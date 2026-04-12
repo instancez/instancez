@@ -65,7 +65,7 @@ func TestConf_Errors(t *testing.T) {
 
 	t.Run("unknown column in filter", func(t *testing.T) {
 		req, err := http.NewRequest("GET",
-			testTS.URL+"/api/users?notacolumn=eq.1", nil)
+			testTS.URL+"/rest/v1/users?notacolumn=eq.1", nil)
 		require.NoError(t, err)
 		status, body := errorBody(t, req)
 		assert.GreaterOrEqual(t, status, 400)
@@ -77,7 +77,7 @@ func TestConf_Errors(t *testing.T) {
 
 	t.Run("unknown operator", func(t *testing.T) {
 		req, err := http.NewRequest("GET",
-			testTS.URL+"/api/users?age=wat.25", nil)
+			testTS.URL+"/rest/v1/users?age=wat.25", nil)
 		require.NoError(t, err)
 		status, body := errorBody(t, req)
 		assert.Equal(t, 400, status)
@@ -87,7 +87,7 @@ func TestConf_Errors(t *testing.T) {
 
 	t.Run("malformed JSON body on POST", func(t *testing.T) {
 		req, err := http.NewRequest("POST",
-			testTS.URL+"/api/users", strings.NewReader(`{"username": "x",`))
+			testTS.URL+"/rest/v1/users", strings.NewReader(`{"username": "x",`))
 		require.NoError(t, err)
 		req.Header.Set("Content-Type", "application/json")
 		status, body := errorBody(t, req)
@@ -97,7 +97,7 @@ func TestConf_Errors(t *testing.T) {
 	})
 
 	t.Run("unknown field in insert body", func(t *testing.T) {
-		req, err := http.NewRequest("POST", testTS.URL+"/api/users",
+		req, err := http.NewRequest("POST", testTS.URL+"/rest/v1/users",
 			strings.NewReader(`{"username":"x","notafield":1}`))
 		require.NoError(t, err)
 		req.Header.Set("Content-Type", "application/json")
@@ -110,7 +110,7 @@ func TestConf_Errors(t *testing.T) {
 	t.Run("single with >1 rows errors", func(t *testing.T) {
 		// status=ONLINE matches multiple seed rows; Single() requires exactly 1.
 		req, err := http.NewRequest("GET",
-			testTS.URL+"/api/users?select=username&status=eq.ONLINE", nil)
+			testTS.URL+"/rest/v1/users?select=username&status=eq.ONLINE", nil)
 		require.NoError(t, err)
 		req.Header.Set("Accept", "application/vnd.pgrst.object+json")
 		status, body := errorBody(t, req)
@@ -122,7 +122,7 @@ func TestConf_Errors(t *testing.T) {
 
 	t.Run("unique violation -> 23505 body shape", func(t *testing.T) {
 		// "supabot" is a seed row — inserting it again triggers pk conflict.
-		req, err := http.NewRequest("POST", testTS.URL+"/api/users",
+		req, err := http.NewRequest("POST", testTS.URL+"/rest/v1/users",
 			strings.NewReader(`{"username":"supabot","status":"ONLINE"}`))
 		require.NoError(t, err)
 		req.Header.Set("Content-Type", "application/json")
@@ -138,7 +138,7 @@ func TestConf_Errors(t *testing.T) {
 		// messages.username references users.username — this user does not exist.
 		uname := fmt.Sprintf("nobody_%d", time.Now().UnixNano())
 		payload := fmt.Sprintf(`{"message":"orphan","username":%q,"channel_id":1}`, uname)
-		req, err := http.NewRequest("POST", testTS.URL+"/api/messages",
+		req, err := http.NewRequest("POST", testTS.URL+"/rest/v1/messages",
 			strings.NewReader(payload))
 		require.NoError(t, err)
 		req.Header.Set("Content-Type", "application/json")
@@ -151,7 +151,7 @@ func TestConf_Errors(t *testing.T) {
 
 	t.Run("not-null violation -> 23502 body shape", func(t *testing.T) {
 		// messages.username is NOT NULL — omit it entirely.
-		req, err := http.NewRequest("POST", testTS.URL+"/api/messages",
+		req, err := http.NewRequest("POST", testTS.URL+"/rest/v1/messages",
 			strings.NewReader(`{"message":"no owner","channel_id":1}`))
 		require.NoError(t, err)
 		req.Header.Set("Content-Type", "application/json")
@@ -508,7 +508,7 @@ func TestConf_Transforms(t *testing.T) {
 		// postgrest-go's CSV() helper swaps the builder's T to string; easier
 		// to issue a raw HTTP request with Accept: text/csv.
 		req, err := http.NewRequest("GET",
-			testTS.URL+"/api/users?select=username,status&order=username.asc", nil)
+			testTS.URL+"/rest/v1/users?select=username,status&order=username.asc", nil)
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAdminKey)
 		req.Header.Set("Accept", "text/csv")
@@ -601,7 +601,7 @@ func TestConf_NestedEmbedding(t *testing.T) {
 
 	t.Run("has-many with nested belongs-to (channels → messages → users)", func(t *testing.T) {
 		// channels → messages(message, users(username))
-		rows := fetchRows(t, "/api/channels?select=slug,messages(message,users(username))&order=id.asc")
+		rows := fetchRows(t, "/rest/v1/channels?select=slug,messages(message,users(username))&order=id.asc")
 		require.Greater(t, len(rows), 0)
 		for _, r := range rows {
 			msgs, ok := r["messages"].([]interface{})
@@ -618,7 +618,7 @@ func TestConf_NestedEmbedding(t *testing.T) {
 
 	t.Run("belongs-to with nested has-many (messages → users → messages)", func(t *testing.T) {
 		// messages → users(username, messages(message))
-		rows := fetchRows(t, "/api/messages?select=id,users(username,messages(message))&order=id.asc")
+		rows := fetchRows(t, "/rest/v1/messages?select=id,users(username,messages(message))&order=id.asc")
 		require.Greater(t, len(rows), 0)
 		for _, r := range rows {
 			u, ok := r["users"].(map[string]interface{})
@@ -632,7 +632,7 @@ func TestConf_NestedEmbedding(t *testing.T) {
 
 	t.Run("spread belongs-to (messages → ...users)", func(t *testing.T) {
 		// messages → ...users(username) — username should be inlined into the parent row.
-		rows := fetchRows(t, "/api/messages?select=id,...users(username)&order=id.asc")
+		rows := fetchRows(t, "/rest/v1/messages?select=id,...users(username)&order=id.asc")
 		require.Greater(t, len(rows), 0)
 		for _, r := range rows {
 			assert.NotNil(t, r["id"])
@@ -644,7 +644,7 @@ func TestConf_NestedEmbedding(t *testing.T) {
 	})
 
 	t.Run("spread on has-many is rejected", func(t *testing.T) {
-		req, err := http.NewRequest("GET", testTS.URL+"/api/users?select=username,...messages(*)", nil)
+		req, err := http.NewRequest("GET", testTS.URL+"/rest/v1/users?select=username,...messages(*)", nil)
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAdminKey)
 		resp, err := http.DefaultClient.Do(req)
@@ -717,7 +717,7 @@ func TestConf_Mutations(t *testing.T) {
 		uname := fmt.Sprintf("mut_min_%d", nowNano())
 		body := fmt.Sprintf(`{"username":%q,"status":"ONLINE"}`, uname)
 
-		req, err := http.NewRequest("POST", testTS.URL+"/api/users", strings.NewReader(body))
+		req, err := http.NewRequest("POST", testTS.URL+"/rest/v1/users", strings.NewReader(body))
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAdminKey)
 		req.Header.Set("Content-Type", "application/json")
@@ -835,7 +835,7 @@ func TestConf_Mutations(t *testing.T) {
 		uname := fmt.Sprintf("rollback_%d", time.Now().UnixNano())
 		body := fmt.Sprintf(`{"username":%q,"status":"ONLINE"}`, uname)
 
-		req, err := http.NewRequest("POST", testTS.URL+"/api/users", strings.NewReader(body))
+		req, err := http.NewRequest("POST", testTS.URL+"/rest/v1/users", strings.NewReader(body))
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAdminKey)
 		req.Header.Set("Content-Type", "application/json")
@@ -957,7 +957,7 @@ func TestConf_LikeAllAny(t *testing.T) {
 
 	t.Run("like(any) matches either pattern", func(t *testing.T) {
 		// "supabot" matches %bot, "kiwicopple" matches %copple.
-		path := "/api/users?select=username&order=username.asc" +
+		path := "/rest/v1/users?select=username&order=username.asc" +
 			"&username=like(any)." + enc("{%bot,%copple}")
 		rows := fetchRows(t, path)
 		got := make([]string, 0, len(rows))
@@ -969,21 +969,21 @@ func TestConf_LikeAllAny(t *testing.T) {
 
 	t.Run("like(all) requires every pattern to match", func(t *testing.T) {
 		// Only "kiwicopple" starts with k AND ends with e.
-		path := "/api/users?select=username&username=like(all)." + enc("{k%,%e}")
+		path := "/rest/v1/users?select=username&username=like(all)." + enc("{k%,%e}")
 		rows := fetchRows(t, path)
 		require.Equal(t, 1, len(rows))
 		assert.Equal(t, "kiwicopple", rows[0]["username"])
 	})
 
 	t.Run("ilike(any) is case-insensitive", func(t *testing.T) {
-		path := "/api/users?select=username&order=username.asc" +
+		path := "/rest/v1/users?select=username&order=username.asc" +
 			"&username=ilike(any)." + enc("{%BOT,%COPPLE}")
 		rows := fetchRows(t, path)
 		require.Equal(t, 2, len(rows))
 	})
 
 	t.Run("ilike(all) is case-insensitive", func(t *testing.T) {
-		path := "/api/users?select=username&username=ilike(all)." + enc("{K%,%E}")
+		path := "/rest/v1/users?select=username&username=ilike(all)." + enc("{K%,%E}")
 		rows := fetchRows(t, path)
 		require.Equal(t, 1, len(rows))
 		assert.Equal(t, "kiwicopple", rows[0]["username"])
@@ -1033,7 +1033,7 @@ func TestConf_MaxAffected(t *testing.T) {
 	t.Run("PATCH over limit -> PGRST124", func(t *testing.T) {
 		body := `{"status":"OFFLINE"}`
 		req, err := http.NewRequest("PATCH",
-			testTS.URL+"/api/users?nickname=eq."+marker, strings.NewReader(body))
+			testTS.URL+"/rest/v1/users?nickname=eq."+marker, strings.NewReader(body))
 		require.NoError(t, err)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Prefer", "max-affected=2")
@@ -1056,7 +1056,7 @@ func TestConf_MaxAffected(t *testing.T) {
 	t.Run("PATCH within limit succeeds", func(t *testing.T) {
 		body := `{"status":"OFFLINE"}`
 		req, err := http.NewRequest("PATCH",
-			testTS.URL+"/api/users?nickname=eq."+marker, strings.NewReader(body))
+			testTS.URL+"/rest/v1/users?nickname=eq."+marker, strings.NewReader(body))
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAdminKey)
 		req.Header.Set("Content-Type", "application/json")
@@ -1092,7 +1092,7 @@ func TestConf_MaxAffected(t *testing.T) {
 		})
 
 		req, err := http.NewRequest("DELETE",
-			testTS.URL+"/api/users?nickname=eq."+delMarker, nil)
+			testTS.URL+"/rest/v1/users?nickname=eq."+delMarker, nil)
 		require.NoError(t, err)
 		req.Header.Set("Prefer", "max-affected=2")
 		status, respBody := errorBody(t, req)

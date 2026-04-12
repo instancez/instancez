@@ -96,6 +96,15 @@ func TestSupabaseJSCompat(t *testing.T) {
 					"user_id": {ForeignKey: &domain.ForeignKey{References: "users.id", OnDelete: "cascade"}},
 				},
 			},
+			"comments": {
+				AllowAnon: true,
+				Fields: map[string]domain.Field{
+					"id":      {Type: "bigserial", PrimaryKey: true},
+					"body":    {Type: "text", Required: true},
+					"todo_id": {ForeignKey: &domain.ForeignKey{References: "todos.id", OnDelete: "cascade"}},
+					"user_id": {ForeignKey: &domain.ForeignKey{References: "users.id", OnDelete: "cascade"}},
+				},
+			},
 		},
 	}
 

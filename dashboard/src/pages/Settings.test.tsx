@@ -85,12 +85,10 @@ describe("SettingsPage", () => {
     expect(screen.getByText("http://localhost:3000")).toBeInTheDocument();
   });
 
-  it("shows CORS methods as checkboxes", () => {
+  it("shows CORS methods as tags", () => {
     renderSettings();
-    const getCheckbox = screen.getByRole("checkbox", { name: "GET" });
-    const postCheckbox = screen.getByRole("checkbox", { name: "POST" });
-    expect(getCheckbox).toBeChecked();
-    expect(postCheckbox).toBeChecked();
+    expect(screen.getByText("GET")).toBeInTheDocument();
+    expect(screen.getByText("POST")).toBeInTheDocument();
   });
 
   it("shows timeout values", () => {
@@ -107,10 +105,10 @@ describe("SettingsPage", () => {
     expect(screen.getByDisplayValue("5m")).toBeInTheDocument();
   });
 
-  it("shows provider dropdowns", () => {
+  it("shows database pool settings section", () => {
     renderSettings();
-    expect(screen.getByText("Email Provider")).toBeInTheDocument();
-    expect(screen.getByText("Storage Provider")).toBeInTheDocument();
+    expect(screen.getByText("Database Pool")).toBeInTheDocument();
+    expect(screen.getByText("Max Connections")).toBeInTheDocument();
   });
 
   it("can update project name", async () => {

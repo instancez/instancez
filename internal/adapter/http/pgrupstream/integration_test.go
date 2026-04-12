@@ -159,7 +159,7 @@ func TestMain(m *testing.M) {
 	testTS = httptest.NewServer(server.Handler())
 	defer testTS.Close()
 
-	testClient = NewClient(testTS.URL+"/api", "public", nil)
+	testClient = NewClient(testTS.URL+"/rest/v1", "public", nil)
 	testClient.SetAuthToken(testAdminKey)
 
 	code := m.Run()

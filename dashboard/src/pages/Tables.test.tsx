@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { Tables } from "./Tables";
+import { DialogProvider } from "../components/Dialog";
 import { ConfigContext } from "../hooks/useConfig";
 import type { Config, ValidationError } from "../lib/types";
 
@@ -40,7 +41,9 @@ function renderTables(config: Config) {
   return render(
     <ConfigContext.Provider value={ctx}>
       <MemoryRouter>
-        <Tables />
+        <DialogProvider>
+          <Tables />
+        </DialogProvider>
       </MemoryRouter>
     </ConfigContext.Provider>
   );

@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { AuthPage } from "./Auth";
+import { DialogProvider } from "../components/Dialog";
 import { ConfigContext } from "../hooks/useConfig";
 import type { Config, ValidationError } from "../lib/types";
 
@@ -52,7 +53,9 @@ function renderAuth(config: Config) {
   const result = render(
     <ConfigContext.Provider value={ctx}>
       <MemoryRouter>
-        <AuthPage />
+        <DialogProvider>
+          <AuthPage />
+        </DialogProvider>
       </MemoryRouter>
     </ConfigContext.Provider>
   );
@@ -126,7 +129,9 @@ describe("AuthPage", () => {
     const { container } = render(
       <ConfigContext.Provider value={ctx}>
         <MemoryRouter>
-          <AuthPage />
+          <DialogProvider>
+            <AuthPage />
+          </DialogProvider>
         </MemoryRouter>
       </ConfigContext.Provider>
     );

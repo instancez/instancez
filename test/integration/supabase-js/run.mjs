@@ -186,7 +186,7 @@ await step('rest: spread embed — ...users(id) on comments', async () => {
   // Spread flattens the joined columns into the parent row.
   // Use raw fetch since supabase-js spread syntax may vary by version.
   const resp = await fetch(
-    `${URL}/api/comments?select=body,...users(id)&user_id=eq.${userId}`,
+    `${URL}/rest/v1/comments?select=body,...users(id)&user_id=eq.${userId}`,
     { headers: { Authorization: `Bearer ${accessToken}`, apikey: ANON_KEY } }
   )
   assert(resp.ok, `spread request failed: ${resp.status}`)
