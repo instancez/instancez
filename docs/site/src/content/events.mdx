@@ -1,0 +1,93 @@
+---
+title: Events & Triggers
+description: WAL-based event triggers, cron jobs, webhooks, and email notifications
+section: Core Concepts
+order: 14
+---
+
+Ultrabase has a built-in event system powered by PostgreSQL's WAL (Write-Ahead Log). React to database changes with webhooks or email notifications, or schedule recurring jobs with cron.
+
+## Event triggers
+
+```yaml
+on:
+  new_signup:
+    events: [auth.signup]
+    webhook:
+      url: https://hooks.slack.com/services/...
+      method: POST
+      headers:
+        Content-Type: application/json
+
+  comment_notification:
+    events: [comments.insert]
+    email:
+      to: "{{row.author_email}}"
+      subject: "New comment on your post"
+      body: "{{row.commenter_name}} commented: {{row.body}}"
+```
+
+## Supported events
+
+| Event | Fires when |
+|---|---|
+| `<table>.insert` | Row inserted |
+| `<table>.update` | Row updated |
+| `<table>.delete` | Row deleted |
+| `auth.signup` | New user registers |
+| `auth.login` | User logs in |
+
+## Cron schedules
+
+Run triggers on a schedule using cron syntax:
+
+```yaml
+on:
+  daily_digest:
+    schedule: "0 9 * * *"  # Every day at 9 AM
+    webhook:
+      url: https://api.example.com/digest
+      method: POST
+
+  cleanup:
+    schedule: "0 0 * * 0"  # Every Sunday at midnight
+    webhook:
+      url: https://api.example.com/cleanup
+      method: POST
+```
+
+<Callout variant="info" title="Cron syntax">
+  Uses standard 5-field cron: `minute hour day-of-month month day-of-week`.
+</Callout>
+
+## Webhook configuration
+
+```yaml
+webhook:
+  url: https://example.com/hook
+  method: POST                    # GET, POST, PUT
+  headers:
+    Authorization: "Bearer ${WEBHOOK_SECRET}"
+    Content-Type: application/json
+```
+
+The webhook payload includes the event type, table name, and the affected row data.
+
+## Email actions
+
+```yaml
+email:
+  to: "{{row.email}}"
+  subject: "Your order has shipped"
+  body: |
+    Hi {{row.name}},
+    Your order #{{row.id}} has shipped!
+```
+
+<Callout variant="warning" title="Email provider required">
+  Email actions require an email provider configured under `providers.email`.
+</Callout>
+
+## Dead letter queue
+
+Failed events are retried with exponential backoff. After all retries are exhausted, events move to the dead letter queue. You can inspect and retry dead letter events via the admin API or the dashboard.

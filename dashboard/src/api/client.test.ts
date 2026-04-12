@@ -1,0 +1,198 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  getConfig,
+  getStats,
+  getStatus,
+  getEvents,
+  retryEvent,
+  purgeEvents,
+  putConfig,
+  validateAdminKey,
+} from "./client";
+
+const mockFetch = vi.fn();
+global.fetch = mockFetch;
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  sessionStorage.setItem("ultrabase_admin_key", "test-key");
+});
+
+afterEach(() => {
+  sessionStorage.clear();
+});
+
+function jsonResponse(data: unknown, status = 200) {
+  return Promise.resolve({
+    ok: status >= 200 && status < 300,
+    status,
+    json: () => Promise.resolve(data),
+  });
+}
+
+describe("getConfig", () => {
+  it("calls /api/_admin/config with auth header", async () => {
+    const config = { version: 1, project: { name: "Test" }, _checksum: "sha256:abc" };
+    mockFetch.mockReturnValueOnce(jsonResponse(config));
+
+    const result = await getConfig();
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/_admin/config",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer test-key",
+        }),
+      })
+    );
+    expect(result).toEqual(config);
+  });
+
+  it("throws when no admin key is set", async () => {
+    sessionStorage.clear();
+    await expect(getConfig()).rejects.toThrow("No admin key configured");
+  });
+});
+
+describe("putConfig", () => {
+  it("sends PUT with If-Match header", async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ message: "Config saved" }));
+
+    const config = { version: 1 } as any;
+    await putConfig(config, "sha256:abc123");
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/_admin/config",
+      expect.objectContaining({
+        method: "PUT",
+        headers: expect.objectContaining({
+          "If-Match": "sha256:abc123",
+        }),
+        body: JSON.stringify(config),
+      })
+    );
+  });
+});
+
+describe("getStats", () => {
+  it("fetches stats", async () => {
+    const stats = {
+      tables: { todos: { row_count: 42 } },
+      events: { last_hour: { delivered: 10, failed: 1, dead: 0 } },
+      storage: {},
+    };
+    mockFetch.mockReturnValueOnce(jsonResponse(stats));
+
+    const result = await getStats();
+    expect(result).toEqual(stats);
+  });
+});
+
+describe("getStatus", () => {
+  it("fetches status", async () => {
+    const status = { status: "ok", database: "connected" };
+    mockFetch.mockReturnValueOnce(jsonResponse(status));
+
+    const result = await getStatus();
+    expect(result).toEqual(status);
+  });
+});
+
+describe("getEvents", () => {
+  it("fetches all events without filter", async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse([]));
+    await getEvents();
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/_admin/events",
+      expect.anything()
+    );
+  });
+
+  it("fetches events with status filter", async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse([]));
+    await getEvents("failed");
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/_admin/events?status=failed",
+      expect.anything()
+    );
+  });
+});
+
+describe("retryEvent", () => {
+  it("posts to retry endpoint", async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ message: "Event re-queued" }));
+    await retryEvent("evt-123");
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/_admin/events/evt-123/retry",
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+});
+
+describe("purgeEvents", () => {
+  it("posts to purge endpoint", async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ purged: 5 }));
+    const result = await purgeEvents();
+    expect(result).toEqual({ purged: 5 });
+  });
+});
+
+describe("validateAdminKey", () => {
+  it("returns true for valid key", async () => {
+    mockFetch.mockReturnValueOnce(Promise.resolve({ ok: true }));
+    const result = await validateAdminKey("valid-key");
+    expect(result).toBe(true);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/_admin/status",
+      expect.objectContaining({
+        headers: { Authorization: "Bearer valid-key" },
+      })
+    );
+  });
+
+  it("returns false for invalid key", async () => {
+    mockFetch.mockReturnValueOnce(Promise.resolve({ ok: false }));
+    const result = await validateAdminKey("bad-key");
+    expect(result).toBe(false);
+  });
+
+  it("returns false on network error", async () => {
+    mockFetch.mockRejectedValueOnce(new Error("Network error"));
+    const result = await validateAdminKey("any-key");
+    expect(result).toBe(false);
+  });
+});
+
+describe("error handling", () => {
+  it("clears session on 401", async () => {
+    // Mock reload to prevent jsdom errors
+    const reloadMock = vi.fn();
+    Object.defineProperty(window, "location", {
+      value: { reload: reloadMock },
+      writable: true,
+    });
+
+    mockFetch.mockReturnValueOnce(
+      Promise.resolve({
+        ok: false,
+        status: 401,
+        json: () => Promise.resolve({}),
+      })
+    );
+
+    await expect(getStatus()).rejects.toThrow("Unauthorized");
+    expect(sessionStorage.getItem("ultrabase_admin_key")).toBeNull();
+  });
+
+  it("throws with error body on non-401 errors", async () => {
+    mockFetch.mockReturnValueOnce(
+      Promise.resolve({
+        ok: false,
+        status: 500,
+        json: () => Promise.resolve({ message: "Internal server error" }),
+      })
+    );
+
+    await expect(getStatus()).rejects.toThrow("Internal server error");
+  });
+});

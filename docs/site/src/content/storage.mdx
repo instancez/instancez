@@ -1,0 +1,58 @@
+---
+title: Storage
+description: File upload buckets with MIME filtering and RLS
+section: Core Concepts
+order: 12
+---
+
+Ultrabase provides file storage with per-bucket configuration, MIME type filtering, and row-level security.
+
+## Defining a bucket
+
+```yaml
+storage:
+  avatars:
+    max_size: 5MB
+    mime_types: ["image/jpeg", "image/png", "image/webp"]
+    public: true
+
+  documents:
+    max_size: 50MB
+    mime_types: ["application/pdf"]
+    public: false
+    rls:
+      - operations: [select, insert, delete]
+        check: "owner_id = auth.uid()"
+```
+
+Each bucket gets upload/download endpoints:
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/storage/<bucket>` | POST | Upload a file |
+| `/api/storage/<bucket>/<id>` | GET | Download a file |
+| `/api/storage/<bucket>/<id>` | DELETE | Delete a file |
+
+## Configuration options
+
+| Option | Description |
+|---|---|
+| `max_size` | Maximum file size (e.g., `5MB`, `100KB`) |
+| `mime_types` | Allowed MIME types, supports wildcards (`image/*`) |
+| `public` | If true, files are accessible without authentication |
+| `rls` | Row-level security policies (same syntax as tables) |
+
+## Storage providers
+
+Configure where files are stored under `providers.storage`:
+
+```yaml
+providers:
+  storage:
+    type: s3  # or: gcs, minio, local
+```
+
+<Callout variant="info">
+  Provider credentials are configured via environment variables (e.g., `AWS_ACCESS_KEY_ID`).
+  The `local` provider stores files on disk — useful for development.
+</Callout>

@@ -1,0 +1,356 @@
+version: 1
+project:
+    name: React Catalog Example
+    description: Product catalog demonstrating Ultrabase + supabase-js (auth, filtering, FTS, JSONB, arrays, embeds, RLS)
+extensions:
+    - pgcrypto
+    - pg_trgm
+server:
+    port: 8080
+    cors:
+        origins:
+            - '*'
+        methods:
+            - GET
+            - POST
+            - PATCH
+            - PUT
+            - DELETE
+            - OPTIONS
+            - HEAD
+        headers:
+            - Authorization
+            - Content-Type
+            - Prefer
+            - Range
+            - Range-Unit
+            - apikey
+            - x-client-info
+        credentials: false
+        max_age: 86400
+    docs_ui: true
+    max_limit: 1000
+providers:
+    email: null
+    storage:
+        type: local
+auth:
+    # Email + password auth. VerifyEmail is off so signup returns a session
+    # immediately; no email provider is required in that mode.
+    jwt_expiry: 1h
+    refresh_tokens: true
+    refresh_token_expiry: 7d
+    fields:
+        display_name:
+            type: text
+            required: false
+tables:
+    categories:
+        fields:
+            id:
+                type: bigserial
+                primary_key: true
+            slug:
+                type: varchar(63)
+                required: true
+                unique: true
+            name:
+                type: text
+                required: true
+        indexes: []
+        rls:
+            - operations:
+                - select
+                - insert
+                - update
+                - delete
+              check: "true"
+        allow_anon: true
+
+    products:
+        fields:
+            id:
+                type: bigserial
+                primary_key: true
+            name:
+                type: text
+                required: true
+            description:
+                type: text
+                required: false
+            price_cents:
+                type: integer
+                required: true
+                min: 0
+            stock:
+                type: integer
+                required: true
+                default: 0
+                min: 0
+            status:
+                type: text
+                required: true
+                default: draft
+                enum:
+                    - draft
+                    - active
+                    - archived
+            featured:
+                type: boolean
+                required: true
+                default: false
+            on_sale:
+                type: boolean
+                required: true
+                default: false
+            tags:
+                type: text[]
+                required: false
+            metadata:
+                type: jsonb
+                required: false
+            category_id:
+                type: ""
+                required: false
+                foreign_key:
+                    references: categories.id
+                    on_delete: set_null
+            created_at:
+                type: timestamptz
+                required: true
+                default: now()
+        indexes:
+            - columns:
+                - status
+                - created_at
+            - columns:
+                - category_id
+            - columns:
+                - price_cents
+        rls:
+            - operations:
+                - select
+                - insert
+                - update
+                - delete
+              check: "true"
+        allow_anon: true
+        searchable:
+            - name
+            - description
+        search_config: english
+
+    reviews:
+        fields:
+            id:
+                type: bigserial
+                primary_key: true
+            product_id:
+                type: ""
+                required: true
+                foreign_key:
+                    references: products.id
+                    on_delete: cascade
+            user_id:
+                type: ""
+                required: false
+                foreign_key:
+                    references: users.id
+                    on_delete: set_null
+            author:
+                type: text
+                required: true
+            rating:
+                type: integer
+                required: true
+                min: 1
+                max: 5
+            body:
+                type: text
+                required: false
+            created_at:
+                type: timestamptz
+                required: true
+                default: now()
+        indexes:
+            - columns:
+                - product_id
+                - created_at
+            - columns:
+                - rating
+            - columns:
+                - user_id
+        # Anyone can read reviews (public product catalog). Only authenticated
+        # users can insert, and only against their own user_id. Updates and
+        # deletes are restricted to the row owner via auth.uid().
+        rls:
+            - operations:
+                - select
+              check: "true"
+            - operations:
+                - insert
+              check: "user_id = auth.uid()"
+            - operations:
+                - update
+                - delete
+              check: "user_id = auth.uid()"
+        allow_anon: true
+
+seeds:
+    categories:
+        - id: 1
+          slug: keyboards
+          name: Keyboards
+        - id: 2
+          slug: headphones
+          name: Headphones
+        - id: 3
+          slug: monitors
+          name: Monitors
+        - id: 4
+          slug: accessories
+          name: Accessories
+
+    products:
+        - name: Kinesis Advantage 360
+          description: Split ergonomic mechanical keyboard with concave keywells.
+          price_cents: 44900
+          stock: 12
+          status: active
+          featured: true
+          on_sale: false
+          tags: ["split", "ergonomic", "mechanical", "wireless"]
+          metadata: {"brand": "Kinesis", "layout": "split", "switches": "Kailh"}
+          category_id: 1
+        - name: ZSA Moonlander
+          description: Hot-swappable split keyboard with RGB and ortholinear layout.
+          price_cents: 36500
+          stock: 5
+          status: active
+          featured: true
+          on_sale: true
+          tags: ["split", "ortholinear", "rgb", "mechanical"]
+          metadata: {"brand": "ZSA", "layout": "ortholinear", "switches": "Kailh Choc"}
+          category_id: 1
+        - name: HHKB Professional HYBRID
+          description: Compact 60% keyboard beloved by developers, Topre switches.
+          price_cents: 38500
+          stock: 0
+          status: active
+          featured: false
+          on_sale: false
+          tags: ["compact", "topre", "bluetooth"]
+          metadata: {"brand": "PFU", "layout": "60", "switches": "Topre"}
+          category_id: 1
+        - name: Sony WH-1000XM5
+          description: Noise cancelling over-ear headphones with long battery life.
+          price_cents: 39900
+          stock: 20
+          status: active
+          featured: true
+          on_sale: true
+          tags: ["wireless", "noise-cancelling", "over-ear"]
+          metadata: {"brand": "Sony", "battery_hours": 30}
+          category_id: 2
+        - name: Sennheiser HD 600
+          description: Open-back reference headphones for critical listening.
+          price_cents: 39900
+          stock: 8
+          status: active
+          featured: false
+          on_sale: false
+          tags: ["wired", "open-back", "audiophile"]
+          metadata: {"brand": "Sennheiser", "impedance_ohm": 300}
+          category_id: 2
+        - name: LG UltraFine 32UN880
+          description: 32-inch 4K monitor with ergo stand and USB-C power delivery.
+          price_cents: 79900
+          stock: 3
+          status: active
+          featured: true
+          on_sale: false
+          tags: ["4k", "32-inch", "usb-c"]
+          metadata: {"brand": "LG", "resolution": "3840x2160", "panel": "IPS"}
+          category_id: 3
+        - name: Dell U2723QE
+          description: 27-inch 4K IPS Black monitor with KVM and USB-C hub.
+          price_cents: 64900
+          stock: 14
+          status: active
+          featured: false
+          on_sale: true
+          tags: ["4k", "27-inch", "usb-c", "kvm"]
+          metadata: {"brand": "Dell", "resolution": "3840x2160", "panel": "IPS Black"}
+          category_id: 3
+        - name: Logitech MX Master 3S
+          description: Flagship wireless mouse with silent clicks and fast scroll.
+          price_cents: 9900
+          stock: 50
+          status: active
+          featured: true
+          on_sale: false
+          tags: ["wireless", "mouse", "productivity"]
+          metadata: {"brand": "Logitech", "dpi": 8000}
+          category_id: 4
+        - name: Grovemade Desk Mat
+          description: Wool felt desk mat, understated aesthetic.
+          price_cents: 8500
+          stock: 30
+          status: active
+          featured: false
+          on_sale: false
+          tags: ["desk", "felt", "aesthetic"]
+          metadata: {"brand": "Grovemade", "material": "wool"}
+          category_id: 4
+        - name: Prototype Split 75
+          description: Draft listing for an upcoming split 75% board.
+          price_cents: 24900
+          stock: 0
+          status: draft
+          featured: false
+          on_sale: false
+          tags: ["split", "prototype"]
+          metadata: {"brand": "Unknown"}
+          category_id: 1
+
+    reviews:
+        - product_id: 1
+          author: Alex
+          rating: 5
+          body: Life-changing ergonomics. Worth every penny.
+        - product_id: 1
+          author: Sam
+          rating: 4
+          body: Steep learning curve but incredible once adapted.
+        - product_id: 2
+          author: Jordan
+          rating: 5
+          body: The RGB is gimmicky but the typing feel is superb.
+        - product_id: 2
+          author: Casey
+          rating: 3
+          body: Great build, but the software is finicky.
+        - product_id: 4
+          author: Morgan
+          rating: 5
+          body: Noise cancellation is best in class.
+        - product_id: 4
+          author: Riley
+          rating: 4
+          body: Comfortable, but a bit warm on long sessions.
+        - product_id: 5
+          author: Taylor
+          rating: 5
+          body: Reference-class sound for a reasonable price.
+        - product_id: 6
+          author: Pat
+          rating: 4
+          body: Gorgeous panel, stand is a bit wobbly.
+        - product_id: 7
+          author: Jamie
+          rating: 5
+          body: IPS Black contrast is noticeably better than my old U2720.
+        - product_id: 8
+          author: Quinn
+          rating: 5
+          body: Silent clicks are oddly satisfying.

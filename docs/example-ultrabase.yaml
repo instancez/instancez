@@ -1,0 +1,366 @@
+version: 1
+
+project:
+  name: "Acme Todo App"
+  description: "Task management with teams"
+
+extensions: [pgcrypto, pg_trgm]
+
+server:
+  port: 8080
+  cors:
+    origins: ["https://acme.com", "https://app.acme.com"]
+    methods: [GET, POST, PATCH, DELETE, OPTIONS]
+    headers: [Authorization, Content-Type]
+    credentials: true
+    max_age: 86400
+  timeouts:
+    request: 30s
+    db_query: 10s
+    upload: 5m
+    shutdown: 30s
+  max_body_size: 1MB
+  db:
+    pool:
+      max: 20
+      min: 5
+      idle_timeout: 300s
+  docs_ui: true # Scalar/Swagger at /api/docs
+
+# ---------------------------------------------------------------------------
+# Providers
+# ---------------------------------------------------------------------------
+providers:
+  email:
+    type: resend
+    # Credentials via ULTRABASE_EMAIL_API_KEY env var
+
+  storage:
+    type: s3
+    # Credentials via AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, S3_BUCKET
+
+# ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
+auth:
+  jwt_expiry: 15m
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+
+  fields:
+    display_name: { type: text, required: true }
+    avatar_url: { type: text }
+
+  email:
+    verify_email: true
+    templates:
+      verify:
+        subject: "Verify your email — {{project.name}}"
+        body_file: templates/verify.html
+      reset:
+        subject: "Reset your password — {{project.name}}"
+        body: |
+          Hi {{data.display_name}},
+
+          Click the link below to reset your password:
+          {{link}}
+
+          If you didn't request this, ignore this email.
+
+  google:
+    client_id: "${GOOGLE_CLIENT_ID}"
+    client_secret: "${GOOGLE_CLIENT_SECRET}"
+    redirect_url: "https://app.acme.com/auth/callback/google"
+
+  github:
+    client_id: "${GITHUB_CLIENT_ID}"
+    client_secret: "${GITHUB_CLIENT_SECRET}"
+    redirect_url: "https://app.acme.com/auth/callback/github"
+
+# ---------------------------------------------------------------------------
+# Tables
+# ---------------------------------------------------------------------------
+tables:
+  teams:
+    fields:
+      id: { type: bigserial, primary_key: true }
+      name: { type: text, required: true }
+      slug: { type: varchar(63), required: true }
+      created_at: { type: timestamptz, required: true, default: now() }
+
+    indexes:
+      - { columns: [slug], unique: true }
+
+    rls:
+      - operations: [select]
+        check: "id IN (SELECT team_id FROM team_members WHERE user_id = auth.uid())"
+      - operations: [insert]
+        check: "auth.is_authenticated()"
+      - operations: [update, delete]
+        check: >
+          id IN (
+            SELECT team_id FROM team_members
+            WHERE user_id = auth.uid() AND role = 'owner'
+          )
+
+  team_members:
+    fields:
+      id: { type: bigserial, primary_key: true }
+      team_id:
+        foreign_key:
+          references: teams.id
+          on_delete: cascade
+      user_id:
+        foreign_key:
+          references: users.id
+          on_delete: cascade
+      role: { type: text, required: true, enum: [owner, admin, member] }
+      joined_at: { type: timestamptz, required: true, default: now() }
+
+    indexes:
+      - { columns: [team_id, user_id], unique: true }
+      - { columns: [user_id] }
+
+    rls:
+      - operations: [select]
+        check: "team_id IN (SELECT team_id FROM team_members WHERE user_id = auth.uid())"
+      - operations: [insert]
+        check: >
+          team_id IN (
+            SELECT team_id FROM team_members
+            WHERE user_id = auth.uid() AND role IN ('owner', 'admin')
+          )
+      - operations: [delete]
+        check: >
+          team_id IN (
+            SELECT team_id FROM team_members
+            WHERE user_id = auth.uid() AND role = 'owner'
+          )
+
+  categories:
+    fields:
+      id: { type: bigserial, primary_key: true }
+      team_id:
+        foreign_key:
+          references: teams.id
+          on_delete: cascade
+      name: { type: text, required: true }
+      color: { type: varchar(7), default: "#6366f1" }
+
+    indexes:
+      - { columns: [team_id, name], unique: true }
+
+    rls:
+      - operations: [select, insert, update, delete]
+        check: "team_id IN (SELECT team_id FROM team_members WHERE user_id = auth.uid())"
+
+  todos:
+    fields:
+      id: { type: bigserial, primary_key: true }
+      team_id:
+        foreign_key:
+          references: teams.id
+          on_delete: cascade
+      category_id:
+        foreign_key:
+          references: categories.id
+          on_delete: set_null
+      user_id:
+        foreign_key:
+          references: users.id
+          on_delete: cascade
+      title: { type: text, required: true }
+      body: { type: text }
+      status:
+        {
+          type: text,
+          required: true,
+          enum: [pending, active, done],
+          default: pending,
+        }
+      priority: { type: integer, required: true, default: 0, min: 0, max: 5 }
+      due_date: { type: date }
+      done_at: { type: timestamptz }
+      created_at: { type: timestamptz, required: true, default: now() }
+      updated_at: { type: timestamptz }
+
+    indexes:
+      - { columns: [team_id, status] }
+      - { columns: [user_id, created_at] }
+      - { columns: [due_date], where: "status != 'done'" }
+
+    searchable: [title, body]
+    search_config: english
+
+    rls:
+      - operations: [select]
+        check: "team_id IN (SELECT team_id FROM team_members WHERE user_id = auth.uid())"
+      - operations: [insert]
+        check: >
+          team_id IN (SELECT team_id FROM team_members WHERE user_id = auth.uid())
+          AND user_id = auth.uid()
+      - operations: [update, delete]
+        check: "user_id = auth.uid()"
+
+  comments:
+    fields:
+      id: { type: bigserial, primary_key: true }
+      todo_id:
+        foreign_key:
+          references: todos.id
+          on_delete: cascade
+      user_id:
+        foreign_key:
+          references: users.id
+          on_delete: cascade
+      body: { type: text, required: true }
+      created_at: { type: timestamptz, required: true, default: now() }
+
+    indexes:
+      - { columns: [todo_id, created_at] }
+
+    rls:
+      - operations: [select]
+        check: >
+          todo_id IN (
+            SELECT id FROM todos
+            WHERE team_id IN (SELECT team_id FROM team_members WHERE user_id = auth.uid())
+          )
+      - operations: [insert]
+        check: "user_id = auth.uid()"
+      - operations: [delete]
+        check: "user_id = auth.uid()"
+
+  # A public-facing table (no auth required)
+  announcements:
+    allow_anon: true
+
+    fields:
+      id: { type: bigserial, primary_key: true }
+      title: { type: text, required: true }
+      body: { type: text, required: true }
+      published: { type: boolean, required: true, default: false }
+      published_at: { type: timestamptz }
+      created_at: { type: timestamptz, required: true, default: now() }
+
+    searchable: [title, body]
+
+    rls:
+      - operations: [select]
+        check: "published = true"
+      - operations: [insert, update, delete]
+        check: >
+          auth.uid() IN (
+            SELECT user_id FROM team_members WHERE role = 'owner'
+          )
+
+# ---------------------------------------------------------------------------
+# Storage
+# ---------------------------------------------------------------------------
+storage:
+  avatars:
+    max_size: 2MB
+    types: [image/*]
+    public: true
+    rls:
+      - operations: [insert, delete]
+        check: "uploaded_by = auth.uid()"
+
+  attachments:
+    max_size: 10MB
+    types: [image/*, application/pdf, text/*]
+    rls:
+      - operations: [select, insert]
+        check: "auth.is_authenticated()"
+      - operations: [delete]
+        check: "uploaded_by = auth.uid()"
+
+# ---------------------------------------------------------------------------
+# Events / Triggers
+# ---------------------------------------------------------------------------
+on:
+  welcome_email:
+    events: [users.insert]
+    email:
+      to: "{{data.email}}"
+      subject: "Welcome to {{project.name}}!"
+      body_file: templates/welcome.html
+
+  todo_assigned_webhook:
+    events: [todos.insert]
+    webhook:
+      url: "${SLACK_WEBHOOK_URL}"
+      headers:
+        Content-Type: application/json
+      retry:
+        max: 3
+        backoff: exponential
+
+  daily_digest:
+    schedule: "0 9 * * *"
+    email:
+      to_query: >
+        SELECT email FROM users
+        WHERE email_verified = true
+      data_query: >
+        SELECT COUNT(*) FILTER (WHERE status = 'pending') as pending,
+               COUNT(*) FILTER (WHERE status = 'done' AND done_at > NOW() - INTERVAL '1 day') as completed_today
+        FROM todos WHERE user_id = $1
+      subject: "Your daily digest — {{project.name}}"
+      body: |
+        You have {{data.pending}} pending tasks.
+        {{data.completed_today}} tasks completed in the last 24 hours.
+
+  audit_deletes:
+    events: ["*.delete"]
+    webhook:
+      url: "${AUDIT_WEBHOOK_URL}"
+      retry:
+        max: 5
+        backoff: exponential
+
+# ---------------------------------------------------------------------------
+# Seeds
+# ---------------------------------------------------------------------------
+seeds:
+  users:
+    - email: admin@acme.com
+      password: "${SEED_ADMIN_PASSWORD:-admin123}"
+      display_name: "Admin User"
+      email_verified: true
+
+  teams:
+    - id: 1
+      name: "Acme Corp"
+      slug: acme
+
+  team_members:
+    - id: 1
+      team_id: 1
+      user_id: 1
+      role: owner
+
+  categories:
+    - id: 1
+      team_id: 1
+      name: "General"
+      color: "#6366f1"
+    - id: 2
+      team_id: 1
+      name: "Bugs"
+      color: "#ef4444"
+
+  todos:
+    - id: 1
+      team_id: 1
+      category_id: 1
+      user_id: 1
+      title: "Set up the project"
+      status: done
+    - id: 2
+      team_id: 1
+      category_id: 2
+      user_id: 1
+      title: "Fix the login bug"
+      status: active
+      priority: 3

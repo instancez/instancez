@@ -1,0 +1,198 @@
+// Package http implements the HTTP adapter (handlers, middleware, routing).
+package http
+
+import (
+	"context"
+	"fmt"
+	"io/fs"
+	"log/slog"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/saedx1/ultrabase/internal/app"
+	"github.com/saedx1/ultrabase/internal/domain"
+)
+
+// Server wraps the gin engine and HTTP server.
+type Server struct {
+	engine     *gin.Engine
+	httpServer *http.Server
+	cfg        *domain.Config
+	logger     *slog.Logger
+	db         domain.Database
+}
+
+// ServerDeps holds all dependencies for the HTTP server.
+type ServerDeps struct {
+	Config         *domain.Config
+	DB             domain.Database
+	Logger         *slog.Logger
+	DevMode        bool
+	Email          domain.EmailSender
+	Storage        domain.ObjectStore
+	JWTKeys        *app.JWTKeyManager // signing/verification keys (managed in DB)
+	ConfigPath     string              // path to ultrabase.yaml (for dashboard config editing)
+	DashboardAssets fs.FS               // embedded SPA assets (nil in dev mode)
+}
+
+// NewServer creates a new HTTP server with all routes mounted.
+func NewServer(deps ServerDeps) *Server {
+	if deps.DevMode {
+		gin.SetMode(gin.DebugMode)
+	} else {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	r := gin.New()
+	r.Use(gin.Recovery())
+	r.Use(requestLogger(deps.Logger))
+
+	s := &Server{
+		engine: r,
+		cfg:    deps.Config,
+		logger: deps.Logger,
+		db:     deps.DB,
+	}
+
+	// Metrics middleware
+	r.Use(metricsMiddleware())
+
+	// CORS
+	r.Use(corsMiddleware(deps.Config.Server.CORS, deps.DevMode))
+
+	// Body size limit
+	r.Use(bodySizeLimit(deps.Config.Server.MaxBodySize))
+
+	// Health + observability endpoints (no auth)
+	r.GET("/live", s.handleLive)
+	r.GET("/health", s.handleHealth)
+	r.GET("/ready", s.handleReady)
+	r.GET("/metrics", handleMetrics)
+
+	// Root router group — used by Supabase-compatible handlers that mount
+	// on absolute paths like /auth/v1 and /rest/v1.
+	root := r.Group("")
+
+	// API group — retained for internal-only endpoints that don't need
+	// supabase-js compatibility (admin dashboard, functions, openapi, docs).
+	api := r.Group("/api")
+
+	// Auth endpoints at /auth/v1/* (GoTrue-compatible, consumed by supabase-js)
+	if deps.Config.Auth != nil {
+		authHandler := NewAuthHandler(deps)
+		authHandler.Mount(root)
+	}
+
+	// OpenAPI
+	api.GET("/openapi.json", s.handleOpenAPI)
+	if s.docsEnabled(deps.DevMode) {
+		api.GET("/docs", s.handleDocs)
+	}
+
+	// Table CRUD at /rest/v1/* (PostgREST-compatible)
+	crudHandler := NewCRUDHandler(deps)
+	crudHandler.Mount(root)
+
+	// Storage endpoints (ultrabase-proprietary signed-URL model, kept
+	// under /api/storage for now — storage compatibility with supabase-js
+	// is deliberately out of scope for this pass).
+	if len(deps.Config.Storage) > 0 && deps.Storage != nil {
+		storageHandler := NewStorageHandler(deps)
+		storageHandler.Mount(api)
+	}
+
+	// Functions endpoints (ultrabase-proprietary)
+	if len(deps.Config.Functions) > 0 {
+		fnHandler := NewFunctionsHandler(deps)
+		fnHandler.Mount(api)
+	}
+
+	// Admin endpoints
+	adminHandler := NewAdminHandler(deps)
+	adminHandler.Mount(api)
+
+	// Dashboard SPA
+	MountDashboard(r, deps.DashboardAssets, deps.DevMode)
+
+	return s
+}
+
+// Handler returns the underlying gin engine as an http.Handler so callers
+// (typically tests) can serve it with httptest.NewServer.
+func (s *Server) Handler() http.Handler {
+	return s.engine
+}
+
+// Start begins listening. Blocks until the server is stopped.
+func (s *Server) Start() error {
+	s.httpServer = &http.Server{
+		Addr:    fmt.Sprintf(":%d", s.cfg.Server.Port),
+		Handler: s.engine,
+	}
+
+	s.logger.Info("HTTP server listening", "addr", s.httpServer.Addr)
+	if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		return fmt.Errorf("http server: %w", err)
+	}
+	return nil
+}
+
+// Shutdown gracefully stops the server.
+func (s *Server) Shutdown(ctx context.Context) error {
+	if s.httpServer == nil {
+		return nil
+	}
+	return s.httpServer.Shutdown(ctx)
+}
+
+func (s *Server) docsEnabled(devMode bool) bool {
+	if s.cfg.Server.DocsUI != nil {
+		return *s.cfg.Server.DocsUI
+	}
+	return devMode
+}
+
+func (s *Server) handleLive(c *gin.Context) {
+	c.JSON(200, gin.H{"status": "ok"})
+}
+
+func (s *Server) handleHealth(c *gin.Context) {
+	c.JSON(200, gin.H{"status": "ok"})
+}
+
+func (s *Server) handleReady(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+	defer cancel()
+
+	if err := s.db.Ping(ctx); err != nil {
+		c.JSON(503, gin.H{"status": "unavailable", "detail": "database not reachable"})
+		return
+	}
+	c.JSON(200, gin.H{"status": "ok"})
+}
+
+func (s *Server) handleOpenAPI(c *gin.Context) {
+	spec := GenerateOpenAPI(s.cfg)
+	c.JSON(200, spec)
+}
+
+func (s *Server) handleDocs(c *gin.Context) {
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	c.String(200, scalarDocsHTML(s.cfg.Project.Name))
+}
+
+func scalarDocsHTML(title string) string {
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html>
+<head>
+  <title>%s - API Docs</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+</head>
+<body>
+  <script id="api-reference" data-url="/api/openapi.json"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+</body>
+</html>`, title)
+}

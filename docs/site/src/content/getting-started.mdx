@@ -1,0 +1,87 @@
+---
+title: Getting Started
+description: Install Ultrabase and create your first project
+section: Getting Started
+order: 1
+---
+
+## Prerequisites
+
+- **Go 1.25+** (for building from source) or download a prebuilt binary
+- **PostgreSQL 15+** — Ultrabase needs a running Postgres instance
+
+## Installation
+
+```bash
+go install github.com/ultrabase/ultrabase@latest
+```
+
+Or download the binary from the [releases page](https://github.com/ultrabase/ultrabase/releases).
+
+## Create your config
+
+Create an `ultrabase.yaml` file in your project root:
+
+```yaml
+project:
+  name: my-app
+  description: My first Ultrabase project
+
+server:
+  port: 8080
+  cors:
+    origins: ["*"]
+    methods: [GET, POST, PATCH, DELETE]
+
+tables:
+  todos:
+    fields:
+      id: { type: bigserial, primary_key: true }
+      title: { type: text, required: true }
+      done: { type: boolean, default: "false" }
+      created_at: { type: timestamptz, default: "now()" }
+    allow_anon: true
+```
+
+## Start the server
+
+Set your database URL and start the dev server:
+
+```bash
+export DATABASE_URL="postgres://user:pass@localhost:5432/mydb?sslmode=disable"
+ultrabase dev
+```
+
+<Callout variant="info" title="Dev mode">
+  `ultrabase dev` watches your YAML file for changes and automatically applies migrations.
+  For production, use `ultrabase start` which skips file watching.
+</Callout>
+
+## Try it out
+
+Your API is now live. Create a todo:
+
+```bash
+curl -X POST http://localhost:8080/api/todos \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Learn Ultrabase"}'
+```
+
+List all todos:
+
+```bash
+curl http://localhost:8080/api/todos
+```
+
+Filter and sort:
+
+```bash
+# Incomplete todos, newest first
+curl "http://localhost:8080/api/todos?done=eq.false&order=created_at.desc"
+```
+
+## Next steps
+
+- Add [authentication](/docs/authentication) to protect your endpoints
+- Define [indexes and RLS policies](/docs/tables) for performance and security
+- Set up [event triggers](/docs/events) for webhooks and notifications

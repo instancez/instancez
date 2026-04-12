@@ -1,0 +1,112 @@
+---
+title: Authentication
+description: Configure email/password auth, OAuth providers, and JWT settings
+section: Core Concepts
+order: 11
+---
+
+Ultrabase has built-in authentication with email/password and OAuth providers. Auth is configured entirely in YAML — no external service required.
+
+## Enabling auth
+
+```yaml
+auth:
+  jwt_expiry: 15m
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+```
+
+This gives you auth endpoints:
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/auth/signup` | POST | Create account |
+| `/api/auth/login` | POST | Get JWT token |
+| `/api/auth/refresh` | POST | Refresh token |
+| `/api/auth/me` | GET | Current user |
+| `/api/auth/logout` | POST | Invalidate refresh token |
+
+## Email verification
+
+```yaml
+auth:
+  email:
+    verify_email: true
+    templates:
+      verify:
+        subject: "Verify your email"
+        body: |
+          Hi {{data.display_name}},
+          Click here to verify: {{link}}
+      reset:
+        subject: "Reset your password"
+        body: |
+          Click here to reset your password: {{link}}
+```
+
+<Callout variant="info" title="Email provider required">
+  Email verification requires an email provider configured under `providers.email`.
+  Supported: `resend`, `sendgrid`.
+</Callout>
+
+## Custom user fields
+
+Add custom fields to the auth users table:
+
+```yaml
+auth:
+  fields:
+    display_name: { type: text }
+    avatar_url: { type: text }
+    role: { type: text, default: "'member'" }
+    org_id: { type: bigint, foreign_key: orgs.id }
+```
+
+These fields are included in the JWT claims and returned by `/api/auth/me`.
+
+## OAuth providers
+
+### Google
+
+```yaml
+auth:
+  google:
+    client_id: ${GOOGLE_CLIENT_ID}
+    client_secret: ${GOOGLE_CLIENT_SECRET}
+    redirect_url: http://localhost:3000/auth/callback
+```
+
+### GitHub
+
+```yaml
+auth:
+  github:
+    client_id: ${GITHUB_CLIENT_ID}
+    client_secret: ${GITHUB_CLIENT_SECRET}
+    redirect_url: http://localhost:3000/auth/callback
+```
+
+<Callout variant="tip" title="Environment variables">
+  Use `${ENV_VAR}` syntax in your YAML. Ultrabase interpolates environment variables at startup,
+  so secrets never live in the config file.
+</Callout>
+
+## Using auth in RLS
+
+The `auth.uid()` function returns the authenticated user's ID. Use it in RLS policies:
+
+```yaml
+tables:
+  posts:
+    rls:
+      - operations: [select, insert, update, delete]
+        check: "author_id = auth.uid()"
+```
+
+The JWT also carries custom fields, accessible via `auth.jwt() ->> 'field_name'`:
+
+```yaml
+rls:
+  - operations: [select]
+    check: "org_id = (auth.jwt() ->> 'org_id')::bigint"
+```

@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ultrabase
+      POSTGRES_PASSWORD: ultrabase
+      POSTGRES_DB: ultrabase
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "ultrabase"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgres://ultrabase:ultrabase@postgres:5432/ultrabase?sslmode=disable
+      ULTRABASE_ADMIN_KEY: ultrabase-dev-key
+      JWT_SECRET: dev-jwt-secret-change-me
+    volumes:
+      - ./ultrabase.yaml:/app/ultrabase.yaml
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  dashboard:
+    build: ./dashboard
+    ports:
+      - "5173:5173"
+    environment:
+      API_URL: http://backend:8080
+    volumes:
+      - ./dashboard/src:/app/src
+      - ./dashboard/index.html:/app/index.html
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:

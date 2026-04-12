@@ -1,0 +1,78 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #1D1616;
+  --color-foreground: #EEEEEE;
+  --color-primary: #161010;
+  --color-on-primary: #EEEEEE;
+  --color-secondary: #8E1616;
+  --color-accent: #D84040;
+  --color-accent-hover: #C03636;
+  --color-muted: #2A1E1E;
+  --color-muted-foreground: #A89999;
+  --color-border: #3D2828;
+  --color-border-hover: #8E1616;
+  --color-destructive: #D84040;
+  --color-destructive-hover: #C03636;
+  --color-warning: #E0A030;
+  --color-info: #D84040;
+  --color-surface: #161010;
+  --color-surface-hover: #2A1E1E;
+  --color-ring: #D84040;
+  --color-input: #161010;
+  --color-input-border: #8E1616;
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Fira Code", ui-monospace, monospace;
+
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+}
+
+* {
+  border-color: var(--color-border);
+}
+
+body {
+  font-family: var(--font-sans);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-muted);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-hover);
+}
+
+/* CodeMirror theme overrides */
+.cm-editor {
+  font-family: var(--font-mono) !important;
+  font-size: 13px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-primary) !important;
+}
+
+.cm-editor.cm-focused {
+  outline: none;
+  border-color: var(--color-ring);
+}
+
+.cm-gutters {
+  background: var(--color-muted) !important;
+  border-right: 1px solid var(--color-border) !important;
+}

@@ -1,0 +1,861 @@
+version: 1
+project:
+    name: Ultrabase Devx
+    description: Local development project
+extensions:
+    - pgcrypto
+    - pg_trgm
+server:
+    port: 8080
+    cors:
+        origins:
+            - '*'
+        methods:
+            - GET
+            - POST
+            - PATCH
+            - DELETE
+            - OPTIONS
+        headers:
+            - Authorization
+            - Content-Type
+        credentials: false
+        max_age: 86400
+    timeouts:
+        request: 30s
+        db_query: 10s
+        upload: 5m
+        shutdown: 30s
+    max_body_size: 10MB
+    db:
+        pool:
+            max: 10
+            min: 2
+            idle_timeout: 300s
+    docs_ui: true
+    max_limit: 1000
+providers:
+    email: null
+    storage:
+        type: local
+auth:
+    jwt_expiry: 15m
+    refresh_tokens: true
+    refresh_token_expiry: 7d
+    fields:
+        avatar_url:
+            type: text
+            primary_key: false
+            required: false
+            unique: false
+            default: null
+            enum: []
+            pattern: ""
+            min: null
+            max: null
+            check: ""
+            foreign_key: null
+            ref: ""
+            on_delete: ""
+        display_name:
+            type: text
+            primary_key: false
+            required: false
+            unique: false
+            default: null
+            enum: []
+            pattern: ""
+            min: null
+            max: null
+            check: ""
+            foreign_key: null
+            ref: ""
+            on_delete: ""
+    email: null
+    google: null
+    github: null
+tables:
+    announcements:
+        fields:
+            body:
+                type: text
+                primary_key: false
+                required: true
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            created_at:
+                type: timestamptz
+                primary_key: false
+                required: true
+                unique: false
+                default: now()
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            id:
+                type: bigserial
+                primary_key: true
+                required: false
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            published:
+                type: boolean
+                primary_key: false
+                required: true
+                unique: false
+                default: false
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            published_at:
+                type: timestamptz
+                primary_key: false
+                required: false
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            title:
+                type: text
+                primary_key: false
+                required: true
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+        indexes: []
+        rls:
+            - operations:
+                - select
+              check: published = true
+            - operations:
+                - insert
+                - update
+                - delete
+              check: |
+                auth.uid() IN (
+                  SELECT user_id FROM team_members WHERE role = 'owner'
+                )
+        allow_anon: true
+        searchable:
+            - title
+            - body
+        search_config: ""
+    categories:
+        fields:
+            color:
+                type: varchar(7)
+                primary_key: false
+                required: false
+                unique: false
+                default: '#6366f1'
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            id:
+                type: bigserial
+                primary_key: true
+                required: false
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            name:
+                type: text
+                primary_key: false
+                required: true
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            team_id:
+                type: ""
+                primary_key: false
+                required: false
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key:
+                    references: teams.id
+                    on_delete: cascade
+                ref: ""
+                on_delete: ""
+        indexes:
+            - columns:
+                - team_id
+                - name
+              unique: true
+              where: ""
+        rls:
+            - operations:
+                - select
+                - insert
+                - update
+                - delete
+              check: team_id IN (SELECT team_id FROM team_members WHERE user_id = auth.uid())
+        allow_anon: false
+        searchable: []
+        search_config: ""
+    comments:
+        fields:
+            body:
+                type: text
+                primary_key: false
+                required: true
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            created_at:
+                type: timestamptz
+                primary_key: false
+                required: true
+                unique: false
+                default: now()
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            id:
+                type: bigserial
+                primary_key: true
+                required: false
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            todo_id:
+                type: ""
+                primary_key: false
+                required: false
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key:
+                    references: todos.id
+                    on_delete: cascade
+                ref: ""
+                on_delete: ""
+            user_id:
+                type: ""
+                primary_key: false
+                required: false
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key:
+                    references: users.id
+                    on_delete: cascade
+                ref: ""
+                on_delete: ""
+        indexes:
+            - columns:
+                - todo_id
+                - created_at
+              unique: false
+              where: ""
+        rls:
+            - operations:
+                - select
+              check: |
+                todo_id IN (
+                  SELECT id FROM todos
+                  WHERE team_id IN (SELECT team_id FROM team_members WHERE user_id = auth.uid())
+                )
+            - operations:
+                - insert
+              check: user_id = auth.uid()
+            - operations:
+                - delete
+              check: user_id = auth.uid()
+        allow_anon: false
+        searchable: []
+        search_config: ""
+    some_table:
+        fields:
+            created_at:
+                type: timestamptz
+                primary_key: false
+                required: false
+                unique: false
+                default: now()
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            id:
+                type: bigserial
+                primary_key: true
+                required: false
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+        indexes: []
+        rls: []
+        allow_anon: false
+        searchable: []
+        search_config: english
+    team_members:
+        fields:
+            id:
+                type: bigserial
+                primary_key: true
+                required: false
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            joined_at:
+                type: timestamptz
+                primary_key: false
+                required: true
+                unique: false
+                default: now()
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            role:
+                type: text
+                primary_key: false
+                required: true
+                unique: false
+                default: null
+                enum:
+                    - owner
+                    - admin
+                    - member
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            team_id:
+                type: bigint
+                primary_key: false
+                required: false
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key:
+                    references: teams.id
+                    on_delete: cascade
+                ref: ""
+                on_delete: ""
+            user_id:
+                type: ""
+                primary_key: false
+                required: false
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key:
+                    references: users.id
+                    on_delete: cascade
+                ref: ""
+                on_delete: ""
+        indexes:
+            - columns:
+                - team_id
+                - user_id
+              unique: true
+              where: ""
+            - columns:
+                - user_id
+              unique: false
+              where: ""
+        rls:
+            - operations:
+                - select
+              check: team_id IN (SELECT team_id FROM team_members WHERE user_id = auth.uid())
+            - operations:
+                - insert
+              check: |
+                team_id IN (
+                  SELECT team_id FROM team_members
+                  WHERE user_id = auth.uid() AND role IN ('owner', 'admin')
+                )
+            - operations:
+                - delete
+              check: |
+                team_id IN (
+                  SELECT team_id FROM team_members
+                  WHERE user_id = auth.uid() AND role = 'owner'
+                )
+        allow_anon: false
+        searchable: []
+        search_config: ""
+    teams:
+        fields:
+            created_at:
+                type: timestamptz
+                primary_key: false
+                required: true
+                unique: false
+                default: now()
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            id:
+                type: bigserial
+                primary_key: true
+                required: false
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            name:
+                type: text
+                primary_key: false
+                required: true
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            slug:
+                type: varchar(63)
+                primary_key: false
+                required: true
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+        indexes:
+            - columns:
+                - slug
+              unique: true
+              where: ""
+        rls:
+            - operations:
+                - select
+              check: id IN (SELECT team_id FROM team_members WHERE user_id = auth.uid())
+            - operations:
+                - insert
+              check: auth.is_authenticated()
+            - operations:
+                - update
+                - delete
+              check: |
+                id IN (
+                  SELECT team_id FROM team_members
+                  WHERE user_id = auth.uid() AND role = 'owner'
+                )
+        allow_anon: false
+        searchable: []
+        search_config: ""
+    todos:
+        fields:
+            body:
+                type: text
+                primary_key: false
+                required: false
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            category_id:
+                type: ""
+                primary_key: false
+                required: false
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key:
+                    references: categories.id
+                    on_delete: set_null
+                ref: ""
+                on_delete: ""
+            created_at:
+                type: timestamptz
+                primary_key: false
+                required: true
+                unique: false
+                default: now()
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            done_at:
+                type: timestamptz
+                primary_key: false
+                required: false
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            due_date:
+                type: date
+                primary_key: false
+                required: false
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            id:
+                type: bigserial
+                primary_key: true
+                required: false
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            priority:
+                type: integer
+                primary_key: false
+                required: true
+                unique: false
+                default: 0
+                enum: []
+                pattern: ""
+                min: 0
+                max: 5
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            status:
+                type: text
+                primary_key: false
+                required: true
+                unique: false
+                default: pending
+                enum:
+                    - pending
+                    - active
+                    - done
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            team_id:
+                type: ""
+                primary_key: false
+                required: false
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key:
+                    references: teams.id
+                    on_delete: cascade
+                ref: ""
+                on_delete: ""
+            title:
+                type: text
+                primary_key: false
+                required: true
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            updated_at:
+                type: timestamptz
+                primary_key: false
+                required: false
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key: null
+                ref: ""
+                on_delete: ""
+            user_id:
+                type: ""
+                primary_key: false
+                required: false
+                unique: false
+                default: null
+                enum: []
+                pattern: ""
+                min: null
+                max: null
+                check: ""
+                foreign_key:
+                    references: users.id
+                    on_delete: cascade
+                ref: ""
+                on_delete: ""
+        indexes:
+            - columns:
+                - team_id
+                - status
+              unique: false
+              where: ""
+            - columns:
+                - user_id
+                - created_at
+              unique: false
+              where: ""
+            - columns:
+                - due_date
+              unique: false
+              where: status != 'done'
+        rls:
+            - operations:
+                - select
+              check: team_id IN (SELECT team_id FROM team_members WHERE user_id = auth.uid())
+            - operations:
+                - insert
+              check: |
+                team_id IN (SELECT team_id FROM team_members WHERE user_id = auth.uid()) AND user_id = auth.uid()
+            - operations:
+                - update
+                - delete
+              check: user_id = auth.uid()
+        allow_anon: false
+        searchable:
+            - title
+            - body
+        search_config: english
+storage:
+    another_bucket:
+        max_size: 5MB
+        types:
+            - image/*
+        public: false
+        rls: []
+    some:
+        max_size: 5MB
+        types:
+            - image/*
+        public: false
+        rls: []
+"on":
+    welcome_hook:
+        events:
+            - users.insert
+        schedule: ""
+        webhook:
+            url: https://httpbin.org/post
+            headers:
+                X-Source: ultrabase
+            retry:
+                max: 3
+                backoff: exponential
+        email: null
+functions:
+    fb:
+        description: ""
+        method: GET
+        query: SELECT 1;
+        params: {}
+        returns:
+            type: rows
+            schema: {}
+        auth_required: true
+    team_stats:
+        description: Get team statistics
+        method: GET
+        query: |
+            SELECT
+              (SELECT COUNT(*) FROM todos WHERE team_id = $1) AS todo_count,
+              (SELECT COUNT(*) FROM todos WHERE team_id = $1 AND status = 'done') AS completed_count,
+              (SELECT COUNT(*) FROM team_members WHERE team_id = $1) AS member_count
+        params:
+            team_id:
+                type: bigint
+                required: true
+                default: null
+                enum: []
+                min: null
+                max: null
+        returns:
+            type: row
+            schema:
+                completed_count: bigint
+                member_count: bigint
+                todo_count: bigint
+        auth_required: true
+seeds:
+    announcements:
+        - body: This is a sample announcement.
+          published: true
+          title: Welcome to Ultrabase
+    teams:
+        - id: 1
+          name: Acme Corp
+          slug: acme

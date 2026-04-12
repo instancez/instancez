@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.exe
+ultrabase
+
+# TypeScript
+tsconfig.tsbuildinfo
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+/vendor/
+
+# Test
+coverage.out
+*.test
+
+# Docker
+pgdata/

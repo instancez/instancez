@@ -1,0 +1,81 @@
+---
+title: Functions
+description: Custom SQL queries exposed as REST endpoints
+section: Core Concepts
+order: 13
+---
+
+Functions let you run custom SQL queries and expose them as REST endpoints. They're useful for aggregations, joins, and any logic that doesn't fit the standard CRUD pattern.
+
+## Defining a function
+
+```yaml
+functions:
+  team_stats:
+    description: Get member count and task stats for a team
+    method: GET
+    auth: true
+    params:
+      - name: team_id
+        type: bigint
+        required: true
+    returns: single_object
+    sql: |
+      SELECT
+        t.name AS team_name,
+        count(DISTINCT tm.user_id) AS member_count,
+        count(DISTINCT tasks.id) AS task_count
+      FROM teams t
+      LEFT JOIN team_members tm ON tm.team_id = t.id
+      LEFT JOIN tasks ON tasks.team_id = t.id
+      WHERE t.id = $1
+      GROUP BY t.id
+```
+
+This creates an endpoint at `GET /api/rpc/team_stats?team_id=1`.
+
+## Parameters
+
+Parameters are mapped to `$1`, `$2`, etc. in the SQL, in order of declaration:
+
+```yaml
+params:
+  - name: org_id
+    type: bigint
+    required: true     # $1
+  - name: status
+    type: text
+    required: false    # $2 (nullable)
+  - name: limit
+    type: integer
+    required: false    # $3
+```
+
+## Return types
+
+| Type | Description |
+|---|---|
+| `rows` | Array of objects (default) |
+| `single_object` | Single object, 404 if no result |
+| `single_value` | Scalar value |
+| `void` | No return value (for mutations) |
+
+## HTTP methods
+
+Use `GET` for read-only queries and `POST` for mutations:
+
+```yaml
+functions:
+  archive_old_tasks:
+    method: POST
+    auth: true
+    returns: void
+    sql: |
+      UPDATE tasks SET archived = true
+      WHERE completed_at < now() - interval '90 days'
+```
+
+<Callout variant="warning">
+  Functions bypass RLS. They run with the privileges of the database role,
+  so validate authorization in the SQL or via the `auth` flag.
+</Callout>

@@ -1,0 +1,156 @@
+---
+title: Tables
+description: Define tables, fields, indexes, RLS policies, and search
+section: Core Concepts
+order: 10
+---
+
+Tables are the core building block. Each table becomes a REST endpoint with full CRUD operations, filtering, pagination, and embedding.
+
+## Defining a table
+
+```yaml
+tables:
+  posts:
+    fields:
+      id: { type: bigserial, primary_key: true }
+      title: { type: text, required: true }
+      body: { type: text }
+      author_id: { type: bigint, foreign_key: users.id }
+      published: { type: boolean, default: "false" }
+      created_at: { type: timestamptz, default: "now()" }
+```
+
+Every table automatically gets a REST endpoint at `/api/<table_name>`.
+
+## Field types
+
+Ultrabase supports all standard PostgreSQL types:
+
+| Type | Description |
+|---|---|
+| `text` | Variable-length string |
+| `integer` | 32-bit integer |
+| `bigint` | 64-bit integer |
+| `bigserial` | Auto-incrementing 64-bit integer |
+| `boolean` | True/false |
+| `timestamptz` | Timestamp with timezone |
+| `jsonb` | Binary JSON |
+| `uuid` | UUID (use with `default: "gen_random_uuid()"`) |
+| `numeric` | Arbitrary precision number |
+| `date` | Calendar date |
+| `time` | Time of day |
+
+## Field options
+
+```yaml
+fields:
+  email:
+    type: text
+    required: true    # NOT NULL constraint
+    unique: true      # UNIQUE constraint
+  role:
+    type: text
+    default: "'user'" # SQL expression default
+  org_id:
+    type: bigint
+    foreign_key: orgs.id  # Foreign key reference
+```
+
+<Callout variant="warning" title="SQL defaults">
+  The `default` value is a raw SQL expression. String literals need inner quotes:
+  `default: "'active'"`. SQL functions don't: `default: "now()"`.
+</Callout>
+
+## Indexes
+
+Add indexes for query performance:
+
+```yaml
+tables:
+  posts:
+    fields:
+      # ...
+    indexes:
+      - columns: [author_id]
+      - columns: [published, created_at]
+      - columns: [title]
+        unique: true
+        where: "published = true"  # Partial index
+```
+
+## Row-Level Security (RLS)
+
+RLS policies control who can read and write rows. Policies reference `auth.uid()` — the authenticated user's ID.
+
+```yaml
+tables:
+  posts:
+    rls:
+      # Anyone can read published posts
+      - operations: [select]
+        check: "published = true"
+
+      # Authors can do anything with their own posts
+      - operations: [select, insert, update, delete]
+        check: "author_id = auth.uid()"
+```
+
+<Callout variant="info">
+  When no RLS policies are defined and `allow_anon` is false (the default),
+  the table is only accessible with a valid admin key.
+</Callout>
+
+### Common patterns
+
+**Owner-only access:**
+
+```yaml
+rls:
+  - operations: [select, insert, update, delete]
+    check: "user_id = auth.uid()"
+```
+
+**Authenticated read, owner write:**
+
+```yaml
+rls:
+  - operations: [select]
+    check: "auth.uid() IS NOT NULL"
+  - operations: [insert, update, delete]
+    check: "user_id = auth.uid()"
+```
+
+## Full-text search
+
+Enable search on a table with a search configuration and searchable columns:
+
+```yaml
+tables:
+  posts:
+    search_config: english
+    searchable: [title, body]
+```
+
+Query with the `search` parameter:
+
+```bash
+curl "http://localhost:8080/api/posts?search=ultrabase+guide"
+```
+
+## Anonymous access
+
+By default, tables require authentication. Set `allow_anon: true` to allow unauthenticated access:
+
+```yaml
+tables:
+  public_feed:
+    allow_anon: true
+    fields:
+      # ...
+```
+
+<Callout variant="danger" title="Use with caution">
+  `allow_anon: true` bypasses authentication entirely for this table.
+  Prefer RLS policies for fine-grained access control.
+</Callout>

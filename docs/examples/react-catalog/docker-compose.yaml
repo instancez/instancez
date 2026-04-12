@@ -1,0 +1,43 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ultrabase
+      POSTGRES_PASSWORD: ultrabase
+      POSTGRES_DB: ultrabase
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "ultrabase"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+
+  ultrabase:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgres://ultrabase:ultrabase@postgres:5432/ultrabase?sslmode=disable
+      ULTRABASE_ADMIN_KEY: ultrabase-dev-key
+      JWT_SECRET: dev-jwt-secret-change-me
+    volumes:
+      - ./ultrabase.yaml:/app/ultrabase.yaml
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build: .
+    ports:
+      - "5174:5174"
+    environment:
+      VITE_PROXY_TARGET: http://ultrabase:8080
+    volumes:
+      - ./src:/app/src
+      - ./index.html:/app/index.html
+      - ./vite.config.js:/app/vite.config.js
+    depends_on:
+      - ultrabase
