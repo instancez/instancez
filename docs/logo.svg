@@ -1,0 +1,14 @@
+<svg width="80" height="80" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="logo-grad" x1="0" y1="0" x2="80" y2="80" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1D1616" />
+      <stop offset="50%" stop-color="#8E1616" />
+      <stop offset="100%" stop-color="#D84040" />
+    </linearGradient>
+    <mask id="logo-mask">
+      <rect width="80" height="80" rx="17.6" fill="white" />
+      <rect x="24" y="-8" width="32" height="59.2" rx="16" fill="black" />
+    </mask>
+  </defs>
+  <rect width="80" height="80" rx="17.6" fill="url(#logo-grad)" mask="url(#logo-mask)" />
+</svg>
