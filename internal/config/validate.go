@@ -8,13 +8,22 @@ import (
 	"github.com/saedx1/ultrabase/internal/domain"
 )
 
-// dbFunctionIdentRE restricts RPC function names and arg names to the same
-// shape Postgres itself accepts without quoting: leading letter/underscore,
-// then letters/digits/underscores. Keeping this tight is the first line of
-// defense against SQL injection via the /rest/v1/rpc/:name path param or
-// JSON body keys — anything that doesn't match is rejected at config load
-// and never reaches migration DDL or runtime query building.
-var dbFunctionIdentRE = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]{0,62}$`)
+// identRE enforces safe SQL identifiers for all user-defined names (tables,
+// columns, buckets, triggers, functions, args). Must start with a lowercase
+// letter, then lowercase letters/digits/underscores, max 63 chars total.
+var identRE = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
+
+const identRule = "must start with a lowercase letter, followed by lowercase letters, digits, or underscores (max 63 chars)"
+
+func validateIdent(path, name string) *domain.ValidationError {
+	if !identRE.MatchString(name) {
+		return &domain.ValidationError{
+			Path:       path,
+			Message:    fmt.Sprintf("invalid identifier %q: %s", name, identRule),
+		}
+	}
+	return nil
+}
 
 // dbFunctionTypeRE permits a conservative subset of Postgres type syntax:
 // identifiers, whitespace, commas, parentheses and brackets. This covers
@@ -220,19 +229,16 @@ func validateTables(tables map[string]domain.Table, auth *domain.Auth) domain.Va
 	for name, table := range tables {
 		path := fmt.Sprintf("tables.%s", name)
 
+		if err := validateIdent(path, name); err != nil {
+			errs = append(errs, err)
+		}
+
 		// Reserved name check
 		if reservedTableNames[name] {
 			errs = append(errs, &domain.ValidationError{
 				Path:       path,
 				Message:    fmt.Sprintf("%q is reserved for auth", name),
 				Suggestion: "Use a different table name",
-			})
-		}
-		if strings.HasPrefix(name, "_") {
-			errs = append(errs, &domain.ValidationError{
-				Path:       path,
-				Message:    "table names starting with '_' are reserved for framework tables",
-				Suggestion: "Use a name without the '_' prefix",
 			})
 		}
 
@@ -250,6 +256,10 @@ func validateTables(tables map[string]domain.Table, auth *domain.Auth) domain.Va
 		hasPK := false
 		for _, field := range table.Fields {
 			fpath := fmt.Sprintf("%s.fields.%s", path, field.Name)
+
+			if err := validateIdent(fpath, field.Name); err != nil {
+				errs = append(errs, err)
+			}
 
 			if field.PrimaryKey {
 				hasPK = true
@@ -391,6 +401,11 @@ func validateStorage(storage map[string]domain.Bucket) domain.ValidationErrors {
 	var errs domain.ValidationErrors
 	for name, bucket := range storage {
 		path := fmt.Sprintf("storage.%s", name)
+
+		if err := validateIdent(path, name); err != nil {
+			errs = append(errs, err)
+		}
+
 		errs = append(errs, validateRLS(path, bucket.RLS)...)
 
 		if bucket.MaxSize != "" {
@@ -410,6 +425,10 @@ func validateTriggers(triggers map[string]domain.Trigger, tables map[string]doma
 	var errs domain.ValidationErrors
 	for name, trigger := range triggers {
 		path := fmt.Sprintf("on.%s", name)
+
+		if err := validateIdent(path, name); err != nil {
+			errs = append(errs, err)
+		}
 
 		// Must have either events or schedule
 		if len(trigger.Events) == 0 && trigger.Schedule == "" {
@@ -534,12 +553,8 @@ var validRPCSecurity = map[string]bool{
 func validateRPCFunction(path, name string, fn domain.Function) domain.ValidationErrors {
 	var errs domain.ValidationErrors
 
-	if !dbFunctionIdentRE.MatchString(name) {
-		errs = append(errs, &domain.ValidationError{
-			Path:       path,
-			Message:    fmt.Sprintf("invalid function name %q", name),
-			Suggestion: "Use letters, digits, and underscores; must start with a letter or underscore",
-		})
+	if err := validateIdent(path, name); err != nil {
+		errs = append(errs, err)
 		return errs
 	}
 
@@ -594,11 +609,8 @@ func validateRPCFunction(path, name string, fn domain.Function) domain.Validatio
 	seenArgs := make(map[string]bool, len(fn.Args))
 	for i, arg := range fn.Args {
 		argPath := fmt.Sprintf("%s.args[%d]", path, i)
-		if !dbFunctionIdentRE.MatchString(arg.Name) {
-			errs = append(errs, &domain.ValidationError{
-				Path:    argPath + ".name",
-				Message: fmt.Sprintf("invalid arg name %q", arg.Name),
-			})
+		if err := validateIdent(argPath+".name", arg.Name); err != nil {
+			errs = append(errs, err)
 			continue
 		}
 		if seenArgs[arg.Name] {

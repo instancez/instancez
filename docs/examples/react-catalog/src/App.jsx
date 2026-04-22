@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from './supabase.js'
 import { AuthBar, useSession } from './AuthBar.jsx'
 import { ProductCard } from './ProductCard.jsx'
@@ -6,6 +6,7 @@ import { ProductDetail } from './ProductDetail.jsx'
 import { FiltersBar } from './FiltersBar.jsx'
 import { CatalogStats } from './CatalogStats.jsx'
 import { SecurityPanel } from './SecurityPanel.jsx'
+import { StoragePanel } from './StoragePanel.jsx'
 
 const PAGE_SIZE = 6
 
@@ -166,6 +167,20 @@ function Catalog({ session }) {
     return [...s].sort()
   }, [products])
 
+  const [imageKeys, setImageKeys] = useState(new Set())
+  const loadImageKeys = useCallback(async () => {
+    const { data, error } = await supabase.storage
+      .from('product_images')
+      .list('', { limit: 200 })
+    console.log('loadImageKeys', { data, error })
+    if (data) {
+      const keys = new Set(data.map((f) => f.name))
+      console.log('imageKeys', [...keys])
+      setImageKeys(keys)
+    }
+  }, [])
+  useEffect(() => { loadImageKeys() }, [loadImageKeys])
+
   return (
     <main>
       <header>
@@ -184,6 +199,8 @@ function Catalog({ session }) {
       <CatalogStats categories={categories} />
 
       {!isAnon && <SecurityPanel session={session} />}
+
+      <StoragePanel />
 
       <FiltersBar
         filters={filters}
@@ -217,7 +234,7 @@ function Catalog({ session }) {
 
       <section className="grid">
         {products.map((p) => (
-          <ProductCard key={p.id} product={p} onOpen={() => setSelected(p)} />
+          <ProductCard key={p.id} product={p} onOpen={() => setSelected(p)} hasImage={imageKeys.has(String(p.id))} />
         ))}
         {!loading && products.length === 0 && (
           <div className="empty">No products match your filters.</div>
@@ -233,6 +250,7 @@ function Catalog({ session }) {
         <ProductDetail
           productId={selected.id}
           onClose={() => setSelected(null)}
+          onImageChange={loadImageKeys}
         />
       )}
     </main>

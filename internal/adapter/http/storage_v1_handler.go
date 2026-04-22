@@ -55,16 +55,17 @@ func (h *StorageV1Handler) Mount(root *gin.RouterGroup) {
 	sg.POST("/object/:bucket/*path", jwtAuth(h.jwtKeys, true), h.uploadObject)
 	sg.PUT("/object/:bucket/*path", jwtAuth(h.jwtKeys, true), h.updateObject)
 
-	// Download — authenticated path
-	sg.GET("/object/authenticated/:bucket/*path", jwtAuth(h.jwtKeys, true), h.downloadObject)
-	// Download — public path
-	sg.GET("/object/public/:bucket/*path", h.downloadPublicObject)
+	// GET /object/* catch-all — dispatches to public download, authenticated
+	// download, or object info based on path prefix. supabase-js sends:
+	//   GET /object/<bucket>/<path>          — authenticated download
+	//   GET /object/public/<bucket>/<path>   — public download
+	//   GET /object/authenticated/<bucket>/<path> — authenticated download (alt)
+	//   GET /object/info/authenticated/<bucket>/<path> — object info
+	// Gin can't register overlapping param routes, so one handler parses them.
+	sg.GET("/object/*all", h.objectGetDispatch)
 
 	// List
 	sg.POST("/object/list/:bucket", jwtAuth(h.jwtKeys, true), h.listObjects)
-
-	// Info
-	sg.GET("/object/info/authenticated/:bucket/*path", jwtAuth(h.jwtKeys, true), h.objectInfo)
 
 	// Exists (HEAD)
 	sg.HEAD("/object/:bucket/*path", jwtAuth(h.jwtKeys, false), h.objectExists)
@@ -187,11 +188,57 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 
 	session := getSession(c)
 
-	contentType := c.ContentType()
-	if ct := c.GetHeader("Content-Type"); ct != "" {
-		contentType = strings.Split(ct, ";")[0]
-		contentType = strings.TrimSpace(contentType)
+	// Enforce bucket size limit
+	var maxBytes int64 = 50 * 1024 * 1024
+	if bucket.MaxSize != "" {
+		if mb := parseSizeBytes(bucket.MaxSize); mb > 0 {
+			maxBytes = mb
+		}
 	}
+
+	// supabase-js sends uploads as multipart/form-data with the file in a
+	// form field. Extract the actual file and its content type from the part.
+	var body io.Reader
+	var contentType string
+	var size int64
+
+	if strings.HasPrefix(c.ContentType(), "multipart/form-data") {
+		mr, err := c.Request.MultipartReader()
+		if err != nil {
+			c.JSON(400, gin.H{"statusCode": "400", "error": "bad_request", "message": "Failed to parse multipart form"})
+			return
+		}
+		var found bool
+		for {
+			part, err := mr.NextPart()
+			if err != nil {
+				break
+			}
+			if part.FileName() == "" {
+				part.Close()
+				continue
+			}
+			body = part
+			contentType = part.Header.Get("Content-Type")
+			size = -1
+			found = true
+			defer part.Close()
+			break
+		}
+		if !found {
+			c.JSON(400, gin.H{"statusCode": "400", "error": "bad_request", "message": "No file found in multipart upload"})
+			return
+		}
+	} else {
+		body = c.Request.Body
+		contentType = c.ContentType()
+		if ct := c.GetHeader("Content-Type"); ct != "" {
+			contentType = strings.Split(ct, ";")[0]
+			contentType = strings.TrimSpace(contentType)
+		}
+		size = c.Request.ContentLength
+	}
+
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
@@ -202,17 +249,10 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 		return
 	}
 
-	// Enforce bucket size limit via a limited reader
-	var maxBytes int64 = 50 * 1024 * 1024 // 50MB default cap for proxied uploads
-	if bucket.MaxSize != "" {
-		if mb := parseSizeBytes(bucket.MaxSize); mb > 0 {
-			maxBytes = mb
-		}
-	}
-	limitedBody := http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+	limitedBody := http.MaxBytesReader(c.Writer, io.NopCloser(body), maxBytes)
 
 	key := bucketName + "/" + objPath
-	if err := h.storage.Upload(c.Request.Context(), key, limitedBody, contentType, c.Request.ContentLength); err != nil {
+	if err := h.storage.Upload(c.Request.Context(), key, limitedBody, contentType, size); err != nil {
 		if strings.Contains(err.Error(), "http: request body too large") {
 			c.JSON(413, gin.H{"statusCode": "413", "error": "payload_too_large", "message": fmt.Sprintf("File exceeds maximum size of %s", bucket.MaxSize)})
 			return
@@ -228,7 +268,6 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 		uploadedBy = session.UserID
 	}
 
-	size := c.Request.ContentLength
 	if size < 0 {
 		size = 0
 	}
@@ -269,49 +308,70 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 	})
 }
 
-func (h *StorageV1Handler) downloadObject(c *gin.Context) {
-	bucketName := c.Param("bucket")
-	objPath := h.cleanPath(c.Param("path"))
+func (h *StorageV1Handler) objectGetDispatch(c *gin.Context) {
+	all := strings.TrimPrefix(c.Param("all"), "/")
+	segments := strings.SplitN(all, "/", 3)
 
-	if _, ok := h.getBucketConfig(bucketName); !ok {
-		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Bucket not found"})
-		return
+	switch segments[0] {
+	case "public":
+		if len(segments) < 3 {
+			c.JSON(400, gin.H{"statusCode": "400", "error": "bad_request", "message": "Missing bucket or path"})
+			return
+		}
+		h.serveDownload(c, segments[1], segments[2], true)
+	case "authenticated":
+		if len(segments) < 3 {
+			c.JSON(400, gin.H{"statusCode": "400", "error": "bad_request", "message": "Missing bucket or path"})
+			return
+		}
+		jwtAuth(h.jwtKeys, true)(c)
+		if c.IsAborted() {
+			return
+		}
+		h.serveDownload(c, segments[1], segments[2], false)
+	case "info":
+		if len(segments) < 2 {
+			c.JSON(400, gin.H{"statusCode": "400", "error": "bad_request", "message": "Missing path"})
+			return
+		}
+		jwtAuth(h.jwtKeys, true)(c)
+		if c.IsAborted() {
+			return
+		}
+		rest := strings.SplitN(strings.TrimPrefix(all, "info/"), "/", 3)
+		if len(rest) >= 2 && rest[0] == "authenticated" {
+			c.Set("_bucket", rest[1])
+			objPath := ""
+			if len(rest) == 3 {
+				objPath = rest[2]
+			}
+			c.Set("_path", objPath)
+			h.objectInfo(c)
+			return
+		}
+		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Not found"})
+	default:
+		if len(segments) < 2 {
+			c.JSON(400, gin.H{"statusCode": "400", "error": "bad_request", "message": "Missing path"})
+			return
+		}
+		jwtAuth(h.jwtKeys, true)(c)
+		if c.IsAborted() {
+			return
+		}
+		h.serveDownload(c, segments[0], strings.Join(segments[1:], "/"), false)
 	}
-
-	ctx := c.Request.Context()
-	row, err := h.db.QueryRow(ctx, "SELECT id FROM _objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
-	if err != nil || row == nil {
-		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Object not found"})
-		return
-	}
-
-	key := bucketName + "/" + objPath
-	body, contentType, err := h.storage.Download(ctx, key)
-	if err != nil {
-		h.logger.Error("download error", "error", err)
-		c.JSON(500, gin.H{"statusCode": "500", "error": "internal", "message": "Download failed"})
-		return
-	}
-	defer body.Close()
-
-	if contentType != "" {
-		c.Header("Content-Type", contentType)
-	}
-	c.Header("Cache-Control", "public, max-age=3600")
-	c.Status(200)
-	io.Copy(c.Writer, body)
 }
 
-func (h *StorageV1Handler) downloadPublicObject(c *gin.Context) {
-	bucketName := c.Param("bucket")
-	objPath := h.cleanPath(c.Param("path"))
+func (h *StorageV1Handler) serveDownload(c *gin.Context, bucketName, objPath string, publicOnly bool) {
+	objPath = h.cleanPath(objPath)
 
 	bucket, ok := h.getBucketConfig(bucketName)
 	if !ok {
 		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Bucket not found"})
 		return
 	}
-	if !bucket.Public {
+	if publicOnly && !bucket.Public {
 		c.JSON(400, gin.H{"statusCode": "400", "error": "not_public", "message": "Bucket is not public"})
 		return
 	}
@@ -407,8 +467,8 @@ func (h *StorageV1Handler) listObjects(c *gin.Context) {
 }
 
 func (h *StorageV1Handler) objectInfo(c *gin.Context) {
-	bucketName := c.Param("bucket")
-	objPath := h.cleanPath(c.Param("path"))
+	bucketName := c.GetString("_bucket")
+	objPath := h.cleanPath(c.GetString("_path"))
 
 	if _, ok := h.getBucketConfig(bucketName); !ok {
 		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Bucket not found"})

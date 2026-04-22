@@ -1,3 +1,7 @@
+import { supabase } from './supabase.js'
+
+const BUCKET = 'product_images'
+
 function priceDollars(cents) {
   return (cents / 100).toLocaleString(undefined, {
     style: 'currency',
@@ -11,10 +15,25 @@ function avgRating(reviews) {
   return (sum / reviews.length).toFixed(1)
 }
 
-export function ProductCard({ product, onOpen }) {
+export function productImageUrl(productId) {
+  const { data } = supabase.storage.from(BUCKET).getPublicUrl(`${productId}`)
+  return data?.publicUrl ?? ''
+}
+
+export function ProductCard({ product, onOpen, hasImage }) {
   const avg = avgRating(product.reviews)
   return (
     <article className="card" onClick={onOpen}>
+      {hasImage ? (
+        <img
+          src={productImageUrl(product.id)}
+          alt={product.name}
+          className="card-img"
+          onError={(e) => { e.target.style.display = 'none' }}
+        />
+      ) : (
+        <div className="card-img-placeholder">No image</div>
+      )}
       <div className="card-head">
         <h3>{product.name}</h3>
         <div className="price">{priceDollars(product.price_cents)}</div>

@@ -841,3 +841,172 @@ code {
 .security .login-form .row button {
   flex: 1;
 }
+
+.storage-panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1rem 1.2rem;
+  margin: 1rem 0;
+}
+
+.storage-panel h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1.05rem;
+}
+
+.storage-toolbar {
+  display: flex;
+  gap: 1rem;
+  align-items: end;
+  flex-wrap: wrap;
+  margin: 0.75rem 0;
+}
+
+.storage-toolbar label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.storage-toolbar input[type='text'] {
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: inherit;
+  background: var(--card-2);
+  color: var(--text);
+}
+
+.upload-form {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.upload-form input[type='file'] {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.upload-form button {
+  padding: 0.5rem 0.9rem;
+  border-radius: 6px;
+  border: 1px solid var(--accent-2);
+  background: var(--accent-2);
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  white-space: nowrap;
+}
+
+.upload-form button:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.upload-form button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.storage-table a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.storage-table a:hover {
+  text-decoration: underline;
+}
+
+.storage-thumb {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: 4px;
+  vertical-align: middle;
+  margin-right: 0.5rem;
+  border: 1px solid var(--line);
+}
+
+.storage-actions {
+  display: flex;
+  gap: 0.3rem;
+  justify-content: flex-end;
+}
+
+.storage-actions button {
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--line);
+  background: var(--card-2);
+  color: var(--text);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.storage-actions button:hover {
+  border-color: var(--accent);
+}
+
+.danger-btn:hover {
+  border-color: var(--sale) !important;
+  color: var(--sale);
+}
+
+.card-img {
+  width: 100%;
+  height: 160px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+
+.card-img-placeholder {
+  width: 100%;
+  height: 160px;
+  border-radius: 8px;
+  border: 1px dashed var(--line);
+  background: var(--card-2);
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.product-image-section {
+  margin: 0.5rem 0;
+}
+
+.product-detail-img {
+  width: 100%;
+  max-height: 260px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  margin-bottom: 0.5rem;
+}
+
+.product-image-actions {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.upload-label {
+  display: inline-block;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--accent-2);
+  background: var(--accent-2);
+  color: #fff;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.upload-label:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+}

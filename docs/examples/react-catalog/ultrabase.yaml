@@ -1,7 +1,7 @@
 version: 1
 project:
     name: React Catalog Example
-    description: Product catalog demonstrating Ultrabase + supabase-js (auth, filtering, FTS, JSONB, arrays, embeds, RLS)
+    description: Product catalog demonstrating Ultrabase + supabase-js (auth, filtering, FTS, JSONB, arrays, embeds, RLS, file storage)
 extensions:
     - pgcrypto
     - pg_trgm
@@ -196,6 +196,11 @@ tables:
                 - delete
               check: "user_id = auth.uid()"
         allow_anon: true
+
+storage:
+    product_images:
+        max_size: 5MB
+        public: true
 
 seeds:
     categories:

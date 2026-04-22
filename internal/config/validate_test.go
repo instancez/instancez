@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/saedx1/ultrabase/internal/domain"
@@ -609,4 +610,61 @@ func TestValidate_RPCFunction_DuplicateArg(t *testing.T) {
 		t.Fatal("expected error for duplicate arg name")
 	}
 	assertHasErrorAt(t, errs, "functions.f.args[1].name")
+}
+
+func TestValidate_IdentifierNaming(t *testing.T) {
+	bad := []struct {
+		kind string
+		name string
+	}{
+		{"table", "product-items"},
+		{"table", "Products"},
+		{"table", "1things"},
+		{"table", "_internal"},
+		{"bucket", "my-bucket"},
+		{"bucket", "MyBucket"},
+		{"field", "First-Name"},
+		{"trigger", "on-insert"},
+		{"function", "do-stuff"},
+	}
+
+	for _, tc := range bad {
+		t.Run(tc.kind+"_"+tc.name, func(t *testing.T) {
+			cfg := validBaseConfig()
+			switch tc.kind {
+			case "table":
+				cfg.Tables[tc.name] = domain.Table{
+					Fields: []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}},
+				}
+			case "bucket":
+				cfg.Storage = map[string]domain.Bucket{tc.name: {Public: true}}
+			case "field":
+				cfg.Tables["items"] = domain.Table{
+					Fields: []domain.Field{{Name: tc.name, Type: "text", PrimaryKey: true}},
+				}
+			case "trigger":
+				cfg.On = map[string]domain.Trigger{tc.name: {
+					Events:  []string{"todos.insert"},
+					Webhook: &domain.WebhookAction{URL: "https://x.com"},
+				}}
+			case "function":
+				fn := validRPCFunction()
+				cfg.Functions = map[string]domain.Function{tc.name: fn}
+			}
+			errs := Validate(cfg)
+			if errs == nil {
+				t.Fatalf("expected error for %s %q", tc.kind, tc.name)
+			}
+			found := false
+			for _, e := range errs {
+				if strings.Contains(e.Message, "invalid identifier") {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("expected 'invalid identifier' error for %s %q, got: %v", tc.kind, tc.name, errs)
+			}
+		})
+	}
 }

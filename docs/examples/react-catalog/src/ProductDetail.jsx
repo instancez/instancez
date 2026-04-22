@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from './supabase.js'
 import { useSession } from './AuthBar.jsx'
+import { productImageUrl } from './ProductCard.jsx'
 
-export function ProductDetail({ productId, onClose }) {
+const BUCKET = 'product_images'
+
+export function ProductDetail({ productId, onClose, onImageChange }) {
   const session = useSession()
   const [product, setProduct] = useState(null)
   const [minRating, setMinRating] = useState(1)
@@ -65,6 +68,7 @@ export function ProductDetail({ productId, onClose }) {
         ) : (
           <>
             <h2>{product.name}</h2>
+            <ProductImage productId={product.id} onImageChange={onImageChange} />
             <p className="meta">
               {product.category?.name} ·{' '}
               {Number(product.price_numeric / 100).toLocaleString(undefined, {
@@ -279,5 +283,78 @@ function ReviewComposer({ productId, session, onCreated }) {
       </button>
       {error && <div className="error inline">{error}</div>}
     </form>
+  )
+}
+
+function ProductImage({ productId, onImageChange }) {
+  const [hasImage, setHasImage] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [error, setError] = useState(null)
+  const inputRef = useRef()
+
+  useEffect(() => {
+    const img = new Image()
+    img.onload = () => setHasImage(true)
+    img.onerror = () => setHasImage(false)
+    img.src = productImageUrl(productId) + '?t=' + Date.now()
+  }, [productId])
+
+  async function handleUpload(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploading(true)
+    setError(null)
+    const { error } = await supabase.storage
+      .from(BUCKET)
+      .upload(`${productId}`, file, { upsert: true, contentType: file.type })
+    setUploading(false)
+    if (error) {
+      setError(error.message)
+    } else {
+      setHasImage(true)
+      onImageChange?.()
+    }
+    if (inputRef.current) inputRef.current.value = ''
+  }
+
+  async function handleRemove() {
+    const { error } = await supabase.storage
+      .from(BUCKET)
+      .remove([`${productId}`])
+    if (error) {
+      setError(error.message)
+    } else {
+      setHasImage(false)
+      onImageChange?.()
+    }
+  }
+
+  return (
+    <div className="product-image-section">
+      {hasImage && (
+        <img
+          src={productImageUrl(productId) + '?t=' + Date.now()}
+          alt="Product"
+          className="product-detail-img"
+        />
+      )}
+      <div className="product-image-actions">
+        <label className="upload-label">
+          {uploading ? 'Uploading…' : hasImage ? 'Replace image' : 'Add image'}
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleUpload}
+            disabled={uploading}
+            hidden
+          />
+        </label>
+        {hasImage && (
+          <button className="danger-btn" onClick={handleRemove}>Remove</button>
+        )}
+      </div>
+      {error && <div className="error inline">{error}</div>}
+    </div>
   )
 }
