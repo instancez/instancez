@@ -3,6 +3,8 @@ package http
 import (
 	"strings"
 	"testing"
+
+	"github.com/saedx1/ultrabase/internal/domain"
 )
 
 func TestParseWhere_SimpleLeaf(t *testing.T) {
@@ -245,5 +247,66 @@ func TestSplitTopLevel(t *testing.T) {
 
 	if _, err := splitTopLevel("a,(b,c", ','); err == nil {
 		t.Error("expected unbalanced-parens error")
+	}
+}
+
+// FTS operators (fts/plfts/phfts/wfts) require a text-like or tsvector
+// column. An int/jsonb/unknown column must be rejected at parse time so
+// the handler can surface PGRST100 rather than sending malformed SQL to
+// Postgres and returning a raw SQLSTATE.
+func TestParseWhere_FTSColumnTypeValidation(t *testing.T) {
+	tableWithTSVector := domain.Table{
+		Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
+			{Name: "title", Type: "text"},
+			{Name: "priority", Type: "int"},
+			{Name: "metadata", Type: "jsonb"},
+			{Name: "doc", Type: "tsvector"},
+			{Name: "short", Type: "varchar(255)"},
+		},
+	}
+	tests := []struct {
+		name    string
+		query   string
+		wantErr bool
+	}{
+		{"text column with fts accepted", "title=fts.cats", false},
+		{"text column with plfts accepted", "title=plfts.cats", false},
+		{"text column with phfts accepted", "title=phfts.happy+dog", false},
+		{"text column with wfts accepted", "title=wfts.cat", false},
+		{"tsvector column accepted", "doc=fts.cats", false},
+		{"varchar column accepted", "short=fts.cats", false},
+		{"int column rejected", "priority=fts.1", true},
+		{"jsonb base column rejected", "metadata=fts.cats", true},
+		{"jsonb ->> text path accepted", "metadata->>theme=fts.dark", false},
+		{"jsonb -> path rejected", "metadata->nested=fts.dark", true},
+		{"fts inside or() rejected on int", "or=(title.fts.cats,priority.fts.cats)", true},
+		{"fts inside or() accepted when both text-ish", "or=(title.fts.cats,doc.fts.cats)", false},
+		{"non-fts op on int still accepted", "priority=eq.1", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := testContext(tt.query)
+			_, err := parseWhere(c, "todos", tableWithTSVector)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("err = %v, wantErr = %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestIsFTSCompatibleType(t *testing.T) {
+	ok := []string{"text", "citext", "tsvector", "varchar", "varchar(255)",
+		"character varying", "char(10)", "character(5)", "bpchar", "TEXT", " text "}
+	for _, s := range ok {
+		if !isFTSCompatibleType(s) {
+			t.Errorf("%q: want compatible", s)
+		}
+	}
+	bad := []string{"int", "bigint", "jsonb", "jsonb[]", "text[]", "boolean", "", "tsquery"}
+	for _, s := range bad {
+		if isFTSCompatibleType(s) {
+			t.Errorf("%q: want incompatible", s)
+		}
 	}
 }

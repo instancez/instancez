@@ -9,31 +9,39 @@ import (
 
 func TestParseFilterValue(t *testing.T) {
 	tests := []struct {
-		input   string
-		wantOp  string
-		wantVal string
-		wantErr bool
+		input      string
+		wantOp     string
+		wantVal    string
+		wantConfig string
+		wantErr    bool
 	}{
-		{"eq.active", "eq", "active", false},
-		{"neq.done", "neq", "done", false},
-		{"gt.5", "gt", "5", false},
-		{"gte.10", "gte", "10", false},
-		{"lt.100", "lt", "100", false},
-		{"lte.50", "lte", "50", false},
-		{"like.*task*", "like", "*task*", false},
-		{"ilike.*TASK*", "ilike", "*TASK*", false},
-		{"is.null", "is", "null", false},
-		{"is.true", "is", "true", false},
-		{"in.(a,b,c)", "in", "(a,b,c)", false},
-		{"plfts.search text", "plfts", "search text", false},
-		{"cs.{urgent}", "cs", "{urgent}", false},
-		{"cd.{a,b}", "cd", "{a,b}", false},
-		{"invalid", "", "", true},
-		{"unknown.value", "", "", true},
+		{"eq.active", "eq", "active", "", false},
+		{"neq.done", "neq", "done", "", false},
+		{"gt.5", "gt", "5", "", false},
+		{"gte.10", "gte", "10", "", false},
+		{"lt.100", "lt", "100", "", false},
+		{"lte.50", "lte", "50", "", false},
+		{"like.*task*", "like", "*task*", "", false},
+		{"ilike.*TASK*", "ilike", "*TASK*", "", false},
+		{"match.^foo", "match", "^foo", "", false},
+		{"imatch.^FOO", "imatch", "^FOO", "", false},
+		{"is.null", "is", "null", "", false},
+		{"is.true", "is", "true", "", false},
+		{"isdistinct.null", "isdistinct", "null", "", false},
+		{"in.(a,b,c)", "in", "(a,b,c)", "", false},
+		{"plfts.search text", "plfts", "search text", "", false},
+		{"fts(english).rápido & furioso", "fts", "rápido & furioso", "english", false},
+		{"plfts(simple).dogs", "plfts", "dogs", "simple", false},
+		{"cs.{urgent}", "cs", "{urgent}", "", false},
+		{"cd.{a,b}", "cd", "{a,b}", "", false},
+		{"invalid", "", "", "", true},
+		{"unknown.value", "", "", "", true},
+		{"fts().query", "", "", "", true},
+		{"fts(bad;name).query", "", "", "", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			op, val, err := parseFilterValue(tt.input)
+			op, val, config, err := parseFilterValue(tt.input)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error")
@@ -48,6 +56,9 @@ func TestParseFilterValue(t *testing.T) {
 			}
 			if val != tt.wantVal {
 				t.Errorf("val = %q, want %q", val, tt.wantVal)
+			}
+			if config != tt.wantConfig {
+				t.Errorf("config = %q, want %q", config, tt.wantConfig)
 			}
 		})
 	}
@@ -161,10 +172,10 @@ func TestBuildFilterCondition(t *testing.T) {
 
 func TestBuildSelectQuery(t *testing.T) {
 	table := domain.Table{
-		Fields: map[string]domain.Field{
-			"id":     {Type: "bigserial", PrimaryKey: true},
-			"title":  {Type: "text"},
-			"status": {Type: "text"},
+		Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
+			{Name: "title", Type: "text"},
+			{Name: "status", Type: "text"},
 		},
 	}
 
@@ -338,10 +349,10 @@ func TestParseSelectParam(t *testing.T) {
 
 func TestFindUnknownFields(t *testing.T) {
 	table := domain.Table{
-		Fields: map[string]domain.Field{
-			"id":     {Type: "bigserial"},
-			"title":  {Type: "text"},
-			"status": {Type: "text"},
+		Fields: []domain.Field{
+			{Name: "id", Type: "bigserial"},
+			{Name: "title", Type: "text"},
+			{Name: "status", Type: "text"},
 		},
 	}
 
@@ -352,7 +363,7 @@ func TestFindUnknownFields(t *testing.T) {
 		"another": "bad",
 	}
 
-	unknowns := findUnknownFields(record, table)
+	unknowns := findUnknownFields(record, table.FieldMap())
 	if len(unknowns) != 2 {
 		t.Fatalf("expected 2 unknown fields, got %d: %v", len(unknowns), unknowns)
 	}
@@ -363,11 +374,11 @@ func TestFindUnknownFields(t *testing.T) {
 
 func TestFindUnknownFields_AllKnown(t *testing.T) {
 	table := domain.Table{
-		Fields: map[string]domain.Field{
-			"title": {Type: "text"},
+		Fields: []domain.Field{
+			{Name: "title", Type: "text"},
 		},
 	}
-	unknowns := findUnknownFields(map[string]any{"title": "test"}, table)
+	unknowns := findUnknownFields(map[string]any{"title": "test"}, table.FieldMap())
 	if len(unknowns) != 0 {
 		t.Errorf("expected no unknowns, got %v", unknowns)
 	}
@@ -415,6 +426,53 @@ func TestParseCountPrefer(t *testing.T) {
 	}
 }
 
+func TestParseMissingPrefer(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"", false},
+		{"missing=default", true},
+		{"return=representation, missing=default", true},
+		{"missing=null", false},
+		{"resolution=merge-duplicates", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := parseMissingPrefer(tt.input)
+			if got != tt.want {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// Documents the existing permissive behavior of renderRowTuples: missing
+// columns are always substituted with DEFAULT, regardless of whether the
+// client sent `Prefer: missing=default`. The Preference-Applied echo in
+// handleCreate/handleUpsert exists to confirm this to clients that probe.
+func TestRenderRowTuples_MissingColumnEmitsDefault(t *testing.T) {
+	records := []map[string]any{
+		{"name": "alice", "age": 30},
+		{"name": "bob"}, // age missing
+	}
+	cols := []string{"name", "age"}
+	args, rows := renderRowTuples(records, cols, 1)
+
+	if len(rows) != 2 {
+		t.Fatalf("got %d row tuples, want 2", len(rows))
+	}
+	if rows[0] != "($1, $2)" {
+		t.Errorf("row0 = %q, want ($1, $2)", rows[0])
+	}
+	if rows[1] != "($3, DEFAULT)" {
+		t.Errorf("row1 = %q, want ($3, DEFAULT)", rows[1])
+	}
+	if len(args) != 3 {
+		t.Errorf("args len = %d, want 3", len(args))
+	}
+}
+
 func TestParseEmbedParam(t *testing.T) {
 	tests := []struct {
 		input    string
@@ -453,18 +511,18 @@ func TestParseEmbedParam(t *testing.T) {
 
 func TestResolveEmbeds_BelongsTo(t *testing.T) {
 	table := domain.Table{
-		Fields: map[string]domain.Field{
-			"id":        {Type: "bigserial", PrimaryKey: true},
-			"title":     {Type: "text"},
-			"author_id": {ForeignKey: &domain.ForeignKey{References: "users.id"}},
+		Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
+			{Name: "title", Type: "text"},
+			{Name: "author_id", ForeignKey: &domain.ForeignKey{References: "users.id"}},
 		},
 	}
 	allTables := map[string]domain.Table{
 		"todos": table,
 		"users": {
-			Fields: map[string]domain.Field{
-				"id":   {Type: "bigserial", PrimaryKey: true},
-				"name": {Type: "text"},
+			Fields: []domain.Field{
+				{Name: "id", Type: "bigserial", PrimaryKey: true},
+				{Name: "name", Type: "text"},
 			},
 		},
 	}
@@ -496,18 +554,18 @@ func TestResolveEmbeds_BelongsTo(t *testing.T) {
 
 func TestResolveEmbeds_HasMany(t *testing.T) {
 	table := domain.Table{
-		Fields: map[string]domain.Field{
-			"id":   {Type: "bigserial", PrimaryKey: true},
-			"name": {Type: "text"},
+		Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
+			{Name: "name", Type: "text"},
 		},
 	}
 	allTables := map[string]domain.Table{
 		"users": table,
 		"todos": {
-			Fields: map[string]domain.Field{
-				"id":      {Type: "bigserial", PrimaryKey: true},
-				"user_id": {ForeignKey: &domain.ForeignKey{References: "users.id"}},
-				"title":   {Type: "text"},
+			Fields: []domain.Field{
+				{Name: "id", Type: "bigserial", PrimaryKey: true},
+				{Name: "user_id", ForeignKey: &domain.ForeignKey{References: "users.id"}},
+				{Name: "title", Type: "text"},
 			},
 		},
 	}
@@ -531,32 +589,54 @@ func TestResolveEmbeds_HasMany(t *testing.T) {
 	}
 }
 
-func TestSplitJSONBColumn(t *testing.T) {
+func TestSplitJSONBPath(t *testing.T) {
 	tests := []struct {
-		input   string
-		col     string
-		op      string
-		key     string
+		input string
+		base  string
+		steps []jsonPathStep
 	}{
-		{"metadata->>theme", "metadata", "->>", "theme"},
-		{"metadata->nested", "metadata", "->", "nested"},
-		{"data->>name", "data", "->>", "name"},
-		{"simple_col", "simple_col", "", ""},
-		{"tags", "tags", "", ""},
+		{"metadata->>theme", "metadata", []jsonPathStep{{op: "->>", key: "theme"}}},
+		{"metadata->nested", "metadata", []jsonPathStep{{op: "->", key: "nested"}}},
+		{"data->>name", "data", []jsonPathStep{{op: "->>", key: "name"}}},
+		{"simple_col", "simple_col", nil},
+		{"tags", "tags", nil},
+		{"data->items->0->>name", "data", []jsonPathStep{
+			{op: "->", key: "items"},
+			{op: "->", key: "0", isInt: true},
+			{op: "->>", key: "name"},
+		}},
+		{"data->0", "data", []jsonPathStep{{op: "->", key: "0", isInt: true}}},
+		{"data->>0", "data", []jsonPathStep{{op: "->>", key: "0", isInt: true}}},
+		{"d->a->b->c", "d", []jsonPathStep{
+			{op: "->", key: "a"},
+			{op: "->", key: "b"},
+			{op: "->", key: "c"},
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			col, op, key := splitJSONBColumn(tt.input)
-			if col != tt.col {
-				t.Errorf("col = %q, want %q", col, tt.col)
+			base, steps := splitJSONBPath(tt.input)
+			if base != tt.base {
+				t.Errorf("base = %q, want %q", base, tt.base)
 			}
-			if op != tt.op {
-				t.Errorf("op = %q, want %q", op, tt.op)
+			if len(steps) != len(tt.steps) {
+				t.Fatalf("steps = %+v, want %+v", steps, tt.steps)
 			}
-			if key != tt.key {
-				t.Errorf("key = %q, want %q", key, tt.key)
+			for i := range steps {
+				if steps[i] != tt.steps[i] {
+					t.Errorf("step[%d] = %+v, want %+v", i, steps[i], tt.steps[i])
+				}
 			}
 		})
+	}
+}
+
+func TestRenderJSONBSuffix_ArrayIndex(t *testing.T) {
+	_, steps := splitJSONBPath("data->items->0->>name")
+	got := renderJSONBSuffix(steps)
+	want := "->'items'->0->>'name'"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
@@ -608,10 +688,10 @@ func TestBuildFilterCondition_JSONB(t *testing.T) {
 
 func TestBuildSelectQuery_WithEmbed(t *testing.T) {
 	table := domain.Table{
-		Fields: map[string]domain.Field{
-			"id":        {Type: "bigserial", PrimaryKey: true},
-			"title":     {Type: "text"},
-			"author_id": {ForeignKey: &domain.ForeignKey{References: "users.id"}},
+		Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
+			{Name: "title", Type: "text"},
+			{Name: "author_id", ForeignKey: &domain.ForeignKey{References: "users.id"}},
 		},
 	}
 	qp := &QueryParams{

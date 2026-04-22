@@ -9,9 +9,9 @@ import (
 
 func TestGenerateTable_Basic(t *testing.T) {
 	table := domain.Table{
-		Fields: map[string]domain.Field{
-			"id":    {Type: "bigserial", PrimaryKey: true},
-			"title": {Type: "text", Required: true},
+		Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
+			{Name: "title", Type: "text", Required: true},
 		},
 	}
 	ddl := generateTable("todos", table, nil)
@@ -25,11 +25,9 @@ func TestGenerateTable_Basic(t *testing.T) {
 
 func TestGenerateTable_ForeignKey(t *testing.T) {
 	table := domain.Table{
-		Fields: map[string]domain.Field{
-			"id": {Type: "bigserial", PrimaryKey: true},
-			"user_id": {
-				ForeignKey: &domain.ForeignKey{References: "users.id", OnDelete: "cascade"},
-			},
+		Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
+			{Name: "user_id", ForeignKey: &domain.ForeignKey{References: "users.id", OnDelete: "cascade"}},
 		},
 	}
 	ddl := generateTable("todos", table, nil)
@@ -42,9 +40,9 @@ func TestGenerateTable_ForeignKey(t *testing.T) {
 
 func TestGenerateTable_FKDefaultRestrict(t *testing.T) {
 	table := domain.Table{
-		Fields: map[string]domain.Field{
-			"id":      {Type: "bigserial", PrimaryKey: true},
-			"team_id": {ForeignKey: &domain.ForeignKey{References: "teams.id"}},
+		Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
+			{Name: "team_id", ForeignKey: &domain.ForeignKey{References: "teams.id"}},
 		},
 	}
 	ddl := generateTable("members", table, nil)
@@ -55,9 +53,9 @@ func TestGenerateTable_FKDefaultRestrict(t *testing.T) {
 
 func TestGenerateTable_Enum(t *testing.T) {
 	table := domain.Table{
-		Fields: map[string]domain.Field{
-			"id":     {Type: "bigserial", PrimaryKey: true},
-			"status": {Type: "text", Enum: []string{"pending", "active", "done"}},
+		Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
+			{Name: "status", Type: "text", Enum: []string{"pending", "active", "done"}},
 		},
 	}
 	ddl := generateTable("todos", table, nil)
@@ -70,9 +68,9 @@ func TestGenerateTable_MinMax(t *testing.T) {
 	min := float64(0)
 	max := float64(5)
 	table := domain.Table{
-		Fields: map[string]domain.Field{
-			"id":       {Type: "bigserial", PrimaryKey: true},
-			"priority": {Type: "integer", Min: &min, Max: &max},
+		Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
+			{Name: "priority", Type: "integer", Min: &min, Max: &max},
 		},
 	}
 	ddl := generateTable("todos", table, nil)
@@ -84,9 +82,9 @@ func TestGenerateTable_MinMax(t *testing.T) {
 
 func TestGenerateTable_Pattern(t *testing.T) {
 	table := domain.Table{
-		Fields: map[string]domain.Field{
-			"id":    {Type: "bigserial", PrimaryKey: true},
-			"email": {Type: "text", Pattern: "^.+@.+$"},
+		Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
+			{Name: "email", Type: "text", Pattern: "^.+@.+$"},
 		},
 	}
 	ddl := generateTable("contacts", table, nil)
@@ -97,9 +95,9 @@ func TestGenerateTable_Pattern(t *testing.T) {
 
 func TestGenerateTable_Unique(t *testing.T) {
 	table := domain.Table{
-		Fields: map[string]domain.Field{
-			"id":   {Type: "bigserial", PrimaryKey: true},
-			"slug": {Type: "text", Unique: true},
+		Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
+			{Name: "slug", Type: "text", Unique: true},
 		},
 	}
 	ddl := generateTable("teams", table, nil)
@@ -110,10 +108,10 @@ func TestGenerateTable_Unique(t *testing.T) {
 
 func TestGenerateTable_Indexes(t *testing.T) {
 	table := domain.Table{
-		Fields: map[string]domain.Field{
-			"id":      {Type: "bigserial", PrimaryKey: true},
-			"team_id": {Type: "bigint"},
-			"status":  {Type: "text"},
+		Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
+			{Name: "team_id", Type: "bigint"},
+			{Name: "status", Type: "text"},
 		},
 		Indexes: []domain.Index{
 			{Columns: []string{"team_id", "status"}},
@@ -121,7 +119,7 @@ func TestGenerateTable_Indexes(t *testing.T) {
 			{Columns: []string{"team_id"}, Where: "status != 'done'"},
 		},
 	}
-	ddl := generateTable("todos", table, nil)
+	ddl := generateIndexes("todos", table)
 	joined := strings.Join(ddl, "\n")
 
 	mustContain(t, joined, "CREATE INDEX IF NOT EXISTS idx_todos_team_id_status ON todos (team_id, status)")
@@ -131,12 +129,12 @@ func TestGenerateTable_Indexes(t *testing.T) {
 
 func TestGenerateTable_Default(t *testing.T) {
 	table := domain.Table{
-		Fields: map[string]domain.Field{
-			"id":         {Type: "bigserial", PrimaryKey: true},
-			"status":     {Type: "text", Default: "pending"},
-			"created_at": {Type: "timestamptz", Default: "now()"},
-			"priority":   {Type: "integer", Default: 0},
-			"active":     {Type: "boolean", Default: false},
+		Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
+			{Name: "status", Type: "text", Default: "pending"},
+			{Name: "created_at", Type: "timestamptz", Default: "now()"},
+			{Name: "priority", Type: "integer", Default: 0},
+			{Name: "active", Type: "boolean", Default: false},
 		},
 	}
 	ddl := generateTable("todos", table, nil)
@@ -152,11 +150,11 @@ func TestGenerateUsersTable(t *testing.T) {
 	auth := &domain.Auth{
 		RefreshTokens: true,
 		Email:         &domain.AuthEmail{VerifyEmail: true},
-		Fields: map[string]domain.Field{
-			"display_name": {Type: "text", Required: true},
-		},
 	}
-	ddl := generateUsersTable(auth)
+	extraFields := []domain.Field{
+		{Name: "display_name", Type: "text", Required: true},
+	}
+	ddl := generateUsersTable(auth, extraFields)
 	joined := strings.Join(ddl, "\n")
 
 	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS users")
@@ -172,9 +170,8 @@ func TestGenerateUsersTable(t *testing.T) {
 func TestGenerateUsersTable_NoRefreshTokens(t *testing.T) {
 	auth := &domain.Auth{
 		RefreshTokens: false,
-		Fields:        map[string]domain.Field{},
 	}
-	ddl := generateUsersTable(auth)
+	ddl := generateUsersTable(auth, nil)
 	joined := strings.Join(ddl, "\n")
 
 	if strings.Contains(joined, "_refresh_tokens") {
@@ -197,7 +194,9 @@ func TestGenerateRLSPolicies(t *testing.T) {
 
 	mustContain(t, joined, "ENABLE ROW LEVEL SECURITY")
 	mustContain(t, joined, "FORCE ROW LEVEL SECURITY")
+	mustContain(t, joined, "DROP POLICY IF EXISTS todos_select_0 ON todos")
 	mustContain(t, joined, "FOR SELECT USING (user_id = auth.uid())")
+	mustContain(t, joined, "DROP POLICY IF EXISTS todos_insert_1 ON todos")
 	mustContain(t, joined, "FOR INSERT WITH CHECK (auth.is_authenticated())")
 }
 
@@ -251,15 +250,17 @@ func TestGenerateStorageRLS_Public(t *testing.T) {
 	ddl := generateStorageRLS("avatars", bucket)
 	joined := strings.Join(ddl, "\n")
 
+	mustContain(t, joined, "DROP POLICY IF EXISTS avatars_public_select ON _objects")
 	mustContain(t, joined, "avatars_public_select")
 	mustContain(t, joined, "bucket_id = 'avatars'")
+	mustContain(t, joined, "DROP POLICY IF EXISTS storage_avatars_insert_0 ON _objects")
 	mustContain(t, joined, "FOR INSERT WITH CHECK")
 }
 
 func TestOrderTables_NoDeps(t *testing.T) {
 	tables := map[string]domain.Table{
-		"a": {Fields: map[string]domain.Field{"id": {Type: "bigserial"}}},
-		"b": {Fields: map[string]domain.Field{"id": {Type: "bigserial"}}},
+		"a": {Fields: []domain.Field{{Name: "id", Type: "bigserial"}}},
+		"b": {Fields: []domain.Field{{Name: "id", Type: "bigserial"}}},
 	}
 	order := orderTables(tables)
 	if len(order) != 2 {
@@ -273,12 +274,12 @@ func TestOrderTables_NoDeps(t *testing.T) {
 
 func TestOrderTables_WithDeps(t *testing.T) {
 	tables := map[string]domain.Table{
-		"todos": {Fields: map[string]domain.Field{
-			"id":      {Type: "bigserial"},
-			"team_id": {ForeignKey: &domain.ForeignKey{References: "teams.id"}},
+		"todos": {Fields: []domain.Field{
+			{Name: "id", Type: "bigserial"},
+			{Name: "team_id", ForeignKey: &domain.ForeignKey{References: "teams.id"}},
 		}},
-		"teams": {Fields: map[string]domain.Field{
-			"id": {Type: "bigserial"},
+		"teams": {Fields: []domain.Field{
+			{Name: "id", Type: "bigserial"},
 		}},
 	}
 	order := orderTables(tables)
@@ -327,4 +328,50 @@ func mustContain(t *testing.T, s, substr string) {
 	if !strings.Contains(s, substr) {
 		t.Errorf("expected output to contain %q, got:\n%s", substr, s)
 	}
+}
+
+// TestGenerateRPCFunction_Signature verifies the DDL shape for a function
+// with ordered args, a default, a non-default language and security
+// clause, and a scalar return. The full statement is compared so any
+// drift in quoting, spacing, or clause order surfaces immediately.
+func TestGenerateRPCFunction_Signature(t *testing.T) {
+	fn := domain.Function{
+				Language:   "sql",
+		Volatility: "stable",
+		Security:   "definer",
+		Returns:    domain.FuncReturn{Type: "int"},
+		Body:       "SELECT $1 + $2;",
+		Args: []domain.FuncArg{
+			{Name: "a", Type: "int"},
+			{Name: "b", Type: "int", Default: 10},
+		},
+	}
+	ddl := generateRPCFunction("add", fn)
+
+	mustContain(t, ddl, `CREATE OR REPLACE FUNCTION public."add"`)
+	mustContain(t, ddl, `"a" int`)
+	mustContain(t, ddl, `"b" int DEFAULT 10`)
+	mustContain(t, ddl, "RETURNS int")
+	mustContain(t, ddl, "LANGUAGE sql")
+	mustContain(t, ddl, "STABLE")
+	mustContain(t, ddl, "SECURITY DEFINER")
+	mustContain(t, ddl, "AS $ub$SELECT $1 + $2;$ub$")
+}
+
+// TestGenerateRPCFunction_VoidDefaults: a minimal function should pick
+// up plpgsql/volatile/invoker defaults applied by the config loader,
+// so we pre-populate them here and assert the invoker clause lands.
+func TestGenerateRPCFunction_VoidDefaults(t *testing.T) {
+	fn := domain.Function{
+				Language:   "plpgsql",
+		Volatility: "volatile",
+		Security:   "invoker",
+		Returns:    domain.FuncReturn{Type: "void"},
+		Body:       "BEGIN END;",
+	}
+	ddl := generateRPCFunction("noop", fn)
+	mustContain(t, ddl, "LANGUAGE plpgsql")
+	mustContain(t, ddl, "VOLATILE")
+	mustContain(t, ddl, "SECURITY INVOKER")
+	mustContain(t, ddl, "RETURNS void")
 }

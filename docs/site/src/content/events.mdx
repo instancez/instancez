@@ -15,7 +15,6 @@ on:
     events: [auth.signup]
     webhook:
       url: https://hooks.slack.com/services/...
-      method: POST
       headers:
         Content-Type: application/json
 
@@ -34,6 +33,7 @@ on:
 | `<table>.insert` | Row inserted |
 | `<table>.update` | Row updated |
 | `<table>.delete` | Row deleted |
+| `*.insert` / `*.update` / `*.delete` | Any table (wildcard) |
 | `auth.signup` | New user registers |
 | `auth.login` | User logs in |
 
@@ -47,13 +47,13 @@ on:
     schedule: "0 9 * * *"  # Every day at 9 AM
     webhook:
       url: https://api.example.com/digest
-      method: POST
+      headers:
+        Authorization: "Bearer ${WEBHOOK_SECRET}"
 
   cleanup:
     schedule: "0 0 * * 0"  # Every Sunday at midnight
     webhook:
       url: https://api.example.com/cleanup
-      method: POST
 ```
 
 <Callout variant="info" title="Cron syntax">
@@ -65,15 +65,19 @@ on:
 ```yaml
 webhook:
   url: https://example.com/hook
-  method: POST                    # GET, POST, PUT
   headers:
     Authorization: "Bearer ${WEBHOOK_SECRET}"
     Content-Type: application/json
+  retry:
+    max: 3                  # Maximum retry attempts
+    backoff: exponential    # exponential | linear
 ```
 
 The webhook payload includes the event type, table name, and the affected row data.
 
 ## Email actions
+
+Simple email with row data:
 
 ```yaml
 email:
@@ -83,6 +87,32 @@ email:
     Hi {{row.name}},
     Your order #{{row.id}} has shipped!
 ```
+
+### Advanced email options
+
+For scheduled triggers or complex notifications, use `to_query` and `data_query` to dynamically resolve recipients and template data:
+
+```yaml
+on:
+  daily_digest:
+    schedule: "0 9 * * *"
+    email:
+      to_query: "SELECT email FROM users WHERE digest_enabled = true"
+      data_query: "SELECT count(*) AS new_tasks FROM tasks WHERE created_at > now() - interval '1 day'"
+      subject: "Your daily digest"
+      body: "You have {{data.new_tasks}} new tasks today."
+      condition: "new_tasks > 0"
+```
+
+| Option | Description |
+|---|---|
+| `to` | Recipient email (supports `{{row.field}}` templates) |
+| `to_query` | SQL query returning recipient emails |
+| `data_query` | SQL query providing template data |
+| `subject` | Email subject |
+| `body` | Inline email body |
+| `body_file` | Path to an email template file |
+| `condition` | SQL expression — email is only sent when this evaluates to true |
 
 <Callout variant="warning" title="Email provider required">
   Email actions require an email provider configured under `providers.email`.

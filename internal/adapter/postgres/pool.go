@@ -63,9 +63,16 @@ func (db *DB) EnsureMigrationsTable(ctx context.Context) error {
 			id BIGSERIAL PRIMARY KEY,
 			checksum TEXT NOT NULL,
 			sql TEXT NOT NULL,
+			config_json TEXT NOT NULL DEFAULT '{}',
 			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)
 	`)
+	if err != nil {
+		return &domain.DatabaseError{Op: "ensure_migrations_table", Err: err}
+	}
+	// Additive column for existing deployments that predate config storage.
+	_, err = db.pool.Exec(ctx,
+		`ALTER TABLE _ultrabase_migrations ADD COLUMN IF NOT EXISTS config_json TEXT NOT NULL DEFAULT '{}'`)
 	if err != nil {
 		return &domain.DatabaseError{Op: "ensure_migrations_table", Err: err}
 	}
@@ -75,10 +82,10 @@ func (db *DB) EnsureMigrationsTable(ctx context.Context) error {
 // GetLastMigration returns the most recently applied migration, or nil if none.
 func (db *DB) GetLastMigration(ctx context.Context) (*domain.Migration, error) {
 	row := db.pool.QueryRow(ctx,
-		`SELECT id, checksum, sql, applied_at FROM _ultrabase_migrations ORDER BY id DESC LIMIT 1`)
+		`SELECT id, checksum, sql, config_json, applied_at FROM _ultrabase_migrations ORDER BY id DESC LIMIT 1`)
 
 	var m domain.Migration
-	err := row.Scan(&m.ID, &m.Checksum, &m.SQL, &m.AppliedAt)
+	err := row.Scan(&m.ID, &m.Checksum, &m.SQL, &m.ConfigJSON, &m.AppliedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
@@ -89,12 +96,64 @@ func (db *DB) GetLastMigration(ctx context.Context) (*domain.Migration, error) {
 }
 
 // RecordMigration stores a new migration record.
-func (db *DB) RecordMigration(ctx context.Context, checksum, sql string) error {
+func (db *DB) RecordMigration(ctx context.Context, checksum, sql, configJSON string) error {
 	_, err := db.pool.Exec(ctx,
-		`INSERT INTO _ultrabase_migrations (checksum, sql) VALUES ($1, $2)`,
-		checksum, sql)
+		`INSERT INTO _ultrabase_migrations (checksum, sql, config_json) VALUES ($1, $2, $3)`,
+		checksum, sql, configJSON)
 	if err != nil {
 		return &domain.DatabaseError{Op: "record_migration", Err: err}
+	}
+	return nil
+}
+
+// EnsureDataTable creates the _ultrabase_data tracking table if it doesn't exist.
+func (db *DB) EnsureDataTable(ctx context.Context) error {
+	_, err := db.pool.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS _ultrabase_data (
+			key        TEXT PRIMARY KEY,
+			table_name TEXT NOT NULL,
+			source     TEXT NOT NULL,
+			checksum   TEXT NOT NULL,
+			row_count  INTEGER NOT NULL,
+			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)
+	`)
+	if err != nil {
+		return &domain.DatabaseError{Op: "ensure_data_table", Err: err}
+	}
+	return nil
+}
+
+// GetAppliedData returns all previously applied data import records.
+func (db *DB) GetAppliedData(ctx context.Context) ([]domain.DataRecord, error) {
+	rows, err := db.pool.Query(ctx,
+		`SELECT key, table_name, source, checksum, row_count, applied_at FROM _ultrabase_data`)
+	if err != nil {
+		return nil, &domain.DatabaseError{Op: "get_applied_data", Err: err}
+	}
+	defer rows.Close()
+
+	var records []domain.DataRecord
+	for rows.Next() {
+		var r domain.DataRecord
+		if err := rows.Scan(&r.Key, &r.TableName, &r.Source, &r.Checksum, &r.RowCount, &r.AppliedAt); err != nil {
+			return nil, &domain.DatabaseError{Op: "scan_data_record", Err: err}
+		}
+		records = append(records, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, &domain.DatabaseError{Op: "data_rows_iteration", Err: err}
+	}
+	return records, nil
+}
+
+// RecordData inserts a data import tracking record within the given transaction.
+func (db *DB) RecordData(ctx context.Context, tx domain.Tx, key, tableName, source, checksum string, rowCount int) error {
+	_, err := tx.Exec(ctx,
+		`INSERT INTO _ultrabase_data (key, table_name, source, checksum, row_count) VALUES ($1, $2, $3, $4, $5)`,
+		key, tableName, source, checksum, rowCount)
+	if err != nil {
+		return &domain.DatabaseError{Op: "record_data", Err: err}
 	}
 	return nil
 }
@@ -164,6 +223,17 @@ func (db *DB) Begin(ctx context.Context) (domain.Tx, error) {
 		if err := setRLSVars(ctx, tx, session); err != nil {
 			tx.Rollback(ctx)
 			return nil, err
+		}
+	}
+
+	// Publish the incoming request ID as a per-transaction GUC so RLS
+	// policies and RPC bodies can read it via current_setting. Independent
+	// of session — even unauthenticated and admin-key requests carry one.
+	if reqID := domain.RequestIDFromContext(ctx); reqID != "" {
+		stmt := "SET LOCAL request.request_id = " + quote(reqID)
+		if _, err := tx.Exec(ctx, stmt); err != nil {
+			tx.Rollback(ctx)
+			return nil, &domain.DatabaseError{Op: "set_request_id", Err: err}
 		}
 	}
 

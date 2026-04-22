@@ -18,8 +18,12 @@ project:
 tables:
   todos:
     fields:
-      id: { type: bigserial, primary_key: true }
-      title: { type: text, required: true }
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: title
+        type: text
+        required: true
 `
 	os.WriteFile(path, []byte(content), 0o644)
 
@@ -64,8 +68,8 @@ project:
 	if cfg.Server.Timeouts.Request != "30s" {
 		t.Errorf("default request timeout = %q, want %q", cfg.Server.Timeouts.Request, "30s")
 	}
-	if cfg.Server.DB.Pool.Max != 20 {
-		t.Errorf("default pool max = %d, want 20", cfg.Server.DB.Pool.Max)
+	if cfg.Database.Pool.Max != 20 {
+		t.Errorf("default pool max = %d, want 20", cfg.Database.Pool.Max)
 	}
 }
 

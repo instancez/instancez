@@ -80,6 +80,13 @@ func (n *WhereNode) buildSQL(argIdx int) (string, []any, int) {
 	return sql, args, argIdx
 }
 
+// colValidator is called on every column reference in a filter tree.
+// Implementations return nil to accept the column and an error to reject it.
+// The typed path (parseWhere on a known table) passes a closure that checks
+// the table's Fields map; RPC untyped setof results pass a permissive validator
+// and let Postgres reject unknown columns at execute time.
+type colValidator func(col string) error
+
 // parseWhere builds a filter tree from the request query string. Top-level
 // parameters are ANDed together. Supported forms:
 //
@@ -98,10 +105,101 @@ func parseWhere(c *gin.Context, tableName string, table domain.Table) (*WhereNod
 // the given prefixes followed by a dot. Used to route "<embed>.*" query
 // parameters into nested embed scopes instead of the outer WHERE.
 func parseWhereSkip(c *gin.Context, tableName string, table domain.Table, skipPrefixes map[string]bool) (*WhereNode, error) {
+	validate := func(col string) error { return validateColumn(table, col) }
+	tree, err := parseWhereWith(c, validate, skipPrefixes, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateFTSLeaves(tree, table); err != nil {
+		return nil, err
+	}
+	return tree, nil
+}
+
+// ftsOps are the full-text-search operators that require a text-like or
+// tsvector target column. Any other operator is unconstrained here.
+var ftsOps = map[string]bool{
+	"fts":   true,
+	"plfts": true,
+	"phfts": true,
+	"wfts":  true,
+}
+
+// isFTSCompatibleType reports whether a field's declared type can be the
+// left-hand operand of an FTS operator (fts/plfts/phfts/wfts). Postgres
+// accepts text, varchar/character/char, citext, and tsvector directly; all
+// produce (or already are) a tsvector when cast. Arrays and non-text types
+// are rejected.
+func isFTSCompatibleType(t string) bool {
+	s := strings.ToLower(strings.TrimSpace(t))
+	// Strip type modifiers like "varchar(255)".
+	if idx := strings.Index(s, "("); idx != -1 {
+		s = strings.TrimSpace(s[:idx])
+	}
+	switch s {
+	case "text", "citext", "tsvector",
+		"varchar", "character varying",
+		"char", "character",
+		"bpchar":
+		return true
+	}
+	return false
+}
+
+// validateFTSLeaves walks a parsed WHERE tree and rejects any leaf that
+// applies an FTS operator to a column whose declared type isn't text-like
+// or tsvector. JSONB `->>` access is allowed (it yields text); JSONB `->`
+// access yields jsonb and is rejected. Errors flow up through parseWhere
+// and are surfaced as PGRST100 bad_request by the handler.
+func validateFTSLeaves(n *WhereNode, table domain.Table) error {
+	if n == nil {
+		return nil
+	}
+	if n.Leaf != nil {
+		if !ftsOps[n.Leaf.Operator] {
+			return nil
+		}
+		base, steps := splitJSONBPath(n.Leaf.Column)
+		// The final step determines the chain's result type:
+		// `->>` yields text — allowed. `->` yields jsonb — rejected.
+		if last := lastJSONBOp(steps); last == "->>" {
+			return nil
+		} else if last == "->" {
+			return fmt.Errorf("operator %q requires a text or tsvector column; %q yields jsonb",
+				n.Leaf.Operator, n.Leaf.Column)
+		}
+		field, ok := table.GetField(base)
+		if !ok {
+			return fmt.Errorf("unknown column %q", base)
+		}
+		if !isFTSCompatibleType(field.Type) {
+			return fmt.Errorf("operator %q requires a text or tsvector column; %q is %q",
+				n.Leaf.Operator, base, field.Type)
+		}
+		return nil
+	}
+	for _, c := range n.Children {
+		if err := validateFTSLeaves(c, table); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// parseWhereWith is the lower-level filter parser. It accepts a colValidator
+// callback instead of a concrete domain.Table so RPC call sites — which may
+// have no corresponding table at all — can supply their own validation
+// strategy (strict against a known table, or permissive for SETOF custom types).
+// skipKeys is an exact-match skip set, used by RPC to keep function-argument
+// query keys out of the WHERE tree.
+func parseWhereWith(c *gin.Context, validate colValidator, skipPrefixes map[string]bool, skipKeys map[string]bool) (*WhereNode, error) {
 	root := &WhereNode{Op: "and"}
 
 	for key, values := range c.Request.URL.Query() {
 		if reservedParams[key] {
+			continue
+		}
+		if skipKeys[key] {
 			continue
 		}
 		if len(skipPrefixes) > 0 {
@@ -119,14 +217,14 @@ func parseWhereSkip(c *gin.Context, tableName string, table domain.Table, skipPr
 		switch key {
 		case "or", "and":
 			for _, v := range values {
-				node, err := parseLogicList(key, v, table)
+				node, err := parseLogicListWith(key, v, validate)
 				if err != nil {
 					return nil, fmt.Errorf("invalid %s: %w", key, err)
 				}
 				root.Children = append(root.Children, node)
 			}
 		default:
-			if err := validateColumn(table, key); err != nil {
+			if err := validate(key); err != nil {
 				return nil, fmt.Errorf("invalid filter on %q: %w", key, err)
 			}
 			for _, v := range values {
@@ -153,12 +251,12 @@ func parseLeafValue(col, val string) (*WhereNode, error) {
 		not = true
 		val = strings.TrimPrefix(val, "not.")
 	}
-	op, operand, err := parseFilterValue(val)
+	op, operand, config, err := parseFilterValue(val)
 	if err != nil {
 		return nil, err
 	}
 	return &WhereNode{
-		Leaf: &Filter{Column: col, Operator: op, Value: operand},
+		Leaf: &Filter{Column: col, Operator: op, Value: operand, Config: config},
 		Not:  not,
 	}, nil
 }
@@ -166,6 +264,10 @@ func parseLeafValue(col, val string) (*WhereNode, error) {
 // parseLogicList parses a value like "(a.eq.1,b.eq.2,and(c.eq.3,d.eq.4))"
 // associated with top-level param "or" or "and".
 func parseLogicList(op, raw string, table domain.Table) (*WhereNode, error) {
+	return parseLogicListWith(op, raw, func(col string) error { return validateColumn(table, col) })
+}
+
+func parseLogicListWith(op, raw string, validate colValidator) (*WhereNode, error) {
 	raw = strings.TrimSpace(raw)
 	if !strings.HasPrefix(raw, "(") || !strings.HasSuffix(raw, ")") {
 		return nil, fmt.Errorf("expected parenthesized list, got %q", raw)
@@ -181,7 +283,7 @@ func parseLogicList(op, raw string, table domain.Table) (*WhereNode, error) {
 		if item == "" {
 			return nil, fmt.Errorf("empty item in logic list")
 		}
-		child, err := parseLogicItem(item, table)
+		child, err := parseLogicItemWith(item, validate)
 		if err != nil {
 			return nil, err
 		}
@@ -198,6 +300,10 @@ func parseLogicList(op, raw string, table domain.Table) (*WhereNode, error) {
 //   - an optional "not." prefix applied to a nested group
 //   - a leaf "col.op.val" or "col.not.op.val"
 func parseLogicItem(item string, table domain.Table) (*WhereNode, error) {
+	return parseLogicItemWith(item, func(col string) error { return validateColumn(table, col) })
+}
+
+func parseLogicItemWith(item string, validate colValidator) (*WhereNode, error) {
 	not := false
 	if strings.HasPrefix(item, "not.") {
 		// Could be "not.and(...)", "not.or(...)", or "not.col.op.val" — the
@@ -225,7 +331,7 @@ func parseLogicItem(item string, table domain.Table) (*WhereNode, error) {
 		node := &WhereNode{Op: op, Not: not}
 		for _, sub := range list {
 			sub = strings.TrimSpace(sub)
-			child, err := parseLogicItem(sub, table)
+			child, err := parseLogicItemWith(sub, validate)
 			if err != nil {
 				return nil, err
 			}
@@ -240,18 +346,22 @@ func parseLogicItem(item string, table domain.Table) (*WhereNode, error) {
 	// Leaf: col.[not.]op.val
 	// Column may itself contain JSONB operators like "metadata->>theme",
 	// which do not contain dots, so splitting on the first dot is safe.
-	return parseLogicLeaf(item, table)
+	return parseLogicLeafWith(item, validate)
 }
 
 // parseLogicLeaf parses "col.op.val" or "col.not.op.val" into a leaf node.
 func parseLogicLeaf(item string, table domain.Table) (*WhereNode, error) {
+	return parseLogicLeafWith(item, func(col string) error { return validateColumn(table, col) })
+}
+
+func parseLogicLeafWith(item string, validate colValidator) (*WhereNode, error) {
 	firstDot := strings.Index(item, ".")
 	if firstDot == -1 {
 		return nil, fmt.Errorf("expected col.op.val, got %q", item)
 	}
 	col := item[:firstDot]
 	rest := item[firstDot+1:]
-	if err := validateColumn(table, col); err != nil {
+	if err := validate(col); err != nil {
 		return nil, err
 	}
 	not := false
@@ -259,14 +369,75 @@ func parseLogicLeaf(item string, table domain.Table) (*WhereNode, error) {
 		not = true
 		rest = strings.TrimPrefix(rest, "not.")
 	}
-	op, val, err := parseFilterValue(rest)
+	op, val, config, err := parseFilterValue(rest)
 	if err != nil {
 		return nil, err
 	}
 	return &WhereNode{
-		Leaf: &Filter{Column: col, Operator: op, Value: val},
+		Leaf: &Filter{Column: col, Operator: op, Value: val, Config: config},
 		Not:  not,
 	}, nil
+}
+
+// parseHavingParam parses a having= query parameter into a WhereNode tree.
+// The having parameter uses the same col.op.value syntax as filter leaves,
+// separated by commas for multiple conditions (implicit AND):
+//
+//	having=count.gt.5               — single condition
+//	having=count.gt.5,sum.gte.100   — AND of two conditions
+//
+// Column names are validated against select-list aggregate aliases (like
+// "count" from id.count()) and also against the table's real columns (for
+// grouped columns). This mirrors PostgREST's behavior where HAVING
+// conditions can reference output-list aliases.
+func parseHavingParam(raw string, table domain.Table, selectItems []string) (*WhereNode, error) {
+	// Build the set of valid aggregate aliases from the select list.
+	aggAliases := map[string]bool{}
+	for _, s := range selectItems {
+		if !isAggSelectEntry(s) {
+			continue
+		}
+		item := parseSelectItem(s)
+		alias := item.Alias
+		if alias == "" && item.Agg != "" {
+			alias = item.Agg // default alias is the aggregate name
+		}
+		if alias != "" {
+			aggAliases[alias] = true
+		}
+	}
+
+	// Validator: accept aggregate aliases and real table columns (grouped columns).
+	validate := func(col string) error {
+		if aggAliases[col] {
+			return nil
+		}
+		if err := validateColumn(table, col); err == nil {
+			return nil
+		}
+		return fmt.Errorf("column %q is not a valid aggregate alias or table column", col)
+	}
+
+	items, err := splitTopLevel(raw, ',')
+	if err != nil {
+		return nil, err
+	}
+	root := &WhereNode{Op: "and"}
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		leaf, err := parseLogicLeafWith(item, validate)
+		if err != nil {
+			return nil, err
+		}
+		root.Children = append(root.Children, leaf)
+	}
+	if len(root.Children) == 0 {
+		return nil, nil
+	}
+	return root, nil
 }
 
 // splitTopLevel splits s on sep at paren depth 0. Tracks '(' and ')'.

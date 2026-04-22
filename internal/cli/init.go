@@ -55,14 +55,25 @@ auth:
 tables:
   todos:
     fields:
-      id: { type: bigserial, primary_key: true }
-      user_id:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: user_id
         foreign_key:
           references: users.id
           on_delete: cascade
-      title: { type: text, required: true }
-      status: { type: text, required: true, enum: [pending, active, done], default: pending }
-      created_at: { type: timestamptz, required: true, default: now() }
+      - name: title
+        type: text
+        required: true
+      - name: status
+        type: text
+        required: true
+        enum: [pending, active, done]
+        default: pending
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
 
     rls:
       - operations: [select, insert, update, delete]

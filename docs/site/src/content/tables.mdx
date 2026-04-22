@@ -13,15 +13,27 @@ Tables are the core building block. Each table becomes a REST endpoint with full
 tables:
   posts:
     fields:
-      id: { type: bigserial, primary_key: true }
-      title: { type: text, required: true }
-      body: { type: text }
-      author_id: { type: bigint, foreign_key: users.id }
-      published: { type: boolean, default: "false" }
-      created_at: { type: timestamptz, default: "now()" }
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: title
+        type: text
+        required: true
+      - name: body
+        type: text
+      - name: author_id
+        foreign_key:
+          references: users.id
+          on_delete: cascade
+      - name: published
+        type: boolean
+        default: "false"
+      - name: created_at
+        type: timestamptz
+        default: "now()"
 ```
 
-Every table automatically gets a REST endpoint at `/api/<table_name>`.
+Every table automatically gets a REST endpoint at `/rest/v1/<table_name>`.
 
 ## Field types
 
@@ -30,37 +42,83 @@ Ultrabase supports all standard PostgreSQL types:
 | Type | Description |
 |---|---|
 | `text` | Variable-length string |
-| `integer` | 32-bit integer |
+| `varchar` | Variable-length string (use `varchar(N)` for length limit) |
+| `char` | Fixed-length string |
+| `integer` / `int` | 32-bit integer |
 | `bigint` | 64-bit integer |
+| `smallint` | 16-bit integer |
+| `serial` | Auto-incrementing 32-bit integer |
 | `bigserial` | Auto-incrementing 64-bit integer |
-| `boolean` | True/false |
-| `timestamptz` | Timestamp with timezone |
-| `jsonb` | Binary JSON |
-| `uuid` | UUID (use with `default: "gen_random_uuid()"`) |
-| `numeric` | Arbitrary precision number |
+| `smallserial` | Auto-incrementing 16-bit integer |
+| `numeric` / `decimal` | Arbitrary precision number |
+| `real` / `float` | 32-bit floating point |
+| `double` | 64-bit floating point |
+| `money` | Currency amount |
+| `boolean` / `bool` | True/false |
 | `date` | Calendar date |
-| `time` | Time of day |
+| `time` / `timetz` | Time of day (with or without timezone) |
+| `timestamp` / `timestamptz` | Timestamp (with or without timezone) |
+| `interval` | Time interval |
+| `uuid` | UUID (use with `default: "gen_random_uuid()"`) |
+| `jsonb` / `json` | JSON data (prefer `jsonb`) |
+| `bytea` | Binary data |
+| `inet` / `cidr` / `macaddr` | Network addresses |
+| `point` / `line` / `polygon` / `circle` / `box` | Geometric types |
+| `tsvector` / `tsquery` | Full-text search types |
+| `xml` | XML data |
+| `bit` | Bit string |
+
+Array types are also supported with a `[]` suffix (e.g., `text[]`, `integer[]`).
 
 ## Field options
 
 ```yaml
 fields:
-  email:
+  - name: email
     type: text
     required: true    # NOT NULL constraint
     unique: true      # UNIQUE constraint
-  role:
+  - name: role
     type: text
     default: "'user'" # SQL expression default
-  org_id:
-    type: bigint
-    foreign_key: orgs.id  # Foreign key reference
+  - name: org_id
+    foreign_key:
+      references: orgs.id     # Foreign key reference
+      on_delete: cascade      # cascade | restrict | set_null
 ```
 
 <Callout variant="warning" title="SQL defaults">
   The `default` value is a raw SQL expression. String literals need inner quotes:
   `default: "'active'"`. SQL functions don't: `default: "now()"`.
 </Callout>
+
+### Validation options
+
+Fields support validation constraints that are enforced at both the API and database level:
+
+```yaml
+fields:
+  - name: status
+    type: text
+    enum: [draft, published, archived]    # Allowed values
+  - name: slug
+    type: text
+    pattern: "^[a-z0-9-]+$"              # Regex pattern
+  - name: age
+    type: integer
+    min: 0                                # Minimum value
+    max: 150                              # Maximum value
+  - name: price
+    type: numeric
+    check: "price > 0"                    # Custom SQL CHECK constraint
+```
+
+| Option | Description |
+|---|---|
+| `enum` | List of allowed values |
+| `pattern` | Regex pattern the value must match |
+| `min` / `max` | Minimum and maximum numeric values |
+| `check` | Custom SQL CHECK constraint expression |
 
 ## Indexes
 
@@ -96,10 +154,26 @@ tables:
         check: "author_id = auth.uid()"
 ```
 
-<Callout variant="info">
+<Callout variant="info" title="Default access">
   When no RLS policies are defined and `allow_anon` is false (the default),
   the table is only accessible with a valid admin key.
 </Callout>
+
+### Policy types
+
+By default, RLS policies are **permissive** — a row is accessible if _any_ permissive policy allows it. Use **restrictive** policies for constraints that must always hold:
+
+```yaml
+rls:
+  # Permissive: users can see their own posts (default)
+  - operations: [select]
+    check: "author_id = auth.uid()"
+
+  # Restrictive: even owners can't see soft-deleted posts
+  - operations: [select]
+    type: restrictive
+    check: "deleted_at IS NULL"
+```
 
 ### Common patterns
 
@@ -135,7 +209,7 @@ tables:
 Query with the `search` parameter:
 
 ```bash
-curl "http://localhost:8080/api/posts?search=ultrabase+guide"
+curl "http://localhost:8080/rest/v1/posts?search=ultrabase+guide"
 ```
 
 ## Anonymous access

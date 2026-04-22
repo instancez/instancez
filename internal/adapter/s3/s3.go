@@ -4,6 +4,7 @@ package s3
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -15,19 +16,19 @@ import (
 
 // Store implements domain.ObjectStore using S3-compatible storage.
 type Store struct {
-	client       *s3.Client
+	client        *s3.Client
 	presignClient *s3.PresignClient
-	bucket       string
+	bucket        string
 }
 
 // Config holds S3 connection configuration.
 type Config struct {
-	Bucket          string
-	Region          string
-	Endpoint        string // for MinIO/custom endpoints (empty for real S3)
-	AccessKeyID     string
-	SecretAccessKey  string
-	ForcePathStyle  bool // true for MinIO
+	Bucket         string
+	Region         string
+	Endpoint       string // for MinIO/custom endpoints (empty for real S3)
+	AccessKeyID    string
+	SecretAccessKey string
+	ForcePathStyle bool // true for MinIO
 }
 
 // New creates a new S3 store with a real AWS SDK client.
@@ -121,6 +122,87 @@ func (s *Store) EnsureBucket(ctx context.Context, bucket string) error {
 	}
 
 	return nil
+}
+
+func (s *Store) Upload(ctx context.Context, key string, r io.Reader, contentType string, size int64) error {
+	input := &s3.PutObjectInput{
+		Bucket:      aws.String(s.bucket),
+		Key:         aws.String(key),
+		Body:        r,
+		ContentType: aws.String(contentType),
+	}
+	if size > 0 {
+		input.ContentLength = aws.Int64(size)
+	}
+	_, err := s.client.PutObject(ctx, input)
+	if err != nil {
+		return fmt.Errorf("upload object: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) Download(ctx context.Context, key string) (io.ReadCloser, string, error) {
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, "", fmt.Errorf("download object: %w", err)
+	}
+	ct := ""
+	if out.ContentType != nil {
+		ct = *out.ContentType
+	}
+	return out.Body, ct, nil
+}
+
+func (s *Store) Copy(ctx context.Context, srcKey, dstKey string) error {
+	_, err := s.client.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket:     aws.String(s.bucket),
+		CopySource: aws.String(s.bucket + "/" + srcKey),
+		Key:        aws.String(dstKey),
+	})
+	if err != nil {
+		return fmt.Errorf("copy object: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) Head(ctx context.Context, key string) (domain.ObjectInfo, error) {
+	out, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return domain.ObjectInfo{}, fmt.Errorf("head object: %w", err)
+	}
+	ct := ""
+	if out.ContentType != nil {
+		ct = *out.ContentType
+	}
+	var sz int64
+	if out.ContentLength != nil {
+		sz = *out.ContentLength
+	}
+	return domain.ObjectInfo{Key: key, Size: sz, ContentType: ct}, nil
+}
+
+func (s *Store) List(ctx context.Context, prefix string) ([]domain.ObjectInfo, error) {
+	out, err := s.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket: aws.String(s.bucket),
+		Prefix: aws.String(prefix),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list objects: %w", err)
+	}
+	var items []domain.ObjectInfo
+	for _, obj := range out.Contents {
+		items = append(items, domain.ObjectInfo{
+			Key:  aws.ToString(obj.Key),
+			Size: aws.ToInt64(obj.Size),
+		})
+	}
+	return items, nil
 }
 
 // Verify interface compliance.

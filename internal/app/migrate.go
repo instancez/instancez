@@ -4,6 +4,7 @@ package app
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -21,8 +22,18 @@ func NewMigrator(db domain.Database) *Migrator {
 }
 
 // Plan generates DDL statements to bring the DB in sync with the config.
-// It introspects the current DB state and diffs against the config.
-func (m *Migrator) Plan(ctx context.Context, cfg *domain.Config) (string, error) {
+// When oldCfg is nil (first migration), it generates the full schema.
+// When oldCfg is provided, it generates only the diff between configs.
+func (m *Migrator) Plan(ctx context.Context, oldCfg, newCfg *domain.Config) (string, error) {
+	if oldCfg == nil {
+		return planFromScratch(newCfg), nil
+	}
+	return planUpdate(oldCfg, newCfg), nil
+}
+
+// planFromScratch generates full DDL for a fresh database using IF NOT EXISTS /
+// CREATE OR REPLACE for safety.
+func planFromScratch(cfg *domain.Config) string {
 	var ddl []string
 
 	// Extensions
@@ -30,29 +41,24 @@ func (m *Migrator) Plan(ctx context.Context, cfg *domain.Config) (string, error)
 		ddl = append(ddl, fmt.Sprintf("CREATE EXTENSION IF NOT EXISTS %s;", ext))
 	}
 
-	// Users table (from auth config)
+	// Users table (core auth columns + custom fields from tables.users)
 	if cfg.Auth != nil {
-		ddl = append(ddl, generateUsersTable(cfg.Auth)...)
+		ddl = append(ddl, generateUsersTable(cfg.Auth, cfg.UserExtraFields())...)
 	}
 
-	// Tables in dependency order (FKs reference other tables)
+	// Tables in dependency order (FKs reference other tables).
+	// Pass 1: CREATE TABLE (must complete before indexes
+	// so that ADD COLUMN IF NOT EXISTS runs before CREATE INDEX references the column).
 	ordered := orderTables(cfg.Tables)
 	for _, name := range ordered {
 		table := cfg.Tables[name]
-		// Generate CREATE TABLE IF NOT EXISTS (idempotent)
 		ddl = append(ddl, generateTable(name, table, cfg.Tables)...)
+	}
 
-		// Auto-diff: check for column additions/changes on existing tables
-		if m.db != nil {
-			exists, err := m.tableExists(ctx, name)
-			if err == nil && exists {
-				existing, err := m.introspectTable(ctx, name)
-				if err == nil && len(existing) > 0 {
-					alterDDL := diffTable(name, existing, table)
-					ddl = append(ddl, alterDDL...)
-				}
-			}
-		}
+	// Pass 2: Indexes (after all tables/columns exist).
+	for _, name := range ordered {
+		table := cfg.Tables[name]
+		ddl = append(ddl, generateIndexes(name, table)...)
 	}
 
 	// Storage metadata table
@@ -83,49 +89,130 @@ func (m *Migrator) Plan(ctx context.Context, cfg *domain.Config) (string, error)
 		ddl = append(ddl, generateSearch(name, table)...)
 	}
 
-	if len(ddl) == 0 {
-		return "", nil
+	// RPC functions (Postgres stored functions)
+	if len(cfg.Functions) > 0 {
+		fnNames := sortedKeys(cfg.Functions)
+		for _, n := range fnNames {
+			ddl = append(ddl, generateRPCFunction(n, cfg.Functions[n]))
+		}
 	}
-	return strings.Join(ddl, "\n\n"), nil
+
+	if len(ddl) == 0 {
+		return ""
+	}
+	return strings.Join(ddl, "\n\n")
+}
+
+// planUpdate generates DDL for transitioning from oldCfg to newCfg.
+// It produces removal DDL from the config diff, followed by additions and
+// alterations, then re-emits idempotent items (indexes, RLS, search, functions).
+func planUpdate(oldCfg, newCfg *domain.Config) string {
+	diff := diffConfigs(oldCfg, newCfg)
+	var ddl []string
+
+	// 1. Removals (DROP TABLE, DROP COLUMN, DROP INDEX, DROP POLICY, etc.)
+	ddl = append(ddl, diff.Removals...)
+
+	// 2. Additions (new extensions, auth, tables, columns, storage, events)
+	ddl = append(ddl, diff.Additions...)
+
+	// 3. Alterations (column type changes, nullability changes)
+	ddl = append(ddl, diff.Alterations...)
+
+	// 4. Re-emit idempotent items for all current tables.
+	// These use IF NOT EXISTS / CREATE OR REPLACE / DROP+CREATE patterns,
+	// so they're safe to run even when nothing changed.
+	ordered := orderTables(newCfg.Tables)
+
+	// Indexes (CREATE INDEX IF NOT EXISTS)
+	for _, name := range ordered {
+		ddl = append(ddl, generateIndexes(name, newCfg.Tables[name])...)
+	}
+
+	// RLS functions (CREATE OR REPLACE)
+	if newCfg.Auth != nil {
+		ddl = append(ddl, generateRLSFunctions()...)
+	}
+
+	// RLS policies (DROP IF EXISTS + CREATE POLICY — idempotent)
+	for _, name := range ordered {
+		ddl = append(ddl, generateRLSPolicies(name, newCfg.Tables[name])...)
+	}
+	for bucketName, bucket := range newCfg.Storage {
+		ddl = append(ddl, generateStorageRLS(bucketName, bucket)...)
+	}
+
+	// Search (ADD COLUMN IF NOT EXISTS + CREATE INDEX IF NOT EXISTS)
+	for _, name := range ordered {
+		ddl = append(ddl, generateSearch(name, newCfg.Tables[name])...)
+	}
+
+	// RPC functions (CREATE OR REPLACE FUNCTION)
+	if len(newCfg.Functions) > 0 {
+		fnNames := sortedKeys(newCfg.Functions)
+		for _, n := range fnNames {
+			ddl = append(ddl, generateRPCFunction(n, newCfg.Functions[n]))
+		}
+	}
+
+	if len(ddl) == 0 {
+		return ""
+	}
+	return strings.Join(ddl, "\n\n")
 }
 
 // Apply generates and executes the migration, recording it in the history table.
+// It stores the applied config as JSON so the next run can diff against it to
+// detect removed objects and avoid re-running unchanged migrations.
 func (m *Migrator) Apply(ctx context.Context, cfg *domain.Config) error {
 	if err := m.db.EnsureMigrationsTable(ctx); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
 
-	sql, err := m.Plan(ctx, cfg)
+	configJSON, err := json.Marshal(cfg)
 	if err != nil {
-		return fmt.Errorf("migrate plan: %w", err)
+		return fmt.Errorf("migrate: marshal config: %w", err)
 	}
-	if sql == "" {
-		return nil
-	}
+	configChecksum := fmt.Sprintf("%x", sha256.Sum256(configJSON))
 
-	checksum := fmt.Sprintf("%x", sha256.Sum256([]byte(sql)))
-
-	// Check if this exact migration was already applied.
 	last, err := m.db.GetLastMigration(ctx)
 	if err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
-	if last != nil && last.Checksum == checksum {
-		return nil // already applied
+	if last != nil && last.Checksum == configChecksum {
+		return nil // config unchanged
 	}
 
-	if err := m.db.ExecDDL(ctx, sql); err != nil {
+	// Recover the previous config to diff against.
+	var oldCfg *domain.Config
+	if last != nil && last.ConfigJSON != "" && last.ConfigJSON != "{}" {
+		oldCfg = &domain.Config{}
+		if err := json.Unmarshal([]byte(last.ConfigJSON), oldCfg); err != nil {
+			oldCfg = nil // treat as first migration if unparseable
+		}
+	}
+
+	planSQL, err := m.Plan(ctx, oldCfg, cfg)
+	if err != nil {
+		return fmt.Errorf("migrate plan: %w", err)
+	}
+
+	if planSQL == "" {
+		return nil
+	}
+
+	if err := m.db.ExecDDL(ctx, planSQL); err != nil {
 		return fmt.Errorf("migrate exec: %w", err)
 	}
 
-	if err := m.db.RecordMigration(ctx, checksum, sql); err != nil {
+	if err := m.db.RecordMigration(ctx, configChecksum, planSQL, string(configJSON)); err != nil {
 		return fmt.Errorf("migrate record: %w", err)
 	}
 
 	return nil
 }
 
-func generateUsersTable(auth *domain.Auth) []string {
+func generateUsersTable(auth *domain.Auth, extraFields []domain.Field) []string {
 	var ddl []string
 
 	// pgcrypto provides gen_random_uuid(); safe to request idempotently.
@@ -151,13 +238,21 @@ func generateUsersTable(auth *domain.Auth) []string {
 	// Custom auth fields are promoted to top-level columns so existing
 	// YAML-driven projects keep working. They're also surfaced under
 	// user_metadata in the GoTrue response.
-	names := sortedKeys(auth.Fields)
-	for _, name := range names {
-		field := auth.Fields[name]
-		cols = append(cols, formatColumn(name, field))
+	for _, field := range extraFields {
+		cols = append(cols, formatColumn(field.Name, field))
 	}
 
 	ddl = append(ddl, fmt.Sprintf("CREATE TABLE IF NOT EXISTS users (\n  %s\n);", strings.Join(cols, ",\n  ")))
+
+	// Additive column for anonymous sign-in support. Declared as an ALTER
+	// outside the CREATE TABLE block so existing deployments pick it up on
+	// the next migration without needing a destructive schema reset.
+	ddl = append(ddl, `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_anonymous BOOLEAN NOT NULL DEFAULT FALSE;`)
+	// Email is nullable for anonymous users (they have no mailbox). The
+	// original CREATE declared email NOT NULL UNIQUE, so drop the NOT NULL
+	// on existing deployments; the UNIQUE constraint stays and Postgres
+	// permits multiple NULLs under a regular UNIQUE by default.
+	ddl = append(ddl, `ALTER TABLE users ALTER COLUMN email DROP NOT NULL;`)
 
 	// JWT signing keys. Managed by app.JWTKeyManager; ultrabase generates
 	// a random HS256 key on first startup and never exposes it in YAML.
@@ -204,7 +299,36 @@ func generateUsersTable(auth *domain.Auth) []string {
   expires_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );`)
+		// Additive columns for 6-digit OTP support. `code` is the numeric
+		// token a user types into a form; `email` scopes lookups so two
+		// users can't collide on the same random 6 digits. Both are
+		// nullable so legacy signup/recovery rows keep working.
+		ddl = append(ddl, `ALTER TABLE _auth_email_verifications ADD COLUMN IF NOT EXISTS code TEXT;`)
+		ddl = append(ddl, `ALTER TABLE _auth_email_verifications ADD COLUMN IF NOT EXISTS email TEXT;`)
+		ddl = append(ddl, `CREATE INDEX IF NOT EXISTS _auth_email_verif_email_code_idx ON _auth_email_verifications (email, code);`)
 	}
+
+	// MFA: TOTP factors + challenges. We always create these (the
+	// migration cost is trivial and gating on a config flag would force
+	// callers to restart ultrabase just to enable 2FA).
+	ddl = append(ddl, `CREATE TABLE IF NOT EXISTS _mfa_factors (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  friendly_name TEXT,
+  factor_type TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'unverified',
+  secret TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);`)
+	ddl = append(ddl, `CREATE INDEX IF NOT EXISTS _mfa_factors_user_idx ON _mfa_factors (user_id);`)
+	ddl = append(ddl, `CREATE TABLE IF NOT EXISTS _mfa_challenges (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  factor_id UUID NOT NULL REFERENCES _mfa_factors(id) ON DELETE CASCADE,
+  verified_at TIMESTAMPTZ,
+  ip_address TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);`)
 
 	return ddl
 }
@@ -214,19 +338,19 @@ func generateTable(name string, table domain.Table, allTables map[string]domain.
 	var cols []string
 	var constraints []string
 
-	// Sort field names for deterministic output, but put PK first.
-	fieldNames := sortedKeys(table.Fields)
-	sort.SliceStable(fieldNames, func(i, j int) bool {
-		fi := table.Fields[fieldNames[i]]
-		fj := table.Fields[fieldNames[j]]
-		if fi.PrimaryKey != fj.PrimaryKey {
-			return fi.PrimaryKey
+	// Copy fields and stable-sort so PK comes first; slice order is
+	// otherwise preserved from the YAML declaration.
+	fields := make([]domain.Field, len(table.Fields))
+	copy(fields, table.Fields)
+	sort.SliceStable(fields, func(i, j int) bool {
+		if fields[i].PrimaryKey != fields[j].PrimaryKey {
+			return fields[i].PrimaryKey
 		}
 		return false
 	})
 
-	for _, fname := range fieldNames {
-		field := table.Fields[fname]
+	for _, field := range fields {
+		fname := field.Name
 		cols = append(cols, formatColumn(fname, field))
 
 		// FK constraint
@@ -288,7 +412,13 @@ func generateTable(name string, table domain.Table, allTables map[string]domain.
 	// REPLICA IDENTITY FULL for WAL CDC
 	ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s REPLICA IDENTITY FULL;", name))
 
-	// Indexes
+	return ddl
+}
+
+// generateIndexes creates index DDL for a table. Split from generateTable so
+// indexes run after column diffs (ADD COLUMN must precede CREATE INDEX).
+func generateIndexes(name string, table domain.Table) []string {
+	var ddl []string
 	for _, idx := range table.Indexes {
 		indexName := fmt.Sprintf("idx_%s_%s", name, strings.Join(idx.Columns, "_"))
 		unique := ""
@@ -302,21 +432,26 @@ func generateTable(name string, table domain.Table, allTables map[string]domain.
 		ddl = append(ddl, fmt.Sprintf("CREATE %sINDEX IF NOT EXISTS %s ON %s (%s)%s;",
 			unique, indexName, name, strings.Join(idx.Columns, ", "), where))
 	}
-
 	return ddl
 }
 
-func formatColumn(name string, field domain.Field) string {
-	typ := field.Type
-	if typ == "" && field.ForeignKey != nil {
-		// Infer FK column type from the referenced table's PK. users.id is
-		// UUID (GoTrue contract); everything else defaults to BIGINT to
-		// match the historical bigserial PK convention.
-		typ = "BIGINT"
-		if strings.EqualFold(field.ForeignKey.References, "users.id") {
-			typ = "UUID"
-		}
+// effectiveType returns the resolved SQL type for a field, inferring from FK
+// references when the type is empty (users.id → UUID, others → BIGINT).
+func effectiveType(f domain.Field) string {
+	if f.Type != "" {
+		return f.Type
 	}
+	if f.ForeignKey != nil {
+		if strings.EqualFold(f.ForeignKey.References, "users.id") {
+			return "UUID"
+		}
+		return "BIGINT"
+	}
+	return f.Type
+}
+
+func formatColumn(name string, field domain.Field) string {
+	typ := effectiveType(field)
 
 	parts := []string{name, typ}
 
@@ -371,11 +506,13 @@ func generateObjectsTable() []string {
 	return []string{`CREATE TABLE IF NOT EXISTS _objects (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   bucket_id TEXT NOT NULL,
-  size BIGINT NOT NULL,
-  mime TEXT NOT NULL,
+  name TEXT NOT NULL,
+  size BIGINT NOT NULL DEFAULT 0,
+  mime TEXT NOT NULL DEFAULT '',
   uploaded_by UUID REFERENCES users(id),
   uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  metadata JSONB
+  metadata JSONB,
+  UNIQUE (bucket_id, name)
 );`}
 }
 
@@ -473,6 +610,7 @@ func generateRLSPolicies(tableName string, table domain.Table) []string {
 			policyName := fmt.Sprintf("%s_%s_%d", tableName, op, i)
 			pgOp := strings.ToUpper(op)
 
+			ddl = append(ddl, fmt.Sprintf("DROP POLICY IF EXISTS %s ON %s;", policyName, tableName))
 			if op == "insert" {
 				ddl = append(ddl, fmt.Sprintf(
 					"CREATE POLICY %s ON %s%s FOR %s WITH CHECK (%s);",
@@ -497,9 +635,11 @@ func generateStorageRLS(bucketName string, bucket domain.Bucket) []string {
 
 	// Public bucket: allow SELECT without auth
 	if bucket.Public {
+		policyName := fmt.Sprintf("%s_public_select", bucketName)
+		ddl = append(ddl, fmt.Sprintf("DROP POLICY IF EXISTS %s ON _objects;", policyName))
 		ddl = append(ddl, fmt.Sprintf(
-			"CREATE POLICY %s_public_select ON _objects FOR SELECT USING (bucket_id = '%s');",
-			bucketName, bucketName))
+			"CREATE POLICY %s ON _objects FOR SELECT USING (bucket_id = '%s');",
+			policyName, bucketName))
 	}
 
 	for i, policy := range bucket.RLS {
@@ -509,6 +649,7 @@ func generateStorageRLS(bucketName string, bucket domain.Bucket) []string {
 			pgOp := strings.ToUpper(op)
 			scopedCheck := fmt.Sprintf("bucket_id = '%s' AND (%s)", bucketName, policy.Check)
 
+			ddl = append(ddl, fmt.Sprintf("DROP POLICY IF EXISTS %s ON _objects;", policyName))
 			if op == "insert" {
 				ddl = append(ddl, fmt.Sprintf(
 					"CREATE POLICY %s ON _objects%s FOR %s WITH CHECK (%s);",
@@ -600,6 +741,42 @@ func orderTables(tables map[string]domain.Table) []string {
 	}
 
 	return result
+}
+
+// generateRPCFunction emits a CREATE OR REPLACE FUNCTION statement for a
+// YAML-declared Postgres function. The function name, arg names, arg types,
+// return type, language, volatility and security clause have all been
+// validated by config.validateRPCFunction before reaching this point, so
+// the values are safe to interpolate as SQL identifiers. Body bytes are
+// wrapped in $ub$...$ub$ dollar quoting; bodies that contain that tag are
+// rejected at config load, so the body cannot break out of the literal.
+func generateRPCFunction(name string, fn domain.Function) string {
+	var sig []string
+	for _, a := range fn.Args {
+		piece := fmt.Sprintf(`"%s" %s`, a.Name, a.Type)
+		if a.Default != nil {
+			piece += fmt.Sprintf(" DEFAULT %s", formatDefault(a.Default, a.Type))
+		}
+		sig = append(sig, piece)
+	}
+
+	language := strings.ToLower(fn.Language)
+	volatility := strings.ToUpper(fn.Volatility)
+	security := "SECURITY INVOKER"
+	if strings.EqualFold(fn.Security, "definer") {
+		security = "SECURITY DEFINER"
+	}
+
+	return fmt.Sprintf(
+		"CREATE OR REPLACE FUNCTION public.\"%s\"(%s)\nRETURNS %s\nLANGUAGE %s\n%s\n%s\nAS $ub$%s$ub$;",
+		name,
+		strings.Join(sig, ", "),
+		fn.Returns.Type,
+		language,
+		volatility,
+		security,
+		fn.Body,
+	)
 }
 
 func sortedKeys[V any](m map[string]V) []string {

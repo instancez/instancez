@@ -9,6 +9,7 @@ type Config struct {
 	Version    int               `yaml:"version" json:"version"`
 	Project    Project           `yaml:"project" json:"project"`
 	Extensions []string          `yaml:"extensions" json:"extensions"`
+	Database   DatabaseConfig    `yaml:"database" json:"database"`
 	Server     Server            `yaml:"server" json:"server"`
 	Providers  Providers         `yaml:"providers" json:"providers"`
 	Auth       *Auth             `yaml:"auth" json:"auth"`
@@ -16,8 +17,33 @@ type Config struct {
 	Storage    map[string]Bucket `yaml:"storage" json:"storage"`
 	On         map[string]Trigger `yaml:"on" json:"on"`
 	Functions  map[string]Function `yaml:"functions" json:"functions"`
-	Seeds      map[string][]map[string]any `yaml:"seeds" json:"seeds"`
+	Data       map[string]map[string]string `yaml:"data" json:"data"`
 }
+
+// coreUserColumns are auto-emitted by the migrator and should not be
+// treated as user-defined fields when iterating tables.users.
+var coreUserColumns = map[string]bool{
+	"id": true, "email": true, "password_hash": true,
+	"email_verified": true, "email_confirmed_at": true,
+	"last_sign_in_at": true, "raw_app_meta_data": true,
+	"raw_user_meta_data": true, "created_at": true, "updated_at": true,
+}
+
+// UserExtraFields returns the custom (non-core) fields from tables.users.
+func (c *Config) UserExtraFields() []Field {
+	usersTable, ok := c.Tables["users"]
+	if !ok {
+		return nil
+	}
+	var extra []Field
+	for _, f := range usersTable.Fields {
+		if !coreUserColumns[f.Name] {
+			extra = append(extra, f)
+		}
+	}
+	return extra
+}
+
 
 // Project holds display-only metadata.
 type Project struct {
@@ -31,7 +57,6 @@ type Server struct {
 	CORS        CORS         `yaml:"cors" json:"cors"`
 	Timeouts    Timeouts     `yaml:"timeouts" json:"timeouts"`
 	MaxBodySize string       `yaml:"max_body_size" json:"max_body_size"`
-	DB          DBConfig     `yaml:"db" json:"db"`
 	DocsUI      *bool        `yaml:"docs_ui" json:"docs_ui"`
 	MaxLimit    int          `yaml:"max_limit" json:"max_limit"`
 }
@@ -51,7 +76,7 @@ type Timeouts struct {
 	Shutdown string `yaml:"shutdown" json:"shutdown"`
 }
 
-type DBConfig struct {
+type DatabaseConfig struct {
 	Pool PoolConfig `yaml:"pool" json:"pool"`
 }
 
@@ -72,15 +97,16 @@ type EmailProvider struct {
 }
 
 type StorageProvider struct {
-	Type string `yaml:"type" json:"type"` // s3 | gcs | minio | local
+	Type string `yaml:"type" json:"type"` // s3 | minio | local
 }
 
-// Auth configures authentication.
+// Auth configures authentication. Custom user fields are defined in
+// tables.users like any other table; core columns (id, email, password_hash,
+// etc.) are auto-emitted by the migrator.
 type Auth struct {
 	JWTExpiry           string            `yaml:"jwt_expiry" json:"jwt_expiry"`
 	RefreshTokens       bool              `yaml:"refresh_tokens" json:"refresh_tokens"`
 	RefreshTokenExpiry  string            `yaml:"refresh_token_expiry" json:"refresh_token_expiry"`
-	Fields              map[string]Field  `yaml:"fields" json:"fields"`
 	Email               *AuthEmail        `yaml:"email" json:"email"`
 	Google              *OAuthProvider    `yaml:"google" json:"google"`
 	GitHub              *OAuthProvider    `yaml:"github" json:"github"`
@@ -105,7 +131,7 @@ type OAuthProvider struct {
 
 // Table defines a database table.
 type Table struct {
-	Fields       map[string]Field    `yaml:"fields" json:"fields"`
+	Fields       []Field             `yaml:"fields" json:"fields"`
 	Indexes      []Index             `yaml:"indexes" json:"indexes"`
 	RLS          []RLSPolicy         `yaml:"rls" json:"rls"`
 	AllowAnon    bool                `yaml:"allow_anon" json:"allow_anon"`
@@ -113,8 +139,28 @@ type Table struct {
 	SearchConfig string              `yaml:"search_config" json:"search_config"`
 }
 
+// GetField returns the named field and true, or zero value and false.
+func (t Table) GetField(name string) (Field, bool) {
+	for _, f := range t.Fields {
+		if f.Name == name {
+			return f, true
+		}
+	}
+	return Field{}, false
+}
+
+// FieldMap returns a map view of the fields for code that needs key-based lookup.
+func (t Table) FieldMap() map[string]Field {
+	m := make(map[string]Field, len(t.Fields))
+	for _, f := range t.Fields {
+		m[f.Name] = f
+	}
+	return m
+}
+
 // Field defines a table column.
 type Field struct {
+	Name       string      `yaml:"name" json:"name"`
 	Type       string      `yaml:"type" json:"type"`
 	PrimaryKey bool        `yaml:"primary_key" json:"primary_key"`
 	Required   bool        `yaml:"required" json:"required"`
@@ -187,28 +233,35 @@ type EmailAction struct {
 	Condition string `yaml:"condition" json:"condition"`
 }
 
-// Function defines a custom SQL function exposed as a REST endpoint.
+// Function defines a user-declared RPC function. Each function becomes a real
+// Postgres stored procedure (CREATE OR REPLACE FUNCTION), exposed at
+// /rest/v1/rpc/<name> for supabase-js .rpc() compatibility.
 type Function struct {
-	Description  string              `yaml:"description" json:"description"`
-	Method       string              `yaml:"method" json:"method"` // GET | POST | PUT | DELETE
-	Query        string              `yaml:"query" json:"query"`
-	Params       map[string]FuncParam `yaml:"params" json:"params"`
-	Returns      FuncReturn          `yaml:"returns" json:"returns"`
-	AuthRequired bool                `yaml:"auth_required" json:"auth_required"`
-}
+	Description  string    `yaml:"description" json:"description"`
+	AuthRequired bool      `yaml:"auth_required" json:"auth_required"`
+	Language     string    `yaml:"language,omitempty" json:"language,omitempty"`
+	Volatility   string    `yaml:"volatility,omitempty" json:"volatility,omitempty"`
+	Security     string    `yaml:"security,omitempty" json:"security,omitempty"`
+	Args         []FuncArg `yaml:"args,omitempty" json:"args,omitempty"`
+	Body         string    `yaml:"body,omitempty" json:"body,omitempty"`
+	Returns      FuncReturn `yaml:"returns" json:"returns"`
 
-type FuncParam struct {
-	Type     string   `yaml:"type" json:"type"`
-	Required bool     `yaml:"required" json:"required"`
-	Default  any      `yaml:"default" json:"default"`
-	Enum     []string `yaml:"enum" json:"enum"`
-	Min      *float64 `yaml:"min" json:"min"`
-	Max      *float64 `yaml:"max" json:"max"`
+	// ReturnCategory is derived from Returns.Type at config load.
+	// Values: "void" | "setof" | "scalar".
+	ReturnCategory string `yaml:"-" json:"-"`
 }
 
 type FuncReturn struct {
-	Type   string            `yaml:"type" json:"type"` // rows | row | scalar | void
-	Schema map[string]string `yaml:"schema" json:"schema"`
+	Type string `yaml:"type" json:"type"`
+}
+
+// FuncArg is one argument to an rpc-kind Function. Order matters: it drives
+// $1/$2 positional mapping and the CREATE FUNCTION signature.
+type FuncArg struct {
+	Name     string `yaml:"name" json:"name"`
+	Type     string `yaml:"type" json:"type"`
+	Default  any    `yaml:"default" json:"default"`
+	Required bool   `yaml:"required" json:"required"`
 }
 
 // --- Runtime types (not from YAML) ---
@@ -263,8 +316,19 @@ type StorageObject struct {
 
 // Migration records an applied migration.
 type Migration struct {
-	ID        int64     `json:"id"`
+	ID         int64     `json:"id"`
+	Checksum   string    `json:"checksum"`
+	SQL        string    `json:"sql"`
+	ConfigJSON string    `json:"config_json"`
+	AppliedAt  time.Time `json:"applied_at"`
+}
+
+// DataRecord tracks an applied CSV data import.
+type DataRecord struct {
+	Key       string    `json:"key"`
+	TableName string    `json:"table_name"`
+	Source    string    `json:"source"`
 	Checksum  string    `json:"checksum"`
-	SQL       string    `json:"sql"`
+	RowCount  int       `json:"row_count"`
 	AppliedAt time.Time `json:"applied_at"`
 }

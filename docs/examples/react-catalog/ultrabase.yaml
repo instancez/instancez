@@ -40,23 +40,24 @@ auth:
     jwt_expiry: 1h
     refresh_tokens: true
     refresh_token_expiry: 7d
-    fields:
-        display_name:
-            type: text
-            required: false
 tables:
+    users:
+        fields:
+            - name: display_name
+              type: text
+              required: false
     categories:
         fields:
-            id:
-                type: bigserial
-                primary_key: true
-            slug:
-                type: varchar(63)
-                required: true
-                unique: true
-            name:
-                type: text
-                required: true
+            - name: id
+              type: bigserial
+              primary_key: true
+            - name: slug
+              type: varchar(63)
+              required: true
+              unique: true
+            - name: name
+              type: text
+              required: true
         indexes: []
         rls:
             - operations:
@@ -69,56 +70,56 @@ tables:
 
     products:
         fields:
-            id:
-                type: bigserial
-                primary_key: true
-            name:
-                type: text
-                required: true
-            description:
-                type: text
-                required: false
-            price_cents:
-                type: integer
-                required: true
-                min: 0
-            stock:
-                type: integer
-                required: true
-                default: 0
-                min: 0
-            status:
-                type: text
-                required: true
-                default: draft
-                enum:
-                    - draft
-                    - active
-                    - archived
-            featured:
-                type: boolean
-                required: true
-                default: false
-            on_sale:
-                type: boolean
-                required: true
-                default: false
-            tags:
-                type: text[]
-                required: false
-            metadata:
-                type: jsonb
-                required: false
-            category_id:
-                type: ""
-                required: false
-                foreign_key:
-                    references: categories.id
-                    on_delete: set_null
-            created_at:
-                type: timestamptz
-                required: true
-                default: now()
+            - name: id
+              type: bigserial
+              primary_key: true
+            - name: name
+              type: text
+              required: true
+            - name: description
+              type: text
+              required: false
+            - name: price_cents
+              type: integer
+              required: true
+              min: 0
+            - name: stock
+              type: integer
+              required: true
+              default: 0
+              min: 0
+            - name: status
+              type: text
+              required: true
+              default: draft
+              enum:
+                  - draft
+                  - active
+                  - archived
+            - name: featured
+              type: boolean
+              required: true
+              default: false
+            - name: on_sale
+              type: boolean
+              required: true
+              default: false
+            - name: tags
+              type: text[]
+              required: false
+            - name: metadata
+              type: jsonb
+              required: false
+            - name: category_id
+              type: ""
+              required: false
+              foreign_key:
+                  references: categories.id
+                  on_delete: set_null
+            - name: created_at
+              type: timestamptz
+              required: true
+              default: now()
         indexes:
             - columns:
                 - status
@@ -142,36 +143,36 @@ tables:
 
     reviews:
         fields:
-            id:
-                type: bigserial
-                primary_key: true
-            product_id:
-                type: ""
-                required: true
-                foreign_key:
-                    references: products.id
-                    on_delete: cascade
-            user_id:
-                type: ""
-                required: false
-                foreign_key:
-                    references: users.id
-                    on_delete: set_null
-            author:
-                type: text
-                required: true
-            rating:
-                type: integer
-                required: true
-                min: 1
-                max: 5
-            body:
-                type: text
-                required: false
-            created_at:
-                type: timestamptz
-                required: true
-                default: now()
+            - name: id
+              type: bigserial
+              primary_key: true
+            - name: product_id
+              type: ""
+              required: true
+              foreign_key:
+                  references: products.id
+                  on_delete: cascade
+            - name: user_id
+              type: ""
+              required: false
+              foreign_key:
+                  references: users.id
+                  on_delete: set_null
+            - name: author
+              type: text
+              required: true
+            - name: rating
+              type: integer
+              required: true
+              min: 1
+              max: 5
+            - name: body
+              type: text
+              required: false
+            - name: created_at
+              type: timestamptz
+              required: true
+              default: now()
         indexes:
             - columns:
                 - product_id

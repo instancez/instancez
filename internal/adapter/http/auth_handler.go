@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,7 +47,7 @@ func NewAuthHandler(deps ServerDeps) *AuthHandler {
 // Mount registers the /auth/v1/* routes on the root router group.
 func (h *AuthHandler) Mount(root *gin.RouterGroup) {
 	auth := root.Group("/auth/v1")
-	auth.POST("/signup", h.handleSignup)
+	auth.POST("/signup", h.handleSignupDispatch)
 	auth.POST("/token", h.handleToken)
 	auth.GET("/user", jwtAuth(h.jwtKeys, true), h.handleGetUser)
 	auth.PUT("/user", jwtAuth(h.jwtKeys, true), h.handleUpdateUser)
@@ -56,7 +58,20 @@ func (h *AuthHandler) Mount(root *gin.RouterGroup) {
 		auth.POST("/recover", h.handleRecover)
 		auth.POST("/verify", h.handleVerify)
 		auth.GET("/verify", h.handleVerifyGET)
+		auth.POST("/otp", h.handleOTP)
 	}
+
+	admin := auth.Group("/admin", adminKeyAuth())
+	admin.POST("/generate_link", h.handleGenerateLink)
+	admin.POST("/users", h.handleAdminCreateUser)
+	admin.GET("/users", h.handleAdminListUsers)
+	admin.GET("/users/:uid", h.handleAdminGetUser)
+	admin.PUT("/users/:uid", h.handleAdminUpdateUser)
+	admin.DELETE("/users/:uid", h.handleAdminDeleteUser)
+
+	auth.POST("/invite", adminKeyAuth(), h.handleAdminInvite)
+
+	h.MountMFA(auth)
 
 	// OAuth (Supabase calls this /authorize)
 	auth.GET("/authorize", h.handleAuthorize)
@@ -70,6 +85,60 @@ func (h *AuthHandler) Mount(root *gin.RouterGroup) {
 
 // ---------- signup ----------
 
+// handleSignupDispatch peeks the raw request body before validation so we
+// can route empty / missing-email bodies to the anonymous sign-in path.
+// The existing handleSignup uses `binding:"required,email"`, which would
+// otherwise reject anonymous requests with a 400 before any branching
+// logic runs.
+func (h *AuthHandler) handleSignupDispatch(c *gin.Context) {
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		problemJSON(c, 400, "bad_request", "Invalid signup request")
+		return
+	}
+	c.Request.Body = io.NopCloser(strings.NewReader(string(body)))
+
+	var probe map[string]any
+	_ = json.Unmarshal(body, &probe)
+	email, _ := probe["email"].(string)
+	if strings.TrimSpace(email) == "" {
+		h.handleSignupAnonymous(c, probe)
+		return
+	}
+	h.handleSignup(c)
+}
+
+// handleSignupAnonymous creates a placeholder user with no email/password
+// and a JWT carrying is_anonymous=true. supabase-js exposes this via
+// auth.signInAnonymously().
+func (h *AuthHandler) handleSignupAnonymous(c *gin.Context, probe map[string]any) {
+	userData, _ := probe["data"].(map[string]any)
+	userMetaJSON := marshalJSONBDefault(userData)
+	appMetaJSON, _ := json.Marshal(map[string]any{
+		"provider":     "anonymous",
+		"providers":    []string{"anonymous"},
+		"is_anonymous": true,
+	})
+
+	ctx := c.Request.Context()
+	row, err := h.db.QueryRow(ctx,
+		fmt.Sprintf("INSERT INTO users (is_anonymous, raw_app_meta_data, raw_user_meta_data) VALUES (true, $1::jsonb, $2::jsonb) RETURNING %s, is_anonymous", userSelectCols),
+		string(appMetaJSON), string(userMetaJSON))
+	if err != nil || row == nil {
+		h.logger.Error("anonymous signup error", "error", err)
+		problemJSON(c, 500, "internal", "Failed to create anonymous user")
+		return
+	}
+
+	userID := asString(row["id"])
+	session, err := h.buildSession(ctx, userID, row)
+	if err != nil {
+		problemJSON(c, 500, "internal", "Failed to generate token")
+		return
+	}
+	c.JSON(200, session)
+}
+
 func (h *AuthHandler) handleSignup(c *gin.Context) {
 	var req struct {
 		Email    string         `json:"email" binding:"required,email"`
@@ -81,16 +150,12 @@ func (h *AuthHandler) handleSignup(c *gin.Context) {
 		return
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-	if err != nil {
-		problemJSON(c, 500, "internal", "Failed to hash password")
+	hash, ok := hashPassword(c, req.Password)
+	if !ok {
 		return
 	}
 
-	userMetaJSON, _ := json.Marshal(req.Data)
-	if len(userMetaJSON) == 0 {
-		userMetaJSON = []byte("{}")
-	}
+	userMetaJSON := marshalJSONBDefault(req.Data)
 
 	// Signup always sets raw_user_meta_data (JSONB). Custom auth.fields are
 	// also promoted to top-level columns when present in `data`.
@@ -99,10 +164,10 @@ func (h *AuthHandler) handleSignup(c *gin.Context) {
 	vals := []any{req.Email, string(hash), string(userMetaJSON)}
 	argIdx := 4
 
-	if h.cfg.Auth.Fields != nil && req.Data != nil {
-		for name := range h.cfg.Auth.Fields {
-			if val, ok := req.Data[name]; ok {
-				cols = append(cols, name)
+	if req.Data != nil {
+		for _, f := range h.cfg.UserExtraFields() {
+			if val, ok := req.Data[f.Name]; ok {
+				cols = append(cols, f.Name)
 				placeholders = append(placeholders, fmt.Sprintf("$%d", argIdx))
 				vals = append(vals, val)
 				argIdx++
@@ -111,14 +176,14 @@ func (h *AuthHandler) handleSignup(c *gin.Context) {
 	}
 
 	query := fmt.Sprintf(
-		"INSERT INTO users (%s) VALUES (%s) RETURNING id::text, email, email_verified, email_confirmed_at, last_sign_in_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at",
+		"INSERT INTO users (%s) VALUES (%s) RETURNING %s",
 		strings.Join(cols, ", "),
-		strings.Join(placeholders, ", "))
+		strings.Join(placeholders, ", "), userSelectCols)
 
 	ctx := c.Request.Context()
 	row, err := h.db.QueryRow(ctx, query, vals...)
 	if err != nil {
-		if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "unique") {
+		if isDuplicateKeyErr(err) {
 			problemJSON(c, 409, "conflict", "Email already registered")
 			return
 		}
@@ -267,8 +332,7 @@ func (h *AuthHandler) handleRefreshGrant(c *gin.Context) {
 	}
 
 	userRow, err := h.db.QueryRow(ctx,
-		`SELECT id::text, email, email_verified, email_confirmed_at, last_sign_in_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at
-		 FROM users WHERE id = $1::uuid`, userID)
+		fmt.Sprintf("SELECT %s FROM users WHERE id = $1::uuid", userSelectCols), userID)
 	if err != nil || userRow == nil {
 		problemJSON(c, 401, "invalid_grant", "User not found")
 		return
@@ -289,8 +353,7 @@ func (h *AuthHandler) handleGetUser(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	row, err := h.db.QueryRow(ctx,
-		`SELECT id::text, email, email_verified, email_confirmed_at, last_sign_in_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at
-		 FROM users WHERE id = $1::uuid`, session.UserID)
+		fmt.Sprintf("SELECT %s FROM users WHERE id = $1::uuid", userSelectCols), session.UserID)
 	if err != nil || row == nil {
 		problemJSON(c, 404, "not_found", "User not found")
 		return
@@ -324,17 +387,16 @@ func (h *AuthHandler) handleUpdateUser(c *gin.Context) {
 			problemJSON(c, 400, "bad_request", "Password must be at least 8 characters")
 			return
 		}
-		hash, err := bcrypt.GenerateFromPassword([]byte(*req.Password), bcrypt.DefaultCost)
-		if err != nil {
-			problemJSON(c, 500, "internal", "Failed to hash password")
+		hash, ok := hashPassword(c, *req.Password)
+		if !ok {
 			return
 		}
 		sets = append(sets, fmt.Sprintf("password_hash = $%d", argIdx))
-		args = append(args, string(hash))
+		args = append(args, hash)
 		argIdx++
 	}
 	if req.Data != nil {
-		metaJSON, _ := json.Marshal(req.Data)
+		metaJSON := marshalJSONBDefault(req.Data)
 		sets = append(sets, fmt.Sprintf("raw_user_meta_data = raw_user_meta_data || $%d::jsonb", argIdx))
 		args = append(args, string(metaJSON))
 		argIdx++
@@ -342,14 +404,13 @@ func (h *AuthHandler) handleUpdateUser(c *gin.Context) {
 
 	args = append(args, session.UserID)
 	query := fmt.Sprintf(
-		`UPDATE users SET %s WHERE id = $%d::uuid
-		 RETURNING id::text, email, email_verified, email_confirmed_at, last_sign_in_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at`,
-		strings.Join(sets, ", "), argIdx)
+		"UPDATE users SET %s WHERE id = $%d::uuid RETURNING %s",
+		strings.Join(sets, ", "), argIdx, userSelectCols)
 
 	ctx := c.Request.Context()
 	row, err := h.db.QueryRow(ctx, query, args...)
 	if err != nil || row == nil {
-		if err != nil && (strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "unique")) {
+		if isDuplicateKeyErr(err) {
 			problemJSON(c, 409, "conflict", "Email already registered")
 			return
 		}
@@ -384,7 +445,8 @@ func (h *AuthHandler) handleLogout(c *gin.Context) {
 
 func (h *AuthHandler) handleRecover(c *gin.Context) {
 	var req struct {
-		Email string `json:"email" binding:"required,email"`
+		Email      string `json:"email" binding:"required,email"`
+		RedirectTo string `json:"redirect_to"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		problemJSON(c, 400, "bad_request", "Invalid email")
@@ -401,7 +463,7 @@ func (h *AuthHandler) handleRecover(c *gin.Context) {
 			"INSERT INTO _auth_email_verifications (user_id, token, purpose, expires_at) VALUES ($1::uuid, $2, 'recovery', $3)",
 			userID, token, expiresAt)
 		if h.email != nil {
-			go h.sendPasswordResetEmail(req.Email, token)
+			go h.sendPasswordResetEmail(req.Email, token, req.RedirectTo)
 		}
 	}
 	// Always return 200 (email enumeration protection).
@@ -426,16 +488,36 @@ func (h *AuthHandler) handleVerify(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	row, err := h.db.QueryRow(ctx,
-		"SELECT user_id::text, purpose, expires_at FROM _auth_email_verifications WHERE token = $1",
-		req.Token)
+	// Two lookup shapes:
+	//   1. Long opaque token (magiclink click, signup confirmation, admin
+	//      generate_link) — globally unique, lookup by token alone.
+	//   2. 6-digit numeric code (signInWithOtp + verifyOtp) — scoped by
+	//      email because 10^6 is small enough for collisions. We require
+	//      the caller to supply `email` when the token is short numeric.
+	var row map[string]any
+	var err error
+	isNumericCode := len(req.Token) == 6 && strings.IndexFunc(req.Token, func(r rune) bool {
+		return r < '0' || r > '9'
+	}) == -1
+	if isNumericCode && req.Email != "" {
+		row, err = h.db.QueryRow(ctx,
+			"SELECT user_id::text, purpose, expires_at, token FROM _auth_email_verifications WHERE email = $1 AND code = $2",
+			req.Email, req.Token)
+	} else {
+		row, err = h.db.QueryRow(ctx,
+			"SELECT user_id::text, purpose, expires_at, token FROM _auth_email_verifications WHERE token = $1",
+			req.Token)
+	}
 	if err != nil || row == nil {
 		problemJSON(c, 401, "invalid_grant", "Invalid or expired token")
 		return
 	}
+	// Row token (the 32-byte hex) is the canonical delete key; req.Token
+	// may be the 6-digit code.
+	rowToken := asString(row["token"])
 	expiresAt, _ := row["expires_at"].(time.Time)
 	if time.Now().After(expiresAt) {
-		h.db.Exec(ctx, "DELETE FROM _auth_email_verifications WHERE token = $1", req.Token)
+		h.db.Exec(ctx, "DELETE FROM _auth_email_verifications WHERE token = $1", rowToken)
 		problemJSON(c, 401, "invalid_grant", "Token expired")
 		return
 	}
@@ -446,7 +528,11 @@ func (h *AuthHandler) handleVerify(c *gin.Context) {
 	// Side-effect based on purpose
 	switch req.Type {
 	case "signup", "email", "email_change":
-		if purpose != "" && purpose != "signup" {
+		// "email" is supabase-js's signInWithOtp type and is served by the
+		// magiclink flow (same row in _auth_email_verifications, purpose
+		// set by handleOTP). Accept both signup and magiclink purposes so
+		// first-time users verifying via 6-digit code aren't rejected.
+		if purpose != "" && purpose != "signup" && purpose != "magiclink" {
 			problemJSON(c, 400, "bad_request", "Token purpose mismatch")
 			return
 		}
@@ -465,12 +551,12 @@ func (h *AuthHandler) handleVerify(c *gin.Context) {
 		return
 	}
 
-	// Consume the token (single-use)
-	h.db.Exec(ctx, "DELETE FROM _auth_email_verifications WHERE token = $1", req.Token)
+	// Consume the token (single-use). Always delete by the canonical
+	// `token` column so 6-digit code flows also clear the row.
+	h.db.Exec(ctx, "DELETE FROM _auth_email_verifications WHERE token = $1", rowToken)
 
 	userRow, err := h.db.QueryRow(ctx,
-		`SELECT id::text, email, email_verified, email_confirmed_at, last_sign_in_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at
-		 FROM users WHERE id = $1::uuid`, userID)
+		fmt.Sprintf("SELECT %s FROM users WHERE id = $1::uuid", userSelectCols), userID)
 	if err != nil || userRow == nil {
 		problemJSON(c, 500, "internal", "User not found")
 		return
@@ -484,9 +570,13 @@ func (h *AuthHandler) handleVerify(c *gin.Context) {
 	c.JSON(200, session)
 }
 
-// handleVerifyGET handles a click on an email verification link. It
-// performs the same token consumption as handleVerify but returns a plain
-// text confirmation so users land on a readable page instead of JSON.
+// handleVerifyGET handles a click on an email verification link. For
+// signup/email tokens it marks the email as verified and returns a plain
+// text confirmation. For recovery tokens it generates a full session and
+// redirects the user to the app's redirect_to URL with the access token
+// in the URL fragment — matching the GoTrue flow that supabase-js expects
+// for password reset (the client picks up the fragment and fires a
+// PASSWORD_RECOVERY auth state change event).
 func (h *AuthHandler) handleVerifyGET(c *gin.Context) {
 	token := c.Query("token")
 	if token == "" {
@@ -503,13 +593,503 @@ func (h *AuthHandler) handleVerifyGET(c *gin.Context) {
 	}
 	expiresAt, _ := row["expires_at"].(time.Time)
 	if time.Now().After(expiresAt) {
+		h.db.Exec(ctx, "DELETE FROM _auth_email_verifications WHERE token = $1", token)
 		c.String(400, "Verification token expired")
 		return
 	}
+
 	userID := asString(row["user_id"])
-	h.db.Exec(ctx, "UPDATE users SET email_verified = true, email_confirmed_at = NOW(), updated_at = NOW() WHERE id = $1::uuid", userID)
+	purpose, _ := row["purpose"].(string)
+
+	// Consume the token (single-use).
 	h.db.Exec(ctx, "DELETE FROM _auth_email_verifications WHERE token = $1", token)
+
+	verifyType := c.DefaultQuery("type", "")
+
+	if purpose == "recovery" || verifyType == "recovery" {
+		// Recovery flow: build a session and redirect to the app with
+		// the access token in the URL fragment so supabase-js can pick
+		// it up and fire the PASSWORD_RECOVERY event.
+		userRow, err := h.db.QueryRow(ctx,
+			fmt.Sprintf("SELECT %s FROM users WHERE id = $1::uuid", userSelectCols), userID)
+		if err != nil || userRow == nil {
+			c.String(500, "User not found")
+			return
+		}
+		session, err := h.buildSession(ctx, userID, userRow)
+		if err != nil {
+			c.String(500, "Failed to generate session")
+			return
+		}
+		accessToken, _ := session["access_token"].(string)
+		refreshToken, _ := session["refresh_token"].(string)
+		expiresIn := "3600"
+		if v, ok := session["expires_in"].(int); ok {
+			expiresIn = fmt.Sprintf("%d", v)
+		} else if v, ok := session["expires_in"].(float64); ok {
+			expiresIn = fmt.Sprintf("%d", int(v))
+		}
+		tokenType, _ := session["token_type"].(string)
+		if tokenType == "" {
+			tokenType = "bearer"
+		}
+
+		redirectTo := c.Query("redirect_to")
+		if redirectTo == "" {
+			redirectTo = h.baseURL()
+		}
+		fragment := fmt.Sprintf("access_token=%s&token_type=%s&expires_in=%s&refresh_token=%s&type=recovery",
+			accessToken, tokenType, expiresIn, refreshToken)
+		c.Redirect(303, redirectTo+"#"+fragment)
+		return
+	}
+
+	// Default: email verification — mark as verified and show confirmation.
+	h.db.Exec(ctx, "UPDATE users SET email_verified = true, email_confirmed_at = NOW(), updated_at = NOW() WHERE id = $1::uuid", userID)
+
+	redirectTo := c.Query("redirect_to")
+	if redirectTo != "" {
+		c.Redirect(303, redirectTo)
+		return
+	}
 	c.String(200, "Email verified successfully")
+}
+
+// ---------- /otp (magic link) ----------
+
+// handleOTP implements POST /auth/v1/otp — supabase-js calls this from
+// auth.signInWithOtp({email}). When create_user is true (the default) we
+// upsert a user row, then generate a magiclink token in
+// _auth_email_verifications and dispatch the email. The handler always
+// returns 200 to prevent enumeration attacks.
+func (h *AuthHandler) handleOTP(c *gin.Context) {
+	var req struct {
+		Email      string         `json:"email" binding:"required,email"`
+		CreateUser *bool          `json:"create_user"`
+		Data       map[string]any `json:"data"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		problemJSON(c, 400, "bad_request", "Invalid otp request: "+err.Error())
+		return
+	}
+	createUser := true
+	if req.CreateUser != nil {
+		createUser = *req.CreateUser
+	}
+
+	ctx := c.Request.Context()
+	row, _ := h.db.QueryRow(ctx, "SELECT id::text FROM users WHERE email = $1", req.Email)
+	var userID string
+	if row != nil {
+		userID = asString(row["id"])
+	} else if createUser {
+		userMetaJSON := marshalJSONBDefault(req.Data)
+		newRow, err := h.db.QueryRow(ctx,
+			`INSERT INTO users (email, raw_user_meta_data) VALUES ($1, $2::jsonb) RETURNING id::text`,
+			req.Email, string(userMetaJSON))
+		if err != nil || newRow == nil {
+			h.logger.Error("otp create user failed", "error", err)
+			c.Status(200)
+			return
+		}
+		userID = asString(newRow["id"])
+	} else {
+		c.Status(200)
+		return
+	}
+
+	token := generateRandomToken()
+	code := generateNumericCode(6)
+	expiresAt := time.Now().Add(1 * time.Hour)
+	_, err := h.db.Exec(ctx,
+		"INSERT INTO _auth_email_verifications (user_id, token, code, email, purpose, expires_at) VALUES ($1::uuid, $2, $3, $4, 'magiclink', $5)",
+		userID, token, code, req.Email, expiresAt)
+	if err != nil {
+		h.logger.Error("otp token insert failed", "error", err)
+		c.Status(200)
+		return
+	}
+	if h.email != nil {
+		go h.sendMagicLinkEmail(req.Email, token, code)
+	}
+	c.Status(200)
+}
+
+// ---------- /admin/generate_link ----------
+
+// handleGenerateLink mirrors GoTrue's admin.generateLink. It creates a
+// verification token without sending an email and returns the fully
+// formed action_link so the caller can embed it in a custom message. Only
+// accessible via adminKeyAuth.
+func (h *AuthHandler) handleGenerateLink(c *gin.Context) {
+	var req struct {
+		Type       string         `json:"type" binding:"required"`
+		Email      string         `json:"email" binding:"required,email"`
+		Password   string         `json:"password"`
+		Data       map[string]any `json:"data"`
+		RedirectTo string         `json:"redirect_to"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		problemJSON(c, 400, "bad_request", "Invalid generate_link request: "+err.Error())
+		return
+	}
+
+	var purpose string
+	switch req.Type {
+	case "signup":
+		purpose = "signup"
+	case "magiclink":
+		purpose = "magiclink"
+	case "recovery":
+		purpose = "recovery"
+	default:
+		problemJSON(c, 400, "bad_request", "Unsupported link type: "+req.Type)
+		return
+	}
+
+	ctx := c.Request.Context()
+	row, _ := h.db.QueryRow(ctx,
+		fmt.Sprintf("SELECT %s FROM users WHERE email = $1", userSelectCols), req.Email)
+
+	var userID string
+	if row == nil {
+		if req.Type != "signup" {
+			problemJSON(c, 404, "not_found", "User not found")
+			return
+		}
+		var hash string
+		if req.Password != "" {
+			var ok bool
+			hash, ok = hashPassword(c, req.Password)
+			if !ok {
+				return
+			}
+		}
+		metaJSON := marshalJSONBDefault(req.Data)
+		newRow, err := h.db.QueryRow(ctx,
+			`INSERT INTO users (email, password_hash, raw_user_meta_data)
+			 VALUES ($1, $2, $3::jsonb)
+			 RETURNING `+userSelectCols,
+			req.Email, hash, string(metaJSON))
+		if err != nil || newRow == nil {
+			h.logger.Error("generate_link create user failed", "error", err)
+			problemJSON(c, 500, "internal", "Failed to create user")
+			return
+		}
+		row = newRow
+		userID = asString(newRow["id"])
+	} else {
+		userID = asString(row["id"])
+	}
+
+	token := generateRandomToken()
+	expiresAt := time.Now().Add(1 * time.Hour)
+	_, err := h.db.Exec(ctx,
+		"INSERT INTO _auth_email_verifications (user_id, token, purpose, expires_at) VALUES ($1::uuid, $2, $3, $4)",
+		userID, token, purpose, expiresAt)
+	if err != nil {
+		h.logger.Error("generate_link token insert failed", "error", err)
+		problemJSON(c, 500, "internal", "Failed to create verification token")
+		return
+	}
+
+	actionLink := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=%s", h.baseURL(), token, req.Type)
+	if req.RedirectTo != "" {
+		actionLink += "&redirect_to=" + url.QueryEscape(req.RedirectTo)
+	}
+
+	resp := gin.H{
+		"action_link":       actionLink,
+		"email_otp":         token,
+		"hashed_token":      token,
+		"verification_type": req.Type,
+		"redirect_to":       req.RedirectTo,
+		"user":              h.buildUser(userID, row),
+	}
+	c.JSON(200, resp)
+}
+
+// ---------- admin user management ----------
+
+const userSelectCols = `id::text, email, email_verified, email_confirmed_at, last_sign_in_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at`
+
+func (h *AuthHandler) handleAdminCreateUser(c *gin.Context) {
+	var req struct {
+		Email        string         `json:"email"`
+		Password     string         `json:"password"`
+		EmailConfirm bool           `json:"email_confirm"`
+		UserMetadata map[string]any `json:"user_metadata"`
+		AppMetadata  map[string]any `json:"app_metadata"`
+		BanDuration  string         `json:"ban_duration"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		problemJSON(c, 400, "bad_request", "Invalid request: "+err.Error())
+		return
+	}
+	if req.Email == "" {
+		problemJSON(c, 400, "bad_request", "Email is required")
+		return
+	}
+
+	var hash string
+	if req.Password != "" {
+		var ok bool
+		hash, ok = hashPassword(c, req.Password)
+		if !ok {
+			return
+		}
+	}
+
+	userMeta := marshalJSONBDefault(req.UserMetadata)
+	appMeta := marshalJSONBDefault(req.AppMetadata)
+	if string(appMeta) == "{}" {
+		appMeta = []byte(`{"provider":"email","providers":["email"]}`)
+	}
+
+	cols := []string{"email", "password_hash", "raw_user_meta_data", "raw_app_meta_data"}
+	placeholders := []string{"$1", "$2", "$3::jsonb", "$4::jsonb"}
+	args := []any{req.Email, hash, string(userMeta), string(appMeta)}
+	argIdx := len(args) + 1
+
+	if req.EmailConfirm {
+		cols = append(cols, "email_verified", "email_confirmed_at")
+		placeholders = append(placeholders, "true", "NOW()")
+	}
+
+	if req.BanDuration != "" && req.BanDuration != "none" {
+		cols = append(cols, "banned_until")
+		placeholders = append(placeholders, fmt.Sprintf("NOW() + $%d::interval", argIdx))
+		args = append(args, req.BanDuration)
+	}
+
+	ctx := c.Request.Context()
+	query := fmt.Sprintf(
+		"INSERT INTO users (%s) VALUES (%s) RETURNING %s",
+		strings.Join(cols, ", "), strings.Join(placeholders, ", "), userSelectCols)
+
+	row, err := h.db.QueryRow(ctx, query, args...)
+	if err != nil {
+		if isDuplicateKeyErr(err) {
+			problemJSON(c, 422, "user_already_exists", "A user with this email address has already been registered")
+			return
+		}
+		h.logger.Error("admin create user failed", "error", err)
+		problemJSON(c, 500, "internal", "Failed to create user")
+		return
+	}
+
+	c.JSON(200, h.buildUser(asString(row["id"]), row))
+}
+
+func (h *AuthHandler) handleAdminListUsers(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	perPage, _ := strconv.Atoi(c.DefaultQuery("per_page", "50"))
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 || perPage > 1000 {
+		perPage = 50
+	}
+	offset := (page - 1) * perPage
+
+	ctx := c.Request.Context()
+
+	rows, err := h.db.Query(ctx,
+		fmt.Sprintf("SELECT %s, count(*) OVER() AS _total FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2", userSelectCols),
+		perPage, offset)
+	if err != nil {
+		problemJSON(c, 500, "internal", "Failed to list users")
+		return
+	}
+
+	total := 0
+	users := make([]gin.H, 0, len(rows))
+	for _, row := range rows {
+		if total == 0 {
+			switch n := row["_total"].(type) {
+			case int64:
+				total = int(n)
+			case int32:
+				total = int(n)
+			case float64:
+				total = int(n)
+			}
+		}
+		users = append(users, h.buildUser(asString(row["id"]), row))
+	}
+
+	lastPage := int(math.Ceil(float64(total) / float64(perPage)))
+	if lastPage < 1 {
+		lastPage = 1
+	}
+
+	c.Header("x-total-count", strconv.Itoa(total))
+	if lastPage > 1 {
+		var links []string
+		if page < lastPage {
+			links = append(links, fmt.Sprintf("<%s/auth/v1/admin/users?page=%d&per_page=%d>; rel=\"next\"", h.baseURL(), page+1, perPage))
+		}
+		links = append(links, fmt.Sprintf("<%s/auth/v1/admin/users?page=%d&per_page=%d>; rel=\"last\"", h.baseURL(), lastPage, perPage))
+		c.Header("link", strings.Join(links, ", "))
+	}
+
+	c.JSON(200, gin.H{"users": users, "aud": "authenticated"})
+}
+
+func (h *AuthHandler) handleAdminGetUser(c *gin.Context) {
+	uid := c.Param("uid")
+	ctx := c.Request.Context()
+
+	row, err := h.db.QueryRow(ctx,
+		fmt.Sprintf("SELECT %s FROM users WHERE id = $1::uuid", userSelectCols), uid)
+	if err != nil || row == nil {
+		problemJSON(c, 404, "user_not_found", "User not found")
+		return
+	}
+
+	c.JSON(200, h.buildUser(asString(row["id"]), row))
+}
+
+func (h *AuthHandler) handleAdminUpdateUser(c *gin.Context) {
+	uid := c.Param("uid")
+	var req struct {
+		Email        *string        `json:"email"`
+		Password     *string        `json:"password"`
+		EmailConfirm *bool          `json:"email_confirm"`
+		UserMetadata map[string]any `json:"user_metadata"`
+		AppMetadata  map[string]any `json:"app_metadata"`
+		BanDuration  *string        `json:"ban_duration"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		problemJSON(c, 400, "bad_request", "Invalid request: "+err.Error())
+		return
+	}
+
+	sets := []string{"updated_at = NOW()"}
+	args := []any{}
+	argIdx := 1
+
+	if req.Email != nil && *req.Email != "" {
+		sets = append(sets, fmt.Sprintf("email = $%d", argIdx))
+		args = append(args, *req.Email)
+		argIdx++
+	}
+	if req.Password != nil && *req.Password != "" {
+		hash, ok := hashPassword(c, *req.Password)
+		if !ok {
+			return
+		}
+		sets = append(sets, fmt.Sprintf("password_hash = $%d", argIdx))
+		args = append(args, hash)
+		argIdx++
+	}
+	if req.EmailConfirm != nil && *req.EmailConfirm {
+		sets = append(sets, "email_verified = true", "email_confirmed_at = NOW()")
+	}
+	if req.UserMetadata != nil {
+		sets = append(sets, fmt.Sprintf("raw_user_meta_data = raw_user_meta_data || $%d::jsonb", argIdx))
+		args = append(args, string(marshalJSONBDefault(req.UserMetadata)))
+		argIdx++
+	}
+	if req.AppMetadata != nil {
+		sets = append(sets, fmt.Sprintf("raw_app_meta_data = raw_app_meta_data || $%d::jsonb", argIdx))
+		args = append(args, string(marshalJSONBDefault(req.AppMetadata)))
+		argIdx++
+	}
+	if req.BanDuration != nil {
+		if *req.BanDuration == "none" {
+			sets = append(sets, "banned_until = NULL")
+		} else {
+			sets = append(sets, fmt.Sprintf("banned_until = NOW() + $%d::interval", argIdx))
+			args = append(args, *req.BanDuration)
+			argIdx++
+		}
+	}
+
+	args = append(args, uid)
+	query := fmt.Sprintf(
+		"UPDATE users SET %s WHERE id = $%d::uuid RETURNING %s",
+		strings.Join(sets, ", "), argIdx, userSelectCols)
+
+	ctx := c.Request.Context()
+	row, err := h.db.QueryRow(ctx, query, args...)
+	if isDuplicateKeyErr(err) {
+		problemJSON(c, 422, "email_exists", "A user with this email address has already been registered")
+		return
+	}
+	if err != nil {
+		h.logger.Error("admin update user failed", "error", err)
+		problemJSON(c, 500, "internal", "Failed to update user")
+		return
+	}
+	if row == nil {
+		problemJSON(c, 404, "user_not_found", "User not found")
+		return
+	}
+
+	c.JSON(200, h.buildUser(asString(row["id"]), row))
+}
+
+func (h *AuthHandler) handleAdminDeleteUser(c *gin.Context) {
+	uid := c.Param("uid")
+	ctx := c.Request.Context()
+
+	// Clean up auth artifacts first.
+	h.db.Exec(ctx, "DELETE FROM _refresh_tokens WHERE user_id = $1::uuid", uid)
+	h.db.Exec(ctx, "DELETE FROM _auth_email_verifications WHERE user_id = $1::uuid", uid)
+	h.db.Exec(ctx, "DELETE FROM _mfa_factors WHERE user_id = $1::uuid", uid)
+
+	affected, err := h.db.Exec(ctx, "DELETE FROM users WHERE id = $1::uuid", uid)
+	if err != nil {
+		h.logger.Error("admin delete user failed", "error", err)
+		problemJSON(c, 500, "internal", "Failed to delete user")
+		return
+	}
+	if affected == 0 {
+		problemJSON(c, 404, "user_not_found", "User not found")
+		return
+	}
+
+	c.JSON(200, gin.H{})
+}
+
+func (h *AuthHandler) handleAdminInvite(c *gin.Context) {
+	var req struct {
+		Email string         `json:"email" binding:"required,email"`
+		Data  map[string]any `json:"data"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		problemJSON(c, 400, "bad_request", "Invalid request: "+err.Error())
+		return
+	}
+
+	ctx := c.Request.Context()
+
+	existing, _ := h.db.QueryRow(ctx, "SELECT id::text FROM users WHERE email = $1", req.Email)
+	if existing != nil {
+		problemJSON(c, 422, "user_already_exists", "A user with this email address has already been registered")
+		return
+	}
+
+	userMeta := marshalJSONBDefault(req.Data)
+	appMeta, _ := json.Marshal(map[string]any{"provider": "email", "providers": []string{"email"}})
+
+	row, err := h.db.QueryRow(ctx,
+		fmt.Sprintf("INSERT INTO users (email, raw_user_meta_data, raw_app_meta_data) VALUES ($1, $2::jsonb, $3::jsonb) RETURNING %s", userSelectCols),
+		req.Email, string(userMeta), string(appMeta))
+	if err != nil || row == nil {
+		h.logger.Error("admin invite failed", "error", err)
+		problemJSON(c, 500, "internal", "Failed to create invited user")
+		return
+	}
+
+	userID := asString(row["id"])
+
+	if h.cfg.Auth.Email != nil && h.email != nil {
+		go h.sendVerificationEmail(userID, req.Email)
+	}
+
+	c.JSON(200, h.buildUser(userID, row))
 }
 
 // ---------- /settings ----------
@@ -606,8 +1186,7 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 		ctx := c.Request.Context()
 
 		row, _ := h.db.QueryRow(ctx,
-			`SELECT id::text, email, email_verified, email_confirmed_at, last_sign_in_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at
-			 FROM users WHERE email = $1`, userInfo.Email)
+			fmt.Sprintf("SELECT %s FROM users WHERE email = $1", userSelectCols), userInfo.Email)
 		var userID string
 
 		if row == nil {
@@ -622,15 +1201,12 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 				"providers": []string{provider},
 			})
 			newRow, err := h.db.QueryRow(ctx,
-				`INSERT INTO users (email, email_verified, email_confirmed_at, raw_user_meta_data, raw_app_meta_data)
-				 VALUES ($1, true, NOW(), $2::jsonb, $3::jsonb)
-				 RETURNING id::text, email, email_verified, email_confirmed_at, last_sign_in_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at`,
+				"INSERT INTO users (email, email_verified, email_confirmed_at, raw_user_meta_data, raw_app_meta_data) VALUES ($1, true, NOW(), $2::jsonb, $3::jsonb) RETURNING "+userSelectCols,
 				userInfo.Email, string(metaJSON), string(appMetaJSON))
 			if err != nil {
 				// Race: another request created the user between lookup and insert.
 				row, err = h.db.QueryRow(ctx,
-					`SELECT id::text, email, email_verified, email_confirmed_at, last_sign_in_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at
-					 FROM users WHERE email = $1`, userInfo.Email)
+					fmt.Sprintf("SELECT %s FROM users WHERE email = $1", userSelectCols), userInfo.Email)
 				if err != nil || row == nil {
 					problemJSON(c, 500, "internal", "Failed to create or find user")
 					return
@@ -718,6 +1294,13 @@ func (h *AuthHandler) buildSession(ctx context.Context, userID string, userRow m
 		userMeta = map[string]any{}
 	}
 
+	// is_anonymous is sourced from raw_app_meta_data — anonymous signup
+	// stores {"is_anonymous": true} there so the claim survives refreshes.
+	isAnon, _ := appMeta["is_anonymous"].(bool)
+	if col, ok := userRow["is_anonymous"].(bool); ok && col {
+		isAnon = true
+	}
+
 	claims := jwt.MapClaims{
 		"iss":           h.issuer(),
 		"sub":           userID,
@@ -729,7 +1312,7 @@ func (h *AuthHandler) buildSession(ctx context.Context, userID string, userRow m
 		"session_id":    sessionID,
 		"app_metadata":  appMeta,
 		"user_metadata": userMeta,
-		"is_anonymous":  false,
+		"is_anonymous":  isAnon,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -1096,9 +1679,50 @@ func (h *AuthHandler) sendVerificationEmail(userID, email string) {
 	}
 }
 
-func (h *AuthHandler) sendPasswordResetEmail(email, token string) {
+func (h *AuthHandler) sendMagicLinkEmail(email, token, code string) {
+	subject := "Your magic sign-in link"
+	link := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=magiclink", h.baseURL(), token)
+	body := fmt.Sprintf("Click to sign in: %s\n\nOr enter this code: %s", link, code)
+
+	if h.cfg.Auth.Email != nil && h.cfg.Auth.Email.Templates != nil {
+		if tmpl, ok := h.cfg.Auth.Email.Templates["magiclink"]; ok {
+			if tmpl.Subject != "" {
+				subject = tmpl.Subject
+			}
+			if tmpl.Body != "" {
+				body = renderAuthTemplate(tmpl.Body, map[string]string{
+					"token":    token,
+					"code":     code,
+					"email":    email,
+					"base_url": h.baseURL(),
+					"link":     link,
+				})
+			}
+		}
+	}
+
+	ctx := context.Background()
+	if err := h.email.Send(ctx, domain.EmailMessage{
+		To:      []string{email},
+		Subject: subject,
+		HTML:    body,
+		Text:    body,
+	}); err != nil {
+		h.logger.Error("failed to send magic link email", "email", email, "error", err)
+	}
+}
+
+func (h *AuthHandler) sendPasswordResetEmail(email, token, redirectTo string) {
 	subject := "Reset your password"
-	body := fmt.Sprintf("Reset your password using this token: %s", token)
+	// Build the verification link that points to GET /auth/v1/verify so the
+	// handler can validate the token, generate a session, and redirect the
+	// user to the app with access_token in the URL fragment — matching the
+	// GoTrue flow that supabase-js expects.
+	verifyLink := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=recovery", h.baseURL(), token)
+	if redirectTo != "" {
+		verifyLink += "&redirect_to=" + redirectTo
+	}
+	body := fmt.Sprintf("Reset your password by clicking this link: %s", verifyLink)
 
 	if h.cfg.Auth.Email != nil && h.cfg.Auth.Email.Templates != nil {
 		if tmpl, ok := h.cfg.Auth.Email.Templates["reset"]; ok {
@@ -1110,7 +1734,7 @@ func (h *AuthHandler) sendPasswordResetEmail(email, token string) {
 					"token":    token,
 					"email":    email,
 					"base_url": h.baseURL(),
-					"link":     fmt.Sprintf("%s/reset-password?token=%s", h.baseURL(), token),
+					"link":     verifyLink,
 				})
 			}
 		}
@@ -1140,6 +1764,42 @@ func renderAuthTemplate(tmpl string, vars map[string]string) string {
 		result = strings.ReplaceAll(result, "{{"+k+"}}", v)
 	}
 	return result
+}
+
+// generateNumericCode returns an n-digit zero-padded numeric string drawn
+// from crypto/rand. Used for email OTP codes (n=6) that a human types into
+// a form; callers must scope the lookup by email to avoid birthday
+// collisions on the small 10^n space.
+func generateNumericCode(n int) string {
+	const digits = "0123456789"
+	b := make([]byte, n)
+	rand.Read(b)
+	out := make([]byte, n)
+	for i := 0; i < n; i++ {
+		out[i] = digits[int(b[i])%10]
+	}
+	return string(out)
+}
+
+func isDuplicateKeyErr(err error) bool {
+	return err != nil && (strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "unique"))
+}
+
+func hashPassword(c *gin.Context, password string) (string, bool) {
+	b, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		problemJSON(c, 500, "internal", "Failed to hash password")
+		return "", false
+	}
+	return string(b), true
+}
+
+func marshalJSONBDefault(v any) []byte {
+	b, _ := json.Marshal(v)
+	if len(b) == 0 || string(b) == "null" {
+		return []byte("{}")
+	}
+	return b
 }
 
 func generateRandomToken() string {

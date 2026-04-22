@@ -32,13 +32,45 @@ Schema (see `ultrabase.yaml`):
 - **users** (implicit, from `auth:`) — `display_name` field promoted into
   `raw_user_meta_data` on signup
 
-Auth flow (see `src/AuthBar.jsx`):
+Auth flows (see `src/AuthBar.jsx`) — four tabs, all driven by supabase-js:
 
-- `supabase.auth.signUp({ email, password, options: { data: { display_name } } })`
-- `supabase.auth.signInWithPassword(...)`
-- `supabase.auth.signOut()`
-- `supabase.auth.getSession()` + `onAuthStateChange(...)` to hydrate and react
-- `display_name` is stored in `user_metadata` and rendered back on the bar
+- **Password** — `supabase.auth.signUp(...)` / `signInWithPassword(...)`
+  with `display_name` promoted into `user_metadata` on signup.
+- **Magic link** — `supabase.auth.signInWithOtp({ email })` dispatches a
+  token, then (dev-only) `supabase.auth.verifyOtp({ token_hash, type: 'magiclink' })`
+  completes the flow without needing an inbox.
+- **Email OTP** — `signInWithOtp` + `verifyOtp({ email, token, type: 'email' })`
+  using a 6-digit code.
+- **Guest** — `supabase.auth.signInAnonymously()` issues a session JWT
+  with `is_anonymous: true`. Anonymous users can read the catalog but
+  RLS blocks them from posting reviews.
+- **Session lifecycle** — `getSession()` + `onAuthStateChange(...)` to
+  hydrate and react across components; `signOut()` to clear.
+
+Because this demo runs without an SMTP provider, the magic-link and
+email-OTP tabs call `/auth/v1/admin/generate_link` under the hood to
+retrieve the token that would normally arrive by email. That admin key
+is wired through `VITE_ULTRABASE_ADMIN_KEY` in docker-compose and is
+**never** safe to expose in a real browser.
+
+Aggregates (see `src/CatalogStats.jsx`):
+
+- Single-row totals via
+  `products.select('total:id.count(),avg_cents:price_cents.avg(),min_cents:price_cents.min(),max_cents:price_cents.max(),stock_total:stock.sum()')`
+- Group-by-category via
+  `products.select('category_id,count:id.count(),avg_cents:price_cents.avg()')`
+  — Ultrabase infers the `GROUP BY category_id` automatically from the
+  unaggregated column.
+
+TOTP MFA (see `src/SecurityPanel.jsx`):
+
+- `supabase.auth.mfa.enroll({ factorType:'totp', friendlyName })` returns
+  a shared secret + otpauth URI.
+- `supabase.auth.mfa.challenge(...)` + `verify(...)` flips the factor to
+  `verified` and upgrades the session to `aal2` (visible on the AuthBar
+  badge).
+- `supabase.auth.mfa.listFactors()` and `unenroll(...)` round out the
+  management flow.
 
 REST / PostgREST query features (see `src/App.jsx` and `src/ProductDetail.jsx`):
 

@@ -2,13 +2,17 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
+	"github.com/saedx1/ultrabase/internal/csvutil"
 	"github.com/saedx1/ultrabase/internal/domain"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -84,21 +88,46 @@ func (e *Engine) Start(ctx context.Context) error {
 	e.logger.Info("starting ultrabase", "mode", e.modeStr())
 
 	// 1. Migrate
-	if e.migrate {
-		t := time.Now()
+	t := time.Now()
+	if e.mode == ModeDev {
 		if err := e.migrator.Apply(ctx, e.cfg); err != nil {
 			return fmt.Errorf("migration failed: %w", err)
 		}
 		e.logger.Info("migrations applied", "duration", time.Since(t).Round(time.Millisecond))
+	} else {
+		if err := e.db.EnsureMigrationsTable(ctx); err != nil {
+			return fmt.Errorf("migration check: %w", err)
+		}
+		last, err := e.db.GetLastMigration(ctx)
+		if err != nil {
+			return fmt.Errorf("migration check: %w", err)
+		}
+		if last == nil {
+			if err := e.migrator.Apply(ctx, e.cfg); err != nil {
+				return fmt.Errorf("initial migration failed: %w", err)
+			}
+			e.logger.Info("initial migration applied", "duration", time.Since(t).Round(time.Millisecond))
+		} else if e.migrate {
+			if err := e.migrator.Apply(ctx, e.cfg); err != nil {
+				return fmt.Errorf("migration failed: %w", err)
+			}
+			e.logger.Info("migrations applied", "duration", time.Since(t).Round(time.Millisecond))
+		} else {
+			configJSON, _ := json.Marshal(e.cfg)
+			configChecksum := fmt.Sprintf("%x", sha256.Sum256(configJSON))
+			if last.Checksum != configChecksum {
+				e.logger.Warn("config has changed since last migration; run with --migrate to apply pending changes")
+			}
+		}
 	}
 
-	// 2. Seed
-	if e.seed && len(e.cfg.Seeds) > 0 {
+	// 2. Data imports
+	if e.seed && len(e.cfg.Data) > 0 {
 		t := time.Now()
-		if err := e.applySeeds(ctx); err != nil {
-			return fmt.Errorf("seeds failed: %w", err)
+		if err := e.applyData(ctx); err != nil {
+			return fmt.Errorf("data import failed: %w", err)
 		}
-		e.logger.Info("seeds applied", "duration", time.Since(t).Round(time.Millisecond))
+		e.logger.Info("data imports applied", "duration", time.Since(t).Round(time.Millisecond))
 	}
 
 	// 3. Start HTTP server
@@ -149,38 +178,158 @@ func (e *Engine) Start(ctx context.Context) error {
 	return e.waitForShutdown(ctx)
 }
 
-func (e *Engine) applySeeds(ctx context.Context) error {
-	ordered := orderSeedTables(e.cfg)
+func (e *Engine) applyData(ctx context.Context) error {
+	if err := e.db.EnsureDataTable(ctx); err != nil {
+		return fmt.Errorf("ensure data table: %w", err)
+	}
+
+	applied, err := e.db.GetAppliedData(ctx)
+	if err != nil {
+		return fmt.Errorf("get applied data: %w", err)
+	}
+	appliedMap := make(map[string]domain.DataRecord, len(applied))
+	for _, r := range applied {
+		appliedMap[r.Key] = r
+	}
+
+	configDir := filepath.Dir(e.configPath)
+	ordered := orderDataTables(e.cfg)
+
+	tx, err := e.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin data transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	anyNew := false
 	for _, tableName := range ordered {
-		rows := e.cfg.Seeds[tableName]
-		for _, row := range rows {
-			// Special handling for users table: hash the password field
-			if tableName == "users" {
-				if pwd, ok := row["password"]; ok {
-					if pwdStr, ok := pwd.(string); ok {
-						hash, err := bcrypt.GenerateFromPassword([]byte(pwdStr), bcrypt.DefaultCost)
-						if err != nil {
-							return fmt.Errorf("seed users: hash password: %w", err)
+		entries := e.cfg.Data[tableName]
+		keys := sortedKeys(entries)
+		for _, key := range keys {
+			csvPath := entries[key]
+			compositeKey := tableName + "." + key
+
+			absPath := csvPath
+			if !filepath.IsAbs(csvPath) {
+				absPath = filepath.Join(configDir, csvPath)
+			}
+
+			fileBytes, err := os.ReadFile(absPath)
+			if err != nil {
+				tx.Rollback(ctx)
+				return fmt.Errorf("data %s: read %s: %w", compositeKey, csvPath, err)
+			}
+			checksum := fmt.Sprintf("%x", sha256.Sum256(fileBytes))
+
+			if prev, ok := appliedMap[compositeKey]; ok {
+				if prev.Checksum == checksum && prev.Source == csvPath {
+					continue
+				}
+				if prev.Checksum != checksum {
+					e.logger.Warn("data file content changed, skipping",
+						"key", compositeKey, "source", csvPath)
+				}
+				if prev.Source != csvPath {
+					e.logger.Warn("data file path changed, skipping",
+						"key", compositeKey, "old_source", prev.Source, "new_source", csvPath)
+				}
+				continue
+			}
+
+			records, err := csvutil.ReadRecords(fileBytes)
+			if err != nil {
+				tx.Rollback(ctx)
+				return fmt.Errorf("data %s: parse csv: %w", compositeKey, err)
+			}
+
+			if err := e.validateDataColumns(tableName, records); err != nil {
+				tx.Rollback(ctx)
+				return fmt.Errorf("data %s: %w", compositeKey, err)
+			}
+
+			table, hasTable := e.cfg.Tables[tableName]
+			if hasTable {
+				records = csvutil.CoerceRecords(records, table)
+			}
+
+			for _, row := range records {
+				if tableName == "users" {
+					if pwd, ok := row["password"]; ok {
+						if pwdStr, ok := pwd.(string); ok {
+							hash, err := bcrypt.GenerateFromPassword([]byte(pwdStr), bcrypt.DefaultCost)
+							if err != nil {
+								tx.Rollback(ctx)
+								return fmt.Errorf("data %s: hash password: %w", compositeKey, err)
+							}
+							row["password_hash"] = string(hash)
+							delete(row, "password")
 						}
-						row["password_hash"] = string(hash)
-						delete(row, "password")
 					}
 				}
+				if err := upsertRow(ctx, tx, e.cfg, tableName, row); err != nil {
+					tx.Rollback(ctx)
+					return fmt.Errorf("data %s: upsert: %w", compositeKey, err)
+				}
 			}
-			if err := e.upsertSeedRow(ctx, tableName, row); err != nil {
-				return fmt.Errorf("seed %s: %w", tableName, err)
+
+			if err := e.db.RecordData(ctx, tx, compositeKey, tableName, csvPath, checksum, len(records)); err != nil {
+				tx.Rollback(ctx)
+				return fmt.Errorf("data %s: record: %w", compositeKey, err)
+			}
+
+			e.logger.Info("data imported", "key", compositeKey, "rows", len(records))
+			anyNew = true
+		}
+	}
+
+	if anyNew {
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("commit data transaction: %w", err)
+		}
+	}
+	return nil
+}
+
+func (e *Engine) validateDataColumns(tableName string, records []map[string]any) error {
+	var table domain.Table
+	var ok bool
+	if tableName == "users" {
+		// "password" is allowed for users (gets hashed to password_hash)
+		known := map[string]bool{"id": true, "email": true, "password": true, "password_hash": true,
+			"email_verified": true, "display_name": true, "created_at": true}
+		for _, f := range e.cfg.UserExtraFields() {
+			known[f.Name] = true
+		}
+		for _, rec := range records {
+			for col := range rec {
+				if !known[col] {
+					return fmt.Errorf("unknown column %q in users table", col)
+				}
+			}
+		}
+		return nil
+	}
+
+	table, ok = e.cfg.Tables[tableName]
+	if !ok {
+		return fmt.Errorf("unknown table %q", tableName)
+	}
+	fieldMap := table.FieldMap()
+	for _, rec := range records {
+		for col := range rec {
+			if _, exists := fieldMap[col]; !exists {
+				return fmt.Errorf("unknown column %q in table %q", col, tableName)
 			}
 		}
 	}
 	return nil
 }
 
-func (e *Engine) upsertSeedRow(ctx context.Context, tableName string, row map[string]any) error {
+func upsertRow(ctx context.Context, tx domain.Tx, cfg *domain.Config, tableName string, row map[string]any) error {
 	if len(row) == 0 {
 		return nil
 	}
 
-	// Build column list and values
 	cols := sortedKeys(row)
 	placeholders := make([]string, len(cols))
 	values := make([]any, len(cols))
@@ -189,18 +338,16 @@ func (e *Engine) upsertSeedRow(ctx context.Context, tableName string, row map[st
 		values[i] = row[col]
 	}
 
-	// Find primary key for ON CONFLICT
-	pk := "id" // conventional default
-	if table, ok := e.cfg.Tables[tableName]; ok {
-		for fname, field := range table.Fields {
+	pk := "id"
+	if table, ok := cfg.Tables[tableName]; ok {
+		for _, field := range table.Fields {
 			if field.PrimaryKey {
-				pk = fname
+				pk = field.Name
 				break
 			}
 		}
 	}
 
-	// Build upsert: INSERT ... ON CONFLICT (pk) DO UPDATE SET ...
 	setClause := make([]string, 0, len(cols))
 	for _, col := range cols {
 		if col != pk {
@@ -217,7 +364,7 @@ func (e *Engine) upsertSeedRow(ctx context.Context, tableName string, row map[st
 		joinStrings(setClause, ", "),
 	)
 
-	_, err := e.db.Exec(ctx, query, values...)
+	_, err := tx.Exec(ctx, query, values...)
 	return err
 }
 
@@ -271,16 +418,16 @@ func (e *Engine) modeStr() string {
 	return "production"
 }
 
-// orderSeedTables returns seed table names in a safe insertion order.
+// orderDataTables returns data table names in a safe insertion order.
 // "users" always comes first (auth table), then tables ordered by FK deps.
-func orderSeedTables(cfg *domain.Config) []string {
+func orderDataTables(cfg *domain.Config) []string {
 	var result []string
-	if _, ok := cfg.Seeds["users"]; ok {
+	if _, ok := cfg.Data["users"]; ok {
 		result = append(result, "users")
 	}
 	ordered := orderTables(cfg.Tables)
 	for _, name := range ordered {
-		if _, ok := cfg.Seeds[name]; ok {
+		if _, ok := cfg.Data[name]; ok {
 			result = append(result, name)
 		}
 	}

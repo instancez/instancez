@@ -1,81 +1,148 @@
 ---
 title: Functions
-description: Custom SQL queries exposed as REST endpoints
+description: Custom PostgreSQL stored functions exposed as REST endpoints
 section: Core Concepts
 order: 13
 ---
 
-Functions let you run custom SQL queries and expose them as REST endpoints. They're useful for aggregations, joins, and any logic that doesn't fit the standard CRUD pattern.
+Functions let you define PostgreSQL stored procedures in YAML and expose them as REST endpoints at `/rest/v1/rpc/<name>`, fully compatible with `supabase-js .rpc()`.
 
 ## Defining a function
 
 ```yaml
 functions:
-  team_stats:
-    description: Get member count and task stats for a team
-    method: GET
-    auth: true
-    params:
+  get_team_members:
+    description: Get all members for a team
+    auth_required: true
+    language: plpgsql
+    volatility: stable
+    security: invoker
+    args:
       - name: team_id
         type: bigint
         required: true
-    returns: single_object
-    sql: |
-      SELECT
-        t.name AS team_name,
-        count(DISTINCT tm.user_id) AS member_count,
-        count(DISTINCT tasks.id) AS task_count
-      FROM teams t
-      LEFT JOIN team_members tm ON tm.team_id = t.id
-      LEFT JOIN tasks ON tasks.team_id = t.id
-      WHERE t.id = $1
-      GROUP BY t.id
+    returns:
+      type: "setof team_members"
+    body: |
+      BEGIN
+        RETURN QUERY
+        SELECT * FROM team_members
+        WHERE team_members.team_id = get_team_members.team_id;
+      END;
 ```
 
-This creates an endpoint at `GET /api/rpc/team_stats?team_id=1`.
+This creates a real PostgreSQL function and exposes it at `/rest/v1/rpc/get_team_members`.
 
-## Parameters
+## Function options
 
-Parameters are mapped to `$1`, `$2`, etc. in the SQL, in order of declaration:
+| Option | Description |
+|---|---|
+| `description` | Human-readable description (shown in OpenAPI docs) |
+| `auth_required` | If true, requires a valid JWT to call |
+| `language` | `sql` or `plpgsql` (default: `plpgsql`) |
+| `volatility` | `volatile`, `stable`, or `immutable` (default: `volatile`) |
+| `security` | `invoker` or `definer` (default: `invoker`) |
+| `args` | Ordered list of function arguments |
+| `returns.type` | Raw PostgreSQL return type (e.g., `int`, `void`, `setof posts`) |
+| `body` | The function body (PL/pgSQL or SQL) |
+
+## Arguments
+
+Arguments are declared as an ordered list. Each argument has a name, type, and optional default:
 
 ```yaml
-params:
+args:
   - name: org_id
     type: bigint
-    required: true     # $1
+    required: true
   - name: status
     type: text
-    required: false    # $2 (nullable)
-  - name: limit
+    required: false
+  - name: max_results
     type: integer
-    required: false    # $3
+    default: 50
 ```
 
 ## Return types
 
+The `returns.type` field accepts any valid PostgreSQL return type:
+
 | Type | Description |
 |---|---|
-| `rows` | Array of objects (default) |
-| `single_object` | Single object, 404 if no result |
-| `single_value` | Scalar value |
-| `void` | No return value (for mutations) |
+| `void` | No return value (HTTP 204) |
+| `int`, `text`, etc. | Scalar value |
+| `setof <table>` | Array of rows from a table |
+| `record` | Single anonymous record |
+| `table(id int, name text)` | Inline table definition |
 
 ## HTTP methods
 
-Use `GET` for read-only queries and `POST` for mutations:
+<Callout variant="info" title="GET vs POST">
+  Functions with `stable` or `immutable` volatility can be called via GET.
+  `volatile` functions require POST.
+</Callout>
+
+## SQL language functions
+
+For simple queries, use `language: sql`:
+
+```yaml
+functions:
+  add_numbers:
+    language: sql
+    volatility: immutable
+    args:
+      - name: a
+        type: int
+        required: true
+      - name: b
+        type: int
+        required: true
+    returns:
+      type: int
+    body: "SELECT a + b"
+```
+
+## PL/pgSQL functions
+
+For procedural logic, use `language: plpgsql`:
 
 ```yaml
 functions:
   archive_old_tasks:
-    method: POST
-    auth: true
-    returns: void
-    sql: |
-      UPDATE tasks SET archived = true
-      WHERE completed_at < now() - interval '90 days'
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    returns:
+      type: void
+    body: |
+      BEGIN
+        UPDATE tasks SET archived = true
+        WHERE completed_at < now() - interval '90 days';
+      END;
 ```
 
-<Callout variant="warning">
+## Calling functions
+
+Functions are called via the standard PostgREST RPC interface:
+
+```bash
+# POST (works for all functions)
+curl -X POST http://localhost:8080/rest/v1/rpc/add_numbers \
+  -H "Content-Type: application/json" \
+  -d '{"a": 1, "b": 2}'
+
+# GET (only for stable/immutable functions)
+curl "http://localhost:8080/rest/v1/rpc/add_numbers?a=1&b=2"
+```
+
+With `supabase-js`:
+
+```js
+const { data, error } = await supabase.rpc('add_numbers', { a: 1, b: 2 })
+```
+
+<Callout variant="warning" title="No RLS enforcement">
   Functions bypass RLS. They run with the privileges of the database role,
-  so validate authorization in the SQL or via the `auth` flag.
+  so validate authorization in the SQL or via the `auth_required` flag.
 </Callout>

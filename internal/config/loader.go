@@ -147,14 +147,14 @@ func applyDefaults(cfg *domain.Config) {
 	if cfg.Server.Timeouts.Shutdown == "" {
 		cfg.Server.Timeouts.Shutdown = "30s"
 	}
-	if cfg.Server.DB.Pool.Max == 0 {
-		cfg.Server.DB.Pool.Max = 20
+	if cfg.Database.Pool.Max == 0 {
+		cfg.Database.Pool.Max = 20
 	}
-	if cfg.Server.DB.Pool.Min == 0 {
-		cfg.Server.DB.Pool.Min = 5
+	if cfg.Database.Pool.Min == 0 {
+		cfg.Database.Pool.Min = 5
 	}
-	if cfg.Server.DB.Pool.IdleTimeout == "" {
-		cfg.Server.DB.Pool.IdleTimeout = "300s"
+	if cfg.Database.Pool.IdleTimeout == "" {
+		cfg.Database.Pool.IdleTimeout = "300s"
 	}
 
 	// Auth defaults
@@ -174,4 +174,33 @@ func applyDefaults(cfg *domain.Config) {
 			cfg.Tables[name] = t
 		}
 	}
+
+	// Functions: fill defaults and derive ReturnCategory.
+	for name, fn := range cfg.Functions {
+		if fn.Language == "" {
+			fn.Language = "plpgsql"
+		}
+		if fn.Volatility == "" {
+			fn.Volatility = "volatile"
+		}
+		if fn.Security == "" {
+			fn.Security = "invoker"
+		}
+		fn.ReturnCategory = classifyRPCReturn(fn.Returns.Type)
+		cfg.Functions[name] = fn
+	}
+}
+
+// classifyRPCReturn reduces a raw SQL return type to one of
+// {"void", "setof", "scalar"} so the RPC handler can pick the right
+// dispatch shape at request time without reparsing strings.
+func classifyRPCReturn(raw string) string {
+	t := strings.TrimSpace(strings.ToLower(raw))
+	if t == "" || t == "void" {
+		return "void"
+	}
+	if strings.HasPrefix(t, "setof ") || strings.HasPrefix(t, "table(") || strings.HasPrefix(t, "table (") {
+		return "setof"
+	}
+	return "scalar"
 }

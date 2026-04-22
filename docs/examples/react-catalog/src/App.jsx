@@ -4,6 +4,8 @@ import { AuthBar, useSession } from './AuthBar.jsx'
 import { ProductCard } from './ProductCard.jsx'
 import { ProductDetail } from './ProductDetail.jsx'
 import { FiltersBar } from './FiltersBar.jsx'
+import { CatalogStats } from './CatalogStats.jsx'
+import { SecurityPanel } from './SecurityPanel.jsx'
 
 const PAGE_SIZE = 6
 
@@ -42,10 +44,13 @@ export default function App() {
     )
   }
 
-  return <Catalog />
+  return <Catalog session={session} />
 }
 
-function Catalog() {
+function Catalog({ session }) {
+  const isAnon =
+    session?.user?.is_anonymous ||
+    session?.user?.app_metadata?.provider === 'anonymous'
   const [categories, setCategories] = useState([])
   const [products, setProducts] = useState([])
   const [total, setTotal] = useState(0)
@@ -175,6 +180,10 @@ function Catalog() {
       </header>
 
       <AuthBar />
+
+      <CatalogStats categories={categories} />
+
+      {!isAnon && <SecurityPanel session={session} />}
 
       <FiltersBar
         filters={filters}

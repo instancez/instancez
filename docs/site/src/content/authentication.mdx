@@ -5,7 +5,7 @@ section: Core Concepts
 order: 11
 ---
 
-Ultrabase has built-in authentication with email/password and OAuth providers. Auth is configured entirely in YAML — no external service required.
+Ultrabase has built-in authentication with email/password, OAuth providers, MFA, and passwordless login. Auth is configured entirely in YAML — no external service required. The auth API is GoTrue-compatible, so the `@supabase/supabase-js` client works without changes.
 
 ## Enabling auth
 
@@ -20,11 +20,47 @@ This gives you auth endpoints:
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/api/auth/signup` | POST | Create account |
-| `/api/auth/login` | POST | Get JWT token |
-| `/api/auth/refresh` | POST | Refresh token |
-| `/api/auth/me` | GET | Current user |
-| `/api/auth/logout` | POST | Invalidate refresh token |
+| `/auth/v1/signup` | POST | Create account |
+| `/auth/v1/token` | POST | Sign in (email/password or refresh token) |
+| `/auth/v1/user` | GET | Get current user |
+| `/auth/v1/user` | PUT | Update user profile |
+| `/auth/v1/logout` | POST | Invalidate refresh token |
+| `/auth/v1/recover` | POST | Initiate password reset |
+| `/auth/v1/verify` | POST | Verify email or reset token |
+| `/auth/v1/otp` | POST | Passwordless OTP (magic link / 6-digit code) |
+| `/auth/v1/settings` | GET | Public auth configuration |
+
+### MFA endpoints
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/auth/v1/factors` | GET | List enrolled MFA factors |
+| `/auth/v1/factors` | POST | Enroll new TOTP factor |
+| `/auth/v1/factors/:id` | DELETE | Unenroll MFA factor |
+| `/auth/v1/factors/:id/challenge` | POST | Create MFA challenge |
+| `/auth/v1/factors/:id/verify` | POST | Verify MFA challenge (upgrades JWT to `aal2`) |
+
+### OAuth endpoints
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/auth/v1/authorize` | GET | Start OAuth flow |
+| `/auth/v1/callback/google` | GET | Google OAuth callback |
+| `/auth/v1/callback/github` | GET | GitHub OAuth callback |
+
+### Admin endpoints
+
+These require the `ULTRABASE_ADMIN_KEY` as the bearer token:
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/auth/v1/admin/users` | POST | Create user |
+| `/auth/v1/admin/users` | GET | List users |
+| `/auth/v1/admin/users/:uid` | GET | Get user by ID |
+| `/auth/v1/admin/users/:uid` | PUT | Update user |
+| `/auth/v1/admin/users/:uid` | DELETE | Delete user |
+| `/auth/v1/admin/generate_link` | POST | Generate sign-in or reset link |
+| `/auth/v1/invite` | POST | Send invite email |
 
 ## Email verification
 
@@ -46,23 +82,30 @@ auth:
 
 <Callout variant="info" title="Email provider required">
   Email verification requires an email provider configured under `providers.email`.
-  Supported: `resend`, `sendgrid`.
+  Supported: `resend`, `sendgrid`, `ses`.
 </Callout>
 
 ## Custom user fields
 
-Add custom fields to the auth users table:
+Custom fields are added to the `users` table under `tables`, not under `auth`. The migrator automatically adds core columns (id, email, password_hash, etc.), so you only declare your custom fields:
 
 ```yaml
-auth:
-  fields:
-    display_name: { type: text }
-    avatar_url: { type: text }
-    role: { type: text, default: "'member'" }
-    org_id: { type: bigint, foreign_key: orgs.id }
+tables:
+  users:
+    fields:
+      - name: display_name
+        type: text
+      - name: avatar_url
+        type: text
+      - name: role
+        type: text
+        default: "'member'"
+      - name: org_id
+        foreign_key:
+          references: orgs.id
 ```
 
-These fields are included in the JWT claims and returned by `/api/auth/me`.
+These fields are included in the JWT claims and returned by `/auth/v1/user`.
 
 ## OAuth providers
 

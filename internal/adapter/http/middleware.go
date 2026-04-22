@@ -2,6 +2,7 @@ package http
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -20,9 +22,50 @@ import (
 )
 
 const (
-	contextKeySession = "ultrabase_session"
-	contextKeyUserID  = "ultrabase_user_id"
+	contextKeySession   = "ultrabase_session"
+	contextKeyUserID    = "ultrabase_user_id"
+	contextKeyRequestID = "ultrabase_request_id"
 )
+
+// requestIDSafe restricts incoming X-Request-Id values to characters that
+// are always safe to quote into a SQL string literal and to log. Clients
+// that send anything fancier get a fresh generated ID instead — their
+// header is echoed nowhere.
+var requestIDSafe = regexp.MustCompile(`^[A-Za-z0-9_.:\-]{1,128}$`)
+
+// requestIDMiddleware reads X-Request-Id from the request (case-insensitive
+// per RFC 7230), validates it, or generates a fresh 128-bit hex ID. The ID
+// is:
+//
+//  1. Stored in gin context so handlers and loggers can access it
+//  2. Echoed back on the response (X-Request-Id) so clients can correlate
+//  3. Attached to the request context via domain.ContextWithRequestID so
+//     the postgres adapter can publish it to SQL as a per-transaction GUC
+//     for RLS policies that want to log or gate by request ID.
+func requestIDMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id := strings.TrimSpace(c.GetHeader("X-Request-Id"))
+		if id == "" || !requestIDSafe.MatchString(id) {
+			id = generateRequestID()
+		}
+		c.Set(contextKeyRequestID, id)
+		c.Header("X-Request-Id", id)
+		c.Request = c.Request.WithContext(domain.ContextWithRequestID(c.Request.Context(), id))
+		c.Next()
+	}
+}
+
+// generateRequestID returns a 16-byte random hex string. crypto/rand is
+// used so two concurrent requests cannot collide under load, and so the
+// ID isn't guessable (clients that want to trace specific flows must set
+// their own header).
+func generateRequestID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("req-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
+}
 
 // requestLogger logs each request (pretty in dev, JSON in prod).
 func requestLogger(logger *slog.Logger) gin.HandlerFunc {
@@ -35,6 +78,7 @@ func requestLogger(logger *slog.Logger) gin.HandlerFunc {
 			"status", c.Writer.Status(),
 			"duration", time.Since(start).Round(time.Microsecond),
 			"user_id", c.GetString(contextKeyUserID),
+			"request_id", c.GetString(contextKeyRequestID),
 		)
 	}
 }
@@ -102,13 +146,18 @@ func corsMiddleware(cfg domain.CORS, devMode bool) gin.HandlerFunc {
 	}
 }
 
-// bodySizeLimit limits request body size.
+// bodySizeLimit limits request body size. Storage upload paths are excluded
+// because the storage handler applies per-bucket size limits itself.
 func bodySizeLimit(maxSize string) gin.HandlerFunc {
 	limit := parseSizeBytes(maxSize)
 	if limit == 0 {
 		limit = 1 << 20 // 1MB default
 	}
 	return func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/storage/v1/object/") {
+			c.Next()
+			return
+		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 		c.Next()
 	}
@@ -265,6 +314,33 @@ var errTypeToCode = map[string]string{
 	"conflict":     "23505",
 	"validation":   "23514",
 	"internal":     "XX000",
+}
+
+// profileHeaderGuard enforces that Accept-Profile (for reads) and
+// Content-Profile (for writes) request the "public" schema. PostgREST uses
+// these headers to pick the DB schema; ultrabase is single-schema so any
+// value other than "public" is rejected with PGRST106, mirroring
+// PostgREST's "The schema must be one of the following: public" error.
+// An absent header is always accepted.
+func profileHeaderGuard() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var header string
+		switch c.Request.Method {
+		case http.MethodGet, http.MethodHead:
+			header = c.GetHeader("Accept-Profile")
+		default:
+			header = c.GetHeader("Content-Profile")
+		}
+		if header == "" || header == "public" {
+			c.Next()
+			return
+		}
+		pgJSON(c, http.StatusNotAcceptable, "PGRST106",
+			"The schema must be one of the following: public",
+			fmt.Sprintf("Requested schema %q is not exposed", header),
+			"")
+		c.Abort()
+	}
 }
 
 // pgJSON writes a PostgREST-compatible error body: {code, message, details, hint}.

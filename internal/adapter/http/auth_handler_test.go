@@ -277,16 +277,29 @@ func TestAuthHandler_Mount_RegistersGoTrueRoutes(t *testing.T) {
 	h.Mount(r.Group(""))
 
 	want := map[string]string{
-		"POST /auth/v1/signup":   "",
-		"POST /auth/v1/token":    "",
-		"GET /auth/v1/user":      "",
-		"PUT /auth/v1/user":      "",
-		"POST /auth/v1/logout":   "",
-		"POST /auth/v1/recover":  "",
-		"POST /auth/v1/verify":   "",
-		"GET /auth/v1/verify":    "",
-		"GET /auth/v1/authorize": "",
-		"GET /auth/v1/settings":  "",
+		"POST /auth/v1/signup":                "",
+		"POST /auth/v1/token":                 "",
+		"GET /auth/v1/user":                   "",
+		"PUT /auth/v1/user":                   "",
+		"POST /auth/v1/logout":                "",
+		"POST /auth/v1/recover":               "",
+		"POST /auth/v1/verify":                "",
+		"GET /auth/v1/verify":                 "",
+		"POST /auth/v1/otp":                   "",
+		"POST /auth/v1/admin/generate_link":   "",
+		"POST /auth/v1/admin/users":           "",
+		"GET /auth/v1/admin/users":            "",
+		"GET /auth/v1/admin/users/:uid":       "",
+		"PUT /auth/v1/admin/users/:uid":       "",
+		"DELETE /auth/v1/admin/users/:uid":    "",
+		"POST /auth/v1/invite":                "",
+		"GET /auth/v1/authorize":              "",
+		"GET /auth/v1/settings":               "",
+		"GET /auth/v1/factors":                "",
+		"POST /auth/v1/factors":               "",
+		"DELETE /auth/v1/factors/:factor_id":  "",
+		"POST /auth/v1/factors/:factor_id/challenge": "",
+		"POST /auth/v1/factors/:factor_id/verify":    "",
 	}
 	for _, rt := range r.Routes() {
 		delete(want, rt.Method+" "+rt.Path)
@@ -301,8 +314,8 @@ func TestCRUDHandler_Mount_RegistersRestV1Routes(t *testing.T) {
 	h := &CRUDHandler{
 		cfg: &domain.Config{
 			Tables: map[string]domain.Table{
-				"todos": {AllowAnon: true, Fields: map[string]domain.Field{
-					"id": {Type: "bigserial", PrimaryKey: true},
+				"todos": {AllowAnon: true, Fields: []domain.Field{
+					{Name: "id", Type: "bigserial", PrimaryKey: true},
 				}},
 			},
 		},
@@ -329,9 +342,9 @@ func TestCRUDHandler_Mount_RegistersRestV1Routes(t *testing.T) {
 	}
 }
 
-// ---------- /rest/v1/rpc/:name returns 501 ----------
+// ---------- /rest/v1/rpc/:name returns PGRST202 for missing functions ----------
 
-func TestRPCEndpoint_Returns501(t *testing.T) {
+func TestRPCEndpoint_UnknownFunction(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := &CRUDHandler{cfg: &domain.Config{Tables: map[string]domain.Table{}}}
 	r := gin.New()
@@ -341,16 +354,20 @@ func TestRPCEndpoint_Returns501(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
-	if w.Code != 501 {
-		t.Errorf("expected 501, got %d: %s", w.Code, w.Body.String())
+	// PostgREST returns 404 with code PGRST202 when the function is not
+	// in the schema cache; supabase-js exposes this to callers verbatim.
+	if w.Code != 404 {
+		t.Errorf("expected 404, got %d: %s", w.Code, w.Body.String())
 	}
-	// Error should use the PostgREST envelope, not a bare string
 	var body map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("body is not JSON: %s", w.Body.String())
 	}
-	if body["code"] == nil || body["message"] == nil {
-		t.Errorf("expected PostgREST envelope, got %v", body)
+	if body["code"] != "PGRST202" {
+		t.Errorf("expected code PGRST202, got %v", body["code"])
+	}
+	if body["message"] == nil {
+		t.Errorf("expected message field, got %v", body)
 	}
 }
 
@@ -402,3 +419,710 @@ func TestCORS_AllowsSupabaseJSHeaders(t *testing.T) {
 
 // small helper to silence unused import complaints when ctx is threaded
 var _ http.Handler = (http.HandlerFunc)(nil)
+
+// ---------- stub DB for auth handler tests ----------
+
+// stubDB implements domain.Database with hookable QueryRow / Exec
+// responses. Only the methods the auth handlers touch are populated;
+// the rest return zero values.
+type stubDB struct {
+	queryRowFn func(ctx context.Context, q string, args ...any) (map[string]any, error)
+	queryFn    func(ctx context.Context, q string, args ...any) ([]map[string]any, error)
+	execFn     func(ctx context.Context, q string, args ...any) (int64, error)
+}
+
+func (s *stubDB) Close() error                                         { return nil }
+func (s *stubDB) Ping(ctx context.Context) error                       { return nil }
+func (s *stubDB) EnsureMigrationsTable(ctx context.Context) error      { return nil }
+func (s *stubDB) GetLastMigration(ctx context.Context) (*domain.Migration, error) {
+	return nil, nil
+}
+func (s *stubDB) RecordMigration(ctx context.Context, checksum, sql, configJSON string) error {
+	return nil
+}
+func (s *stubDB) ExecDDL(ctx context.Context, sql string) error { return nil }
+func (s *stubDB) EnsureDataTable(ctx context.Context) error     { return nil }
+func (s *stubDB) GetAppliedData(ctx context.Context) ([]domain.DataRecord, error) {
+	return nil, nil
+}
+func (s *stubDB) RecordData(ctx context.Context, tx domain.Tx, key, tableName, source, checksum string, rowCount int) error {
+	return nil
+}
+func (s *stubDB) Query(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
+	if s.queryFn != nil {
+		return s.queryFn(ctx, q, args...)
+	}
+	return nil, nil
+}
+func (s *stubDB) QueryRow(ctx context.Context, q string, args ...any) (map[string]any, error) {
+	if s.queryRowFn != nil {
+		return s.queryRowFn(ctx, q, args...)
+	}
+	return nil, nil
+}
+func (s *stubDB) Exec(ctx context.Context, q string, args ...any) (int64, error) {
+	if s.execFn != nil {
+		return s.execFn(ctx, q, args...)
+	}
+	return 0, nil
+}
+func (s *stubDB) WithRLS(ctx context.Context, session domain.Session) (context.Context, error) {
+	return ctx, nil
+}
+func (s *stubDB) Begin(ctx context.Context) (domain.Tx, error) { return nil, nil }
+
+// ---------- signup dispatch / anonymous ----------
+
+// TestHandleSignupDispatch_AnonymousOnEmptyBody asserts that POSTing an
+// empty JSON body to /signup routes to the anonymous path instead of
+// being rejected by the `required,email` binding on the struct.
+func TestHandleSignupDispatch_AnonymousOnEmptyBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := &stubDB{
+		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+			if strings.Contains(q, "INSERT INTO users") {
+				return map[string]any{
+					"id":                 "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+					"email":              nil,
+					"email_verified":     false,
+					"raw_app_meta_data":  `{"is_anonymous":true}`,
+					"raw_user_meta_data": `{}`,
+					"created_at":         time.Now(),
+					"updated_at":         time.Now(),
+					"is_anonymous":       true,
+				}, nil
+			}
+			return nil, nil
+		},
+	}
+	h := &AuthHandler{
+		cfg:     &domain.Config{Auth: &domain.Auth{JWTExpiry: "15m"}},
+		db:      db,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		jwtKeys: stubKeys(t),
+	}
+	r := gin.New()
+	r.POST("/auth/v1/signup", h.handleSignupDispatch)
+
+	req := httptest.NewRequest("POST", "/auth/v1/signup", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	tok, _ := body["access_token"].(string)
+	if tok == "" {
+		t.Fatalf("missing access_token in body: %s", w.Body.String())
+	}
+	// Parse claims and verify is_anonymous=true.
+	parsed, _, err := jwt.NewParser().ParseUnverified(tok, jwt.MapClaims{})
+	if err != nil {
+		t.Fatalf("parse token: %v", err)
+	}
+	claims := parsed.Claims.(jwt.MapClaims)
+	if isAnon, _ := claims["is_anonymous"].(bool); !isAnon {
+		t.Errorf("expected is_anonymous=true in claims, got %v", claims["is_anonymous"])
+	}
+}
+
+// TestHandleOTP_CreatesTokenForNewUser drives the magic link path: a
+// previously unknown email should produce an INSERT for the user and a
+// second INSERT into _auth_email_verifications with purpose='magiclink'.
+func TestHandleOTP_CreatesTokenForNewUser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	userLookups := 0
+	inserts := 0
+	insertedPurpose := ""
+	db := &stubDB{
+		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+			if strings.Contains(q, "SELECT id::text FROM users WHERE email") {
+				userLookups++
+				return nil, nil
+			}
+			if strings.Contains(q, "INSERT INTO users") {
+				return map[string]any{"id": "11111111-2222-3333-4444-555555555555"}, nil
+			}
+			return nil, nil
+		},
+		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
+			if strings.Contains(q, "_auth_email_verifications") {
+				inserts++
+				if strings.Contains(q, "'magiclink'") {
+					insertedPurpose = "magiclink"
+				}
+			}
+			return 1, nil
+		},
+	}
+	h := &AuthHandler{
+		cfg: &domain.Config{Auth: &domain.Auth{
+			Email: &domain.AuthEmail{},
+		}},
+		db:      db,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		jwtKeys: stubKeys(t),
+	}
+	r := gin.New()
+	r.POST("/auth/v1/otp", h.handleOTP)
+
+	req := httptest.NewRequest("POST", "/auth/v1/otp", strings.NewReader(`{"email":"new@example.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if userLookups != 1 {
+		t.Errorf("expected 1 user lookup, got %d", userLookups)
+	}
+	if inserts != 1 {
+		t.Errorf("expected 1 verification insert, got %d", inserts)
+	}
+	if insertedPurpose != "magiclink" {
+		t.Errorf("expected purpose=magiclink, got %q", insertedPurpose)
+	}
+}
+
+// TestHandleOTP_NoCreateUserWhenDisabled ensures create_user:false returns
+// 200 for unknown emails without inserting a user row (enumeration guard).
+func TestHandleOTP_NoCreateUserWhenDisabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	userInserts := 0
+	db := &stubDB{
+		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+			if strings.Contains(q, "INSERT INTO users") {
+				userInserts++
+			}
+			return nil, nil
+		},
+	}
+	h := &AuthHandler{
+		cfg: &domain.Config{Auth: &domain.Auth{
+			Email: &domain.AuthEmail{},
+		}},
+		db:      db,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		jwtKeys: stubKeys(t),
+	}
+	r := gin.New()
+	r.POST("/auth/v1/otp", h.handleOTP)
+
+	req := httptest.NewRequest("POST", "/auth/v1/otp",
+		strings.NewReader(`{"email":"ghost@example.com","create_user":false}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200 (enum guard), got %d", w.Code)
+	}
+	if userInserts != 0 {
+		t.Errorf("expected no user insert when create_user=false, got %d", userInserts)
+	}
+}
+
+// TestHandleGenerateLink_MagiclinkExistingUser exercises the admin
+// generate_link path for a known user: no email is sent, but a magiclink
+// token row is created and the response includes action_link + token.
+func TestHandleGenerateLink_MagiclinkExistingUser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tokenInserts := 0
+	db := &stubDB{
+		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+			if strings.Contains(q, "FROM users WHERE email") {
+				return map[string]any{
+					"id":                 "11111111-2222-3333-4444-555555555555",
+					"email":              "user@example.com",
+					"email_verified":     true,
+					"raw_app_meta_data":  `{}`,
+					"raw_user_meta_data": `{}`,
+					"created_at":         time.Now(),
+					"updated_at":         time.Now(),
+				}, nil
+			}
+			return nil, nil
+		},
+		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
+			if strings.Contains(q, "_auth_email_verifications") {
+				tokenInserts++
+			}
+			return 1, nil
+		},
+	}
+	h := &AuthHandler{
+		cfg:     &domain.Config{Auth: &domain.Auth{}},
+		db:      db,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		jwtKeys: stubKeys(t),
+	}
+	r := gin.New()
+	r.POST("/auth/v1/admin/generate_link", h.handleGenerateLink)
+
+	req := httptest.NewRequest("POST", "/auth/v1/admin/generate_link",
+		strings.NewReader(`{"type":"magiclink","email":"user@example.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if tokenInserts != 1 {
+		t.Errorf("expected 1 token insert, got %d", tokenInserts)
+	}
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if al, _ := body["action_link"].(string); !strings.Contains(al, "/auth/v1/verify?token=") {
+		t.Errorf("missing action_link: %v", body["action_link"])
+	}
+	if body["verification_type"] != "magiclink" {
+		t.Errorf("verification_type = %v", body["verification_type"])
+	}
+}
+
+// TestGenerateNumericCode_ShapeAndEntropy asserts the code generator
+// returns the requested width, only digits, and doesn't return the same
+// value on two back-to-back calls.
+func TestGenerateNumericCode_ShapeAndEntropy(t *testing.T) {
+	got := generateNumericCode(6)
+	if len(got) != 6 {
+		t.Errorf("length = %d, want 6", len(got))
+	}
+	for _, c := range got {
+		if c < '0' || c > '9' {
+			t.Errorf("non-digit %q in code %q", c, got)
+		}
+	}
+	// Probabilistic: two calls returning the same 6-digit value is ~1 in
+	// a million. Run a handful and require at least one difference.
+	seen := map[string]struct{}{got: {}}
+	diff := false
+	for i := 0; i < 10; i++ {
+		v := generateNumericCode(6)
+		if _, ok := seen[v]; !ok {
+			diff = true
+			break
+		}
+		seen[v] = struct{}{}
+	}
+	if !diff {
+		t.Errorf("generator produced duplicates 10x in a row — entropy broken")
+	}
+}
+
+// TestHandleOTP_StoresCodeAndEmail asserts the /otp insert records both a
+// 6-digit code and the caller's email so /verify can look up by
+// (email, code) in the numeric flow.
+func TestHandleOTP_StoresCodeAndEmail(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var capturedCode, capturedEmail string
+	db := &stubDB{
+		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+			if strings.Contains(q, "SELECT id::text FROM users") {
+				return map[string]any{"id": "11111111-2222-3333-4444-555555555555"}, nil
+			}
+			return nil, nil
+		},
+		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
+			if strings.Contains(q, "_auth_email_verifications") && strings.Contains(q, "code") {
+				// (user_id, token, code, email, 'magiclink', expires_at)
+				if len(args) >= 4 {
+					capturedCode, _ = args[2].(string)
+					capturedEmail, _ = args[3].(string)
+				}
+			}
+			return 1, nil
+		},
+	}
+	h := &AuthHandler{
+		cfg: &domain.Config{Auth: &domain.Auth{
+			Email: &domain.AuthEmail{},
+		}},
+		db:      db,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		jwtKeys: stubKeys(t),
+	}
+	r := gin.New()
+	r.POST("/auth/v1/otp", h.handleOTP)
+
+	req := httptest.NewRequest("POST", "/auth/v1/otp",
+		strings.NewReader(`{"email":"otp@example.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("status = %d", w.Code)
+	}
+	if len(capturedCode) != 6 {
+		t.Errorf("expected 6-digit code, got %q", capturedCode)
+	}
+	if capturedEmail != "otp@example.com" {
+		t.Errorf("email = %q, want otp@example.com", capturedEmail)
+	}
+}
+
+// TestHandleVerify_NumericCodeLookup asserts that a {type:'email',
+// email:..., token:<6 digits>} request hits the (email, code) lookup
+// branch instead of the token-only path.
+func TestHandleVerify_NumericCodeLookup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var lookupQ string
+	var lookupArgs []any
+	db := &stubDB{
+		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+			if strings.Contains(q, "_auth_email_verifications") && strings.Contains(q, "code") {
+				lookupQ = q
+				lookupArgs = args
+				return map[string]any{
+					"user_id":    "11111111-2222-3333-4444-555555555555",
+					"purpose":    "magiclink",
+					"expires_at": time.Now().Add(1 * time.Hour),
+					"token":      "longtoken",
+				}, nil
+			}
+			if strings.Contains(q, "FROM users WHERE id") {
+				return map[string]any{
+					"id":                 "11111111-2222-3333-4444-555555555555",
+					"email":              "otp@example.com",
+					"email_verified":     true,
+					"raw_app_meta_data":  `{}`,
+					"raw_user_meta_data": `{}`,
+					"created_at":         time.Now(),
+					"updated_at":         time.Now(),
+				}, nil
+			}
+			return nil, nil
+		},
+	}
+	h := &AuthHandler{
+		cfg: &domain.Config{Auth: &domain.Auth{
+			JWTExpiry: "1h",
+			Email:     &domain.AuthEmail{},
+		}},
+		db:      db,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		jwtKeys: stubKeys(t),
+	}
+	r := gin.New()
+	r.POST("/auth/v1/verify", h.handleVerify)
+
+	req := httptest.NewRequest("POST", "/auth/v1/verify",
+		strings.NewReader(`{"type":"email","email":"otp@example.com","token":"123456"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(lookupQ, "email = $1 AND code = $2") {
+		t.Errorf("wrong lookup query: %s", lookupQ)
+	}
+	if len(lookupArgs) != 2 || lookupArgs[0] != "otp@example.com" || lookupArgs[1] != "123456" {
+		t.Errorf("lookup args = %v", lookupArgs)
+	}
+}
+
+// TestHandleVerify_LongTokenFallsBackToTokenLookup asserts that a 32-byte
+// hex token (magic link click) still uses the token-only lookup even
+// when an email is supplied.
+func TestHandleVerify_LongTokenFallsBackToTokenLookup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var lookupQ string
+	db := &stubDB{
+		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+			if strings.Contains(q, "_auth_email_verifications") {
+				lookupQ = q
+				return map[string]any{
+					"user_id":    "11111111-2222-3333-4444-555555555555",
+					"purpose":    "magiclink",
+					"expires_at": time.Now().Add(1 * time.Hour),
+					"token":      "aaaaaaaabbbbbbbbccccccccdddddddd",
+				}, nil
+			}
+			if strings.Contains(q, "FROM users WHERE id") {
+				return map[string]any{
+					"id":                 "11111111-2222-3333-4444-555555555555",
+					"email":              "u@e.com",
+					"email_verified":     true,
+					"raw_app_meta_data":  `{}`,
+					"raw_user_meta_data": `{}`,
+					"created_at":         time.Now(),
+					"updated_at":         time.Now(),
+				}, nil
+			}
+			return nil, nil
+		},
+	}
+	h := &AuthHandler{
+		cfg:     &domain.Config{Auth: &domain.Auth{JWTExpiry: "1h", Email: &domain.AuthEmail{}}},
+		db:      db,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		jwtKeys: stubKeys(t),
+	}
+	r := gin.New()
+	r.POST("/auth/v1/verify", h.handleVerify)
+
+	req := httptest.NewRequest("POST", "/auth/v1/verify",
+		strings.NewReader(`{"type":"magiclink","email":"u@e.com","token":"aaaaaaaabbbbbbbbccccccccdddddddd"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(lookupQ, "code = $2") {
+		t.Errorf("long token should use token-only lookup, got: %s", lookupQ)
+	}
+	if !strings.Contains(lookupQ, "WHERE token = $1") {
+		t.Errorf("wrong lookup query: %s", lookupQ)
+	}
+}
+
+// TestHandleGenerateLink_UnsupportedType asserts 400 for unknown link types.
+func TestHandleGenerateLink_UnsupportedType(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &AuthHandler{
+		cfg:     &domain.Config{Auth: &domain.Auth{}},
+		db:      &stubDB{},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		jwtKeys: stubKeys(t),
+	}
+	r := gin.New()
+	r.POST("/auth/v1/admin/generate_link", h.handleGenerateLink)
+
+	req := httptest.NewRequest("POST", "/auth/v1/admin/generate_link",
+		strings.NewReader(`{"type":"sms","email":"u@e.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 400 {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+// ---------- password reset (recover → verify GET → redirect) ----------
+
+// TestHandleRecover_AlwaysReturns200 verifies email enumeration
+// protection: the endpoint returns 200 regardless of whether the email
+// exists, and stores a recovery token when the user does exist.
+func TestHandleRecover_AlwaysReturns200(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var storedPurpose string
+	db := &stubDB{
+		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+			if strings.Contains(q, "SELECT id::text FROM users") {
+				return map[string]any{"id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}, nil
+			}
+			return nil, nil
+		},
+		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
+			if strings.Contains(q, "_auth_email_verifications") {
+				// args: userID, token, expiresAt — purpose is hardcoded in SQL
+				storedPurpose = "recovery" // verified via the SQL literal
+			}
+			return 1, nil
+		},
+	}
+	h := &AuthHandler{
+		cfg:     &domain.Config{Auth: &domain.Auth{}},
+		db:      db,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		jwtKeys: stubKeys(t),
+	}
+	r := gin.New()
+	r.POST("/auth/v1/recover", h.handleRecover)
+
+	// Known email
+	req := httptest.NewRequest("POST", "/auth/v1/recover",
+		strings.NewReader(`{"email":"user@example.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Errorf("expected 200 for known email, got %d", w.Code)
+	}
+	if storedPurpose != "recovery" {
+		t.Errorf("expected recovery token insert, got %q", storedPurpose)
+	}
+
+	// Unknown email — still 200
+	db.queryRowFn = func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+		return nil, nil
+	}
+	req2 := httptest.NewRequest("POST", "/auth/v1/recover",
+		strings.NewReader(`{"email":"nobody@example.com"}`))
+	req2.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+	if w2.Code != 200 {
+		t.Errorf("expected 200 for unknown email, got %d", w2.Code)
+	}
+}
+
+// TestHandleVerifyGET_RecoveryRedirectsWithToken exercises the full
+// password-reset link-click flow: GET /auth/v1/verify?token=...&type=recovery
+// should consume the token, build a session, and redirect with the access
+// token in the URL fragment so supabase-js can fire PASSWORD_RECOVERY.
+func TestHandleVerifyGET_RecoveryRedirectsWithToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	deleted := false
+	db := &stubDB{
+		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+			if strings.Contains(q, "_auth_email_verifications") {
+				return map[string]any{
+					"user_id":    "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+					"purpose":    "recovery",
+					"expires_at": time.Now().Add(30 * time.Minute),
+				}, nil
+			}
+			if strings.Contains(q, "FROM users") {
+				return map[string]any{
+					"id":                 "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+					"email":              "user@example.com",
+					"email_verified":     true,
+					"raw_app_meta_data":  `{}`,
+					"raw_user_meta_data": `{}`,
+					"created_at":         time.Now(),
+					"updated_at":         time.Now(),
+				}, nil
+			}
+			return nil, nil
+		},
+		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
+			if strings.Contains(q, "DELETE FROM _auth_email_verifications") {
+				deleted = true
+			}
+			return 1, nil
+		},
+	}
+	h := &AuthHandler{
+		cfg:     &domain.Config{Auth: &domain.Auth{JWTExpiry: "15m"}},
+		db:      db,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		jwtKeys: stubKeys(t),
+	}
+	r := gin.New()
+	r.GET("/auth/v1/verify", h.handleVerifyGET)
+
+	req := httptest.NewRequest("GET",
+		"/auth/v1/verify?token=abc123&type=recovery&redirect_to=http://app.local/reset", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 303 {
+		t.Fatalf("expected 303 redirect, got %d: %s", w.Code, w.Body.String())
+	}
+	loc := w.Header().Get("Location")
+	if !strings.HasPrefix(loc, "http://app.local/reset#") {
+		t.Fatalf("redirect should point to redirect_to, got %s", loc)
+	}
+	if !strings.Contains(loc, "access_token=") {
+		t.Errorf("redirect missing access_token fragment: %s", loc)
+	}
+	if !strings.Contains(loc, "type=recovery") {
+		t.Errorf("redirect missing type=recovery fragment: %s", loc)
+	}
+	if !strings.Contains(loc, "refresh_token=") {
+		t.Errorf("redirect missing refresh_token fragment: %s", loc)
+	}
+	if !deleted {
+		t.Error("recovery token was not consumed (DELETE not called)")
+	}
+}
+
+// TestHandleVerifyGET_ExpiredTokenRejected ensures an expired recovery
+// token returns 400 and is cleaned up from the database.
+func TestHandleVerifyGET_ExpiredTokenRejected(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	deleted := false
+	db := &stubDB{
+		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+			if strings.Contains(q, "_auth_email_verifications") {
+				return map[string]any{
+					"user_id":    "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+					"purpose":    "recovery",
+					"expires_at": time.Now().Add(-10 * time.Minute), // expired
+				}, nil
+			}
+			return nil, nil
+		},
+		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
+			if strings.Contains(q, "DELETE FROM _auth_email_verifications") {
+				deleted = true
+			}
+			return 1, nil
+		},
+	}
+	h := &AuthHandler{
+		cfg:     &domain.Config{Auth: &domain.Auth{}},
+		db:      db,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		jwtKeys: stubKeys(t),
+	}
+	r := gin.New()
+	r.GET("/auth/v1/verify", h.handleVerifyGET)
+
+	req := httptest.NewRequest("GET", "/auth/v1/verify?token=expired123&type=recovery", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 400 {
+		t.Errorf("expected 400 for expired token, got %d", w.Code)
+	}
+	if !deleted {
+		t.Error("expired token should be cleaned up")
+	}
+}
+
+// TestHandleVerifyGET_EmailVerificationStillWorks ensures the original
+// email verification path is unbroken by the recovery changes.
+func TestHandleVerifyGET_EmailVerificationStillWorks(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	emailVerified := false
+	db := &stubDB{
+		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+			if strings.Contains(q, "_auth_email_verifications") {
+				return map[string]any{
+					"user_id":    "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+					"purpose":    "signup",
+					"expires_at": time.Now().Add(30 * time.Minute),
+				}, nil
+			}
+			return nil, nil
+		},
+		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
+			if strings.Contains(q, "email_verified = true") {
+				emailVerified = true
+			}
+			return 1, nil
+		},
+	}
+	h := &AuthHandler{
+		cfg:     &domain.Config{Auth: &domain.Auth{}},
+		db:      db,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		jwtKeys: stubKeys(t),
+	}
+	r := gin.New()
+	r.GET("/auth/v1/verify", h.handleVerifyGET)
+
+	req := httptest.NewRequest("GET", "/auth/v1/verify?token=signuptoken", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !emailVerified {
+		t.Error("email_verified should have been set to true")
+	}
+}

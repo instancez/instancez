@@ -3,6 +3,8 @@ package http
 import (
 	"strings"
 	"testing"
+
+	"github.com/saedx1/ultrabase/internal/domain"
 )
 
 func TestContentTypeIsCSV(t *testing.T) {
@@ -124,5 +126,106 @@ func TestCsvRenderRows_EmptyReturnsOnlyHeader(t *testing.T) {
 	}
 	if string(out) != "" {
 		t.Errorf("empty input should yield empty output, got %q", out)
+	}
+}
+
+func TestCoerceCSVValue(t *testing.T) {
+	tests := []struct {
+		val    string
+		pgType string
+		want   any
+		changed bool
+	}{
+		// Integers
+		{"42", "integer", int64(42), true},
+		{"42", "int4", int64(42), true},
+		{"42", "bigint", int64(42), true},
+		{"42", "smallint", int64(42), true},
+		{"42", "serial", int64(42), true},
+
+		// Floats
+		{"3.14", "real", float64(float32(3.14)), true},
+		{"3.14", "double precision", 3.14, true},
+		{"3.14", "float8", 3.14, true},
+
+		// Numeric stays as string (arbitrary precision)
+		{"99999.99", "numeric", "99999.99", false},
+		{"99999.99", "numeric(10,2)", "99999.99", false},
+
+		// Booleans
+		{"true", "boolean", true, true},
+		{"false", "bool", false, true},
+		{"t", "boolean", true, true},
+		{"f", "boolean", false, true},
+		{"yes", "boolean", true, true},
+		{"no", "boolean", false, true},
+		{"1", "boolean", true, true},
+		{"0", "boolean", false, true},
+
+		// Text types stay as-is
+		{"hello", "text", "hello", false},
+		{"hello", "varchar(255)", "hello", false},
+		{"hello", "citext", "hello", false},
+
+		// Empty string → nil for non-text
+		{"", "integer", nil, true},
+		{"", "boolean", nil, true},
+		{"", "uuid", nil, true},
+		// Empty string stays for text types
+		{"", "text", "", false},
+		{"", "varchar", "", false},
+
+		// UUID, date, timestamp — pass through as string
+		{"550e8400-e29b-41d4-a716-446655440000", "uuid", "550e8400-e29b-41d4-a716-446655440000", false},
+		{"2024-01-15", "date", "2024-01-15", false},
+		{"2024-01-15T10:30:00Z", "timestamptz", "2024-01-15T10:30:00Z", false},
+
+		// JSON validation
+		{`{"key":"val"}`, "jsonb", `{"key":"val"}`, false},
+		{`not json`, "jsonb", `not json`, false}, // invalid JSON passes through
+
+		// Invalid numbers stay as string
+		{"abc", "integer", "abc", false},
+	}
+	for _, tc := range tests {
+		got, changed := coerceCSVValue(tc.val, tc.pgType)
+		if changed != tc.changed {
+			t.Errorf("coerceCSVValue(%q, %q) changed=%v, want %v", tc.val, tc.pgType, changed, tc.changed)
+			continue
+		}
+		if changed && got != tc.want {
+			t.Errorf("coerceCSVValue(%q, %q) = %v (%T), want %v (%T)", tc.val, tc.pgType, got, got, tc.want, tc.want)
+		}
+	}
+}
+
+func TestCsvCoerceRecords(t *testing.T) {
+	table := domain.Table{
+		Fields: []domain.Field{
+			{Name: "id", Type: "integer"},
+			{Name: "name", Type: "text"},
+			{Name: "active", Type: "boolean"},
+			{Name: "score", Type: "float8"},
+		},
+	}
+	records := []map[string]any{
+		{"id": "1", "name": "Alice", "active": "true", "score": "9.5"},
+		{"id": "2", "name": "Bob", "active": "false", "score": ""},
+	}
+	out := csvCoerceRecords(records, table)
+	if out[0]["id"] != int64(1) {
+		t.Errorf("id = %v (%T), want int64(1)", out[0]["id"], out[0]["id"])
+	}
+	if out[0]["name"] != "Alice" {
+		t.Errorf("name = %v", out[0]["name"])
+	}
+	if out[0]["active"] != true {
+		t.Errorf("active = %v", out[0]["active"])
+	}
+	if out[0]["score"] != 9.5 {
+		t.Errorf("score = %v", out[0]["score"])
+	}
+	if out[1]["score"] != nil {
+		t.Errorf("empty float should be nil, got %v", out[1]["score"])
 	}
 }

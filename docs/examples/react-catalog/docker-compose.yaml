@@ -35,6 +35,11 @@ services:
       - "5174:5174"
     environment:
       VITE_PROXY_TARGET: http://ultrabase:8080
+      # Exposed only because this is a localhost dev demo: the magic-link
+      # and email-OTP tabs call /auth/v1/admin/generate_link to surface the
+      # token that would normally arrive by email. Never ship an admin key
+      # to a real browser.
+      VITE_ULTRABASE_ADMIN_KEY: ultrabase-dev-key
     volumes:
       - ./src:/app/src
       - ./index.html:/app/index.html

@@ -46,6 +46,7 @@ func NewServer(deps ServerDeps) *Server {
 
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(requestIDMiddleware())
 	r.Use(requestLogger(deps.Logger))
 
 	s := &Server{
@@ -94,18 +95,14 @@ func NewServer(deps ServerDeps) *Server {
 	crudHandler := NewCRUDHandler(deps)
 	crudHandler.Mount(root)
 
-	// Storage endpoints (ultrabase-proprietary signed-URL model, kept
-	// under /api/storage for now — storage compatibility with supabase-js
-	// is deliberately out of scope for this pass).
+	// Storage endpoints — supabase-js compatible at /storage/v1/*,
+	// plus serverless-friendly presigned URL endpoints at /api/storage/*.
 	if len(deps.Config.Storage) > 0 && deps.Storage != nil {
+		storageV1 := NewStorageV1Handler(deps)
+		storageV1.Mount(root)
+
 		storageHandler := NewStorageHandler(deps)
 		storageHandler.Mount(api)
-	}
-
-	// Functions endpoints (ultrabase-proprietary)
-	if len(deps.Config.Functions) > 0 {
-		fnHandler := NewFunctionsHandler(deps)
-		fnHandler.Mount(api)
 	}
 
 	// Admin endpoints

@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/saedx1/ultrabase/internal/adapter/gcs"
 	"github.com/saedx1/ultrabase/internal/adapter/resend"
 	"github.com/saedx1/ultrabase/internal/adapter/s3"
 	"github.com/saedx1/ultrabase/internal/adapter/sendgrid"
@@ -55,13 +54,6 @@ func initStorageProvider(ctx context.Context, cfg *domain.Config) (domain.Object
 	case "minio":
 		return newS3Store(ctx, true)
 
-	case "gcs":
-		bucket := os.Getenv("GCS_BUCKET")
-		if bucket == "" {
-			return nil, fmt.Errorf("GCS_BUCKET not set")
-		}
-		return gcs.New(ctx, bucket)
-
 	case "local":
 		path := os.Getenv("ULTRABASE_LOCAL_STORAGE_PATH")
 		if path == "" {
@@ -73,7 +65,7 @@ func initStorageProvider(ctx context.Context, cfg *domain.Config) (domain.Object
 		return nil, nil
 
 	default:
-		return nil, fmt.Errorf("unsupported storage provider: %s (supported: s3, gcs, minio, local)", cfg.Providers.Storage.Type)
+		return nil, fmt.Errorf("unsupported storage provider: %s (supported: s3, minio, local)", cfg.Providers.Storage.Type)
 	}
 }
 

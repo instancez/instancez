@@ -7,8 +7,6 @@ import {
   POSTGRES_TYPES,
   SQL_DEFAULTS,
   RLS_OPERATIONS,
-  HTTP_METHODS,
-  RETURN_TYPES,
   SEARCH_CONFIGS,
   CORS_METHODS,
 } from "./utils";
@@ -118,14 +116,6 @@ describe("constants", () => {
 
   it("RLS_OPERATIONS has CRUD operations", () => {
     expect(RLS_OPERATIONS).toEqual(["select", "insert", "update", "delete"]);
-  });
-
-  it("HTTP_METHODS has standard methods", () => {
-    expect(HTTP_METHODS).toEqual(["GET", "POST", "PUT", "DELETE"]);
-  });
-
-  it("RETURN_TYPES has all function return types", () => {
-    expect(RETURN_TYPES).toEqual(["void", "scalar", "row", "rows"]);
   });
 
   it("SEARCH_CONFIGS includes english", () => {

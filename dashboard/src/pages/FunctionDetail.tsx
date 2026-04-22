@@ -14,8 +14,12 @@ import { useDialog } from "../components/Dialog";
 import { PageHeader } from "../components/PageHeader";
 import { SaveBar } from "../components/SaveBar";
 import { CodeEditor } from "../components/CodeEditor";
-import { HTTP_METHODS, RETURN_TYPES, POSTGRES_TYPES } from "../lib/utils";
-import type { FunctionDef, FuncParam } from "../lib/types";
+import { POSTGRES_TYPES } from "../lib/utils";
+import type { FunctionDef, FuncArg } from "../lib/types";
+
+const LANGUAGES = ["plpgsql", "sql"];
+const VOLATILITIES = ["volatile", "stable", "immutable"];
+const SECURITIES = ["invoker", "definer"];
 
 export function FunctionDetail() {
   const { name } = useParams<{ name: string }>();
@@ -64,22 +68,31 @@ export function FunctionDetail() {
   }
 
   async function runTest() {
-    if (!name) return;
+    if (!name || !fn) return;
     setTestLoading(true);
     setTestResult(null);
     try {
       const key = sessionStorage.getItem("ultrabase_admin_key") || "";
-      const res = await fetch(`/api/fn/${name}`, {
+      const args: Record<string, unknown> = {};
+      for (const a of fn.args || []) {
+        if (testInputs[a.name] !== undefined && testInputs[a.name] !== "") {
+          args[a.name] = testInputs[a.name];
+        }
+      }
+      const res = await fetch(`/rest/v1/rpc/${name}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer test`,
           "X-Admin-Key": key,
         },
-        body: JSON.stringify(testInputs),
+        body: JSON.stringify(args),
       });
-      const data = await res.json();
-      setTestResult(JSON.stringify(data, null, 2));
+      const text = await res.text();
+      try {
+        setTestResult(JSON.stringify(JSON.parse(text), null, 2));
+      } catch {
+        setTestResult(text);
+      }
     } catch (err: any) {
       setTestResult(`Error: ${err.message}`);
     } finally {
@@ -95,15 +108,13 @@ export function FunctionDetail() {
     );
   }
 
-  const paramEntries = Object.entries(fn.params || {}).sort(([a], [b]) =>
-    a.localeCompare(b)
-  );
+  const args = fn.args || [];
 
   return (
     <div className="pb-20">
       <PageHeader
         title={name}
-        description={fn.description || "Custom SQL function"}
+        description={fn.description || "RPC function"}
         actions={
           <div className="flex items-center gap-2">
             <button
@@ -137,82 +148,122 @@ export function FunctionDetail() {
               className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-ring transition-colors"
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1">Method</label>
-              <select
-                value={fn.method}
-                onChange={(e) => updateFn((f) => ({ ...f, method: e.target.value }))}
-                className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm text-foreground focus:outline-none focus:border-ring transition-colors cursor-pointer"
-              >
-                {HTTP_METHODS.map((m) => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
-            </div>
-            <div className="flex items-end">
-              <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer pb-2">
-                <input
-                  type="checkbox"
-                  checked={fn.auth_required}
-                  onChange={(e) => updateFn((f) => ({ ...f, auth_required: e.target.checked }))}
-                  className="rounded border-border"
-                />
-                Auth required
-              </label>
-            </div>
+          <div className="flex items-end">
+            <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer pb-2">
+              <input
+                type="checkbox"
+                checked={fn.auth_required}
+                onChange={(e) => updateFn((f) => ({ ...f, auth_required: e.target.checked }))}
+                className="rounded border-border"
+              />
+              Auth required
+            </label>
           </div>
         </div>
 
-        {/* SQL Query */}
+        {/* Function Properties */}
+        <div className="grid grid-cols-3 gap-4">
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">Language</label>
+            <select
+              value={fn.language || "plpgsql"}
+              onChange={(e) => updateFn((f) => ({ ...f, language: e.target.value }))}
+              className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm text-foreground focus:outline-none focus:border-ring transition-colors cursor-pointer"
+            >
+              {LANGUAGES.map((l) => (
+                <option key={l} value={l}>{l}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">Volatility</label>
+            <select
+              value={fn.volatility || "volatile"}
+              onChange={(e) => updateFn((f) => ({ ...f, volatility: e.target.value }))}
+              className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm text-foreground focus:outline-none focus:border-ring transition-colors cursor-pointer"
+            >
+              {VOLATILITIES.map((v) => (
+                <option key={v} value={v}>{v}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">Security</label>
+            <select
+              value={fn.security || "invoker"}
+              onChange={(e) => updateFn((f) => ({ ...f, security: e.target.value }))}
+              className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm text-foreground focus:outline-none focus:border-ring transition-colors cursor-pointer"
+            >
+              {SECURITIES.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* Return Type */}
         <div>
-          <label className="block text-sm font-medium text-foreground mb-2">SQL Query</label>
+          <label className="block text-xs font-medium text-muted-foreground mb-1">Return Type</label>
+          <input
+            type="text"
+            value={fn.returns?.type || ""}
+            onChange={(e) =>
+              updateFn((f) => ({
+                ...f,
+                returns: { ...f.returns, type: e.target.value },
+              }))
+            }
+            placeholder="void, int, setof posts, etc."
+            className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-ring transition-colors"
+          />
+        </div>
+
+        {/* Function Body */}
+        <div>
+          <label className="block text-sm font-medium text-foreground mb-2">Function Body</label>
           <CodeEditor
-            value={fn.query}
-            onChange={(val) => updateFn((f) => ({ ...f, query: val }))}
+            value={fn.body || ""}
+            onChange={(val) => updateFn((f) => ({ ...f, body: val }))}
             language="sql"
             minHeight="160px"
           />
         </div>
 
-        {/* Params */}
+        {/* Arguments */}
         <div>
           <div className="flex items-center justify-between mb-3">
-            <label className="text-sm font-medium text-foreground">Parameters</label>
+            <label className="text-sm font-medium text-foreground">Arguments</label>
             <button
               onClick={async () => {
-                const pName = await dialog.prompt("Parameter name:");
-                if (!pName?.trim()) return;
+                const argName = await dialog.prompt("Argument name:");
+                if (!argName?.trim()) return;
                 updateFn((f) => ({
                   ...f,
-                  params: {
-                    ...f.params,
-                    [pName.trim()]: { type: "text", required: false },
-                  },
+                  args: [...(f.args || []), { name: argName.trim(), type: "text", required: false }],
                 }));
               }}
               className="inline-flex items-center gap-1 px-2 py-1 rounded border border-dashed border-border text-xs text-muted-foreground hover:text-foreground hover:border-border-hover transition-colors cursor-pointer"
             >
               <Plus size={12} />
-              Add Param
+              Add Arg
             </button>
           </div>
-          {paramEntries.length > 0 ? (
+          {args.length > 0 ? (
             <div className="space-y-2">
-              {paramEntries.map(([pName, param], idx) => (
+              {args.map((arg, idx) => (
                 <div
-                  key={pName}
+                  key={arg.name}
                   className="flex items-center gap-3 px-3 py-2 rounded-lg border border-border bg-primary"
                 >
-                  <span className="text-xs font-mono text-accent w-6">${idx + 1}</span>
-                  <span className="text-sm font-mono text-foreground min-w-[100px]">{pName}</span>
+                  <span className="text-sm font-mono text-foreground min-w-[100px]">{arg.name}</span>
                   <select
-                    value={param.type}
+                    value={arg.type}
                     onChange={(e) =>
-                      updateFn((f) => ({
-                        ...f,
-                        params: { ...f.params, [pName]: { ...param, type: e.target.value } },
-                      }))
+                      updateFn((f) => {
+                        const newArgs = [...(f.args || [])];
+                        newArgs[idx] = { ...newArgs[idx], type: e.target.value };
+                        return { ...f, args: newArgs };
+                      })
                     }
                     className="px-2 py-1 rounded border border-border bg-input text-xs font-mono text-foreground cursor-pointer focus:outline-none focus:border-ring"
                   >
@@ -223,12 +274,13 @@ export function FunctionDetail() {
                   <label className="flex items-center gap-1 text-xs text-foreground cursor-pointer">
                     <input
                       type="checkbox"
-                      checked={param.required}
+                      checked={arg.required}
                       onChange={(e) =>
-                        updateFn((f) => ({
-                          ...f,
-                          params: { ...f.params, [pName]: { ...param, required: e.target.checked } },
-                        }))
+                        updateFn((f) => {
+                          const newArgs = [...(f.args || [])];
+                          newArgs[idx] = { ...newArgs[idx], required: e.target.checked };
+                          return { ...f, args: newArgs };
+                        })
                       }
                       className="rounded border-border"
                     />
@@ -236,10 +288,10 @@ export function FunctionDetail() {
                   </label>
                   <button
                     onClick={() =>
-                      updateFn((f) => {
-                        const { [pName]: _, ...rest } = f.params;
-                        return { ...f, params: rest };
-                      })
+                      updateFn((f) => ({
+                        ...f,
+                        args: (f.args || []).filter((_, i) => i !== idx),
+                      }))
                     }
                     className="ml-auto p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
                   >
@@ -249,29 +301,8 @@ export function FunctionDetail() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">No parameters defined.</p>
+            <p className="text-sm text-muted-foreground">No arguments defined.</p>
           )}
-        </div>
-
-        {/* Returns */}
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">Return Type</label>
-            <select
-              value={fn.returns.type}
-              onChange={(e) =>
-                updateFn((f) => ({
-                  ...f,
-                  returns: { ...f.returns, type: e.target.value },
-                }))
-              }
-              className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm text-foreground focus:outline-none focus:border-ring transition-colors cursor-pointer"
-            >
-              {RETURN_TYPES.map((t) => (
-                <option key={t} value={t}>{t}</option>
-              ))}
-            </select>
-          </div>
         </div>
 
         {/* Test Pane */}
@@ -285,14 +316,14 @@ export function FunctionDetail() {
           </button>
           {showTest && (
             <div className="mt-3 space-y-3">
-              {paramEntries.map(([pName]) => (
-                <div key={pName}>
-                  <label className="block text-xs font-medium text-muted-foreground mb-1">{pName}</label>
+              {args.map((arg) => (
+                <div key={arg.name}>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1">{arg.name}</label>
                   <input
                     type="text"
-                    value={testInputs[pName] || ""}
+                    value={testInputs[arg.name] || ""}
                     onChange={(e) =>
-                      setTestInputs((prev) => ({ ...prev, [pName]: e.target.value }))
+                      setTestInputs((prev) => ({ ...prev, [arg.name]: e.target.value }))
                     }
                     className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm font-mono text-foreground focus:outline-none focus:border-ring transition-colors"
                   />

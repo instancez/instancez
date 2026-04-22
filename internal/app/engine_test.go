@@ -7,55 +7,54 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-func TestOrderSeedTables_UsersFirst(t *testing.T) {
+func TestOrderDataTables_UsersFirst(t *testing.T) {
 	cfg := &domain.Config{
 		Tables: map[string]domain.Table{
 			"todos": {
-				Fields: map[string]domain.Field{
-					"id":      {Type: "bigserial", PrimaryKey: true},
-					"user_id": {ForeignKey: &domain.ForeignKey{References: "users.id"}},
+				Fields: []domain.Field{
+					{Name: "id", Type: "bigserial", PrimaryKey: true},
+					{Name: "user_id", ForeignKey: &domain.ForeignKey{References: "users.id"}},
 				},
 			},
 			"teams": {
-				Fields: map[string]domain.Field{
-					"id": {Type: "bigserial", PrimaryKey: true},
+				Fields: []domain.Field{
+					{Name: "id", Type: "bigserial", PrimaryKey: true},
 				},
 			},
 		},
-		Seeds: map[string][]map[string]any{
-			"users": {{"email": "admin@test.com", "password": "secret"}},
-			"todos": {{"id": 1, "title": "Test"}},
-			"teams": {{"id": 1, "name": "Acme"}},
+		Data: map[string]map[string]string{
+			"users": {"demo": "./seeds/users.csv"},
+			"todos": {"init": "./seeds/todos.csv"},
+			"teams": {"init": "./seeds/teams.csv"},
 		},
 	}
 
-	order := orderSeedTables(cfg)
+	order := orderDataTables(cfg)
 	if len(order) == 0 {
-		t.Fatal("expected seed tables")
+		t.Fatal("expected data tables")
 	}
 	if order[0] != "users" {
-		t.Errorf("first seed table should be 'users', got %q", order[0])
+		t.Errorf("first data table should be 'users', got %q", order[0])
 	}
 }
 
-func TestOrderSeedTables_NoUsers(t *testing.T) {
+func TestOrderDataTables_NoUsers(t *testing.T) {
 	cfg := &domain.Config{
 		Tables: map[string]domain.Table{
-			"todos": {Fields: map[string]domain.Field{"id": {Type: "bigserial", PrimaryKey: true}}},
+			"todos": {Fields: []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}}},
 		},
-		Seeds: map[string][]map[string]any{
-			"todos": {{"id": 1}},
+		Data: map[string]map[string]string{
+			"todos": {"init": "./seeds/todos.csv"},
 		},
 	}
 
-	order := orderSeedTables(cfg)
+	order := orderDataTables(cfg)
 	if len(order) != 1 || order[0] != "todos" {
 		t.Errorf("expected [todos], got %v", order)
 	}
 }
 
-func TestSeedPasswordHashing(t *testing.T) {
-	// Simulate what applySeeds does for users
+func TestDataPasswordHashing(t *testing.T) {
 	row := map[string]any{
 		"email":    "admin@test.com",
 		"password": "secret123",
@@ -72,7 +71,6 @@ func TestSeedPasswordHashing(t *testing.T) {
 		}
 	}
 
-	// Verify password_hash is set and password is gone
 	if _, ok := row["password"]; ok {
 		t.Error("password should have been removed")
 	}
@@ -82,15 +80,61 @@ func TestSeedPasswordHashing(t *testing.T) {
 		t.Fatal("password_hash should be set")
 	}
 
-	// Verify the hash matches the original password
 	err := bcrypt.CompareHashAndPassword([]byte(hashStr), []byte("secret123"))
 	if err != nil {
 		t.Errorf("bcrypt verification failed: %v", err)
 	}
 
-	// Wrong password should fail
 	err = bcrypt.CompareHashAndPassword([]byte(hashStr), []byte("wrong"))
 	if err == nil {
 		t.Error("wrong password should fail verification")
+	}
+}
+
+func TestValidateDataColumns_UnknownColumn(t *testing.T) {
+	e := &Engine{
+		cfg: &domain.Config{
+			Tables: map[string]domain.Table{
+				"products": {
+					Fields: []domain.Field{
+						{Name: "id", Type: "bigserial", PrimaryKey: true},
+						{Name: "name", Type: "text"},
+					},
+				},
+			},
+		},
+	}
+
+	records := []map[string]any{
+		{"id": "1", "name": "Widget", "nonexistent": "bad"},
+	}
+
+	err := e.validateDataColumns("products", records)
+	if err == nil {
+		t.Error("expected error for unknown column")
+	}
+}
+
+func TestValidateDataColumns_ValidColumns(t *testing.T) {
+	e := &Engine{
+		cfg: &domain.Config{
+			Tables: map[string]domain.Table{
+				"products": {
+					Fields: []domain.Field{
+						{Name: "id", Type: "bigserial", PrimaryKey: true},
+						{Name: "name", Type: "text"},
+					},
+				},
+			},
+		},
+	}
+
+	records := []map[string]any{
+		{"id": "1", "name": "Widget"},
+	}
+
+	err := e.validateDataColumns("products", records)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
 	}
 }

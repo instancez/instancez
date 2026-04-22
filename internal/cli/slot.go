@@ -64,7 +64,7 @@ func runSlotReset(configPath string, force bool) error {
 	}
 
 	ctx := context.Background()
-	db, err := postgres.New(ctx, dbURL, cfg.Server.DB.Pool)
+	db, err := postgres.New(ctx, dbURL, cfg.Database.Pool)
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}

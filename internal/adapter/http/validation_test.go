@@ -12,12 +12,12 @@ import (
 
 func testTable() domain.Table {
 	return domain.Table{
-		Fields: map[string]domain.Field{
-			"id":       {Type: "bigserial", PrimaryKey: true},
-			"title":    {Type: "text"},
-			"status":   {Type: "text"},
-			"priority": {Type: "int"},
-			"metadata": {Type: "jsonb"},
+		Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
+			{Name: "title", Type: "text"},
+			{Name: "status", Type: "text"},
+			{Name: "priority", Type: "int"},
+			{Name: "metadata", Type: "jsonb"},
 		},
 	}
 }

@@ -36,10 +36,18 @@ server:
 tables:
   todos:
     fields:
-      id: { type: bigserial, primary_key: true }
-      title: { type: text, required: true }
-      done: { type: boolean, default: "false" }
-      created_at: { type: timestamptz, default: "now()" }
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: title
+        type: text
+        required: true
+      - name: done
+        type: boolean
+        default: "false"
+      - name: created_at
+        type: timestamptz
+        default: "now()"
     allow_anon: true
 ```
 
@@ -54,7 +62,7 @@ ultrabase dev
 
 <Callout variant="info" title="Dev mode">
   `ultrabase dev` watches your YAML file for changes and automatically applies migrations.
-  For production, use `ultrabase start` which skips file watching.
+  For production, use `ultrabase serve` which skips file watching.
 </Callout>
 
 ## Try it out
@@ -62,7 +70,7 @@ ultrabase dev
 Your API is now live. Create a todo:
 
 ```bash
-curl -X POST http://localhost:8080/api/todos \
+curl -X POST http://localhost:8080/rest/v1/todos \
   -H "Content-Type: application/json" \
   -d '{"title": "Learn Ultrabase"}'
 ```
@@ -70,14 +78,14 @@ curl -X POST http://localhost:8080/api/todos \
 List all todos:
 
 ```bash
-curl http://localhost:8080/api/todos
+curl http://localhost:8080/rest/v1/todos
 ```
 
 Filter and sort:
 
 ```bash
 # Incomplete todos, newest first
-curl "http://localhost:8080/api/todos?done=eq.false&order=created_at.desc"
+curl "http://localhost:8080/rest/v1/todos?done=eq.false&order=created_at.desc"
 ```
 
 ## Next steps

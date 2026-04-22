@@ -317,7 +317,7 @@ func (h *AdminHandler) handleConfigDiff(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	migrator := app.NewMigrator(h.db)
-	sql, err := migrator.Plan(ctx, h.cfg)
+	sql, err := migrator.Plan(ctx, nil, h.cfg)
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to generate migration diff")
 		return

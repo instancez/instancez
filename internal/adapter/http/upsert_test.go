@@ -9,10 +9,10 @@ import (
 
 func TestPrimaryKeyColumns(t *testing.T) {
 	table := domain.Table{
-		Fields: map[string]domain.Field{
-			"id":    {Type: "bigserial", PrimaryKey: true},
-			"title": {Type: "text"},
-			"sub":   {Type: "uuid", PrimaryKey: true},
+		Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
+			{Name: "title", Type: "text"},
+			{Name: "sub", Type: "uuid", PrimaryKey: true},
 		},
 	}
 	pks := primaryKeyColumns(table)
@@ -25,7 +25,7 @@ func TestPrimaryKeyColumns(t *testing.T) {
 }
 
 func TestPrimaryKeyColumns_Empty(t *testing.T) {
-	table := domain.Table{Fields: map[string]domain.Field{"title": {Type: "text"}}}
+	table := domain.Table{Fields: []domain.Field{{Name: "title", Type: "text"}}}
 	if len(primaryKeyColumns(table)) != 0 {
 		t.Error("expected no pks")
 	}

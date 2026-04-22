@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/saedx1/ultrabase/internal/domain"
 )
 
@@ -51,9 +52,9 @@ func TestBuildSelectQuery_BelongsToFilterAndOuterWhere_ArgOrdering(t *testing.T)
 // must reference the actual parent PK, not a hardcoded "id".
 func TestBuildSelectQuery_HasManyWithNonIdRefColumn(t *testing.T) {
 	table := domain.Table{
-		Fields: map[string]domain.Field{
-			"uuid": {Type: "uuid", PrimaryKey: true},
-			"name": {Type: "text"},
+		Fields: []domain.Field{
+			{Name: "uuid", Type: "uuid", PrimaryKey: true},
+			{Name: "name", Type: "text"},
 		},
 	}
 	qp := &QueryParams{
@@ -114,6 +115,30 @@ func TestParseOrderValue_Direct(t *testing.T) {
 			t.Error("expected error")
 		}
 	})
+	t.Run("resolves aggregate default alias", func(t *testing.T) {
+		// select=...,id.count() exposes "count" as an output-list key.
+		c, err := parseOrderValueWithSelect("count.desc", table, []string{"id.count()"})
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if len(c) != 1 || c[0].Column != "count" || !c[0].Desc || !c[0].IsAlias {
+			t.Errorf("got %+v", c)
+		}
+		if ob := renderOrderBy(c); ob != `"count" DESC` {
+			t.Errorf("renderOrderBy = %q", ob)
+		}
+	})
+	t.Run("resolves explicit aggregate alias", func(t *testing.T) {
+		c, err := parseOrderValueWithSelect("total.desc", table, []string{"total:id.count()"})
+		if err != nil || !c[0].IsAlias || c[0].Column != "total" {
+			t.Fatalf("got %+v err=%v", c, err)
+		}
+	})
+	t.Run("still rejects unknown when no alias matches", func(t *testing.T) {
+		if _, err := parseOrderValueWithSelect("bogus.asc", table, []string{"id.count()"}); err == nil {
+			t.Error("expected error")
+		}
+	})
 }
 
 // Gap 4: columns= that strips every key — ensure we don't build a
@@ -141,6 +166,118 @@ func TestBuildBulkInsertQuery_RejectsAllEmptyRecords(t *testing.T) {
 	// Validate the handler-level guard: recordsAllEmpty should detect this.
 	if !recordsAllEmpty(records) {
 		t.Error("expected recordsAllEmpty=true")
+	}
+}
+
+// TestParseHandlingPrefer covers the `Prefer: handling=lenient|strict`
+// parser. Defaults to lenient when absent or unparseable, so unknown
+// clients keep working.
+func TestParseHandlingPrefer(t *testing.T) {
+	cases := map[string]string{
+		"":                         "lenient",
+		"return=minimal":           "lenient",
+		"handling=lenient":         "lenient",
+		"handling=strict":          "strict",
+		"return=minimal,handling=strict": "strict",
+		"handling=unknown":         "lenient",
+	}
+	for in, want := range cases {
+		if got := parseHandlingPrefer(in); got != want {
+			t.Errorf("%q → %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestParseReturnPrefer_HeadersOnly verifies the parser recognizes
+// return=headers-only so write handlers can suppress the body.
+func TestParseReturnPrefer_HeadersOnly(t *testing.T) {
+	if got := parseReturnPrefer("return=headers-only"); got != "headers-only" {
+		t.Errorf("got %q, want headers-only", got)
+	}
+}
+
+// Gap 6: improved error mapping — suggestHintForPgError generates useful
+// hints for common Postgres errors when the database doesn't provide one.
+func TestSuggestHintForPgError(t *testing.T) {
+	tests := []struct {
+		code           string
+		constraintName string
+		columnName     string
+		wantContains   string
+	}{
+		{"23505", "users_email_key", "", "constraint: users_email_key"},
+		{"23505", "", "", "already exists"},
+		{"23503", "fk_author", "", "constraint: fk_author"},
+		{"23502", "", "title", `Column "title" cannot be null`},
+		{"42703", "", "bogus_col", `Column "bogus_col" does not exist`},
+		{"42P01", "", "", "table does not exist"},
+		{"22P02", "", "", "expected column type"},
+		{"22001", "", "", "too long"},
+		{"P0001", "", "", "raised an error"},
+		{"99999", "", "", ""}, // unknown code → empty hint
+	}
+	for _, tc := range tests {
+		pgErr := &pgconn.PgError{
+			Code:           tc.code,
+			ConstraintName: tc.constraintName,
+			ColumnName:     tc.columnName,
+		}
+		hint := suggestHintForPgError(pgErr)
+		if tc.wantContains == "" {
+			if hint != "" {
+				t.Errorf("code=%s: expected empty hint, got %q", tc.code, hint)
+			}
+		} else if !strings.Contains(hint, tc.wantContains) {
+			t.Errorf("code=%s: hint %q should contain %q", tc.code, hint, tc.wantContains)
+		}
+	}
+}
+
+// Gap 7: HAVING clause — aggregate filters applied after GROUP BY.
+func TestBuildSelectQuery_Having(t *testing.T) {
+	table := testTable()
+	qp := &QueryParams{
+		Select: []string{"status", "id.count()"},
+		Having: andLeaves(Filter{Column: "count", Operator: "gt", Value: "5"}),
+		Limit:  20,
+	}
+	sql, args := buildSelectQuery("todos", qp, table)
+	if !strings.Contains(sql, "HAVING") {
+		t.Fatalf("missing HAVING clause: %s", sql)
+	}
+	if !strings.Contains(sql, "GROUP BY") {
+		t.Fatalf("missing GROUP BY: %s", sql)
+	}
+	// HAVING should come after GROUP BY and before ORDER BY.
+	groupIdx := strings.Index(sql, "GROUP BY")
+	havingIdx := strings.Index(sql, "HAVING")
+	if havingIdx < groupIdx {
+		t.Errorf("HAVING should come after GROUP BY: %s", sql)
+	}
+	if len(args) != 1 || args[0] != "5" {
+		t.Errorf("args = %v, want [5]", args)
+	}
+}
+
+// Gap 6b: HAVING is rejected when no aggregate is present.
+func TestParseHavingParam_RejectsNonAggregate(t *testing.T) {
+	table := testTable()
+	// No aggregates in select → "count" is not a valid alias.
+	_, err := parseHavingParam("count.gt.5", table, []string{"status"})
+	if err == nil {
+		t.Error("expected error for HAVING on non-aggregate column")
+	}
+}
+
+// Gap 6c: HAVING accepts real table columns (grouped columns).
+func TestParseHavingParam_AcceptsGroupedColumn(t *testing.T) {
+	table := testTable()
+	node, err := parseHavingParam("status.eq.active", table, []string{"status", "id.count()"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if node == nil {
+		t.Fatal("expected non-nil node")
 	}
 }
 

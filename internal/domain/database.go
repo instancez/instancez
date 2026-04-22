@@ -11,8 +11,13 @@ type Database interface {
 	// Migrations
 	EnsureMigrationsTable(ctx context.Context) error
 	GetLastMigration(ctx context.Context) (*Migration, error)
-	RecordMigration(ctx context.Context, checksum, sql string) error
+	RecordMigration(ctx context.Context, checksum, sql, configJSON string) error
 	ExecDDL(ctx context.Context, sql string) error
+
+	// Data imports
+	EnsureDataTable(ctx context.Context) error
+	GetAppliedData(ctx context.Context) ([]DataRecord, error)
+	RecordData(ctx context.Context, tx Tx, key, tableName, source, checksum string, rowCount int) error
 
 	// CRUD (called by PostgREST-compatible query engine)
 	Query(ctx context.Context, query string, args ...any) ([]map[string]any, error)

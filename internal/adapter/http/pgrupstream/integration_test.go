@@ -59,6 +59,41 @@ CREATE TABLE messages (
     username   text   NOT NULL REFERENCES users(username) ON UPDATE CASCADE ON DELETE CASCADE,
     channel_id bigint NOT NULL REFERENCES channels(id)   ON UPDATE CASCADE ON DELETE CASCADE
 );
+
+-- Stored functions used by TestConf_RPC. Declared here (instead of via
+-- the ultrabase Migrator) so the conformance schema stays self-contained
+-- and doesn't couple function DDL generation to the RPC test.
+CREATE OR REPLACE FUNCTION public.add_numbers(a int, b int)
+RETURNS int LANGUAGE sql IMMUTABLE AS $$ SELECT a + b $$;
+
+CREATE OR REPLACE FUNCTION public.greet(name text DEFAULT 'world')
+RETURNS text LANGUAGE sql STABLE AS $$ SELECT 'hello ' || name $$;
+
+CREATE OR REPLACE FUNCTION public.users_by_status(target text)
+RETURNS SETOF users LANGUAGE sql STABLE AS $$
+  SELECT * FROM users WHERE status = target ORDER BY username
+$$;
+
+CREATE OR REPLACE FUNCTION public.touch_nothing()
+RETURNS void LANGUAGE plpgsql VOLATILE AS $$ BEGIN RETURN; END $$;
+
+-- Deliberately mis-declared: claims to be STABLE but attempts a write.
+-- Used by TestConf_RPC to verify ultrabase pins stable/immutable RPC
+-- transactions to read-only mode as a defense-in-depth guard.
+CREATE OR REPLACE FUNCTION public.sneaky_insert()
+RETURNS int LANGUAGE plpgsql STABLE AS $$
+BEGIN
+    INSERT INTO channels (slug) VALUES ('sneaky');
+    RETURN 1;
+END $$;
+
+-- Returns the request.request_id GUC that the http middleware publishes
+-- into every transaction. Used by TestConf_RequestID to verify the header
+-- reaches SQL and can be observed from RLS/RPC bodies.
+CREATE OR REPLACE FUNCTION public.current_request_id()
+RETURNS text LANGUAGE sql STABLE AS $$
+  SELECT current_setting('request.request_id', true)
+$$;
 `
 
 const seedSQL = `
@@ -89,31 +124,85 @@ func buildConfig() *domain.Config {
 		},
 		Tables: map[string]domain.Table{
 			"users": {
-				Fields: map[string]domain.Field{
-					"username": {Type: "text", PrimaryKey: true, Required: true},
-					"status":   {Type: "text"},
-					"age":      {Type: "int"},
-					"nickname": {Type: "text"},
-					"tags":     {Type: "text[]"},
+				Fields: []domain.Field{
+					{Name: "username", Type: "text", PrimaryKey: true, Required: true},
+					{Name: "status", Type: "text"},
+					{Name: "age", Type: "int"},
+					{Name: "nickname", Type: "text"},
+					{Name: "tags", Type: "text[]"},
 				},
 			},
 			"channels": {
-				Fields: map[string]domain.Field{
-					"id":            {Type: "bigserial", PrimaryKey: true},
-					"slug":          {Type: "text"},
-					"data":          {Type: "jsonb"},
-					"active_during": {Type: "int4range"},
+				Fields: []domain.Field{
+					{Name: "id", Type: "bigserial", PrimaryKey: true},
+					{Name: "slug", Type: "text"},
+					{Name: "data", Type: "jsonb"},
+					{Name: "active_during", Type: "int4range"},
 				},
 			},
 			"messages": {
-				Fields: map[string]domain.Field{
-					"id":      {Type: "bigserial", PrimaryKey: true},
-					"message": {Type: "text"},
-					"username": {Type: "text", Required: true,
+				Fields: []domain.Field{
+					{Name: "id", Type: "bigserial", PrimaryKey: true},
+					{Name: "message", Type: "text"},
+					{Name: "username", Type: "text", Required: true,
 						ForeignKey: &domain.ForeignKey{References: "users.username", OnDelete: "cascade"}},
-					"channel_id": {Type: "bigint", Required: true,
+					{Name: "channel_id", Type: "bigint", Required: true,
 						ForeignKey: &domain.ForeignKey{References: "channels.id", OnDelete: "cascade"}},
 				},
+			},
+		},
+		// Declared here so /rest/v1/rpc/:name routes are mounted. The
+		// underlying Postgres functions are created by schemaSQL above
+		// (intentionally bypassing the Migrator for this package).
+		Functions: map[string]domain.Function{
+			"add_numbers": {
+				Kind: "rpc",
+				Language: "sql", Volatility: "immutable", Security: "invoker",
+				Returns: domain.FuncReturn{Type: "int"}, ReturnCategory: "scalar",
+				Args: []domain.FuncArg{
+					{Name: "a", Type: "int", Required: true},
+					{Name: "b", Type: "int", Required: true},
+				},
+				Body: "SELECT a + b",
+			},
+			"greet": {
+				Kind: "rpc",
+				Language: "sql", Volatility: "stable", Security: "invoker",
+				Returns: domain.FuncReturn{Type: "text"}, ReturnCategory: "scalar",
+				Args: []domain.FuncArg{
+					{Name: "name", Type: "text", Default: "world"},
+				},
+				Body: "SELECT 'hello ' || name",
+			},
+			"users_by_status": {
+				Kind: "rpc",
+				Language: "sql", Volatility: "stable", Security: "invoker",
+				Returns: domain.FuncReturn{Type: "setof users"}, ReturnCategory: "setof",
+				Args: []domain.FuncArg{
+					{Name: "target", Type: "text", Required: true},
+				},
+				Body: "SELECT * FROM users WHERE status = target",
+			},
+			"touch_nothing": {
+				Kind: "rpc",
+				Language: "plpgsql", Volatility: "volatile", Security: "invoker",
+				Returns: domain.FuncReturn{Type: "void"}, ReturnCategory: "void",
+				Body: "BEGIN RETURN; END",
+			},
+			// Mis-declared stable function that attempts to insert. The
+			// handler pins non-volatile RPC transactions to read-only,
+			// so calling this via .rpc() must fail with 25006.
+			"sneaky_insert": {
+				Kind: "rpc",
+				Language: "plpgsql", Volatility: "stable", Security: "invoker",
+				Returns: domain.FuncReturn{Type: "int"}, ReturnCategory: "scalar",
+				Body: "BEGIN INSERT INTO channels (slug) VALUES ('sneaky'); RETURN 1; END",
+			},
+			"current_request_id": {
+				Kind: "rpc",
+				Language: "sql", Volatility: "stable", Security: "invoker",
+				Returns: domain.FuncReturn{Type: "text"}, ReturnCategory: "scalar",
+				Body: "SELECT current_setting('request.request_id', true)",
 			},
 		},
 	}

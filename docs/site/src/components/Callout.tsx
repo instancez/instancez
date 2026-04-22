@@ -39,7 +39,7 @@ const variants: Record<
 
 interface CalloutProps {
   variant?: CalloutVariant;
-  title?: string;
+  title: string;
   children: ReactNode;
 }
 
@@ -51,9 +51,7 @@ export function Callout({ variant = "info", title, children }: CalloutProps) {
         <Icon size={16} strokeWidth={2.25} />
       </div>
       <div className="min-w-0 text-sm leading-relaxed">
-        {title && (
-          <p className={`font-semibold ${titleColor} mb-1`}>{title}</p>
-        )}
+        <p className={`font-semibold ${titleColor} mt-0 mb-1`} style={{ marginTop: 0 }}>{title}</p>
         <div className="text-muted-foreground [&>p]:m-0 [&>p]:leading-relaxed">{children}</div>
       </div>
     </div>

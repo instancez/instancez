@@ -30,10 +30,18 @@ project:
 tables:
   todos:
     fields:
-      id: { type: bigserial, primary_key: true }
-      title: { type: text, required: true }
-      done: { type: boolean, default: "false" }
-      created_at: { type: timestamptz, default: "now()" }
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: title
+        type: text
+        required: true
+      - name: done
+        type: boolean
+        default: "false"
+      - name: created_at
+        type: timestamptz
+        default: "now()"
 
 auth:
   jwt_expiry: 15m
@@ -45,7 +53,7 @@ auth:
 ultrabase dev
 ```
 
-That gives you a REST API with auth, automatic migrations, and a Swagger UI at `/docs`.
+That gives you a REST API with auth, automatic migrations, and a Swagger UI at `/api/docs`.
 
 ## How it compares
 

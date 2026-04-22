@@ -44,18 +44,14 @@ func (h *CRUDHandler) allTables() map[string]domain.Table {
 	for k, v := range h.cfg.Tables {
 		merged[k] = v
 	}
-	// Synthetic users table with the core columns that user-defined tables
-	// may reference via foreign keys.
-	usersFields := map[string]domain.Field{
-		"id":    {Type: "uuid", PrimaryKey: true},
-		"email": {Type: "text"},
+	// If auth is enabled but tables.users isn't declared, synthesize a
+	// minimal users entry so FK resolution can still find id/email.
+	if _, ok := merged["users"]; !ok && h.cfg.Auth != nil {
+		merged["users"] = domain.Table{Fields: []domain.Field{
+			{Name: "id", Type: "uuid", PrimaryKey: true},
+			{Name: "email", Type: "text"},
+		}}
 	}
-	if h.cfg.Auth != nil {
-		for name, f := range h.cfg.Auth.Fields {
-			usersFields[name] = f
-		}
-	}
-	merged["users"] = domain.Table{Fields: usersFields}
 	return merged
 }
 
@@ -63,15 +59,22 @@ func (h *CRUDHandler) allTables() map[string]domain.Table {
 // @supabase/supabase-js can drive ultrabase without a custom URL prefix.
 func (h *CRUDHandler) Mount(root *gin.RouterGroup) {
 	rest := root.Group("/rest/v1")
+	rest.Use(profileHeaderGuard())
 
-	// /rest/v1/rpc/:name — supabase-js .rpc() lands here. Real Postgres
-	// stored-function execution is intentionally out of scope for this
-	// pass; return a structured 501 so client code surfaces a clear error
-	// instead of a confusing 404.
-	rest.POST("/rpc/:name", func(c *gin.Context) {
-		problemJSON(c, 501, "not_implemented",
-			"POST /rest/v1/rpc/:name is not implemented in this build. Use the /api/fn/ ultrabase functions endpoint for custom procedures.")
-	})
+	// /rest/v1/rpc/:name — supabase-js .rpc() dispatch. Only rpc-kind
+	// functions are reachable; everything else returns
+	// PGRST202 so a typo can't silently hit a different endpoint. POST is
+	// always allowed; GET is only honored for non-volatile functions,
+	// matching PostgREST. Auth is required=false at middleware level so
+	// anon calls still parse a token if present; per-function
+	// auth_required enforcement happens inside handleRPC.
+	rpc := h.handleRPC()
+	rest.POST("/rpc/:name", jwtAuth(h.jwtKeys, false), rpc)
+	rest.GET("/rpc/:name", jwtAuth(h.jwtKeys, false), rpc)
+	// HEAD reuses the same handler so supabase-js .rpc('fn', {}, { head: true })
+	// picks up Content-Range without streaming the row body. As with the CRUD
+	// list path, net/http strips the body after the status + headers fly.
+	rest.HEAD("/rpc/:name", jwtAuth(h.jwtKeys, false), rpc)
 
 	for tableName, table := range h.cfg.Tables {
 		name := tableName
@@ -97,6 +100,11 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 	allTbls := h.allTables()
 	return func(c *gin.Context) {
 		session := getSession(c)
+
+		prefer := joinPrefer(c)
+		if !enforceStrictPrefer(c, prefer) {
+			return
+		}
 
 		// Parse query params
 		qp, err := parseQueryParams(c, tableName, table, allTbls)
@@ -158,7 +166,6 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 		}
 
 		// Count if requested
-		prefer := joinPrefer(c)
 		countMode := parseCountPrefer(prefer)
 		total := -1
 		if countMode != "" {
@@ -183,14 +190,14 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 		// Check for singular response
 		accept := c.GetHeader("Accept")
 		if accept == "application/vnd.pgrst.object+json" {
-			if len(rows) == 0 {
-				problemJSON(c, 406, "not_found", "JSON object requested, multiple (or no) rows returned")
-				return
-			}
-			if len(rows) > 1 {
+			if len(rows) != 1 {
+				// supabase-js .maybeSingle() distinguishes zero-row from
+				// multi-row errors by parsing the details string ("0 rows"
+				// → return null, otherwise surface error). Emit PGRST116
+				// for both branches so that contract holds.
 				pgJSON(c, 406, "PGRST116",
 					"JSON object requested, multiple (or no) rows returned",
-					fmt.Sprintf("Results contain %d rows", len(rows)), "")
+					fmt.Sprintf("The result contains %d rows", len(rows)), "")
 				return
 			}
 			c.JSON(200, rows[0])
@@ -237,6 +244,11 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 	return func(c *gin.Context) {
 		session := getSession(c)
 
+		prefer := joinPrefer(c)
+		if !enforceStrictPrefer(c, prefer) {
+			return
+		}
+
 		body, err := io.ReadAll(c.Request.Body)
 		if err != nil {
 			problemJSON(c, 400, "bad_request", "Cannot read request body")
@@ -251,6 +263,7 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 				problemJSON(c, 400, "bad_request", err.Error())
 				return
 			}
+			records = csvCoerceRecords(records, table)
 		} else {
 			trimmed := strings.TrimSpace(string(body))
 			if strings.HasPrefix(trimmed, "[") {
@@ -288,8 +301,9 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 		}
 
 		// Validate fields — reject unknown
+		fieldMap := table.FieldMap()
 		for _, rec := range records {
-			if unknowns := findUnknownFields(rec, table); len(unknowns) > 0 {
+			if unknowns := findUnknownFields(rec, fieldMap); len(unknowns) > 0 {
 				problemJSON(c, 400, "bad_request",
 					fmt.Sprintf("Unknown fields: %s", strings.Join(unknowns, ", ")))
 				return
@@ -312,7 +326,6 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 		}
 		defer tx.Rollback(ctx)
 
-		prefer := joinPrefer(c)
 		returnMode := parseReturnPrefer(prefer)
 		resolution := parseResolutionPrefer(prefer)
 		var results []map[string]any
@@ -364,6 +377,10 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 			return
 		}
 
+		if parseMissingPrefer(prefer) {
+			c.Header("Preference-Applied", "missing=default")
+		}
+
 		switch returnMode {
 		case "representation":
 			if c.GetHeader("Accept") == "application/vnd.pgrst.object+json" && len(results) == 1 {
@@ -374,6 +391,9 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 				}
 				c.JSON(201, results)
 			}
+		case "headers-only":
+			c.Header("Preference-Applied", "return=headers-only")
+			c.Status(201)
 		default:
 			c.Status(201)
 		}
@@ -386,6 +406,11 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 func (h *CRUDHandler) handleUpsert(tableName string, table domain.Table) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		session := getSession(c)
+
+		prefer := joinPrefer(c)
+		if !enforceStrictPrefer(c, prefer) {
+			return
+		}
 
 		body, err := io.ReadAll(c.Request.Body)
 		if err != nil {
@@ -400,6 +425,7 @@ func (h *CRUDHandler) handleUpsert(tableName string, table domain.Table) gin.Han
 				problemJSON(c, 400, "bad_request", err.Error())
 				return
 			}
+			records = csvCoerceRecords(records, table)
 		} else {
 			trimmed := strings.TrimSpace(string(body))
 			if strings.HasPrefix(trimmed, "[") {
@@ -428,8 +454,9 @@ func (h *CRUDHandler) handleUpsert(tableName string, table domain.Table) gin.Han
 			return
 		}
 
+		upsertFieldMap := table.FieldMap()
 		for _, rec := range records {
-			if unknowns := findUnknownFields(rec, table); len(unknowns) > 0 {
+			if unknowns := findUnknownFields(rec, upsertFieldMap); len(unknowns) > 0 {
 				problemJSON(c, 400, "bad_request",
 					fmt.Sprintf("Unknown fields: %s", strings.Join(unknowns, ", ")))
 				return
@@ -461,7 +488,6 @@ func (h *CRUDHandler) handleUpsert(tableName string, table domain.Table) gin.Han
 		}
 		defer tx.Rollback(ctx)
 
-		prefer := joinPrefer(c)
 		returnMode := parseReturnPrefer(prefer)
 		var results []map[string]any
 
@@ -484,6 +510,10 @@ func (h *CRUDHandler) handleUpsert(tableName string, table domain.Table) gin.Han
 			return
 		}
 
+		if parseMissingPrefer(prefer) {
+			c.Header("Preference-Applied", "missing=default")
+		}
+
 		switch returnMode {
 		case "representation":
 			if c.GetHeader("Accept") == "application/vnd.pgrst.object+json" && len(results) == 1 {
@@ -494,6 +524,9 @@ func (h *CRUDHandler) handleUpsert(tableName string, table domain.Table) gin.Han
 				}
 				c.JSON(200, results)
 			}
+		case "headers-only":
+			c.Header("Preference-Applied", "return=headers-only")
+			c.Status(200)
 		default:
 			c.Status(200)
 		}
@@ -504,6 +537,11 @@ func (h *CRUDHandler) handleUpsert(tableName string, table domain.Table) gin.Han
 func (h *CRUDHandler) handleUpdate(tableName string, table domain.Table) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		session := getSession(c)
+
+		prefer := joinPrefer(c)
+		if !enforceStrictPrefer(c, prefer) {
+			return
+		}
 
 		var updates map[string]any
 		if err := c.ShouldBindJSON(&updates); err != nil {
@@ -516,7 +554,7 @@ func (h *CRUDHandler) handleUpdate(tableName string, table domain.Table) gin.Han
 			return
 		}
 
-		if unknowns := findUnknownFields(updates, table); len(unknowns) > 0 {
+		if unknowns := findUnknownFields(updates, table.FieldMap()); len(unknowns) > 0 {
 			problemJSON(c, 400, "bad_request",
 				fmt.Sprintf("Unknown fields: %s", strings.Join(unknowns, ", ")))
 			return
@@ -537,7 +575,6 @@ func (h *CRUDHandler) handleUpdate(tableName string, table domain.Table) gin.Han
 			ctx = c.Request.Context()
 		}
 
-		prefer := joinPrefer(c)
 		returnMode := parseReturnPrefer(prefer)
 		maxAffected, hasMax := parseMaxAffectedPrefer(prefer)
 
@@ -577,7 +614,12 @@ func (h *CRUDHandler) handleUpdate(tableName string, table domain.Table) gin.Han
 			if !finishTx(c, tx, ctx, parseTxPrefer(prefer)) {
 				return
 			}
-			c.Status(204)
+			if returnMode == "headers-only" {
+				c.Header("Preference-Applied", "return=headers-only")
+				c.Status(200)
+			} else {
+				c.Status(204)
+			}
 		}
 	}
 }
@@ -586,6 +628,11 @@ func (h *CRUDHandler) handleUpdate(tableName string, table domain.Table) gin.Han
 func (h *CRUDHandler) handleDelete(tableName string, table domain.Table) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		session := getSession(c)
+
+		prefer := joinPrefer(c)
+		if !enforceStrictPrefer(c, prefer) {
+			return
+		}
 
 		where, err := parseWhere(c, tableName, table)
 		if err != nil {
@@ -609,7 +656,6 @@ func (h *CRUDHandler) handleDelete(tableName string, table domain.Table) gin.Han
 		}
 		defer tx.Rollback(ctx)
 
-		prefer := joinPrefer(c)
 		returnMode := parseReturnPrefer(prefer)
 		maxAffected, hasMax := parseMaxAffectedPrefer(prefer)
 		query, args := buildDeleteQuery(tableName, where, returnMode == "representation")
@@ -652,6 +698,11 @@ func (h *CRUDHandler) handleDelete(tableName string, table domain.Table) gin.Han
 			return
 		}
 
+		if returnMode == "headers-only" {
+			c.Header("Preference-Applied", "return=headers-only")
+			c.Status(200)
+			return
+		}
 		c.Status(204)
 	}
 }
@@ -745,11 +796,11 @@ func (h *CRUDHandler) executeEstimateCount(ctx context.Context, tableName string
 	return -1, nil
 }
 
-// findUnknownFields returns field names not in the table definition.
-func findUnknownFields(record map[string]any, table domain.Table) []string {
+// findUnknownFields returns field names not in the provided field map.
+func findUnknownFields(record map[string]any, fieldMap map[string]domain.Field) []string {
 	var unknowns []string
 	for key := range record {
-		if _, ok := table.Fields[key]; !ok {
+		if _, ok := fieldMap[key]; !ok {
 			unknowns = append(unknowns, key)
 		}
 	}
@@ -766,12 +817,20 @@ func joinPrefer(c *gin.Context) string {
 	return strings.Join(c.Request.Header.Values("Prefer"), ",")
 }
 
-func parseReturnPrefer(prefer string) string {
+func findPreferDirective(prefer, key string) (string, bool) {
+	prefix := key + "="
 	for _, part := range strings.Split(prefer, ",") {
 		part = strings.TrimSpace(part)
-		if strings.HasPrefix(part, "return=") {
-			return strings.TrimPrefix(part, "return=")
+		if strings.HasPrefix(part, prefix) {
+			return strings.TrimPrefix(part, prefix), true
 		}
+	}
+	return "", false
+}
+
+func parseReturnPrefer(prefer string) string {
+	if v, ok := findPreferDirective(prefer, "return"); ok {
+		return v
 	}
 	return "minimal"
 }
@@ -796,15 +855,8 @@ func finishTx(c *gin.Context, tx domain.Tx, ctx context.Context, txMode string) 
 // otherwise "". Callers use "rollback" to execute a dry-run: the query is
 // issued but its effects are discarded on transaction rollback.
 func parseTxPrefer(prefer string) string {
-	for _, part := range strings.Split(prefer, ",") {
-		part = strings.TrimSpace(part)
-		if !strings.HasPrefix(part, "tx=") {
-			continue
-		}
-		val := strings.TrimPrefix(part, "tx=")
-		if val == "rollback" || val == "commit" {
-			return val
-		}
+	if v, ok := findPreferDirective(prefer, "tx"); ok && (v == "rollback" || v == "commit") {
+		return v
 	}
 	return ""
 }
@@ -824,29 +876,81 @@ func maxAffectedError(c *gin.Context, affected, limit int) {
 }
 
 func parseMaxAffectedPrefer(prefer string) (int, bool) {
+	raw, ok := findPreferDirective(prefer, "max-affected")
+	if !ok {
+		return 0, false
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
+}
+
+// parseHandlingPrefer extracts `handling=lenient` or `handling=strict` from
+// a Prefer header. Defaults to "lenient" (PostgREST's default). In strict
+// mode the server rejects any Prefer directive it does not recognize with
+// a PGRST122 error; enforceStrictPrefer performs that check.
+func parseHandlingPrefer(prefer string) string {
+	if v, ok := findPreferDirective(prefer, "handling"); ok && (v == "strict" || v == "lenient") {
+		return v
+	}
+	return "lenient"
+}
+
+// knownPreferDirectives lists every Prefer token Ultrabase recognizes.
+// In handling=strict mode we reject any incoming directive not in this set.
+var knownPreferDirectives = map[string]bool{
+	"return":       true,
+	"count":        true,
+	"resolution":   true,
+	"tx":           true,
+	"missing":      true,
+	"max-affected": true,
+	"handling":     true,
+	"params":       true,
+}
+
+// enforceStrictPrefer checks every directive in the Prefer header when
+// handling=strict is set and writes a PGRST122 error for the first unknown
+// token. Returns false when the request has been aborted.
+func enforceStrictPrefer(c *gin.Context, prefer string) bool {
+	if parseHandlingPrefer(prefer) != "strict" {
+		return true
+	}
 	for _, part := range strings.Split(prefer, ",") {
 		part = strings.TrimSpace(part)
-		if !strings.HasPrefix(part, "max-affected=") {
+		if part == "" {
 			continue
 		}
-		raw := strings.TrimPrefix(part, "max-affected=")
-		n, err := strconv.Atoi(raw)
-		if err != nil || n < 0 {
-			return 0, false
+		key := part
+		if eq := strings.Index(part, "="); eq != -1 {
+			key = part[:eq]
 		}
-		return n, true
+		if !knownPreferDirectives[key] {
+			pgJSON(c, 400, "PGRST122",
+				"Invalid preference",
+				fmt.Sprintf("Unknown Prefer directive %q under handling=strict", part),
+				"")
+			return false
+		}
 	}
-	return 0, false
+	return true
 }
 
 func parseCountPrefer(prefer string) string {
-	for _, part := range strings.Split(prefer, ",") {
-		part = strings.TrimSpace(part)
-		if strings.HasPrefix(part, "count=") {
-			return strings.TrimPrefix(part, "count=")
-		}
-	}
-	return ""
+	v, _ := findPreferDirective(prefer, "count")
+	return v
+}
+
+// parseMissingPrefer extracts `missing=default` from a Prefer header.
+// Returns true when the client explicitly asked for the default-substitution
+// behavior for omitted columns on bulk insert. Ultrabase already emits
+// DEFAULT for missing keys unconditionally (see renderRowTuples), so this
+// is only used to echo Preference-Applied for clients that probe for it.
+func parseMissingPrefer(prefer string) bool {
+	v, ok := findPreferDirective(prefer, "missing")
+	return ok && v == "default"
 }
 
 // handleDBError maps Postgres errors to PostgREST-compatible HTTP errors.
@@ -870,6 +974,27 @@ func handleDBError(c *gin.Context, err error) {
 		case "42P01", // undefined_table
 			"42703": // undefined_column
 			status = 404
+		case "22001": // string_data_right_truncation
+			status = 422
+		case "22003": // numeric_value_out_of_range
+			status = 422
+		case "22007", // invalid_datetime_format
+			"22008": // datetime_field_overflow
+			status = 422
+		case "23000": // integrity_constraint_violation (generic)
+			status = 409
+		case "25006": // read_only_sql_transaction
+			status = 405
+		case "42601": // syntax_error
+			status = 400
+		case "42602": // invalid_name
+			status = 400
+		case "42883": // undefined_function
+			status = 404
+		case "P0001": // raise_exception (user-defined)
+			// User-defined PL/pgSQL RAISE maps to 400 by default; the
+			// hint field often carries application-specific guidance.
+			status = 400
 		}
 		// RLS policy violations surface as various SQLSTATEs depending on
 		// Postgres version; catch the common phrases too.
@@ -877,7 +1002,11 @@ func handleDBError(c *gin.Context, err error) {
 			strings.Contains(pgErr.Message, "new row violates") {
 			status = 403
 		}
-		pgJSON(c, status, pgErr.Code, pgErr.Message, pgErr.Detail, pgErr.Hint)
+		hint := pgErr.Hint
+		if hint == "" {
+			hint = suggestHintForPgError(pgErr)
+		}
+		pgJSON(c, status, pgErr.Code, pgErr.Message, pgErr.Detail, hint)
 		return
 	}
 
@@ -889,13 +1018,61 @@ func handleDBError(c *gin.Context, err error) {
 		pgJSON(c, 422, "23503", errStr, "", "")
 	case strings.Contains(errStr, "violates check"):
 		pgJSON(c, 422, "23514", errStr, "", "")
+	case strings.Contains(errStr, "not-null constraint"):
+		pgJSON(c, 422, "23502", errStr, "", "")
 	case strings.Contains(errStr, "row-level security") || strings.Contains(errStr, "new row violates"):
 		pgJSON(c, 403, "42501", "Access denied by row-level security policy", "", "")
 	case strings.Contains(errStr, "permission denied"):
 		pgJSON(c, 403, "42501", errStr, "", "")
+	case strings.Contains(errStr, "value too long"):
+		pgJSON(c, 422, "22001", errStr, "", "")
+	case strings.Contains(errStr, "invalid input syntax"):
+		pgJSON(c, 422, "22P02", errStr, "", "Check that the value matches the expected column type")
 	default:
 		pgJSON(c, 500, "XX000", "Database error", errStr, "")
 	}
+}
+
+// suggestHintForPgError generates a hint string for common Postgres errors
+// when the database itself didn't provide one. This helps API consumers
+// understand what went wrong without having to look up SQLSTATE codes.
+func suggestHintForPgError(pgErr *pgconn.PgError) string {
+	switch pgErr.Code {
+	case "23505":
+		if pgErr.ConstraintName != "" {
+			return fmt.Sprintf("A record with the same value already exists (constraint: %s)", pgErr.ConstraintName)
+		}
+		return "A record with the same value already exists"
+	case "23503":
+		if pgErr.ConstraintName != "" {
+			return fmt.Sprintf("The referenced record does not exist (constraint: %s)", pgErr.ConstraintName)
+		}
+		return "The referenced record does not exist"
+	case "23502":
+		if pgErr.ColumnName != "" {
+			return fmt.Sprintf("Column %q cannot be null", pgErr.ColumnName)
+		}
+		return "A required column is missing or null"
+	case "23514":
+		if pgErr.ConstraintName != "" {
+			return fmt.Sprintf("The value violates a check constraint (constraint: %s)", pgErr.ConstraintName)
+		}
+		return "The value does not satisfy a check constraint"
+	case "42703":
+		if pgErr.ColumnName != "" {
+			return fmt.Sprintf("Column %q does not exist on this table", pgErr.ColumnName)
+		}
+		return "The specified column does not exist"
+	case "42P01":
+		return "The specified table does not exist in the schema"
+	case "22P02":
+		return "Check that the value matches the expected column type"
+	case "22001":
+		return "The value is too long for this column"
+	case "P0001":
+		return "A server-side function raised an error"
+	}
+	return ""
 }
 
 // --- SQL Query Building ---
@@ -915,9 +1092,10 @@ type Embed struct {
 	// Nested (PostgREST) scoping applied via "embedname.<...>" query params.
 	// Where applies to either side; Order and Limit are only valid for
 	// has-many (reverse) embeds where the result is a row set.
-	Where *WhereNode
-	Order []OrderClause
-	Limit *int
+	Where  *WhereNode
+	Order  []OrderClause
+	Limit  *int
+	Offset *int
 }
 
 // QueryParams holds parsed PostgREST query parameters.
@@ -925,6 +1103,7 @@ type QueryParams struct {
 	Select []string
 	Embeds []Embed
 	Where  *WhereNode
+	Having *WhereNode // HAVING clause filters applied after GROUP BY
 	Order  []OrderClause
 	Limit  int
 	Offset int
@@ -934,12 +1113,24 @@ type Filter struct {
 	Column   string
 	Operator string
 	Value    string
+	// Config carries an inline parameter parsed from operator syntax like
+	// `fts(english).query`. Currently only used by the FTS family to
+	// choose the Postgres text-search configuration at query time.
+	Config string
 }
 
 type OrderClause struct {
 	Column string
 	Desc   bool
 	Nulls  string // "", "first", or "last"
+	// IsAlias marks clauses whose Column refers to a select-list alias
+	// (explicit or the default key of an aggregate like "count") rather
+	// than a real table column. Such clauses skip column validation at
+	// parse time and are emitted as a double-quoted identifier so
+	// Postgres resolves them from the output list — matching PostgREST's
+	// behaviour where `order=count.desc` sorts by the aggregate selected
+	// as `...,id.count()`.
+	IsAlias bool
 }
 
 func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allTables map[string]domain.Table) (*QueryParams, error) {
@@ -952,7 +1143,7 @@ func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allT
 	if sel := c.Query("select"); sel != "" {
 		qp.Select = parseSelectParam(sel)
 		for _, s := range qp.Select {
-			if strings.Contains(s, "(") {
+			if strings.Contains(s, "(") && !isAggSelectEntry(s) {
 				continue // embed — validated via resolveEmbeds
 			}
 			item := parseSelectItem(s)
@@ -967,7 +1158,7 @@ func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allT
 	if allTables != nil {
 		var embedParams []string
 		for _, s := range qp.Select {
-			if strings.Contains(s, "(") {
+			if strings.Contains(s, "(") && !isAggSelectEntry(s) {
 				embedParams = append(embedParams, s)
 			}
 		}
@@ -985,8 +1176,10 @@ func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allT
 	}
 
 	// Parse order. Format per PostgREST: col[.asc|.desc][.nullsfirst|.nullslast].
+	// Select-list aliases (including aggregate default keys) are resolved
+	// first so `order=count.desc` works against `select=...,id.count()`.
 	if order := c.Query("order"); order != "" {
-		clauses, err := parseOrderValue(order, table)
+		clauses, err := parseOrderValueWithSelect(order, table, qp.Select)
 		if err != nil {
 			return nil, fmt.Errorf("invalid order: %w", err)
 		}
@@ -1031,6 +1224,19 @@ func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allT
 	}
 	qp.Where = where
 
+	// Parse HAVING. Format mirrors filter syntax but conditions must reference
+	// aggregate aliases or columns that will appear in GROUP BY. The having
+	// parameter uses the same col.op.value syntax as filters:
+	//   ?having=count.gt.5
+	//   ?having=sum.gte.100
+	if havingRaw := c.Query("having"); havingRaw != "" {
+		havingNode, err := parseHavingParam(havingRaw, table, qp.Select)
+		if err != nil {
+			return nil, fmt.Errorf("invalid having: %w", err)
+		}
+		qp.Having = havingNode
+	}
+
 	return qp, nil
 }
 
@@ -1039,6 +1245,60 @@ func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allT
 // modifiers are stripped right-to-left so the remaining prefix is the
 // column name (default ASC, server default nulls order).
 func parseOrderValue(val string, table domain.Table) ([]OrderClause, error) {
+	return parseOrderValueWith(val, func(col string) error { return validateColumn(table, col) })
+}
+
+// parseOrderValueWithSelect is parseOrderValue with knowledge of the
+// select list, so order tokens that match a select alias (explicit or
+// the default key of an aggregate) bypass column validation and are
+// emitted as quoted output-list references in the generated SQL. This
+// mirrors PostgREST, where `order=count.desc` against a select of
+// `...,id.count()` sorts by the aggregate output rather than failing
+// with "unknown column".
+func parseOrderValueWithSelect(val string, table domain.Table, selectItems []string) ([]OrderClause, error) {
+	aliases := collectSelectAliases(selectItems)
+	validate := func(col string) error {
+		if _, ok := aliases[col]; ok {
+			return nil
+		}
+		return validateColumn(table, col)
+	}
+	clauses, err := parseOrderValueWith(val, validate)
+	if err != nil {
+		return nil, err
+	}
+	for i := range clauses {
+		if _, ok := aliases[clauses[i].Column]; ok {
+			clauses[i].IsAlias = true
+		}
+	}
+	return clauses, nil
+}
+
+// collectSelectAliases returns the set of output-list names produced by
+// a parsed select list: explicit aliases (`nick:name`) and the default
+// alias key for aggregates without an explicit alias (`id.count()` →
+// "count"). Embed entries are skipped.
+func collectSelectAliases(selectItems []string) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, s := range selectItems {
+		if strings.Contains(s, "(") && !isAggSelectEntry(s) {
+			continue
+		}
+		item := parseSelectItem(s)
+		switch {
+		case item.Alias != "":
+			out[item.Alias] = struct{}{}
+		case item.Agg != "":
+			out[item.Agg] = struct{}{}
+		}
+	}
+	return out
+}
+
+// parseOrderValueWith is parseOrderValue with a pluggable column validator,
+// used by the RPC path when there is no single domain.Table to validate against.
+func parseOrderValueWith(val string, validate colValidator) ([]OrderClause, error) {
 	var out []OrderClause
 	for _, part := range strings.Split(val, ",") {
 		part = strings.TrimSpace(part)
@@ -1064,7 +1324,7 @@ func parseOrderValue(val string, table domain.Table) ([]OrderClause, error) {
 			break
 		}
 		oc.Column = part
-		if err := validateColumn(table, oc.Column); err != nil {
+		if err := validate(oc.Column); err != nil {
 			return nil, err
 		}
 		out = append(out, oc)
@@ -1089,10 +1349,20 @@ func parseEmbedScopedParams(c *gin.Context, embedByName map[string]*Embed, allTa
 			if !ok {
 				return fmt.Errorf("embed %q references unknown table %q", embName, emb.RefTable)
 			}
+			// Embed-scoped filters and order may reference select-list
+			// aliases (explicit or aggregate defaults) in the embed's own
+			// projection, e.g. `posts.count.gt=0` against `posts(id.count())`.
+			aliasSet := collectSelectAliases(emb.Columns)
+			embValidate := func(col string) error {
+				if _, ok := aliasSet[col]; ok {
+					return nil
+				}
+				return validateColumn(embTable, col)
+			}
 			switch suffix {
 			case "or", "and":
 				for _, v := range values {
-					node, err := parseLogicList(suffix, v, embTable)
+					node, err := parseLogicListWith(suffix, v, embValidate)
 					if err != nil {
 						return fmt.Errorf("invalid %s for embed %q: %w", suffix, embName, err)
 					}
@@ -1106,7 +1376,7 @@ func parseEmbedScopedParams(c *gin.Context, embedByName map[string]*Embed, allTa
 					return fmt.Errorf("order not allowed on belongs-to embed %q", embName)
 				}
 				for _, v := range values {
-					clauses, err := parseOrderValue(v, embTable)
+					clauses, err := parseOrderValueWithSelect(v, embTable, emb.Columns)
 					if err != nil {
 						return fmt.Errorf("invalid order for embed %q: %w", embName, err)
 					}
@@ -1124,8 +1394,22 @@ func parseEmbedScopedParams(c *gin.Context, embedByName map[string]*Embed, allTa
 					return fmt.Errorf("invalid limit for embed %q: %s", embName, values[0])
 				}
 				emb.Limit = &n
-			case "select", "offset":
-				// Reserved names inside an embed scope: not supported yet.
+			case "offset":
+				if !emb.IsReverse {
+					return fmt.Errorf("offset not allowed on belongs-to embed %q", embName)
+				}
+				if len(values) == 0 {
+					break
+				}
+				n, err := strconv.Atoi(values[0])
+				if err != nil || n < 0 {
+					return fmt.Errorf("invalid offset for embed %q: %s", embName, values[0])
+				}
+				emb.Offset = &n
+			case "select":
+				// Reserved name inside an embed scope: column projection is
+				// controlled by the parentheses syntax (posts(col1,col2))
+				// rather than a separate posts.select= param.
 				return fmt.Errorf("embed param %q.%s not supported", embName, suffix)
 			default:
 				if err := validateColumn(embTable, suffix); err != nil {
@@ -1174,6 +1458,7 @@ var reservedParams = map[string]bool{
 	"order":  true,
 	"limit":  true,
 	"offset": true,
+	"having": true,
 }
 
 // jsonKeyRe restricts JSONB path keys to safe identifiers. Keys are
@@ -1188,35 +1473,43 @@ func validateColumn(table domain.Table, col string) error {
 	if col == "" {
 		return fmt.Errorf("empty column name")
 	}
-	base, op, key := splitJSONBColumn(col)
-	if _, ok := table.Fields[base]; !ok {
+	base, steps := splitJSONBPath(col)
+	if _, ok := table.GetField(base); !ok {
 		return fmt.Errorf("unknown column %q", base)
 	}
-	if op != "" && !jsonKeyRe.MatchString(key) {
-		return fmt.Errorf("invalid JSONB key %q", key)
+	for _, s := range steps {
+		if s.key == "" {
+			return fmt.Errorf("empty JSONB key in %q", col)
+		}
+		if !s.isInt && !jsonKeyRe.MatchString(s.key) {
+			return fmt.Errorf("invalid JSONB key %q", s.key)
+		}
 	}
 	return nil
 }
 
 
 var validOps = map[string]string{
-	"eq":    "=",
-	"neq":   "!=",
-	"gt":    ">",
-	"gte":   ">=",
-	"lt":    "<",
-	"lte":   "<=",
-	"like":  "LIKE",
-	"ilike": "ILIKE",
-	"is":    "IS",
-	"in":    "IN",
-	"cs":    "@>",
-	"cd":    "<@",
-	"ov":    "&&",
-	"fts":   "@@",
-	"plfts": "@@",
-	"phfts": "@@",
-	"wfts":  "@@",
+	"eq":         "=",
+	"neq":        "!=",
+	"gt":         ">",
+	"gte":        ">=",
+	"lt":         "<",
+	"lte":        "<=",
+	"like":       "LIKE",
+	"ilike":      "ILIKE",
+	"match":      "~",  // POSIX regex match
+	"imatch":     "~*", // POSIX regex match, case-insensitive
+	"is":         "IS",
+	"isdistinct": "IS DISTINCT FROM",
+	"in":         "IN",
+	"cs":         "@>",
+	"cd":         "<@",
+	"ov":         "&&",
+	"fts":        "@@",
+	"plfts":      "@@",
+	"phfts":      "@@",
+	"wfts":       "@@",
 	// Range operators (PostgREST). Values are Postgres range literals like
 	// "(1,10)" or "[1,10)"; we pass them as text params and rely on
 	// Postgres to infer the range type from the target column.
@@ -1233,23 +1526,42 @@ var validOps = map[string]string{
 	"ilike(any)": "ILIKE",
 }
 
-// parseFilterValue splits "eq.active" into ("eq", "active", nil).
+// parseFilterValue splits "eq.active" into ("eq", "active", "", nil).
+// Operators may carry an inline parameter in parentheses — currently
+// used by the FTS family to choose a text-search configuration:
+//
+//	fts(english).query → op="fts", config="english", value="query"
+//
 // For JSONB access, the column may contain "->" or "->>" operators,
 // e.g. "metadata->>theme=eq.dark" is parsed in parseFilters with column="metadata->>theme".
-func parseFilterValue(val string) (string, string, error) {
+func parseFilterValue(val string) (op, operand, config string, err error) {
 	idx := strings.Index(val, ".")
 	if idx == -1 {
-		return "", "", fmt.Errorf("expected operator.value format, got %q", val)
+		return "", "", "", fmt.Errorf("expected operator.value format, got %q", val)
 	}
+	op = val[:idx]
+	operand = val[idx+1:]
 
-	op := val[:idx]
-	operand := val[idx+1:]
+	// Inline config: strip "(…)" from the op token.
+	if lp := strings.Index(op, "("); lp != -1 {
+		if !strings.HasSuffix(op, ")") {
+			return "", "", "", fmt.Errorf("malformed operator %q", op)
+		}
+		config = op[lp+1 : len(op)-1]
+		op = op[:lp]
+		if config == "" {
+			return "", "", "", fmt.Errorf("empty config in operator %q", val[:idx])
+		}
+		if !identRe.MatchString(config) {
+			return "", "", "", fmt.Errorf("invalid config %q", config)
+		}
+	}
 
 	if _, ok := validOps[op]; !ok {
-		return "", "", fmt.Errorf("unknown operator %q", op)
+		return "", "", "", fmt.Errorf("unknown operator %q", op)
 	}
 
-	return op, operand, nil
+	return op, operand, config, nil
 }
 
 // parsePatternList parses the value portion of a like(all)/like(any) filter.
@@ -1275,16 +1587,88 @@ func parsePatternList(raw string) []string {
 	return out
 }
 
-// splitJSONBColumn splits "metadata->>theme" into ("metadata", "->>", "theme").
-// Returns the original column and empty strings if no JSONB operator is found.
-func splitJSONBColumn(col string) (string, string, string) {
-	if idx := strings.Index(col, "->>"); idx != -1 {
-		return col[:idx], "->>", col[idx+3:]
+// jsonPathStep is one link of a JSONB accessor chain. An integer key
+// (isInt = true) is rendered into SQL unquoted so Postgres treats it as
+// an array index; a text key is rendered as a single-quoted literal.
+type jsonPathStep struct {
+	op    string // "->" or "->>"
+	key   string
+	isInt bool
+}
+
+// splitJSONBPath parses a filter/select column like "data->items->0->>name"
+// into the base column ("data") and an ordered list of JSONB access steps.
+// A column with no path operators returns (col, nil).
+func splitJSONBPath(col string) (string, []jsonPathStep) {
+	idx := strings.Index(col, "->")
+	if idx == -1 {
+		return col, nil
 	}
-	if idx := strings.Index(col, "->"); idx != -1 {
-		return col[:idx], "->", col[idx+2:]
+	base := col[:idx]
+	rest := col[idx:]
+	var steps []jsonPathStep
+	for len(rest) > 0 {
+		if !strings.HasPrefix(rest, "->") {
+			break
+		}
+		op := "->"
+		keyStart := 2
+		if len(rest) > 2 && rest[2] == '>' {
+			op = "->>"
+			keyStart = 3
+		}
+		tail := rest[keyStart:]
+		next := strings.Index(tail, "->")
+		var key string
+		if next == -1 {
+			key = tail
+			rest = ""
+		} else {
+			key = tail[:next]
+			rest = tail[next:]
+		}
+		steps = append(steps, jsonPathStep{op: op, key: key, isInt: isAllDigits(key)})
 	}
-	return col, "", ""
+	return base, steps
+}
+
+// renderJSONBSuffix serializes a JSONB access chain onto a prefix like
+// "tbl.col" or "col", emitting integer keys unquoted and text keys as
+// single-quoted literals (jsonKeyRe has already validated text keys).
+func renderJSONBSuffix(steps []jsonPathStep) string {
+	var b strings.Builder
+	for _, s := range steps {
+		b.WriteString(s.op)
+		if s.isInt {
+			b.WriteString(s.key)
+		} else {
+			b.WriteByte('\'')
+			b.WriteString(s.key)
+			b.WriteByte('\'')
+		}
+	}
+	return b.String()
+}
+
+// lastJSONBOp reports the operator of the final step in a JSONB chain,
+// which determines the result type: "->>" yields text, "->" yields jsonb.
+func lastJSONBOp(steps []jsonPathStep) string {
+	if len(steps) == 0 {
+		return ""
+	}
+	return steps[len(steps)-1].op
+}
+
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func parseSelectParam(sel string) []string {
@@ -1334,8 +1718,8 @@ func buildEmbedRowExpr(emb Embed, srcAlias string, allTables map[string]domain.T
 		// Emit all fields from the referenced table as scalar columns.
 		if allTables != nil {
 			if refTbl, ok := allTables[emb.RefTable]; ok {
-				for fname := range refTbl.Fields {
-					scalarCols = append(scalarCols, fname)
+				for _, f := range refTbl.Fields {
+					scalarCols = append(scalarCols, f.Name)
 				}
 				sort.Strings(scalarCols)
 			}
@@ -1389,6 +1773,9 @@ func buildChildEmbedSubselect(child Embed, parentAlias string, allTables map[str
 		if child.Limit != nil {
 			sub += fmt.Sprintf(" LIMIT %d", *child.Limit)
 		}
+		if child.Offset != nil {
+			sub += fmt.Sprintf(" OFFSET %d", *child.Offset)
+		}
 		return fmt.Sprintf("(%s)", sub), allArgs, argIdx
 	}
 
@@ -1412,13 +1799,27 @@ func buildSelectQuery(tableName string, qp *QueryParams, table domain.Table) (st
 func buildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table, allTables map[string]domain.Table) (string, []any) {
 	// SELECT clause — base table columns
 	var selectParts []string
+	var groupByExprs []string
+	var hasAgg bool
 	if len(qp.Select) > 0 {
+		var items []SelectItem
 		for _, s := range qp.Select {
-			if strings.Contains(s, "(") {
+			if strings.Contains(s, "(") && !isAggSelectEntry(s) {
 				continue // embed handled below
 			}
 			item := parseSelectItem(s)
+			items = append(items, item)
+			if item.Agg != "" {
+				hasAgg = true
+			}
+		}
+		for _, item := range items {
 			selectParts = append(selectParts, renderSelectItem(tableName, item))
+			if hasAgg && item.Agg == "" {
+				if expr := renderSelectItemGroupByExpr(tableName, item); expr != "" {
+					groupByExprs = append(groupByExprs, expr)
+				}
+			}
 		}
 	}
 	if len(selectParts) == 0 {
@@ -1463,14 +1864,17 @@ func buildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 			if emb.Limit != nil {
 				sub += fmt.Sprintf(" LIMIT %d", *emb.Limit)
 			}
+			if emb.Offset != nil {
+				sub += fmt.Sprintf(" OFFSET %d", *emb.Offset)
+			}
 			selectParts = append(selectParts, fmt.Sprintf("(%s) AS %s", sub, emb.Name))
 		} else if emb.Spread {
 			// Spread belongs-to: inline columns into parent SELECT.
 			spreadCols := emb.Columns
 			if len(spreadCols) == 0 {
 				refTbl := allTables[emb.RefTable]
-				for fname := range refTbl.Fields {
-					spreadCols = append(spreadCols, fname)
+				for _, f := range refTbl.Fields {
+					spreadCols = append(spreadCols, f.Name)
 				}
 				sort.Strings(spreadCols)
 			}
@@ -1531,17 +1935,62 @@ func buildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 	}
 
 	// Outer WHERE: combine main filters with belongs-to embed filters.
-	whereSQL, whereArgs, _ := qp.Where.buildSQL(argIdx)
+	whereSQL, whereArgs, nextArgIdx := qp.Where.buildSQL(argIdx)
 	if whereSQL != "" {
 		allArgs = append(allArgs, whereArgs...)
 	}
+	argIdx = nextArgIdx
 	var whereParts []string
 	if whereSQL != "" {
 		whereParts = append(whereParts, whereSQL)
 	}
 	whereParts = append(whereParts, belongsToWhere...)
+
+	// has-many !inner: filter parent rows to those with at least one
+	// matching child via WHERE EXISTS (...). PostgREST treats the !inner
+	// hint on a reverse embed as an existence predicate on the parent,
+	// independent of the json_agg subselect that still materializes the
+	// child array. The embed WHERE is re-rendered here with a fresh
+	// argIdx so placeholder numbering continues after the outer WHERE.
+	for _, emb := range qp.Embeds {
+		if !emb.IsReverse || !emb.Inner {
+			continue
+		}
+		refPK := emb.RefColumn
+		if refPK == "" {
+			refPK = "id"
+		}
+		existsSQL := fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s.%s = %s.%s",
+			emb.RefTable, emb.RefTable, emb.FKColumn, tableName, refPK)
+		if emb.Where != nil {
+			clauseSQL, clauseArgs, next := emb.Where.buildSQL(argIdx)
+			if clauseSQL != "" {
+				existsSQL += " AND " + clauseSQL
+				allArgs = append(allArgs, clauseArgs...)
+				argIdx = next
+			}
+		}
+		existsSQL += ")"
+		whereParts = append(whereParts, existsSQL)
+	}
+
 	if len(whereParts) > 0 {
 		sql += " WHERE " + strings.Join(whereParts, " AND ")
+	}
+
+	// GROUP BY — added whenever aggregates are mixed with plain columns.
+	if len(groupByExprs) > 0 {
+		sql += " GROUP BY " + strings.Join(groupByExprs, ", ")
+	}
+
+	// HAVING — aggregate filters applied after GROUP BY.
+	if qp.Having != nil {
+		havingSQL, havingArgs, nextIdx := qp.Having.buildSQL(argIdx)
+		if havingSQL != "" {
+			sql += " HAVING " + havingSQL
+			allArgs = append(allArgs, havingArgs...)
+			argIdx = nextIdx
+		}
 	}
 
 	// ORDER BY
@@ -1556,6 +2005,8 @@ func buildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 }
 
 // renderOrderBy emits a comma-separated ORDER BY list from OrderClauses.
+// Alias-resolved clauses are double-quoted so Postgres resolves them
+// from the select output list rather than the underlying table.
 func renderOrderBy(clauses []OrderClause) string {
 	parts := make([]string, 0, len(clauses))
 	for _, o := range clauses {
@@ -1563,7 +2014,11 @@ func renderOrderBy(clauses []OrderClause) string {
 		if o.Desc {
 			dir = "DESC"
 		}
-		c := fmt.Sprintf("%s %s", o.Column, dir)
+		col := o.Column
+		if o.IsAlias {
+			col = `"` + strings.ReplaceAll(o.Column, `"`, `""`) + `"`
+		}
+		c := fmt.Sprintf("%s %s", col, dir)
 		switch o.Nulls {
 		case "first":
 			c += " NULLS FIRST"
@@ -1582,15 +2037,16 @@ func resolveEmbeds(tableName string, table domain.Table, embedNames []string, al
 
 	for _, raw := range embedNames {
 		name, cols, nested, spread := parseEmbedParam(raw)
-		name, inner := parseEmbedHint(name)
+		name, inner, fkHint := parseEmbedHint(name)
 
 		// Check for belongs-to: this table has a FK column pointing to the embed name
 		// Convention: FK column name matches embed name + "_id" or references the embed table
 		found := false
-		for fieldName, field := range table.Fields {
+		for _, field := range table.Fields {
 			if field.ForeignKey == nil {
 				continue
 			}
+			fieldName := field.Name
 			ref := field.ForeignKey.References
 			parts := strings.SplitN(ref, ".", 2)
 			if len(parts) != 2 {
@@ -1598,33 +2054,42 @@ func resolveEmbeds(tableName string, table domain.Table, embedNames []string, al
 			}
 			refTable, refCol := parts[0], parts[1]
 
-			// Match if embed name equals the referenced table or the FK column minus "_id"
-			if refTable == name || strings.TrimSuffix(fieldName, "_id") == name {
-				emb := Embed{
-					Name:      name,
-					Columns:   cols,
-					FKColumn:  fieldName,
-					RefTable:  refTable,
-					RefColumn: refCol,
-					Inner:     inner,
-					Spread:    spread,
+			// When an FK hint was given, the caller is disambiguating between
+			// multiple FKs to the same table — only match the column whose name
+			// (or column-minus-_id) equals the hint.
+			if fkHint != "" {
+				if fieldName != fkHint && strings.TrimSuffix(fieldName, "_id") != fkHint {
+					continue
 				}
-				// Recurse for nested embeds
-				if len(nested) > 0 {
-					refTbl, ok := allTables[refTable]
-					if !ok {
-						return nil, fmt.Errorf("embed %q references unknown table %q", name, refTable)
-					}
-					children, err := resolveEmbeds(refTable, refTbl, nested, allTables)
-					if err != nil {
-						return nil, fmt.Errorf("nested embed in %q: %w", name, err)
-					}
-					emb.Children = children
+				if refTable != name {
+					continue
 				}
-				embeds = append(embeds, emb)
-				found = true
-				break
+			} else if !(refTable == name || strings.TrimSuffix(fieldName, "_id") == name) {
+				continue
 			}
+			emb := Embed{
+				Name:      name,
+				Columns:   cols,
+				FKColumn:  fieldName,
+				RefTable:  refTable,
+				RefColumn: refCol,
+				Inner:     inner,
+				Spread:    spread,
+			}
+			if len(nested) > 0 {
+				refTbl, ok := allTables[refTable]
+				if !ok {
+					return nil, fmt.Errorf("embed %q references unknown table %q", name, refTable)
+				}
+				children, err := resolveEmbeds(refTable, refTbl, nested, allTables)
+				if err != nil {
+					return nil, fmt.Errorf("nested embed in %q: %w", name, err)
+				}
+				emb.Children = children
+			}
+			embeds = append(embeds, emb)
+			found = true
+			break
 		}
 
 		if found {
@@ -1642,16 +2107,24 @@ func resolveEmbeds(tableName string, table domain.Table, embedNames []string, al
 			if spread {
 				return nil, fmt.Errorf("spread (...) not allowed on has-many embed %q", name)
 			}
-			for fieldName, field := range otherTable.Fields {
+			for _, field := range otherTable.Fields {
 				if field.ForeignKey == nil {
 					continue
 				}
+				fieldName := field.Name
 				ref := field.ForeignKey.References
 				parts := strings.SplitN(ref, ".", 2)
 				if len(parts) != 2 {
 					continue
 				}
 				if parts[0] == tableName {
+					// Respect FK disambiguation hint: when set, only match the
+					// reverse FK whose column name equals the hint. This lets
+					// callers pick a specific FK when two tables reference the
+					// same parent.
+					if fkHint != "" && fieldName != fkHint && strings.TrimSuffix(fieldName, "_id") != fkHint {
+						continue
+					}
 					emb := Embed{
 						Name:      name,
 						Columns:   cols,
@@ -1723,11 +2196,13 @@ func parseEmbedParam(s string) (name string, cols []string, nested []string, spr
 }
 
 func buildFilterCondition(f Filter, argIdx int) (string, []any, int) {
-	// Handle JSONB access operators in column name (e.g. "metadata->>theme")
+	// Handle JSONB access operators in column name (e.g. "metadata->>theme",
+	// "data->items->0->>name"). splitJSONBPath returns the base column plus
+	// an ordered chain of ->/->> steps, which we render back onto the base.
 	colExpr := f.Column
-	baseCol, jsonOp, jsonKey := splitJSONBColumn(f.Column)
-	if jsonOp != "" {
-		colExpr = fmt.Sprintf("%s%s'%s'", baseCol, jsonOp, jsonKey)
+	baseCol, steps := splitJSONBPath(f.Column)
+	if len(steps) > 0 {
+		colExpr = baseCol + renderJSONBSuffix(steps)
 	}
 
 	switch f.Operator {
@@ -1737,6 +2212,15 @@ func buildFilterCondition(f Filter, argIdx int) (string, []any, int) {
 			return fmt.Sprintf("%s IS %s", colExpr, val), nil, argIdx
 		}
 		return fmt.Sprintf("%s IS %s", colExpr, f.Value), nil, argIdx
+
+	case "isdistinct":
+		// PostgREST: `col=isdistinct.NULL` / `col=isdistinct.val`.
+		val := strings.ToUpper(f.Value)
+		if val == "NULL" || val == "TRUE" || val == "FALSE" {
+			return fmt.Sprintf("%s IS DISTINCT FROM %s", colExpr, val), nil, argIdx
+		}
+		return fmt.Sprintf("%s IS DISTINCT FROM $%d", colExpr, argIdx),
+			[]any{f.Value}, argIdx + 1
 
 	case "in":
 		// in.(val1,val2,val3)
@@ -1752,14 +2236,21 @@ func buildFilterCondition(f Filter, argIdx int) (string, []any, int) {
 		}
 		return fmt.Sprintf("%s IN (%s)", colExpr, strings.Join(placeholders, ", ")), args, argIdx
 
-	case "fts":
-		return fmt.Sprintf("%s @@ to_tsquery($%d)", colExpr, argIdx), []any{f.Value}, argIdx + 1
-	case "plfts":
-		return fmt.Sprintf("%s @@ plainto_tsquery($%d)", colExpr, argIdx), []any{f.Value}, argIdx + 1
-	case "phfts":
-		return fmt.Sprintf("%s @@ phraseto_tsquery($%d)", colExpr, argIdx), []any{f.Value}, argIdx + 1
-	case "wfts":
-		return fmt.Sprintf("%s @@ websearch_to_tsquery($%d)", colExpr, argIdx), []any{f.Value}, argIdx + 1
+	case "fts", "plfts", "phfts", "wfts":
+		fn := map[string]string{
+			"fts":   "to_tsquery",
+			"plfts": "plainto_tsquery",
+			"phfts": "phraseto_tsquery",
+			"wfts":  "websearch_to_tsquery",
+		}[f.Operator]
+		// `fts(english).query` surfaces as Config="english"; emit it as
+		// the first arg to the text-search function, matching
+		// PostgREST's fts(<config>).<query> wire format.
+		if f.Config != "" {
+			return fmt.Sprintf("%s @@ %s('%s', $%d)", colExpr, fn, f.Config, argIdx),
+				[]any{f.Value}, argIdx + 1
+		}
+		return fmt.Sprintf("%s @@ %s($%d)", colExpr, fn, argIdx), []any{f.Value}, argIdx + 1
 
 	case "cs":
 		return fmt.Sprintf("%s @> $%d", colExpr, argIdx), []any{f.Value}, argIdx + 1
@@ -1950,7 +2441,7 @@ func parseColumnsParam(val string, table domain.Table) (map[string]bool, error) 
 		if c == "" {
 			return nil, fmt.Errorf("empty column in columns hint")
 		}
-		if _, ok := table.Fields[c]; !ok {
+		if _, ok := table.GetField(c); !ok {
 			return nil, fmt.Errorf("unknown column %q in columns hint", c)
 		}
 		cols[c] = true
@@ -2004,9 +2495,9 @@ func parseOnConflictParam(val string, table domain.Table) ([]string, error) {
 // this as a configuration error when building upsert SQL.
 func primaryKeyColumns(table domain.Table) []string {
 	var pks []string
-	for name, f := range table.Fields {
+	for _, f := range table.Fields {
 		if f.PrimaryKey {
-			pks = append(pks, name)
+			pks = append(pks, f.Name)
 		}
 	}
 	sort.Strings(pks)

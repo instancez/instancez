@@ -61,10 +61,6 @@ export const RLS_OPERATIONS = [
   "delete",
 ] as const;
 
-export const HTTP_METHODS = ["GET", "POST", "PUT", "DELETE"] as const;
-
-export const RETURN_TYPES = ["void", "scalar", "row", "rows"] as const;
-
 export const SEARCH_CONFIGS = [
   "english",
   "simple",

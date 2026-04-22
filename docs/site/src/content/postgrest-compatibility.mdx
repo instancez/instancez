@@ -1,86 +1,100 @@
 ---
-title: PostgREST Compatibility
-description: What Ultrabase supports from the PostgREST API and what's missing
+title: Supabase Compatibility
+description: What Ultrabase supports from the supabase-js client — auth, REST, and storage
 section: Reference
 order: 50
 ---
 
-Ultrabase exposes a PostgREST-compatible HTTP surface over your tables. Existing PostgREST clients — including `postgrest-js`, `postgrest-go`, and the Supabase SDKs — can talk to Ultrabase without client-side changes for the features listed below. This page documents the current state: what works, what's partial, and what's intentionally out of scope.
+Ultrabase implements the Supabase HTTP APIs so the standard `@supabase/supabase-js` client works without client-side changes for the features listed below. This page documents the current state across all three surfaces: **Auth**, **REST** (PostgREST), and **Storage**.
 
-## At a glance
+```js
+import { createClient } from '@supabase/supabase-js'
 
-| Area | Status | Notes |
-| --- | --- | --- |
-| **CRUD & writes** — `GET`/`POST`/`PATCH`/`DELETE`, bulk insert + `columns=`, upsert (`on_conflict=`), `?select=` on mutations | ✅ Full | |
-| **`Prefer` headers** — `return=representation`/`minimal`/`headers-only`, `tx=rollback`, `count=exact`/`planned`/`estimated` | ✅ Full | `count` sets `Content-Range` on GET/HEAD |
-| **Filter operators** — `eq`/`neq`/`gt[e]`/`lt[e]`, `like`/`ilike` (incl. `like(all)`/`like(any)`/`ilike(all)`/`ilike(any)`), `is.null`/`is.true`/`is.false`, `in`, `cs`/`cd`/`ov` | ✅ Full | |
-| **Range operators** — `sl`, `sr`, `nxl`, `nxr`, `adj` on range-typed columns | ✅ Full | Declare the range column in raw SQL; Ultrabase passes values to Postgres as-is |
-| **`Prefer: max-affected=N`** guard on PATCH/DELETE | ✅ Full | Aborts with `PGRST124` and rolls back when affected row count exceeds `N` |
-| **Logical trees** — `and=`, `or=`, `not.` prefixes, nested | ✅ Full | |
-| **Resource embedding** — belongs-to, has-many, `!inner`, nested `select`/`order`/`limit`/filters | ✅ Full | |
-| **Content types** — `application/json`, `application/vnd.pgrst.object+json` (Single), `text/csv` | ✅ Full | Single → 406 + `PGRST116` on 0 or >1 rows |
-| **JSONB path access** — `metadata->>theme=eq.dark` in filters and `select` | ✅ Full | |
-| **Error envelope** — `{code, message, details, hint}` with real SQLSTATE + `PGRST*` codes | ✅ Full | All four fields always present |
-| **Full-text search** — `fts`, `plfts`, `phfts`, `wfts` | ⚠️ Partial | Column must already be `tsvector` — no auto-`to_tsvector` wrapping |
-| **RPC** — `POST /rpc/<name>` | ❌ Missing | See Functions page for the Ultrabase equivalent |
-| **Views as endpoints** | ❌ Missing | |
-| **Multi-schema** — `Accept-Profile`/`Content-Profile` | ❌ Missing | Single-schema per instance |
-| **FK-hint disambiguation** — `author:users!author_id(*)` | ❌ Missing | Embeds resolve by table name only |
-| **Computed columns** from `function(row)` | ❌ Missing | |
-| **Aggregates** — `select=count(),avg(x)` | ❌ Missing | |
-| **EXPLAIN** — `Accept: application/vnd.pgrst.plan+json` | ❌ Missing | |
-| **GeoJSON** — `Accept: application/geo+json` | ❌ Missing | PostGIS types not in schema vocabulary |
-
-Detailed notes on each row follow below.
-
-## What works today
-
-### CRUD
-- `GET /api/<table>` with `select`, `order`, `limit`, `offset`, `Range` headers and `Prefer: count=exact|planned|estimated`
-- `POST /api/<table>` for single-row and bulk inserts, including the `columns=` hint
-- `PATCH /api/<table>` for filtered updates, with `?select=` returning the updated rows under `return=representation`
-- `DELETE /api/<table>` for filtered deletes, with `?select=` returning the deleted rows under `return=representation`
-- `POST` with `Prefer: resolution=merge-duplicates|ignore-duplicates` and `on_conflict=` for upsert
-- `return=representation` / `return=minimal` / `return=headers-only`
-- `Prefer: tx=rollback` for dry-run writes
-- `Prefer: max-affected=N` on PATCH/DELETE — aborts with `PGRST124` (and rolls back) when the mutation would touch more than `N` rows
-- `Accept: application/vnd.pgrst.object+json` for single-row responses. If the query matches 0 or >1 rows, Ultrabase returns HTTP 406 with code `PGRST116`, matching PostgREST's `Single()` / `MaybeSingle()` semantics.
-- `Accept: text/csv` for CSV export
-
-### Filters and operators
-- Equality and comparison: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`
-- Pattern matching: `like`, `ilike`, plus `like(all)`, `like(any)`, `ilike(all)`, `ilike(any)` with `{pat1,pat2}` patterns
-- `is.null`, `is.true`, `is.false`
-- `in.(...)`
-- Array containment and overlap: `cs`, `cd`, `ov`
-- Range operators on range-typed columns: `sl`, `sr`, `nxl`, `nxr`, `adj` (declare the column in raw SQL; range literals like `[1,10)` are passed through to Postgres)
-- Full-text search: `fts`, `plfts`, `phfts`, `wfts`
-- Logical trees: top-level `and=(...)` / `or=(...)` and `not.` prefixes
-- `Match(map)` shorthand via repeated `column=eq.value` params
-
-### Resource embedding
-- Belongs-to (forward FK): `select=*,author(*)`
-- Has-many (reverse FK): `select=*,posts(*)` returns a JSON array
-- Column projection inside the embed: `select=*,author(id,name)`
-- `!inner` hint for INNER JOIN semantics on belongs-to
-- Nested scope on has-many embeds: `posts.select`, `posts.order`, `posts.limit`, and PostgREST-style filter params like `posts.status=eq.published`
-
-### Error shape
-Errors use the PostgREST body format:
-
-```json
-{
-  "code": "23505",
-  "message": "duplicate key value violates unique constraint \"users_pkey\"",
-  "details": "Key (username)=(alice) already exists.",
-  "hint": ""
-}
+const supabase = createClient(ULTRABASE_URL, ULTRABASE_ANON_KEY)
 ```
 
-Constraint violations forward the real SQLSTATE and Postgres-supplied detail/hint:
+## Auth (`/auth/v1/`)
+
+supabase-js auth methods that work today:
+
+| Method | Status | Notes |
+|---|---|---|
+| `auth.signUp()` | ✅ | Email/password with optional `user_metadata` |
+| `auth.signInWithPassword()` | ✅ | |
+| `auth.signInAnonymously()` | ✅ | JWT carries `is_anonymous: true` |
+| `auth.signOut()` | ✅ | |
+| `auth.getUser()` | ✅ | |
+| `auth.refreshSession()` | ✅ | Token rotation |
+| `auth.signInWithOtp()` | ✅ | Email magic link / 6-digit code |
+| `auth.verifyOtp()` | ✅ | |
+| `auth.resetPasswordForEmail()` | ✅ | |
+| `auth.updateUser()` | ✅ | |
+| `auth.mfa.enroll()` | ✅ | TOTP only |
+| `auth.mfa.challenge()` | ✅ | |
+| `auth.mfa.verify()` | ✅ | Upgrades JWT to `aal2` |
+| `auth.mfa.unenroll()` | ✅ | |
+| `auth.mfa.listFactors()` | ✅ | |
+| `auth.signInWithOAuth()` | ✅ | Google, GitHub (configurable) |
+| Admin: `generateLink()` | ✅ | Via admin key |
+| `auth.signInWithIdToken()` | ❌ | |
+| `auth.signInWithSSO()` | ❌ | |
+| Phone auth | ❌ | |
+
+## REST (`/rest/v1/`)
+
+Ultrabase exposes a PostgREST-compatible HTTP surface. The supabase-js `.from()`, `.rpc()`, and query builder methods work without changes.
+
+### At a glance
+
+| Area | Status | Notes |
+|---|---|---|
+| **CRUD** — `GET`/`POST`/`PATCH`/`DELETE`, bulk insert + `columns=`, upsert (`on_conflict=`), `?select=` on mutations | ✅ Full | |
+| **`Prefer` headers** — `return=representation`/`minimal`/`headers-only`, `tx=rollback`, `count=exact`/`planned`/`estimated`, `max-affected=N`, `handling=strict` | ✅ Full | |
+| **Filter operators** — `eq`/`neq`/`gt[e]`/`lt[e]`, `like`/`ilike` (incl. `all`/`any` variants), `is`, `in`, `cs`/`cd`/`ov`, `match`/`imatch`, `isdistinct` | ✅ Full | |
+| **Range operators** — `sl`, `sr`, `nxl`, `nxr`, `adj` | ✅ Full | |
+| **Logical trees** — `and=`, `or=`, `not.` prefixes, nested | ✅ Full | |
+| **Resource embedding** — belongs-to, has-many, `!inner`, nested scope, spread (`...`), FK-hint disambiguation | ✅ Full | |
+| **Content types** — `application/json`, `application/vnd.pgrst.object+json`, `text/csv` | ✅ Full | |
+| **JSONB path access** — `metadata->>key` in filters and select | ✅ Full | |
+| **Full-text search** — `fts`, `plfts`, `phfts`, `wfts` | ✅ Full | |
+| **RPC** — `.rpc()` with scalar/SETOF/void returns, chaining, `params=single-object` | ✅ Full | |
+| **Aggregates** — `count()`, `avg()`, `sum()`, `min()`, `max()`, aliases, GROUP BY, HAVING | ✅ Full | |
+| **Error envelope** — `{code, message, details, hint}` with SQLSTATE + `PGRST*` codes | ✅ Full | |
+| Views as endpoints | ❌ Missing | |
+| Multi-schema (`Accept-Profile`/`Content-Profile`) | ❌ Missing | Single-schema; headers accepted for `public` only |
+| Computed columns from `function(row)` | ❌ Missing | |
+| `EXPLAIN` plan endpoint | ❌ Missing | |
+| GeoJSON (`application/geo+json`) | ❌ Missing | |
+
+### supabase-js query builder methods
+
+| Method | Status |
+|---|---|
+| `.from(table).select()` | ✅ |
+| `.from(table).insert()` | ✅ |
+| `.from(table).update()` | ✅ |
+| `.from(table).upsert()` | ✅ |
+| `.from(table).delete()` | ✅ |
+| `.single()` / `.maybeSingle()` | ✅ |
+| `.eq()` / `.neq()` / `.gt()` / `.gte()` / `.lt()` / `.lte()` | ✅ |
+| `.like()` / `.ilike()` | ✅ |
+| `.in()` | ✅ |
+| `.is()` | ✅ |
+| `.filter()` | ✅ |
+| `.match()` | ✅ |
+| `.or()` / `.not()` | ✅ |
+| `.order()` | ✅ |
+| `.limit()` / `.range()` | ✅ |
+| `.rpc()` | ✅ |
+| `.rpc()` with `.eq()` / `.order()` / `.limit()` chaining (SETOF) | ✅ |
+| `.csv()` | ✅ |
+
+### Error codes
+
+Constraint violations forward real SQLSTATEs:
 
 | SQLSTATE | HTTP | Kind |
-| --- | --- | --- |
+|---|---|---|
 | `23505` | 409 | unique_violation |
 | `23503` | 422 | foreign_key_violation |
 | `23502` | 422 | not_null_violation |
@@ -90,53 +104,59 @@ Constraint violations forward the real SQLSTATE and Postgres-supplied detail/hin
 | `42P01` | 404 | undefined_table |
 | `42703` | 404 | undefined_column |
 
-API-level errors that have no SQLSTATE use `PGRST*` codes (`PGRST100` parse error, `PGRST106` table not exposed, `PGRST116` single-row expectation, `PGRST301` auth). All four fields (`code`, `message`, `details`, `hint`) are always present in the body so clients can pattern-match on the shape without null checks.
+API-level errors use `PGRST*` codes: `PGRST100` (parse), `PGRST106` (schema), `PGRST116` (single-row), `PGRST122` (strict), `PGRST124` (max-affected), `PGRST202` (unknown function), `PGRST301` (auth).
 
-### Other PostgREST niceties
-- `Content-Range` response header for ranged reads
-- CORS preflight with `Authorization`, `Content-Type`, `Prefer`, `Accept`
-- JSONB key access in filters and select lists: `metadata->>theme=eq.dark`
+## Storage (`/storage/v1/`)
 
-## Not supported yet
+Ultrabase implements the Supabase Storage API so `supabase.storage` methods work out of the box.
 
-These are gaps against upstream PostgREST. Most are planned; a few are intentional design trade-offs.
+### Fully compatible methods
 
-### RPC / stored functions
-`POST /rpc/<name>` is not implemented. Ultrabase exposes custom SQL through its own **Functions** feature (see the Functions page), which gives you typed parameters and RLS integration but does not match PostgREST's RPC URL scheme. If you need PostgREST RPC specifically, this is the biggest gap.
+| Method | Status | Notes |
+|---|---|---|
+| `storage.listBuckets()` | ✅ | |
+| `storage.getBucket(id)` | ✅ | |
+| `storage.from(b).list(folder)` | ✅ | |
+| `storage.from(b).info(path)` | ✅ | |
+| `storage.from(b).exists(path)` | ✅ | |
+| `storage.from(b).remove([paths])` | ✅ | |
+| `storage.from(b).move(from, to)` | ✅ | Server-side copy + delete |
+| `storage.from(b).copy(from, to)` | ✅ | Server-side copy |
+| `storage.from(b).createSignedUrl(path, exp)` | ✅ | Returns direct S3 URL |
+| `storage.from(b).createSignedUrls(paths, exp)` | ✅ | Batch version |
+| `storage.from(b).createSignedUploadUrl(path)` | ✅ | |
+| `storage.from(b).getPublicUrl(path)` | ✅ | Client-side URL construction |
+| `storage.from(b).upload(path, file)` | ✅ | Proxied, capped at bucket `max_size` |
+| `storage.from(b).update(path, file)` | ✅ | Proxied, capped at bucket `max_size` |
+| `storage.from(b).download(path)` | ✅ | Proxied, capped at bucket `max_size` |
+| `storage.from(b).uploadToSignedUrl(path, token, file)` | ✅ | Proxied, capped at bucket `max_size` |
+| `storage.from(b).emptyBucket()` | ✅ | |
+| `storage.createBucket()` | ❌ | Buckets are defined in YAML |
+| `storage.updateBucket()` | ❌ | |
+| `storage.deleteBucket()` | ❌ | |
+| Image transformations | ❌ | |
+| Resumable uploads (TUS) | ❌ | |
 
-### Multi-schema exposure
-PostgREST lets a single instance expose several schemas and switches between them via `Accept-Profile` / `Content-Profile` headers. Ultrabase is single-schema per instance.
+<Callout variant="warning" title="Serverless payload limits">
+  The 4 proxied methods (upload, update, download, uploadToSignedUrl) stream file bytes through the server. In serverless environments, these are constrained by request/response payload limits (e.g., 6MB on AWS Lambda). For large files, use the serverless-friendly presigned URL endpoints described on the [Storage](/docs/storage) page.
+</Callout>
 
-### Views
-Updatable and non-updatable views are not wired into the REST layer. You can create them in migrations, but they won't appear as endpoints.
+## Realtime
 
-### Foreign-key hint disambiguation
-When two tables have multiple FKs pointing at each other, PostgREST accepts a hint like `author:users!author_id(*)` to pick one. Ultrabase resolves embeds by table name alone, so ambiguous FK graphs will pick the first match.
-
-### Computed / generated columns exposed as virtual fields
-PostgREST can surface a function like `full_name(row users)` as a readable column on `users`. Ultrabase has no equivalent.
-
-### Aggregate and analytic operations
-PostgREST 13 supports `select=count(),avg(score)` and similar aggregates. Ultrabase rejects these expressions.
-
-### `EXPLAIN` plan endpoint
-`Accept: application/vnd.pgrst.plan+json` is not implemented.
-
-### Rich Postgres types in the declarative schema
-The YAML schema supports `text`, `bigserial`, `bigint`, `int`, `boolean`, `jsonb`, `text[]`, `timestamptz`, and a few others. Enums, composite types, ranges, `tsvector`, PostGIS geometry, and similar must be declared in raw migrations — they won't be validated at the Ultrabase layer and won't appear in the generated OpenAPI spec.
-
-### Stored function error codes returned verbatim
-Errors raised from inside Postgres functions with `RAISE` will surface with whatever SQLSTATE they set, but custom `PGRST*` codes that some PostgREST extensions emit are not recognized specially.
+| Feature | Status |
+|---|---|
+| `supabase.channel()` | ❌ Not supported |
+| Postgres Changes | ❌ Not supported |
+| Broadcast | ❌ Not supported |
+| Presence | ❌ Not supported |
 
 ## Testing compatibility
 
-The Ultrabase integration suite runs `postgrest-go` against a live Ultrabase server — see `internal/adapter/http/pgrupstream/`. Two files cover the client-facing surface end-to-end:
+The integration suite runs both `postgrest-go` and `@supabase/supabase-js` against a live Ultrabase server with a real Postgres instance:
 
-- `integration_test.go` — harness only. Owns `TestMain`, the schema/seed SQL, `buildConfig`, and a single baseline smoke test.
-- `conformance_test.go` — all client-driven behavior, grouped into `TestConf_Filters` (eq, neq, gt/gte/lt/lte, like/ilike, in, is-null, cs/cd/ov, not.*, or, match, stacked, generic `filter()`), `TestConf_Transforms` (order asc/desc/multi-col/nullsfirst, limit, range, single, maybeSingle, csv), `TestConf_Embedding` (belongs-to, has-many with filters/limit/count), `TestConf_Mutations` (single/bulk insert, update, delete with `?select=*`, upsert, `return=minimal`, GET/HEAD with `count=exact`, `Prefer: tx=rollback`), and `TestConf_Errors` (asserts the `{code, message, details, hint}` envelope on unknown-column, unknown-operator, malformed-body, unknown-field, `Single()` with multiple rows, and unique/FK/not-null violations).
-
-Run them with:
+- **postgrest-go conformance** — `internal/adapter/http/pgrupstream/conformance_test.go`: filters, transforms, embedding, mutations, error envelope
+- **supabase-js harness** — `test/integration/supabase-js/run.mjs`: auth flows (signup, signin, refresh, MFA, anonymous, OTP, admin generate_link), REST operations (CRUD, filters, embeds, upsert, RPC), and storage operations (all 20 endpoints + serverless-friendly presigned URLs)
 
 ```sh
-DATABASE_URL=postgres://user:pass@host:5432/dbname go test -tags=integration ./internal/adapter/http/pgrupstream/...
+go test -tags=integration ./internal/adapter/http/...
 ```

@@ -12,9 +12,9 @@ func validBaseConfig() *domain.Config {
 		Project: domain.Project{Name: "test"},
 		Tables: map[string]domain.Table{
 			"todos": {
-				Fields: map[string]domain.Field{
-					"id":    {Type: "bigserial", PrimaryKey: true},
-					"title": {Type: "text", Required: true},
+				Fields: []domain.Field{
+					{Name: "id", Type: "bigserial", PrimaryKey: true},
+					{Name: "title", Type: "text", Required: true},
 				},
 			},
 		},
@@ -40,23 +40,13 @@ func TestValidate_WrongVersion(t *testing.T) {
 	assertHasErrorAt(t, errs, "version")
 }
 
-func TestValidate_ReservedTableName(t *testing.T) {
-	cfg := validBaseConfig()
-	cfg.Tables["users"] = domain.Table{
-		Fields: map[string]domain.Field{
-			"id": {Type: "bigserial", PrimaryKey: true},
-		},
-	}
 
-	errs := Validate(cfg)
-	assertHasErrorAt(t, errs, "tables.users")
-}
 
 func TestValidate_UnderscorePrefixTable(t *testing.T) {
 	cfg := validBaseConfig()
 	cfg.Tables["_internal"] = domain.Table{
-		Fields: map[string]domain.Field{
-			"id": {Type: "bigserial", PrimaryKey: true},
+		Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
 		},
 	}
 
@@ -67,8 +57,8 @@ func TestValidate_UnderscorePrefixTable(t *testing.T) {
 func TestValidate_NoPrimaryKey(t *testing.T) {
 	cfg := validBaseConfig()
 	cfg.Tables["todos"] = domain.Table{
-		Fields: map[string]domain.Field{
-			"title": {Type: "text", Required: true},
+		Fields: []domain.Field{
+			{Name: "title", Type: "text", Required: true},
 		},
 	}
 
@@ -79,7 +69,7 @@ func TestValidate_NoPrimaryKey(t *testing.T) {
 func TestValidate_NoFields(t *testing.T) {
 	cfg := validBaseConfig()
 	cfg.Tables["empty"] = domain.Table{
-		Fields: map[string]domain.Field{},
+		Fields: []domain.Field{},
 	}
 
 	errs := Validate(cfg)
@@ -88,7 +78,9 @@ func TestValidate_NoFields(t *testing.T) {
 
 func TestValidate_MissingFieldType(t *testing.T) {
 	cfg := validBaseConfig()
-	cfg.Tables["todos"].Fields["bad"] = domain.Field{}
+	table := cfg.Tables["todos"]
+	table.Fields = append(table.Fields, domain.Field{Name: "bad"})
+	cfg.Tables["todos"] = table
 
 	errs := Validate(cfg)
 	assertHasErrorAt(t, errs, "tables.todos.fields.bad")
@@ -96,7 +88,9 @@ func TestValidate_MissingFieldType(t *testing.T) {
 
 func TestValidate_UnknownFieldType(t *testing.T) {
 	cfg := validBaseConfig()
-	cfg.Tables["todos"].Fields["bad"] = domain.Field{Type: "unknowntype"}
+	table := cfg.Tables["todos"]
+	table.Fields = append(table.Fields, domain.Field{Name: "bad", Type: "unknowntype"})
+	cfg.Tables["todos"] = table
 
 	errs := Validate(cfg)
 	assertHasErrorAt(t, errs, "tables.todos.fields.bad.type")
@@ -104,9 +98,11 @@ func TestValidate_UnknownFieldType(t *testing.T) {
 
 func TestValidate_FKMissingReferences(t *testing.T) {
 	cfg := validBaseConfig()
-	cfg.Tables["todos"].Fields["user_id"] = domain.Field{
-		ForeignKey: &domain.ForeignKey{References: ""},
-	}
+	table := cfg.Tables["todos"]
+	table.Fields = append(table.Fields, domain.Field{
+		Name: "user_id", ForeignKey: &domain.ForeignKey{References: ""},
+	})
+	cfg.Tables["todos"] = table
 
 	errs := Validate(cfg)
 	assertHasErrorAt(t, errs, "tables.todos.fields.user_id.foreign_key.references")
@@ -114,9 +110,11 @@ func TestValidate_FKMissingReferences(t *testing.T) {
 
 func TestValidate_FKInvalidFormat(t *testing.T) {
 	cfg := validBaseConfig()
-	cfg.Tables["todos"].Fields["user_id"] = domain.Field{
-		ForeignKey: &domain.ForeignKey{References: "noDot"},
-	}
+	table := cfg.Tables["todos"]
+	table.Fields = append(table.Fields, domain.Field{
+		Name: "user_id", ForeignKey: &domain.ForeignKey{References: "noDot"},
+	})
+	cfg.Tables["todos"] = table
 
 	errs := Validate(cfg)
 	assertHasErrorAt(t, errs, "tables.todos.fields.user_id.foreign_key.references")
@@ -124,9 +122,11 @@ func TestValidate_FKInvalidFormat(t *testing.T) {
 
 func TestValidate_FKInvalidOnDelete(t *testing.T) {
 	cfg := validBaseConfig()
-	cfg.Tables["todos"].Fields["user_id"] = domain.Field{
-		ForeignKey: &domain.ForeignKey{References: "users.id", OnDelete: "explode"},
-	}
+	table := cfg.Tables["todos"]
+	table.Fields = append(table.Fields, domain.Field{
+		Name: "user_id", ForeignKey: &domain.ForeignKey{References: "users.id", OnDelete: "explode"},
+	})
+	cfg.Tables["todos"] = table
 
 	errs := Validate(cfg)
 	assertHasErrorAt(t, errs, "tables.todos.fields.user_id.foreign_key.on_delete")
@@ -134,9 +134,11 @@ func TestValidate_FKInvalidOnDelete(t *testing.T) {
 
 func TestValidate_FKReferencesNonexistentTable(t *testing.T) {
 	cfg := validBaseConfig()
-	cfg.Tables["todos"].Fields["cat_id"] = domain.Field{
-		ForeignKey: &domain.ForeignKey{References: "categories.id"},
-	}
+	table := cfg.Tables["todos"]
+	table.Fields = append(table.Fields, domain.Field{
+		Name: "cat_id", ForeignKey: &domain.ForeignKey{References: "categories.id"},
+	})
+	cfg.Tables["todos"] = table
 
 	errs := Validate(cfg)
 	assertHasErrorAt(t, errs, "tables.todos.fields.cat_id.foreign_key.references")
@@ -144,9 +146,11 @@ func TestValidate_FKReferencesNonexistentTable(t *testing.T) {
 
 func TestValidate_FKReferencesUsersOK(t *testing.T) {
 	cfg := validBaseConfig()
-	cfg.Tables["todos"].Fields["user_id"] = domain.Field{
-		ForeignKey: &domain.ForeignKey{References: "users.id", OnDelete: "cascade"},
-	}
+	table := cfg.Tables["todos"]
+	table.Fields = append(table.Fields, domain.Field{
+		Name: "user_id", ForeignKey: &domain.ForeignKey{References: "users.id", OnDelete: "cascade"},
+	})
+	cfg.Tables["todos"] = table
 
 	errs := Validate(cfg)
 	if errs != nil {
@@ -196,10 +200,11 @@ func TestValidate_SearchableUnknownColumn(t *testing.T) {
 
 func TestValidate_EnumOnNonStringType(t *testing.T) {
 	cfg := validBaseConfig()
-	cfg.Tables["todos"].Fields["priority"] = domain.Field{
-		Type: "integer",
-		Enum: []string{"low", "high"},
-	}
+	table := cfg.Tables["todos"]
+	table.Fields = append(table.Fields, domain.Field{
+		Name: "priority", Type: "integer", Enum: []string{"low", "high"},
+	})
+	cfg.Tables["todos"] = table
 
 	errs := Validate(cfg)
 	assertHasErrorAt(t, errs, "tables.todos.fields.priority.enum")
@@ -207,10 +212,11 @@ func TestValidate_EnumOnNonStringType(t *testing.T) {
 
 func TestValidate_InvalidDefault(t *testing.T) {
 	cfg := validBaseConfig()
-	cfg.Tables["todos"].Fields["bad"] = domain.Field{
-		Type:    "text",
-		Default: "random_func()",
-	}
+	table := cfg.Tables["todos"]
+	table.Fields = append(table.Fields, domain.Field{
+		Name: "bad", Type: "text", Default: "random_func()",
+	})
+	cfg.Tables["todos"] = table
 
 	errs := Validate(cfg)
 	assertHasErrorAt(t, errs, "tables.todos.fields.bad.default")
@@ -231,10 +237,11 @@ func TestValidate_ValidDefaults(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := validBaseConfig()
-			cfg.Tables["todos"].Fields["col"] = domain.Field{
-				Type:    "text",
-				Default: tt.val,
-			}
+			table := cfg.Tables["todos"]
+			table.Fields = append(table.Fields, domain.Field{
+				Name: "col", Type: "text", Default: tt.val,
+			})
+			cfg.Tables["todos"] = table
 			errs := Validate(cfg)
 			if errs != nil {
 				t.Errorf("expected no errors for default %v, got: %v", tt.val, errs)
@@ -326,45 +333,57 @@ func TestValidate_TriggerWildcardTableOK(t *testing.T) {
 	}
 }
 
-func TestValidate_FunctionParamMismatch(t *testing.T) {
+func TestValidate_FunctionMissingBody(t *testing.T) {
 	cfg := validBaseConfig()
 	cfg.Functions = map[string]domain.Function{
 		"bad": {
-			Query:   "SELECT * FROM todos WHERE id = $1 AND user_id = $2",
-			Params:  map[string]domain.FuncParam{"id": {Type: "integer"}},
-			Returns: domain.FuncReturn{Type: "rows"},
+			Language:   "plpgsql",
+			Volatility: "volatile",
+			Security:   "invoker",
+			Returns:    domain.FuncReturn{Type: "void"},
 		},
 	}
 
 	errs := Validate(cfg)
-	assertHasErrorAt(t, errs, "functions.bad")
+	assertHasErrorAt(t, errs, "functions.bad.body")
 }
 
-func TestValidate_SeedUnknownTable(t *testing.T) {
+func TestValidate_DataUnknownTable(t *testing.T) {
 	cfg := validBaseConfig()
-	cfg.Seeds = map[string][]map[string]any{
-		"nonexistent": {{
-			"id": 1,
-		}},
+	cfg.Data = map[string]map[string]string{
+		"nonexistent": {
+			"init": "./seeds/nonexistent.csv",
+		},
 	}
 
 	errs := Validate(cfg)
-	assertHasErrorAt(t, errs, "seeds.nonexistent")
+	assertHasErrorAt(t, errs, "data.nonexistent")
 }
 
-func TestValidate_SeedUsersOK(t *testing.T) {
+func TestValidate_DataUsersOK(t *testing.T) {
 	cfg := validBaseConfig()
-	cfg.Seeds = map[string][]map[string]any{
-		"users": {{
-			"email":    "admin@test.com",
-			"password": "secret",
-		}},
+	cfg.Data = map[string]map[string]string{
+		"users": {
+			"demo": "./seeds/users.csv",
+		},
 	}
 
 	errs := Validate(cfg)
 	if errs != nil {
-		t.Errorf("expected no errors for seeds.users, got: %v", errs)
+		t.Errorf("expected no errors for data.users, got: %v", errs)
 	}
+}
+
+func TestValidate_DataEmptySource(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Data = map[string]map[string]string{
+		"users": {
+			"demo": "",
+		},
+	}
+
+	errs := Validate(cfg)
+	assertHasErrorAt(t, errs, "data.users.demo")
 }
 
 func TestValidate_StorageInvalidSize(t *testing.T) {
@@ -403,18 +422,20 @@ func TestValidate_FullExampleConfig(t *testing.T) {
 			JWTExpiry:     "15m",
 			RefreshTokens: true,
 			Email:         &domain.AuthEmail{VerifyEmail: true},
-			Fields: map[string]domain.Field{
-				"display_name": {Type: "text", Required: true},
-				"avatar_url":   {Type: "text"},
-			},
 		},
 		Tables: map[string]domain.Table{
+			"users": {
+				Fields: []domain.Field{
+					{Name: "display_name", Type: "text", Required: true},
+					{Name: "avatar_url", Type: "text"},
+				},
+			},
 			"teams": {
-				Fields: map[string]domain.Field{
-					"id":         {Type: "bigserial", PrimaryKey: true},
-					"name":       {Type: "text", Required: true},
-					"slug":       {Type: "varchar(63)", Required: true},
-					"created_at": {Type: "timestamptz", Required: true, Default: "now()"},
+				Fields: []domain.Field{
+					{Name: "id", Type: "bigserial", PrimaryKey: true},
+					{Name: "name", Type: "text", Required: true},
+					{Name: "slug", Type: "varchar(63)", Required: true},
+					{Name: "created_at", Type: "timestamptz", Required: true, Default: "now()"},
 				},
 				Indexes: []domain.Index{
 					{Columns: []string{"slug"}, Unique: true},
@@ -424,12 +445,12 @@ func TestValidate_FullExampleConfig(t *testing.T) {
 				},
 			},
 			"todos": {
-				Fields: map[string]domain.Field{
-					"id":      {Type: "bigserial", PrimaryKey: true},
-					"team_id": {ForeignKey: &domain.ForeignKey{References: "teams.id", OnDelete: "cascade"}},
-					"user_id": {ForeignKey: &domain.ForeignKey{References: "users.id", OnDelete: "cascade"}},
-					"title":   {Type: "text", Required: true},
-					"status":  {Type: "text", Required: true, Enum: []string{"pending", "active", "done"}, Default: "pending"},
+				Fields: []domain.Field{
+					{Name: "id", Type: "bigserial", PrimaryKey: true},
+					{Name: "team_id", ForeignKey: &domain.ForeignKey{References: "teams.id", OnDelete: "cascade"}},
+					{Name: "user_id", ForeignKey: &domain.ForeignKey{References: "users.id", OnDelete: "cascade"}},
+					{Name: "title", Type: "text", Required: true},
+					{Name: "status", Type: "text", Required: true, Enum: []string{"pending", "active", "done"}, Default: "pending"},
 				},
 				Searchable: []string{"title"},
 				RLS: []domain.RLSPolicy{
@@ -457,9 +478,9 @@ func TestValidate_FullExampleConfig(t *testing.T) {
 				},
 			},
 		},
-		Seeds: map[string][]map[string]any{
-			"users": {{"email": "admin@test.com", "password": "secret"}},
-			"teams": {{"id": 1, "name": "Acme", "slug": "acme"}},
+		Data: map[string]map[string]string{
+			"users": {"demo": "./seeds/users.csv"},
+			"teams": {"init": "./seeds/teams.csv"},
 		},
 	}
 
@@ -488,4 +509,104 @@ func assertHasErrorAt(t *testing.T, errs domain.ValidationErrors, pathPrefix str
 		paths[i] = e.Path
 	}
 	t.Errorf("expected error at %q, got errors at: %v", pathPrefix, paths)
+}
+
+// --- RPC Functions validation ---
+
+func validRPCFunction() domain.Function {
+	return domain.Function{
+		Language:   "plpgsql",
+		Volatility: "stable",
+		Security:   "invoker",
+		Returns:    domain.FuncReturn{Type: "int"},
+		Body:       "BEGIN RETURN 1; END;",
+		Args: []domain.FuncArg{
+			{Name: "x", Type: "int"},
+		},
+	}
+}
+
+func TestValidate_RPCFunction_Valid(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Functions = map[string]domain.Function{
+		"add_one": validRPCFunction(),
+	}
+	if errs := Validate(cfg); errs != nil {
+		t.Errorf("expected no errors, got %v", errs)
+	}
+}
+
+func TestValidate_RPCFunction_BadName(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Functions = map[string]domain.Function{
+		"drop table users;--": validRPCFunction(),
+	}
+	errs := Validate(cfg)
+	if errs == nil {
+		t.Fatal("expected error for malicious function name")
+	}
+	assertHasErrorAt(t, errs, "functions.drop table users;--")
+}
+
+func TestValidate_RPCFunction_BadArgName(t *testing.T) {
+	cfg := validBaseConfig()
+	fn := validRPCFunction()
+	fn.Args = []domain.FuncArg{{Name: "x); DROP TABLE users; --", Type: "int"}}
+	cfg.Functions = map[string]domain.Function{"f": fn}
+	errs := Validate(cfg)
+	if errs == nil {
+		t.Fatal("expected error for malicious arg name")
+	}
+	assertHasErrorAt(t, errs, "functions.f.args[0].name")
+}
+
+func TestValidate_RPCFunction_BadArgType(t *testing.T) {
+	cfg := validBaseConfig()
+	fn := validRPCFunction()
+	fn.Args = []domain.FuncArg{{Name: "x", Type: "int; DROP TABLE users"}}
+	cfg.Functions = map[string]domain.Function{"f": fn}
+	errs := Validate(cfg)
+	if errs == nil {
+		t.Fatal("expected error for malicious arg type")
+	}
+	assertHasErrorAt(t, errs, "functions.f.args[0].type")
+}
+
+func TestValidate_RPCFunction_RejectsReservedDollarTag(t *testing.T) {
+	cfg := validBaseConfig()
+	fn := validRPCFunction()
+	fn.Body = "BEGIN RAISE 'oops $ub$ ok'; END;"
+	cfg.Functions = map[string]domain.Function{"f": fn}
+	errs := Validate(cfg)
+	if errs == nil {
+		t.Fatal("expected error for body containing $ub$ tag")
+	}
+	assertHasErrorAt(t, errs, "functions.f.body")
+}
+
+func TestValidate_RPCFunction_UnknownLanguage(t *testing.T) {
+	cfg := validBaseConfig()
+	fn := validRPCFunction()
+	fn.Language = "plpython"
+	cfg.Functions = map[string]domain.Function{"f": fn}
+	errs := Validate(cfg)
+	if errs == nil {
+		t.Fatal("expected error for unsupported language")
+	}
+	assertHasErrorAt(t, errs, "functions.f.language")
+}
+
+func TestValidate_RPCFunction_DuplicateArg(t *testing.T) {
+	cfg := validBaseConfig()
+	fn := validRPCFunction()
+	fn.Args = []domain.FuncArg{
+		{Name: "x", Type: "int"},
+		{Name: "x", Type: "text"},
+	}
+	cfg.Functions = map[string]domain.Function{"f": fn}
+	errs := Validate(cfg)
+	if errs == nil {
+		t.Fatal("expected error for duplicate arg name")
+	}
+	assertHasErrorAt(t, errs, "functions.f.args[1].name")
 }

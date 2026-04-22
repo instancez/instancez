@@ -13,18 +13,18 @@ import (
 func postsAuthorTables() map[string]domain.Table {
 	return map[string]domain.Table{
 		"posts": {
-			Fields: map[string]domain.Field{
-				"id":        {Type: "bigserial", PrimaryKey: true},
-				"title":     {Type: "text"},
-				"status":    {Type: "text"},
-				"author_id": {ForeignKey: &domain.ForeignKey{References: "authors.id"}},
+			Fields: []domain.Field{
+				{Name: "id", Type: "bigserial", PrimaryKey: true},
+				{Name: "title", Type: "text"},
+				{Name: "status", Type: "text"},
+				{Name: "author_id", ForeignKey: &domain.ForeignKey{References: "authors.id"}},
 			},
 		},
 		"authors": {
-			Fields: map[string]domain.Field{
-				"id":     {Type: "bigserial", PrimaryKey: true},
-				"name":   {Type: "text"},
-				"active": {Type: "bool"},
+			Fields: []domain.Field{
+				{Name: "id", Type: "bigserial", PrimaryKey: true},
+				{Name: "name", Type: "text"},
+				{Name: "active", Type: "bool"},
 			},
 		},
 	}
@@ -109,6 +109,60 @@ func TestParseQueryParams_EmbedUnknownColumnRejected(t *testing.T) {
 	}
 }
 
+func TestParseQueryParams_EmbedOffset_HasMany(t *testing.T) {
+	tables := postsAuthorTables()
+	c := testContext("select=*,posts(*)&posts.limit=5&posts.offset=10")
+	qp, err := parseQueryParams(c, "authors", tables["authors"], tables)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	emb := qp.Embeds[0]
+	if emb.Offset == nil || *emb.Offset != 10 {
+		t.Errorf("offset = %+v", emb.Offset)
+	}
+	if emb.Limit == nil || *emb.Limit != 5 {
+		t.Errorf("limit = %+v", emb.Limit)
+	}
+}
+
+func TestParseQueryParams_EmbedOffsetOnBelongsToRejected(t *testing.T) {
+	tables := postsAuthorTables()
+	c := testContext("select=*,author(*)&author.offset=1")
+	if _, err := parseQueryParams(c, "posts", tables["posts"], tables); err == nil {
+		t.Error("expected rejection: offset not allowed on belongs-to embed")
+	}
+}
+
+func TestParseQueryParams_EmbedOffsetInvalid(t *testing.T) {
+	tables := postsAuthorTables()
+	for _, v := range []string{"abc", "-1"} {
+		c := testContext("select=*,posts(*)&posts.offset=" + v)
+		if _, err := parseQueryParams(c, "authors", tables["authors"], tables); err == nil {
+			t.Errorf("expected rejection for offset=%q", v)
+		}
+	}
+}
+
+func TestBuildSelectQuery_HasManyEmbedOffsetRendered(t *testing.T) {
+	tables := postsAuthorTables()
+	limit := 5
+	offset := 10
+	qp := &QueryParams{
+		Select: []string{"*", "posts(*)"},
+		Embeds: []Embed{{
+			Name: "posts", IsReverse: true,
+			FKColumn: "author_id", RefTable: "posts", RefColumn: "id",
+			Limit:  &limit,
+			Offset: &offset,
+		}},
+		Limit: 20,
+	}
+	sql, _ := buildSelectQuery("authors", qp, tables["authors"])
+	if !strings.Contains(sql, "LIMIT 5 OFFSET 10") {
+		t.Errorf("expected LIMIT 5 OFFSET 10: %s", sql)
+	}
+}
+
 func TestParseQueryParams_EmbedInvalidLimitRejected(t *testing.T) {
 	tables := postsAuthorTables()
 	c := testContext("select=*,posts(*)&posts.limit=nope")
@@ -188,6 +242,88 @@ func TestBuildSelectQuery_BelongsToFilterGoesToOuterWhere(t *testing.T) {
 	}
 }
 
+func TestBuildSelectQuery_HasManyInnerEmitsExists(t *testing.T) {
+	tables := postsAuthorTables()
+	// authors?select=*,posts!inner(*) — only authors with at least 1 post.
+	qp := &QueryParams{
+		Select: []string{"*", "posts!inner(*)"},
+		Embeds: []Embed{{
+			Name: "posts", IsReverse: true, Inner: true,
+			FKColumn: "author_id", RefTable: "posts", RefColumn: "id",
+		}},
+		Limit: 20,
+	}
+	sql, args := buildSelectQueryFull("authors", qp, tables["authors"], tables)
+
+	if !strings.Contains(sql, "EXISTS (SELECT 1 FROM posts WHERE posts.author_id = authors.id)") {
+		t.Errorf("missing EXISTS clause: %s", sql)
+	}
+	// Still renders the has-many json_agg subselect in SELECT list.
+	if !strings.Contains(sql, "json_agg(") {
+		t.Errorf("missing json_agg for has-many embed: %s", sql)
+	}
+	if len(args) != 0 {
+		t.Errorf("no args expected, got %v", args)
+	}
+}
+
+func TestBuildSelectQuery_HasManyInnerWithFilterAndOuterFilter(t *testing.T) {
+	tables := postsAuthorTables()
+	qp := &QueryParams{
+		Select: []string{"*", "posts!inner(*)"},
+		Embeds: []Embed{{
+			Name: "posts", IsReverse: true, Inner: true,
+			FKColumn: "author_id", RefTable: "posts", RefColumn: "id",
+			Where: andLeaves(Filter{Column: "status", Operator: "eq", Value: "published"}),
+		}},
+		Where: andLeaves(Filter{Column: "active", Operator: "eq", Value: "true"}),
+		Limit: 20,
+	}
+	sql, args := buildSelectQueryFull("authors", qp, tables["authors"], tables)
+
+	// json_agg subselect filter is $1; outer WHERE is $2; EXISTS clause re-uses the filter at $3.
+	if !strings.Contains(sql, "status = $1") {
+		t.Errorf("embed filter should be $1: %s", sql)
+	}
+	if !strings.Contains(sql, "active = $2") {
+		t.Errorf("outer filter should be $2: %s", sql)
+	}
+	if !strings.Contains(sql, "EXISTS (SELECT 1 FROM posts WHERE posts.author_id = authors.id AND status = $3)") {
+		t.Errorf("EXISTS clause should re-render filter as $3: %s", sql)
+	}
+	if len(args) != 3 || args[0] != "published" || args[1] != "true" || args[2] != "published" {
+		t.Errorf("args = %v", args)
+	}
+}
+
+func TestBuildSelectQuery_HasManyWithoutInnerOmitsExists(t *testing.T) {
+	tables := postsAuthorTables()
+	qp := &QueryParams{
+		Select: []string{"*", "posts(*)"},
+		Embeds: []Embed{{
+			Name: "posts", IsReverse: true, // Inner: false
+			FKColumn: "author_id", RefTable: "posts", RefColumn: "id",
+		}},
+		Limit: 20,
+	}
+	sql, _ := buildSelectQueryFull("authors", qp, tables["authors"], tables)
+	if strings.Contains(sql, "EXISTS") {
+		t.Errorf("default has-many must not emit EXISTS: %s", sql)
+	}
+}
+
+func TestParseEmbedHint_InnerOnHasMany(t *testing.T) {
+	tables := postsAuthorTables()
+	c := testContext("select=*,posts!inner(*)")
+	qp, err := parseQueryParams(c, "authors", tables["authors"], tables)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(qp.Embeds) != 1 || !qp.Embeds[0].IsReverse || !qp.Embeds[0].Inner {
+		t.Errorf("embed = %+v", qp.Embeds)
+	}
+}
+
 func TestBuildSelectQuery_EmbedFilterAndOuterFilterArgOrdering(t *testing.T) {
 	tables := postsAuthorTables()
 	qp := &QueryParams{
@@ -263,24 +399,24 @@ func TestBuildSelectQuery_EmbedOrLogicEmitsOR(t *testing.T) {
 func threeTableFixture() map[string]domain.Table {
 	return map[string]domain.Table{
 		"authors": {
-			Fields: map[string]domain.Field{
-				"id":   {Type: "bigserial", PrimaryKey: true},
-				"name": {Type: "text"},
+			Fields: []domain.Field{
+				{Name: "id", Type: "bigserial", PrimaryKey: true},
+				{Name: "name", Type: "text"},
 			},
 		},
 		"posts": {
-			Fields: map[string]domain.Field{
-				"id":        {Type: "bigserial", PrimaryKey: true},
-				"title":     {Type: "text"},
-				"status":    {Type: "text"},
-				"author_id": {ForeignKey: &domain.ForeignKey{References: "authors.id"}},
+			Fields: []domain.Field{
+				{Name: "id", Type: "bigserial", PrimaryKey: true},
+				{Name: "title", Type: "text"},
+				{Name: "status", Type: "text"},
+				{Name: "author_id", ForeignKey: &domain.ForeignKey{References: "authors.id"}},
 			},
 		},
 		"comments": {
-			Fields: map[string]domain.Field{
-				"id":      {Type: "bigserial", PrimaryKey: true},
-				"body":    {Type: "text"},
-				"post_id": {ForeignKey: &domain.ForeignKey{References: "posts.id"}},
+			Fields: []domain.Field{
+				{Name: "id", Type: "bigserial", PrimaryKey: true},
+				{Name: "body", Type: "text"},
+				{Name: "post_id", ForeignKey: &domain.ForeignKey{References: "posts.id"}},
 			},
 		},
 	}

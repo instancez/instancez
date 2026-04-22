@@ -25,8 +25,6 @@ func NewRootCmd() *cobra.Command {
 		newDevCmd(),
 		newServeCmd(),
 		newRollbackCmd(),
-		newDBCmd(),
-		newGenerateCmd(),
 		newSlotCmd(),
 		newVersionCmd(),
 	)

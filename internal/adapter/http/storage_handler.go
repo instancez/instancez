@@ -10,7 +10,8 @@ import (
 	"github.com/saedx1/ultrabase/internal/domain"
 )
 
-// StorageHandler serves storage endpoints (signed URLs).
+// StorageHandler serves serverless-friendly storage endpoints that return
+// presigned URLs for direct-to-provider uploads and downloads.
 type StorageHandler struct {
 	cfg     *domain.Config
 	db      domain.Database
@@ -97,16 +98,16 @@ func (h *StorageHandler) handleSignUpload(bucketName string, bucket domain.Bucke
 		if session.UserID != "" {
 			uploadedBy = session.UserID
 		}
-		_, err = h.db.Exec(ctx,
-			"INSERT INTO _objects (id, bucket_id, size, mime, uploaded_by) VALUES ($1, $2, 0, $3, $4)",
-			key, bucketName, req.ContentType, uploadedBy)
-		if err != nil {
+		row, err := h.db.QueryRow(ctx,
+			"INSERT INTO _objects (bucket_id, name, size, mime, uploaded_by) VALUES ($1, $2, 0, $3, $4) RETURNING id::text",
+			bucketName, key, req.ContentType, uploadedBy)
+		if err != nil || row == nil {
 			problemJSON(c, 500, "internal", "Failed to record object")
 			return
 		}
 
 		c.JSON(200, gin.H{
-			"id":         key,
+			"id":         asString(row["id"]),
 			"upload_url": url,
 		})
 	}
@@ -114,18 +115,17 @@ func (h *StorageHandler) handleSignUpload(bucketName string, bucket domain.Bucke
 
 func (h *StorageHandler) handleSignDownload(bucketName string, bucket domain.Bucket) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		id := c.Param("id")
+		name := c.Param("id")
 
-		// Verify object exists
 		ctx := c.Request.Context()
 		row, err := h.db.QueryRow(ctx,
-			"SELECT id, mime FROM _objects WHERE id = $1 AND bucket_id = $2", id, bucketName)
+			"SELECT id FROM _objects WHERE name = $1 AND bucket_id = $2", name, bucketName)
 		if err != nil || row == nil {
 			problemJSON(c, 404, "not_found", "Object not found")
 			return
 		}
 
-		url, err := h.storage.SignDownload(ctx, bucketName+"/"+id, 15*time.Minute)
+		url, err := h.storage.SignDownload(ctx, bucketName+"/"+name, 15*time.Minute)
 		if err != nil {
 			problemJSON(c, 500, "internal", "Failed to generate download URL")
 			return
@@ -139,18 +139,16 @@ func (h *StorageHandler) handleSignDownload(bucketName string, bucket domain.Buc
 
 func (h *StorageHandler) handleDelete(bucketName string, bucket domain.Bucket) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		id := c.Param("id")
+		name := c.Param("id")
 		ctx := c.Request.Context()
 
-		// Delete from provider
-		if err := h.storage.Delete(ctx, bucketName+"/"+id); err != nil {
+		if err := h.storage.Delete(ctx, bucketName+"/"+name); err != nil {
 			h.logger.Error("storage delete error", "error", err)
 			problemJSON(c, 500, "internal", "Failed to delete object")
 			return
 		}
 
-		// Delete from _objects
-		h.db.Exec(ctx, "DELETE FROM _objects WHERE id = $1 AND bucket_id = $2", id, bucketName)
+		h.db.Exec(ctx, "DELETE FROM _objects WHERE name = $1 AND bucket_id = $2", name, bucketName)
 
 		c.Status(204)
 	}

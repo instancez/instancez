@@ -20,12 +20,13 @@ server:
     upload: 5m
     shutdown: 30s
   max_body_size: 1MB
-  db:
-    pool:
-      max: 20
-      min: 5
-      idle_timeout: 300s
   docs_ui: true # Scalar/Swagger at /api/docs
+
+database:
+  pool:
+    max: 20
+    min: 5
+    idle_timeout: 300s
 
 # ---------------------------------------------------------------------------
 # Providers
@@ -46,10 +47,6 @@ auth:
   jwt_expiry: 15m
   refresh_tokens: true
   refresh_token_expiry: 7d
-
-  fields:
-    display_name: { type: text, required: true }
-    avatar_url: { type: text }
 
   email:
     verify_email: true
@@ -81,12 +78,28 @@ auth:
 # Tables
 # ---------------------------------------------------------------------------
 tables:
+  users:
+    fields:
+      - name: display_name
+        type: text
+        required: true
+      - name: avatar_url
+        type: text
   teams:
     fields:
-      id: { type: bigserial, primary_key: true }
-      name: { type: text, required: true }
-      slug: { type: varchar(63), required: true }
-      created_at: { type: timestamptz, required: true, default: now() }
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: name
+        type: text
+        required: true
+      - name: slug
+        type: varchar(63)
+        required: true
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
 
     indexes:
       - { columns: [slug], unique: true }
@@ -105,17 +118,25 @@ tables:
 
   team_members:
     fields:
-      id: { type: bigserial, primary_key: true }
-      team_id:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: team_id
         foreign_key:
           references: teams.id
           on_delete: cascade
-      user_id:
+      - name: user_id
         foreign_key:
           references: users.id
           on_delete: cascade
-      role: { type: text, required: true, enum: [owner, admin, member] }
-      joined_at: { type: timestamptz, required: true, default: now() }
+      - name: role
+        type: text
+        required: true
+        enum: [owner, admin, member]
+      - name: joined_at
+        type: timestamptz
+        required: true
+        default: now()
 
     indexes:
       - { columns: [team_id, user_id], unique: true }
@@ -139,13 +160,19 @@ tables:
 
   categories:
     fields:
-      id: { type: bigserial, primary_key: true }
-      team_id:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: team_id
         foreign_key:
           references: teams.id
           on_delete: cascade
-      name: { type: text, required: true }
-      color: { type: varchar(7), default: "#6366f1" }
+      - name: name
+        type: text
+        required: true
+      - name: color
+        type: varchar(7)
+        default: "#6366f1"
 
     indexes:
       - { columns: [team_id, name], unique: true }
@@ -156,33 +183,47 @@ tables:
 
   todos:
     fields:
-      id: { type: bigserial, primary_key: true }
-      team_id:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: team_id
         foreign_key:
           references: teams.id
           on_delete: cascade
-      category_id:
+      - name: category_id
         foreign_key:
           references: categories.id
           on_delete: set_null
-      user_id:
+      - name: user_id
         foreign_key:
           references: users.id
           on_delete: cascade
-      title: { type: text, required: true }
-      body: { type: text }
-      status:
-        {
-          type: text,
-          required: true,
-          enum: [pending, active, done],
-          default: pending,
-        }
-      priority: { type: integer, required: true, default: 0, min: 0, max: 5 }
-      due_date: { type: date }
-      done_at: { type: timestamptz }
-      created_at: { type: timestamptz, required: true, default: now() }
-      updated_at: { type: timestamptz }
+      - name: title
+        type: text
+        required: true
+      - name: body
+        type: text
+      - name: status
+        type: text
+        required: true
+        enum: [pending, active, done]
+        default: pending
+      - name: priority
+        type: integer
+        required: true
+        default: 0
+        min: 0
+        max: 5
+      - name: due_date
+        type: date
+      - name: done_at
+        type: timestamptz
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+      - name: updated_at
+        type: timestamptz
 
     indexes:
       - { columns: [team_id, status] }
@@ -204,17 +245,24 @@ tables:
 
   comments:
     fields:
-      id: { type: bigserial, primary_key: true }
-      todo_id:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: todo_id
         foreign_key:
           references: todos.id
           on_delete: cascade
-      user_id:
+      - name: user_id
         foreign_key:
           references: users.id
           on_delete: cascade
-      body: { type: text, required: true }
-      created_at: { type: timestamptz, required: true, default: now() }
+      - name: body
+        type: text
+        required: true
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
 
     indexes:
       - { columns: [todo_id, created_at] }
@@ -236,12 +284,25 @@ tables:
     allow_anon: true
 
     fields:
-      id: { type: bigserial, primary_key: true }
-      title: { type: text, required: true }
-      body: { type: text, required: true }
-      published: { type: boolean, required: true, default: false }
-      published_at: { type: timestamptz }
-      created_at: { type: timestamptz, required: true, default: now() }
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: title
+        type: text
+        required: true
+      - name: body
+        type: text
+        required: true
+      - name: published
+        type: boolean
+        required: true
+        default: false
+      - name: published_at
+        type: timestamptz
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
 
     searchable: [title, body]
 

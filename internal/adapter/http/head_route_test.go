@@ -14,8 +14,8 @@ func TestMount_RegistersHEADForTables(t *testing.T) {
 			Tables: map[string]domain.Table{
 				"todos": {
 					AllowAnon: true,
-					Fields: map[string]domain.Field{
-						"id": {Type: "bigserial", PrimaryKey: true},
+					Fields: []domain.Field{
+						{Name: "id", Type: "bigserial", PrimaryKey: true},
 					},
 				},
 			},

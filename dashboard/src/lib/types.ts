@@ -157,25 +157,24 @@ export interface EmailAction {
 
 export interface FunctionDef {
   description: string;
-  method: string;
-  query: string;
-  params: Record<string, FuncParam>;
-  returns: FuncReturn;
   auth_required: boolean;
+  language: string;
+  volatility: string;
+  security: string;
+  args: FuncArg[];
+  body: string;
+  returns: FuncReturn;
 }
 
-export interface FuncParam {
+export interface FuncArg {
+  name: string;
   type: string;
   required: boolean;
   default?: unknown;
-  enum?: string[];
-  min?: number | null;
-  max?: number | null;
 }
 
 export interface FuncReturn {
   type: string;
-  schema: Record<string, string>;
 }
 
 // API response types

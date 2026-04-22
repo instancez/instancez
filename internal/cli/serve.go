@@ -17,7 +17,8 @@ func newServeCmd() *cobra.Command {
 	var (
 		port             int
 		configPath       string
-		seed             bool
+		loadData         bool
+		migrate          bool
 		allowDestructive bool
 	)
 
@@ -25,18 +26,19 @@ func newServeCmd() *cobra.Command {
 		Use:   "serve",
 		Short: "Start production server",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runServe(port, configPath, seed, allowDestructive)
+			return runServe(port, configPath, loadData, migrate, allowDestructive)
 		},
 	}
 
 	cmd.Flags().IntVar(&port, "port", 0, "server port (default: from config or 8080)")
 	cmd.Flags().StringVar(&configPath, "config", "ultrabase.yaml", "config source (file path or s3://bucket/key)")
-	cmd.Flags().BoolVar(&seed, "seed", false, "apply seeds on startup")
+	cmd.Flags().BoolVar(&loadData, "data", false, "apply CSV data imports on startup")
+	cmd.Flags().BoolVar(&migrate, "migrate", false, "run pending migrations on startup")
 	cmd.Flags().BoolVar(&allowDestructive, "allow-destructive", false, "permit DROP TABLE/COLUMN in migrations")
 	return cmd
 }
 
-func runServe(port int, configPath string, seed, allowDestructive bool) error {
+func runServe(port int, configPath string, loadData, migrate, allowDestructive bool) error {
 	ctx := context.Background()
 
 	source, err := config.NewSource(configPath)
@@ -74,7 +76,7 @@ func runServe(port int, configPath string, seed, allowDestructive bool) error {
 		return fmt.Errorf("DATABASE_URL not set")
 	}
 
-	db, err := postgres.New(ctx, dbURL, cfg.Server.DB.Pool)
+	db, err := postgres.New(ctx, dbURL, cfg.Database.Pool)
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
@@ -124,8 +126,8 @@ func runServe(port int, configPath string, seed, allowDestructive bool) error {
 	// Create engine with HTTP server
 	engine := app.NewEngine(cfg, db,
 		app.WithMode(app.ModeProd),
-		app.WithMigrate(true),
-		app.WithSeed(seed),
+		app.WithMigrate(migrate),
+		app.WithSeed(loadData),
 		app.WithAllowDestructive(allowDestructive),
 		app.WithWatch(false),
 		app.WithLogger(logger),

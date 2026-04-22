@@ -71,15 +71,15 @@ func GenerateOpenAPI(cfg *domain.Config) map[string]any {
 		}
 	}
 
-	// Functions endpoints
 	for fnName, fn := range cfg.Functions {
-		method := strings.ToLower(fn.Method)
-		if method == "" {
-			method = "post"
+		path := "/rest/v1/rpc/" + fnName
+		ops := map[string]any{
+			"post": generateRPCPostOp(fnName, fn),
 		}
-		paths["/api/fn/"+fnName] = map[string]any{
-			method: opSummary("Call "+fnName, fn.Description, []string{"functions"}, 200),
+		if !strings.EqualFold(fn.Volatility, "volatile") {
+			ops["get"] = generateRPCGetOp(fnName, fn)
 		}
+		paths[path] = ops
 	}
 
 	// Admin endpoints
@@ -145,7 +145,7 @@ func generateTableSchema(tableName string, table domain.Table) map[string]any {
 	properties := map[string]any{}
 	required := []string{}
 
-	for fieldName, field := range table.Fields {
+	for _, field := range table.Fields {
 		prop := postgresTypeToOpenAPI(field.Type)
 
 		if field.ForeignKey != nil {
@@ -155,10 +155,10 @@ func generateTableSchema(tableName string, table domain.Table) map[string]any {
 			prop["enum"] = field.Enum
 		}
 
-		properties[fieldName] = prop
+		properties[field.Name] = prop
 
 		if field.Required || field.PrimaryKey {
-			required = append(required, fieldName)
+			required = append(required, field.Name)
 		}
 	}
 
@@ -176,7 +176,7 @@ func generateTableInputSchema(tableName string, table domain.Table) map[string]a
 	properties := map[string]any{}
 	required := []string{}
 
-	for fieldName, field := range table.Fields {
+	for _, field := range table.Fields {
 		if field.PrimaryKey {
 			continue // PK usually auto-generated
 		}
@@ -189,10 +189,10 @@ func generateTableInputSchema(tableName string, table domain.Table) map[string]a
 			prop["enum"] = field.Enum
 		}
 
-		properties[fieldName] = prop
+		properties[field.Name] = prop
 
 		if field.Required && field.Default == nil {
-			required = append(required, fieldName)
+			required = append(required, field.Name)
 		}
 	}
 
@@ -215,12 +215,12 @@ func generateListOp(tableName string, table domain.Table) map[string]any {
 	}
 
 	// Add filter params for each column
-	for fieldName := range table.Fields {
+	for _, field := range table.Fields {
 		params = append(params, map[string]any{
-			"name":        fieldName,
+			"name":        field.Name,
 			"in":          "query",
 			"schema":      map[string]any{"type": "string"},
-			"description": fmt.Sprintf("Filter by %s (e.g. eq.value, gt.5)", fieldName),
+			"description": fmt.Sprintf("Filter by %s (e.g. eq.value, gt.5)", field.Name),
 		})
 	}
 
@@ -304,6 +304,106 @@ func generateDeleteOp(tableName string) map[string]any {
 			"204": map[string]any{"description": "Deleted"},
 		},
 	}
+}
+
+// rpcArgsSchema produces the request-body JSON schema for an RPC Function.
+// Each declared arg becomes a property, required if the arg has no default.
+// An empty function (no args) still returns a valid empty object schema so
+// clients can send `{}`.
+func rpcArgsSchema(fn domain.Function) map[string]any {
+	properties := map[string]any{}
+	var required []string
+	for _, a := range fn.Args {
+		properties[a.Name] = postgresTypeToOpenAPI(a.Type)
+		if a.Required {
+			required = append(required, a.Name)
+		}
+	}
+	schema := map[string]any{
+		"type":       "object",
+		"properties": properties,
+	}
+	if len(required) > 0 {
+		schema["required"] = required
+	}
+	return schema
+}
+
+// rpcResponseSchema maps the function's ReturnCategory/Returns to an
+// OpenAPI response schema. scalar → bare value, setof → array of objects,
+// void → no content (204). For setof we leave the item type loose since
+// resolving TABLE(...)/SETOF to actual columns lives outside the OpenAPI
+// path for now.
+func rpcResponseSchema(fn domain.Function) (int, map[string]any) {
+	switch fn.ReturnCategory {
+	case "void":
+		return 204, nil
+	case "setof":
+		return 200, map[string]any{
+			"type":  "array",
+			"items": map[string]any{"type": "object"},
+		}
+	default: // scalar
+		return 200, postgresTypeToOpenAPI(fn.Returns.Type)
+	}
+}
+
+func generateRPCPostOp(fnName string, fn domain.Function) map[string]any {
+	status, schema := rpcResponseSchema(fn)
+	op := map[string]any{
+		"summary": "Call " + fnName,
+		"tags":    []string{"rpc"},
+		"requestBody": map[string]any{
+			"required": true,
+			"content": map[string]any{
+				"application/json": map[string]any{"schema": rpcArgsSchema(fn)},
+			},
+		},
+	}
+	responses := map[string]any{}
+	if schema == nil {
+		responses[fmt.Sprintf("%d", status)] = map[string]any{"description": "No content"}
+	} else {
+		responses[fmt.Sprintf("%d", status)] = map[string]any{
+			"description": "Success",
+			"content": map[string]any{
+				"application/json": map[string]any{"schema": schema},
+			},
+		}
+	}
+	op["responses"] = responses
+	return op
+}
+
+func generateRPCGetOp(fnName string, fn domain.Function) map[string]any {
+	var params []map[string]any
+	for _, a := range fn.Args {
+		params = append(params, map[string]any{
+			"name":     a.Name,
+			"in":       "query",
+			"required": a.Required,
+			"schema":   postgresTypeToOpenAPI(a.Type),
+		})
+	}
+	status, schema := rpcResponseSchema(fn)
+	op := map[string]any{
+		"summary":    "Call " + fnName + " (non-volatile)",
+		"tags":       []string{"rpc"},
+		"parameters": params,
+	}
+	responses := map[string]any{}
+	if schema == nil {
+		responses[fmt.Sprintf("%d", status)] = map[string]any{"description": "No content"}
+	} else {
+		responses[fmt.Sprintf("%d", status)] = map[string]any{
+			"description": "Success",
+			"content": map[string]any{
+				"application/json": map[string]any{"schema": schema},
+			},
+		}
+	}
+	op["responses"] = responses
+	return op
 }
 
 func opSummary(summary, description string, tags []string, status int) map[string]any {
