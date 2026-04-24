@@ -22,23 +22,41 @@ supabase-js auth methods that work today:
 | `auth.signUp()` | ✅ | Email/password with optional `user_metadata` |
 | `auth.signInWithPassword()` | ✅ | |
 | `auth.signInAnonymously()` | ✅ | JWT carries `is_anonymous: true` |
-| `auth.signOut()` | ✅ | |
+| `auth.signOut()` | ✅ | Supports `scope: global/local/others` |
 | `auth.getUser()` | ✅ | |
 | `auth.refreshSession()` | ✅ | Token rotation |
 | `auth.signInWithOtp()` | ✅ | Email magic link / 6-digit code |
 | `auth.verifyOtp()` | ✅ | |
 | `auth.resetPasswordForEmail()` | ✅ | |
 | `auth.updateUser()` | ✅ | |
+| `auth.resend()` | ✅ | Re-sends signup/magiclink/email_change verification |
+| `auth.reauthenticate()` | ✅ | Sends nonce to user's email |
+| `auth.signInWithOAuth()` | ✅ | Google, GitHub (configurable). PKCE flow supported |
+| `auth.exchangeCodeForSession()` | ✅ | PKCE code exchange via `grant_type=pkce` |
+| `auth.signInWithIdToken()` | ✅ | Google OIDC tokens; verifies via JWKS |
 | `auth.mfa.enroll()` | ✅ | TOTP only |
 | `auth.mfa.challenge()` | ✅ | |
 | `auth.mfa.verify()` | ✅ | Upgrades JWT to `aal2` |
 | `auth.mfa.unenroll()` | ✅ | |
 | `auth.mfa.listFactors()` | ✅ | |
-| `auth.signInWithOAuth()` | ✅ | Google, GitHub (configurable) |
+| `auth.getUserIdentities()` | ✅ | Lists linked OAuth identities |
+| `auth.linkIdentity()` | ✅ | Links an OAuth provider to existing account |
+| `auth.unlinkIdentity()` | ✅ | Removes an OAuth identity (keeps at least one auth method) |
 | Admin: `generateLink()` | ✅ | Via admin key |
-| `auth.signInWithIdToken()` | ❌ | |
-| `auth.signInWithSSO()` | ❌ | |
-| Phone auth | ❌ | |
+| Admin: `signOut(uid)` | ✅ | Revokes all sessions for a user |
+| Admin: `deleteFactor()` | ✅ | Removes an MFA factor for a user |
+| Token verification | ✅ | `POST /auth/v1/token/verify` — HS256 claims extraction |
+| `setSession` / `onAuthStateChange` | ✅ | Client-side only; server provides the required endpoints |
+| `startAutoRefresh` / `stopAutoRefresh` | ✅ | Client-side only |
+| `auth.signInWithSSO()` | ❌ | SAML SSO not supported |
+| `auth.signInWithWeb3()` | ❌ | |
+| Phone auth | ❌ | Email only |
+| MFA phone/WebAuthn | ❌ | TOTP only |
+| JWKS endpoint (`/.well-known/jwks.json`) | ✅ | RS256 public keys for client-side verification |
+| RS256 JWT signing | ✅ | Tokens signed with RSA; HS256 still accepted for verification |
+| Rate limiting on auth endpoints | ✅ | Token-bucket per-IP on signup, login, recover, verify, OTP, resend |
+| Admin: OAuth client management | ❌ | |
+| Admin: custom providers | ❌ | |
 
 ## REST (`/rest/v1/`)
 
@@ -60,11 +78,13 @@ Ultrabase exposes a PostgREST-compatible HTTP surface. The supabase-js `.from()`
 | **RPC** — `.rpc()` with scalar/SETOF/void returns, chaining, `params=single-object` | ✅ Full | |
 | **Aggregates** — `count()`, `avg()`, `sum()`, `min()`, `max()`, aliases, GROUP BY, HAVING | ✅ Full | |
 | **Error envelope** — `{code, message, details, hint}` with SQLSTATE + `PGRST*` codes | ✅ Full | |
+| **EXPLAIN** — `Accept: application/vnd.pgrst.plan+json` returns query plan | ✅ | JSON and text formats |
+| **GeoJSON** — `Accept: application/geo+json` wraps geometry columns as FeatureCollection | ✅ | Requires PostGIS + geometry/geography column |
+| **Multi-schema** — `Accept-Profile`/`Content-Profile` headers | ✅ | Tables can declare `schema:` in YAML; `SET LOCAL search_path` per request |
+| **DB timeout** — `Prefer: statement-timeout=N` (ms) | ✅ | Capped at configured `server.timeouts.db_query` |
+| **Request cancellation** (`abortSignal`) | ✅ | Client-side only; HTTP context propagates to pgx |
 | Views as endpoints | ❌ Missing | |
-| Multi-schema (`Accept-Profile`/`Content-Profile`) | ❌ Missing | Single-schema; headers accepted for `public` only |
 | Computed columns from `function(row)` | ❌ Missing | |
-| `EXPLAIN` plan endpoint | ❌ Missing | |
-| GeoJSON (`application/geo+json`) | ❌ Missing | |
 
 ### supabase-js query builder methods
 
@@ -88,6 +108,11 @@ Ultrabase exposes a PostgREST-compatible HTTP surface. The supabase-js `.from()`
 | `.rpc()` | ✅ |
 | `.rpc()` with `.eq()` / `.order()` / `.limit()` chaining (SETOF) | ✅ |
 | `.csv()` | ✅ |
+| `.explain()` | ✅ |
+| `.geojson()` | ✅ |
+| `.schema()` | ✅ |
+| `.maxAffected()` | ✅ |
+| `.rollback()` | ✅ |
 
 ### Error codes
 
@@ -117,6 +142,7 @@ Ultrabase implements the Supabase Storage API so `supabase.storage` methods work
 | `storage.listBuckets()` | ✅ | |
 | `storage.getBucket(id)` | ✅ | |
 | `storage.from(b).list(folder)` | ✅ | |
+| `storage.from(b).listV2(folder)` | ✅ | Cursor-based pagination, `with_delimiter` for folders |
 | `storage.from(b).info(path)` | ✅ | |
 | `storage.from(b).exists(path)` | ✅ | |
 | `storage.from(b).remove([paths])` | ✅ | |
@@ -128,18 +154,25 @@ Ultrabase implements the Supabase Storage API so `supabase.storage` methods work
 | `storage.from(b).getPublicUrl(path)` | ✅ | Client-side URL construction |
 | `storage.from(b).upload(path, file)` | ✅ | Proxied, capped at bucket `max_size` |
 | `storage.from(b).update(path, file)` | ✅ | Proxied, capped at bucket `max_size` |
-| `storage.from(b).download(path)` | ✅ | Proxied, capped at bucket `max_size` |
+| `storage.from(b).download(path)` | ✅ | Supports image transforms via query params |
 | `storage.from(b).uploadToSignedUrl(path, token, file)` | ✅ | Proxied, capped at bucket `max_size` |
 | `storage.from(b).emptyBucket()` | ✅ | |
+| Image transforms | ✅ | `?width=&height=&resize=&quality=&format=` on download |
 | `storage.createBucket()` | ❌ | Buckets are defined in YAML |
 | `storage.updateBucket()` | ❌ | |
 | `storage.deleteBucket()` | ❌ | |
-| Image transformations | ❌ | |
 | Resumable uploads (TUS) | ❌ | |
+| Vector storage | ❌ | |
 
 <Callout variant="warning" title="Serverless payload limits">
   The 4 proxied methods (upload, update, download, uploadToSignedUrl) stream file bytes through the server. In serverless environments, these are constrained by request/response payload limits (e.g., 6MB on AWS Lambda). For large files, use the serverless-friendly presigned URL endpoints described on the [Storage](/docs/storage) page.
 </Callout>
+
+## Edge Functions
+
+| Feature | Status |
+|---|---|
+| `supabase.functions.invoke()` | ❌ Not supported |
 
 ## Realtime
 
@@ -155,7 +188,7 @@ Ultrabase implements the Supabase Storage API so `supabase.storage` methods work
 The integration suite runs both `postgrest-go` and `@supabase/supabase-js` against a live Ultrabase server with a real Postgres instance:
 
 - **postgrest-go conformance** — `internal/adapter/http/pgrupstream/conformance_test.go`: filters, transforms, embedding, mutations, error envelope
-- **supabase-js harness** — `test/integration/supabase-js/run.mjs`: auth flows (signup, signin, refresh, MFA, anonymous, OTP, admin generate_link), REST operations (CRUD, filters, embeds, upsert, RPC), and storage operations (all 20 endpoints + serverless-friendly presigned URLs)
+- **supabase-js harness** — `test/integration/supabase-js/run.mjs`: auth flows (signup, signin, refresh, MFA, anonymous, OTP, PKCE, ID token, identity linking, admin ops), REST operations (CRUD, filters, embeds, upsert, RPC, explain), and storage operations (all endpoints + image transforms + serverless presigned URLs)
 
 ```sh
 go test -tags=integration ./internal/adapter/http/...

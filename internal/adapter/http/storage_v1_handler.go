@@ -66,6 +66,7 @@ func (h *StorageV1Handler) Mount(root *gin.RouterGroup) {
 
 	// List
 	sg.POST("/object/list/:bucket", jwtAuth(h.jwtKeys, true), h.listObjects)
+	sg.POST("/object/list-v2/:bucket", jwtAuth(h.jwtKeys, true), h.listObjectsV2)
 
 	// Exists (HEAD)
 	sg.HEAD("/object/:bucket/*path", jwtAuth(h.jwtKeys, false), h.objectExists)
@@ -392,6 +393,15 @@ func (h *StorageV1Handler) serveDownload(c *gin.Context, bucketName, objPath str
 	}
 	defer body.Close()
 
+	// Image transforms
+	if tp := parseTransformParams(c); tp != nil && strings.HasPrefix(contentType, "image/") {
+		transformed, newCT, err := applyTransform(body, contentType, tp)
+		if err == nil {
+			body = transformed
+			contentType = newCT
+		}
+	}
+
 	if contentType != "" {
 		c.Header("Content-Type", contentType)
 	}
@@ -464,6 +474,121 @@ func (h *StorageV1Handler) listObjects(c *gin.Context) {
 		items = []gin.H{}
 	}
 	c.JSON(200, items)
+}
+
+func (h *StorageV1Handler) listObjectsV2(c *gin.Context) {
+	bucketName := c.Param("bucket")
+	if _, ok := h.getBucketConfig(bucketName); !ok {
+		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Bucket not found"})
+		return
+	}
+
+	var req struct {
+		Prefix        string `json:"prefix"`
+		Limit         int    `json:"limit"`
+		Cursor        string `json:"cursor"`
+		WithDelimiter bool   `json:"with_delimiter"`
+		SortBy        struct {
+			Column string `json:"column"`
+			Order  string `json:"order"`
+		} `json:"sortBy"`
+	}
+	c.ShouldBindJSON(&req)
+
+	prefix := strings.TrimPrefix(req.Prefix, "/")
+	if req.Limit <= 0 {
+		req.Limit = 100
+	}
+
+	ctx := c.Request.Context()
+
+	// Fetch one extra row to determine hasNext.
+	fetchLimit := req.Limit + 1
+
+	query := "SELECT name, size, mime, uploaded_at, metadata FROM _objects WHERE bucket_id = $1"
+	args := []any{bucketName}
+	argIdx := 2
+
+	if prefix != "" {
+		query += fmt.Sprintf(" AND name LIKE $%d", argIdx)
+		args = append(args, prefix+"%")
+		argIdx++
+	}
+	if req.Cursor != "" {
+		query += fmt.Sprintf(" AND name > $%d", argIdx)
+		args = append(args, req.Cursor)
+		argIdx++
+	}
+
+	sortCol := "name"
+	sortOrder := "ASC"
+	if req.SortBy.Column == "updated_at" || req.SortBy.Column == "created_at" {
+		sortCol = "uploaded_at"
+	}
+	if strings.EqualFold(req.SortBy.Order, "desc") {
+		sortOrder = "DESC"
+	}
+	query += fmt.Sprintf(" ORDER BY %s %s", sortCol, sortOrder)
+	query += fmt.Sprintf(" LIMIT $%d", argIdx)
+	args = append(args, fetchLimit)
+
+	rows, err := h.db.Query(ctx, query, args...)
+	if err != nil {
+		h.logger.Error("list objects v2", "error", err)
+		c.JSON(500, gin.H{"statusCode": "500", "error": "internal", "message": "Failed to list"})
+		return
+	}
+
+	hasNext := len(rows) > req.Limit
+	if hasNext {
+		rows = rows[:req.Limit]
+	}
+
+	var folders []gin.H
+	var objects []gin.H
+	seenFolders := map[string]bool{}
+
+	for _, row := range rows {
+		name, _ := row["name"].(string)
+		relName := strings.TrimPrefix(name, prefix)
+
+		if req.WithDelimiter {
+			if idx := strings.Index(relName, "/"); idx >= 0 {
+				folderName := relName[:idx+1]
+				if !seenFolders[folderName] {
+					seenFolders[folderName] = true
+					folders = append(folders, gin.H{"name": folderName, "key": prefix + folderName})
+				}
+				continue
+			}
+		}
+
+		objects = append(objects, gin.H{
+			"name":       relName,
+			"id":         name,
+			"created_at": asString(row["uploaded_at"]),
+			"updated_at": asString(row["uploaded_at"]),
+			"metadata":   row["metadata"],
+		})
+	}
+
+	if folders == nil {
+		folders = []gin.H{}
+	}
+	if objects == nil {
+		objects = []gin.H{}
+	}
+
+	result := gin.H{
+		"has_next": hasNext,
+		"folders":  folders,
+		"objects":  objects,
+	}
+	if hasNext && len(rows) > 0 {
+		lastRow := rows[len(rows)-1]
+		result["next_cursor"], _ = lastRow["name"].(string)
+	}
+	c.JSON(200, result)
 }
 
 func (h *StorageV1Handler) objectInfo(c *gin.Context) {

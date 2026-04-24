@@ -390,9 +390,11 @@ func parseLogicLeafWith(item string, validate colValidator) (*WhereNode, error) 
 // "count" from id.count()) and also against the table's real columns (for
 // grouped columns). This mirrors PostgREST's behavior where HAVING
 // conditions can reference output-list aliases.
-func parseHavingParam(raw string, table domain.Table, selectItems []string) (*WhereNode, error) {
-	// Build the set of valid aggregate aliases from the select list.
-	aggAliases := map[string]bool{}
+func parseHavingParam(raw string, tableName string, table domain.Table, selectItems []string) (*WhereNode, error) {
+	// Build a map of aggregate alias → SQL expression so we can expand
+	// aliases in the HAVING clause (Postgres does not resolve SELECT aliases
+	// in HAVING).
+	aggAliasExprs := map[string]string{}
 	for _, s := range selectItems {
 		if !isAggSelectEntry(s) {
 			continue
@@ -400,16 +402,32 @@ func parseHavingParam(raw string, table domain.Table, selectItems []string) (*Wh
 		item := parseSelectItem(s)
 		alias := item.Alias
 		if alias == "" && item.Agg != "" {
-			alias = item.Agg // default alias is the aggregate name
+			alias = item.Agg
 		}
-		if alias != "" {
-			aggAliases[alias] = true
+		if alias == "" {
+			continue
 		}
+		// Build the raw SQL expression (without " AS alias").
+		var expr string
+		if item.Agg != "" && item.Col == "" {
+			expr = "COUNT(*)"
+		} else {
+			base, steps := splitJSONBPath(item.Col)
+			expr = fmt.Sprintf("%s.%s", tableName, base)
+			if len(steps) > 0 {
+				expr += renderJSONBSuffix(steps)
+			}
+			expr = fmt.Sprintf("%s(%s)", strings.ToUpper(item.Agg), expr)
+		}
+		if item.Cast != "" {
+			expr = fmt.Sprintf("(%s)::%s", expr, item.Cast)
+		}
+		aggAliasExprs[alias] = expr
 	}
 
 	// Validator: accept aggregate aliases and real table columns (grouped columns).
 	validate := func(col string) error {
-		if aggAliases[col] {
+		if _, ok := aggAliasExprs[col]; ok {
 			return nil
 		}
 		if err := validateColumn(table, col); err == nil {
@@ -431,6 +449,14 @@ func parseHavingParam(raw string, table domain.Table, selectItems []string) (*Wh
 		leaf, err := parseLogicLeafWith(item, validate)
 		if err != nil {
 			return nil, err
+		}
+		// Expand aggregate alias to the actual SQL expression.
+		if leaf.Leaf != nil {
+			if expr, ok := aggAliasExprs[leaf.Leaf.Column]; ok {
+				leaf.Leaf.Column = expr
+			} else {
+				leaf.Leaf.Column = tableName + "." + leaf.Leaf.Column
+			}
 		}
 		root.Children = append(root.Children, leaf)
 	}

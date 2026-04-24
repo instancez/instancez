@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { supabase } from './supabase.js'
 
 const BUCKET = 'product_images'
@@ -20,19 +21,21 @@ export function productImageUrl(productId) {
   return data?.publicUrl ?? ''
 }
 
-export function ProductCard({ product, onOpen, hasImage }) {
+export function ProductCard({ product, onOpen, imageVersion }) {
+  const [imgFailed, setImgFailed] = useState(false)
   const avg = avgRating(product.reviews)
+  const imgSrc = productImageUrl(product.id) + (imageVersion ? `?v=${imageVersion}` : '')
   return (
     <article className="card" onClick={onOpen}>
-      {hasImage ? (
+      {imgFailed ? (
+        <div className="card-img-placeholder">No image</div>
+      ) : (
         <img
-          src={productImageUrl(product.id)}
+          src={imgSrc}
           alt={product.name}
           className="card-img"
-          onError={(e) => { e.target.style.display = 'none' }}
+          onError={() => setImgFailed(true)}
         />
-      ) : (
-        <div className="card-img-placeholder">No image</div>
       )}
       <div className="card-head">
         <h3>{product.name}</h3>

@@ -46,6 +46,16 @@ func planFromScratch(cfg *domain.Config) string {
 		ddl = append(ddl, generateUsersTable(cfg.Auth, cfg.UserExtraFields())...)
 	}
 
+	// Create non-public schemas
+	schemasSeen := map[string]bool{"public": true}
+	for _, table := range cfg.Tables {
+		s := table.EffectiveSchema()
+		if !schemasSeen[s] {
+			ddl = append(ddl, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s;", s))
+			schemasSeen[s] = true
+		}
+	}
+
 	// Tables in dependency order (FKs reference other tables).
 	// Pass 1: CREATE TABLE (must complete before indexes
 	// so that ADD COLUMN IF NOT EXISTS runs before CREATE INDEX references the column).
@@ -287,7 +297,10 @@ func generateUsersTable(auth *domain.Auth, extraFields []domain.Field) []string 
   expires_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );`)
-	}
+			ddl = append(ddl, `ALTER TABLE _refresh_tokens ADD COLUMN IF NOT EXISTS session_id TEXT;`)
+			ddl = append(ddl, `ALTER TABLE _refresh_tokens ADD COLUMN IF NOT EXISTS ip TEXT;`)
+			ddl = append(ddl, `ALTER TABLE _refresh_tokens ADD COLUMN IF NOT EXISTS user_agent TEXT;`)
+		}
 
 	// Email verifications table (for verify email + password reset tokens)
 	if auth.Email != nil {
@@ -328,6 +341,26 @@ func generateUsersTable(auth *domain.Auth, extraFields []domain.Field) []string 
   verified_at TIMESTAMPTZ,
   ip_address TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);`)
+
+	// OAuth state + PKCE auth codes
+	ddl = append(ddl, `CREATE TABLE IF NOT EXISTS _oauth_states (
+  state TEXT PRIMARY KEY,
+  code_challenge TEXT,
+  code_challenge_method TEXT,
+  redirect_to TEXT,
+  provider TEXT NOT NULL,
+  linking_user_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL
+);`)
+	ddl = append(ddl, `CREATE TABLE IF NOT EXISTS _auth_codes (
+  code TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  code_challenge TEXT NOT NULL,
+  code_challenge_method TEXT NOT NULL DEFAULT 'S256',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL
 );`)
 
 	return ddl
@@ -406,11 +439,15 @@ func generateTable(name string, table domain.Table, allTables map[string]domain.
 	}
 
 	allParts := append(cols, constraints...)
+	qualName := name
+	if s := table.EffectiveSchema(); s != "public" {
+		qualName = s + "." + name
+	}
 	ddl = append(ddl, fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (\n  %s\n);",
-		name, strings.Join(allParts, ",\n  ")))
+		qualName, strings.Join(allParts, ",\n  ")))
 
 	// REPLICA IDENTITY FULL for WAL CDC
-	ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s REPLICA IDENTITY FULL;", name))
+	ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s REPLICA IDENTITY FULL;", qualName))
 
 	return ddl
 }

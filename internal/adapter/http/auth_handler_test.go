@@ -146,10 +146,10 @@ func TestBuildUser_UnverifiedHasEmptyConfirmedAt(t *testing.T) {
 
 // ---------- jwtAuth middleware: GoTrue claim shape ----------
 
-// stubKey builds a trivial JWTKeyManager backed by an in-memory kid/secret.
+// stubKeys builds a trivial JWTKeyManager backed by an in-memory RS256 key.
 func stubKeys(t *testing.T) *app.JWTKeyManager {
 	t.Helper()
-	km, err := app.NewInMemoryJWTKeyManager("test-kid", []byte("test-secret-must-be-long-enough-to-sign"))
+	km, err := app.NewInMemoryJWTKeyManager("test-kid", nil)
 	if err != nil {
 		t.Fatalf("stub keys: %v", err)
 	}
@@ -162,9 +162,9 @@ func signToken(t *testing.T, km *app.JWTKeyManager, claims jwt.MapClaims) string
 	if err != nil {
 		t.Fatalf("active key: %v", err)
 	}
-	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	tok.Header["kid"] = key.KID
-	s, err := tok.SignedString(key.Secret)
+	s, err := tok.SignedString(key.PrivateKey)
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}

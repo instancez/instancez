@@ -194,6 +194,14 @@ func TestSupabaseJSCompat(t *testing.T) {
 					{Name: "n", Type: "int", Required: true},
 				},
 			},
+			"sql_void": {
+				Language:   "sql",
+				Volatility: "volatile",
+				Security:   "invoker",
+				Returns:    domain.FuncReturn{Type: "void"},
+				Body:       "SELECT",
+				Args:       []domain.FuncArg{},
+			},
 		},
 	}
 	// Ensure ReturnCategory is populated; normally set by the YAML
@@ -527,9 +535,19 @@ func signAnonKey(key *app.JWTKey) (string, error) {
 		"iat":  now.Unix(),
 		"exp":  now.Add(24 * time.Hour).Unix(),
 	}
-	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	var signingMethod jwt.SigningMethod
+	var signingKey any
+	switch key.Algorithm {
+	case "RS256":
+		signingMethod = jwt.SigningMethodRS256
+		signingKey = key.PrivateKey
+	default:
+		signingMethod = jwt.SigningMethodHS256
+		signingKey = key.Secret
+	}
+	tok := jwt.NewWithClaims(signingMethod, claims)
 	tok.Header["kid"] = key.KID
-	signed, err := tok.SignedString(key.Secret)
+	signed, err := tok.SignedString(signingKey)
 	if err != nil {
 		return "", fmt.Errorf("sign: %w", err)
 	}

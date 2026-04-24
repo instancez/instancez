@@ -164,7 +164,7 @@ func TestMFA_VerifyGoodCodeFlipsFactorAndReturnsAAL2(t *testing.T) {
 	m := newMFAHarness(t, db)
 	// Override userID to match the stubbed factor.
 	m.userID = uid
-	m.token = signToken(t, stubKeys(t), jwt.MapClaims{
+	m.token = signToken(t, m.h.jwtKeys, jwt.MapClaims{
 		"sub": uid, "role": "authenticated", "aud": "authenticated",
 		"email": "u@e.com",
 		"iat":   time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix(),
@@ -222,7 +222,7 @@ func TestMFA_VerifyBadCodeRejected(t *testing.T) {
 	}
 	m := newMFAHarness(t, db)
 	m.userID = uid
-	m.token = signToken(t, stubKeys(t), jwt.MapClaims{
+	m.token = signToken(t, m.h.jwtKeys, jwt.MapClaims{
 		"sub": uid, "role": "authenticated", "aud": "authenticated",
 		"iat": time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix(),
 	})

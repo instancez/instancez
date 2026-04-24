@@ -137,6 +137,110 @@ await step('auth.refreshSession rotates tokens', async () => {
   refreshToken = data.session.refresh_token
 })
 
+// --- Resend OTP ---
+await step('auth: resend OTP returns 200', async () => {
+  const resp = await fetch(`${URL}/auth/v1/resend`, {
+    method: 'POST',
+    headers: { apikey: ANON_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'magiclink', email }),
+  })
+  assertEq(resp.status, 200)
+})
+
+// --- Token verify ---
+await step('auth: token verify returns claims', async () => {
+  const resp = await fetch(`${URL}/auth/v1/token/verify`, {
+    method: 'POST',
+    headers: { apikey: ANON_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: accessToken }),
+  })
+  assertEq(resp.status, 200)
+  const claims = await resp.json()
+  assert(claims.sub, 'sub present in claims')
+  assert(claims.email === email, 'email matches')
+  assert(claims.role === 'authenticated', 'role is authenticated')
+})
+
+// --- Reauthenticate ---
+await step('auth: reauthenticate returns 200', async () => {
+  const resp = await fetch(`${URL}/auth/v1/reauthenticate`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      apikey: ANON_KEY,
+      'Content-Type': 'application/json',
+    },
+  })
+  assertEq(resp.status, 200)
+})
+
+// --- Identity listing ---
+await step('auth: list identities returns array', async () => {
+  const resp = await fetch(`${URL}/auth/v1/user/identities`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      apikey: ANON_KEY,
+    },
+  })
+  assertEq(resp.status, 200)
+  const data = await resp.json()
+  assert(Array.isArray(data.identities), 'identities is array')
+})
+
+// --- Admin signOut ---
+await step('admin: signOut revokes user sessions', async () => {
+  if (!ADMIN_KEY) return
+  // Sign in to get a session, then admin-revoke it
+  const { data: s } = await anon.auth.signInWithPassword({ email, password })
+  const rt = s.session.refresh_token
+
+  const resp = await fetch(`${URL}/auth/v1/admin/users/${userId}/signout`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${ADMIN_KEY}`, apikey: ANON_KEY },
+  })
+  assertEq(resp.status, 204)
+
+  // Refresh should now fail
+  const { error } = await anon.auth.refreshSession({ refresh_token: rt })
+  assert(error, 'refresh should fail after admin signOut')
+
+  // Re-login so subsequent tests work
+  const { data: re } = await anon.auth.signInWithPassword({ email, password })
+  accessToken = re.session.access_token
+  refreshToken = re.session.refresh_token
+})
+
+// --- Admin deleteFactor ---
+await step('admin: deleteFactor removes a factor', async () => {
+  if (!ADMIN_KEY) return
+  // Enroll a factor
+  const enrollResp = await fetch(`${URL}/auth/v1/factors`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      apikey: ANON_KEY,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ factor_type: 'totp', friendly_name: 'admin-test' }),
+  })
+  assert(enrollResp.ok, `enroll failed: ${enrollResp.status}`)
+  const factor = await enrollResp.json()
+
+  // Admin delete it
+  const delResp = await fetch(`${URL}/auth/v1/admin/users/${userId}/factors/${factor.id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${ADMIN_KEY}`, apikey: ANON_KEY },
+  })
+  assertEq(delResp.status, 200)
+
+  // Verify it's gone
+  const listResp = await fetch(`${URL}/auth/v1/factors`, {
+    headers: { Authorization: `Bearer ${accessToken}`, apikey: ANON_KEY },
+  })
+  const factors = await listResp.json()
+  assert(!factors.all?.some(f => f.id === factor.id), 'factor should be gone')
+})
+
 await step('rest: insert row via PostgREST', async () => {
   const client = createClient(URL, ANON_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -1137,6 +1241,83 @@ await step('storage: list objects in bucket', async () => {
   assert(items.some(i => i.name === 'test-file.txt' || i.id === 'test-file.txt'), 'test-file.txt in list')
 })
 
+await step('storage: listV2 returns cursor-based results', async () => {
+  const resp = await fetch(`${URL}/storage/v1/object/list-v2/avatars`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      apikey: ANON_KEY,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ prefix: '', limit: 100 }),
+  })
+  assert(resp.ok, `listV2 failed: ${resp.status}`)
+  const result = await resp.json()
+  assert(typeof result.has_next === 'boolean', 'has_next is boolean')
+  assert(Array.isArray(result.folders), 'folders is array')
+  assert(Array.isArray(result.objects), 'objects is array')
+  assert(result.objects.length >= 1, 'at least one object')
+  assert(result.objects.some(o => o.name === 'test-file.txt' || o.id === 'test-file.txt'), 'test-file.txt in objects')
+})
+
+await step('storage: listV2 with_delimiter separates folders', async () => {
+  // Upload a nested file to test delimiter behavior
+  const nestedResp = await fetch(`${URL}/storage/v1/object/avatars/subfolder/nested.txt`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      apikey: ANON_KEY,
+      'Content-Type': 'text/plain',
+      'x-upsert': 'true',
+    },
+    body: 'nested content',
+  })
+  assert(nestedResp.ok, `nested upload failed: ${nestedResp.status}`)
+
+  const resp = await fetch(`${URL}/storage/v1/object/list-v2/avatars`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      apikey: ANON_KEY,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ prefix: '', limit: 100, with_delimiter: true }),
+  })
+  assert(resp.ok, `listV2 delimiter failed: ${resp.status}`)
+  const result = await resp.json()
+  assert(result.folders.length >= 1, 'at least one folder')
+  assert(result.folders.some(f => f.name === 'subfolder/'), 'subfolder/ in folders')
+})
+
+await step('storage: listV2 cursor pagination', async () => {
+  const resp1 = await fetch(`${URL}/storage/v1/object/list-v2/avatars`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      apikey: ANON_KEY,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ prefix: '', limit: 1 }),
+  })
+  assert(resp1.ok, `listV2 page1 failed: ${resp1.status}`)
+  const page1 = await resp1.json()
+  assert(page1.has_next === true, 'has_next should be true with limit=1')
+  assert(typeof page1.next_cursor === 'string', 'next_cursor present')
+
+  const resp2 = await fetch(`${URL}/storage/v1/object/list-v2/avatars`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      apikey: ANON_KEY,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ prefix: '', limit: 100, cursor: page1.next_cursor }),
+  })
+  assert(resp2.ok, `listV2 page2 failed: ${resp2.status}`)
+  const page2 = await resp2.json()
+  assert(page2.objects.length >= 1, 'page2 has objects')
+})
+
 // --- Update (PUT) ---
 
 await step('storage: update existing object via PUT', async () => {
@@ -1361,6 +1542,96 @@ await step('storage: cleanup documents bucket', async () => {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}`, apikey: ANON_KEY },
   })
+})
+
+// --- explain() response ---
+await step('rest: explain returns query plan', async () => {
+  const resp = await fetch(`${URL}/rest/v1/todos?select=*`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      apikey: ANON_KEY,
+      Accept: 'application/vnd.pgrst.plan+json',
+    },
+  })
+  assertEq(resp.status, 200)
+  const plan = await resp.json()
+  assert(Array.isArray(plan) || (typeof plan === 'object'), 'plan returned')
+})
+
+// --- signOut scope=local ---
+await step('auth: signOut scope=local revokes only current session', async () => {
+  // Sign in twice to get two sessions
+  const { data: s1 } = await anon.auth.signInWithPassword({ email, password })
+  const { data: s2 } = await anon.auth.signInWithPassword({ email, password })
+
+  // signOut scope=local on s1
+  const resp = await fetch(`${URL}/auth/v1/logout?scope=local`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${s1.session.access_token}`, apikey: ANON_KEY },
+  })
+  assertEq(resp.status, 204)
+
+  // s2 refresh should still work
+  const { data: refreshed, error } = await anon.auth.refreshSession({ refresh_token: s2.session.refresh_token })
+  assert(!error, 'second session should still be valid after local signout')
+  accessToken = refreshed.session.access_token
+  refreshToken = refreshed.session.refresh_token
+})
+
+// --- JWKS endpoint ---
+await step('auth: JWKS endpoint returns RS256 public key', async () => {
+  const resp = await fetch(`${URL}/auth/v1/.well-known/jwks.json`, {
+    headers: { apikey: ANON_KEY },
+  })
+  assertEq(resp.status, 200)
+  const body = await resp.json()
+  assert(Array.isArray(body.keys), 'JWKS should have keys array')
+  assert(body.keys.length > 0, 'JWKS should have at least one key')
+  const key = body.keys[0]
+  assertEq(key.kty, 'RSA')
+  assertEq(key.alg, 'RS256')
+  assertEq(key.use, 'sig')
+  assert(key.kid, 'key should have kid')
+  assert(key.n, 'key should have modulus n')
+  assert(key.e, 'key should have exponent e')
+})
+
+// --- RS256 token verification ---
+await step('auth: tokens are signed with RS256', async () => {
+  const { data } = await anon.auth.signInWithPassword({ email, password })
+  assert(data.session, 'should have session')
+  const parts = data.session.access_token.split('.')
+  const header = JSON.parse(Buffer.from(parts[0], 'base64url').toString())
+  assertEq(header.alg, 'RS256')
+  assert(header.kid, 'token header should have kid')
+})
+
+// --- Image transforms ---
+await step('storage: download with image transform', async () => {
+  // Upload a small valid PNG (1x1 red pixel)
+  const pngBuf = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==',
+    'base64'
+  )
+  const uploadResp = await fetch(`${URL}/storage/v1/object/avatars/transform-test.png`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      apikey: ANON_KEY,
+      'Content-Type': 'image/png',
+      'x-upsert': 'true',
+    },
+    body: pngBuf,
+  })
+  assert(uploadResp.ok, `upload failed: ${uploadResp.status}`)
+
+  // Download with transform
+  const dlResp = await fetch(`${URL}/storage/v1/object/public/avatars/transform-test.png?width=1&height=1&format=png`, {
+    headers: { apikey: ANON_KEY },
+  })
+  assert(dlResp.ok, `transformed download failed: ${dlResp.status}`)
+  const ct = dlResp.headers.get('content-type')
+  assert(ct && ct.includes('image/png'), `expected image/png, got ${ct}`)
 })
 
 // --- Serverless-friendly endpoints (raw fetch, not supabase-js) ---

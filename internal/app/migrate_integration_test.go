@@ -440,7 +440,6 @@ func TestIntegration_RPCFunction_CreateAndRemove(t *testing.T) {
 		Tables:  map[string]domain.Table{},
 		Functions: map[string]domain.Function{
 			"add_nums": {
-				Kind:       "rpc",
 				Language:   "sql",
 				Volatility: "immutable",
 				Security:   "invoker",
@@ -1261,11 +1260,12 @@ func TestIntegration_AuthUsersTable(t *testing.T) {
 		Auth: &domain.Auth{
 			RefreshTokens: true,
 			Email:         &domain.AuthEmail{VerifyEmail: true},
-			Fields: []domain.Field{
-				{Name: "display_name", Type: "text"},
-			},
 		},
-		Tables: map[string]domain.Table{},
+		Tables: map[string]domain.Table{
+			"users": {Fields: []domain.Field{
+				{Name: "display_name", Type: "text"},
+			}},
+		},
 	}
 
 	migrator := app.NewMigrator(db)
@@ -1516,7 +1516,6 @@ func TestIntegration_RPCFunction_UpdateBody(t *testing.T) {
 		Tables:  map[string]domain.Table{},
 		Functions: map[string]domain.Function{
 			"greet": {
-				Kind:       "rpc",
 				Language:   "sql",
 				Volatility: "immutable",
 				Security:   "invoker",
@@ -1546,7 +1545,6 @@ func TestIntegration_RPCFunction_UpdateBody(t *testing.T) {
 		Tables:  map[string]domain.Table{},
 		Functions: map[string]domain.Function{
 			"greet": {
-				Kind:       "rpc",
 				Language:   "sql",
 				Volatility: "immutable",
 				Security:   "invoker",
@@ -2088,7 +2086,6 @@ func TestIntegration_ChangedRPCFunction_Body(t *testing.T) {
 		Tables:  map[string]domain.Table{},
 		Functions: map[string]domain.Function{
 			"multiply": {
-				Kind:       "rpc",
 				Language:   "sql",
 				Volatility: "immutable",
 				Security:   "invoker",
@@ -2118,7 +2115,6 @@ func TestIntegration_ChangedRPCFunction_Body(t *testing.T) {
 		Tables:  map[string]domain.Table{},
 		Functions: map[string]domain.Function{
 			"multiply": {
-				Kind:       "rpc",
 				Language:   "sql",
 				Volatility: "immutable",
 				Security:   "invoker",

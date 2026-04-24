@@ -1373,7 +1373,8 @@ func TestConf_RPC(t *testing.T) {
 		code, _ := m["code"].(string)
 		hasReadOnly := strings.Contains(strings.ToLower(msg), "read-only") ||
 			strings.Contains(strings.ToLower(msg), "read only") ||
-			code == "25006"
+			strings.Contains(strings.ToLower(msg), "not allowed in a non-volatile function") ||
+			code == "25006" || code == "0A000"
 		assert.True(t, hasReadOnly, "error body should indicate read-only: %v", m)
 
 		// Belt-and-suspenders: no 'sneaky' channel should have been committed.

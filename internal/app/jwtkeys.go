@@ -3,7 +3,10 @@ package app
 import (
 	"context"
 	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/hex"
+	"encoding/pem"
 	"fmt"
 	"sync"
 
@@ -12,18 +15,14 @@ import (
 
 // JWTKey is a signing key used to sign and verify JWTs.
 type JWTKey struct {
-	KID       string
-	Secret    []byte
-	Algorithm string
+	KID        string
+	Secret     []byte // legacy HS256 secret; nil for RS256 keys
+	Algorithm  string // "HS256" or "RS256"
+	PrivateKey *rsa.PrivateKey
+	PublicKey  *rsa.PublicKey
 }
 
-// JWTKeyManager loads and caches JWT signing keys from the database. Keys are
-// stored in the _auth_jwt_keys table, which is created by the migrator when
-// auth is configured.
-//
-// On first call to Active, if no key row exists, a new HS256 key is generated
-// and inserted. This makes the JWT secret fully managed: operators never need
-// to configure or rotate it manually for v0.
+// JWTKeyManager loads and caches JWT signing keys from the database.
 type JWTKeyManager struct {
 	db domain.Database
 
@@ -39,13 +38,25 @@ func NewJWTKeyManager(db domain.Database) *JWTKeyManager {
 	}
 }
 
-// NewInMemoryJWTKeyManager builds a key manager with a single pre-seeded key
-// and no database backing. Intended for tests and ephemeral dev setups.
-func NewInMemoryJWTKeyManager(kid string, secret []byte) (*JWTKeyManager, error) {
-	if kid == "" || len(secret) == 0 {
-		return nil, fmt.Errorf("jwt key: kid and secret required")
+// NewInMemoryJWTKeyManager builds a key manager with a single pre-seeded
+// RS256 key and no database backing. If privateKey is nil, generates one.
+func NewInMemoryJWTKeyManager(kid string, privateKey *rsa.PrivateKey) (*JWTKeyManager, error) {
+	if kid == "" {
+		return nil, fmt.Errorf("jwt key: kid required")
 	}
-	key := &JWTKey{KID: kid, Secret: secret, Algorithm: "HS256"}
+	if privateKey == nil {
+		var err error
+		privateKey, err = rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			return nil, fmt.Errorf("jwt key: generate: %w", err)
+		}
+	}
+	key := &JWTKey{
+		KID:        kid,
+		Algorithm:  "RS256",
+		PrivateKey: privateKey,
+		PublicKey:  &privateKey.PublicKey,
+	}
 	return &JWTKeyManager{
 		active: key,
 		byKID:  map[string]*JWTKey{kid: key},
@@ -83,14 +94,18 @@ func (m *JWTKeyManager) Active(ctx context.Context) (*JWTKey, error) {
 		return key, nil
 	}
 
-	// No key exists yet. Generate one and insert.
-	key, err := generateHS256Key()
+	// No key exists yet. Generate RS256 and insert.
+	key, err := generateRS256Key()
 	if err != nil {
 		return nil, fmt.Errorf("jwt key: generate: %w", err)
 	}
+	privPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key.PrivateKey),
+	})
 	_, err = m.db.Exec(ctx,
 		`INSERT INTO _auth_jwt_keys (kid, secret, algorithm) VALUES ($1, $2, $3)`,
-		key.KID, key.Secret, key.Algorithm)
+		key.KID, privPEM, key.Algorithm)
 	if err != nil {
 		return nil, fmt.Errorf("jwt key: insert: %w", err)
 	}
@@ -99,10 +114,8 @@ func (m *JWTKeyManager) Active(ctx context.Context) (*JWTKey, error) {
 	return key, nil
 }
 
-// Get fetches a key by its KID. Retired keys are still returned so that
-// verification of tokens signed just before a rotation continues to work until
-// the token itself expires. V0 never rotates, so in practice every key lookup
-// hits either the cache or the one active row.
+// Get fetches a key by its KID. Retired keys are still returned for
+// verification of tokens signed before rotation.
 func (m *JWTKeyManager) Get(ctx context.Context, kid string) (*JWTKey, error) {
 	if kid == "" {
 		return nil, fmt.Errorf("jwt key: empty kid")
@@ -135,6 +148,24 @@ func (m *JWTKeyManager) Get(ctx context.Context, kid string) (*JWTKey, error) {
 	return key, nil
 }
 
+// AllPublicKeys returns all non-retired public keys for the JWKS endpoint.
+func (m *JWTKeyManager) AllPublicKeys(ctx context.Context) ([]*JWTKey, error) {
+	rows, err := m.db.Query(ctx,
+		`SELECT kid, secret, algorithm FROM _auth_jwt_keys WHERE retired_at IS NULL ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	var keys []*JWTKey
+	for _, row := range rows {
+		key, err := rowToKey(row)
+		if err != nil {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	return keys, nil
+}
+
 func rowToKey(row map[string]any) (*JWTKey, error) {
 	kid, _ := row["kid"].(string)
 	alg, _ := row["algorithm"].(string)
@@ -145,7 +176,28 @@ func rowToKey(row map[string]any) (*JWTKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("jwt key: secret: %w", err)
 	}
-	return &JWTKey{KID: kid, Secret: secret, Algorithm: alg}, nil
+
+	key := &JWTKey{KID: kid, Algorithm: alg}
+
+	switch alg {
+	case "RS256":
+		block, _ := pem.Decode(secret)
+		if block == nil {
+			return nil, fmt.Errorf("jwt key: invalid PEM for kid %s", kid)
+		}
+		priv, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("jwt key: parse RSA key %s: %w", kid, err)
+		}
+		key.PrivateKey = priv
+		key.PublicKey = &priv.PublicKey
+	case "HS256":
+		key.Secret = secret
+	default:
+		return nil, fmt.Errorf("jwt key: unsupported algorithm %s", alg)
+	}
+
+	return key, nil
 }
 
 func coerceBytes(v any) ([]byte, error) {
@@ -159,9 +211,9 @@ func coerceBytes(v any) ([]byte, error) {
 	}
 }
 
-func generateHS256Key() (*JWTKey, error) {
-	secret := make([]byte, 32)
-	if _, err := rand.Read(secret); err != nil {
+func generateRS256Key() (*JWTKey, error) {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
 		return nil, err
 	}
 	kidBytes := make([]byte, 8)
@@ -169,8 +221,9 @@ func generateHS256Key() (*JWTKey, error) {
 		return nil, err
 	}
 	return &JWTKey{
-		KID:       hex.EncodeToString(kidBytes),
-		Secret:    secret,
-		Algorithm: "HS256",
+		KID:        hex.EncodeToString(kidBytes),
+		Algorithm:  "RS256",
+		PrivateKey: priv,
+		PublicKey:  &priv.PublicKey,
 	}, nil
 }

@@ -263,7 +263,7 @@ func TestBuildSelectQuery_Having(t *testing.T) {
 func TestParseHavingParam_RejectsNonAggregate(t *testing.T) {
 	table := testTable()
 	// No aggregates in select → "count" is not a valid alias.
-	_, err := parseHavingParam("count.gt.5", table, []string{"status"})
+	_, err := parseHavingParam("count.gt.5", "test", table, []string{"status"})
 	if err == nil {
 		t.Error("expected error for HAVING on non-aggregate column")
 	}
@@ -272,7 +272,7 @@ func TestParseHavingParam_RejectsNonAggregate(t *testing.T) {
 // Gap 6c: HAVING accepts real table columns (grouped columns).
 func TestParseHavingParam_AcceptsGroupedColumn(t *testing.T) {
 	table := testTable()
-	node, err := parseHavingParam("status.eq.active", table, []string{"status", "id.count()"})
+	node, err := parseHavingParam("status.eq.active", "test", table, []string{"status", "id.count()"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

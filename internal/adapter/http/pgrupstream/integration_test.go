@@ -156,7 +156,6 @@ func buildConfig() *domain.Config {
 		// (intentionally bypassing the Migrator for this package).
 		Functions: map[string]domain.Function{
 			"add_numbers": {
-				Kind: "rpc",
 				Language: "sql", Volatility: "immutable", Security: "invoker",
 				Returns: domain.FuncReturn{Type: "int"}, ReturnCategory: "scalar",
 				Args: []domain.FuncArg{
@@ -166,7 +165,6 @@ func buildConfig() *domain.Config {
 				Body: "SELECT a + b",
 			},
 			"greet": {
-				Kind: "rpc",
 				Language: "sql", Volatility: "stable", Security: "invoker",
 				Returns: domain.FuncReturn{Type: "text"}, ReturnCategory: "scalar",
 				Args: []domain.FuncArg{
@@ -175,7 +173,6 @@ func buildConfig() *domain.Config {
 				Body: "SELECT 'hello ' || name",
 			},
 			"users_by_status": {
-				Kind: "rpc",
 				Language: "sql", Volatility: "stable", Security: "invoker",
 				Returns: domain.FuncReturn{Type: "setof users"}, ReturnCategory: "setof",
 				Args: []domain.FuncArg{
@@ -184,7 +181,6 @@ func buildConfig() *domain.Config {
 				Body: "SELECT * FROM users WHERE status = target",
 			},
 			"touch_nothing": {
-				Kind: "rpc",
 				Language: "plpgsql", Volatility: "volatile", Security: "invoker",
 				Returns: domain.FuncReturn{Type: "void"}, ReturnCategory: "void",
 				Body: "BEGIN RETURN; END",
@@ -193,13 +189,11 @@ func buildConfig() *domain.Config {
 			// handler pins non-volatile RPC transactions to read-only,
 			// so calling this via .rpc() must fail with 25006.
 			"sneaky_insert": {
-				Kind: "rpc",
 				Language: "plpgsql", Volatility: "stable", Security: "invoker",
 				Returns: domain.FuncReturn{Type: "int"}, ReturnCategory: "scalar",
 				Body: "BEGIN INSERT INTO channels (slug) VALUES ('sneaky'); RETURN 1; END",
 			},
 			"current_request_id": {
-				Kind: "rpc",
 				Language: "sql", Volatility: "stable", Security: "invoker",
 				Returns: domain.FuncReturn{Type: "text"}, ReturnCategory: "scalar",
 				Body: "SELECT current_setting('request.request_id', true)",

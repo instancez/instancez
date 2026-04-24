@@ -495,7 +495,7 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 				selStrings = append(selStrings, raw)
 			}
 		}
-		havingNode, err := parseHavingParam(havingRaw, targetTable, selStrings)
+		havingNode, err := parseHavingParam(havingRaw, target, targetTable, selStrings)
 		if err != nil {
 			return nil, nil, fmt.Errorf("invalid having: %w", err)
 		}

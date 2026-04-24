@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -59,7 +60,13 @@ func (h *CRUDHandler) allTables() map[string]domain.Table {
 // @supabase/supabase-js can drive ultrabase without a custom URL prefix.
 func (h *CRUDHandler) Mount(root *gin.RouterGroup) {
 	rest := root.Group("/rest/v1")
-	rest.Use(profileHeaderGuard())
+	var schemas []string
+	for _, t := range h.cfg.Tables {
+		if s := t.EffectiveSchema(); s != "public" {
+			schemas = append(schemas, s)
+		}
+	}
+	rest.Use(profileHeaderGuard(schemas...))
 
 	// /rest/v1/rpc/:name — supabase-js .rpc() dispatch. Only rpc-kind
 	// functions are reachable; everything else returns
@@ -134,7 +141,12 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 		query, args := buildSelectQueryFull(tableName, qp, table, allTbls)
 
 		// Set RLS context
-		ctx, err := h.db.WithRLS(c.Request.Context(), session)
+		reqCtx := c.Request.Context()
+		ctx, cancel := h.withDBTimeout(reqCtx, prefer)
+		if cancel != nil {
+			defer cancel()
+		}
+		ctx, err = h.db.WithRLS(ctx, session)
 		if err != nil {
 			problemJSON(c, 500, "internal", "Failed to set RLS context")
 			return
@@ -142,7 +154,45 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 
 		// If admin, skip RLS
 		if isAdmin(c) {
-			ctx = c.Request.Context()
+			ctx2, cancel2 := h.withDBTimeout(reqCtx, prefer)
+			if cancel2 != nil {
+				defer cancel2()
+			}
+			ctx = ctx2
+		}
+
+		// EXPLAIN plan response
+		accept := c.GetHeader("Accept")
+		if accept == "application/vnd.pgrst.plan+json" || accept == "application/vnd.pgrst.plan+text" {
+			explainOpts := "FORMAT JSON"
+			if strings.Contains(accept, "+text") {
+				explainOpts = "FORMAT TEXT"
+			}
+			explainQuery := fmt.Sprintf("EXPLAIN (%s) %s", explainOpts, query)
+			tx, err := h.db.Begin(ctx)
+			if err != nil {
+				problemJSON(c, 500, "internal", "Failed to start transaction")
+				return
+			}
+			defer tx.Rollback(ctx)
+			rows, err := tx.Query(ctx, explainQuery, args...)
+			if err != nil {
+				handleDBError(c, err)
+				return
+			}
+			tx.Commit(ctx)
+			if strings.Contains(accept, "+text") {
+				var lines []string
+				for _, r := range rows {
+					for _, v := range r {
+						lines = append(lines, fmt.Sprintf("%v", v))
+					}
+				}
+				c.Data(200, "application/vnd.pgrst.plan+text", []byte(strings.Join(lines, "\n")))
+			} else {
+				c.JSON(200, rows)
+			}
+			return
 		}
 
 		// Execute in transaction for RLS
@@ -152,6 +202,12 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 			return
 		}
 		defer tx.Rollback(ctx)
+
+		if schema, _ := c.Get("_schema"); schema != nil {
+			if s, ok := schema.(string); ok && s != "" && s != "public" {
+				tx.Exec(ctx, fmt.Sprintf("SET LOCAL search_path TO %s, public", s))
+			}
+		}
 
 		rows, err := tx.Query(ctx, query, args...)
 		if err != nil {
@@ -187,8 +243,36 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 			c.Header("Content-Range", fmt.Sprintf("%d-%d/*", offset, end))
 		}
 
+		// GeoJSON response
+		if accept == "application/geo+json" {
+			geomCol := findGeometryColumn(table)
+			if geomCol == "" {
+				pgJSON(c, 406, "PGRST118", "No geometry column found for GeoJSON output", "", "")
+				return
+			}
+			features := make([]map[string]any, 0, len(rows))
+			for _, r := range rows {
+				geom := r[geomCol]
+				props := make(map[string]any, len(r)-1)
+				for k, v := range r {
+					if k != geomCol {
+						props[k] = v
+					}
+				}
+				features = append(features, map[string]any{
+					"type":       "Feature",
+					"geometry":   geom,
+					"properties": props,
+				})
+			}
+			c.JSON(200, gin.H{
+				"type":     "FeatureCollection",
+				"features": features,
+			})
+			return
+		}
+
 		// Check for singular response
-		accept := c.GetHeader("Accept")
 		if accept == "application/vnd.pgrst.object+json" {
 			if len(rows) != 1 {
 				// supabase-js .maybeSingle() distinguishes zero-row from
@@ -1230,7 +1314,7 @@ func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allT
 	//   ?having=count.gt.5
 	//   ?having=sum.gte.100
 	if havingRaw := c.Query("having"); havingRaw != "" {
-		havingNode, err := parseHavingParam(havingRaw, table, qp.Select)
+		havingNode, err := parseHavingParam(havingRaw, tableName, table, qp.Select)
 		if err != nil {
 			return nil, fmt.Errorf("invalid having: %w", err)
 		}
@@ -1846,28 +1930,53 @@ func buildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 			if refPK == "" {
 				refPK = "id"
 			}
-			sub := fmt.Sprintf(
-				"SELECT coalesce(json_agg(%s", rowExpr)
-			if len(emb.Order) > 0 {
-				sub += " ORDER BY " + renderOrderBy(emb.Order)
-			}
-			sub += fmt.Sprintf("), '[]'::json) FROM %s WHERE %s.%s = %s.%s",
-				emb.RefTable, emb.RefTable, emb.FKColumn, tableName, refPK)
-			if emb.Where != nil {
-				clauseSQL, clauseArgs, next := emb.Where.buildSQL(argIdx)
-				if clauseSQL != "" {
-					sub += " AND " + clauseSQL
-					allArgs = append(allArgs, clauseArgs...)
-					argIdx = next
+
+			needsInnerSubquery := emb.Limit != nil || emb.Offset != nil
+
+			if needsInnerSubquery {
+				// When LIMIT/OFFSET is requested, wrap the source rows in a
+				// subquery so pagination applies before aggregation.
+				inner := fmt.Sprintf("SELECT * FROM %s WHERE %s.%s = %s.%s",
+					emb.RefTable, emb.RefTable, emb.FKColumn, tableName, refPK)
+				if emb.Where != nil {
+					clauseSQL, clauseArgs, next := emb.Where.buildSQL(argIdx)
+					if clauseSQL != "" {
+						inner += " AND " + clauseSQL
+						allArgs = append(allArgs, clauseArgs...)
+						argIdx = next
+					}
 				}
+				if len(emb.Order) > 0 {
+					inner += " ORDER BY " + renderOrderBy(emb.Order)
+				}
+				if emb.Limit != nil {
+					inner += fmt.Sprintf(" LIMIT %d", *emb.Limit)
+				}
+				if emb.Offset != nil {
+					inner += fmt.Sprintf(" OFFSET %d", *emb.Offset)
+				}
+				sub := fmt.Sprintf(
+					"SELECT coalesce(json_agg(%s), '[]'::json) FROM (%s) %s",
+					rowExpr, inner, emb.RefTable)
+				selectParts = append(selectParts, fmt.Sprintf("(%s) AS %s", sub, emb.Name))
+			} else {
+				sub := fmt.Sprintf(
+					"SELECT coalesce(json_agg(%s", rowExpr)
+				if len(emb.Order) > 0 {
+					sub += " ORDER BY " + renderOrderBy(emb.Order)
+				}
+				sub += fmt.Sprintf("), '[]'::json) FROM %s WHERE %s.%s = %s.%s",
+					emb.RefTable, emb.RefTable, emb.FKColumn, tableName, refPK)
+				if emb.Where != nil {
+					clauseSQL, clauseArgs, next := emb.Where.buildSQL(argIdx)
+					if clauseSQL != "" {
+						sub += " AND " + clauseSQL
+						allArgs = append(allArgs, clauseArgs...)
+						argIdx = next
+					}
+				}
+				selectParts = append(selectParts, fmt.Sprintf("(%s) AS %s", sub, emb.Name))
 			}
-			if emb.Limit != nil {
-				sub += fmt.Sprintf(" LIMIT %d", *emb.Limit)
-			}
-			if emb.Offset != nil {
-				sub += fmt.Sprintf(" OFFSET %d", *emb.Offset)
-			}
-			selectParts = append(selectParts, fmt.Sprintf("(%s) AS %s", sub, emb.Name))
 		} else if emb.Spread {
 			// Spread belongs-to: inline columns into parent SELECT.
 			spreadCols := emb.Columns
@@ -2143,9 +2252,14 @@ func resolveEmbeds(tableName string, table domain.Table, embedNames []string, al
 						emb.Children = children
 					}
 					embeds = append(embeds, emb)
+					found = true
 					break
 				}
 			}
+		}
+
+		if !found {
+			return nil, fmt.Errorf("could not find a relationship between %q and %q in the schema", tableName, name)
 		}
 	}
 
@@ -2205,7 +2319,14 @@ func buildFilterCondition(f Filter, argIdx int) (string, []any, int) {
 		colExpr = baseCol + renderJSONBSuffix(steps)
 	}
 
-	switch f.Operator {
+	// like(all)/like(any)/ilike(all)/ilike(any) are parsed as op="like" config="any"
+	// by parseFilterValue. Reconstruct the composite key for the switch below.
+	switchOp := f.Operator
+	if f.Config == "all" || f.Config == "any" {
+		switchOp = f.Operator + "(" + f.Config + ")"
+	}
+
+	switch switchOp {
 	case "is":
 		val := strings.ToUpper(f.Value)
 		if val == "NULL" || val == "TRUE" || val == "FALSE" {
@@ -2265,11 +2386,11 @@ func buildFilterCondition(f Filter, argIdx int) (string, []any, int) {
 
 	case "like(all)", "like(any)", "ilike(all)", "ilike(any)":
 		sqlOp := "LIKE"
-		if strings.HasPrefix(f.Operator, "ilike") {
+		if strings.HasPrefix(switchOp, "ilike") {
 			sqlOp = "ILIKE"
 		}
 		quant := "ALL"
-		if strings.HasSuffix(f.Operator, "(any)") {
+		if strings.HasSuffix(switchOp, "(any)") {
 			quant = "ANY"
 		}
 		patterns := parsePatternList(f.Value)
@@ -2657,4 +2778,41 @@ func handleNotFound() http.HandlerFunc {
 		w.WriteHeader(http.StatusNotFound)
 		fmt.Fprintf(w, `{"code":"PGRST106","message":"Resource not found","details":"","hint":""}`)
 	}
+}
+
+// withDBTimeout wraps ctx with the configured db_query timeout. If
+// Prefer: statement-timeout=N is present (milliseconds), that overrides
+// the config value but is capped at the configured max.
+func (h *CRUDHandler) withDBTimeout(ctx context.Context, prefer string) (context.Context, context.CancelFunc) {
+	cfgTimeout, _ := time.ParseDuration(h.cfg.Server.Timeouts.DBQuery)
+
+	// Check Prefer header for statement-timeout
+	if idx := strings.Index(prefer, "statement-timeout="); idx >= 0 {
+		val := prefer[idx+len("statement-timeout="):]
+		if end := strings.IndexAny(val, ", "); end > 0 {
+			val = val[:end]
+		}
+		if ms, err := strconv.Atoi(val); err == nil && ms > 0 {
+			d := time.Duration(ms) * time.Millisecond
+			if cfgTimeout > 0 && d > cfgTimeout {
+				d = cfgTimeout
+			}
+			return context.WithTimeout(ctx, d)
+		}
+	}
+
+	if cfgTimeout > 0 {
+		return context.WithTimeout(ctx, cfgTimeout)
+	}
+	return ctx, nil
+}
+
+func findGeometryColumn(table domain.Table) string {
+	for _, f := range table.Fields {
+		t := strings.ToLower(f.Type)
+		if t == "geometry" || t == "geography" || strings.HasPrefix(t, "geometry(") || strings.HasPrefix(t, "geography(") {
+			return f.Name
+		}
+	}
+	return ""
 }

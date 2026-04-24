@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -22,6 +23,19 @@ import (
 	"github.com/saedx1/ultrabase/internal/domain"
 	"golang.org/x/crypto/bcrypt"
 )
+
+type ctxKey int
+
+const (
+	ctxKeyIP ctxKey = iota
+	ctxKeyUA
+)
+
+func ctxWithRequestMeta(ctx context.Context, c *gin.Context) context.Context {
+	ctx = context.WithValue(ctx, ctxKeyIP, c.ClientIP())
+	ctx = context.WithValue(ctx, ctxKeyUA, c.GetHeader("User-Agent"))
+	return ctx
+}
 
 // AuthHandler serves GoTrue-compatible authentication endpoints under
 // /auth/v1/*. Response shapes mirror Supabase's gotrue-js contract so that
@@ -47,19 +61,29 @@ func NewAuthHandler(deps ServerDeps) *AuthHandler {
 // Mount registers the /auth/v1/* routes on the root router group.
 func (h *AuthHandler) Mount(root *gin.RouterGroup) {
 	auth := root.Group("/auth/v1")
-	auth.POST("/signup", h.handleSignupDispatch)
-	auth.POST("/token", h.handleToken)
+	authRL := rateLimitMiddleware(10) // 10 req/s per IP on sensitive endpoints
+	auth.POST("/signup", authRL, h.handleSignupDispatch)
+	auth.POST("/token", authRL, h.handleToken)
 	auth.GET("/user", jwtAuth(h.jwtKeys, true), h.handleGetUser)
 	auth.PUT("/user", jwtAuth(h.jwtKeys, true), h.handleUpdateUser)
 	auth.POST("/logout", jwtAuth(h.jwtKeys, true), h.handleLogout)
 	auth.GET("/settings", h.handleSettings)
 
 	if h.cfg.Auth.Email != nil {
-		auth.POST("/recover", h.handleRecover)
-		auth.POST("/verify", h.handleVerify)
+		auth.POST("/recover", authRL, h.handleRecover)
+		auth.POST("/verify", authRL, h.handleVerify)
 		auth.GET("/verify", h.handleVerifyGET)
-		auth.POST("/otp", h.handleOTP)
+		auth.POST("/otp", authRL, h.handleOTP)
+		auth.POST("/resend", authRL, h.handleResend)
+		auth.POST("/reauthenticate", jwtAuth(h.jwtKeys, true), h.handleReauthenticate)
 	}
+	auth.POST("/token/verify", h.handleTokenVerify)
+	auth.GET("/.well-known/jwks.json", h.handleJWKS)
+
+	// Identity management
+	auth.GET("/user/identities", jwtAuth(h.jwtKeys, true), h.handleListIdentities)
+	auth.POST("/user/identities/authorize", jwtAuth(h.jwtKeys, true), h.handleLinkIdentity)
+	auth.DELETE("/user/identities/:id", jwtAuth(h.jwtKeys, true), h.handleUnlinkIdentity)
 
 	admin := auth.Group("/admin", adminKeyAuth())
 	admin.POST("/generate_link", h.handleGenerateLink)
@@ -68,6 +92,8 @@ func (h *AuthHandler) Mount(root *gin.RouterGroup) {
 	admin.GET("/users/:uid", h.handleAdminGetUser)
 	admin.PUT("/users/:uid", h.handleAdminUpdateUser)
 	admin.DELETE("/users/:uid", h.handleAdminDeleteUser)
+	admin.POST("/users/:uid/signout", h.handleAdminSignOut)
+	admin.DELETE("/users/:uid/factors/:factor_id", h.handleAdminDeleteFactor)
 
 	auth.POST("/invite", adminKeyAuth(), h.handleAdminInvite)
 
@@ -131,6 +157,7 @@ func (h *AuthHandler) handleSignupAnonymous(c *gin.Context, probe map[string]any
 	}
 
 	userID := asString(row["id"])
+	ctx = ctxWithRequestMeta(ctx, c)
 	session, err := h.buildSession(ctx, userID, row)
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to generate token")
@@ -199,6 +226,7 @@ func (h *AuthHandler) handleSignup(c *gin.Context) {
 		go h.sendVerificationEmail(userID, req.Email)
 	}
 
+	ctx = ctxWithRequestMeta(ctx, c)
 	session, err := h.buildSession(ctx, userID, row)
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to generate token")
@@ -234,6 +262,10 @@ func (h *AuthHandler) handleToken(c *gin.Context) {
 		h.handlePasswordGrant(c)
 	case "refresh_token":
 		h.handleRefreshGrant(c)
+	case "pkce":
+		h.handlePKCEGrant(c)
+	case "id_token":
+		h.handleIDTokenGrant(c)
 	default:
 		problemJSON(c, 400, "bad_request", "Unsupported grant_type: "+grantType)
 	}
@@ -284,6 +316,7 @@ func (h *AuthHandler) handlePasswordGrant(c *gin.Context) {
 	_, _ = h.db.Exec(ctx, "UPDATE users SET last_sign_in_at = NOW(), updated_at = NOW() WHERE id = $1::uuid", userID)
 	row["last_sign_in_at"] = time.Now().UTC()
 
+	ctx = ctxWithRequestMeta(ctx, c)
 	session, err := h.buildSession(ctx, userID, row)
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to generate token")
@@ -338,7 +371,145 @@ func (h *AuthHandler) handleRefreshGrant(c *gin.Context) {
 		return
 	}
 
+	ctx = ctxWithRequestMeta(ctx, c)
 	session, err := h.buildSession(ctx, userID, userRow)
+	if err != nil {
+		problemJSON(c, 500, "internal", "Failed to generate token")
+		return
+	}
+	c.JSON(200, session)
+}
+
+func (h *AuthHandler) handlePKCEGrant(c *gin.Context) {
+	var req struct {
+		AuthCode     string `json:"auth_code" binding:"required"`
+		CodeVerifier string `json:"code_verifier" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		problemJSON(c, 400, "bad_request", "Missing auth_code or code_verifier")
+		return
+	}
+
+	ctx := c.Request.Context()
+	row, err := h.db.QueryRow(ctx,
+		"SELECT user_id, code_challenge, code_challenge_method FROM _auth_codes WHERE code = $1 AND expires_at > NOW()",
+		req.AuthCode)
+	if err != nil || row == nil {
+		problemJSON(c, 401, "invalid_grant", "Invalid or expired auth code")
+		return
+	}
+
+	h.db.Exec(ctx, "DELETE FROM _auth_codes WHERE code = $1", req.AuthCode)
+
+	codeChallenge, _ := row["code_challenge"].(string)
+	codeChallengeMethod, _ := row["code_challenge_method"].(string)
+
+	if !verifyCodeChallenge(codeChallengeMethod, req.CodeVerifier, codeChallenge) {
+		problemJSON(c, 401, "invalid_grant", "Code verifier does not match challenge")
+		return
+	}
+
+	userID, _ := row["user_id"].(string)
+	userRow, err := h.db.QueryRow(ctx,
+		fmt.Sprintf("SELECT %s FROM users WHERE id = $1::uuid", userSelectCols), userID)
+	if err != nil || userRow == nil {
+		problemJSON(c, 401, "invalid_grant", "User not found")
+		return
+	}
+
+	ctx = ctxWithRequestMeta(ctx, c)
+	session, err := h.buildSession(ctx, userID, userRow)
+	if err != nil {
+		problemJSON(c, 500, "internal", "Failed to generate token")
+		return
+	}
+	c.JSON(200, session)
+}
+
+func (h *AuthHandler) handleIDTokenGrant(c *gin.Context) {
+	var req struct {
+		Provider string `json:"provider" binding:"required"`
+		Token    string `json:"token" binding:"required"`
+		Nonce    string `json:"nonce"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		problemJSON(c, 400, "bad_request", "Missing provider or token")
+		return
+	}
+
+	var clientID string
+	switch req.Provider {
+	case "google":
+		if h.cfg.Auth.Google == nil {
+			problemJSON(c, 400, "bad_request", "Google provider not configured")
+			return
+		}
+		clientID = h.cfg.Auth.Google.ClientID
+	default:
+		problemJSON(c, 400, "bad_request", "Unsupported provider for ID token: "+req.Provider)
+		return
+	}
+
+	claims, err := verifyIDToken(req.Provider, req.Token, clientID, req.Nonce)
+	if err != nil {
+		h.logger.Error("id token verification failed", "provider", req.Provider, "error", err)
+		problemJSON(c, 401, "invalid_token", "ID token verification failed: "+err.Error())
+		return
+	}
+
+	email, _ := claims["email"].(string)
+	if email == "" {
+		problemJSON(c, 400, "bad_request", "ID token does not contain email")
+		return
+	}
+	sub, _ := claims["sub"].(string)
+	name, _ := claims["name"].(string)
+
+	ctx := c.Request.Context()
+	row, _ := h.db.QueryRow(ctx,
+		fmt.Sprintf("SELECT %s FROM users WHERE email = $1", userSelectCols), email)
+	var userID string
+
+	if row == nil {
+		metaJSON, _ := json.Marshal(map[string]any{
+			"provider":       req.Provider,
+			"full_name":      name,
+			"email":          email,
+			"email_verified": true,
+		})
+		appMetaJSON, _ := json.Marshal(map[string]any{
+			"provider":  req.Provider,
+			"providers": []string{req.Provider},
+		})
+		newRow, err := h.db.QueryRow(ctx,
+			"INSERT INTO users (email, email_verified, email_confirmed_at, raw_user_meta_data, raw_app_meta_data) VALUES ($1, true, NOW(), $2::jsonb, $3::jsonb) RETURNING "+userSelectCols,
+			email, string(metaJSON), string(appMetaJSON))
+		if err != nil {
+			row, err = h.db.QueryRow(ctx,
+				fmt.Sprintf("SELECT %s FROM users WHERE email = $1", userSelectCols), email)
+			if err != nil || row == nil {
+				problemJSON(c, 500, "internal", "Failed to create or find user")
+				return
+			}
+			userID = asString(row["id"])
+		} else {
+			row = newRow
+			userID = asString(newRow["id"])
+		}
+	} else {
+		userID = asString(row["id"])
+		h.db.Exec(ctx, "UPDATE users SET email_verified = true, email_confirmed_at = COALESCE(email_confirmed_at, NOW()), last_sign_in_at = NOW(), updated_at = NOW() WHERE id = $1::uuid", userID)
+	}
+
+	h.db.Exec(ctx,
+		`INSERT INTO _user_identities (user_id, provider, provider_user_id, email, last_sign_in_at, updated_at)
+		 VALUES ($1::uuid, $2, $3, $4, NOW(), NOW())
+		 ON CONFLICT (provider, provider_user_id)
+		 DO UPDATE SET last_sign_in_at = EXCLUDED.last_sign_in_at, updated_at = EXCLUDED.updated_at`,
+		userID, req.Provider, sub, email)
+
+	ctx = ctxWithRequestMeta(ctx, c)
+	session, err := h.buildSession(ctx, userID, row)
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to generate token")
 		return
@@ -428,13 +599,21 @@ func (h *AuthHandler) handleLogout(c *gin.Context) {
 
 	ctx := c.Request.Context()
 	if h.cfg.Auth.RefreshTokens && session.UserID != "" {
+		sessionID := h.extractSessionID(session.JWT)
 		switch scope {
-		case "local", "others":
-			// GoTrue's "local" revokes only the current session; we don't
-			// track session_id per refresh row yet, so fall through to
-			// global for now. "others" means all except current — same.
-			fallthrough
-		case "global":
+		case "local":
+			if sessionID != "" {
+				h.db.Exec(ctx, "DELETE FROM _refresh_tokens WHERE session_id = $1", sessionID)
+			} else {
+				h.db.Exec(ctx, "DELETE FROM _refresh_tokens WHERE user_id = $1::uuid", session.UserID)
+			}
+		case "others":
+			if sessionID != "" {
+				h.db.Exec(ctx, "DELETE FROM _refresh_tokens WHERE user_id = $1::uuid AND (session_id IS NULL OR session_id != $2)", session.UserID, sessionID)
+			} else {
+				h.db.Exec(ctx, "DELETE FROM _refresh_tokens WHERE user_id = $1::uuid", session.UserID)
+			}
+		default: // global
 			h.db.Exec(ctx, "DELETE FROM _refresh_tokens WHERE user_id = $1::uuid", session.UserID)
 		}
 	}
@@ -562,6 +741,7 @@ func (h *AuthHandler) handleVerify(c *gin.Context) {
 		return
 	}
 
+	ctx = ctxWithRequestMeta(ctx, c)
 	session, err := h.buildSession(ctx, userID, userRow)
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to generate token")
@@ -616,7 +796,8 @@ func (h *AuthHandler) handleVerifyGET(c *gin.Context) {
 			c.String(500, "User not found")
 			return
 		}
-		session, err := h.buildSession(ctx, userID, userRow)
+		ctx = ctxWithRequestMeta(ctx, c)
+	session, err := h.buildSession(ctx, userID, userRow)
 		if err != nil {
 			c.String(500, "Failed to generate session")
 			return
@@ -1118,6 +1299,8 @@ func (h *AuthHandler) handleSettings(c *gin.Context) {
 func (h *AuthHandler) handleAuthorize(c *gin.Context) {
 	provider := c.Query("provider")
 	redirectTo := c.Query("redirect_to")
+	codeChallenge := c.Query("code_challenge")
+	codeChallengeMethod := c.Query("code_challenge_method")
 
 	var cfg *domain.OAuthProvider
 	switch provider {
@@ -1132,9 +1315,24 @@ func (h *AuthHandler) handleAuthorize(c *gin.Context) {
 	}
 
 	state := generateRandomToken()
-	// Stash state + redirect_to so the callback can pick them up.
-	c.SetCookie("oauth_state", state, 600, "/", "", false, true)
-	c.SetCookie("oauth_redirect_to", redirectTo, 600, "/", "", false, true)
+
+	if codeChallenge != "" {
+		if codeChallengeMethod == "" {
+			codeChallengeMethod = "S256"
+		}
+		ctx := c.Request.Context()
+		expiresAt := time.Now().Add(10 * time.Minute)
+		_, err := h.db.Exec(ctx,
+			"INSERT INTO _oauth_states (state, code_challenge, code_challenge_method, redirect_to, provider, expires_at) VALUES ($1, $2, $3, $4, $5, $6)",
+			state, codeChallenge, codeChallengeMethod, redirectTo, provider, expiresAt)
+		if err != nil {
+			problemJSON(c, 500, "internal", "Failed to store OAuth state")
+			return
+		}
+	} else {
+		c.SetCookie("oauth_state", state, 600, "/", "", false, true)
+		c.SetCookie("oauth_redirect_to", redirectTo, 600, "/", "", false, true)
+	}
 
 	var authURL string
 	switch provider {
@@ -1153,12 +1351,34 @@ func (h *AuthHandler) handleAuthorize(c *gin.Context) {
 func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		state := c.Query("state")
-		savedState, _ := c.Cookie("oauth_state")
-		if state == "" || state != savedState {
-			problemJSON(c, 400, "bad_request", "Invalid OAuth state")
-			return
+		ctx := c.Request.Context()
+
+		// Try DB-stored state first (PKCE / identity linking), fall back to cookie.
+		var dbState map[string]any
+		var redirectTo string
+		var isPKCE bool
+		var linkingUserID string
+
+		dbState, _ = h.db.QueryRow(ctx,
+			"SELECT code_challenge, code_challenge_method, redirect_to, provider, linking_user_id FROM _oauth_states WHERE state = $1 AND expires_at > NOW()",
+			state)
+		if dbState != nil {
+			h.db.Exec(ctx, "DELETE FROM _oauth_states WHERE state = $1", state)
+			redirectTo, _ = dbState["redirect_to"].(string)
+			if cc, _ := dbState["code_challenge"].(string); cc != "" {
+				isPKCE = true
+			}
+			if lu, _ := dbState["linking_user_id"].(string); lu != "" {
+				linkingUserID = lu
+			}
+		} else {
+			savedState, _ := c.Cookie("oauth_state")
+			if state == "" || state != savedState {
+				problemJSON(c, 400, "bad_request", "Invalid OAuth state")
+				return
+			}
+			redirectTo, _ = c.Cookie("oauth_redirect_to")
 		}
-		redirectTo, _ := c.Cookie("oauth_redirect_to")
 
 		code := c.Query("code")
 		if code == "" {
@@ -1183,7 +1403,20 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 			return
 		}
 
-		ctx := c.Request.Context()
+		// Identity linking: just add the identity to the existing user
+		if linkingUserID != "" {
+			h.db.Exec(ctx,
+				`INSERT INTO _user_identities (user_id, provider, provider_user_id, email, last_sign_in_at, updated_at)
+				 VALUES ($1::uuid, $2, $3, $4, NOW(), NOW())
+				 ON CONFLICT (provider, provider_user_id) DO NOTHING`,
+				linkingUserID, provider, userInfo.ProviderID, userInfo.Email)
+			if redirectTo != "" {
+				c.Redirect(http.StatusFound, redirectTo+"#message=identity_linked")
+				return
+			}
+			c.JSON(200, gin.H{"message": "Identity linked"})
+			return
+		}
 
 		row, _ := h.db.QueryRow(ctx,
 			fmt.Sprintf("SELECT %s FROM users WHERE email = $1", userSelectCols), userInfo.Email)
@@ -1228,16 +1461,41 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 			 DO UPDATE SET last_sign_in_at = EXCLUDED.last_sign_in_at, updated_at = EXCLUDED.updated_at`,
 			userID, provider, userInfo.ProviderID, userInfo.Email)
 
-		session, err := h.buildSession(ctx, userID, row)
+		// PKCE flow: return an auth code instead of tokens directly
+		if isPKCE {
+			authCode := generateRandomToken()
+			codeChallenge, _ := dbState["code_challenge"].(string)
+			codeChallengeMethod, _ := dbState["code_challenge_method"].(string)
+			if codeChallengeMethod == "" {
+				codeChallengeMethod = "S256"
+			}
+			expiresAt := time.Now().Add(5 * time.Minute)
+			_, err := h.db.Exec(ctx,
+				"INSERT INTO _auth_codes (code, user_id, code_challenge, code_challenge_method, expires_at) VALUES ($1, $2, $3, $4, $5)",
+				authCode, userID, codeChallenge, codeChallengeMethod, expiresAt)
+			if err != nil {
+				problemJSON(c, 500, "internal", "Failed to store auth code")
+				return
+			}
+			if redirectTo != "" {
+				sep := "?"
+				if strings.Contains(redirectTo, "?") {
+					sep = "&"
+				}
+				c.Redirect(http.StatusFound, redirectTo+sep+"code="+authCode)
+				return
+			}
+			c.JSON(200, gin.H{"code": authCode})
+			return
+		}
+
+		ctx = ctxWithRequestMeta(ctx, c)
+	session, err := h.buildSession(ctx, userID, row)
 		if err != nil {
 			problemJSON(c, 500, "internal", "Failed to generate token")
 			return
 		}
 
-		// supabase-js's detectSessionInUrl reads the session from the URL
-		// fragment. If the caller gave us a redirect_to, bounce there with
-		// the tokens appended; otherwise return JSON as a fallback so API
-		// callers aren't broken.
 		if redirectTo != "" {
 			frag := url.Values{}
 			frag.Set("access_token", session["access_token"].(string))
@@ -1315,9 +1573,19 @@ func (h *AuthHandler) buildSession(ctx context.Context, userID string, userRow m
 		"is_anonymous":  isAnon,
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	var signingMethod jwt.SigningMethod
+	var signingKey any
+	switch key.Algorithm {
+	case "RS256":
+		signingMethod = jwt.SigningMethodRS256
+		signingKey = key.PrivateKey
+	default:
+		signingMethod = jwt.SigningMethodHS256
+		signingKey = key.Secret
+	}
+	token := jwt.NewWithClaims(signingMethod, claims)
 	token.Header["kid"] = key.KID
-	tokenStr, err := token.SignedString(key.Secret)
+	tokenStr, err := token.SignedString(signingKey)
 	if err != nil {
 		return nil, err
 	}
@@ -1336,9 +1604,11 @@ func (h *AuthHandler) buildSession(ctx context.Context, userID string, userRow m
 		if refreshExpiry == 0 {
 			refreshExpiry = 7 * 24 * time.Hour
 		}
+		ip, _ := ctx.Value(ctxKeyIP).(string)
+		ua, _ := ctx.Value(ctxKeyUA).(string)
 		_, err := h.db.Exec(context.Background(),
-			"INSERT INTO _refresh_tokens (user_id, token, expires_at) VALUES ($1::uuid, $2, $3)",
-			userID, refreshToken, time.Now().Add(refreshExpiry))
+			"INSERT INTO _refresh_tokens (user_id, token, session_id, ip, user_agent, expires_at) VALUES ($1::uuid, $2, $3, $4, $5, $6)",
+			userID, refreshToken, sessionID, ip, ua, time.Now().Add(refreshExpiry))
 		if err != nil {
 			return nil, err
 		}
@@ -1806,4 +2076,323 @@ func generateRandomToken() string {
 	b := make([]byte, 32)
 	rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+func base64RawURL(b []byte) string {
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func bigIntBytes(i int) []byte {
+	b := make([]byte, 0, 4)
+	for i > 0 {
+		b = append([]byte{byte(i & 0xff)}, b...)
+		i >>= 8
+	}
+	if len(b) == 0 {
+		b = []byte{0}
+	}
+	return b
+}
+
+// ---------- /resend ----------
+
+func (h *AuthHandler) handleResend(c *gin.Context) {
+	var req struct {
+		Type  string `json:"type" binding:"required"`
+		Email string `json:"email" binding:"required,email"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		problemJSON(c, 400, "bad_request", "Invalid resend request: "+err.Error())
+		return
+	}
+
+	purposeMap := map[string]string{
+		"signup":       "signup",
+		"email_change": "email_change",
+		"magiclink":    "magiclink",
+	}
+	purpose, ok := purposeMap[req.Type]
+	if !ok {
+		problemJSON(c, 400, "bad_request", "type must be one of: signup, email_change, magiclink")
+		return
+	}
+
+	ctx := c.Request.Context()
+	row, _ := h.db.QueryRow(ctx, "SELECT id::text FROM users WHERE email = $1", req.Email)
+	if row == nil {
+		c.Status(200)
+		return
+	}
+	userID := asString(row["id"])
+
+	h.db.Exec(ctx, "DELETE FROM _auth_email_verifications WHERE user_id = $1::uuid AND purpose = $2", userID, purpose)
+
+	token := generateRandomToken()
+	code := generateNumericCode(6)
+	expiresAt := time.Now().Add(1 * time.Hour)
+	_, err := h.db.Exec(ctx,
+		"INSERT INTO _auth_email_verifications (user_id, token, code, email, purpose, expires_at) VALUES ($1::uuid, $2, $3, $4, $5, $6)",
+		userID, token, code, req.Email, purpose, expiresAt)
+	if err != nil {
+		h.logger.Error("resend token insert failed", "error", err)
+		c.Status(200)
+		return
+	}
+	if h.email != nil {
+		go h.sendMagicLinkEmail(req.Email, token, code)
+	}
+	c.Status(200)
+}
+
+// ---------- /reauthenticate ----------
+
+func (h *AuthHandler) handleReauthenticate(c *gin.Context) {
+	session := getSession(c)
+	if session.UserID == "" {
+		problemJSON(c, 401, "unauthorized", "Not authenticated")
+		return
+	}
+
+	ctx := c.Request.Context()
+	row, _ := h.db.QueryRow(ctx, "SELECT email FROM users WHERE id = $1::uuid", session.UserID)
+	if row == nil {
+		problemJSON(c, 404, "not_found", "User not found")
+		return
+	}
+	email := asString(row["email"])
+	if email == "" {
+		problemJSON(c, 422, "unprocessable", "User has no email for reauthentication")
+		return
+	}
+
+	token := generateRandomToken()
+	code := generateNumericCode(6)
+	expiresAt := time.Now().Add(10 * time.Minute)
+	_, err := h.db.Exec(ctx,
+		"INSERT INTO _auth_email_verifications (user_id, token, code, email, purpose, expires_at) VALUES ($1::uuid, $2, $3, $4, 'reauthentication', $5)",
+		session.UserID, token, code, email, expiresAt)
+	if err != nil {
+		h.logger.Error("reauthenticate token insert failed", "error", err)
+		problemJSON(c, 500, "internal", "Failed to create reauthentication nonce")
+		return
+	}
+	if h.email != nil {
+		go h.sendMagicLinkEmail(email, token, code)
+	}
+	c.Status(200)
+}
+
+// ---------- /token/verify ----------
+
+func (h *AuthHandler) handleTokenVerify(c *gin.Context) {
+	var req struct {
+		Token string `json:"token" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		problemJSON(c, 400, "bad_request", "Invalid request: "+err.Error())
+		return
+	}
+
+	parser := jwt.NewParser(jwt.WithoutClaimsValidation())
+	token, _, err := parser.ParseUnverified(req.Token, jwt.MapClaims{})
+	if err != nil {
+		problemJSON(c, 401, "invalid_token", "Malformed token")
+		return
+	}
+
+	kid, _ := token.Header["kid"].(string)
+	key, err := h.jwtKeys.Get(c.Request.Context(), kid)
+	if err != nil {
+		problemJSON(c, 401, "invalid_token", "Unknown signing key")
+		return
+	}
+
+	verified, err := jwt.Parse(req.Token, func(t *jwt.Token) (any, error) {
+		switch t.Method.(type) {
+		case *jwt.SigningMethodRSA:
+			if key.PublicKey == nil {
+				return nil, fmt.Errorf("no RSA public key for kid %s", kid)
+			}
+			return key.PublicKey, nil
+		case *jwt.SigningMethodHMAC:
+			if len(key.Secret) == 0 {
+				return nil, fmt.Errorf("no HMAC secret for kid %s", kid)
+			}
+			return key.Secret, nil
+		default:
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
+	})
+	if err != nil || !verified.Valid {
+		problemJSON(c, 401, "invalid_token", "Token verification failed")
+		return
+	}
+
+	claims, _ := verified.Claims.(jwt.MapClaims)
+	c.JSON(200, claims)
+}
+
+// ---------- /.well-known/jwks.json ----------
+
+func (h *AuthHandler) handleJWKS(c *gin.Context) {
+	keys, err := h.jwtKeys.AllPublicKeys(c.Request.Context())
+	if err != nil {
+		problemJSON(c, 500, "internal", "Failed to load keys")
+		return
+	}
+	var jwks []gin.H
+	for _, key := range keys {
+		if key.PublicKey == nil {
+			continue
+		}
+		jwks = append(jwks, gin.H{
+			"kty": "RSA",
+			"use": "sig",
+			"alg": "RS256",
+			"kid": key.KID,
+			"n":   base64RawURL(key.PublicKey.N.Bytes()),
+			"e":   base64RawURL(bigIntBytes(key.PublicKey.E)),
+		})
+	}
+	if jwks == nil {
+		jwks = []gin.H{}
+	}
+	c.JSON(200, gin.H{"keys": jwks})
+}
+
+// ---------- /user/identities ----------
+
+func (h *AuthHandler) handleListIdentities(c *gin.Context) {
+	session := getSession(c)
+	ctx := c.Request.Context()
+	rows, err := h.db.Query(ctx,
+		"SELECT id::text, provider, provider_user_id, identity_data, email, last_sign_in_at, created_at, updated_at FROM _user_identities WHERE user_id = $1::uuid ORDER BY created_at",
+		session.UserID)
+	if err != nil {
+		problemJSON(c, 500, "internal", "Failed to list identities")
+		return
+	}
+	if rows == nil {
+		rows = []map[string]any{}
+	}
+	c.JSON(200, gin.H{"identities": rows})
+}
+
+func (h *AuthHandler) handleLinkIdentity(c *gin.Context) {
+	session := getSession(c)
+	provider := c.Query("provider")
+	redirectTo := c.Query("redirect_to")
+
+	var cfg *domain.OAuthProvider
+	switch provider {
+	case "google":
+		cfg = h.cfg.Auth.Google
+	case "github":
+		cfg = h.cfg.Auth.GitHub
+	}
+	if cfg == nil {
+		problemJSON(c, 400, "bad_request", "Unsupported or unconfigured provider: "+provider)
+		return
+	}
+
+	state := generateRandomToken()
+	ctx := c.Request.Context()
+	expiresAt := time.Now().Add(10 * time.Minute)
+	_, err := h.db.Exec(ctx,
+		"INSERT INTO _oauth_states (state, redirect_to, provider, linking_user_id, expires_at) VALUES ($1, $2, $3, $4, $5)",
+		state, redirectTo, provider, session.UserID, expiresAt)
+	if err != nil {
+		problemJSON(c, 500, "internal", "Failed to store OAuth state")
+		return
+	}
+
+	var authURL string
+	switch provider {
+	case "google":
+		authURL = fmt.Sprintf(
+			"https://accounts.google.com/o/oauth2/v2/auth?client_id=%s&redirect_uri=%s&response_type=code&scope=openid+email+profile&state=%s",
+			cfg.ClientID, url.QueryEscape(cfg.RedirectURL), state)
+	case "github":
+		authURL = fmt.Sprintf(
+			"https://github.com/login/oauth/authorize?client_id=%s&redirect_uri=%s&scope=user:email&state=%s",
+			cfg.ClientID, url.QueryEscape(cfg.RedirectURL), state)
+	}
+	c.JSON(200, gin.H{"url": authURL})
+}
+
+func (h *AuthHandler) handleUnlinkIdentity(c *gin.Context) {
+	session := getSession(c)
+	identityID := c.Param("id")
+	ctx := c.Request.Context()
+
+	// Ensure user keeps at least one auth method
+	rows, err := h.db.Query(ctx, "SELECT id::text FROM _user_identities WHERE user_id = $1::uuid", session.UserID)
+	if err != nil {
+		problemJSON(c, 500, "internal", "Failed to check identities")
+		return
+	}
+	hasPassword := false
+	pwRow, _ := h.db.QueryRow(ctx, "SELECT password_hash FROM users WHERE id = $1::uuid", session.UserID)
+	if pwRow != nil {
+		if ph, _ := pwRow["password_hash"].(string); ph != "" {
+			hasPassword = true
+		}
+	}
+	if len(rows) <= 1 && !hasPassword {
+		problemJSON(c, 400, "bad_request", "Cannot unlink the only identity without a password set")
+		return
+	}
+
+	res, err := h.db.Exec(ctx,
+		"DELETE FROM _user_identities WHERE id = $1::uuid AND user_id = $2::uuid",
+		identityID, session.UserID)
+	if err != nil {
+		problemJSON(c, 500, "internal", "Failed to unlink identity")
+		return
+	}
+	if res == 0 {
+		problemJSON(c, 404, "not_found", "Identity not found")
+		return
+	}
+	c.Status(200)
+}
+
+// ---------- admin: signOut + deleteFactor ----------
+
+func (h *AuthHandler) handleAdminSignOut(c *gin.Context) {
+	uid := c.Param("uid")
+	ctx := c.Request.Context()
+	h.db.Exec(ctx, "DELETE FROM _refresh_tokens WHERE user_id = $1::uuid", uid)
+	c.Status(204)
+}
+
+func (h *AuthHandler) handleAdminDeleteFactor(c *gin.Context) {
+	uid := c.Param("uid")
+	factorID := c.Param("factor_id")
+	ctx := c.Request.Context()
+	res, err := h.db.Exec(ctx,
+		"DELETE FROM _mfa_factors WHERE id = $1::uuid AND user_id = $2::uuid",
+		factorID, uid)
+	if err != nil {
+		problemJSON(c, 500, "internal", "Failed to delete factor")
+		return
+	}
+	if res == 0 {
+		problemJSON(c, 404, "not_found", "Factor not found")
+		return
+	}
+	c.Status(200)
+}
+
+// extractSessionID parses the session_id claim from a raw JWT without
+// re-verifying the signature (already done by middleware).
+func (h *AuthHandler) extractSessionID(rawJWT string) string {
+	parser := jwt.NewParser(jwt.WithoutClaimsValidation())
+	token, _, err := parser.ParseUnverified(rawJWT, jwt.MapClaims{})
+	if err != nil {
+		return ""
+	}
+	claims, _ := token.Claims.(jwt.MapClaims)
+	sid, _ := claims["session_id"].(string)
+	return sid
 }

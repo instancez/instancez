@@ -11,10 +11,13 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/didip/tollbooth/v7"
+	"github.com/didip/tollbooth/v7/limiter"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/saedx1/ultrabase/internal/app"
@@ -205,15 +208,25 @@ func jwtAuth(keys *app.JWTKeyManager, required bool) gin.HandlerFunc {
 
 		tokenStr := strings.TrimPrefix(header, "Bearer ")
 		token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (any, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-			}
 			kid, _ := token.Header["kid"].(string)
 			key, err := keys.Get(c.Request.Context(), kid)
 			if err != nil {
 				return nil, err
 			}
-			return key.Secret, nil
+			switch token.Method.(type) {
+			case *jwt.SigningMethodRSA:
+				if key.PublicKey == nil {
+					return nil, fmt.Errorf("no RSA public key for kid %s", kid)
+				}
+				return key.PublicKey, nil
+			case *jwt.SigningMethodHMAC:
+				if len(key.Secret) == 0 {
+					return nil, fmt.Errorf("no HMAC secret for kid %s", kid)
+				}
+				return key.Secret, nil
+			default:
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
 		}, jwt.WithExpirationRequired())
 
 		if err != nil || !token.Valid {
@@ -317,12 +330,20 @@ var errTypeToCode = map[string]string{
 }
 
 // profileHeaderGuard enforces that Accept-Profile (for reads) and
-// Content-Profile (for writes) request the "public" schema. PostgREST uses
-// these headers to pick the DB schema; ultrabase is single-schema so any
-// value other than "public" is rejected with PGRST106, mirroring
-// PostgREST's "The schema must be one of the following: public" error.
-// An absent header is always accepted.
-func profileHeaderGuard() gin.HandlerFunc {
+// Content-Profile (for writes) request a configured schema. An absent
+// header is always accepted.
+func profileHeaderGuard(schemas ...string) gin.HandlerFunc {
+	allowed := map[string]bool{"public": true}
+	for _, s := range schemas {
+		allowed[s] = true
+	}
+	schemaList := make([]string, 0, len(allowed))
+	for s := range allowed {
+		schemaList = append(schemaList, s)
+	}
+	sort.Strings(schemaList)
+	msg := "The schema must be one of the following: " + strings.Join(schemaList, ", ")
+
 	return func(c *gin.Context) {
 		var header string
 		switch c.Request.Method {
@@ -331,12 +352,15 @@ func profileHeaderGuard() gin.HandlerFunc {
 		default:
 			header = c.GetHeader("Content-Profile")
 		}
-		if header == "" || header == "public" {
+		if header == "" || allowed[header] {
+			if header != "" {
+				c.Set("_schema", header)
+			}
 			c.Next()
 			return
 		}
 		pgJSON(c, http.StatusNotAcceptable, "PGRST106",
-			"The schema must be one of the following: public",
+			msg,
 			fmt.Sprintf("Requested schema %q is not exposed", header),
 			"")
 		c.Abort()
@@ -411,4 +435,31 @@ func computeHMACSignature(secret, timestamp, body string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(timestamp + "." + body))
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+}
+
+// rateLimitMiddleware returns a gin middleware that limits requests per IP
+// using a token-bucket algorithm. maxPerSecond is the sustained rate;
+// short bursts up to 5x are allowed.
+func rateLimitMiddleware(maxPerSecond float64) gin.HandlerFunc {
+	lmt := tollbooth.NewLimiter(maxPerSecond, &limiter.ExpirableOptions{
+		DefaultExpirationTTL: 10 * time.Minute,
+	})
+	lmt.SetBurst(int(maxPerSecond * 5))
+	lmt.SetIPLookups([]string{"X-Forwarded-For", "X-Real-IP", "RemoteAddr"})
+	lmt.SetMessage(`{"code":"rate_limit","message":"Too many requests"}`)
+	lmt.SetMessageContentType("application/json; charset=utf-8")
+
+	return func(c *gin.Context) {
+		httpError := tollbooth.LimitByRequest(lmt, c.Writer, c.Request)
+		if httpError != nil {
+			c.Header("Content-Type", "application/json; charset=utf-8")
+			c.Header("Retry-After", "1")
+			c.AbortWithStatusJSON(httpError.StatusCode, gin.H{
+				"code":    "rate_limit",
+				"message": httpError.Message,
+			})
+			return
+		}
+		c.Next()
+	}
 }
