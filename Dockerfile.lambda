@@ -4,10 +4,12 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -o /ultrabase ./cmd/ultrabase
+RUN CGO_ENABLED=0 GOOS=linux go build -o /ultrabase ./cmd/ultrabase
 
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates
 COPY --from=builder /ultrabase /usr/local/bin/ultrabase
+COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.9.1 /lambda-adapter /opt/extensions/lambda-adapter
 WORKDIR /app
+EXPOSE 8080
 CMD ["ultrabase", "serve"]

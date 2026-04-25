@@ -1,0 +1,73 @@
+name: Build Docker Images
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Environment to deploy"
+        required: true
+        type: string
+    outputs:
+      image_uri:
+        description: "Docker image URI (tag: <sha>)"
+        value: ${{ jobs.build.outputs.image_uri }}
+      lambda_image_uri:
+        description: "Lambda-compatible Docker image URI (tag: <sha>-lambda)"
+        value: ${{ jobs.build.outputs.lambda_image_uri }}
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  build:
+    name: Build Images
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      image_uri: ${{ steps.set-uri.outputs.image_uri }}
+      lambda_image_uri: ${{ steps.set-uri.outputs.lambda_image_uri }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set short SHA
+        id: vars
+        run: echo "short_sha=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set environment
+        id: env
+        run: echo "env=${{ inputs.environment }}" >> $GITHUB_OUTPUT
+
+      - name: Build and push regular image
+        run: |
+          IMAGE=${{ steps.login-ecr.outputs.registry }}/ultrabase/${{ steps.env.outputs.env }}:${{ steps.vars.outputs.short_sha }}
+          docker build --provenance=false -t $IMAGE .
+          docker push $IMAGE
+
+      - name: Build and push Lambda image
+        run: |
+          IMAGE=${{ steps.login-ecr.outputs.registry }}/ultrabase/${{ steps.env.outputs.env }}:${{ steps.vars.outputs.short_sha }}-lambda
+          docker build --provenance=false -f Dockerfile.lambda -t $IMAGE .
+          docker push $IMAGE
+
+      - name: Set image URIs
+        id: set-uri
+        run: |
+          REGISTRY=${{ steps.login-ecr.outputs.registry }}
+          ENV=${{ steps.env.outputs.env }}
+          SHA=${{ steps.vars.outputs.short_sha }}
+          echo "image_uri=${REGISTRY}/ultrabase/${ENV}:${SHA}" >> $GITHUB_OUTPUT
+          echo "lambda_image_uri=${REGISTRY}/ultrabase/${ENV}:${SHA}-lambda" >> $GITHUB_OUTPUT
