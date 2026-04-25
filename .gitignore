@@ -4,7 +4,7 @@ node_modules/
 # Build output
 dist/
 *.exe
-ultrabase
+/ultrabase
 
 # TypeScript
 tsconfig.tsbuildinfo
