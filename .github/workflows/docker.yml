@@ -2,6 +2,14 @@ name: Build Docker Images
 
 on:
   workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to deploy"
+        required: true
+        type: choice
+        options:
+          - dev
+          - prod
   workflow_call:
     inputs:
       environment:
