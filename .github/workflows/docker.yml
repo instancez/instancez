@@ -32,7 +32,7 @@ jobs:
     name: Check CI Status
     runs-on: ubuntu-latest
     permissions:
-      actions: read
+      checks: read
     outputs:
       tests_passed: ${{ steps.check.outputs.passed }}
     steps:
