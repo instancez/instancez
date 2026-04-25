@@ -287,15 +287,15 @@ export function SettingsPage() {
               <label className="block text-xs font-medium text-muted-foreground mb-1">Max Connections</label>
               <input
                 type="number"
-                value={local.database?.pool?.max || 0}
+                value={local.server.db?.pool?.max || 0}
                 onChange={(e) =>
                   update((c) => ({
                     ...c,
-                    database: {
-                      ...c.database,
-                      pool: {
-                        ...c.database?.pool,
-                        max: parseInt(e.target.value) || 0,
+                    server: {
+                      ...c.server,
+                      db: {
+                        ...c.server.db,
+                        pool: { ...c.server.db.pool, max: parseInt(e.target.value) || 0 },
                       },
                     },
                   }))
@@ -307,15 +307,15 @@ export function SettingsPage() {
               <label className="block text-xs font-medium text-muted-foreground mb-1">Min Connections</label>
               <input
                 type="number"
-                value={local.database?.pool?.min || 0}
+                value={local.server.db?.pool?.min || 0}
                 onChange={(e) =>
                   update((c) => ({
                     ...c,
-                    database: {
-                      ...c.database,
-                      pool: {
-                        ...c.database?.pool,
-                        min: parseInt(e.target.value) || 0,
+                    server: {
+                      ...c.server,
+                      db: {
+                        ...c.server.db,
+                        pool: { ...c.server.db.pool, min: parseInt(e.target.value) || 0 },
                       },
                     },
                   }))
@@ -327,15 +327,15 @@ export function SettingsPage() {
               <label className="block text-xs font-medium text-muted-foreground mb-1">Idle Timeout</label>
               <input
                 type="text"
-                value={local.database?.pool?.idle_timeout || ""}
+                value={local.server.db?.pool?.idle_timeout || ""}
                 onChange={(e) =>
                   update((c) => ({
                     ...c,
-                    database: {
-                      ...c.database,
-                      pool: {
-                        ...c.database?.pool,
-                        idle_timeout: e.target.value,
+                    server: {
+                      ...c.server,
+                      db: {
+                        ...c.server.db,
+                        pool: { ...c.server.db.pool, idle_timeout: e.target.value },
                       },
                     },
                   }))
