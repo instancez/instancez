@@ -20,7 +20,32 @@ env:
   AWS_REGION: us-east-1
 
 jobs:
+  check-ci:
+    name: Check CI Status
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      tests_passed: ${{ steps.check.outputs.passed }}
+    steps:
+      - name: Check if CI already passed for this commit
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RESULT=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
+            --jq '[.check_runs[] | select(.name == "Go unit tests" or .name == "Go integration tests" or .name == "Dashboard tests")] | if length >= 3 and all(.conclusion == "success") then "true" else "false" end')
+          echo "passed=${RESULT}" >> $GITHUB_OUTPUT
+
+  test:
+    name: Run Tests
+    needs: check-ci
+    if: needs.check-ci.outputs.tests_passed != 'true'
+    uses: ./.github/workflows/ci.yml
+
   build:
+    needs: [check-ci, test]
+    if: always() && (needs.test.result == 'success' || needs.test.result == 'skipped')
     name: Build Images
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
