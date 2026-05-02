@@ -12,4 +12,4 @@ COPY --from=builder /ultrabase /usr/local/bin/ultrabase
 COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.9.1 /lambda-adapter /opt/extensions/lambda-adapter
 WORKDIR /app
 EXPOSE 8080
-CMD ["ultrabase", "serve"]
+CMD ["ultrabase", "serve", "--data", "--migrate"]
