@@ -22,10 +22,10 @@ func TestOrderDataTables_UsersFirst(t *testing.T) {
 				},
 			},
 		},
-		Data: map[string]map[string]string{
-			"users": {"demo": "./seeds/users.csv"},
-			"todos": {"init": "./seeds/todos.csv"},
-			"teams": {"init": "./seeds/teams.csv"},
+		Data: map[string]domain.TableData{
+			"users": {CSVFiles: map[string]string{"demo": "./seeds/users.csv"}},
+			"todos": {CSVFiles: map[string]string{"init": "./seeds/todos.csv"}},
+			"teams": {CSVFiles: map[string]string{"init": "./seeds/teams.csv"}},
 		},
 	}
 
@@ -43,8 +43,8 @@ func TestOrderDataTables_NoUsers(t *testing.T) {
 		Tables: map[string]domain.Table{
 			"todos": {Fields: []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}}},
 		},
-		Data: map[string]map[string]string{
-			"todos": {"init": "./seeds/todos.csv"},
+		Data: map[string]domain.TableData{
+			"todos": {CSVFiles: map[string]string{"init": "./seeds/todos.csv"}},
 		},
 	}
 

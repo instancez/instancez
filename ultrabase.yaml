@@ -394,7 +394,7 @@ functions:
               (SELECT COUNT(*) FROM todos WHERE team_id = team_stats.team_id) AS todo_count,
               (SELECT COUNT(*) FROM todos WHERE team_id = team_stats.team_id AND status = 'done') AS completed_count,
               (SELECT COUNT(*) FROM team_members WHERE team_id = team_stats.team_id) AS member_count
-seeds:
+data:
     announcements:
         - body: This is a sample announcement.
           published: true

@@ -202,7 +202,7 @@ storage:
         max_size: 5MB
         public: true
 
-seeds:
+data:
     categories:
         - id: 1
           slug: keyboards

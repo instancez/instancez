@@ -34,3 +34,6 @@ coverage.out
 
 # Docker
 pgdata/
+
+# LLM prompts
+prompts/
