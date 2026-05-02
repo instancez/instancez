@@ -17,7 +17,7 @@ type Config struct {
 	Storage    map[string]Bucket `yaml:"storage" json:"storage"`
 	On         map[string]Trigger `yaml:"on" json:"on"`
 	Functions  map[string]Function `yaml:"functions" json:"functions"`
-	Data       map[string]map[string]string `yaml:"data" json:"data"`
+	Data       map[string][]map[string]any  `yaml:"data" json:"data"`
 }
 
 // coreUserColumns are auto-emitted by the migrator and should not be

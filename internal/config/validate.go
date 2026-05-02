@@ -635,9 +635,9 @@ func validateRPCFunction(path, name string, fn domain.Function) domain.Validatio
 	return errs
 }
 
-func validateData(data map[string]map[string]string, tables map[string]domain.Table) domain.ValidationErrors {
+func validateData(data map[string][]map[string]any, tables map[string]domain.Table) domain.ValidationErrors {
 	var errs domain.ValidationErrors
-	for tableName, entries := range data {
+	for tableName, rows := range data {
 		basePath := fmt.Sprintf("data.%s", tableName)
 		if tableName != "users" {
 			if _, ok := tables[tableName]; !ok {
@@ -648,14 +648,11 @@ func validateData(data map[string]map[string]string, tables map[string]domain.Ta
 				})
 			}
 		}
-		for key, source := range entries {
-			entryPath := fmt.Sprintf("data.%s.%s", tableName, key)
-			if source == "" {
-				errs = append(errs, &domain.ValidationError{
-					Path:    entryPath,
-					Message: "source path is empty",
-				})
-			}
+		if len(rows) == 0 {
+			errs = append(errs, &domain.ValidationError{
+				Path:    basePath,
+				Message: "data list is empty",
+			})
 		}
 	}
 	return errs
