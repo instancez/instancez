@@ -1907,7 +1907,14 @@ func buildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 		}
 	}
 	if len(selectParts) == 0 {
-		selectParts = append(selectParts, tableName+".*")
+		if len(table.Searchable) > 0 {
+			// Exclude the internal _tsv tsvector column from default SELECT.
+			for _, f := range table.Fields {
+				selectParts = append(selectParts, tableName+"."+f.Name)
+			}
+		} else {
+			selectParts = append(selectParts, tableName+".*")
+		}
 	}
 
 	var allArgs []any
