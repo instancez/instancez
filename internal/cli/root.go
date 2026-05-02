@@ -4,8 +4,10 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 const version = "0.1.0"
@@ -19,6 +21,11 @@ func NewRootCmd() *cobra.Command {
 		SilenceErrors: true,
 	}
 
+	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		applyEnvFlags(cmd)
+		return nil
+	}
+
 	root.AddCommand(
 		newInitCmd(),
 		newValidateCmd(),
@@ -30,6 +37,19 @@ func NewRootCmd() *cobra.Command {
 	)
 
 	return root
+}
+
+// applyEnvFlags sets any unset flag from ULTRABASE_<FLAG_UPPER_SNAKE> env vars.
+func applyEnvFlags(cmd *cobra.Command) {
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		if f.Changed {
+			return
+		}
+		envKey := "ULTRABASE_" + strings.ToUpper(strings.ReplaceAll(f.Name, "-", "_"))
+		if v := os.Getenv(envKey); v != "" {
+			_ = cmd.Flags().Set(f.Name, v)
+		}
+	})
 }
 
 func Execute() {

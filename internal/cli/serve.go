@@ -31,7 +31,7 @@ func newServeCmd() *cobra.Command {
 	}
 
 	cmd.Flags().IntVar(&port, "port", 0, "server port (default: from config or 8080)")
-	cmd.Flags().StringVar(&configPath, "config", "ultrabase.yaml", "config source (file path or s3://bucket/key)")
+	cmd.Flags().StringVar(&configPath, "config", "ultrabase.yaml", "config source (file path, s3://bucket/key, or $ULTRABASE_CONFIG)")
 	cmd.Flags().BoolVar(&loadData, "data", false, "apply CSV data imports on startup")
 	cmd.Flags().BoolVar(&migrate, "migrate", false, "run pending migrations on startup")
 	cmd.Flags().BoolVar(&allowDestructive, "allow-destructive", false, "permit DROP TABLE/COLUMN in migrations")
