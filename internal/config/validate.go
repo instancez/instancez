@@ -635,9 +635,9 @@ func validateRPCFunction(path, name string, fn domain.Function) domain.Validatio
 	return errs
 }
 
-func validateData(data map[string][]map[string]any, tables map[string]domain.Table) domain.ValidationErrors {
+func validateData(data map[string]domain.TableData, tables map[string]domain.Table) domain.ValidationErrors {
 	var errs domain.ValidationErrors
-	for tableName, rows := range data {
+	for tableName, td := range data {
 		basePath := fmt.Sprintf("data.%s", tableName)
 		if tableName != "users" {
 			if _, ok := tables[tableName]; !ok {
@@ -648,11 +648,19 @@ func validateData(data map[string][]map[string]any, tables map[string]domain.Tab
 				})
 			}
 		}
-		if len(rows) == 0 {
+		if td.Rows != nil && len(td.Rows) == 0 {
 			errs = append(errs, &domain.ValidationError{
 				Path:    basePath,
 				Message: "data list is empty",
 			})
+		}
+		for key, source := range td.CSVFiles {
+			if source == "" {
+				errs = append(errs, &domain.ValidationError{
+					Path:    fmt.Sprintf("data.%s.%s", tableName, key),
+					Message: "source path is empty",
+				})
+			}
 		}
 	}
 	return errs

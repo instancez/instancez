@@ -8,9 +8,11 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
+	"github.com/saedx1/ultrabase/internal/csvutil"
 	"github.com/saedx1/ultrabase/internal/domain"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -190,6 +192,7 @@ func (e *Engine) applyData(ctx context.Context) error {
 		appliedMap[r.Key] = r
 	}
 
+	configDir := filepath.Dir(e.configPath)
 	ordered := orderDataTables(e.cfg)
 
 	tx, err := e.db.Begin(ctx)
@@ -200,58 +203,129 @@ func (e *Engine) applyData(ctx context.Context) error {
 
 	anyNew := false
 	for _, tableName := range ordered {
-		rows := e.cfg.Data[tableName]
-		compositeKey := tableName + ".inline"
+		td := e.cfg.Data[tableName]
 
-		rowsJSON, _ := json.Marshal(rows)
-		checksum := fmt.Sprintf("%x", sha256.Sum256(rowsJSON))
+		if td.Rows != nil {
+			// Inline rows
+			compositeKey := tableName + ".inline"
+			rowsJSON, _ := json.Marshal(td.Rows)
+			checksum := fmt.Sprintf("%x", sha256.Sum256(rowsJSON))
 
-		if prev, ok := appliedMap[compositeKey]; ok {
-			if prev.Checksum == checksum {
+			if prev, ok := appliedMap[compositeKey]; ok {
+				if prev.Checksum == checksum {
+					continue
+				}
+				e.logger.Warn("inline data changed, skipping (already applied)", "key", compositeKey)
 				continue
 			}
-			e.logger.Warn("inline data changed, skipping (already applied)", "key", compositeKey)
-			continue
-		}
 
-		if err := e.validateDataColumns(tableName, rows); err != nil {
-			tx.Rollback(ctx)
-			return fmt.Errorf("data %s: %w", compositeKey, err)
-		}
+			if err := e.validateDataColumns(tableName, td.Rows); err != nil {
+				tx.Rollback(ctx)
+				return fmt.Errorf("data %s: %w", compositeKey, err)
+			}
 
-		for _, row := range rows {
-			if tableName == "users" {
-				if pwd, ok := row["password"]; ok {
-					if pwdStr, ok := pwd.(string); ok {
-						hash, err := bcrypt.GenerateFromPassword([]byte(pwdStr), bcrypt.DefaultCost)
-						if err != nil {
-							tx.Rollback(ctx)
-							return fmt.Errorf("data %s: hash password: %w", compositeKey, err)
-						}
-						row["password_hash"] = string(hash)
-						delete(row, "password")
-					}
+			for _, row := range td.Rows {
+				if err := e.applyDataRow(ctx, tx, tableName, compositeKey, row); err != nil {
+					tx.Rollback(ctx)
+					return err
 				}
 			}
-			if err := upsertRow(ctx, tx, e.cfg, tableName, row); err != nil {
+
+			if err := e.db.RecordData(ctx, tx, compositeKey, tableName, "inline", checksum, len(td.Rows)); err != nil {
 				tx.Rollback(ctx)
-				return fmt.Errorf("data %s: upsert: %w", compositeKey, err)
+				return fmt.Errorf("data %s: record: %w", compositeKey, err)
+			}
+			e.logger.Info("data imported", "key", compositeKey, "rows", len(td.Rows))
+			anyNew = true
+
+		} else {
+			// CSV file references
+			keys := sortedKeys(td.CSVFiles)
+			for _, key := range keys {
+				csvPath := td.CSVFiles[key]
+				compositeKey := tableName + "." + key
+
+				absPath := csvPath
+				if !filepath.IsAbs(csvPath) {
+					absPath = filepath.Join(configDir, csvPath)
+				}
+
+				fileBytes, err := os.ReadFile(absPath)
+				if err != nil {
+					tx.Rollback(ctx)
+					return fmt.Errorf("data %s: read %s: %w", compositeKey, csvPath, err)
+				}
+				checksum := fmt.Sprintf("%x", sha256.Sum256(fileBytes))
+
+				if prev, ok := appliedMap[compositeKey]; ok {
+					if prev.Checksum == checksum && prev.Source == csvPath {
+						continue
+					}
+					if prev.Checksum != checksum {
+						e.logger.Warn("data file content changed, skipping", "key", compositeKey, "source", csvPath)
+					}
+					if prev.Source != csvPath {
+						e.logger.Warn("data file path changed, skipping", "key", compositeKey, "old_source", prev.Source, "new_source", csvPath)
+					}
+					continue
+				}
+
+				records, err := csvutil.ReadRecords(fileBytes)
+				if err != nil {
+					tx.Rollback(ctx)
+					return fmt.Errorf("data %s: parse csv: %w", compositeKey, err)
+				}
+
+				if err := e.validateDataColumns(tableName, records); err != nil {
+					tx.Rollback(ctx)
+					return fmt.Errorf("data %s: %w", compositeKey, err)
+				}
+
+				table, hasTable := e.cfg.Tables[tableName]
+				if hasTable {
+					records = csvutil.CoerceRecords(records, table)
+				}
+
+				for _, row := range records {
+					if err := e.applyDataRow(ctx, tx, tableName, compositeKey, row); err != nil {
+						tx.Rollback(ctx)
+						return err
+					}
+				}
+
+				if err := e.db.RecordData(ctx, tx, compositeKey, tableName, csvPath, checksum, len(records)); err != nil {
+					tx.Rollback(ctx)
+					return fmt.Errorf("data %s: record: %w", compositeKey, err)
+				}
+				e.logger.Info("data imported", "key", compositeKey, "rows", len(records))
+				anyNew = true
 			}
 		}
-
-		if err := e.db.RecordData(ctx, tx, compositeKey, tableName, "inline", checksum, len(rows)); err != nil {
-			tx.Rollback(ctx)
-			return fmt.Errorf("data %s: record: %w", compositeKey, err)
-		}
-
-		e.logger.Info("data imported", "key", compositeKey, "rows", len(rows))
-		anyNew = true
 	}
 
 	if anyNew {
 		if err := tx.Commit(ctx); err != nil {
 			return fmt.Errorf("commit data transaction: %w", err)
 		}
+	}
+	return nil
+}
+
+func (e *Engine) applyDataRow(ctx context.Context, tx domain.Tx, tableName, compositeKey string, row map[string]any) error {
+	if tableName == "users" {
+		if pwd, ok := row["password"]; ok {
+			if pwdStr, ok := pwd.(string); ok {
+				hash, err := bcrypt.GenerateFromPassword([]byte(pwdStr), bcrypt.DefaultCost)
+				if err != nil {
+					return fmt.Errorf("data %s: hash password: %w", compositeKey, err)
+				}
+				row["password_hash"] = string(hash)
+				delete(row, "password")
+			}
+		}
+	}
+	if err := upsertRow(ctx, tx, e.cfg, tableName, row); err != nil {
+		return fmt.Errorf("data %s: upsert: %w", compositeKey, err)
 	}
 	return nil
 }

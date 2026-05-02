@@ -2,7 +2,12 @@
 // This package has zero imports from adapter/, app/, or external packages.
 package domain
 
-import "time"
+import (
+	"fmt"
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
 
 // Config is the top-level Ultrabase configuration parsed from YAML.
 type Config struct {
@@ -17,7 +22,25 @@ type Config struct {
 	Storage    map[string]Bucket `yaml:"storage" json:"storage"`
 	On         map[string]Trigger `yaml:"on" json:"on"`
 	Functions  map[string]Function `yaml:"functions" json:"functions"`
-	Data       map[string][]map[string]any  `yaml:"data" json:"data"`
+	Data       map[string]TableData         `yaml:"data" json:"data"`
+}
+
+// TableData holds either inline rows (a list) or CSV file references (a label→path map).
+// The YAML value under data.<table> can be either format.
+type TableData struct {
+	Rows     []map[string]any  // set when YAML value is a sequence
+	CSVFiles map[string]string // set when YAML value is a mapping (label → file path)
+}
+
+func (td *TableData) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.SequenceNode:
+		return value.Decode(&td.Rows)
+	case yaml.MappingNode:
+		return value.Decode(&td.CSVFiles)
+	default:
+		return fmt.Errorf("data entry must be a sequence (inline rows) or mapping (csv files)")
+	}
 }
 
 // coreUserColumns are auto-emitted by the migrator and should not be
