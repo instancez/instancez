@@ -7,6 +7,7 @@ import (
 
 	"github.com/saedx1/ultrabase/internal/adapter/postgres"
 	"github.com/saedx1/ultrabase/internal/domain"
+	"golang.org/x/sync/errgroup"
 )
 
 // dbConnections opens the owner and authenticator pools from environment.
@@ -28,14 +29,34 @@ func dbConnections(ctx context.Context, poolCfg domain.PoolConfig) (domain.Owner
 		return domain.OwnerDB{}, domain.RequestDB{}, domain.Roles{}, err
 	}
 
-	owner, err := postgres.NewOwner(ctx, ownerURL, poolCfg)
-	if err != nil {
-		return domain.OwnerDB{}, domain.RequestDB{}, domain.Roles{}, fmt.Errorf("owner pool: %w", err)
-	}
-	auth, err := postgres.NewRequest(ctx, authURL, poolCfg, roles)
-	if err != nil {
-		owner.Close()
-		return domain.OwnerDB{}, domain.RequestDB{}, domain.Roles{}, fmt.Errorf("auth pool: %w", err)
+	// Open both pools concurrently — the TLS+SCRAM handshake on each is
+	// 50–150ms in Lambda cold-start, so doing them in parallel halves the
+	// startup tax. errgroup cancels the sibling on first failure.
+	var owner domain.OwnerDB
+	var auth domain.RequestDB
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		var err error
+		if owner, err = postgres.NewOwner(gctx, ownerURL, poolCfg); err != nil {
+			return fmt.Errorf("owner pool: %w", err)
+		}
+		return nil
+	})
+	g.Go(func() error {
+		var err error
+		if auth, err = postgres.NewRequest(gctx, authURL, poolCfg, roles); err != nil {
+			return fmt.Errorf("auth pool: %w", err)
+		}
+		return nil
+	})
+	if err := g.Wait(); err != nil {
+		if owner.Database != nil {
+			owner.Close()
+		}
+		if auth.Database != nil {
+			auth.Close()
+		}
+		return domain.OwnerDB{}, domain.RequestDB{}, domain.Roles{}, err
 	}
 	return owner, auth, roles, nil
 }
