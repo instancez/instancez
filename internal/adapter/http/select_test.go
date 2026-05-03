@@ -227,14 +227,14 @@ func TestRenderSelectItem_Aggregate(t *testing.T) {
 // into validateSelectItem.
 func TestIsAggSelectEntry(t *testing.T) {
 	cases := map[string]bool{
-		"id.count()":        true,
-		"count()":           true,
-		"total:id.sum()":    true,
-		"id.sum()::text":    true,
-		"author(*)":         false,
-		"author!inner(id)":  false,
-		"title":             false,
-		"metadata->>theme":  false,
+		"id.count()":       true,
+		"count()":          true,
+		"total:id.sum()":   true,
+		"id.sum()::text":   true,
+		"author(*)":        false,
+		"author!inner(id)": false,
+		"title":            false,
+		"metadata->>theme": false,
 	}
 	for in, want := range cases {
 		if got := isAggSelectEntry(in); got != want {

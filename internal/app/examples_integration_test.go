@@ -8,52 +8,18 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
-
-	tc "github.com/testcontainers/testcontainers-go"
-	pgcontainer "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 
 	pgadapter "github.com/saedx1/ultrabase/internal/adapter/postgres"
 	"github.com/saedx1/ultrabase/internal/app"
 	"github.com/saedx1/ultrabase/internal/config"
-	"github.com/saedx1/ultrabase/internal/domain"
+	"github.com/saedx1/ultrabase/internal/testutil/dbboot"
 )
 
 // startExamplesPostgres spins up a postgres:15-alpine container (image cached locally).
 func startExamplesPostgres(t *testing.T) *pgadapter.DB {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	container, err := pgcontainer.Run(ctx,
-		"postgres:15-alpine",
-		pgcontainer.WithDatabase("ultrabase_test"),
-		pgcontainer.WithUsername("ultrabase"),
-		pgcontainer.WithPassword("ultrabase"),
-		tc.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(90*time.Second),
-		),
-	)
-	if err != nil {
-		t.Fatalf("start postgres: %v", err)
-	}
-	t.Cleanup(func() { _ = container.Terminate(context.Background()) })
-
-	connStr, err := container.ConnectionString(context.Background(), "sslmode=disable")
-	if err != nil {
-		t.Fatalf("connection string: %v", err)
-	}
-
-	db, err := pgadapter.New(context.Background(), connStr, domain.PoolConfig{Max: 4, Min: 1})
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-
-	return db
+	owner, _ := dbboot.StartContainer(t, "postgres:15-alpine")
+	return owner.Database.(*pgadapter.DB)
 }
 
 // resetSchema drops all user schemas and recreates public, giving each subtest

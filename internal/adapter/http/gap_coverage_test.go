@@ -174,12 +174,12 @@ func TestBuildBulkInsertQuery_RejectsAllEmptyRecords(t *testing.T) {
 // clients keep working.
 func TestParseHandlingPrefer(t *testing.T) {
 	cases := map[string]string{
-		"":                         "lenient",
-		"return=minimal":           "lenient",
-		"handling=lenient":         "lenient",
-		"handling=strict":          "strict",
+		"":                               "lenient",
+		"return=minimal":                 "lenient",
+		"handling=lenient":               "lenient",
+		"handling=strict":                "strict",
 		"return=minimal,handling=strict": "strict",
-		"handling=unknown":         "lenient",
+		"handling=unknown":               "lenient",
 	}
 	for in, want := range cases {
 		if got := parseHandlingPrefer(in); got != want {

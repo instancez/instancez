@@ -26,10 +26,10 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	ultrahttp "github.com/saedx1/ultrabase/internal/adapter/http"
-	"github.com/saedx1/ultrabase/internal/adapter/postgres"
 	"github.com/saedx1/ultrabase/internal/app"
 	"github.com/saedx1/ultrabase/internal/cli"
 	"github.com/saedx1/ultrabase/internal/domain"
+	"github.com/saedx1/ultrabase/internal/testutil/dbboot"
 )
 
 // TestSupabaseJSCompat boots a real Postgres in a container, runs migrations,
@@ -74,12 +74,16 @@ func TestSupabaseJSCompat(t *testing.T) {
 		t.Fatalf("connection string: %v", err)
 	}
 
-	// ---- 2. Connect and migrate ----
-	db, err := postgres.New(ctx, dbURL, domain.PoolConfig{Max: 4, Min: 1})
+	// ---- 2. Bootstrap roles (owner + authenticator) and connect ----
+	ownerDB, authDB, err := dbboot.Bootstrap(ctx, dbURL, domain.PoolConfig{Max: 4, Min: 1})
 	if err != nil {
-		t.Fatalf("connect: %v", err)
+		t.Fatalf("bootstrap roles: %v", err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() {
+		ownerDB.Close()
+		authDB.Close()
+	})
+	db := ownerDB.Database // used for migrator + JWT key manager (privileged path)
 
 	verifyEmail := false
 	cfg := &domain.Config{
@@ -114,6 +118,21 @@ func TestSupabaseJSCompat(t *testing.T) {
 					{Name: "body", Type: "text", Required: true},
 					{Name: "todo_id", ForeignKey: &domain.ForeignKey{References: "todos.id", OnDelete: "cascade"}},
 					{Name: "user_id", ForeignKey: &domain.ForeignKey{References: "users.id", OnDelete: "cascade"}},
+				},
+			},
+			// rls_secrets exercises the two-login model end-to-end:
+			//   - anon clients must be denied by RLS,
+			//   - service_role (admin key) must bypass RLS,
+			//   - authenticated users can read/write only their own rows.
+			"rls_secrets": {
+				AllowAnon: true, // HTTP middleware permits the request through; RLS does the gating.
+				Fields: []domain.Field{
+					{Name: "id", Type: "bigserial", PrimaryKey: true},
+					{Name: "owner_id", Type: "uuid", Required: true},
+					{Name: "secret", Type: "text", Required: true},
+				},
+				RLS: []domain.RLSPolicy{
+					{Operations: []string{"select", "insert", "update", "delete"}, Check: "owner_id = auth.uid()"},
 				},
 			},
 		},
@@ -243,7 +262,7 @@ func TestSupabaseJSCompat(t *testing.T) {
 	capturedEmail := &captureEmailSender{}
 	srv := ultrahttp.NewServer(ultrahttp.ServerDeps{
 		Config:  cfg,
-		DB:      db,
+		DB:      authDB,
 		Logger:  logger,
 		DevMode: true,
 		JWTKeys: keys,
@@ -305,8 +324,8 @@ func TestSupabaseJSCompat(t *testing.T) {
 // captureEmailSender records every email the auth handler asks to send
 // so tests can assert on content (e.g. extract a 6-digit OTP code).
 type captureEmailSender struct {
-	mu    sync.Mutex
-	sent  []domain.EmailMessage
+	mu   sync.Mutex
+	sent []domain.EmailMessage
 }
 
 func (c *captureEmailSender) Send(_ context.Context, msg domain.EmailMessage) error {

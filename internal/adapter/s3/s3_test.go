@@ -13,12 +13,12 @@ func TestInterfaceCompliance(t *testing.T) {
 
 func TestConfig(t *testing.T) {
 	cfg := Config{
-		Bucket:         "test-bucket",
-		Region:         "us-east-1",
-		Endpoint:       "http://localhost:9000",
-		AccessKeyID:    "minioadmin",
+		Bucket:          "test-bucket",
+		Region:          "us-east-1",
+		Endpoint:        "http://localhost:9000",
+		AccessKeyID:     "minioadmin",
 		SecretAccessKey: "minioadmin",
-		ForcePathStyle: true,
+		ForcePathStyle:  true,
 	}
 
 	if cfg.Bucket != "test-bucket" {

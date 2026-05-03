@@ -26,7 +26,7 @@ type AdminHandler struct {
 func NewAdminHandler(deps ServerDeps) *AdminHandler {
 	return &AdminHandler{
 		cfg:        deps.Config,
-		db:         deps.DB,
+		db:         deps.DB.Database,
 		logger:     deps.Logger,
 		configPath: deps.ConfigPath,
 		devMode:    deps.DevMode,

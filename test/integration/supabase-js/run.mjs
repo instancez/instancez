@@ -1658,6 +1658,68 @@ await step('storage: serverless-friendly presigned URL — sign via /api/storage
   assert(signData.upload_url, 'upload_url present')
 })
 
+// --- RLS / two-login enforcement ---
+// rls_secrets has a policy: owner_id = auth.uid(). This exercises the
+// per-request SET LOCAL ROLE: anon must be denied, service_role must
+// bypass, and authenticated users can only see their own rows.
+await step('rls: anon cannot insert into rls_secrets', async () => {
+  const anonClient = createClient(URL, ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+  const { error } = await anonClient.from('rls_secrets').insert({
+    owner_id: '00000000-0000-0000-0000-000000000001',
+    secret: 'should-fail',
+  })
+  assert(error, 'anon insert should be rejected by RLS')
+})
+
+await step('rls: anon cannot read other users\' secrets', async () => {
+  const anonClient = createClient(URL, ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+  const { data, error } = await anonClient.from('rls_secrets').select('*')
+  if (error) throw error
+  assertEq(data.length, 0, 'anon must not see any rows')
+})
+
+await step('rls: service_role (admin key) bypasses RLS on insert', async () => {
+  const adminClient = createClient(URL, ADMIN_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${ADMIN_KEY}` } },
+  })
+  const { error } = await adminClient.from('rls_secrets').insert({
+    owner_id: '00000000-0000-0000-0000-000000000099',
+    secret: 'admin-seeded',
+  })
+  if (error) throw error
+})
+
+await step('rls: authenticated user can write + read own row', async () => {
+  const userClient = createClient(URL, ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const insRes = await userClient.from('rls_secrets').insert({
+    owner_id: userId,
+    secret: 'mine',
+  })
+  if (insRes.error) throw insRes.error
+  const selRes = await userClient.from('rls_secrets').select('*')
+  if (selRes.error) throw selRes.error
+  assert(selRes.data.length >= 1, 'user should see at least their own row')
+  // owner_id may come back as a string or as a byte buffer depending on the
+  // pgx codec path. Normalize both to a hyphenated UUID string before comparing.
+  const toUuid = (v) => {
+    if (typeof v === 'string') return v
+    const bytes = Array.isArray(v) ? v : Object.values(v)
+    const hex = bytes.map((b) => b.toString(16).padStart(2, '0')).join('')
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+  }
+  for (const row of selRes.data) {
+    assertEq(toUuid(row.owner_id), userId, 'user must only see own rows')
+  }
+})
+
 await step('auth.signOut revokes the session', async () => {
   const client = createClient(URL, ANON_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },

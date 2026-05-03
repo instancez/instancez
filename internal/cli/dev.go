@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/saedx1/ultrabase/internal/adapter/postgres"
 	ultrahttp "github.com/saedx1/ultrabase/internal/adapter/http"
 	"github.com/saedx1/ultrabase/internal/app"
 	"github.com/saedx1/ultrabase/internal/config"
@@ -61,18 +60,12 @@ func runDev(port int, configPath string, noWatch, verbose bool) error {
 	fmt.Printf("  Ultrabase v%s\n\n", version)
 	fmt.Printf("  \u2713 Schema valid\n")
 
-	// Connect to database
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		return fmt.Errorf("DATABASE_URL not set. Add it to .env or export it.")
-	}
-
 	ctx := context.Background()
-	db, err := postgres.New(ctx, dbURL, cfg.Database.Pool)
+	ownerDB, authDB, roles, err := dbConnections(ctx, cfg.Database.Pool)
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
-	fmt.Printf("  \u2713 Connected to PostgreSQL\n")
+	fmt.Printf("  \u2713 Connected to PostgreSQL (owner + authenticator)\n")
 
 	// Initialize providers
 	email, storage, err := initProviders(ctx, cfg)
@@ -89,17 +82,17 @@ func runDev(port int, configPath string, noWatch, verbose bool) error {
 	// Create HTTP server
 	httpServer := ultrahttp.NewServer(ultrahttp.ServerDeps{
 		Config:     cfg,
-		DB:         db,
+		DB:         authDB,
 		Logger:     logger,
 		DevMode:    true,
 		Email:      email,
 		Storage:    storage,
-		JWTKeys:    app.NewJWTKeyManager(db),
+		JWTKeys:    app.NewJWTKeyManager(ownerDB),
 		ConfigPath: configPath,
 	})
 
 	// Create and start engine with HTTP server
-	engine := app.NewEngine(cfg, db,
+	engine := app.NewEngine(cfg, ownerDB, authDB, roles,
 		app.WithMode(app.ModeDev),
 		app.WithMigrate(true),
 		app.WithSeed(true),

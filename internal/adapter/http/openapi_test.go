@@ -117,17 +117,17 @@ func TestGenerateOpenAPI_RPCPaths(t *testing.T) {
 		Server:  domain.Server{Port: 8080},
 		Functions: map[string]domain.Function{
 			"add_numbers": {
-								Volatility: "immutable", Returns: domain.FuncReturn{Type: "int"}, ReturnCategory: "scalar",
+				Volatility: "immutable", Returns: domain.FuncReturn{Type: "int"}, ReturnCategory: "scalar",
 				Args: []domain.FuncArg{
 					{Name: "a", Type: "int", Required: true},
 					{Name: "b", Type: "int", Required: true},
 				},
 			},
 			"touch_row": {
-								Volatility: "volatile", Returns: domain.FuncReturn{Type: "void"}, ReturnCategory: "void",
+				Volatility: "volatile", Returns: domain.FuncReturn{Type: "void"}, ReturnCategory: "void",
 			},
 			"users_by_status": {
-								Volatility: "stable", Returns: domain.FuncReturn{Type: "setof users"}, ReturnCategory: "setof",
+				Volatility: "stable", Returns: domain.FuncReturn{Type: "setof users"}, ReturnCategory: "setof",
 				Args: []domain.FuncArg{
 					{Name: "target", Type: "text", Required: true},
 				},

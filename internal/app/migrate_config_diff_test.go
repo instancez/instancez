@@ -157,7 +157,7 @@ func TestDiffConfigs_RemovedRPCFunction(t *testing.T) {
 	old := &domain.Config{
 		Functions: map[string]domain.Function{
 			"add": {
-								Returns: domain.FuncReturn{Type: "int"},
+				Returns: domain.FuncReturn{Type: "int"},
 				Args: []domain.FuncArg{
 					{Name: "a", Type: "int"},
 					{Name: "b", Type: "int"},
@@ -169,7 +169,7 @@ func TestDiffConfigs_RemovedRPCFunction(t *testing.T) {
 	new := &domain.Config{
 		Functions: map[string]domain.Function{
 			"add": {
-								Returns: domain.FuncReturn{Type: "int"},
+				Returns: domain.FuncReturn{Type: "int"},
 				Args: []domain.FuncArg{
 					{Name: "a", Type: "int"},
 					{Name: "b", Type: "int"},
@@ -214,7 +214,7 @@ func TestDiffConfigs_NoChanges(t *testing.T) {
 	cfg := &domain.Config{
 		Tables: map[string]domain.Table{
 			"todos": {
-				Fields: []domain.Field{{Name: "id", Type: "bigserial"}},
+				Fields:  []domain.Field{{Name: "id", Type: "bigserial"}},
 				Indexes: []domain.Index{{Columns: []string{"id"}}},
 				RLS:     []domain.RLSPolicy{{Operations: []string{"select"}, Check: "true"}},
 			},
@@ -276,7 +276,7 @@ func TestDiffConfigs_RPCFunctionWithArgs_DropSignature(t *testing.T) {
 	old := &domain.Config{
 		Functions: map[string]domain.Function{
 			"compute": {
-								Returns: domain.FuncReturn{Type: "int"},
+				Returns: domain.FuncReturn{Type: "int"},
 				Args: []domain.FuncArg{
 					{Name: "x", Type: "int"},
 					{Name: "y", Type: "text"},

@@ -15,7 +15,7 @@ import (
 // so the pgx positional params slice always matches $1/$2/... in the
 // same positions.
 func TestBuildRPCCall_OrdersByDeclaration(t *testing.T) {
-	fn := domain.Function{		ReturnCategory: "setof",
+	fn := domain.Function{ReturnCategory: "setof",
 		Args: []domain.FuncArg{
 			{Name: "post_id", Type: "uuid"},
 			{Name: "limit_n", Type: "int"},
@@ -42,7 +42,7 @@ func TestBuildRPCCall_OrdersByDeclaration(t *testing.T) {
 // callArgs are dropped from the SQL entirely, letting Postgres fall
 // back to the function's DEFAULT value.
 func TestBuildRPCCall_OmitsMissingArgs(t *testing.T) {
-	fn := domain.Function{		ReturnCategory: "scalar",
+	fn := domain.Function{ReturnCategory: "scalar",
 		Args: []domain.FuncArg{
 			{Name: "a", Type: "int"},
 			{Name: "b", Type: "int"},
@@ -80,8 +80,7 @@ func TestBuildRPCCall_NoArgs(t *testing.T) {
 func TestCollectRPCArgs_RejectsUnknownKeys(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := &CRUDHandler{cfg: &domain.Config{}}
-	fn := domain.Function{		Args: []domain.FuncArg{{Name: "x", Type: "int"}},
-	}
+	fn := domain.Function{Args: []domain.FuncArg{{Name: "x", Type: "int"}}}
 
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest("POST", "/rpc/f", strings.NewReader(`{"x": 1, "DROP TABLE": 2}`))
@@ -102,8 +101,7 @@ func TestCollectRPCArgs_RejectsUnknownKeys(t *testing.T) {
 func TestCollectRPCArgs_RequiresRequired(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := &CRUDHandler{cfg: &domain.Config{}}
-	fn := domain.Function{		Args: []domain.FuncArg{{Name: "x", Type: "int", Required: true}},
-	}
+	fn := domain.Function{Args: []domain.FuncArg{{Name: "x", Type: "int", Required: true}}}
 
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest("POST", "/rpc/f", strings.NewReader(`{}`))
@@ -125,8 +123,7 @@ func TestCollectRPCArgs_RequiresRequired(t *testing.T) {
 func TestCollectRPCArgs_SingleObject(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := &CRUDHandler{cfg: &domain.Config{}}
-	fn := domain.Function{		Args: []domain.FuncArg{{Name: "payload", Type: "jsonb"}},
-	}
+	fn := domain.Function{Args: []domain.FuncArg{{Name: "payload", Type: "jsonb"}}}
 
 	body := `{"a": 1, "b": [2, 3]}`
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -308,8 +305,8 @@ func TestParseRPCChain_Select(t *testing.T) {
 			},
 		},
 	}}
-	fn := domain.Function{		ReturnCategory: "setof",
-		Returns:        domain.FuncReturn{Type: "setof users"},
+	fn := domain.Function{ReturnCategory: "setof",
+		Returns: domain.FuncReturn{Type: "setof users"},
 	}
 
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -333,8 +330,8 @@ func TestParseRPCChain_Select(t *testing.T) {
 	}
 
 	// Embeds on unknown tables must fail — no FK graph to resolve.
-	fnUnknown := domain.Function{		ReturnCategory: "setof",
-		Returns:        domain.FuncReturn{Type: "setof custom_type"},
+	fnUnknown := domain.Function{ReturnCategory: "setof",
+		Returns: domain.FuncReturn{Type: "setof custom_type"},
 	}
 	c3, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c3.Request = httptest.NewRequest("GET", "/rpc/custom_fn?select=id,posts(*)", nil)

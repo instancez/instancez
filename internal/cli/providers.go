@@ -102,12 +102,12 @@ func newS3Store(ctx context.Context, isMinio bool) (*s3.Store, error) {
 	}
 
 	s3Cfg := s3.Config{
-		Bucket:         bucket,
-		Region:         os.Getenv("S3_REGION"),
-		Endpoint:       os.Getenv("S3_ENDPOINT"),
-		AccessKeyID:    os.Getenv("S3_ACCESS_KEY_ID"),
+		Bucket:          bucket,
+		Region:          os.Getenv("S3_REGION"),
+		Endpoint:        os.Getenv("S3_ENDPOINT"),
+		AccessKeyID:     os.Getenv("S3_ACCESS_KEY_ID"),
 		SecretAccessKey: os.Getenv("S3_SECRET_ACCESS_KEY"),
-		ForcePathStyle: isMinio,
+		ForcePathStyle:  isMinio,
 	}
 
 	if isMinio && s3Cfg.Endpoint == "" {

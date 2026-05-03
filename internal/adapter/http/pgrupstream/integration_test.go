@@ -19,6 +19,7 @@ import (
 	ultrahttp "github.com/saedx1/ultrabase/internal/adapter/http"
 	"github.com/saedx1/ultrabase/internal/adapter/postgres"
 	"github.com/saedx1/ultrabase/internal/domain"
+	"github.com/saedx1/ultrabase/internal/testutil/dbboot"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -214,13 +215,15 @@ func TestMain(m *testing.M) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	db, err := postgres.New(ctx, dbURL, domain.PoolConfig{Max: 4, Min: 1})
+	ownerDB, authDB, err := dbboot.Bootstrap(ctx, dbURL, domain.PoolConfig{Max: 4, Min: 1})
 	if err != nil {
-		fmt.Printf("pgrupstream: connect: %v\n", err)
+		fmt.Printf("pgrupstream: bootstrap roles: %v\n", err)
 		os.Exit(1)
 	}
+	db := ownerDB.Database.(*postgres.DB)
 	testDB = db
-	defer db.Close()
+	defer ownerDB.Close()
+	defer authDB.Close()
 
 	if err := db.ExecDDL(ctx, schemaSQL); err != nil {
 		fmt.Printf("pgrupstream: schema: %v\n", err)
@@ -234,7 +237,7 @@ func TestMain(m *testing.M) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	server := ultrahttp.NewServer(ultrahttp.ServerDeps{
 		Config:  buildConfig(),
-		DB:      db,
+		DB:      authDB,
 		Logger:  logger,
 		DevMode: true,
 	})

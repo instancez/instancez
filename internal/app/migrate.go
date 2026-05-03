@@ -14,11 +14,18 @@ import (
 
 // Migrator generates and applies DDL migrations from config.
 type Migrator struct {
-	db domain.Database
+	db    domain.Database
+	roles domain.Roles
 }
 
-func NewMigrator(db domain.Database) *Migrator {
-	return &Migrator{db: db}
+// NewMigrator builds a Migrator. Pass an explicit Roles value, or
+// domain.DefaultRoles() to keep Supabase-compatible defaults.
+func NewMigrator(db domain.Database, roles ...domain.Roles) *Migrator {
+	r := domain.DefaultRoles()
+	if len(roles) > 0 {
+		r = roles[0]
+	}
+	return &Migrator{db: db, roles: r}
 }
 
 // Plan generates DDL statements to bring the DB in sync with the config.
@@ -26,15 +33,19 @@ func NewMigrator(db domain.Database) *Migrator {
 // When oldCfg is provided, it generates only the diff between configs.
 func (m *Migrator) Plan(ctx context.Context, oldCfg, newCfg *domain.Config) (string, error) {
 	if oldCfg == nil {
-		return planFromScratch(newCfg), nil
+		return planFromScratch(newCfg, m.roles), nil
 	}
-	return planUpdate(oldCfg, newCfg), nil
+	return planUpdate(oldCfg, newCfg, m.roles), nil
 }
 
 // planFromScratch generates full DDL for a fresh database using IF NOT EXISTS /
 // CREATE OR REPLACE for safety.
-func planFromScratch(cfg *domain.Config) string {
+func planFromScratch(cfg *domain.Config, roles domain.Roles) string {
 	var ddl []string
+
+	// No-login roles + grants for the two-login Supabase-style model.
+	// Idempotent: re-running is a no-op.
+	ddl = append(ddl, generateRoleDDL(roles)...)
 
 	// Extensions
 	for _, ext := range cfg.Extensions {
@@ -116,9 +127,13 @@ func planFromScratch(cfg *domain.Config) string {
 // planUpdate generates DDL for transitioning from oldCfg to newCfg.
 // It produces removal DDL from the config diff, followed by additions and
 // alterations, then re-emits idempotent items (indexes, RLS, search, functions).
-func planUpdate(oldCfg, newCfg *domain.Config) string {
+func planUpdate(oldCfg, newCfg *domain.Config, roles domain.Roles) string {
 	diff := diffConfigs(oldCfg, newCfg)
 	var ddl []string
+
+	// Re-assert role bootstrapping (idempotent) so renames in roles config
+	// are picked up on subsequent migrations.
+	ddl = append(ddl, generateRoleDDL(roles)...)
 
 	// 1. Removals (DROP TABLE, DROP COLUMN, DROP INDEX, DROP POLICY, etc.)
 	ddl = append(ddl, diff.Removals...)
@@ -222,6 +237,37 @@ func (m *Migrator) Apply(ctx context.Context, cfg *domain.Config) error {
 	return nil
 }
 
+// generateRoleDDL emits idempotent DO blocks creating the three no-login
+// roles (anon/authenticated/service_role) and granting them to the
+// authenticator login role. The login roles themselves (ultrabase_owner +
+// authenticator) must exist before the migration runs — Postgres can't
+// bootstrap them from inside a session that authenticated as one of them.
+func generateRoleDDL(roles domain.Roles) []string {
+	noLogin := []struct{ name, attrs string }{
+		{roles.Anon, ""},
+		{roles.Authenticated, ""},
+		{roles.Service, " BYPASSRLS"},
+	}
+	rlist := fmt.Sprintf("%s, %s, %s", roles.Anon, roles.Authenticated, roles.Service)
+	ddl := make([]string, 0, len(noLogin)+6)
+	for _, r := range noLogin {
+		ddl = append(ddl, fmt.Sprintf(`DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '%s') THEN
+        CREATE ROLE %s NOLOGIN%s;
+    END IF;
+END $$;`, r.name, r.name, r.attrs))
+	}
+	ddl = append(ddl,
+		fmt.Sprintf("GRANT %s TO %s;", rlist, roles.Authenticator),
+		fmt.Sprintf("GRANT USAGE ON SCHEMA public TO %s;", rlist),
+		fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %s;", rlist),
+		fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO %s;", rlist),
+		fmt.Sprintf("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %s;", rlist),
+		fmt.Sprintf("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO %s;", rlist),
+	)
+	return ddl
+}
+
 func generateUsersTable(auth *domain.Auth, extraFields []domain.Field) []string {
 	var ddl []string
 
@@ -297,10 +343,10 @@ func generateUsersTable(auth *domain.Auth, extraFields []domain.Field) []string 
   expires_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );`)
-			ddl = append(ddl, `ALTER TABLE _refresh_tokens ADD COLUMN IF NOT EXISTS session_id TEXT;`)
-			ddl = append(ddl, `ALTER TABLE _refresh_tokens ADD COLUMN IF NOT EXISTS ip TEXT;`)
-			ddl = append(ddl, `ALTER TABLE _refresh_tokens ADD COLUMN IF NOT EXISTS user_agent TEXT;`)
-		}
+		ddl = append(ddl, `ALTER TABLE _refresh_tokens ADD COLUMN IF NOT EXISTS session_id TEXT;`)
+		ddl = append(ddl, `ALTER TABLE _refresh_tokens ADD COLUMN IF NOT EXISTS ip TEXT;`)
+		ddl = append(ddl, `ALTER TABLE _refresh_tokens ADD COLUMN IF NOT EXISTS user_agent TEXT;`)
+	}
 
 	// Email verifications table (for verify email + password reset tokens)
 	if auth.Email != nil {

@@ -1,0 +1,58 @@
+package dbboot
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	tc "github.com/testcontainers/testcontainers-go"
+	pgcontainer "github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/saedx1/ultrabase/internal/domain"
+)
+
+// StartContainer launches a postgres testcontainer, bootstraps the owner +
+// authenticator login roles, and returns ready-to-use pools. Cleanup is
+// registered with t — caller does nothing.
+//
+// Image defaults to postgres:16-alpine; pass an override to pin a version.
+func StartContainer(t *testing.T, image ...string) (domain.OwnerDB, domain.RequestDB) {
+	t.Helper()
+	img := "postgres:16-alpine"
+	if len(image) > 0 {
+		img = image[0]
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	container, err := pgcontainer.Run(ctx, img,
+		pgcontainer.WithDatabase("ultrabase_test"),
+		pgcontainer.WithUsername("postgres"),
+		pgcontainer.WithPassword("postgres"),
+		tc.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).
+				WithStartupTimeout(90*time.Second),
+		),
+	)
+	if err != nil {
+		t.Fatalf("start postgres: %v", err)
+	}
+	t.Cleanup(func() { _ = container.Terminate(context.Background()) })
+
+	url, err := container.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		t.Fatalf("connection string: %v", err)
+	}
+
+	owner, auth, err := Bootstrap(ctx, url, domain.PoolConfig{Max: 4, Min: 1})
+	if err != nil {
+		t.Fatalf("bootstrap roles: %v", err)
+	}
+	t.Cleanup(func() {
+		owner.Close()
+		auth.Close()
+	})
+	return owner, auth
+}

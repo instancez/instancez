@@ -94,4 +94,3 @@ func runSlotReset(configPath string, force bool) error {
 	fmt.Println("  ✓ Slot recreated")
 	return nil
 }
-

@@ -31,7 +31,7 @@ type CRUDHandler struct {
 func NewCRUDHandler(deps ServerDeps) *CRUDHandler {
 	return &CRUDHandler{
 		cfg:     deps.Config,
-		db:      deps.DB,
+		db:      deps.DB.Database,
 		logger:  deps.Logger,
 		jwtKeys: deps.JWTKeys,
 	}
@@ -150,15 +150,6 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 		if err != nil {
 			problemJSON(c, 500, "internal", "Failed to set RLS context")
 			return
-		}
-
-		// If admin, skip RLS
-		if isAdmin(c) {
-			ctx2, cancel2 := h.withDBTimeout(reqCtx, prefer)
-			if cancel2 != nil {
-				defer cancel2()
-			}
-			ctx = ctx2
 		}
 
 		// EXPLAIN plan response
@@ -399,9 +390,6 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 			problemJSON(c, 500, "internal", "Failed to set RLS context")
 			return
 		}
-		if isAdmin(c) {
-			ctx = c.Request.Context()
-		}
 
 		tx, err := h.db.Begin(ctx)
 		if err != nil {
@@ -561,9 +549,6 @@ func (h *CRUDHandler) handleUpsert(tableName string, table domain.Table) gin.Han
 			problemJSON(c, 500, "internal", "Failed to set RLS context")
 			return
 		}
-		if isAdmin(c) {
-			ctx = c.Request.Context()
-		}
 
 		tx, err := h.db.Begin(ctx)
 		if err != nil {
@@ -655,9 +640,6 @@ func (h *CRUDHandler) handleUpdate(tableName string, table domain.Table) gin.Han
 			problemJSON(c, 500, "internal", "Failed to set RLS context")
 			return
 		}
-		if isAdmin(c) {
-			ctx = c.Request.Context()
-		}
 
 		returnMode := parseReturnPrefer(prefer)
 		maxAffected, hasMax := parseMaxAffectedPrefer(prefer)
@@ -728,9 +710,6 @@ func (h *CRUDHandler) handleDelete(tableName string, table domain.Table) gin.Han
 		if err != nil {
 			problemJSON(c, 500, "internal", "Failed to set RLS context")
 			return
-		}
-		if isAdmin(c) {
-			ctx = c.Request.Context()
 		}
 
 		tx, err := h.db.Begin(ctx)
@@ -1571,7 +1550,6 @@ func validateColumn(table domain.Table, col string) error {
 	}
 	return nil
 }
-
 
 var validOps = map[string]string{
 	"eq":         "=",

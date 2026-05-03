@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/saedx1/ultrabase/internal/adapter/postgres"
 	ultrahttp "github.com/saedx1/ultrabase/internal/adapter/http"
 	"github.com/saedx1/ultrabase/internal/app"
 	"github.com/saedx1/ultrabase/internal/config"
@@ -75,17 +74,12 @@ func runServe(port int, configPath string, loadData, migrate, allowDestructive b
 
 	logger.Warn("ultrabase is designed for single-replica deployments; multi-replica support is planned")
 
-	// Connect to database
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		return fmt.Errorf("DATABASE_URL not set")
-	}
-
-	db, err := postgres.New(ctx, dbURL, cfg.Database.Pool)
+	// Connect to database (owner + authenticator pools).
+	ownerDB, authDB, roles, err := dbConnections(ctx, cfg.Database.Pool)
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
-	fmt.Printf("  \u2713 Connected to PostgreSQL\n")
+	fmt.Printf("  \u2713 Connected to PostgreSQL (owner + authenticator)\n")
 
 	// Initialize providers
 	email, storage, err := initProviders(ctx, cfg)
@@ -119,17 +113,17 @@ func runServe(port int, configPath string, loadData, migrate, allowDestructive b
 	// Create HTTP server
 	httpServer := ultrahttp.NewServer(ultrahttp.ServerDeps{
 		Config:     cfg,
-		DB:         db,
+		DB:         authDB,
 		Logger:     logger,
 		DevMode:    false,
 		Email:      email,
 		Storage:    storage,
-		JWTKeys:    app.NewJWTKeyManager(db),
+		JWTKeys:    app.NewJWTKeyManager(ownerDB),
 		ConfigPath: adminConfigPath,
 	})
 
 	// Create engine with HTTP server
-	engine := app.NewEngine(cfg, db,
+	engine := app.NewEngine(cfg, ownerDB, authDB, roles,
 		app.WithMode(app.ModeProd),
 		app.WithMigrate(migrate),
 		app.WithSeed(loadData),

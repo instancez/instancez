@@ -32,7 +32,7 @@ type StorageV1Handler struct {
 func NewStorageV1Handler(deps ServerDeps) *StorageV1Handler {
 	return &StorageV1Handler{
 		cfg:     deps.Config,
-		db:      deps.DB,
+		db:      deps.DB.Database,
 		logger:  deps.Logger,
 		storage: deps.Storage,
 		jwtKeys: deps.JWTKeys,
@@ -304,8 +304,8 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 	}
 
 	c.JSON(200, gin.H{
-		"Key":     bucketName + "/" + objPath,
-		"Id":      objPath,
+		"Key": bucketName + "/" + objPath,
+		"Id":  objPath,
 	})
 }
 
@@ -673,9 +673,9 @@ func (h *StorageV1Handler) removeObjects(c *gin.Context) {
 
 func (h *StorageV1Handler) moveObject(c *gin.Context) {
 	var req struct {
-		BucketID        string `json:"bucketId"`
-		SourceKey       string `json:"sourceKey"`
-		DestinationKey  string `json:"destinationKey"`
+		BucketID          string `json:"bucketId"`
+		SourceKey         string `json:"sourceKey"`
+		DestinationKey    string `json:"destinationKey"`
 		DestinationBucket string `json:"destinationBucket"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -721,9 +721,9 @@ func (h *StorageV1Handler) moveObject(c *gin.Context) {
 
 func (h *StorageV1Handler) copyObject(c *gin.Context) {
 	var req struct {
-		BucketID        string `json:"bucketId"`
-		SourceKey       string `json:"sourceKey"`
-		DestinationKey  string `json:"destinationKey"`
+		BucketID          string `json:"bucketId"`
+		SourceKey         string `json:"sourceKey"`
+		DestinationKey    string `json:"destinationKey"`
 		DestinationBucket string `json:"destinationBucket"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -905,8 +905,8 @@ func (h *StorageV1Handler) uploadToSignedURL(c *gin.Context) {
 		bucketName, objPath, size, contentType)
 
 	c.JSON(200, gin.H{
-		"Key":  bucketName + "/" + objPath,
-		"path": objPath,
+		"Key":      bucketName + "/" + objPath,
+		"path":     objPath,
 		"fullPath": bucketName + "/" + objPath,
 	})
 }
@@ -950,4 +950,3 @@ func (h *StorageV1Handler) verifyUploadToken(token, bucket, objPath string) bool
 	expected := hex.EncodeToString(mac.Sum(nil))
 	return hmac.Equal([]byte(parts[1]), []byte(expected))
 }
-

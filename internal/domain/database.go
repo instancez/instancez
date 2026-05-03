@@ -1,6 +1,86 @@
 package domain
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"regexp"
+)
+
+// JWT "role" claim values accepted on the wire (Supabase contract). These
+// are wire-format tokens, not Postgres role identifiers — the request pool
+// maps each to the corresponding Roles.* identifier when issuing SET LOCAL
+// ROLE. Do not rename these to track configurable Roles values.
+const (
+	JWTRoleAnon          = "anon"
+	JWTRoleAuthenticated = "authenticated"
+	JWTRoleService       = "service_role"
+)
+
+// Roles holds the configurable Postgres role names. Defaults match Supabase
+// for supabase-js compatibility. The owner login role is implicit in the
+// owner connection URL and not represented here.
+type Roles struct {
+	Authenticator string // login role used by the request pool; appears in GRANT ... TO
+	Anon          string // RLS-enforced role for unauthenticated requests
+	Authenticated string // RLS-enforced role for logged-in users
+	Service       string // BYPASSRLS role for trusted backend / admin-key requests
+}
+
+// DefaultRoles returns the Supabase-compatible defaults.
+func DefaultRoles() Roles {
+	return Roles{
+		Authenticator: "authenticator",
+		Anon:          JWTRoleAnon,
+		Authenticated: JWTRoleAuthenticated,
+		Service:       JWTRoleService,
+	}
+}
+
+var roleIdentRE = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]{0,62}$`)
+
+// Validate ensures all role names are safe Postgres identifiers and distinct.
+func (r Roles) Validate() error {
+	pairs := []struct{ name, val string }{
+		{"authenticator", r.Authenticator},
+		{"anon", r.Anon},
+		{"authenticated", r.Authenticated},
+		{"service", r.Service},
+	}
+	seen := make(map[string]string, len(pairs))
+	for _, p := range pairs {
+		if p.val == "" {
+			return fmt.Errorf("role %s is empty", p.name)
+		}
+		if !roleIdentRE.MatchString(p.val) {
+			return fmt.Errorf("role %s = %q is not a valid Postgres identifier", p.name, p.val)
+		}
+		if other, ok := seen[p.val]; ok {
+			return fmt.Errorf("role %s = %q duplicates role %s", p.name, p.val, other)
+		}
+		seen[p.val] = p.name
+	}
+	return nil
+}
+
+// AssumableFromSession returns the role name that a request transaction
+// should SET LOCAL ROLE to, based on the inbound session. The case labels
+// accept both the wire-format JWT claim values (Supabase contract) and the
+// configured Roles.* identifiers, which differ when ops rename them.
+func (r Roles) AssumableFromSession(s Session) string {
+	switch s.Role {
+	case JWTRoleService, r.Service:
+		return r.Service
+	case JWTRoleAuthenticated, r.Authenticated:
+		return r.Authenticated
+	case JWTRoleAnon, r.Anon, "":
+		if s.IsAuthenticated {
+			return r.Authenticated
+		}
+		return r.Anon
+	default:
+		return r.Anon
+	}
+}
 
 // Database is the port for all database operations.
 type Database interface {
@@ -30,6 +110,17 @@ type Database interface {
 	// Transactions
 	Begin(ctx context.Context) (Tx, error)
 }
+
+// OwnerDB is the privileged database connection used for migrations,
+// seeding, replication slot creation, and extension installs. It MUST NOT
+// be passed into HTTP request handling — the distinct named type makes
+// such a substitution a compile error at every API boundary.
+type OwnerDB struct{ Database }
+
+// RequestDB is the per-request database connection used by HTTP handlers.
+// Each transaction issues SET LOCAL ROLE to anon/authenticated/service_role
+// based on the inbound session. It MUST NOT be used for DDL or seeding.
+type RequestDB struct{ Database }
 
 // Tx represents a database transaction.
 type Tx interface {

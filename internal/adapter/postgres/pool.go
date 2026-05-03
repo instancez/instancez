@@ -11,12 +11,39 @@ import (
 	"github.com/saedx1/ultrabase/internal/domain"
 )
 
-// DB implements domain.Database backed by a pgx connection pool.
+// DB implements domain.Database backed by a pgx connection pool. The roles
+// field is non-nil only when wrapped as a RequestDB.
 type DB struct {
-	pool *pgxpool.Pool
+	pool  *pgxpool.Pool
+	roles *domain.Roles
 }
 
-// New creates a new DB from a DATABASE_URL and pool config.
+// NewOwner constructs the privileged pool used for migrations, seeding,
+// replication slot creation, and extension installs.
+func NewOwner(ctx context.Context, databaseURL string, poolCfg domain.PoolConfig) (domain.OwnerDB, error) {
+	db, err := New(ctx, databaseURL, poolCfg)
+	if err != nil {
+		return domain.OwnerDB{}, err
+	}
+	return domain.OwnerDB{Database: db}, nil
+}
+
+// NewRequest constructs the per-request pool. Each transaction issues
+// SET LOCAL ROLE based on the inbound session before running queries.
+func NewRequest(ctx context.Context, databaseURL string, poolCfg domain.PoolConfig, roles domain.Roles) (domain.RequestDB, error) {
+	if err := roles.Validate(); err != nil {
+		return domain.RequestDB{}, fmt.Errorf("invalid roles config: %w", err)
+	}
+	db, err := New(ctx, databaseURL, poolCfg)
+	if err != nil {
+		return domain.RequestDB{}, err
+	}
+	db.roles = &roles
+	return domain.RequestDB{Database: db}, nil
+}
+
+// New creates a new DB from a DATABASE_URL and pool config. Most callers
+// should use NewOwner or NewRequest instead.
 func New(ctx context.Context, databaseURL string, poolCfg domain.PoolConfig) (*DB, error) {
 	cfg, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
@@ -211,67 +238,56 @@ func (db *DB) WithRLS(ctx context.Context, session domain.Session) (context.Cont
 	return contextWithSession(ctx, session), nil
 }
 
-// Begin starts a new transaction.
+// Begin starts a new transaction. Session GUCs, request-id, and (on the
+// request pool) SET LOCAL ROLE are all batched into a single Exec to keep
+// the per-request hot path to one round-trip.
 func (db *DB) Begin(ctx context.Context) (domain.Tx, error) {
 	tx, err := db.pool.Begin(ctx)
 	if err != nil {
 		return nil, &domain.DatabaseError{Op: "begin", Err: err}
 	}
 
-	// If there's an RLS session in context, set the session variables.
-	if session, ok := sessionFromContext(ctx); ok {
-		if err := setRLSVars(ctx, tx, session); err != nil {
-			tx.Rollback(ctx)
-			return nil, err
-		}
-	}
-
-	// Publish the incoming request ID as a per-transaction GUC so RLS
-	// policies and RPC bodies can read it via current_setting. Independent
-	// of session — even unauthenticated and admin-key requests carry one.
-	if reqID := domain.RequestIDFromContext(ctx); reqID != "" {
-		stmt := "SET LOCAL request.request_id = " + quote(reqID)
+	if stmt := buildSessionSetup(ctx, db.roles); stmt != "" {
 		if _, err := tx.Exec(ctx, stmt); err != nil {
 			tx.Rollback(ctx)
-			return nil, &domain.DatabaseError{Op: "set_request_id", Err: err}
+			return nil, &domain.DatabaseError{Op: "set_session_vars", Err: err}
 		}
 	}
-
 	return &Tx{tx: tx}, nil
 }
 
-func setRLSVars(ctx context.Context, tx pgx.Tx, session domain.Session) error {
-	// Publish GoTrue-compatible GUCs so RLS helpers (auth.uid, auth.role,
-	// auth.email, auth.jwt) can read them. We also set the legacy
-	// app.user_id / app.is_authenticated variables during the transition.
-	role := session.Role
-	if role == "" {
+// buildSessionSetup composes the SET LOCAL statements for a transaction.
+// Role names come from Roles which is validated at construction; literal
+// values are escaped via quote(). Returns "" when nothing needs setting.
+func buildSessionSetup(ctx context.Context, roles *domain.Roles) string {
+	var b strings.Builder
+	if session, ok := sessionFromContext(ctx); ok {
+		role := session.Role
+		if role == "" {
+			if session.IsAuthenticated {
+				role = "authenticated"
+			} else {
+				role = "anon"
+			}
+		}
+		isAuthed := "false"
 		if session.IsAuthenticated {
-			role = "authenticated"
-		} else {
-			role = "anon"
+			isAuthed = "true"
+		}
+		fmt.Fprintf(&b, "SET LOCAL app.user_id = %s;", quote(session.UserID))
+		fmt.Fprintf(&b, "SET LOCAL app.role = %s;", quote(role))
+		fmt.Fprintf(&b, "SET LOCAL app.email = %s;", quote(session.Email))
+		fmt.Fprintf(&b, "SET LOCAL app.jwt = %s;", quote(session.JWT))
+		fmt.Fprintf(&b, "SET LOCAL app.is_authenticated = %s;", quote(isAuthed))
+
+		if roles != nil {
+			fmt.Fprintf(&b, "SET LOCAL ROLE %s;", roles.AssumableFromSession(session))
 		}
 	}
-
-	vars := [][2]string{
-		{"app.user_id", session.UserID},
-		{"app.role", role},
-		{"app.email", session.Email},
-		{"app.jwt", session.JWT},
+	if reqID := domain.RequestIDFromContext(ctx); reqID != "" {
+		fmt.Fprintf(&b, "SET LOCAL request.request_id = %s;", quote(reqID))
 	}
-	if session.IsAuthenticated {
-		vars = append(vars, [2]string{"app.is_authenticated", "true"})
-	} else {
-		vars = append(vars, [2]string{"app.is_authenticated", "false"})
-	}
-
-	for _, kv := range vars {
-		stmt := "SET LOCAL " + kv[0] + " = " + quote(kv[1])
-		if _, err := tx.Exec(ctx, stmt); err != nil {
-			return &domain.DatabaseError{Op: "set_rls_" + kv[0], Err: err}
-		}
-	}
-	return nil
+	return b.String()
 }
 
 func quote(s string) string {

@@ -336,7 +336,7 @@ func mustContain(t *testing.T, s, substr string) {
 // drift in quoting, spacing, or clause order surfaces immediately.
 func TestGenerateRPCFunction_Signature(t *testing.T) {
 	fn := domain.Function{
-				Language:   "sql",
+		Language:   "sql",
 		Volatility: "stable",
 		Security:   "definer",
 		Returns:    domain.FuncReturn{Type: "int"},
@@ -363,7 +363,7 @@ func TestGenerateRPCFunction_Signature(t *testing.T) {
 // so we pre-populate them here and assert the invoker clause lands.
 func TestGenerateRPCFunction_VoidDefaults(t *testing.T) {
 	fn := domain.Function{
-				Language:   "plpgsql",
+		Language:   "plpgsql",
 		Volatility: "volatile",
 		Security:   "invoker",
 		Returns:    domain.FuncReturn{Type: "void"},

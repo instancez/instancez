@@ -14,9 +14,9 @@ const version = "0.1.0"
 
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "ultrabase",
-		Short: "Ultrabase — declarative backend from a single YAML file",
-		Long:  "Ultrabase turns a YAML config into a full backend: Postgres CRUD, auth, storage, events, and more.",
+		Use:           "ultrabase",
+		Short:         "Ultrabase — declarative backend from a single YAML file",
+		Long:          "Ultrabase turns a YAML config into a full backend: Postgres CRUD, auth, storage, events, and more.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

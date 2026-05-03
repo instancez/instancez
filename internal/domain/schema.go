@@ -11,18 +11,18 @@ import (
 
 // Config is the top-level Ultrabase configuration parsed from YAML.
 type Config struct {
-	Version    int               `yaml:"version" json:"version"`
-	Project    Project           `yaml:"project" json:"project"`
-	Extensions []string          `yaml:"extensions" json:"extensions"`
-	Database   DatabaseConfig    `yaml:"database" json:"database"`
-	Server     Server            `yaml:"server" json:"server"`
-	Providers  Providers         `yaml:"providers" json:"providers"`
-	Auth       *Auth             `yaml:"auth" json:"auth"`
-	Tables     map[string]Table  `yaml:"tables" json:"tables"`
-	Storage    map[string]Bucket `yaml:"storage" json:"storage"`
-	On         map[string]Trigger `yaml:"on" json:"on"`
-	Functions  map[string]Function `yaml:"functions" json:"functions"`
-	Data       map[string]TableData         `yaml:"data" json:"data"`
+	Version    int                  `yaml:"version" json:"version"`
+	Project    Project              `yaml:"project" json:"project"`
+	Extensions []string             `yaml:"extensions" json:"extensions"`
+	Database   DatabaseConfig       `yaml:"database" json:"database"`
+	Server     Server               `yaml:"server" json:"server"`
+	Providers  Providers            `yaml:"providers" json:"providers"`
+	Auth       *Auth                `yaml:"auth" json:"auth"`
+	Tables     map[string]Table     `yaml:"tables" json:"tables"`
+	Storage    map[string]Bucket    `yaml:"storage" json:"storage"`
+	On         map[string]Trigger   `yaml:"on" json:"on"`
+	Functions  map[string]Function  `yaml:"functions" json:"functions"`
+	Data       map[string]TableData `yaml:"data" json:"data"`
 }
 
 // TableData holds either inline rows (a list) or CSV file references (a label→path map).
@@ -67,7 +67,6 @@ func (c *Config) UserExtraFields() []Field {
 	return extra
 }
 
-
 // Project holds display-only metadata.
 type Project struct {
 	Name        string `yaml:"name" json:"name"`
@@ -76,12 +75,12 @@ type Project struct {
 
 // Server groups runtime/HTTP concerns.
 type Server struct {
-	Port        int          `yaml:"port" json:"port"`
-	CORS        CORS         `yaml:"cors" json:"cors"`
-	Timeouts    Timeouts     `yaml:"timeouts" json:"timeouts"`
-	MaxBodySize string       `yaml:"max_body_size" json:"max_body_size"`
-	DocsUI      *bool        `yaml:"docs_ui" json:"docs_ui"`
-	MaxLimit    int          `yaml:"max_limit" json:"max_limit"`
+	Port        int      `yaml:"port" json:"port"`
+	CORS        CORS     `yaml:"cors" json:"cors"`
+	Timeouts    Timeouts `yaml:"timeouts" json:"timeouts"`
+	MaxBodySize string   `yaml:"max_body_size" json:"max_body_size"`
+	DocsUI      *bool    `yaml:"docs_ui" json:"docs_ui"`
+	MaxLimit    int      `yaml:"max_limit" json:"max_limit"`
 }
 
 type CORS struct {
@@ -127,16 +126,16 @@ type StorageProvider struct {
 // tables.users like any other table; core columns (id, email, password_hash,
 // etc.) are auto-emitted by the migrator.
 type Auth struct {
-	JWTExpiry           string            `yaml:"jwt_expiry" json:"jwt_expiry"`
-	RefreshTokens       bool              `yaml:"refresh_tokens" json:"refresh_tokens"`
-	RefreshTokenExpiry  string            `yaml:"refresh_token_expiry" json:"refresh_token_expiry"`
-	Email               *AuthEmail        `yaml:"email" json:"email"`
-	Google              *OAuthProvider    `yaml:"google" json:"google"`
-	GitHub              *OAuthProvider    `yaml:"github" json:"github"`
+	JWTExpiry          string         `yaml:"jwt_expiry" json:"jwt_expiry"`
+	RefreshTokens      bool           `yaml:"refresh_tokens" json:"refresh_tokens"`
+	RefreshTokenExpiry string         `yaml:"refresh_token_expiry" json:"refresh_token_expiry"`
+	Email              *AuthEmail     `yaml:"email" json:"email"`
+	Google             *OAuthProvider `yaml:"google" json:"google"`
+	GitHub             *OAuthProvider `yaml:"github" json:"github"`
 }
 
 type AuthEmail struct {
-	VerifyEmail bool                    `yaml:"verify_email" json:"verify_email"`
+	VerifyEmail bool                     `yaml:"verify_email" json:"verify_email"`
 	Templates   map[string]EmailTemplate `yaml:"templates" json:"templates"`
 }
 
@@ -154,13 +153,13 @@ type OAuthProvider struct {
 
 // Table defines a database table.
 type Table struct {
-	Schema       string              `yaml:"schema" json:"schema"`
-	Fields       []Field             `yaml:"fields" json:"fields"`
-	Indexes      []Index             `yaml:"indexes" json:"indexes"`
-	RLS          []RLSPolicy         `yaml:"rls" json:"rls"`
-	AllowAnon    bool                `yaml:"allow_anon" json:"allow_anon"`
-	Searchable   []string            `yaml:"searchable" json:"searchable"`
-	SearchConfig string              `yaml:"search_config" json:"search_config"`
+	Schema       string      `yaml:"schema" json:"schema"`
+	Fields       []Field     `yaml:"fields" json:"fields"`
+	Indexes      []Index     `yaml:"indexes" json:"indexes"`
+	RLS          []RLSPolicy `yaml:"rls" json:"rls"`
+	AllowAnon    bool        `yaml:"allow_anon" json:"allow_anon"`
+	Searchable   []string    `yaml:"searchable" json:"searchable"`
+	SearchConfig string      `yaml:"search_config" json:"search_config"`
 }
 
 // EffectiveSchema returns the table's schema, defaulting to "public".
@@ -204,8 +203,8 @@ type Field struct {
 	Max        *float64    `yaml:"max" json:"max"`
 	Check      string      `yaml:"check" json:"check"`
 	ForeignKey *ForeignKey `yaml:"foreign_key" json:"foreign_key"`
-	Ref        string      `yaml:"ref" json:"ref"`               // storage reference: "storage.<bucket>"
-	OnDelete   string      `yaml:"on_delete" json:"on_delete"`   // for storage refs: cascade | keep
+	Ref        string      `yaml:"ref" json:"ref"`             // storage reference: "storage.<bucket>"
+	OnDelete   string      `yaml:"on_delete" json:"on_delete"` // for storage refs: cascade | keep
 }
 
 // ForeignKey defines a foreign key reference.
@@ -223,8 +222,8 @@ type Index struct {
 
 // RLSPolicy defines a row-level security policy.
 type RLSPolicy struct {
-	Operations []string `yaml:"operations" json:"operations"` // select, insert, update, delete
-	Check      string   `yaml:"check" json:"check"`           // SQL expression
+	Operations []string `yaml:"operations" json:"operations"`         // select, insert, update, delete
+	Check      string   `yaml:"check" json:"check"`                   // SQL expression
 	Type       string   `yaml:"type,omitempty" json:"type,omitempty"` // permissive (default) | restrictive
 }
 
@@ -238,10 +237,10 @@ type Bucket struct {
 
 // Trigger defines an event-driven trigger.
 type Trigger struct {
-	Events   []string        `yaml:"events" json:"events"`       // WAL events: "table.operation"
-	Schedule string          `yaml:"schedule" json:"schedule"`   // cron expression
-	Webhook  *WebhookAction  `yaml:"webhook" json:"webhook"`
-	Email    *EmailAction    `yaml:"email" json:"email"`
+	Events   []string       `yaml:"events" json:"events"`     // WAL events: "table.operation"
+	Schedule string         `yaml:"schedule" json:"schedule"` // cron expression
+	Webhook  *WebhookAction `yaml:"webhook" json:"webhook"`
+	Email    *EmailAction   `yaml:"email" json:"email"`
 }
 
 type WebhookAction struct {
@@ -269,13 +268,13 @@ type EmailAction struct {
 // Postgres stored procedure (CREATE OR REPLACE FUNCTION), exposed at
 // /rest/v1/rpc/<name> for supabase-js .rpc() compatibility.
 type Function struct {
-	Description  string    `yaml:"description" json:"description"`
-	AuthRequired bool      `yaml:"auth_required" json:"auth_required"`
-	Language     string    `yaml:"language,omitempty" json:"language,omitempty"`
-	Volatility   string    `yaml:"volatility,omitempty" json:"volatility,omitempty"`
-	Security     string    `yaml:"security,omitempty" json:"security,omitempty"`
-	Args         []FuncArg `yaml:"args,omitempty" json:"args,omitempty"`
-	Body         string    `yaml:"body,omitempty" json:"body,omitempty"`
+	Description  string     `yaml:"description" json:"description"`
+	AuthRequired bool       `yaml:"auth_required" json:"auth_required"`
+	Language     string     `yaml:"language,omitempty" json:"language,omitempty"`
+	Volatility   string     `yaml:"volatility,omitempty" json:"volatility,omitempty"`
+	Security     string     `yaml:"security,omitempty" json:"security,omitempty"`
+	Args         []FuncArg  `yaml:"args,omitempty" json:"args,omitempty"`
+	Body         string     `yaml:"body,omitempty" json:"body,omitempty"`
 	Returns      FuncReturn `yaml:"returns" json:"returns"`
 
 	// ReturnCategory is derived from Returns.Type at config load.

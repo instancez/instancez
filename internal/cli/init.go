@@ -80,8 +80,25 @@ tables:
         check: "user_id = auth.uid()"
 `, name)
 
-	envContent := `# Database
-DATABASE_URL=postgres://user:password@localhost:5432/` + name + `?sslmode=disable
+	envContent := `# Database — two-login Supabase-style setup.
+#
+# Provision once on the Postgres server (run as superuser):
+#   CREATE ROLE ultrabase_owner LOGIN PASSWORD 'CHANGE_ME'
+#       CREATEROLE CREATEDB BYPASSRLS REPLICATION;
+#   CREATE ROLE authenticator LOGIN PASSWORD 'CHANGE_ME' INHERIT;
+#   ALTER DATABASE ` + name + ` OWNER TO ultrabase_owner;
+#   ALTER SCHEMA public OWNER TO ultrabase_owner;
+# The three no-login roles (anon, authenticated, service_role) and grants
+# to authenticator are created automatically by ultrabase migrations.
+
+ULTRABASE_OWNER_DATABASE_URL=postgres://ultrabase_owner:CHANGE_ME@localhost:5432/` + name + `?sslmode=disable
+ULTRABASE_AUTH_DATABASE_URL=postgres://authenticator:CHANGE_ME@localhost:5432/` + name + `?sslmode=disable
+
+# Optional role name overrides (defaults match Supabase / supabase-js).
+# ULTRABASE_DB_AUTHENTICATOR_ROLE=authenticator
+# ULTRABASE_DB_ANON_ROLE=anon
+# ULTRABASE_DB_AUTHENTICATED_ROLE=authenticated
+# ULTRABASE_DB_SERVICE_ROLE=service_role
 
 # Optional: Email provider
 # ULTRABASE_EMAIL_API_KEY=re_xxxxx

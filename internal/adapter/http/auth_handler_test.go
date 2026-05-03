@@ -277,27 +277,27 @@ func TestAuthHandler_Mount_RegistersGoTrueRoutes(t *testing.T) {
 	h.Mount(r.Group(""))
 
 	want := map[string]string{
-		"POST /auth/v1/signup":                "",
-		"POST /auth/v1/token":                 "",
-		"GET /auth/v1/user":                   "",
-		"PUT /auth/v1/user":                   "",
-		"POST /auth/v1/logout":                "",
-		"POST /auth/v1/recover":               "",
-		"POST /auth/v1/verify":                "",
-		"GET /auth/v1/verify":                 "",
-		"POST /auth/v1/otp":                   "",
-		"POST /auth/v1/admin/generate_link":   "",
-		"POST /auth/v1/admin/users":           "",
-		"GET /auth/v1/admin/users":            "",
-		"GET /auth/v1/admin/users/:uid":       "",
-		"PUT /auth/v1/admin/users/:uid":       "",
-		"DELETE /auth/v1/admin/users/:uid":    "",
-		"POST /auth/v1/invite":                "",
-		"GET /auth/v1/authorize":              "",
-		"GET /auth/v1/settings":               "",
-		"GET /auth/v1/factors":                "",
-		"POST /auth/v1/factors":               "",
-		"DELETE /auth/v1/factors/:factor_id":  "",
+		"POST /auth/v1/signup":                       "",
+		"POST /auth/v1/token":                        "",
+		"GET /auth/v1/user":                          "",
+		"PUT /auth/v1/user":                          "",
+		"POST /auth/v1/logout":                       "",
+		"POST /auth/v1/recover":                      "",
+		"POST /auth/v1/verify":                       "",
+		"GET /auth/v1/verify":                        "",
+		"POST /auth/v1/otp":                          "",
+		"POST /auth/v1/admin/generate_link":          "",
+		"POST /auth/v1/admin/users":                  "",
+		"GET /auth/v1/admin/users":                   "",
+		"GET /auth/v1/admin/users/:uid":              "",
+		"PUT /auth/v1/admin/users/:uid":              "",
+		"DELETE /auth/v1/admin/users/:uid":           "",
+		"POST /auth/v1/invite":                       "",
+		"GET /auth/v1/authorize":                     "",
+		"GET /auth/v1/settings":                      "",
+		"GET /auth/v1/factors":                       "",
+		"POST /auth/v1/factors":                      "",
+		"DELETE /auth/v1/factors/:factor_id":         "",
 		"POST /auth/v1/factors/:factor_id/challenge": "",
 		"POST /auth/v1/factors/:factor_id/verify":    "",
 	}
@@ -431,9 +431,9 @@ type stubDB struct {
 	execFn     func(ctx context.Context, q string, args ...any) (int64, error)
 }
 
-func (s *stubDB) Close() error                                         { return nil }
-func (s *stubDB) Ping(ctx context.Context) error                       { return nil }
-func (s *stubDB) EnsureMigrationsTable(ctx context.Context) error      { return nil }
+func (s *stubDB) Close() error                                    { return nil }
+func (s *stubDB) Ping(ctx context.Context) error                  { return nil }
+func (s *stubDB) EnsureMigrationsTable(ctx context.Context) error { return nil }
 func (s *stubDB) GetLastMigration(ctx context.Context) (*domain.Migration, error) {
 	return nil, nil
 }

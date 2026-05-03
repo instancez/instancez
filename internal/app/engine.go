@@ -26,7 +26,8 @@ type HTTPServer interface {
 // Engine orchestrates the full Ultrabase lifecycle.
 type Engine struct {
 	cfg      *domain.Config
-	db       domain.Database
+	ownerDB  domain.OwnerDB   // privileged: migrations, seeding, replication
+	authDB   domain.RequestDB // request path; SET LOCAL ROLE per tx
 	migrator *Migrator
 	logger   *slog.Logger
 
@@ -47,33 +48,34 @@ type Engine struct {
 type Mode int
 
 const (
-	ModeDev  Mode = iota
+	ModeDev Mode = iota
 	ModeProd
 )
 
 type EngineOption func(*Engine)
 
-func WithMode(m Mode) EngineOption         { return func(e *Engine) { e.mode = m } }
-func WithMigrate(v bool) EngineOption      { return func(e *Engine) { e.migrate = v } }
-func WithSeed(v bool) EngineOption         { return func(e *Engine) { e.seed = v } }
-func WithAllowDestructive(v bool) EngineOption { return func(e *Engine) { e.allowDestructive = v } }
-func WithWatch(v bool) EngineOption              { return func(e *Engine) { e.watch = v } }
-func WithLogger(l *slog.Logger) EngineOption     { return func(e *Engine) { e.logger = l } }
-func WithHTTPServer(s HTTPServer) EngineOption   { return func(e *Engine) { e.httpServer = s } }
+func WithMode(m Mode) EngineOption                      { return func(e *Engine) { e.mode = m } }
+func WithMigrate(v bool) EngineOption                   { return func(e *Engine) { e.migrate = v } }
+func WithSeed(v bool) EngineOption                      { return func(e *Engine) { e.seed = v } }
+func WithAllowDestructive(v bool) EngineOption          { return func(e *Engine) { e.allowDestructive = v } }
+func WithWatch(v bool) EngineOption                     { return func(e *Engine) { e.watch = v } }
+func WithLogger(l *slog.Logger) EngineOption            { return func(e *Engine) { e.logger = l } }
+func WithHTTPServer(s HTTPServer) EngineOption          { return func(e *Engine) { e.httpServer = s } }
 func WithWALConsumer(w domain.WALConsumer) EngineOption { return func(e *Engine) { e.walConsumer = w } }
 func WithEventWorker(w *EventWorker) EngineOption       { return func(e *Engine) { e.eventWorker = w } }
-func WithConfigPath(p string) EngineOption { return func(e *Engine) { e.configPath = p } }
+func WithConfigPath(p string) EngineOption              { return func(e *Engine) { e.configPath = p } }
 
-func NewEngine(cfg *domain.Config, db domain.Database, opts ...EngineOption) *Engine {
+func NewEngine(cfg *domain.Config, ownerDB domain.OwnerDB, authDB domain.RequestDB, roles domain.Roles, opts ...EngineOption) *Engine {
 	e := &Engine{
-		cfg:     cfg,
-		db:      db,
-		migrator: NewMigrator(db),
-		logger:  slog.Default(),
-		mode:    ModeDev,
-		migrate: true,
-		seed:    true,
-		watch:   true,
+		cfg:      cfg,
+		ownerDB:  ownerDB,
+		authDB:   authDB,
+		migrator: NewMigrator(ownerDB, roles),
+		logger:   slog.Default(),
+		mode:     ModeDev,
+		migrate:  true,
+		seed:     true,
+		watch:    true,
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -95,10 +97,10 @@ func (e *Engine) Start(ctx context.Context) error {
 		}
 		e.logger.Info("migrations applied", "duration", time.Since(t).Round(time.Millisecond))
 	} else {
-		if err := e.db.EnsureMigrationsTable(ctx); err != nil {
+		if err := e.ownerDB.EnsureMigrationsTable(ctx); err != nil {
 			return fmt.Errorf("migration check: %w", err)
 		}
-		last, err := e.db.GetLastMigration(ctx)
+		last, err := e.ownerDB.GetLastMigration(ctx)
 		if err != nil {
 			return fmt.Errorf("migration check: %w", err)
 		}
@@ -159,7 +161,7 @@ func (e *Engine) Start(ctx context.Context) error {
 
 	// 5. Start config file watcher (dev mode only)
 	if e.watch && e.configPath != "" {
-		watcher := NewConfigWatcher(e.configPath, e.db, e.logger, func(newCfg *domain.Config) {
+		watcher := NewConfigWatcher(e.configPath, e.ownerDB, e.logger, func(newCfg *domain.Config) {
 			e.cfg = newCfg
 		})
 		go func() {
@@ -179,11 +181,11 @@ func (e *Engine) Start(ctx context.Context) error {
 }
 
 func (e *Engine) applyData(ctx context.Context) error {
-	if err := e.db.EnsureDataTable(ctx); err != nil {
+	if err := e.ownerDB.EnsureDataTable(ctx); err != nil {
 		return fmt.Errorf("ensure data table: %w", err)
 	}
 
-	applied, err := e.db.GetAppliedData(ctx)
+	applied, err := e.ownerDB.GetAppliedData(ctx)
 	if err != nil {
 		return fmt.Errorf("get applied data: %w", err)
 	}
@@ -195,7 +197,7 @@ func (e *Engine) applyData(ctx context.Context) error {
 	configDir := filepath.Dir(e.configPath)
 	ordered := orderDataTables(e.cfg)
 
-	tx, err := e.db.Begin(ctx)
+	tx, err := e.ownerDB.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin data transaction: %w", err)
 	}
@@ -231,7 +233,7 @@ func (e *Engine) applyData(ctx context.Context) error {
 				}
 			}
 
-			if err := e.db.RecordData(ctx, tx, compositeKey, tableName, "inline", checksum, len(td.Rows)); err != nil {
+			if err := e.ownerDB.RecordData(ctx, tx, compositeKey, tableName, "inline", checksum, len(td.Rows)); err != nil {
 				tx.Rollback(ctx)
 				return fmt.Errorf("data %s: record: %w", compositeKey, err)
 			}
@@ -293,7 +295,7 @@ func (e *Engine) applyData(ctx context.Context) error {
 					}
 				}
 
-				if err := e.db.RecordData(ctx, tx, compositeKey, tableName, csvPath, checksum, len(records)); err != nil {
+				if err := e.ownerDB.RecordData(ctx, tx, compositeKey, tableName, csvPath, checksum, len(records)); err != nil {
 					tx.Rollback(ctx)
 					return fmt.Errorf("data %s: record: %w", compositeKey, err)
 				}
@@ -443,7 +445,7 @@ func (e *Engine) shutdown() error {
 	}
 
 	// Close database
-	if err := e.db.Close(); err != nil {
+	if err := e.ownerDB.Close(); err != nil {
 		e.logger.Error("error closing database", "error", err)
 	}
 

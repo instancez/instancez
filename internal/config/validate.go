@@ -18,8 +18,8 @@ const identRule = "must start with a lowercase letter, followed by lowercase let
 func validateIdent(path, name string) *domain.ValidationError {
 	if !identRE.MatchString(name) {
 		return &domain.ValidationError{
-			Path:       path,
-			Message:    fmt.Sprintf("invalid identifier %q: %s", name, identRule),
+			Path:    path,
+			Message: fmt.Sprintf("invalid identifier %q: %s", name, identRule),
 		}
 	}
 	return nil
@@ -83,8 +83,8 @@ var validOnDelete = map[string]bool{
 }
 
 var validRLSTypes = map[string]bool{
-	"":           true, // default (permissive)
-	"permissive": true,
+	"":            true, // default (permissive)
+	"permissive":  true,
 	"restrictive": true,
 }
 
@@ -109,11 +109,11 @@ var validBackoff = map[string]bool{
 
 // allowedDefaults is the allowlist of SQL functions usable in field defaults.
 var allowedDefaults = map[string]bool{
-	"now()":         true,
-	"uuid_v7()":     true,
-	"uuid_v4()":     true,
-	"current_date":  true,
-	"current_time":  true,
+	"now()":        true,
+	"uuid_v7()":    true,
+	"uuid_v4()":    true,
+	"current_date": true,
+	"current_time": true,
 }
 
 // reservedTableNames cannot be used by user-defined tables.

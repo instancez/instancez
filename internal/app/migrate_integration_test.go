@@ -8,50 +8,17 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
-
-	tc "github.com/testcontainers/testcontainers-go"
-	pgcontainer "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/saedx1/ultrabase/internal/adapter/postgres"
 	"github.com/saedx1/ultrabase/internal/app"
 	"github.com/saedx1/ultrabase/internal/domain"
+	"github.com/saedx1/ultrabase/internal/testutil/dbboot"
 )
 
 func startPostgres(t *testing.T) *postgres.DB {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	container, err := pgcontainer.Run(ctx,
-		"postgres:16-alpine",
-		pgcontainer.WithDatabase("ultrabase_test"),
-		pgcontainer.WithUsername("ultrabase"),
-		pgcontainer.WithPassword("ultrabase"),
-		tc.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(90*time.Second),
-		),
-	)
-	if err != nil {
-		t.Fatalf("start postgres: %v", err)
-	}
-	t.Cleanup(func() { _ = container.Terminate(context.Background()) })
-
-	dbURL, err := container.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("connection string: %v", err)
-	}
-
-	db, err := postgres.New(ctx, dbURL, domain.PoolConfig{Max: 4, Min: 1})
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-
-	return db
+	owner, _ := dbboot.StartContainer(t)
+	return owner.Database.(*postgres.DB)
 }
 
 func tableExists(t *testing.T, db *postgres.DB, name string) bool {
@@ -2168,9 +2135,9 @@ func TestIntegration_MixedMigration(t *testing.T) {
 		Tables: map[string]domain.Table{
 			"todos": {Fields: []domain.Field{
 				{Name: "id", Type: "bigserial", PrimaryKey: true},
-				{Name: "title", Type: "text", Required: true},       // nullability change
-				{Name: "priority", Type: "bigint"},                     // type change
-				{Name: "status", Type: "text", Default: "pending"},   // new column
+				{Name: "title", Type: "text", Required: true},      // nullability change
+				{Name: "priority", Type: "bigint"},                 // type change
+				{Name: "status", Type: "text", Default: "pending"}, // new column
 			}},
 			// comments removed
 			"posts": {Fields: []domain.Field{ // new table

@@ -130,9 +130,9 @@ func GenerateOpenAPI(cfg *domain.Config) map[string]any {
 					"bearerFormat": "JWT",
 				},
 				"adminKey": map[string]any{
-					"type":         "http",
-					"scheme":       "bearer",
-					"description":  "Admin API key (ULTRABASE_ADMIN_KEY)",
+					"type":        "http",
+					"scheme":      "bearer",
+					"description": "Admin API key (ULTRABASE_ADMIN_KEY)",
 				},
 			},
 		},
@@ -230,9 +230,9 @@ func generateListOp(tableName string, table domain.Table) map[string]any {
 	}
 
 	return map[string]any{
-		"summary":     "List " + tableName,
-		"tags":        tags,
-		"parameters":  params,
+		"summary":    "List " + tableName,
+		"tags":       tags,
+		"parameters": params,
 		"responses": map[string]any{
 			"200": map[string]any{
 				"description": "Array of " + tableName,

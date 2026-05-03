@@ -131,9 +131,9 @@ func TestCsvRenderRows_EmptyReturnsOnlyHeader(t *testing.T) {
 
 func TestCoerceCSVValue(t *testing.T) {
 	tests := []struct {
-		val    string
-		pgType string
-		want   any
+		val     string
+		pgType  string
+		want    any
 		changed bool
 	}{
 		// Integers

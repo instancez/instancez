@@ -51,7 +51,7 @@ type AuthHandler struct {
 func NewAuthHandler(deps ServerDeps) *AuthHandler {
 	return &AuthHandler{
 		cfg:     deps.Config,
-		db:      deps.DB,
+		db:      deps.DB.Database,
 		logger:  deps.Logger,
 		email:   deps.Email,
 		jwtKeys: deps.JWTKeys,
@@ -797,7 +797,7 @@ func (h *AuthHandler) handleVerifyGET(c *gin.Context) {
 			return
 		}
 		ctx = ctxWithRequestMeta(ctx, c)
-	session, err := h.buildSession(ctx, userID, userRow)
+		session, err := h.buildSession(ctx, userID, userRow)
 		if err != nil {
 			c.String(500, "Failed to generate session")
 			return
@@ -1284,13 +1284,13 @@ func (h *AuthHandler) handleSettings(c *gin.Context) {
 		providers["github"] = true
 	}
 	c.JSON(200, gin.H{
-		"external":                   providers,
-		"disable_signup":             false,
-		"mailer_autoconfirm":         h.cfg.Auth.Email == nil || !h.cfg.Auth.Email.VerifyEmail,
-		"phone_autoconfirm":          false,
-		"sms_provider":               "",
-		"mfa_enabled":                false,
-		"saml_enabled":               false,
+		"external":           providers,
+		"disable_signup":     false,
+		"mailer_autoconfirm": h.cfg.Auth.Email == nil || !h.cfg.Auth.Email.VerifyEmail,
+		"phone_autoconfirm":  false,
+		"sms_provider":       "",
+		"mfa_enabled":        false,
+		"saml_enabled":       false,
 	})
 }
 
@@ -1424,9 +1424,9 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 
 		if row == nil {
 			metaJSON, _ := json.Marshal(map[string]any{
-				"provider":      provider,
-				"full_name":     userInfo.Name,
-				"email":         userInfo.Email,
+				"provider":       provider,
+				"full_name":      userInfo.Name,
+				"email":          userInfo.Email,
 				"email_verified": true,
 			})
 			appMetaJSON, _ := json.Marshal(map[string]any{
@@ -1490,7 +1490,7 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 		}
 
 		ctx = ctxWithRequestMeta(ctx, c)
-	session, err := h.buildSession(ctx, userID, row)
+		session, err := h.buildSession(ctx, userID, row)
 		if err != nil {
 			problemJSON(c, 500, "internal", "Failed to generate token")
 			return
@@ -1647,7 +1647,7 @@ func (h *AuthHandler) buildUser(userID string, row map[string]any) gin.H {
 	return gin.H{
 		"id":                 userID,
 		"aud":                "authenticated",
-		"role":                "authenticated",
+		"role":               "authenticated",
 		"email":              email,
 		"email_confirmed_at": emailConfirmedAt,
 		"phone":              "",

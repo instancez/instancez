@@ -99,7 +99,7 @@ func TestComputeBackoff(t *testing.T) {
 		{1, "linear", 1 * time.Second},
 		{2, "linear", 2 * time.Second},
 		{3, "linear", 3 * time.Second},
-		{1, "", 1 * time.Second},  // default is exponential
+		{1, "", 1 * time.Second}, // default is exponential
 		{3, "", 4 * time.Second},
 	}
 

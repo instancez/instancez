@@ -41,8 +41,6 @@ func TestValidate_WrongVersion(t *testing.T) {
 	assertHasErrorAt(t, errs, "version")
 }
 
-
-
 func TestValidate_UnderscorePrefixTable(t *testing.T) {
 	cfg := validBaseConfig()
 	cfg.Tables["_internal"] = domain.Table{

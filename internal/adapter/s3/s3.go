@@ -23,12 +23,12 @@ type Store struct {
 
 // Config holds S3 connection configuration.
 type Config struct {
-	Bucket         string
-	Region         string
-	Endpoint       string // for MinIO/custom endpoints (empty for real S3)
-	AccessKeyID    string
+	Bucket          string
+	Region          string
+	Endpoint        string // for MinIO/custom endpoints (empty for real S3)
+	AccessKeyID     string
 	SecretAccessKey string
-	ForcePathStyle bool // true for MinIO
+	ForcePathStyle  bool // true for MinIO
 }
 
 // New creates a new S3 store with a real AWS SDK client.

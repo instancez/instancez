@@ -23,7 +23,7 @@ type StorageHandler struct {
 func NewStorageHandler(deps ServerDeps) *StorageHandler {
 	return &StorageHandler{
 		cfg:     deps.Config,
-		db:      deps.DB,
+		db:      deps.DB.Database,
 		logger:  deps.Logger,
 		storage: deps.Storage,
 		jwtKeys: deps.JWTKeys,

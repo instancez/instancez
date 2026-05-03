@@ -24,16 +24,20 @@ type Server struct {
 }
 
 // ServerDeps holds all dependencies for the HTTP server.
+//
+// DB must be a domain.RequestDB (the per-request authenticator pool). The
+// distinct named type prevents callers from accidentally passing the
+// privileged owner pool — that's a compile error.
 type ServerDeps struct {
-	Config         *domain.Config
-	DB             domain.Database
-	Logger         *slog.Logger
-	DevMode        bool
-	Email          domain.EmailSender
-	Storage        domain.ObjectStore
-	JWTKeys        *app.JWTKeyManager // signing/verification keys (managed in DB)
-	ConfigPath     string              // path to ultrabase.yaml (for dashboard config editing)
-	DashboardAssets fs.FS               // embedded SPA assets (nil in dev mode)
+	Config          *domain.Config
+	DB              domain.RequestDB
+	Logger          *slog.Logger
+	DevMode         bool
+	Email           domain.EmailSender
+	Storage         domain.ObjectStore
+	JWTKeys         *app.JWTKeyManager // signing/verification keys (managed in DB)
+	ConfigPath      string             // path to ultrabase.yaml (for dashboard config editing)
+	DashboardAssets fs.FS              // embedded SPA assets (nil in dev mode)
 }
 
 // NewServer creates a new HTTP server with all routes mounted.
@@ -53,7 +57,7 @@ func NewServer(deps ServerDeps) *Server {
 		engine: r,
 		cfg:    deps.Config,
 		logger: deps.Logger,
-		db:     deps.DB,
+		db:     deps.DB.Database,
 	}
 
 	// Metrics middleware
