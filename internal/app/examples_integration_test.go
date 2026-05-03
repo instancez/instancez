@@ -81,6 +81,9 @@ func TestExampleConfigMigrations(t *testing.T) {
 
 	entries, err := os.ReadDir(examplesDir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			t.Skip("prompts/examples directory not found")
+		}
 		t.Fatalf("read examples dir: %v", err)
 	}
 

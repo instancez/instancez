@@ -351,10 +351,8 @@ func TestValidate_FunctionMissingBody(t *testing.T) {
 
 func TestValidate_DataUnknownTable(t *testing.T) {
 	cfg := validBaseConfig()
-	cfg.Data = map[string]map[string]string{
-		"nonexistent": {
-			"init": "./seeds/nonexistent.csv",
-		},
+	cfg.Data = map[string]domain.TableData{
+		"nonexistent": {CSVFiles: map[string]string{"init": "./seeds/nonexistent.csv"}},
 	}
 
 	errs := Validate(cfg)
@@ -363,10 +361,8 @@ func TestValidate_DataUnknownTable(t *testing.T) {
 
 func TestValidate_DataUsersOK(t *testing.T) {
 	cfg := validBaseConfig()
-	cfg.Data = map[string]map[string]string{
-		"users": {
-			"demo": "./seeds/users.csv",
-		},
+	cfg.Data = map[string]domain.TableData{
+		"users": {CSVFiles: map[string]string{"demo": "./seeds/users.csv"}},
 	}
 
 	errs := Validate(cfg)
@@ -377,10 +373,8 @@ func TestValidate_DataUsersOK(t *testing.T) {
 
 func TestValidate_DataEmptySource(t *testing.T) {
 	cfg := validBaseConfig()
-	cfg.Data = map[string]map[string]string{
-		"users": {
-			"demo": "",
-		},
+	cfg.Data = map[string]domain.TableData{
+		"users": {CSVFiles: map[string]string{"demo": ""}},
 	}
 
 	errs := Validate(cfg)
@@ -479,9 +473,9 @@ func TestValidate_FullExampleConfig(t *testing.T) {
 				},
 			},
 		},
-		Data: map[string]map[string]string{
-			"users": {"demo": "./seeds/users.csv"},
-			"teams": {"init": "./seeds/teams.csv"},
+		Data: map[string]domain.TableData{
+			"users": {CSVFiles: map[string]string{"demo": "./seeds/users.csv"}},
+			"teams": {CSVFiles: map[string]string{"init": "./seeds/teams.csv"}},
 		},
 	}
 
