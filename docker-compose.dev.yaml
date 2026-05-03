@@ -9,6 +9,7 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./scripts/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "ultrabase"]
       interval: 2s
@@ -20,7 +21,8 @@ services:
     ports:
       - "8080:8080"
     environment:
-      DATABASE_URL: postgres://ultrabase:ultrabase@postgres:5432/ultrabase?sslmode=disable
+      ULTRABASE_OWNER_DATABASE_URL: postgres://ultrabase_owner:ultrabase@postgres:5432/ultrabase?sslmode=disable
+      ULTRABASE_AUTH_DATABASE_URL: postgres://authenticator:ultrabase@postgres:5432/ultrabase?sslmode=disable
       ULTRABASE_ADMIN_KEY: ultrabase-dev-key
       JWT_SECRET: dev-jwt-secret-change-me
     volumes:
