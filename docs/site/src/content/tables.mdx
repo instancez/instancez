@@ -35,6 +35,32 @@ tables:
 
 Every table automatically gets a REST endpoint at `/rest/v1/<table_name>`.
 
+## Schemas
+
+Tables default to the `public` schema. Set `schema:` on a table to put it elsewhere — the schema is auto-created, granted `USAGE` to anon/authenticated/service_role, and configured with default privileges so future tables in it inherit grants:
+
+```yaml
+tables:
+  audit_log:
+    schema: internal
+    fields:
+      - { name: id, type: bigserial, primary_key: true }
+      - { name: event, type: text, required: true }
+    rls:
+      - operations: [select]
+        check: "auth.role() = 'service_role'"
+```
+
+From supabase-js, target a non-public schema with `.schema()`:
+
+```js
+await supabase.schema('internal').from('audit_log').select()
+```
+
+The REST request sets `Accept-Profile: internal` (reads) or `Content-Profile: internal` (writes). Only schemas referenced by tables in your config are accepted; any other value returns `PGRST106`.
+
+There is no separate top-level `schemas:` block — schema membership is per-table. To lock a schema down further than RLS allows (e.g. `REVOKE USAGE ON SCHEMA internal FROM anon`), drop the SQL into your own migration step.
+
 ## Field types
 
 Ultrabase supports all standard PostgreSQL types:
