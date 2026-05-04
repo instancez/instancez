@@ -25,7 +25,7 @@ Each provider has a `type:` field naming the implementation. All credentials are
 
 ### What's NOT a Provider
 
-- **Database** — configured via `DATABASE_URL` env var, not in `providers:`
+- **Database** — configured via `ULTRABASE_OWNER_DATABASE_URL` + `ULTRABASE_AUTH_DATABASE_URL` env vars, not in `providers:`
 - There is no `database` provider type
 
 ---

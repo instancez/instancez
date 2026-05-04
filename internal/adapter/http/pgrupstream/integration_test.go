@@ -204,9 +204,11 @@ func buildConfig() *domain.Config {
 }
 
 func TestMain(m *testing.M) {
-	dbURL := os.Getenv("DATABASE_URL")
+	// Superuser URL — dbboot.Bootstrap creates ultrabase_owner +
+	// authenticator from this connection before tests start.
+	dbURL := os.Getenv("ULTRABASE_TEST_DATABASE_URL")
 	if dbURL == "" {
-		fmt.Println("pgrupstream: DATABASE_URL not set, skipping upstream integration tests")
+		fmt.Println("pgrupstream: ULTRABASE_TEST_DATABASE_URL not set, skipping upstream integration tests")
 		os.Exit(0)
 	}
 

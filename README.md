@@ -88,7 +88,14 @@ This starts PostgreSQL 17, the Ultrabase API server on port `8080`, and the dash
 # Prerequisites: Go 1.25+, PostgreSQL 17+, Node.js 20+ (for dashboard)
 
 go build -o ultrabase ./cmd/ultrabase
-export DATABASE_URL="postgres://user:pass@localhost:5432/mydb?sslmode=disable"
+
+# Two Postgres logins are required (Supabase-style). Provision them once:
+#   CREATE ROLE ultrabase_owner LOGIN PASSWORD '...'
+#       CREATEROLE CREATEDB BYPASSRLS REPLICATION;
+#   CREATE ROLE authenticator LOGIN PASSWORD '...' INHERIT;
+#   ALTER DATABASE mydb OWNER TO ultrabase_owner;
+export ULTRABASE_OWNER_DATABASE_URL="postgres://ultrabase_owner:pass@localhost:5432/mydb?sslmode=disable"
+export ULTRABASE_AUTH_DATABASE_URL="postgres://authenticator:pass@localhost:5432/mydb?sslmode=disable"
 export JWT_SECRET="your-secret"
 export ULTRABASE_ADMIN_KEY="your-admin-key"
 
@@ -344,7 +351,12 @@ Environment variables:
 
 | Variable | Required | Description |
 |---|---|---|
-| `DATABASE_URL` | Yes | PostgreSQL connection string |
+| `ULTRABASE_OWNER_DATABASE_URL` | Yes | Privileged login (migrations, seeding, replication). Role needs `CREATEROLE`, `CREATEDB`, `BYPASSRLS`, `REPLICATION`. |
+| `ULTRABASE_AUTH_DATABASE_URL` | Yes | Authenticator login for HTTP requests. Role `INHERIT`s anon/authenticated/service_role per transaction. |
+| `ULTRABASE_DB_AUTHENTICATOR_ROLE` | No | Override the authenticator role name (default: `authenticator`). |
+| `ULTRABASE_DB_ANON_ROLE` | No | Override the anon role name (default: `anon`). |
+| `ULTRABASE_DB_AUTHENTICATED_ROLE` | No | Override the authenticated role name (default: `authenticated`). |
+| `ULTRABASE_DB_SERVICE_ROLE` | No | Override the service role name (default: `service_role`). |
 | `JWT_SECRET` | Yes | Secret for signing JWTs |
 | `ULTRABASE_ADMIN_KEY` | Yes | Admin API authentication key |
 | `PORT` | No | Override server port (default: from YAML or 8080) |

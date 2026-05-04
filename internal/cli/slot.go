@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/saedx1/ultrabase/internal/adapter/postgres"
@@ -58,17 +57,18 @@ func runSlotReset(configPath string, force bool) error {
 		return err
 	}
 
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		return fmt.Errorf("DATABASE_URL not set")
-	}
-
+	// Replication slot management is privileged (REPLICATION attribute), so
+	// it runs on the owner pool. The auth pool is unused here but we
+	// connect both to keep startup uniform with the rest of the CLI.
 	ctx := context.Background()
-	db, err := postgres.New(ctx, dbURL, cfg.Database.Pool)
+	owner, auth, _, err := dbConnections(ctx, cfg.Database.Pool)
 	if err != nil {
-		return fmt.Errorf("database: %w", err)
+		return err
 	}
-	defer db.Close()
+	defer owner.Close()
+	defer auth.Close()
+
+	db := owner.Database.(*postgres.DB)
 
 	// Drop existing slot (ignore error if it doesn't exist)
 	err = postgres.DropSlot(ctx, db.Pool())

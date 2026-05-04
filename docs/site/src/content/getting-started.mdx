@@ -52,10 +52,17 @@ tables:
 
 ## Start the server
 
-Set your database URL and start the dev server:
+Set the two Postgres login URLs and start the dev server:
 
 ```bash
-export DATABASE_URL="postgres://user:pass@localhost:5432/mydb?sslmode=disable"
+# Provision once on your Postgres server (as a superuser):
+#   CREATE ROLE ultrabase_owner LOGIN PASSWORD '...'
+#       CREATEROLE CREATEDB BYPASSRLS REPLICATION;
+#   CREATE ROLE authenticator LOGIN PASSWORD '...' INHERIT;
+#   ALTER DATABASE mydb OWNER TO ultrabase_owner;
+
+export ULTRABASE_OWNER_DATABASE_URL="postgres://ultrabase_owner:pass@localhost:5432/mydb?sslmode=disable"
+export ULTRABASE_AUTH_DATABASE_URL="postgres://authenticator:pass@localhost:5432/mydb?sslmode=disable"
 ultrabase dev
 ```
 

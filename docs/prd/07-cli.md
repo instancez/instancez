@@ -113,7 +113,7 @@ $ ultrabase validate
 
 **Two modes:**
 - **Syntax-only** (no DB): validates YAML structure, types, references, RLS expressions
-- **With DB** (if `DATABASE_URL` available): additionally shows a dry-run of pending migration diff
+- **With DB** (if `ULTRABASE_OWNER_DATABASE_URL` available): additionally shows a dry-run of pending migration diff
 
 **Flags:**
 - `--config <path>` — config file
@@ -135,7 +135,7 @@ $ ultrabase rollback --steps 3    # rollback last 3
 Database utilities.
 
 ```bash
-ultrabase db console              # open psql connected to DATABASE_URL
+ultrabase db console              # open psql connected to the owner login
 ultrabase db dump > backup.sql    # pg_dump
 ultrabase db restore backup.sql   # pg_restore
 ```
@@ -194,7 +194,7 @@ $ ultrabase slot reset
 | Command Category | Needs | Examples |
 |---|---|---|
 | Pure-local | Nothing | `init`, `validate` (syntax), `generate sdk`, `generate openapi` |
-| Database access | `DATABASE_URL` | `dev`, `serve`, `validate` (dry-run), `db *`, `rollback` |
+| Database access | `ULTRABASE_OWNER_DATABASE_URL` | `dev`, `serve`, `validate` (dry-run), `db *`, `rollback` |
 | Admin API (remote) | `ULTRABASE_ADMIN_KEY` + `ULTRABASE_URL` | `events retry`, `events purge`, `users disable` |
 
 `ULTRABASE_URL` defaults to `http://localhost:8080`.
@@ -246,7 +246,7 @@ $ ultrabase slot reset
 
     Suggestions:
     - Is PostgreSQL running? Try: pg_isready -h localhost -p 5432
-    - Check DATABASE_URL in .env
+    - Check ULTRABASE_OWNER_DATABASE_URL + ULTRABASE_AUTH_DATABASE_URL in .env
 ```
 
 ---

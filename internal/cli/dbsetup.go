@@ -11,7 +11,7 @@ import (
 )
 
 // dbConnections opens the owner and authenticator pools from environment.
-// Both URLs are required; there is no DATABASE_URL fallback.
+// Both URLs are required.
 func dbConnections(ctx context.Context, poolCfg domain.PoolConfig) (domain.OwnerDB, domain.RequestDB, domain.Roles, error) {
 	ownerURL := os.Getenv("ULTRABASE_OWNER_DATABASE_URL")
 	if ownerURL == "" {

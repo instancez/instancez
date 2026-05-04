@@ -42,8 +42,8 @@ func NewRequest(ctx context.Context, databaseURL string, poolCfg domain.PoolConf
 	return domain.RequestDB{Database: db}, nil
 }
 
-// New creates a new DB from a DATABASE_URL and pool config. Most callers
-// should use NewOwner or NewRequest instead.
+// New creates a new DB from a Postgres connection URL and pool config.
+// Most callers should use NewOwner or NewRequest instead.
 func New(ctx context.Context, databaseURL string, poolCfg domain.PoolConfig) (*DB, error) {
 	cfg, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
