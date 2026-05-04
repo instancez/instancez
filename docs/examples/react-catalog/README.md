@@ -101,6 +101,7 @@ exactly what supabase-js sent the backend.
 supabase-js always requires an anon key at `createClient()` time. In a real
 Supabase project that key is a signed JWT with `role: "anon"`. For this demo
 we send a placeholder string — Ultrabase's JWT middleware fails to parse it
-and falls through to `role=anon` on tables with `allow_anon: true`. When a
-user signs in, supabase-js replaces the `Authorization` header with the real
-access token automatically, and RLS then evaluates against `auth.uid()`.
+and falls through to `role=anon`; table-level grants + RLS policies decide
+access from there. When a user signs in, supabase-js replaces the
+`Authorization` header with the real access token automatically, and RLS
+then evaluates against `auth.uid()`.

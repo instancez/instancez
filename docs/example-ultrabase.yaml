@@ -281,7 +281,6 @@ tables:
 
   # A public-facing table (no auth required)
   announcements:
-    allow_anon: true
 
     fields:
       - name: id

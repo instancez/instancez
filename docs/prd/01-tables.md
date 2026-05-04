@@ -43,7 +43,6 @@ tables:
     searchable: [title, body]
     search_config: english
 
-    allow_anon: false   # default; set true for public tables
 
     rls:
       - operations: [select]
@@ -205,9 +204,9 @@ rls:
 
 - Multiple policies on the same operation are **OR'd** (any match grants access)
 - `check` supports any SQL expression including subqueries and joins
-- No RLS section on a table = no policies enabled, open access (Postgres default)
-- `allow_anon: true` on a table allows unauthenticated requests (RLS alone decides access)
-- Admin key (`ULTRABASE_ADMIN_KEY`) always bypasses RLS
+- No RLS section on a table = no policies enabled, open access (Postgres default; matches Supabase)
+- Anon requests reach Postgres as the `anon` role and are gated by table grants + RLS policies; no per-table HTTP toggle
+- Admin key (`ULTRABASE_ADMIN_KEY`) maps to the `service_role` (BYPASSRLS) — always bypasses RLS
 
 ---
 

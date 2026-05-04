@@ -8,9 +8,9 @@ const URL = import.meta.env.VITE_ULTRABASE_URL || window.location.origin
 
 // supabase-js requires an "anon key" even for unauthenticated requests. For
 // this demo we send a placeholder: the server's JWT middleware fails to parse
-// it, then falls through to role=anon for tables that have `allow_anon: true`.
-// In a real deployment you'd issue a proper anon JWT and rotate it like a
-// public credential.
+// it, then falls through to role=anon. Table grants and RLS policies decide
+// access from there. In a real deployment you'd issue a proper anon JWT and
+// rotate it like a public credential.
 const ANON_KEY = import.meta.env.VITE_ULTRABASE_ANON_KEY ?? 'public-anon-placeholder'
 
 export const supabase = createClient(URL, ANON_KEY, {

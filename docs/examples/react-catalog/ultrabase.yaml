@@ -66,7 +66,6 @@ tables:
                 - update
                 - delete
               check: "true"
-        allow_anon: true
 
     products:
         fields:
@@ -135,7 +134,6 @@ tables:
                 - update
                 - delete
               check: "true"
-        allow_anon: true
         searchable:
             - name
             - description
@@ -195,7 +193,6 @@ tables:
                 - update
                 - delete
               check: "user_id = auth.uid()"
-        allow_anon: true
 
 storage:
     product_images:

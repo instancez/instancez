@@ -314,7 +314,7 @@ func TestCRUDHandler_Mount_RegistersRestV1Routes(t *testing.T) {
 	h := &CRUDHandler{
 		cfg: &domain.Config{
 			Tables: map[string]domain.Table{
-				"todos": {AllowAnon: true, Fields: []domain.Field{
+				"todos": {Fields: []domain.Field{
 					{Name: "id", Type: "bigserial", PrimaryKey: true},
 				}},
 			},

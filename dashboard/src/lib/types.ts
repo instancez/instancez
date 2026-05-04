@@ -87,7 +87,6 @@ export interface Table {
   fields: Record<string, Field>;
   indexes: Index[];
   rls: RLSPolicy[];
-  allow_anon: boolean;
   searchable: string[];
   search_config: string;
 }

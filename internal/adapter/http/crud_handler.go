@@ -87,7 +87,10 @@ func (h *CRUDHandler) Mount(root *gin.RouterGroup) {
 		name := tableName
 		t := table
 		group := rest.Group("/" + name)
-		group.Use(jwtAuth(h.jwtKeys, !t.AllowAnon))
+		// JWT not required at HTTP level — anon falls through with
+		// session.Role="anon" and SQL-layer grants + RLS gate access.
+		// Matches Supabase's PostgREST behavior.
+		group.Use(jwtAuth(h.jwtKeys, false))
 
 		list := h.handleList(name, t)
 		group.GET("", list)

@@ -98,9 +98,6 @@ Visual editor for the `tables:` section.
 - Checkbox list of text columns to include in `searchable`
 - Dropdown for `search_config` (english, simple, etc.)
 
-**Settings tab:**
-- `allow_anon` toggle
-
 **Preview pane (collapsible bottom):**
 - Shows the YAML output for this table in real time as the user edits
 - Shows the migration diff (DDL statements) that would be generated

@@ -357,7 +357,7 @@ The framework automatically hashes the `password` field using bcrypt before inse
 
 ## Edge Cases
 
-1. **No auth section:** If `auth:` is absent from YAML, no `users` table is created, no auth endpoints are mounted. All table endpoints still require a JWT by default (which means they're inaccessible unless `allow_anon: true`).
+1. **No auth section:** If `auth:` is absent from YAML, no `users` table is created, no auth endpoints are mounted. Table endpoints remain reachable; access is decided by table-level grants and RLS policies (anon requests run as the `anon` Postgres role).
 2. **OAuth without email method:** Users can sign up via OAuth only. The `password_hash` column is NULL for these users. Login endpoint rejects them (they must use OAuth).
 3. **Email provider missing:** If `verify_email: true` or password reset is configured but no email provider exists in `providers:`, the framework warns at boot (does not block startup).
 4. **User deletion:** Governed by FK `on_delete` settings on tables referencing `users.id`. No special cascade behavior.

@@ -13,7 +13,6 @@ func TestMount_RegistersHEADForTables(t *testing.T) {
 		cfg: &domain.Config{
 			Tables: map[string]domain.Table{
 				"todos": {
-					AllowAnon: true,
 					Fields: []domain.Field{
 						{Name: "id", Type: "bigserial", PrimaryKey: true},
 					},

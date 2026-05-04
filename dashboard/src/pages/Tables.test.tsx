@@ -59,8 +59,8 @@ describe("Tables", () => {
     const config = {
       ...baseConfig,
       tables: {
-        zebras: { fields: { id: { type: "bigserial", primary_key: true } }, indexes: [], rls: [], allow_anon: false, searchable: [], search_config: "" },
-        apples: { fields: { id: { type: "bigserial", primary_key: true }, name: { type: "text" } }, indexes: [], rls: [], allow_anon: false, searchable: [], search_config: "" },
+        zebras: { fields: { id: { type: "bigserial", primary_key: true } }, indexes: [], rls: [], searchable: [], search_config: "" },
+        apples: { fields: { id: { type: "bigserial", primary_key: true }, name: { type: "text" } }, indexes: [], rls: [], searchable: [], search_config: "" },
       },
     };
     renderTables(config as any);
@@ -78,7 +78,7 @@ describe("Tables", () => {
           fields: { id: { type: "bigserial", primary_key: true }, title: { type: "text" }, done: { type: "boolean" } },
           indexes: [],
           rls: [],
-          allow_anon: false,
+          
           searchable: [],
           search_config: "",
         },
@@ -96,7 +96,7 @@ describe("Tables", () => {
           fields: { id: { type: "bigserial", primary_key: true } },
           indexes: [],
           rls: [{ operations: ["select"], check: "true" }],
-          allow_anon: false,
+          
           searchable: [],
           search_config: "",
         },
@@ -106,30 +106,13 @@ describe("Tables", () => {
     expect(screen.getByText("1 RLS")).toBeInTheDocument();
   });
 
-  it("shows public badge when allow_anon is true", () => {
-    const config = {
-      ...baseConfig,
-      tables: {
-        todos: {
-          fields: { id: { type: "bigserial", primary_key: true } },
-          indexes: [],
-          rls: [],
-          allow_anon: true,
-          searchable: [],
-          search_config: "",
-        },
-      },
-    };
-    renderTables(config as any);
-    expect(screen.getByText("public")).toBeInTheDocument();
-  });
 
   it("shows table count in description", () => {
     const config = {
       ...baseConfig,
       tables: {
-        a: { fields: {}, indexes: [], rls: [], allow_anon: false, searchable: [], search_config: "" },
-        b: { fields: {}, indexes: [], rls: [], allow_anon: false, searchable: [], search_config: "" },
+        a: { fields: {}, indexes: [], rls: [], searchable: [], search_config: "" },
+        b: { fields: {}, indexes: [], rls: [], searchable: [], search_config: "" },
       },
     };
     renderTables(config as any);

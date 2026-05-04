@@ -157,7 +157,6 @@ type Table struct {
 	Fields       []Field     `yaml:"fields" json:"fields"`
 	Indexes      []Index     `yaml:"indexes" json:"indexes"`
 	RLS          []RLSPolicy `yaml:"rls" json:"rls"`
-	AllowAnon    bool        `yaml:"allow_anon" json:"allow_anon"`
 	Searchable   []string    `yaml:"searchable" json:"searchable"`
 	SearchConfig string      `yaml:"search_config" json:"search_config"`
 }

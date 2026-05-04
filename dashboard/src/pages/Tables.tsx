@@ -33,7 +33,6 @@ export function Tables() {
           },
           indexes: [],
           rls: [],
-          allow_anon: false,
           searchable: [],
           search_config: "english",
         },
@@ -111,9 +110,6 @@ export function Tables() {
                       <StatusBadge variant="info">
                         {rlsCount} RLS
                       </StatusBadge>
-                    )}
-                    {table.allow_anon && (
-                      <StatusBadge variant="warning">public</StatusBadge>
                     )}
                   </div>
                 </button>

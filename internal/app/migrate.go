@@ -42,10 +42,15 @@ func (m *Migrator) Plan(ctx context.Context, oldCfg, newCfg *domain.Config) (str
 // CREATE OR REPLACE for safety.
 func planFromScratch(cfg *domain.Config, roles domain.Roles) string {
 	var ddl []string
+	schemas := orderedSchemas(cfg)
 
 	// No-login roles + grants for the two-login Supabase-style model.
 	// Idempotent: re-running is a no-op.
 	ddl = append(ddl, generateRoleDDL(roles)...)
+
+	// Schemas (including public) get USAGE + default privileges so any
+	// table created later in this migration picks up the grants.
+	ddl = append(ddl, generateSchemaGrants(schemas, roles)...)
 
 	// Extensions
 	for _, ext := range cfg.Extensions {
@@ -55,16 +60,6 @@ func planFromScratch(cfg *domain.Config, roles domain.Roles) string {
 	// Users table (core auth columns + custom fields from tables.users)
 	if cfg.Auth != nil {
 		ddl = append(ddl, generateUsersTable(cfg.Auth, cfg.UserExtraFields())...)
-	}
-
-	// Create non-public schemas
-	schemasSeen := map[string]bool{"public": true}
-	for _, table := range cfg.Tables {
-		s := table.EffectiveSchema()
-		if !schemasSeen[s] {
-			ddl = append(ddl, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s;", s))
-			schemasSeen[s] = true
-		}
 	}
 
 	// Tables in dependency order (FKs reference other tables).
@@ -118,6 +113,12 @@ func planFromScratch(cfg *domain.Config, roles domain.Roles) string {
 		}
 	}
 
+	// Backfill grants on tables created earlier in this same migration —
+	// ALTER DEFAULT PRIVILEGES applies to objects created after the ALTER,
+	// but the underlying behavior in some Postgres versions can race with
+	// CREATE TABLE in the same session, so we issue an explicit catch-up.
+	ddl = append(ddl, generateExistingObjectGrants(schemas, roles)...)
+
 	if len(ddl) == 0 {
 		return ""
 	}
@@ -130,10 +131,12 @@ func planFromScratch(cfg *domain.Config, roles domain.Roles) string {
 func planUpdate(oldCfg, newCfg *domain.Config, roles domain.Roles) string {
 	diff := diffConfigs(oldCfg, newCfg)
 	var ddl []string
+	schemas := orderedSchemas(newCfg)
 
-	// Re-assert role bootstrapping (idempotent) so renames in roles config
-	// are picked up on subsequent migrations.
+	// Re-assert role + schema bootstrapping (idempotent) so renames or new
+	// schemas in the config are picked up on subsequent migrations.
 	ddl = append(ddl, generateRoleDDL(roles)...)
+	ddl = append(ddl, generateSchemaGrants(schemas, roles)...)
 
 	// 1. Removals (DROP TABLE, DROP COLUMN, DROP INDEX, DROP POLICY, etc.)
 	ddl = append(ddl, diff.Removals...)
@@ -179,6 +182,9 @@ func planUpdate(oldCfg, newCfg *domain.Config, roles domain.Roles) string {
 			ddl = append(ddl, generateRPCFunction(n, newCfg.Functions[n]))
 		}
 	}
+
+	// Catch-up grants on any newly-added tables.
+	ddl = append(ddl, generateExistingObjectGrants(schemas, roles)...)
 
 	if len(ddl) == 0 {
 		return ""
@@ -248,8 +254,8 @@ func generateRoleDDL(roles domain.Roles) []string {
 		{roles.Authenticated, ""},
 		{roles.Service, " BYPASSRLS"},
 	}
-	rlist := fmt.Sprintf("%s, %s, %s", roles.Anon, roles.Authenticated, roles.Service)
-	ddl := make([]string, 0, len(noLogin)+6)
+	rlist := apiRoleList(roles)
+	ddl := make([]string, 0, len(noLogin)+1)
 	for _, r := range noLogin {
 		ddl = append(ddl, fmt.Sprintf(`DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '%s') THEN
@@ -257,15 +263,61 @@ func generateRoleDDL(roles domain.Roles) []string {
     END IF;
 END $$;`, r.name, r.name, r.attrs))
 	}
-	ddl = append(ddl,
-		fmt.Sprintf("GRANT %s TO %s;", rlist, roles.Authenticator),
-		fmt.Sprintf("GRANT USAGE ON SCHEMA public TO %s;", rlist),
-		fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %s;", rlist),
-		fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO %s;", rlist),
-		fmt.Sprintf("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %s;", rlist),
-		fmt.Sprintf("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO %s;", rlist),
-	)
+	ddl = append(ddl, fmt.Sprintf("GRANT %s TO %s;", rlist, roles.Authenticator))
 	return ddl
+}
+
+// generateSchemaGrants emits per-schema USAGE + default privileges for the
+// three API roles. Mirrors what Supabase configures for `public` at project
+// init, applied uniformly to every schema we manage. CREATE SCHEMA is
+// idempotent so this is safe to re-emit every migration.
+func generateSchemaGrants(schemas []string, roles domain.Roles) []string {
+	rlist := apiRoleList(roles)
+	ddl := make([]string, 0, len(schemas)*4)
+	for _, s := range schemas {
+		ddl = append(ddl,
+			fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s;", s),
+			fmt.Sprintf("GRANT USAGE ON SCHEMA %s TO %s;", s, rlist),
+			fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA %s GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %s;", s, rlist),
+			fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA %s GRANT USAGE, SELECT ON SEQUENCES TO %s;", s, rlist),
+		)
+	}
+	return ddl
+}
+
+// generateExistingObjectGrants backfills GRANTs on tables/sequences that
+// already exist (created by an earlier migration, before this run's
+// ALTER DEFAULT PRIVILEGES took effect). Emitted near the end of the plan
+// so it picks up tables created in the same migration.
+func generateExistingObjectGrants(schemas []string, roles domain.Roles) []string {
+	rlist := apiRoleList(roles)
+	ddl := make([]string, 0, len(schemas)*2)
+	for _, s := range schemas {
+		ddl = append(ddl,
+			fmt.Sprintf("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %s TO %s;", s, rlist),
+			fmt.Sprintf("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA %s TO %s;", s, rlist),
+		)
+	}
+	return ddl
+}
+
+func apiRoleList(roles domain.Roles) string {
+	return fmt.Sprintf("%s, %s, %s", roles.Anon, roles.Authenticated, roles.Service)
+}
+
+// orderedSchemas returns the deduped list of schemas referenced by tables
+// in the config, with "public" first. The auth helper schema is included
+// when cfg.Auth is set.
+func orderedSchemas(cfg *domain.Config) []string {
+	seen := map[string]bool{"public": true}
+	out := []string{"public"}
+	for _, table := range cfg.Tables {
+		if s := table.EffectiveSchema(); !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func generateUsersTable(auth *domain.Auth, extraFields []domain.Field) []string {

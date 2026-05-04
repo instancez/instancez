@@ -138,7 +138,7 @@ export function TableDetail() {
       <div className="px-8">
         <Tabs.Root defaultValue="fields">
           <Tabs.List className="flex gap-1 border-b border-border mb-6">
-            {["Fields", "Indexes", "RLS", "Search", "Seeds", "Settings"].map((tab) => (
+            {["Fields", "Indexes", "RLS", "Search", "Seeds"].map((tab) => (
               <Tabs.Trigger
                 key={tab}
                 value={tab.toLowerCase()}
@@ -497,25 +497,6 @@ export function TableDetail() {
             />
           </Tabs.Content>
 
-          {/* Settings Tab */}
-          <Tabs.Content value="settings">
-            <div className="max-w-lg space-y-4">
-              <label className="flex items-center gap-3 text-sm text-foreground cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={table.allow_anon || false}
-                  onChange={(e) =>
-                    updateTable((t) => ({ ...t, allow_anon: e.target.checked }))
-                  }
-                  className="rounded border-border"
-                />
-                Allow anonymous access
-                <span className="text-xs text-muted-foreground">
-                  (public table, no auth required for reads)
-                </span>
-              </label>
-            </div>
-          </Tabs.Content>
         </Tabs.Root>
 
         {/* Preview Pane */}

@@ -225,9 +225,6 @@ func generateListOp(tableName string, table domain.Table) map[string]any {
 	}
 
 	tags := []string{tableName}
-	if table.AllowAnon {
-		tags = append(tags, "public")
-	}
 
 	return map[string]any{
 		"summary":    "List " + tableName,

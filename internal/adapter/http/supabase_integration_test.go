@@ -102,7 +102,6 @@ func TestSupabaseJSCompat(t *testing.T) {
 				},
 			},
 			"todos": {
-				AllowAnon: true,
 				Fields: []domain.Field{
 					{Name: "id", Type: "bigserial", PrimaryKey: true},
 					{Name: "title", Type: "text", Required: true},
@@ -112,7 +111,6 @@ func TestSupabaseJSCompat(t *testing.T) {
 				},
 			},
 			"comments": {
-				AllowAnon: true,
 				Fields: []domain.Field{
 					{Name: "id", Type: "bigserial", PrimaryKey: true},
 					{Name: "body", Type: "text", Required: true},
@@ -125,7 +123,6 @@ func TestSupabaseJSCompat(t *testing.T) {
 			//   - service_role (admin key) must bypass RLS,
 			//   - authenticated users can read/write only their own rows.
 			"rls_secrets": {
-				AllowAnon: true, // HTTP middleware permits the request through; RLS does the gating.
 				Fields: []domain.Field{
 					{Name: "id", Type: "bigserial", PrimaryKey: true},
 					{Name: "owner_id", Type: "uuid", Required: true},

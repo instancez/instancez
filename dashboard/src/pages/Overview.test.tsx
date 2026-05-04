@@ -23,7 +23,7 @@ const baseConfig: Config = {
       fields: { id: { type: "bigserial", primary_key: true }, title: { type: "text" } },
       indexes: [],
       rls: [],
-      allow_anon: false,
+      
       searchable: [],
       search_config: "",
     },
