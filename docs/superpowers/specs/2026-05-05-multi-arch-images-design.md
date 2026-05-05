@@ -28,8 +28,10 @@ Cross-compile in Go, driven by Buildx's `BUILDPLATFORM` / `TARGETARCH` build arg
 The Go builder stage runs natively on the amd64 GitHub runner (`$BUILDPLATFORM`)
 and produces a binary for `$TARGETARCH`. The runtime stage uses the target arch.
 
-This avoids QEMU entirely, because no `RUN` step ever executes target-arch
-binaries. CGO is already disabled, so Go's native cross-compile path is enough.
+CGO is already disabled, so Go's native cross-compile path is enough — no
+emulator is needed for the heavyweight `go build` step. QEMU is still
+registered in CI for the runtime stage's `RUN apk add --no-cache ca-certificates`,
+which runs target-arch `apk` for ~1–2s per arch and is negligible.
 
 ### Dockerfile changes
 
@@ -66,6 +68,9 @@ Replace the `docker build` / `docker push` pairs in the `build` job with
 `docker/build-push-action@v6` invocations that emit a manifest list per tag:
 
 ```yaml
+- uses: docker/setup-qemu-action@v3
+  with:
+    platforms: arm64
 - uses: docker/setup-buildx-action@v3
 
 - name: Build and push regular image (multi-arch)
@@ -91,7 +96,9 @@ Replace the `docker build` / `docker push` pairs in the `build` job with
 
 Notes:
 
-- No `setup-qemu-action`. We never emulate.
+- `setup-qemu-action` is needed only for the runtime stage's `apk add`. The
+  Go build stage uses `--platform=$BUILDPLATFORM` and cross-compiles, so it
+  never runs under emulation.
 - `provenance: false` is preserved to avoid the extra "unknown/unknown" manifest
   entries that ECR's console flags as confusing.
 - The `image_uri` / `lambda_image_uri` job outputs are unchanged — they still
