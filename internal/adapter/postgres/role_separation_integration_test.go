@@ -11,30 +11,12 @@ import (
 	"github.com/saedx1/ultrabase/internal/testutil/dbboot"
 )
 
-// roleSetupDDL provisions the three no-login roles and grants them to the
-// authenticator login. The full migration normally does this; tests skip
-// the migration and need just enough to make SET LOCAL ROLE succeed.
-func roleSetupDDL(roles domain.Roles) string {
-	mk := func(r, attrs string) string {
-		return "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='" + r + "') THEN CREATE ROLE " + r + " NOLOGIN" + attrs + "; END IF; END $$;"
-	}
-	return strings.Join([]string{
-		mk(roles.Anon, ""),
-		mk(roles.Authenticated, ""),
-		mk(roles.Service, " BYPASSRLS"),
-		"GRANT " + roles.Anon + ", " + roles.Authenticated + ", " + roles.Service + " TO " + roles.Authenticator + ";",
-	}, "\n")
-}
-
 // TestRequestPool_SetLocalRole verifies that the request-pool Begin issues
 // SET LOCAL ROLE based on the inbound session, so current_user inside the
 // transaction is the assumed role rather than the authenticator login itself.
 func TestRequestPool_SetLocalRole(t *testing.T) {
-	owner, auth := dbboot.StartContainer(t)
+	_, auth := dbboot.StartContainer(t)
 	ctx := context.Background()
-	if err := owner.ExecDDL(ctx, roleSetupDDL(domain.DefaultRoles())); err != nil {
-		t.Fatalf("role setup: %v", err)
-	}
 
 	cases := []struct{ role, ident string }{
 		{"anon", "anon"},
@@ -93,7 +75,7 @@ func TestSeedBypassesForceRLS(t *testing.T) {
 	ctx := context.Background()
 
 	roles := domain.DefaultRoles()
-	setup := roleSetupDDL(roles) + "\n" + strings.Join([]string{
+	setup := strings.Join([]string{
 		"CREATE TABLE locked (id int PRIMARY KEY, label text);",
 		"GRANT INSERT ON locked TO " + roles.Anon + ", " + roles.Authenticated + ", " + roles.Service + ";",
 		"ALTER TABLE locked ENABLE ROW LEVEL SECURITY;",
