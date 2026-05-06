@@ -20,9 +20,12 @@ on:
       image_uri:
         description: "Docker image URI (tag: <sha>)"
         value: ${{ jobs.build.outputs.image_uri }}
-      lambda_image_uri:
-        description: "Lambda-compatible Docker image URI (tag: <sha>-lambda)"
-        value: ${{ jobs.build.outputs.lambda_image_uri }}
+      lambda_image_uri_amd64:
+        description: "Lambda x86_64 Docker image URI (tag: <sha>-lambda-amd64)"
+        value: ${{ jobs.build.outputs.lambda_image_uri_amd64 }}
+      lambda_image_uri_arm64:
+        description: "Lambda arm64 Docker image URI (tag: <sha>-lambda-arm64)"
+        value: ${{ jobs.build.outputs.lambda_image_uri_arm64 }}
 
 env:
   AWS_REGION: us-east-1
@@ -87,7 +90,8 @@ jobs:
       id-token: write
     outputs:
       image_uri: ${{ steps.set-uri.outputs.image_uri }}
-      lambda_image_uri: ${{ steps.set-uri.outputs.lambda_image_uri }}
+      lambda_image_uri_amd64: ${{ steps.set-uri.outputs.lambda_image_uri_amd64 }}
+      lambda_image_uri_arm64: ${{ steps.set-uri.outputs.lambda_image_uri_arm64 }}
     steps:
       - uses: actions/checkout@v4
 
@@ -127,15 +131,25 @@ jobs:
           provenance: false
           tags: ${{ steps.login-ecr.outputs.registry }}/ultrabase/${{ steps.env.outputs.env }}:${{ steps.vars.outputs.short_sha }}
 
-      - name: Build and push Lambda image (multi-arch)
+      - name: Build and push Lambda image (amd64)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.lambda
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
           provenance: false
-          tags: ${{ steps.login-ecr.outputs.registry }}/ultrabase/${{ steps.env.outputs.env }}:${{ steps.vars.outputs.short_sha }}-lambda
+          tags: ${{ steps.login-ecr.outputs.registry }}/ultrabase/${{ steps.env.outputs.env }}:${{ steps.vars.outputs.short_sha }}-lambda-amd64
+
+      - name: Build and push Lambda image (arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.lambda
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          tags: ${{ steps.login-ecr.outputs.registry }}/ultrabase/${{ steps.env.outputs.env }}:${{ steps.vars.outputs.short_sha }}-lambda-arm64
 
       - name: Set image URIs
         id: set-uri
@@ -144,4 +158,5 @@ jobs:
           ENV=${{ steps.env.outputs.env }}
           SHA=${{ steps.vars.outputs.short_sha }}
           echo "image_uri=${REGISTRY}/ultrabase/${ENV}:${SHA}" >> $GITHUB_OUTPUT
-          echo "lambda_image_uri=${REGISTRY}/ultrabase/${ENV}:${SHA}-lambda" >> $GITHUB_OUTPUT
+          echo "lambda_image_uri_amd64=${REGISTRY}/ultrabase/${ENV}:${SHA}-lambda-amd64" >> $GITHUB_OUTPUT
+          echo "lambda_image_uri_arm64=${REGISTRY}/ultrabase/${ENV}:${SHA}-lambda-arm64" >> $GITHUB_OUTPUT
