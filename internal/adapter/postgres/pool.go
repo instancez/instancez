@@ -54,9 +54,10 @@ func New(ctx context.Context, databaseURL string, poolCfg domain.PoolConfig) (*D
 	// QueryExecModeCacheStatement issues `PREPARE stmtcache_<hash>` whose
 	// names collide on shared backend connections behind a transaction-pooled
 	// PgBouncer/RDS Proxy/Supabase pooler, producing SQLSTATE 42P05.
-	// QueryExecModeExec uses unnamed extended-protocol Parse/Bind/Execute,
-	// preserving parameter binding without server-side statement names.
-	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
+	// DescribeExec uses an unnamed Parse + Describe per query (no statement
+	// names to collide), and the Describe round-trip preserves parameter OID
+	// inference so types like map[string]any encode correctly into jsonb.
+	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeDescribeExec
 
 	if poolCfg.Max > 0 {
 		cfg.MaxConns = int32(poolCfg.Max)
