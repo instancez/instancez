@@ -44,12 +44,12 @@ func planFromScratch(cfg *domain.Config, roles domain.Roles) string {
 	var ddl []string
 	schemas := orderedSchemas(cfg)
 
-	// No-login roles + grants for the two-login Supabase-style model.
-	// Idempotent: re-running is a no-op.
-	ddl = append(ddl, generateRoleDDL(roles)...)
-
 	// Schemas (including public) get USAGE + default privileges so any
-	// table created later in this migration picks up the grants.
+	// table created later in this migration picks up the grants. The
+	// Postgres roles themselves are infrastructure — provisioned by the
+	// control plane in managed deployments and by
+	// scripts/postgres-init/01-roles.sql in dev — so the migration assumes
+	// they already exist.
 	ddl = append(ddl, generateSchemaGrants(schemas, roles)...)
 
 	// Extensions
@@ -133,9 +133,11 @@ func planUpdate(oldCfg, newCfg *domain.Config, roles domain.Roles) string {
 	var ddl []string
 	schemas := orderedSchemas(newCfg)
 
-	// Re-assert role + schema bootstrapping (idempotent) so renames or new
-	// schemas in the config are picked up on subsequent migrations.
-	ddl = append(ddl, generateRoleDDL(roles)...)
+	// Re-assert schema bootstrapping (idempotent) so renames or new schemas
+	// in the config are picked up on subsequent migrations. The Postgres
+	// roles (login + API) are infrastructure — provisioned by the control
+	// plane in managed deployments and by scripts/postgres-init/01-roles.sql
+	// in dev — so the migration assumes they already exist.
 	ddl = append(ddl, generateSchemaGrants(schemas, roles)...)
 
 	// 1. Removals (DROP TABLE, DROP COLUMN, DROP INDEX, DROP POLICY, etc.)
@@ -241,30 +243,6 @@ func (m *Migrator) Apply(ctx context.Context, cfg *domain.Config) error {
 	}
 
 	return nil
-}
-
-// generateRoleDDL emits idempotent DO blocks creating the three no-login
-// roles (anon/authenticated/service_role) and granting them to the
-// authenticator login role. The login roles themselves (ultrabase_owner +
-// authenticator) must exist before the migration runs — Postgres can't
-// bootstrap them from inside a session that authenticated as one of them.
-func generateRoleDDL(roles domain.Roles) []string {
-	noLogin := []struct{ name, attrs string }{
-		{roles.Anon, ""},
-		{roles.Authenticated, ""},
-		{roles.Service, " BYPASSRLS"},
-	}
-	rlist := apiRoleList(roles)
-	ddl := make([]string, 0, len(noLogin)+1)
-	for _, r := range noLogin {
-		ddl = append(ddl, fmt.Sprintf(`DO $$ BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '%s') THEN
-        CREATE ROLE %s NOLOGIN%s;
-    END IF;
-END $$;`, r.name, r.name, r.attrs))
-	}
-	ddl = append(ddl, fmt.Sprintf("GRANT %s TO %s;", rlist, roles.Authenticator))
-	return ddl
 }
 
 // generateSchemaGrants emits per-schema USAGE + default privileges for the

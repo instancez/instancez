@@ -78,10 +78,6 @@ func Bootstrap(ctx context.Context, superURL string, poolCfg domain.PoolConfig) 
 			END IF;
 		END $$;`, roles.Service, roles.Service),
 		fmt.Sprintf(`GRANT %s TO %s;`, apiRoles, AuthenticatorRole),
-		// WITH ADMIN OPTION lets OwnerRole re-issue these GRANTs
-		// idempotently when the Migrator's generateRoleDDL runs (which
-		// it does in tests that exercise the full migration path).
-		fmt.Sprintf(`GRANT %s TO %s WITH ADMIN OPTION;`, apiRoles, OwnerRole),
 		fmt.Sprintf(`ALTER DATABASE %s OWNER TO %s;`, currentDB(superURL), OwnerRole),
 		fmt.Sprintf(`ALTER SCHEMA public OWNER TO %s;`, OwnerRole),
 		fmt.Sprintf(`GRANT ALL ON SCHEMA public TO %s;`, OwnerRole),
