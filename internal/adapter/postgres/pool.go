@@ -50,6 +50,14 @@ func New(ctx context.Context, databaseURL string, poolCfg domain.PoolConfig) (*D
 		return nil, &domain.DatabaseError{Op: "parse_url", Err: err}
 	}
 
+	// Disable pgx's prepared-statement cache. The default
+	// QueryExecModeCacheStatement issues `PREPARE stmtcache_<hash>` whose
+	// names collide on shared backend connections behind a transaction-pooled
+	// PgBouncer/RDS Proxy/Supabase pooler, producing SQLSTATE 42P05.
+	// QueryExecModeExec uses unnamed extended-protocol Parse/Bind/Execute,
+	// preserving parameter binding without server-side statement names.
+	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
+
 	if poolCfg.Max > 0 {
 		cfg.MaxConns = int32(poolCfg.Max)
 	}
