@@ -110,6 +110,37 @@ func TestGenerateOpenAPI_Structure(t *testing.T) {
 	}
 }
 
+// TestGenerateOpenAPI_SignupDocuments403 asserts that the /auth/v1/signup
+// operation advertises a 403 response so clients can wire branching on
+// `signup_disabled` even when the project they're talking to has public
+// signup turned off.
+func TestGenerateOpenAPI_SignupDocuments403(t *testing.T) {
+	cfg := &domain.Config{
+		Version: 1,
+		Project: domain.Project{Name: "Test App"},
+		Server:  domain.Server{Port: 8080},
+		Auth:    &domain.Auth{JWTExpiry: "15m"},
+	}
+
+	spec := GenerateOpenAPI(cfg)
+	paths := spec["paths"].(map[string]any)
+	signup, ok := paths["/auth/v1/signup"].(map[string]any)
+	if !ok {
+		t.Fatal("missing /auth/v1/signup path")
+	}
+	post, ok := signup["post"].(map[string]any)
+	if !ok {
+		t.Fatal("missing /auth/v1/signup post op")
+	}
+	responses, ok := post["responses"].(map[string]any)
+	if !ok {
+		t.Fatal("missing /auth/v1/signup responses")
+	}
+	if _, ok := responses["403"]; !ok {
+		t.Errorf("expected 403 response documented on /auth/v1/signup, got %v", responses)
+	}
+}
+
 func TestGenerateOpenAPI_RPCPaths(t *testing.T) {
 	cfg := &domain.Config{
 		Version: 1,

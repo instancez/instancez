@@ -327,6 +327,9 @@ var errTypeToCode = map[string]string{
 	"conflict":     "23505",
 	"validation":   "23514",
 	"internal":     "XX000",
+	// Policy errors with no SQLSTATE / PGRST equivalent: the slug doubles
+	// as the stable client-facing `code` so callers can branch on it.
+	"signup_disabled": "signup_disabled",
 }
 
 // profileHeaderGuard enforces that Accept-Profile (for reads) and

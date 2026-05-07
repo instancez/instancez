@@ -48,6 +48,20 @@ auth:
   refresh_tokens: true
   refresh_token_expiry: 7d
 
+  # Public registration controls. Both default to true when omitted.
+  #
+  # allow_signup: false closes POST /auth/v1/signup (both credentialed and
+  # anonymous sign-in) to anonymous clients. Use this for admin-only apps
+  # where users are provisioned via the admin-keyed POST /auth/v1/admin/users
+  # or POST /auth/v1/invite endpoints — those endpoints intentionally ignore
+  # this flag.
+  #
+  # allow_anonymous: false blocks only the empty-body anonymous path while
+  # leaving credentialed signup open. Has no effect when allow_signup is
+  # false (signup_disabled implies anonymous_disabled).
+  # allow_signup: false
+  # allow_anonymous: false
+
   email:
     verify_email: true
     templates:

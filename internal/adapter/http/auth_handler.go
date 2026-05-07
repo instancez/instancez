@@ -116,7 +116,24 @@ func (h *AuthHandler) Mount(root *gin.RouterGroup) {
 // The existing handleSignup uses `binding:"required,email"`, which would
 // otherwise reject anonymous requests with a 400 before any branching
 // logic runs.
+//
+// This is also where the allow_signup / allow_anonymous yaml flags are
+// enforced. Gating happens here (not at mount time) so the route stays in
+// the OpenAPI surface and clients get a typed `signup_disabled` error code
+// instead of a 404. The admin-keyed escape hatches (handleAdminCreateUser,
+// handleAdminInvite) sit on a different middleware chain and intentionally
+// ignore these flags — see the comments on those handlers.
 func (h *AuthHandler) handleSignupDispatch(c *gin.Context) {
+	// allow_signup=false rejects every variant (credentialed and anonymous)
+	// before any body parse — anonymous users are still new user rows, so
+	// disabling registration must disable both branches. Bailing early
+	// also avoids wasting a body read + JSON unmarshal on requests we'll
+	// reject anyway.
+	if !h.cfg.Auth.SignupAllowed() {
+		problemJSON(c, 403, "signup_disabled", "Public signup is disabled")
+		return
+	}
+
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		problemJSON(c, 400, "bad_request", "Invalid signup request")
@@ -127,7 +144,14 @@ func (h *AuthHandler) handleSignupDispatch(c *gin.Context) {
 	var probe map[string]any
 	_ = json.Unmarshal(body, &probe)
 	email, _ := probe["email"].(string)
-	if strings.TrimSpace(email) == "" {
+	isAnonymous := strings.TrimSpace(email) == ""
+
+	if isAnonymous && !h.cfg.Auth.AnonymousAllowed() {
+		problemJSON(c, 403, "signup_disabled", "Anonymous sign-in is not allowed")
+		return
+	}
+
+	if isAnonymous {
 		h.handleSignupAnonymous(c, probe)
 		return
 	}
@@ -994,6 +1018,11 @@ func (h *AuthHandler) handleGenerateLink(c *gin.Context) {
 
 const userSelectCols = `id::text, email, email_verified, email_confirmed_at, last_sign_in_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at`
 
+// handleAdminCreateUser intentionally ignores cfg.Auth.AllowSignup. The whole
+// point of the flag is to disable *public* signup while keeping admin-keyed
+// user creation open (admin portals, AI-app-builder workflows that mint
+// users via a backend). Access is gated by the adminKeyAuth() middleware on
+// the route, not by the signup flag.
 func (h *AuthHandler) handleAdminCreateUser(c *gin.Context) {
 	var req struct {
 		Email        string         `json:"email"`
@@ -1234,6 +1263,9 @@ func (h *AuthHandler) handleAdminDeleteUser(c *gin.Context) {
 	c.JSON(200, gin.H{})
 }
 
+// handleAdminInvite intentionally ignores cfg.Auth.AllowSignup for the same
+// reason as handleAdminCreateUser: the admin key path is the supported way
+// to add users to a project that has public registration turned off.
 func (h *AuthHandler) handleAdminInvite(c *gin.Context) {
 	var req struct {
 		Email string         `json:"email" binding:"required,email"`

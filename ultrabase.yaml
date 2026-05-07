@@ -42,6 +42,8 @@ auth:
     jwt_expiry: 15m
     refresh_tokens: true
     refresh_token_expiry: 7d
+    # allow_signup: false       # admin-only: POST /auth/v1/signup → 403 signup_disabled
+    # allow_anonymous: false    # block empty-body anonymous sign-in
     email: null
     google: null
     github: null

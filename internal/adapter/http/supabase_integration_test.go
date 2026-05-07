@@ -316,6 +316,63 @@ func TestSupabaseJSCompat(t *testing.T) {
 	// Like the email OTP flow, we need the capturing EmailSender to
 	// extract the recovery token from the email.
 	runPasswordResetFlow(t, ts.URL, capturedEmail)
+
+	// ---- 8. allow_signup=false gating ----
+	// Run last: this mutates cfg.Auth.AllowSignup, which the dispatcher
+	// reads on every request.
+	runSignupDisabledFlow(t, cfg, ts.URL, adminKey)
+}
+
+func runSignupDisabledFlow(t *testing.T, cfg *domain.Config, baseURL, adminKey string) {
+	t.Helper()
+	// Restore via Cleanup so any t.Fatalf below still resets the live cfg
+	// — the dispatcher reads this pointer on every request.
+	disabled := false
+	cfg.Auth.AllowSignup = &disabled
+	t.Cleanup(func() { cfg.Auth.AllowSignup = nil })
+
+	signupBody := bytes.NewBufferString(`{"email":"blocked@example.com","password":"hunter2hunter2"}`)
+	resp, err := http.Post(baseURL+"/auth/v1/signup", "application/json", signupBody)
+	if err != nil {
+		t.Fatalf("disabled signup: POST /signup failed: %v", err)
+	}
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != 403 {
+		t.Fatalf("disabled signup: status = %d, want 403; body = %s", resp.StatusCode, bodyBytes)
+	}
+	var env map[string]any
+	_ = json.Unmarshal(bodyBytes, &env)
+	if env["code"] != "signup_disabled" {
+		t.Errorf("disabled signup: code = %v, want signup_disabled; body = %s", env["code"], bodyBytes)
+	}
+
+	// Anonymous signup (empty body) is also blocked when allow_signup=false.
+	anonResp, err := http.Post(baseURL+"/auth/v1/signup", "application/json", bytes.NewBufferString(`{}`))
+	if err != nil {
+		t.Fatalf("disabled signup: anonymous POST /signup failed: %v", err)
+	}
+	anonBytes, _ := io.ReadAll(anonResp.Body)
+	_ = anonResp.Body.Close()
+	if anonResp.StatusCode != 403 {
+		t.Fatalf("disabled signup: anonymous status = %d, want 403; body = %s", anonResp.StatusCode, anonBytes)
+	}
+
+	// Admin-keyed create user must still succeed.
+	adminEmail := fmt.Sprintf("admin_create_%d@example.com", time.Now().UnixNano())
+	adminBody := bytes.NewBufferString(fmt.Sprintf(`{"email":%q,"password":"hunter2hunter2","email_confirm":true}`, adminEmail))
+	req, _ := http.NewRequest("POST", baseURL+"/auth/v1/admin/users", adminBody)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+adminKey)
+	adminResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("disabled signup: POST /admin/users failed: %v", err)
+	}
+	adminRespBody, _ := io.ReadAll(adminResp.Body)
+	_ = adminResp.Body.Close()
+	if adminResp.StatusCode != 200 {
+		t.Fatalf("disabled signup: admin/users status = %d, want 200; body = %s", adminResp.StatusCode, adminRespBody)
+	}
 }
 
 // captureEmailSender records every email the auth handler asks to send

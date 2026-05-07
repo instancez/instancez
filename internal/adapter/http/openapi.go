@@ -29,9 +29,25 @@ func GenerateOpenAPI(cfg *domain.Config) map[string]any {
 
 	// Auth endpoints (GoTrue-compatible)
 	if cfg.Auth != nil {
-		paths["/auth/v1/signup"] = map[string]any{
-			"post": opSummary("Sign up", "Create a new user account", []string{"auth"}, 200),
+		// /auth/v1/signup advertises both 200 and 403 (allow_signup /
+		// allow_anonymous gating) so clients can branch on the typed
+		// `signup_disabled` code. Gating happens at dispatch, not at mount
+		// time, so the route is in the spec unconditionally.
+		signupOp := opSummary("Sign up", "Create a new user account", []string{"auth"}, 200)
+		signupOp["responses"].(map[string]any)["403"] = map[string]any{
+			"description": "Public signup or anonymous sign-in is disabled (code: signup_disabled)",
+			"content": map[string]any{
+				"application/json": map[string]any{
+					"example": map[string]any{
+						"code":    "signup_disabled",
+						"message": "Public signup is disabled",
+						"details": "",
+						"hint":    "",
+					},
+				},
+			},
 		}
+		paths["/auth/v1/signup"] = map[string]any{"post": signupOp}
 		paths["/auth/v1/token"] = map[string]any{
 			"post": opSummary("Token", "Exchange credentials or refresh token for an access token (grant_type=password|refresh_token)", []string{"auth"}, 200),
 		}

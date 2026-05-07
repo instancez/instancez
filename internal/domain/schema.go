@@ -125,13 +125,40 @@ type StorageProvider struct {
 // Auth configures authentication. Custom user fields are defined in
 // tables.users like any other table; core columns (id, email, password_hash,
 // etc.) are auto-emitted by the migrator.
+//
+// AllowSignup / AllowAnonymous are pointers so we can distinguish "unset"
+// (defaults to allowed, preserving backward compatibility) from "explicitly
+// false" (public registration is disabled). Always read them through the
+// SignupAllowed() / AnonymousAllowed() helpers.
 type Auth struct {
 	JWTExpiry          string         `yaml:"jwt_expiry" json:"jwt_expiry"`
 	RefreshTokens      bool           `yaml:"refresh_tokens" json:"refresh_tokens"`
 	RefreshTokenExpiry string         `yaml:"refresh_token_expiry" json:"refresh_token_expiry"`
+	AllowSignup        *bool          `yaml:"allow_signup" json:"allow_signup"`
+	AllowAnonymous     *bool          `yaml:"allow_anonymous" json:"allow_anonymous"`
 	Email              *AuthEmail     `yaml:"email" json:"email"`
 	Google             *OAuthProvider `yaml:"google" json:"google"`
 	GitHub             *OAuthProvider `yaml:"github" json:"github"`
+}
+
+// SignupAllowed reports whether public /auth/v1/signup with credentials is
+// permitted. Defaults to true when AllowSignup is unset. The admin-keyed
+// /auth/v1/admin/users and /auth/v1/invite endpoints ignore this flag.
+func (a *Auth) SignupAllowed() bool {
+	if a == nil || a.AllowSignup == nil {
+		return true
+	}
+	return *a.AllowSignup
+}
+
+// AnonymousAllowed reports whether anonymous sign-in (POST /auth/v1/signup
+// with an empty body) is permitted. Defaults to true when AllowAnonymous is
+// unset.
+func (a *Auth) AnonymousAllowed() bool {
+	if a == nil || a.AllowAnonymous == nil {
+		return true
+	}
+	return *a.AllowAnonymous
 }
 
 type AuthEmail struct {

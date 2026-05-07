@@ -529,6 +529,172 @@ func TestHandleSignupDispatch_AnonymousOnEmptyBody(t *testing.T) {
 	}
 }
 
+// ---------- signup gating (allow_signup / allow_anonymous) ----------
+
+func signupGatingHandler(t *testing.T, allowSignup, allowAnonymous *bool) (*AuthHandler, *stubDB) {
+	t.Helper()
+	db := &stubDB{
+		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+			if strings.Contains(q, "INSERT INTO users") {
+				return map[string]any{
+					"id":                 "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+					"email":              "user@example.com",
+					"email_verified":     false,
+					"raw_app_meta_data":  `{}`,
+					"raw_user_meta_data": `{}`,
+					"created_at":         time.Now(),
+					"updated_at":         time.Now(),
+				}, nil
+			}
+			return nil, nil
+		},
+	}
+	h := &AuthHandler{
+		cfg: &domain.Config{Auth: &domain.Auth{
+			JWTExpiry:      "15m",
+			AllowSignup:    allowSignup,
+			AllowAnonymous: allowAnonymous,
+		}},
+		db:      db,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		jwtKeys: stubKeys(t),
+	}
+	return h, db
+}
+
+func ptrBool(b bool) *bool { return &b }
+
+func postSignup(h *AuthHandler, body string) *httptest.ResponseRecorder {
+	r := gin.New()
+	r.POST("/auth/v1/signup", h.handleSignupDispatch)
+	req := httptest.NewRequest("POST", "/auth/v1/signup", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w
+}
+
+func TestSignupGating_AllowSignupFalse_BlocksEmailSignup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, _ := signupGatingHandler(t, ptrBool(false), nil)
+	w := postSignup(h, `{"email":"u@example.com","password":"hunter2hunter2"}`)
+	if w.Code != 403 {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["code"] != "signup_disabled" {
+		t.Errorf("expected code=signup_disabled, got %v (body=%s)", body["code"], w.Body.String())
+	}
+}
+
+// allow_signup=false implies anonymous is also blocked (anonymous users
+// are new user rows). This invariant is part of the YAML contract.
+func TestSignupGating_AllowSignupFalse_BlocksAnonymous(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, _ := signupGatingHandler(t, ptrBool(false), nil)
+	w := postSignup(h, `{}`)
+	if w.Code != 403 {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["code"] != "signup_disabled" {
+		t.Errorf("expected code=signup_disabled, got %v (body=%s)", body["code"], w.Body.String())
+	}
+}
+
+func TestSignupGating_AnonymousFalse_BlocksAnonymousOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, _ := signupGatingHandler(t, ptrBool(true), ptrBool(false))
+	w := postSignup(h, `{}`)
+	if w.Code != 403 {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["code"] != "signup_disabled" {
+		t.Errorf("expected code=signup_disabled, got %v (body=%s)", body["code"], w.Body.String())
+	}
+}
+
+func TestSignupGating_AnonymousFalse_AllowsEmailSignup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, _ := signupGatingHandler(t, ptrBool(true), ptrBool(false))
+	w := postSignup(h, `{"email":"u@example.com","password":"hunter2hunter2"}`)
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSignupGating_NilFlags_PreservesBackwardCompat(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	// email signup
+	h, _ := signupGatingHandler(t, nil, nil)
+	w := postSignup(h, `{"email":"u@example.com","password":"hunter2hunter2"}`)
+	if w.Code != 200 {
+		t.Fatalf("email signup with nil flags: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// anonymous
+	h2, _ := signupGatingHandler(t, nil, nil)
+	w2 := postSignup(h2, `{}`)
+	if w2.Code != 200 {
+		t.Fatalf("anonymous signup with nil flags: expected 200, got %d: %s", w2.Code, w2.Body.String())
+	}
+}
+
+// Admin-keyed user creation is the escape hatch for admin-only projects;
+// it must keep working even with allow_signup=false.
+func TestSignupGating_AdminCreateUser_IgnoresAllowSignup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("ULTRABASE_ADMIN_KEY", "test-admin-key")
+
+	h, _ := signupGatingHandler(t, ptrBool(false), ptrBool(false))
+	r := gin.New()
+	h.Mount(r.Group(""))
+
+	req := httptest.NewRequest("POST", "/auth/v1/admin/users",
+		strings.NewReader(`{"email":"new@example.com","password":"hunter2hunter2"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-admin-key")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	// Admin-create must not be rejected with signup_disabled. Accept any
+	// 2xx (handler returns 200 on success); reject 403.
+	if w.Code == 403 {
+		t.Fatalf("admin create user blocked by signup gating: %s", w.Body.String())
+	}
+	if w.Code >= 400 {
+		t.Fatalf("admin create user failed: status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestSignupGating_AdminInvite_IgnoresAllowSignup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("ULTRABASE_ADMIN_KEY", "test-admin-key")
+
+	h, _ := signupGatingHandler(t, ptrBool(false), ptrBool(false))
+	r := gin.New()
+	h.Mount(r.Group(""))
+
+	req := httptest.NewRequest("POST", "/auth/v1/invite",
+		strings.NewReader(`{"email":"invited@example.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-admin-key")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code == 403 {
+		t.Fatalf("admin invite blocked by signup gating: %s", w.Body.String())
+	}
+	if w.Code >= 400 {
+		t.Fatalf("admin invite failed: status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
 // TestHandleOTP_CreatesTokenForNewUser drives the magic link path: a
 // previously unknown email should produce an INSERT for the user and a
 // second INSERT into _auth_email_verifications with purpose='magiclink'.

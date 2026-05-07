@@ -15,6 +15,8 @@ auth:
   jwt_expiry: 15m
   refresh_tokens: true
   refresh_token_expiry: 7d
+  allow_signup: true        # default; set false for admin-only projects
+  allow_anonymous: true     # default; set false to disable anonymous sign-in
 
   fields:
     display_name: { type: text, required: true }
@@ -50,6 +52,8 @@ auth:
 | `jwt_expiry` | duration | `15m` | Access token lifetime |
 | `refresh_tokens` | bool | `false` | Enable refresh token flow |
 | `refresh_token_expiry` | duration | `7d` | Refresh token lifetime |
+| `allow_signup` | bool | `true` | When `false`, `POST /auth/v1/signup` returns `403` with code `signup_disabled`. Admin-keyed `POST /auth/v1/admin/users` and `POST /auth/v1/invite` are unaffected. |
+| `allow_anonymous` | bool | `true` | When `false`, anonymous sign-in (empty body to `/signup`) is rejected. Implied false when `allow_signup: false`. |
 | `fields` | map | — | Custom columns added to `users` table |
 
 ### What's NOT Here
