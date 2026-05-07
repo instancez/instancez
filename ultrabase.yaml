@@ -350,7 +350,7 @@ storage:
             - image/*
         public: false
         rls: []
-    some:
+    some_bucket:
         max_size: 5MB
         types:
             - image/*

@@ -660,3 +660,117 @@ func TestValidate_IdentifierNaming(t *testing.T) {
 		})
 	}
 }
+
+// SQL reserved words like `order`, `select`, `where` would pass identRE but
+// blow up at migration time because we interpolate identifiers raw. Reject
+// them at validate time across every YAML site that ends up as a SQL
+// identifier (tables, columns, schemas, buckets, RPC functions, RPC args).
+func TestValidate_ReservedSQLWord(t *testing.T) {
+	bad := []struct {
+		kind string
+		name string
+	}{
+		{"table", "order"},
+		{"table", "user"},
+		{"field", "select"},
+		{"field", "where"},
+		{"field", "primary"},
+		{"bucket", "table"},
+		{"trigger", "from"},
+		{"function", "group"},
+	}
+
+	for _, tc := range bad {
+		t.Run(tc.kind+"_"+tc.name, func(t *testing.T) {
+			cfg := validBaseConfig()
+			switch tc.kind {
+			case "table":
+				cfg.Tables[tc.name] = domain.Table{
+					Fields: []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}},
+				}
+			case "bucket":
+				cfg.Storage = map[string]domain.Bucket{tc.name: {Public: true}}
+			case "field":
+				cfg.Tables["items"] = domain.Table{
+					Fields: []domain.Field{
+						{Name: "id", Type: "bigserial", PrimaryKey: true},
+						{Name: tc.name, Type: "text"},
+					},
+				}
+			case "trigger":
+				cfg.On = map[string]domain.Trigger{tc.name: {
+					Events:  []string{"todos.insert"},
+					Webhook: &domain.WebhookAction{URL: "https://x.com"},
+				}}
+			case "function":
+				cfg.Functions = map[string]domain.Function{tc.name: validRPCFunction()}
+			}
+			errs := Validate(cfg)
+			if errs == nil {
+				t.Fatalf("expected error for %s %q", tc.kind, tc.name)
+			}
+			found := false
+			for _, e := range errs {
+				if strings.Contains(e.Message, "reserved SQL keyword") {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("expected 'reserved SQL keyword' error for %s %q, got: %v", tc.kind, tc.name, errs)
+			}
+		})
+	}
+}
+
+// Schema names are interpolated into CREATE SCHEMA / GRANT statements, so
+// they must clear the same identifier rules as tables.
+func TestValidate_ReservedSchemaName(t *testing.T) {
+	cfg := validBaseConfig()
+	table := cfg.Tables["todos"]
+	table.Schema = "user"
+	cfg.Tables["todos"] = table
+
+	errs := Validate(cfg)
+	assertHasErrorAt(t, errs, "tables.todos.schema")
+}
+
+func TestValidate_BadSchemaName(t *testing.T) {
+	cfg := validBaseConfig()
+	table := cfg.Tables["todos"]
+	table.Schema = "Bad-Schema"
+	cfg.Tables["todos"] = table
+
+	errs := Validate(cfg)
+	assertHasErrorAt(t, errs, "tables.todos.schema")
+}
+
+// RPC arg name picks up reserved-word rejection too.
+func TestValidate_ReservedRPCArgName(t *testing.T) {
+	cfg := validBaseConfig()
+	fn := validRPCFunction()
+	fn.Args = []domain.FuncArg{{Name: "where", Type: "int"}}
+	cfg.Functions = map[string]domain.Function{"f": fn}
+
+	errs := Validate(cfg)
+	assertHasErrorAt(t, errs, "functions.f.args[0].name")
+}
+
+// Names that contain or extend a reserved word but aren't reserved
+// themselves must still validate (regression guard).
+func TestValidate_NonReservedSimilarNames(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Tables["orders"] = domain.Table{ // plural — not reserved
+		Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
+			{Name: "ordering", Type: "integer"},  // contains "order"
+			{Name: "user_id", Type: "uuid"},      // contains "user"
+			{Name: "selected", Type: "boolean"},  // contains "select"
+		},
+	}
+
+	errs := Validate(cfg)
+	if errs != nil {
+		t.Fatalf("expected no errors for non-reserved names, got: %v", errs)
+	}
+}
