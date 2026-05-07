@@ -85,7 +85,7 @@ tables:
 # Provision once on the Postgres server (run as superuser):
 #   CREATE ROLE ultrabase_owner LOGIN PASSWORD 'CHANGE_ME'
 #       CREATEROLE CREATEDB BYPASSRLS REPLICATION;
-#   CREATE ROLE authenticator LOGIN PASSWORD 'CHANGE_ME' INHERIT;
+#   CREATE ROLE authenticator LOGIN PASSWORD 'CHANGE_ME' NOINHERIT;
 #   ALTER DATABASE ` + name + ` OWNER TO ultrabase_owner;
 #   ALTER SCHEMA public OWNER TO ultrabase_owner;
 # The three no-login roles (anon, authenticated, service_role) and grants

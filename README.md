@@ -92,7 +92,7 @@ go build -o ultrabase ./cmd/ultrabase
 # Two Postgres logins are required (Supabase-style). Provision them once:
 #   CREATE ROLE ultrabase_owner LOGIN PASSWORD '...'
 #       CREATEROLE CREATEDB BYPASSRLS REPLICATION;
-#   CREATE ROLE authenticator LOGIN PASSWORD '...' INHERIT;
+#   CREATE ROLE authenticator LOGIN PASSWORD '...' NOINHERIT;
 #   ALTER DATABASE mydb OWNER TO ultrabase_owner;
 export ULTRABASE_OWNER_DATABASE_URL="postgres://ultrabase_owner:pass@localhost:5432/mydb?sslmode=disable"
 export ULTRABASE_AUTH_DATABASE_URL="postgres://authenticator:pass@localhost:5432/mydb?sslmode=disable"
@@ -352,7 +352,7 @@ Environment variables:
 | Variable | Required | Description |
 |---|---|---|
 | `ULTRABASE_OWNER_DATABASE_URL` | Yes | Privileged login (migrations, seeding, replication). Role needs `CREATEROLE`, `CREATEDB`, `BYPASSRLS`, `REPLICATION`. |
-| `ULTRABASE_AUTH_DATABASE_URL` | Yes | Authenticator login for HTTP requests. Role `INHERIT`s anon/authenticated/service_role per transaction. |
+| `ULTRABASE_AUTH_DATABASE_URL` | Yes | Authenticator login for HTTP requests. `NOINHERIT`; ultrabase issues `SET LOCAL ROLE` per transaction (CRUD: from JWT; system endpoints: `service_role`). |
 | `ULTRABASE_DB_AUTHENTICATOR_ROLE` | No | Override the authenticator role name (default: `authenticator`). |
 | `ULTRABASE_DB_ANON_ROLE` | No | Override the anon role name (default: `anon`). |
 | `ULTRABASE_DB_AUTHENTICATED_ROLE` | No | Override the authenticated role name (default: `authenticated`). |

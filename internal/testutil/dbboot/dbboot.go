@@ -32,9 +32,10 @@ const rolePassword = "ultrabase_test"
 // superURL must point to the testcontainer DB as a superuser. The function
 // is idempotent — re-running against an existing setup is a no-op.
 //
-// authenticator uses default INHERIT so system endpoints (auth/admin) that
-// don't wrap their queries in a WithRLS tx still have the union of granted
-// privileges. CRUD endpoints explicitly SET LOCAL ROLE per transaction.
+// authenticator is NOINHERIT to match production (instancez deployer). Every
+// query the request pool runs goes through a tx with SET LOCAL ROLE — system
+// endpoints (auth/admin/mfa) default to service_role, CRUD endpoints pick the
+// session role. NOINHERIT here surfaces any code path that forgets to switch.
 //
 // The three NOLOGIN API roles (anon/authenticated/service_role) are also
 // provisioned here so tests that bypass the Migrator (e.g. pgrupstream
@@ -59,7 +60,7 @@ func Bootstrap(ctx context.Context, superURL string, poolCfg domain.PoolConfig) 
 		END $$;`, OwnerRole, OwnerRole, rolePassword),
 		fmt.Sprintf(`DO $$ BEGIN
 			IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '%s') THEN
-				CREATE ROLE %s LOGIN PASSWORD '%s' INHERIT;
+				CREATE ROLE %s LOGIN PASSWORD '%s' NOINHERIT;
 			END IF;
 		END $$;`, AuthenticatorRole, AuthenticatorRole, rolePassword),
 		fmt.Sprintf(`DO $$ BEGIN

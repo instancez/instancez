@@ -7,7 +7,7 @@
 CREATE ROLE ultrabase_owner LOGIN PASSWORD 'ultrabase'
     CREATEROLE CREATEDB BYPASSRLS REPLICATION;
 
-CREATE ROLE authenticator LOGIN PASSWORD 'ultrabase' INHERIT;
+CREATE ROLE authenticator LOGIN PASSWORD 'ultrabase' NOINHERIT;
 
 -- No-login API roles assumed by the request pool's SET LOCAL ROLE.
 CREATE ROLE anon NOLOGIN;

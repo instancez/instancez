@@ -203,8 +203,26 @@ func (db *DB) ExecDDL(ctx context.Context, sql string) error {
 	return nil
 }
 
-// Query executes a query and returns all rows as maps.
+// Query executes a query and returns all rows as maps. On the request
+// pool (roles != nil) the query runs inside a short-lived tx that issues
+// SET LOCAL ROLE — authenticator is NOINHERIT in production, so a bare
+// pool query would otherwise have no table privileges.
 func (db *DB) Query(ctx context.Context, query string, args ...any) ([]map[string]any, error) {
+	if db.roles != nil {
+		tx, err := db.Begin(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer tx.Rollback(ctx)
+		rows, err := tx.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, &domain.DatabaseError{Op: "commit", Err: err}
+		}
+		return rows, nil
+	}
 	rows, err := db.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, &domain.DatabaseError{Op: "query", Err: err}
@@ -214,7 +232,23 @@ func (db *DB) Query(ctx context.Context, query string, args ...any) ([]map[strin
 }
 
 // QueryRow executes a query and returns a single row as a map, or nil.
+// Auto-wraps in a role-switching tx on the request pool — see Query.
 func (db *DB) QueryRow(ctx context.Context, query string, args ...any) (map[string]any, error) {
+	if db.roles != nil {
+		tx, err := db.Begin(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer tx.Rollback(ctx)
+		row, err := tx.QueryRow(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, &domain.DatabaseError{Op: "commit", Err: err}
+		}
+		return row, nil
+	}
 	rows, err := db.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, &domain.DatabaseError{Op: "query_row", Err: err}
@@ -232,7 +266,23 @@ func (db *DB) QueryRow(ctx context.Context, query string, args ...any) (map[stri
 }
 
 // Exec executes a statement and returns affected row count.
+// Auto-wraps in a role-switching tx on the request pool — see Query.
 func (db *DB) Exec(ctx context.Context, query string, args ...any) (int64, error) {
+	if db.roles != nil {
+		tx, err := db.Begin(ctx)
+		if err != nil {
+			return 0, err
+		}
+		defer tx.Rollback(ctx)
+		n, err := tx.Exec(ctx, query, args...)
+		if err != nil {
+			return 0, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return 0, &domain.DatabaseError{Op: "commit", Err: err}
+		}
+		return n, nil
+	}
 	tag, err := db.pool.Exec(ctx, query, args...)
 	if err != nil {
 		return 0, &domain.DatabaseError{Op: "exec", Err: err}
@@ -268,9 +318,19 @@ func (db *DB) Begin(ctx context.Context) (domain.Tx, error) {
 // buildSessionSetup composes the SET LOCAL statements for a transaction.
 // Role names come from Roles which is validated at construction; literal
 // values are escaped via quote(). Returns "" when nothing needs setting.
+//
+// On the request pool (roles != nil) with no session on context — the
+// auth/admin/mfa system endpoints — we default to service_role. Production
+// authenticators are NOINHERIT, so without an explicit SET LOCAL ROLE the
+// login carries no table privileges.
 func buildSessionSetup(ctx context.Context, roles *domain.Roles) string {
 	var b strings.Builder
-	if session, ok := sessionFromContext(ctx); ok {
+	session, hasSession := sessionFromContext(ctx)
+	if !hasSession && roles != nil {
+		session = domain.Session{Role: "service_role"}
+		hasSession = true
+	}
+	if hasSession {
 		role := session.Role
 		if role == "" {
 			if session.IsAuthenticated {
