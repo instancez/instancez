@@ -28,9 +28,11 @@ Three levers, set by CLI flag or env var. **Never** in the YAML they control —
 
 | Flag | Env var | Default in `serve` | Default in `dev` |
 |---|---|---|---|
-| `--config <path-or-uri>` | `ULTRABASE_CONFIG_SOURCE` | `./ultrabase.yaml` | hardcoded `./ultrabase.yaml` |
-| `--watch` / `--no-watch` | `ULTRABASE_CONFIG_WATCH` | off | hardcoded on |
-| `--dashboard <mode>` | `ULTRABASE_DASHBOARD` | `disabled` | hardcoded `readwrite` |
+| `--config <path-or-uri>` | `ULTRABASE_CONFIG_SOURCE` | `./ultrabase.yaml` | `./ultrabase.yaml` |
+| `--watch` / `--no-watch` | `ULTRABASE_CONFIG_WATCH` | off | on |
+| `--dashboard <mode>` | `ULTRABASE_DASHBOARD` | `disabled` | `readwrite` |
+
+Both `dev` and `serve` accept all three flags; only the defaults differ. Running `ultrabase dev --no-watch --dashboard readonly --config s3://my-bucket/config.yaml` is valid and behaves exactly as those overrides imply.
 
 `--dashboard` is a tri-state enum:
 
@@ -46,7 +48,7 @@ Invalid values (`--dashboard true`, `--dashboard yes`, anything not in the three
 
 This avoids a redundant `--backend` flag and lets the URI scheme be the single source of intent.
 
-**`ultrabase dev` is unchanged** and ignores these flags. It hardcodes file backend, watch on, dashboard `readwrite`, auto-loads `.env`, and applies lenient CORS defaults. The flags exist for `serve` only.
+**`ultrabase dev`** uses the same flag surface as `serve` but ships with the dev-friendly defaults shown above (watch on, dashboard `readwrite`, file backend at `./ultrabase.yaml`). It also auto-loads `.env`, applies lenient CORS defaults, prints pretty/colored logs, and prompts interactively for destructive migrations — those non-flag behaviors are properties of the command itself, not the levers.
 
 **Validation at startup:**
 - `--watch` with an `s3://` URI → reject with a clear error (`config watch is only supported with file backends in v1`).
@@ -75,20 +77,20 @@ After this spec lands, the two CLI commands diverge as follows. Anything not lis
 
 | Concern | `ultrabase dev` | `ultrabase serve` |
 |---|---|---|
-| `--config` source | hardcoded `./ultrabase.yaml`; flag ignored if passed | configurable; default `./ultrabase.yaml`; accepts `s3://` |
-| `--watch` | hardcoded on; flag ignored | configurable; default off; rejected with `s3://` source |
-| `--dashboard` | hardcoded `readwrite`; flag ignored | configurable; default `disabled`; values `disabled`/`readonly`/`readwrite` |
+| `--config` default | `./ultrabase.yaml` | `./ultrabase.yaml` |
+| `--watch` default | on (so file edits hot-reload) | off (restart-only) |
+| `--dashboard` default | `readwrite` | `disabled` |
 | `.env` autoload | yes (auto-load from project root) | no (12-factor: real env vars only) |
 | CORS defaults | permissive: `origins: ["*"]` if not configured | strict: must be set in YAML or requests are rejected |
 | Log format | pretty / colored, human-readable | structured JSON via `slog` |
 | Destructive migrations (DROP TABLE / DROP COLUMN) | interactive `y/N` prompt at boot | refuses to start unless `--allow-destructive` is passed |
-| Boot-time migration failure (other than destructive) | log loud error, run on `lastGood` (same as `serve`) | log loud error, run on `lastGood` |
-| Hot-reload trigger | fsnotify on `ultrabase.yaml` save | only via process restart |
+| Boot-time migration failure (other than destructive) | log loud error, run on `lastGood` | log loud error, run on `lastGood` (identical) |
 
-Two takeaways from the table:
+Three takeaways from the table:
 
-1. **`dev` is a curated preset, not a separate code path.** It just hardcodes the same levers `serve` exposes. Anyone who wants "dev with the dashboard disabled" or "dev against an S3 config" can use `serve --watch --dashboard readwrite --config s3://…` and get the same behavior with their own choices.
-2. **Boot-time migration failure handling is identical.** Both fall back to `lastGood` and surface drift status. The only place the two crash on config errors is destructive ops in `serve` without `--allow-destructive` — and even that is a refusal-to-start rather than a crash mid-boot.
+1. **`dev` is a curated preset, not a separate code path.** It exposes the same flag surface as `serve` and only changes their defaults. Anyone who wants "dev with the dashboard disabled" can run `ultrabase dev --dashboard disabled` directly; anyone who wants "serve with watch on" can run `ultrabase serve --watch`. The lines between the two commands are about non-flag behaviors (`.env` loading, CORS defaults, log format, destructive-migration UX), not the lever set.
+2. **Hot-reload is not a separate concern from `--watch`.** When `--watch` is on (with a file backend), config file changes trigger reload; when it's off, only a process restart does. So `dev`'s hot-reload behavior is just a consequence of `--watch` defaulting to on, and it can be toggled in either direction in either command.
+3. **Boot-time migration failure handling is identical.** Both fall back to `lastGood` and surface drift status. The only place either crashes on config issues is destructive ops in `serve` without `--allow-destructive` — and even that is a refusal-to-start rather than a crash mid-boot.
 
 ## Dashboard behavior by mode
 
