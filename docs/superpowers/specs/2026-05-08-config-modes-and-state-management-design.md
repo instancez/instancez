@@ -30,7 +30,15 @@ Three levers, set by CLI flag or env var. **Never** in the YAML they control —
 |---|---|---|---|
 | `--config <path-or-uri>` | `ULTRABASE_CONFIG_SOURCE` | `./ultrabase.yaml` | hardcoded `./ultrabase.yaml` |
 | `--watch` / `--no-watch` | `ULTRABASE_CONFIG_WATCH` | off | hardcoded on |
-| `--ui-edit` / `--no-ui-edit` | `ULTRABASE_CONFIG_UI_EDIT` | off | hardcoded on |
+| `--dashboard <mode>` | `ULTRABASE_DASHBOARD` | `disabled` | hardcoded `readwrite` |
+
+`--dashboard` is a tri-state enum:
+
+- **`disabled`** — no dashboard SPA is served. `PUT /api/_admin/config` returns `403 Forbidden`. Read-only admin endpoints (`GET /_admin/config`, `GET /_admin/config/status`, the ops endpoints for events / users / migrations) remain available to anyone with the admin key.
+- **`readonly`** — SPA is served and renders all sections. PUTs to config-mutation endpoints return `403`. Ops actions (event retry, user disable, password reset) work as normal.
+- **`readwrite`** — SPA served, all endpoints enabled, including `PUT /api/_admin/config`.
+
+Invalid values (`--dashboard true`, `--dashboard yes`, anything not in the three above) are rejected at startup with a clear message.
 
 **Backend is derived from the `--config` URI scheme**, not a separate flag:
 - A bare path (`./ultrabase.yaml`, `/etc/ultrabase/config.yaml`) → `file` backend.
@@ -38,7 +46,7 @@ Three levers, set by CLI flag or env var. **Never** in the YAML they control —
 
 This avoids a redundant `--backend` flag and lets the URI scheme be the single source of intent.
 
-**`ultrabase dev` is unchanged** and ignores these flags. It hardcodes file backend, watch on, ui-edit on, auto-loads `.env`, and applies lenient CORS defaults. The flags exist for `serve` only.
+**`ultrabase dev` is unchanged** and ignores these flags. It hardcodes file backend, watch on, dashboard `readwrite`, auto-loads `.env`, and applies lenient CORS defaults. The flags exist for `serve` only.
 
 **Validation at startup:**
 - `--watch` with an `s3://` URI → reject with a clear error (`config watch is only supported with file backends in v1`).
@@ -49,19 +57,42 @@ This avoids a redundant `--backend` flag and lets the URI scheme be the single s
 
 The three named user segments map onto combinations of these levers:
 
-| Segment | Topology | `--config` | `--watch` | `--ui-edit` |
+| Segment | Topology | `--config` | `--watch` | `--dashboard` |
 |---|---|---|---|---|
-| Solo / small team | local laptop | (uses `dev`) | (on) | (on) |
-| Solo / small team | single container, GitOps | `./ultrabase.yaml` (volume mount) | off | off |
-| Engineering team | k8s, GitOps | `s3://…` | off | off |
-| OSS / dashboard-driven | single container | `./ultrabase.yaml` | off | on |
-| OSS / dashboard-driven | serverless | `s3://…` | off | on |
+| Solo / small team | local laptop | (uses `dev`) | (on) | (`readwrite`) |
+| Solo / small team | single container, GitOps | `./ultrabase.yaml` (volume mount) | off | `readonly` (or `disabled`) |
+| Engineering team | k8s, GitOps | `s3://…` | off | `readonly` (or `disabled`) |
+| OSS / dashboard-driven | single container | `./ultrabase.yaml` | off | `readwrite` |
+| OSS / dashboard-driven | serverless | `s3://…` | off | `readwrite` |
+
+`readonly` is the recommended default for GitOps deployments that want their ops team to be able to inspect the live config in the dashboard without granting edit power. `disabled` is for hardened deployments that don't want any browser-facing surface at all.
 
 There is no need for named presets beyond `dev` and `serve` — the lever combinations cover all five cells with one CLI surface.
 
-## UI edit behavior
+## Differences between `dev` and `serve`
 
-When `--ui-edit` is on, `PUT /api/_admin/config` is enabled. The handler:
+After this spec lands, the two CLI commands diverge as follows. Anything not listed is identical (HTTP routes, auth, RLS, WAL events, the supabase-js wire surface).
+
+| Concern | `ultrabase dev` | `ultrabase serve` |
+|---|---|---|
+| `--config` source | hardcoded `./ultrabase.yaml`; flag ignored if passed | configurable; default `./ultrabase.yaml`; accepts `s3://` |
+| `--watch` | hardcoded on; flag ignored | configurable; default off; rejected with `s3://` source |
+| `--dashboard` | hardcoded `readwrite`; flag ignored | configurable; default `disabled`; values `disabled`/`readonly`/`readwrite` |
+| `.env` autoload | yes (auto-load from project root) | no (12-factor: real env vars only) |
+| CORS defaults | permissive: `origins: ["*"]` if not configured | strict: must be set in YAML or requests are rejected |
+| Log format | pretty / colored, human-readable | structured JSON via `slog` |
+| Destructive migrations (DROP TABLE / DROP COLUMN) | interactive `y/N` prompt at boot | refuses to start unless `--allow-destructive` is passed |
+| Boot-time migration failure (other than destructive) | log loud error, run on `lastGood` (same as `serve`) | log loud error, run on `lastGood` |
+| Hot-reload trigger | fsnotify on `ultrabase.yaml` save | only via process restart |
+
+Two takeaways from the table:
+
+1. **`dev` is a curated preset, not a separate code path.** It just hardcodes the same levers `serve` exposes. Anyone who wants "dev with the dashboard disabled" or "dev against an S3 config" can use `serve --watch --dashboard readwrite --config s3://…` and get the same behavior with their own choices.
+2. **Boot-time migration failure handling is identical.** Both fall back to `lastGood` and surface drift status. The only place the two crash on config errors is destructive ops in `serve` without `--allow-destructive` — and even that is a refusal-to-start rather than a crash mid-boot.
+
+## Dashboard behavior by mode
+
+**`--dashboard readwrite`** — `PUT /api/_admin/config` is enabled. The handler:
 
 1. Receives the proposed JSON config.
 2. Validates it (same rules as `ultrabase validate`).
@@ -69,23 +100,25 @@ When `--ui-edit` is on, `PUT /api/_admin/config` is enabled. The handler:
 4. Opens a Postgres transaction; runs the migration statements; on success, records a new row in `_ultrabase_migrations` (with the full `config_json`), then writes the new YAML to the configured backend.
 5. On any failure: rolls back the tx, leaves the backend untouched, returns a 4xx with the failing statement and reason.
 
-Order matters: **DB migration first, backend write second.** If the backend write succeeds but the migration didn't, we'd have a stale "successful" config in the source that doesn't match the DB. This order keeps DB and backend consistent even on partial failure.
+Order matters: **DB migration first, backend write second.** If the backend write succeeded but the migration didn't, we'd have a stale "successful" config in the source that doesn't match the DB. This order keeps DB and backend consistent even on partial failure.
 
-When `--ui-edit` is off, `PUT /api/_admin/config` returns `403 Forbidden` with a body pointing the operator at their deployment pipeline:
+**`--dashboard readonly`** — the SPA is served and all read endpoints work, but `PUT /api/_admin/config` returns `403 Forbidden`:
 
 ```json
 {
-  "error": "ui_edit_disabled",
+  "error": "dashboard_readonly",
   "message": "This deployment is GitOps-managed. To change the configuration, update the source YAML and redeploy.",
   "config_source": "s3://my-bucket/ultrabase.yaml"
 }
 ```
 
-Schema-editing screens in the dashboard render read-only with a banner explaining the same. Ops actions that don't touch config (event retry, user disable, password reset) continue to work regardless.
+Schema-editing screens render read-only with a banner explaining the same. Ops actions (event retry, user disable, password reset) continue to work — they don't touch config.
+
+**`--dashboard disabled`** — the `/dashboard/*` SPA routes return `404` (the embedded assets are not registered), and `PUT /api/_admin/config` returns the same `403` as `readonly`. The error code in that response is `dashboard_disabled` to distinguish from the readonly case. Read-only admin API endpoints remain available to clients holding the admin key, since they're useful for monitoring and CI even without a UI.
 
 ### UI edit messaging
 
-When `--ui-edit` is on, two surfaces make the operator aware of the source-of-truth question:
+When `--dashboard` is `readwrite`, two surfaces make the operator aware of the source-of-truth question:
 
 **Persistent banner** at the top of every dashboard page:
 
@@ -95,7 +128,7 @@ When `--ui-edit` is on, two surfaces make the operator aware of the source-of-tr
 
 > Saved to `<config_source>`. Migrations applied: `<count>` statement(s). **Reminder:** update your git source to match, or your next external update will revert this. [Download YAML]
 
-Both surfaces show the actual `config_source` URI so the operator knows whether they wrote to a file or an S3 object. The Download links call `GET /api/_admin/config` and serialize the response to YAML on the client.
+Both surfaces show the actual `config_source` URI so the operator knows whether they wrote to a file or an S3 object. The Download links call `GET /api/_admin/config` and serialize the response to YAML on the client. The Download link is also surfaced when `--dashboard readonly` is set, since "let me grab a copy of what's running" is useful regardless of edit power.
 
 ## Boot-time migration behavior
 
@@ -128,7 +161,7 @@ else:
 
 **Retry policy:**
 - `--watch` on (file backend only): fsnotify fires when the operator edits the file again. Natural retry on save.
-- `--watch` off (file or S3): no automatic retry. Drift persists until next process restart, or until a UI edit (when `--ui-edit` is on) provides a new candidate that succeeds.
+- `--watch` off (file or S3): no automatic retry. Drift persists until next process restart, or until a UI edit (when `--dashboard readwrite` is set) provides a new candidate that succeeds.
 
 **Heartbeat logging while drifted:** the server logs an error-level line on every boot in drift state, then again every N minutes (default 10), so the issue doesn't get buried in log volume:
 
@@ -169,7 +202,7 @@ External monitoring (Prometheus, Datadog, plain HTTP probes) can alert on `statu
 
 ### Drift banner (dashboard)
 
-Shown at the top of every page when `status == "drift"`, regardless of `--ui-edit`:
+Shown at the top of every page when `status == "drift"`, regardless of `--dashboard` mode (as long as the SPA is served — i.e., not `disabled`):
 
 > ⚠️ **Configuration drift.** The source `<config_source>` has changes that failed to apply: `<last_error>`. The server is running on the last successful config from `<applied_at>`. Fix the source and restart, or revert the failing change. [View error details]
 
@@ -177,7 +210,7 @@ The "View error details" link expands to show the failing DDL statement(s) and t
 
 ### UI edits while drifted
 
-When `--ui-edit` is on and the server is in drift state, the dashboard's editing surfaces show the **running** config (`lastGood`), not the failing source. This way, a user fixing things via UI is editing what is actually live.
+When `--dashboard readwrite` is set and the server is in drift state, the dashboard's editing surfaces show the **running** config (`lastGood`), not the failing source. This way, a user fixing things via UI is editing what is actually live.
 
 A successful UI save in this state follows the same DB-first / backend-second order as a normal UI edit:
 1. Migrations run in a tx against `lastGood` → new candidate. On commit, the new candidate becomes the recorded `lastGood` in `_ultrabase_migrations`.
@@ -197,12 +230,13 @@ This makes "fix it from the dashboard" a viable recovery path when GitOps round-
 
 Components that change or are added:
 
-- **`internal/cli/serve.go`** — register `--config`, `--watch`, `--ui-edit` flags; resolve env-var fallbacks; reject invalid combinations (watch + s3, unknown URI scheme, missing S3 creds).
+- **`internal/cli/serve.go`** — register `--config`, `--watch`, `--dashboard` flags; resolve env-var fallbacks; reject invalid combinations (watch + s3, unknown URI scheme, missing S3 creds, `--dashboard` value not in the three-element enum).
 - **`internal/config/loader.go`** (or new `internal/config/source.go`) — backend abstraction with `file` and `s3` implementations. Read returns bytes + checksum; Write takes bytes + expected checksum (ETag for S3, mtime for file) and returns the new checksum.
 - **`internal/adapter/postgres/pool.go`** — replace `ExecDDL`'s single-string apply with a tx-wrapped variant that takes `[]string` and runs each statement inside one `pool.BeginTx` → loop → `Commit`/`Rollback`. The diff layer already produces `[]string` (`migrationPlan.Removals`, `Additions`, `Alterations` in `internal/app/migrate_config_diff.go`), so no string-splitting is required at the call site.
 - **`internal/app/migrate.go`** — `Apply` returns failure without wiping the running config; engine boot loop catches the error, sets a drift state, falls back to `lastGood`'s `config_json`.
 - **`internal/app/engine.go`** — track drift state in memory (`{status, lastError, sourceChecksum, runningChecksum, runningAppliedAt}`) and expose a getter.
-- **`internal/adapter/http/admin_handler.go`** — add `GET /_admin/config/status`; gate `PUT /_admin/config` on `--ui-edit`.
+- **`internal/adapter/http/admin_handler.go`** — add `GET /_admin/config/status`; gate `PUT /_admin/config` on `--dashboard == readwrite` (return `403 dashboard_readonly` or `403 dashboard_disabled` accordingly).
+- **`internal/adapter/http/dashboard.go`** — gate the embedded SPA's static-file routes on `--dashboard != disabled`; when disabled, the routes return 404 and the embed assets stay registered but unmounted.
 - **`dashboard/src`** — drift banner component (polls `/_admin/config/status`); UI edit banner + save toast; download-as-YAML helper.
 
 ## Open questions deferred to implementation planning
@@ -211,4 +245,4 @@ Components that change or are added:
 - Whether the file backend uses `mtime + size` or computed checksum for change detection.
 - S3 credential resolution (SDK default chain vs explicit env).
 - Whether the dashboard polls `/_admin/config/status` on a timer or relies on user navigation.
-- Behavior if `--config` points to a file the process cannot write to but `--ui-edit` is on (reject at startup vs allow PUTs that 500 on write).
+- Behavior if `--config` points to a file the process cannot write to but `--dashboard readwrite` is set (reject at startup vs allow PUTs that 500 on write).
