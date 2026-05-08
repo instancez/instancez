@@ -19,7 +19,7 @@ Ultrabase has two CLI commands today (`dev`, `serve`), a YAML-on-disk source of 
 - An `ultrabase config export` CLI verb (the dashboard offers a download instead).
 - Drift detection or three-way merge between repo YAML and live blob (operators reconcile by hand with `diff`).
 - Additional backends (k8s ConfigMap, GCS native, secrets managers, generic HTTP+ETag).
-- S3 watch via event notifications.
+- S3 watch via event notifications (SNS/SQS, EventBridge). v1 uses HEAD-polling, which is good enough at the 60s scale; event-driven watching is a post-v1 latency optimization.
 </scope>
 
 ## Operator-controlled levers
@@ -30,9 +30,16 @@ Three levers, set by CLI flag or env var. **Never** in the YAML they control —
 |---|---|---|---|
 | `--config <path-or-uri>` | `ULTRABASE_CONFIG_SOURCE` | `./ultrabase.yaml` | `./ultrabase.yaml` |
 | `--watch` / `--no-watch` | `ULTRABASE_CONFIG_WATCH` | off | on |
+| `--watch-interval <duration>` | `ULTRABASE_CONFIG_WATCH_INTERVAL` | `60s` | `60s` |
 | `--dashboard <mode>` | `ULTRABASE_DASHBOARD` | `disabled` | `readwrite` |
 
-Both `dev` and `serve` accept all three flags; only the defaults differ. Running `ultrabase dev --no-watch --dashboard readonly --config s3://my-bucket/config.yaml` is valid and behaves exactly as those overrides imply.
+Both `dev` and `serve` accept all flags; only the defaults differ. Running `ultrabase dev --no-watch --dashboard readonly --config s3://my-bucket/config.yaml` is valid and behaves exactly as those overrides imply.
+
+`--watch` is supported on both backends, with backend-appropriate mechanisms:
+- **`file` backend**: fsnotify on the configured path. Reload is event-driven; `--watch-interval` has no effect.
+- **`s3` backend**: HEAD-poll on the object every `--watch-interval` (default `60s`, minimum `10s`). On ETag change, the server fetches the new object and runs the same boot-time apply path. HEAD costs are negligible (≤ 1440 requests/day at the default).
+
+Polling failures (network blip, transient 5xx, credential refresh) are logged at warn level and the next interval retries. They do **not** flip the server into drift state — drift is only set when a successful fetch produces a config that fails validation or migration.
 
 `--dashboard` is a tri-state enum:
 
@@ -51,9 +58,10 @@ This avoids a redundant `--backend` flag and lets the URI scheme be the single s
 **`ultrabase dev`** uses the same flag surface as `serve` but ships with the dev-friendly defaults shown above (watch on, dashboard `readwrite`, file backend at `./ultrabase.yaml`). It also auto-loads `.env`, applies lenient CORS defaults, prints pretty/colored logs, and prompts interactively for destructive migrations — those non-flag behaviors are properties of the command itself, not the levers.
 
 **Validation at startup:**
-- `--watch` with an `s3://` URI → reject with a clear error (`config watch is only supported with file backends in v1`).
 - `--config` URI with an unsupported scheme → reject (`unsupported config backend: <scheme>`).
 - S3 URI without resolvable credentials in env → reject before opening the listener.
+- `--watch-interval` below the `10s` minimum → reject (`--watch-interval must be at least 10s`).
+- `--watch-interval` passed with a file backend → accept silently (it's a no-op for fsnotify).
 
 ## Mode matrix
 
@@ -162,8 +170,9 @@ else:
 **Atomicity fix:** today's `ExecDDL` (`internal/adapter/postgres/pool.go:198`) calls `pool.Exec(ctx, sql)` with the whole migration as one multi-statement string. Under pgx's simple protocol that runs autocommit per statement, so a failure mid-migration leaves earlier statements committed. To make the "fall back to last good" promise hold, the migration apply must run in an explicit transaction (`pool.BeginTx` → loop → `Commit`/`Rollback`). The DDL we generate is uniformly tx-safe (the YAML schema can't express non-transactional statements like `CREATE INDEX CONCURRENTLY`), so wrapping in a tx requires no other changes.
 
 **Retry policy:**
-- `--watch` on (file backend only): fsnotify fires when the operator edits the file again. Natural retry on save.
-- `--watch` off (file or S3): no automatic retry. Drift persists until next process restart, or until a UI edit (when `--dashboard readwrite` is set) provides a new candidate that succeeds.
+- `--watch` on, file backend: fsnotify fires when the operator edits the file again. Natural retry on save.
+- `--watch` on, S3 backend: the next successful HEAD poll that finds a new ETag fetches the object and runs the apply path again. If the new content is also broken, drift is updated with the new error.
+- `--watch` off (any backend): no automatic retry. Drift persists until next process restart, or until a UI edit (when `--dashboard readwrite` is set) provides a new candidate that succeeds.
 
 **Heartbeat logging while drifted:** the server logs an error-level line on every boot in drift state, then again every N minutes (default 10), so the issue doesn't get buried in log volume:
 
@@ -232,7 +241,7 @@ This makes "fix it from the dashboard" a viable recovery path when GitOps round-
 
 Components that change or are added:
 
-- **`internal/cli/serve.go`** — register `--config`, `--watch`, `--dashboard` flags; resolve env-var fallbacks; reject invalid combinations (watch + s3, unknown URI scheme, missing S3 creds, `--dashboard` value not in the three-element enum).
+- **`internal/cli/serve.go`** — register `--config`, `--watch`, `--watch-interval`, `--dashboard` flags; resolve env-var fallbacks; reject invalid combinations (unknown URI scheme, missing S3 creds, `--watch-interval` below 10s, `--dashboard` value not in the three-element enum).
 - **`internal/config/loader.go`** (or new `internal/config/source.go`) — backend abstraction with `file` and `s3` implementations. Read returns bytes + checksum; Write takes bytes + expected checksum (ETag for S3, mtime for file) and returns the new checksum.
 - **`internal/adapter/postgres/pool.go`** — replace `ExecDDL`'s single-string apply with a tx-wrapped variant that takes `[]string` and runs each statement inside one `pool.BeginTx` → loop → `Commit`/`Rollback`. The diff layer already produces `[]string` (`migrationPlan.Removals`, `Additions`, `Alterations` in `internal/app/migrate_config_diff.go`), so no string-splitting is required at the call site.
 - **`internal/app/migrate.go`** — `Apply` returns failure without wiping the running config; engine boot loop catches the error, sets a drift state, falls back to `lastGood`'s `config_json`.
