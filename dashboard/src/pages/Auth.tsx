@@ -83,7 +83,7 @@ export function AuthPage() {
     <div className="pb-20">
       <PageHeader
         title="Authentication"
-        description="Configure auth providers, JWT settings, and custom user fields"
+        description="Configure auth providers and JWT settings"
       />
 
       <div className="px-8 space-y-6">
