@@ -11,10 +11,14 @@ import (
 // MountDashboard serves the embedded SPA assets at /dashboard/*.
 // In dev mode with no embedded assets, it returns a placeholder page pointing to the Vite dev server.
 //
-// The mode parameter is plumbed through for future gating (Task 10) — it has
-// no behavioral effect yet.
+// When mode is DashboardDisabled, no routes are registered, so requests to
+// /dashboard fall through to gin's default 404 handler. Readonly and readwrite
+// both mount the SPA identically — the read/write distinction is enforced at
+// the API layer (config-mutation endpoints), not at the SPA mount.
 func MountDashboard(r *gin.Engine, assets fs.FS, devMode bool, mode DashboardMode) {
-	_ = mode // reserved for Task 10's disabled-gating logic
+	if mode == DashboardDisabled {
+		return // routes not registered → gin returns 404 from its default handler
+	}
 
 	if assets == nil && devMode {
 		// Dev mode: serve a redirect/placeholder to the Vite dev server
