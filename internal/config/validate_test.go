@@ -756,6 +756,34 @@ func TestValidate_ReservedRPCArgName(t *testing.T) {
 	assertHasErrorAt(t, errs, "functions.f.args[0].name")
 }
 
+func TestValidateRejectsReservedSchemas(t *testing.T) {
+	for _, reserved := range []string{"auth", "storage"} {
+		cfg := &domain.Config{
+			Version: 1,
+			Tables: map[string]domain.Table{
+				"sneaky": {Schema: reserved, Fields: []domain.Field{
+					{Name: "id", Type: "BIGINT", PrimaryKey: true},
+				}},
+			},
+		}
+		errs := Validate(cfg)
+		if errs == nil {
+			t.Fatalf("schema=%q: expected validation error, got nil", reserved)
+		}
+		found := false
+		for _, e := range errs {
+			if strings.Contains(e.Message, reserved) || strings.Contains(e.Path, reserved) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("schema=%q: no error mentions the reserved schema name; errors: %v", reserved, errs)
+		}
+		assertHasErrorAt(t, errs, "tables.sneaky.schema")
+	}
+}
+
 // Names that contain or extend a reserved word but aren't reserved
 // themselves must still validate (regression guard).
 func TestValidate_NonReservedSimilarNames(t *testing.T) {

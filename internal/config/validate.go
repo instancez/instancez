@@ -279,6 +279,15 @@ func validateTables(tables map[string]domain.Table, auth *domain.Auth) domain.Va
 			if err := validateIdent(path+".schema", table.Schema); err != nil {
 				errs = append(errs, err)
 			}
+			// auth and storage schemas are owned by the framework.
+			if table.Schema == "auth" || table.Schema == "storage" {
+				errs = append(errs, &domain.ValidationError{
+					Path:       fmt.Sprintf("tables.%s.schema", name),
+					Message:    fmt.Sprintf("schema %q is reserved by the framework", table.Schema),
+					Suggestion: "Use a different schema or omit it to default to public.",
+				})
+				continue
+			}
 		}
 
 		// Reserved name check
