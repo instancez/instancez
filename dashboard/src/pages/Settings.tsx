@@ -4,6 +4,8 @@ import { PageHeader } from "../components/PageHeader";
 import { SaveBar } from "../components/SaveBar";
 import { TagInput } from "../components/TagInput";
 import { CORS_METHODS } from "../lib/utils";
+import { downloadYamlFromConfig } from "../lib/downloadYaml";
+import { getConfig } from "../api/client";
 import type { Config } from "../lib/types";
 
 export function SettingsPage() {
@@ -32,6 +34,11 @@ export function SettingsPage() {
     setDirty(false);
   }
 
+  async function handleDownload() {
+    const cfg = await getConfig();
+    downloadYamlFromConfig(cfg);
+  }
+
   if (!local) return null;
 
   return (
@@ -39,6 +46,14 @@ export function SettingsPage() {
       <PageHeader
         title="Server Settings"
         description="Configure project metadata, server, CORS, timeouts, and database pool"
+        actions={
+          <button
+            onClick={handleDownload}
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
+          >
+            Download current config as YAML
+          </button>
+        }
       />
 
       <div className="px-8 space-y-8 max-w-2xl">
