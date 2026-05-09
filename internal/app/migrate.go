@@ -352,10 +352,6 @@ func orderedSchemas(cfg *domain.Config) []string {
 // schema; the underscore prefixes used pre-schema-move are dropped because
 // the schema already provides the namespace. Names align with Supabase's
 // auth schema where they map cleanly.
-//
-// Task 7 (separate commit) will add auth.flow_state consolidating PKCE
-// auth codes and OAuth state; this function intentionally does not emit
-// either today.
 func generateAuthTables(auth *domain.Auth) []string {
 	var ddl []string
 
@@ -455,6 +451,30 @@ func generateAuthTables(auth *domain.Auth) []string {
   ip_address TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );`)
+
+	// auth.flow_state — consolidates PKCE auth codes and OAuth state into one
+	// Supabase-shaped table. provider_type distinguishes the two flows
+	// ('pkce' vs. 'oauth'); auth_code holds the PKCE code or the OAuth
+	// state token. redirect_to and linking_user_id are carry-overs ultrabase
+	// needs that Supabase doesn't represent natively.
+	ddl = append(ddl, `CREATE TABLE IF NOT EXISTS auth.flow_state (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID,
+  auth_code TEXT,
+  code_challenge TEXT,
+  code_challenge_method TEXT,
+  provider_type TEXT NOT NULL,
+  provider_access_token TEXT,
+  provider_refresh_token TEXT,
+  authentication_method TEXT,
+  redirect_to TEXT,
+  linking_user_id TEXT,
+  auth_code_issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);`)
+	ddl = append(ddl, `CREATE INDEX IF NOT EXISTS idx_flow_state_auth_code ON auth.flow_state (auth_code);`)
+	ddl = append(ddl, `CREATE INDEX IF NOT EXISTS idx_flow_state_user_id_auth_method ON auth.flow_state (user_id, authentication_method);`)
 
 	return ddl
 }

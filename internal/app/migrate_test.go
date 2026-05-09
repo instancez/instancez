@@ -173,9 +173,7 @@ func TestGenerateAuthTables(t *testing.T) {
 	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS auth.mfa_challenges")
 	mustContain(t, joined, "CREATE INDEX IF NOT EXISTS idx_one_time_tokens_email_code ON auth.one_time_tokens")
 	mustContain(t, joined, "CREATE INDEX IF NOT EXISTS idx_mfa_factors_user ON auth.mfa_factors")
-	// TODO Task 7: replacement auth.flow_state should consolidate
-	// PKCE auth codes + OAuth state. Re-add an assertion for
-	// "CREATE TABLE IF NOT EXISTS auth.flow_state" once Task 7 lands.
+	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS auth.flow_state")
 }
 
 func TestGenerateAuthTables_NoRefreshTokens(t *testing.T) {
@@ -358,6 +356,34 @@ func mustContain(t *testing.T, s, substr string) {
 	if !strings.Contains(s, substr) {
 		t.Errorf("expected output to contain %q, got:\n%s", substr, s)
 	}
+}
+
+func mustNotContain(t *testing.T, haystack, needle string) {
+	t.Helper()
+	if strings.Contains(haystack, needle) {
+		t.Fatalf("expected DDL to NOT contain %q, but it did:\n%s", needle, haystack)
+	}
+}
+
+func TestGenerateAuthFlowState(t *testing.T) {
+	ddl := strings.Join(generateAuthTables(&domain.Auth{}), "\n")
+	mustContain(t, ddl, "CREATE TABLE IF NOT EXISTS auth.flow_state")
+	mustContain(t, ddl, "auth_code TEXT")
+	mustContain(t, ddl, "code_challenge TEXT")
+	mustContain(t, ddl, "code_challenge_method TEXT")
+	mustContain(t, ddl, "provider_type TEXT NOT NULL")
+	mustContain(t, ddl, "provider_access_token TEXT")
+	mustContain(t, ddl, "provider_refresh_token TEXT")
+	mustContain(t, ddl, "authentication_method TEXT")
+	mustContain(t, ddl, "redirect_to TEXT")
+	mustContain(t, ddl, "linking_user_id TEXT")
+	mustContain(t, ddl, "auth_code_issued_at TIMESTAMPTZ")
+	mustContain(t, ddl, "CREATE INDEX IF NOT EXISTS idx_flow_state_auth_code ON auth.flow_state (auth_code)")
+	mustContain(t, ddl, "CREATE INDEX IF NOT EXISTS idx_flow_state_user_id_auth_method ON auth.flow_state (user_id, authentication_method)")
+
+	// And the old tables must NOT be emitted.
+	mustNotContain(t, ddl, "_oauth_states")
+	mustNotContain(t, ddl, "_auth_codes")
 }
 
 // TestGenerateRPCFunction_Signature verifies the DDL shape for a function
