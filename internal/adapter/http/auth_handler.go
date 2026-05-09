@@ -404,14 +404,14 @@ func (h *AuthHandler) handlePKCEGrant(c *gin.Context) {
 
 	ctx := c.Request.Context()
 	row, err := h.db.QueryRow(ctx,
-		"SELECT user_id, code_challenge, code_challenge_method FROM _auth_codes WHERE code = $1 AND expires_at > NOW()",
+		"SELECT user_id::text, code_challenge, code_challenge_method FROM auth.flow_state WHERE auth_code = $1 AND provider_type = 'pkce' AND auth_code_issued_at > NOW() - INTERVAL '10 minutes'",
 		req.AuthCode)
 	if err != nil || row == nil {
 		problemJSON(c, 401, "invalid_grant", "Invalid or expired auth code")
 		return
 	}
 
-	h.db.Exec(ctx, "DELETE FROM _auth_codes WHERE code = $1", req.AuthCode)
+	h.db.Exec(ctx, "DELETE FROM auth.flow_state WHERE auth_code = $1 AND provider_type = 'pkce'", req.AuthCode)
 
 	codeChallenge, _ := row["code_challenge"].(string)
 	codeChallengeMethod, _ := row["code_challenge_method"].(string)
@@ -1489,10 +1489,9 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 			if codeChallengeMethod == "" {
 				codeChallengeMethod = "S256"
 			}
-			expiresAt := time.Now().Add(5 * time.Minute)
 			_, err := h.db.Exec(ctx,
-				"INSERT INTO _auth_codes (code, user_id, code_challenge, code_challenge_method, expires_at) VALUES ($1, $2, $3, $4, $5)",
-				authCode, userID, codeChallenge, codeChallengeMethod, expiresAt)
+				"INSERT INTO auth.flow_state (auth_code, user_id, code_challenge, code_challenge_method, provider_type, authentication_method, auth_code_issued_at) VALUES ($1, $2::uuid, $3, $4, 'pkce', 'pkce', NOW())",
+				authCode, userID, codeChallenge, codeChallengeMethod)
 			if err != nil {
 				problemJSON(c, 500, "internal", "Failed to store auth code")
 				return
