@@ -206,9 +206,8 @@ func TestDiffConfigs_RemovedStorageRLS(t *testing.T) {
 
 	diff := diffConfigs(old, new)
 	joined := strings.Join(diff.Removals, "\n")
-	// TODO Task 11: per-bucket policy DDL will move from _objects to storage.objects.
-	mustContain(t, joined, "DROP POLICY IF EXISTS avatars_public_select ON _objects")
-	mustContain(t, joined, "DROP POLICY IF EXISTS storage_avatars_insert_0 ON _objects")
+	mustContain(t, joined, "DROP POLICY IF EXISTS avatars_public_select ON storage.objects")
+	mustContain(t, joined, "DROP POLICY IF EXISTS storage_avatars_insert_0 ON storage.objects")
 }
 
 func TestDiffConfigs_NoChanges(t *testing.T) {
@@ -268,10 +267,9 @@ func TestDiffConfigs_RemovedBucket(t *testing.T) {
 	diff := diffConfigs(old, new)
 	joined := strings.Join(diff.Removals, "\n")
 
-	// TODO Task 11: per-bucket policy DDL will move from _objects to storage.objects.
-	mustContain(t, joined, "DROP POLICY IF EXISTS avatars_public_select ON _objects")
-	mustContain(t, joined, "DROP POLICY IF EXISTS storage_avatars_insert_0 ON _objects")
-	mustContain(t, joined, "DROP POLICY IF EXISTS storage_avatars_delete_0 ON _objects")
+	mustContain(t, joined, "DROP POLICY IF EXISTS avatars_public_select ON storage.objects")
+	mustContain(t, joined, "DROP POLICY IF EXISTS storage_avatars_insert_0 ON storage.objects")
+	mustContain(t, joined, "DROP POLICY IF EXISTS storage_avatars_delete_0 ON storage.objects")
 }
 
 func TestDiffConfigs_RPCFunctionWithArgs_DropSignature(t *testing.T) {

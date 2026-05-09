@@ -270,11 +270,10 @@ func TestGenerateStorageRLS_Public(t *testing.T) {
 	ddl := generateStorageRLS("avatars", bucket)
 	joined := strings.Join(ddl, "\n")
 
-	// TODO Task 11: per-bucket policy DDL will move from _objects to storage.objects.
-	mustContain(t, joined, "DROP POLICY IF EXISTS avatars_public_select ON _objects")
+	mustContain(t, joined, "DROP POLICY IF EXISTS avatars_public_select ON storage.objects")
 	mustContain(t, joined, "avatars_public_select")
 	mustContain(t, joined, "bucket_id = 'avatars'")
-	mustContain(t, joined, "DROP POLICY IF EXISTS storage_avatars_insert_0 ON _objects")
+	mustContain(t, joined, "DROP POLICY IF EXISTS storage_avatars_insert_0 ON storage.objects")
 	mustContain(t, joined, "FOR INSERT WITH CHECK")
 }
 

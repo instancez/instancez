@@ -154,7 +154,7 @@ func diffRemovedStorageRLS(old, new *domain.Config) []string {
 		// Drop public select policy if bucket removed or no longer public
 		if oldBucket.Public && (!bucketExists || !newBucket.Public) {
 			policyName := fmt.Sprintf("%s_public_select", bucketName)
-			ddl = append(ddl, fmt.Sprintf("DROP POLICY IF EXISTS %s ON _objects;", policyName))
+			ddl = append(ddl, fmt.Sprintf("DROP POLICY IF EXISTS %s ON storage.objects;", policyName))
 		}
 
 		oldPolicies := storageRLSPolicyNames(bucketName, oldBucket.RLS)
@@ -165,7 +165,7 @@ func diffRemovedStorageRLS(old, new *domain.Config) []string {
 
 		for _, name := range oldPolicies {
 			if !slices.Contains(newPolicies, name) {
-				ddl = append(ddl, fmt.Sprintf("DROP POLICY IF EXISTS %s ON _objects;", name))
+				ddl = append(ddl, fmt.Sprintf("DROP POLICY IF EXISTS %s ON storage.objects;", name))
 			}
 		}
 	}

@@ -818,9 +818,9 @@ func generateStorageRLS(bucketName string, bucket domain.Bucket) []string {
 	// Public bucket: allow SELECT without auth
 	if bucket.Public {
 		policyName := fmt.Sprintf("%s_public_select", bucketName)
-		ddl = append(ddl, fmt.Sprintf("DROP POLICY IF EXISTS %s ON _objects;", policyName))
+		ddl = append(ddl, fmt.Sprintf("DROP POLICY IF EXISTS %s ON storage.objects;", policyName))
 		ddl = append(ddl, fmt.Sprintf(
-			"CREATE POLICY %s ON _objects FOR SELECT USING (bucket_id = '%s');",
+			"CREATE POLICY %s ON storage.objects FOR SELECT USING (bucket_id = '%s');",
 			policyName, bucketName))
 	}
 
@@ -831,14 +831,14 @@ func generateStorageRLS(bucketName string, bucket domain.Bucket) []string {
 			pgOp := strings.ToUpper(op)
 			scopedCheck := fmt.Sprintf("bucket_id = '%s' AND (%s)", bucketName, policy.Check)
 
-			ddl = append(ddl, fmt.Sprintf("DROP POLICY IF EXISTS %s ON _objects;", policyName))
+			ddl = append(ddl, fmt.Sprintf("DROP POLICY IF EXISTS %s ON storage.objects;", policyName))
 			if op == "insert" {
 				ddl = append(ddl, fmt.Sprintf(
-					"CREATE POLICY %s ON _objects%s FOR %s WITH CHECK (%s);",
+					"CREATE POLICY %s ON storage.objects%s FOR %s WITH CHECK (%s);",
 					policyName, typeClause, pgOp, scopedCheck))
 			} else {
 				ddl = append(ddl, fmt.Sprintf(
-					"CREATE POLICY %s ON _objects%s FOR %s USING (%s);",
+					"CREATE POLICY %s ON storage.objects%s FOR %s USING (%s);",
 					policyName, typeClause, pgOp, scopedCheck))
 			}
 		}
