@@ -20,12 +20,12 @@ func Load(path string) (*domain.Config, error) {
 	if err != nil {
 		return nil, &domain.ConfigError{Path: path, Message: "cannot read file", Err: err}
 	}
-	return parseBytes(data, path)
+	return ParseBytes(data, path)
 }
 
-// parseBytes runs env var interpolation and YAML parse on raw config bytes.
+// ParseBytes runs env var interpolation and YAML parse on raw config bytes.
 // origin is used for error messages (a path, URL, or other identifier).
-func parseBytes(data []byte, origin string) (*domain.Config, error) {
+func ParseBytes(data []byte, origin string) (*domain.Config, error) {
 	interpolated, missing := interpolateEnvVars(string(data))
 	if len(missing) > 0 {
 		return nil, &domain.MissingEnvError{Vars: missing}

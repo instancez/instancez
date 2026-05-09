@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -26,7 +27,13 @@ type HTTPServer interface {
 
 // Engine orchestrates the full Ultrabase lifecycle.
 type Engine struct {
+	// mu guards cfg and drift, both of which are reassigned by the watcher
+	// goroutine on reload while the request path and admin endpoints read
+	// them concurrently. The DriftTracker itself is internally synchronized;
+	// the lock here only protects pointer reassignment.
+	mu       sync.RWMutex
 	cfg      *domain.Config
+	drift    *DriftTracker
 	ownerDB  domain.OwnerDB   // privileged: migrations, seeding, replication
 	authDB   domain.RequestDB // request path; SET LOCAL ROLE per tx
 	migrator *Migrator
@@ -46,8 +53,7 @@ type Engine struct {
 	watchInterval    time.Duration
 	configPath       string // for hot-reload watcher
 
-	// Drift / config-source state populated during Start.
-	drift  *DriftTracker
+	// Config-source state populated during Start.
 	source config.Source
 }
 
@@ -93,11 +99,15 @@ func NewEngine(cfg *domain.Config, ownerDB domain.OwnerDB, authDB domain.Request
 
 // Drift returns the engine's drift tracker (or nil before Start has run).
 func (e *Engine) Drift() *DriftTracker {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 	return e.drift
 }
 
 // Config returns the live engine config (lastGood when drifted).
 func (e *Engine) Config() *domain.Config {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 	return e.cfg
 }
 
@@ -149,13 +159,79 @@ func (e *Engine) applyMigrationsWithFallback(ctx context.Context) (*DriftTracker
 			"reason", applyErr.Error(),
 			"running_applied_at", last.AppliedAt,
 		)
+		e.mu.Lock()
 		e.cfg = &goodCfg
+		e.mu.Unlock()
 		// Order matters: MarkOK seeds running_*, then MarkDrift overlays
 		// source_* and LastError without clobbering running_*. Reversed,
 		// MarkOK would clear the just-recorded source/error fields.
 		tracker.MarkOK(last.Checksum, last.AppliedAt)
 		tracker.MarkDrift(checksum, applyErr.Error(), time.Now())
 		return tracker, nil
+	}
+}
+
+// versionChecksum returns the sha256 hex digest of the supplied bytes. Used
+// to stamp drift events keyed off raw source bytes (where we don't have a
+// parsed Config to JSON-encode).
+func versionChecksum(data []byte) string {
+	return fmt.Sprintf("%x", sha256.Sum256(data))
+}
+
+// runWatcher subscribes to source change events and reloads the engine on
+// each one, going through the same applyMigrationsWithFallback path as boot
+// so failures degrade to drift instead of crashing.
+func (e *Engine) runWatcher(ctx context.Context, interval time.Duration) {
+	if e.source == nil {
+		e.logger.Warn("watcher requested but no config source configured")
+		return
+	}
+	ch, err := e.source.Watch(ctx, interval)
+	if err != nil {
+		e.logger.Error("config watcher failed to start", "error", err)
+		return
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev, ok := <-ch:
+			if !ok {
+				return
+			}
+			if ev.Err != nil {
+				e.logger.Warn("config watch transient error", "error", ev.Err)
+				continue
+			}
+			cfg, err := config.ParseBytes(ev.Data, e.source.Describe())
+			if err != nil {
+				e.logger.Error("config reload: parse failed", "error", err)
+				if d := e.Drift(); d != nil {
+					d.MarkDrift(versionChecksum(ev.Data), err.Error(), time.Now())
+				}
+				continue
+			}
+			if errs := config.Validate(cfg); errs != nil {
+				e.logger.Error("config reload: validation failed", "count", len(errs))
+				if d := e.Drift(); d != nil {
+					msg := errs[0].Path + ": " + errs[0].Message
+					d.MarkDrift(versionChecksum(ev.Data), msg, time.Now())
+				}
+				continue
+			}
+			e.mu.Lock()
+			e.cfg = cfg
+			e.mu.Unlock()
+			tracker, err := e.applyMigrationsWithFallback(ctx)
+			if err != nil {
+				e.logger.Error("config reload: migration unrecoverable", "error", err)
+				continue
+			}
+			e.mu.Lock()
+			e.drift = tracker
+			e.mu.Unlock()
+			e.logger.Info("config reloaded successfully", "tables", len(cfg.Tables))
+		}
 	}
 }
 
@@ -247,16 +323,9 @@ func (e *Engine) Start(ctx context.Context) error {
 		}()
 	}
 
-	// 5. Start config file watcher (dev mode only)
-	if e.watch && e.configPath != "" {
-		watcher := NewConfigWatcher(e.configPath, e.ownerDB, e.logger, func(newCfg *domain.Config) {
-			e.cfg = newCfg
-		})
-		go func() {
-			if err := watcher.Watch(ctx); err != nil {
-				e.logger.Error("config watcher error", "error", err)
-			}
-		}()
+	// 5. Start config source watcher
+	if e.watch && e.source != nil {
+		go e.runWatcher(ctx, e.watchInterval)
 	}
 
 	e.logger.Info("startup complete",

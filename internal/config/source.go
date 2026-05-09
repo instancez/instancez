@@ -39,7 +39,7 @@ var ErrConfigVersionMismatch = errors.New("config: version mismatch")
 // Implementations include local files and S3 objects.
 type Source interface {
 	// Load fetches, parses, and validates the config. Convenience wrapper
-	// around Read + parseBytes.
+	// around Read + ParseBytes.
 	Load(ctx context.Context) (*domain.Config, error)
 
 	// Read returns the raw bytes plus an opaque version token (mtime+size
@@ -81,7 +81,7 @@ func (s *FileSource) Load(ctx context.Context) (*domain.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parseBytes(data, s.Path)
+	return ParseBytes(data, s.Path)
 }
 
 func (s *FileSource) Read(ctx context.Context) ([]byte, string, error) {
@@ -229,7 +229,7 @@ func (s *S3Source) Load(ctx context.Context) (*domain.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parseBytes(data, s.Describe())
+	return ParseBytes(data, s.Describe())
 }
 
 func (s *S3Source) ensureClient(ctx context.Context) error {
