@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeTemp(t *testing.T, content string) string {
@@ -51,5 +52,34 @@ func TestFileSourceReadWrite(t *testing.T) {
 	// Writing with empty version (no concurrency check) always succeeds.
 	if _, err := src.Write(ctx, []byte("version: 1\n"), ""); err != nil {
 		t.Fatalf("write without version: %v", err)
+	}
+}
+
+func TestFileSourceWatchFiresOnChange(t *testing.T) {
+	path := writeTemp(t, "version: 1\n")
+	src := &FileSource{Path: path}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, err := src.Watch(ctx, 0)
+	if err != nil {
+		t.Fatalf("watch: %v", err)
+	}
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		_ = os.WriteFile(path, []byte("version: 1\nproject:\n  name: x\n"), 0644)
+	}()
+
+	select {
+	case ev := <-ch:
+		if ev.Err != nil {
+			t.Fatalf("watch event err: %v", ev.Err)
+		}
+		if !strings.Contains(string(ev.Data), "name: x") {
+			t.Fatalf("unexpected data: %q", ev.Data)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("watcher did not fire")
 	}
 }

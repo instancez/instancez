@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/saedx1/ultrabase/internal/config"
@@ -41,6 +42,14 @@ func (s *stubSource) Write(ctx context.Context, data []byte, expected string) (s
 	return "new-version", nil
 }
 func (s *stubSource) Describe() string { return "stub://" }
+func (s *stubSource) Watch(ctx context.Context, _ time.Duration) (<-chan config.WatchEvent, error) {
+	ch := make(chan config.WatchEvent)
+	go func() {
+		<-ctx.Done()
+		close(ch)
+	}()
+	return ch, nil
+}
 
 // newAdminTestRouter wires a minimal gin engine with PUT /api/_admin/config
 // directly to the handler. It deliberately skips adminKeyAuth so the tests

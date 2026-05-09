@@ -10,14 +10,25 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
+	"github.com/fsnotify/fsnotify"
 	"github.com/saedx1/ultrabase/internal/domain"
 )
+
+// WatchEvent is delivered when the watcher detects a change. Either Data is
+// populated with the new bytes (and Version with the new token), or Err is
+// set (transient errors do NOT close the channel — the watcher keeps going).
+type WatchEvent struct {
+	Data    []byte
+	Version string
+	Err     error
+}
 
 // ErrConfigVersionMismatch is returned by Source.Write when the supplied
 // expected version does not match the backend's current version. Callers
@@ -43,6 +54,12 @@ type Source interface {
 
 	// Describe returns a human-readable identifier for logs and errors.
 	Describe() string
+
+	// Watch starts a background watcher that emits a WatchEvent each time
+	// the source changes. The channel is closed when ctx is cancelled.
+	// For S3 sources, interval controls the HEAD-poll cadence; for file
+	// sources, interval is ignored (event-driven via fsnotify).
+	Watch(ctx context.Context, interval time.Duration) (<-chan WatchEvent, error)
 }
 
 // NewSource returns a Source for the given spec. Specs beginning with "s3://"
@@ -122,6 +139,61 @@ func (s *FileSource) Write(ctx context.Context, data []byte, expectedVersion str
 
 func (s *FileSource) Describe() string {
 	return s.Path
+}
+
+func (s *FileSource) Watch(ctx context.Context, _ time.Duration) (<-chan WatchEvent, error) {
+	w, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, fmt.Errorf("file watch: %w", err)
+	}
+	if err := w.Add(s.Path); err != nil {
+		w.Close()
+		return nil, fmt.Errorf("file watch %s: %w", s.Path, err)
+	}
+
+	out := make(chan WatchEvent, 1)
+	go func() {
+		defer close(out)
+		defer w.Close()
+
+		var debounce *time.Timer
+		emit := func() {
+			data, ver, err := s.Read(ctx)
+			select {
+			case out <- WatchEvent{Data: data, Version: ver, Err: err}:
+			case <-ctx.Done():
+			}
+		}
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev, ok := <-w.Events:
+				if !ok {
+					return
+				}
+				if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) == 0 {
+					continue
+				}
+				if debounce != nil {
+					debounce.Stop()
+				}
+				debounce = time.AfterFunc(500*time.Millisecond, emit)
+			case err, ok := <-w.Errors:
+				if !ok {
+					return
+				}
+				select {
+				case out <- WatchEvent{Err: err}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	return out, nil
 }
 
 func fileVersionToken(info os.FileInfo) string {
@@ -233,4 +305,68 @@ func isPreconditionFailed(err error) bool {
 
 func (s *S3Source) Describe() string {
 	return fmt.Sprintf("s3://%s/%s", s.Bucket, s.Key)
+}
+
+func (s *S3Source) Watch(ctx context.Context, interval time.Duration) (<-chan WatchEvent, error) {
+	if interval <= 0 {
+		interval = 60 * time.Second
+	}
+	if err := s.ensureClient(ctx); err != nil {
+		return nil, err
+	}
+
+	out := make(chan WatchEvent, 1)
+	go func() {
+		defer close(out)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		// Seed: capture the current ETag so we don't emit on first tick.
+		lastVer := ""
+		if head, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
+			Bucket: aws.String(s.Bucket), Key: aws.String(s.Key),
+		}); err == nil {
+			lastVer = aws.ToString(head.ETag)
+		}
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				head, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
+					Bucket: aws.String(s.Bucket), Key: aws.String(s.Key),
+				})
+				if err != nil {
+					select {
+					case out <- WatchEvent{Err: fmt.Errorf("s3 head: %w", err)}:
+					case <-ctx.Done():
+						return
+					}
+					continue
+				}
+				ver := aws.ToString(head.ETag)
+				if ver == lastVer {
+					continue
+				}
+				data, newVer, err := s.Read(ctx)
+				if err != nil {
+					select {
+					case out <- WatchEvent{Err: err}:
+					case <-ctx.Done():
+						return
+					}
+					continue
+				}
+				lastVer = newVer
+				select {
+				case out <- WatchEvent{Data: data, Version: newVer}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	return out, nil
 }
