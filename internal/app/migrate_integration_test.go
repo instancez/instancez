@@ -2034,7 +2034,7 @@ func TestIntegration_AddColumnWithFK(t *testing.T) {
 			"todos": {Fields: []domain.Field{
 				{Name: "id", Type: "bigserial", PrimaryKey: true},
 				{Name: "title", Type: "text", Required: true},
-				{Name: "user_id", ForeignKey: &domain.ForeignKey{References: "users.id", OnDelete: "cascade"}},
+				{Name: "user_id", ForeignKey: &domain.ForeignKey{References: "auth.users.id", OnDelete: "cascade"}},
 			}},
 		},
 	}
