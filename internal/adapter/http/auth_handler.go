@@ -404,7 +404,7 @@ func (h *AuthHandler) handlePKCEGrant(c *gin.Context) {
 
 	ctx := c.Request.Context()
 	row, err := h.db.QueryRow(ctx,
-		"SELECT user_id::text, code_challenge, code_challenge_method FROM auth.flow_state WHERE auth_code = $1 AND provider_type = 'pkce' AND auth_code_issued_at > NOW() - INTERVAL '10 minutes'",
+		"SELECT user_id::text, code_challenge, code_challenge_method FROM auth.flow_state WHERE auth_code = $1 AND provider_type = 'pkce' AND auth_code_issued_at > NOW() - INTERVAL '5 minutes'",
 		req.AuthCode)
 	if err != nil || row == nil {
 		problemJSON(c, 401, "invalid_grant", "Invalid or expired auth code")
