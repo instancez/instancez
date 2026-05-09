@@ -427,14 +427,18 @@ await step('rest: insert comment for nested embed test', async () => {
 })
 
 await step('rest: nested embed — has-many with nested belongs-to', async () => {
-  // todos → comments(body, users(id))
+  // todos → comments(body, todos(title))
+  // The nested belongs-to back to todos exercises the parent-of-child embed
+  // codepath. The schema has no public.users any more (auth lives in the
+  // auth schema and the embed parser's 2-part FK split can't reach it),
+  // so we use the comments→todos FK as the inner belongs-to leg.
   const client = createClient(URL, ANON_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
     global: { headers: { Authorization: `Bearer ${accessToken}` } },
   })
   const { data, error } = await client
     .from('todos')
-    .select('title, comments(body, users(id))')
+    .select('title, comments(body, todos(title))')
     .eq('user_id', userId)
   if (error) throw error
   assert(Array.isArray(data), 'result is array')
@@ -444,11 +448,11 @@ await step('rest: nested embed — has-many with nested belongs-to', async () =>
   assert(todo.comments.length >= 1, 'at least one comment')
   const comment = todo.comments[0]
   assertEq(comment.body, 'test comment')
-  assert(comment.users, 'nested users should be present')
-  assertEq(comment.users.id, userId, 'nested user id should match')
+  assert(comment.todos, 'nested todos (parent) should be present')
+  assertEq(comment.todos.title, todo.title, 'nested todo title should match parent title')
 })
 
-await step('rest: aliased belongs-to embed — author:users(id) on comments', async () => {
+await step('rest: aliased belongs-to embed — parent:todos(title) on comments', async () => {
   // Regression for the docs/examples/react-catalog bug where
   // `category:categories!left(...)` was rejected with "could not find a
   // relationship between 'products' and 'category:categories'". The alias
@@ -460,14 +464,15 @@ await step('rest: aliased belongs-to embed — author:users(id) on comments', as
   })
   const { data, error } = await client
     .from('comments')
-    .select('body, author:users!left(id)')
+    .select('body, parent:todos!left(id,title)')
     .eq('user_id', userId)
   if (error) throw error
   assert(Array.isArray(data) && data.length >= 1, 'expected at least one comment')
   const row = data[0]
-  assert(row.author, 'aliased embed must surface under the alias key')
-  assert(row.users === undefined, 'must not also surface under the relation name')
-  assertEq(row.author.id, userId, 'aliased embed should expose joined columns')
+  assert(row.parent, 'aliased embed must surface under the alias key')
+  assert(row.todos === undefined, 'must not also surface under the relation name')
+  assert(row.parent.id !== undefined, 'aliased embed should expose joined columns')
+  assert(typeof row.parent.title === 'string', 'aliased embed should expose joined columns')
 })
 
 await step('rest: aliased has-many embed — feedback:comments(body) on todos', async () => {
@@ -487,11 +492,11 @@ await step('rest: aliased has-many embed — feedback:comments(body) on todos', 
   assert(todo.comments === undefined, 'must not also surface under the relation name')
 })
 
-await step('rest: spread embed — ...users(id) on comments', async () => {
+await step('rest: spread embed — ...todos(title) on comments', async () => {
   // Spread flattens the joined columns into the parent row.
   // Use raw fetch since supabase-js spread syntax may vary by version.
   const resp = await fetch(
-    `${URL}/rest/v1/comments?select=body,...users(id)&user_id=eq.${userId}`,
+    `${URL}/rest/v1/comments?select=body,...todos(title)&user_id=eq.${userId}`,
     { headers: { Authorization: `Bearer ${accessToken}`, apikey: ANON_KEY } }
   )
   assert(resp.ok, `spread request failed: ${resp.status}`)
@@ -499,9 +504,9 @@ await step('rest: spread embed — ...users(id) on comments', async () => {
   assert(Array.isArray(rows), 'result is array')
   assert(rows.length >= 1, 'at least one row')
   const row = rows[0]
-  // The user's id should be inlined into the parent row, not nested under "users".
-  assert(row.id !== undefined, 'spread should inline id')
-  assert(row.users === undefined, 'spread should not have nested users key')
+  // The todo's title should be inlined into the parent row, not nested under "todos".
+  assert(typeof row.title === 'string', 'spread should inline title')
+  assert(row.todos === undefined, 'spread should not have nested todos key')
 })
 
 // --- Upsert tests ---
@@ -1757,6 +1762,55 @@ await step('rls: authenticated user can write + read own row', async () => {
   for (const row of selRes.data) {
     assertEq(toUuid(row.owner_id), userId, 'user must only see own rows')
   }
+})
+
+// --- Cross-schema FK + RLS via auth.uid() ---
+// `profiles` lives in public, with id FK'd to auth.users.id, RLS gated
+// by auth.uid() = id. This is the supabase-canonical pattern for
+// per-user metadata that doesn't belong on auth.users itself.
+await step('rest: profiles cross-schema FK + auth.uid()-gated RLS', async () => {
+  const userClient = createClient(URL, ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+
+  // pgx may codec UUIDs as a 16-byte buffer rather than a string in JSON
+  // outputs; normalize before comparing. (Same helper as the rls_secrets
+  // step.)
+  const toUuid = (v) => {
+    if (typeof v === 'string') return v
+    const bytes = Array.isArray(v) ? v : Object.values(v)
+    const hex = bytes.map((b) => b.toString(16).padStart(2, '0')).join('')
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+  }
+
+  const { data: ins, error: insErr } = await userClient
+    .from('profiles')
+    .insert({ id: userId, display_name: 'Alice' })
+    .select()
+    .single()
+  if (insErr) throw new Error(`profiles insert failed: ${insErr.message}`)
+  assertEq(toUuid(ins.id), userId, 'profiles.id must equal auth.users.id')
+  assertEq(ins.display_name, 'Alice', 'profiles.display_name roundtrip')
+
+  // Read back through RLS.
+  const { data: read, error: readErr } = await userClient
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+  if (readErr) throw new Error(`profiles select failed: ${readErr.message}`)
+  assertEq(read.length, 1, 'profiles select should return one row')
+  assertEq(read[0].display_name, 'Alice', 'read-back display_name')
+
+  // Inserting a profile for a different auth user must be blocked: the
+  // RLS WITH CHECK clause (auth.uid() = id) and the FK to auth.users.id
+  // both reject this. Either failure mode is acceptable — the contract
+  // is that the operation is denied.
+  const otherId = '00000000-0000-0000-0000-000000000042'
+  const { error: foreignErr } = await userClient
+    .from('profiles')
+    .insert({ id: otherId, display_name: 'Mallory' })
+  assert(foreignErr, "profiles insert with other user's id should be denied")
 })
 
 await step('auth.signOut revokes the session', async () => {

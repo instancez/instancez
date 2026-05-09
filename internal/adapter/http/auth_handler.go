@@ -1235,7 +1235,7 @@ func (h *AuthHandler) handleAdminDeleteUser(c *gin.Context) {
 	// Clean up auth artifacts first.
 	h.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE user_id = $1::uuid", uid)
 	h.db.Exec(ctx, "DELETE FROM auth.one_time_tokens WHERE user_id = $1::uuid", uid)
-	h.db.Exec(ctx, "DELETE FROM _mfa_factors WHERE user_id = $1::uuid", uid)
+	h.db.Exec(ctx, "DELETE FROM auth.mfa_factors WHERE user_id = $1::uuid", uid)
 
 	affected, err := h.db.Exec(ctx, "DELETE FROM auth.users WHERE id = $1::uuid", uid)
 	if err != nil {
@@ -2388,7 +2388,7 @@ func (h *AuthHandler) handleAdminDeleteFactor(c *gin.Context) {
 	factorID := c.Param("factor_id")
 	ctx := c.Request.Context()
 	res, err := h.db.Exec(ctx,
-		"DELETE FROM _mfa_factors WHERE id = $1::uuid AND user_id = $2::uuid",
+		"DELETE FROM auth.mfa_factors WHERE id = $1::uuid AND user_id = $2::uuid",
 		factorID, uid)
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to delete factor")

@@ -96,18 +96,13 @@ func TestSupabaseJSCompat(t *testing.T) {
 			Email:         &domain.AuthEmail{VerifyEmail: verifyEmail},
 		},
 		Tables: map[string]domain.Table{
-			"users": {
-				Fields: []domain.Field{
-					{Name: "display_name", Type: "text"},
-				},
-			},
 			"todos": {
 				Fields: []domain.Field{
 					{Name: "id", Type: "bigserial", PrimaryKey: true},
 					{Name: "title", Type: "text", Required: true},
 					{Name: "done", Type: "boolean", Default: false},
 					{Name: "priority", Type: "int", Default: 0},
-					{Name: "user_id", ForeignKey: &domain.ForeignKey{References: "users.id", OnDelete: "cascade"}},
+					{Name: "user_id", ForeignKey: &domain.ForeignKey{References: "auth.users.id", OnDelete: "cascade"}},
 				},
 			},
 			"comments": {
@@ -115,7 +110,26 @@ func TestSupabaseJSCompat(t *testing.T) {
 					{Name: "id", Type: "bigserial", PrimaryKey: true},
 					{Name: "body", Type: "text", Required: true},
 					{Name: "todo_id", ForeignKey: &domain.ForeignKey{References: "todos.id", OnDelete: "cascade"}},
-					{Name: "user_id", ForeignKey: &domain.ForeignKey{References: "users.id", OnDelete: "cascade"}},
+					{Name: "user_id", ForeignKey: &domain.ForeignKey{References: "auth.users.id", OnDelete: "cascade"}},
+				},
+			},
+			// profiles exercises cross-schema FK + RLS using auth.uid().
+			// FK targets auth.users.id (auto-emitted whenever cfg.Auth != nil),
+			// the RLS policies reference auth.uid() to gate writes to the row's
+			// owning user. This is the supabase-recommended pattern for
+			// per-user app metadata that lives outside auth.users.
+			"profiles": {
+				Fields: []domain.Field{
+					{
+						Name:       "id",
+						PrimaryKey: true,
+						ForeignKey: &domain.ForeignKey{References: "auth.users.id", OnDelete: "cascade"},
+					},
+					{Name: "display_name", Type: "text"},
+				},
+				RLS: []domain.RLSPolicy{
+					{Operations: []string{"select"}, Check: "true"},
+					{Operations: []string{"insert", "update"}, Check: "auth.uid() = id"},
 				},
 			},
 			// rls_secrets exercises the two-login model end-to-end:
