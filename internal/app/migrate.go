@@ -563,10 +563,7 @@ func generateTable(name string, table domain.Table, allTables map[string]domain.
 	}
 
 	allParts := append(cols, constraints...)
-	qualName := name
-	if s := table.EffectiveSchema(); s != "public" {
-		qualName = s + "." + name
-	}
+	qualName := qualifiedTableName(name, table)
 	ddl = append(ddl, fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (\n  %s\n);",
 		qualName, strings.Join(allParts, ",\n  ")))
 
@@ -581,6 +578,7 @@ func generateTable(name string, table domain.Table, allTables map[string]domain.
 // indexes run after column diffs (ADD COLUMN must precede CREATE INDEX).
 func generateIndexes(name string, table domain.Table) []string {
 	var ddl []string
+	qualName := qualifiedTableName(name, table)
 	for _, idx := range table.Indexes {
 		indexName := fmt.Sprintf("idx_%s_%s", name, strings.Join(idx.Columns, "_"))
 		unique := ""
@@ -592,9 +590,20 @@ func generateIndexes(name string, table domain.Table) []string {
 			where = " WHERE " + idx.Where
 		}
 		ddl = append(ddl, fmt.Sprintf("CREATE %sINDEX IF NOT EXISTS %s ON %s (%s)%s;",
-			unique, indexName, name, strings.Join(idx.Columns, ", "), where))
+			unique, indexName, qualName, strings.Join(idx.Columns, ", "), where))
 	}
 	return ddl
+}
+
+// qualifiedTableName returns "schema.table" for non-default schemas, and the
+// bare table name for the default ("public") schema. Mirrors the inline logic
+// previously embedded in generateTable.
+func qualifiedTableName(name string, t domain.Table) string {
+	s := t.EffectiveSchema()
+	if s == "public" {
+		return name
+	}
+	return s + "." + name
 }
 
 // effectiveType returns the resolved SQL type for a field, inferring from FK
@@ -761,10 +770,11 @@ func generateRLSPolicies(tableName string, table domain.Table) []string {
 	if len(table.RLS) == 0 {
 		return nil
 	}
+	qualName := qualifiedTableName(tableName, table)
 
 	var ddl []string
-	ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ENABLE ROW LEVEL SECURITY;", tableName))
-	ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s FORCE ROW LEVEL SECURITY;", tableName))
+	ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ENABLE ROW LEVEL SECURITY;", qualName))
+	ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s FORCE ROW LEVEL SECURITY;", qualName))
 
 	for i, policy := range table.RLS {
 		typeClause := rlsPolicyTypeClause(policy)
@@ -772,15 +782,15 @@ func generateRLSPolicies(tableName string, table domain.Table) []string {
 			policyName := fmt.Sprintf("%s_%s_%d", tableName, op, i)
 			pgOp := strings.ToUpper(op)
 
-			ddl = append(ddl, fmt.Sprintf("DROP POLICY IF EXISTS %s ON %s;", policyName, tableName))
+			ddl = append(ddl, fmt.Sprintf("DROP POLICY IF EXISTS %s ON %s;", policyName, qualName))
 			if op == "insert" {
 				ddl = append(ddl, fmt.Sprintf(
 					"CREATE POLICY %s ON %s%s FOR %s WITH CHECK (%s);",
-					policyName, tableName, typeClause, pgOp, policy.Check))
+					policyName, qualName, typeClause, pgOp, policy.Check))
 			} else {
 				ddl = append(ddl, fmt.Sprintf(
 					"CREATE POLICY %s ON %s%s FOR %s USING (%s);",
-					policyName, tableName, typeClause, pgOp, policy.Check))
+					policyName, qualName, typeClause, pgOp, policy.Check))
 			}
 		}
 	}

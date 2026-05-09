@@ -564,3 +564,40 @@ func TestApplyRollsBackOnFailure(t *testing.T) {
 	}
 }
 
+func TestQualifiedTableName(t *testing.T) {
+	cases := []struct {
+		name  string
+		table domain.Table
+		want  string
+	}{
+		{"public default", domain.Table{}, "posts"},
+		{"explicit public", domain.Table{Schema: "public"}, "posts"},
+		{"non-default", domain.Table{Schema: "analytics"}, "analytics.posts"},
+	}
+	for _, tt := range cases {
+		got := qualifiedTableName("posts", tt.table)
+		if got != tt.want {
+			t.Errorf("%s: got %q want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestRLSAndIndexesUseQualifiedNames(t *testing.T) {
+	tbl := domain.Table{
+		Schema: "analytics",
+		Fields: []domain.Field{{Name: "id", Type: "BIGINT", PrimaryKey: true}},
+		Indexes: []domain.Index{{Columns: []string{"id"}}},
+		RLS: []domain.RLSPolicy{
+			{Operations: []string{"select"}, Check: "true"},
+		},
+	}
+	idx := strings.Join(generateIndexes("posts", tbl), "\n")
+	if !strings.Contains(idx, "ON analytics.posts (") {
+		t.Errorf("expected schema-qualified index DDL, got: %s", idx)
+	}
+	rls := strings.Join(generateRLSPolicies("posts", tbl), "\n")
+	if !strings.Contains(rls, "ALTER TABLE analytics.posts") {
+		t.Errorf("expected schema-qualified RLS DDL, got: %s", rls)
+	}
+}
+
