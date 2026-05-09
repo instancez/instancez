@@ -1341,10 +1341,9 @@ func (h *AuthHandler) handleAuthorize(c *gin.Context) {
 			codeChallengeMethod = "S256"
 		}
 		ctx := c.Request.Context()
-		expiresAt := time.Now().Add(10 * time.Minute)
 		_, err := h.db.Exec(ctx,
-			"INSERT INTO _oauth_states (state, code_challenge, code_challenge_method, redirect_to, provider, expires_at) VALUES ($1, $2, $3, $4, $5, $6)",
-			state, codeChallenge, codeChallengeMethod, redirectTo, provider, expiresAt)
+			"INSERT INTO auth.flow_state (auth_code, code_challenge, code_challenge_method, redirect_to, provider_type, authentication_method, linking_user_id, auth_code_issued_at) VALUES ($1, $2, $3, $4, 'oauth', 'oauth', $5, NOW())",
+			state, codeChallenge, codeChallengeMethod, redirectTo, nil)
 		if err != nil {
 			problemJSON(c, 500, "internal", "Failed to store OAuth state")
 			return
@@ -1380,10 +1379,10 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 		var linkingUserID string
 
 		dbState, _ = h.db.QueryRow(ctx,
-			"SELECT code_challenge, code_challenge_method, redirect_to, provider, linking_user_id FROM _oauth_states WHERE state = $1 AND expires_at > NOW()",
+			"SELECT code_challenge, code_challenge_method, redirect_to, linking_user_id FROM auth.flow_state WHERE auth_code = $1 AND provider_type = 'oauth' AND auth_code_issued_at > NOW() - INTERVAL '10 minutes'",
 			state)
 		if dbState != nil {
-			h.db.Exec(ctx, "DELETE FROM _oauth_states WHERE state = $1", state)
+			h.db.Exec(ctx, "DELETE FROM auth.flow_state WHERE auth_code = $1 AND provider_type = 'oauth'", state)
 			redirectTo, _ = dbState["redirect_to"].(string)
 			if cc, _ := dbState["code_challenge"].(string); cc != "" {
 				isPKCE = true
@@ -2316,10 +2315,9 @@ func (h *AuthHandler) handleLinkIdentity(c *gin.Context) {
 
 	state := generateRandomToken()
 	ctx := c.Request.Context()
-	expiresAt := time.Now().Add(10 * time.Minute)
 	_, err := h.db.Exec(ctx,
-		"INSERT INTO _oauth_states (state, redirect_to, provider, linking_user_id, expires_at) VALUES ($1, $2, $3, $4, $5)",
-		state, redirectTo, provider, session.UserID, expiresAt)
+		"INSERT INTO auth.flow_state (auth_code, redirect_to, provider_type, authentication_method, linking_user_id, auth_code_issued_at) VALUES ($1, $2, 'oauth', 'oauth', $3, NOW())",
+		state, redirectTo, session.UserID)
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to store OAuth state")
 		return
