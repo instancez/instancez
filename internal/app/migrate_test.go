@@ -398,10 +398,10 @@ func TestGenerateRPCFunction_VoidDefaults(t *testing.T) {
 // successful Apply so subsequent assertions can measure only the delta added
 // by a later (failing) Apply.
 type fakeDB struct {
-	migrationsTableEnsured       bool
-	lastMigration                *domain.Migration
-	failOnStatementContaining    string
-	committedStatements          int
+	migrationsTableEnsured        bool
+	lastMigration                 *domain.Migration
+	failOnStatementContaining     string
+	committedStatements           int
 	committedStatementsAfterFirst int
 }
 
@@ -410,8 +410,8 @@ func newFakeDB(t *testing.T) *fakeDB {
 	return &fakeDB{}
 }
 
-func (f *fakeDB) Close() error                                 { return nil }
-func (f *fakeDB) Ping(ctx context.Context) error               { return nil }
+func (f *fakeDB) Close() error                   { return nil }
+func (f *fakeDB) Ping(ctx context.Context) error { return nil }
 func (f *fakeDB) EnsureMigrationsTable(ctx context.Context) error {
 	f.migrationsTableEnsured = true
 	return nil
@@ -433,7 +433,7 @@ func (f *fakeDB) ExecDDL(ctx context.Context, sql string) error {
 	// a regression worth surfacing.
 	return fmt.Errorf("fakeDB.ExecDDL should not be called; Apply must use Begin/Commit")
 }
-func (f *fakeDB) EnsureDataTable(ctx context.Context) error                 { return nil }
+func (f *fakeDB) EnsureDataTable(ctx context.Context) error { return nil }
 func (f *fakeDB) GetAppliedData(ctx context.Context) ([]domain.DataRecord, error) {
 	return nil, nil
 }
