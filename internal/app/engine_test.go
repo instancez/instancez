@@ -2,8 +2,12 @@ package app
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/saedx1/ultrabase/internal/domain"
 	"golang.org/x/crypto/bcrypt"
@@ -254,5 +258,35 @@ func TestEngineFailsHardOnUnparseableLastConfig(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unparseable") {
 		t.Fatalf("expected error to mention 'unparseable', got: %v", err)
+	}
+}
+
+func TestDriftHeartbeatLogsPeriodically(t *testing.T) {
+	tracker := NewDriftTracker("test://x")
+	tracker.MarkOK("good", time.Now())
+	tracker.MarkDrift("bad", "boom", time.Now())
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{
+		Level: slog.LevelError,
+	}))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tickCh := make(chan struct{}, 4)
+	var logged int32
+	go runDriftHeartbeat(ctx, tracker, logger, 20*time.Millisecond, func() {
+		atomic.AddInt32(&logged, 1)
+		select {
+		case tickCh <- struct{}{}:
+		default:
+		}
+	})
+
+	for i := 0; i < 3; i++ {
+		select {
+		case <-tickCh:
+		case <-time.After(500 * time.Millisecond):
+			t.Fatalf("heartbeat did not tick %d times (got %d)", 3, atomic.LoadInt32(&logged))
+		}
 	}
 }

@@ -199,6 +199,11 @@ func (e *Engine) Start(ctx context.Context) error {
 		}
 	}
 
+	// 1b. Drift heartbeat (only meaningful when in drift)
+	if e.drift != nil {
+		go runDriftHeartbeat(ctx, e.drift, e.logger, 10*time.Minute, nil)
+	}
+
 	// 2. Data imports
 	if e.seed && len(e.cfg.Data) > 0 {
 		t := time.Now()
@@ -550,6 +555,37 @@ func orderDataTables(cfg *domain.Config) []string {
 		}
 	}
 	return result
+}
+
+// runDriftHeartbeat logs a loud error periodically while the tracker shows
+// drift, so the failure mode doesn't get buried in log volume. Returns when
+// ctx is cancelled. The onTick callback is for tests; nil in production.
+func runDriftHeartbeat(ctx context.Context, tracker *DriftTracker, logger *slog.Logger, interval time.Duration, onTick func()) {
+	if interval <= 0 {
+		interval = 10 * time.Minute
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			state := tracker.Snapshot()
+			if state.Status != DriftStatusDrift {
+				continue
+			}
+			logger.Error("config drift",
+				"source", state.ConfigSource,
+				"reason", state.LastError,
+				"running_applied_at", state.RunningAppliedAt,
+				"source_seen_at", state.SourceLastSeenAt,
+			)
+			if onTick != nil {
+				onTick()
+			}
+		}
+	}
 }
 
 func joinStrings(strs []string, sep string) string {
