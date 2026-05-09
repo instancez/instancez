@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
 
 	"github.com/gin-gonic/gin"
 	"github.com/saedx1/ultrabase/internal/app"
@@ -16,21 +15,45 @@ import (
 
 // AdminHandler serves /api/_admin/* endpoints.
 type AdminHandler struct {
-	cfg        *domain.Config
-	db         domain.Database
-	logger     *slog.Logger
-	configPath string
-	devMode    bool
+	cfg           *domain.Config
+	configFn      func() *domain.Config // returns the LIVE engine config (lastGood when drifted)
+	db            domain.Database
+	logger        *slog.Logger
+	configSource  config.Source
+	dashboardMode DashboardMode
+	driftFn       func() *app.DriftTracker
+	devMode       bool
 }
 
 func NewAdminHandler(deps ServerDeps) *AdminHandler {
 	return &AdminHandler{
-		cfg:        deps.Config,
-		db:         deps.DB.Database,
-		logger:     deps.Logger,
-		configPath: deps.ConfigPath,
-		devMode:    deps.DevMode,
+		cfg:           deps.Config,
+		configFn:      deps.ConfigFn,
+		db:            deps.DB.Database,
+		logger:        deps.Logger,
+		configSource:  deps.ConfigSource,
+		dashboardMode: deps.DashboardMode,
+		driftFn:       deps.DriftFn,
+		devMode:       deps.DevMode,
 	}
+}
+
+// liveConfig returns the engine's current running config. Falls back to the
+// boot-time cfg if no closure was supplied (test paths).
+func (h *AdminHandler) liveConfig() *domain.Config {
+	if h.configFn != nil {
+		if c := h.configFn(); c != nil {
+			return c
+		}
+	}
+	return h.cfg
+}
+
+func (h *AdminHandler) sourceDescribe() string {
+	if h.configSource == nil {
+		return ""
+	}
+	return h.configSource.Describe()
 }
 
 func (h *AdminHandler) Mount(api *gin.RouterGroup) {
@@ -203,91 +226,90 @@ func (h *AdminHandler) handleSchema(c *gin.Context) {
 	c.JSON(200, schema)
 }
 
-// handleGetConfig returns the full parsed config as JSON with a checksum.
+// handleGetConfig returns the full parsed config as JSON. The shape mirrors
+// the running engine config (drift-aware via configFn) and includes a
+// `_checksum` field carrying the source's current version token, which clients
+// can echo back on PUT via `If-Match` for optimistic concurrency.
 func (h *AdminHandler) handleGetConfig(c *gin.Context) {
-	if h.configPath == "" {
-		problemJSON(c, 501, "not_implemented", "Config path not available")
-		return
-	}
-
-	data, err := os.ReadFile(h.configPath)
-	if err != nil {
-		problemJSON(c, 500, "internal", "Failed to read config file")
-		return
-	}
-
-	checksum := fmt.Sprintf("sha256:%x", sha256.Sum256(data))
-
-	// Parse the raw YAML into the config struct for JSON serialization
-	var cfg domain.Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		problemJSON(c, 500, "internal", "Failed to parse config file")
-		return
-	}
-
-	// Marshal to JSON, then unmarshal to a map so we can add _checksum
+	cfg := h.liveConfig()
 	jsonData, err := json.Marshal(cfg)
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to serialize config")
 		return
 	}
-
 	var result map[string]any
-	json.Unmarshal(jsonData, &result)
-	result["_checksum"] = checksum
+	if err := json.Unmarshal(jsonData, &result); err != nil {
+		problemJSON(c, 500, "internal", "Failed to round-trip config")
+		return
+	}
 
+	// Surface the source's current version token as `_checksum` so PUT can
+	// pass it back via If-Match. When no source is wired (test path) the
+	// field is omitted.
+	if h.configSource != nil {
+		if _, ver, err := h.configSource.Read(c.Request.Context()); err == nil {
+			result["_checksum"] = ver
+		}
+	}
 	c.JSON(200, result)
 }
 
-// handlePutConfig validates and writes config to disk.
+// handlePutConfig validates and writes config through the configured Source.
+// Behavior is gated on the dashboard mode: disabled returns 403
+// "dashboard_disabled", readonly returns 403 "dashboard_readonly", and
+// readwrite runs the migration first and only writes the YAML to the source
+// after the migration commits. Optimistic concurrency uses the source's
+// version token via the `If-Match` request header.
 func (h *AdminHandler) handlePutConfig(c *gin.Context) {
-	if h.configPath == "" {
-		problemJSON(c, 501, "not_implemented", "Config path not available")
+	switch h.dashboardMode {
+	case DashboardDisabled:
+		c.JSON(403, gin.H{
+			"error":         "dashboard_disabled",
+			"message":       "The dashboard is disabled. To change the configuration, update the source and restart.",
+			"config_source": h.sourceDescribe(),
+		})
+		return
+	case DashboardReadonly:
+		c.JSON(403, gin.H{
+			"error":         "dashboard_readonly",
+			"message":       "This deployment is GitOps-managed. To change the configuration, update the source and redeploy.",
+			"config_source": h.sourceDescribe(),
+		})
 		return
 	}
 
-	if !h.devMode {
-		problemJSON(c, 403, "forbidden", "Config editing is only available in dev mode")
+	if h.configSource == nil {
+		problemJSON(c, 501, "not_implemented", "Config source not available")
 		return
 	}
 
-	// Conflict detection via If-Match header
-	ifMatch := c.GetHeader("If-Match")
-	if ifMatch != "" {
-		currentData, err := os.ReadFile(h.configPath)
-		if err != nil {
-			problemJSON(c, 500, "internal", "Failed to read current config")
-			return
-		}
-		currentChecksum := fmt.Sprintf("sha256:%x", sha256.Sum256(currentData))
-		if ifMatch != currentChecksum {
-			// Conflict: file changed on disk
-			var currentCfg domain.Config
-			yaml.Unmarshal(currentData, &currentCfg)
-			c.JSON(409, gin.H{
-				"error":            "conflict",
-				"current_checksum": currentChecksum,
-				"current_config":   currentCfg,
-			})
-			return
-		}
+	// Read current bytes + version (for optimistic concurrency).
+	currentBytes, currentVersion, err := h.configSource.Read(c.Request.Context())
+	if err != nil {
+		problemJSON(c, 500, "internal", "Failed to read current config: "+err.Error())
+		return
 	}
 
-	// Parse incoming JSON config
-	var cfg domain.Config
-	if err := c.ShouldBindJSON(&cfg); err != nil {
+	// If-Match check (optional — clients can send the version they're editing).
+	if ifMatch := c.GetHeader("If-Match"); ifMatch != "" && ifMatch != currentVersion {
+		c.JSON(409, gin.H{
+			"error":            "conflict",
+			"current_version":  currentVersion,
+			"current_checksum": fmt.Sprintf("sha256:%x", sha256.Sum256(currentBytes)),
+		})
+		return
+	}
+
+	// Parse + validate the proposed config.
+	var newCfg domain.Config
+	if err := c.ShouldBindJSON(&newCfg); err != nil {
 		problemJSON(c, 400, "invalid_body", "Invalid JSON body")
 		return
 	}
-
-	// Validate
-	if errs := config.Validate(&cfg); errs != nil {
+	if errs := config.Validate(&newCfg); errs != nil {
 		var errList []gin.H
 		for _, e := range errs {
-			item := gin.H{
-				"path":    e.Path,
-				"message": e.Message,
-			}
+			item := gin.H{"path": e.Path, "message": e.Message}
 			if e.Suggestion != "" {
 				item["suggestion"] = e.Suggestion
 			}
@@ -297,19 +319,36 @@ func (h *AdminHandler) handlePutConfig(c *gin.Context) {
 		return
 	}
 
-	// Marshal to YAML and write
-	yamlData, err := yaml.Marshal(&cfg)
+	// Migration first: run via the migrator. If it fails, leave the backend untouched.
+	migrator := app.NewMigrator(h.db)
+	if err := migrator.Apply(c.Request.Context(), &newCfg); err != nil {
+		problemJSON(c, 400, "migration_failed", err.Error())
+		return
+	}
+
+	// Migration committed; now write the YAML to the backend.
+	yamlData, err := yaml.Marshal(&newCfg)
 	if err != nil {
-		problemJSON(c, 500, "internal", "Failed to serialize config")
+		problemJSON(c, 500, "internal", "Failed to serialize config to YAML")
+		return
+	}
+	newVersion, err := h.configSource.Write(c.Request.Context(), yamlData, currentVersion)
+	if err != nil {
+		// The DB has been migrated but the source write failed. Log loudly;
+		// the next boot will re-read the (stale) source and migrate forward
+		// again, which is idempotent for the patterns we generate.
+		h.logger.Error("config source write failed after successful migration",
+			"source", h.sourceDescribe(),
+			"error", err.Error())
+		problemJSON(c, 500, "source_write_failed", err.Error())
 		return
 	}
 
-	if err := os.WriteFile(h.configPath, yamlData, 0644); err != nil {
-		problemJSON(c, 500, "internal", "Failed to write config file")
-		return
-	}
-
-	c.JSON(200, gin.H{"message": "Config saved"})
+	c.JSON(200, gin.H{
+		"message":       "Config saved",
+		"config_source": h.sourceDescribe(),
+		"new_version":   newVersion,
+	})
 }
 
 // handleConfigDiff returns DDL migration diff for current config.
