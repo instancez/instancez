@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { getConfig, putConfig } from "../api/client";
+import { showSaveToast } from "../components/SaveToast";
 import type { Config, ValidationError } from "../lib/types";
 
 interface ConfigState {
@@ -59,7 +60,11 @@ export function useConfigState(): ConfigState {
         setSaving(true);
         setSaveErrors([]);
         const { _checksum, ...body } = updated;
-        await putConfig(body, checksum);
+        const resp = await putConfig(body, checksum);
+        showSaveToast({
+          source: resp.config_source ?? "",
+          statementCount: 0,
+        });
         await refresh();
         return true;
       } catch (e: any) {

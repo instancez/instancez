@@ -54,7 +54,7 @@ export async function getConfig(): Promise<Config> {
 export async function putConfig(
   config: Omit<Config, "_checksum">,
   checksum: string
-): Promise<{ message: string }> {
+): Promise<{ message: string; config_source?: string }> {
   return request("/config", {
     method: "PUT",
     headers: { "If-Match": checksum },

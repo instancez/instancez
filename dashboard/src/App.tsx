@@ -5,6 +5,7 @@ import { Layout } from "./components/Layout";
 import { DialogProvider } from "./components/Dialog";
 import { DriftBanner } from "./components/DriftBanner";
 import { EditModeBanner } from "./components/EditModeBanner";
+import { SaveToast } from "./components/SaveToast";
 import { useConfigStatus } from "./hooks/useConfigStatus";
 import { Login } from "./pages/Login";
 
@@ -63,6 +64,7 @@ export function App() {
   return (
     <DialogProvider>
       <StatusBanners />
+      <SaveToast />
       <Suspense fallback={<PageLoader />}>
         <Routes>
           <Route element={<Layout />}>
