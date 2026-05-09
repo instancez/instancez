@@ -60,7 +60,6 @@ export interface Auth {
   jwt_expiry: string;
   refresh_tokens: boolean;
   refresh_token_expiry: string;
-  fields: Record<string, Field>;
   email: AuthEmail | null;
   google: OAuthProvider | null;
   github: OAuthProvider | null;

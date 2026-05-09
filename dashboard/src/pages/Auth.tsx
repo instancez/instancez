@@ -1,13 +1,11 @@
 import { useState, useEffect } from "react";
-import { Shield, Plus, Trash2 } from "lucide-react";
+import { Shield } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
-import { useDialog } from "../components/Dialog";
 import { PageHeader } from "../components/PageHeader";
 import { SaveBar } from "../components/SaveBar";
 import { CodeEditor } from "../components/CodeEditor";
 import { EmptyState } from "../components/EmptyState";
-import type { Auth, Field } from "../lib/types";
-import { POSTGRES_TYPES } from "../lib/utils";
+import type { Auth } from "../lib/types";
 
 function GoogleIcon({ size = 16 }: { size?: number }) {
   return (
@@ -32,7 +30,6 @@ const DEFAULT_AUTH: Auth = {
   jwt_expiry: "15m",
   refresh_tokens: true,
   refresh_token_expiry: "7d",
-  fields: {},
   email: { verify_email: false, templates: {} },
   google: null,
   github: null,
@@ -40,7 +37,6 @@ const DEFAULT_AUTH: Auth = {
 
 export function AuthPage() {
   const { config, save, saving, saveErrors } = useConfig();
-  const dialog = useDialog();
   const [auth, setAuth] = useState<Auth | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -151,89 +147,6 @@ export function AuthPage() {
                 />
                 Enable refresh tokens
               </label>
-            </section>
-
-            {/* Custom Fields */}
-            <section className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-medium text-foreground">Custom User Fields</h2>
-                <button
-                  onClick={async () => {
-                    const name = await dialog.prompt("Field name:");
-                    if (!name?.trim()) return;
-                    updateAuth((a) => ({
-                      ...a,
-                      fields: { ...a.fields, [name.trim()]: { type: "text" } },
-                    }));
-                  }}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded border border-dashed border-border text-xs text-muted-foreground hover:text-foreground hover:border-border-hover transition-colors cursor-pointer"
-                >
-                  <Plus size={12} />
-                  Add Field
-                </button>
-              </div>
-
-              {/* System fields (read-only) */}
-              <div className="space-y-1">
-                {["id", "email", "password_hash", "email_verified", "created_at"].map((f) => (
-                  <div
-                    key={f}
-                    className="flex items-center gap-3 px-3 py-2 rounded-lg bg-muted/50"
-                  >
-                    <span className="text-xs font-mono text-muted-foreground">{f}</span>
-                    <span className="text-xs text-muted-foreground/60">system field</span>
-                  </div>
-                ))}
-              </div>
-
-              {/* Custom fields */}
-              {Object.entries(auth.fields || {}).map(([fieldName, field]) => (
-                <div
-                  key={fieldName}
-                  className="flex items-center gap-3 px-3 py-2 rounded-lg border border-border bg-primary"
-                >
-                  <span className="text-sm font-mono text-foreground min-w-[120px]">{fieldName}</span>
-                  <select
-                    value={field.type}
-                    onChange={(e) =>
-                      updateAuth((a) => ({
-                        ...a,
-                        fields: { ...a.fields, [fieldName]: { ...field, type: e.target.value } },
-                      }))
-                    }
-                    className="px-2 py-1 rounded border border-border bg-input text-xs font-mono text-foreground cursor-pointer focus:outline-none focus:border-ring"
-                  >
-                    {POSTGRES_TYPES.map((t) => (
-                      <option key={t} value={t}>{t}</option>
-                    ))}
-                  </select>
-                  <label className="flex items-center gap-1 text-xs text-foreground cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={field.required || false}
-                      onChange={(e) =>
-                        updateAuth((a) => ({
-                          ...a,
-                          fields: { ...a.fields, [fieldName]: { ...field, required: e.target.checked } },
-                        }))
-                      }
-                      className="rounded border-border"
-                    />
-                    Required
-                  </label>
-                  <button
-                    onClick={() =>
-                      updateAuth((a) => {
-                        const { [fieldName]: _, ...rest } = a.fields;
-                        return { ...a, fields: rest };
-                      })
-                    }
-                    className="ml-auto p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              ))}
             </section>
 
             {/* Email Verification */}

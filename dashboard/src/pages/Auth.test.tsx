@@ -16,7 +16,6 @@ const makeConfig = (authEnabled: boolean): Config => ({
         jwt_expiry: "15m",
         refresh_tokens: true,
         refresh_token_expiry: "7d",
-        fields: {},
         email: { verify_email: false, templates: {} },
         google: null,
         github: null,
@@ -79,13 +78,6 @@ describe("AuthPage", () => {
     renderAuth(makeConfig(false));
     expect(screen.getByText("Auth is disabled")).toBeInTheDocument();
     expect(screen.queryByText("JWT Settings")).not.toBeInTheDocument();
-  });
-
-  it("shows system fields as read-only", () => {
-    renderAuth(makeConfig(true));
-    expect(screen.getByText("id")).toBeInTheDocument();
-    expect(screen.getByText("email")).toBeInTheDocument();
-    expect(screen.getByText("created_at")).toBeInTheDocument();
   });
 
   it("shows OAuth provider toggles", () => {

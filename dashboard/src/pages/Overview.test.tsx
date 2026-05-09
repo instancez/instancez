@@ -28,7 +28,7 @@ const baseConfig: Config = {
       search_config: "",
     },
   },
-  auth: { jwt_expiry: "15m", refresh_tokens: true, refresh_token_expiry: "7d", fields: {}, email: { verify_email: false, templates: {} }, google: null, github: null },
+  auth: { jwt_expiry: "15m", refresh_tokens: true, refresh_token_expiry: "7d", email: { verify_email: false, templates: {} }, google: null, github: null },
   storage: {
     avatars: { max_size: "5MB", mime_types: ["image/*"], public: true, rls: [] },
   },
