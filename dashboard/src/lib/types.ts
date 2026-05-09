@@ -209,3 +209,12 @@ export interface ValidationError {
   message: string;
   suggestion?: string;
 }
+
+export type ConfigStatus = {
+  status: "ok" | "drift" | "unknown";
+  config_source: string;
+  running: { checksum: string; applied_at: string };
+  source: { checksum: string; last_seen_at: string };
+  last_error: string | null;
+  dashboard_mode: "disabled" | "readonly" | "readwrite";
+};

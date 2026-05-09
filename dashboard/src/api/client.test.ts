@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   getConfig,
+  getConfigStatus,
   getStats,
   getStatus,
   getEvents,
@@ -160,6 +161,43 @@ describe("validateAdminKey", () => {
     mockFetch.mockRejectedValueOnce(new Error("Network error"));
     const result = await validateAdminKey("any-key");
     expect(result).toBe(false);
+  });
+});
+
+describe("getConfigStatus", () => {
+  beforeEach(() => {
+    sessionStorage.setItem("ultrabase_admin_key", "test-key");
+  });
+
+  afterEach(() => {
+    sessionStorage.clear();
+    vi.unstubAllGlobals();
+  });
+
+  it("fetches and returns the status payload", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        status: "drift",
+        config_source: "s3://bucket/key",
+        running: { checksum: "abc", applied_at: "2026-05-08T12:00:00Z" },
+        source: { checksum: "def", last_seen_at: "2026-05-08T12:01:00Z" },
+        last_error: "boom",
+        dashboard_mode: "readwrite",
+      }),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const got = await getConfigStatus();
+    expect(got.status).toBe("drift");
+    expect(got.last_error).toBe("boom");
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/_admin/config/status",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer test-key" }),
+      }),
+    );
   });
 });
 

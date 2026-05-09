@@ -1,5 +1,6 @@
 import type {
   Config,
+  ConfigStatus,
   StatsResponse,
   DiffResponse,
   EventRow,
@@ -63,6 +64,10 @@ export async function putConfig(
 
 export async function getConfigDiff(): Promise<DiffResponse> {
   return request<DiffResponse>("/config/diff");
+}
+
+export async function getConfigStatus(): Promise<ConfigStatus> {
+  return request<ConfigStatus>("/config/status");
 }
 
 // Stats
