@@ -514,7 +514,7 @@ func (h *AuthHandler) handleIDTokenGrant(c *gin.Context) {
 	}
 
 	h.db.Exec(ctx,
-		`INSERT INTO _user_identities (user_id, provider, provider_user_id, email, last_sign_in_at, updated_at)
+		`INSERT INTO auth.identities (user_id, provider, provider_user_id, email, last_sign_in_at, updated_at)
 		 VALUES ($1::uuid, $2, $3, $4, NOW(), NOW())
 		 ON CONFLICT (provider, provider_user_id)
 		 DO UPDATE SET last_sign_in_at = EXCLUDED.last_sign_in_at, updated_at = EXCLUDED.updated_at`,
@@ -720,7 +720,7 @@ func (h *AuthHandler) handleVerify(c *gin.Context) {
 	switch req.Type {
 	case "signup", "email", "email_change":
 		// "email" is supabase-js's signInWithOtp type and is served by the
-		// magiclink flow (same row in _auth_email_verifications, purpose
+		// magiclink flow (same row in auth.one_time_tokens, purpose
 		// set by handleOTP). Accept both signup and magiclink purposes so
 		// first-time users verifying via 6-digit code aren't rejected.
 		if purpose != "" && purpose != "signup" && purpose != "magiclink" {
@@ -853,7 +853,7 @@ func (h *AuthHandler) handleVerifyGET(c *gin.Context) {
 // handleOTP implements POST /auth/v1/otp — supabase-js calls this from
 // auth.signInWithOtp({email}). When create_user is true (the default) we
 // upsert a user row, then generate a magiclink token in
-// _auth_email_verifications and dispatch the email. The handler always
+// auth.one_time_tokens and dispatch the email. The handler always
 // returns 200 to prevent enumeration attacks.
 func (h *AuthHandler) handleOTP(c *gin.Context) {
 	var req struct {
@@ -1426,7 +1426,7 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 		// Identity linking: just add the identity to the existing user
 		if linkingUserID != "" {
 			h.db.Exec(ctx,
-				`INSERT INTO _user_identities (user_id, provider, provider_user_id, email, last_sign_in_at, updated_at)
+				`INSERT INTO auth.identities (user_id, provider, provider_user_id, email, last_sign_in_at, updated_at)
 				 VALUES ($1::uuid, $2, $3, $4, NOW(), NOW())
 				 ON CONFLICT (provider, provider_user_id) DO NOTHING`,
 				linkingUserID, provider, userInfo.ProviderID, userInfo.Email)
@@ -1475,7 +1475,7 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 		}
 
 		h.db.Exec(ctx,
-			`INSERT INTO _user_identities (user_id, provider, provider_user_id, email, last_sign_in_at, updated_at)
+			`INSERT INTO auth.identities (user_id, provider, provider_user_id, email, last_sign_in_at, updated_at)
 			 VALUES ($1::uuid, $2, $3, $4, NOW(), NOW())
 			 ON CONFLICT (provider, provider_user_id)
 			 DO UPDATE SET last_sign_in_at = EXCLUDED.last_sign_in_at, updated_at = EXCLUDED.updated_at`,
@@ -2286,7 +2286,7 @@ func (h *AuthHandler) handleListIdentities(c *gin.Context) {
 	session := getSession(c)
 	ctx := c.Request.Context()
 	rows, err := h.db.Query(ctx,
-		"SELECT id::text, provider, provider_user_id, identity_data, email, last_sign_in_at, created_at, updated_at FROM _user_identities WHERE user_id = $1::uuid ORDER BY created_at",
+		"SELECT id::text, provider, provider_user_id, identity_data, email, last_sign_in_at, created_at, updated_at FROM auth.identities WHERE user_id = $1::uuid ORDER BY created_at",
 		session.UserID)
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to list identities")
@@ -2346,7 +2346,7 @@ func (h *AuthHandler) handleUnlinkIdentity(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	// Ensure user keeps at least one auth method
-	rows, err := h.db.Query(ctx, "SELECT id::text FROM _user_identities WHERE user_id = $1::uuid", session.UserID)
+	rows, err := h.db.Query(ctx, "SELECT id::text FROM auth.identities WHERE user_id = $1::uuid", session.UserID)
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to check identities")
 		return
@@ -2364,7 +2364,7 @@ func (h *AuthHandler) handleUnlinkIdentity(c *gin.Context) {
 	}
 
 	res, err := h.db.Exec(ctx,
-		"DELETE FROM _user_identities WHERE id = $1::uuid AND user_id = $2::uuid",
+		"DELETE FROM auth.identities WHERE id = $1::uuid AND user_id = $2::uuid",
 		identityID, session.UserID)
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to unlink identity")

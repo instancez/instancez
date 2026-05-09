@@ -697,7 +697,7 @@ func TestSignupGating_AdminInvite_IgnoresAllowSignup(t *testing.T) {
 
 // TestHandleOTP_CreatesTokenForNewUser drives the magic link path: a
 // previously unknown email should produce an INSERT for the user and a
-// second INSERT into _auth_email_verifications with purpose='magiclink'.
+// second INSERT into auth.one_time_tokens with purpose='magiclink'.
 func TestHandleOTP_CreatesTokenForNewUser(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	userLookups := 0
