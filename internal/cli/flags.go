@@ -178,3 +178,116 @@ func parseBool(s string) (bool, error) {
 		return false, fmt.Errorf("invalid boolean: %q", s)
 	}
 }
+
+// devOptions are the parsed values for runDev. Same as serveOptions but
+// with dev-friendly defaults already filled in.
+type devOptions struct {
+	serveOptions
+	noWatch bool
+	verbose bool
+}
+
+type devFlagSet struct {
+	flags         *pflag.FlagSet
+	port          int
+	configPath    string
+	noWatch       bool
+	watch         bool
+	watchInterval time.Duration
+	dashboard     string
+	verbose       bool
+}
+
+func newDevFlagSet() *devFlagSet {
+	fs := &devFlagSet{flags: pflag.NewFlagSet("dev", pflag.ContinueOnError)}
+	fs.flags.IntVar(&fs.port, "port", 0, "")
+	fs.flags.StringVar(&fs.configPath, "config", "ultrabase.yaml", "")
+	fs.flags.BoolVar(&fs.noWatch, "no-watch", false, "")
+	fs.flags.BoolVar(&fs.watch, "watch", true, "")
+	fs.flags.DurationVar(&fs.watchInterval, "watch-interval", 60*time.Second, "")
+	fs.flags.StringVar(&fs.dashboard, "dashboard", "readwrite", "")
+	fs.flags.BoolVar(&fs.verbose, "verbose", false, "")
+	fs.flags.SetOutput(io.Discard)
+	return fs
+}
+
+// parseDevFlags parses dev's flag surface. dev shares serve's flag set but
+// with dev-friendly defaults: watch on, dashboard readwrite, plus the
+// dev-only --no-watch alias and --verbose.
+func parseDevFlags(args []string, envLookup func(string) string) (devOptions, error) {
+	fs := newDevFlagSet()
+	if err := fs.flags.Parse(args); err != nil {
+		return devOptions{}, err
+	}
+
+	opts := devOptions{
+		serveOptions: serveOptions{
+			port:          fs.port,
+			configPath:    fs.configPath,
+			migrate:       true, // dev always migrates
+			loadData:      true, // dev always seeds
+			watch:         true, // dev default
+			watchInterval: 60 * time.Second,
+			dashboard:     DashboardReadwrite,
+		},
+		noWatch: fs.noWatch,
+		verbose: fs.verbose,
+	}
+
+	// --config falls back to ULTRABASE_CONFIG_SOURCE then ULTRABASE_CONFIG.
+	if !fs.flags.Changed("config") {
+		if v := envLookup("ULTRABASE_CONFIG_SOURCE"); v != "" {
+			opts.configPath = v
+		} else if v := envLookup("ULTRABASE_CONFIG"); v != "" {
+			opts.configPath = v
+		}
+	}
+
+	// --no-watch wins over default-on watch when explicitly passed.
+	if fs.flags.Changed("no-watch") && fs.noWatch {
+		opts.watch = false
+	} else if fs.flags.Changed("watch") {
+		opts.watch = fs.watch
+	} else if v := envLookup("ULTRABASE_CONFIG_WATCH"); v != "" {
+		b, err := parseBool(v)
+		if err != nil {
+			return opts, fmt.Errorf("ULTRABASE_CONFIG_WATCH: %w", err)
+		}
+		opts.watch = b
+	}
+
+	intervalSource := "--watch-interval"
+	if fs.flags.Changed("watch-interval") {
+		opts.watchInterval = fs.watchInterval
+	} else if v := envLookup("ULTRABASE_CONFIG_WATCH_INTERVAL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return opts, fmt.Errorf("ULTRABASE_CONFIG_WATCH_INTERVAL: %w", err)
+		}
+		opts.watchInterval = d
+		intervalSource = "ULTRABASE_CONFIG_WATCH_INTERVAL"
+	}
+	if opts.watchInterval < minWatchInterval {
+		return opts, fmt.Errorf("%s must be at least %s", intervalSource, minWatchInterval)
+	}
+
+	if fs.flags.Changed("dashboard") {
+		m, err := parseDashboardMode(fs.dashboard)
+		if err != nil {
+			return opts, err
+		}
+		opts.dashboard = m
+	} else if v := envLookup("ULTRABASE_DASHBOARD"); v != "" {
+		m, err := parseDashboardMode(v)
+		if err != nil {
+			return opts, fmt.Errorf("ULTRABASE_DASHBOARD: %w", err)
+		}
+		opts.dashboard = m
+	}
+
+	if !isFileSpec(opts.configPath) && !strings.HasPrefix(opts.configPath, "s3://") {
+		return opts, fmt.Errorf("unsupported config backend: %s", opts.configPath)
+	}
+
+	return opts, nil
+}
