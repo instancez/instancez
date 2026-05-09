@@ -143,7 +143,7 @@ func (h *StorageV1Handler) emptyBucket(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	rows, err := h.db.Query(ctx, "SELECT name FROM _objects WHERE bucket_id = $1", id)
+	rows, err := h.db.Query(ctx, "SELECT name FROM storage.objects WHERE bucket_id = $1", id)
 	if err != nil {
 		h.logger.Error("empty bucket query", "error", err)
 		c.JSON(500, gin.H{"statusCode": "500", "error": "internal", "message": "Failed to list objects"})
@@ -153,7 +153,7 @@ func (h *StorageV1Handler) emptyBucket(c *gin.Context) {
 		name, _ := row["name"].(string)
 		_ = h.storage.Delete(ctx, id+"/"+name)
 	}
-	h.db.Exec(ctx, "DELETE FROM _objects WHERE bucket_id = $1", id)
+	h.db.Exec(ctx, "DELETE FROM storage.objects WHERE bucket_id = $1", id)
 	c.JSON(200, gin.H{"message": "Successfully emptied"})
 }
 
@@ -275,21 +275,21 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 
 	if isUpdate {
 		h.db.Exec(ctx,
-			"UPDATE _objects SET size = $1, mime = $2, uploaded_at = NOW(), uploaded_by = $3 WHERE bucket_id = $4 AND name = $5",
+			"UPDATE storage.objects SET size = $1, mime = $2, uploaded_at = NOW(), uploaded_by = $3 WHERE bucket_id = $4 AND name = $5",
 			size, contentType, uploadedBy, bucketName, objPath)
 	} else {
 		// Upsert: if the path already exists, update it (matches Supabase behavior with upsert header)
 		upsert := c.GetHeader("x-upsert") == "true"
 		if upsert {
 			h.db.Exec(ctx,
-				`INSERT INTO _objects (bucket_id, name, size, mime, uploaded_by)
+				`INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by)
 				 VALUES ($1, $2, $3, $4, $5)
 				 ON CONFLICT (bucket_id, name)
 				 DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime, uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW()`,
 				bucketName, objPath, size, contentType, uploadedBy)
 		} else {
 			_, err := h.db.Exec(ctx,
-				"INSERT INTO _objects (bucket_id, name, size, mime, uploaded_by) VALUES ($1, $2, $3, $4, $5)",
+				"INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by) VALUES ($1, $2, $3, $4, $5)",
 				bucketName, objPath, size, contentType, uploadedBy)
 			if err != nil {
 				if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "23505") {
@@ -378,7 +378,7 @@ func (h *StorageV1Handler) serveDownload(c *gin.Context, bucketName, objPath str
 	}
 
 	ctx := c.Request.Context()
-	row, err := h.db.QueryRow(ctx, "SELECT id FROM _objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
+	row, err := h.db.QueryRow(ctx, "SELECT id FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
 	if err != nil || row == nil {
 		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Object not found"})
 		return
@@ -432,7 +432,7 @@ func (h *StorageV1Handler) listObjects(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	query := "SELECT name, size, mime, uploaded_at, metadata FROM _objects WHERE bucket_id = $1"
+	query := "SELECT name, size, mime, uploaded_at, metadata FROM storage.objects WHERE bucket_id = $1"
 	args := []any{bucketName}
 	argIdx := 2
 
@@ -505,7 +505,7 @@ func (h *StorageV1Handler) listObjectsV2(c *gin.Context) {
 	// Fetch one extra row to determine hasNext.
 	fetchLimit := req.Limit + 1
 
-	query := "SELECT name, size, mime, uploaded_at, metadata FROM _objects WHERE bucket_id = $1"
+	query := "SELECT name, size, mime, uploaded_at, metadata FROM storage.objects WHERE bucket_id = $1"
 	args := []any{bucketName}
 	argIdx := 2
 
@@ -602,7 +602,7 @@ func (h *StorageV1Handler) objectInfo(c *gin.Context) {
 
 	ctx := c.Request.Context()
 	row, err := h.db.QueryRow(ctx,
-		"SELECT id, name, size, mime, uploaded_at, uploaded_by, metadata FROM _objects WHERE bucket_id = $1 AND name = $2",
+		"SELECT id, name, size, mime, uploaded_at, uploaded_by, metadata FROM storage.objects WHERE bucket_id = $1 AND name = $2",
 		bucketName, objPath)
 	if err != nil || row == nil {
 		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Object not found"})
@@ -630,7 +630,7 @@ func (h *StorageV1Handler) objectExists(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	row, err := h.db.QueryRow(ctx, "SELECT id FROM _objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
+	row, err := h.db.QueryRow(ctx, "SELECT id FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
 	if err != nil || row == nil {
 		c.Status(404)
 		return
@@ -657,12 +657,12 @@ func (h *StorageV1Handler) removeObjects(c *gin.Context) {
 	var deleted []gin.H
 	for _, p := range req.Prefixes {
 		p = strings.TrimPrefix(p, "/")
-		row, err := h.db.QueryRow(ctx, "SELECT id, name, bucket_id FROM _objects WHERE bucket_id = $1 AND name = $2", bucketName, p)
+		row, err := h.db.QueryRow(ctx, "SELECT id, name, bucket_id FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, p)
 		if err != nil || row == nil {
 			continue
 		}
 		_ = h.storage.Delete(ctx, bucketName+"/"+p)
-		h.db.Exec(ctx, "DELETE FROM _objects WHERE bucket_id = $1 AND name = $2", bucketName, p)
+		h.db.Exec(ctx, "DELETE FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, p)
 		deleted = append(deleted, gin.H{"name": p, "bucket_id": bucketName})
 	}
 	if deleted == nil {
@@ -713,7 +713,7 @@ func (h *StorageV1Handler) moveObject(c *gin.Context) {
 
 	// Update DB
 	h.db.Exec(ctx,
-		"UPDATE _objects SET bucket_id = $1, name = $2 WHERE bucket_id = $3 AND name = $4",
+		"UPDATE storage.objects SET bucket_id = $1, name = $2 WHERE bucket_id = $3 AND name = $4",
 		dstBucket, req.DestinationKey, srcBucket, req.SourceKey)
 
 	c.JSON(200, gin.H{"message": "Successfully moved"})
@@ -758,8 +758,8 @@ func (h *StorageV1Handler) copyObject(c *gin.Context) {
 
 	// Copy DB row
 	h.db.Exec(ctx,
-		`INSERT INTO _objects (bucket_id, name, size, mime, uploaded_by, metadata)
-		 SELECT $1, $2, size, mime, uploaded_by, metadata FROM _objects WHERE bucket_id = $3 AND name = $4
+		`INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by, metadata)
+		 SELECT $1, $2, size, mime, uploaded_by, metadata FROM storage.objects WHERE bucket_id = $3 AND name = $4
 		 ON CONFLICT (bucket_id, name) DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime, uploaded_at = NOW()`,
 		dstBucket, req.DestinationKey, srcBucket, req.SourceKey)
 
@@ -785,7 +785,7 @@ func (h *StorageV1Handler) createSignedURL(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	row, err := h.db.QueryRow(ctx, "SELECT id FROM _objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
+	row, err := h.db.QueryRow(ctx, "SELECT id FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
 	if err != nil || row == nil {
 		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Object not found"})
 		return
@@ -898,7 +898,7 @@ func (h *StorageV1Handler) uploadToSignedURL(c *gin.Context) {
 		size = 0
 	}
 	h.db.Exec(ctx,
-		`INSERT INTO _objects (bucket_id, name, size, mime)
+		`INSERT INTO storage.objects (bucket_id, name, size, mime)
 		 VALUES ($1, $2, $3, $4)
 		 ON CONFLICT (bucket_id, name)
 		 DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime, uploaded_at = NOW()`,

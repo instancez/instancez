@@ -161,7 +161,7 @@ func (h *AdminHandler) handleListMigrations(c *gin.Context) {
 func (h *AdminHandler) handleListUsers(c *gin.Context) {
 	ctx := c.Request.Context()
 	rows, err := h.db.Query(ctx,
-		"SELECT id, email, email_verified, created_at FROM users ORDER BY id LIMIT 100")
+		"SELECT id, email, email_verified, created_at FROM auth.users ORDER BY id LIMIT 100")
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to query users")
 		return
@@ -174,7 +174,7 @@ func (h *AdminHandler) handleDisableUser(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	// Delete refresh tokens to force logout
-	h.db.Exec(ctx, "DELETE FROM _refresh_tokens WHERE user_id = $1", id)
+	h.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE user_id = $1", id)
 
 	c.JSON(200, gin.H{"message": "User disabled", "user_id": id})
 }
@@ -186,7 +186,7 @@ func (h *AdminHandler) handleAdminResetPassword(c *gin.Context) {
 	// Generate a temporary token
 	token := generateRandomToken()
 	h.db.Exec(ctx,
-		"INSERT INTO _auth_email_verifications (user_id, token, expires_at) VALUES ($1, $2, NOW() + INTERVAL '24 hours')",
+		"INSERT INTO auth.one_time_tokens (user_id, token, expires_at) VALUES ($1, $2, NOW() + INTERVAL '24 hours')",
 		id, token)
 
 	c.JSON(200, gin.H{"message": "Password reset initiated", "token": token})
@@ -466,7 +466,7 @@ func (h *AdminHandler) handleStats(c *gin.Context) {
 		for name := range h.cfg.Storage {
 			row, err := h.db.QueryRow(ctx,
 				`SELECT COUNT(*)::INTEGER AS object_count, COALESCE(SUM(size), 0)::BIGINT AS total_bytes
-				 FROM _objects WHERE bucket_id = $1`, name)
+				 FROM storage.objects WHERE bucket_id = $1`, name)
 			if err == nil && row != nil {
 				storage[name] = gin.H{
 					"object_count": row["object_count"],

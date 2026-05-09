@@ -92,14 +92,14 @@ func (h *StorageHandler) handleSignUpload(bucketName string, bucket domain.Bucke
 			return
 		}
 
-		// Record in _objects
+		// Record in storage.objects
 		ctx := c.Request.Context()
 		var uploadedBy any
 		if session.UserID != "" {
 			uploadedBy = session.UserID
 		}
 		row, err := h.db.QueryRow(ctx,
-			"INSERT INTO _objects (bucket_id, name, size, mime, uploaded_by) VALUES ($1, $2, 0, $3, $4) RETURNING id::text",
+			"INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by) VALUES ($1, $2, 0, $3, $4) RETURNING id::text",
 			bucketName, key, req.ContentType, uploadedBy)
 		if err != nil || row == nil {
 			problemJSON(c, 500, "internal", "Failed to record object")
@@ -119,7 +119,7 @@ func (h *StorageHandler) handleSignDownload(bucketName string, bucket domain.Buc
 
 		ctx := c.Request.Context()
 		row, err := h.db.QueryRow(ctx,
-			"SELECT id FROM _objects WHERE name = $1 AND bucket_id = $2", name, bucketName)
+			"SELECT id FROM storage.objects WHERE name = $1 AND bucket_id = $2", name, bucketName)
 		if err != nil || row == nil {
 			problemJSON(c, 404, "not_found", "Object not found")
 			return
@@ -148,7 +148,7 @@ func (h *StorageHandler) handleDelete(bucketName string, bucket domain.Bucket) g
 			return
 		}
 
-		h.db.Exec(ctx, "DELETE FROM _objects WHERE name = $1 AND bucket_id = $2", name, bucketName)
+		h.db.Exec(ctx, "DELETE FROM storage.objects WHERE name = $1 AND bucket_id = $2", name, bucketName)
 
 		c.Status(204)
 	}
