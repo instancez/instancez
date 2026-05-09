@@ -79,6 +79,7 @@ func (h *AdminHandler) Mount(api *gin.RouterGroup) {
 	// Config (dashboard)
 	admin.GET("/config", h.handleGetConfig)
 	admin.PUT("/config", h.handlePutConfig)
+	admin.GET("/config/status", h.handleConfigStatus)
 	admin.GET("/config/diff", h.handleConfigDiff)
 	admin.GET("/stats", h.handleStats)
 }
