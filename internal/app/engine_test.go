@@ -542,6 +542,26 @@ func TestEngineRunWatcher_InvalidYAMLMarksDrift(t *testing.T) {
 	}
 }
 
+func TestValidateDataColumnsAuthUsersAllowsKnownCols(t *testing.T) {
+	e := &Engine{cfg: &domain.Config{}}
+	err := e.validateDataColumns("auth.users", []map[string]any{
+		{"email": "a@b.com", "password": "x", "raw_user_meta_data": map[string]any{}},
+	})
+	if err != nil {
+		t.Fatalf("expected validation to pass for known auth.users cols, got: %v", err)
+	}
+}
+
+func TestValidateDataColumnsAuthUsersRejectsUnknown(t *testing.T) {
+	e := &Engine{cfg: &domain.Config{}}
+	err := e.validateDataColumns("auth.users", []map[string]any{
+		{"display_name": "alice"},
+	})
+	if err == nil {
+		t.Fatal("expected validation to reject unknown column on auth.users")
+	}
+}
+
 // TestEngineRunWatcher_TransientErrorIgnored: a WatchEvent carrying only
 // Err must not flip the tracker into drift; it's a watcher hiccup, not a
 // config change.

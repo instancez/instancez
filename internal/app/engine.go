@@ -490,23 +490,28 @@ func (e *Engine) applyDataRow(ctx context.Context, tx domain.Tx, tableName, comp
 }
 
 func (e *Engine) validateDataColumns(tableName string, records []map[string]any) error {
-	var table domain.Table
-	var ok bool
-	if tableName == "users" {
-		// "password" is allowed for users (gets hashed to password_hash)
-		known := map[string]bool{"id": true, "email": true, "password": true, "password_hash": true,
-			"email_verified": true, "display_name": true, "created_at": true}
+	if tableName == "auth.users" {
+		// Known auth.users columns. "password" is allowed (gets bcrypted to
+		// password_hash by applyDataRow). Custom profile fields belong in a
+		// separate user-defined table FK'd to auth.users.id, not here.
+		known := map[string]bool{
+			"id": true, "email": true, "password": true, "password_hash": true,
+			"email_verified": true, "email_confirmed_at": true,
+			"last_sign_in_at": true, "raw_app_meta_data": true,
+			"raw_user_meta_data": true, "is_anonymous": true,
+			"created_at": true, "updated_at": true,
+		}
 		for _, rec := range records {
 			for col := range rec {
 				if !known[col] {
-					return fmt.Errorf("unknown column %q in users table", col)
+					return fmt.Errorf("unknown column %q in auth.users data", col)
 				}
 			}
 		}
 		return nil
 	}
 
-	table, ok = e.cfg.Tables[tableName]
+	table, ok := e.cfg.Tables[tableName]
 	if !ok {
 		return fmt.Errorf("unknown table %q", tableName)
 	}
