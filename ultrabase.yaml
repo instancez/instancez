@@ -48,12 +48,25 @@ auth:
     google: null
     github: null
 tables:
-    users:
-        fields:
-            - name: avatar_url
-              type: text
-            - name: display_name
-              type: text
+    # Profile data lives in a regular user-defined table FK'd to auth.users.id.
+    # Uncomment and adjust to suit your app.
+    #
+    # profiles:
+    #     fields:
+    #         - name: id
+    #           foreign_key:
+    #               references: auth.users.id
+    #               on_delete: cascade
+    #           primary_key: true
+    #         - name: avatar_url
+    #           type: text
+    #         - name: display_name
+    #           type: text
+    #     rls:
+    #         - operations: [select]
+    #           check: "true"
+    #         - operations: [update]
+    #           check: "auth.uid() = id"
     announcements:
         fields:
             - name: body
