@@ -2,10 +2,12 @@ package config
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -14,12 +16,27 @@ import (
 	"github.com/saedx1/ultrabase/internal/domain"
 )
 
-// Source is a read-only source of ultrabase configuration.
+// ErrConfigVersionMismatch is returned by Source.Write when the supplied
+// expected version does not match the backend's current version. Callers
+// should re-Read and retry. An empty expected version skips the check.
+var ErrConfigVersionMismatch = errors.New("config: version mismatch")
+
+// Source is a read/write source of ultrabase configuration.
 // Implementations include local files and S3 objects.
 type Source interface {
-	// Load fetches the raw config bytes, interpolates env vars, parses YAML,
-	// and applies defaults.
+	// Load fetches, parses, and validates the config. Convenience wrapper
+	// around Read + parseBytes.
 	Load(ctx context.Context) (*domain.Config, error)
+
+	// Read returns the raw bytes plus an opaque version token (mtime+size
+	// for files, ETag for S3).
+	Read(ctx context.Context) ([]byte, string, error)
+
+	// Write writes the supplied bytes to the backend, returning the new
+	// version token. If expectedVersion is non-empty and does not match the
+	// backend's current version, returns ErrConfigVersionMismatch and does
+	// not modify the backend.
+	Write(ctx context.Context, data []byte, expectedVersion string) (string, error)
 
 	// Describe returns a human-readable identifier for logs and errors.
 	Describe() string
@@ -40,15 +57,72 @@ type FileSource struct {
 }
 
 func (s *FileSource) Load(ctx context.Context) (*domain.Config, error) {
-	data, err := os.ReadFile(s.Path)
+	data, _, err := s.Read(ctx)
 	if err != nil {
-		return nil, &domain.ConfigError{Path: s.Path, Message: "cannot read file", Err: err}
+		return nil, err
 	}
 	return parseBytes(data, s.Path)
 }
 
+func (s *FileSource) Read(ctx context.Context) ([]byte, string, error) {
+	data, err := os.ReadFile(s.Path)
+	if err != nil {
+		return nil, "", &domain.ConfigError{Path: s.Path, Message: "cannot read file", Err: err}
+	}
+	info, err := os.Stat(s.Path)
+	if err != nil {
+		return nil, "", &domain.ConfigError{Path: s.Path, Message: "cannot stat file", Err: err}
+	}
+	return data, fileVersionToken(info), nil
+}
+
+func (s *FileSource) Write(ctx context.Context, data []byte, expectedVersion string) (string, error) {
+	if expectedVersion != "" {
+		info, err := os.Stat(s.Path)
+		if err != nil && !os.IsNotExist(err) {
+			return "", &domain.ConfigError{Path: s.Path, Message: "cannot stat file", Err: err}
+		}
+		current := ""
+		if err == nil {
+			current = fileVersionToken(info)
+		}
+		if current != expectedVersion {
+			return "", ErrConfigVersionMismatch
+		}
+	}
+
+	dir := filepath.Dir(s.Path)
+	tmp, err := os.CreateTemp(dir, ".ultrabase-config-*")
+	if err != nil {
+		return "", &domain.ConfigError{Path: s.Path, Message: "create temp file", Err: err}
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath) // best-effort if rename failed
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return "", &domain.ConfigError{Path: s.Path, Message: "write temp file", Err: err}
+	}
+	if err := tmp.Close(); err != nil {
+		return "", &domain.ConfigError{Path: s.Path, Message: "close temp file", Err: err}
+	}
+	if err := os.Rename(tmpPath, s.Path); err != nil {
+		return "", &domain.ConfigError{Path: s.Path, Message: "rename temp file", Err: err}
+	}
+
+	info, err := os.Stat(s.Path)
+	if err != nil {
+		return "", &domain.ConfigError{Path: s.Path, Message: "post-write stat", Err: err}
+	}
+	return fileVersionToken(info), nil
+}
+
 func (s *FileSource) Describe() string {
 	return s.Path
+}
+
+func fileVersionToken(info os.FileInfo) string {
+	return fmt.Sprintf("%d-%d", info.ModTime().UnixNano(), info.Size())
 }
 
 // S3Source loads config from an S3 object. Authentication uses the default
@@ -98,6 +172,14 @@ func (s *S3Source) Load(ctx context.Context) (*domain.Config, error) {
 		return nil, fmt.Errorf("s3 config %s: read body: %w", s.Describe(), err)
 	}
 	return parseBytes(data, s.Describe())
+}
+
+func (s *S3Source) Read(ctx context.Context) ([]byte, string, error) {
+	return nil, "", fmt.Errorf("s3 source: Read not yet implemented")
+}
+
+func (s *S3Source) Write(ctx context.Context, data []byte, expectedVersion string) (string, error) {
+	return "", fmt.Errorf("s3 source: Write not yet implemented")
 }
 
 func (s *S3Source) Describe() string {
