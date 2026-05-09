@@ -111,7 +111,9 @@ func runDev(opts devOptions) error {
 	)
 
 	fmt.Printf("\n  API:       http://localhost:%d\n", cfg.Server.Port)
-	fmt.Printf("  Dashboard: http://localhost:%d/dashboard\n", cfg.Server.Port)
+	if opts.dashboard != DashboardDisabled {
+		fmt.Printf("  Dashboard: http://localhost:%d/dashboard\n", cfg.Server.Port)
+	}
 	fmt.Printf("  Docs:      http://localhost:%d/api/docs\n", cfg.Server.Port)
 	fmt.Printf("  OpenAPI:   http://localhost:%d/api/openapi.json\n", cfg.Server.Port)
 

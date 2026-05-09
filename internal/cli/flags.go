@@ -286,7 +286,7 @@ func parseDevFlags(args []string, envLookup func(string) string) (devOptions, er
 	}
 
 	if !isFileSpec(opts.configPath) && !strings.HasPrefix(opts.configPath, "s3://") {
-		return opts, fmt.Errorf("unsupported config backend: %s", opts.configPath)
+		return opts, fmt.Errorf("unsupported config backend: %s (only file paths and s3:// URIs are supported)", opts.configPath)
 	}
 
 	return opts, nil
