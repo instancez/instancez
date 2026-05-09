@@ -9,9 +9,13 @@ import (
 )
 
 func TestDashboardDisabledReturns404(t *testing.T) {
+	// devMode=true forces the dev-placeholder route registration in the
+	// non-disabled path; the gate must short-circuit before that runs.
+	// With devMode=false + assets=nil the existing fall-through already
+	// registers nothing, which would mask a missing gate.
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	MountDashboard(r, nil, false, DashboardDisabled)
+	MountDashboard(r, nil, true, DashboardDisabled)
 
 	req := httptest.NewRequest("GET", "/dashboard", nil)
 	w := httptest.NewRecorder()
