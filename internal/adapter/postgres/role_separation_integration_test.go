@@ -4,9 +4,11 @@ package postgres_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/saedx1/ultrabase/internal/app"
 	"github.com/saedx1/ultrabase/internal/domain"
 	"github.com/saedx1/ultrabase/internal/testutil/dbboot"
 )
@@ -64,6 +66,35 @@ func TestOwnerPool_NoRoleSwitching(t *testing.T) {
 	}
 	if row["current_user"] != dbboot.OwnerRole {
 		t.Fatalf("owner pool current_user = %v, want %s", row["current_user"], dbboot.OwnerRole)
+	}
+}
+
+// TestAuthenticatorWithoutRoleSwitchCannotReadAuthOrStorage asserts the
+// load-bearing NOINHERIT guarantee: the authenticator login role, when used
+// without issuing SET LOCAL ROLE, is denied access to auth.users and
+// storage.objects. This regression test enforces the CLAUDE.md architecture
+// contract — NOINHERIT on the authenticator is what makes a missing role-switch
+// surface as an error rather than silently running as authenticator.
+func TestAuthenticatorWithoutRoleSwitchCannotReadAuthOrStorage(t *testing.T) {
+	owner, _, rawAuth := dbboot.StartContainerWithRawAuth(t)
+	ctx := context.Background()
+
+	cfg := &domain.Config{
+		Version: 1,
+		Auth:    &domain.Auth{},
+		Storage: map[string]domain.Bucket{"test": {Public: true}},
+	}
+	if err := app.NewMigrator(owner).Apply(ctx, cfg); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	for _, fqn := range []string{"auth.users", "storage.objects"} {
+		// rawAuth is the authenticator login without SET LOCAL ROLE — NOINHERIT
+		// means the granted API-role privileges are not in effect.
+		_, err := rawAuth.Query(ctx, fmt.Sprintf("SELECT 1 FROM %s LIMIT 1", fqn))
+		if err == nil {
+			t.Errorf("expected authenticator without SET LOCAL ROLE to be denied on %s", fqn)
+		}
 	}
 }
 
