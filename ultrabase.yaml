@@ -153,7 +153,7 @@ tables:
                   on_delete: cascade
             - name: user_id
               foreign_key:
-                  references: users.id
+                  references: auth.users.id
                   on_delete: cascade
         indexes:
             - columns:
@@ -212,7 +212,7 @@ tables:
                   on_delete: cascade
             - name: user_id
               foreign_key:
-                  references: users.id
+                  references: auth.users.id
                   on_delete: cascade
         indexes:
             - columns:
@@ -325,7 +325,7 @@ tables:
               type: timestamptz
             - name: user_id
               foreign_key:
-                  references: users.id
+                  references: auth.users.id
                   on_delete: cascade
         indexes:
             - columns:
