@@ -77,7 +77,7 @@ func TestMFA_EnrollCreatesUnverifiedFactor(t *testing.T) {
 	var insertedSecret string
 	db := &stubDB{
 		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "INSERT INTO _mfa_factors") {
+			if strings.Contains(q, "INSERT INTO auth.mfa_factors") {
 				// args: user_id, friendly_name, secret
 				if len(args) >= 3 {
 					insertedSecret, _ = args[2].(string)
@@ -135,13 +135,13 @@ func TestMFA_VerifyGoodCodeFlipsFactorAndReturnsAAL2(t *testing.T) {
 	db := &stubDB{
 		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
 			switch {
-			case strings.Contains(q, "SELECT user_id::text, secret, status FROM _mfa_factors"):
+			case strings.Contains(q, "SELECT user_id::text, secret, status FROM auth.mfa_factors"):
 				return map[string]any{
 					"user_id": uid,
 					"secret":  secret,
 					"status":  "unverified",
 				}, nil
-			case strings.Contains(q, "FROM users WHERE id"):
+			case strings.Contains(q, "FROM auth.users WHERE id"):
 				return map[string]any{
 					"id":                 uid,
 					"email":              "u@e.com",
@@ -155,7 +155,7 @@ func TestMFA_VerifyGoodCodeFlipsFactorAndReturnsAAL2(t *testing.T) {
 			return nil, nil
 		},
 		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
-			if strings.Contains(q, "UPDATE _mfa_factors SET status = 'verified'") {
+			if strings.Contains(q, "UPDATE auth.mfa_factors SET status = 'verified'") {
 				flipped = true
 			}
 			return 1, nil
@@ -208,7 +208,7 @@ func TestMFA_VerifyBadCodeRejected(t *testing.T) {
 	flipped := false
 	db := &stubDB{
 		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "SELECT user_id::text, secret, status FROM _mfa_factors") {
+			if strings.Contains(q, "SELECT user_id::text, secret, status FROM auth.mfa_factors") {
 				return map[string]any{"user_id": uid, "secret": secret, "status": "unverified"}, nil
 			}
 			return nil, nil
@@ -241,7 +241,7 @@ func TestMFA_VerifyBadCodeRejected(t *testing.T) {
 func TestMFA_UnenrollRejectsWrongOwner(t *testing.T) {
 	db := &stubDB{
 		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
-			if strings.Contains(q, "DELETE FROM _mfa_factors") {
+			if strings.Contains(q, "DELETE FROM auth.mfa_factors") {
 				// Simulate no rows matched (factor belongs to someone else).
 				return 0, nil
 			}

@@ -63,7 +63,7 @@ func (h *AuthHandler) handleEnrollFactor(c *gin.Context) {
 
 	ctx := c.Request.Context()
 	row, err := h.db.QueryRow(ctx,
-		`INSERT INTO _mfa_factors (user_id, friendly_name, factor_type, status, secret)
+		`INSERT INTO auth.mfa_factors (user_id, friendly_name, factor_type, status, secret)
 		 VALUES ($1::uuid, $2, 'totp', 'unverified', $3)
 		 RETURNING id::text, friendly_name, factor_type, status, created_at, updated_at`,
 		session.UserID, req.FriendlyName, key.Secret())
@@ -98,14 +98,14 @@ func (h *AuthHandler) handleChallengeFactor(c *gin.Context) {
 
 	// Ownership check: factor must belong to the caller.
 	owner, err := h.db.QueryRow(ctx,
-		"SELECT user_id::text FROM _mfa_factors WHERE id = $1::uuid", factorID)
+		"SELECT user_id::text FROM auth.mfa_factors WHERE id = $1::uuid", factorID)
 	if err != nil || owner == nil || asString(owner["user_id"]) != session.UserID {
 		problemJSON(c, 404, "not_found", "Factor not found")
 		return
 	}
 
 	row, err := h.db.QueryRow(ctx,
-		`INSERT INTO _mfa_challenges (factor_id) VALUES ($1::uuid)
+		`INSERT INTO auth.mfa_challenges (factor_id) VALUES ($1::uuid)
 		 RETURNING id::text, created_at`,
 		factorID)
 	if err != nil || row == nil {
@@ -137,7 +137,7 @@ func (h *AuthHandler) handleVerifyFactor(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	factorRow, err := h.db.QueryRow(ctx,
-		"SELECT user_id::text, secret, status FROM _mfa_factors WHERE id = $1::uuid",
+		"SELECT user_id::text, secret, status FROM auth.mfa_factors WHERE id = $1::uuid",
 		factorID)
 	if err != nil || factorRow == nil || asString(factorRow["user_id"]) != session.UserID {
 		problemJSON(c, 404, "not_found", "Factor not found")
@@ -149,7 +149,7 @@ func (h *AuthHandler) handleVerifyFactor(c *gin.Context) {
 	// Challenge must exist, belong to this factor, and be unverified.
 	if req.ChallengeID != "" {
 		ch, err := h.db.QueryRow(ctx,
-			"SELECT factor_id::text, verified_at, created_at FROM _mfa_challenges WHERE id = $1::uuid",
+			"SELECT factor_id::text, verified_at, created_at FROM auth.mfa_challenges WHERE id = $1::uuid",
 			req.ChallengeID)
 		if err != nil || ch == nil || asString(ch["factor_id"]) != factorID {
 			problemJSON(c, 404, "not_found", "Challenge not found")
@@ -172,15 +172,15 @@ func (h *AuthHandler) handleVerifyFactor(c *gin.Context) {
 	}
 
 	if req.ChallengeID != "" {
-		h.db.Exec(ctx, "UPDATE _mfa_challenges SET verified_at = NOW() WHERE id = $1::uuid", req.ChallengeID)
+		h.db.Exec(ctx, "UPDATE auth.mfa_challenges SET verified_at = NOW() WHERE id = $1::uuid", req.ChallengeID)
 	}
 	if status == "unverified" {
-		h.db.Exec(ctx, "UPDATE _mfa_factors SET status = 'verified', updated_at = NOW() WHERE id = $1::uuid", factorID)
+		h.db.Exec(ctx, "UPDATE auth.mfa_factors SET status = 'verified', updated_at = NOW() WHERE id = $1::uuid", factorID)
 	}
 
 	userRow, err := h.db.QueryRow(ctx,
 		`SELECT id::text, email, email_verified, email_confirmed_at, last_sign_in_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at
-		 FROM users WHERE id = $1::uuid`, session.UserID)
+		 FROM auth.users WHERE id = $1::uuid`, session.UserID)
 	if err != nil || userRow == nil {
 		problemJSON(c, 500, "internal", "User not found")
 		return
@@ -212,7 +212,7 @@ func (h *AuthHandler) handleUnenrollFactor(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	n, err := h.db.Exec(ctx,
-		"DELETE FROM _mfa_factors WHERE id = $1::uuid AND user_id = $2::uuid",
+		"DELETE FROM auth.mfa_factors WHERE id = $1::uuid AND user_id = $2::uuid",
 		factorID, session.UserID)
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to unenroll factor")
@@ -234,7 +234,7 @@ func (h *AuthHandler) handleListFactors(c *gin.Context) {
 
 	rows, err := h.db.Query(ctx,
 		`SELECT id::text, friendly_name, factor_type, status, created_at, updated_at
-		 FROM _mfa_factors WHERE user_id = $1::uuid ORDER BY created_at ASC`,
+		 FROM auth.mfa_factors WHERE user_id = $1::uuid ORDER BY created_at ASC`,
 		session.UserID)
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to list factors")
