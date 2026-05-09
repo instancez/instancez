@@ -437,7 +437,7 @@ func TestDiffConfigs_NewColumnWithFK(t *testing.T) {
 	diff := diffConfigs(old, new)
 	joined := strings.Join(diff.Additions, "\n")
 
-	mustContain(t, joined, "ALTER TABLE todos ADD COLUMN user_id UUID REFERENCES users(id) ON DELETE CASCADE")
+	mustContain(t, joined, "ALTER TABLE todos ADD COLUMN user_id UUID REFERENCES public.users(id) ON DELETE CASCADE")
 }
 
 func TestDiffConfigs_ColumnTypeChange(t *testing.T) {

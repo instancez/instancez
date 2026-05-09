@@ -740,12 +740,16 @@ func validateForeignKeys(tables map[string]domain.Table) domain.ValidationErrors
 				continue
 			}
 			fkPath := fmt.Sprintf("tables.%s.fields.%s.foreign_key", tableName, fieldName)
-			parts := strings.SplitN(field.ForeignKey.References, ".", 2)
-			if len(parts) != 2 {
+			schema, refTable, refCol, err := domain.ParseFKReference(field.ForeignKey.References)
+			if err != nil {
 				continue // already caught by structural validation
 			}
-
-			refTable, refCol := parts[0], parts[1]
+			// Cross-schema references (e.g. auth.users.id) target tables outside this
+			// config's tables map. We don't validate their existence here — that's the
+			// migrator's job at apply time.
+			if schema != "public" {
+				continue
+			}
 			targetFields, tableExists := knownTables[refTable]
 			if !tableExists {
 				errs = append(errs, &domain.ValidationError{

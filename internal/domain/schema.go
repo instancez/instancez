@@ -4,6 +4,7 @@ package domain
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -237,6 +238,21 @@ type Field struct {
 type ForeignKey struct {
 	References string `yaml:"references" json:"references"` // "table.column"
 	OnDelete   string `yaml:"on_delete" json:"on_delete"`   // cascade | restrict | set_null
+}
+
+// ParseFKReference splits a foreign-key target string into (schema, table, column).
+// 2-part inputs default to the public schema; 3-part inputs are schema-qualified.
+// Anything else is an error.
+func ParseFKReference(ref string) (schema, table, column string, err error) {
+	parts := strings.Split(ref, ".")
+	switch len(parts) {
+	case 2:
+		return "public", parts[0], parts[1], nil
+	case 3:
+		return parts[0], parts[1], parts[2], nil
+	default:
+		return "", "", "", fmt.Errorf("invalid foreign_key.references %q: expected table.column or schema.table.column", ref)
+	}
 }
 
 // Index defines a table index.

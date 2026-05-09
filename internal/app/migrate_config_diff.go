@@ -365,14 +365,17 @@ func diffNewColumns(old, new *domain.Config) []string {
 func formatColumnForAdd(name string, field domain.Field) string {
 	def := formatColumn(name, field)
 	if field.ForeignKey != nil {
-		parts := strings.SplitN(field.ForeignKey.References, ".", 2)
-		if len(parts) == 2 {
+		schema, refTable, refCol, err := domain.ParseFKReference(field.ForeignKey.References)
+		if err == nil {
 			onDelete := "RESTRICT"
 			if field.ForeignKey.OnDelete != "" {
 				onDelete = strings.ToUpper(strings.ReplaceAll(field.ForeignKey.OnDelete, "_", " "))
 			}
-			def += fmt.Sprintf(" REFERENCES %s(%s) ON DELETE %s", parts[0], parts[1], onDelete)
+			def += fmt.Sprintf(" REFERENCES %s.%s(%s) ON DELETE %s", schema, refTable, refCol, onDelete)
 		}
+		// On parse error: omit the REFERENCES clause. Validation runs upstream
+		// and rejects malformed references; if it didn't, we'd rather emit a
+		// column without a constraint than malformed SQL.
 	}
 	return def
 }

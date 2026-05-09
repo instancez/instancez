@@ -514,7 +514,7 @@ func generateTable(name string, table domain.Table, allTables map[string]domain.
 
 		// FK constraint
 		if field.ForeignKey != nil {
-			schema, refTable, refCol, err := parseFKReference(field.ForeignKey.References)
+			schema, refTable, refCol, err := domain.ParseFKReference(field.ForeignKey.References)
 			if err != nil {
 				// Surface the validation error as a SQL syntax error in the
 				// emitted DDL, which the migrator will fail on with a clear
@@ -583,20 +583,6 @@ func generateTable(name string, table domain.Table, allTables map[string]domain.
 	return ddl
 }
 
-// parseFKReference splits a foreign-key target string into (schema, table, column).
-// 2-part inputs default to the public schema; 3-part inputs are schema-qualified.
-// Anything else is an error.
-func parseFKReference(ref string) (schema, table, column string, err error) {
-	parts := strings.Split(ref, ".")
-	switch len(parts) {
-	case 2:
-		return "public", parts[0], parts[1], nil
-	case 3:
-		return parts[0], parts[1], parts[2], nil
-	default:
-		return "", "", "", fmt.Errorf("invalid foreign_key.references %q: expected table.column or schema.table.column", ref)
-	}
-}
 
 // generateIndexes creates index DDL for a table. Split from generateTable so
 // indexes run after column diffs (ADD COLUMN must precede CREATE INDEX).
@@ -885,7 +871,7 @@ func orderTables(tables map[string]domain.Table) []string {
 	for name, table := range tables {
 		for _, field := range table.Fields {
 			if field.ForeignKey != nil {
-				_, refTable, _, err := parseFKReference(field.ForeignKey.References)
+				_, refTable, _, err := domain.ParseFKReference(field.ForeignKey.References)
 				if err != nil {
 					continue
 				}
