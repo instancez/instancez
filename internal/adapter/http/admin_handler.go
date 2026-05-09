@@ -1,8 +1,8 @@
 package http
 
 import (
-	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -22,7 +22,6 @@ type AdminHandler struct {
 	configSource  config.Source
 	dashboardMode DashboardMode
 	driftFn       func() *app.DriftTracker
-	devMode       bool
 }
 
 func NewAdminHandler(deps ServerDeps) *AdminHandler {
@@ -34,7 +33,6 @@ func NewAdminHandler(deps ServerDeps) *AdminHandler {
 		configSource:  deps.ConfigSource,
 		dashboardMode: deps.DashboardMode,
 		driftFn:       deps.DriftFn,
-		devMode:       deps.DevMode,
 	}
 }
 
@@ -283,8 +281,11 @@ func (h *AdminHandler) handlePutConfig(c *gin.Context) {
 		return
 	}
 
-	// Read current bytes + version (for optimistic concurrency).
-	currentBytes, currentVersion, err := h.configSource.Read(c.Request.Context())
+	// Read current version (for optimistic concurrency). The bytes are
+	// discarded — clients echo `_checksum` (the source's version token) on
+	// PUT via `If-Match`; the source's own ETag/mtime is the only token we
+	// surface.
+	_, currentVersion, err := h.configSource.Read(c.Request.Context())
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to read current config: "+err.Error())
 		return
@@ -293,9 +294,8 @@ func (h *AdminHandler) handlePutConfig(c *gin.Context) {
 	// If-Match check (optional — clients can send the version they're editing).
 	if ifMatch := c.GetHeader("If-Match"); ifMatch != "" && ifMatch != currentVersion {
 		c.JSON(409, gin.H{
-			"error":            "conflict",
-			"current_version":  currentVersion,
-			"current_checksum": fmt.Sprintf("sha256:%x", sha256.Sum256(currentBytes)),
+			"error":           "conflict",
+			"current_version": currentVersion,
 		})
 		return
 	}
@@ -319,10 +319,15 @@ func (h *AdminHandler) handlePutConfig(c *gin.Context) {
 		return
 	}
 
-	// Migration first: run via the migrator. If it fails, leave the backend untouched.
+	// Migration first: run via the migrator. If it fails, leave the backend
+	// untouched. Migrator failures are infrastructure errors at this point —
+	// user-fixable validation already ran above — so surface as 500.
 	migrator := app.NewMigrator(h.db)
 	if err := migrator.Apply(c.Request.Context(), &newCfg); err != nil {
-		problemJSON(c, 400, "migration_failed", err.Error())
+		h.logger.Error("migration failed",
+			"source", h.sourceDescribe(),
+			"error", err.Error())
+		problemJSON(c, 500, "migration_failed", err.Error())
 		return
 	}
 
@@ -334,13 +339,38 @@ func (h *AdminHandler) handlePutConfig(c *gin.Context) {
 	}
 	newVersion, err := h.configSource.Write(c.Request.Context(), yamlData, currentVersion)
 	if err != nil {
-		// The DB has been migrated but the source write failed. Log loudly;
-		// the next boot will re-read the (stale) source and migrate forward
-		// again, which is idempotent for the patterns we generate.
+		if errors.Is(err, config.ErrConfigVersionMismatch) {
+			// DB has been migrated; source advanced concurrently between our
+			// Read above and this Write. Surface as 409 so the dashboard can
+			// show the conflict UI. The DB is now at the new schema; the
+			// source still reflects whatever the concurrent writer landed.
+			h.logger.Warn("config source advanced during migration; DB migrated, source not written",
+				"source", h.sourceDescribe(),
+				"expected_version", currentVersion)
+			c.JSON(409, gin.H{
+				"error":            "source_advanced_during_migration",
+				"message":          "Source was modified during migration. DB has been migrated; please re-fetch and re-submit.",
+				"expected_version": currentVersion,
+				"db_migrated":      true,
+			})
+			return
+		}
+		// The DB has been migrated but the source write failed for some other
+		// reason. Log loudly; the source still reflects the old version. The
+		// next boot will re-read the (still old) source and attempt to diff
+		// against last_migration.config_json (which is now the new config).
+		// Operator must reconcile by exporting the new config to the source
+		// manually before next boot.
 		h.logger.Error("config source write failed after successful migration",
 			"source", h.sourceDescribe(),
 			"error", err.Error())
-		problemJSON(c, 500, "source_write_failed", err.Error())
+		c.JSON(500, gin.H{
+			"error":         "source_write_failed",
+			"message":       "Migration committed but source write failed. The DB is at the new schema; the source is still at the old version. Export and reconcile manually before the next deploy.",
+			"config_source": h.sourceDescribe(),
+			"db_migrated":   true,
+			"detail":        err.Error(),
+		})
 		return
 	}
 
