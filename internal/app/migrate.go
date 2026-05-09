@@ -514,15 +514,20 @@ func generateTable(name string, table domain.Table, allTables map[string]domain.
 
 		// FK constraint
 		if field.ForeignKey != nil {
-			parts := strings.SplitN(field.ForeignKey.References, ".", 2)
-			if len(parts) == 2 {
+			schema, refTable, refCol, err := parseFKReference(field.ForeignKey.References)
+			if err != nil {
+				// Surface the validation error as a SQL syntax error in the
+				// emitted DDL, which the migrator will fail on with a clear
+				// message. (Validation runs before this in normal flow.)
+				constraints = append(constraints, fmt.Sprintf("/* invalid FK: %s */", err.Error()))
+			} else {
 				onDelete := "RESTRICT"
 				if field.ForeignKey.OnDelete != "" {
 					onDelete = strings.ToUpper(strings.ReplaceAll(field.ForeignKey.OnDelete, "_", " "))
 				}
 				constraints = append(constraints,
-					fmt.Sprintf("FOREIGN KEY (%s) REFERENCES %s(%s) ON DELETE %s",
-						fname, parts[0], parts[1], onDelete))
+					fmt.Sprintf("FOREIGN KEY (%s) REFERENCES %s.%s(%s) ON DELETE %s",
+						fname, schema, refTable, refCol, onDelete))
 			}
 		}
 
@@ -576,6 +581,21 @@ func generateTable(name string, table domain.Table, allTables map[string]domain.
 	ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s REPLICA IDENTITY FULL;", qualName))
 
 	return ddl
+}
+
+// parseFKReference splits a foreign-key target string into (schema, table, column).
+// 2-part inputs default to the public schema; 3-part inputs are schema-qualified.
+// Anything else is an error.
+func parseFKReference(ref string) (schema, table, column string, err error) {
+	parts := strings.Split(ref, ".")
+	switch len(parts) {
+	case 2:
+		return "public", parts[0], parts[1], nil
+	case 3:
+		return parts[0], parts[1], parts[2], nil
+	default:
+		return "", "", "", fmt.Errorf("invalid foreign_key.references %q: expected table.column or schema.table.column", ref)
+	}
 }
 
 // generateIndexes creates index DDL for a table. Split from generateTable so
@@ -865,11 +885,17 @@ func orderTables(tables map[string]domain.Table) []string {
 	for name, table := range tables {
 		for _, field := range table.Fields {
 			if field.ForeignKey != nil {
-				parts := strings.SplitN(field.ForeignKey.References, ".", 2)
-				if len(parts) == 2 && parts[0] != name && parts[0] != "users" {
-					if _, exists := tables[parts[0]]; exists {
-						deps[name] = append(deps[name], parts[0])
-					}
+				_, refTable, _, err := parseFKReference(field.ForeignKey.References)
+				if err != nil {
+					continue
+				}
+				// Self-references and cross-schema references (e.g. auth.users.id)
+				// don't create dependency edges within cfg.Tables.
+				if refTable == name {
+					continue
+				}
+				if _, exists := tables[refTable]; exists {
+					deps[name] = append(deps[name], refTable)
 				}
 			}
 		}

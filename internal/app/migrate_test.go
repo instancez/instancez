@@ -39,7 +39,7 @@ func TestGenerateTable_ForeignKey(t *testing.T) {
 
 	// FK referencing users.id now infers UUID to match the GoTrue schema.
 	mustContain(t, joined, "user_id UUID")
-	mustContain(t, joined, "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE")
+	mustContain(t, joined, "FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE")
 }
 
 func TestGenerateTable_FKDefaultRestrict(t *testing.T) {
@@ -545,5 +545,36 @@ func TestApplyRollsBackOnFailure(t *testing.T) {
 	}
 	if _, hasB := lastCfg.Tables["b"]; hasB {
 		t.Fatalf("history shows b table; should have rolled back")
+	}
+}
+
+func TestParseFKReference(t *testing.T) {
+	tests := []struct {
+		in        string
+		schema    string
+		table     string
+		column    string
+		expectErr bool
+	}{
+		{"posts.id", "public", "posts", "id", false},
+		{"auth.users.id", "auth", "users", "id", false},
+		{"id", "", "", "", true},                             // no column
+		{"a.b.c.d", "", "", "", true},                       // too many parts
+		{"", "", "", "", true},                              // empty
+		{"public.posts.id", "public", "posts", "id", false}, // explicit public allowed
+	}
+	for _, tt := range tests {
+		s, table, col, err := parseFKReference(tt.in)
+		if (err != nil) != tt.expectErr {
+			t.Errorf("parseFKReference(%q) err=%v want err=%v", tt.in, err, tt.expectErr)
+			continue
+		}
+		if tt.expectErr {
+			continue
+		}
+		if s != tt.schema || table != tt.table || col != tt.column {
+			t.Errorf("parseFKReference(%q) = (%q, %q, %q); want (%q, %q, %q)",
+				tt.in, s, table, col, tt.schema, tt.table, tt.column)
+		}
 	}
 }
