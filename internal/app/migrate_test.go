@@ -37,8 +37,9 @@ func TestGenerateTable_ForeignKey(t *testing.T) {
 	ddl := generateTable("todos", table, nil)
 	joined := strings.Join(ddl, "\n")
 
-	// FK referencing users.id now infers UUID to match the GoTrue schema.
-	mustContain(t, joined, "user_id UUID")
+	// FK referencing users.id (a user-defined public.users table) infers BIGINT.
+	// Only auth.users.id (3-part reference) auto-infers UUID.
+	mustContain(t, joined, "user_id BIGINT")
 	mustContain(t, joined, "FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE")
 }
 
@@ -324,6 +325,25 @@ func TestFormatDefault_SQLFunctions(t *testing.T) {
 				t.Errorf("formatDefault(%v, %q) = %q, want %q", tt.val, tt.typ, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestEffectiveTypeAutoUUIDForAuthUsers(t *testing.T) {
+	cases := []struct {
+		name string
+		f    domain.Field
+		want string
+	}{
+		{"auth.users.id → UUID", domain.Field{ForeignKey: &domain.ForeignKey{References: "auth.users.id"}}, "UUID"},
+		{"posts.id → BIGINT", domain.Field{ForeignKey: &domain.ForeignKey{References: "posts.id"}}, "BIGINT"},
+		{"explicit type wins", domain.Field{Type: "TEXT", ForeignKey: &domain.ForeignKey{References: "auth.users.id"}}, "TEXT"},
+		{"legacy users.id no longer auto-uuids", domain.Field{ForeignKey: &domain.ForeignKey{References: "users.id"}}, "BIGINT"},
+	}
+	for _, tt := range cases {
+		got := effectiveType(tt.f)
+		if got != tt.want {
+			t.Errorf("%s: got %q want %q", tt.name, got, tt.want)
+		}
 	}
 }
 

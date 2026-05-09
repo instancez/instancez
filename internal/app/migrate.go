@@ -605,13 +605,13 @@ func generateIndexes(name string, table domain.Table) []string {
 }
 
 // effectiveType returns the resolved SQL type for a field, inferring from FK
-// references when the type is empty (users.id → UUID, others → BIGINT).
+// references when the type is empty (auth.users.id → UUID, others → BIGINT).
 func effectiveType(f domain.Field) string {
 	if f.Type != "" {
 		return f.Type
 	}
 	if f.ForeignKey != nil {
-		if strings.EqualFold(f.ForeignKey.References, "users.id") {
+		if strings.EqualFold(f.ForeignKey.References, "auth.users.id") {
 			return "UUID"
 		}
 		return "BIGINT"
