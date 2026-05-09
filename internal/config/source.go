@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,8 +12,10 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go"
 	"github.com/saedx1/ultrabase/internal/domain"
 )
 
@@ -150,36 +153,82 @@ func newS3Source(spec string) (*S3Source, error) {
 }
 
 func (s *S3Source) Load(ctx context.Context) (*domain.Config, error) {
-	if s.client == nil {
-		awsCfg, err := awsconfig.LoadDefaultConfig(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("s3 config %s: load aws config: %w", s.Describe(), err)
-		}
-		s.client = s3.NewFromConfig(awsCfg)
+	data, _, err := s.Read(ctx)
+	if err != nil {
+		return nil, err
 	}
+	return parseBytes(data, s.Describe())
+}
 
+func (s *S3Source) ensureClient(ctx context.Context) error {
+	if s.client != nil {
+		return nil
+	}
+	awsCfg, err := awsconfig.LoadDefaultConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("s3 config %s: load aws config: %w", s.Describe(), err)
+	}
+	s.client = s3.NewFromConfig(awsCfg)
+	return nil
+}
+
+func (s *S3Source) Read(ctx context.Context) ([]byte, string, error) {
+	if err := s.ensureClient(ctx); err != nil {
+		return nil, "", err
+	}
 	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.Bucket),
 		Key:    aws.String(s.Key),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("s3 config %s: get object: %w", s.Describe(), err)
+		return nil, "", fmt.Errorf("s3 config %s: get object: %w", s.Describe(), err)
 	}
 	defer out.Body.Close()
-
 	data, err := io.ReadAll(out.Body)
 	if err != nil {
-		return nil, fmt.Errorf("s3 config %s: read body: %w", s.Describe(), err)
+		return nil, "", fmt.Errorf("s3 config %s: read body: %w", s.Describe(), err)
 	}
-	return parseBytes(data, s.Describe())
-}
-
-func (s *S3Source) Read(ctx context.Context) ([]byte, string, error) {
-	return nil, "", fmt.Errorf("s3 source: Read not yet implemented")
+	return data, aws.ToString(out.ETag), nil
 }
 
 func (s *S3Source) Write(ctx context.Context, data []byte, expectedVersion string) (string, error) {
-	return "", fmt.Errorf("s3 source: Write not yet implemented")
+	if err := s.ensureClient(ctx); err != nil {
+		return "", err
+	}
+	in := &s3.PutObjectInput{
+		Bucket:      aws.String(s.Bucket),
+		Key:         aws.String(s.Key),
+		Body:        bytes.NewReader(data),
+		ContentType: aws.String("application/yaml"),
+	}
+	if expectedVersion != "" {
+		in.IfMatch = aws.String(expectedVersion)
+	}
+	out, err := s.client.PutObject(ctx, in)
+	if err != nil {
+		if isPreconditionFailed(err) {
+			return "", ErrConfigVersionMismatch
+		}
+		return "", fmt.Errorf("s3 config %s: put object: %w", s.Describe(), err)
+	}
+	return aws.ToString(out.ETag), nil
+}
+
+func isPreconditionFailed(err error) bool {
+	var rerr *awshttp.ResponseError
+	if errors.As(err, &rerr) {
+		if rerr.HTTPStatusCode() == 412 {
+			return true
+		}
+	}
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.ErrorCode() {
+		case "PreconditionFailed", "ConditionalRequestConflict":
+			return true
+		}
+	}
+	return false
 }
 
 func (s *S3Source) Describe() string {
