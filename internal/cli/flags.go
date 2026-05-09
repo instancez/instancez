@@ -125,6 +125,7 @@ func parseServeFlags(args []string, envLookup func(string) string) (serveOptions
 		opts.watch = b
 	}
 
+	intervalSource := "--watch-interval"
 	if fs.flags.Changed("watch-interval") {
 		opts.watchInterval = fs.watchInterval
 	} else if v := envLookup("ULTRABASE_CONFIG_WATCH_INTERVAL"); v != "" {
@@ -133,9 +134,10 @@ func parseServeFlags(args []string, envLookup func(string) string) (serveOptions
 			return opts, fmt.Errorf("ULTRABASE_CONFIG_WATCH_INTERVAL: %w", err)
 		}
 		opts.watchInterval = d
+		intervalSource = "ULTRABASE_CONFIG_WATCH_INTERVAL"
 	}
 	if opts.watchInterval < minWatchInterval {
-		return opts, fmt.Errorf("--watch-interval must be at least %s", minWatchInterval)
+		return opts, fmt.Errorf("%s must be at least %s", intervalSource, minWatchInterval)
 	}
 
 	if fs.flags.Changed("dashboard") {
