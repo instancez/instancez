@@ -43,11 +43,21 @@ auth:
     # allow_signup: false       # admin-only: POST /auth/v1/signup → 403 signup_disabled
     # allow_anonymous: false    # block empty-body anonymous sign-in
 tables:
-    users:
+    profiles:
         fields:
+            - name: id
+              foreign_key:
+                  references: auth.users.id
+                  on_delete: cascade
+              primary_key: true
             - name: display_name
               type: text
               required: false
+        rls:
+            - operations: [select]
+              check: "true"
+            - operations: [insert, update]
+              check: "auth.uid() = id"
     categories:
         fields:
             - name: id
@@ -156,7 +166,7 @@ tables:
               type: ""
               required: false
               foreign_key:
-                  references: users.id
+                  references: auth.users.id
                   on_delete: set_null
             - name: author
               type: text

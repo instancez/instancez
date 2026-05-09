@@ -23,14 +23,17 @@ Then open:
 
 Schema (see `ultrabase.yaml`):
 
+The project's user identity lives in `auth.users` (managed by ultrabase).
+Profile data lives in `profiles`, a user-defined table FK'd to `auth.users.id`.
+
 - **categories** — simple lookup table, public read/write
 - **products** — `text[]` tags, `jsonb` metadata, enum `status`, booleans,
   `searchable: [name, description]` with `search_config: english` for FTS
-- **reviews** — has-many on `products`, FK to `users.id` via `user_id`.
+- **reviews** — has-many on `products`, FK to `auth.users.id` via `user_id`.
   Public **select**, but **insert/update/delete** are gated by RLS:
   `user_id = auth.uid()` — only the row owner can touch their own review
-- **users** (implicit, from `auth:`) — `display_name` field promoted into
-  `raw_user_meta_data` on signup
+- **profiles** — user-defined table FK'd to `auth.users.id`; `display_name`
+  is promoted into `raw_user_meta_data` on signup
 
 Auth flows (see `src/AuthBar.jsx`) — four tabs, all driven by supabase-js:
 
