@@ -208,23 +208,11 @@ func (h *AuthHandler) handleSignup(c *gin.Context) {
 
 	userMetaJSON := marshalJSONBDefault(req.Data)
 
-	// Signup always sets raw_user_meta_data (JSONB). Custom auth.fields are
-	// also promoted to top-level columns when present in `data`.
+	// Signup always sets raw_user_meta_data (JSONB). Signup data is stored
+	// in raw_user_meta_data rather than promoted to top-level columns.
 	cols := []string{"email", "password_hash", "raw_user_meta_data"}
 	placeholders := []string{"$1", "$2", "$3::jsonb"}
 	vals := []any{req.Email, string(hash), string(userMetaJSON)}
-	argIdx := 4
-
-	if req.Data != nil {
-		for _, f := range h.cfg.UserExtraFields() {
-			if val, ok := req.Data[f.Name]; ok {
-				cols = append(cols, f.Name)
-				placeholders = append(placeholders, fmt.Sprintf("$%d", argIdx))
-				vals = append(vals, val)
-				argIdx++
-			}
-		}
-	}
 
 	query := fmt.Sprintf(
 		"INSERT INTO users (%s) VALUES (%s) RETURNING %s",

@@ -243,27 +243,16 @@ func diffNewExtensions(old, new *domain.Config) []string {
 }
 
 // diffNewAuth returns DDL for auth table additions. If auth is newly added,
-// generates the full users table. If auth already existed, generates ADD COLUMN
-// for new custom fields.
+// generates the full users table. If auth already existed, handles additive
+// schema changes (refresh tokens, email verification).
 func diffNewAuth(old, new *domain.Config) []string {
 	if new.Auth == nil {
 		return nil
 	}
 	if old.Auth == nil {
-		return generateUsersTable(new.Auth, new.UserExtraFields())
+		return generateUsersTable(new.Auth)
 	}
 	var ddl []string
-	oldExtra := old.UserExtraFields()
-	oldFieldMap := make(map[string]domain.Field, len(oldExtra))
-	for _, f := range oldExtra {
-		oldFieldMap[f.Name] = f
-	}
-	for _, field := range new.UserExtraFields() {
-		if _, exists := oldFieldMap[field.Name]; !exists {
-			colDef := formatColumn(field.Name, field)
-			ddl = append(ddl, fmt.Sprintf("ALTER TABLE users ADD COLUMN IF NOT EXISTS %s;", colDef))
-		}
-	}
 	// Handle transition to refresh tokens
 	if new.Auth.RefreshTokens && !old.Auth.RefreshTokens {
 		ddl = append(ddl, `CREATE TABLE IF NOT EXISTS _refresh_tokens (

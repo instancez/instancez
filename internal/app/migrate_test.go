@@ -156,17 +156,13 @@ func TestGenerateUsersTable(t *testing.T) {
 		RefreshTokens: true,
 		Email:         &domain.AuthEmail{VerifyEmail: true},
 	}
-	extraFields := []domain.Field{
-		{Name: "display_name", Type: "text", Required: true},
-	}
-	ddl := generateUsersTable(auth, extraFields)
+	ddl := generateUsersTable(auth)
 	joined := strings.Join(ddl, "\n")
 
 	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS users")
 	mustContain(t, joined, "email TEXT NOT NULL UNIQUE")
 	mustContain(t, joined, "password_hash TEXT")
 	mustContain(t, joined, "email_verified BOOLEAN")
-	mustContain(t, joined, "display_name text NOT NULL")
 	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS _user_identities")
 	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS _refresh_tokens")
 	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS _auth_email_verifications")
@@ -176,7 +172,7 @@ func TestGenerateUsersTable_NoRefreshTokens(t *testing.T) {
 	auth := &domain.Auth{
 		RefreshTokens: false,
 	}
-	ddl := generateUsersTable(auth, nil)
+	ddl := generateUsersTable(auth)
 	joined := strings.Join(ddl, "\n")
 
 	if strings.Contains(joined, "_refresh_tokens") {

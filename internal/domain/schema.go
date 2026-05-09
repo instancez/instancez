@@ -44,30 +44,6 @@ func (td *TableData) UnmarshalYAML(value *yaml.Node) error {
 	}
 }
 
-// coreUserColumns are auto-emitted by the migrator and should not be
-// treated as user-defined fields when iterating tables.users.
-var coreUserColumns = map[string]bool{
-	"id": true, "email": true, "password_hash": true,
-	"email_verified": true, "email_confirmed_at": true,
-	"last_sign_in_at": true, "raw_app_meta_data": true,
-	"raw_user_meta_data": true, "created_at": true, "updated_at": true,
-}
-
-// UserExtraFields returns the custom (non-core) fields from tables.users.
-func (c *Config) UserExtraFields() []Field {
-	usersTable, ok := c.Tables["users"]
-	if !ok {
-		return nil
-	}
-	var extra []Field
-	for _, f := range usersTable.Fields {
-		if !coreUserColumns[f.Name] {
-			extra = append(extra, f)
-		}
-	}
-	return extra
-}
-
 // Project holds display-only metadata.
 type Project struct {
 	Name        string `yaml:"name" json:"name"`

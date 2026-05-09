@@ -80,9 +80,9 @@ func planFromScratchStatements(cfg *domain.Config, roles domain.Roles) []string 
 		ddl = append(ddl, fmt.Sprintf("CREATE EXTENSION IF NOT EXISTS %s;", ext))
 	}
 
-	// Users table (core auth columns + custom fields from tables.users)
+	// Users table (core auth columns).
 	if cfg.Auth != nil {
-		ddl = append(ddl, generateUsersTable(cfg.Auth, cfg.UserExtraFields())...)
+		ddl = append(ddl, generateUsersTable(cfg.Auth)...)
 	}
 
 	// Tables in dependency order (FKs reference other tables).
@@ -348,7 +348,7 @@ func orderedSchemas(cfg *domain.Config) []string {
 	return out
 }
 
-func generateUsersTable(auth *domain.Auth, extraFields []domain.Field) []string {
+func generateUsersTable(auth *domain.Auth) []string {
 	var ddl []string
 
 	// pgcrypto provides gen_random_uuid(); safe to request idempotently.
@@ -370,13 +370,6 @@ func generateUsersTable(auth *domain.Auth, extraFields []domain.Field) []string 
 	cols = append(cols, "raw_user_meta_data JSONB NOT NULL DEFAULT '{}'::jsonb")
 	cols = append(cols, "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()")
 	cols = append(cols, "updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()")
-
-	// Custom auth fields are promoted to top-level columns so existing
-	// YAML-driven projects keep working. They're also surfaced under
-	// user_metadata in the GoTrue response.
-	for _, field := range extraFields {
-		cols = append(cols, formatColumn(field.Name, field))
-	}
 
 	ddl = append(ddl, fmt.Sprintf("CREATE TABLE IF NOT EXISTS users (\n  %s\n);", strings.Join(cols, ",\n  ")))
 

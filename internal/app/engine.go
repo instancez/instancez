@@ -496,9 +496,6 @@ func (e *Engine) validateDataColumns(tableName string, records []map[string]any)
 		// "password" is allowed for users (gets hashed to password_hash)
 		known := map[string]bool{"id": true, "email": true, "password": true, "password_hash": true,
 			"email_verified": true, "display_name": true, "created_at": true}
-		for _, f := range e.cfg.UserExtraFields() {
-			known[f.Name] = true
-		}
 		for _, rec := range records {
 			for col := range rec {
 				if !known[col] {

@@ -644,34 +644,6 @@ func TestDiffConfigs_NewExtension(t *testing.T) {
 	}
 }
 
-func TestDiffConfigs_AuthFieldAdded(t *testing.T) {
-	old := &domain.Config{
-		Auth: &domain.Auth{},
-		Tables: map[string]domain.Table{
-			"users": {Fields: []domain.Field{
-				{Name: "name", Type: "text"},
-			}},
-		},
-	}
-	new := &domain.Config{
-		Auth: &domain.Auth{},
-		Tables: map[string]domain.Table{
-			"users": {Fields: []domain.Field{
-				{Name: "name", Type: "text"},
-				{Name: "phone", Type: "text"},
-			}},
-		},
-	}
-
-	diff := diffConfigs(old, new)
-	joined := strings.Join(diff.Additions, "\n")
-
-	mustContain(t, joined, "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone text")
-
-	if strings.Contains(joined, "name text") {
-		t.Error("should not re-add existing auth field")
-	}
-}
 
 func TestDiffConfigs_NewStorage(t *testing.T) {
 	old := &domain.Config{
