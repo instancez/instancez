@@ -1146,6 +1146,7 @@ func suggestHintForPgError(pgErr *pgconn.PgError) string {
 // Embed represents a relation embed in the select clause (e.g., author(id,name)).
 type Embed struct {
 	Name      string   // relation name (e.g., "author")
+	Alias     string   // optional output key from "alias:name" prefix (PostgREST)
 	Columns   []string // columns to select from the related table (empty = *)
 	FKColumn  string   // the FK column on this table (e.g., "author_id")
 	RefTable  string   // the referenced table (e.g., "users")
@@ -1162,6 +1163,16 @@ type Embed struct {
 	Order  []OrderClause
 	Limit  *int
 	Offset *int
+}
+
+// outputKey returns the JSON object key for this embed in the response, and
+// the SQL alias seed used internally. Aliased embeds (`category:categories`)
+// surface under the alias; otherwise the relation Name is used.
+func (e Embed) outputKey() string {
+	if e.Alias != "" {
+		return e.Alias
+	}
+	return e.Name
 }
 
 // QueryParams holds parsed PostgREST query parameters.
@@ -1238,7 +1249,7 @@ func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allT
 	}
 	embedByName := map[string]*Embed{}
 	for i := range qp.Embeds {
-		embedByName[qp.Embeds[i].Name] = &qp.Embeds[i]
+		embedByName[qp.Embeds[i].outputKey()] = &qp.Embeds[i]
 	}
 
 	// Parse order. Format per PostgREST: col[.asc|.desc][.nullsfirst|.nullslast].
@@ -1496,6 +1507,35 @@ func parseEmbedScopedParams(c *gin.Context, embedByName map[string]*Embed, allTa
 		}
 	}
 	return nil
+}
+
+// hasBelongsToJoin reports whether any embed will produce a JOIN on the
+// outer FROM clause. Reverse (has-many) embeds become correlated subselects
+// and don't widen the outer scope; belongs-to embeds do.
+func hasBelongsToJoin(embeds []Embed) bool {
+	for _, e := range embeds {
+		if !e.IsReverse {
+			return true
+		}
+	}
+	return false
+}
+
+// qualifyOrderColumns prefixes each non-alias ORDER clause column with
+// "<table>." so it's unambiguous against joined embed columns. IsAlias
+// clauses resolve against the SELECT output list and are left untouched.
+func qualifyOrderColumns(clauses []OrderClause, tableName string) []OrderClause {
+	if len(clauses) == 0 {
+		return clauses
+	}
+	out := make([]OrderClause, len(clauses))
+	for i, oc := range clauses {
+		out[i] = oc
+		if !oc.IsAlias && !strings.Contains(oc.Column, ".") {
+			out[i].Column = tableName + "." + oc.Column
+		}
+	}
+	return out
 }
 
 // aliasWhereColumns returns a clone of n with every leaf column prefixed
@@ -1798,7 +1838,7 @@ func buildEmbedRowExpr(emb Embed, srcAlias string, allTables map[string]domain.T
 	// Nested child embeds → scalar subselects.
 	for _, child := range emb.Children {
 		childExpr, childArgs, nextIdx := buildChildEmbedSubselect(child, srcAlias, allTables, argIdx)
-		entries = append(entries, fmt.Sprintf("'%s', %s", child.Name, childExpr))
+		entries = append(entries, fmt.Sprintf("'%s', %s", child.outputKey(), childExpr))
 		allArgs = append(allArgs, childArgs...)
 		argIdx = nextIdx
 	}
@@ -1906,7 +1946,7 @@ func buildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 	// joined row by alias; has-many embeds are emitted as a correlated
 	// scalar subselect that aggregates children into a JSON array.
 	for _, emb := range qp.Embeds {
-		alias := "_emb_" + emb.Name
+		alias := "_emb_" + emb.outputKey()
 		hasChildren := len(emb.Children) > 0
 		if emb.IsReverse {
 			// Has-many embed → correlated scalar subselect with json_agg.
@@ -1946,7 +1986,7 @@ func buildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 				sub := fmt.Sprintf(
 					"SELECT coalesce(json_agg(%s), '[]'::json) FROM (%s) %s",
 					rowExpr, inner, emb.RefTable)
-				selectParts = append(selectParts, fmt.Sprintf("(%s) AS %s", sub, emb.Name))
+				selectParts = append(selectParts, fmt.Sprintf("(%s) AS %s", sub, emb.outputKey()))
 			} else {
 				sub := fmt.Sprintf(
 					"SELECT coalesce(json_agg(%s", rowExpr)
@@ -1963,7 +2003,7 @@ func buildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 						argIdx = next
 					}
 				}
-				selectParts = append(selectParts, fmt.Sprintf("(%s) AS %s", sub, emb.Name))
+				selectParts = append(selectParts, fmt.Sprintf("(%s) AS %s", sub, emb.outputKey()))
 			}
 		} else if emb.Spread {
 			// Spread belongs-to: inline columns into parent SELECT.
@@ -1981,7 +2021,7 @@ func buildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 			// Nested children of a spread embed also become top-level select parts.
 			for _, child := range emb.Children {
 				childExpr, childArgs, nextIdx := buildChildEmbedSubselect(child, alias, allTables, argIdx)
-				selectParts = append(selectParts, fmt.Sprintf("%s AS %s", childExpr, child.Name))
+				selectParts = append(selectParts, fmt.Sprintf("%s AS %s", childExpr, child.outputKey()))
 				allArgs = append(allArgs, childArgs...)
 				argIdx = nextIdx
 			}
@@ -1990,19 +2030,19 @@ func buildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 			rowExpr, rowArgs, nextIdx := buildEmbedRowExpr(emb, alias, allTables, argIdx)
 			allArgs = append(allArgs, rowArgs...)
 			argIdx = nextIdx
-			selectParts = append(selectParts, fmt.Sprintf("%s AS %s", rowExpr, emb.Name))
+			selectParts = append(selectParts, fmt.Sprintf("%s AS %s", rowExpr, emb.outputKey()))
 		} else {
 			// Simple belongs-to (no children, no spread).
 			if len(emb.Columns) == 0 {
 				selectParts = append(selectParts,
-					fmt.Sprintf("row_to_json(%s.*) AS %s", alias, emb.Name))
+					fmt.Sprintf("row_to_json(%s.*) AS %s", alias, emb.outputKey()))
 			} else {
 				var embCols []string
 				for _, c := range emb.Columns {
 					embCols = append(embCols, fmt.Sprintf("'%s', %s.%s", c, alias, c))
 				}
 				selectParts = append(selectParts,
-					fmt.Sprintf("json_build_object(%s) AS %s", strings.Join(embCols, ", "), emb.Name))
+					fmt.Sprintf("json_build_object(%s) AS %s", strings.Join(embCols, ", "), emb.outputKey()))
 			}
 		}
 	}
@@ -2014,7 +2054,7 @@ func buildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 		if emb.IsReverse {
 			continue
 		}
-		alias := "_emb_" + emb.Name
+		alias := "_emb_" + emb.outputKey()
 		joinKind := "LEFT JOIN"
 		if emb.Inner {
 			joinKind = "INNER JOIN"
@@ -2032,7 +2072,14 @@ func buildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 	}
 
 	// Outer WHERE: combine main filters with belongs-to embed filters.
-	whereSQL, whereArgs, nextArgIdx := qp.Where.buildSQL(argIdx)
+	// When belongs-to embeds added JOINs above, parent filter columns must be
+	// qualified with the base table name; otherwise references like `id` are
+	// ambiguous against the joined table's columns.
+	parentWhere := qp.Where
+	if hasBelongsToJoin(qp.Embeds) {
+		parentWhere = aliasWhereColumns(qp.Where, tableName)
+	}
+	whereSQL, whereArgs, nextArgIdx := parentWhere.buildSQL(argIdx)
 	if whereSQL != "" {
 		allArgs = append(allArgs, whereArgs...)
 	}
@@ -2090,9 +2137,18 @@ func buildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 		}
 	}
 
-	// ORDER BY
+	// ORDER BY. Same ambiguity story as WHERE: when JOINs are present, a
+	// non-alias clause like `order=id.asc` must be qualified to the base table
+	// for any column that's also present on a joined embed table. Postgres
+	// resolves output-list aliases first, so columns explicitly in the SELECT
+	// are safe; we qualify the rest. IsAlias clauses are already double-quoted
+	// against the output list and never need a table prefix.
 	if len(qp.Order) > 0 {
-		sql += " ORDER BY " + renderOrderBy(qp.Order)
+		order := qp.Order
+		if hasBelongsToJoin(qp.Embeds) {
+			order = qualifyOrderColumns(qp.Order, tableName)
+		}
+		sql += " ORDER BY " + renderOrderBy(order)
 	}
 
 	// LIMIT & OFFSET
@@ -2133,8 +2189,11 @@ func resolveEmbeds(tableName string, table domain.Table, embedNames []string, al
 	var embeds []Embed
 
 	for _, raw := range embedNames {
-		name, cols, nested, spread := parseEmbedParam(raw)
+		name, alias, cols, nested, spread := parseEmbedParam(raw)
 		name, inner, fkHint := parseEmbedHint(name)
+		if spread && alias != "" {
+			return nil, fmt.Errorf("alias not allowed on spread embed %q", alias+":"+name)
+		}
 
 		// Check for belongs-to: this table has a FK column pointing to the embed name
 		// Convention: FK column name matches embed name + "_id" or references the embed table
@@ -2166,6 +2225,7 @@ func resolveEmbeds(tableName string, table domain.Table, embedNames []string, al
 			}
 			emb := Embed{
 				Name:      name,
+				Alias:     alias,
 				Columns:   cols,
 				FKColumn:  fieldName,
 				RefTable:  refTable,
@@ -2224,6 +2284,7 @@ func resolveEmbeds(tableName string, table domain.Table, embedNames []string, al
 					}
 					emb := Embed{
 						Name:      name,
+						Alias:     alias,
 						Columns:   cols,
 						FKColumn:  fieldName,
 						RefTable:  otherName,
@@ -2254,10 +2315,11 @@ func resolveEmbeds(tableName string, table domain.Table, embedNames []string, al
 	return embeds, nil
 }
 
-// parseEmbedParam parses "author(id,name)" into name, cols, and nested embed
-// raw strings. Items containing "(" are returned in nested; others in cols.
-// A "..." prefix on the name sets spread=true.
-func parseEmbedParam(s string) (name string, cols []string, nested []string, spread bool) {
+// parseEmbedParam parses "author(id,name)" into name, alias, cols, and nested
+// embed raw strings. Items containing "(" are returned in nested; others in
+// cols. A "..." prefix on the name sets spread=true. A "alias:" prefix
+// (PostgREST renaming) is stripped from name and returned in alias.
+func parseEmbedParam(s string) (name, alias string, cols []string, nested []string, spread bool) {
 	idx := strings.Index(s, "(")
 	if idx == -1 {
 		name = s
@@ -2265,6 +2327,7 @@ func parseEmbedParam(s string) (name string, cols []string, nested []string, spr
 			spread = true
 			name = name[3:]
 		}
+		alias, name = splitEmbedAlias(name)
 		return
 	}
 	name = s[:idx]
@@ -2272,6 +2335,7 @@ func parseEmbedParam(s string) (name string, cols []string, nested []string, spr
 		spread = true
 		name = name[3:]
 	}
+	alias, name = splitEmbedAlias(name)
 	inner := s[idx+1 : len(s)-1] // strip parens
 	if inner == "*" || inner == "" {
 		return

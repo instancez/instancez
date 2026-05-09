@@ -331,6 +331,207 @@ func TestBuildSelectQuery_InnerJoinEmbed(t *testing.T) {
 	}
 }
 
+// TestSplitEmbedAlias covers the PostgREST "alias:relation" prefix used to
+// rename an embed in the response. A "::" sequence is a cast and must not be
+// treated as an alias separator.
+func TestSplitEmbedAlias(t *testing.T) {
+	cases := []struct {
+		in        string
+		wantAlias string
+		wantName  string
+	}{
+		{"author", "", "author"},
+		{"category:categories", "category", "categories"},
+		{"category:categories!left", "category", "categories!left"},
+		{"category:categories!inner", "category", "categories!inner"},
+		{"category:categories!fk_hint", "category", "categories!fk_hint"},
+		{"price::numeric", "", "price::numeric"},
+		{"a::b:c", "", "a::b:c"},
+	}
+	for _, tc := range cases {
+		alias, name := splitEmbedAlias(tc.in)
+		if alias != tc.wantAlias || name != tc.wantName {
+			t.Errorf("%q → (%q, %q), want (%q, %q)", tc.in, alias, name, tc.wantAlias, tc.wantName)
+		}
+	}
+}
+
+// TestParseEmbedParam_Alias verifies the PostgREST "alias:relation" prefix is
+// stripped from the relation name and surfaced via the returned alias slot.
+// Combined with !left/!inner hints, the alias precedes the hint marker.
+func TestParseEmbedParam_Alias(t *testing.T) {
+	cases := []struct {
+		in        string
+		wantName  string
+		wantAlias string
+		wantCols  []string
+	}{
+		{"category:categories(id,slug,name)", "categories", "category", []string{"id", "slug", "name"}},
+		{"category:categories!left(id,slug,name)", "categories!left", "category", []string{"id", "slug", "name"}},
+		{"category:categories!inner(id,slug,name)", "categories!inner", "category", []string{"id", "slug", "name"}},
+		{"author(id,name)", "author", "", []string{"id", "name"}},
+	}
+	for _, tc := range cases {
+		name, alias, cols, _, _ := parseEmbedParam(tc.in)
+		if name != tc.wantName || alias != tc.wantAlias {
+			t.Errorf("%q → name=%q alias=%q, want name=%q alias=%q", tc.in, name, alias, tc.wantName, tc.wantAlias)
+		}
+		if len(cols) != len(tc.wantCols) {
+			t.Fatalf("%q cols len = %d, want %d", tc.in, len(cols), len(tc.wantCols))
+		}
+		for i := range cols {
+			if cols[i] != tc.wantCols[i] {
+				t.Errorf("%q cols[%d] = %q, want %q", tc.in, i, cols[i], tc.wantCols[i])
+			}
+		}
+	}
+}
+
+// TestResolveEmbeds_Alias asserts the PostgREST "alias:relation" prefix
+// resolves the relationship by the post-colon name and surfaces the embed
+// under the alias both as JSON output key and as the internal SQL alias.
+// This is the regression test for the docs/examples/react-catalog bug where
+// "category:categories!left(...)" was rejected with "could not find a
+// relationship between 'products' and 'category:categories'".
+func TestResolveEmbeds_Alias(t *testing.T) {
+	table := domain.Table{
+		Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
+			{Name: "name", Type: "text"},
+			{Name: "category_id", ForeignKey: &domain.ForeignKey{References: "categories.id"}},
+		},
+	}
+	allTables := map[string]domain.Table{
+		"products":   table,
+		"categories": {Fields: []domain.Field{{Name: "id"}, {Name: "slug"}, {Name: "name"}}},
+	}
+
+	t.Run("belongs-to with !left", func(t *testing.T) {
+		embeds, err := resolveEmbeds("products", table, []string{"category:categories!left(id,slug,name)"}, allTables)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(embeds) != 1 {
+			t.Fatalf("expected 1 embed, got %d", len(embeds))
+		}
+		e := embeds[0]
+		if e.Name != "categories" || e.Alias != "category" {
+			t.Errorf("Name=%q Alias=%q, want categories/category", e.Name, e.Alias)
+		}
+		if e.RefTable != "categories" || e.FKColumn != "category_id" {
+			t.Errorf("RefTable=%q FKColumn=%q", e.RefTable, e.FKColumn)
+		}
+		if e.IsReverse || e.Inner {
+			t.Errorf("expected belongs-to LEFT, got IsReverse=%v Inner=%v", e.IsReverse, e.Inner)
+		}
+		if e.outputKey() != "category" {
+			t.Errorf("outputKey = %q, want category", e.outputKey())
+		}
+	})
+
+	t.Run("belongs-to with !inner", func(t *testing.T) {
+		embeds, err := resolveEmbeds("products", table, []string{"category:categories!inner(id)"}, allTables)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(embeds) != 1 || !embeds[0].Inner || embeds[0].Alias != "category" {
+			t.Errorf("expected inner aliased embed, got %+v", embeds)
+		}
+	})
+
+	t.Run("SQL emits alias as JSON key and SQL alias", func(t *testing.T) {
+		embeds, err := resolveEmbeds("products", table, []string{"category:categories!left(id,name)"}, allTables)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		qp := &QueryParams{Select: []string{"id", "category:categories!left(id,name)"}, Embeds: embeds}
+		sql, _ := buildSelectQuery("products", qp, table)
+		// JSON output key must be the alias, not the table name.
+		if !strings.Contains(sql, "AS category") {
+			t.Errorf("expected `AS category` in select, got: %s", sql)
+		}
+		if strings.Contains(sql, "AS categories") {
+			t.Errorf("must not emit `AS categories` (the relation name) when aliased: %s", sql)
+		}
+		// Internal SQL alias for the JOIN must be derived from the alias too,
+		// so multiple embeds to the same table cannot collide.
+		if !strings.Contains(sql, "LEFT JOIN categories AS _emb_category") {
+			t.Errorf("expected JOIN alias `_emb_category`, got: %s", sql)
+		}
+	})
+
+	t.Run("has-many with alias", func(t *testing.T) {
+		// reviews → products via product_id; from products embed reviews.
+		ptable := domain.Table{
+			Fields: []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}},
+		}
+		all := map[string]domain.Table{
+			"products": ptable,
+			"reviews": {
+				Fields: []domain.Field{
+					{Name: "id", Type: "bigserial", PrimaryKey: true},
+					{Name: "rating", Type: "int"},
+					{Name: "product_id", ForeignKey: &domain.ForeignKey{References: "products.id"}},
+				},
+			},
+		}
+		embeds, err := resolveEmbeds("products", ptable, []string{"feedback:reviews(id,rating)"}, all)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(embeds) != 1 || embeds[0].Name != "reviews" || embeds[0].Alias != "feedback" || !embeds[0].IsReverse {
+			t.Errorf("expected aliased has-many, got %+v", embeds)
+		}
+		qp := &QueryParams{Select: []string{"id", "feedback:reviews(id,rating)"}, Embeds: embeds}
+		sql, _ := buildSelectQuery("products", qp, ptable)
+		if !strings.Contains(sql, "AS feedback") {
+			t.Errorf("expected `AS feedback`, got: %s", sql)
+		}
+	})
+
+	t.Run("alias on spread is rejected", func(t *testing.T) {
+		_, err := resolveEmbeds("products", table, []string{"...cat:categories(name)"}, allTables)
+		if err == nil {
+			t.Error("expected error: alias on spread embed is meaningless")
+		}
+	})
+
+	t.Run("two embeds to same table disambiguated by alias", func(t *testing.T) {
+		// Build a schema where products has two FKs to categories so both
+		// belongs-to embeds can resolve via FK hints. Without the alias-aware
+		// SQL alias seed (`_emb_<outputKey>`), both embeds collide on
+		// `_emb_categories` and the generated SQL is invalid.
+		dual := domain.Table{
+			Fields: []domain.Field{
+				{Name: "id", Type: "bigserial", PrimaryKey: true},
+				{Name: "primary_category_id", ForeignKey: &domain.ForeignKey{References: "categories.id"}},
+				{Name: "secondary_category_id", ForeignKey: &domain.ForeignKey{References: "categories.id"}},
+			},
+		}
+		all := map[string]domain.Table{
+			"products":   dual,
+			"categories": {Fields: []domain.Field{{Name: "id"}, {Name: "name"}}},
+		}
+		embeds, err := resolveEmbeds("products", dual,
+			[]string{"primary:categories!primary_category(name)", "secondary:categories!secondary_category(name)"},
+			all)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(embeds) != 2 {
+			t.Fatalf("expected 2 embeds, got %d", len(embeds))
+		}
+		qp := &QueryParams{
+			Select: []string{"id", "primary:categories!primary_category(name)", "secondary:categories!secondary_category(name)"},
+			Embeds: embeds,
+		}
+		sql, _ := buildSelectQuery("products", qp, dual)
+		if !strings.Contains(sql, "_emb_primary") || !strings.Contains(sql, "_emb_secondary") {
+			t.Errorf("expected distinct join aliases _emb_primary and _emb_secondary, got: %s", sql)
+		}
+	})
+}
+
 func TestResolveEmbeds_InnerHint(t *testing.T) {
 	table := domain.Table{
 		Fields: []domain.Field{

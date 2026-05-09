@@ -477,10 +477,11 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 	}
 	chain.where = where
 
-	// HAVING.
+	// HAVING. Validate against the target table when known, but qualify
+	// emitted column references with the `_rpc` alias — the wrapped query
+	// exposes the SETOF rows under that alias, so the original table name
+	// is no longer in scope on the outer SELECT.
 	if havingRaw := c.Query("having"); havingRaw != "" {
-		// For RPC, use the target table (if known) for validation, plus
-		// aggregate aliases from the select items.
 		var selStrings []string
 		for _, it := range chain.selectItems {
 			if it.Agg != "" {
@@ -495,7 +496,7 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 				selStrings = append(selStrings, raw)
 			}
 		}
-		havingNode, err := parseHavingParam(havingRaw, target, targetTable, selStrings)
+		havingNode, err := parseHavingParam(havingRaw, "_rpc", targetTable, selStrings)
 		if err != nil {
 			return nil, nil, fmt.Errorf("invalid having: %w", err)
 		}
@@ -622,7 +623,18 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 	if chain == nil {
 		return callSQL, nil
 	}
-	suffix, _ := renderRPCChain(chain, baseArgIdx)
+	hasEmbeds := len(chain.embeds) > 0
+	// When belongs-to embeds will JOIN onto _rpc below, qualify outer WHERE
+	// columns with the _rpc alias so a filter like `id=eq.1` doesn't go
+	// ambiguous against the joined table's `id`. Mirrors the same fix in
+	// buildSelectQueryFull for direct CRUD queries.
+	renderChain := chain
+	if hasEmbeds && hasBelongsToJoin(chain.embeds) && chain.where != nil {
+		clone := *chain
+		clone.where = aliasWhereColumns(chain.where, "_rpc")
+		renderChain = &clone
+	}
+	suffix, _ := renderRPCChain(renderChain, baseArgIdx)
 	projection := "*"
 	if len(chain.selectItems) > 0 {
 		parts := make([]string, 0, len(chain.selectItems))
@@ -632,7 +644,6 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 		projection = strings.Join(parts, ", ")
 	}
 
-	hasEmbeds := len(chain.embeds) > 0
 	if suffix == "" && projection == "*" && !hasEmbeds {
 		return callSQL, nil
 	}
@@ -643,7 +654,7 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 	var embedSelectParts []string
 	argIdx := baseArgIdx
 	// Advance past the suffix args so embed placeholder numbering doesn't collide.
-	if _, suffixArgs := renderRPCChain(chain, baseArgIdx); len(suffixArgs) > 0 {
+	if _, suffixArgs := renderRPCChain(renderChain, baseArgIdx); len(suffixArgs) > 0 {
 		argIdx = baseArgIdx + len(suffixArgs)
 	}
 

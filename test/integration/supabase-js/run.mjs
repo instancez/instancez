@@ -448,6 +448,45 @@ await step('rest: nested embed — has-many with nested belongs-to', async () =>
   assertEq(comment.users.id, userId, 'nested user id should match')
 })
 
+await step('rest: aliased belongs-to embed — author:users(id) on comments', async () => {
+  // Regression for the docs/examples/react-catalog bug where
+  // `category:categories!left(...)` was rejected with "could not find a
+  // relationship between 'products' and 'category:categories'". The alias
+  // prefix must be stripped from the relation lookup and surfaced as the
+  // JSON output key.
+  const client = createClient(URL, ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { data, error } = await client
+    .from('comments')
+    .select('body, author:users!left(id)')
+    .eq('user_id', userId)
+  if (error) throw error
+  assert(Array.isArray(data) && data.length >= 1, 'expected at least one comment')
+  const row = data[0]
+  assert(row.author, 'aliased embed must surface under the alias key')
+  assert(row.users === undefined, 'must not also surface under the relation name')
+  assertEq(row.author.id, userId, 'aliased embed should expose joined columns')
+})
+
+await step('rest: aliased has-many embed — feedback:comments(body) on todos', async () => {
+  // Aliased reverse (has-many) embed: todos → feedback (=comments).
+  const client = createClient(URL, ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { data, error } = await client
+    .from('todos')
+    .select('title, feedback:comments(body)')
+    .eq('user_id', userId)
+  if (error) throw error
+  assert(Array.isArray(data) && data.length >= 1, 'expected at least one todo')
+  const todo = data[0]
+  assert(Array.isArray(todo.feedback), 'aliased has-many must surface under the alias key as an array')
+  assert(todo.comments === undefined, 'must not also surface under the relation name')
+})
+
 await step('rest: spread embed — ...users(id) on comments', async () => {
   // Spread flattens the joined columns into the parent row.
   // Use raw fetch since supabase-js spread syntax may vary by version.

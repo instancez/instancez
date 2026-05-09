@@ -288,6 +288,89 @@ func TestWrapRPCCallForChain_SelectWithFilter(t *testing.T) {
 	}
 }
 
+// TestWrapRPCCallForChain_HavingQualifiedToRPCAlias is a regression for the
+// case where `?having=count.gt.5` (or `having=col.eq.x`) is layered onto a
+// SETOF RPC. parseHavingParam pre-qualifies columns with the table name it
+// was given, so the wrapped query — which exposes the underlying rows under
+// the `_rpc` alias, not the original table name — would error with
+// "missing FROM-clause entry for table" if any column qualifier was the
+// raw table name. The fix is to qualify against `_rpc` for RPC chains.
+func TestWrapRPCCallForChain_HavingQualifiedToRPCAlias(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &CRUDHandler{cfg: &domain.Config{
+		Tables: map[string]domain.Table{
+			"users": {
+				Fields: []domain.Field{
+					{Name: "id", Type: "int", PrimaryKey: true},
+					{Name: "username", Type: "text"},
+					{Name: "status", Type: "text"},
+				},
+			},
+		},
+	}}
+	fn := domain.Function{ReturnCategory: "setof",
+		Returns: domain.FuncReturn{Type: "setof users"},
+	}
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET",
+		"/rpc/users_by_status?select=id.count()&having=count.gt.5", nil)
+	chain, _, err := h.parseRPCChain(c, fn, map[string]bool{}, 1)
+	if err != nil {
+		t.Fatalf("parseRPCChain: %v", err)
+	}
+
+	call := `SELECT * FROM public."users_by_status"()`
+	got, _ := wrapRPCCallForChain(call, chain, 1)
+
+	// The aggregate column inside COUNT(...) must reference the _rpc alias,
+	// not the underlying table that's no longer in scope.
+	if !strings.Contains(got, "COUNT(_rpc.id)") {
+		t.Errorf("expected COUNT(_rpc.id) in HAVING, got: %s", got)
+	}
+	if strings.Contains(got, "COUNT(users.id)") {
+		t.Errorf("HAVING should not reference unaliased table name, got: %s", got)
+	}
+}
+
+// TestWrapRPCCallForChain_HavingNonAggregateQualifiedToRPCAlias covers the
+// non-aggregate HAVING leaf branch, which qualifies the raw column
+// (`status`) rather than expanding an aggregate alias.
+func TestWrapRPCCallForChain_HavingNonAggregateQualifiedToRPCAlias(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &CRUDHandler{cfg: &domain.Config{
+		Tables: map[string]domain.Table{
+			"users": {
+				Fields: []domain.Field{
+					{Name: "id", Type: "int", PrimaryKey: true},
+					{Name: "status", Type: "text"},
+				},
+			},
+		},
+	}}
+	fn := domain.Function{ReturnCategory: "setof",
+		Returns: domain.FuncReturn{Type: "setof users"},
+	}
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET",
+		"/rpc/users_by_status?select=status,id.count()&having=status.eq.active", nil)
+	chain, _, err := h.parseRPCChain(c, fn, map[string]bool{}, 1)
+	if err != nil {
+		t.Fatalf("parseRPCChain: %v", err)
+	}
+
+	call := `SELECT * FROM public."users_by_status"()`
+	got, _ := wrapRPCCallForChain(call, chain, 1)
+
+	if !strings.Contains(got, "_rpc.status = $") {
+		t.Errorf("expected _rpc.status in HAVING, got: %s", got)
+	}
+	if strings.Contains(got, "users.status =") {
+		t.Errorf("HAVING should not reference table name, got: %s", got)
+	}
+}
+
 // TestParseRPCChain_Select verifies that parseRPCChain reads select=…,
 // validates columns against the target setof table, and stores parsed
 // items on the chain. Unknown columns must be rejected up front so the

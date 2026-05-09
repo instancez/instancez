@@ -242,6 +242,88 @@ func TestBuildSelectQuery_BelongsToFilterGoesToOuterWhere(t *testing.T) {
 	}
 }
 
+// Regression: a parent-side filter on a column that exists on both the base
+// table and a belongs-to embed (e.g. `id` on every table) must be qualified
+// with the base table name. Without qualification Postgres errors with
+// "column reference \"id\" is ambiguous" once the embed adds a JOIN.
+func TestBuildSelectQuery_ParentWhereQualifiedWhenBelongsToJoinPresent(t *testing.T) {
+	tables := postsAuthorTables()
+	qp := &QueryParams{
+		Select: []string{"id", "title", "author(id,name)"},
+		Embeds: []Embed{{
+			Name:      "author",
+			Columns:   []string{"id", "name"},
+			FKColumn:  "author_id",
+			RefTable:  "authors",
+			RefColumn: "id",
+		}},
+		Where: andLeaves(Filter{Column: "id", Operator: "eq", Value: "1"}),
+		Limit: 20,
+	}
+	sql, _ := buildSelectQuery("posts", qp, tables["posts"])
+	if !strings.Contains(sql, "WHERE posts.id = $1") {
+		t.Errorf("expected parent WHERE qualified as posts.id, got: %s", sql)
+	}
+}
+
+// Without belongs-to JOINs, parent WHERE columns stay unqualified — the
+// schema is single-table and qualification would be noise. This guards
+// against over-eager rewriting in the no-embed and has-many-only paths.
+func TestBuildSelectQuery_ParentWhereUnqualifiedWithoutBelongsToJoin(t *testing.T) {
+	tables := postsAuthorTables()
+	qp := &QueryParams{
+		Select: []string{"*"},
+		Where:  andLeaves(Filter{Column: "id", Operator: "eq", Value: "1"}),
+		Limit:  20,
+	}
+	sql, _ := buildSelectQuery("posts", qp, tables["posts"])
+	if !strings.Contains(sql, "WHERE id = $1") {
+		t.Errorf("expected unqualified WHERE without joins, got: %s", sql)
+	}
+
+	// Has-many embeds emit correlated subselects, not JOINs, so the outer
+	// scope is still single-table and qualification is unnecessary.
+	qpHasMany := &QueryParams{
+		Select: []string{"*", "posts(*)"},
+		Embeds: []Embed{{
+			Name: "posts", IsReverse: true,
+			FKColumn: "author_id", RefTable: "posts", RefColumn: "id",
+		}},
+		Where: andLeaves(Filter{Column: "id", Operator: "eq", Value: "1"}),
+		Limit: 20,
+	}
+	sql, _ = buildSelectQueryFull("authors", qpHasMany, tables["authors"], tables)
+	if !strings.Contains(sql, "WHERE id = $1") {
+		t.Errorf("has-many-only embed should leave parent WHERE unqualified, got: %s", sql)
+	}
+}
+
+// Regression: ORDER BY against a column not in the explicit SELECT list must
+// also be qualified once a belongs-to JOIN is present. When the column IS in
+// the SELECT, Postgres resolves output-list aliases first and would not be
+// ambiguous, but we qualify uniformly here for clarity.
+func TestBuildSelectQuery_OrderByQualifiedWhenBelongsToJoinPresent(t *testing.T) {
+	tables := postsAuthorTables()
+	qp := &QueryParams{
+		// `id` deliberately omitted from select — output-list resolution
+		// can't save us, so the FROM-side reference must be qualified.
+		Select: []string{"title", "author(id,name)"},
+		Embeds: []Embed{{
+			Name:      "author",
+			Columns:   []string{"id", "name"},
+			FKColumn:  "author_id",
+			RefTable:  "authors",
+			RefColumn: "id",
+		}},
+		Order: []OrderClause{{Column: "id"}},
+		Limit: 20,
+	}
+	sql, _ := buildSelectQuery("posts", qp, tables["posts"])
+	if !strings.Contains(sql, "ORDER BY posts.id ASC") {
+		t.Errorf("expected ORDER BY qualified as posts.id, got: %s", sql)
+	}
+}
+
 func TestBuildSelectQuery_HasManyInnerEmitsExists(t *testing.T) {
 	tables := postsAuthorTables()
 	// authors?select=*,posts!inner(*) — only authors with at least 1 post.
@@ -484,7 +566,7 @@ func TestParseQueryParams_SpreadOnHasManyRejected(t *testing.T) {
 // --- Nested embed parsing tests ---
 
 func TestParseEmbedParam_Nested(t *testing.T) {
-	name, cols, nested, spread := parseEmbedParam("author(*,posts(*))")
+	name, _, cols, nested, spread := parseEmbedParam("author(*,posts(*))")
 	if name != "author" {
 		t.Errorf("name = %q", name)
 	}
@@ -500,7 +582,7 @@ func TestParseEmbedParam_Nested(t *testing.T) {
 }
 
 func TestParseEmbedParam_NestedWithCols(t *testing.T) {
-	name, cols, nested, _ := parseEmbedParam("author(name,posts(title))")
+	name, _, cols, nested, _ := parseEmbedParam("author(name,posts(title))")
 	if name != "author" {
 		t.Errorf("name = %q", name)
 	}
@@ -513,7 +595,7 @@ func TestParseEmbedParam_NestedWithCols(t *testing.T) {
 }
 
 func TestParseEmbedParam_Spread(t *testing.T) {
-	name, cols, _, spread := parseEmbedParam("...author(name)")
+	name, _, cols, _, spread := parseEmbedParam("...author(name)")
 	if name != "author" {
 		t.Errorf("name = %q", name)
 	}
@@ -526,7 +608,7 @@ func TestParseEmbedParam_Spread(t *testing.T) {
 }
 
 func TestParseEmbedParam_SpreadStar(t *testing.T) {
-	name, cols, _, spread := parseEmbedParam("...author(*)")
+	name, _, cols, _, spread := parseEmbedParam("...author(*)")
 	if name != "author" {
 		t.Errorf("name = %q", name)
 	}

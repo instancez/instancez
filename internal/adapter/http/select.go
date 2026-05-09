@@ -174,6 +174,22 @@ func isAggSelectEntry(raw string) bool {
 	return false
 }
 
+// splitEmbedAlias splits an embed name like "alias:relation" into
+// ("alias", "relation"). Returns ("", s) when no alias prefix is present.
+// A "::" sequence is treated as part of a cast and is not an alias separator,
+// matching the behaviour of parseSelectItem on plain select entries.
+func splitEmbedAlias(s string) (alias, name string) {
+	for i := 0; i < len(s); i++ {
+		if s[i] == ':' {
+			if i+1 < len(s) && s[i+1] == ':' {
+				break
+			}
+			return s[:i], s[i+1:]
+		}
+	}
+	return "", s
+}
+
 // parseEmbedHint extracts "!inner"/"!left" join modifiers and an optional
 // FK disambiguation hint from an embed name. PostgREST allows syntax like:
 //

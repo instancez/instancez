@@ -487,7 +487,7 @@ func TestParseEmbedParam(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			name, cols, _, _ := parseEmbedParam(tt.input)
+			name, _, cols, _, _ := parseEmbedParam(tt.input)
 			if name != tt.wantName {
 				t.Errorf("name = %q, want %q", name, tt.wantName)
 			}
