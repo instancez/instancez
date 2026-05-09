@@ -389,7 +389,7 @@ func TestGenerateAuthFlowState(t *testing.T) {
 	mustContain(t, ddl, "redirect_to TEXT")
 	mustContain(t, ddl, "linking_user_id TEXT")
 	mustContain(t, ddl, "auth_code_issued_at TIMESTAMPTZ")
-	mustContain(t, ddl, "CREATE INDEX IF NOT EXISTS idx_flow_state_auth_code ON auth.flow_state (auth_code)")
+	mustContain(t, ddl, "CREATE UNIQUE INDEX IF NOT EXISTS idx_flow_state_auth_code ON auth.flow_state (auth_code) WHERE auth_code IS NOT NULL")
 	mustContain(t, ddl, "CREATE INDEX IF NOT EXISTS idx_flow_state_user_id_auth_method ON auth.flow_state (user_id, authentication_method)")
 
 	// And the old tables must NOT be emitted.

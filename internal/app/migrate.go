@@ -480,7 +480,11 @@ func generateAuthTables(auth *domain.Auth) []string {
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );`)
-	ddl = append(ddl, `CREATE INDEX IF NOT EXISTS idx_flow_state_auth_code ON auth.flow_state (auth_code);`)
+	// auth_code uniqueness is enforced via a partial unique index because the
+	// column is nullable (linking flows can leave it empty). Pre-merge, both
+	// _auth_codes.code and _oauth_states.state were PRIMARY KEY; this preserves
+	// that uniqueness invariant for the merged table.
+	ddl = append(ddl, `CREATE UNIQUE INDEX IF NOT EXISTS idx_flow_state_auth_code ON auth.flow_state (auth_code) WHERE auth_code IS NOT NULL;`)
 	ddl = append(ddl, `CREATE INDEX IF NOT EXISTS idx_flow_state_user_id_auth_method ON auth.flow_state (user_id, authentication_method);`)
 
 	return ddl
