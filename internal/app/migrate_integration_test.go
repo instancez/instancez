@@ -1322,7 +1322,7 @@ func TestIntegration_StorageTable(t *testing.T) {
 	db := startPostgres(t)
 	ctx := context.Background()
 
-	// Auth is required for the users FK in _objects.
+	// Auth is required for the users FK in storage.objects.
 	cfg := &domain.Config{
 		Version: 1,
 		Auth:    &domain.Auth{},
@@ -1337,14 +1337,14 @@ func TestIntegration_StorageTable(t *testing.T) {
 		t.Fatalf("apply: %v", err)
 	}
 
-	if !tableExists(t, db, "_objects") {
-		t.Fatal("_objects table should exist")
+	if !tableExists(t, db, "storage.objects") {
+		t.Fatal("storage.objects table should exist")
 	}
-	if !columnExists(t, db, "_objects", "bucket_id") {
+	if !columnExists(t, db, "storage.objects", "bucket_id") {
 		t.Fatal("bucket_id column should exist")
 	}
 
-	if !policyExists(t, db, "_objects", "avatars_public_select") {
+	if !policyExists(t, db, "storage.objects", "avatars_public_select") {
 		t.Fatal("public select policy should exist for avatars bucket")
 	}
 }
