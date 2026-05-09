@@ -82,7 +82,7 @@ func planFromScratchStatements(cfg *domain.Config, roles domain.Roles) []string 
 
 	// Users table (core auth columns).
 	if cfg.Auth != nil {
-		ddl = append(ddl, generateUsersTable(cfg.Auth)...)
+		ddl = append(ddl, generateAuthTables(cfg.Auth)...)
 	}
 
 	// Tables in dependency order (FKs reference other tables).
@@ -348,44 +348,44 @@ func orderedSchemas(cfg *domain.Config) []string {
 	return out
 }
 
-func generateUsersTable(auth *domain.Auth) []string {
+// generateAuthTables emits the auth.* tables. All tables live in the auth
+// schema; the underscore prefixes used pre-schema-move are dropped because
+// the schema already provides the namespace. Names align with Supabase's
+// auth schema where they map cleanly.
+//
+// Task 7 (separate commit) will add auth.flow_state consolidating PKCE
+// auth codes and OAuth state; this function intentionally does not emit
+// either today.
+func generateAuthTables(auth *domain.Auth) []string {
 	var ddl []string
 
-	// pgcrypto provides gen_random_uuid(); safe to request idempotently.
+	// pgcrypto provides gen_random_uuid().
 	ddl = append(ddl, `CREATE EXTENSION IF NOT EXISTS pgcrypto;`)
+	// Ensure the auth schema exists before we put tables in it. (Schema GRANTs
+	// are emitted separately by generateSchemaGrants once orderedSchemas
+	// includes "auth"; see Task 8.)
+	ddl = append(ddl, `CREATE SCHEMA IF NOT EXISTS auth;`)
 
-	var cols []string
-	// UUID primary key mirrors GoTrue (auth.users.id uuid).
-	cols = append(cols, "id UUID PRIMARY KEY DEFAULT gen_random_uuid()")
-	cols = append(cols, "email TEXT NOT NULL UNIQUE")
-	cols = append(cols, "password_hash TEXT")
-	cols = append(cols, "email_verified BOOLEAN NOT NULL DEFAULT FALSE")
-	// GoTrue surfaces these timestamps on the user object.
-	cols = append(cols, "email_confirmed_at TIMESTAMPTZ")
-	cols = append(cols, "last_sign_in_at TIMESTAMPTZ")
-	// Arbitrary app/user metadata blobs, read into JWT claims and the
-	// /auth/v1/user response. raw_app_meta_data is server-managed; clients
-	// can only write raw_user_meta_data via signup data / updateUser data.
-	cols = append(cols, "raw_app_meta_data JSONB NOT NULL DEFAULT '{}'::jsonb")
-	cols = append(cols, "raw_user_meta_data JSONB NOT NULL DEFAULT '{}'::jsonb")
-	cols = append(cols, "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()")
-	cols = append(cols, "updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+	// auth.users
+	{
+		var cols []string
+		cols = append(cols, "id UUID PRIMARY KEY DEFAULT gen_random_uuid()")
+		cols = append(cols, "email TEXT UNIQUE")
+		cols = append(cols, "password_hash TEXT")
+		cols = append(cols, "email_verified BOOLEAN NOT NULL DEFAULT FALSE")
+		cols = append(cols, "email_confirmed_at TIMESTAMPTZ")
+		cols = append(cols, "last_sign_in_at TIMESTAMPTZ")
+		cols = append(cols, "raw_app_meta_data JSONB NOT NULL DEFAULT '{}'::jsonb")
+		cols = append(cols, "raw_user_meta_data JSONB NOT NULL DEFAULT '{}'::jsonb")
+		cols = append(cols, "is_anonymous BOOLEAN NOT NULL DEFAULT FALSE")
+		cols = append(cols, "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+		cols = append(cols, "updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()")
 
-	ddl = append(ddl, fmt.Sprintf("CREATE TABLE IF NOT EXISTS users (\n  %s\n);", strings.Join(cols, ",\n  ")))
+		ddl = append(ddl, fmt.Sprintf("CREATE TABLE IF NOT EXISTS auth.users (\n  %s\n);", strings.Join(cols, ",\n  ")))
+	}
 
-	// Additive column for anonymous sign-in support. Declared as an ALTER
-	// outside the CREATE TABLE block so existing deployments pick it up on
-	// the next migration without needing a destructive schema reset.
-	ddl = append(ddl, `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_anonymous BOOLEAN NOT NULL DEFAULT FALSE;`)
-	// Email is nullable for anonymous users (they have no mailbox). The
-	// original CREATE declared email NOT NULL UNIQUE, so drop the NOT NULL
-	// on existing deployments; the UNIQUE constraint stays and Postgres
-	// permits multiple NULLs under a regular UNIQUE by default.
-	ddl = append(ddl, `ALTER TABLE users ALTER COLUMN email DROP NOT NULL;`)
-
-	// JWT signing keys. Managed by app.JWTKeyManager; ultrabase generates
-	// a random HS256 key on first startup and never exposes it in YAML.
-	ddl = append(ddl, `CREATE TABLE IF NOT EXISTS _auth_jwt_keys (
+	// auth.jwt_keys — managed by app.JWTKeyManager.
+	ddl = append(ddl, `CREATE TABLE IF NOT EXISTS auth.jwt_keys (
   kid TEXT PRIMARY KEY,
   secret BYTEA NOT NULL,
   algorithm TEXT NOT NULL,
@@ -393,10 +393,10 @@ func generateUsersTable(auth *domain.Auth) []string {
   retired_at TIMESTAMPTZ
 );`)
 
-	// User identities table for OAuth
-	ddl = append(ddl, `CREATE TABLE IF NOT EXISTS _user_identities (
+	// auth.identities — OAuth identity links.
+	ddl = append(ddl, `CREATE TABLE IF NOT EXISTS auth.identities (
   id BIGSERIAL PRIMARY KEY,
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   provider TEXT NOT NULL,
   provider_user_id TEXT NOT NULL,
   identity_data JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -407,45 +407,39 @@ func generateUsersTable(auth *domain.Auth) []string {
   UNIQUE(provider, provider_user_id)
 );`)
 
-	// Refresh tokens table
 	if auth.RefreshTokens {
-		ddl = append(ddl, `CREATE TABLE IF NOT EXISTS _refresh_tokens (
+		ddl = append(ddl, `CREATE TABLE IF NOT EXISTS auth.refresh_tokens (
   id BIGSERIAL PRIMARY KEY,
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   token TEXT NOT NULL UNIQUE,
   expires_at TIMESTAMPTZ NOT NULL,
+  session_id TEXT,
+  ip TEXT,
+  user_agent TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );`)
-		ddl = append(ddl, `ALTER TABLE _refresh_tokens ADD COLUMN IF NOT EXISTS session_id TEXT;`)
-		ddl = append(ddl, `ALTER TABLE _refresh_tokens ADD COLUMN IF NOT EXISTS ip TEXT;`)
-		ddl = append(ddl, `ALTER TABLE _refresh_tokens ADD COLUMN IF NOT EXISTS user_agent TEXT;`)
 	}
 
-	// Email verifications table (for verify email + password reset tokens)
 	if auth.Email != nil {
-		ddl = append(ddl, `CREATE TABLE IF NOT EXISTS _auth_email_verifications (
+		ddl = append(ddl, `CREATE TABLE IF NOT EXISTS auth.one_time_tokens (
   id BIGSERIAL PRIMARY KEY,
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   token TEXT NOT NULL UNIQUE,
   purpose TEXT NOT NULL DEFAULT 'signup',
+  email TEXT,
+  code TEXT,
   expires_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );`)
-		// Additive columns for 6-digit OTP support. `code` is the numeric
-		// token a user types into a form; `email` scopes lookups so two
-		// users can't collide on the same random 6 digits. Both are
-		// nullable so legacy signup/recovery rows keep working.
-		ddl = append(ddl, `ALTER TABLE _auth_email_verifications ADD COLUMN IF NOT EXISTS code TEXT;`)
-		ddl = append(ddl, `ALTER TABLE _auth_email_verifications ADD COLUMN IF NOT EXISTS email TEXT;`)
-		ddl = append(ddl, `CREATE INDEX IF NOT EXISTS _auth_email_verif_email_code_idx ON _auth_email_verifications (email, code);`)
+		ddl = append(ddl, `CREATE INDEX IF NOT EXISTS idx_one_time_tokens_email_code ON auth.one_time_tokens (email, code);`)
 	}
 
-	// MFA: TOTP factors + challenges. We always create these (the
-	// migration cost is trivial and gating on a config flag would force
-	// callers to restart ultrabase just to enable 2FA).
-	ddl = append(ddl, `CREATE TABLE IF NOT EXISTS _mfa_factors (
+	// auth.mfa_factors / auth.mfa_challenges — TOTP MFA. Always emitted
+	// (the migration cost is trivial and gating on a config flag would
+	// force callers to restart ultrabase just to enable 2FA).
+	ddl = append(ddl, `CREATE TABLE IF NOT EXISTS auth.mfa_factors (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   friendly_name TEXT,
   factor_type TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'unverified',
@@ -453,33 +447,13 @@ func generateUsersTable(auth *domain.Auth) []string {
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );`)
-	ddl = append(ddl, `CREATE INDEX IF NOT EXISTS _mfa_factors_user_idx ON _mfa_factors (user_id);`)
-	ddl = append(ddl, `CREATE TABLE IF NOT EXISTS _mfa_challenges (
+	ddl = append(ddl, `CREATE INDEX IF NOT EXISTS idx_mfa_factors_user ON auth.mfa_factors (user_id);`)
+	ddl = append(ddl, `CREATE TABLE IF NOT EXISTS auth.mfa_challenges (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  factor_id UUID NOT NULL REFERENCES _mfa_factors(id) ON DELETE CASCADE,
+  factor_id UUID NOT NULL REFERENCES auth.mfa_factors(id) ON DELETE CASCADE,
   verified_at TIMESTAMPTZ,
   ip_address TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);`)
-
-	// OAuth state + PKCE auth codes
-	ddl = append(ddl, `CREATE TABLE IF NOT EXISTS _oauth_states (
-  state TEXT PRIMARY KEY,
-  code_challenge TEXT,
-  code_challenge_method TEXT,
-  redirect_to TEXT,
-  provider TEXT NOT NULL,
-  linking_user_id TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  expires_at TIMESTAMPTZ NOT NULL
-);`)
-	ddl = append(ddl, `CREATE TABLE IF NOT EXISTS _auth_codes (
-  code TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  code_challenge TEXT NOT NULL,
-  code_challenge_method TEXT NOT NULL DEFAULT 'S256',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  expires_at TIMESTAMPTZ NOT NULL
 );`)
 
 	return ddl

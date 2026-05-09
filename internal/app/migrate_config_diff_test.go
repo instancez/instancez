@@ -806,9 +806,9 @@ func TestDiffConfigs_NewAuth(t *testing.T) {
 	diff := diffConfigs(old, new)
 	joined := strings.Join(diff.Additions, "\n")
 
-	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS users")
-	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS _refresh_tokens")
-	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS _auth_email_verifications")
+	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS auth.users")
+	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS auth.refresh_tokens")
+	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS auth.one_time_tokens")
 }
 
 func TestDiffConfigs_AuthRefreshTokensAdded(t *testing.T) {
@@ -826,7 +826,7 @@ func TestDiffConfigs_AuthRefreshTokensAdded(t *testing.T) {
 	diff := diffConfigs(old, new)
 	joined := strings.Join(diff.Additions, "\n")
 
-	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS _refresh_tokens")
+	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS auth.refresh_tokens")
 }
 
 func TestDiffConfigs_NormalizeType(t *testing.T) {

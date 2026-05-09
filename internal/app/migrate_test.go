@@ -151,35 +151,45 @@ func TestGenerateTable_Default(t *testing.T) {
 	mustContain(t, joined, "DEFAULT FALSE")
 }
 
-func TestGenerateUsersTable(t *testing.T) {
+func TestGenerateAuthTables(t *testing.T) {
 	auth := &domain.Auth{
 		RefreshTokens: true,
 		Email:         &domain.AuthEmail{VerifyEmail: true},
 	}
-	ddl := generateUsersTable(auth)
+	ddl := generateAuthTables(auth)
 	joined := strings.Join(ddl, "\n")
 
-	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS users")
-	mustContain(t, joined, "email TEXT NOT NULL UNIQUE")
+	mustContain(t, joined, "CREATE SCHEMA IF NOT EXISTS auth")
+	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS auth.users")
+	mustContain(t, joined, "email TEXT UNIQUE")
 	mustContain(t, joined, "password_hash TEXT")
 	mustContain(t, joined, "email_verified BOOLEAN")
-	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS _user_identities")
-	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS _refresh_tokens")
-	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS _auth_email_verifications")
+	mustContain(t, joined, "is_anonymous BOOLEAN NOT NULL DEFAULT FALSE")
+	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS auth.identities")
+	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS auth.refresh_tokens")
+	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS auth.one_time_tokens")
+	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS auth.jwt_keys")
+	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS auth.mfa_factors")
+	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS auth.mfa_challenges")
+	mustContain(t, joined, "CREATE INDEX IF NOT EXISTS idx_one_time_tokens_email_code ON auth.one_time_tokens")
+	mustContain(t, joined, "CREATE INDEX IF NOT EXISTS idx_mfa_factors_user ON auth.mfa_factors")
+	// TODO Task 7: replacement auth.flow_state should consolidate
+	// PKCE auth codes + OAuth state. Re-add an assertion for
+	// "CREATE TABLE IF NOT EXISTS auth.flow_state" once Task 7 lands.
 }
 
-func TestGenerateUsersTable_NoRefreshTokens(t *testing.T) {
+func TestGenerateAuthTables_NoRefreshTokens(t *testing.T) {
 	auth := &domain.Auth{
 		RefreshTokens: false,
 	}
-	ddl := generateUsersTable(auth)
+	ddl := generateAuthTables(auth)
 	joined := strings.Join(ddl, "\n")
 
-	if strings.Contains(joined, "_refresh_tokens") {
-		t.Error("should not create _refresh_tokens when refresh_tokens is false")
+	if strings.Contains(joined, "auth.refresh_tokens") {
+		t.Error("should not create auth.refresh_tokens when refresh_tokens is false")
 	}
-	if strings.Contains(joined, "_auth_email_verifications") {
-		t.Error("should not create _auth_email_verifications when email is nil")
+	if strings.Contains(joined, "auth.one_time_tokens") {
+		t.Error("should not create auth.one_time_tokens when email is nil")
 	}
 }
 

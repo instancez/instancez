@@ -243,39 +243,42 @@ func diffNewExtensions(old, new *domain.Config) []string {
 }
 
 // diffNewAuth returns DDL for auth table additions. If auth is newly added,
-// generates the full users table. If auth already existed, handles additive
+// generates the full auth schema. If auth already existed, handles additive
 // schema changes (refresh tokens, email verification).
 func diffNewAuth(old, new *domain.Config) []string {
 	if new.Auth == nil {
 		return nil
 	}
 	if old.Auth == nil {
-		return generateUsersTable(new.Auth)
+		return generateAuthTables(new.Auth)
 	}
 	var ddl []string
 	// Handle transition to refresh tokens
 	if new.Auth.RefreshTokens && !old.Auth.RefreshTokens {
-		ddl = append(ddl, `CREATE TABLE IF NOT EXISTS _refresh_tokens (
+		ddl = append(ddl, `CREATE TABLE IF NOT EXISTS auth.refresh_tokens (
   id BIGSERIAL PRIMARY KEY,
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   token TEXT NOT NULL UNIQUE,
   expires_at TIMESTAMPTZ NOT NULL,
+  session_id TEXT,
+  ip TEXT,
+  user_agent TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );`)
 	}
 	// Handle transition to email verification
 	if new.Auth.Email != nil && old.Auth.Email == nil {
-		ddl = append(ddl, `CREATE TABLE IF NOT EXISTS _auth_email_verifications (
+		ddl = append(ddl, `CREATE TABLE IF NOT EXISTS auth.one_time_tokens (
   id BIGSERIAL PRIMARY KEY,
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   token TEXT NOT NULL UNIQUE,
   purpose TEXT NOT NULL DEFAULT 'signup',
+  email TEXT,
+  code TEXT,
   expires_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );`)
-		ddl = append(ddl, `ALTER TABLE _auth_email_verifications ADD COLUMN IF NOT EXISTS code TEXT;`)
-		ddl = append(ddl, `ALTER TABLE _auth_email_verifications ADD COLUMN IF NOT EXISTS email TEXT;`)
-		ddl = append(ddl, `CREATE INDEX IF NOT EXISTS _auth_email_verif_email_code_idx ON _auth_email_verifications (email, code);`)
+		ddl = append(ddl, `CREATE INDEX IF NOT EXISTS idx_one_time_tokens_email_code ON auth.one_time_tokens (email, code);`)
 	}
 	return ddl
 }
