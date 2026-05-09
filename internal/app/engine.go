@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/saedx1/ultrabase/internal/config"
 	"github.com/saedx1/ultrabase/internal/csvutil"
 	"github.com/saedx1/ultrabase/internal/domain"
 	"golang.org/x/crypto/bcrypt"
@@ -43,6 +44,10 @@ type Engine struct {
 	allowDestructive bool
 	watch            bool
 	configPath       string // for hot-reload watcher
+
+	// Drift / config-source state populated during Start.
+	drift  *DriftTracker
+	source config.Source
 }
 
 type Mode int
@@ -64,6 +69,7 @@ func WithHTTPServer(s HTTPServer) EngineOption          { return func(e *Engine)
 func WithWALConsumer(w domain.WALConsumer) EngineOption { return func(e *Engine) { e.walConsumer = w } }
 func WithEventWorker(w *EventWorker) EngineOption       { return func(e *Engine) { e.eventWorker = w } }
 func WithConfigPath(p string) EngineOption              { return func(e *Engine) { e.configPath = p } }
+func WithConfigSource(s config.Source) EngineOption     { return func(e *Engine) { e.source = s } }
 
 func NewEngine(cfg *domain.Config, ownerDB domain.OwnerDB, authDB domain.RequestDB, roles domain.Roles, opts ...EngineOption) *Engine {
 	e := &Engine{
@@ -83,20 +89,83 @@ func NewEngine(cfg *domain.Config, ownerDB domain.OwnerDB, authDB domain.Request
 	return e
 }
 
+// Drift returns the engine's drift tracker (or nil before Start has run).
+func (e *Engine) Drift() *DriftTracker {
+	return e.drift
+}
+
+// sourceDescription returns a stable, human-readable identifier for the
+// active config source for use in logs and the drift snapshot.
+func (e *Engine) sourceDescription() string {
+	if e.source != nil {
+		return e.source.Describe()
+	}
+	if e.configPath != "" {
+		return e.configPath
+	}
+	return "unknown"
+}
+
+// applyMigrationsWithFallback runs migrations against e.cfg. On success it
+// returns a DriftTracker in OK state. On failure, it attempts to load the
+// last-known-good config from _ultrabase_migrations.config_json and
+// continues running with that config, returning a DriftTracker in drift
+// state. If no last-known-good exists (first boot), it returns the original
+// migration error so the caller can fail fast.
+func (e *Engine) applyMigrationsWithFallback(ctx context.Context) (*DriftTracker, error) {
+	tracker := NewDriftTracker(e.sourceDescription())
+
+	configJSON, _ := json.Marshal(e.cfg)
+	checksum := fmt.Sprintf("%x", sha256.Sum256(configJSON))
+
+	if err := e.migrator.Apply(ctx, e.cfg); err == nil {
+		tracker.MarkOK(checksum, time.Now())
+		return tracker, nil
+	} else {
+		applyErr := err
+
+		last, lastErr := e.ownerDB.GetLastMigration(ctx)
+		if lastErr != nil {
+			return nil, fmt.Errorf("migration failed (%w) and could not load last-known-good: %v", applyErr, lastErr)
+		}
+		if last == nil || last.ConfigJSON == "" || last.ConfigJSON == "{}" {
+			return nil, fmt.Errorf("first-boot migration failed: %w", applyErr)
+		}
+
+		var goodCfg domain.Config
+		if err := json.Unmarshal([]byte(last.ConfigJSON), &goodCfg); err != nil {
+			return nil, fmt.Errorf("migration failed and last-known-good is unparseable: %v (apply error: %w)", err, applyErr)
+		}
+
+		e.logger.Error("config drift: source has unapplied changes",
+			"source", e.sourceDescription(),
+			"reason", applyErr.Error(),
+			"running_applied_at", last.AppliedAt,
+		)
+		e.cfg = &goodCfg
+		tracker.MarkOK(last.Checksum, last.AppliedAt)
+		tracker.MarkDrift(checksum, applyErr.Error(), time.Now())
+		return tracker, nil
+	}
+}
+
 // Start runs the full startup sequence and blocks until shutdown.
 func (e *Engine) Start(ctx context.Context) error {
 	start := time.Now()
 
 	e.logger.Info("starting ultrabase", "mode", e.modeStr())
 
-	// 1. Migrate
+	// 1. Migrate (with last-known-good fallback)
 	t := time.Now()
-	if e.mode == ModeDev {
-		if err := e.migrator.Apply(ctx, e.cfg); err != nil {
+	if e.mode == ModeDev || e.migrate {
+		tracker, err := e.applyMigrationsWithFallback(ctx)
+		if err != nil {
 			return fmt.Errorf("migration failed: %w", err)
 		}
+		e.drift = tracker
 		e.logger.Info("migrations applied", "duration", time.Since(t).Round(time.Millisecond))
 	} else {
+		// migrate=false on serve: only check, never mutate the schema.
 		if err := e.ownerDB.EnsureMigrationsTable(ctx); err != nil {
 			return fmt.Errorf("migration check: %w", err)
 		}
@@ -105,21 +174,24 @@ func (e *Engine) Start(ctx context.Context) error {
 			return fmt.Errorf("migration check: %w", err)
 		}
 		if last == nil {
-			if err := e.migrator.Apply(ctx, e.cfg); err != nil {
+			tracker, err := e.applyMigrationsWithFallback(ctx)
+			if err != nil {
 				return fmt.Errorf("initial migration failed: %w", err)
 			}
+			e.drift = tracker
 			e.logger.Info("initial migration applied", "duration", time.Since(t).Round(time.Millisecond))
-		} else if e.migrate {
-			if err := e.migrator.Apply(ctx, e.cfg); err != nil {
-				return fmt.Errorf("migration failed: %w", err)
-			}
-			e.logger.Info("migrations applied", "duration", time.Since(t).Round(time.Millisecond))
 		} else {
 			configJSON, _ := json.Marshal(e.cfg)
-			configChecksum := fmt.Sprintf("%x", sha256.Sum256(configJSON))
-			if last.Checksum != configChecksum {
+			checksum := fmt.Sprintf("%x", sha256.Sum256(configJSON))
+			tracker := NewDriftTracker(e.sourceDescription())
+			if last.Checksum == checksum {
+				tracker.MarkOK(last.Checksum, last.AppliedAt)
+			} else {
 				e.logger.Warn("config has changed since last migration; run with --migrate to apply pending changes")
+				tracker.MarkOK(last.Checksum, last.AppliedAt)
+				tracker.MarkDrift(checksum, "config changed but --migrate not set", time.Now())
 			}
+			e.drift = tracker
 		}
 	}
 
