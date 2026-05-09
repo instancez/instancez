@@ -11,16 +11,16 @@ export function ProductDetail({ productId, onClose, onImageChange }) {
   const [minRating, setMinRating] = useState(1)
   const [error, setError] = useState(null)
 
-  const load = useCallback(async () => {
-    setError(null)
-    // Demonstrates embed-scoped filters and order:
-    // reviews.rating=gte.<n>, reviews.order=rating.desc, reviews.limit=5.
-    // Also: !inner on category, alias (category:categories), and a cast
-    // (price_numeric:price_cents::numeric) turned into a client-friendly shape.
-    const { data, error } = await supabase
-      .from('products')
-      .select(
-        `
+  // Demonstrates embed-scoped filters and order:
+  // reviews.rating=gte.<n>, reviews.order=rating.desc, reviews.limit=5.
+  // Also: !inner on category, alias (category:categories), and a cast
+  // (price_numeric:price_cents::numeric) turned into a client-friendly shape.
+  const fetchProduct = useCallback(
+    () =>
+      supabase
+        .from('products')
+        .select(
+          `
         id,
         name,
         description,
@@ -34,27 +34,38 @@ export function ProductDetail({ productId, onClose, onImageChange }) {
         category:categories!inner(id,slug,name),
         reviews(id,author,rating,body,created_at,user_id)
         `,
-      )
-      .eq('id', productId)
-      .gte('reviews.rating', minRating)
-      .order('rating', { ascending: false, foreignTable: 'reviews' })
-      .limit(5, { foreignTable: 'reviews' })
-      .single()
+        )
+        .eq('id', productId)
+        .gte('reviews.rating', minRating)
+        .order('rating', { ascending: false, foreignTable: 'reviews' })
+        .limit(5, { foreignTable: 'reviews' })
+        .single(),
+    [productId, minRating],
+  )
 
+  const load = useCallback(async () => {
+    setError(null)
+    const { data, error } = await fetchProduct()
     if (error) setError(error.message)
     else setProduct(data)
-  }, [productId, minRating])
+  }, [fetchProduct])
 
+  // Effect-driven load uses an `active` flag so StrictMode's double-invoke
+  // and out-of-order completions can't leave the component stuck showing
+  // "Loading…": skip the setState when this closure has been superseded.
   useEffect(() => {
-    let cancelled = false
+    let active = true
     ;(async () => {
-      await load()
-      if (cancelled) setProduct(null)
+      setError(null)
+      const { data, error } = await fetchProduct()
+      if (!active) return
+      if (error) setError(error.message)
+      else setProduct(data)
     })()
     return () => {
-      cancelled = true
+      active = false
     }
-  }, [load])
+  }, [fetchProduct])
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
