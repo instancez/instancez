@@ -10,6 +10,7 @@ import (
 	ultrahttp "github.com/saedx1/ultrabase/internal/adapter/http"
 	"github.com/saedx1/ultrabase/internal/app"
 	"github.com/saedx1/ultrabase/internal/config"
+	"github.com/saedx1/ultrabase/internal/domain"
 	"github.com/spf13/cobra"
 )
 
@@ -45,6 +46,13 @@ func runDev(opts devOptions) error {
 	errs := config.Validate(cfg)
 	if errs != nil {
 		return printPrettyErrors(errs)
+	}
+
+	// Build a Source handle for the engine + http deps (Tasks 10/11/12 use it
+	// for the watch loop and the admin PUT endpoint).
+	source, err := config.NewSource(opts.configPath)
+	if err != nil {
+		return err
 	}
 
 	if opts.port > 0 {
@@ -87,25 +95,44 @@ func runDev(opts devOptions) error {
 		fmt.Printf("  ✓ Storage provider: %s\n", cfg.Providers.Storage.Type)
 	}
 
-	// Create HTTP server
+	// Create HTTP server. The Drift/Config closures capture `engine` (declared
+	// below) so handlers see live engine state once Start has run; before
+	// Start they fall back to nil/cfg.
+	var engine *app.Engine
 	httpServer := ultrahttp.NewServer(ultrahttp.ServerDeps{
-		Config:     cfg,
-		DB:         authDB,
-		Logger:     logger,
-		DevMode:    true,
-		Email:      email,
-		Storage:    storage,
-		JWTKeys:    app.NewJWTKeyManager(ownerDB),
-		ConfigPath: opts.configPath,
+		Config:        cfg,
+		DB:            authDB,
+		Logger:        logger,
+		DevMode:       true,
+		Email:         email,
+		Storage:       storage,
+		JWTKeys:       app.NewJWTKeyManager(ownerDB),
+		ConfigPath:    opts.configPath,
+		DashboardMode: opts.dashboard.HTTP(),
+		ConfigSource:  source,
+		DriftFn: func() *app.DriftTracker {
+			if engine == nil {
+				return nil
+			}
+			return engine.Drift()
+		},
+		ConfigFn: func() *domain.Config {
+			if engine == nil {
+				return cfg
+			}
+			return engine.Config()
+		},
 	})
 
 	// Create and start engine with HTTP server
-	engine := app.NewEngine(cfg, ownerDB, authDB, roles,
+	engine = app.NewEngine(cfg, ownerDB, authDB, roles,
 		app.WithMode(app.ModeDev),
 		app.WithMigrate(true),
 		app.WithSeed(true),
 		app.WithWatch(opts.watch),
+		app.WithWatchInterval(opts.watchInterval),
 		app.WithConfigPath(opts.configPath),
+		app.WithConfigSource(source),
 		app.WithLogger(logger),
 		app.WithHTTPServer(httpServer),
 	)

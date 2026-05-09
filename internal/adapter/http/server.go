@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/saedx1/ultrabase/internal/app"
+	"github.com/saedx1/ultrabase/internal/config"
 	"github.com/saedx1/ultrabase/internal/domain"
 )
 
@@ -38,6 +39,11 @@ type ServerDeps struct {
 	JWTKeys         *app.JWTKeyManager // signing/verification keys (managed in DB)
 	ConfigPath      string             // path to ultrabase.yaml (for dashboard config editing)
 	DashboardAssets fs.FS              // embedded SPA assets (nil in dev mode)
+
+	DashboardMode DashboardMode            // disabled | readonly | readwrite
+	ConfigSource  config.Source            // for the watch + admin PUT
+	DriftFn       func() *app.DriftTracker // engine drift state (live closure; nil before Start)
+	ConfigFn      func() *domain.Config    // engine running config (lastGood when drifted)
 }
 
 // NewServer creates a new HTTP server with all routes mounted.
@@ -114,7 +120,7 @@ func NewServer(deps ServerDeps) *Server {
 	adminHandler.Mount(api)
 
 	// Dashboard SPA
-	MountDashboard(r, deps.DashboardAssets, deps.DevMode)
+	MountDashboard(r, deps.DashboardAssets, deps.DevMode, deps.DashboardMode)
 
 	return s
 }

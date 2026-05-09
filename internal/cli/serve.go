@@ -10,6 +10,7 @@ import (
 	ultrahttp "github.com/saedx1/ultrabase/internal/adapter/http"
 	"github.com/saedx1/ultrabase/internal/app"
 	"github.com/saedx1/ultrabase/internal/config"
+	"github.com/saedx1/ultrabase/internal/domain"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -127,27 +128,46 @@ func runServe(opts serveOptions) error {
 		adminConfigPath = fs.Path
 	}
 
-	// Create HTTP server
+	// Create HTTP server. The Drift/Config closures capture `engine` (declared
+	// below) so the handlers see live engine state once Start has run; before
+	// Start they fall back to nil/cfg.
+	var engine *app.Engine
 	httpServer := ultrahttp.NewServer(ultrahttp.ServerDeps{
-		Config:     cfg,
-		DB:         authDB,
-		Logger:     logger,
-		DevMode:    false,
-		Email:      email,
-		Storage:    storage,
-		JWTKeys:    app.NewJWTKeyManager(ownerDB),
-		ConfigPath: adminConfigPath,
+		Config:        cfg,
+		DB:            authDB,
+		Logger:        logger,
+		DevMode:       false,
+		Email:         email,
+		Storage:       storage,
+		JWTKeys:       app.NewJWTKeyManager(ownerDB),
+		ConfigPath:    adminConfigPath,
+		DashboardMode: opts.dashboard.HTTP(),
+		ConfigSource:  source,
+		DriftFn: func() *app.DriftTracker {
+			if engine == nil {
+				return nil
+			}
+			return engine.Drift()
+		},
+		ConfigFn: func() *domain.Config {
+			if engine == nil {
+				return cfg
+			}
+			return engine.Config()
+		},
 	})
 
 	// Create engine with HTTP server
-	engine := app.NewEngine(cfg, ownerDB, authDB, roles,
+	engine = app.NewEngine(cfg, ownerDB, authDB, roles,
 		app.WithMode(app.ModeProd),
 		app.WithMigrate(opts.migrate),
 		app.WithSeed(opts.loadData),
 		app.WithAllowDestructive(opts.allowDestructive),
-		app.WithWatch(false),
+		app.WithWatch(opts.watch),
+		app.WithWatchInterval(opts.watchInterval),
 		app.WithLogger(logger),
 		app.WithHTTPServer(httpServer),
+		app.WithConfigSource(source),
 	)
 
 	fmt.Printf("\n  Listening on :%d\n", cfg.Server.Port)

@@ -43,6 +43,7 @@ type Engine struct {
 	seed             bool
 	allowDestructive bool
 	watch            bool
+	watchInterval    time.Duration
 	configPath       string // for hot-reload watcher
 
 	// Drift / config-source state populated during Start.
@@ -70,6 +71,7 @@ func WithWALConsumer(w domain.WALConsumer) EngineOption { return func(e *Engine)
 func WithEventWorker(w *EventWorker) EngineOption       { return func(e *Engine) { e.eventWorker = w } }
 func WithConfigPath(p string) EngineOption              { return func(e *Engine) { e.configPath = p } }
 func WithConfigSource(s config.Source) EngineOption     { return func(e *Engine) { e.source = s } }
+func WithWatchInterval(d time.Duration) EngineOption    { return func(e *Engine) { e.watchInterval = d } }
 
 func NewEngine(cfg *domain.Config, ownerDB domain.OwnerDB, authDB domain.RequestDB, roles domain.Roles, opts ...EngineOption) *Engine {
 	e := &Engine{
@@ -92,6 +94,11 @@ func NewEngine(cfg *domain.Config, ownerDB domain.OwnerDB, authDB domain.Request
 // Drift returns the engine's drift tracker (or nil before Start has run).
 func (e *Engine) Drift() *DriftTracker {
 	return e.drift
+}
+
+// Config returns the live engine config (lastGood when drifted).
+func (e *Engine) Config() *domain.Config {
+	return e.cfg
 }
 
 // sourceDescription returns a stable, human-readable identifier for the

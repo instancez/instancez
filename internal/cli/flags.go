@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	ultrahttp "github.com/saedx1/ultrabase/internal/adapter/http"
 	"github.com/spf13/pflag"
 )
 
@@ -27,6 +28,19 @@ func (m DashboardMode) String() string {
 		return "readwrite"
 	default:
 		return "disabled"
+	}
+}
+
+// HTTP returns the http-package equivalent of the dashboard mode (avoids
+// an import cycle because http does not import cli).
+func (m DashboardMode) HTTP() ultrahttp.DashboardMode {
+	switch m {
+	case DashboardReadonly:
+		return ultrahttp.DashboardReadonly
+	case DashboardReadwrite:
+		return ultrahttp.DashboardReadwrite
+	default:
+		return ultrahttp.DashboardDisabled
 	}
 }
 
