@@ -3,6 +3,9 @@ import { useState, useEffect, lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
 import { Layout } from "./components/Layout";
 import { DialogProvider } from "./components/Dialog";
+import { DriftBanner } from "./components/DriftBanner";
+import { EditModeBanner } from "./components/EditModeBanner";
+import { useConfigStatus } from "./hooks/useConfigStatus";
 import { Login } from "./pages/Login";
 
 const Overview = lazy(() => import("./pages/Overview").then((m) => ({ default: m.Overview })));
@@ -23,6 +26,16 @@ function PageLoader() {
     <div className="flex items-center justify-center py-24">
       <Loader2 size={20} className="animate-spin text-accent" />
     </div>
+  );
+}
+
+function StatusBanners() {
+  const { data } = useConfigStatus();
+  return (
+    <>
+      <DriftBanner status={data} />
+      <EditModeBanner status={data} />
+    </>
   );
 }
 
@@ -49,6 +62,7 @@ export function App() {
 
   return (
     <DialogProvider>
+      <StatusBanners />
       <Suspense fallback={<PageLoader />}>
         <Routes>
           <Route element={<Layout />}>
