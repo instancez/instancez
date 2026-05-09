@@ -21,10 +21,23 @@ func startPostgres(t *testing.T) *postgres.DB {
 	return owner.Database.(*postgres.DB)
 }
 
+// splitSchemaTable accepts either a bare table name (defaulting schema to
+// "public") or a "schema.table" form and returns the two parts.
+func splitSchemaTable(name string) (schema, table string) {
+	schema = "public"
+	table = name
+	if i := strings.Index(name, "."); i >= 0 {
+		schema = name[:i]
+		table = name[i+1:]
+	}
+	return schema, table
+}
+
 func tableExists(t *testing.T, db *postgres.DB, name string) bool {
 	t.Helper()
+	schema, tbl := splitSchemaTable(name)
 	row, err := db.QueryRow(context.Background(),
-		`SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=$1)`, name)
+		`SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema=$1 AND table_name=$2)`, schema, tbl)
 	if err != nil {
 		t.Fatalf("tableExists: %v", err)
 	}
@@ -33,8 +46,9 @@ func tableExists(t *testing.T, db *postgres.DB, name string) bool {
 
 func columnExists(t *testing.T, db *postgres.DB, table, column string) bool {
 	t.Helper()
+	schema, tbl := splitSchemaTable(table)
 	row, err := db.QueryRow(context.Background(),
-		`SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name=$1 AND column_name=$2)`, table, column)
+		`SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=$1 AND table_name=$2 AND column_name=$3)`, schema, tbl, column)
 	if err != nil {
 		t.Fatalf("columnExists: %v", err)
 	}
@@ -53,8 +67,9 @@ func indexExists(t *testing.T, db *postgres.DB, name string) bool {
 
 func policyExists(t *testing.T, db *postgres.DB, table, policyName string) bool {
 	t.Helper()
+	schema, tbl := splitSchemaTable(table)
 	row, err := db.QueryRow(context.Background(),
-		`SELECT EXISTS(SELECT 1 FROM pg_policies WHERE tablename=$1 AND policyname=$2)`, table, policyName)
+		`SELECT EXISTS(SELECT 1 FROM pg_policies WHERE schemaname=$1 AND tablename=$2 AND policyname=$3)`, schema, tbl, policyName)
 	if err != nil {
 		t.Fatalf("policyExists: %v", err)
 	}
@@ -1228,11 +1243,7 @@ func TestIntegration_AuthUsersTable(t *testing.T) {
 			RefreshTokens: true,
 			Email:         &domain.AuthEmail{VerifyEmail: true},
 		},
-		Tables: map[string]domain.Table{
-			"users": {Fields: []domain.Field{
-				{Name: "display_name", Type: "text"},
-			}},
-		},
+		Tables: map[string]domain.Table{},
 	}
 
 	migrator := app.NewMigrator(db)
@@ -1240,32 +1251,29 @@ func TestIntegration_AuthUsersTable(t *testing.T) {
 		t.Fatalf("apply: %v", err)
 	}
 
-	if !tableExists(t, db, "users") {
-		t.Fatal("users table should exist")
+	if !tableExists(t, db, "auth.users") {
+		t.Fatal("auth.users table should exist")
 	}
-	if !columnExists(t, db, "users", "email") {
+	if !columnExists(t, db, "auth.users", "email") {
 		t.Fatal("email column should exist")
 	}
-	if !columnExists(t, db, "users", "password_hash") {
+	if !columnExists(t, db, "auth.users", "password_hash") {
 		t.Fatal("password_hash column should exist")
 	}
-	if !columnExists(t, db, "users", "display_name") {
-		t.Fatal("custom auth field display_name should exist")
+	if !tableExists(t, db, "auth.identities") {
+		t.Fatal("auth.identities table should exist")
 	}
-	if !tableExists(t, db, "_user_identities") {
-		t.Fatal("_user_identities table should exist")
+	if !tableExists(t, db, "auth.refresh_tokens") {
+		t.Fatal("auth.refresh_tokens table should exist")
 	}
-	if !tableExists(t, db, "_refresh_tokens") {
-		t.Fatal("_refresh_tokens table should exist")
+	if !tableExists(t, db, "auth.one_time_tokens") {
+		t.Fatal("auth.one_time_tokens table should exist")
 	}
-	if !tableExists(t, db, "_auth_email_verifications") {
-		t.Fatal("_auth_email_verifications table should exist")
+	if !tableExists(t, db, "auth.mfa_factors") {
+		t.Fatal("auth.mfa_factors table should exist")
 	}
-	if !tableExists(t, db, "_mfa_factors") {
-		t.Fatal("_mfa_factors table should exist")
-	}
-	if !tableExists(t, db, "_auth_jwt_keys") {
-		t.Fatal("_auth_jwt_keys table should exist")
+	if !tableExists(t, db, "auth.jwt_keys") {
+		t.Fatal("auth.jwt_keys table should exist")
 	}
 
 	// Verify auth helper functions were created.
