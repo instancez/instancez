@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/saedx1/ultrabase/internal/domain"
@@ -213,5 +214,45 @@ func TestEngineFailsHardOnFirstBootMigrationFailure(t *testing.T) {
 	engine := NewEngine(bad, domain.OwnerDB{Database: db}, authDB, roles, WithMode(ModeProd), WithMigrate(true))
 	if _, err := engine.applyMigrationsWithFallback(context.Background()); err == nil {
 		t.Fatalf("expected hard error on first-boot failure")
+	}
+}
+
+// TestEngineFailsHardOnUnparseableLastConfig: if the recorded
+// last-known-good config_json is corrupt and can't be deserialized,
+// the engine must hard-fail rather than continue with an unknown state.
+func TestEngineFailsHardOnUnparseableLastConfig(t *testing.T) {
+	db := newFakeDB(t)
+	roles := domain.DefaultRoles()
+	authDB := newFakeRequestDB(t)
+
+	good := &domain.Config{
+		Tables: map[string]domain.Table{
+			"a": {Fields: []domain.Field{{Name: "id", Type: "BIGINT", PrimaryKey: true}}},
+		},
+		Server: domain.Server{Port: 8080},
+	}
+	migrator := NewMigrator(db, roles)
+	if err := migrator.Apply(context.Background(), good); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Corrupt the recorded config_json so unmarshal fails.
+	db.lastMigration.ConfigJSON = "{not valid json"
+
+	bad := &domain.Config{
+		Tables: map[string]domain.Table{
+			"a": good.Tables["a"],
+			"b": {Fields: []domain.Field{{Name: "id", Type: "BIGINT", PrimaryKey: true}}},
+		},
+	}
+	db.failOnStatementContaining = "CREATE TABLE IF NOT EXISTS b"
+
+	engine := NewEngine(bad, domain.OwnerDB{Database: db}, authDB, roles, WithMode(ModeProd), WithMigrate(true))
+	_, err := engine.applyMigrationsWithFallback(context.Background())
+	if err == nil {
+		t.Fatalf("expected hard error when last-known-good is unparseable")
+	}
+	if !strings.Contains(err.Error(), "unparseable") {
+		t.Fatalf("expected error to mention 'unparseable', got: %v", err)
 	}
 }

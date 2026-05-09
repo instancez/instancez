@@ -143,6 +143,9 @@ func (e *Engine) applyMigrationsWithFallback(ctx context.Context) (*DriftTracker
 			"running_applied_at", last.AppliedAt,
 		)
 		e.cfg = &goodCfg
+		// Order matters: MarkOK seeds running_*, then MarkDrift overlays
+		// source_* and LastError without clobbering running_*. Reversed,
+		// MarkOK would clear the just-recorded source/error fields.
 		tracker.MarkOK(last.Checksum, last.AppliedAt)
 		tracker.MarkDrift(checksum, applyErr.Error(), time.Now())
 		return tracker, nil
@@ -188,6 +191,7 @@ func (e *Engine) Start(ctx context.Context) error {
 				tracker.MarkOK(last.Checksum, last.AppliedAt)
 			} else {
 				e.logger.Warn("config has changed since last migration; run with --migrate to apply pending changes")
+				// Order matters: MarkOK before MarkDrift (see applyMigrationsWithFallback).
 				tracker.MarkOK(last.Checksum, last.AppliedAt)
 				tracker.MarkDrift(checksum, "config changed but --migrate not set", time.Now())
 			}
