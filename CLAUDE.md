@@ -97,8 +97,9 @@ internal/adapter/     postgres (pgx pool, WAL/logical replication), http (Gin ha
 <gotchas>
 - **Two DB URLs are required even for `validate`-adjacent flows.** Don't try to "simplify" by collapsing to one connection — RLS enforcement depends on the role-switch happening on a non-superuser login.
 - **JWT role tokens are not Postgres role names.** `anon`/`authenticated`/`service_role` on the wire stay constant; the Postgres-side names are looked up from `domain.Roles` and may differ. Don't conflate them.
-- **`auth.uid()` and `auth.is_authenticated()`** are Postgres functions installed by migrations, used inside RLS policy expressions. They read session GUCs set by the request middleware, not application memory.
+- **`auth.uid()` and `auth.is_authenticated()`** are Postgres functions installed by migrations, used inside RLS policy expressions. They read session GUCs set by the request middleware, not application memory. They live in the `auth` schema and are typically referenced from RLS policies on tables that FK to `auth.users.id`.
 - **No auto-added columns, not even `id`.** The migrator does not inject primary keys. Every column, including PKs, must be declared in YAML.
-- **Reserved names:** `users` (auth users) and any identifier starting with `_` (framework tables: `_objects`, `_events`, `_ultrabase_migrations`, `_user_identities`, …).
+- **Reserved schemas:** `auth` and `storage`. The migrator owns these schemas; user tables declaring `schema: auth` or `schema: storage` are rejected at validation. The auth user record lives at `auth.users`; profile data is a regular user-defined table FK'd to `auth.users.id`.
+- **Underscore-prefixed names** are still reserved for framework-internal tables (`_events`, `_ultrabase_migrations`).
 - **The Lambda image is per-arch.** `Dockerfile.lambda` is built once per platform (`-lambda-amd64`, `-lambda-arm64`) because Lambda rejects multi-arch manifest lists. Don't "fix" this back to a manifest list.
 </gotchas>
