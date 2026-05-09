@@ -206,6 +206,7 @@ func TestDiffConfigs_RemovedStorageRLS(t *testing.T) {
 
 	diff := diffConfigs(old, new)
 	joined := strings.Join(diff.Removals, "\n")
+	// TODO Task 11: per-bucket policy DDL will move from _objects to storage.objects.
 	mustContain(t, joined, "DROP POLICY IF EXISTS avatars_public_select ON _objects")
 	mustContain(t, joined, "DROP POLICY IF EXISTS storage_avatars_insert_0 ON _objects")
 }
@@ -267,6 +268,7 @@ func TestDiffConfigs_RemovedBucket(t *testing.T) {
 	diff := diffConfigs(old, new)
 	joined := strings.Join(diff.Removals, "\n")
 
+	// TODO Task 11: per-bucket policy DDL will move from _objects to storage.objects.
 	mustContain(t, joined, "DROP POLICY IF EXISTS avatars_public_select ON _objects")
 	mustContain(t, joined, "DROP POLICY IF EXISTS storage_avatars_insert_0 ON _objects")
 	mustContain(t, joined, "DROP POLICY IF EXISTS storage_avatars_delete_0 ON _objects")
@@ -658,7 +660,7 @@ func TestDiffConfigs_NewStorage(t *testing.T) {
 	diff := diffConfigs(old, new)
 	joined := strings.Join(diff.Additions, "\n")
 
-	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS _objects")
+	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS storage.objects")
 }
 
 func TestDiffConfigs_NewEvents(t *testing.T) {

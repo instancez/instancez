@@ -101,9 +101,7 @@ func planFromScratchStatements(cfg *domain.Config, roles domain.Roles) []string 
 	}
 
 	// Storage metadata table
-	if len(cfg.Storage) > 0 {
-		ddl = append(ddl, generateObjectsTable()...)
-	}
+	ddl = append(ddl, generateStorageTables(cfg)...)
 
 	// Events table
 	if len(cfg.On) > 0 {
@@ -676,18 +674,27 @@ func formatDefault(val any, colType string) string {
 	}
 }
 
-func generateObjectsTable() []string {
-	return []string{`CREATE TABLE IF NOT EXISTS _objects (
+// generateStorageTables emits the storage.* tables. Today that's just
+// storage.objects (file metadata). Buckets remain configured in YAML; no
+// storage.buckets table is emitted.
+func generateStorageTables(cfg *domain.Config) []string {
+	if len(cfg.Storage) == 0 {
+		return nil
+	}
+	return []string{
+		`CREATE SCHEMA IF NOT EXISTS storage;`,
+		`CREATE TABLE IF NOT EXISTS storage.objects (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   bucket_id TEXT NOT NULL,
   name TEXT NOT NULL,
   size BIGINT NOT NULL DEFAULT 0,
   mime TEXT NOT NULL DEFAULT '',
-  uploaded_by UUID REFERENCES users(id),
+  uploaded_by UUID REFERENCES auth.users(id),
   uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   metadata JSONB,
   UNIQUE (bucket_id, name)
-);`}
+);`,
+	}
 }
 
 func generateEventsTable() []string {

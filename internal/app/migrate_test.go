@@ -232,13 +232,23 @@ func TestGenerateSearch(t *testing.T) {
 	mustContain(t, joined, "USING GIN")
 }
 
-func TestGenerateObjectsTable(t *testing.T) {
-	ddl := generateObjectsTable()
-	joined := strings.Join(ddl, "\n")
+func TestGenerateStorageTablesUsesStorageSchema(t *testing.T) {
+	cfg := &domain.Config{
+		Storage: map[string]domain.Bucket{"avatars": {}},
+	}
+	ddl := strings.Join(generateStorageTables(cfg), "\n")
+	mustContain(t, ddl, "CREATE SCHEMA IF NOT EXISTS storage;")
+	mustContain(t, ddl, "CREATE TABLE IF NOT EXISTS storage.objects")
+	mustContain(t, ddl, "REFERENCES auth.users(id)")
+	mustNotContain(t, ddl, "CREATE TABLE IF NOT EXISTS _objects")
+}
 
-	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS _objects")
-	mustContain(t, joined, "bucket_id TEXT NOT NULL")
-	mustContain(t, joined, "uploaded_by UUID REFERENCES users(id)")
+func TestGenerateStorageTablesEmptyWhenNoBuckets(t *testing.T) {
+	cfg := &domain.Config{}
+	ddl := generateStorageTables(cfg)
+	if len(ddl) != 0 {
+		t.Errorf("expected no DDL when no buckets configured, got: %v", ddl)
+	}
 }
 
 func TestGenerateEventsTable(t *testing.T) {
@@ -260,6 +270,7 @@ func TestGenerateStorageRLS_Public(t *testing.T) {
 	ddl := generateStorageRLS("avatars", bucket)
 	joined := strings.Join(ddl, "\n")
 
+	// TODO Task 11: per-bucket policy DDL will move from _objects to storage.objects.
 	mustContain(t, joined, "DROP POLICY IF EXISTS avatars_public_select ON _objects")
 	mustContain(t, joined, "avatars_public_select")
 	mustContain(t, joined, "bucket_id = 'avatars'")

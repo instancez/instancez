@@ -372,14 +372,14 @@ func formatColumnForAdd(name string, field domain.Field) string {
 	return def
 }
 
-// diffNewStorage returns DDL to create the _objects table when storage is
-// newly added (present in new but not old).
+// diffNewStorage returns DDL to create the storage.objects table when storage
+// is newly added (present in new but not old).
 func diffNewStorage(old, new *domain.Config) []string {
 	if len(new.Storage) == 0 {
 		return nil
 	}
 	if len(old.Storage) == 0 {
-		return generateObjectsTable()
+		return generateStorageTables(new)
 	}
 	return nil
 }
