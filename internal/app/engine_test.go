@@ -31,9 +31,9 @@ func TestOrderDataTables_UsersFirst(t *testing.T) {
 			},
 		},
 		Data: map[string]domain.TableData{
-			"users": {CSVFiles: map[string]string{"demo": "./seeds/users.csv"}},
-			"todos": {CSVFiles: map[string]string{"init": "./seeds/todos.csv"}},
-			"teams": {CSVFiles: map[string]string{"init": "./seeds/teams.csv"}},
+			"auth.users": {CSVFiles: map[string]string{"demo": "./seeds/users.csv"}},
+			"todos":      {CSVFiles: map[string]string{"init": "./seeds/todos.csv"}},
+			"teams":      {CSVFiles: map[string]string{"init": "./seeds/teams.csv"}},
 		},
 	}
 
@@ -41,8 +41,8 @@ func TestOrderDataTables_UsersFirst(t *testing.T) {
 	if len(order) == 0 {
 		t.Fatal("expected data tables")
 	}
-	if order[0] != "users" {
-		t.Errorf("first data table should be 'users', got %q", order[0])
+	if order[0] != "auth.users" {
+		t.Errorf("first data table should be 'auth.users', got %q", order[0])
 	}
 }
 

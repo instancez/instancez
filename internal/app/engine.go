@@ -471,7 +471,7 @@ func (e *Engine) applyData(ctx context.Context) error {
 }
 
 func (e *Engine) applyDataRow(ctx context.Context, tx domain.Tx, tableName, compositeKey string, row map[string]any) error {
-	if tableName == "users" {
+	if tableName == "auth.users" {
 		if pwd, ok := row["password"]; ok {
 			if pwdStr, ok := pwd.(string); ok {
 				hash, err := bcrypt.GenerateFromPassword([]byte(pwdStr), bcrypt.DefaultCost)
@@ -620,11 +620,12 @@ func (e *Engine) modeStr() string {
 }
 
 // orderDataTables returns data table names in a safe insertion order.
-// "users" always comes first (auth table), then tables ordered by FK deps.
+// "auth.users" always comes first (the auth user record), then user-defined
+// tables ordered by FK deps.
 func orderDataTables(cfg *domain.Config) []string {
 	var result []string
-	if _, ok := cfg.Data["users"]; ok {
-		result = append(result, "users")
+	if _, ok := cfg.Data["auth.users"]; ok {
+		result = append(result, "auth.users")
 	}
 	ordered := orderTables(cfg.Tables)
 	for _, name := range ordered {
