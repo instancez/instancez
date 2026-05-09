@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -634,6 +635,29 @@ func TestRLSAndIndexesUseQualifiedNames(t *testing.T) {
 	rls := strings.Join(generateRLSPolicies("posts", tbl), "\n")
 	if !strings.Contains(rls, "ALTER TABLE analytics.posts") {
 		t.Errorf("expected schema-qualified RLS DDL, got: %s", rls)
+	}
+}
+
+func TestOrderedSchemasIncludesAuthAndStorage(t *testing.T) {
+	cfg := &domain.Config{
+		Auth:    &domain.Auth{},
+		Storage: map[string]domain.Bucket{"avatars": {}},
+		Tables: map[string]domain.Table{
+			"posts": {Schema: "analytics"},
+		},
+	}
+	got := orderedSchemas(cfg)
+	want := []string{"public", "auth", "storage", "analytics"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("orderedSchemas: got %v, want %v", got, want)
+	}
+}
+
+func TestOrderedSchemasOmitsAuthWhenUnconfigured(t *testing.T) {
+	cfg := &domain.Config{}
+	got := orderedSchemas(cfg)
+	if len(got) != 1 || got[0] != "public" {
+		t.Errorf("orderedSchemas with no auth/storage: got %v, want [public]", got)
 	}
 }
 

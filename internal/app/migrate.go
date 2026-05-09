@@ -333,17 +333,26 @@ func apiRoleList(roles domain.Roles) string {
 	return fmt.Sprintf("%s, %s, %s", roles.Anon, roles.Authenticated, roles.Service)
 }
 
-// orderedSchemas returns the deduped list of schemas referenced by tables
-// in the config, with "public" first. The auth helper schema is included
-// when cfg.Auth is set.
+// orderedSchemas returns the deduped list of schemas the migrator manages,
+// with "public" first, "auth" if auth is configured, "storage" if buckets
+// exist, then any user-declared schemas in YAML order.
 func orderedSchemas(cfg *domain.Config) []string {
 	seen := map[string]bool{"public": true}
 	out := []string{"public"}
-	for _, table := range cfg.Tables {
-		if s := table.EffectiveSchema(); !seen[s] {
+	add := func(s string) {
+		if !seen[s] {
 			seen[s] = true
 			out = append(out, s)
 		}
+	}
+	if cfg.Auth != nil {
+		add("auth")
+	}
+	if len(cfg.Storage) > 0 {
+		add("storage")
+	}
+	for _, table := range cfg.Tables {
+		add(table.EffectiveSchema())
 	}
 	return out
 }
