@@ -82,7 +82,7 @@ func (m *JWTKeyManager) Active(ctx context.Context) (*JWTKey, error) {
 
 	// Try to load the most recent non-retired key.
 	row, err := m.db.QueryRow(ctx,
-		`SELECT kid, secret, algorithm FROM _auth_jwt_keys
+		`SELECT kid, secret, algorithm FROM auth.jwt_keys
 		 WHERE retired_at IS NULL ORDER BY created_at DESC LIMIT 1`)
 	if err == nil && row != nil {
 		key, kerr := rowToKey(row)
@@ -104,7 +104,7 @@ func (m *JWTKeyManager) Active(ctx context.Context) (*JWTKey, error) {
 		Bytes: x509.MarshalPKCS1PrivateKey(key.PrivateKey),
 	})
 	_, err = m.db.Exec(ctx,
-		`INSERT INTO _auth_jwt_keys (kid, secret, algorithm) VALUES ($1, $2, $3)`,
+		`INSERT INTO auth.jwt_keys (kid, secret, algorithm) VALUES ($1, $2, $3)`,
 		key.KID, privPEM, key.Algorithm)
 	if err != nil {
 		return nil, fmt.Errorf("jwt key: insert: %w", err)
@@ -129,7 +129,7 @@ func (m *JWTKeyManager) Get(ctx context.Context, kid string) (*JWTKey, error) {
 	m.mu.RUnlock()
 
 	row, err := m.db.QueryRow(ctx,
-		`SELECT kid, secret, algorithm FROM _auth_jwt_keys WHERE kid = $1`, kid)
+		`SELECT kid, secret, algorithm FROM auth.jwt_keys WHERE kid = $1`, kid)
 	if err != nil {
 		return nil, fmt.Errorf("jwt key: lookup %s: %w", kid, err)
 	}
@@ -151,7 +151,7 @@ func (m *JWTKeyManager) Get(ctx context.Context, kid string) (*JWTKey, error) {
 // AllPublicKeys returns all non-retired public keys for the JWKS endpoint.
 func (m *JWTKeyManager) AllPublicKeys(ctx context.Context) ([]*JWTKey, error) {
 	rows, err := m.db.Query(ctx,
-		`SELECT kid, secret, algorithm FROM _auth_jwt_keys WHERE retired_at IS NULL ORDER BY created_at DESC`)
+		`SELECT kid, secret, algorithm FROM auth.jwt_keys WHERE retired_at IS NULL ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
