@@ -38,9 +38,32 @@ func (m *Migrator) Plan(ctx context.Context, oldCfg, newCfg *domain.Config) (str
 	return planUpdate(oldCfg, newCfg, m.roles), nil
 }
 
+// PlanStatements is like Plan but returns statements as a slice, so callers
+// can run them inside a single transaction. Returns nil when there are no
+// changes to apply.
+func (m *Migrator) PlanStatements(ctx context.Context, oldCfg, newCfg *domain.Config) ([]string, error) {
+	if oldCfg == nil {
+		return planFromScratchStatements(newCfg, m.roles), nil
+	}
+	return planUpdateStatements(oldCfg, newCfg, m.roles), nil
+}
+
 // planFromScratch generates full DDL for a fresh database using IF NOT EXISTS /
-// CREATE OR REPLACE for safety.
+// CREATE OR REPLACE for safety. Delegates to planFromScratchStatements and
+// joins the result with blank-line separators for callers that want the
+// joined-string form (e.g. the rollback dry-run output).
 func planFromScratch(cfg *domain.Config, roles domain.Roles) string {
+	stmts := planFromScratchStatements(cfg, roles)
+	if len(stmts) == 0 {
+		return ""
+	}
+	return strings.Join(stmts, "\n\n")
+}
+
+// planFromScratchStatements is the slice-returning core of planFromScratch.
+// Apply uses this directly so each statement can run inside a single
+// transaction.
+func planFromScratchStatements(cfg *domain.Config, roles domain.Roles) []string {
 	var ddl []string
 	schemas := orderedSchemas(cfg)
 
@@ -119,16 +142,24 @@ func planFromScratch(cfg *domain.Config, roles domain.Roles) string {
 	// CREATE TABLE in the same session, so we issue an explicit catch-up.
 	ddl = append(ddl, generateExistingObjectGrants(schemas, roles)...)
 
-	if len(ddl) == 0 {
-		return ""
-	}
-	return strings.Join(ddl, "\n\n")
+	return ddl
 }
 
 // planUpdate generates DDL for transitioning from oldCfg to newCfg.
 // It produces removal DDL from the config diff, followed by additions and
 // alterations, then re-emits idempotent items (indexes, RLS, search, functions).
+// Delegates to planUpdateStatements; see planFromScratch for the rationale.
 func planUpdate(oldCfg, newCfg *domain.Config, roles domain.Roles) string {
+	stmts := planUpdateStatements(oldCfg, newCfg, roles)
+	if len(stmts) == 0 {
+		return ""
+	}
+	return strings.Join(stmts, "\n\n")
+}
+
+// planUpdateStatements is the slice-returning core of planUpdate. Apply uses
+// this directly so each statement can run inside a single transaction.
+func planUpdateStatements(oldCfg, newCfg *domain.Config, roles domain.Roles) []string {
 	diff := diffConfigs(oldCfg, newCfg)
 	var ddl []string
 	schemas := orderedSchemas(newCfg)
@@ -188,15 +219,16 @@ func planUpdate(oldCfg, newCfg *domain.Config, roles domain.Roles) string {
 	// Catch-up grants on any newly-added tables.
 	ddl = append(ddl, generateExistingObjectGrants(schemas, roles)...)
 
-	if len(ddl) == 0 {
-		return ""
-	}
-	return strings.Join(ddl, "\n\n")
+	return ddl
 }
 
 // Apply generates and executes the migration, recording it in the history table.
 // It stores the applied config as JSON so the next run can diff against it to
 // detect removed objects and avoid re-running unchanged migrations.
+//
+// All DDL statements run inside a single transaction so a mid-migration
+// failure rolls back cleanly: either every statement applies or none do.
+// The history row is recorded post-commit; see the comment below for why.
 func (m *Migrator) Apply(ctx context.Context, cfg *domain.Config) error {
 	if err := m.db.EnsureMigrationsTable(ctx); err != nil {
 		return fmt.Errorf("migrate: %w", err)
@@ -225,23 +257,41 @@ func (m *Migrator) Apply(ctx context.Context, cfg *domain.Config) error {
 		}
 	}
 
-	planSQL, err := m.Plan(ctx, oldCfg, cfg)
+	stmts, err := m.PlanStatements(ctx, oldCfg, cfg)
 	if err != nil {
 		return fmt.Errorf("migrate plan: %w", err)
 	}
-
-	if planSQL == "" {
+	if len(stmts) == 0 {
 		return nil
 	}
 
-	if err := m.db.ExecDDL(ctx, planSQL); err != nil {
-		return fmt.Errorf("migrate exec: %w", err)
+	tx, err := m.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("migrate begin: %w", err)
+	}
+	// Safe to defer: tx.Rollback after a successful Commit is a no-op error
+	// we ignore. Calling Rollback before return guarantees no leak on panic.
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	for _, stmt := range stmts {
+		if _, err := tx.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("migrate exec: %w", err)
+		}
 	}
 
+	planSQL := strings.Join(stmts, "\n\n")
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("migrate commit: %w", err)
+	}
+
+	// Record AFTER commit. If RecordMigration fails post-commit the DB schema
+	// is correct but the history is missing the row — next Apply will diff
+	// from the older lastGood and try to re-emit idempotent statements,
+	// which is safe (CREATE OR REPLACE / IF NOT EXISTS / DROP+CREATE
+	// patterns), so we accept that risk.
 	if err := m.db.RecordMigration(ctx, configChecksum, planSQL, string(configJSON)); err != nil {
 		return fmt.Errorf("migrate record: %w", err)
 	}
-
 	return nil
 }
 

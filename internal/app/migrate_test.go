@@ -1,8 +1,12 @@
 package app
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/saedx1/ultrabase/internal/domain"
 )
@@ -374,4 +378,172 @@ func TestGenerateRPCFunction_VoidDefaults(t *testing.T) {
 	mustContain(t, ddl, "VOLATILE")
 	mustContain(t, ddl, "SECURITY INVOKER")
 	mustContain(t, ddl, "RETURNS void")
+}
+
+// --- Fake DB for Apply tests ---
+//
+// fakeDB is a minimal in-memory stand-in for domain.Database used to exercise
+// the Migrator.Apply transaction path. Only the methods Apply touches are
+// implemented with real behavior; everything else returns zero values.
+//
+// failOnStatementContaining: when set, fakeTx.Exec returns an error for any
+// statement whose text contains the substring, simulating a mid-migration
+// failure inside the transaction.
+//
+// committedStatements: the running total of statements that have been
+// committed across all transactions. fakeTx.Commit adds its per-tx counter
+// here; Rollback discards it.
+//
+// committedStatementsAfterFirst: snapshotted by tests after a first
+// successful Apply so subsequent assertions can measure only the delta added
+// by a later (failing) Apply.
+type fakeDB struct {
+	migrationsTableEnsured       bool
+	lastMigration                *domain.Migration
+	failOnStatementContaining    string
+	committedStatements          int
+	committedStatementsAfterFirst int
+}
+
+func newFakeDB(t *testing.T) *fakeDB {
+	t.Helper()
+	return &fakeDB{}
+}
+
+func (f *fakeDB) Close() error                                 { return nil }
+func (f *fakeDB) Ping(ctx context.Context) error               { return nil }
+func (f *fakeDB) EnsureMigrationsTable(ctx context.Context) error {
+	f.migrationsTableEnsured = true
+	return nil
+}
+func (f *fakeDB) GetLastMigration(ctx context.Context) (*domain.Migration, error) {
+	return f.lastMigration, nil
+}
+func (f *fakeDB) RecordMigration(ctx context.Context, checksum, sql, configJSON string) error {
+	f.lastMigration = &domain.Migration{
+		Checksum:   checksum,
+		SQL:        sql,
+		ConfigJSON: configJSON,
+		AppliedAt:  time.Now(),
+	}
+	return nil
+}
+func (f *fakeDB) ExecDDL(ctx context.Context, sql string) error {
+	// Apply no longer calls ExecDDL after the tx refactor; if it does, that's
+	// a regression worth surfacing.
+	return fmt.Errorf("fakeDB.ExecDDL should not be called; Apply must use Begin/Commit")
+}
+func (f *fakeDB) EnsureDataTable(ctx context.Context) error                 { return nil }
+func (f *fakeDB) GetAppliedData(ctx context.Context) ([]domain.DataRecord, error) {
+	return nil, nil
+}
+func (f *fakeDB) RecordData(ctx context.Context, tx domain.Tx, key, tableName, source, checksum string, rowCount int) error {
+	return nil
+}
+func (f *fakeDB) Query(ctx context.Context, query string, args ...any) ([]map[string]any, error) {
+	return nil, nil
+}
+func (f *fakeDB) QueryRow(ctx context.Context, query string, args ...any) (map[string]any, error) {
+	return nil, nil
+}
+func (f *fakeDB) Exec(ctx context.Context, query string, args ...any) (int64, error) {
+	return 0, nil
+}
+func (f *fakeDB) WithRLS(ctx context.Context, session domain.Session) (context.Context, error) {
+	return ctx, nil
+}
+func (f *fakeDB) Begin(ctx context.Context) (domain.Tx, error) {
+	return &fakeTx{db: f}, nil
+}
+
+// fakeTx tracks statements executed inside a single transaction. They only
+// roll up into fakeDB.committedStatements when Commit is called; Rollback
+// drops the per-tx counter on the floor, mirroring real transactional
+// semantics.
+type fakeTx struct {
+	db       *fakeDB
+	pending  int
+	finished bool
+}
+
+func (tx *fakeTx) Query(ctx context.Context, query string, args ...any) ([]map[string]any, error) {
+	return nil, nil
+}
+func (tx *fakeTx) QueryRow(ctx context.Context, query string, args ...any) (map[string]any, error) {
+	return nil, nil
+}
+func (tx *fakeTx) Exec(ctx context.Context, query string, args ...any) (int64, error) {
+	if tx.finished {
+		return 0, fmt.Errorf("fakeTx: Exec after finish")
+	}
+	if tx.db.failOnStatementContaining != "" && strings.Contains(query, tx.db.failOnStatementContaining) {
+		return 0, fmt.Errorf("fakeTx: simulated failure on statement containing %q", tx.db.failOnStatementContaining)
+	}
+	tx.pending++
+	return 0, nil
+}
+func (tx *fakeTx) Commit(ctx context.Context) error {
+	if tx.finished {
+		return nil
+	}
+	tx.finished = true
+	tx.db.committedStatements += tx.pending
+	tx.pending = 0
+	return nil
+}
+func (tx *fakeTx) Rollback(ctx context.Context) error {
+	if tx.finished {
+		return nil
+	}
+	tx.finished = true
+	tx.pending = 0
+	return nil
+}
+
+func TestApplyRollsBackOnFailure(t *testing.T) {
+	db := newFakeDB(t)
+	m := NewMigrator(db)
+
+	// First config applies cleanly: one table.
+	cfg1 := &domain.Config{
+		Tables: map[string]domain.Table{
+			"a": {Fields: []domain.Field{{Name: "id", Type: "BIGINT", PrimaryKey: true}}},
+		},
+	}
+	if err := m.Apply(context.Background(), cfg1); err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+	db.committedStatementsAfterFirst = db.committedStatements
+
+	// Second config: add table "b" with a column type the fake DB rejects on
+	// the second statement to simulate a mid-migration failure.
+	db.failOnStatementContaining = "CREATE TABLE IF NOT EXISTS b"
+	cfg2 := &domain.Config{
+		Tables: map[string]domain.Table{
+			"a": cfg1.Tables["a"],
+			"b": {Fields: []domain.Field{{Name: "id", Type: "BIGINT", PrimaryKey: true}}},
+		},
+	}
+	err := m.Apply(context.Background(), cfg2)
+	if err == nil {
+		t.Fatalf("expected migration to fail")
+	}
+
+	// Critical: nothing from the failing migration should have committed.
+	if db.committedStatements != db.committedStatementsAfterFirst {
+		t.Fatalf("expected rollback, but %d new statements committed",
+			db.committedStatements-db.committedStatementsAfterFirst)
+	}
+	// And the migration history must NOT have been updated.
+	last, _ := db.GetLastMigration(context.Background())
+	if last == nil || last.ConfigJSON == "" {
+		t.Fatalf("history wiped; expected first migration to survive")
+	}
+	var lastCfg domain.Config
+	if err := json.Unmarshal([]byte(last.ConfigJSON), &lastCfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, hasB := lastCfg.Tables["b"]; hasB {
+		t.Fatalf("history shows b table; should have rolled back")
+	}
 }
