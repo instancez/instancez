@@ -5,47 +5,61 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"time"
 
 	ultrahttp "github.com/saedx1/ultrabase/internal/adapter/http"
 	"github.com/saedx1/ultrabase/internal/app"
 	"github.com/saedx1/ultrabase/internal/config"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 func newServeCmd() *cobra.Command {
-	var (
-		port             int
-		configPath       string
-		loadData         bool
-		migrate          bool
-		allowDestructive bool
-	)
-
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Start production server",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runServe(port, configPath, loadData, migrate, allowDestructive)
+			opts, err := parseServeFlags(extractCobraArgs(cmd.Flags()), os.Getenv)
+			if err != nil {
+				return err
+			}
+			return runServe(opts)
 		},
 	}
 
-	configDefault := "ultrabase.yaml"
-	if v := os.Getenv("ULTRABASE_CONFIG"); v != "" {
-		configDefault = v
-	}
-
-	cmd.Flags().IntVar(&port, "port", 0, "server port (default: from config or 8080)")
-	cmd.Flags().StringVar(&configPath, "config", configDefault, "config source (file path, s3://bucket/key, or $ULTRABASE_CONFIG)")
-	cmd.Flags().BoolVar(&loadData, "data", false, "apply CSV data imports on startup")
-	cmd.Flags().BoolVar(&migrate, "migrate", false, "run pending migrations on startup")
-	cmd.Flags().BoolVar(&allowDestructive, "allow-destructive", false, "permit DROP TABLE/COLUMN in migrations")
+	cmd.Flags().Int("port", 0, "server port (default: from config or 8080)")
+	cmd.Flags().String("config", "ultrabase.yaml", "config source (file path or s3://bucket/key; env: ULTRABASE_CONFIG_SOURCE or ULTRABASE_CONFIG)")
+	cmd.Flags().Bool("data", false, "apply CSV data imports on startup")
+	cmd.Flags().Bool("migrate", false, "run pending migrations on startup")
+	cmd.Flags().Bool("allow-destructive", false, "permit DROP TABLE/COLUMN in migrations")
+	cmd.Flags().Bool("watch", false, "watch the config source for changes (env: ULTRABASE_CONFIG_WATCH)")
+	cmd.Flags().Duration("watch-interval", 60*time.Second, "S3-watch poll interval; min 10s (env: ULTRABASE_CONFIG_WATCH_INTERVAL)")
+	cmd.Flags().String("dashboard", "disabled", "dashboard mode: disabled | readonly | readwrite (env: ULTRABASE_DASHBOARD)")
 	return cmd
 }
 
-func runServe(port int, configPath string, loadData, migrate, allowDestructive bool) error {
+// extractCobraArgs reproduces only the flags the user explicitly passed,
+// so parseServeFlags' env-fallback logic kicks in for unset flags.
+func extractCobraArgs(fs *pflag.FlagSet) []string {
+	var out []string
+	fs.Visit(func(f *pflag.Flag) {
+		if f.Value.Type() == "bool" {
+			if f.Value.String() == "true" {
+				out = append(out, "--"+f.Name)
+			} else {
+				out = append(out, "--"+f.Name+"=false")
+			}
+			return
+		}
+		out = append(out, "--"+f.Name, f.Value.String())
+	})
+	return out
+}
+
+func runServe(opts serveOptions) error {
 	ctx := context.Background()
 
-	source, err := config.NewSource(configPath)
+	source, err := config.NewSource(opts.configPath)
 	if err != nil {
 		return err
 	}
@@ -61,8 +75,8 @@ func runServe(port int, configPath string, loadData, migrate, allowDestructive b
 		return printPrettyErrors(errs)
 	}
 
-	if port > 0 {
-		cfg.Server.Port = port
+	if opts.port > 0 {
+		cfg.Server.Port = opts.port
 	}
 
 	// Structured JSON logger for production
@@ -70,7 +84,10 @@ func runServe(port int, configPath string, loadData, migrate, allowDestructive b
 
 	fmt.Printf("  Ultrabase v%s (production)\n\n", version)
 	fmt.Printf("  Config source: %s\n", source.Describe())
-	fmt.Printf("  \u2713 Schema valid\n")
+	fmt.Printf("  ✓ Schema valid\n")
+	fmt.Printf("  Watch:     %v\n", opts.watch)
+	fmt.Printf("  Watch interval: %s\n", opts.watchInterval)
+	fmt.Printf("  Dashboard: %s\n", opts.dashboard)
 
 	logger.Warn("ultrabase is designed for single-replica deployments; multi-replica support is planned")
 
@@ -79,7 +96,7 @@ func runServe(port int, configPath string, loadData, migrate, allowDestructive b
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
-	fmt.Printf("  \u2713 Connected to PostgreSQL (owner + authenticator)\n")
+	fmt.Printf("  ✓ Connected to PostgreSQL (owner + authenticator)\n")
 
 	// Initialize providers
 	email, storage, err := initProviders(ctx, cfg)
@@ -100,7 +117,7 @@ func runServe(port int, configPath string, loadData, migrate, allowDestructive b
 		if err := checkStorageHealth(ctx, storage, cfg, logger); err != nil {
 			return fmt.Errorf("storage health: %w", err)
 		}
-		fmt.Printf("  \u2713 Storage buckets verified\n")
+		fmt.Printf("  ✓ Storage buckets verified\n")
 	}
 
 	// Only expose a local config path to the admin handler when the source is
@@ -125,9 +142,9 @@ func runServe(port int, configPath string, loadData, migrate, allowDestructive b
 	// Create engine with HTTP server
 	engine := app.NewEngine(cfg, ownerDB, authDB, roles,
 		app.WithMode(app.ModeProd),
-		app.WithMigrate(migrate),
-		app.WithSeed(loadData),
-		app.WithAllowDestructive(allowDestructive),
+		app.WithMigrate(opts.migrate),
+		app.WithSeed(opts.loadData),
+		app.WithAllowDestructive(opts.allowDestructive),
 		app.WithWatch(false),
 		app.WithLogger(logger),
 		app.WithHTTPServer(httpServer),
