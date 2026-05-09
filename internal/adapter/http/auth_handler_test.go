@@ -480,7 +480,7 @@ func TestHandleSignupDispatch_AnonymousOnEmptyBody(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := &stubDB{
 		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "INSERT INTO users") {
+			if strings.Contains(q, "INSERT INTO auth.users") {
 				return map[string]any{
 					"id":                 "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
 					"email":              nil,
@@ -535,7 +535,7 @@ func signupGatingHandler(t *testing.T, allowSignup, allowAnonymous *bool) (*Auth
 	t.Helper()
 	db := &stubDB{
 		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "INSERT INTO users") {
+			if strings.Contains(q, "INSERT INTO auth.users") {
 				return map[string]any{
 					"id":                 "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
 					"email":              "user@example.com",
@@ -705,17 +705,17 @@ func TestHandleOTP_CreatesTokenForNewUser(t *testing.T) {
 	insertedPurpose := ""
 	db := &stubDB{
 		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "SELECT id::text FROM users WHERE email") {
+			if strings.Contains(q, "SELECT id::text FROM auth.users WHERE email") {
 				userLookups++
 				return nil, nil
 			}
-			if strings.Contains(q, "INSERT INTO users") {
+			if strings.Contains(q, "INSERT INTO auth.users") {
 				return map[string]any{"id": "11111111-2222-3333-4444-555555555555"}, nil
 			}
 			return nil, nil
 		},
 		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
-			if strings.Contains(q, "_auth_email_verifications") {
+			if strings.Contains(q, "auth.one_time_tokens") {
 				inserts++
 				if strings.Contains(q, "'magiclink'") {
 					insertedPurpose = "magiclink"
@@ -761,7 +761,7 @@ func TestHandleOTP_NoCreateUserWhenDisabled(t *testing.T) {
 	userInserts := 0
 	db := &stubDB{
 		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "INSERT INTO users") {
+			if strings.Contains(q, "INSERT INTO auth.users") {
 				userInserts++
 			}
 			return nil, nil
@@ -800,7 +800,7 @@ func TestHandleGenerateLink_MagiclinkExistingUser(t *testing.T) {
 	tokenInserts := 0
 	db := &stubDB{
 		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "FROM users WHERE email") {
+			if strings.Contains(q, "FROM auth.users WHERE email") {
 				return map[string]any{
 					"id":                 "11111111-2222-3333-4444-555555555555",
 					"email":              "user@example.com",
@@ -814,7 +814,7 @@ func TestHandleGenerateLink_MagiclinkExistingUser(t *testing.T) {
 			return nil, nil
 		},
 		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
-			if strings.Contains(q, "_auth_email_verifications") {
+			if strings.Contains(q, "auth.one_time_tokens") {
 				tokenInserts++
 			}
 			return 1, nil
@@ -889,13 +889,13 @@ func TestHandleOTP_StoresCodeAndEmail(t *testing.T) {
 	var capturedCode, capturedEmail string
 	db := &stubDB{
 		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "SELECT id::text FROM users") {
+			if strings.Contains(q, "SELECT id::text FROM auth.users") {
 				return map[string]any{"id": "11111111-2222-3333-4444-555555555555"}, nil
 			}
 			return nil, nil
 		},
 		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
-			if strings.Contains(q, "_auth_email_verifications") && strings.Contains(q, "code") {
+			if strings.Contains(q, "auth.one_time_tokens") && strings.Contains(q, "code") {
 				// (user_id, token, code, email, 'magiclink', expires_at)
 				if len(args) >= 4 {
 					capturedCode, _ = args[2].(string)
@@ -942,7 +942,7 @@ func TestHandleVerify_NumericCodeLookup(t *testing.T) {
 	var lookupArgs []any
 	db := &stubDB{
 		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "_auth_email_verifications") && strings.Contains(q, "code") {
+			if strings.Contains(q, "auth.one_time_tokens") && strings.Contains(q, "code") {
 				lookupQ = q
 				lookupArgs = args
 				return map[string]any{
@@ -952,7 +952,7 @@ func TestHandleVerify_NumericCodeLookup(t *testing.T) {
 					"token":      "longtoken",
 				}, nil
 			}
-			if strings.Contains(q, "FROM users WHERE id") {
+			if strings.Contains(q, "FROM auth.users WHERE id") {
 				return map[string]any{
 					"id":                 "11111111-2222-3333-4444-555555555555",
 					"email":              "otp@example.com",
@@ -1003,7 +1003,7 @@ func TestHandleVerify_LongTokenFallsBackToTokenLookup(t *testing.T) {
 	var lookupQ string
 	db := &stubDB{
 		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "_auth_email_verifications") {
+			if strings.Contains(q, "auth.one_time_tokens") {
 				lookupQ = q
 				return map[string]any{
 					"user_id":    "11111111-2222-3333-4444-555555555555",
@@ -1012,7 +1012,7 @@ func TestHandleVerify_LongTokenFallsBackToTokenLookup(t *testing.T) {
 					"token":      "aaaaaaaabbbbbbbbccccccccdddddddd",
 				}, nil
 			}
-			if strings.Contains(q, "FROM users WHERE id") {
+			if strings.Contains(q, "FROM auth.users WHERE id") {
 				return map[string]any{
 					"id":                 "11111111-2222-3333-4444-555555555555",
 					"email":              "u@e.com",
@@ -1085,13 +1085,13 @@ func TestHandleRecover_AlwaysReturns200(t *testing.T) {
 	var storedPurpose string
 	db := &stubDB{
 		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "SELECT id::text FROM users") {
+			if strings.Contains(q, "SELECT id::text FROM auth.users") {
 				return map[string]any{"id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}, nil
 			}
 			return nil, nil
 		},
 		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
-			if strings.Contains(q, "_auth_email_verifications") {
+			if strings.Contains(q, "auth.one_time_tokens") {
 				// args: userID, token, expiresAt — purpose is hardcoded in SQL
 				storedPurpose = "recovery" // verified via the SQL literal
 			}
@@ -1143,14 +1143,14 @@ func TestHandleVerifyGET_RecoveryRedirectsWithToken(t *testing.T) {
 	deleted := false
 	db := &stubDB{
 		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "_auth_email_verifications") {
+			if strings.Contains(q, "auth.one_time_tokens") {
 				return map[string]any{
 					"user_id":    "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
 					"purpose":    "recovery",
 					"expires_at": time.Now().Add(30 * time.Minute),
 				}, nil
 			}
-			if strings.Contains(q, "FROM users") {
+			if strings.Contains(q, "FROM auth.users") {
 				return map[string]any{
 					"id":                 "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
 					"email":              "user@example.com",
@@ -1164,7 +1164,7 @@ func TestHandleVerifyGET_RecoveryRedirectsWithToken(t *testing.T) {
 			return nil, nil
 		},
 		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
-			if strings.Contains(q, "DELETE FROM _auth_email_verifications") {
+			if strings.Contains(q, "DELETE FROM auth.one_time_tokens") {
 				deleted = true
 			}
 			return 1, nil
@@ -1212,7 +1212,7 @@ func TestHandleVerifyGET_ExpiredTokenRejected(t *testing.T) {
 	deleted := false
 	db := &stubDB{
 		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "_auth_email_verifications") {
+			if strings.Contains(q, "auth.one_time_tokens") {
 				return map[string]any{
 					"user_id":    "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
 					"purpose":    "recovery",
@@ -1222,7 +1222,7 @@ func TestHandleVerifyGET_ExpiredTokenRejected(t *testing.T) {
 			return nil, nil
 		},
 		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
-			if strings.Contains(q, "DELETE FROM _auth_email_verifications") {
+			if strings.Contains(q, "DELETE FROM auth.one_time_tokens") {
 				deleted = true
 			}
 			return 1, nil
@@ -1256,7 +1256,7 @@ func TestHandleVerifyGET_EmailVerificationStillWorks(t *testing.T) {
 	emailVerified := false
 	db := &stubDB{
 		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "_auth_email_verifications") {
+			if strings.Contains(q, "auth.one_time_tokens") {
 				return map[string]any{
 					"user_id":    "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
 					"purpose":    "signup",

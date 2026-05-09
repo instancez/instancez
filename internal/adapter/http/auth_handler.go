@@ -172,7 +172,7 @@ func (h *AuthHandler) handleSignupAnonymous(c *gin.Context, probe map[string]any
 
 	ctx := c.Request.Context()
 	row, err := h.db.QueryRow(ctx,
-		fmt.Sprintf("INSERT INTO users (is_anonymous, raw_app_meta_data, raw_user_meta_data) VALUES (true, $1::jsonb, $2::jsonb) RETURNING %s, is_anonymous", userSelectCols),
+		fmt.Sprintf("INSERT INTO auth.users (is_anonymous, raw_app_meta_data, raw_user_meta_data) VALUES (true, $1::jsonb, $2::jsonb) RETURNING %s, is_anonymous", userSelectCols),
 		string(appMetaJSON), string(userMetaJSON))
 	if err != nil || row == nil {
 		h.logger.Error("anonymous signup error", "error", err)
@@ -215,7 +215,7 @@ func (h *AuthHandler) handleSignup(c *gin.Context) {
 	vals := []any{req.Email, string(hash), string(userMetaJSON)}
 
 	query := fmt.Sprintf(
-		"INSERT INTO users (%s) VALUES (%s) RETURNING %s",
+		"INSERT INTO auth.users (%s) VALUES (%s) RETURNING %s",
 		strings.Join(cols, ", "),
 		strings.Join(placeholders, ", "), userSelectCols)
 
@@ -301,7 +301,7 @@ func (h *AuthHandler) handlePasswordGrant(c *gin.Context) {
 	ctx := c.Request.Context()
 	row, err := h.db.QueryRow(ctx,
 		`SELECT id::text, email, password_hash, email_verified, email_confirmed_at, last_sign_in_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at
-		 FROM users WHERE email = $1`, req.Email)
+		 FROM auth.users WHERE email = $1`, req.Email)
 	if err != nil || row == nil {
 		problemJSON(c, 401, "invalid_grant", "Invalid login credentials")
 		return
@@ -325,7 +325,7 @@ func (h *AuthHandler) handlePasswordGrant(c *gin.Context) {
 
 	userID := asString(row["id"])
 	// Bump last_sign_in_at so the /user response reflects the login.
-	_, _ = h.db.Exec(ctx, "UPDATE users SET last_sign_in_at = NOW(), updated_at = NOW() WHERE id = $1::uuid", userID)
+	_, _ = h.db.Exec(ctx, "UPDATE auth.users SET last_sign_in_at = NOW(), updated_at = NOW() WHERE id = $1::uuid", userID)
 	row["last_sign_in_at"] = time.Now().UTC()
 
 	ctx = ctxWithRequestMeta(ctx, c)
@@ -352,7 +352,7 @@ func (h *AuthHandler) handleRefreshGrant(c *gin.Context) {
 
 	ctx := c.Request.Context()
 	row, err := h.db.QueryRow(ctx,
-		"SELECT user_id::text, expires_at FROM _refresh_tokens WHERE token = $1", req.RefreshToken)
+		"SELECT user_id::text, expires_at FROM auth.refresh_tokens WHERE token = $1", req.RefreshToken)
 	if err != nil || row == nil {
 		problemJSON(c, 401, "invalid_grant", "Invalid refresh token")
 		return
@@ -360,7 +360,7 @@ func (h *AuthHandler) handleRefreshGrant(c *gin.Context) {
 
 	expiresAt, _ := row["expires_at"].(time.Time)
 	if time.Now().After(expiresAt) {
-		h.db.Exec(ctx, "DELETE FROM _refresh_tokens WHERE token = $1", req.RefreshToken)
+		h.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE token = $1", req.RefreshToken)
 		problemJSON(c, 401, "invalid_grant", "Refresh token expired")
 		return
 	}
@@ -368,16 +368,16 @@ func (h *AuthHandler) handleRefreshGrant(c *gin.Context) {
 	userID := asString(row["user_id"])
 
 	// Rotation: each token is single-use.
-	affected, _ := h.db.Exec(ctx, "DELETE FROM _refresh_tokens WHERE token = $1", req.RefreshToken)
+	affected, _ := h.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE token = $1", req.RefreshToken)
 	if affected == 0 {
 		h.logger.Warn("refresh token reuse detected, revoking all tokens", "user_id", userID)
-		h.db.Exec(ctx, "DELETE FROM _refresh_tokens WHERE user_id = $1::uuid", userID)
+		h.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE user_id = $1::uuid", userID)
 		problemJSON(c, 401, "invalid_grant", "Refresh token reuse detected. All sessions revoked.")
 		return
 	}
 
 	userRow, err := h.db.QueryRow(ctx,
-		fmt.Sprintf("SELECT %s FROM users WHERE id = $1::uuid", userSelectCols), userID)
+		fmt.Sprintf("SELECT %s FROM auth.users WHERE id = $1::uuid", userSelectCols), userID)
 	if err != nil || userRow == nil {
 		problemJSON(c, 401, "invalid_grant", "User not found")
 		return
@@ -423,7 +423,7 @@ func (h *AuthHandler) handlePKCEGrant(c *gin.Context) {
 
 	userID, _ := row["user_id"].(string)
 	userRow, err := h.db.QueryRow(ctx,
-		fmt.Sprintf("SELECT %s FROM users WHERE id = $1::uuid", userSelectCols), userID)
+		fmt.Sprintf("SELECT %s FROM auth.users WHERE id = $1::uuid", userSelectCols), userID)
 	if err != nil || userRow == nil {
 		problemJSON(c, 401, "invalid_grant", "User not found")
 		return
@@ -479,7 +479,7 @@ func (h *AuthHandler) handleIDTokenGrant(c *gin.Context) {
 
 	ctx := c.Request.Context()
 	row, _ := h.db.QueryRow(ctx,
-		fmt.Sprintf("SELECT %s FROM users WHERE email = $1", userSelectCols), email)
+		fmt.Sprintf("SELECT %s FROM auth.users WHERE email = $1", userSelectCols), email)
 	var userID string
 
 	if row == nil {
@@ -494,11 +494,11 @@ func (h *AuthHandler) handleIDTokenGrant(c *gin.Context) {
 			"providers": []string{req.Provider},
 		})
 		newRow, err := h.db.QueryRow(ctx,
-			"INSERT INTO users (email, email_verified, email_confirmed_at, raw_user_meta_data, raw_app_meta_data) VALUES ($1, true, NOW(), $2::jsonb, $3::jsonb) RETURNING "+userSelectCols,
+			"INSERT INTO auth.users (email, email_verified, email_confirmed_at, raw_user_meta_data, raw_app_meta_data) VALUES ($1, true, NOW(), $2::jsonb, $3::jsonb) RETURNING "+userSelectCols,
 			email, string(metaJSON), string(appMetaJSON))
 		if err != nil {
 			row, err = h.db.QueryRow(ctx,
-				fmt.Sprintf("SELECT %s FROM users WHERE email = $1", userSelectCols), email)
+				fmt.Sprintf("SELECT %s FROM auth.users WHERE email = $1", userSelectCols), email)
 			if err != nil || row == nil {
 				problemJSON(c, 500, "internal", "Failed to create or find user")
 				return
@@ -510,7 +510,7 @@ func (h *AuthHandler) handleIDTokenGrant(c *gin.Context) {
 		}
 	} else {
 		userID = asString(row["id"])
-		h.db.Exec(ctx, "UPDATE users SET email_verified = true, email_confirmed_at = COALESCE(email_confirmed_at, NOW()), last_sign_in_at = NOW(), updated_at = NOW() WHERE id = $1::uuid", userID)
+		h.db.Exec(ctx, "UPDATE auth.users SET email_verified = true, email_confirmed_at = COALESCE(email_confirmed_at, NOW()), last_sign_in_at = NOW(), updated_at = NOW() WHERE id = $1::uuid", userID)
 	}
 
 	h.db.Exec(ctx,
@@ -536,7 +536,7 @@ func (h *AuthHandler) handleGetUser(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	row, err := h.db.QueryRow(ctx,
-		fmt.Sprintf("SELECT %s FROM users WHERE id = $1::uuid", userSelectCols), session.UserID)
+		fmt.Sprintf("SELECT %s FROM auth.users WHERE id = $1::uuid", userSelectCols), session.UserID)
 	if err != nil || row == nil {
 		problemJSON(c, 404, "not_found", "User not found")
 		return
@@ -587,7 +587,7 @@ func (h *AuthHandler) handleUpdateUser(c *gin.Context) {
 
 	args = append(args, session.UserID)
 	query := fmt.Sprintf(
-		"UPDATE users SET %s WHERE id = $%d::uuid RETURNING %s",
+		"UPDATE auth.users SET %s WHERE id = $%d::uuid RETURNING %s",
 		strings.Join(sets, ", "), argIdx, userSelectCols)
 
 	ctx := c.Request.Context()
@@ -615,18 +615,18 @@ func (h *AuthHandler) handleLogout(c *gin.Context) {
 		switch scope {
 		case "local":
 			if sessionID != "" {
-				h.db.Exec(ctx, "DELETE FROM _refresh_tokens WHERE session_id = $1", sessionID)
+				h.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE session_id = $1", sessionID)
 			} else {
-				h.db.Exec(ctx, "DELETE FROM _refresh_tokens WHERE user_id = $1::uuid", session.UserID)
+				h.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE user_id = $1::uuid", session.UserID)
 			}
 		case "others":
 			if sessionID != "" {
-				h.db.Exec(ctx, "DELETE FROM _refresh_tokens WHERE user_id = $1::uuid AND (session_id IS NULL OR session_id != $2)", session.UserID, sessionID)
+				h.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE user_id = $1::uuid AND (session_id IS NULL OR session_id != $2)", session.UserID, sessionID)
 			} else {
-				h.db.Exec(ctx, "DELETE FROM _refresh_tokens WHERE user_id = $1::uuid", session.UserID)
+				h.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE user_id = $1::uuid", session.UserID)
 			}
 		default: // global
-			h.db.Exec(ctx, "DELETE FROM _refresh_tokens WHERE user_id = $1::uuid", session.UserID)
+			h.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE user_id = $1::uuid", session.UserID)
 		}
 	}
 	c.Status(204)
@@ -645,13 +645,13 @@ func (h *AuthHandler) handleRecover(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	row, err := h.db.QueryRow(ctx, "SELECT id::text FROM users WHERE email = $1", req.Email)
+	row, err := h.db.QueryRow(ctx, "SELECT id::text FROM auth.users WHERE email = $1", req.Email)
 	if err == nil && row != nil {
 		userID := asString(row["id"])
 		token := generateRandomToken()
 		expiresAt := time.Now().Add(1 * time.Hour)
 		h.db.Exec(ctx,
-			"INSERT INTO _auth_email_verifications (user_id, token, purpose, expires_at) VALUES ($1::uuid, $2, 'recovery', $3)",
+			"INSERT INTO auth.one_time_tokens (user_id, token, purpose, expires_at) VALUES ($1::uuid, $2, 'recovery', $3)",
 			userID, token, expiresAt)
 		if h.email != nil {
 			go h.sendPasswordResetEmail(req.Email, token, req.RedirectTo)
@@ -692,11 +692,11 @@ func (h *AuthHandler) handleVerify(c *gin.Context) {
 	}) == -1
 	if isNumericCode && req.Email != "" {
 		row, err = h.db.QueryRow(ctx,
-			"SELECT user_id::text, purpose, expires_at, token FROM _auth_email_verifications WHERE email = $1 AND code = $2",
+			"SELECT user_id::text, purpose, expires_at, token FROM auth.one_time_tokens WHERE email = $1 AND code = $2",
 			req.Email, req.Token)
 	} else {
 		row, err = h.db.QueryRow(ctx,
-			"SELECT user_id::text, purpose, expires_at, token FROM _auth_email_verifications WHERE token = $1",
+			"SELECT user_id::text, purpose, expires_at, token FROM auth.one_time_tokens WHERE token = $1",
 			req.Token)
 	}
 	if err != nil || row == nil {
@@ -708,7 +708,7 @@ func (h *AuthHandler) handleVerify(c *gin.Context) {
 	rowToken := asString(row["token"])
 	expiresAt, _ := row["expires_at"].(time.Time)
 	if time.Now().After(expiresAt) {
-		h.db.Exec(ctx, "DELETE FROM _auth_email_verifications WHERE token = $1", rowToken)
+		h.db.Exec(ctx, "DELETE FROM auth.one_time_tokens WHERE token = $1", rowToken)
 		problemJSON(c, 401, "invalid_grant", "Token expired")
 		return
 	}
@@ -727,7 +727,7 @@ func (h *AuthHandler) handleVerify(c *gin.Context) {
 			problemJSON(c, 400, "bad_request", "Token purpose mismatch")
 			return
 		}
-		h.db.Exec(ctx, "UPDATE users SET email_verified = true, email_confirmed_at = NOW(), updated_at = NOW() WHERE id = $1::uuid", userID)
+		h.db.Exec(ctx, "UPDATE auth.users SET email_verified = true, email_confirmed_at = NOW(), updated_at = NOW() WHERE id = $1::uuid", userID)
 	case "recovery":
 		if purpose != "" && purpose != "recovery" {
 			problemJSON(c, 400, "bad_request", "Token purpose mismatch")
@@ -744,10 +744,10 @@ func (h *AuthHandler) handleVerify(c *gin.Context) {
 
 	// Consume the token (single-use). Always delete by the canonical
 	// `token` column so 6-digit code flows also clear the row.
-	h.db.Exec(ctx, "DELETE FROM _auth_email_verifications WHERE token = $1", rowToken)
+	h.db.Exec(ctx, "DELETE FROM auth.one_time_tokens WHERE token = $1", rowToken)
 
 	userRow, err := h.db.QueryRow(ctx,
-		fmt.Sprintf("SELECT %s FROM users WHERE id = $1::uuid", userSelectCols), userID)
+		fmt.Sprintf("SELECT %s FROM auth.users WHERE id = $1::uuid", userSelectCols), userID)
 	if err != nil || userRow == nil {
 		problemJSON(c, 500, "internal", "User not found")
 		return
@@ -777,7 +777,7 @@ func (h *AuthHandler) handleVerifyGET(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	row, err := h.db.QueryRow(ctx,
-		"SELECT user_id::text, purpose, expires_at FROM _auth_email_verifications WHERE token = $1",
+		"SELECT user_id::text, purpose, expires_at FROM auth.one_time_tokens WHERE token = $1",
 		token)
 	if err != nil || row == nil {
 		c.String(400, "Invalid verification token")
@@ -785,7 +785,7 @@ func (h *AuthHandler) handleVerifyGET(c *gin.Context) {
 	}
 	expiresAt, _ := row["expires_at"].(time.Time)
 	if time.Now().After(expiresAt) {
-		h.db.Exec(ctx, "DELETE FROM _auth_email_verifications WHERE token = $1", token)
+		h.db.Exec(ctx, "DELETE FROM auth.one_time_tokens WHERE token = $1", token)
 		c.String(400, "Verification token expired")
 		return
 	}
@@ -794,7 +794,7 @@ func (h *AuthHandler) handleVerifyGET(c *gin.Context) {
 	purpose, _ := row["purpose"].(string)
 
 	// Consume the token (single-use).
-	h.db.Exec(ctx, "DELETE FROM _auth_email_verifications WHERE token = $1", token)
+	h.db.Exec(ctx, "DELETE FROM auth.one_time_tokens WHERE token = $1", token)
 
 	verifyType := c.DefaultQuery("type", "")
 
@@ -803,7 +803,7 @@ func (h *AuthHandler) handleVerifyGET(c *gin.Context) {
 		// the access token in the URL fragment so supabase-js can pick
 		// it up and fire the PASSWORD_RECOVERY event.
 		userRow, err := h.db.QueryRow(ctx,
-			fmt.Sprintf("SELECT %s FROM users WHERE id = $1::uuid", userSelectCols), userID)
+			fmt.Sprintf("SELECT %s FROM auth.users WHERE id = $1::uuid", userSelectCols), userID)
 		if err != nil || userRow == nil {
 			c.String(500, "User not found")
 			return
@@ -838,7 +838,7 @@ func (h *AuthHandler) handleVerifyGET(c *gin.Context) {
 	}
 
 	// Default: email verification — mark as verified and show confirmation.
-	h.db.Exec(ctx, "UPDATE users SET email_verified = true, email_confirmed_at = NOW(), updated_at = NOW() WHERE id = $1::uuid", userID)
+	h.db.Exec(ctx, "UPDATE auth.users SET email_verified = true, email_confirmed_at = NOW(), updated_at = NOW() WHERE id = $1::uuid", userID)
 
 	redirectTo := c.Query("redirect_to")
 	if redirectTo != "" {
@@ -871,14 +871,14 @@ func (h *AuthHandler) handleOTP(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	row, _ := h.db.QueryRow(ctx, "SELECT id::text FROM users WHERE email = $1", req.Email)
+	row, _ := h.db.QueryRow(ctx, "SELECT id::text FROM auth.users WHERE email = $1", req.Email)
 	var userID string
 	if row != nil {
 		userID = asString(row["id"])
 	} else if createUser {
 		userMetaJSON := marshalJSONBDefault(req.Data)
 		newRow, err := h.db.QueryRow(ctx,
-			`INSERT INTO users (email, raw_user_meta_data) VALUES ($1, $2::jsonb) RETURNING id::text`,
+			`INSERT INTO auth.users (email, raw_user_meta_data) VALUES ($1, $2::jsonb) RETURNING id::text`,
 			req.Email, string(userMetaJSON))
 		if err != nil || newRow == nil {
 			h.logger.Error("otp create user failed", "error", err)
@@ -895,7 +895,7 @@ func (h *AuthHandler) handleOTP(c *gin.Context) {
 	code := generateNumericCode(6)
 	expiresAt := time.Now().Add(1 * time.Hour)
 	_, err := h.db.Exec(ctx,
-		"INSERT INTO _auth_email_verifications (user_id, token, code, email, purpose, expires_at) VALUES ($1::uuid, $2, $3, $4, 'magiclink', $5)",
+		"INSERT INTO auth.one_time_tokens (user_id, token, code, email, purpose, expires_at) VALUES ($1::uuid, $2, $3, $4, 'magiclink', $5)",
 		userID, token, code, req.Email, expiresAt)
 	if err != nil {
 		h.logger.Error("otp token insert failed", "error", err)
@@ -942,7 +942,7 @@ func (h *AuthHandler) handleGenerateLink(c *gin.Context) {
 
 	ctx := c.Request.Context()
 	row, _ := h.db.QueryRow(ctx,
-		fmt.Sprintf("SELECT %s FROM users WHERE email = $1", userSelectCols), req.Email)
+		fmt.Sprintf("SELECT %s FROM auth.users WHERE email = $1", userSelectCols), req.Email)
 
 	var userID string
 	if row == nil {
@@ -960,7 +960,7 @@ func (h *AuthHandler) handleGenerateLink(c *gin.Context) {
 		}
 		metaJSON := marshalJSONBDefault(req.Data)
 		newRow, err := h.db.QueryRow(ctx,
-			`INSERT INTO users (email, password_hash, raw_user_meta_data)
+			`INSERT INTO auth.users (email, password_hash, raw_user_meta_data)
 			 VALUES ($1, $2, $3::jsonb)
 			 RETURNING `+userSelectCols,
 			req.Email, hash, string(metaJSON))
@@ -978,7 +978,7 @@ func (h *AuthHandler) handleGenerateLink(c *gin.Context) {
 	token := generateRandomToken()
 	expiresAt := time.Now().Add(1 * time.Hour)
 	_, err := h.db.Exec(ctx,
-		"INSERT INTO _auth_email_verifications (user_id, token, purpose, expires_at) VALUES ($1::uuid, $2, $3, $4)",
+		"INSERT INTO auth.one_time_tokens (user_id, token, purpose, expires_at) VALUES ($1::uuid, $2, $3, $4)",
 		userID, token, purpose, expiresAt)
 	if err != nil {
 		h.logger.Error("generate_link token insert failed", "error", err)
@@ -1062,7 +1062,7 @@ func (h *AuthHandler) handleAdminCreateUser(c *gin.Context) {
 
 	ctx := c.Request.Context()
 	query := fmt.Sprintf(
-		"INSERT INTO users (%s) VALUES (%s) RETURNING %s",
+		"INSERT INTO auth.users (%s) VALUES (%s) RETURNING %s",
 		strings.Join(cols, ", "), strings.Join(placeholders, ", "), userSelectCols)
 
 	row, err := h.db.QueryRow(ctx, query, args...)
@@ -1093,7 +1093,7 @@ func (h *AuthHandler) handleAdminListUsers(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	rows, err := h.db.Query(ctx,
-		fmt.Sprintf("SELECT %s, count(*) OVER() AS _total FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2", userSelectCols),
+		fmt.Sprintf("SELECT %s, count(*) OVER() AS _total FROM auth.users ORDER BY created_at DESC LIMIT $1 OFFSET $2", userSelectCols),
 		perPage, offset)
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to list users")
@@ -1139,7 +1139,7 @@ func (h *AuthHandler) handleAdminGetUser(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	row, err := h.db.QueryRow(ctx,
-		fmt.Sprintf("SELECT %s FROM users WHERE id = $1::uuid", userSelectCols), uid)
+		fmt.Sprintf("SELECT %s FROM auth.users WHERE id = $1::uuid", userSelectCols), uid)
 	if err != nil || row == nil {
 		problemJSON(c, 404, "user_not_found", "User not found")
 		return
@@ -1206,7 +1206,7 @@ func (h *AuthHandler) handleAdminUpdateUser(c *gin.Context) {
 
 	args = append(args, uid)
 	query := fmt.Sprintf(
-		"UPDATE users SET %s WHERE id = $%d::uuid RETURNING %s",
+		"UPDATE auth.users SET %s WHERE id = $%d::uuid RETURNING %s",
 		strings.Join(sets, ", "), argIdx, userSelectCols)
 
 	ctx := c.Request.Context()
@@ -1233,11 +1233,11 @@ func (h *AuthHandler) handleAdminDeleteUser(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	// Clean up auth artifacts first.
-	h.db.Exec(ctx, "DELETE FROM _refresh_tokens WHERE user_id = $1::uuid", uid)
-	h.db.Exec(ctx, "DELETE FROM _auth_email_verifications WHERE user_id = $1::uuid", uid)
+	h.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE user_id = $1::uuid", uid)
+	h.db.Exec(ctx, "DELETE FROM auth.one_time_tokens WHERE user_id = $1::uuid", uid)
 	h.db.Exec(ctx, "DELETE FROM _mfa_factors WHERE user_id = $1::uuid", uid)
 
-	affected, err := h.db.Exec(ctx, "DELETE FROM users WHERE id = $1::uuid", uid)
+	affected, err := h.db.Exec(ctx, "DELETE FROM auth.users WHERE id = $1::uuid", uid)
 	if err != nil {
 		h.logger.Error("admin delete user failed", "error", err)
 		problemJSON(c, 500, "internal", "Failed to delete user")
@@ -1266,7 +1266,7 @@ func (h *AuthHandler) handleAdminInvite(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	existing, _ := h.db.QueryRow(ctx, "SELECT id::text FROM users WHERE email = $1", req.Email)
+	existing, _ := h.db.QueryRow(ctx, "SELECT id::text FROM auth.users WHERE email = $1", req.Email)
 	if existing != nil {
 		problemJSON(c, 422, "user_already_exists", "A user with this email address has already been registered")
 		return
@@ -1276,7 +1276,7 @@ func (h *AuthHandler) handleAdminInvite(c *gin.Context) {
 	appMeta, _ := json.Marshal(map[string]any{"provider": "email", "providers": []string{"email"}})
 
 	row, err := h.db.QueryRow(ctx,
-		fmt.Sprintf("INSERT INTO users (email, raw_user_meta_data, raw_app_meta_data) VALUES ($1, $2::jsonb, $3::jsonb) RETURNING %s", userSelectCols),
+		fmt.Sprintf("INSERT INTO auth.users (email, raw_user_meta_data, raw_app_meta_data) VALUES ($1, $2::jsonb, $3::jsonb) RETURNING %s", userSelectCols),
 		req.Email, string(userMeta), string(appMeta))
 	if err != nil || row == nil {
 		h.logger.Error("admin invite failed", "error", err)
@@ -1439,7 +1439,7 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 		}
 
 		row, _ := h.db.QueryRow(ctx,
-			fmt.Sprintf("SELECT %s FROM users WHERE email = $1", userSelectCols), userInfo.Email)
+			fmt.Sprintf("SELECT %s FROM auth.users WHERE email = $1", userSelectCols), userInfo.Email)
 		var userID string
 
 		if row == nil {
@@ -1454,12 +1454,12 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 				"providers": []string{provider},
 			})
 			newRow, err := h.db.QueryRow(ctx,
-				"INSERT INTO users (email, email_verified, email_confirmed_at, raw_user_meta_data, raw_app_meta_data) VALUES ($1, true, NOW(), $2::jsonb, $3::jsonb) RETURNING "+userSelectCols,
+				"INSERT INTO auth.users (email, email_verified, email_confirmed_at, raw_user_meta_data, raw_app_meta_data) VALUES ($1, true, NOW(), $2::jsonb, $3::jsonb) RETURNING "+userSelectCols,
 				userInfo.Email, string(metaJSON), string(appMetaJSON))
 			if err != nil {
 				// Race: another request created the user between lookup and insert.
 				row, err = h.db.QueryRow(ctx,
-					fmt.Sprintf("SELECT %s FROM users WHERE email = $1", userSelectCols), userInfo.Email)
+					fmt.Sprintf("SELECT %s FROM auth.users WHERE email = $1", userSelectCols), userInfo.Email)
 				if err != nil || row == nil {
 					problemJSON(c, 500, "internal", "Failed to create or find user")
 					return
@@ -1471,7 +1471,7 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 			}
 		} else {
 			userID = asString(row["id"])
-			h.db.Exec(ctx, "UPDATE users SET email_verified = true, email_confirmed_at = COALESCE(email_confirmed_at, NOW()), last_sign_in_at = NOW(), updated_at = NOW() WHERE id = $1::uuid", userID)
+			h.db.Exec(ctx, "UPDATE auth.users SET email_verified = true, email_confirmed_at = COALESCE(email_confirmed_at, NOW()), last_sign_in_at = NOW(), updated_at = NOW() WHERE id = $1::uuid", userID)
 		}
 
 		h.db.Exec(ctx,
@@ -1627,7 +1627,7 @@ func (h *AuthHandler) buildSession(ctx context.Context, userID string, userRow m
 		ip, _ := ctx.Value(ctxKeyIP).(string)
 		ua, _ := ctx.Value(ctxKeyUA).(string)
 		_, err := h.db.Exec(context.Background(),
-			"INSERT INTO _refresh_tokens (user_id, token, session_id, ip, user_agent, expires_at) VALUES ($1::uuid, $2, $3, $4, $5, $6)",
+			"INSERT INTO auth.refresh_tokens (user_id, token, session_id, ip, user_agent, expires_at) VALUES ($1::uuid, $2, $3, $4, $5, $6)",
 			userID, refreshToken, sessionID, ip, ua, time.Now().Add(refreshExpiry))
 		if err != nil {
 			return nil, err
@@ -1937,7 +1937,7 @@ func (h *AuthHandler) sendVerificationEmail(userID, email string) {
 
 	ctx := context.Background()
 	h.db.Exec(ctx,
-		"INSERT INTO _auth_email_verifications (user_id, token, purpose, expires_at) VALUES ($1::uuid, $2, 'signup', $3)",
+		"INSERT INTO auth.one_time_tokens (user_id, token, purpose, expires_at) VALUES ($1::uuid, $2, 'signup', $3)",
 		userID, token, expiresAt)
 
 	subject := "Verify your email"
@@ -2138,20 +2138,20 @@ func (h *AuthHandler) handleResend(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	row, _ := h.db.QueryRow(ctx, "SELECT id::text FROM users WHERE email = $1", req.Email)
+	row, _ := h.db.QueryRow(ctx, "SELECT id::text FROM auth.users WHERE email = $1", req.Email)
 	if row == nil {
 		c.Status(200)
 		return
 	}
 	userID := asString(row["id"])
 
-	h.db.Exec(ctx, "DELETE FROM _auth_email_verifications WHERE user_id = $1::uuid AND purpose = $2", userID, purpose)
+	h.db.Exec(ctx, "DELETE FROM auth.one_time_tokens WHERE user_id = $1::uuid AND purpose = $2", userID, purpose)
 
 	token := generateRandomToken()
 	code := generateNumericCode(6)
 	expiresAt := time.Now().Add(1 * time.Hour)
 	_, err := h.db.Exec(ctx,
-		"INSERT INTO _auth_email_verifications (user_id, token, code, email, purpose, expires_at) VALUES ($1::uuid, $2, $3, $4, $5, $6)",
+		"INSERT INTO auth.one_time_tokens (user_id, token, code, email, purpose, expires_at) VALUES ($1::uuid, $2, $3, $4, $5, $6)",
 		userID, token, code, req.Email, purpose, expiresAt)
 	if err != nil {
 		h.logger.Error("resend token insert failed", "error", err)
@@ -2174,7 +2174,7 @@ func (h *AuthHandler) handleReauthenticate(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	row, _ := h.db.QueryRow(ctx, "SELECT email FROM users WHERE id = $1::uuid", session.UserID)
+	row, _ := h.db.QueryRow(ctx, "SELECT email FROM auth.users WHERE id = $1::uuid", session.UserID)
 	if row == nil {
 		problemJSON(c, 404, "not_found", "User not found")
 		return
@@ -2189,7 +2189,7 @@ func (h *AuthHandler) handleReauthenticate(c *gin.Context) {
 	code := generateNumericCode(6)
 	expiresAt := time.Now().Add(10 * time.Minute)
 	_, err := h.db.Exec(ctx,
-		"INSERT INTO _auth_email_verifications (user_id, token, code, email, purpose, expires_at) VALUES ($1::uuid, $2, $3, $4, 'reauthentication', $5)",
+		"INSERT INTO auth.one_time_tokens (user_id, token, code, email, purpose, expires_at) VALUES ($1::uuid, $2, $3, $4, 'reauthentication', $5)",
 		session.UserID, token, code, email, expiresAt)
 	if err != nil {
 		h.logger.Error("reauthenticate token insert failed", "error", err)
@@ -2352,7 +2352,7 @@ func (h *AuthHandler) handleUnlinkIdentity(c *gin.Context) {
 		return
 	}
 	hasPassword := false
-	pwRow, _ := h.db.QueryRow(ctx, "SELECT password_hash FROM users WHERE id = $1::uuid", session.UserID)
+	pwRow, _ := h.db.QueryRow(ctx, "SELECT password_hash FROM auth.users WHERE id = $1::uuid", session.UserID)
 	if pwRow != nil {
 		if ph, _ := pwRow["password_hash"].(string); ph != "" {
 			hasPassword = true
@@ -2382,7 +2382,7 @@ func (h *AuthHandler) handleUnlinkIdentity(c *gin.Context) {
 func (h *AuthHandler) handleAdminSignOut(c *gin.Context) {
 	uid := c.Param("uid")
 	ctx := c.Request.Context()
-	h.db.Exec(ctx, "DELETE FROM _refresh_tokens WHERE user_id = $1::uuid", uid)
+	h.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE user_id = $1::uuid", uid)
 	c.Status(204)
 }
 
