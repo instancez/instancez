@@ -20,11 +20,14 @@ func newValidateCmd() *cobra.Command {
 		Use:   "validate",
 		Short: "Validate config without starting the server",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := applyEnvDefaults(cmd.Flags(), map[string][]string{"config": configEnvAliases}, os.Getenv); err != nil {
+				return err
+			}
 			return runValidate(configPath, jsonOutput)
 		},
 	}
 
-	cmd.Flags().StringVar(&configPath, "config", "ultrabase.yaml", "config file path")
+	cmd.Flags().StringVar(&configPath, "config", "ultrabase.yaml", "config source (env: ULTRABASE_CONFIG_SOURCE or ULTRABASE_CONFIG)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output errors as JSON (for CI)")
 	return cmd
 }
@@ -41,7 +44,7 @@ func runValidate(configPath string, jsonOutput bool) error {
 	errs := config.Validate(cfg)
 	if errs == nil {
 		if !jsonOutput {
-			fmt.Println("  \u2713 Schema valid")
+			fmt.Println("  ✓ Schema valid")
 		}
 		return nil
 	}
@@ -53,9 +56,11 @@ func runValidate(configPath string, jsonOutput bool) error {
 	return printPrettyErrors(errs)
 }
 
+// printPrettyErrors writes a formatted validation report to stderr and returns
+// errReported so the caller exits non-zero without re-printing a bare error.
 func printPrettyErrors(errs domain.ValidationErrors) error {
 	for _, e := range errs {
-		fmt.Fprintf(os.Stderr, "\n  \u2717 Error: %s\n", e.Path)
+		fmt.Fprintf(os.Stderr, "\n  ✗ Error: %s\n", e.Path)
 		if e.Line > 0 {
 			fmt.Fprintf(os.Stderr, "    at ultrabase.yaml:%d\n", e.Line)
 		}
@@ -65,8 +70,7 @@ func printPrettyErrors(errs domain.ValidationErrors) error {
 		}
 	}
 	fmt.Fprintf(os.Stderr, "\n  Found %d error(s)\n", len(errs))
-	os.Exit(1)
-	return nil
+	return errReported
 }
 
 type jsonError struct {
@@ -89,8 +93,7 @@ func printJSONErrors(errs domain.ValidationErrors) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	enc.Encode(out)
-	os.Exit(1)
-	return nil
+	return errReported
 }
 
 func printJSONError(err error) error {
@@ -98,6 +101,5 @@ func printJSONError(err error) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	enc.Encode(out)
-	os.Exit(1)
-	return nil
+	return errReported
 }

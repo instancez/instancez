@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -59,6 +60,94 @@ func parseDashboardMode(s string) (DashboardMode, error) {
 
 const minWatchInterval = 10 * time.Second
 
+func parseBool(s string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "1", "t", "true", "yes", "on":
+		return true, nil
+	case "0", "f", "false", "no", "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("invalid boolean: %q", s)
+	}
+}
+
+func isFileSpec(s string) bool {
+	return !strings.Contains(s, "://")
+}
+
+func checkConfigBackend(path string) error {
+	if !isFileSpec(path) && !strings.HasPrefix(path, "s3://") {
+		return fmt.Errorf("unsupported config backend: %s (only file paths and s3:// URIs are supported)", path)
+	}
+	return nil
+}
+
+// configEnvAliases is the env-var precedence list backing the --config flag:
+// the new ULTRABASE_CONFIG_SOURCE name first, the legacy ULTRABASE_CONFIG second.
+var configEnvAliases = []string{"ULTRABASE_CONFIG_SOURCE", "ULTRABASE_CONFIG"}
+
+// serveEnvAliases / devEnvAliases give the env-var names that back each flag.
+// A flag absent from the map uses the generic ULTRABASE_<FLAG_UPPER_SNAKE>
+// rule; a flag mapped to an empty slice has no env binding at all.
+var (
+	serveEnvAliases = map[string][]string{
+		"config":         configEnvAliases,
+		"watch":          {"ULTRABASE_CONFIG_WATCH"},
+		"watch-interval": {"ULTRABASE_CONFIG_WATCH_INTERVAL"},
+		"dashboard":      {"ULTRABASE_DASHBOARD"},
+	}
+	devEnvAliases = map[string][]string{
+		"config":         configEnvAliases,
+		"watch":          {"ULTRABASE_CONFIG_WATCH"},
+		"watch-interval": {"ULTRABASE_CONFIG_WATCH_INTERVAL"},
+		"dashboard":      {"ULTRABASE_DASHBOARD"},
+		"no-watch":       {},
+		"verbose":        {},
+	}
+)
+
+// applyEnvDefaults is the single env-var fallback mechanism for the whole CLI.
+// For every flag the user did NOT pass explicitly, it sets the flag from the
+// first non-empty env var that backs it (see the alias maps above), letting
+// pflag do the type parsing. It returns flag-name → env-var-name for the flags
+// it set, so callers can attribute downstream validation errors to the env var.
+func applyEnvDefaults(fs *pflag.FlagSet, aliases map[string][]string, lookup func(string) string) (map[string]string, error) {
+	setBy := map[string]string{}
+	var ferr error
+	fs.VisitAll(func(f *pflag.Flag) {
+		if ferr != nil || f.Changed {
+			return
+		}
+		names, ok := aliases[f.Name]
+		if !ok {
+			names = []string{"ULTRABASE_" + strings.ToUpper(strings.ReplaceAll(f.Name, "-", "_"))}
+		}
+		for _, n := range names {
+			v := lookup(n)
+			if v == "" {
+				continue
+			}
+			// pflag's bool parser is stricter than parseBool; normalize first
+			// so env values like "yes"/"on"/"off" keep working.
+			if f.Value.Type() == "bool" {
+				b, err := parseBool(v)
+				if err != nil {
+					ferr = fmt.Errorf("%s: %w", n, err)
+					return
+				}
+				v = strconv.FormatBool(b)
+			}
+			if err := fs.Set(f.Name, v); err != nil {
+				ferr = fmt.Errorf("%s: %w", n, err)
+				return
+			}
+			setBy[f.Name] = n
+			return
+		}
+	})
+	return setBy, ferr
+}
+
 // serveOptions holds the parsed values that runServe needs.
 type serveOptions struct {
 	port             int
@@ -72,7 +161,9 @@ type serveOptions struct {
 	dashboard     DashboardMode
 }
 
-// serveFlagSet is split out for unit-testable flag parsing without invoking cobra.
+// serveFlagSet owns the single definition of serve's flags. The cobra command
+// registers it via AddFlagSet, and unit tests parse it directly — there is no
+// second flag definition to drift against.
 type serveFlagSet struct {
 	flags *pflag.FlagSet
 
@@ -81,116 +172,70 @@ type serveFlagSet struct {
 	loadData         bool
 	migrate          bool
 	allowDestructive bool
-
-	watch         bool
-	watchInterval time.Duration
-	dashboard     string
+	watch            bool
+	watchInterval    time.Duration
+	dashboard        string
 }
 
 func newServeFlagSet() *serveFlagSet {
 	fs := &serveFlagSet{flags: pflag.NewFlagSet("serve", pflag.ContinueOnError)}
-	fs.flags.IntVar(&fs.port, "port", 0, "")
-	fs.flags.StringVar(&fs.configPath, "config", "ultrabase.yaml", "")
-	fs.flags.BoolVar(&fs.loadData, "data", false, "")
-	fs.flags.BoolVar(&fs.migrate, "migrate", false, "")
-	fs.flags.BoolVar(&fs.allowDestructive, "allow-destructive", false, "")
-	fs.flags.BoolVar(&fs.watch, "watch", false, "")
-	fs.flags.DurationVar(&fs.watchInterval, "watch-interval", 60*time.Second, "")
-	fs.flags.StringVar(&fs.dashboard, "dashboard", "disabled", "")
+	fs.flags.IntVar(&fs.port, "port", 0, "server port (default: from config or 8080)")
+	fs.flags.StringVar(&fs.configPath, "config", "ultrabase.yaml", "config source (file path or s3://bucket/key; env: ULTRABASE_CONFIG_SOURCE or ULTRABASE_CONFIG)")
+	fs.flags.BoolVar(&fs.loadData, "data", false, "apply CSV data imports on startup")
+	fs.flags.BoolVar(&fs.migrate, "migrate", false, "run pending migrations on startup")
+	fs.flags.BoolVar(&fs.allowDestructive, "allow-destructive", false, "permit DROP TABLE/COLUMN in migrations")
+	fs.flags.BoolVar(&fs.watch, "watch", false, "watch the config source for changes (env: ULTRABASE_CONFIG_WATCH)")
+	fs.flags.DurationVar(&fs.watchInterval, "watch-interval", 60*time.Second, "S3-watch poll interval; min 10s (env: ULTRABASE_CONFIG_WATCH_INTERVAL)")
+	fs.flags.StringVar(&fs.dashboard, "dashboard", "disabled", "dashboard mode: disabled | readonly | readwrite (env: ULTRABASE_DASHBOARD)")
 	fs.flags.SetOutput(io.Discard)
 	return fs
 }
 
-// parseServeFlags parses args (no leading "serve") + applies env-var
-// fallbacks for any flag the caller did NOT pass. envLookup is normally
-// os.Getenv; tests pass a map-backed function.
-func parseServeFlags(args []string, envLookup func(string) string) (serveOptions, error) {
-	fs := newServeFlagSet()
-	if err := fs.flags.Parse(args); err != nil {
+// resolveServeFlags applies env-var fallbacks to an already-parsed flag set
+// and validates the result. It is the single resolution path: the cobra
+// command and parseServeFlags (tests) both funnel through here.
+func resolveServeFlags(fs *serveFlagSet, lookup func(string) string) (serveOptions, error) {
+	setBy, err := applyEnvDefaults(fs.flags, serveEnvAliases, lookup)
+	if err != nil {
 		return serveOptions{}, err
 	}
 
-	opts := serveOptions{
+	if fs.watchInterval < minWatchInterval {
+		return serveOptions{}, fmt.Errorf("%s must be at least %s", source(setBy, "watch-interval", "--watch-interval"), minWatchInterval)
+	}
+
+	mode, err := parseDashboardMode(fs.dashboard)
+	if err != nil {
+		if s, ok := setBy["dashboard"]; ok {
+			return serveOptions{}, fmt.Errorf("%s: %w", s, err)
+		}
+		return serveOptions{}, err
+	}
+
+	if err := checkConfigBackend(fs.configPath); err != nil {
+		return serveOptions{}, err
+	}
+
+	return serveOptions{
 		port:             fs.port,
 		configPath:       fs.configPath,
 		loadData:         fs.loadData,
 		migrate:          fs.migrate,
 		allowDestructive: fs.allowDestructive,
-		watchInterval:    60 * time.Second,
-		dashboard:        DashboardDisabled,
-	}
-
-	// --config can fall back to ULTRABASE_CONFIG (existing) or ULTRABASE_CONFIG_SOURCE (new).
-	if !fs.flags.Changed("config") {
-		if v := envLookup("ULTRABASE_CONFIG_SOURCE"); v != "" {
-			opts.configPath = v
-		} else if v := envLookup("ULTRABASE_CONFIG"); v != "" {
-			opts.configPath = v
-		}
-	}
-
-	if fs.flags.Changed("watch") {
-		opts.watch = fs.watch
-	} else if v := envLookup("ULTRABASE_CONFIG_WATCH"); v != "" {
-		b, err := parseBool(v)
-		if err != nil {
-			return opts, fmt.Errorf("ULTRABASE_CONFIG_WATCH: %w", err)
-		}
-		opts.watch = b
-	}
-
-	intervalSource := "--watch-interval"
-	if fs.flags.Changed("watch-interval") {
-		opts.watchInterval = fs.watchInterval
-	} else if v := envLookup("ULTRABASE_CONFIG_WATCH_INTERVAL"); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil {
-			return opts, fmt.Errorf("ULTRABASE_CONFIG_WATCH_INTERVAL: %w", err)
-		}
-		opts.watchInterval = d
-		intervalSource = "ULTRABASE_CONFIG_WATCH_INTERVAL"
-	}
-	if opts.watchInterval < minWatchInterval {
-		return opts, fmt.Errorf("%s must be at least %s", intervalSource, minWatchInterval)
-	}
-
-	if fs.flags.Changed("dashboard") {
-		m, err := parseDashboardMode(fs.dashboard)
-		if err != nil {
-			return opts, err
-		}
-		opts.dashboard = m
-	} else if v := envLookup("ULTRABASE_DASHBOARD"); v != "" {
-		m, err := parseDashboardMode(v)
-		if err != nil {
-			return opts, fmt.Errorf("ULTRABASE_DASHBOARD: %w", err)
-		}
-		opts.dashboard = m
-	}
-
-	if !isFileSpec(opts.configPath) && !strings.HasPrefix(opts.configPath, "s3://") {
-		return opts, fmt.Errorf("unsupported config backend: %s (only file paths and s3:// URIs are supported)", opts.configPath)
-	}
-
-	return opts, nil
+		watch:            fs.watch,
+		watchInterval:    fs.watchInterval,
+		dashboard:        mode,
+	}, nil
 }
 
-func isFileSpec(s string) bool {
-	if strings.Contains(s, "://") {
-		return false
+// parseServeFlags parses args (no leading "serve") then resolves env-var
+// fallbacks. envLookup is normally os.Getenv; tests pass a map-backed function.
+func parseServeFlags(args []string, envLookup func(string) string) (serveOptions, error) {
+	fs := newServeFlagSet()
+	if err := fs.flags.Parse(args); err != nil {
+		return serveOptions{}, err
 	}
-	return true
-}
-
-func parseBool(s string) (bool, error) {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "1", "t", "true", "yes", "on":
-		return true, nil
-	case "0", "f", "false", "no", "off":
-		return false, nil
-	default:
-		return false, fmt.Errorf("invalid boolean: %q", s)
-	}
+	return resolveServeFlags(fs, envLookup)
 }
 
 // devOptions are the parsed values for runDev. Same as serveOptions but
@@ -214,94 +259,76 @@ type devFlagSet struct {
 
 func newDevFlagSet() *devFlagSet {
 	fs := &devFlagSet{flags: pflag.NewFlagSet("dev", pflag.ContinueOnError)}
-	fs.flags.IntVar(&fs.port, "port", 0, "")
-	fs.flags.StringVar(&fs.configPath, "config", "ultrabase.yaml", "")
-	fs.flags.BoolVar(&fs.noWatch, "no-watch", false, "")
-	fs.flags.BoolVar(&fs.watch, "watch", true, "")
-	fs.flags.DurationVar(&fs.watchInterval, "watch-interval", 60*time.Second, "")
-	fs.flags.StringVar(&fs.dashboard, "dashboard", "readwrite", "")
-	fs.flags.BoolVar(&fs.verbose, "verbose", false, "")
+	fs.flags.IntVar(&fs.port, "port", 0, "server port (default: from config or 8080)")
+	fs.flags.StringVar(&fs.configPath, "config", "ultrabase.yaml", "config source (path or s3://bucket/key)")
+	fs.flags.BoolVar(&fs.noWatch, "no-watch", false, "disable hot-reload (alias for --watch=false)")
+	fs.flags.BoolVar(&fs.watch, "watch", true, "watch the config source for changes")
+	fs.flags.DurationVar(&fs.watchInterval, "watch-interval", 60*time.Second, "S3-watch poll interval; min 10s")
+	fs.flags.StringVar(&fs.dashboard, "dashboard", "readwrite", "dashboard mode: disabled | readonly | readwrite")
+	fs.flags.BoolVar(&fs.verbose, "verbose", false, "debug logging")
 	fs.flags.SetOutput(io.Discard)
 	return fs
 }
 
-// parseDevFlags parses dev's flag surface. dev shares serve's flag set but
-// with dev-friendly defaults: watch on, dashboard readwrite, plus the
-// dev-only --no-watch alias and --verbose.
-func parseDevFlags(args []string, envLookup func(string) string) (devOptions, error) {
-	fs := newDevFlagSet()
-	if err := fs.flags.Parse(args); err != nil {
+// resolveDevFlags mirrors resolveServeFlags but with dev defaults: watch on,
+// dashboard readwrite, migrate+seed always on, plus the --no-watch alias.
+func resolveDevFlags(fs *devFlagSet, lookup func(string) string) (devOptions, error) {
+	setBy, err := applyEnvDefaults(fs.flags, devEnvAliases, lookup)
+	if err != nil {
 		return devOptions{}, err
 	}
 
-	opts := devOptions{
+	// --no-watch, when explicitly passed, wins over --watch / the env default.
+	watch := fs.watch
+	if fs.flags.Changed("no-watch") && fs.noWatch {
+		watch = false
+	}
+
+	if fs.watchInterval < minWatchInterval {
+		return devOptions{}, fmt.Errorf("%s must be at least %s", source(setBy, "watch-interval", "--watch-interval"), minWatchInterval)
+	}
+
+	mode, err := parseDashboardMode(fs.dashboard)
+	if err != nil {
+		if s, ok := setBy["dashboard"]; ok {
+			return devOptions{}, fmt.Errorf("%s: %w", s, err)
+		}
+		return devOptions{}, err
+	}
+
+	if err := checkConfigBackend(fs.configPath); err != nil {
+		return devOptions{}, err
+	}
+
+	return devOptions{
 		serveOptions: serveOptions{
 			port:          fs.port,
 			configPath:    fs.configPath,
 			migrate:       true, // dev always migrates
 			loadData:      true, // dev always seeds
-			watch:         true, // dev default
-			watchInterval: 60 * time.Second,
-			dashboard:     DashboardReadwrite,
+			watch:         watch,
+			watchInterval: fs.watchInterval,
+			dashboard:     mode,
 		},
 		noWatch: fs.noWatch,
 		verbose: fs.verbose,
-	}
+	}, nil
+}
 
-	// --config falls back to ULTRABASE_CONFIG_SOURCE then ULTRABASE_CONFIG.
-	if !fs.flags.Changed("config") {
-		if v := envLookup("ULTRABASE_CONFIG_SOURCE"); v != "" {
-			opts.configPath = v
-		} else if v := envLookup("ULTRABASE_CONFIG"); v != "" {
-			opts.configPath = v
-		}
+// parseDevFlags parses dev's flag surface then resolves env-var fallbacks.
+func parseDevFlags(args []string, envLookup func(string) string) (devOptions, error) {
+	fs := newDevFlagSet()
+	if err := fs.flags.Parse(args); err != nil {
+		return devOptions{}, err
 	}
+	return resolveDevFlags(fs, envLookup)
+}
 
-	// --no-watch wins over default-on watch when explicitly passed.
-	if fs.flags.Changed("no-watch") && fs.noWatch {
-		opts.watch = false
-	} else if fs.flags.Changed("watch") {
-		opts.watch = fs.watch
-	} else if v := envLookup("ULTRABASE_CONFIG_WATCH"); v != "" {
-		b, err := parseBool(v)
-		if err != nil {
-			return opts, fmt.Errorf("ULTRABASE_CONFIG_WATCH: %w", err)
-		}
-		opts.watch = b
+// source names the origin of a flag value for error messages: the env var
+// that set it, or the CLI flag name when it came from args or the default.
+func source(setBy map[string]string, flag, flagName string) string {
+	if s, ok := setBy[flag]; ok {
+		return s
 	}
-
-	intervalSource := "--watch-interval"
-	if fs.flags.Changed("watch-interval") {
-		opts.watchInterval = fs.watchInterval
-	} else if v := envLookup("ULTRABASE_CONFIG_WATCH_INTERVAL"); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil {
-			return opts, fmt.Errorf("ULTRABASE_CONFIG_WATCH_INTERVAL: %w", err)
-		}
-		opts.watchInterval = d
-		intervalSource = "ULTRABASE_CONFIG_WATCH_INTERVAL"
-	}
-	if opts.watchInterval < minWatchInterval {
-		return opts, fmt.Errorf("%s must be at least %s", intervalSource, minWatchInterval)
-	}
-
-	if fs.flags.Changed("dashboard") {
-		m, err := parseDashboardMode(fs.dashboard)
-		if err != nil {
-			return opts, err
-		}
-		opts.dashboard = m
-	} else if v := envLookup("ULTRABASE_DASHBOARD"); v != "" {
-		m, err := parseDashboardMode(v)
-		if err != nil {
-			return opts, fmt.Errorf("ULTRABASE_DASHBOARD: %w", err)
-		}
-		opts.dashboard = m
-	}
-
-	if !isFileSpec(opts.configPath) && !strings.HasPrefix(opts.configPath, "s3://") {
-		return opts, fmt.Errorf("unsupported config backend: %s (only file paths and s3:// URIs are supported)", opts.configPath)
-	}
-
-	return opts, nil
+	return flagName
 }

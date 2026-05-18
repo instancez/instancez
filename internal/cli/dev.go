@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"time"
 
 	ultrahttp "github.com/saedx1/ultrabase/internal/adapter/http"
 	"github.com/saedx1/ultrabase/internal/app"
@@ -15,25 +14,19 @@ import (
 )
 
 func newDevCmd() *cobra.Command {
+	fs := newDevFlagSet()
 	cmd := &cobra.Command{
 		Use:   "dev",
 		Short: "Start local development server with hot-reload",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts, err := parseDevFlags(extractCobraArgs(cmd.Flags()), os.Getenv)
+			opts, err := resolveDevFlags(fs, os.Getenv)
 			if err != nil {
 				return err
 			}
 			return runDev(opts)
 		},
 	}
-
-	cmd.Flags().Int("port", 0, "server port (default: from config or 8080)")
-	cmd.Flags().String("config", "ultrabase.yaml", "config source (path or s3://bucket/key)")
-	cmd.Flags().Bool("no-watch", false, "disable hot-reload (alias for --watch=false)")
-	cmd.Flags().Bool("watch", true, "watch the config source for changes")
-	cmd.Flags().Duration("watch-interval", 60*time.Second, "S3-watch poll interval; min 10s")
-	cmd.Flags().String("dashboard", "readwrite", "dashboard mode: disabled | readonly | readwrite")
-	cmd.Flags().Bool("verbose", false, "debug logging")
+	cmd.Flags().AddFlagSet(fs.flags)
 	return cmd
 }
 

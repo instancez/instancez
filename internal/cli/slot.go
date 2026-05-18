@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/saedx1/ultrabase/internal/adapter/postgres"
@@ -30,12 +31,15 @@ func newSlotResetCmd() *cobra.Command {
 		Use:   "reset",
 		Short: "Drop and recreate the replication slot",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := applyEnvDefaults(cmd.Flags(), map[string][]string{"config": configEnvAliases}, os.Getenv); err != nil {
+				return err
+			}
 			return runSlotReset(configPath, force)
 		},
 	}
 
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "skip confirmation prompt")
-	cmd.Flags().StringVar(&configPath, "config", "ultrabase.yaml", "config file path")
+	cmd.Flags().StringVar(&configPath, "config", "ultrabase.yaml", "config source (env: ULTRABASE_CONFIG_SOURCE or ULTRABASE_CONFIG)")
 	return cmd
 }
 

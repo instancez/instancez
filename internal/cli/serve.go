@@ -5,56 +5,29 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"time"
 
 	ultrahttp "github.com/saedx1/ultrabase/internal/adapter/http"
 	"github.com/saedx1/ultrabase/internal/app"
 	"github.com/saedx1/ultrabase/internal/config"
 	"github.com/saedx1/ultrabase/internal/domain"
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 )
 
 func newServeCmd() *cobra.Command {
+	fs := newServeFlagSet()
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Start production server",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts, err := parseServeFlags(extractCobraArgs(cmd.Flags()), os.Getenv)
+			opts, err := resolveServeFlags(fs, os.Getenv)
 			if err != nil {
 				return err
 			}
 			return runServe(opts)
 		},
 	}
-
-	cmd.Flags().Int("port", 0, "server port (default: from config or 8080)")
-	cmd.Flags().String("config", "ultrabase.yaml", "config source (file path or s3://bucket/key; env: ULTRABASE_CONFIG_SOURCE or ULTRABASE_CONFIG)")
-	cmd.Flags().Bool("data", false, "apply CSV data imports on startup")
-	cmd.Flags().Bool("migrate", false, "run pending migrations on startup")
-	cmd.Flags().Bool("allow-destructive", false, "permit DROP TABLE/COLUMN in migrations")
-	cmd.Flags().Bool("watch", false, "watch the config source for changes (env: ULTRABASE_CONFIG_WATCH)")
-	cmd.Flags().Duration("watch-interval", 60*time.Second, "S3-watch poll interval; min 10s (env: ULTRABASE_CONFIG_WATCH_INTERVAL)")
-	cmd.Flags().String("dashboard", "disabled", "dashboard mode: disabled | readonly | readwrite (env: ULTRABASE_DASHBOARD)")
+	cmd.Flags().AddFlagSet(fs.flags)
 	return cmd
-}
-
-// extractCobraArgs reproduces only the flags the user explicitly passed,
-// so parseServeFlags' env-fallback logic kicks in for unset flags.
-func extractCobraArgs(fs *pflag.FlagSet) []string {
-	var out []string
-	fs.Visit(func(f *pflag.Flag) {
-		if f.Value.Type() == "bool" {
-			if f.Value.String() == "true" {
-				out = append(out, "--"+f.Name)
-			} else {
-				out = append(out, "--"+f.Name+"=false")
-			}
-			return
-		}
-		out = append(out, "--"+f.Name, f.Value.String())
-	})
-	return out
 }
 
 func runServe(opts serveOptions) error {
@@ -80,15 +53,19 @@ func runServe(opts serveOptions) error {
 		cfg.Server.Port = opts.port
 	}
 
-	// Structured JSON logger for production
+	// Structured JSON logger for production. All startup output goes through
+	// the logger so prod stdout stays a single parseable JSON stream.
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	fmt.Printf("  Ultrabase v%s (production)\n\n", version)
-	fmt.Printf("  Config source: %s\n", source.Describe())
-	fmt.Printf("  ✓ Schema valid\n")
-	fmt.Printf("  Watch:     %v\n", opts.watch)
-	fmt.Printf("  Watch interval: %s\n", opts.watchInterval)
-	fmt.Printf("  Dashboard: %s\n", opts.dashboard)
+	logger.Info("starting ultrabase",
+		"version", version,
+		"mode", "production",
+		"config_source", source.Describe())
+	logger.Info("schema valid")
+	logger.Info("config resolved",
+		"watch", opts.watch,
+		"watch_interval", opts.watchInterval.String(),
+		"dashboard", opts.dashboard.String())
 
 	logger.Warn("ultrabase is designed for single-replica deployments; multi-replica support is planned")
 
@@ -97,7 +74,7 @@ func runServe(opts serveOptions) error {
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
-	fmt.Printf("  ✓ Connected to PostgreSQL (owner + authenticator)\n")
+	logger.Info("connected to postgres", "pools", "owner+authenticator")
 
 	// Initialize providers
 	email, storage, err := initProviders(ctx, cfg)
@@ -118,7 +95,7 @@ func runServe(opts serveOptions) error {
 		if err := checkStorageHealth(ctx, storage, cfg, logger); err != nil {
 			return fmt.Errorf("storage health: %w", err)
 		}
-		fmt.Printf("  ✓ Storage buckets verified\n")
+		logger.Info("storage buckets verified")
 	}
 
 	// Only expose a local config path to the admin handler when the source is
@@ -170,7 +147,7 @@ func runServe(opts serveOptions) error {
 		app.WithConfigSource(source),
 	)
 
-	fmt.Printf("\n  Listening on :%d\n", cfg.Server.Port)
+	logger.Info("listening", "port", cfg.Server.Port)
 
 	return engine.Start(ctx)
 }

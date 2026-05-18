@@ -4,8 +4,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/spf13/pflag"
 )
 
 func TestParseServeFlagsDefaults(t *testing.T) {
@@ -39,6 +37,43 @@ func TestParseServeFlagsEnvFallbacks(t *testing.T) {
 	}
 }
 
+func TestParseServeFlagsConfigSourceEnv(t *testing.T) {
+	// ULTRABASE_CONFIG_SOURCE takes precedence over the legacy ULTRABASE_CONFIG.
+	env := map[string]string{
+		"ULTRABASE_CONFIG_SOURCE": "s3://bucket/new",
+		"ULTRABASE_CONFIG":        "s3://bucket/legacy",
+	}
+	got, err := parseServeFlags([]string{}, func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got.configPath != "s3://bucket/new" {
+		t.Fatalf("configPath = %q, want s3://bucket/new", got.configPath)
+	}
+
+	// With only the legacy name set, it is still honored.
+	got, err = parseServeFlags([]string{}, func(k string) string {
+		return map[string]string{"ULTRABASE_CONFIG": "s3://bucket/legacy"}[k]
+	})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got.configPath != "s3://bucket/legacy" {
+		t.Fatalf("legacy ULTRABASE_CONFIG ignored: %q", got.configPath)
+	}
+}
+
+func TestParseServeFlagsExplicitWinsOverEnv(t *testing.T) {
+	env := map[string]string{"ULTRABASE_DASHBOARD": "readwrite"}
+	got, err := parseServeFlags([]string{"--dashboard", "readonly"}, func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got.dashboard != DashboardReadonly {
+		t.Fatalf("explicit --dashboard should win over env, got %v", got.dashboard)
+	}
+}
+
 func TestParseServeFlagsValidation(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -67,6 +102,12 @@ func TestParseServeFlagsValidation(t *testing.T) {
 			env:     map[string]string{"ULTRABASE_CONFIG_WATCH_INTERVAL": "5s"},
 			wantErr: "ULTRABASE_CONFIG_WATCH_INTERVAL must be at least 10s",
 		},
+		{
+			name:    "bad dashboard env attributed to env name",
+			args:    []string{},
+			env:     map[string]string{"ULTRABASE_DASHBOARD": "bogus"},
+			wantErr: "ULTRABASE_DASHBOARD: --dashboard must be one of",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -80,108 +121,4 @@ func TestParseServeFlagsValidation(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestExtractCobraArgs(t *testing.T) {
-	cases := []struct {
-		name     string
-		setFlags func(fs *pflag.FlagSet)
-		want     []string
-	}{
-		{
-			name:     "no flags set",
-			setFlags: func(fs *pflag.FlagSet) {},
-			want:     nil,
-		},
-		{
-			name: "string flag set",
-			setFlags: func(fs *pflag.FlagSet) {
-				_ = fs.Set("config", "s3://bucket/key")
-			},
-			want: []string{"--config", "s3://bucket/key"},
-		},
-		{
-			name: "bool flag set true",
-			setFlags: func(fs *pflag.FlagSet) {
-				_ = fs.Set("watch", "true")
-			},
-			want: []string{"--watch"},
-		},
-		{
-			name: "bool flag set false explicitly",
-			setFlags: func(fs *pflag.FlagSet) {
-				_ = fs.Set("watch", "false")
-			},
-			want: []string{"--watch=false"},
-		},
-		{
-			name: "duration flag set",
-			setFlags: func(fs *pflag.FlagSet) {
-				_ = fs.Set("watch-interval", "30s")
-			},
-			want: []string{"--watch-interval", "30s"},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
-			fs.String("config", "ultrabase.yaml", "")
-			fs.Bool("watch", false, "")
-			fs.Duration("watch-interval", 60*time.Second, "")
-			tc.setFlags(fs)
-			got := extractCobraArgs(fs)
-			if !slicesEqual(got, tc.want) {
-				t.Fatalf("extractCobraArgs = %v, want %v", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestExtractCobraArgsRoundTrip(t *testing.T) {
-	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
-	fs.String("config", "ultrabase.yaml", "")
-	fs.Bool("watch", false, "")
-	fs.Duration("watch-interval", 60*time.Second, "")
-	fs.String("dashboard", "disabled", "")
-	fs.Int("port", 0, "")
-
-	_ = fs.Set("config", "s3://bucket/key")
-	_ = fs.Set("watch", "false")
-	_ = fs.Set("watch-interval", "30s")
-	_ = fs.Set("dashboard", "readonly")
-	_ = fs.Set("port", "9090")
-
-	args := extractCobraArgs(fs)
-
-	opts, err := parseServeFlags(args, func(string) string { return "" })
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if opts.configPath != "s3://bucket/key" {
-		t.Fatalf("configPath = %q", opts.configPath)
-	}
-	if opts.watch != false {
-		t.Fatalf("watch should be false (explicit)")
-	}
-	if opts.watchInterval != 30*time.Second {
-		t.Fatalf("watchInterval = %s", opts.watchInterval)
-	}
-	if opts.dashboard != DashboardReadonly {
-		t.Fatalf("dashboard = %s", opts.dashboard)
-	}
-	if opts.port != 9090 {
-		t.Fatalf("port = %d", opts.port)
-	}
-}
-
-func slicesEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

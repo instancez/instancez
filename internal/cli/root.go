@@ -2,15 +2,19 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 )
 
 const version = "0.1.0"
+
+// errReported marks an error whose details were already printed to the user
+// (e.g. a formatted validation report). Execute exits non-zero for it without
+// printing the bare error again.
+var errReported = errors.New("reported")
 
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
@@ -19,11 +23,6 @@ func NewRootCmd() *cobra.Command {
 		Long:          "Ultrabase turns a YAML config into a full backend: Postgres CRUD, auth, storage, events, and more.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-	}
-
-	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
-		applyEnvFlags(cmd)
-		return nil
 	}
 
 	root.AddCommand(
@@ -39,22 +38,11 @@ func NewRootCmd() *cobra.Command {
 	return root
 }
 
-// applyEnvFlags sets any unset flag from ULTRABASE_<FLAG_UPPER_SNAKE> env vars.
-func applyEnvFlags(cmd *cobra.Command) {
-	cmd.Flags().VisitAll(func(f *pflag.Flag) {
-		if f.Changed {
-			return
-		}
-		envKey := "ULTRABASE_" + strings.ToUpper(strings.ReplaceAll(f.Name, "-", "_"))
-		if v := os.Getenv(envKey); v != "" {
-			_ = cmd.Flags().Set(f.Name, v)
-		}
-	})
-}
-
 func Execute() {
 	if err := NewRootCmd().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		if !errors.Is(err, errReported) {
+			fmt.Fprintln(os.Stderr, err)
+		}
 		os.Exit(1)
 	}
 }

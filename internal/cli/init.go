@@ -60,7 +60,7 @@ tables:
         primary_key: true
       - name: user_id
         foreign_key:
-          references: users.id
+          references: auth.users.id
           on_delete: cascade
       - name: title
         type: text
