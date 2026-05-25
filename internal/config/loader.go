@@ -41,15 +41,25 @@ func ParseBytes(data []byte, origin string) (*domain.Config, error) {
 }
 
 // LoadWithDotenv loads a .env file (if present) into the process environment,
-// then loads the config. Used by `ultrabase dev`.
+// then loads the config. Used by `ultra dev` with `.development.env`.
 func LoadWithDotenv(configPath, dotenvPath string) (*domain.Config, error) {
-	if err := loadDotenv(dotenvPath); err != nil {
-		// .env is optional — only error if the file exists but is malformed
-		if !os.IsNotExist(err) {
-			return nil, fmt.Errorf("loading .env: %w", err)
-		}
+	if err := LoadDotenv(dotenvPath); err != nil {
+		return nil, err
 	}
 	return Load(configPath)
+}
+
+// LoadDotenv parses the given .env file (if present) and exports its keys
+// into the process environment without overriding real env vars. Returns
+// nil if the file does not exist; only malformed files surface an error.
+func LoadDotenv(path string) error {
+	if err := loadDotenv(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("loading %s: %w", path, err)
+	}
+	return nil
 }
 
 // interpolateEnvVars replaces ${VAR} and ${VAR:-default} references.

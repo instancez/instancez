@@ -54,7 +54,7 @@ on:
 ```
 
 ```sh
-ultrabase dev
+ultra dev --use-dsn
 # REST API on :8080, dashboard on :5173
 ```
 
@@ -87,31 +87,28 @@ This starts PostgreSQL 17, the Ultrabase API server on port `8080`, and the dash
 ```sh
 # Prerequisites: Go 1.25+, PostgreSQL 17+, Node.js 20+ (for dashboard)
 
-go build -o ultrabase ./cmd/ultrabase
+go build -o ultra ./cmd/ultra
 
-# Two Postgres logins are required (Supabase-style). Provision them once:
-#   CREATE ROLE ultrabase_owner LOGIN PASSWORD '...'
-#       CREATEROLE CREATEDB BYPASSRLS REPLICATION;
-#   CREATE ROLE authenticator LOGIN PASSWORD '...' NOINHERIT;
-#   ALTER DATABASE mydb OWNER TO ultrabase_owner;
-export ULTRABASE_OWNER_DATABASE_URL="postgres://ultrabase_owner:pass@localhost:5432/mydb?sslmode=disable"
-export ULTRABASE_AUTH_DATABASE_URL="postgres://authenticator:pass@localhost:5432/mydb?sslmode=disable"
+# Initialize the project and bootstrap a Postgres in one step. Supply any
+# CREATEROLE-capable DSN (superuser works); ultra creates ultrabase_owner +
+# authenticator + the API roles and writes the resulting DSNs to .development.env.
+./ultra init --with-dsn postgres://superuser:pass@localhost:5432/mydb
+
 export JWT_SECRET="your-secret"
 export ULTRABASE_ADMIN_KEY="your-admin-key"
 
-./ultrabase dev
+./ultra dev --use-dsn
 ```
 
 ### CLI Commands
 
 ```sh
-ultrabase init <name>       # Scaffold a new project
-ultrabase dev               # Start dev server with hot-reload
-ultrabase serve             # Production mode
-ultrabase validate          # Check YAML syntax
-ultrabase generate          # Generate TypeScript/Python/Go SDKs
-ultrabase db migrate        # Apply migrations
-ultrabase db seed           # Load seed data
+ultra init [--with-dsn <url>]        # Scaffold project; optionally bootstrap a DB
+ultra dev --use-dsn                   # Start dev server with hot-reload
+ultra serve                           # Production mode (reads .production.env)
+ultra validate [--use-dsn <url>]      # YAML syntax check; with DSN, also plan a migration
+ultra slot reset                      # Drop & recreate the WAL replication slot
+ultra version
 ```
 
 ## Features
@@ -268,16 +265,6 @@ functions:
 curl /rest/v1/rpc/team_stats?team_id=1
 ```
 
-### SDK Generation
-
-Auto-generate typed client libraries from your YAML schema:
-
-```sh
-ultrabase generate --lang typescript --output ./sdk
-ultrabase generate --lang python --output ./sdk
-ultrabase generate --lang go --output ./sdk
-```
-
 ### Dashboard
 
 A built-in admin dashboard for managing your config, browsing data, monitoring events, and previewing migrations.
@@ -313,7 +300,7 @@ functions: { ... }             # Custom SQL endpoints
 seeds:     { ... }             # Initial data
 ```
 
-See the [docs/](docs/) directory for the full specification of each section.
+See [docs/example-ultrabase.yaml](docs/example-ultrabase.yaml) for a fully annotated example covering every section.
 
 ## Architecture
 

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/saedx1/ultrabase/dashboard"
 	ultrahttp "github.com/saedx1/ultrabase/internal/adapter/http"
 	"github.com/saedx1/ultrabase/internal/app"
 	"github.com/saedx1/ultrabase/internal/config"
@@ -33,12 +34,24 @@ func newServeCmd() *cobra.Command {
 func runServe(opts serveOptions) error {
 	ctx := context.Background()
 
+	if err := requireConfigFile(opts.configPath); err != nil {
+		return err
+	}
+
 	source, err := config.NewSource(opts.configPath)
 	if err != nil {
 		return err
 	}
 
-	// serve does NOT load .env (12-factor compliance)
+	// serve loads .production.env when running against a local file source;
+	// shell env vars always take precedence. Skipped for s3:// sources
+	// since prod env vars come from the orchestrator (ConfigMap, secrets,
+	// etc.) in that deployment shape.
+	if _, ok := source.(*config.FileSource); ok {
+		if err := config.LoadDotenv(".production.env"); err != nil {
+			return err
+		}
+	}
 	cfg, err := source.Load(ctx)
 	if err != nil {
 		return err
@@ -110,16 +123,17 @@ func runServe(opts serveOptions) error {
 	// Start they fall back to nil/cfg.
 	var engine *app.Engine
 	httpServer := ultrahttp.NewServer(ultrahttp.ServerDeps{
-		Config:        cfg,
-		DB:            authDB,
-		Logger:        logger,
-		DevMode:       false,
-		Email:         email,
-		Storage:       storage,
-		JWTKeys:       app.NewJWTKeyManager(ownerDB),
-		ConfigPath:    adminConfigPath,
-		DashboardMode: opts.dashboard.HTTP(),
-		ConfigSource:  source,
+		Config:          cfg,
+		DB:              authDB,
+		Logger:          logger,
+		DevMode:         false,
+		Email:           email,
+		Storage:         storage,
+		JWTKeys:         app.NewJWTKeyManager(ownerDB),
+		ConfigPath:      adminConfigPath,
+		DashboardMode:   opts.dashboard.HTTP(),
+		DashboardAssets: dashboard.Assets(),
+		ConfigSource:    source,
 		DriftFn: func() *app.DriftTracker {
 			if engine == nil {
 				return nil

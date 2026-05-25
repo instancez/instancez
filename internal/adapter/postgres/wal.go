@@ -87,7 +87,7 @@ func (w *WALConsumer) ensureSlot(ctx context.Context) error {
 
 	if count == 0 {
 		_, err := w.pool.Exec(ctx,
-			"SELECT pg_create_logical_replication_slot($1, 'pgoutput')", slotName)
+			"SELECT pg_create_logical_replication_slot($1, 'wal2json')", slotName)
 		if err != nil {
 			return fmt.Errorf("create slot: %w", err)
 		}

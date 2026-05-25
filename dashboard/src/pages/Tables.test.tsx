@@ -7,6 +7,7 @@ import { ConfigContext } from "../hooks/useConfig";
 import type { Config, ValidationError } from "../lib/types";
 
 const baseConfig: Config = {
+  version: 1,
   project: { name: "Test", description: "" },
   extensions: [],
   tables: {},
@@ -23,6 +24,7 @@ const baseConfig: Config = {
     docs_ui: true,
     cors: { origins: [], methods: [], headers: [], credentials: false, max_age: 0 },
     timeouts: { request: "30s", db_query: "10s", upload: "60s", shutdown: "10s" },
+    db: { pool: { max: 25, min: 5, idle_timeout: "5m" } },
   },
 };
 

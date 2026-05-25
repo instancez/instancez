@@ -17,7 +17,13 @@ services:
       retries: 10
 
   backend:
-    build: .
+    build:
+      context: .
+      # Skip the embedded SPA in dev — the `dashboard` service below runs
+      # vite with HMR on :5173, which is what dev should hit. Keeping the
+      # embed off here also keeps the backend image rebuild fast.
+      args:
+        WITH_DASHBOARD: "false"
     ports:
       - "8080:8080"
     environment:

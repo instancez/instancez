@@ -31,10 +31,10 @@ Concrete rules that fall out of this:
 <commands>
 **Build & run:**
 ```sh
-go build -o ultrabase ./cmd/ultrabase
-./ultrabase dev          # hot-reload dev server (requires the two DB URLs + JWT_SECRET + ULTRABASE_ADMIN_KEY in env)
-./ultrabase serve        # production mode
-./ultrabase validate     # YAML syntax check, no DB
+go build -o ultra ./cmd/ultra
+./ultra dev --use-dsn    # hot-reload dev server (requires the two DB URLs + JWT_SECRET + ULTRABASE_ADMIN_KEY in env)
+./ultra serve            # production mode
+./ultra validate         # YAML syntax check, no DB
 docker compose -f docker-compose.dev.yaml up   # full stack: postgres + backend + dashboard
 ```
 
@@ -63,10 +63,10 @@ npm run build     # tsc -b && vite build
 Hexagonal layout under `internal/`:
 
 ```
-cmd/ultrabase/main.go
+cmd/ultra/main.go
         │
         ▼
-internal/cli/         cobra commands (dev, serve, init, validate, rollback, dbsetup)
+internal/cli/         cobra commands (dev, serve, init, validate, slot, dbsetup)
         │
         ▼
 internal/app/         engine.go orchestrates lifecycle: migrate → seed → http + WAL consumer + event worker + watcher

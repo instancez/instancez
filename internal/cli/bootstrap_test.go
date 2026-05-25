@@ -1,0 +1,52 @@
+package cli
+
+import "testing"
+
+// TestWithUserPassInjectsDBName guards the regression where a privileged DSN
+// with no /dbname path produced rotated DSNs that also had no dbname, and pgx
+// defaulted the database to the user — so the auth pool tried to connect to
+// a database literally named "authenticator" which doesn't exist.
+func TestWithUserPassInjectsDBName(t *testing.T) {
+	cases := []struct {
+		name    string
+		in      string
+		dbName  string
+		want    string
+	}{
+		{
+			name:   "no path",
+			in:     "postgres://postgres:secret@localhost:5432",
+			dbName: "postgres",
+			want:   "postgres://newuser:newpass@localhost:5432/postgres",
+		},
+		{
+			name:   "trailing slash only",
+			in:     "postgres://postgres:secret@localhost:5432/",
+			dbName: "postgres",
+			want:   "postgres://newuser:newpass@localhost:5432/postgres",
+		},
+		{
+			name:   "explicit dbname is overwritten with resolved one",
+			in:     "postgres://postgres:secret@localhost:5432/other",
+			dbName: "actual",
+			want:   "postgres://newuser:newpass@localhost:5432/actual",
+		},
+		{
+			name:   "query params preserved",
+			in:     "postgres://postgres:secret@localhost:5432/?sslmode=disable",
+			dbName: "postgres",
+			want:   "postgres://newuser:newpass@localhost:5432/postgres?sslmode=disable",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := withUserPass(tc.in, "newuser", "newpass", tc.dbName)
+			if err != nil {
+				t.Fatalf("withUserPass: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

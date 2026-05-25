@@ -1,3 +1,23 @@
+# syntax=docker/dockerfile:1.7
+
+# Per-arch Lambda image (Lambda rejects multi-arch manifest lists), built
+# once per platform as ultrabase:-lambda-amd64 / -lambda-arm64. The
+# WITH_DASHBOARD flag mirrors the main Dockerfile: true (default) embeds
+# the SPA, false produces a slim binary that 404s on /dashboard.
+ARG WITH_DASHBOARD=true
+
+FROM --platform=$BUILDPLATFORM node:22-alpine AS dashboard-true
+WORKDIR /src/dashboard
+COPY dashboard/package.json dashboard/package-lock.json ./
+RUN npm ci
+COPY dashboard/ ./
+RUN npm run build && mkdir -p /out && mv dist /out/dist
+
+FROM --platform=$BUILDPLATFORM alpine:3.21 AS dashboard-false
+RUN mkdir -p /out/dist && touch /out/dist/.gitkeep
+
+FROM dashboard-${WITH_DASHBOARD} AS dashboard
+
 FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
 
 ARG TARGETOS TARGETARCH
@@ -6,13 +26,14 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+COPY --from=dashboard /out/dist ./dashboard/dist
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -o /ultrabase ./cmd/ultrabase
+    go build -o /ultra ./cmd/ultra
 
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates
-COPY --from=builder /ultrabase /usr/local/bin/ultrabase
+COPY --from=builder /ultra /usr/local/bin/ultra
 COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.9.1 /lambda-adapter /opt/extensions/lambda-adapter
 WORKDIR /app
 EXPOSE 8080
-CMD ["ultrabase", "serve", "--data", "--migrate"]
+CMD ["ultra", "serve", "--data", "--migrate"]

@@ -7,6 +7,7 @@ import { ConfigContext } from "../hooks/useConfig";
 import type { Config, ValidationError } from "../lib/types";
 
 const baseConfig: Config = {
+  version: 1,
   project: { name: "My App", description: "A cool app" },
   extensions: ["pgcrypto"],
   tables: {},

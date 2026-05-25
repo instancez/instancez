@@ -3,8 +3,11 @@ node_modules/
 
 # Build output
 dist/
+!/dashboard/dist/
+/dashboard/dist/*
+!/dashboard/dist/.gitkeep
 *.exe
-/ultrabase
+/ultra
 
 # TypeScript
 tsconfig.tsbuildinfo

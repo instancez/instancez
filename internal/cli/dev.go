@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/saedx1/ultrabase/dashboard"
 	ultrahttp "github.com/saedx1/ultrabase/internal/adapter/http"
 	"github.com/saedx1/ultrabase/internal/app"
 	"github.com/saedx1/ultrabase/internal/config"
@@ -31,7 +32,23 @@ func newDevCmd() *cobra.Command {
 }
 
 func runDev(opts devOptions) error {
-	cfg, err := config.LoadWithDotenv(opts.configPath, ".env")
+	if err := requireConfigFile(opts.configPath); err != nil {
+		return err
+	}
+
+	switch opts.dbSrc {
+	case DevDBSourceDocker:
+		return fmt.Errorf("--use-docker is not yet implemented in this build; use --use-dsn for now")
+	case DevDBSourceCloudEphemeral:
+		return fmt.Errorf("--use-cloud-ephemeral is not yet implemented in this build; use --use-dsn for now")
+	case DevDBSourceDSN:
+		// fall through — env-var DSN is the only wired path right now.
+	default:
+		// Defensive: resolveDevFlags should have caught this.
+		return fmt.Errorf("internal: dev data source unset")
+	}
+
+	cfg, err := config.LoadWithDotenv(opts.configPath, ".development.env")
 	if err != nil {
 		return err
 	}
@@ -93,16 +110,17 @@ func runDev(opts devOptions) error {
 	// Start they fall back to nil/cfg.
 	var engine *app.Engine
 	httpServer := ultrahttp.NewServer(ultrahttp.ServerDeps{
-		Config:        cfg,
-		DB:            authDB,
-		Logger:        logger,
-		DevMode:       true,
-		Email:         email,
-		Storage:       storage,
-		JWTKeys:       app.NewJWTKeyManager(ownerDB),
-		ConfigPath:    opts.configPath,
-		DashboardMode: opts.dashboard.HTTP(),
-		ConfigSource:  source,
+		Config:          cfg,
+		DB:              authDB,
+		Logger:          logger,
+		DevMode:         true,
+		Email:           email,
+		Storage:         storage,
+		JWTKeys:         app.NewJWTKeyManager(ownerDB),
+		ConfigPath:      opts.configPath,
+		DashboardMode:   opts.dashboard.HTTP(),
+		DashboardAssets: dashboard.Assets(),
+		ConfigSource:    source,
 		DriftFn: func() *app.DriftTracker {
 			if engine == nil {
 				return nil

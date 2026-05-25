@@ -1,6 +1,7 @@
 package http
 
 import (
+	"io"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -39,30 +40,43 @@ func MountDashboard(r *gin.Engine, assets fs.FS, devMode bool, mode DashboardMod
 
 	fileServer := http.FileServer(http.FS(assets))
 
+	// serveIndex writes dist/index.html directly rather than routing it
+	// through fileServer — http.FileServer 301-redirects any request whose
+	// path ends in "/index.html" to its parent directory, which would turn
+	// the SPA fallback into a redirect to "/" and break the dashboard.
+	serveIndex := func(c *gin.Context) {
+		f, err := assets.Open("index.html")
+		if err != nil {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		defer f.Close()
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.Status(http.StatusOK)
+		io.Copy(c.Writer, f)
+	}
+
 	handler := func(c *gin.Context) {
 		path := c.Request.URL.Path
 		// Strip /dashboard prefix for asset lookup
 		assetPath := strings.TrimPrefix(path, "/dashboard")
-		if assetPath == "" {
-			assetPath = "/"
+		if assetPath == "" || assetPath == "/" {
+			serveIndex(c)
+			return
 		}
 
 		// Try to serve the file directly
-		if assetPath != "/" {
-			trimmed := strings.TrimPrefix(assetPath, "/")
-			if f, err := assets.Open(trimmed); err == nil {
-				f.Close()
-				c.Request.URL.Path = assetPath
-				fileServer.ServeHTTP(c.Writer, c.Request)
-				c.Request.URL.Path = path // restore
-				return
-			}
+		trimmed := strings.TrimPrefix(assetPath, "/")
+		if f, err := assets.Open(trimmed); err == nil {
+			f.Close()
+			c.Request.URL.Path = assetPath
+			fileServer.ServeHTTP(c.Writer, c.Request)
+			c.Request.URL.Path = path // restore
+			return
 		}
 
-		// SPA fallback: serve index.html for all non-asset routes
-		c.Request.URL.Path = "/index.html"
-		fileServer.ServeHTTP(c.Writer, c.Request)
-		c.Request.URL.Path = path // restore
+		// SPA client-side route fallback — serve index.html.
+		serveIndex(c)
 	}
 
 	r.GET("/dashboard", handler)

@@ -16,6 +16,7 @@ const mockGetStats = vi.mocked(getStats);
 const mockGetStatus = vi.mocked(getStatus);
 
 const baseConfig: Config = {
+  version: 1,
   project: { name: "My Project", description: "A test project" },
   extensions: [],
   tables: {
@@ -30,7 +31,7 @@ const baseConfig: Config = {
   },
   auth: { jwt_expiry: "15m", refresh_tokens: true, refresh_token_expiry: "7d", email: { verify_email: false, templates: {} }, google: null, github: null },
   storage: {
-    avatars: { max_size: "5MB", mime_types: ["image/*"], public: true, rls: [] },
+    avatars: { max_size: "5MB", types: ["image/*"], public: true, rls: [] },
   },
   functions: {},
   on: {
@@ -45,6 +46,7 @@ const baseConfig: Config = {
     docs_ui: true,
     cors: { origins: [], methods: [], headers: [], credentials: false, max_age: 0 },
     timeouts: { request: "30s", db_query: "10s", upload: "60s", shutdown: "10s" },
+    db: { pool: { max: 25, min: 5, idle_timeout: "5m" } },
   },
 };
 
@@ -73,7 +75,7 @@ describe("Overview", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetStats.mockResolvedValue({
-      tables: { todos: { row_count: 42, size_bytes: 8192 } },
+      tables: { todos: { row_count: 42 } },
       storage: { avatars: { object_count: 10, total_bytes: 1048576 } },
       events: { last_hour: { delivered: 100, failed: 3, dead: 1 } },
     });

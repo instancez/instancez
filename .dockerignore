@@ -1,0 +1,18 @@
+# Keep host artifacts out of the build context — the npm and go stages
+# install their own. Without this, host node_modules would overwrite the
+# freshly-installed ones in the dashboard stage.
+.git
+.github
+ultra
+**/node_modules
+dashboard/dist
+*.test
+coverage.out
+pgdata
+uploads
+prompts
+.env
+.env.*
+!.env.example
+.DS_Store
+*.swp

@@ -261,7 +261,9 @@ export function FunctionDetail() {
                     onChange={(e) =>
                       updateFn((f) => {
                         const newArgs = [...(f.args || [])];
-                        newArgs[idx] = { ...newArgs[idx], type: e.target.value };
+                        const cur = newArgs[idx];
+                        if (!cur) return f;
+                        newArgs[idx] = { ...cur, type: e.target.value };
                         return { ...f, args: newArgs };
                       })
                     }
@@ -278,7 +280,9 @@ export function FunctionDetail() {
                       onChange={(e) =>
                         updateFn((f) => {
                           const newArgs = [...(f.args || [])];
-                          newArgs[idx] = { ...newArgs[idx], required: e.target.checked };
+                          const cur = newArgs[idx];
+                          if (!cur) return f;
+                          newArgs[idx] = { ...cur, required: e.target.checked };
                           return { ...f, args: newArgs };
                         })
                       }

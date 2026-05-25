@@ -12,14 +12,15 @@ import {
 } from "./client";
 
 const mockFetch = vi.fn();
-global.fetch = mockFetch;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubGlobal("fetch", mockFetch);
   sessionStorage.setItem("ultrabase_admin_key", "test-key");
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   sessionStorage.clear();
 });
 

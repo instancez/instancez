@@ -44,6 +44,10 @@ func newSlotResetCmd() *cobra.Command {
 }
 
 func runSlotReset(configPath string, force bool) error {
+	if err := requireConfigFile(configPath); err != nil {
+		return err
+	}
+
 	if !force {
 		fmt.Println("  ⚠ This will drop the replication slot and recreate it.")
 		fmt.Println("  ⚠ Events between the last checkpoint and now will be lost.")

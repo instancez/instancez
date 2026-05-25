@@ -28,11 +28,13 @@ export function Functions() {
         ...config!.functions,
         [fnName]: {
           description: "",
-          method: "GET",
-          query: "SELECT 1;",
-          params: {},
-          returns: { type: "rows", schema: {} },
           auth_required: true,
+          language: "plpgsql",
+          volatility: "volatile",
+          security: "invoker",
+          args: [],
+          body: "BEGIN\n  -- function body\nEND;",
+          returns: { type: "void" },
         },
       },
     };
@@ -40,13 +42,6 @@ export function Functions() {
     const ok = await save(updated);
     if (ok) navigate(`/functions/${fnName}`);
   }
-
-  const METHOD_COLORS: Record<string, string> = {
-    GET: "info",
-    POST: "success",
-    PUT: "warning",
-    DELETE: "error",
-  };
 
   return (
     <div>
@@ -103,19 +98,13 @@ export function Functions() {
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  <StatusBadge
-                    variant={
-                      (METHOD_COLORS[fn.method] as any) || "muted"
-                    }
-                  >
-                    {fn.method}
-                  </StatusBadge>
+                  <StatusBadge variant="info">{fn.language}</StatusBadge>
                   {fn.auth_required && (
                     <StatusBadge variant="info">auth</StatusBadge>
                   )}
                   <StatusBadge variant="muted">
-                    {Object.keys(fn.params || {}).length} param
-                    {Object.keys(fn.params || {}).length !== 1 ? "s" : ""}
+                    {(fn.args || []).length} arg
+                    {(fn.args || []).length !== 1 ? "s" : ""}
                   </StatusBadge>
                 </div>
               </button>
