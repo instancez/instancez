@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/saedx1/ultrabase/internal/cloud"
 	"github.com/spf13/cobra"
 )
 
@@ -74,6 +75,13 @@ func runInit(ctx context.Context, opts initOptions) error {
 		return err
 	}
 
+	// Cloud-dependent flags require credentials. Fail fast.
+	if opts.withCloud || opts.generateLike != "" {
+		if _, err := cloud.Load(); err != nil {
+			return fmt.Errorf("--with-cloud / --generate-like require `ultra login`: %w", err)
+		}
+	}
+
 	dir, err := filepath.Abs(opts.dir)
 	if err != nil {
 		return fmt.Errorf("resolve dir: %w", err)
@@ -111,8 +119,26 @@ func runInit(ctx context.Context, opts initOptions) error {
 		fmt.Println()
 	}
 
+	// If --generate-like is set, fetch the YAML from the cloud AI service
+	// instead of using the static scaffold.
+	var generatedYAML string
+	if opts.generateLike != "" {
+		fmt.Println("  Generating ultrabase.yaml from prompt...")
+		creds, _ := cloud.Load()
+		c := cloud.NewClient(cloud.APIURL(), creds.PAT)
+		resp, err := c.GenerateYAML(opts.generateLike)
+		if err != nil {
+			return fmt.Errorf("generate-yaml: %w", err)
+		}
+		generatedYAML = resp.YAML
+		fmt.Printf("  ✓ Generated (%d input + %d output tokens)\n", resp.Tokens.Input, resp.Tokens.Output)
+	}
+
 	// ultrabase.yaml: existence already gated above (errors without --force).
 	if err := applyWrite(dir, "ultrabase.yaml", func(_ string) (string, writeAction) {
+		if generatedYAML != "" {
+			return generatedYAML, actionCreate
+		}
 		return scaffoldYAML(name), actionCreate
 	}); err != nil {
 		return err

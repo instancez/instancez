@@ -29,6 +29,15 @@ func TestInitWithDSNAndDockerStillMutuallyExclusive(t *testing.T) {
 	assert.Error(t, validateInitFlags(opts))
 }
 
+func TestInitGenerateLikeRequiresLogin(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir) // no credentials in this HOME
+
+	opts := initOptions{dir: dir, generateLike: "twitter"}
+	err := runInit(context.Background(), opts)
+	assert.ErrorContains(t, err, "ultra login")
+}
+
 // TestRunInitScaffoldStartsCleanly guards the generated project: it must both
 // validate AND describe migratable DDL. The todos.user_id FK must reference
 // auth.users.id (3-part) — a 2-part `users.id` validates fine but the migrator
