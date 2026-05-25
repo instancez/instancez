@@ -37,6 +37,129 @@ func TestClientDeviceTokenPending(t *testing.T) {
 	assert.Equal(t, "authorization_pending", apiErr.Code)
 }
 
+func TestClientCreateProject(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/ultrabase/projects", r.URL.Path)
+		assert.Equal(t, "Bearer ultra_pat_test", r.Header.Get("Authorization"))
+
+		var body struct {
+			Name string `json:"name"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		assert.Equal(t, "myapp", body.Name)
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"project_id": "app-uuid",
+			"slug":       "myapp-abc",
+			"name":       "myapp",
+		})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "ultra_pat_test")
+	resp, err := c.CreateProject("myapp")
+	assert.NoError(t, err)
+	assert.Equal(t, "app-uuid", resp.ProjectID)
+}
+
+func TestClientDeploy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/ultrabase/projects/app-uuid/deploy", r.URL.Path)
+
+		_ = json.NewEncoder(w).Encode(map[string]any{"version_id": "v-1"})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "ultra_pat_test")
+	resp, err := c.Deploy("app-uuid")
+	assert.NoError(t, err)
+	assert.Equal(t, "v-1", resp.VersionID)
+}
+
+func TestClientMigrationPreview(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "GET", r.Method)
+		assert.Equal(t, "/ultrabase/projects/app-uuid/migration-preview", r.URL.Path)
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"diff": "+ added table todos",
+		})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "ultra_pat_test")
+	resp, err := c.MigrationPreview("app-uuid")
+	assert.NoError(t, err)
+	assert.Contains(t, resp.Diff, "todos")
+}
+
+func TestClientGenerateYAML(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/ai/generate-yaml", r.URL.Path)
+
+		var body struct {
+			Prompt string `json:"prompt"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		assert.Equal(t, "twitter clone", body.Prompt)
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"yaml":   "version: 1\nproject:\n  name: t\n",
+			"tokens": map[string]int{"input": 100, "output": 200},
+		})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "ultra_pat_test")
+	resp, err := c.GenerateYAML("twitter clone")
+	assert.NoError(t, err)
+	assert.Contains(t, resp.YAML, "version: 1")
+	assert.Equal(t, 100, resp.Tokens.Input)
+	assert.Equal(t, 200, resp.Tokens.Output)
+}
+
+func TestClientUploadYAML(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "PUT", r.Method)
+		assert.Equal(t, "/ultrabase/projects/app-uuid/yaml", r.URL.Path)
+
+		var body struct {
+			YAML string `json:"yaml"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		assert.Contains(t, body.YAML, "version: 1")
+
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "version_id": "v-2"})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "ultra_pat_test")
+	err := c.UploadYAML("app-uuid", "version: 1\n")
+	assert.NoError(t, err)
+}
+
+func TestClientWhoami(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "GET", r.Method)
+		assert.Equal(t, "/ultrabase/whoami", r.URL.Path)
+		assert.Equal(t, "Bearer ultra_pat_test", r.Header.Get("Authorization"))
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"email":   "me@example.com",
+			"user_id": "me@example.com",
+		})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "ultra_pat_test")
+	resp, err := c.Whoami()
+	assert.NoError(t, err)
+	assert.Equal(t, "me@example.com", resp.Email)
+}
+
 func TestClientDeviceCode(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)

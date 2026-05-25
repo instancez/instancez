@@ -61,6 +61,98 @@ func (c *Client) DeviceToken(deviceCode string) (string, error) {
 	return out.Token, nil
 }
 
+// CreateProjectResponse mirrors POST /ultrabase/projects.
+type CreateProjectResponse struct {
+	ProjectID string `json:"project_id"`
+	Slug      string `json:"slug"`
+	Name      string `json:"name"`
+}
+
+// CreateProject creates a new backend-only App in Ultrabase Cloud. Requires
+// a Bearer PAT.
+func (c *Client) CreateProject(name string) (*CreateProjectResponse, error) {
+	var out CreateProjectResponse
+	if err := c.do("POST", "/ultrabase/projects", map[string]string{"name": name}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DeployResponse mirrors POST /ultrabase/projects/:id/deploy. The version_id
+// can be polled via GET /data/apps/:id to track status.
+type DeployResponse struct {
+	VersionID string `json:"version_id"`
+	Message   string `json:"message,omitempty"`
+}
+
+// Deploy triggers a production deploy for the given project.
+func (c *Client) Deploy(projectID string) (*DeployResponse, error) {
+	var out DeployResponse
+	if err := c.do("POST", "/ultrabase/projects/"+projectID+"/deploy", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// MigrationPreviewResponse mirrors GET /ultrabase/projects/:id/migration-preview.
+// The exact shape of `diff` depends on v2 — keep it loose so we can adapt
+// once the server-side response stabilizes.
+type MigrationPreviewResponse struct {
+	Diff string `json:"diff"`
+}
+
+// MigrationPreview returns the diff between the current ultrabase.yaml and
+// what's deployed to the cloud project.
+func (c *Client) MigrationPreview(projectID string) (*MigrationPreviewResponse, error) {
+	var out MigrationPreviewResponse
+	if err := c.do("GET", "/ultrabase/projects/"+projectID+"/migration-preview", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GenerateYAMLResponse mirrors POST /ai/generate-yaml.
+type GenerateYAMLResponse struct {
+	YAML   string `json:"yaml"`
+	Tokens struct {
+		Input  int `json:"input"`
+		Output int `json:"output"`
+	} `json:"tokens"`
+}
+
+// GenerateYAML asks the AI service to produce a starter ultrabase.yaml from
+// a free-form prompt (≤ 256 chars).
+func (c *Client) GenerateYAML(prompt string) (*GenerateYAMLResponse, error) {
+	var out GenerateYAMLResponse
+	if err := c.do("POST", "/ai/generate-yaml", map[string]string{"prompt": prompt}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// UploadYAML pushes the local ultrabase.yaml to the project's server-side
+// draft Defs. Called by `ultra deploy` and `ultra validate --project` before
+// their respective actions so the server sees the latest local source.
+func (c *Client) UploadYAML(projectID, yamlContent string) error {
+	return c.do("PUT", "/ultrabase/projects/"+projectID+"/yaml", map[string]string{"yaml": yamlContent}, nil)
+}
+
+// WhoamiResponse mirrors GET /ultrabase/whoami.
+type WhoamiResponse struct {
+	Email  string `json:"email"`
+	UserID string `json:"user_id"`
+}
+
+// Whoami returns the identity of the PAT holder. Useful for `ultra whoami`
+// and as a post-login sanity check.
+func (c *Client) Whoami() (*WhoamiResponse, error) {
+	var out WhoamiResponse
+	if err := c.do("GET", "/ultrabase/whoami", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // APIError is returned for non-2xx responses. Code is the body's "error" field
 // if present (matches the v2 envelope), otherwise the HTTP status text.
 type APIError struct {
