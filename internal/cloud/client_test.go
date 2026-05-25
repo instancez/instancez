@@ -9,6 +9,34 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestClientDeviceTokenSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"token": "ultra_pat_xyz"})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "")
+	token, err := c.DeviceToken("dc_abc")
+	assert.NoError(t, err)
+	assert.Equal(t, "ultra_pat_xyz", token)
+}
+
+func TestClientDeviceTokenPending(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(400)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": "authorization_pending"})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "")
+	_, err := c.DeviceToken("dc_abc")
+	var apiErr *APIError
+	assert.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, "authorization_pending", apiErr.Code)
+}
+
 func TestClientDeviceCode(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)

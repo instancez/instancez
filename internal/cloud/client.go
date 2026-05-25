@@ -46,6 +46,21 @@ func (c *Client) DeviceCode() (*DeviceCodeResponse, error) {
 	return &out, nil
 }
 
+// DeviceToken polls for completion of an in-flight device authorization
+// grant. On success returns the raw PAT. On RFC 8628 polling errors
+// (authorization_pending, slow_down, access_denied, expired_token), returns
+// an *APIError with Code set — caller inspects to decide whether to keep polling.
+func (c *Client) DeviceToken(deviceCode string) (string, error) {
+	payload := map[string]string{"device_code": deviceCode}
+	var out struct {
+		Token string `json:"token"`
+	}
+	if err := c.do("POST", "/auth/device/token", payload, &out); err != nil {
+		return "", err
+	}
+	return out.Token, nil
+}
+
 // APIError is returned for non-2xx responses. Code is the body's "error" field
 // if present (matches the v2 envelope), otherwise the HTTP status text.
 type APIError struct {
