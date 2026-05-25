@@ -38,6 +38,15 @@ func TestInitGenerateLikeRequiresLogin(t *testing.T) {
 	assert.ErrorContains(t, err, "ultra login")
 }
 
+func TestInitWithCloudRequiresLogin(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	opts := initOptions{dir: dir, withCloud: true, name: "myapp"}
+	err := runInit(context.Background(), opts)
+	assert.ErrorContains(t, err, "ultra login")
+}
+
 // TestRunInitScaffoldStartsCleanly guards the generated project: it must both
 // validate AND describe migratable DDL. The todos.user_id FK must reference
 // auth.users.id (3-part) — a 2-part `users.id` validates fine but the migrator

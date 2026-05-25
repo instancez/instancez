@@ -192,12 +192,39 @@ func runInit(ctx context.Context, opts initOptions) error {
 		}
 	}
 
+	// Create cloud project and bake project_id into ultrabase.yaml.
+	if opts.withCloud {
+		fmt.Println("  Creating Ultrabase Cloud project...")
+		creds, _ := cloud.Load()
+		c := cloud.NewClient(cloud.APIURL(), creds.PAT)
+		resp, err := c.CreateProject(name)
+		if err != nil {
+			return fmt.Errorf("creating cloud project: %w", err)
+		}
+		fmt.Printf("  ✓ Project created (id: %s)\n", resp.ProjectID)
+
+		existing, err := os.ReadFile(yamlPath)
+		if err != nil {
+			return fmt.Errorf("re-reading ultrabase.yaml: %w", err)
+		}
+		updated, err := cloud.WriteProjectID(existing, resp.ProjectID)
+		if err != nil {
+			return fmt.Errorf("injecting project_id: %w", err)
+		}
+		if err := os.WriteFile(yamlPath, updated, 0o644); err != nil {
+			return fmt.Errorf("writing ultrabase.yaml: %w", err)
+		}
+		fmt.Println("  ~ ultrabase.yaml (added project.cloud.project_id)")
+	}
+
 	fmt.Println()
 	fmt.Println("Done! Next steps:")
 	if dir != mustCwd() {
 		fmt.Printf("  cd %s\n", opts.dir)
 	}
 	switch {
+	case opts.withCloud:
+		fmt.Println("  ultra deploy            # push your YAML to the cloud project")
 	case opts.withDSN != "":
 		fmt.Println("  ultra dev --use-dsn")
 	case opts.useDock:
