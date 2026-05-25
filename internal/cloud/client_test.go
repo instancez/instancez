@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -35,6 +37,41 @@ func TestClientDeviceTokenPending(t *testing.T) {
 	var apiErr *APIError
 	assert.ErrorAs(t, err, &apiErr)
 	assert.Equal(t, "authorization_pending", apiErr.Code)
+}
+
+func TestPollDeviceTokenSucceedsAfterPending(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		switch n {
+		case 1, 2:
+			w.WriteHeader(400)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "authorization_pending"})
+		case 3:
+			_ = json.NewEncoder(w).Encode(map[string]any{"token": "ultra_pat_ok"})
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "")
+	token, err := pollDeviceToken(c, "dc_abc", 30*time.Second, 1*time.Millisecond, func(time.Duration) {})
+	assert.NoError(t, err)
+	assert.Equal(t, "ultra_pat_ok", token)
+	assert.Equal(t, int32(3), calls.Load())
+}
+
+func TestPollDeviceTokenDenied(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(400)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": "access_denied"})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "")
+	_, err := pollDeviceToken(c, "dc_abc", 30*time.Second, 1*time.Millisecond, func(time.Duration) {})
+	assert.ErrorIs(t, err, ErrDeviceAccessDenied)
 }
 
 func TestClientCreateProject(t *testing.T) {

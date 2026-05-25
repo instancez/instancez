@@ -3,6 +3,7 @@ package cloud
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -151,6 +152,53 @@ func (c *Client) Whoami() (*WhoamiResponse, error) {
 		return nil, err
 	}
 	return &out, nil
+}
+
+// ErrDeviceAccessDenied is returned when the user denies the device flow in
+// the browser. Terminal — don't retry.
+var ErrDeviceAccessDenied = errors.New("user denied authorization")
+
+// ErrDeviceExpired is returned when the device flow's expires_in window
+// passes without confirmation. Terminal.
+var ErrDeviceExpired = errors.New("device code expired")
+
+// pollDeviceToken polls /auth/device/token until success, denial, or timeout.
+// `sleep` is parameterized for tests (use time.Sleep in production).
+func pollDeviceToken(c *Client, deviceCode string, timeout, interval time.Duration, sleep func(time.Duration)) (string, error) {
+	deadline := time.Now().Add(timeout)
+	curInterval := interval
+
+	for time.Now().Before(deadline) {
+		token, err := c.DeviceToken(deviceCode)
+		if err == nil {
+			return token, nil
+		}
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) {
+			// Network error — back off and retry.
+			sleep(curInterval)
+			continue
+		}
+		switch apiErr.Code {
+		case "authorization_pending":
+			sleep(curInterval)
+		case "slow_down":
+			curInterval += 5 * time.Second
+			sleep(curInterval)
+		case "access_denied":
+			return "", ErrDeviceAccessDenied
+		case "expired_token":
+			return "", ErrDeviceExpired
+		default:
+			return "", err
+		}
+	}
+	return "", ErrDeviceExpired
+}
+
+// PollDeviceToken is the exported wrapper. Uses time.Sleep for waits.
+func PollDeviceToken(c *Client, deviceCode string, timeout, interval time.Duration) (string, error) {
+	return pollDeviceToken(c, deviceCode, timeout, interval, time.Sleep)
 }
 
 // APIError is returned for non-2xx responses. Code is the body's "error" field
