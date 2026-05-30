@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"strings"
 	"log/slog"
 	"net/http"
 	"time"
@@ -95,9 +96,13 @@ func NewServer(deps ServerDeps) *Server {
 		authHandler.Mount(root)
 	}
 
-	// OpenAPI
+	// OpenAPI + docs — mounted on root so proxy-stripped deployments reach
+	// them at /openapi.json and /docs rather than /api/openapi.json and /api/docs.
+	// Also keep the /api/* aliases for direct (non-proxied) access.
+	r.GET("/openapi.json", s.handleOpenAPI)
 	api.GET("/openapi.json", s.handleOpenAPI)
 	if s.docsEnabled(deps.DevMode) {
+		r.GET("/docs", s.handleDocs)
 		api.GET("/docs", s.handleDocs)
 	}
 
@@ -186,10 +191,15 @@ func (s *Server) handleOpenAPI(c *gin.Context) {
 
 func (s *Server) handleDocs(c *gin.Context) {
 	c.Header("Content-Type", "text/html; charset=utf-8")
-	c.String(200, scalarDocsHTML(s.cfg.Project.Name))
+	// Derive the OpenAPI URL from the request so it works regardless of proxy
+	// prefix: same scheme+host+path-directory + openapi.json.
+	reqPath := c.Request.URL.Path // e.g. /docs or /api/docs
+	dir := reqPath[:strings.LastIndex(reqPath, "/")+1]
+	openAPIURL := dir + "openapi.json"
+	c.String(200, scalarDocsHTML(s.cfg.Project.Name, openAPIURL))
 }
 
-func scalarDocsHTML(title string) string {
+func scalarDocsHTML(title, openAPIURL string) string {
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html>
 <head>
@@ -198,8 +208,8 @@ func scalarDocsHTML(title string) string {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 </head>
 <body>
-  <script id="api-reference" data-url="/api/openapi.json"></script>
+  <script id="api-reference" data-url="%s"></script>
   <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
 </body>
-</html>`, title)
+</html>`, title, openAPIURL)
 }

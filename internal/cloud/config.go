@@ -7,12 +7,9 @@ import (
 	"strings"
 )
 
-// defaultCloudAPI is a placeholder. The real hostname is not yet locked in;
-// deployments are expected to set ULTRABASE_CLOUD_API or pin
-// project.cloud.api_url in ultrabase.yaml. The default exists only so
-// `ultra login` produces a recognizable "couldn't connect to ..." error
-// instead of an empty URL.
-const defaultCloudAPI = "https://api.ultrabase.invalid"
+// defaultCloudAPI is the Ultrabase Cloud API endpoint. Can be overridden by
+// ULTRABASE_CLOUD_API env var or project.cloud.api_url in ultrabase.yaml.
+const defaultCloudAPI = "https://my.instancez.dev/api"
 
 // APIURL returns the base URL for the Ultrabase Cloud API, considering only
 // the environment variable. Used by commands that run without a project

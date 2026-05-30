@@ -92,7 +92,8 @@ type Providers struct {
 }
 
 type EmailProvider struct {
-	Type string `yaml:"type" json:"type"` // resend | sendgrid | ses
+	Type      string `yaml:"type" json:"type"`      // resend | sendgrid | ses
+	FromEmail string `yaml:"from_email" json:"from_email"` // e.g. "Ultrabase <noreply@example.com>"
 }
 
 type StorageProvider struct {

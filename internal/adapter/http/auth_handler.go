@@ -1938,6 +1938,10 @@ func (h *AuthHandler) sendVerificationEmail(userID, email string) {
 		"INSERT INTO auth.one_time_tokens (user_id, token, purpose, expires_at) VALUES ($1::uuid, $2, 'signup', $3)",
 		userID, token, expiresAt)
 
+	var fromEmail string
+	if h.cfg.Providers.Email != nil {
+		fromEmail = h.cfg.Providers.Email.FromEmail
+	}
 	subject := "Verify your email"
 	body := fmt.Sprintf("Please verify your email by clicking this link: %s/auth/v1/verify?token=%s", h.baseURL(), token)
 
@@ -1959,6 +1963,7 @@ func (h *AuthHandler) sendVerificationEmail(userID, email string) {
 
 	if err := h.email.Send(ctx, domain.EmailMessage{
 		To:      []string{email},
+		From:    fromEmail,
 		Subject: subject,
 		HTML:    body,
 		Text:    body,
@@ -1968,6 +1973,10 @@ func (h *AuthHandler) sendVerificationEmail(userID, email string) {
 }
 
 func (h *AuthHandler) sendMagicLinkEmail(email, token, code string) {
+	var fromEmail string
+	if h.cfg.Providers.Email != nil {
+		fromEmail = h.cfg.Providers.Email.FromEmail
+	}
 	subject := "Your magic sign-in link"
 	link := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=magiclink", h.baseURL(), token)
 	body := fmt.Sprintf("Click to sign in: %s\n\nOr enter this code: %s", link, code)
@@ -1992,6 +2001,7 @@ func (h *AuthHandler) sendMagicLinkEmail(email, token, code string) {
 	ctx := context.Background()
 	if err := h.email.Send(ctx, domain.EmailMessage{
 		To:      []string{email},
+		From:    fromEmail,
 		Subject: subject,
 		HTML:    body,
 		Text:    body,
@@ -2001,6 +2011,10 @@ func (h *AuthHandler) sendMagicLinkEmail(email, token, code string) {
 }
 
 func (h *AuthHandler) sendPasswordResetEmail(email, token, redirectTo string) {
+	var fromEmail string
+	if h.cfg.Providers.Email != nil {
+		fromEmail = h.cfg.Providers.Email.FromEmail
+	}
 	subject := "Reset your password"
 	// Build the verification link that points to GET /auth/v1/verify so the
 	// handler can validate the token, generate a session, and redirect the
@@ -2031,6 +2045,7 @@ func (h *AuthHandler) sendPasswordResetEmail(email, token, redirectTo string) {
 	ctx := context.Background()
 	if err := h.email.Send(ctx, domain.EmailMessage{
 		To:      []string{email},
+		From:    fromEmail,
 		Subject: subject,
 		HTML:    body,
 		Text:    body,

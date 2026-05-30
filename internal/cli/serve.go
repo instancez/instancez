@@ -99,8 +99,8 @@ func runServe(opts serveOptions) error {
 	if len(cfg.Storage) > 0 && storage == nil {
 		return fmt.Errorf("storage buckets configured but no storage provider set in providers.storage")
 	}
-	if cfg.Auth != nil && cfg.Auth.Email != nil && email == nil {
-		return fmt.Errorf("auth email configured but no email provider set in providers.email")
+	if cfg.Auth != nil && cfg.Auth.Email != nil && cfg.Auth.Email.VerifyEmail && email == nil {
+		return fmt.Errorf("auth.email.verify_email is true but no email provider set in providers.email")
 	}
 
 	// Provider health checks
