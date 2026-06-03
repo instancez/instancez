@@ -120,3 +120,21 @@ func TestLocalStore_EnsureBucket(t *testing.T) {
 		t.Error("bucket should be a directory")
 	}
 }
+
+func TestLocalStore_ListStripsPrefix(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := NewLocalStore(dir, "app123")
+	if err := s.Upload(context.Background(), "avatars/x", strings.NewReader("hi"), "text/plain", 2); err != nil {
+		t.Fatal(err)
+	}
+	items, err := s.List(context.Background(), "avatars")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].Key != "avatars/x" {
+		t.Fatalf("expected logical key 'avatars/x' (prefix stripped), got %q", items[0].Key)
+	}
+}

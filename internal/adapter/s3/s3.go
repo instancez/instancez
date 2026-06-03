@@ -56,13 +56,13 @@ func New(ctx context.Context, cfg Config) (*Store, error) {
 		return nil, fmt.Errorf("load AWS config: %w", err)
 	}
 
+	// Assume a per-app-scoped role; session tags (e.g. app_id) let IAM
+	// condition-key policies restrict S3 access to the app's key prefix.
 	if cfg.AssumeRoleARN != "" {
 		stsClient := sts.NewFromConfig(awsCfg)
 		provider := stscreds.NewAssumeRoleProvider(stsClient, cfg.AssumeRoleARN, func(o *stscreds.AssumeRoleOptions) {
 			o.RoleSessionName = "ultrabase-storage"
-			for k, v := range cfg.SessionTags {
-				o.Tags = append(o.Tags, ststypes.Tag{Key: aws.String(k), Value: aws.String(v)})
-			}
+			o.Tags = buildSessionTags(cfg.SessionTags)
 		})
 		awsCfg.Credentials = aws.NewCredentialsCache(provider)
 	}
@@ -82,6 +82,16 @@ func New(ctx context.Context, cfg Config) (*Store, error) {
 		bucket:        cfg.Bucket,
 		keyPrefix:     cfg.KeyPrefix,
 	}, nil
+}
+
+// buildSessionTags converts a string map into the STS Tag slice expected by
+// AssumeRoleOptions. It is a pure helper to keep New readable and testable.
+func buildSessionTags(tags map[string]string) []ststypes.Tag {
+	out := make([]ststypes.Tag, 0, len(tags))
+	for k, v := range tags {
+		out = append(out, ststypes.Tag{Key: aws.String(k), Value: aws.String(v)})
+	}
+	return out
 }
 
 func (s *Store) fullKey(key string) string {
@@ -203,7 +213,7 @@ func (s *Store) Head(ctx context.Context, key string) (domain.ObjectInfo, error)
 	if out.ContentLength != nil {
 		sz = *out.ContentLength
 	}
-	// key is the caller's logical key — no stripping needed (we never replaced it with fullKey)
+	// Return the caller's logical key, not the prefixed storage key sent to S3.
 	return domain.ObjectInfo{Key: key, Size: sz, ContentType: ct}, nil
 }
 

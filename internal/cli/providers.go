@@ -123,9 +123,15 @@ func parseTagList(s string) map[string]string {
 		}
 		k, v, ok := strings.Cut(pair, "=")
 		if !ok {
+			slog.Warn("ULTRABASE_STORAGE_SESSION_TAGS: skipping malformed pair (no '=')", "pair", pair)
 			continue
 		}
-		out[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		k, v = strings.TrimSpace(k), strings.TrimSpace(v)
+		if k == "" || v == "" {
+			slog.Warn("ULTRABASE_STORAGE_SESSION_TAGS: skipping pair with empty key or value", "pair", pair)
+			continue
+		}
+		out[k] = v
 	}
 	return out
 }
