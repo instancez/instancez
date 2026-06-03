@@ -16,9 +16,8 @@ func TestConfig(t *testing.T) {
 		Bucket:          "test-bucket",
 		Region:          "us-east-1",
 		Endpoint:        "http://localhost:9000",
-		AccessKeyID:     "minioadmin",
-		SecretAccessKey: "minioadmin",
-		ForcePathStyle:  true,
+		AccessKeyID:     "testkey",
+		SecretAccessKey: "testsecret",
 	}
 
 	if cfg.Bucket != "test-bucket" {
@@ -27,7 +26,7 @@ func TestConfig(t *testing.T) {
 	if cfg.Region != "us-east-1" {
 		t.Errorf("region = %q, want us-east-1", cfg.Region)
 	}
-	if !cfg.ForcePathStyle {
-		t.Error("ForcePathStyle should be true for MinIO")
+	if cfg.Endpoint != "http://localhost:9000" {
+		t.Errorf("endpoint = %q, want http://localhost:9000", cfg.Endpoint)
 	}
 }

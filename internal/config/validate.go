@@ -142,7 +142,7 @@ var validEmailProviders = map[string]bool{
 }
 
 var validStorageProviders = map[string]bool{
-	"s3": true, "minio": true, "local": true,
+	"s3": true, "local": true,
 }
 
 var validBackoff = map[string]bool{
@@ -206,7 +206,7 @@ func validateProviders(p *domain.Providers) domain.ValidationErrors {
 			errs = append(errs, &domain.ValidationError{
 				Path:       "providers.storage.type",
 				Message:    fmt.Sprintf("unknown storage provider type %q", p.Storage.Type),
-				Suggestion: "Supported types: s3, minio, local",
+				Suggestion: "Supported types: s3, local",
 			})
 		}
 	}

@@ -130,20 +130,3 @@ func TestInitStorageProvider_Local(t *testing.T) {
 		t.Error("expected non-nil store")
 	}
 }
-
-func TestInitStorageProvider_MinioNoEndpoint(t *testing.T) {
-	t.Setenv("S3_BUCKET", "test-bucket")
-	t.Setenv("S3_ENDPOINT", "")
-	t.Setenv("S3_ACCESS_KEY_ID", "minioadmin")
-	t.Setenv("S3_SECRET_ACCESS_KEY", "minioadmin")
-
-	cfg := &domain.Config{
-		Providers: domain.Providers{
-			Storage: &domain.StorageProvider{Type: "minio"},
-		},
-	}
-	_, err := initStorageProvider(t.Context(), cfg)
-	if err == nil {
-		t.Error("expected error when S3_ENDPOINT not set for minio")
-	}
-}

@@ -97,7 +97,7 @@ type EmailProvider struct {
 }
 
 type StorageProvider struct {
-	Type string `yaml:"type" json:"type"` // s3 | minio | local
+	Type string `yaml:"type" json:"type"` // s3 | local
 }
 
 // Auth configures authentication. Custom user fields are defined in

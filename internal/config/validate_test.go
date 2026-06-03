@@ -486,6 +486,23 @@ func TestValidate_FullExampleConfig(t *testing.T) {
 	}
 }
 
+func TestValidate_MinioStorageRejected(t *testing.T) {
+	cfg, err := ParseBytes([]byte("version: 1\nproviders:\n  storage:\n    type: minio\n"), "t")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	errs := Validate(cfg)
+	found := false
+	for _, e := range errs {
+		if e.Path == "providers.storage.type" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected minio to be rejected as an unknown storage provider type")
+	}
+}
+
 // assertHasErrorAt checks that at least one error has the given path prefix.
 func assertHasErrorAt(t *testing.T, errs domain.ValidationErrors, pathPrefix string) {
 	t.Helper()

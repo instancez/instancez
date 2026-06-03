@@ -49,10 +49,7 @@ func initStorageProvider(ctx context.Context, cfg *domain.Config) (domain.Object
 
 	switch cfg.Providers.Storage.Type {
 	case "s3":
-		return newS3Store(ctx, false)
-
-	case "minio":
-		return newS3Store(ctx, true)
+		return newS3Store(ctx)
 
 	case "local":
 		path := os.Getenv("ULTRABASE_LOCAL_STORAGE_PATH")
@@ -65,7 +62,7 @@ func initStorageProvider(ctx context.Context, cfg *domain.Config) (domain.Object
 		return nil, nil
 
 	default:
-		return nil, fmt.Errorf("unsupported storage provider: %s (supported: s3, minio, local)", cfg.Providers.Storage.Type)
+		return nil, fmt.Errorf("unsupported storage provider: %s (supported: s3, local)", cfg.Providers.Storage.Type)
 	}
 }
 
@@ -95,7 +92,7 @@ func checkStorageHealth(ctx context.Context, store domain.ObjectStore, cfg *doma
 	return nil
 }
 
-func newS3Store(ctx context.Context, isMinio bool) (*s3.Store, error) {
+func newS3Store(ctx context.Context) (*s3.Store, error) {
 	bucket := os.Getenv("S3_BUCKET")
 	if bucket == "" {
 		return nil, fmt.Errorf("S3_BUCKET not set")
@@ -107,11 +104,6 @@ func newS3Store(ctx context.Context, isMinio bool) (*s3.Store, error) {
 		Endpoint:        os.Getenv("S3_ENDPOINT"),
 		AccessKeyID:     os.Getenv("S3_ACCESS_KEY_ID"),
 		SecretAccessKey: os.Getenv("S3_SECRET_ACCESS_KEY"),
-		ForcePathStyle:  isMinio,
-	}
-
-	if isMinio && s3Cfg.Endpoint == "" {
-		return nil, fmt.Errorf("S3_ENDPOINT must be set for MinIO provider")
 	}
 
 	return s3.New(ctx, s3Cfg)

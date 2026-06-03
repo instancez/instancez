@@ -1,4 +1,4 @@
-// Package s3 implements domain.ObjectStore using AWS S3 (or S3-compatible services like MinIO).
+// Package s3 implements domain.ObjectStore using AWS S3.
 package s3
 
 import (
@@ -25,10 +25,9 @@ type Store struct {
 type Config struct {
 	Bucket          string
 	Region          string
-	Endpoint        string // for MinIO/custom endpoints (empty for real S3)
+	Endpoint        string // custom endpoint (empty for real S3)
 	AccessKeyID     string
 	SecretAccessKey string
-	ForcePathStyle  bool // true for MinIO
 }
 
 // New creates a new S3 store with a real AWS SDK client.
@@ -53,7 +52,6 @@ func New(ctx context.Context, cfg Config) (*Store, error) {
 	if cfg.Endpoint != "" {
 		s3Opts = append(s3Opts, func(o *s3.Options) {
 			o.BaseEndpoint = aws.String(cfg.Endpoint)
-			o.UsePathStyle = cfg.ForcePathStyle
 		})
 	}
 
