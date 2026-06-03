@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -19,6 +20,7 @@ type Store struct {
 	client        *s3.Client
 	presignClient *s3.PresignClient
 	bucket        string
+	keyPrefix     string
 }
 
 // Config holds S3 connection configuration.
@@ -28,6 +30,7 @@ type Config struct {
 	Endpoint        string // custom endpoint (empty for real S3)
 	AccessKeyID     string
 	SecretAccessKey string
+	KeyPrefix       string // optional prefix prepended to all object keys
 }
 
 // New creates a new S3 store with a real AWS SDK client.
@@ -61,13 +64,28 @@ func New(ctx context.Context, cfg Config) (*Store, error) {
 		client:        client,
 		presignClient: s3.NewPresignClient(client),
 		bucket:        cfg.Bucket,
+		keyPrefix:     cfg.KeyPrefix,
 	}, nil
+}
+
+func (s *Store) fullKey(key string) string {
+	if s.keyPrefix == "" {
+		return key
+	}
+	return s.keyPrefix + "/" + key
+}
+
+func (s *Store) stripKey(key string) string {
+	if s.keyPrefix == "" {
+		return key
+	}
+	return strings.TrimPrefix(key, s.keyPrefix+"/")
 }
 
 func (s *Store) SignUpload(ctx context.Context, key string, contentType string, expiry time.Duration) (string, error) {
 	input := &s3.PutObjectInput{
 		Bucket:      aws.String(s.bucket),
-		Key:         aws.String(key),
+		Key:         aws.String(s.fullKey(key)),
 		ContentType: aws.String(contentType),
 	}
 
@@ -82,7 +100,7 @@ func (s *Store) SignUpload(ctx context.Context, key string, contentType string, 
 func (s *Store) SignDownload(ctx context.Context, key string, expiry time.Duration) (string, error) {
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
-		Key:    aws.String(key),
+		Key:    aws.String(s.fullKey(key)),
 	}
 
 	req, err := s.presignClient.PresignGetObject(ctx, input, s3.WithPresignExpires(expiry))
@@ -96,7 +114,7 @@ func (s *Store) SignDownload(ctx context.Context, key string, expiry time.Durati
 func (s *Store) Delete(ctx context.Context, key string) error {
 	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(s.bucket),
-		Key:    aws.String(key),
+		Key:    aws.String(s.fullKey(key)),
 	})
 	if err != nil {
 		return fmt.Errorf("delete object: %w", err)
@@ -125,7 +143,7 @@ func (s *Store) EnsureBucket(ctx context.Context, bucket string) error {
 func (s *Store) Upload(ctx context.Context, key string, r io.Reader, contentType string, size int64) error {
 	input := &s3.PutObjectInput{
 		Bucket:      aws.String(s.bucket),
-		Key:         aws.String(key),
+		Key:         aws.String(s.fullKey(key)),
 		Body:        r,
 		ContentType: aws.String(contentType),
 	}
@@ -142,7 +160,7 @@ func (s *Store) Upload(ctx context.Context, key string, r io.Reader, contentType
 func (s *Store) Download(ctx context.Context, key string) (io.ReadCloser, string, error) {
 	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
-		Key:    aws.String(key),
+		Key:    aws.String(s.fullKey(key)),
 	})
 	if err != nil {
 		return nil, "", fmt.Errorf("download object: %w", err)
@@ -157,8 +175,8 @@ func (s *Store) Download(ctx context.Context, key string) (io.ReadCloser, string
 func (s *Store) Copy(ctx context.Context, srcKey, dstKey string) error {
 	_, err := s.client.CopyObject(ctx, &s3.CopyObjectInput{
 		Bucket:     aws.String(s.bucket),
-		CopySource: aws.String(s.bucket + "/" + srcKey),
-		Key:        aws.String(dstKey),
+		CopySource: aws.String(s.bucket + "/" + s.fullKey(srcKey)),
+		Key:        aws.String(s.fullKey(dstKey)),
 	})
 	if err != nil {
 		return fmt.Errorf("copy object: %w", err)
@@ -169,7 +187,7 @@ func (s *Store) Copy(ctx context.Context, srcKey, dstKey string) error {
 func (s *Store) Head(ctx context.Context, key string) (domain.ObjectInfo, error) {
 	out, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(s.bucket),
-		Key:    aws.String(key),
+		Key:    aws.String(s.fullKey(key)),
 	})
 	if err != nil {
 		return domain.ObjectInfo{}, fmt.Errorf("head object: %w", err)
@@ -182,13 +200,14 @@ func (s *Store) Head(ctx context.Context, key string) (domain.ObjectInfo, error)
 	if out.ContentLength != nil {
 		sz = *out.ContentLength
 	}
+	// key is the caller's logical key — no stripping needed (we never replaced it with fullKey)
 	return domain.ObjectInfo{Key: key, Size: sz, ContentType: ct}, nil
 }
 
 func (s *Store) List(ctx context.Context, prefix string) ([]domain.ObjectInfo, error) {
 	out, err := s.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
 		Bucket: aws.String(s.bucket),
-		Prefix: aws.String(prefix),
+		Prefix: aws.String(s.fullKey(prefix)),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list objects: %w", err)
@@ -196,7 +215,7 @@ func (s *Store) List(ctx context.Context, prefix string) ([]domain.ObjectInfo, e
 	var items []domain.ObjectInfo
 	for _, obj := range out.Contents {
 		items = append(items, domain.ObjectInfo{
-			Key:  aws.ToString(obj.Key),
+			Key:  s.stripKey(aws.ToString(obj.Key)),
 			Size: aws.ToInt64(obj.Size),
 		})
 	}

@@ -6,6 +6,23 @@ import (
 	"github.com/saedx1/ultrabase/internal/domain"
 )
 
+func TestKeyPrefix_PrependAndStrip(t *testing.T) {
+	s := &Store{keyPrefix: "app123"}
+	if got := s.fullKey("avatars/tok"); got != "app123/avatars/tok" {
+		t.Fatalf("fullKey = %q", got)
+	}
+	if got := s.stripKey("app123/avatars/tok"); got != "avatars/tok" {
+		t.Fatalf("stripKey = %q", got)
+	}
+	z := &Store{}
+	if got := z.fullKey("avatars/tok"); got != "avatars/tok" {
+		t.Fatalf("no-prefix fullKey = %q", got)
+	}
+	if got := z.stripKey("avatars/tok"); got != "avatars/tok" {
+		t.Fatalf("no-prefix stripKey = %q", got)
+	}
+}
+
 func TestInterfaceCompliance(t *testing.T) {
 	// Verify Store implements domain.ObjectStore at compile time
 	var _ domain.ObjectStore = (*Store)(nil)
