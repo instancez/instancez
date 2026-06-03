@@ -1,10 +1,18 @@
 package s3
 
 import (
+	"context"
 	"testing"
 
 	"github.com/saedx1/ultrabase/internal/domain"
 )
+
+func TestEnsureBucket_IsNoOp(t *testing.T) {
+	s := &Store{} // nil client; a no-op must not touch it
+	if err := s.EnsureBucket(context.Background(), "avatars"); err != nil {
+		t.Fatalf("expected no-op nil, got %v", err)
+	}
+}
 
 func TestKeyPrefix_PrependAndStrip(t *testing.T) {
 	s := &Store{keyPrefix: "app123"}

@@ -122,23 +122,10 @@ func (s *Store) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-func (s *Store) EnsureBucket(ctx context.Context, bucket string) error {
-	_, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{
-		Bucket: aws.String(bucket),
-	})
-	if err == nil {
-		return nil // bucket exists
-	}
-
-	_, err = s.client.CreateBucket(ctx, &s3.CreateBucketInput{
-		Bucket: aws.String(bucket),
-	})
-	if err != nil {
-		return fmt.Errorf("create bucket %q: %w", bucket, err)
-	}
-
-	return nil
-}
+// EnsureBucket is a no-op for S3: all objects live in the single configured
+// bucket (provisioned out of band); logical buckets are key prefixes, not
+// physical buckets.
+func (s *Store) EnsureBucket(_ context.Context, _ string) error { return nil }
 
 func (s *Store) Upload(ctx context.Context, key string, r io.Reader, contentType string, size int64) error {
 	input := &s3.PutObjectInput{
