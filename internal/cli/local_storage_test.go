@@ -8,9 +8,20 @@ import (
 	"testing"
 )
 
+func TestLocalStore_KeyPrefix(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := NewLocalStore(dir, "app123")
+	if err := s.Upload(context.Background(), "avatars/x", strings.NewReader("hi"), "text/plain", 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "app123", "avatars", "x")); err != nil {
+		t.Fatalf("expected object under prefixed path: %v", err)
+	}
+}
+
 func TestLocalStore_SignUpload(t *testing.T) {
 	dir := t.TempDir()
-	store, err := NewLocalStore(dir)
+	store, err := NewLocalStore(dir, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +48,7 @@ func TestLocalStore_SignUpload(t *testing.T) {
 
 func TestLocalStore_SignDownload(t *testing.T) {
 	dir := t.TempDir()
-	store, err := NewLocalStore(dir)
+	store, err := NewLocalStore(dir, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +65,7 @@ func TestLocalStore_SignDownload(t *testing.T) {
 
 func TestLocalStore_Delete(t *testing.T) {
 	dir := t.TempDir()
-	store, err := NewLocalStore(dir)
+	store, err := NewLocalStore(dir, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +88,7 @@ func TestLocalStore_Delete(t *testing.T) {
 
 func TestLocalStore_Delete_NonExistent(t *testing.T) {
 	dir := t.TempDir()
-	store, err := NewLocalStore(dir)
+	store, err := NewLocalStore(dir, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +102,7 @@ func TestLocalStore_Delete_NonExistent(t *testing.T) {
 
 func TestLocalStore_EnsureBucket(t *testing.T) {
 	dir := t.TempDir()
-	store, err := NewLocalStore(dir)
+	store, err := NewLocalStore(dir, "")
 	if err != nil {
 		t.Fatal(err)
 	}

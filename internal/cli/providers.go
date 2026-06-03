@@ -56,7 +56,7 @@ func initStorageProvider(ctx context.Context, cfg *domain.Config) (domain.Object
 		if path == "" {
 			path = "./uploads"
 		}
-		return NewLocalStore(path)
+		return NewLocalStore(path, os.Getenv("ULTRABASE_STORAGE_KEY_PREFIX"))
 
 	case "":
 		return nil, nil

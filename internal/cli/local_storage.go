@@ -16,18 +16,19 @@ import (
 // LocalStore implements domain.ObjectStore using the local filesystem.
 // Intended for development use only.
 type LocalStore struct {
-	basePath string
+	basePath  string
+	keyPrefix string
 }
 
-func NewLocalStore(basePath string) (*LocalStore, error) {
+func NewLocalStore(basePath, keyPrefix string) (*LocalStore, error) {
 	if err := os.MkdirAll(basePath, 0o755); err != nil {
 		return nil, fmt.Errorf("create storage dir: %w", err)
 	}
-	return &LocalStore{basePath: basePath}, nil
+	return &LocalStore{basePath: basePath, keyPrefix: keyPrefix}, nil
 }
 
 func (s *LocalStore) SignUpload(_ context.Context, key string, _ string, _ time.Duration) (string, error) {
-	fullPath := filepath.Join(s.basePath, key)
+	fullPath := filepath.Join(s.basePath, s.keyPrefix, key)
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 		return "", fmt.Errorf("create dir: %w", err)
 	}
@@ -35,12 +36,12 @@ func (s *LocalStore) SignUpload(_ context.Context, key string, _ string, _ time.
 }
 
 func (s *LocalStore) SignDownload(_ context.Context, key string, _ time.Duration) (string, error) {
-	fullPath := filepath.Join(s.basePath, key)
+	fullPath := filepath.Join(s.basePath, s.keyPrefix, key)
 	return "file://" + fullPath, nil
 }
 
 func (s *LocalStore) Delete(_ context.Context, key string) error {
-	fullPath := filepath.Join(s.basePath, key)
+	fullPath := filepath.Join(s.basePath, s.keyPrefix, key)
 	if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("delete: %w", err)
 	}
@@ -48,12 +49,12 @@ func (s *LocalStore) Delete(_ context.Context, key string) error {
 }
 
 func (s *LocalStore) EnsureBucket(_ context.Context, bucket string) error {
-	dir := filepath.Join(s.basePath, bucket)
+	dir := filepath.Join(s.basePath, s.keyPrefix, bucket)
 	return os.MkdirAll(dir, 0o755)
 }
 
 func (s *LocalStore) Upload(_ context.Context, key string, r io.Reader, _ string, _ int64) error {
-	fullPath := filepath.Join(s.basePath, key)
+	fullPath := filepath.Join(s.basePath, s.keyPrefix, key)
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 		return fmt.Errorf("create dir: %w", err)
 	}
@@ -69,7 +70,7 @@ func (s *LocalStore) Upload(_ context.Context, key string, r io.Reader, _ string
 }
 
 func (s *LocalStore) Download(_ context.Context, key string) (io.ReadCloser, string, error) {
-	fullPath := filepath.Join(s.basePath, key)
+	fullPath := filepath.Join(s.basePath, s.keyPrefix, key)
 	f, err := os.Open(fullPath)
 	if err != nil {
 		return nil, "", fmt.Errorf("open file: %w", err)
@@ -82,8 +83,8 @@ func (s *LocalStore) Download(_ context.Context, key string) (io.ReadCloser, str
 }
 
 func (s *LocalStore) Copy(_ context.Context, srcKey, dstKey string) error {
-	srcPath := filepath.Join(s.basePath, srcKey)
-	dstPath := filepath.Join(s.basePath, dstKey)
+	srcPath := filepath.Join(s.basePath, s.keyPrefix, srcKey)
+	dstPath := filepath.Join(s.basePath, s.keyPrefix, dstKey)
 	if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
 		return fmt.Errorf("create dir: %w", err)
 	}
@@ -104,7 +105,7 @@ func (s *LocalStore) Copy(_ context.Context, srcKey, dstKey string) error {
 }
 
 func (s *LocalStore) Head(_ context.Context, key string) (domain.ObjectInfo, error) {
-	fullPath := filepath.Join(s.basePath, key)
+	fullPath := filepath.Join(s.basePath, s.keyPrefix, key)
 	fi, err := os.Stat(fullPath)
 	if err != nil {
 		return domain.ObjectInfo{}, fmt.Errorf("stat: %w", err)
@@ -113,7 +114,8 @@ func (s *LocalStore) Head(_ context.Context, key string) (domain.ObjectInfo, err
 }
 
 func (s *LocalStore) List(_ context.Context, prefix string) ([]domain.ObjectInfo, error) {
-	dir := filepath.Join(s.basePath, prefix)
+	dir := filepath.Join(s.basePath, s.keyPrefix, prefix)
+	prefixedBase := filepath.Join(s.basePath, s.keyPrefix)
 	var items []domain.ObjectInfo
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -122,7 +124,8 @@ func (s *LocalStore) List(_ context.Context, prefix string) ([]domain.ObjectInfo
 		if info.IsDir() {
 			return nil
 		}
-		rel, _ := filepath.Rel(s.basePath, path)
+		// Rel is computed from prefixedBase so the keyPrefix never leaks to callers.
+		rel, _ := filepath.Rel(prefixedBase, path)
 		rel = strings.ReplaceAll(rel, string(filepath.Separator), "/")
 		items = append(items, domain.ObjectInfo{Key: rel, Size: info.Size()})
 		return nil

@@ -264,7 +264,7 @@ func TestSupabaseJSCompat(t *testing.T) {
 
 	// ---- 4. Start HTTP server ----
 	storageDir := filepath.Join(t.TempDir(), "storage")
-	localStorage, err := cli.NewLocalStore(storageDir)
+	localStorage, err := cli.NewLocalStore(storageDir, "")
 	if err != nil {
 		t.Fatalf("local storage: %v", err)
 	}
