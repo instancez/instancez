@@ -22,6 +22,7 @@ func ValidateYAML(data []byte) []Problem {
 	}
 	var probs []Problem
 	for _, ve := range config.Validate(cfg) {
+		// Note: ultrabase's ValidationError.Line is not currently surfaced in Problem.
 		probs = append(probs, Problem{Path: ve.Path, Message: ve.Message, Suggestion: ve.Suggestion})
 	}
 	return probs

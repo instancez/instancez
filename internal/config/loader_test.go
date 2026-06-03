@@ -324,14 +324,29 @@ project:
 }
 
 func TestParseBytesLenient_MissingEnvDoesNotFail(t *testing.T) {
-	// ${MISSING_VAR} would make ParseBytes return MissingEnvError; lenient must not.
-	yamlSrc := []byte("version: 1\nproject:\n  name: test\nproviders:\n  email:\n    type: resend\n    api_key: ${MISSING_VAR}\n")
+	// A missing ${VAR} must not error; it should be replaced by the placeholder.
+	yamlSrc := []byte("version: 1\nproject:\n  name: ${MISSING_VAR}\n")
 	cfg, err := ParseBytesLenient(yamlSrc, "test")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if cfg == nil {
 		t.Fatal("expected a config")
+	}
+	if cfg.Project.Name != "placeholder" {
+		t.Fatalf("expected missing var replaced by placeholder, got %q", cfg.Project.Name)
+	}
+}
+
+func TestParseBytesLenient_EmptyDefault(t *testing.T) {
+	// ${VAR:-} with a missing VAR yields the empty default, not the placeholder.
+	yamlSrc := []byte("version: 1\nproject:\n  name: \"${MISSING:-}\"\n")
+	cfg, err := ParseBytesLenient(yamlSrc, "test")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.Project.Name != "" {
+		t.Fatalf("expected empty default, got %q", cfg.Project.Name)
 	}
 }
 
