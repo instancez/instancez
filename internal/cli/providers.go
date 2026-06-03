@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/saedx1/ultrabase/internal/adapter/resend"
 	"github.com/saedx1/ultrabase/internal/adapter/s3"
@@ -104,7 +105,27 @@ func newS3Store(ctx context.Context) (*s3.Store, error) {
 		Endpoint:        os.Getenv("S3_ENDPOINT"),
 		AccessKeyID:     os.Getenv("S3_ACCESS_KEY_ID"),
 		SecretAccessKey: os.Getenv("S3_SECRET_ACCESS_KEY"),
+		KeyPrefix:       os.Getenv("ULTRABASE_STORAGE_KEY_PREFIX"),
+		AssumeRoleARN:   os.Getenv("ULTRABASE_STORAGE_ASSUME_ROLE_ARN"),
+		SessionTags:     parseTagList(os.Getenv("ULTRABASE_STORAGE_SESSION_TAGS")),
 	}
 
 	return s3.New(ctx, s3Cfg)
+}
+
+// parseTagList parses "k=v,k=v" into a map; blanks ignored.
+func parseTagList(s string) map[string]string {
+	out := map[string]string{}
+	for _, pair := range strings.Split(s, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(pair, "=")
+		if !ok {
+			continue
+		}
+		out[strings.TrimSpace(k)] = strings.TrimSpace(v)
+	}
+	return out
 }

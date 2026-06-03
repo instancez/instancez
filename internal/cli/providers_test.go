@@ -130,3 +130,13 @@ func TestInitStorageProvider_Local(t *testing.T) {
 		t.Error("expected non-nil store")
 	}
 }
+
+func TestParseTagList(t *testing.T) {
+	got := parseTagList("app_id=a1, team=x ")
+	if got["app_id"] != "a1" || got["team"] != "x" {
+		t.Fatalf("parseTagList = %#v", got)
+	}
+	if len(parseTagList("")) != 0 {
+		t.Fatal("empty input should yield empty map")
+	}
+}

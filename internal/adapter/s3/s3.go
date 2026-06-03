@@ -11,7 +11,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
+	ststypes "github.com/aws/aws-sdk-go-v2/service/sts/types"
 	"github.com/saedx1/ultrabase/internal/domain"
 )
 
@@ -30,7 +33,9 @@ type Config struct {
 	Endpoint        string // custom endpoint (empty for real S3)
 	AccessKeyID     string
 	SecretAccessKey string
-	KeyPrefix       string // optional prefix prepended to all object keys
+	KeyPrefix       string            // optional prefix prepended to all object keys
+	AssumeRoleARN   string            // optional IAM role ARN to assume via STS
+	SessionTags     map[string]string // optional session tags passed with STS assume-role
 }
 
 // New creates a new S3 store with a real AWS SDK client.
@@ -49,6 +54,17 @@ func New(ctx context.Context, cfg Config) (*Store, error) {
 	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("load AWS config: %w", err)
+	}
+
+	if cfg.AssumeRoleARN != "" {
+		stsClient := sts.NewFromConfig(awsCfg)
+		provider := stscreds.NewAssumeRoleProvider(stsClient, cfg.AssumeRoleARN, func(o *stscreds.AssumeRoleOptions) {
+			o.RoleSessionName = "ultrabase-storage"
+			for k, v := range cfg.SessionTags {
+				o.Tags = append(o.Tags, ststypes.Tag{Key: aws.String(k), Value: aws.String(v)})
+			}
+		})
+		awsCfg.Credentials = aws.NewCredentialsCache(provider)
 	}
 
 	var s3Opts []func(*s3.Options)

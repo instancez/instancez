@@ -55,3 +55,15 @@ func TestConfig(t *testing.T) {
 		t.Errorf("endpoint = %q, want http://localhost:9000", cfg.Endpoint)
 	}
 }
+
+func TestNew_WithAssumeRole_Constructs(t *testing.T) {
+	s, err := New(context.Background(), Config{
+		Bucket: "b", Region: "us-east-1",
+		AssumeRoleARN: "arn:aws:iam::123456789012:role/app-uploads",
+		SessionTags:   map[string]string{"app_id": "a1"},
+		KeyPrefix:     "a1",
+	})
+	if err != nil || s == nil {
+		t.Fatalf("construct with assume-role: err=%v store=%v", err, s)
+	}
+}
