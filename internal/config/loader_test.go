@@ -322,3 +322,29 @@ project:
 		t.Errorf("project.name = %q, want %q", cfg.Project.Name, "admin123")
 	}
 }
+
+func TestParseBytesLenient_MissingEnvDoesNotFail(t *testing.T) {
+	// ${MISSING_VAR} would make ParseBytes return MissingEnvError; lenient must not.
+	yamlSrc := []byte("version: 1\nproject:\n  name: test\nproviders:\n  email:\n    type: resend\n    api_key: ${MISSING_VAR}\n")
+	cfg, err := ParseBytesLenient(yamlSrc, "test")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected a config")
+	}
+}
+
+func TestEnvRefs_ReturnsUniqueNames(t *testing.T) {
+	data := []byte("a: ${FOO}\nb: ${BAR:-x}\nc: ${FOO}\n")
+	got := EnvRefs(data)
+	want := map[string]bool{"FOO": true, "BAR": true}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 unique names, got %v", got)
+	}
+	for _, n := range got {
+		if !want[n] {
+			t.Errorf("unexpected name %q", n)
+		}
+	}
+}

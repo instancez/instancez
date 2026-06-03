@@ -62,6 +62,55 @@ func LoadDotenv(path string) error {
 	return nil
 }
 
+// ParseBytesLenient is like ParseBytes but substitutes a harmless placeholder
+// for any missing ${VAR} instead of returning MissingEnvError. This lets static
+// structural validation run without the runtime environment (used by
+// pkg/configvalidate). Values that are present in the environment, and ${VAR:-default}
+// defaults, are still honored.
+func ParseBytesLenient(data []byte, origin string) (*domain.Config, error) {
+	interpolated := interpolateEnvVarsLenient(string(data))
+	var cfg domain.Config
+	if err := yaml.Unmarshal([]byte(interpolated), &cfg); err != nil {
+		return nil, &domain.ConfigError{Path: origin, Message: "invalid YAML", Err: err}
+	}
+	applyDefaults(&cfg)
+	return &cfg, nil
+}
+
+// interpolateEnvVarsLenient resolves ${VAR} from the environment, falls back to
+// ${VAR:-default}, and substitutes a placeholder for anything still missing so the
+// YAML can be parsed and structurally validated.
+func interpolateEnvVarsLenient(input string) string {
+	return envVarPattern.ReplaceAllStringFunc(input, func(match string) string {
+		groups := envVarPattern.FindStringSubmatch(match)
+		name := groups[1]
+		hasDefault := strings.Contains(match, ":-")
+		if val, ok := os.LookupEnv(name); ok {
+			return val
+		}
+		if hasDefault {
+			return groups[2]
+		}
+		return "placeholder" // missing var: keep parse/validate unblocked
+	})
+}
+
+// EnvRefs returns the unique names of all ${VAR} references in data, extracted
+// with the canonical interpolation pattern. Exposed so external policy checks
+// scan exactly what ultrabase interpolates.
+func EnvRefs(data []byte) []string {
+	var names []string
+	seen := map[string]bool{}
+	for _, m := range envVarPattern.FindAllStringSubmatch(string(data), -1) {
+		name := m[1]
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
 // interpolateEnvVars replaces ${VAR} and ${VAR:-default} references.
 // Returns the interpolated string and a list of missing required variables.
 func interpolateEnvVars(input string) (string, []string) {
