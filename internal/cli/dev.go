@@ -9,6 +9,7 @@ import (
 	"github.com/saedx1/ultrabase/dashboard"
 	ultrahttp "github.com/saedx1/ultrabase/internal/adapter/http"
 	"github.com/saedx1/ultrabase/internal/app"
+	"github.com/saedx1/ultrabase/internal/cli/preflight"
 	"github.com/saedx1/ultrabase/internal/config"
 	"github.com/saedx1/ultrabase/internal/domain"
 	"github.com/spf13/cobra"
@@ -32,6 +33,17 @@ func newDevCmd() *cobra.Command {
 }
 
 func runDev(opts devOptions) error {
+	// Preflight: load dev dotenv first so DSN env vars are visible, then run
+	// fail-fast checks before any expensive work.
+	_ = config.LoadDotenv(".development.env")
+	if r, failed := preflight.RunUntilFail([]preflight.Check{
+		preflight.ConfigValidCheck(opts.configPath),
+		preflight.DSNPresentCheck(os.Getenv),
+	}); failed {
+		fmt.Fprintf(os.Stderr, "  ✗ %s — %s\n    hint: %s\n", r.Name, r.Detail, r.FixHint)
+		return errReported
+	}
+
 	if err := requireConfigFile(opts.configPath); err != nil {
 		return err
 	}

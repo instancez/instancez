@@ -9,6 +9,7 @@ import (
 	"github.com/saedx1/ultrabase/dashboard"
 	ultrahttp "github.com/saedx1/ultrabase/internal/adapter/http"
 	"github.com/saedx1/ultrabase/internal/app"
+	"github.com/saedx1/ultrabase/internal/cli/preflight"
 	"github.com/saedx1/ultrabase/internal/config"
 	"github.com/saedx1/ultrabase/internal/domain"
 	"github.com/spf13/cobra"
@@ -32,6 +33,17 @@ func newServeCmd() *cobra.Command {
 }
 
 func runServe(opts serveOptions) error {
+	// Preflight: structural config check before loading dotenv or opening pools.
+	// DSN env vars are not checked here because serve reads them from the
+	// orchestrator environment (not a local dotenv file), and dbConnections
+	// already returns a clear error when they are absent.
+	if r, failed := preflight.RunUntilFail([]preflight.Check{
+		preflight.ConfigValidCheck(opts.configPath),
+	}); failed {
+		fmt.Fprintf(os.Stderr, "  ✗ %s — %s\n    hint: %s\n", r.Name, r.Detail, r.FixHint)
+		return errReported
+	}
+
 	ctx := context.Background()
 
 	if err := requireConfigFile(opts.configPath); err != nil {

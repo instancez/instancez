@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/saedx1/ultrabase/internal/cli/preflight"
 	"github.com/saedx1/ultrabase/internal/cloud"
 	"github.com/spf13/cobra"
 )
@@ -27,6 +28,14 @@ ultra init --with-cloud first if no project is set yet.`,
 }
 
 func runDeploy(configPath string) error {
+	// Preflight: verify config is structurally valid before touching the network.
+	if r, failed := preflight.RunUntilFail([]preflight.Check{
+		preflight.ConfigValidCheck(configPath),
+	}); failed {
+		fmt.Fprintf(os.Stderr, "  ✗ %s — %s\n    hint: %s\n", r.Name, r.Detail, r.FixHint)
+		return errReported
+	}
+
 	if err := requireConfigFile(configPath); err != nil {
 		return err
 	}
