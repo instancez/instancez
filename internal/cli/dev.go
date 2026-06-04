@@ -37,14 +37,11 @@ func runDev(opts devOptions) error {
 	}
 
 	switch opts.dbSrc {
-	case DevDBSourceDocker:
-		return fmt.Errorf("--use-docker is not yet implemented in this build; use --use-dsn for now")
-	case DevDBSourceCloudEphemeral:
-		return fmt.Errorf("--use-cloud-ephemeral is not yet implemented in this build; use --use-dsn for now")
+	case DevDBSourceCloud:
+		return fmt.Errorf("--use-cloud is not yet implemented in this build; omit it to use the DSN")
 	case DevDBSourceDSN:
-		// fall through — env-var DSN is the only wired path right now.
+		// default path — env-var DSN
 	default:
-		// Defensive: resolveDevFlags should have caught this.
 		return fmt.Errorf("internal: dev data source unset")
 	}
 

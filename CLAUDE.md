@@ -32,7 +32,7 @@ Concrete rules that fall out of this:
 **Build & run:**
 ```sh
 go build -o ultra ./cmd/ultra
-./ultra dev --use-dsn    # hot-reload dev server (requires the two DB URLs + JWT_SECRET + ULTRABASE_ADMIN_KEY in env)
+./ultra dev              # hot-reload dev server (requires the two DB URLs + JWT_SECRET + ULTRABASE_ADMIN_KEY in env)
 ./ultra serve            # production mode
 ./ultra validate         # YAML syntax check, no DB
 docker compose -f docker-compose.dev.yaml up   # full stack: postgres + backend + dashboard

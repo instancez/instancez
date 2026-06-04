@@ -256,15 +256,13 @@ func parseServeFlags(args []string, envLookup func(string) string) (serveOptions
 	return resolveServeFlags(fs, envLookup)
 }
 
-// DevDBSource picks which data-source path `ultra dev` takes. Exactly one
-// must be set by the caller; resolveDevFlags enforces that.
+// DevDBSource picks which data-source path `ultra dev` takes.
 type DevDBSource int
 
 const (
 	DevDBSourceUnset DevDBSource = iota
 	DevDBSourceDSN
-	DevDBSourceDocker
-	DevDBSourceCloudEphemeral
+	DevDBSourceCloud
 )
 
 // devOptions are the parsed values for runDev. Same as serveOptions but
@@ -286,9 +284,8 @@ type devFlagSet struct {
 	dashboard     string
 	verbose       bool
 
-	useDSN             bool
-	useDocker          bool
-	useCloudEphemeral  bool
+	useDSN   bool
+	useCloud bool
 }
 
 func newDevFlagSet() *devFlagSet {
@@ -300,26 +297,26 @@ func newDevFlagSet() *devFlagSet {
 	fs.flags.DurationVar(&fs.watchInterval, "watch-interval", 60*time.Second, "S3-watch poll interval; min 10s")
 	fs.flags.StringVar(&fs.dashboard, "dashboard", "readwrite", "dashboard mode: disabled | readonly | readwrite")
 	fs.flags.BoolVar(&fs.verbose, "verbose", false, "debug logging")
-	fs.flags.BoolVar(&fs.useDSN, "use-dsn", false, "use ULTRABASE_*_DATABASE_URL from .development.env / shell env")
-	fs.flags.BoolVar(&fs.useDocker, "use-docker", false, "use a local Docker Postgres started by ultra")
-	fs.flags.BoolVar(&fs.useCloudEphemeral, "use-cloud-ephemeral", false, "use an ephemeral Ultrabase Cloud database")
+	fs.flags.BoolVar(&fs.useDSN, "use-dsn", false, "deprecated no-op; dev uses the DSN by default")
+	_ = fs.flags.MarkHidden("use-dsn")
+	_ = fs.flags.MarkDeprecated("use-dsn", "dev now uses the DSN by default; flag is a no-op")
+	fs.flags.BoolVar(&fs.useCloud, "use-cloud", false, "run against the cloud project's draft database (requires `ultra init --with-cloud`)")
 	fs.flags.SetOutput(io.Discard)
 	return fs
 }
 
 // resolveDevFlags mirrors resolveServeFlags but with dev defaults: watch on,
 // dashboard readwrite, migrate+seed always on, plus the --no-watch alias.
-// It also enforces that exactly one --use-* data-source flag was supplied —
-// the user must explicitly pick where the DB comes from, no implicit defaults.
+// When no --use-* flag is given, dev defaults to the DSN path.
 func resolveDevFlags(fs *devFlagSet, lookup func(string) string) (devOptions, error) {
 	setBy, err := applyEnvDefaults(fs.flags, devEnvAliases, lookup)
 	if err != nil {
 		return devOptions{}, err
 	}
 
-	dbSrc, err := selectDevDBSource(fs.useDSN, fs.useDocker, fs.useCloudEphemeral)
-	if err != nil {
-		return devOptions{}, err
+	dbSrc := DevDBSourceDSN
+	if fs.useCloud {
+		dbSrc = DevDBSourceCloud
 	}
 
 	// --no-watch, when explicitly passed, wins over --watch / the env default.
@@ -358,35 +355,6 @@ func resolveDevFlags(fs *devFlagSet, lookup func(string) string) (devOptions, er
 		verbose: fs.verbose,
 		dbSrc:   dbSrc,
 	}, nil
-}
-
-// selectDevDBSource turns the three mutually-exclusive bool flags into a
-// single enum, with a precise error message naming which flags conflicted
-// (or that none were set). Kept separate so dev tests can exercise the
-// matrix without going through the full devFlagSet.
-func selectDevDBSource(useDSN, useDocker, useCloudEphemeral bool) (DevDBSource, error) {
-	picked := []string{}
-	src := DevDBSourceUnset
-	if useDSN {
-		picked = append(picked, "--use-dsn")
-		src = DevDBSourceDSN
-	}
-	if useDocker {
-		picked = append(picked, "--use-docker")
-		src = DevDBSourceDocker
-	}
-	if useCloudEphemeral {
-		picked = append(picked, "--use-cloud-ephemeral")
-		src = DevDBSourceCloudEphemeral
-	}
-	switch len(picked) {
-	case 0:
-		return DevDBSourceUnset, fmt.Errorf("exactly one of --use-dsn, --use-docker, or --use-cloud-ephemeral is required")
-	case 1:
-		return src, nil
-	default:
-		return DevDBSourceUnset, fmt.Errorf("%s are mutually exclusive; pick one", strings.Join(picked, " and "))
-	}
 }
 
 // parseDevFlags parses dev's flag surface then resolves env-var fallbacks.

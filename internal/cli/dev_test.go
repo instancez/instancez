@@ -7,7 +7,7 @@ import (
 )
 
 func TestParseDevFlagsDefaults(t *testing.T) {
-	got, err := parseDevFlags([]string{"--use-dsn"}, func(string) string { return "" })
+	got, err := parseDevFlags([]string{}, func(string) string { return "" })
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -27,7 +27,7 @@ func TestParseDevFlagsDefaults(t *testing.T) {
 
 func TestParseDevFlagsOverrides(t *testing.T) {
 	got, err := parseDevFlags(
-		[]string{"--use-dsn", "--no-watch", "--dashboard", "disabled"},
+		[]string{"--no-watch", "--dashboard", "disabled"},
 		func(string) string { return "" },
 	)
 	if err != nil {
@@ -41,66 +41,40 @@ func TestParseDevFlagsOverrides(t *testing.T) {
 	}
 }
 
-// TestParseDevFlagsRequiresDBSource locks the contract that `ultra dev`
-// refuses to start without an explicit data-source choice. No defaulting,
-// no auto-cloud — the user must say where the DB lives.
-func TestParseDevFlagsRequiresDBSource(t *testing.T) {
-	_, err := parseDevFlags([]string{}, func(string) string { return "" })
-	if err == nil {
-		t.Fatal("expected error when no --use-* flag is supplied")
+// TestParseDevFlagsUseDSNDeprecated verifies that --use-dsn is still accepted
+// (hidden/deprecated no-op) and resolves to DevDBSourceDSN.
+func TestParseDevFlagsUseDSNDeprecated(t *testing.T) {
+	got, err := parseDevFlags([]string{"--use-dsn"}, func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("--use-dsn should still be accepted (deprecated no-op): %v", err)
 	}
-	if !strings.Contains(err.Error(), "--use-dsn") {
-		t.Errorf("error %q should mention the --use-* flags", err.Error())
-	}
-}
-
-// TestParseDevFlagsMutuallyExclusive prevents the contradictory invocation
-// where two data sources are requested simultaneously.
-func TestParseDevFlagsMutuallyExclusive(t *testing.T) {
-	_, err := parseDevFlags([]string{"--use-dsn", "--use-docker"}, func(string) string { return "" })
-	if err == nil {
-		t.Fatal("expected error when two --use-* flags are supplied")
-	}
-	if !strings.Contains(err.Error(), "mutually exclusive") {
-		t.Errorf("error %q should mention 'mutually exclusive'", err.Error())
+	if got.dbSrc != DevDBSourceDSN {
+		t.Fatalf("dbSrc = %v, want DevDBSourceDSN", got.dbSrc)
 	}
 }
 
-// TestSelectDevDBSourceMatrix exercises the picker directly without going
-// through the flag set, so the precedence/error logic is exhaustively covered.
-func TestSelectDevDBSourceMatrix(t *testing.T) {
-	cases := []struct {
-		name                                       string
-		useDSN, useDocker, useCloudEphemeral       bool
-		wantSrc                                    DevDBSource
-		wantErrSubstr                              string
-	}{
-		{"none", false, false, false, DevDBSourceUnset, "exactly one"},
-		{"dsn", true, false, false, DevDBSourceDSN, ""},
-		{"docker", false, true, false, DevDBSourceDocker, ""},
-		{"cloud", false, false, true, DevDBSourceCloudEphemeral, ""},
-		{"dsn+docker", true, true, false, DevDBSourceUnset, "mutually exclusive"},
-		{"dsn+cloud", true, false, true, DevDBSourceUnset, "mutually exclusive"},
-		{"all three", true, true, true, DevDBSourceUnset, "mutually exclusive"},
+// TestParseDevFlagsUseCloud verifies that --use-cloud resolves to DevDBSourceCloud.
+func TestParseDevFlagsUseCloud(t *testing.T) {
+	got, err := parseDevFlags([]string{"--use-cloud"}, func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("parse: %v", err)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := selectDevDBSource(tc.useDSN, tc.useDocker, tc.useCloudEphemeral)
-			if tc.wantErrSubstr == "" {
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
-				if got != tc.wantSrc {
-					t.Fatalf("got src %v, want %v", got, tc.wantSrc)
-				}
-				return
-			}
-			if err == nil {
-				t.Fatalf("expected error containing %q, got nil", tc.wantErrSubstr)
-			}
-			if !strings.Contains(err.Error(), tc.wantErrSubstr) {
-				t.Errorf("error %q does not contain %q", err.Error(), tc.wantErrSubstr)
-			}
-		})
+	if got.dbSrc != DevDBSourceCloud {
+		t.Fatalf("dbSrc = %v, want DevDBSourceCloud", got.dbSrc)
+	}
+}
+
+// TestParseDevFlagsRemovedFlagsUnknown verifies that the removed --use-docker
+// and --use-cloud-ephemeral flags are now unknown and cause a parse error.
+func TestParseDevFlagsRemovedFlagsUnknown(t *testing.T) {
+	for _, flag := range []string{"--use-docker", "--use-cloud-ephemeral"} {
+		_, err := parseDevFlags([]string{flag}, func(string) string { return "" })
+		if err == nil {
+			t.Errorf("%s: expected parse error for removed flag, got nil", flag)
+			continue
+		}
+		if !strings.Contains(err.Error(), "unknown flag") {
+			t.Errorf("%s: error %q should mention 'unknown flag'", flag, err.Error())
+		}
 	}
 }
