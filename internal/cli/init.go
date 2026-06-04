@@ -67,6 +67,24 @@ func runInit(ctx context.Context, opts initOptions) error {
 		return err
 	}
 
+	// Resolve the output directory and check for an existing yaml early so we
+	// can make decisions (generate-like guard, keep-existing) before any
+	// network/login calls.
+	dir, err := filepath.Abs(opts.dir)
+	if err != nil {
+		return fmt.Errorf("resolve dir: %w", err)
+	}
+	yamlPath := filepath.Join(dir, "ultrabase.yaml")
+	_, statErr := os.Stat(yamlPath)
+	yamlExists := statErr == nil
+
+	// --generate-like over an existing yaml would consume cloud tokens to
+	// produce output that is immediately discarded. Fail fast before any
+	// network or login call.
+	if opts.generateLike != "" && yamlExists && !opts.force {
+		return fmt.Errorf("ultrabase.yaml already exists; pass --force to regenerate it from --generate-like")
+	}
+
 	// Cloud-dependent flags require credentials. Fail fast.
 	if opts.withCloud || opts.generateLike != "" {
 		if _, err := cloud.Load(); err != nil {
@@ -74,10 +92,6 @@ func runInit(ctx context.Context, opts initOptions) error {
 		}
 	}
 
-	dir, err := filepath.Abs(opts.dir)
-	if err != nil {
-		return fmt.Errorf("resolve dir: %w", err)
-	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create directory: %w", err)
 	}
@@ -85,11 +99,6 @@ func runInit(ctx context.Context, opts initOptions) error {
 	name := opts.name
 	if name == "" {
 		name = filepath.Base(dir)
-	}
-
-	yamlPath := filepath.Join(dir, "ultrabase.yaml")
-	if _, err := os.Stat(yamlPath); err == nil && !opts.force {
-		return fmt.Errorf("ultrabase.yaml already exists in %s (use --force to overwrite)", dir)
 	}
 
 	// Bootstrap a DB first if requested — fail fast before writing any files
@@ -124,14 +133,20 @@ func runInit(ctx context.Context, opts initOptions) error {
 		fmt.Printf("  ✓ Generated (%d input + %d output tokens)\n", resp.Tokens.Input, resp.Tokens.Output)
 	}
 
-	// ultrabase.yaml: existence already gated above (errors without --force).
-	if err := applyWrite(dir, "ultrabase.yaml", func(_ string) (string, writeAction) {
-		if generatedYAML != "" {
-			return generatedYAML, actionCreate
+	// ultrabase.yaml: keep existing content when the file is already present
+	// and --force is not set. The rest of init (role provisioning, cloud
+	// linking, next-steps) still runs so a re-run is fully idempotent.
+	if yamlExists && !opts.force {
+		fmt.Println("  = ultrabase.yaml (unchanged)")
+	} else {
+		if err := applyWrite(dir, "ultrabase.yaml", func(_ string) (string, writeAction) {
+			if generatedYAML != "" {
+				return generatedYAML, actionCreate
+			}
+			return scaffoldYAML(name), actionCreate
+		}); err != nil {
+			return err
 		}
-		return scaffoldYAML(name), actionCreate
-	}); err != nil {
-		return err
 	}
 
 	// .gitignore: append-only — preserve user customizations, only add our

@@ -92,24 +92,102 @@ func TestRunInitWritesProductionEnvExample(t *testing.T) {
 	}
 }
 
-// TestRunInitRefusesOverwrite stops a re-run from blowing away an in-progress
-// project. --force is the documented escape hatch.
-func TestRunInitRefusesOverwrite(t *testing.T) {
+// TestRunInitIdempotent verifies that re-running init without --force is safe:
+// it succeeds (no error), leaves the existing ultrabase.yaml bytes unchanged,
+// and still completes the rest of the init steps (gitignore, env example, etc).
+func TestRunInitIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	if err := runInit(context.Background(), initOptions{name: "demo", dir: dir}); err != nil {
 		t.Fatalf("first runInit: %v", err)
 	}
-	err := runInit(context.Background(), initOptions{name: "demo", dir: dir})
+
+	yamlPath := filepath.Join(dir, "ultrabase.yaml")
+	originalBytes, err := os.ReadFile(yamlPath)
+	if err != nil {
+		t.Fatalf("read yaml after first init: %v", err)
+	}
+
+	// Re-run without --force: must succeed and leave yaml bytes unchanged.
+	if err := runInit(context.Background(), initOptions{name: "demo", dir: dir}); err != nil {
+		t.Fatalf("re-runInit without --force should succeed, got: %v", err)
+	}
+
+	afterBytes, err := os.ReadFile(yamlPath)
+	if err != nil {
+		t.Fatalf("read yaml after re-init: %v", err)
+	}
+	if string(afterBytes) != string(originalBytes) {
+		t.Errorf("ultrabase.yaml was modified on re-run without --force\n--- before ---\n%s--- after ---\n%s",
+			originalBytes, afterBytes)
+	}
+}
+
+// TestRunInitForceOverwrites confirms that --force does overwrite the yaml.
+func TestRunInitForceOverwrites(t *testing.T) {
+	dir := t.TempDir()
+	if err := runInit(context.Background(), initOptions{name: "demo", dir: dir}); err != nil {
+		t.Fatalf("first runInit: %v", err)
+	}
+
+	// Inject custom content so we can detect whether it was replaced.
+	yamlPath := filepath.Join(dir, "ultrabase.yaml")
+	customContent := "# custom content that --force should replace\n"
+	if err := os.WriteFile(yamlPath, []byte(customContent), 0o644); err != nil {
+		t.Fatalf("write custom yaml: %v", err)
+	}
+
+	if err := runInit(context.Background(), initOptions{name: "demo", dir: dir, force: true}); err != nil {
+		t.Fatalf("--force should overwrite: %v", err)
+	}
+
+	afterBytes, err := os.ReadFile(yamlPath)
+	if err != nil {
+		t.Fatalf("read yaml after --force re-init: %v", err)
+	}
+	if string(afterBytes) == customContent {
+		t.Error("ultrabase.yaml was NOT overwritten despite --force")
+	}
+}
+
+// TestRunInitGenerateLikeRefusesWhenYAMLExists verifies that --generate-like
+// over an existing yaml fails fast with an error — before any login/network
+// call — when --force is not set. This prevents wasting cloud tokens to
+// generate output that would immediately be discarded.
+func TestRunInitGenerateLikeRefusesWhenYAMLExists(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write an existing yaml directly (no credentials needed for this step).
+	yamlPath := filepath.Join(dir, "ultrabase.yaml")
+	existingContent := scaffoldYAML("demo")
+	if err := os.WriteFile(yamlPath, []byte(existingContent), 0o644); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+
+	// Use a fresh HOME with no credentials — if the guard fires before the
+	// login check, the error must NOT mention "ultra login".
+	t.Setenv("HOME", t.TempDir())
+
+	opts := initOptions{dir: dir, generateLike: "twitter"}
+	err := runInit(context.Background(), opts)
 	if err == nil {
-		t.Fatal("expected error on re-init without --force, got nil")
+		t.Fatal("expected error when --generate-like over existing yaml without --force, got nil")
 	}
 	if !strings.Contains(err.Error(), "already exists") {
 		t.Errorf("error %q should mention 'already exists'", err.Error())
 	}
+	// The guard must fire before the login check — verify the error is NOT
+	// the login error.
+	if strings.Contains(err.Error(), "ultra login") {
+		t.Errorf("guard should fire before login check, but got login error: %v", err)
+	}
 
-	// With --force, re-init succeeds.
-	if err := runInit(context.Background(), initOptions{name: "demo", dir: dir, force: true}); err != nil {
-		t.Fatalf("--force should overwrite: %v", err)
+	// yaml must be untouched.
+	afterBytes, err2 := os.ReadFile(yamlPath)
+	if err2 != nil {
+		t.Fatalf("read yaml after failed generate-like: %v", err2)
+	}
+	if string(afterBytes) != existingContent {
+		t.Error("ultrabase.yaml was modified despite the guard error")
 	}
 }
 
