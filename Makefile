@@ -9,6 +9,9 @@ NODE_MODULES_STAMP := $(DASHBOARD_DIR)/node_modules/.package-lock.json
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
 
+VERSION := $(shell git describe --tags --always 2>/dev/null || echo dev)
+LDFLAGS := -X github.com/saedx1/ultrabase/internal/cli.version=$(VERSION)
+
 .PHONY: build build-go build-dashboard test test-go test-integration test-dashboard clean help
 
 help:
@@ -27,7 +30,7 @@ build: build-dashboard build-go
 	@echo "Installed ultra → $(BINDIR)/ultra"
 
 build-go:
-	go build -o ultra ./cmd/ultra
+	go build -ldflags "$(LDFLAGS)" -o ultra ./cmd/ultra
 
 build-dashboard: $(NODE_MODULES_STAMP)
 	cd $(DASHBOARD_DIR) && npm run build

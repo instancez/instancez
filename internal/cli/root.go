@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const version = "0.1.0"
+var version = "dev"
 
 // errReported marks an error whose details were already printed to the user
 // (e.g. a formatted validation report). Execute exits non-zero for it without
