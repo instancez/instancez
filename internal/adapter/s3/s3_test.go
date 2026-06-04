@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/saedx1/ultrabase/internal/domain"
 )
 
@@ -57,24 +56,3 @@ func TestConfig(t *testing.T) {
 	}
 }
 
-func TestNew_WithAssumeRole_Constructs(t *testing.T) {
-	s, err := New(context.Background(), Config{
-		Bucket: "b", Region: "us-east-1",
-		AssumeRoleARN: "arn:aws:iam::123456789012:role/app-uploads",
-		SessionTags:   map[string]string{"app_id": "a1"},
-		KeyPrefix:     "a1",
-	})
-	if err != nil || s == nil {
-		t.Fatalf("construct with assume-role: err=%v store=%v", err, s)
-	}
-}
-
-func TestBuildSessionTags(t *testing.T) {
-	tags := buildSessionTags(map[string]string{"app_id": "a1"})
-	if len(tags) != 1 || aws.ToString(tags[0].Key) != "app_id" || aws.ToString(tags[0].Value) != "a1" {
-		t.Fatalf("buildSessionTags = %#v", tags)
-	}
-	if len(buildSessionTags(nil)) != 0 {
-		t.Fatal("nil map should yield empty slice")
-	}
-}

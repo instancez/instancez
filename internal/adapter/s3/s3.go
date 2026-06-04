@@ -11,10 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/sts"
-	ststypes "github.com/aws/aws-sdk-go-v2/service/sts/types"
 	"github.com/saedx1/ultrabase/internal/domain"
 )
 
@@ -33,9 +30,7 @@ type Config struct {
 	Endpoint        string // custom endpoint (empty for real S3)
 	AccessKeyID     string
 	SecretAccessKey string
-	KeyPrefix       string            // optional prefix prepended to all object keys
-	AssumeRoleARN   string            // optional IAM role ARN to assume via STS
-	SessionTags     map[string]string // optional session tags passed with STS assume-role
+	KeyPrefix       string // optional prefix prepended to all object keys
 }
 
 // New creates a new S3 store with a real AWS SDK client.
@@ -56,17 +51,6 @@ func New(ctx context.Context, cfg Config) (*Store, error) {
 		return nil, fmt.Errorf("load AWS config: %w", err)
 	}
 
-	// Assume a per-app-scoped role; session tags (e.g. app_id) let IAM
-	// condition-key policies restrict S3 access to the app's key prefix.
-	if cfg.AssumeRoleARN != "" {
-		stsClient := sts.NewFromConfig(awsCfg)
-		provider := stscreds.NewAssumeRoleProvider(stsClient, cfg.AssumeRoleARN, func(o *stscreds.AssumeRoleOptions) {
-			o.RoleSessionName = "ultrabase-storage"
-			o.Tags = buildSessionTags(cfg.SessionTags)
-		})
-		awsCfg.Credentials = aws.NewCredentialsCache(provider)
-	}
-
 	var s3Opts []func(*s3.Options)
 	if cfg.Endpoint != "" {
 		s3Opts = append(s3Opts, func(o *s3.Options) {
@@ -82,16 +66,6 @@ func New(ctx context.Context, cfg Config) (*Store, error) {
 		bucket:        cfg.Bucket,
 		keyPrefix:     cfg.KeyPrefix,
 	}, nil
-}
-
-// buildSessionTags converts a string map into the STS Tag slice expected by
-// AssumeRoleOptions. It is a pure helper to keep New readable and testable.
-func buildSessionTags(tags map[string]string) []ststypes.Tag {
-	out := make([]ststypes.Tag, 0, len(tags))
-	for k, v := range tags {
-		out = append(out, ststypes.Tag{Key: aws.String(k), Value: aws.String(v)})
-	}
-	return out
 }
 
 func (s *Store) fullKey(key string) string {
