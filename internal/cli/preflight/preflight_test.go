@@ -67,12 +67,22 @@ func TestDSNPresentCheck(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 type fakeRoleReporter struct {
-	roles map[string]bool
-	err   error
+	roles  map[string]bool
+	grants map[string]bool
+	err    error
+	// grantsErr, if non-nil, is returned by AuthenticatorGrants instead of err.
+	grantsErr error
 }
 
 func (f *fakeRoleReporter) ExistingRoles() (map[string]bool, error) {
 	return f.roles, f.err
+}
+
+func (f *fakeRoleReporter) AuthenticatorGrants() (map[string]bool, error) {
+	if f.grantsErr != nil {
+		return nil, f.grantsErr
+	}
+	return f.grants, f.err
 }
 
 func allExpectedRoles() map[string]bool {
@@ -85,8 +95,16 @@ func allExpectedRoles() map[string]bool {
 	}
 }
 
+func allExpectedGrants() map[string]bool {
+	return map[string]bool{
+		"anon":          true,
+		"authenticated": true,
+		"service_role":  true,
+	}
+}
+
 func TestRoleLayoutCheck_AllPresent(t *testing.T) {
-	reporter := &fakeRoleReporter{roles: allExpectedRoles()}
+	reporter := &fakeRoleReporter{roles: allExpectedRoles(), grants: allExpectedGrants()}
 	r := preflight.RoleLayoutCheck(reporter)()
 	if !r.OK {
 		t.Fatalf("expected OK, got failure: %s", r.Detail)
@@ -96,7 +114,7 @@ func TestRoleLayoutCheck_AllPresent(t *testing.T) {
 func TestRoleLayoutCheck_MissingRole(t *testing.T) {
 	roles := allExpectedRoles()
 	delete(roles, "authenticator")
-	reporter := &fakeRoleReporter{roles: roles}
+	reporter := &fakeRoleReporter{roles: roles, grants: allExpectedGrants()}
 	r := preflight.RoleLayoutCheck(reporter)()
 	if r.OK {
 		t.Fatal("expected failure for missing role, got OK")
@@ -109,11 +127,41 @@ func TestRoleLayoutCheck_MissingRole(t *testing.T) {
 	}
 }
 
+func TestRoleLayoutCheck_AuthenticatorNotGranted(t *testing.T) {
+	grants := allExpectedGrants()
+	delete(grants, "anon")
+	reporter := &fakeRoleReporter{roles: allExpectedRoles(), grants: grants}
+	r := preflight.RoleLayoutCheck(reporter)()
+	if r.OK {
+		t.Fatal("expected failure when authenticator is missing a grant, got OK")
+	}
+	if !strings.Contains(r.Detail, "anon") {
+		t.Errorf("Detail %q should name the ungranted role", r.Detail)
+	}
+	if r.FixHint == "" {
+		t.Errorf("FixHint must be non-empty on failure")
+	}
+}
+
 func TestRoleLayoutCheck_ReporterError(t *testing.T) {
 	reporter := &fakeRoleReporter{err: errors.New("connection refused")}
 	r := preflight.RoleLayoutCheck(reporter)()
 	if r.OK {
 		t.Fatal("expected failure when reporter errors, got OK")
+	}
+	if r.FixHint == "" {
+		t.Errorf("FixHint must be non-empty on failure")
+	}
+}
+
+func TestRoleLayoutCheck_GrantsQueryError(t *testing.T) {
+	reporter := &fakeRoleReporter{
+		roles:     allExpectedRoles(),
+		grantsErr: errors.New("permission denied"),
+	}
+	r := preflight.RoleLayoutCheck(reporter)()
+	if r.OK {
+		t.Fatal("expected failure when grants query errors, got OK")
 	}
 	if r.FixHint == "" {
 		t.Errorf("FixHint must be non-empty on failure")

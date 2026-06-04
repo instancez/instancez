@@ -43,9 +43,19 @@ func runDoctor(configPath string) error {
 
 // doctorChecks builds the full check list used by both runDoctor and
 // doctor_test.go (where it is called with injected dependencies).
+//
+// Dependency order: config → DSN env vars → owner connect → auth connect →
+// role layout.  Each check depends on the previous ones succeeding, but
+// RunAll runs them all and collects every failure so the user sees the full
+// picture at once.
 func doctorChecks(configPath string, lookup func(string) string) []preflight.Check {
+	ownerDSN := lookup(preflight.EnvOwnerDSN)
+	authDSN := lookup(preflight.EnvAuthDSN)
 	return []preflight.Check{
 		preflight.ConfigValidCheck(configPath),
 		preflight.DSNPresentCheck(lookup),
+		preflight.OwnerConnectCheck(ownerDSN),
+		preflight.AuthConnectCheck(authDSN),
+		preflight.RoleLayoutCheck(preflight.PostgresRoleReporter(ownerDSN)),
 	}
 }

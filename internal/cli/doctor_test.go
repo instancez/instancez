@@ -78,3 +78,34 @@ func TestDoctorChecksNoLiveDB(t *testing.T) {
 		t.Log("Note: unexpectedly all checks passed; may run from a directory with a valid ultrabase.yaml")
 	}
 }
+
+// TestDoctorChecksContainsExpectedChecks is a membership guard that asserts
+// doctorChecks returns exactly the expected set of named checks.  If a check
+// is accidentally removed this test will fail, preventing a silent regression.
+func TestDoctorChecksContainsExpectedChecks(t *testing.T) {
+	noEnv := func(string) string { return "" }
+	checks := doctorChecks("ultrabase.yaml", noEnv)
+
+	// Run each check against the empty env and collect result Names.
+	names := make(map[string]bool, len(checks))
+	for _, c := range checks {
+		r := c()
+		names[r.Name] = true
+	}
+
+	required := []string{
+		"config file valid",
+		"DSN env vars present",
+		"owner DB connect",
+		"auth DB connect",
+		"role layout",
+	}
+	for _, want := range required {
+		if !names[want] {
+			t.Errorf("doctorChecks is missing check %q; got names: %v", want, names)
+		}
+	}
+	if len(checks) != len(required) {
+		t.Errorf("doctorChecks returned %d checks, want %d; names: %v", len(checks), len(required), names)
+	}
+}

@@ -4,10 +4,13 @@
 package preflight
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
+	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/saedx1/ultrabase/internal/config"
 	"github.com/saedx1/ultrabase/internal/domain"
 )
@@ -182,20 +185,213 @@ func ConfigValidCheck(configPath string) Check {
 }
 
 // ---------------------------------------------------------------------------
+// ConnectCheck
+// ---------------------------------------------------------------------------
+
+// connectTimeout is the maximum time allowed when opening a pool + pinging
+// the database during a preflight check.
+const connectTimeout = 5 * time.Second
+
+// ConnectCheck returns a Check that opens a pgxpool connection to the given
+// DSN and verifies it is reachable via Ping.  name is a short label used in
+// the Result (e.g. "owner DB connect").  The pool is opened lazily by pgx but
+// Ping forces an actual round-trip so a dead database is caught immediately.
+//
+// If dsn is empty the check fails immediately without attempting a dial — this
+// keeps the check fast when called against an environment with no DSNs set
+// (e.g. in the doctorChecks membership guard test).
+func ConnectCheck(name, dsn string) Check {
+	return func() Result {
+		if dsn == "" {
+			return Result{
+				Name:    name,
+				OK:      false,
+				Detail:  "DSN is empty",
+				FixHint: "run `ultra init --with-dsn <dsn>` or set the env var in .development.env",
+			}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
+		defer cancel()
+		pool, err := pgxpool.New(ctx, dsn)
+		if err != nil {
+			return Result{
+				Name:    name,
+				OK:      false,
+				Detail:  "could not open pool: " + err.Error(),
+				FixHint: "run `ultra init --with-dsn <dsn>` to bootstrap the database",
+			}
+		}
+		defer pool.Close()
+		if err := pool.Ping(ctx); err != nil {
+			return Result{
+				Name:    name,
+				OK:      false,
+				Detail:  "could not reach database: " + err.Error(),
+				FixHint: "check that Postgres is running and the DSN is correct",
+			}
+		}
+		return Result{Name: name, OK: true}
+	}
+}
+
+// OwnerConnectCheck is ConnectCheck pre-labelled for the owner DSN.
+func OwnerConnectCheck(dsn string) Check {
+	return ConnectCheck("owner DB connect", dsn)
+}
+
+// AuthConnectCheck is ConnectCheck pre-labelled for the authenticator DSN.
+func AuthConnectCheck(dsn string) Check {
+	return ConnectCheck("auth DB connect", dsn)
+}
+
+// ---------------------------------------------------------------------------
 // RoleLayoutCheck
 // ---------------------------------------------------------------------------
 
 // RoleReporter is implemented by anything that can report which Postgres roles
-// currently exist.  The real implementation queries pg_roles; tests inject a
-// fake.
+// currently exist and which roles have been granted to the authenticator login
+// role.  The real implementation queries pg_roles / pg_auth_members; tests
+// inject a fake.
 type RoleReporter interface {
 	ExistingRoles() (map[string]bool, error)
+	// AuthenticatorGrants returns the set of role names that have been
+	// granted TO the authenticator login role (i.e. roles the authenticator
+	// can SET ROLE to).
+	AuthenticatorGrants() (map[string]bool, error)
+}
+
+// PostgresRoleReporter returns a RoleReporter that queries a live Postgres
+// instance reachable via dsn.  Each method opens its own short-lived pool so
+// the reporter has no connection state.  Integration-only — not unit-tested.
+func PostgresRoleReporter(dsn string) RoleReporter {
+	return &pgRoleReporter{dsn: dsn}
+}
+
+type pgRoleReporter struct{ dsn string }
+
+func (r *pgRoleReporter) ExistingRoles() (map[string]bool, error) {
+	if r.dsn == "" {
+		return nil, fmt.Errorf("owner DSN is empty")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, r.dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open pool: %w", err)
+	}
+	defer pool.Close()
+
+	rows, err := pool.Query(ctx, `SELECT rolname FROM pg_roles`)
+	if err != nil {
+		return nil, fmt.Errorf("query pg_roles: %w", err)
+	}
+	defer rows.Close()
+	result := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scan rolname: %w", err)
+		}
+		result[name] = true
+	}
+	return result, rows.Err()
+}
+
+func (r *pgRoleReporter) AuthenticatorGrants() (map[string]bool, error) {
+	if r.dsn == "" {
+		return nil, fmt.Errorf("owner DSN is empty")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, r.dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open pool: %w", err)
+	}
+	defer pool.Close()
+
+	// Returns the roles granted TO the 'authenticator' login role.
+	const q = `
+		SELECT r.rolname
+		FROM pg_auth_members m
+		JOIN pg_roles r ON r.oid = m.roleid
+		JOIN pg_roles a ON a.oid = m.member
+		WHERE a.rolname = 'authenticator'`
+	rows, err := pool.Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("query pg_auth_members: %w", err)
+	}
+	defer rows.Close()
+	grants := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scan rolname: %w", err)
+		}
+		grants[name] = true
+	}
+	return grants, rows.Err()
+}
+
+// roleLayoutDecision contains the pure decision logic for RoleLayoutCheck.
+// It is extracted so it can be unit-tested with injected maps without touching
+// a database.  Returns the Check Result for the "role layout" check.
+func roleLayoutDecision(existing, grants map[string]bool) Result {
+	// Step 1: all five roles must exist.
+	var missing []string
+	for _, name := range expectedRoleNames() {
+		if !existing[name] {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		detail := "missing roles: "
+		for i, m := range missing {
+			if i > 0 {
+				detail += ", "
+			}
+			detail += m
+		}
+		return Result{
+			Name:    "role layout",
+			OK:      false,
+			Detail:  detail,
+			FixHint: "run `ultra init --with-dsn <dsn>`",
+		}
+	}
+
+	// Step 2: authenticator must be granted the three API roles.
+	r := domain.DefaultRoles()
+	apiRoles := []string{r.Anon, r.Authenticated, r.Service}
+	var notGranted []string
+	for _, name := range apiRoles {
+		if !grants[name] {
+			notGranted = append(notGranted, name)
+		}
+	}
+	if len(notGranted) > 0 {
+		detail := "authenticator not granted: "
+		for i, g := range notGranted {
+			if i > 0 {
+				detail += ", "
+			}
+			detail += g
+		}
+		return Result{
+			Name:    "role layout",
+			OK:      false,
+			Detail:  detail,
+			FixHint: "run `ultra init --with-dsn <dsn>`",
+		}
+	}
+
+	return Result{Name: "role layout", OK: true}
 }
 
 // RoleLayoutCheck returns a Check that verifies the five ultrabase roles
 // (ultrabase_owner, authenticator, anon, authenticated, service_role) exist
-// in the database.  It uses the injected RoleReporter so the decision logic
-// can be exercised without a real database connection.
+// in the database, and that authenticator has been granted the three API roles.
+// It uses the injected RoleReporter so the decision logic can be exercised
+// without a real database connection.
 func RoleLayoutCheck(roles RoleReporter) Check {
 	return func() Result {
 		existing, err := roles.ExistingRoles()
@@ -207,27 +403,15 @@ func RoleLayoutCheck(roles RoleReporter) Check {
 				FixHint: "run `ultra init --with-dsn <dsn>` to bootstrap the database",
 			}
 		}
-		var missing []string
-		for _, name := range expectedRoleNames() {
-			if !existing[name] {
-				missing = append(missing, name)
-			}
-		}
-		if len(missing) > 0 {
-			detail := "missing roles: "
-			for i, m := range missing {
-				if i > 0 {
-					detail += ", "
-				}
-				detail += m
-			}
+		grants, err := roles.AuthenticatorGrants()
+		if err != nil {
 			return Result{
 				Name:    "role layout",
 				OK:      false,
-				Detail:  detail,
-				FixHint: "run `ultra init --with-dsn <dsn>`",
+				Detail:  "could not query pg_auth_members: " + err.Error(),
+				FixHint: "run `ultra init --with-dsn <dsn>` to bootstrap the database",
 			}
 		}
-		return Result{Name: "role layout", OK: true}
+		return roleLayoutDecision(existing, grants)
 	}
 }

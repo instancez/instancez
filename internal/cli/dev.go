@@ -34,11 +34,16 @@ func newDevCmd() *cobra.Command {
 
 func runDev(opts devOptions) error {
 	// Preflight: load dev dotenv first so DSN env vars are visible, then run
-	// fail-fast checks before any expensive work.
+	// fail-fast checks before any expensive work.  We include connectivity
+	// and role-layout checks because dev needs a working, fully-bootstrapped
+	// database to start successfully.
 	_ = config.LoadDotenv(".development.env")
 	if r, failed := preflight.RunUntilFail([]preflight.Check{
 		preflight.ConfigValidCheck(opts.configPath),
 		preflight.DSNPresentCheck(os.Getenv),
+		preflight.OwnerConnectCheck(os.Getenv(preflight.EnvOwnerDSN)),
+		preflight.AuthConnectCheck(os.Getenv(preflight.EnvAuthDSN)),
+		preflight.RoleLayoutCheck(preflight.PostgresRoleReporter(os.Getenv(preflight.EnvOwnerDSN))),
 	}); failed {
 		fmt.Fprintf(os.Stderr, "  ✗ %s — %s\n    hint: %s\n", r.Name, r.Detail, r.FixHint)
 		return errReported

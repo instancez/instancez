@@ -27,10 +27,49 @@ ultra init --with-cloud first if no project is set yet.`,
 	return cmd
 }
 
+// projectIDPresentCheck returns a Check that reads the project_id from
+// configPath and fails if it is absent or empty.  Defined in deploy.go
+// (package cli) to avoid an import cycle between preflight and cloud.
+func projectIDPresentCheck(configPath string) preflight.Check {
+	return func() preflight.Result {
+		src, err := os.ReadFile(configPath)
+		if err != nil {
+			// If the file can't be read the ConfigValidCheck will already have
+			// failed; report a short message here rather than double-printing.
+			return preflight.Result{
+				Name:    "project_id present",
+				OK:      false,
+				Detail:  err.Error(),
+				FixHint: "run `ultra init` to create ultrabase.yaml",
+			}
+		}
+		id, err := cloud.ReadProjectID(src)
+		if err != nil {
+			return preflight.Result{
+				Name:    "project_id present",
+				OK:      false,
+				Detail:  "parse error: " + err.Error(),
+				FixHint: "check ultrabase.yaml for YAML syntax errors",
+			}
+		}
+		if id == "" {
+			return preflight.Result{
+				Name:    "project_id present",
+				OK:      false,
+				Detail:  "project.cloud.project_id is not set",
+				FixHint: "run `ultra init --with-cloud` to link this project to Ultrabase Cloud",
+			}
+		}
+		return preflight.Result{Name: "project_id present", OK: true}
+	}
+}
+
 func runDeploy(configPath string) error {
-	// Preflight: verify config is structurally valid before touching the network.
+	// Preflight: verify config is structurally valid and a project_id is
+	// present before touching the network.
 	if r, failed := preflight.RunUntilFail([]preflight.Check{
 		preflight.ConfigValidCheck(configPath),
+		projectIDPresentCheck(configPath),
 	}); failed {
 		fmt.Fprintf(os.Stderr, "  ✗ %s — %s\n    hint: %s\n", r.Name, r.Detail, r.FixHint)
 		return errReported
