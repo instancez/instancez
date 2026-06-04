@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,7 +16,6 @@ type initOptions struct {
 	name         string
 	dir          string
 	withDSN      string
-	useDock      bool
 	withCloud    bool
 	generateLike string
 	force        bool
@@ -37,7 +35,6 @@ defaults to the directory's basename when not given as a positional argument.
 Optional bootstrap flags also wire up a database so 'ultra dev' works
 immediately:
   --with-dsn <url>   Bootstrap roles on a Postgres you supply
-  --with-docker      Start a local Docker Postgres (not yet implemented)
 
 Without a flag, init only writes scaffolding files; you can configure a data
 source later.`,
@@ -52,7 +49,6 @@ source later.`,
 
 	cmd.Flags().StringVar(&opts.dir, "dir", ".", "output directory")
 	cmd.Flags().StringVar(&opts.withDSN, "with-dsn", "", "bootstrap roles on this privileged Postgres DSN")
-	cmd.Flags().BoolVar(&opts.useDock, "with-docker", false, "start a local Docker Postgres and bootstrap it")
 	cmd.Flags().BoolVar(&opts.withCloud, "with-cloud", false, "create a project in Ultrabase Cloud (requires `ultra login`)")
 	cmd.Flags().StringVar(&opts.generateLike, "generate-like", "", "generate ultrabase.yaml from a free-form prompt (requires `ultra login`)")
 	cmd.Flags().BoolVar(&opts.force, "force", false, "overwrite existing scaffolding files")
@@ -60,13 +56,9 @@ source later.`,
 }
 
 // validateInitFlags enforces mutual exclusions between init's flags.
-// --with-dsn and --with-docker are mutually exclusive (both are local dev
-// DB sources). --with-cloud is orthogonal — it specifies the cloud target.
-// --generate-like is also orthogonal (it shapes the scaffold YAML).
+// --with-cloud is orthogonal to the local dev flags — it specifies the cloud
+// target. --generate-like is also orthogonal (it shapes the scaffold YAML).
 func validateInitFlags(opts initOptions) error {
-	if opts.withDSN != "" && opts.useDock {
-		return errors.New("--with-dsn and --with-docker are mutually exclusive")
-	}
 	return nil
 }
 
@@ -104,8 +96,6 @@ func runInit(ctx context.Context, opts initOptions) error {
 	// so a bad DSN doesn't leave the project half-scaffolded.
 	var ownerDSN, authDSN string
 	switch {
-	case opts.useDock:
-		return errors.New("--with-docker is not yet implemented in this build; use --with-dsn or omit the flag for now")
 	case opts.withDSN != "":
 		fmt.Println("  Bootstrapping roles on the supplied DSN...")
 		ownerDSN, authDSN, err = bootstrapDB(ctx, opts.withDSN)
@@ -226,12 +216,10 @@ func runInit(ctx context.Context, opts initOptions) error {
 	case opts.withCloud:
 		fmt.Println("  ultra deploy            # push your YAML to the cloud project")
 	case opts.withDSN != "":
-		fmt.Println("  ultra dev --use-dsn")
-	case opts.useDock:
-		fmt.Println("  ultra dev --use-docker")
+		fmt.Println("  ultra dev")
 	default:
 		fmt.Println("  # Configure a data source, then:")
-		fmt.Println("  ultra dev --use-dsn        # point at your own Postgres")
+		fmt.Println("  ultra dev               # point at your own Postgres")
 	}
 	return nil
 }

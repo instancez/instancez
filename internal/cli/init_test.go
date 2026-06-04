@@ -17,17 +17,6 @@ func TestInitFlagsCloudAndGenerateLike(t *testing.T) {
 	assert.NotNil(t, cmd.Flags().Lookup("generate-like"))
 }
 
-func TestInitWithDockerAndCloudCompose(t *testing.T) {
-	// --with-cloud and --with-docker are NOT mutually exclusive — they're
-	// orthogonal axes (cloud target vs local dev DB).
-	opts := initOptions{useDock: true, withCloud: true}
-	assert.NoError(t, validateInitFlags(opts))
-}
-
-func TestInitWithDSNAndDockerStillMutuallyExclusive(t *testing.T) {
-	opts := initOptions{withDSN: "x", useDock: true}
-	assert.Error(t, validateInitFlags(opts))
-}
 
 func TestInitGenerateLikeRequiresLogin(t *testing.T) {
 	dir := t.TempDir()
@@ -95,11 +84,11 @@ func TestRunInitWritesProductionEnvExample(t *testing.T) {
 		}
 	}
 	// .development.env must NOT exist for a no-flag init — that file is only
-	// written by --with-dsn / --with-docker. If it appeared here, somebody
-	// added a hidden default-bootstrap step that would silently call out to
-	// a Postgres on every plain `ultra init`.
+	// written by --with-dsn. If it appeared here, somebody added a hidden
+	// default-bootstrap step that would silently call out to a Postgres on
+	// every plain `ultra init`.
 	if _, err := os.Stat(filepath.Join(dir, ".development.env")); !os.IsNotExist(err) {
-		t.Errorf("plain init wrote .development.env (expected only with --with-dsn / --with-docker)")
+		t.Errorf("plain init wrote .development.env (expected only with --with-dsn)")
 	}
 }
 
@@ -124,36 +113,6 @@ func TestRunInitRefusesOverwrite(t *testing.T) {
 	}
 }
 
-// TestRunInitMutuallyExclusiveBootstrapFlags prevents the contradictory
-// "use my DSN AND start docker" invocation.
-func TestRunInitMutuallyExclusiveBootstrapFlags(t *testing.T) {
-	dir := t.TempDir()
-	err := runInit(context.Background(), initOptions{
-		dir:     dir,
-		withDSN: "postgres://example",
-		useDock: true,
-	})
-	if err == nil {
-		t.Fatal("expected error when --with-dsn and --with-docker are both set")
-	}
-	if !strings.Contains(err.Error(), "mutually exclusive") {
-		t.Errorf("error %q should mention 'mutually exclusive'", err.Error())
-	}
-}
-
-// TestRunInitDockerStubbed guards the stub message until the docker path
-// is fully implemented. When that lands, this test should be deleted or
-// repurposed to assert the real docker behavior.
-func TestRunInitDockerStubbed(t *testing.T) {
-	dir := t.TempDir()
-	err := runInit(context.Background(), initOptions{dir: dir, useDock: true})
-	if err == nil {
-		t.Fatal("expected stub error for --with-docker")
-	}
-	if !strings.Contains(err.Error(), "not yet implemented") {
-		t.Errorf("error %q should mention 'not yet implemented'", err.Error())
-	}
-}
 
 // TestMergeEnvFile pins the dotenv merge semantics that protect user edits
 // in .development.env (and the example file) across re-runs of `ultra init`.
