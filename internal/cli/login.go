@@ -132,7 +132,7 @@ func ensureLoggedIn(opts ensureLoginOpts) (cloud.Credentials, error) {
 	}
 
 	// 3. Interactive: confirm intent (unless --yes), then run the flow.
-	fmt.Println("Creating a cloud project requires signing in.")
+	fmt.Println("This requires signing in to Ultrabase Cloud.")
 	if !opts.assumeYes {
 		if !opts.confirm("Sign in now? [Y/n] ") {
 			return cloud.Credentials{}, errors.New("login required — run `ultra login` to sign in")
