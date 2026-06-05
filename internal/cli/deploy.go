@@ -163,7 +163,7 @@ func runDeploy(configPath string, yes bool) error {
 	// deploy — that's a user choice, not a failure.
 	if !yes {
 		if !promptConfirm("Promote draft → production? [y/N] ") {
-			fmt.Println("  Aborted — nothing was promoted.")
+			fmt.Println("  Aborted — draft uploaded but not promoted to production.")
 			return nil
 		}
 	}
