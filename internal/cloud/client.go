@@ -138,6 +138,39 @@ func (c *Client) UploadYAML(projectID, yamlContent string) error {
 	return c.do("PUT", "/ultrabase/projects/"+projectID+"/yaml", map[string]string{"yaml": yamlContent}, nil)
 }
 
+// GetAppResponse mirrors GET /ultrabase/projects/:id. It carries the project
+// fields plus the PRODUCTION version's deploy state (Deployment) and whether the
+// draft has unpublished changes vs production (DraftDirty). Note: Status is the
+// project lifecycle status, distinct from Deployment.Status (the deploy state).
+type GetAppResponse struct {
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	Slug       string         `json:"slug"`
+	URL        string         `json:"url"`
+	Status     string         `json:"status"`
+	Deployment DeploymentInfo `json:"deployment"`
+	DraftDirty bool           `json:"draft_dirty"`
+}
+
+// DeploymentInfo is the production version's deploy state. Status is one of
+// building/build_done/deploying/deploy_done/deploy_failed/not_ready. DeployedAt
+// is nil until a successful deploy; Error is empty unless the deploy failed.
+type DeploymentInfo struct {
+	Status     string  `json:"status"`
+	DeployedAt *string `json:"deployed_at"`
+	Error      string  `json:"error"`
+}
+
+// GetApp fetches the cloud project's current state: project metadata, the
+// production deploy status, and draft dirtiness.
+func (c *Client) GetApp(projectID string) (*GetAppResponse, error) {
+	var out GetAppResponse
+	if err := c.do("GET", "/ultrabase/projects/"+projectID, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // WhoamiResponse mirrors GET /ultrabase/whoami.
 type WhoamiResponse struct {
 	Email  string `json:"email"`

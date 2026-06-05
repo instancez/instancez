@@ -37,6 +37,7 @@ func NewRootCmd() *cobra.Command {
 		newDeployCmd(),
 		newWhoamiCmd(),
 		newDoctorCmd(),
+		newStatusCmd(),
 	)
 
 	return root

@@ -197,6 +197,68 @@ func TestClientWhoami(t *testing.T) {
 	assert.Equal(t, "me@example.com", resp.Email)
 }
 
+func TestClientGetApp(t *testing.T) {
+	deployedAt := "2026-06-01T12:00:00Z"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "GET", r.Method)
+		assert.Equal(t, "/ultrabase/projects/app-uuid", r.URL.Path)
+		assert.Equal(t, "Bearer ultra_pat_test", r.Header.Get("Authorization"))
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":     "app-uuid",
+			"name":   "My App",
+			"slug":   "my-app",
+			"url":    "https://my-app.ultrabase.app",
+			"status": "DEPLOYED",
+			"deployment": map[string]any{
+				"status":      "deploy_done",
+				"deployed_at": deployedAt,
+				"error":       "",
+			},
+			"draft_dirty": true,
+		})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "ultra_pat_test")
+	resp, err := c.GetApp("app-uuid")
+	assert.NoError(t, err)
+	assert.Equal(t, "app-uuid", resp.ID)
+	assert.Equal(t, "My App", resp.Name)
+	assert.Equal(t, "https://my-app.ultrabase.app", resp.URL)
+	assert.Equal(t, "DEPLOYED", resp.Status)
+	assert.Equal(t, "deploy_done", resp.Deployment.Status)
+	if assert.NotNil(t, resp.Deployment.DeployedAt) {
+		assert.Equal(t, deployedAt, *resp.Deployment.DeployedAt)
+	}
+	assert.Empty(t, resp.Deployment.Error)
+	assert.True(t, resp.DraftDirty)
+}
+
+func TestClientGetAppNullDeployedAt(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":     "app-uuid",
+			"name":   "My App",
+			"status": "DRAFT",
+			"deployment": map[string]any{
+				"status":      "not_ready",
+				"deployed_at": nil,
+				"error":       "",
+			},
+			"draft_dirty": false,
+		})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "ultra_pat_test")
+	resp, err := c.GetApp("app-uuid")
+	assert.NoError(t, err)
+	assert.Equal(t, "not_ready", resp.Deployment.Status)
+	assert.Nil(t, resp.Deployment.DeployedAt)
+	assert.False(t, resp.DraftDirty)
+}
+
 func TestClientDeviceCode(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
