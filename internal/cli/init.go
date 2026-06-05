@@ -85,10 +85,13 @@ func runInit(ctx context.Context, opts initOptions) error {
 		return fmt.Errorf("ultrabase.yaml already exists; pass --force to regenerate it from --generate-like")
 	}
 
-	// Cloud-dependent flags require credentials. Fail fast.
+	// Cloud-dependent flags require credentials. On an interactive terminal
+	// ensureLoggedIn prompts and runs the device-code flow inline (saving creds
+	// to disk so the cloud calls below pick them up); in a non-interactive
+	// session it returns a hard error pointing at `ultra login`.
 	if opts.withCloud || opts.generateLike != "" {
-		if _, err := cloud.Load(); err != nil {
-			return fmt.Errorf("--with-cloud / --generate-like require `ultra login`: %w", err)
+		if _, err := ensureLoggedIn(ensureLoginOpts{}); err != nil {
+			return err
 		}
 	}
 
