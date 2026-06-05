@@ -7,8 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/saedx1/ultrabase/internal/cloud"
 	"github.com/saedx1/ultrabase/internal/config"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestInitFlagsCloudAndGenerateLike(t *testing.T) {
@@ -191,6 +193,62 @@ func TestRunInitGenerateLikeRefusesWhenYAMLExists(t *testing.T) {
 	}
 }
 
+
+// TestRunInitWithCloudSkipsCreateWhenAlreadyLinked guards against duplicate
+// cloud-project creation: re-running `ultra init --with-cloud` over a yaml that
+// already carries project.cloud.project_id must NOT call CreateProject.
+//
+// The proof is twofold and network-free:
+//   - We point ULTRABASE_CLOUD_API at a dead address. If the guard regressed
+//     and CreateProject were reached, it would hit that address and runInit
+//     would return an error. So err==nil IS the evidence the guard fired.
+//   - The existing project_id read is purely local, so valid creds-on-disk let
+//     ensureLoggedIn return early without TTY or network.
+//
+// We also assert the yaml bytes are unchanged — the no-id path would inject a
+// freshly-created id and rewrite the file.
+func TestRunInitWithCloudSkipsCreateWhenAlreadyLinked(t *testing.T) {
+	dir := t.TempDir()
+
+	// Fresh HOME with valid creds so ensureLoggedIn returns at login.go:124
+	// (no TTY prompt, no device-code flow).
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "test-pat"}))
+
+	// Any CreateProject call would hit this unreachable address and error.
+	t.Setenv("ULTRABASE_CLOUD_API", "http://127.0.0.1:1")
+
+	// Seed a yaml that already declares project.cloud.project_id. Use the real
+	// helper so the field lands exactly where ReadProjectID looks for it.
+	linked, err := cloud.WriteProjectID([]byte(scaffoldYAML("demo")), "proj_existing")
+	require.NoError(t, err)
+	yamlPath := filepath.Join(dir, "ultrabase.yaml")
+	require.NoError(t, os.WriteFile(yamlPath, linked, 0o644))
+
+	err = runInit(context.Background(), initOptions{name: "demo", dir: dir, withCloud: true})
+	require.NoError(t, err, "guard should skip CreateProject; any creation hits the dead API and errors")
+
+	after, err := os.ReadFile(yamlPath)
+	require.NoError(t, err)
+	assert.Equal(t, string(linked), string(after), "yaml must be untouched when already linked")
+}
+
+// TestReadProjectIDGuardDecision unit-tests the guard predicate in isolation:
+// a yaml with a project_id yields a non-empty id (→ skip), and one without
+// yields "" (→ create). This is the local, network-free read the guard branches
+// on inside the --with-cloud block.
+func TestReadProjectIDGuardDecision(t *testing.T) {
+	linked, err := cloud.WriteProjectID([]byte(scaffoldYAML("demo")), "proj_abc")
+	require.NoError(t, err)
+	id, err := cloud.ReadProjectID(linked)
+	require.NoError(t, err)
+	assert.Equal(t, "proj_abc", id, "linked yaml should report its project_id (guard → skip)")
+
+	id, err = cloud.ReadProjectID([]byte(scaffoldYAML("demo")))
+	require.NoError(t, err)
+	assert.Empty(t, id, "scaffold yaml has no project_id (guard → create)")
+}
 
 // TestMergeEnvFile pins the dotenv merge semantics that protect user edits
 // in .development.env (and the example file) across re-runs of `ultra init`.

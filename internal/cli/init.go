@@ -201,28 +201,42 @@ func runInit(ctx context.Context, opts initOptions) error {
 	}
 
 	// Create cloud project and bake project_id into ultrabase.yaml.
+	//
+	// Guard against duplicate creation: init is idempotent (it keeps an
+	// existing yaml), so a re-run of --with-cloud reaches this block over a
+	// yaml that may already carry project.cloud.project_id. Read it first —
+	// the read is local — and skip creation if we're already linked, so a
+	// re-run doesn't spawn a second cloud project.
 	if opts.withCloud {
-		fmt.Println("  Creating Ultrabase Cloud project...")
-		creds, _ := cloud.Load()
-		c := cloud.NewClient(cloud.APIURL(), creds.PAT)
-		resp, err := c.CreateProject(name)
-		if err != nil {
-			return fmt.Errorf("creating cloud project: %w", err)
-		}
-		fmt.Printf("  ✓ Project created (id: %s)\n", resp.ProjectID)
-
 		existing, err := os.ReadFile(yamlPath)
 		if err != nil {
 			return fmt.Errorf("re-reading ultrabase.yaml: %w", err)
 		}
-		updated, err := cloud.WriteProjectID(existing, resp.ProjectID)
+		linkedID, err := cloud.ReadProjectID(existing)
 		if err != nil {
-			return fmt.Errorf("injecting project_id: %w", err)
+			return fmt.Errorf("reading project_id: %w", err)
 		}
-		if err := os.WriteFile(yamlPath, updated, 0o644); err != nil {
-			return fmt.Errorf("writing ultrabase.yaml: %w", err)
+		if linkedID != "" {
+			fmt.Printf("  = already linked to project %s\n", linkedID)
+		} else {
+			fmt.Println("  Creating Ultrabase Cloud project...")
+			creds, _ := cloud.Load()
+			c := cloud.NewClient(cloud.APIURL(), creds.PAT)
+			resp, err := c.CreateProject(name)
+			if err != nil {
+				return fmt.Errorf("creating cloud project: %w", err)
+			}
+			fmt.Printf("  ✓ Project created (id: %s)\n", resp.ProjectID)
+
+			updated, err := cloud.WriteProjectID(existing, resp.ProjectID)
+			if err != nil {
+				return fmt.Errorf("injecting project_id: %w", err)
+			}
+			if err := os.WriteFile(yamlPath, updated, 0o644); err != nil {
+				return fmt.Errorf("writing ultrabase.yaml: %w", err)
+			}
+			fmt.Println("  ~ ultrabase.yaml (added project.cloud.project_id)")
 		}
-		fmt.Println("  ~ ultrabase.yaml (added project.cloud.project_id)")
 	}
 
 	fmt.Println()
