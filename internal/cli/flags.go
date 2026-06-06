@@ -100,6 +100,19 @@ func requireConfigFile(path string) error {
 	return nil
 }
 
+// requireLocalConfig is requireConfigFile for commands that only read config
+// from the local filesystem (dev, deploy, status, validate). Unlike
+// requireConfigFile — which skips remote specs because serve fetches them via
+// the s3 client — this rejects s3:// (and any other non-file) spec up front
+// with a clear message, instead of letting the command fall through to
+// os.ReadFile and fail later with a confusing ENOENT.
+func requireLocalConfig(path string) error {
+	if !isFileSpec(path) {
+		return fmt.Errorf("this command reads config from the local filesystem and does not support remote sources like %q; pass a local file path", path)
+	}
+	return requireConfigFile(path)
+}
+
 // configEnvAliases is the env-var precedence list backing the --config flag:
 // the new ULTRABASE_CONFIG_SOURCE name first, the legacy ULTRABASE_CONFIG second.
 var configEnvAliases = []string{"ULTRABASE_CONFIG_SOURCE", "ULTRABASE_CONFIG"}

@@ -96,6 +96,13 @@ func projectIDPresentCheck(configPath string) preflight.Check {
 }
 
 func runDeploy(configPath string, yes bool) error {
+	// deploy reads the local config to find the project_id and upload it to
+	// cloud; it does not support remote config sources. Reject them up front,
+	// before the preflight checks that read the file via os.ReadFile.
+	if err := requireLocalConfig(configPath); err != nil {
+		return err
+	}
+
 	// Preflight: verify config is structurally valid and a project_id is
 	// present before touching the network. Failures are printed here and
 	// surfaced as the errReported sentinel (no network calls happen).
@@ -105,10 +112,6 @@ func runDeploy(configPath string, yes bool) error {
 	}); failed {
 		fmt.Fprintf(os.Stderr, "  ✗ %s — %s\n    hint: %s\n", r.Name, r.Detail, r.FixHint)
 		return errReported
-	}
-
-	if err := requireConfigFile(configPath); err != nil {
-		return err
 	}
 
 	// Inline login: returns existing creds, prompts on a TTY, or hard-errors

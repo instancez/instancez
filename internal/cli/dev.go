@@ -33,6 +33,12 @@ func newDevCmd() *cobra.Command {
 }
 
 func runDev(opts devOptions) error {
+	// dev runs against a local file + local DB; reject remote config sources
+	// before any preflight work so the failure is clear and immediate.
+	if err := requireLocalConfig(opts.configPath); err != nil {
+		return err
+	}
+
 	// Preflight: load dev dotenv first so DSN env vars are visible, then run
 	// fail-fast checks before any expensive work.  We include connectivity
 	// and role-layout checks because dev needs a working, fully-bootstrapped
@@ -47,10 +53,6 @@ func runDev(opts devOptions) error {
 	}); failed {
 		fmt.Fprintf(os.Stderr, "  ✗ %s — %s\n    hint: %s\n", r.Name, r.Detail, r.FixHint)
 		return errReported
-	}
-
-	if err := requireConfigFile(opts.configPath); err != nil {
-		return err
 	}
 
 	switch opts.dbSrc {

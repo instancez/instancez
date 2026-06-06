@@ -33,6 +33,9 @@ This is distinct from ultra doctor, which checks local environment health.`,
 }
 
 func runStatus(configPath string) error {
+	if err := requireLocalConfig(configPath); err != nil {
+		return err
+	}
 	src, err := os.ReadFile(configPath)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", configPath, err)

@@ -53,7 +53,7 @@ project.cloud.project_id) and prints the diff vs. the deployed version.`,
 }
 
 func runValidate(ctx context.Context, configPath string, jsonOutput bool, useDSN string) error {
-	if err := requireConfigFile(configPath); err != nil {
+	if err := requireLocalConfig(configPath); err != nil {
 		return err
 	}
 
@@ -223,7 +223,7 @@ func printJSONError(err error) error {
 // (so the server-side diff reflects what's actually on disk) and then fetches
 // the migration preview. Pure side-effect-aware — no local DB connection.
 func planAgainstProject(ctx context.Context, configPath string, jsonOutput bool) error {
-	if err := requireConfigFile(configPath); err != nil {
+	if err := requireLocalConfig(configPath); err != nil {
 		return err
 	}
 	creds, err := cloud.Load()
