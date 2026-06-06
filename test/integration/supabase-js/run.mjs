@@ -254,6 +254,8 @@ await step('rest: insert row via PostgREST', async () => {
   if (error) throw error
   assertEq(data.title, 'buy milk')
   assertEq(data.done, false)
+  // uuid columns must come back as canonical strings, not a byte array.
+  assertEq(data.user_id, userId)
 })
 
 await step('rest: select rows back', async () => {

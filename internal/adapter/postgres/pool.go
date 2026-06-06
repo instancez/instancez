@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/saedx1/ultrabase/internal/domain"
 )
@@ -363,6 +365,22 @@ func quote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
+// normalizeValue converts pgx's default Go decoding of a column into a
+// JSON/wire-friendly form, keyed on the column's Postgres OID. pgx decodes
+// `uuid` to a raw [16]byte, which json.Marshal would emit as a number array;
+// we emit the canonical "xxxxxxxx-xxxx-..." string instead. The switch is the
+// extension point for other codec-default types (e.g. numeric) when they
+// surface.
+func normalizeValue(oid uint32, v any) any {
+	switch oid {
+	case pgtype.UUIDOID:
+		if b, ok := v.([16]byte); ok {
+			return uuid.UUID(b).String()
+		}
+	}
+	return v
+}
+
 // collectRows converts pgx rows into a slice of maps.
 func collectRows(rows pgx.Rows) ([]map[string]any, error) {
 	descs := rows.FieldDescriptions()
@@ -375,7 +393,7 @@ func collectRows(rows pgx.Rows) ([]map[string]any, error) {
 		}
 		row := make(map[string]any, len(descs))
 		for i, desc := range descs {
-			row[desc.Name] = values[i]
+			row[desc.Name] = normalizeValue(desc.DataTypeOID, values[i])
 		}
 		results = append(results, row)
 	}
