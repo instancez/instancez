@@ -9,6 +9,24 @@ import (
 	"time"
 )
 
+func TestNewSourceDispatch(t *testing.T) {
+	s3, err := NewSource("s3://bucket/path/ultrabase.yaml")
+	if err != nil {
+		t.Fatalf("s3 spec: %v", err)
+	}
+	if _, ok := s3.(*S3Source); !ok {
+		t.Fatalf("s3:// spec returned %T, want *S3Source", s3)
+	}
+
+	file, err := NewSource("ultrabase.yaml")
+	if err != nil {
+		t.Fatalf("file spec: %v", err)
+	}
+	if _, ok := file.(*FileSource); !ok {
+		t.Fatalf("plain path returned %T, want *FileSource", file)
+	}
+}
+
 func writeTemp(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()

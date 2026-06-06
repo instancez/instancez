@@ -7,7 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -146,15 +146,30 @@ func DSNPresentCheck(lookup func(string) string) Check {
 // ConfigValidCheck
 // ---------------------------------------------------------------------------
 
-// ConfigValidCheck returns a Check that reads the config file at configPath,
+// configReadTimeout bounds the config fetch so a hanging S3 backend cannot
+// stall fail-fast preflight. Local file reads return well within this.
+const configReadTimeout = 10 * time.Second
+
+// ConfigSource is the minimal read surface ConfigValidCheck needs. Both
+// *config.FileSource and *config.S3Source satisfy it, so the check works
+// against local files and s3:// objects alike.
+type ConfigSource interface {
+	Read(ctx context.Context) ([]byte, string, error)
+	Describe() string
+}
+
+// ConfigValidCheck returns a Check that reads the config at configPath,
 // parses it with lenient env-var interpolation (missing ${VAR} references are
 // substituted with a placeholder rather than causing a hard error), and runs
 // config.Validate over the result.  Using the lenient parser lets the check
 // run safely at the very top of runDev/runServe — before dotenv files are
 // loaded — without false-failing on DSN placeholders.
+//
+// configPath may be a local file path or an s3://bucket/key URI; it is routed
+// through config.NewSource so both backends are read the same way.
 func ConfigValidCheck(configPath string) Check {
 	return func() Result {
-		data, err := os.ReadFile(configPath)
+		src, err := config.NewSource(configPath)
 		if err != nil {
 			return Result{
 				Name:    "config file valid",
@@ -163,7 +178,32 @@ func ConfigValidCheck(configPath string) Check {
 				FixHint: "run `ultra init` to create ultrabase.yaml",
 			}
 		}
-		cfg, err := config.ParseBytesLenient(data, configPath)
+		return ConfigValidCheckSource(src)()
+	}
+}
+
+// ConfigValidCheckSource is ConfigValidCheck for a pre-built source. Exposed so
+// callers that already hold a config.Source (and tests with a fake source) can
+// validate without re-deriving the source from a path string.
+func ConfigValidCheckSource(src ConfigSource) Check {
+	return func() Result {
+		ctx, cancel := context.WithTimeout(context.Background(), configReadTimeout)
+		defer cancel()
+
+		data, _, err := src.Read(ctx)
+		if err != nil {
+			fixHint := "run `ultra init` to create ultrabase.yaml"
+			if strings.HasPrefix(src.Describe(), "s3://") {
+				fixHint = "verify the s3:// object exists and credentials grant s3:GetObject"
+			}
+			return Result{
+				Name:    "config file valid",
+				OK:      false,
+				Detail:  err.Error(),
+				FixHint: fixHint,
+			}
+		}
+		cfg, err := config.ParseBytesLenient(data, src.Describe())
 		if err != nil {
 			return Result{
 				Name:    "config file valid",

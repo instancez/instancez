@@ -1,12 +1,105 @@
 package preflight_test
 
 import (
+	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/saedx1/ultrabase/internal/cli/preflight"
 )
+
+// ---------------------------------------------------------------------------
+// ConfigValidCheck
+// ---------------------------------------------------------------------------
+
+// fakeConfigSource is a minimal config source for ConfigValidCheck tests. It
+// supplies canned bytes (or an error) so the parse/validate logic can be
+// exercised without touching the filesystem or S3.
+type fakeConfigSource struct {
+	data     []byte
+	err      error
+	describe string
+}
+
+func (f fakeConfigSource) Read(context.Context) ([]byte, string, error) {
+	return f.data, "v1", f.err
+}
+
+func (f fakeConfigSource) Describe() string {
+	if f.describe != "" {
+		return f.describe
+	}
+	return "fake://config"
+}
+
+func TestConfigValidCheckSource_Valid(t *testing.T) {
+	src := fakeConfigSource{data: []byte("version: 1\nproject:\n  name: demo\n")}
+	r := preflight.ConfigValidCheckSource(src)()
+	if !r.OK {
+		t.Fatalf("expected OK, got failure: %s", r.Detail)
+	}
+}
+
+func TestConfigValidCheckSource_ReadError(t *testing.T) {
+	// A read failure (e.g. S3 GetObject denied / object missing) must surface
+	// as a failed check carrying the underlying error — not a panic or success.
+	src := fakeConfigSource{err: errors.New("get object: access denied")}
+	r := preflight.ConfigValidCheckSource(src)()
+	if r.OK {
+		t.Fatalf("expected failure on read error")
+	}
+	if !strings.Contains(r.Detail, "access denied") {
+		t.Fatalf("Detail = %q, want it to include the read error", r.Detail)
+	}
+}
+
+func TestConfigValidCheckSource_S3ReadErrorHint(t *testing.T) {
+	// An s3 read failure (missing object / AccessDenied) must not advise
+	// `ultra init` — that's local-file advice and useless for the s3 case.
+	src := fakeConfigSource{describe: "s3://bucket/key", err: errors.New("get object: AccessDenied")}
+	r := preflight.ConfigValidCheckSource(src)()
+	if r.OK {
+		t.Fatalf("expected failure on s3 read error")
+	}
+	if strings.Contains(r.FixHint, "ultra init") {
+		t.Fatalf("FixHint = %q, should not suggest `ultra init` for an s3 read error", r.FixHint)
+	}
+	if !strings.Contains(strings.ToLower(r.FixHint), "s3") {
+		t.Fatalf("FixHint = %q, want it to reference the s3 source", r.FixHint)
+	}
+}
+
+func TestConfigValidCheckSource_LenientEnvVars(t *testing.T) {
+	// Missing ${VAR} references must NOT fail the check: it runs at the top of
+	// runDev/runServe before dotenv is loaded. This guards against regressing
+	// to the strict parser (ParseBytes / Source.Load).
+	src := fakeConfigSource{data: []byte("version: 1\nproject:\n  name: ${UNSET_PROJECT_NAME}\n")}
+	r := preflight.ConfigValidCheckSource(src)()
+	if !r.OK {
+		t.Fatalf("expected lenient parse to pass, got failure: %s", r.Detail)
+	}
+}
+
+func TestConfigValidCheck_LocalFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ultrabase.yaml")
+	if err := os.WriteFile(path, []byte("version: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := preflight.ConfigValidCheck(path)()
+	if !r.OK {
+		t.Fatalf("expected OK for valid local file, got: %s", r.Detail)
+	}
+}
+
+func TestConfigValidCheck_LocalFileMissing(t *testing.T) {
+	r := preflight.ConfigValidCheck(filepath.Join(t.TempDir(), "nope.yaml"))()
+	if r.OK {
+		t.Fatalf("expected failure for missing file")
+	}
+}
 
 // ---------------------------------------------------------------------------
 // DSNPresentCheck
