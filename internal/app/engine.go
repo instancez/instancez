@@ -34,14 +34,13 @@ type Engine struct {
 	mu       sync.RWMutex
 	cfg      *domain.Config
 	drift    *DriftTracker
-	ownerDB  domain.OwnerDB   // privileged: migrations, seeding, replication
+	ownerDB  domain.OwnerDB   // privileged: migrations and seeding
 	authDB   domain.RequestDB // request path; SET LOCAL ROLE per tx
 	migrator *Migrator
 	logger   *slog.Logger
 
 	// Managed components
 	httpServer  HTTPServer
-	walConsumer domain.WALConsumer
 	eventWorker *EventWorker
 
 	// Options
@@ -73,8 +72,7 @@ func WithAllowDestructive(v bool) EngineOption          { return func(e *Engine)
 func WithWatch(v bool) EngineOption                     { return func(e *Engine) { e.watch = v } }
 func WithLogger(l *slog.Logger) EngineOption            { return func(e *Engine) { e.logger = l } }
 func WithHTTPServer(s HTTPServer) EngineOption          { return func(e *Engine) { e.httpServer = s } }
-func WithWALConsumer(w domain.WALConsumer) EngineOption { return func(e *Engine) { e.walConsumer = w } }
-func WithEventWorker(w *EventWorker) EngineOption       { return func(e *Engine) { e.eventWorker = w } }
+func WithEventWorker(w *EventWorker) EngineOption { return func(e *Engine) { e.eventWorker = w } }
 func WithConfigPath(p string) EngineOption              { return func(e *Engine) { e.configPath = p } }
 func WithConfigSource(s config.Source) EngineOption     { return func(e *Engine) { e.source = s } }
 func WithWatchInterval(d time.Duration) EngineOption    { return func(e *Engine) { e.watchInterval = d } }
@@ -305,16 +303,7 @@ func (e *Engine) Start(ctx context.Context) error {
 		}()
 	}
 
-	// 4. Start WAL consumer
-	if e.walConsumer != nil {
-		go func() {
-			if err := e.walConsumer.Start(ctx); err != nil {
-				e.logger.Error("WAL consumer error", "error", err)
-			}
-		}()
-	}
-
-	// 4b. Start event worker (outbox deliverer)
+	// 4. Start event worker (outbox deliverer)
 	if e.eventWorker != nil {
 		go func() {
 			if err := e.eventWorker.Start(ctx); err != nil {
@@ -593,13 +582,6 @@ func (e *Engine) shutdown() error {
 	if e.httpServer != nil {
 		if err := e.httpServer.Shutdown(shutdownCtx); err != nil {
 			e.logger.Error("error shutting down HTTP server", "error", err)
-		}
-	}
-
-	// Stop WAL consumer
-	if e.walConsumer != nil {
-		if err := e.walConsumer.Stop(shutdownCtx); err != nil {
-			e.logger.Error("error stopping WAL consumer", "error", err)
 		}
 	}
 

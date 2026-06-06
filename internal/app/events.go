@@ -37,8 +37,8 @@ func NewEventDispatcher(cfg *domain.Config, db domain.Database, logger *slog.Log
 	}
 }
 
-// Dispatch matches the event against all WAL triggers and inserts one outbox
-// row per match. Called by the WAL consumer.
+// Dispatch matches the event against all triggers and inserts one outbox
+// row per match.
 func (d *EventDispatcher) Dispatch(ctx context.Context, event domain.Event) error {
 	matched := d.matchTriggers(event)
 	if len(matched) == 0 {

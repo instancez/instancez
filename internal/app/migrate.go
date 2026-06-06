@@ -572,9 +572,6 @@ func generateTable(name string, table domain.Table, allTables map[string]domain.
 	ddl = append(ddl, fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (\n  %s\n);",
 		qualName, strings.Join(allParts, ",\n  ")))
 
-	// REPLICA IDENTITY FULL for WAL CDC
-	ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s REPLICA IDENTITY FULL;", qualName))
-
 	return ddl
 }
 

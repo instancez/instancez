@@ -25,7 +25,6 @@ func TestGenerateTable_Basic(t *testing.T) {
 	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS todos")
 	mustContain(t, joined, "id bigserial PRIMARY KEY")
 	mustContain(t, joined, "title text NOT NULL")
-	mustContain(t, joined, "REPLICA IDENTITY FULL")
 }
 
 func TestGenerateTable_ForeignKey(t *testing.T) {
