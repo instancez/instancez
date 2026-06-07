@@ -211,6 +211,43 @@ storage:
         max_size: 5MB
         public: true
 
+# Code functions: JavaScript HTTP handlers served at /functions/v1/<name>.
+# Source lives in ./functions (shared deps in functions/package.json). `ultra dev`
+# runs `npm ci` there on boot; restart dev to pick up code edits.
+functions:
+    # Minimal handler — try this first: curl localhost:8080/functions/v1/hello -d '{"name":"you"}'
+    hello:
+        runtime: node
+        file: functions/hello.js
+        auth_required: false
+        timeout: 10s
+
+    # Reflects the request/ctx surface (method, path, query, headers, body, claims).
+    echo:
+        runtime: node
+        file: functions/echo.js
+        auth_required: false
+        env:
+            API_KEY: "${ULTRA_ENV_DEMO_API_KEY:-demo}"
+
+    # The signed-in user's reviews. auth_required → 401 for anonymous callers.
+    # Uses ctx.supabase (RLS as the caller) + the `zod` npm dep.
+    my-reviews:
+        runtime: node
+        file: functions/my-reviews.js
+        auth_required: true
+        timeout: 15s
+
+    # Import a review from an external system: HMAC-verified, written via
+    # service_role (BYPASSRLS). Uses `nanoid` + node:crypto. Set
+    # ULTRA_ENV_WEBHOOK_SECRET in your env/.env for a real secret.
+    webhook:
+        runtime: node
+        file: functions/webhook.js
+        auth_required: false
+        env:
+            WEBHOOK_SECRET: "${ULTRA_ENV_WEBHOOK_SECRET:-dev-secret}"
+
 data:
     categories:
         - id: 1

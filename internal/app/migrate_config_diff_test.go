@@ -155,7 +155,7 @@ func TestDiffConfigs_AllRLSRemoved_DisablesRLS(t *testing.T) {
 
 func TestDiffConfigs_RemovedRPCFunction(t *testing.T) {
 	old := &domain.Config{
-		Functions: map[string]domain.Function{
+		RPC: map[string]domain.Function{
 			"add": {
 				Returns: domain.FuncReturn{Type: "int"},
 				Args: []domain.FuncArg{
@@ -167,7 +167,7 @@ func TestDiffConfigs_RemovedRPCFunction(t *testing.T) {
 		},
 	}
 	new := &domain.Config{
-		Functions: map[string]domain.Function{
+		RPC: map[string]domain.Function{
 			"add": {
 				Returns: domain.FuncReturn{Type: "int"},
 				Args: []domain.FuncArg{
@@ -274,7 +274,7 @@ func TestDiffConfigs_RemovedBucket(t *testing.T) {
 
 func TestDiffConfigs_RPCFunctionWithArgs_DropSignature(t *testing.T) {
 	old := &domain.Config{
-		Functions: map[string]domain.Function{
+		RPC: map[string]domain.Function{
 			"compute": {
 				Returns: domain.FuncReturn{Type: "int"},
 				Args: []domain.FuncArg{
@@ -285,7 +285,7 @@ func TestDiffConfigs_RPCFunctionWithArgs_DropSignature(t *testing.T) {
 		},
 	}
 	new := &domain.Config{
-		Functions: map[string]domain.Function{},
+		RPC: map[string]domain.Function{},
 	}
 
 	diff := diffConfigs(old, new)
@@ -584,10 +584,10 @@ func TestDiffConfigs_NewUniqueIndex(t *testing.T) {
 
 func TestDiffConfigs_NewRPCFunction(t *testing.T) {
 	old := &domain.Config{
-		Functions: map[string]domain.Function{},
+		RPC: map[string]domain.Function{},
 	}
 	new := &domain.Config{
-		Functions: map[string]domain.Function{
+		RPC: map[string]domain.Function{
 			"add": {
 				Language:   "sql",
 				Volatility: "immutable",
@@ -609,12 +609,12 @@ func TestDiffConfigs_NewRPCFunction(t *testing.T) {
 
 func TestDiffConfigs_ChangedRPCFunction(t *testing.T) {
 	old := &domain.Config{
-		Functions: map[string]domain.Function{
+		RPC: map[string]domain.Function{
 			"greet": {Returns: domain.FuncReturn{Type: "text"}, Body: "SELECT 'hello';", Language: "sql", Volatility: "immutable", Security: "invoker"},
 		},
 	}
 	new := &domain.Config{
-		Functions: map[string]domain.Function{
+		RPC: map[string]domain.Function{
 			"greet": {Returns: domain.FuncReturn{Type: "text"}, Body: "SELECT 'hi';", Language: "sql", Volatility: "immutable", Security: "invoker"},
 		},
 	}
@@ -659,22 +659,6 @@ func TestDiffConfigs_NewStorage(t *testing.T) {
 	joined := strings.Join(diff.Additions, "\n")
 
 	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS storage.objects")
-}
-
-func TestDiffConfigs_NewEvents(t *testing.T) {
-	old := &domain.Config{
-		On: map[string]domain.Trigger{},
-	}
-	new := &domain.Config{
-		On: map[string]domain.Trigger{
-			"new_todo": {Events: []string{"todos.insert"}},
-		},
-	}
-
-	diff := diffConfigs(old, new)
-	joined := strings.Join(diff.Additions, "\n")
-
-	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS _events")
 }
 
 func TestDiffConfigs_NewSearch(t *testing.T) {

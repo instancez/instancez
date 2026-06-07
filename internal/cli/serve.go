@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/saedx1/ultrabase/dashboard"
+	"github.com/saedx1/ultrabase/internal/adapter/funcs"
 	ultrahttp "github.com/saedx1/ultrabase/internal/adapter/http"
 	"github.com/saedx1/ultrabase/internal/app"
 	"github.com/saedx1/ultrabase/internal/cli/preflight"
@@ -130,6 +132,26 @@ func runServe(opts serveOptions) error {
 		adminConfigPath = fs.Path
 	}
 
+	km := app.NewJWTKeyManager(ownerDB)
+
+	// Function runtime (serve consumes the pre-built bundle; it NEVER builds).
+	// The bundle is extracted under a writable temp dir and the runtime is
+	// wrapped in a SwapRuntime so the config watcher can hot-swap a new bundle
+	// version without recreating the HTTP handler.
+	var funcRuntime domain.FunctionRuntime
+	var swapRT *funcs.SwapRuntime
+	extractParent := filepath.Join(os.TempDir(), "ultrabase-functions")
+	if len(cfg.Functions) > 0 {
+		rt, _, ferr := buildServeFuncRuntime(ctx, cfg, filepath.Dir(adminConfigPath), extractParent, km, logger)
+		if ferr != nil {
+			return ferr
+		}
+		swapRT = funcs.NewSwapRuntime(rt)
+		funcRuntime = swapRT
+		defer swapRT.Close()
+		logger.Info("function runtime ready", "functions", len(cfg.Functions), "bundle", cfg.FunctionsBundle)
+	}
+
 	// Create HTTP server. The Drift/Config closures capture `engine` (declared
 	// below) so the handlers see live engine state once Start has run; before
 	// Start they fall back to nil/cfg.
@@ -141,7 +163,8 @@ func runServe(opts serveOptions) error {
 		DevMode:         false,
 		Email:           email,
 		Storage:         storage,
-		JWTKeys:         app.NewJWTKeyManager(ownerDB),
+		JWTKeys:         km,
+		FunctionRuntime: funcRuntime,
 		ConfigPath:      adminConfigPath,
 		DashboardMode:   opts.dashboard.HTTP(),
 		DashboardAssets: dashboard.Assets(),
@@ -160,8 +183,7 @@ func runServe(opts serveOptions) error {
 		},
 	})
 
-	// Create engine with HTTP server
-	engine = app.NewEngine(cfg, ownerDB, authDB, roles,
+	engineOpts := []app.EngineOption{
 		app.WithMode(app.ModeProd),
 		app.WithMigrate(opts.migrate),
 		app.WithSeed(opts.loadData),
@@ -171,7 +193,36 @@ func runServe(opts serveOptions) error {
 		app.WithLogger(logger),
 		app.WithHTTPServer(httpServer),
 		app.WithConfigSource(source),
-	)
+	}
+
+	// Hot-reload: when the watcher applies a config whose functions bundle
+	// version changed, fetch+extract the new bundle, build a fresh runtime, and
+	// atomically swap it in (draining and closing the old one). Errors are
+	// logged and the previous runtime keeps serving.
+	if swapRT != nil {
+		lastBundle := cfg.FunctionsBundle
+		engineOpts = append(engineOpts, app.WithFunctionReload(func(newCfg *domain.Config) {
+			if newCfg.FunctionsBundle == "" || newCfg.FunctionsBundle == lastBundle {
+				return
+			}
+			logger.Info("function bundle changed; reloading", "old", lastBundle, "new", newCfg.FunctionsBundle)
+			newRT, _, rerr := buildServeFuncRuntime(ctx, newCfg, filepath.Dir(adminConfigPath), extractParent, km, logger)
+			if rerr != nil {
+				logger.Error("function bundle reload failed; keeping previous runtime", "error", rerr)
+				return
+			}
+			lastBundle = newCfg.FunctionsBundle
+			if old := swapRT.Swap(newRT); old != nil {
+				if cerr := old.Close(); cerr != nil {
+					logger.Warn("closing previous function runtime", "error", cerr)
+				}
+			}
+			logger.Info("function runtime reloaded", "bundle", newCfg.FunctionsBundle)
+		}))
+	}
+
+	// Create engine with HTTP server
+	engine = app.NewEngine(cfg, ownerDB, authDB, roles, engineOpts...)
 
 	logger.Info("listening", "port", cfg.Server.Port)
 

@@ -5,7 +5,6 @@ import {
   Shield,
   HardDrive,
   Code2,
-  Zap,
   Plug,
   Settings,
   ExternalLink,
@@ -18,7 +17,6 @@ const NAV_ITEMS = [
   { to: "/auth", icon: Shield, label: "Auth" },
   { to: "/storage", icon: HardDrive, label: "Storage" },
   { to: "/functions", icon: Code2, label: "Functions" },
-  { to: "/events", icon: Zap, label: "Events" },
   { to: "/providers", icon: Plug, label: "Providers" },
   { to: "/settings", icon: Settings, label: "Settings" },
 ] as const;

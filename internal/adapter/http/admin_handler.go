@@ -58,12 +58,6 @@ func (h *AdminHandler) Mount(api *gin.RouterGroup) {
 	admin := api.Group("/_admin")
 	admin.Use(adminKeyAuth())
 
-	// Events
-	admin.GET("/events", h.handleListEvents)
-	admin.GET("/events/dead", h.handleDeadLetterEvents)
-	admin.POST("/events/:id/retry", h.handleRetryEvent)
-	admin.POST("/events/purge", h.handlePurgeEvents)
-
 	// Migrations
 	admin.GET("/migrations", h.handleListMigrations)
 
@@ -82,69 +76,6 @@ func (h *AdminHandler) Mount(api *gin.RouterGroup) {
 	admin.GET("/config/status", h.handleConfigStatus)
 	admin.GET("/config/diff", h.handleConfigDiff)
 	admin.GET("/stats", h.handleStats)
-}
-
-func (h *AdminHandler) handleListEvents(c *gin.Context) {
-	ctx := c.Request.Context()
-	status := c.DefaultQuery("status", "")
-
-	query := "SELECT * FROM _events ORDER BY created_at DESC LIMIT 100"
-	if status != "" {
-		query = "SELECT * FROM _events WHERE status = $1 ORDER BY created_at DESC LIMIT 100"
-		rows, err := h.db.Query(ctx, query, status)
-		if err != nil {
-			problemJSON(c, 500, "internal", "Failed to query events")
-			return
-		}
-		c.JSON(200, rows)
-		return
-	}
-
-	rows, err := h.db.Query(ctx, query)
-	if err != nil {
-		problemJSON(c, 500, "internal", "Failed to query events")
-		return
-	}
-	c.JSON(200, rows)
-}
-
-func (h *AdminHandler) handleDeadLetterEvents(c *gin.Context) {
-	ctx := c.Request.Context()
-	rows, err := h.db.Query(ctx,
-		"SELECT * FROM _events WHERE status = 'dead' ORDER BY created_at DESC LIMIT 100")
-	if err != nil {
-		problemJSON(c, 500, "internal", "Failed to query dead-letter events")
-		return
-	}
-	c.JSON(200, rows)
-}
-
-func (h *AdminHandler) handleRetryEvent(c *gin.Context) {
-	id := c.Param("id")
-	ctx := c.Request.Context()
-
-	affected, err := h.db.Exec(ctx,
-		"UPDATE _events SET status = 'pending', attempts = 0, last_error = NULL WHERE id = $1", id)
-	if err != nil {
-		problemJSON(c, 500, "internal", "Failed to retry event")
-		return
-	}
-	if affected == 0 {
-		problemJSON(c, 404, "not_found", "Event not found")
-		return
-	}
-	c.JSON(200, gin.H{"message": "Event re-queued"})
-}
-
-func (h *AdminHandler) handlePurgeEvents(c *gin.Context) {
-	ctx := c.Request.Context()
-	affected, err := h.db.Exec(ctx,
-		"DELETE FROM _events WHERE status = 'delivered' AND created_at < NOW() - INTERVAL '7 days'")
-	if err != nil {
-		problemJSON(c, 500, "internal", "Failed to purge events")
-		return
-	}
-	c.JSON(200, gin.H{"purged": affected})
 }
 
 func (h *AdminHandler) handleListMigrations(c *gin.Context) {
@@ -197,10 +128,9 @@ func (h *AdminHandler) handleStatus(c *gin.Context) {
 
 	// DB pool stats
 	status := gin.H{
-		"status":   "ok",
-		"tables":   len(h.cfg.Tables),
-		"storage":  len(h.cfg.Storage),
-		"triggers": len(h.cfg.On),
+		"status":  "ok",
+		"tables":  len(h.cfg.Tables),
+		"storage": len(h.cfg.Storage),
 	}
 
 	// Check DB connectivity
@@ -440,25 +370,6 @@ func (h *AdminHandler) handleStats(c *gin.Context) {
 		}
 	}
 	result["tables"] = tables
-
-	// Event stats
-	events := gin.H{"last_hour": gin.H{"delivered": 0, "failed": 0, "dead": 0}}
-	if len(h.cfg.On) > 0 {
-		rows, err := h.db.Query(ctx,
-			`SELECT status, COUNT(*)::INTEGER AS count FROM _events
-			 WHERE created_at > NOW() - INTERVAL '1 hour'
-			 GROUP BY status`)
-		if err == nil {
-			lastHour := gin.H{"delivered": 0, "failed": 0, "dead": 0}
-			for _, row := range rows {
-				if s, ok := row["status"].(string); ok {
-					lastHour[s] = row["count"]
-				}
-			}
-			events["last_hour"] = lastHour
-		}
-	}
-	result["events"] = events
 
 	// Storage stats
 	storage := gin.H{}

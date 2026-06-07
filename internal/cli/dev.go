@@ -121,6 +121,22 @@ func runDev(opts devOptions) error {
 		fmt.Printf("  ✓ Storage provider: %s\n", cfg.Providers.Storage.Type)
 	}
 
+	km := app.NewJWTKeyManager(ownerDB)
+
+	// Function runtime (dev builds: `npm ci` runs in functions/ when a
+	// package.json is present, then a worker pool is spawned pointing at the
+	// project tree). Nil when no functions are declared.
+	var funcRuntime domain.FunctionRuntime
+	funcRT, err := buildDevFuncRuntime(ctx, cfg, opts.configPath, km, logger)
+	if err != nil {
+		return err
+	}
+	if funcRT != nil {
+		funcRuntime = funcRT
+		defer funcRT.Close()
+		fmt.Printf("  ✓ Functions: %d (runtime ready)\n", len(cfg.Functions))
+	}
+
 	// Create HTTP server. The Drift/Config closures capture `engine` (declared
 	// below) so handlers see live engine state once Start has run; before
 	// Start they fall back to nil/cfg.
@@ -132,7 +148,8 @@ func runDev(opts devOptions) error {
 		DevMode:         true,
 		Email:           email,
 		Storage:         storage,
-		JWTKeys:         app.NewJWTKeyManager(ownerDB),
+		JWTKeys:         km,
+		FunctionRuntime: funcRuntime,
 		ConfigPath:      opts.configPath,
 		DashboardMode:   opts.dashboard.HTTP(),
 		DashboardAssets: dashboard.Assets(),

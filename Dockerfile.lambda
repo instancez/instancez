@@ -31,7 +31,9 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -o /ultra ./cmd/ultra
 
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates
+# nodejs runs code-function workers. Lambda only runs `serve` (consumes a
+# pre-built bundle), so npm is not needed here.
+RUN apk add --no-cache ca-certificates nodejs
 COPY --from=builder /ultra /usr/local/bin/ultra
 COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.9.1 /lambda-adapter /opt/extensions/lambda-adapter
 WORKDIR /app

@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
-	"strings"
 	"log/slog"
 	"net/http"
 	"time"
@@ -45,6 +44,8 @@ type ServerDeps struct {
 	ConfigSource  config.Source            // for the watch + admin PUT
 	DriftFn       func() *app.DriftTracker // engine drift state (live closure; nil before Start)
 	ConfigFn      func() *domain.Config    // engine running config (lastGood when drifted)
+
+	FunctionRuntime domain.FunctionRuntime // nil → /functions/v1 returns 501
 }
 
 // NewServer creates a new HTTP server with all routes mounted.
@@ -109,6 +110,13 @@ func NewServer(deps ServerDeps) *Server {
 	// Table CRUD at /rest/v1/* (PostgREST-compatible)
 	crudHandler := NewCRUDHandler(deps)
 	crudHandler.Mount(root)
+
+	// Code functions at /functions/v1/:name — same JWT gate as /rest/v1.
+	// FunctionRuntime may be nil (returns 501) so existing call sites that
+	// do not set FunctionRuntime continue to compile and work unchanged.
+	functionsV1 := root.Group("/functions/v1")
+	functionsV1.Use(jwtAuth(deps.JWTKeys, false))
+	NewFunctionsHandler(deps.FunctionRuntime).Mount(functionsV1)
 
 	// Storage endpoints — supabase-js compatible at /storage/v1/*,
 	// plus serverless-friendly presigned URL endpoints at /api/storage/*.
@@ -191,12 +199,15 @@ func (s *Server) handleOpenAPI(c *gin.Context) {
 
 func (s *Server) handleDocs(c *gin.Context) {
 	c.Header("Content-Type", "text/html; charset=utf-8")
-	// Derive the OpenAPI URL from the request so it works regardless of proxy
-	// prefix: same scheme+host+path-directory + openapi.json.
-	reqPath := c.Request.URL.Path // e.g. /docs or /api/docs
-	dir := reqPath[:strings.LastIndex(reqPath, "/")+1]
-	openAPIURL := dir + "openapi.json"
-	c.String(200, scalarDocsHTML(s.cfg.Project.Name, openAPIURL))
+	// Reference openapi.json with a path *relative* to the docs page so the
+	// browser resolves it against the public URL it loaded, not the path the
+	// backend sees. This is what makes it survive a prefix-stripping proxy:
+	// when docs is published at /api/xyz/docs but the ingress forwards /docs
+	// to us, the browser resolves "openapi.json" to /api/xyz/openapi.json
+	// (correct) whereas a root-absolute /openapi.json would 404. For the
+	// direct mounts it still resolves correctly: /docs -> /openapi.json and
+	// /api/docs -> /api/openapi.json.
+	c.String(200, scalarDocsHTML(s.cfg.Project.Name, "openapi.json"))
 }
 
 func scalarDocsHTML(title, openAPIURL string) string {

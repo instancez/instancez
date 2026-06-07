@@ -14,7 +14,6 @@ const baseConfig: Config = {
   auth: null,
   storage: {},
   functions: {},
-  on: {},
   seeds: {},
   providers: { email: null, storage: null },
   server: {

@@ -2,19 +2,23 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/saedx1/ultrabase/internal/cli/preflight"
 	"github.com/saedx1/ultrabase/internal/cloud"
+	"github.com/saedx1/ultrabase/internal/config"
 	"github.com/spf13/cobra"
 )
 
 func newDeployCmd() *cobra.Command {
 	var configPath string
 	var yes bool
+	var bundleDest string
 
 	cmd := &cobra.Command{
 		Use:   "deploy",
@@ -25,13 +29,19 @@ ultra init --with-cloud first if no project is set yet.
 
 Deploy uploads the local yaml to the project's draft, shows a migration
 preview (production → draft), and — after confirmation — promotes the draft
-to production.`,
+to production.
+
+When the project declares code functions, deploy also builds the functions
+bundle (running npm ci to vendor node_modules). Pass --functions-bundle-dest
+to upload the bundle to an s3:// destination so that ultra serve can fetch it.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDeploy(configPath, yes)
+			return runDeploy(configPath, yes, bundleDest)
 		},
 	}
 	cmd.Flags().StringVar(&configPath, "config", "ultrabase.yaml", "path to ultrabase.yaml")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation prompt")
+	cmd.Flags().StringVar(&bundleDest, "functions-bundle-dest", "",
+		"s3://bucket/key (or s3://bucket/prefix/) to upload the built functions bundle to")
 	return cmd
 }
 
@@ -95,7 +105,7 @@ func projectIDPresentCheck(configPath string) preflight.Check {
 	}
 }
 
-func runDeploy(configPath string, yes bool) error {
+func runDeploy(configPath string, yes bool, bundleDest string) error {
 	// deploy reads the local config to find the project_id and upload it to
 	// cloud; it does not support remote config sources. Reject them up front,
 	// before the preflight checks that read the file via os.ReadFile.
@@ -147,6 +157,13 @@ func runDeploy(configPath string, yes bool) error {
 		return fmt.Errorf("upload yaml: %w", err)
 	}
 
+	// 1b. Build (and optionally ship) the functions bundle. Only runs when the
+	// project declares code functions; otherwise this is a no-op and the cloud
+	// deploy path stays byte-identical to the pre-functions behavior.
+	if err := deployFunctionsBundle(configPath, bundleDest); err != nil {
+		return err
+	}
+
 	// 2. Server-computed migration plan (production → draft). Render it so the
 	// user can see what promoting will do.
 	preview, err := c.MigrationPreview(projectID)
@@ -180,5 +197,61 @@ func runDeploy(configPath string, yes bool) error {
 
 	fmt.Printf("  ✓ Promoted — deploying (version_id: %s)\n", resp.VersionID)
 	fmt.Println("  Track progress in the Ultrabase Cloud dashboard.")
+	return nil
+}
+
+// deployFunctionsBundle builds and (when a dest is given) uploads the project's
+// functions bundle. It is a no-op when the project declares no code functions,
+// keeping the no-functions deploy path unchanged. When functions exist but no
+// --functions-bundle-dest was given, it still builds (a useful validation that
+// npm ci / vendoring succeeds) and warns that serve won't find the bundle.
+//
+// The cloud-managed bundle handoff (how the managed cloud ingests the bundle)
+// is OUT OF SCOPE here: for the cloud path we print the pointer rather than
+// persisting it through a cloud API. Self-host fetches the bundle from the
+// printed/recorded s3:// pointer.
+func deployFunctionsBundle(configPath, bundleDest string) error {
+	// Parse leniently (placeholder-substitute unresolved ${VAR}) so the
+	// no-functions deploy path stays byte-identical to before: a config that
+	// previously deployed with unset runtime env vars must not start failing
+	// here just because we now peek at the functions block. This mirrors what
+	// preflight's ConfigValidCheck already does.
+	src, err := os.ReadFile(configPath)
+	if err != nil {
+		return fmt.Errorf("read %s for functions bundle: %w", configPath, err)
+	}
+	cfg, err := config.ParseBytesLenient(src, configPath)
+	if err != nil {
+		return fmt.Errorf("parse config for functions bundle: %w", err)
+	}
+	if len(cfg.Functions) == 0 {
+		return nil // no code functions: nothing to build or ship.
+	}
+
+	projectDir := filepath.Dir(configPath)
+
+	if bundleDest == "" {
+		// Build anyway to validate vendoring, then warn loudly.
+		fmt.Println("  Building functions bundle...")
+		bundlePath, err := BuildBundle(projectDir)
+		if err != nil {
+			return fmt.Errorf("build functions bundle: %w", err)
+		}
+		_ = os.Remove(bundlePath)
+		fmt.Fprintln(os.Stderr,
+			"  ⚠ functions bundle built but not shipped: pass --functions-bundle-dest "+
+				"s3://bucket/key so `ultra serve` can fetch it.")
+		return nil
+	}
+
+	fmt.Println("  Building and uploading functions bundle...")
+	pointer, err := buildAndRecordBundle(context.Background(), projectDir, bundleDest, s3BundleUploader{}, cfg)
+	if err != nil {
+		return fmt.Errorf("ship functions bundle: %w", err)
+	}
+	// Print the pointer clearly. Persisting it into the cloud draft config is
+	// out of scope (see doc comment); self-host records it via this pointer.
+	fmt.Printf("  ✓ Functions bundle uploaded — pointer: %s\n", pointer)
+	fmt.Println("    Set `functions_bundle` to this value where `ultra serve` reads its config.")
 	return nil
 }

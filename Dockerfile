@@ -35,7 +35,10 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -o /ultra ./cmd/ultra
 
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates
+# nodejs runs code-function workers (serve + dev). npm is needed by `ultra dev`,
+# which builds functions on the fly; serve consumes a pre-built bundle and
+# doesn't use npm.
+RUN apk add --no-cache ca-certificates nodejs npm
 COPY --from=builder /ultra /usr/local/bin/ultra
 WORKDIR /app
 CMD ["ultra", "serve"]

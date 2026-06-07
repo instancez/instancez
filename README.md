@@ -12,12 +12,13 @@
   <a href="#quickstart">Quickstart</a> &middot;
   <a href="#yaml-schema">YAML Schema</a> &middot;
   <a href="#features">Features</a> &middot;
+  <a href="docs/functions.md">Code Functions</a> &middot;
   <a href="docs/">Documentation</a>
 </p>
 
 ---
 
-Ultrabase is a declarative backend framework. A single YAML file defines your tables, authentication, file storage, event webhooks, and custom SQL functions. A single Go binary reads that file and produces a fully functional REST API powered by PostgreSQL.
+Ultrabase is a declarative backend framework. A single YAML file defines your tables, authentication, file storage, and custom SQL functions. A single Go binary reads that file and produces a fully functional REST API powered by PostgreSQL.
 
 No backend code. No migrations to write. No ORM to learn.
 
@@ -45,12 +46,6 @@ storage:
   avatars:
     max_size: 2MB
     types: [image/*]
-
-on:
-  welcome_email:
-    events: [users.insert]
-    webhook:
-      url: https://api.example.com/welcome
 ```
 
 ```sh
@@ -107,7 +102,6 @@ ultra init [--with-dsn <url>]        # Scaffold project; optionally bootstrap a 
 ultra dev --use-dsn                   # Start dev server with hot-reload
 ultra serve                           # Production mode (reads .production.env)
 ultra validate [--use-dsn <url>]      # YAML syntax check; with DSN, also plan a migration
-ultra slot reset                      # Drop & recreate the WAL replication slot
 ultra version
 ```
 
@@ -214,65 +208,73 @@ storage:
     public: true
 ```
 
-### Events & Webhooks
+### Custom SQL Functions (rpc:)
 
-WAL-based change data capture. No polling. Every insert, update, and delete is captured through PostgreSQL logical replication and dispatched to webhooks or email actions.
-
-```yaml
-on:
-  new_todo_notify:
-    events: [todos.insert]
-    webhook:
-      url: https://hooks.slack.com/...
-      headers:
-        Authorization: Bearer ${SLACK_TOKEN}
-      retry:
-        max: 3
-        backoff: exponential
-
-  daily_digest:
-    schedule: "0 9 * * *"
-    webhook:
-      url: https://api.example.com/digest
-```
-
-### Custom SQL Functions
-
-Expose arbitrary SQL queries as typed REST endpoints with parameter validation.
+Expose PostgreSQL stored procedures as typed REST endpoints, compatible with `supabase-js .rpc()`.
 
 ```yaml
-functions:
+rpc:
   team_stats:
     description: Get team statistics
-    method: GET
-    query: |
-      SELECT
-        (SELECT COUNT(*) FROM todos WHERE team_id = $1) AS todo_count,
-        (SELECT COUNT(*) FROM todos WHERE team_id = $1 AND status = 'done') AS completed_count,
-        (SELECT COUNT(*) FROM team_members WHERE team_id = $1) AS member_count
-    params:
-      team_id: { type: bigint, required: true }
-    returns:
-      type: row
-      schema:
-        todo_count: bigint
-        completed_count: bigint
-        member_count: bigint
     auth_required: true
+    language: plpgsql
+    volatility: stable
+    args:
+      - name: team_id
+        type: bigint
+        required: true
+    returns:
+      type: "table(todo_count bigint, completed_count bigint, member_count bigint)"
+    body: |
+      BEGIN
+        RETURN QUERY
+        SELECT
+          (SELECT COUNT(*) FROM todos WHERE team_id = team_stats.team_id),
+          (SELECT COUNT(*) FROM todos WHERE team_id = team_stats.team_id AND status = 'done'),
+          (SELECT COUNT(*) FROM team_members WHERE team_id = team_stats.team_id);
+      END;
 ```
 
 ```sh
 curl /rest/v1/rpc/team_stats?team_id=1
 ```
 
+### Code Functions (functions:)
+
+Write arbitrary JavaScript handlers served at `/functions/v1/<name>`, invocable from `supabase-js` via `functions.invoke()`.
+
+```yaml
+functions:
+  hello:
+    runtime: node
+    file: functions/hello.js
+    timeout: 30s
+    env:
+      API_KEY: "${ULTRA_ENV_MY_API_KEY}"
+```
+
+```js
+// functions/hello.js
+export default async function handler(req, ctx) {
+  const name = req.body?.name ?? "world";
+  return { status: 200, body: { hello: name } };
+}
+```
+
+```sh
+curl -X POST /functions/v1/hello -d '{"name": "ultrabase"}'
+# → {"hello":"ultrabase"}
+```
+
+The `ctx` argument provides: `supabase` (caller-RLS client), `serviceClient` (service_role), `claims` (JWT claims or null for anonymous callers), `env` (resolved secrets), `log`, and `signal` (AbortSignal). Secrets are resolved from the `ULTRA_ENV_*` namespace at startup and never written to the worker's process environment. Set `auth_required: true` on a function to have Ultrabase return 401 for unauthenticated callers before the handler is invoked; handlers can still inspect `ctx.claims` for finer-grained authorization.
+
 ### Dashboard
 
-A built-in admin dashboard for managing your config, browsing data, monitoring events, and previewing migrations.
+A built-in admin dashboard for managing your config, browsing data, and previewing migrations.
 
 - Visual table/field editor
 - RLS policy builder
 - SQL function editor with CodeMirror
-- Event log with dead-letter queue
 - Migration diff preview
 
 ### Observability
@@ -296,11 +298,12 @@ auth:      { jwt_expiry, refresh_tokens, fields, google, github }
 tables:    { ... }             # Table definitions
 storage:   { ... }             # File storage buckets
 on:        { ... }             # Event triggers & cron
-functions: { ... }             # Custom SQL endpoints
+rpc:       { ... }             # Custom Postgres stored procedures (/rest/v1/rpc/<name>)
+functions: { ... }             # Code functions — JS handlers (/functions/v1/<name>)
 seeds:     { ... }             # Initial data
 ```
 
-See [docs/example-ultrabase.yaml](docs/example-ultrabase.yaml) for a fully annotated example covering every section.
+See [docs/examples/react-catalog](docs/examples/react-catalog) for a complete, runnable example (`docker compose up`) covering tables, RLS, storage, auth, and code functions.
 
 ## Architecture
 

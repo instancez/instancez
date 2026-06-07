@@ -91,8 +91,8 @@ func TestExampleConfigMigrations(t *testing.T) {
 				t.Fatalf("migration failed: %v", err)
 			}
 
-			t.Logf("ok — %d tables, %d functions, %d buckets",
-				len(cfg.Tables), len(cfg.Functions), len(cfg.Storage))
+			t.Logf("ok — %d tables, %d rpc, %d buckets",
+				len(cfg.Tables), len(cfg.RPC), len(cfg.Storage))
 		})
 	}
 }

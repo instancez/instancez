@@ -20,7 +20,7 @@ import (
 // gating for GET, and void → 204 No Content.
 //
 // Security model: the function name in the URL is matched against
-// h.cfg.Functions, so only configured functions are reachable; a typo
+// h.cfg.RPC, so only configured functions are reachable; a typo
 // or probe returns PGRST202. Arg names in the request body are matched
 // against the function's declared args (unknown keys are rejected, just
 // like PostgREST). Arg values are passed as pgx placeholders, never
@@ -29,7 +29,7 @@ import (
 func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		name := c.Param("name")
-		fn, ok := h.cfg.Functions[name]
+		fn, ok := h.cfg.RPC[name]
 		if !ok {
 			pgJSON(c, http.StatusNotFound, "PGRST202",
 				fmt.Sprintf("Could not find the function public.%s in the schema cache", name),

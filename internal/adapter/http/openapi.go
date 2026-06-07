@@ -87,7 +87,7 @@ func GenerateOpenAPI(cfg *domain.Config) map[string]any {
 		}
 	}
 
-	for fnName, fn := range cfg.Functions {
+	for fnName, fn := range cfg.RPC {
 		path := "/rest/v1/rpc/" + fnName
 		ops := map[string]any{
 			"post": generateRPCPostOp(fnName, fn),
@@ -99,12 +99,6 @@ func GenerateOpenAPI(cfg *domain.Config) map[string]any {
 	}
 
 	// Admin endpoints
-	paths["/api/_admin/events"] = map[string]any{
-		"get": opSummary("List events", "List event log", []string{"admin"}, 200),
-	}
-	paths["/api/_admin/events/dead"] = map[string]any{
-		"get": opSummary("Dead letter queue", "List dead-lettered events", []string{"admin"}, 200),
-	}
 	paths["/api/_admin/status"] = map[string]any{
 		"get": opSummary("Server status", "Health and runtime info", []string{"admin"}, 200),
 	}

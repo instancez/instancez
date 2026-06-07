@@ -103,11 +103,6 @@ func planFromScratchStatements(cfg *domain.Config, roles domain.Roles) []string 
 	// Storage metadata table
 	ddl = append(ddl, generateStorageTables(cfg)...)
 
-	// Events table
-	if len(cfg.On) > 0 {
-		ddl = append(ddl, generateEventsTable()...)
-	}
-
 	// RLS policies
 	if cfg.Auth != nil {
 		ddl = append(ddl, generateRLSFunctions()...)
@@ -127,10 +122,10 @@ func planFromScratchStatements(cfg *domain.Config, roles domain.Roles) []string 
 	}
 
 	// RPC functions (Postgres stored functions)
-	if len(cfg.Functions) > 0 {
-		fnNames := sortedKeys(cfg.Functions)
+	if len(cfg.RPC) > 0 {
+		fnNames := sortedKeys(cfg.RPC)
 		for _, n := range fnNames {
-			ddl = append(ddl, generateRPCFunction(n, cfg.Functions[n]))
+			ddl = append(ddl, generateRPCFunction(n, cfg.RPC[n]))
 		}
 	}
 
@@ -172,7 +167,7 @@ func planUpdateStatements(oldCfg, newCfg *domain.Config, roles domain.Roles) []s
 	// 1. Removals (DROP TABLE, DROP COLUMN, DROP INDEX, DROP POLICY, etc.)
 	ddl = append(ddl, diff.Removals...)
 
-	// 2. Additions (new extensions, auth, tables, columns, storage, events)
+	// 2. Additions (new extensions, auth, tables, columns, storage)
 	ddl = append(ddl, diff.Additions...)
 
 	// 3. Alterations (column type changes, nullability changes)
@@ -207,10 +202,10 @@ func planUpdateStatements(oldCfg, newCfg *domain.Config, roles domain.Roles) []s
 	}
 
 	// RPC functions (CREATE OR REPLACE FUNCTION)
-	if len(newCfg.Functions) > 0 {
-		fnNames := sortedKeys(newCfg.Functions)
+	if len(newCfg.RPC) > 0 {
+		fnNames := sortedKeys(newCfg.RPC)
 		for _, n := range fnNames {
-			ddl = append(ddl, generateRPCFunction(n, newCfg.Functions[n]))
+			ddl = append(ddl, generateRPCFunction(n, newCfg.RPC[n]))
 		}
 	}
 
@@ -575,7 +570,6 @@ func generateTable(name string, table domain.Table, allTables map[string]domain.
 	return ddl
 }
 
-
 // generateIndexes creates index DDL for a table. Split from generateTable so
 // indexes run after column diffs (ADD COLUMN must precede CREATE INDEX).
 func generateIndexes(name string, table domain.Table) []string {
@@ -696,28 +690,6 @@ func generateStorageTables(cfg *domain.Config) []string {
   UNIQUE (bucket_id, name)
 );`,
 	}
-}
-
-func generateEventsTable() []string {
-	return []string{`CREATE TABLE IF NOT EXISTS _events (
-  id BIGSERIAL PRIMARY KEY,
-  source_id TEXT NOT NULL,
-  trigger_name TEXT NOT NULL,
-  event_name TEXT NOT NULL,
-  table_name TEXT NOT NULL,
-  operation TEXT NOT NULL,
-  payload JSONB NOT NULL,
-  delivery JSONB NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending',
-  attempts INTEGER NOT NULL DEFAULT 0,
-  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  last_error TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  delivered_at TIMESTAMPTZ,
-  UNIQUE (source_id, trigger_name)
-);
-
-CREATE INDEX IF NOT EXISTS idx_events_pending ON _events (next_attempt_at) WHERE status = 'pending';`}
 }
 
 func generateRLSFunctions() []string {

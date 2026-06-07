@@ -9,7 +9,6 @@ export interface Config {
   auth: Auth | null;
   tables: Record<string, Table>;
   storage: Record<string, Bucket>;
-  on: Record<string, Trigger>;
   functions: Record<string, FunctionDef>;
   seeds: Record<string, Record<string, unknown>[]>;
   _checksum?: string;
@@ -130,29 +129,6 @@ export interface Bucket {
   rls: RLSPolicy[];
 }
 
-export interface Trigger {
-  events: string[];
-  schedule: string;
-  webhook: WebhookAction | null;
-  email: EmailAction | null;
-}
-
-export interface WebhookAction {
-  url: string;
-  headers: Record<string, string>;
-  retry: { max: number; backoff: string };
-}
-
-export interface EmailAction {
-  to: string;
-  to_query: string;
-  data_query: string;
-  subject: string;
-  body: string;
-  body_file: string;
-  condition: string;
-}
-
 export interface FunctionDef {
   description: string;
   auth_required: boolean;
@@ -179,28 +155,12 @@ export interface FuncReturn {
 
 export interface StatsResponse {
   tables: Record<string, { row_count: number }>;
-  events: {
-    last_hour: { delivered: number; failed: number; dead: number };
-  };
   storage: Record<string, { object_count: number; total_bytes: number }>;
 }
 
 export interface DiffResponse {
   statements: string[];
   is_destructive: boolean;
-}
-
-export interface EventRow {
-  id: string;
-  event: string;
-  table: string;
-  operation: string;
-  status: string;
-  attempts: number;
-  last_error: string | null;
-  created_at: string;
-  data: Record<string, unknown>;
-  old_data: Record<string, unknown>;
 }
 
 export interface ValidationError {

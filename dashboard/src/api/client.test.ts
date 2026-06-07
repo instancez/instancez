@@ -4,9 +4,6 @@ import {
   getConfigStatus,
   getStats,
   getStatus,
-  getEvents,
-  retryEvent,
-  purgeEvents,
   putConfig,
   validateAdminKey,
 } from "./client";
@@ -80,7 +77,6 @@ describe("getStats", () => {
   it("fetches stats", async () => {
     const stats = {
       tables: { todos: { row_count: 42 } },
-      events: { last_hour: { delivered: 10, failed: 1, dead: 0 } },
       storage: {},
     };
     mockFetch.mockReturnValueOnce(jsonResponse(stats));
@@ -97,45 +93,6 @@ describe("getStatus", () => {
 
     const result = await getStatus();
     expect(result).toEqual(status);
-  });
-});
-
-describe("getEvents", () => {
-  it("fetches all events without filter", async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse([]));
-    await getEvents();
-    expect(mockFetch).toHaveBeenCalledWith(
-      "/api/_admin/events",
-      expect.anything()
-    );
-  });
-
-  it("fetches events with status filter", async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse([]));
-    await getEvents("failed");
-    expect(mockFetch).toHaveBeenCalledWith(
-      "/api/_admin/events?status=failed",
-      expect.anything()
-    );
-  });
-});
-
-describe("retryEvent", () => {
-  it("posts to retry endpoint", async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse({ message: "Event re-queued" }));
-    await retryEvent("evt-123");
-    expect(mockFetch).toHaveBeenCalledWith(
-      "/api/_admin/events/evt-123/retry",
-      expect.objectContaining({ method: "POST" })
-    );
-  });
-});
-
-describe("purgeEvents", () => {
-  it("posts to purge endpoint", async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse({ purged: 5 }));
-    const result = await purgeEvents();
-    expect(result).toEqual({ purged: 5 });
   });
 });
 

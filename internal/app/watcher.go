@@ -103,8 +103,7 @@ func (w *ConfigWatcher) reload(ctx context.Context) {
 	}
 
 	w.logger.Info("config reloaded successfully",
-		"tables", len(cfg.Tables),
-		"triggers", len(cfg.On))
+		"tables", len(cfg.Tables))
 
 	if w.onChange != nil {
 		w.onChange(cfg)

@@ -148,23 +148,12 @@ func loadDotenv(path string) error {
 		return err
 	}
 
-	for i, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
+	pairs, err := parseDotenvBytes(data)
+	if err != nil {
+		return err
+	}
 
-		key, val, ok := strings.Cut(line, "=")
-		if !ok {
-			return fmt.Errorf("line %d: invalid format (expected KEY=VALUE)", i+1)
-		}
-
-		key = strings.TrimSpace(key)
-		val = strings.TrimSpace(val)
-
-		// Strip surrounding quotes
-		val = stripQuotes(val)
-
+	for key, val := range pairs {
 		// Don't override real env vars
 		if _, exists := os.LookupEnv(key); !exists {
 			os.Setenv(key, val)
@@ -234,8 +223,8 @@ func applyDefaults(cfg *domain.Config) {
 		}
 	}
 
-	// Functions: fill defaults and derive ReturnCategory.
-	for name, fn := range cfg.Functions {
+	// RPC: fill defaults and derive ReturnCategory.
+	for name, fn := range cfg.RPC {
 		if fn.Language == "" {
 			fn.Language = "plpgsql"
 		}
@@ -246,7 +235,7 @@ func applyDefaults(cfg *domain.Config) {
 			fn.Security = "invoker"
 		}
 		fn.ReturnCategory = classifyRPCReturn(fn.Returns.Type)
-		cfg.Functions[name] = fn
+		cfg.RPC[name] = fn
 	}
 }
 

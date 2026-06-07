@@ -40,8 +40,7 @@ type Engine struct {
 	logger   *slog.Logger
 
 	// Managed components
-	httpServer  HTTPServer
-	eventWorker *EventWorker
+	httpServer HTTPServer
 
 	// Options
 	mode             Mode
@@ -54,6 +53,12 @@ type Engine struct {
 
 	// Config-source state populated during Start.
 	source config.Source
+
+	// onFunctionReload, when set, is invoked by the config watcher after a
+	// successful reload with the newly-applied config. serve uses it to hot-swap
+	// the function runtime when the functions bundle version changes. It runs on
+	// the watcher goroutine and must not block for long.
+	onFunctionReload func(*domain.Config)
 }
 
 type Mode int
@@ -65,17 +70,23 @@ const (
 
 type EngineOption func(*Engine)
 
-func WithMode(m Mode) EngineOption                      { return func(e *Engine) { e.mode = m } }
-func WithMigrate(v bool) EngineOption                   { return func(e *Engine) { e.migrate = v } }
-func WithSeed(v bool) EngineOption                      { return func(e *Engine) { e.seed = v } }
-func WithAllowDestructive(v bool) EngineOption          { return func(e *Engine) { e.allowDestructive = v } }
-func WithWatch(v bool) EngineOption                     { return func(e *Engine) { e.watch = v } }
-func WithLogger(l *slog.Logger) EngineOption            { return func(e *Engine) { e.logger = l } }
-func WithHTTPServer(s HTTPServer) EngineOption          { return func(e *Engine) { e.httpServer = s } }
-func WithEventWorker(w *EventWorker) EngineOption { return func(e *Engine) { e.eventWorker = w } }
-func WithConfigPath(p string) EngineOption              { return func(e *Engine) { e.configPath = p } }
-func WithConfigSource(s config.Source) EngineOption     { return func(e *Engine) { e.source = s } }
-func WithWatchInterval(d time.Duration) EngineOption    { return func(e *Engine) { e.watchInterval = d } }
+func WithMode(m Mode) EngineOption                   { return func(e *Engine) { e.mode = m } }
+func WithMigrate(v bool) EngineOption                { return func(e *Engine) { e.migrate = v } }
+func WithSeed(v bool) EngineOption                   { return func(e *Engine) { e.seed = v } }
+func WithAllowDestructive(v bool) EngineOption       { return func(e *Engine) { e.allowDestructive = v } }
+func WithWatch(v bool) EngineOption                  { return func(e *Engine) { e.watch = v } }
+func WithLogger(l *slog.Logger) EngineOption         { return func(e *Engine) { e.logger = l } }
+func WithHTTPServer(s HTTPServer) EngineOption       { return func(e *Engine) { e.httpServer = s } }
+func WithConfigPath(p string) EngineOption           { return func(e *Engine) { e.configPath = p } }
+func WithConfigSource(s config.Source) EngineOption  { return func(e *Engine) { e.source = s } }
+func WithWatchInterval(d time.Duration) EngineOption { return func(e *Engine) { e.watchInterval = d } }
+
+// WithFunctionReload registers a callback invoked by the config watcher after a
+// successful reload, with the newly-applied config. Used by serve to hot-swap
+// the function runtime on a bundle version change.
+func WithFunctionReload(fn func(*domain.Config)) EngineOption {
+	return func(e *Engine) { e.onFunctionReload = fn }
+}
 
 func NewEngine(cfg *domain.Config, ownerDB domain.OwnerDB, authDB domain.RequestDB, roles domain.Roles, opts ...EngineOption) *Engine {
 	e := &Engine{
@@ -229,6 +240,9 @@ func (e *Engine) runWatcher(ctx context.Context, interval time.Duration) {
 			e.drift = tracker
 			e.mu.Unlock()
 			e.logger.Info("config reloaded successfully", "tables", len(cfg.Tables))
+			if e.onFunctionReload != nil {
+				e.onFunctionReload(cfg)
+			}
 		}
 	}
 }
@@ -303,16 +317,7 @@ func (e *Engine) Start(ctx context.Context) error {
 		}()
 	}
 
-	// 4. Start event worker (outbox deliverer)
-	if e.eventWorker != nil {
-		go func() {
-			if err := e.eventWorker.Start(ctx); err != nil {
-				e.logger.Error("event worker error", "error", err)
-			}
-		}()
-	}
-
-	// 5. Start config source watcher
+	// 4. Start config source watcher
 	if e.watch && e.source != nil {
 		go e.runWatcher(ctx, e.watchInterval)
 	}

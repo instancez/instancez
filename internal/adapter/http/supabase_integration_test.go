@@ -161,7 +161,7 @@ func TestSupabaseJSCompat(t *testing.T) {
 		// rpc functions drive the supabase-js .rpc() compat checks in
 		// run.mjs. Creation goes through the real Migrator so this path
 		// also exercises generateRPCFunction → CREATE OR REPLACE FUNCTION.
-		Functions: map[string]domain.Function{
+		RPC: map[string]domain.Function{
 			"add_two": {
 				Language:   "sql",
 				Volatility: "immutable",
@@ -236,7 +236,7 @@ func TestSupabaseJSCompat(t *testing.T) {
 	}
 	// Ensure ReturnCategory is populated; normally set by the YAML
 	// loader's applyDefaults, but this test constructs Config directly.
-	for k, fn := range cfg.Functions {
+	for k, fn := range cfg.RPC {
 		if fn.ReturnCategory == "" {
 			if fn.Returns.Type == "void" {
 				fn.ReturnCategory = "void"
@@ -244,7 +244,7 @@ func TestSupabaseJSCompat(t *testing.T) {
 				fn.ReturnCategory = "scalar"
 			}
 		}
-		cfg.Functions[k] = fn
+		cfg.RPC[k] = fn
 	}
 
 	if err := app.NewMigrator(db).Apply(ctx, cfg); err != nil {

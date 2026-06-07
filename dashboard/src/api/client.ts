@@ -3,7 +3,6 @@ import type {
   ConfigStatus,
   StatsResponse,
   DiffResponse,
-  EventRow,
   ValidationError,
 } from "../lib/types";
 
@@ -78,28 +77,6 @@ export async function getStats(): Promise<StatsResponse> {
 // Status
 export async function getStatus(): Promise<Record<string, unknown>> {
   return request("/status");
-}
-
-// Events
-export async function getEvents(
-  status?: string
-): Promise<EventRow[]> {
-  const qs = status ? `?status=${status}` : "";
-  return request<EventRow[]>(`/events${qs}`);
-}
-
-export async function getDeadLetterEvents(): Promise<EventRow[]> {
-  return request<EventRow[]>("/events/dead");
-}
-
-export async function retryEvent(
-  id: string
-): Promise<{ message: string }> {
-  return request(`/events/${id}/retry`, { method: "POST" });
-}
-
-export async function purgeEvents(): Promise<{ purged: number }> {
-  return request("/events/purge", { method: "POST" });
 }
 
 // Migrations

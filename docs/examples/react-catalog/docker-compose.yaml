@@ -20,7 +20,10 @@ services:
     build:
       context: ../../..
       dockerfile: Dockerfile
-    command: ["ultrabase", "serve", "--data", "--migrate"]
+    # `dev` migrates, seeds, and builds the code functions on the fly (runs
+    # `npm ci` in /app/functions). `serve` is the production mode, but it never
+    # builds functions — it consumes a pre-built bundle from `ultra deploy`.
+    command: ["ultra", "dev"]
     ports:
       - "8080:8080"
     environment:
@@ -30,6 +33,7 @@ services:
       JWT_SECRET: dev-jwt-secret-change-me
     volumes:
       - ./ultrabase.yaml:/app/ultrabase.yaml
+      - ./functions:/app/functions   # code functions; `ultra dev` runs npm ci here
     depends_on:
       postgres:
         condition: service_healthy

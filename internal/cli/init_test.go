@@ -73,6 +73,45 @@ func TestRunInitScaffoldStartsCleanly(t *testing.T) {
 	}
 }
 
+// TestRunInitScaffoldsFunctions verifies init drops a working starter code
+// function (package.json + handler) and wires it into ultrabase.yaml so
+// `ultra dev` can serve it immediately.
+func TestRunInitScaffoldsFunctions(t *testing.T) {
+	dir := t.TempDir()
+	if err := runInit(context.Background(), initOptions{name: "demo", dir: dir}); err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+
+	// package.json declares the deps the scaffolded handler needs.
+	pkg, err := os.ReadFile(filepath.Join(dir, "functions", "package.json"))
+	require.NoError(t, err, "functions/package.json should exist")
+	assert.Contains(t, string(pkg), "@supabase/supabase-js", "ctx.supabase needs supabase-js")
+	assert.Contains(t, string(pkg), "zod")
+
+	// The handler is a real one (uses ctx.supabase + default export).
+	fn, err := os.ReadFile(filepath.Join(dir, "functions", "todos.js"))
+	require.NoError(t, err, "functions/todos.js should exist")
+	assert.Contains(t, string(fn), "export default")
+	assert.Contains(t, string(fn), "ctx.supabase")
+
+	// Wired into the config as a code function.
+	cfg, err := config.Load(filepath.Join(dir, "ultrabase.yaml"))
+	require.NoError(t, err)
+	if errs := config.Validate(cfg); errs != nil {
+		t.Fatalf("scaffolded config failed validation: %v", errs)
+	}
+	todosFn, ok := cfg.Functions["todos"]
+	require.True(t, ok, "ultrabase.yaml should declare the todos code function")
+	assert.Equal(t, "node", todosFn.Runtime)
+	assert.Equal(t, "functions/todos.js", todosFn.File)
+	assert.True(t, todosFn.AuthRequired)
+
+	// node_modules ignored.
+	gi, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	require.NoError(t, err)
+	assert.Contains(t, string(gi), "functions/node_modules/")
+}
+
 // TestRunInitWritesProductionEnvExample verifies the prod template lands.
 // It's the only handhold a user has for "where do I put prod config?".
 func TestRunInitWritesProductionEnvExample(t *testing.T) {

@@ -384,7 +384,7 @@ storage:
                 max: 3
                 backoff: exponential
         email: null
-functions:
+rpc:
     team_stats:
         description: Get team statistics
         auth_required: true

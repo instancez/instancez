@@ -99,6 +99,31 @@ REST / PostgREST query features (see `src/App.jsx` and `src/ProductDetail.jsx`):
 The grid shows the **last PostgREST URL** at the bottom — expand it to see
 exactly what supabase-js sent the backend.
 
+## Code functions
+
+`ultrabase.yaml` also declares a few JavaScript HTTP handlers (served at
+`/functions/v1/<name>`); the source is in [`functions/`](functions/), with
+shared deps in [`functions/package.json`](functions/package.json). `docker
+compose up` runs them; locally, `ultra dev` runs `npm ci` there on boot.
+
+- **`hello`** — the minimum handler.
+- **`echo`** — reflects the request/ctx surface (method, path, query, headers, body, claims).
+- **`my-reviews`** — `auth_required`; uses `ctx.supabase` (RLS as the caller) + `zod` to
+  list/create the signed-in user's reviews.
+- **`webhook`** — HMAC-verified import endpoint that writes via `ctx.serviceClient`
+  (BYPASSRLS, since there's no caller to attribute the row to).
+
+```sh
+# no auth needed
+curl -s localhost:8080/functions/v1/hello -d '{"name":"you"}' | jq
+curl -s 'localhost:8080/functions/v1/echo?q=hi' -d '{"x":1}' | jq
+
+# auth_required: sign in (see below), then pass the access token
+curl -s localhost:8080/functions/v1/my-reviews -H "Authorization: Bearer $TOKEN" | jq
+```
+
+See [`../../functions.md`](../../functions.md) for the full code-functions reference.
+
 ## The "anon key"
 
 supabase-js always requires an anon key at `createClient()` time. In a real

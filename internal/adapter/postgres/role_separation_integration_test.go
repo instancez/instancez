@@ -48,6 +48,67 @@ func TestRequestPool_SetLocalRole(t *testing.T) {
 	}
 }
 
+// TestRequestPool_ServiceRoleUserIDIsNull verifies that for a service_role
+// session the per-request setup leaves app.user_id empty, so auth.uid()
+// (NULLIF(current_setting('app.user_id',true),”)::uuid) resolves to NULL —
+// matching Supabase, where service_role tokens have no subject. For an
+// authenticated session the GUC is populated with the user's UUID.
+func TestRequestPool_ServiceRoleUserIDIsNull(t *testing.T) {
+	_, auth := dbboot.StartContainer(t)
+	ctx := context.Background()
+
+	const uid = "11111111-1111-1111-1111-111111111111"
+
+	// service_role: app.user_id must be empty even though the minted token may
+	// carry a synthetic sub.
+	t.Run("service_role", func(t *testing.T) {
+		rctx, err := auth.WithRLS(ctx, domain.Session{
+			Role: "service_role", UserID: "00000000-0000-0000-0000-000000000000", IsAuthenticated: true,
+		})
+		if err != nil {
+			t.Fatalf("WithRLS: %v", err)
+		}
+		tx, err := auth.Begin(rctx)
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		defer tx.Rollback(rctx)
+
+		row, err := tx.QueryRow(rctx,
+			"SELECT NULLIF(current_setting('app.user_id', true), '') AS uid")
+		if err != nil {
+			t.Fatalf("query: %v", err)
+		}
+		if row["uid"] != nil {
+			t.Fatalf("service_role app.user_id = %v, want NULL", row["uid"])
+		}
+	})
+
+	// authenticated: app.user_id is set to the user's UUID.
+	t.Run("authenticated", func(t *testing.T) {
+		rctx, err := auth.WithRLS(ctx, domain.Session{
+			Role: "authenticated", UserID: uid, IsAuthenticated: true,
+		})
+		if err != nil {
+			t.Fatalf("WithRLS: %v", err)
+		}
+		tx, err := auth.Begin(rctx)
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		defer tx.Rollback(rctx)
+
+		row, err := tx.QueryRow(rctx,
+			"SELECT NULLIF(current_setting('app.user_id', true), '') AS uid")
+		if err != nil {
+			t.Fatalf("query: %v", err)
+		}
+		if row["uid"] != uid {
+			t.Fatalf("authenticated app.user_id = %v, want %s", row["uid"], uid)
+		}
+	})
+}
+
 // TestOwnerPool_NoRoleSwitching confirms the owner pool stays as
 // ultrabase_owner — no SET LOCAL ROLE is ever issued on it.
 func TestOwnerPool_NoRoleSwitching(t *testing.T) {

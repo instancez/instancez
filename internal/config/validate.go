@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/saedx1/ultrabase/internal/domain"
 )
@@ -145,10 +146,6 @@ var validStorageProviders = map[string]bool{
 	"s3": true, "local": true,
 }
 
-var validBackoff = map[string]bool{
-	"exponential": true, "linear": true,
-}
-
 // allowedDefaults is the allowlist of SQL functions usable in field defaults.
 var allowedDefaults = map[string]bool{
 	"now()":        true,
@@ -177,8 +174,8 @@ func Validate(cfg *domain.Config) domain.ValidationErrors {
 	errs = append(errs, validateAuth(cfg.Auth)...)
 	errs = append(errs, validateTables(cfg.Tables, cfg.Auth)...)
 	errs = append(errs, validateStorage(cfg.Storage)...)
-	errs = append(errs, validateTriggers(cfg.On, cfg.Tables)...)
-	errs = append(errs, validateFunctions(cfg.Functions)...)
+	errs = append(errs, validateRPC(cfg.RPC)...)
+	errs = append(errs, validateCodeFunctions(cfg.Functions)...)
 	errs = append(errs, validateData(cfg.Data, cfg.Tables)...)
 
 	// Cross-cutting: FK reference validation
@@ -478,114 +475,10 @@ func validateStorage(storage map[string]domain.Bucket) domain.ValidationErrors {
 	return errs
 }
 
-func validateTriggers(triggers map[string]domain.Trigger, tables map[string]domain.Table) domain.ValidationErrors {
-	var errs domain.ValidationErrors
-	for name, trigger := range triggers {
-		path := fmt.Sprintf("on.%s", name)
-
-		if err := validateIdent(path, name); err != nil {
-			errs = append(errs, err)
-		}
-
-		// Must have either events or schedule
-		if len(trigger.Events) == 0 && trigger.Schedule == "" {
-			errs = append(errs, &domain.ValidationError{
-				Path:    path,
-				Message: "trigger must have events or schedule",
-			})
-		}
-		if len(trigger.Events) > 0 && trigger.Schedule != "" {
-			errs = append(errs, &domain.ValidationError{
-				Path:    path,
-				Message: "trigger cannot have both events and schedule",
-			})
-		}
-
-		// Must have at least one action
-		if trigger.Webhook == nil && trigger.Email == nil {
-			errs = append(errs, &domain.ValidationError{
-				Path:    path,
-				Message: "trigger must have at least one action (webhook or email)",
-			})
-		}
-
-		// Validate event patterns
-		for _, evt := range trigger.Events {
-			parts := strings.SplitN(evt, ".", 2)
-			if len(parts) != 2 {
-				errs = append(errs, &domain.ValidationError{
-					Path:       path + ".events",
-					Message:    fmt.Sprintf("invalid event pattern %q", evt),
-					Suggestion: "Use format: table.operation (e.g. todos.insert, *.delete)",
-				})
-				continue
-			}
-			tableName, op := parts[0], parts[1]
-			if tableName != "*" {
-				// Check table exists (including "users" for auth events)
-				if _, ok := tables[tableName]; !ok && tableName != "users" {
-					errs = append(errs, &domain.ValidationError{
-						Path:       path + ".events",
-						Message:    fmt.Sprintf("event references unknown table %q", tableName),
-						Suggestion: fmt.Sprintf("Define a %q table or use '*' for all tables", tableName),
-					})
-				}
-			}
-			if op != "*" && op != "insert" && op != "update" && op != "delete" {
-				errs = append(errs, &domain.ValidationError{
-					Path:       path + ".events",
-					Message:    fmt.Sprintf("invalid operation %q in event pattern", op),
-					Suggestion: "Supported: insert, update, delete, *",
-				})
-			}
-		}
-
-		// Validate webhook action
-		if trigger.Webhook != nil {
-			if trigger.Webhook.URL == "" {
-				errs = append(errs, &domain.ValidationError{
-					Path:    path + ".webhook.url",
-					Message: "url is required",
-				})
-			}
-			if trigger.Webhook.Retry.Backoff != "" && !validBackoff[trigger.Webhook.Retry.Backoff] {
-				errs = append(errs, &domain.ValidationError{
-					Path:       path + ".webhook.retry.backoff",
-					Message:    fmt.Sprintf("invalid backoff %q", trigger.Webhook.Retry.Backoff),
-					Suggestion: "Supported: exponential, linear",
-				})
-			}
-		}
-
-		// Validate email action
-		if trigger.Email != nil {
-			if trigger.Email.To == "" && trigger.Email.ToQuery == "" {
-				errs = append(errs, &domain.ValidationError{
-					Path:    path + ".email",
-					Message: "either to or to_query is required",
-				})
-			}
-			if trigger.Email.Subject == "" {
-				errs = append(errs, &domain.ValidationError{
-					Path:    path + ".email.subject",
-					Message: "subject is required",
-				})
-			}
-			if trigger.Email.Body == "" && trigger.Email.BodyFile == "" {
-				errs = append(errs, &domain.ValidationError{
-					Path:    path + ".email",
-					Message: "either body or body_file is required",
-				})
-			}
-		}
-	}
-	return errs
-}
-
-func validateFunctions(functions map[string]domain.Function) domain.ValidationErrors {
+func validateRPC(functions map[string]domain.Function) domain.ValidationErrors {
 	var errs domain.ValidationErrors
 	for name, fn := range functions {
-		path := fmt.Sprintf("functions.%s", name)
+		path := fmt.Sprintf("rpc.%s", name)
 		errs = append(errs, validateRPCFunction(path, name, fn)...)
 	}
 	return errs
@@ -687,6 +580,63 @@ func validateRPCFunction(path, name string, fn domain.Function) domain.Validatio
 				Path:    argPath + ".type",
 				Message: fmt.Sprintf("invalid type %q", arg.Type),
 			})
+		}
+	}
+	return errs
+}
+
+// codeFunctionNameRE enforces safe URL path segments for code function names.
+// Must start with an alphanumeric character, followed by alphanumerics, hyphens, or underscores.
+var codeFunctionNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
+
+func validateCodeFunctions(functions map[string]domain.CodeFunction) domain.ValidationErrors {
+	var errs domain.ValidationErrors
+	for name, fn := range functions {
+		path := fmt.Sprintf("functions.%s", name)
+
+		// Detect old-RPC-shape accidentally left under functions: (runtime and file both unset).
+		// This is a strong signal the user copy-pasted a Postgres function block, but it also
+		// covers an empty/stub entry where the user simply forgot to fill in the fields.
+		if fn.Runtime == "" && fn.File == "" {
+			errs = append(errs, &domain.ValidationError{
+				Path:       path,
+				Message:    fmt.Sprintf("function %q: runtime and file are required", name),
+				Suggestion: "If this is a Postgres function, move it to the `rpc:` block.",
+			})
+			continue
+		}
+
+		if !codeFunctionNameRE.MatchString(name) {
+			errs = append(errs, &domain.ValidationError{
+				Path:       path,
+				Message:    fmt.Sprintf("invalid function name %q", name),
+				Suggestion: "Use letters, digits, hyphens or underscores; must not start with a hyphen.",
+			})
+		}
+
+		if fn.Runtime != "node" {
+			errs = append(errs, &domain.ValidationError{
+				Path:       path + ".runtime",
+				Message:    fmt.Sprintf("unsupported runtime %q", fn.Runtime),
+				Suggestion: `Supported: "node"`,
+			})
+		}
+
+		if fn.File == "" {
+			errs = append(errs, &domain.ValidationError{
+				Path:    path + ".file",
+				Message: "file is required",
+			})
+		}
+
+		if fn.Timeout != "" {
+			if _, err := time.ParseDuration(fn.Timeout); err != nil {
+				errs = append(errs, &domain.ValidationError{
+					Path:       path + ".timeout",
+					Message:    fmt.Sprintf("invalid timeout %q: %v", fn.Timeout, err),
+					Suggestion: `Use a Go duration string, e.g. "30s", "1m30s"`,
+				})
+			}
 		}
 	}
 	return errs

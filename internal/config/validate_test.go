@@ -257,84 +257,9 @@ func TestValidate_Providers(t *testing.T) {
 	assertHasErrorAt(t, errs, "providers.email.type")
 }
 
-func TestValidate_TriggerNoAction(t *testing.T) {
-	cfg := validBaseConfig()
-	cfg.On = map[string]domain.Trigger{
-		"bad": {Events: []string{"todos.insert"}},
-	}
-
-	errs := Validate(cfg)
-	assertHasErrorAt(t, errs, "on.bad")
-}
-
-func TestValidate_TriggerNoTrigger(t *testing.T) {
-	cfg := validBaseConfig()
-	cfg.On = map[string]domain.Trigger{
-		"bad": {Webhook: &domain.WebhookAction{URL: "https://example.com"}},
-	}
-
-	errs := Validate(cfg)
-	assertHasErrorAt(t, errs, "on.bad")
-}
-
-func TestValidate_TriggerBothEventsAndSchedule(t *testing.T) {
-	cfg := validBaseConfig()
-	cfg.On = map[string]domain.Trigger{
-		"bad": {
-			Events:   []string{"todos.insert"},
-			Schedule: "0 9 * * *",
-			Webhook:  &domain.WebhookAction{URL: "https://example.com"},
-		},
-	}
-
-	errs := Validate(cfg)
-	assertHasErrorAt(t, errs, "on.bad")
-}
-
-func TestValidate_TriggerInvalidEventPattern(t *testing.T) {
-	cfg := validBaseConfig()
-	cfg.On = map[string]domain.Trigger{
-		"bad": {
-			Events:  []string{"invalid"},
-			Webhook: &domain.WebhookAction{URL: "https://example.com"},
-		},
-	}
-
-	errs := Validate(cfg)
-	assertHasErrorAt(t, errs, "on.bad.events")
-}
-
-func TestValidate_TriggerUnknownTable(t *testing.T) {
-	cfg := validBaseConfig()
-	cfg.On = map[string]domain.Trigger{
-		"bad": {
-			Events:  []string{"nonexistent.insert"},
-			Webhook: &domain.WebhookAction{URL: "https://example.com"},
-		},
-	}
-
-	errs := Validate(cfg)
-	assertHasErrorAt(t, errs, "on.bad.events")
-}
-
-func TestValidate_TriggerWildcardTableOK(t *testing.T) {
-	cfg := validBaseConfig()
-	cfg.On = map[string]domain.Trigger{
-		"audit": {
-			Events:  []string{"*.delete"},
-			Webhook: &domain.WebhookAction{URL: "https://example.com"},
-		},
-	}
-
-	errs := Validate(cfg)
-	if errs != nil {
-		t.Errorf("expected no errors, got: %v", errs)
-	}
-}
-
 func TestValidate_FunctionMissingBody(t *testing.T) {
 	cfg := validBaseConfig()
-	cfg.Functions = map[string]domain.Function{
+	cfg.RPC = map[string]domain.Function{
 		"bad": {
 			Language:   "plpgsql",
 			Volatility: "volatile",
@@ -344,7 +269,7 @@ func TestValidate_FunctionMissingBody(t *testing.T) {
 	}
 
 	errs := Validate(cfg)
-	assertHasErrorAt(t, errs, "functions.bad.body")
+	assertHasErrorAt(t, errs, "rpc.bad.body")
 }
 
 func TestValidate_DataUnknownTable(t *testing.T) {
@@ -461,16 +386,6 @@ func TestValidate_FullExampleConfig(t *testing.T) {
 				},
 			},
 		},
-		On: map[string]domain.Trigger{
-			"welcome": {
-				Events: []string{"users.insert"},
-				Email: &domain.EmailAction{
-					To:      "{{data.email}}",
-					Subject: "Welcome!",
-					Body:    "Hello!",
-				},
-			},
-		},
 		Data: map[string]domain.TableData{
 			"users": {CSVFiles: map[string]string{"demo": "./seeds/users.csv"}},
 			"teams": {CSVFiles: map[string]string{"init": "./seeds/teams.csv"}},
@@ -538,7 +453,7 @@ func validRPCFunction() domain.Function {
 
 func TestValidate_RPCFunction_Valid(t *testing.T) {
 	cfg := validBaseConfig()
-	cfg.Functions = map[string]domain.Function{
+	cfg.RPC = map[string]domain.Function{
 		"add_one": validRPCFunction(),
 	}
 	if errs := Validate(cfg); errs != nil {
@@ -548,62 +463,62 @@ func TestValidate_RPCFunction_Valid(t *testing.T) {
 
 func TestValidate_RPCFunction_BadName(t *testing.T) {
 	cfg := validBaseConfig()
-	cfg.Functions = map[string]domain.Function{
+	cfg.RPC = map[string]domain.Function{
 		"drop table users;--": validRPCFunction(),
 	}
 	errs := Validate(cfg)
 	if errs == nil {
 		t.Fatal("expected error for malicious function name")
 	}
-	assertHasErrorAt(t, errs, "functions.drop table users;--")
+	assertHasErrorAt(t, errs, "rpc.drop table users;--")
 }
 
 func TestValidate_RPCFunction_BadArgName(t *testing.T) {
 	cfg := validBaseConfig()
 	fn := validRPCFunction()
 	fn.Args = []domain.FuncArg{{Name: "x); DROP TABLE users; --", Type: "int"}}
-	cfg.Functions = map[string]domain.Function{"f": fn}
+	cfg.RPC = map[string]domain.Function{"f": fn}
 	errs := Validate(cfg)
 	if errs == nil {
 		t.Fatal("expected error for malicious arg name")
 	}
-	assertHasErrorAt(t, errs, "functions.f.args[0].name")
+	assertHasErrorAt(t, errs, "rpc.f.args[0].name")
 }
 
 func TestValidate_RPCFunction_BadArgType(t *testing.T) {
 	cfg := validBaseConfig()
 	fn := validRPCFunction()
 	fn.Args = []domain.FuncArg{{Name: "x", Type: "int; DROP TABLE users"}}
-	cfg.Functions = map[string]domain.Function{"f": fn}
+	cfg.RPC = map[string]domain.Function{"f": fn}
 	errs := Validate(cfg)
 	if errs == nil {
 		t.Fatal("expected error for malicious arg type")
 	}
-	assertHasErrorAt(t, errs, "functions.f.args[0].type")
+	assertHasErrorAt(t, errs, "rpc.f.args[0].type")
 }
 
 func TestValidate_RPCFunction_RejectsReservedDollarTag(t *testing.T) {
 	cfg := validBaseConfig()
 	fn := validRPCFunction()
 	fn.Body = "BEGIN RAISE 'oops $ub$ ok'; END;"
-	cfg.Functions = map[string]domain.Function{"f": fn}
+	cfg.RPC = map[string]domain.Function{"f": fn}
 	errs := Validate(cfg)
 	if errs == nil {
 		t.Fatal("expected error for body containing $ub$ tag")
 	}
-	assertHasErrorAt(t, errs, "functions.f.body")
+	assertHasErrorAt(t, errs, "rpc.f.body")
 }
 
 func TestValidate_RPCFunction_UnknownLanguage(t *testing.T) {
 	cfg := validBaseConfig()
 	fn := validRPCFunction()
 	fn.Language = "plpython"
-	cfg.Functions = map[string]domain.Function{"f": fn}
+	cfg.RPC = map[string]domain.Function{"f": fn}
 	errs := Validate(cfg)
 	if errs == nil {
 		t.Fatal("expected error for unsupported language")
 	}
-	assertHasErrorAt(t, errs, "functions.f.language")
+	assertHasErrorAt(t, errs, "rpc.f.language")
 }
 
 func TestValidate_RPCFunction_DuplicateArg(t *testing.T) {
@@ -613,12 +528,12 @@ func TestValidate_RPCFunction_DuplicateArg(t *testing.T) {
 		{Name: "x", Type: "int"},
 		{Name: "x", Type: "text"},
 	}
-	cfg.Functions = map[string]domain.Function{"f": fn}
+	cfg.RPC = map[string]domain.Function{"f": fn}
 	errs := Validate(cfg)
 	if errs == nil {
 		t.Fatal("expected error for duplicate arg name")
 	}
-	assertHasErrorAt(t, errs, "functions.f.args[1].name")
+	assertHasErrorAt(t, errs, "rpc.f.args[1].name")
 }
 
 func TestValidate_IdentifierNaming(t *testing.T) {
@@ -633,7 +548,6 @@ func TestValidate_IdentifierNaming(t *testing.T) {
 		{"bucket", "my-bucket"},
 		{"bucket", "MyBucket"},
 		{"field", "First-Name"},
-		{"trigger", "on-insert"},
 		{"function", "do-stuff"},
 	}
 
@@ -651,14 +565,9 @@ func TestValidate_IdentifierNaming(t *testing.T) {
 				cfg.Tables["items"] = domain.Table{
 					Fields: []domain.Field{{Name: tc.name, Type: "text", PrimaryKey: true}},
 				}
-			case "trigger":
-				cfg.On = map[string]domain.Trigger{tc.name: {
-					Events:  []string{"todos.insert"},
-					Webhook: &domain.WebhookAction{URL: "https://x.com"},
-				}}
 			case "function":
 				fn := validRPCFunction()
-				cfg.Functions = map[string]domain.Function{tc.name: fn}
+				cfg.RPC = map[string]domain.Function{tc.name: fn}
 			}
 			errs := Validate(cfg)
 			if errs == nil {
@@ -693,7 +602,6 @@ func TestValidate_ReservedSQLWord(t *testing.T) {
 		{"field", "where"},
 		{"field", "primary"},
 		{"bucket", "table"},
-		{"trigger", "from"},
 		{"function", "group"},
 	}
 
@@ -714,13 +622,8 @@ func TestValidate_ReservedSQLWord(t *testing.T) {
 						{Name: tc.name, Type: "text"},
 					},
 				}
-			case "trigger":
-				cfg.On = map[string]domain.Trigger{tc.name: {
-					Events:  []string{"todos.insert"},
-					Webhook: &domain.WebhookAction{URL: "https://x.com"},
-				}}
 			case "function":
-				cfg.Functions = map[string]domain.Function{tc.name: validRPCFunction()}
+				cfg.RPC = map[string]domain.Function{tc.name: validRPCFunction()}
 			}
 			errs := Validate(cfg)
 			if errs == nil {
@@ -767,10 +670,10 @@ func TestValidate_ReservedRPCArgName(t *testing.T) {
 	cfg := validBaseConfig()
 	fn := validRPCFunction()
 	fn.Args = []domain.FuncArg{{Name: "where", Type: "int"}}
-	cfg.Functions = map[string]domain.Function{"f": fn}
+	cfg.RPC = map[string]domain.Function{"f": fn}
 
 	errs := Validate(cfg)
-	assertHasErrorAt(t, errs, "functions.f.args[0].name")
+	assertHasErrorAt(t, errs, "rpc.f.args[0].name")
 }
 
 func TestValidateRejectsReservedSchemas(t *testing.T) {
@@ -799,6 +702,97 @@ func TestValidateRejectsReservedSchemas(t *testing.T) {
 		}
 		assertHasErrorAt(t, errs, "tables.sneaky.schema")
 	}
+}
+
+// --- Code Functions validation ---
+
+func TestValidateCodeFunctions_Valid(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Functions = map[string]domain.CodeFunction{
+		"send-welcome": {Runtime: "node", File: "functions/send-welcome.js", Timeout: "30s"},
+	}
+	if errs := Validate(cfg); errs != nil {
+		t.Fatalf("expected valid, got %v", errs)
+	}
+}
+
+func TestValidateCodeFunctions_ValidNoTimeout(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Functions = map[string]domain.CodeFunction{
+		"my-fn": {Runtime: "node", File: "functions/my-fn.js"},
+	}
+	if errs := Validate(cfg); errs != nil {
+		t.Fatalf("expected valid, got %v", errs)
+	}
+}
+
+func TestValidateCodeFunctions_BadRuntime(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Functions = map[string]domain.CodeFunction{
+		"x": {Runtime: "ruby", File: "functions/x.js"},
+	}
+	errs := Validate(cfg)
+	if errs == nil {
+		t.Fatal("expected error for unsupported runtime")
+	}
+	assertHasErrorAt(t, errs, "functions.x.runtime")
+}
+
+func TestValidateCodeFunctions_MissingFile(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Functions = map[string]domain.CodeFunction{
+		"x": {Runtime: "node"},
+	}
+	errs := Validate(cfg)
+	if errs == nil {
+		t.Fatal("expected error for missing file")
+	}
+	assertHasErrorAt(t, errs, "functions.x.file")
+}
+
+func TestValidateCodeFunctions_InvalidName(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Functions = map[string]domain.CodeFunction{
+		"bad name!": {Runtime: "node", File: "functions/x.js"},
+	}
+	errs := Validate(cfg)
+	if errs == nil {
+		t.Fatal("expected error for invalid function name")
+	}
+	assertHasErrorAt(t, errs, "functions.bad name!")
+}
+
+func TestValidateCodeFunctions_BadTimeout(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Functions = map[string]domain.CodeFunction{
+		"x": {Runtime: "node", File: "functions/x.js", Timeout: "soon"},
+	}
+	errs := Validate(cfg)
+	if errs == nil {
+		t.Fatal("expected error for unparseable timeout")
+	}
+	assertHasErrorAt(t, errs, "functions.x.timeout")
+}
+
+func TestRejectOldRPCShapeUnderFunctions(t *testing.T) {
+	raw := []byte("version: 1\nfunctions:\n  legacy:\n    language: sql\n    body: \"SELECT 1\"\n    returns:\n      type: void\n")
+	cfg, err := ParseBytes(raw, "test")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	errs := Validate(cfg)
+	assertHasErrorAt(t, errs, "functions.legacy")
+}
+
+func TestEmptyCodeFunctionReportsRequiredFields(t *testing.T) {
+	cfg := &domain.Config{
+		Version: 1,
+		Functions: map[string]domain.CodeFunction{
+			"my-fn": {},
+		},
+	}
+	errs := Validate(cfg)
+	assertHasErrorAt(t, errs, "functions.my-fn")
 }
 
 // Names that contain or extend a reserved word but aren't reserved

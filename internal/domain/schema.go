@@ -12,18 +12,27 @@ import (
 
 // Config is the top-level Ultrabase configuration parsed from YAML.
 type Config struct {
-	Version    int                  `yaml:"version" json:"version"`
-	Project    Project              `yaml:"project" json:"project"`
-	Extensions []string             `yaml:"extensions" json:"extensions"`
-	Database   DatabaseConfig       `yaml:"database" json:"database"`
-	Server     Server               `yaml:"server" json:"server"`
-	Providers  Providers            `yaml:"providers" json:"providers"`
-	Auth       *Auth                `yaml:"auth" json:"auth"`
-	Tables     map[string]Table     `yaml:"tables" json:"tables"`
-	Storage    map[string]Bucket    `yaml:"storage" json:"storage"`
-	On         map[string]Trigger   `yaml:"on" json:"on"`
-	Functions  map[string]Function  `yaml:"functions" json:"functions"`
-	Data       map[string]TableData `yaml:"data" json:"data"`
+	Version    int                     `yaml:"version" json:"version"`
+	Project    Project                 `yaml:"project" json:"project"`
+	Extensions []string                `yaml:"extensions" json:"extensions"`
+	Database   DatabaseConfig          `yaml:"database" json:"database"`
+	Server     Server                  `yaml:"server" json:"server"`
+	Providers  Providers               `yaml:"providers" json:"providers"`
+	Auth       *Auth                   `yaml:"auth" json:"auth"`
+	Tables     map[string]Table        `yaml:"tables" json:"tables"`
+	Storage    map[string]Bucket       `yaml:"storage" json:"storage"`
+	RPC        map[string]Function     `yaml:"rpc" json:"rpc"`
+	Functions  map[string]CodeFunction `yaml:"functions" json:"functions"`
+	Data       map[string]TableData    `yaml:"data" json:"data"`
+
+	// FunctionsBundle is a pointer to the pre-built functions bundle that
+	// `serve` consumes at runtime (it never builds). `ultra deploy` builds the
+	// bundle (vendoring node_modules), uploads it, and records the pointer here.
+	// The value is an object URI carrying a version token, e.g.
+	// "s3://bucket/key#<sha256>". Empty when the project has no code functions
+	// or the deploy was run without a bundle destination. Consumed by Task 12;
+	// not read by the runtime yet.
+	FunctionsBundle string `yaml:"functions_bundle" json:"functions_bundle"`
 }
 
 // TableData holds either inline rows (a list) or CSV file references (a label→path map).
@@ -92,7 +101,7 @@ type Providers struct {
 }
 
 type EmailProvider struct {
-	Type      string `yaml:"type" json:"type"`      // resend | sendgrid | ses
+	Type      string `yaml:"type" json:"type"`             // resend | sendgrid | ses
 	FromEmail string `yaml:"from_email" json:"from_email"` // e.g. "Ultrabase <noreply@example.com>"
 }
 
@@ -254,35 +263,6 @@ type Bucket struct {
 	RLS     []RLSPolicy `yaml:"rls" json:"rls"`
 }
 
-// Trigger defines an event-driven trigger.
-type Trigger struct {
-	Events   []string       `yaml:"events" json:"events"`     // WAL events: "table.operation"
-	Schedule string         `yaml:"schedule" json:"schedule"` // cron expression
-	Webhook  *WebhookAction `yaml:"webhook" json:"webhook"`
-	Email    *EmailAction   `yaml:"email" json:"email"`
-}
-
-type WebhookAction struct {
-	URL     string            `yaml:"url" json:"url"`
-	Headers map[string]string `yaml:"headers" json:"headers"`
-	Retry   RetryConfig       `yaml:"retry" json:"retry"`
-}
-
-type RetryConfig struct {
-	Max     int    `yaml:"max" json:"max"`
-	Backoff string `yaml:"backoff" json:"backoff"` // exponential | linear
-}
-
-type EmailAction struct {
-	To        string `yaml:"to" json:"to"`
-	ToQuery   string `yaml:"to_query" json:"to_query"`
-	DataQuery string `yaml:"data_query" json:"data_query"`
-	Subject   string `yaml:"subject" json:"subject"`
-	Body      string `yaml:"body" json:"body"`
-	BodyFile  string `yaml:"body_file" json:"body_file"`
-	Condition string `yaml:"condition" json:"condition"`
-}
-
 // Function defines a user-declared RPC function. Each function becomes a real
 // Postgres stored procedure (CREATE OR REPLACE FUNCTION), exposed at
 // /rest/v1/rpc/<name> for supabase-js .rpc() compatibility.
@@ -314,18 +294,18 @@ type FuncArg struct {
 	Required bool   `yaml:"required" json:"required"`
 }
 
-// --- Runtime types (not from YAML) ---
-
-// Event represents a WAL change event dispatched to triggers.
-type Event struct {
-	ID        string         `json:"id"`
-	EventName string         `json:"event"`
-	Table     string         `json:"table"`
-	Operation string         `json:"operation"`
-	Timestamp time.Time      `json:"timestamp"`
-	Data      map[string]any `json:"data"`
-	OldData   map[string]any `json:"old_data"`
+// CodeFunction is a user-declared HTTP handler written in JS, served at
+// /functions/v1/<name>. Distinct from Function (the Postgres-RPC block, now
+// under `rpc:`).
+type CodeFunction struct {
+	Runtime      string            `yaml:"runtime" json:"runtime"` // "node" (v1)
+	File         string            `yaml:"file" json:"file"`       // path relative to config root
+	AuthRequired bool              `yaml:"auth_required" json:"auth_required"`
+	Timeout      string            `yaml:"timeout" json:"timeout"` // e.g. "30s"; default applied at runtime
+	Env          map[string]string `yaml:"env" json:"env"`         // name -> literal or ${ULTRA_ENV_*}
 }
+
+// --- Runtime types (not from YAML) ---
 
 // User represents an authenticated user.
 type User struct {

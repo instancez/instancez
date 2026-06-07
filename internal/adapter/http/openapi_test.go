@@ -86,9 +86,6 @@ func TestGenerateOpenAPI_Structure(t *testing.T) {
 	}
 
 	// Check admin endpoints
-	if _, ok := paths["/api/_admin/events"]; !ok {
-		t.Error("missing /api/_admin/events path")
-	}
 	if _, ok := paths["/api/_admin/status"]; !ok {
 		t.Error("missing /api/_admin/status path")
 	}
@@ -146,7 +143,7 @@ func TestGenerateOpenAPI_RPCPaths(t *testing.T) {
 		Version: 1,
 		Project: domain.Project{Name: "rpc"},
 		Server:  domain.Server{Port: 8080},
-		Functions: map[string]domain.Function{
+		RPC: map[string]domain.Function{
 			"add_numbers": {
 				Volatility: "immutable", Returns: domain.FuncReturn{Type: "int"}, ReturnCategory: "scalar",
 				Args: []domain.FuncArg{

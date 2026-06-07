@@ -420,7 +420,7 @@ func TestIntegration_RPCFunction_CreateAndRemove(t *testing.T) {
 	cfgV1 := &domain.Config{
 		Version: 1,
 		Tables:  map[string]domain.Table{},
-		Functions: map[string]domain.Function{
+		RPC: map[string]domain.Function{
 			"add_nums": {
 				Language:   "sql",
 				Volatility: "immutable",
@@ -456,7 +456,7 @@ func TestIntegration_RPCFunction_CreateAndRemove(t *testing.T) {
 	cfgV2 := &domain.Config{
 		Version:   1,
 		Tables:    map[string]domain.Table{},
-		Functions: map[string]domain.Function{},
+		RPC: map[string]domain.Function{},
 	}
 
 	if err := migrator.Apply(ctx, cfgV2); err != nil {
@@ -1349,36 +1349,6 @@ func TestIntegration_StorageTable(t *testing.T) {
 	}
 }
 
-// --- Events ---
-
-func TestIntegration_EventsTable(t *testing.T) {
-	db := startPostgres(t)
-	ctx := context.Background()
-
-	cfg := &domain.Config{
-		Version: 1,
-		Tables:  map[string]domain.Table{},
-		On: map[string]domain.Trigger{
-			"new_todo": {Events: []string{"todos.insert"}},
-		},
-	}
-
-	migrator := app.NewMigrator(db)
-	if err := migrator.Apply(ctx, cfg); err != nil {
-		t.Fatalf("apply: %v", err)
-	}
-
-	if !tableExists(t, db, "_events") {
-		t.Fatal("_events table should exist")
-	}
-	if !columnExists(t, db, "_events", "trigger_name") {
-		t.Fatal("trigger_name column should exist")
-	}
-	if !indexExists(t, db, "idx_events_pending") {
-		t.Fatal("idx_events_pending should exist")
-	}
-}
-
 // --- Search ---
 
 func TestIntegration_Search_TSVECTOR(t *testing.T) {
@@ -1489,7 +1459,7 @@ func TestIntegration_RPCFunction_UpdateBody(t *testing.T) {
 	cfgV1 := &domain.Config{
 		Version: 1,
 		Tables:  map[string]domain.Table{},
-		Functions: map[string]domain.Function{
+		RPC: map[string]domain.Function{
 			"greet": {
 				Language:   "sql",
 				Volatility: "immutable",
@@ -1518,7 +1488,7 @@ func TestIntegration_RPCFunction_UpdateBody(t *testing.T) {
 	cfgV2 := &domain.Config{
 		Version: 1,
 		Tables:  map[string]domain.Table{},
-		Functions: map[string]domain.Function{
+		RPC: map[string]domain.Function{
 			"greet": {
 				Language:   "sql",
 				Volatility: "immutable",
@@ -2059,7 +2029,7 @@ func TestIntegration_ChangedRPCFunction_Body(t *testing.T) {
 	cfgV1 := &domain.Config{
 		Version: 1,
 		Tables:  map[string]domain.Table{},
-		Functions: map[string]domain.Function{
+		RPC: map[string]domain.Function{
 			"multiply": {
 				Language:   "sql",
 				Volatility: "immutable",
@@ -2088,7 +2058,7 @@ func TestIntegration_ChangedRPCFunction_Body(t *testing.T) {
 	cfgV2 := &domain.Config{
 		Version: 1,
 		Tables:  map[string]domain.Table{},
-		Functions: map[string]domain.Function{
+		RPC: map[string]domain.Function{
 			"multiply": {
 				Language:   "sql",
 				Volatility: "immutable",

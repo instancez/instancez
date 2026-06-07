@@ -17,8 +17,6 @@ const Storage = lazy(() => import("./pages/Storage").then((m) => ({ default: m.S
 const StorageDetail = lazy(() => import("./pages/StorageDetail").then((m) => ({ default: m.StorageDetail })));
 const Functions = lazy(() => import("./pages/Functions").then((m) => ({ default: m.Functions })));
 const FunctionDetail = lazy(() => import("./pages/FunctionDetail").then((m) => ({ default: m.FunctionDetail })));
-const Events = lazy(() => import("./pages/Events").then((m) => ({ default: m.Events })));
-const EventDetail = lazy(() => import("./pages/EventDetail").then((m) => ({ default: m.EventDetail })));
 const ProvidersPage = lazy(() => import("./pages/Providers").then((m) => ({ default: m.ProvidersPage })));
 const SettingsPage = lazy(() => import("./pages/Settings").then((m) => ({ default: m.SettingsPage })));
 
@@ -76,8 +74,6 @@ export function App() {
             <Route path="storage/:name" element={<StorageDetail />} />
             <Route path="functions" element={<Functions />} />
             <Route path="functions/:name" element={<FunctionDetail />} />
-            <Route path="events" element={<Events />} />
-            <Route path="events/:name" element={<EventDetail />} />
             <Route path="providers" element={<ProvidersPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />

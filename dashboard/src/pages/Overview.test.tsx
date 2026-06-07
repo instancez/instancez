@@ -34,9 +34,6 @@ const baseConfig: Config = {
     avatars: { max_size: "5MB", types: ["image/*"], public: true, rls: [] },
   },
   functions: {},
-  on: {
-    daily_cleanup: { events: [], schedule: "0 0 * * *", webhook: null, email: null },
-  },
   seeds: {},
   providers: { email: null, storage: null },
   server: {
@@ -77,7 +74,6 @@ describe("Overview", () => {
     mockGetStats.mockResolvedValue({
       tables: { todos: { row_count: 42 } },
       storage: { avatars: { object_count: 10, total_bytes: 1048576 } },
-      events: { last_hour: { delivered: 100, failed: 3, dead: 1 } },
     });
     mockGetStatus.mockResolvedValue({ database: "connected" });
   });
@@ -112,16 +108,6 @@ describe("Overview", () => {
   it("shows port badge", () => {
     renderOverview();
     expect(screen.getByText("Port 8080")).toBeInTheDocument();
-  });
-
-  it("shows event throughput when stats load", async () => {
-    renderOverview();
-    await waitFor(() => {
-      expect(screen.getByText("100")).toBeInTheDocument();
-      expect(screen.getByText("Delivered")).toBeInTheDocument();
-      expect(screen.getByText("3")).toBeInTheDocument();
-      expect(screen.getByText("Failed")).toBeInTheDocument();
-    });
   });
 
   it("shows table detail rows with row counts", async () => {

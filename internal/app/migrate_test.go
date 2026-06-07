@@ -250,15 +250,6 @@ func TestGenerateStorageTablesEmptyWhenNoBuckets(t *testing.T) {
 	}
 }
 
-func TestGenerateEventsTable(t *testing.T) {
-	ddl := generateEventsTable()
-	joined := strings.Join(ddl, "\n")
-
-	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS _events")
-	mustContain(t, joined, "event_name TEXT NOT NULL")
-	mustContain(t, joined, "status TEXT NOT NULL DEFAULT 'pending'")
-}
-
 func TestGenerateStorageRLS_Public(t *testing.T) {
 	bucket := domain.Bucket{
 		Public: true,

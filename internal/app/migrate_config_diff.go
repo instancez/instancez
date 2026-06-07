@@ -41,7 +41,6 @@ func diffConfigs(old, new *domain.Config) configDiff {
 	diff.Additions = append(diff.Additions, diffNewTables(old, new)...)
 	diff.Additions = append(diff.Additions, diffNewColumns(old, new)...)
 	diff.Additions = append(diff.Additions, diffNewStorage(old, new)...)
-	diff.Additions = append(diff.Additions, diffNewEvents(old, new)...)
 
 	// Alterations (type changes, nullability changes)
 	diff.Alterations = append(diff.Alterations, diffColumnChanges(old, new)...)
@@ -186,8 +185,8 @@ func storageRLSPolicyNames(bucketName string, policies []domain.RLSPolicy) []str
 // that existed in old but are no longer in new.
 func diffRemovedRPCFunctions(old, new *domain.Config) []string {
 	var ddl []string
-	for name, fn := range old.Functions {
-		if _, exists := new.Functions[name]; !exists {
+	for name, fn := range old.RPC {
+		if _, exists := new.RPC[name]; !exists {
 			sig := rpcFunctionDropSig(fn)
 			ddl = append(ddl, fmt.Sprintf("DROP FUNCTION IF EXISTS public.\"%s\"(%s);", name, sig))
 		}
@@ -380,18 +379,6 @@ func diffNewStorage(old, new *domain.Config) []string {
 	}
 	if len(old.Storage) == 0 {
 		return generateStorageTables(new)
-	}
-	return nil
-}
-
-// diffNewEvents returns DDL to create the _events table when events are
-// newly added (present in new but not old).
-func diffNewEvents(old, new *domain.Config) []string {
-	if len(new.On) == 0 {
-		return nil
-	}
-	if len(old.On) == 0 {
-		return generateEventsTable()
 	}
 	return nil
 }

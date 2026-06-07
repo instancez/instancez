@@ -345,7 +345,18 @@ func buildSessionSetup(ctx context.Context, roles *domain.Roles) string {
 		if session.IsAuthenticated {
 			isAuthed = "true"
 		}
-		fmt.Fprintf(&b, "SET LOCAL app.user_id = %s;", quote(session.UserID))
+		// For service_role we deliberately leave app.user_id empty so that
+		// auth.uid() (NULLIF(current_setting('app.user_id',true),'')::uuid)
+		// resolves to NULL, matching Supabase — a service_role token has no
+		// subject. ultra-minted service tokens carry a synthetic all-zeros
+		// `sub` only to satisfy the middleware's non-empty-sub requirement;
+		// that synthetic value must NOT leak into auth.uid(). service_role has
+		// BYPASSRLS, so RLS does not depend on auth.uid() here anyway.
+		userID := session.UserID
+		if role == "service_role" {
+			userID = ""
+		}
+		fmt.Fprintf(&b, "SET LOCAL app.user_id = %s;", quote(userID))
 		fmt.Fprintf(&b, "SET LOCAL app.role = %s;", quote(role))
 		fmt.Fprintf(&b, "SET LOCAL app.email = %s;", quote(session.Email))
 		fmt.Fprintf(&b, "SET LOCAL app.jwt = %s;", quote(session.JWT))

@@ -66,30 +66,28 @@ Hexagonal layout under `internal/`:
 cmd/ultra/main.go
         │
         ▼
-internal/cli/         cobra commands (dev, serve, init, validate, slot, dbsetup)
+internal/cli/         cobra commands (dev, serve, init, validate, deploy, doctor, status, login, …)
         │
         ▼
-internal/app/         engine.go orchestrates lifecycle: migrate → seed → http + WAL consumer + event worker + watcher
+internal/app/         engine.go orchestrates lifecycle: migrate → seed → http + watcher
         │             — depends only on internal/domain interfaces
         ▼
-internal/domain/      pure types + port interfaces (OwnerDB, RequestDB, WALConsumer, Roles, Config, …)
+internal/domain/      pure types + port interfaces (OwnerDB, RequestDB, Roles, Config, …)
         ▲
         │ implemented by
-internal/adapter/     postgres (pgx pool, WAL/logical replication), http (Gin handlers + PostgREST surface),
+internal/adapter/     postgres (pgx pool), http (Gin handlers + PostgREST surface),
                       s3, resend, sendgrid
 ```
 
 **Two Postgres logins, by design.** This is non-obvious and load-bearing:
-- `ULTRABASE_OWNER_DATABASE_URL` → privileged login (`CREATEROLE CREATEDB BYPASSRLS REPLICATION`). Used for migrations, seeding, and the WAL replication slot. Lives behind `domain.OwnerDB`.
+- `ULTRABASE_OWNER_DATABASE_URL` → privileged login (`CREATEROLE CREATEDB BYPASSRLS REPLICATION`). Used for migrations and seeding. Lives behind `domain.OwnerDB`.
 - `ULTRABASE_AUTH_DATABASE_URL` → `authenticator` login (`NOINHERIT`) that is granted `anon` / `authenticated` / `service_role`. Every query the request pool runs goes through a tx that issues `SET LOCAL ROLE`: CRUD endpoints pick the role from the validated JWT, system endpoints (auth/admin/mfa/storage) default to `service_role`. NOINHERIT is load-bearing — without an explicit role switch the login carries no table privileges, which is exactly what we want as a regression guard. Lives behind `domain.RequestDB`. See `internal/adapter/postgres/context.go` and `pool.go` (`buildSessionSetup`, the auto-wrap on `Query`/`QueryRow`/`Exec`).
 
 **RLS is the only authorization layer.** There is no HTTP-level RBAC and no application-side role table. All access decisions are Postgres policies declared in `ultrabase.yaml` under each table's `rls:` block. The middleware's job is to validate the JWT and pick the right Postgres role; everything else is RLS. The `service_role` (used by the admin key path) has `BYPASSRLS`. See `internal/domain/database.go` for the `Roles` struct — wire JWT values (`anon`/`authenticated`/`service_role`) are fixed for supabase-js compat, but the Postgres role identifiers are configurable via `ULTRABASE_DB_*_ROLE` env vars.
 
-**WAL-based event system.** Webhooks and notifications are not triggered by application code on insert/update/delete. The `walConsumer` adapter reads logical replication output, the `EventWorker` in `internal/app/events.go` matches changes against `on:` rules from the YAML, and dispatches. This means: events fire even for changes made directly in psql or via raw SQL functions, and there is no synchronous webhook step in the request path.
-
 **YAML is the source of truth.** On boot, `internal/app/migrate.go` diffs `ultrabase.yaml` against the live database and applies migrations (gated by `--allow-destructive` for drops). `migrate_config_diff.go` is where the diff lives. The dev watcher (`watcher.go`) re-applies on file change.
 
-**HTTP surface mirrors PostgREST + Supabase.** `internal/adapter/http/` contains `crud_handler.go`, `rpc_handler.go`, `storage_v1_handler.go`, `auth_handler.go`, `mfa_handler.go`. The `where.go` / `select.go` / `csv.go` files implement PostgREST query parsing. Handlers must stay parseable by `@supabase/supabase-js`.
+**HTTP surface mirrors PostgREST + Supabase.** `internal/adapter/http/` contains `crud_handler.go`, `rpc_handler.go`, `storage_v1_handler.go`, `auth_handler.go`, `mfa_handler.go`. The `where.go` / `select.go` / `csv.go` files implement PostgREST query parsing. Handlers must stay parseable by `@supabase/supabase-js`. **Code functions** are served at `/functions/v1/<name>` by `functions_handler.go`; they run in Node.js worker processes managed by `internal/adapter/funcs/`. **The Postgres-RPC block was renamed from `functions:` to `rpc:` in Task 1** — `functions:` now declares code functions exclusively. Docs and examples must use `rpc:` for Postgres stored procedures.
 </architecture>
 
 ## Things that look weird but are intentional
@@ -100,6 +98,6 @@ internal/adapter/     postgres (pgx pool, WAL/logical replication), http (Gin ha
 - **`auth.uid()` and `auth.is_authenticated()`** are Postgres functions installed by migrations, used inside RLS policy expressions. They read session GUCs set by the request middleware, not application memory. They live in the `auth` schema and are typically referenced from RLS policies on tables that FK to `auth.users.id`.
 - **No auto-added columns, not even `id`.** The migrator does not inject primary keys. Every column, including PKs, must be declared in YAML.
 - **Reserved schemas:** `auth` and `storage`. The migrator owns these schemas; user tables declaring `schema: auth` or `schema: storage` are rejected at validation. The auth user record lives at `auth.users`; profile data is a regular user-defined table FK'd to `auth.users.id`.
-- **Underscore-prefixed names** are still reserved for framework-internal tables (`_events`, `_ultrabase_migrations`).
+- **Underscore-prefixed names** are still reserved for framework-internal tables (`_ultrabase_migrations`).
 - **The Lambda image is per-arch.** `Dockerfile.lambda` is built once per platform (`-lambda-amd64`, `-lambda-arm64`) because Lambda rejects multi-arch manifest lists. Don't "fix" this back to a manifest list.
 </gotchas>

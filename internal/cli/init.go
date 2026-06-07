@@ -168,6 +168,29 @@ func runInit(ctx context.Context, opts initOptions) error {
 		return err
 	}
 
+	// functions/: a working starter code function (served at /functions/v1/todos)
+	// plus its shared package.json. Written once; user edits are preserved on
+	// re-run. `ultra dev` runs `npm ci` here on boot.
+	if err := os.MkdirAll(filepath.Join(dir, "functions"), 0o755); err != nil {
+		return fmt.Errorf("creating functions dir: %w", err)
+	}
+	if err := applyWrite(dir, filepath.Join("functions", "package.json"), func(existing string) (string, writeAction) {
+		if existing != "" {
+			return existing, actionSkip
+		}
+		return scaffoldFunctionsPackageJSON(), actionCreate
+	}); err != nil {
+		return err
+	}
+	if err := applyWrite(dir, filepath.Join("functions", "todos.js"), func(existing string) (string, writeAction) {
+		if existing != "" {
+			return existing, actionSkip
+		}
+		return scaffoldTodosFunction(), actionCreate
+	}); err != nil {
+		return err
+	}
+
 	// .production.env.example: write once. After that, treat user edits as
 	// authoritative — the file is a static example, we have no live values to
 	// inject, and the user may have hand-tuned it for their environment.
@@ -308,6 +331,15 @@ tables:
     rls:
       - operations: [select, insert, update, delete]
         check: "user_id = auth.uid()"
+
+# Code functions: JavaScript HTTP handlers served at /functions/v1/<name>.
+# Source + shared deps live in ./functions (run by Node workers). See
+# functions/todos.js — a working CRUD handler over the todos table above.
+functions:
+  todos:
+    runtime: node
+    file: functions/todos.js
+    auth_required: true   # ultrabase returns 401 for anonymous callers
 `, name)
 }
 
@@ -317,6 +349,80 @@ func scaffoldGitignore() string {
 uploads/
 sdk/
 pgdata/
+functions/node_modules/
+`
+}
+
+// scaffoldFunctionsPackageJSON is the shared manifest for the project's code
+// functions. @supabase/supabase-js is required for ctx.supabase/serviceClient;
+// zod is used by the scaffolded todos handler for request validation.
+func scaffoldFunctionsPackageJSON() string {
+	return `{
+  "name": "functions",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.107.0",
+    "zod": "^3.23.8"
+  }
+}
+`
+}
+
+// scaffoldTodosFunction is a working starter code function over the scaffolded
+// todos table: list + create the signed-in user's todos, authorized by RLS.
+func scaffoldTodosFunction() string {
+	return `/**
+ * todos — a REST-ish handler over the scaffolded "todos" table.
+ *
+ * Served at /functions/v1/todos. auth_required: true, so anonymous callers get
+ * a 401 before this runs.
+ *
+ *   GET  /functions/v1/todos?status=active   → list the caller's todos
+ *   POST /functions/v1/todos  {"title":"..."} → create one
+ *
+ * ctx.supabase carries the CALLER's JWT, so the table's RLS policy
+ * (user_id = auth.uid()) authorizes every query as that user — you never check
+ * ownership in JS. Body validation uses the "zod" dependency.
+ */
+import { z } from "zod";
+
+const NewTodo = z.object({
+  title: z.string().min(1).max(200),
+  status: z.enum(["pending", "active", "done"]).optional(),
+});
+
+export default async function handler(req, ctx) {
+  if (req.method === "GET") {
+    let q = ctx.supabase
+      .from("todos")
+      .select("id, title, status, created_at")
+      .order("created_at", { ascending: false });
+    if (req.query.status) q = q.eq("status", req.query.status);
+    const { data, error } = await q;
+    if (error) return { status: 400, body: { error: error.message } };
+    return { status: 200, body: { todos: data } };
+  }
+
+  if (req.method === "POST") {
+    const parsed = NewTodo.safeParse(req.body);
+    if (!parsed.success) {
+      return { status: 400, body: { error: "invalid body", issues: parsed.error.issues } };
+    }
+    // user_id is stamped from the verified JWT; the RLS policy also enforces
+    // user_id = auth.uid(), so it can't be spoofed.
+    const { data, error } = await ctx.supabase
+      .from("todos")
+      .insert({ ...parsed.data, user_id: ctx.claims.sub })
+      .select()
+      .single();
+    if (error) return { status: 400, body: { error: error.message } };
+    ctx.log.info("todo created", { id: data.id });
+    return { status: 201, body: { todo: data } };
+  }
+
+  return { status: 405, body: { error: "method not allowed" } };
+}
 `
 }
 

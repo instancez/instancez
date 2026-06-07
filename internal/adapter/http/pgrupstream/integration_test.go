@@ -155,7 +155,7 @@ func buildConfig() *domain.Config {
 		// Declared here so /rest/v1/rpc/:name routes are mounted. The
 		// underlying Postgres functions are created by schemaSQL above
 		// (intentionally bypassing the Migrator for this package).
-		Functions: map[string]domain.Function{
+		RPC: map[string]domain.Function{
 			"add_numbers": {
 				Language: "sql", Volatility: "immutable", Security: "invoker",
 				Returns: domain.FuncReturn{Type: "int"}, ReturnCategory: "scalar",

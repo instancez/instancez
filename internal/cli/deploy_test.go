@@ -71,7 +71,7 @@ func TestRunDeployHappyPathYes(t *testing.T) {
 	}))
 
 	cfg := writeDeployConfig(t, home)
-	require.NoError(t, runDeploy(cfg, true))
+	require.NoError(t, runDeploy(cfg, true, ""))
 
 	require.Equal(t, []string{
 		"PUT /ultrabase/projects/abc/yaml",
@@ -94,7 +94,7 @@ func TestRunDeployMissingProjectID(t *testing.T) {
 	p := filepath.Join(home, "ultrabase.yaml")
 	require.NoError(t, os.WriteFile(p, []byte("version: 1\n"), 0o644))
 
-	err := runDeploy(p, true)
+	err := runDeploy(p, true, "")
 	assert.ErrorIs(t, err, errReported, "missing project_id should fail preflight with errReported")
 }
 
@@ -109,7 +109,7 @@ func TestRunDeployInvalidYAML(t *testing.T) {
 	p := filepath.Join(home, "ultrabase.yaml")
 	require.NoError(t, os.WriteFile(p, []byte("version: 99\n"), 0o644)) // unsupported version
 
-	err := runDeploy(p, true)
+	err := runDeploy(p, true, "")
 	assert.ErrorIs(t, err, errReported, "invalid yaml should fail preflight before any upload")
 }
 
@@ -146,7 +146,7 @@ func TestRunDeployConfirmDeclineAborts(t *testing.T) {
 	}))
 
 	cfg := writeDeployConfig(t, home)
-	err := runDeploy(cfg, false)
+	err := runDeploy(cfg, false, "")
 	require.NoError(t, err, "declining is a user choice, not a failure")
 	assert.True(t, confirmCalled, "confirm prompt must be shown when yes=false")
 	assert.Equal(t, []string{
@@ -181,7 +181,7 @@ func TestRunDeployConfirmAcceptPromotes(t *testing.T) {
 	t.Cleanup(swapPromptConfirm(func(string) bool { return true }))
 
 	cfg := writeDeployConfig(t, home)
-	require.NoError(t, runDeploy(cfg, false))
+	require.NoError(t, runDeploy(cfg, false, ""))
 	assert.True(t, deployHit, "accepting the prompt must trigger the promote/deploy call")
 }
 

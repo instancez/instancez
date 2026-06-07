@@ -4,11 +4,6 @@ import {
   Table2,
   Shield,
   HardDrive,
-  Zap,
-  Clock,
-  CheckCircle2,
-  AlertTriangle,
-  XCircle,
   Server,
   RefreshCw,
 } from "lucide-react";
@@ -48,7 +43,6 @@ export function Overview() {
 
   const tableCount = Object.keys(config.tables || {}).length;
   const bucketCount = Object.keys(config.storage || {}).length;
-  const triggerCount = Object.keys(config.on || {}).length;
   const functionCount = Object.keys(config.functions || {}).length;
   const authEnabled = !!config.auth;
 
@@ -59,8 +53,6 @@ export function Overview() {
   const totalStorage = stats
     ? Object.values(stats.storage).reduce((sum, s) => sum + s.total_bytes, 0)
     : 0;
-
-  const eventsLastHour = stats?.events.last_hour;
 
   return (
     <div className="pb-8">
@@ -145,61 +137,7 @@ export function Overview() {
             </p>
           </Card>
 
-          <Card hoverable onClick={() => navigate("/events")}>
-            <div className="flex items-center justify-between">
-              <CardTitle>Events</CardTitle>
-              <Zap size={18} className="text-muted-foreground" />
-            </div>
-            <CardValue>{triggerCount}</CardValue>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {triggerCount === 1 ? "trigger" : "triggers"} configured
-            </p>
-          </Card>
         </div>
-
-        {/* Event Throughput */}
-        {eventsLastHour && (
-          <Card>
-            <h3 className="text-sm font-medium text-foreground mb-4">
-              Event Throughput (Last Hour)
-            </h3>
-            <div className="grid grid-cols-3 gap-6">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-accent/10 flex items-center justify-center">
-                  <CheckCircle2 size={18} className="text-accent" />
-                </div>
-                <div>
-                  <p className="text-lg font-semibold text-foreground tabular-nums">
-                    {eventsLastHour.delivered}
-                  </p>
-                  <p className="text-xs text-muted-foreground">Delivered</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-warning/10 flex items-center justify-center">
-                  <AlertTriangle size={18} className="text-warning" />
-                </div>
-                <div>
-                  <p className="text-lg font-semibold text-foreground tabular-nums">
-                    {eventsLastHour.failed}
-                  </p>
-                  <p className="text-xs text-muted-foreground">Failed</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-destructive/10 flex items-center justify-center">
-                  <XCircle size={18} className="text-destructive" />
-                </div>
-                <div>
-                  <p className="text-lg font-semibold text-foreground tabular-nums">
-                    {eventsLastHour.dead}
-                  </p>
-                  <p className="text-xs text-muted-foreground">Dead Letter</p>
-                </div>
-              </div>
-            </div>
-          </Card>
-        )}
 
         {/* Tables Detail */}
         {tableCount > 0 && stats && (
@@ -264,37 +202,6 @@ export function Overview() {
                   </div>
                 </button>
               ))}
-            </div>
-          </Card>
-        )}
-
-        {/* Cron Schedules */}
-        {Object.entries(config.on || {}).some(
-          ([_, t]) => t.schedule
-        ) && (
-          <Card>
-            <h3 className="text-sm font-medium text-foreground mb-4">
-              Cron Schedules
-            </h3>
-            <div className="space-y-2">
-              {Object.entries(config.on)
-                .filter(([_, t]) => t.schedule)
-                .map(([name, trigger]) => (
-                  <div
-                    key={name}
-                    className="flex items-center justify-between px-3 py-2 rounded-lg"
-                  >
-                    <div className="flex items-center gap-3">
-                      <Clock size={14} className="text-muted-foreground" />
-                      <span className="text-sm font-mono text-foreground">
-                        {name}
-                      </span>
-                    </div>
-                    <span className="text-sm font-mono text-muted-foreground">
-                      {trigger.schedule}
-                    </span>
-                  </div>
-                ))}
             </div>
           </Card>
         )}

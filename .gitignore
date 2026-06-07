@@ -13,9 +13,12 @@ dist/
 tsconfig.tsbuildinfo
 
 # Environment
+# Catch every env file shape: .env, .env.local, .development.env, .production.env, etc.
 .env
 .env.*
+*.env
 !.env.example
+!*.env.example
 
 # IDE
 .idea/

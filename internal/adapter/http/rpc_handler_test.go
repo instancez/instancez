@@ -147,7 +147,7 @@ func TestRPCEndpoint_VolatileRejectsGET(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := &CRUDHandler{cfg: &domain.Config{
 		Tables: map[string]domain.Table{},
-		Functions: map[string]domain.Function{
+		RPC: map[string]domain.Function{
 			"write_stuff": {
 				Volatility:     "volatile",
 				Returns:        domain.FuncReturn{Type: "void"},
