@@ -5,6 +5,7 @@ import { PageHeader } from "../components/PageHeader";
 import { SaveBar } from "../components/SaveBar";
 import { CodeEditor } from "../components/CodeEditor";
 import { EmptyState } from "../components/EmptyState";
+import { Toggle } from "../components/Toggle";
 import type { Auth } from "../lib/types";
 
 function GoogleIcon({ size = 16 }: { size?: number }) {
@@ -91,18 +92,11 @@ export function AuthPage() {
               Enable email/password and OAuth authentication
             </p>
           </div>
-          <button
-            onClick={toggleAuth}
-            className={`relative w-11 h-6 rounded-full transition-colors cursor-pointer ${
-              enabled ? "bg-accent" : "bg-secondary"
-            }`}
-          >
-            <span
-              className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${
-                enabled ? "translate-x-5" : ""
-              }`}
-            />
-          </button>
+          <Toggle
+            aria-label="Enable authentication"
+            checked={enabled}
+            onChange={toggleAuth}
+          />
         </div>
 
         {!enabled ? (
@@ -138,37 +132,29 @@ export function AuthPage() {
                   />
                 </div>
               </div>
-              <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={auth.refresh_tokens}
-                  onChange={(e) => updateAuth((a) => ({ ...a, refresh_tokens: e.target.checked }))}
-                  className="rounded border-border"
-                />
-                Enable refresh tokens
-              </label>
+              <Toggle
+                checked={auth.refresh_tokens}
+                onChange={(v) => updateAuth((a) => ({ ...a, refresh_tokens: v }))}
+                label="Enable refresh tokens"
+              />
             </section>
 
             {/* Email Verification */}
             <section className="space-y-4">
               <h2 className="text-sm font-medium text-foreground">Email Verification</h2>
-              <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={auth.email?.verify_email || false}
-                  onChange={(e) =>
-                    updateAuth((a) => ({
-                      ...a,
-                      email: {
-                        ...(a.email || { verify_email: false, templates: {} }),
-                        verify_email: e.target.checked,
-                      },
-                    }))
-                  }
-                  className="rounded border-border"
-                />
-                Require email verification
-              </label>
+              <Toggle
+                checked={auth.email?.verify_email || false}
+                onChange={(v) =>
+                  updateAuth((a) => ({
+                    ...a,
+                    email: {
+                      ...(a.email || { verify_email: false, templates: {} }),
+                      verify_email: v,
+                    },
+                  }))
+                }
+                label="Require email verification"
+              />
 
               {auth.email?.verify_email && (
                 <div className="space-y-4 pl-6 border-l-2 border-border">
@@ -241,8 +227,10 @@ export function AuthPage() {
                         {provider === "google" ? <GoogleIcon size={18} /> : <GitHubIcon size={18} />}
                         {provider}
                       </span>
-                      <button
-                        onClick={() =>
+                      <Toggle
+                        aria-label={`Enable ${provider}`}
+                        checked={isEnabled}
+                        onChange={() =>
                           updateAuth((a) => ({
                             ...a,
                             [provider]: isEnabled
@@ -250,16 +238,7 @@ export function AuthPage() {
                               : { client_id: "", client_secret: "", redirect_url: "" },
                           }))
                         }
-                        className={`relative w-11 h-6 rounded-full transition-colors cursor-pointer ${
-                          isEnabled ? "bg-accent" : "bg-secondary"
-                        }`}
-                      >
-                        <span
-                          className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${
-                            isEnabled ? "translate-x-5" : ""
-                          }`}
-                        />
-                      </button>
+                      />
                     </div>
 
                     {isEnabled && config && (

@@ -1,7 +1,20 @@
 import { Outlet } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
+import { DriftBanner } from "./DriftBanner";
+import { EditModeBanner } from "./EditModeBanner";
+import { useConfigStatus } from "../hooks/useConfigStatus";
 import { ConfigContext, useConfigState } from "../hooks/useConfig";
 import { Loader2, AlertCircle, RefreshCw } from "lucide-react";
+
+function StatusBanners() {
+  const { data } = useConfigStatus();
+  return (
+    <>
+      <DriftBanner status={data} />
+      <EditModeBanner status={data} />
+    </>
+  );
+}
 
 export function Layout() {
   const configState = useConfigState();
@@ -38,11 +51,16 @@ export function Layout() {
 
   return (
     <ConfigContext.Provider value={configState}>
-      <div className="min-h-dvh bg-background">
-        <Sidebar />
-        <main className="ml-[272px] min-h-dvh">
-          <Outlet />
-        </main>
+      <div className="h-dvh bg-background flex flex-col overflow-hidden">
+        {/* Banners sit at the top of the shell so they push the sidebar AND
+            content down, rather than being overlapped by a fixed sidebar. */}
+        <StatusBanners />
+        <div className="flex flex-1 min-h-0">
+          <Sidebar />
+          <main className="flex-1 min-w-0 overflow-y-auto">
+            <Outlet />
+          </main>
+        </div>
       </div>
     </ConfigContext.Provider>
   );

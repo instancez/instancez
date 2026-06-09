@@ -12,7 +12,7 @@ export function SaveBar({ onSave, saving, errors, dirty = true }: SaveBarProps) 
   if (!dirty && errors.length === 0) return null;
 
   return (
-    <div className="fixed bottom-0 left-60 right-0 z-30 border-t border-border bg-surface/95 backdrop-blur-sm px-8 py-3">
+    <div className="fixed bottom-0 left-[272px] right-0 z-30 border-t border-border bg-surface/95 backdrop-blur-sm px-8 py-3">
       <div className="flex items-center justify-between gap-4">
         <div className="flex-1 min-w-0">
           {errors.length > 0 && (

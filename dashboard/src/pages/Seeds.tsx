@@ -5,6 +5,7 @@ import { useDialog } from "../components/Dialog";
 import { PageHeader } from "../components/PageHeader";
 import { SaveBar } from "../components/SaveBar";
 import { EmptyState } from "../components/EmptyState";
+import { Toggle } from "../components/Toggle";
 
 export function Seeds() {
   const { config, save, saving, saveErrors } = useConfig();
@@ -153,14 +154,14 @@ export function Seeds() {
                         {tableFields.map(([fieldName, field]) => (
                           <td key={fieldName} className="px-3 py-1.5">
                             {field.type === "boolean" ? (
-                              <input
-                                type="checkbox"
+                              <Toggle
+                                aria-label={fieldName}
                                 checked={!!row[fieldName]}
-                                onChange={(e) => {
+                                onChange={(v) => {
                                   const updated = [...currentSeeds];
                                   updated[rowIdx] = {
                                     ...updated[rowIdx]!,
-                                    [fieldName]: e.target.checked,
+                                    [fieldName]: v,
                                   };
                                   setSeeds((prev) => ({
                                     ...prev,
@@ -168,7 +169,6 @@ export function Seeds() {
                                   }));
                                   setDirty(true);
                                 }}
-                                className="rounded border-border cursor-pointer"
                               />
                             ) : field.enum && field.enum.length > 0 ? (
                               <select

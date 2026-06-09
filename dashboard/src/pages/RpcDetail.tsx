@@ -14,6 +14,7 @@ import { useDialog } from "../components/Dialog";
 import { PageHeader } from "../components/PageHeader";
 import { SaveBar } from "../components/SaveBar";
 import { CodeEditor } from "../components/CodeEditor";
+import { Toggle } from "../components/Toggle";
 import { POSTGRES_TYPES } from "../lib/utils";
 import type { RpcFunction, FuncArg } from "../lib/types";
 
@@ -148,16 +149,12 @@ export function RpcDetail() {
               className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-ring transition-colors"
             />
           </div>
-          <div className="flex items-end">
-            <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer pb-2">
-              <input
-                type="checkbox"
-                checked={fn.auth_required}
-                onChange={(e) => updateFn((f) => ({ ...f, auth_required: e.target.checked }))}
-                className="rounded border-border"
-              />
-              Auth required
-            </label>
+          <div className="flex items-end pb-2">
+            <Toggle
+              checked={fn.auth_required}
+              onChange={(v) => updateFn((f) => ({ ...f, auth_required: v }))}
+              label="Auth required"
+            />
           </div>
         </div>
 
@@ -273,23 +270,19 @@ export function RpcDetail() {
                       <option key={t} value={t}>{t}</option>
                     ))}
                   </select>
-                  <label className="flex items-center gap-1 text-xs text-foreground cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={arg.required}
-                      onChange={(e) =>
-                        updateFn((f) => {
-                          const newArgs = [...(f.args || [])];
-                          const cur = newArgs[idx];
-                          if (!cur) return f;
-                          newArgs[idx] = { ...cur, required: e.target.checked };
-                          return { ...f, args: newArgs };
-                        })
-                      }
-                      className="rounded border-border"
-                    />
-                    Required
-                  </label>
+                  <Toggle
+                    checked={arg.required}
+                    onChange={(v) =>
+                      updateFn((f) => {
+                        const newArgs = [...(f.args || [])];
+                        const cur = newArgs[idx];
+                        if (!cur) return f;
+                        newArgs[idx] = { ...cur, required: v };
+                        return { ...f, args: newArgs };
+                      })
+                    }
+                    label="Required"
+                  />
                   <button
                     onClick={() =>
                       updateFn((f) => ({

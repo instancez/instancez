@@ -5,7 +5,12 @@ import { useConfig } from "../hooks/useConfig";
 import { useDialog } from "../components/Dialog";
 import { PageHeader } from "../components/PageHeader";
 import { SaveBar } from "../components/SaveBar";
+import { Toggle } from "../components/Toggle";
 import type { CodeFunction } from "../lib/types";
+
+// Code-function runtimes ultrabase supports. validateCodeFunctions rejects
+// anything else, so this is a closed set rendered as a dropdown.
+const RUNTIMES = ["node"];
 
 export function FunctionDetail() {
   const { name } = useParams<{ name: string }>();
@@ -98,13 +103,17 @@ export function FunctionDetail() {
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">Runtime</label>
-            <input
-              type="text"
-              value={fn.runtime || ""}
+            <select
+              value={fn.runtime || "node"}
               onChange={(e) => updateFn((f) => ({ ...f, runtime: e.target.value }))}
-              placeholder="node"
-              className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm font-mono text-foreground focus:outline-none focus:border-ring transition-colors"
-            />
+              className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm text-foreground focus:outline-none focus:border-ring transition-colors cursor-pointer"
+            >
+              {RUNTIMES.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
           </div>
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">File</label>
@@ -126,16 +135,12 @@ export function FunctionDetail() {
               className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm font-mono text-foreground focus:outline-none focus:border-ring transition-colors"
             />
           </div>
-          <div className="flex items-end">
-            <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer pb-2">
-              <input
-                type="checkbox"
-                checked={fn.auth_required}
-                onChange={(e) => updateFn((f) => ({ ...f, auth_required: e.target.checked }))}
-                className="rounded border-border"
-              />
-              Auth required
-            </label>
+          <div className="flex items-end pb-2">
+            <Toggle
+              checked={fn.auth_required}
+              onChange={(v) => updateFn((f) => ({ ...f, auth_required: v }))}
+              label="Auth required"
+            />
           </div>
         </div>
 

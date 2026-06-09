@@ -15,6 +15,7 @@ import { PageHeader } from "../components/PageHeader";
 import { SaveBar } from "../components/SaveBar";
 import { CodeEditor } from "../components/CodeEditor";
 import { TagInput } from "../components/TagInput";
+import { Toggle } from "../components/Toggle";
 import { DiffViewer } from "../components/DiffViewer";
 import { getConfigDiff } from "../api/client";
 import { POSTGRES_TYPES, SQL_DEFAULTS, RLS_OPERATIONS, SEARCH_CONFIGS } from "../lib/utils";
@@ -240,21 +241,17 @@ export function TableDetail() {
                       />
                     </div>
                     <div className="flex gap-4">
-                      <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={idx.unique}
-                          onChange={(e) =>
-                            updateTable((t) => {
-                              const indexes = [...(t.indexes || [])];
-                              indexes[i] = { ...indexes[i]!, unique: e.target.checked };
-                              return { ...t, indexes };
-                            })
-                          }
-                          className="rounded border-border"
-                        />
-                        Unique
-                      </label>
+                      <Toggle
+                        checked={idx.unique}
+                        onChange={(v) =>
+                          updateTable((t) => {
+                            const indexes = [...(t.indexes || [])];
+                            indexes[i] = { ...indexes[i]!, unique: v };
+                            return { ...t, indexes };
+                          })
+                        }
+                        label="Unique"
+                      />
                       <div className="flex-1">
                         <input
                           type="text"
@@ -576,15 +573,14 @@ function SeedsTab({
                     {tableFields.map(([fieldName, field]) => (
                       <td key={fieldName} className="px-3 py-1.5">
                         {field.type === "boolean" ? (
-                          <input
-                            type="checkbox"
+                          <Toggle
+                            aria-label={fieldName}
                             checked={!!row[fieldName]}
-                            onChange={(e) => {
+                            onChange={(v) => {
                               const updated = [...seeds];
-                              updated[rowIdx] = { ...updated[rowIdx]!, [fieldName]: e.target.checked };
+                              updated[rowIdx] = { ...updated[rowIdx]!, [fieldName]: v };
                               onChange(updated);
                             }}
-                            className="rounded border-border cursor-pointer"
                           />
                         ) : field.enum && field.enum.length > 0 ? (
                           <select
@@ -720,29 +716,32 @@ function FieldRow({
           ))}
         </select>
       </td>
-      <td className="text-center px-2 py-2">
-        <input
-          type="checkbox"
-          checked={field.primary_key || false}
-          onChange={(e) => onChange({ ...field, primary_key: e.target.checked })}
-          className="rounded border-border cursor-pointer"
-        />
+      <td className="px-2 py-2">
+        <div className="flex justify-center">
+          <Toggle
+            aria-label="primary key"
+            checked={field.primary_key || false}
+            onChange={(v) => onChange({ ...field, primary_key: v })}
+          />
+        </div>
       </td>
-      <td className="text-center px-2 py-2">
-        <input
-          type="checkbox"
-          checked={field.required || false}
-          onChange={(e) => onChange({ ...field, required: e.target.checked })}
-          className="rounded border-border cursor-pointer"
-        />
+      <td className="px-2 py-2">
+        <div className="flex justify-center">
+          <Toggle
+            aria-label="required"
+            checked={field.required || false}
+            onChange={(v) => onChange({ ...field, required: v })}
+          />
+        </div>
       </td>
-      <td className="text-center px-2 py-2">
-        <input
-          type="checkbox"
-          checked={field.unique || false}
-          onChange={(e) => onChange({ ...field, unique: e.target.checked })}
-          className="rounded border-border cursor-pointer"
-        />
+      <td className="px-2 py-2">
+        <div className="flex justify-center">
+          <Toggle
+            aria-label="unique"
+            checked={field.unique || false}
+            onChange={(v) => onChange({ ...field, unique: v })}
+          />
+        </div>
       </td>
       <td className="px-3 py-2">
         <input

@@ -92,8 +92,8 @@ describe("AuthPage", () => {
     renderAuth(makeConfig(false));
     expect(screen.getByText("Auth is disabled")).toBeInTheDocument();
 
-    // Click the toggle button (the first one on the page)
-    const toggles = screen.getAllByRole("button");
+    // Click the auth enable/disable toggle (the first switch on the page)
+    const toggles = screen.getAllByRole("switch");
     const authToggle = toggles[0]!;
     await userEvent.click(authToggle);
 

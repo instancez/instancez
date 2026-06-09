@@ -7,6 +7,7 @@ import { PageHeader } from "../components/PageHeader";
 import { SaveBar } from "../components/SaveBar";
 import { TagInput } from "../components/TagInput";
 import { CodeEditor } from "../components/CodeEditor";
+import { Toggle } from "../components/Toggle";
 import { RLS_OPERATIONS } from "../lib/utils";
 import type { Bucket } from "../lib/types";
 
@@ -107,18 +108,18 @@ export function StorageDetail() {
           />
         </div>
 
-        <label className="flex items-center gap-3 text-sm text-foreground cursor-pointer">
-          <input
-            type="checkbox"
-            checked={bucket.public}
-            onChange={(e) => updateBucket((b) => ({ ...b, public: e.target.checked }))}
-            className="rounded border-border"
-          />
-          Public bucket
-          <span className="text-xs text-muted-foreground">
-            (allows unauthenticated downloads)
-          </span>
-        </label>
+        <Toggle
+          checked={bucket.public}
+          onChange={(v) => updateBucket((b) => ({ ...b, public: v }))}
+          label={
+            <>
+              Public bucket{" "}
+              <span className="text-xs text-muted-foreground">
+                (allows unauthenticated downloads)
+              </span>
+            </>
+          }
+        />
 
         {/* RLS Policies */}
         <div>
