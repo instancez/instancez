@@ -61,6 +61,72 @@ func dbConnections(ctx context.Context, poolCfg domain.PoolConfig) (domain.Owner
 	return owner, auth, roles, nil
 }
 
+// roleBootstrap reports the outcome of ensureRoles so the caller can log it.
+type roleBootstrap struct {
+	Ran     bool   // bootstrap executed this run
+	EnvFile string // file the derived DSNs were written to
+}
+
+// shouldBootstrap reports whether ensureRoles should provision roles: only when
+// the two role DSNs are NOT both already present AND a superuser DSN is
+// available to bootstrap from.
+func shouldBootstrap(ownerDSN, authDSN, superuserDSN string) bool {
+	bothPresent := ownerDSN != "" && authDSN != ""
+	return !bothPresent && superuserDSN != ""
+}
+
+// ensureRoles provisions the ultrabase role layout from a privileged/superuser
+// DSN when the two role DSNs are absent, writing the derived owner +
+// authenticator DSNs into the process env (so the unchanged preflight checks
+// and dbConnections pick them up) and persisting them to envFile for reuse on
+// the next run. It is a no-op when both role DSNs are already set or when no
+// superuser DSN is available.
+func ensureRoles(ctx context.Context, superuserDSN, envFile string) (roleBootstrap, error) {
+	owner := os.Getenv("ULTRABASE_OWNER_DATABASE_URL")
+	auth := os.Getenv("ULTRABASE_AUTH_DATABASE_URL")
+	if !shouldBootstrap(owner, auth, superuserDSN) {
+		return roleBootstrap{}, nil
+	}
+
+	ownerDSN, authDSN, err := bootstrapDB(ctx, superuserDSN)
+	if err != nil {
+		return roleBootstrap{}, err
+	}
+	os.Setenv("ULTRABASE_OWNER_DATABASE_URL", ownerDSN)
+	os.Setenv("ULTRABASE_AUTH_DATABASE_URL", authDSN)
+
+	if err := persistDSNs(envFile, ownerDSN, authDSN); err != nil {
+		return roleBootstrap{}, err
+	}
+	return roleBootstrap{Ran: true, EnvFile: envFile}, nil
+}
+
+// persistDSNs writes the derived owner + authenticator DSNs into envFile. When
+// the file is absent it is created from the scaffold template; when present the
+// two keys are merged in (preserving the user's other lines and comments).
+func persistDSNs(envFile, ownerDSN, authDSN string) error {
+	var existing string
+	if data, err := os.ReadFile(envFile); err == nil {
+		existing = string(data)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("read %s: %w", envFile, err)
+	}
+
+	var content string
+	if existing == "" {
+		content = scaffoldDevelopmentEnv(ownerDSN, authDSN)
+	} else {
+		content = mergeEnvFile(existing, []envKV{
+			{Key: "ULTRABASE_OWNER_DATABASE_URL", Val: ownerDSN},
+			{Key: "ULTRABASE_AUTH_DATABASE_URL", Val: authDSN},
+		})
+	}
+	if err := os.WriteFile(envFile, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", envFile, err)
+	}
+	return nil
+}
+
 func rolesFromEnv() domain.Roles {
 	r := domain.DefaultRoles()
 	if v := os.Getenv("ULTRABASE_DB_AUTHENTICATOR_ROLE"); v != "" {
