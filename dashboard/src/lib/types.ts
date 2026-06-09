@@ -9,7 +9,8 @@ export interface Config {
   auth: Auth | null;
   tables: Record<string, Table>;
   storage: Record<string, Bucket>;
-  functions: Record<string, FunctionDef>;
+  rpc: Record<string, RpcFunction>;
+  functions: Record<string, CodeFunction>;
   seeds: Record<string, Record<string, unknown>[]>;
   _checksum?: string;
 }
@@ -129,7 +130,7 @@ export interface Bucket {
   rls: RLSPolicy[];
 }
 
-export interface FunctionDef {
+export interface RpcFunction {
   description: string;
   auth_required: boolean;
   language: string;
@@ -138,6 +139,14 @@ export interface FunctionDef {
   args: FuncArg[];
   body: string;
   returns: FuncReturn;
+}
+
+export interface CodeFunction {
+  runtime: string;
+  file: string;
+  auth_required: boolean;
+  timeout?: string;
+  env?: Record<string, string>;
 }
 
 export interface FuncArg {
