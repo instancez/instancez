@@ -33,6 +33,7 @@ const baseConfig: Config = {
   storage: {
     avatars: { max_size: "5MB", types: ["image/*"], public: true, rls: [] },
   },
+  rpc: {},
   functions: {},
   seeds: {},
   providers: { email: null, storage: null },
@@ -110,7 +111,7 @@ describe("Overview", () => {
     expect(screen.getByText("Port 8080")).toBeInTheDocument();
   });
 
-  it("shows table detail rows with row counts", async () => {
+  it("shows table detail rows with field counts", async () => {
     renderOverview();
     await waitFor(() => {
       expect(screen.getByText("todos")).toBeInTheDocument();

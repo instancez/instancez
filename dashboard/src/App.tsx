@@ -15,10 +15,11 @@ const TableDetail = lazy(() => import("./pages/TableDetail").then((m) => ({ defa
 const AuthPage = lazy(() => import("./pages/Auth").then((m) => ({ default: m.AuthPage })));
 const Storage = lazy(() => import("./pages/Storage").then((m) => ({ default: m.Storage })));
 const StorageDetail = lazy(() => import("./pages/StorageDetail").then((m) => ({ default: m.StorageDetail })));
+const Rpc = lazy(() => import("./pages/Rpc").then((m) => ({ default: m.Rpc })));
+const RpcDetail = lazy(() => import("./pages/RpcDetail").then((m) => ({ default: m.RpcDetail })));
 const Functions = lazy(() => import("./pages/Functions").then((m) => ({ default: m.Functions })));
 const FunctionDetail = lazy(() => import("./pages/FunctionDetail").then((m) => ({ default: m.FunctionDetail })));
 const ProvidersPage = lazy(() => import("./pages/Providers").then((m) => ({ default: m.ProvidersPage })));
-const SettingsPage = lazy(() => import("./pages/Settings").then((m) => ({ default: m.SettingsPage })));
 
 function PageLoader() {
   return (
@@ -72,10 +73,11 @@ export function App() {
             <Route path="auth" element={<AuthPage />} />
             <Route path="storage" element={<Storage />} />
             <Route path="storage/:name" element={<StorageDetail />} />
+            <Route path="rpc" element={<Rpc />} />
+            <Route path="rpc/:name" element={<RpcDetail />} />
             <Route path="functions" element={<Functions />} />
             <Route path="functions/:name" element={<FunctionDetail />} />
             <Route path="providers" element={<ProvidersPage />} />
-            <Route path="settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

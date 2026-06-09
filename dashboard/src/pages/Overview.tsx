@@ -8,11 +8,12 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
-import { getStats, getStatus } from "../api/client";
+import { getStats, getStatus, getConfig } from "../api/client";
+import { downloadYamlFromConfig } from "../lib/downloadYaml";
 import { PageHeader } from "../components/PageHeader";
 import { Card, CardTitle, CardValue } from "../components/Card";
 import { StatusBadge } from "../components/StatusBadge";
-import { formatBytes, formatNumber } from "../lib/utils";
+import { formatBytes } from "../lib/utils";
 import type { StatsResponse } from "../lib/types";
 
 export function Overview() {
@@ -35,6 +36,11 @@ export function Overview() {
     }
   }
 
+  async function handleDownload() {
+    const cfg = await getConfig();
+    downloadYamlFromConfig(cfg);
+  }
+
   useEffect(() => {
     loadData();
   }, []);
@@ -46,10 +52,6 @@ export function Overview() {
   const functionCount = Object.keys(config.functions || {}).length;
   const authEnabled = !!config.auth;
 
-  const totalRows = stats
-    ? Object.values(stats.tables).reduce((sum, t) => sum + t.row_count, 0)
-    : 0;
-
   const totalStorage = stats
     ? Object.values(stats.storage).reduce((sum, s) => sum + s.total_bytes, 0)
     : 0;
@@ -60,14 +62,22 @@ export function Overview() {
         title={config.project.name || "Ultrabase Project"}
         description={config.project.description || "Project overview and health"}
         actions={
-          <button
-            onClick={loadData}
-            disabled={loading}
-            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
-          >
-            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
-            Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleDownload}
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
+            >
+              Download config as YAML
+            </button>
+            <button
+              onClick={loadData}
+              disabled={loading}
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
+            >
+              <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+              Refresh
+            </button>
+          </div>
         }
       />
 
@@ -102,9 +112,6 @@ export function Overview() {
               <Table2 size={18} className="text-muted-foreground" />
             </div>
             <CardValue>{tableCount}</CardValue>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {formatNumber(totalRows)} total rows
-            </p>
           </Card>
 
           <Card hoverable onClick={() => navigate("/auth")}>
@@ -140,7 +147,7 @@ export function Overview() {
         </div>
 
         {/* Tables Detail */}
-        {tableCount > 0 && stats && (
+        {tableCount > 0 && (
           <Card>
             <h3 className="text-sm font-medium text-foreground mb-4">
               Tables
@@ -161,9 +168,6 @@ export function Overview() {
                       {Object.keys(table.fields || {}).length} fields
                     </span>
                   </div>
-                  <span className="text-sm text-muted-foreground tabular-nums">
-                    {formatNumber(stats.tables[name]?.row_count ?? 0)} rows
-                  </span>
                 </button>
               ))}
             </div>

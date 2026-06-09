@@ -23,6 +23,7 @@ const makeConfig = (authEnabled: boolean): Config => ({
       }
     : null,
   storage: {},
+  rpc: {},
   functions: {},
   seeds: {},
   providers: { email: null, storage: null },

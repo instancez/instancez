@@ -1,79 +1,31 @@
 import { useNavigate } from "react-router-dom";
-import { Plus, Code2 } from "lucide-react";
+import { Code2 } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
-import { useDialog } from "../components/Dialog";
 import { PageHeader } from "../components/PageHeader";
 import { EmptyState } from "../components/EmptyState";
 import { StatusBadge } from "../components/StatusBadge";
 
 export function Functions() {
-  const { config, save } = useConfig();
+  const { config } = useConfig();
   const navigate = useNavigate();
-  const dialog = useDialog();
-
   if (!config) return null;
 
   const functions = Object.entries(config.functions || {}).sort(([a], [b]) =>
     a.localeCompare(b)
   );
 
-  async function addFunction() {
-    const name = await dialog.prompt("Function name:");
-    if (!name?.trim()) return;
-    const fnName = name.trim().toLowerCase().replace(/\s+/g, "_");
-
-    const updated = {
-      ...config!,
-      functions: {
-        ...config!.functions,
-        [fnName]: {
-          description: "",
-          auth_required: true,
-          language: "plpgsql",
-          volatility: "volatile",
-          security: "invoker",
-          args: [],
-          body: "BEGIN\n  -- function body\nEND;",
-          returns: { type: "void" },
-        },
-      },
-    };
-
-    const ok = await save(updated);
-    if (ok) navigate(`/functions/${fnName}`);
-  }
-
   return (
     <div>
       <PageHeader
-        title="Functions"
-        description={`${functions.length} custom SQL function${functions.length !== 1 ? "s" : ""}`}
-        actions={
-          <button
-            onClick={addFunction}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-hover transition-colors cursor-pointer"
-          >
-            <Plus size={14} />
-            Add Function
-          </button>
-        }
+        title="Edge Functions"
+        description={`${functions.length} code function${functions.length !== 1 ? "s" : ""}`}
       />
-
       <div className="px-8">
         {functions.length === 0 ? (
           <EmptyState
             icon={Code2}
-            title="No functions yet"
-            description="Create custom SQL functions exposed as REST endpoints."
-            action={
-              <button
-                onClick={addFunction}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-hover transition-colors cursor-pointer"
-              >
-                <Plus size={14} />
-                Add Function
-              </button>
-            }
+            title="No edge functions"
+            description="Declare a function in ultrabase.yaml with a runtime and a .js file under functions/ (served at /functions/v1/<name>)."
           />
         ) : (
           <div className="space-y-2">
@@ -91,21 +43,18 @@ export function Functions() {
                   <span className="text-sm font-mono font-medium text-foreground">
                     {name}
                   </span>
-                  {fn.description && (
-                    <span className="text-xs text-muted-foreground">
-                      {fn.description}
-                    </span>
-                  )}
+                  <span className="text-xs font-mono text-muted-foreground">
+                    {fn.file}
+                  </span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <StatusBadge variant="info">{fn.language}</StatusBadge>
+                  <StatusBadge variant="info">{fn.runtime || "node"}</StatusBadge>
                   {fn.auth_required && (
                     <StatusBadge variant="info">auth</StatusBadge>
                   )}
-                  <StatusBadge variant="muted">
-                    {(fn.args || []).length} arg
-                    {(fn.args || []).length !== 1 ? "s" : ""}
-                  </StatusBadge>
+                  {fn.timeout && (
+                    <StatusBadge variant="muted">{fn.timeout}</StatusBadge>
+                  )}
                 </div>
               </button>
             ))}

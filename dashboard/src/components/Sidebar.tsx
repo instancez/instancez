@@ -5,8 +5,8 @@ import {
   Shield,
   HardDrive,
   Code2,
+  Database,
   Plug,
-  Settings,
   ExternalLink,
 } from "lucide-react";
 import { Logo } from "./Logo";
@@ -16,9 +16,9 @@ const NAV_ITEMS = [
   { to: "/tables", icon: Table2, label: "Tables" },
   { to: "/auth", icon: Shield, label: "Auth" },
   { to: "/storage", icon: HardDrive, label: "Storage" },
-  { to: "/functions", icon: Code2, label: "Functions" },
+  { to: "/rpc", icon: Database, label: "Database Functions" },
+  { to: "/functions", icon: Code2, label: "Edge Functions" },
   { to: "/providers", icon: Plug, label: "Providers" },
-  { to: "/settings", icon: Settings, label: "Settings" },
 ] as const;
 
 export function Sidebar() {

@@ -13,6 +13,7 @@ const baseConfig: Config = {
   tables: {},
   auth: null,
   storage: {},
+  rpc: {},
   functions: {},
   seeds: {},
   providers: { email: null, storage: null },
