@@ -32,7 +32,7 @@ Concrete rules that fall out of this:
 **Build & run:**
 ```sh
 go build -o ultra ./cmd/ultra
-./ultra dev              # hot-reload dev server (requires the two DB URLs + ULTRABASE_ADMIN_KEY in env; JWT keys are DB-managed via auth.jwt_keys)
+./ultra dev              # hot-reload dev server (set ULTRABASE_DATABASE_URL — a superuser DSN — and dev provisions the two role DSNs on first run; or set them directly. JWT keys are DB-managed via auth.jwt_keys)
 ./ultra serve            # production mode
 ./ultra validate         # YAML syntax check, no DB
 docker compose -f docker-compose.dev.yaml up   # full stack: postgres + backend + dashboard

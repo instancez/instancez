@@ -13,8 +13,9 @@ import (
 )
 
 // ownerRole and authenticatorRole are the default login role names provisioned
-// by `ultra init`. They match the names dbboot uses for integration tests so a
-// dev-bootstrapped project behaves identically to a test-container project.
+// by `ultra dev` (via ensureRoles) when bootstrapping from a superuser DSN. They
+// match the names dbboot uses for integration tests so a dev-bootstrapped
+// project behaves identically to a test-container project.
 const (
 	ownerRole         = "ultrabase_owner"
 	authenticatorRole = "authenticator"

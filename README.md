@@ -49,7 +49,7 @@ storage:
 ```
 
 ```sh
-ultra dev --use-dsn
+ultra dev
 # REST API on :8080, dashboard on :5173
 ```
 
@@ -84,24 +84,25 @@ This starts PostgreSQL 17, the Ultrabase API server on port `8080`, and the dash
 
 go build -o ultra ./cmd/ultra
 
-# Initialize the project and bootstrap a Postgres in one step. Supply any
-# CREATEROLE-capable DSN (superuser works); ultra creates ultrabase_owner +
-# authenticator + the API roles and writes the resulting DSNs to .development.env.
-./ultra init --with-dsn postgres://superuser:pass@localhost:5432/mydb
+# Scaffold project files (no DB calls).
+./ultra init
 
 export JWT_SECRET="your-secret"
 export ULTRABASE_ADMIN_KEY="your-admin-key"
 
-./ultra dev --use-dsn
+# 1. point ultra at a superuser DSN
+export ULTRABASE_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres
+# 2. dev provisions roles on first run
+./ultra dev
 ```
 
 ### CLI Commands
 
 ```sh
-ultra init [--with-dsn <url>]        # Scaffold project; optionally bootstrap a DB
-ultra dev --use-dsn                   # Start dev server with hot-reload
-ultra serve                           # Production mode (reads .production.env)
-ultra validate [--use-dsn <url>]      # YAML syntax check; with DSN, also plan a migration
+ultra init                           # Scaffold project (no DB calls)
+ultra dev                            # Start dev server with hot-reload
+ultra serve                          # Production mode (reads .production.env)
+ultra validate                       # YAML syntax check, no DB
 ultra version
 ```
 
@@ -341,6 +342,7 @@ Environment variables:
 
 | Variable | Required | Description |
 |---|---|---|
+| `ULTRABASE_DATABASE_URL` | No (dev only) | Superuser/privileged DSN. `ultra dev` provisions the role layout from it and writes the derived owner/authenticator DSNs to `.development.env`. Not used by `serve`. |
 | `ULTRABASE_OWNER_DATABASE_URL` | Yes | Privileged login (migrations, seeding, replication). Role needs `CREATEROLE`, `CREATEDB`, `BYPASSRLS`, `REPLICATION`. |
 | `ULTRABASE_AUTH_DATABASE_URL` | Yes | Authenticator login for HTTP requests. `NOINHERIT`; ultrabase issues `SET LOCAL ROLE` per transaction (CRUD: from JWT; system endpoints: `service_role`). |
 | `ULTRABASE_DB_AUTHENTICATOR_ROLE` | No | Override the authenticator role name (default: `authenticator`). |
