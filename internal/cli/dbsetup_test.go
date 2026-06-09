@@ -63,9 +63,9 @@ func TestRolesFromEnv_PartialOverride(t *testing.T) {
 
 func TestShouldBootstrap(t *testing.T) {
 	cases := []struct {
-		name                       string
-		owner, auth, superuser     string
-		want                       bool
+		name                   string
+		owner, auth, superuser string
+		want                   bool
 	}{
 		{"both role DSNs set → skip even with superuser", "o", "a", "super", false},
 		{"both role DSNs set, no superuser → skip", "o", "a", "", false},
