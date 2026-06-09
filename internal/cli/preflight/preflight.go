@@ -40,10 +40,10 @@ func expectedRoleNames() []string {
 
 // Result is the outcome of a single preflight check.
 type Result struct {
-	Name     string
-	OK       bool
-	Detail   string
-	FixHint  string
+	Name    string
+	OK      bool
+	Detail  string
+	FixHint string
 }
 
 // Check is a function that performs one preflight check and returns its Result.
@@ -120,21 +120,21 @@ func DSNPresentCheck(lookup func(string) string) Check {
 				Name:    "DSN env vars present",
 				OK:      false,
 				Detail:  EnvOwnerDSN + " and " + EnvAuthDSN + " are not set",
-				FixHint: "run `ultra init --with-dsn <dsn>` or set the env vars in .development.env",
+				FixHint: "set ULTRABASE_DATABASE_URL (a superuser DSN) in .development.env and run `ultra dev`, or set " + EnvOwnerDSN + " + " + EnvAuthDSN + " directly",
 			}
 		case owner == "":
 			return Result{
 				Name:    "DSN env vars present",
 				OK:      false,
 				Detail:  EnvOwnerDSN + " is not set",
-				FixHint: "run `ultra init --with-dsn <dsn>` or set " + EnvOwnerDSN + " in .development.env",
+				FixHint: "set ULTRABASE_DATABASE_URL (a superuser DSN) and run `ultra dev`, or set " + EnvOwnerDSN + " in .development.env",
 			}
 		case auth == "":
 			return Result{
 				Name:    "DSN env vars present",
 				OK:      false,
 				Detail:  EnvAuthDSN + " is not set",
-				FixHint: "run `ultra init --with-dsn <dsn>` or set " + EnvAuthDSN + " in .development.env",
+				FixHint: "set ULTRABASE_DATABASE_URL (a superuser DSN) and run `ultra dev`, or set " + EnvAuthDSN + " in .development.env",
 			}
 		default:
 			return Result{Name: "DSN env vars present", OK: true}
@@ -247,7 +247,7 @@ func ConnectCheck(name, dsn string) Check {
 				Name:    name,
 				OK:      false,
 				Detail:  "DSN is empty",
-				FixHint: "run `ultra init --with-dsn <dsn>` or set the env var in .development.env",
+				FixHint: "set ULTRABASE_DATABASE_URL (a superuser DSN) and run `ultra dev`, or set the role DSNs in .development.env",
 			}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
@@ -258,7 +258,7 @@ func ConnectCheck(name, dsn string) Check {
 				Name:    name,
 				OK:      false,
 				Detail:  "could not open pool: " + err.Error(),
-				FixHint: "run `ultra init --with-dsn <dsn>` to bootstrap the database",
+				FixHint: "set ULTRABASE_DATABASE_URL (a superuser DSN) so `ultra dev` provisions the database",
 			}
 		}
 		defer pool.Close()
@@ -395,7 +395,7 @@ func roleLayoutDecision(existing, grants map[string]bool) Result {
 			Name:    "role layout",
 			OK:      false,
 			Detail:  detail,
-			FixHint: "run `ultra init --with-dsn <dsn>`",
+			FixHint: "set ULTRABASE_DATABASE_URL (a superuser DSN) and run `ultra dev` to provision the roles",
 		}
 	}
 
@@ -420,7 +420,7 @@ func roleLayoutDecision(existing, grants map[string]bool) Result {
 			Name:    "role layout",
 			OK:      false,
 			Detail:  detail,
-			FixHint: "run `ultra init --with-dsn <dsn>`",
+			FixHint: "set ULTRABASE_DATABASE_URL (a superuser DSN) and run `ultra dev` to provision the roles",
 		}
 	}
 
@@ -440,7 +440,7 @@ func RoleLayoutCheck(roles RoleReporter) Check {
 				Name:    "role layout",
 				OK:      false,
 				Detail:  "could not query pg_roles: " + err.Error(),
-				FixHint: "run `ultra init --with-dsn <dsn>` to bootstrap the database",
+				FixHint: "set ULTRABASE_DATABASE_URL (a superuser DSN) and run `ultra dev` to provision the roles",
 			}
 		}
 		grants, err := roles.AuthenticatorGrants()
@@ -449,7 +449,7 @@ func RoleLayoutCheck(roles RoleReporter) Check {
 				Name:    "role layout",
 				OK:      false,
 				Detail:  "could not query pg_auth_members: " + err.Error(),
-				FixHint: "run `ultra init --with-dsn <dsn>` to bootstrap the database",
+				FixHint: "set ULTRABASE_DATABASE_URL (a superuser DSN) and run `ultra dev` to provision the roles",
 			}
 		}
 		return roleLayoutDecision(existing, grants)
