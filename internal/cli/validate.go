@@ -35,7 +35,7 @@ migration is planned but never applied — this is a dry-run.
 With --project, validate uploads the local yaml to the cloud project (from
 project.cloud.project_id) and prints the diff vs. the deployed version.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if _, err := applyEnvDefaults(cmd.Flags(), map[string][]string{"config": configEnvAliases}, os.Getenv); err != nil {
+			if _, err := applyEnvDefaults(cmd.Flags(), nil, os.Getenv); err != nil {
 				return err
 			}
 			if useProject {
@@ -45,7 +45,7 @@ project.cloud.project_id) and prints the diff vs. the deployed version.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&configPath, "config", "ultrabase.yaml", "config source (env: ULTRABASE_CONFIG_SOURCE or ULTRABASE_CONFIG)")
+	cmd.Flags().StringVar(&configPath, "config", "ultrabase.yaml", "config source (env: ULTRABASE_CONFIG)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output errors as JSON (for CI)")
 	cmd.Flags().StringVar(&useDSN, "use-dsn", "", "after syntax check, plan a migration against this owner-class DSN")
 	cmd.Flags().BoolVar(&useProject, "project", false, "preview migration against the cloud project from ultrabase.yaml")

@@ -113,29 +113,14 @@ func requireLocalConfig(path string) error {
 	return requireConfigFile(path)
 }
 
-// configEnvAliases is the env-var precedence list backing the --config flag:
-// the new ULTRABASE_CONFIG_SOURCE name first, the legacy ULTRABASE_CONFIG second.
-var configEnvAliases = []string{"ULTRABASE_CONFIG_SOURCE", "ULTRABASE_CONFIG"}
-
-// serveEnvAliases / devEnvAliases give the env-var names that back each flag.
-// A flag absent from the map uses the generic ULTRABASE_<FLAG_UPPER_SNAKE>
-// rule; a flag mapped to an empty slice has no env binding at all.
-var (
-	serveEnvAliases = map[string][]string{
-		"config":         configEnvAliases,
-		"watch":          {"ULTRABASE_CONFIG_WATCH"},
-		"watch-interval": {"ULTRABASE_CONFIG_WATCH_INTERVAL"},
-		"dashboard":      {"ULTRABASE_DASHBOARD"},
-	}
-	devEnvAliases = map[string][]string{
-		"config":         configEnvAliases,
-		"watch":          {"ULTRABASE_CONFIG_WATCH"},
-		"watch-interval": {"ULTRABASE_CONFIG_WATCH_INTERVAL"},
-		"dashboard":      {"ULTRABASE_DASHBOARD"},
-		"no-watch":       {},
-		"verbose":        {},
-	}
-)
+// devNoEnvBinding lists dev flags that intentionally have NO env-var binding:
+// no-watch is pure CLI sugar (the env way to disable watching is
+// ULTRABASE_WATCH=false) and use-dsn is a deprecated no-op. Every other flag
+// resolves through applyEnvDefaults' generic ULTRABASE_<FLAG_UPPER_SNAKE> rule.
+var devNoEnvBinding = map[string][]string{
+	"no-watch": {},
+	"use-dsn":  {},
+}
 
 // applyEnvDefaults is the single env-var fallback mechanism for the whole CLI.
 // For every flag the user did NOT pass explicitly, it sets the flag from the
@@ -211,12 +196,12 @@ type serveFlagSet struct {
 func newServeFlagSet() *serveFlagSet {
 	fs := &serveFlagSet{flags: pflag.NewFlagSet("serve", pflag.ContinueOnError)}
 	fs.flags.IntVar(&fs.port, "port", 0, "server port (default: from config or 8080)")
-	fs.flags.StringVar(&fs.configPath, "config", "ultrabase.yaml", "config source (file path or s3://bucket/key; env: ULTRABASE_CONFIG_SOURCE or ULTRABASE_CONFIG)")
+	fs.flags.StringVar(&fs.configPath, "config", "ultrabase.yaml", "config source (file path or s3://bucket/key; env: ULTRABASE_CONFIG)")
 	fs.flags.BoolVar(&fs.loadData, "data", false, "apply CSV data imports on startup")
 	fs.flags.BoolVar(&fs.migrate, "migrate", false, "run pending migrations on startup")
 	fs.flags.BoolVar(&fs.allowDestructive, "allow-destructive", false, "permit DROP TABLE/COLUMN in migrations")
-	fs.flags.BoolVar(&fs.watch, "watch", false, "watch the config source for changes (env: ULTRABASE_CONFIG_WATCH)")
-	fs.flags.DurationVar(&fs.watchInterval, "watch-interval", 60*time.Second, "S3-watch poll interval; min 10s (env: ULTRABASE_CONFIG_WATCH_INTERVAL)")
+	fs.flags.BoolVar(&fs.watch, "watch", false, "watch the config source for changes (env: ULTRABASE_WATCH)")
+	fs.flags.DurationVar(&fs.watchInterval, "watch-interval", 60*time.Second, "S3-watch poll interval; min 10s (env: ULTRABASE_WATCH_INTERVAL)")
 	fs.flags.StringVar(&fs.dashboard, "dashboard", "disabled", "dashboard mode: disabled | readonly | readwrite (env: ULTRABASE_DASHBOARD)")
 	fs.flags.SetOutput(io.Discard)
 	return fs
@@ -226,7 +211,7 @@ func newServeFlagSet() *serveFlagSet {
 // and validates the result. It is the single resolution path: the cobra
 // command and parseServeFlags (tests) both funnel through here.
 func resolveServeFlags(fs *serveFlagSet, lookup func(string) string) (serveOptions, error) {
-	setBy, err := applyEnvDefaults(fs.flags, serveEnvAliases, lookup)
+	setBy, err := applyEnvDefaults(fs.flags, nil, lookup)
 	if err != nil {
 		return serveOptions{}, err
 	}
@@ -322,7 +307,7 @@ func newDevFlagSet() *devFlagSet {
 // dashboard readwrite, migrate+seed always on, plus the --no-watch alias.
 // When no --use-* flag is given, dev defaults to the DSN path.
 func resolveDevFlags(fs *devFlagSet, lookup func(string) string) (devOptions, error) {
-	setBy, err := applyEnvDefaults(fs.flags, devEnvAliases, lookup)
+	setBy, err := applyEnvDefaults(fs.flags, devNoEnvBinding, lookup)
 	if err != nil {
 		return devOptions{}, err
 	}

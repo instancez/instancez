@@ -24,9 +24,9 @@ func TestParseServeFlagsDefaults(t *testing.T) {
 
 func TestParseServeFlagsEnvFallbacks(t *testing.T) {
 	env := map[string]string{
-		"ULTRABASE_CONFIG_WATCH":          "true",
-		"ULTRABASE_CONFIG_WATCH_INTERVAL": "30s",
-		"ULTRABASE_DASHBOARD":             "readwrite",
+		"ULTRABASE_WATCH":          "true",
+		"ULTRABASE_WATCH_INTERVAL": "30s",
+		"ULTRABASE_DASHBOARD":      "readwrite",
 	}
 	got, err := parseServeFlags([]string{}, func(k string) string { return env[k] })
 	if err != nil {
@@ -37,13 +37,11 @@ func TestParseServeFlagsEnvFallbacks(t *testing.T) {
 	}
 }
 
-func TestParseServeFlagsConfigSourceEnv(t *testing.T) {
-	// ULTRABASE_CONFIG_SOURCE takes precedence over the legacy ULTRABASE_CONFIG.
-	env := map[string]string{
-		"ULTRABASE_CONFIG_SOURCE": "s3://bucket/new",
-		"ULTRABASE_CONFIG":        "s3://bucket/legacy",
-	}
-	got, err := parseServeFlags([]string{}, func(k string) string { return env[k] })
+func TestParseServeFlagsConfigEnv(t *testing.T) {
+	// The single standardized name sets the config path.
+	got, err := parseServeFlags([]string{}, func(k string) string {
+		return map[string]string{"ULTRABASE_CONFIG": "s3://bucket/new"}[k]
+	})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -51,15 +49,15 @@ func TestParseServeFlagsConfigSourceEnv(t *testing.T) {
 		t.Fatalf("configPath = %q, want s3://bucket/new", got.configPath)
 	}
 
-	// With only the legacy name set, it is still honored.
+	// The old ULTRABASE_CONFIG_SOURCE name is no longer bound.
 	got, err = parseServeFlags([]string{}, func(k string) string {
-		return map[string]string{"ULTRABASE_CONFIG": "s3://bucket/legacy"}[k]
+		return map[string]string{"ULTRABASE_CONFIG_SOURCE": "s3://bucket/old"}[k]
 	})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if got.configPath != "s3://bucket/legacy" {
-		t.Fatalf("legacy ULTRABASE_CONFIG ignored: %q", got.configPath)
+	if got.configPath != "ultrabase.yaml" {
+		t.Fatalf("ULTRABASE_CONFIG_SOURCE should no longer bind; configPath = %q, want default", got.configPath)
 	}
 }
 
@@ -99,8 +97,8 @@ func TestParseServeFlagsValidation(t *testing.T) {
 		{
 			name:    "env var below minimum attributed to env name",
 			args:    []string{},
-			env:     map[string]string{"ULTRABASE_CONFIG_WATCH_INTERVAL": "5s"},
-			wantErr: "ULTRABASE_CONFIG_WATCH_INTERVAL must be at least 10s",
+			env:     map[string]string{"ULTRABASE_WATCH_INTERVAL": "5s"},
+			wantErr: "ULTRABASE_WATCH_INTERVAL must be at least 10s",
 		},
 		{
 			name:    "bad dashboard env attributed to env name",
