@@ -124,9 +124,11 @@ var devNoEnvBinding = map[string][]string{
 
 // applyEnvDefaults is the single env-var fallback mechanism for the whole CLI.
 // For every flag the user did NOT pass explicitly, it sets the flag from the
-// first non-empty env var that backs it (see the alias maps above), letting
-// pflag do the type parsing. It returns flag-name → env-var-name for the flags
-// it set, so callers can attribute downstream validation errors to the env var.
+// first non-empty env var that backs it — either an entry in the aliases map
+// argument, or the generic ULTRABASE_<FLAG_UPPER_SNAKE> name when aliases has
+// no entry for the flag (or is nil) — letting pflag do the type parsing. It
+// returns flag-name → env-var-name for the flags it set, so callers can
+// attribute downstream validation errors to the env var.
 func applyEnvDefaults(fs *pflag.FlagSet, aliases map[string][]string, lookup func(string) string) (map[string]string, error) {
 	setBy := map[string]string{}
 	var ferr error
@@ -289,7 +291,7 @@ type devFlagSet struct {
 func newDevFlagSet() *devFlagSet {
 	fs := &devFlagSet{flags: pflag.NewFlagSet("dev", pflag.ContinueOnError)}
 	fs.flags.IntVar(&fs.port, "port", 0, "server port (default: from config or 8080)")
-	fs.flags.StringVar(&fs.configPath, "config", "ultrabase.yaml", "config source (path or s3://bucket/key)")
+	fs.flags.StringVar(&fs.configPath, "config", "ultrabase.yaml", "config source (file path or s3://bucket/key; env: ULTRABASE_CONFIG)")
 	fs.flags.BoolVar(&fs.noWatch, "no-watch", false, "disable hot-reload (alias for --watch=false)")
 	fs.flags.BoolVar(&fs.watch, "watch", true, "watch the config source for changes")
 	fs.flags.DurationVar(&fs.watchInterval, "watch-interval", 60*time.Second, "S3-watch poll interval; min 10s")

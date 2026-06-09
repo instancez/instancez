@@ -64,6 +64,20 @@ func TestParseDevFlagsUseCloud(t *testing.T) {
 	}
 }
 
+// TestParseDevFlagsVerboseFromEnv verifies the standardized ULTRABASE_VERBOSE
+// env var binds to the --verbose flag (it had no env binding before).
+func TestParseDevFlagsVerboseFromEnv(t *testing.T) {
+	got, err := parseDevFlags([]string{}, func(k string) string {
+		return map[string]string{"ULTRABASE_VERBOSE": "true"}[k]
+	})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !got.verbose {
+		t.Fatal("ULTRABASE_VERBOSE=true should set verbose")
+	}
+}
+
 // TestParseDevFlagsRemovedFlagsUnknown verifies that the removed --use-docker
 // and --use-cloud-ephemeral flags are now unknown and cause a parse error.
 func TestParseDevFlagsRemovedFlagsUnknown(t *testing.T) {
