@@ -791,6 +791,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `README.md`
+- Modify: `CLAUDE.md` (stale dev-requirements line)
 - Modify: `internal/cli/bootstrap.go` (comment only)
 
 - [ ] **Step 1: Update the bootstrap.go provenance comment**
@@ -826,14 +827,35 @@ In `README.md`, update the references found at the quickstart and env-var sectio
   Run: `grep -n "ULTRABASE_CONFIG_SOURCE\|ULTRABASE_CONFIG_WATCH\|with-dsn\|--use-dsn" README.md`
   Expected: no output.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: Update CLAUDE.md's stale dev-requirements line**
+
+`CLAUDE.md` states `./ultra dev` *"(requires the two DB URLs + ULTRABASE_ADMIN_KEY in env …)"* — no longer true, since dev can derive the two role DSNs from a single `ULTRABASE_DATABASE_URL`. Update that parenthetical to reflect the superuser-DSN path, e.g.:
+
+```
+./ultra dev              # hot-reload dev server (set ULTRABASE_DATABASE_URL — a superuser DSN — and dev provisions the two role DSNs on first run; or set them directly. JWT keys are DB-managed via auth.jwt_keys)
+```
+
+- [ ] **Step 4: Repo-wide staleness sweep (excluding historical specs/plans)**
+
+Run:
+```bash
+grep -rn "with-dsn\|--use-dsn\|ULTRABASE_CONFIG_SOURCE\|ULTRABASE_CONFIG_WATCH" \
+  --include="*.md" . | grep -v "docs/superpowers/specs/" | grep -v "docs/superpowers/plans/"
+```
+Expected: no output. (The `docs/superpowers/specs` and `docs/superpowers/plans` trees are historical record — do NOT rewrite them. Fix any other hit, e.g. `docs/examples/react-catalog/README.md`.)
+
+- [ ] **Step 5: Commit**
 
 ```bash
-git add README.md internal/cli/bootstrap.go
+git add README.md CLAUDE.md internal/cli/bootstrap.go docs/examples/
 git commit -m "docs: document superuser-DSN dev flow and standardized env names
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ```
+
+> **Non-blocking notes (so they aren't later filed as regressions):**
+> - The provisioning log lines print *before* the `Ultrabase v…` banner, since `ensureRoles` runs before the banner block in `runDev`. Cosmetic only; reorder if desired.
+> - `ultra doctor` on a project that has been `init`'d and given a superuser DSN but has **not yet run `dev`** will report `role layout` as unhealthy. This is correct: provisioning now happens in `dev`, and `doctor` is read-only by design — it does not bootstrap.
 
 ---
 
