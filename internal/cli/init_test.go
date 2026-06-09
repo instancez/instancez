@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,7 +23,7 @@ func TestInitGenerateLikeRequiresLogin(t *testing.T) {
 	t.Setenv("HOME", dir) // no credentials in this HOME
 
 	opts := initOptions{dir: dir, generateLike: "twitter"}
-	err := runInit(context.Background(), opts)
+	err := runInit(opts)
 	assert.ErrorContains(t, err, "ultra login")
 }
 
@@ -33,7 +32,7 @@ func TestInitWithCloudRequiresLogin(t *testing.T) {
 	t.Setenv("HOME", dir)
 
 	opts := initOptions{dir: dir, withCloud: true, name: "myapp"}
-	err := runInit(context.Background(), opts)
+	err := runInit(opts)
 	assert.ErrorContains(t, err, "ultra login")
 }
 
@@ -44,7 +43,7 @@ func TestInitWithCloudRequiresLogin(t *testing.T) {
 // die at migration time.
 func TestRunInitScaffoldStartsCleanly(t *testing.T) {
 	dir := t.TempDir()
-	if err := runInit(context.Background(), initOptions{name: "demo", dir: dir}); err != nil {
+	if err := runInit(initOptions{name: "demo", dir: dir}); err != nil {
 		t.Fatalf("runInit: %v", err)
 	}
 
@@ -77,7 +76,7 @@ func TestRunInitScaffoldStartsCleanly(t *testing.T) {
 // `ultra dev` can serve it immediately.
 func TestRunInitScaffoldsFunctions(t *testing.T) {
 	dir := t.TempDir()
-	if err := runInit(context.Background(), initOptions{name: "demo", dir: dir}); err != nil {
+	if err := runInit(initOptions{name: "demo", dir: dir}); err != nil {
 		t.Fatalf("runInit: %v", err)
 	}
 
@@ -113,7 +112,7 @@ func TestRunInitScaffoldsFunctions(t *testing.T) {
 
 func TestRunInitWritesProductionEnvExample(t *testing.T) {
 	dir := t.TempDir()
-	if err := runInit(context.Background(), initOptions{name: "demo", dir: dir}); err != nil {
+	if err := runInit(initOptions{name: "demo", dir: dir}); err != nil {
 		t.Fatalf("runInit: %v", err)
 	}
 	for _, name := range []string{".production.env.example", ".development.env.example", ".gitignore"} {
@@ -133,7 +132,7 @@ func TestRunInitWritesProductionEnvExample(t *testing.T) {
 // points users at the single superuser DSN that `ultra dev` bootstraps from.
 func TestRunInitDevelopmentEnvExampleDocumentsSuperuser(t *testing.T) {
 	dir := t.TempDir()
-	if err := runInit(context.Background(), initOptions{name: "demo", dir: dir}); err != nil {
+	if err := runInit(initOptions{name: "demo", dir: dir}); err != nil {
 		t.Fatalf("runInit: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, ".development.env.example"))
@@ -150,7 +149,7 @@ func TestRunInitDevelopmentEnvExampleDocumentsSuperuser(t *testing.T) {
 // and still completes the rest of the init steps (gitignore, env example, etc).
 func TestRunInitIdempotent(t *testing.T) {
 	dir := t.TempDir()
-	if err := runInit(context.Background(), initOptions{name: "demo", dir: dir}); err != nil {
+	if err := runInit(initOptions{name: "demo", dir: dir}); err != nil {
 		t.Fatalf("first runInit: %v", err)
 	}
 
@@ -161,7 +160,7 @@ func TestRunInitIdempotent(t *testing.T) {
 	}
 
 	// Re-run without --force: must succeed and leave yaml bytes unchanged.
-	if err := runInit(context.Background(), initOptions{name: "demo", dir: dir}); err != nil {
+	if err := runInit(initOptions{name: "demo", dir: dir}); err != nil {
 		t.Fatalf("re-runInit without --force should succeed, got: %v", err)
 	}
 
@@ -178,7 +177,7 @@ func TestRunInitIdempotent(t *testing.T) {
 // TestRunInitForceOverwrites confirms that --force does overwrite the yaml.
 func TestRunInitForceOverwrites(t *testing.T) {
 	dir := t.TempDir()
-	if err := runInit(context.Background(), initOptions{name: "demo", dir: dir}); err != nil {
+	if err := runInit(initOptions{name: "demo", dir: dir}); err != nil {
 		t.Fatalf("first runInit: %v", err)
 	}
 
@@ -189,7 +188,7 @@ func TestRunInitForceOverwrites(t *testing.T) {
 		t.Fatalf("write custom yaml: %v", err)
 	}
 
-	if err := runInit(context.Background(), initOptions{name: "demo", dir: dir, force: true}); err != nil {
+	if err := runInit(initOptions{name: "demo", dir: dir, force: true}); err != nil {
 		t.Fatalf("--force should overwrite: %v", err)
 	}
 
@@ -221,7 +220,7 @@ func TestRunInitGenerateLikeRefusesWhenYAMLExists(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	opts := initOptions{dir: dir, generateLike: "twitter"}
-	err := runInit(context.Background(), opts)
+	err := runInit(opts)
 	if err == nil {
 		t.Fatal("expected error when --generate-like over existing yaml without --force, got nil")
 	}
@@ -276,7 +275,7 @@ func TestRunInitWithCloudSkipsCreateWhenAlreadyLinked(t *testing.T) {
 	yamlPath := filepath.Join(dir, "ultrabase.yaml")
 	require.NoError(t, os.WriteFile(yamlPath, linked, 0o644))
 
-	err = runInit(context.Background(), initOptions{name: "demo", dir: dir, withCloud: true})
+	err = runInit(initOptions{name: "demo", dir: dir, withCloud: true})
 	require.NoError(t, err, "guard should skip CreateProject; any creation hits the dead API and errors")
 
 	after, err := os.ReadFile(yamlPath)
@@ -433,7 +432,7 @@ func TestRunInitPreservesUserGitignore(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := runInit(context.Background(), initOptions{name: "demo", dir: dir}); err != nil {
+	if err := runInit(initOptions{name: "demo", dir: dir}); err != nil {
 		t.Fatalf("runInit: %v", err)
 	}
 
@@ -455,7 +454,7 @@ func TestRunInitPreservesUserGitignore(t *testing.T) {
 // authoritative — re-init must not rewrite it.
 func TestRunInitPreservesProductionEnvExample(t *testing.T) {
 	dir := t.TempDir()
-	if err := runInit(context.Background(), initOptions{name: "demo", dir: dir}); err != nil {
+	if err := runInit(initOptions{name: "demo", dir: dir}); err != nil {
 		t.Fatalf("first runInit: %v", err)
 	}
 
@@ -465,7 +464,7 @@ func TestRunInitPreservesProductionEnvExample(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := runInit(context.Background(), initOptions{name: "demo", dir: dir, force: true}); err != nil {
+	if err := runInit(initOptions{name: "demo", dir: dir, force: true}); err != nil {
 		t.Fatalf("re-runInit: %v", err)
 	}
 

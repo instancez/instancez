@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -39,7 +38,7 @@ init only writes scaffolding files; it never touches a database. A
 			if len(args) == 1 {
 				opts.name = args[0]
 			}
-			return runInit(cmd.Context(), opts)
+			return runInit(opts)
 		},
 	}
 
@@ -57,7 +56,7 @@ func validateInitFlags(opts initOptions) error {
 	return nil
 }
 
-func runInit(ctx context.Context, opts initOptions) error {
+func runInit(opts initOptions) error {
 	if err := validateInitFlags(opts); err != nil {
 		return err
 	}
