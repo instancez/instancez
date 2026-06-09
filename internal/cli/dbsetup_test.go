@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/saedx1/ultrabase/internal/config"
 	"github.com/saedx1/ultrabase/internal/domain"
 )
 
@@ -93,6 +94,44 @@ func TestEnsureRolesSkipsWhenRoleDSNsPresent(t *testing.T) {
 	}
 	if res.Ran {
 		t.Error("ensureRoles ran bootstrap despite both role DSNs being set")
+	}
+}
+
+// TestEnsureRolesSkipsAfterDotenvPersist exercises the real "second run" flow
+// end-to-end: a prior run persisted both role DSNs to .development.env, so
+// loading that dotenv populates the env and ensureRoles must skip bootstrap —
+// even with a superuser DSN still available — and never touch a database. This
+// closes the round-trip (LoadDotenv → skip) that the env-only skip test doesn't
+// cover, and guards against a re-bootstrap-every-run regression.
+func TestEnsureRolesSkipsAfterDotenvPersist(t *testing.T) {
+	dir := t.TempDir()
+	envFile := filepath.Join(dir, ".development.env")
+	if err := os.WriteFile(envFile, []byte(
+		"ULTRABASE_OWNER_DATABASE_URL=postgres://owner@h/db\n"+
+			"ULTRABASE_AUTH_DATABASE_URL=postgres://auth@h/db\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Register restoration of any ambient values, then unset so LoadDotenv (which
+	// never overrides a real env var) actually populates from the file.
+	t.Setenv("ULTRABASE_OWNER_DATABASE_URL", "")
+	t.Setenv("ULTRABASE_AUTH_DATABASE_URL", "")
+	os.Unsetenv("ULTRABASE_OWNER_DATABASE_URL")
+	os.Unsetenv("ULTRABASE_AUTH_DATABASE_URL")
+
+	if err := config.LoadDotenv(envFile); err != nil {
+		t.Fatalf("LoadDotenv: %v", err)
+	}
+
+	// A superuser DSN is present but must be ignored: both role DSNs are set, so
+	// ensureRoles returns before any bootstrapDB call (the bogus DSN proves no
+	// connection is attempted).
+	res, err := ensureRoles(context.Background(), "postgres://super@h/db", envFile)
+	if err != nil {
+		t.Fatalf("ensureRoles: %v", err)
+	}
+	if res.Ran {
+		t.Error("ensureRoles re-bootstrapped on a second run despite persisted role DSNs")
 	}
 }
 
