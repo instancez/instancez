@@ -102,7 +102,7 @@ export ULTRABASE_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgr
 ultra init                           # Scaffold project (no DB calls)
 ultra dev                            # Start dev server with hot-reload
 ultra serve                          # Production mode (reads .production.env)
-ultra validate                       # YAML syntax check, no DB
+ultra validate [--use-dsn <url>]     # YAML syntax check; with DSN, also plan a migration
 ultra version
 ```
 
