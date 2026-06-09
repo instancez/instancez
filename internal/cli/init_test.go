@@ -104,6 +104,12 @@ func TestRunInitScaffoldsFunctions(t *testing.T) {
 	assert.Equal(t, "functions/todos.js", todosFn.File)
 	assert.True(t, todosFn.AuthRequired)
 
+	// Storage bucket scaffolded so the example exercises the storage feature.
+	bucket, ok := cfg.Storage["avatars"]
+	require.True(t, ok, "scaffold should declare the avatars storage bucket")
+	assert.True(t, bucket.Public, "avatars bucket should be public")
+	assert.Equal(t, "5MB", bucket.MaxSize)
+
 	// node_modules ignored.
 	gi, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
 	require.NoError(t, err)

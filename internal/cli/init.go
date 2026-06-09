@@ -299,6 +299,18 @@ tables:
       - operations: [select, insert, update, delete]
         check: "user_id = auth.uid()"
 
+# Storage buckets: file uploads served at /storage/v1/object/<bucket>/<path>.
+# Access is governed by RLS, exactly like tables.
+storage:
+  avatars:
+    public: true          # objects are world-readable by URL
+    max_size: 5MB
+    types: [image/*]
+    rls:
+      # Only signed-in users may upload, replace, or remove avatars.
+      - operations: [insert, update, delete]
+        check: "auth.is_authenticated()"
+
 # Code functions: JavaScript HTTP handlers served at /functions/v1/<name>.
 # Source + shared deps live in ./functions (run by Node workers). See
 # functions/todos.js — a working CRUD handler over the todos table above.
