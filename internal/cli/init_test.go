@@ -112,24 +112,37 @@ func TestRunInitScaffoldsFunctions(t *testing.T) {
 	assert.Contains(t, string(gi), "functions/node_modules/")
 }
 
-// TestRunInitWritesProductionEnvExample verifies the prod template lands.
-// It's the only handhold a user has for "where do I put prod config?".
 func TestRunInitWritesProductionEnvExample(t *testing.T) {
 	dir := t.TempDir()
 	if err := runInit(context.Background(), initOptions{name: "demo", dir: dir}); err != nil {
 		t.Fatalf("runInit: %v", err)
 	}
-	for _, name := range []string{".production.env.example", ".gitignore"} {
+	for _, name := range []string{".production.env.example", ".development.env.example", ".gitignore"} {
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			t.Errorf("missing %s: %v", name, err)
 		}
 	}
-	// .development.env must NOT exist for a no-flag init — that file is only
-	// written by --with-dsn. If it appeared here, somebody added a hidden
-	// default-bootstrap step that would silently call out to a Postgres on
-	// every plain `ultra init`.
+	// init never touches a database, so it must NOT write a live .development.env
+	// (that is now written by `ultra dev` after bootstrapping). Only the example
+	// template is written here.
 	if _, err := os.Stat(filepath.Join(dir, ".development.env")); !os.IsNotExist(err) {
-		t.Errorf("plain init wrote .development.env (expected only with --with-dsn)")
+		t.Errorf("init wrote a live .development.env (expected only .development.env.example)")
+	}
+}
+
+// TestRunInitDevelopmentEnvExampleDocumentsSuperuser verifies the dev example
+// points users at the single superuser DSN that `ultra dev` bootstraps from.
+func TestRunInitDevelopmentEnvExampleDocumentsSuperuser(t *testing.T) {
+	dir := t.TempDir()
+	if err := runInit(context.Background(), initOptions{name: "demo", dir: dir}); err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".development.env.example"))
+	if err != nil {
+		t.Fatalf("read .development.env.example: %v", err)
+	}
+	if !strings.Contains(string(data), "ULTRABASE_DATABASE_URL=") {
+		t.Errorf(".development.env.example should document ULTRABASE_DATABASE_URL\n--- got ---\n%s", data)
 	}
 }
 

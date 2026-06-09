@@ -15,7 +15,6 @@ import (
 type initOptions struct {
 	name         string
 	dir          string
-	withDSN      string
 	withCloud    bool
 	generateLike string
 	force        bool
@@ -32,12 +31,9 @@ func newInitCmd() *cobra.Command {
 The project is created in the current directory by default. The project name
 defaults to the directory's basename when not given as a positional argument.
 
-Optional bootstrap flags also wire up a database so 'ultra dev' works
-immediately:
-  --with-dsn <url>   Bootstrap roles on a Postgres you supply
-
-Without a flag, init only writes scaffolding files; you can configure a data
-source later.`,
+init only writes scaffolding files; it never touches a database. A
+'.development.env.example' is written documenting the single superuser DSN that
+'ultra dev' uses to provision roles on first run.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 1 {
@@ -48,7 +44,6 @@ source later.`,
 	}
 
 	cmd.Flags().StringVar(&opts.dir, "dir", ".", "output directory")
-	cmd.Flags().StringVar(&opts.withDSN, "with-dsn", "", "bootstrap roles on this privileged Postgres DSN")
 	cmd.Flags().BoolVar(&opts.withCloud, "with-cloud", false, "create a project in Ultrabase Cloud (requires `ultra login`)")
 	cmd.Flags().StringVar(&opts.generateLike, "generate-like", "", "generate ultrabase.yaml from a free-form prompt (requires `ultra login`)")
 	cmd.Flags().BoolVar(&opts.force, "force", false, "overwrite existing scaffolding files")
@@ -102,23 +97,6 @@ func runInit(ctx context.Context, opts initOptions) error {
 	name := opts.name
 	if name == "" {
 		name = filepath.Base(dir)
-	}
-
-	// Bootstrap a DB first if requested — fail fast before writing any files
-	// so a bad DSN doesn't leave the project half-scaffolded.
-	var ownerDSN, authDSN string
-	switch {
-	case opts.withDSN != "":
-		fmt.Println("  Bootstrapping roles on the supplied DSN...")
-		ownerDSN, authDSN, err = bootstrapDB(ctx, opts.withDSN)
-		if err != nil {
-			return fmt.Errorf("bootstrap: %w", err)
-		}
-		fmt.Println("  ✓ Roles provisioned (ultrabase_owner + authenticator + anon/authenticated/service_role)")
-		fmt.Println()
-		fmt.Println("  Note: ultrabase only manages tables/schemas it creates from ultrabase.yaml.")
-		fmt.Println("  Existing tables in your database are not imported or modified.")
-		fmt.Println()
 	}
 
 	// If --generate-like is set, fetch the YAML from the cloud AI service
@@ -203,24 +181,16 @@ func runInit(ctx context.Context, opts initOptions) error {
 		return err
 	}
 
-	// .development.env: key-preserving merge. Rotated DSNs go in, user-added
-	// custom lines (extra env vars, comments) stay put.
-	if ownerDSN != "" && authDSN != "" {
-		if err := applyWrite(dir, ".development.env", func(existing string) (string, writeAction) {
-			if existing == "" {
-				return scaffoldDevelopmentEnv(ownerDSN, authDSN), actionCreate
-			}
-			merged := mergeEnvFile(existing, []envKV{
-				{Key: "ULTRABASE_OWNER_DATABASE_URL", Val: ownerDSN},
-				{Key: "ULTRABASE_AUTH_DATABASE_URL", Val: authDSN},
-			})
-			if merged == existing {
-				return existing, actionSkip
-			}
-			return merged, actionUpdate
-		}); err != nil {
-			return err
+	// .development.env.example: write once. Documents the superuser DSN that
+	// `ultra dev` bootstraps roles from. Treated as authoritative after first
+	// write — user edits are preserved on re-run.
+	if err := applyWrite(dir, ".development.env.example", func(existing string) (string, writeAction) {
+		if existing != "" {
+			return existing, actionSkip
 		}
+		return scaffoldDevelopmentEnvExample(), actionCreate
+	}); err != nil {
+		return err
 	}
 
 	// Create cloud project and bake project_id into ultrabase.yaml.
@@ -270,11 +240,9 @@ func runInit(ctx context.Context, opts initOptions) error {
 	switch {
 	case opts.withCloud:
 		fmt.Println("  ultra deploy            # push your YAML to the cloud project")
-	case opts.withDSN != "":
-		fmt.Println("  ultra dev")
 	default:
-		fmt.Println("  # Configure a data source, then:")
-		fmt.Println("  ultra dev               # point at your own Postgres")
+		fmt.Println("  cp .development.env.example .development.env   # set ULTRABASE_DATABASE_URL")
+		fmt.Println("  ultra dev")
 	}
 	return nil
 }
@@ -441,6 +409,17 @@ ULTRABASE_AUTH_DATABASE_URL=postgres://authenticator:CHANGE_ME@host:5432/dbname?
 
 # Optional: email provider
 # ULTRABASE_EMAIL_API_KEY=re_xxx
+`
+}
+
+func scaffoldDevelopmentEnvExample() string {
+	return `# Local development config — copy to .development.env (gitignored), then set a
+# superuser/privileged Postgres DSN below. On first run, 'ultra dev' provisions
+# ultrabase_owner + authenticator + the API roles from it and writes the derived
+# owner/authenticator DSNs back into .development.env, so subsequent runs reuse
+# them. After the first run you can remove ULTRABASE_DATABASE_URL.
+
+ULTRABASE_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres
 `
 }
 
