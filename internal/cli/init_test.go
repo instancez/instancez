@@ -19,7 +19,6 @@ func TestInitFlagsCloudAndGenerateLike(t *testing.T) {
 	assert.NotNil(t, cmd.Flags().Lookup("generate-like"))
 }
 
-
 func TestInitGenerateLikeRequiresLogin(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir) // no credentials in this HOME
@@ -244,7 +243,6 @@ func TestRunInitGenerateLikeRefusesWhenYAMLExists(t *testing.T) {
 		t.Error("ultrabase.yaml was modified despite the guard error")
 	}
 }
-
 
 // TestRunInitWithCloudSkipsCreateWhenAlreadyLinked guards against duplicate
 // cloud-project creation: re-running `ultra init --with-cloud` over a yaml that
