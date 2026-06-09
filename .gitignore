@@ -43,3 +43,6 @@ pgdata/
 
 # LLM prompts
 prompts/
+
+# Claude Code local memory store
+memory/
