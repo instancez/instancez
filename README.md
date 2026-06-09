@@ -342,7 +342,7 @@ Environment variables:
 
 | Variable | Required | Description |
 |---|---|---|
-| `ULTRABASE_DATABASE_URL` | No (dev only) | Superuser/privileged DSN. `ultra dev` provisions the role layout from it and writes the derived owner/authenticator DSNs to `.development.env`. Not used by `serve`. |
+| `ULTRABASE_DATABASE_URL` | No (dev only) | Superuser/privileged DSN. `ultra dev` provisions the role layout from it, writes the derived owner/authenticator DSNs to `.development.env`, and generates a random `ULTRABASE_ADMIN_KEY` there if one isn't already set. Not used by `serve`. |
 | `ULTRABASE_OWNER_DATABASE_URL` | Yes | Privileged login (migrations, seeding, replication). Role needs `CREATEROLE`, `CREATEDB`, `BYPASSRLS`, `REPLICATION`. |
 | `ULTRABASE_AUTH_DATABASE_URL` | Yes | Authenticator login for HTTP requests. `NOINHERIT`; ultrabase issues `SET LOCAL ROLE` per transaction (CRUD: from JWT; system endpoints: `service_role`). |
 | `ULTRABASE_DB_AUTHENTICATOR_ROLE` | No | Override the authenticator role name (default: `authenticator`). |
@@ -350,7 +350,7 @@ Environment variables:
 | `ULTRABASE_DB_AUTHENTICATED_ROLE` | No | Override the authenticated role name (default: `authenticated`). |
 | `ULTRABASE_DB_SERVICE_ROLE` | No | Override the service role name (default: `service_role`). |
 | `JWT_SECRET` | Yes | Secret for signing JWTs |
-| `ULTRABASE_ADMIN_KEY` | Yes | Admin API authentication key |
+| `ULTRABASE_ADMIN_KEY` | Yes | Admin API + dashboard authentication key. Leave unset to disable those endpoints (they return 404). `ultra dev` auto-generates one into `.development.env`. |
 | `PORT` | No | Override server port (default: from YAML or 8080) |
 
 ## Contributing

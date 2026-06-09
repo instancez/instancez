@@ -63,8 +63,9 @@ func dbConnections(ctx context.Context, poolCfg domain.PoolConfig) (domain.Owner
 
 // roleBootstrap reports the outcome of ensureRoles so the caller can log it.
 type roleBootstrap struct {
-	Ran     bool   // bootstrap executed this run
-	EnvFile string // file the derived DSNs were written to
+	Ran      bool   // bootstrap executed this run
+	EnvFile  string // file the derived DSNs were written to
+	AdminKey string // generated admin key, empty if an existing one was kept
 }
 
 // shouldBootstrap reports whether ensureRoles should provision roles: only when
@@ -95,36 +96,54 @@ func ensureRoles(ctx context.Context, superuserDSN, envFile string) (roleBootstr
 	os.Setenv("ULTRABASE_OWNER_DATABASE_URL", ownerDSN)
 	os.Setenv("ULTRABASE_AUTH_DATABASE_URL", authDSN)
 
-	if err := persistDSNs(envFile, ownerDSN, authDSN); err != nil {
+	adminKey, err := persistDSNs(envFile, ownerDSN, authDSN)
+	if err != nil {
 		return roleBootstrap{}, err
 	}
-	return roleBootstrap{Ran: true, EnvFile: envFile}, nil
+	return roleBootstrap{Ran: true, EnvFile: envFile, AdminKey: adminKey}, nil
 }
 
 // persistDSNs writes the derived owner + authenticator DSNs into envFile. When
 // the file is absent it is created from the scaffold template; when present the
-// two keys are merged in (preserving the user's other lines and comments).
-func persistDSNs(envFile, ownerDSN, authDSN string) error {
+// two keys are merged in (preserving the user's other lines and comments). A
+// random ULTRABASE_ADMIN_KEY is generated and added unless the file already
+// declares one; the generated key is returned (empty when an existing key was
+// kept) so the caller can surface it to the user.
+func persistDSNs(envFile, ownerDSN, authDSN string) (string, error) {
 	var existing string
 	if data, err := os.ReadFile(envFile); err == nil {
 		existing = string(data)
 	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("read %s: %w", envFile, err)
+		return "", fmt.Errorf("read %s: %w", envFile, err)
 	}
 
-	var content string
+	var content, adminKey string
 	if existing == "" {
-		content = scaffoldDevelopmentEnv(ownerDSN, authDSN)
+		key, err := randomPassword()
+		if err != nil {
+			return "", fmt.Errorf("generate admin key: %w", err)
+		}
+		adminKey = key
+		content = scaffoldDevelopmentEnv(ownerDSN, authDSN, adminKey)
 	} else {
-		content = mergeEnvFile(existing, []envKV{
+		updates := []envKV{
 			{Key: "ULTRABASE_OWNER_DATABASE_URL", Val: ownerDSN},
 			{Key: "ULTRABASE_AUTH_DATABASE_URL", Val: authDSN},
-		})
+		}
+		if !hasActiveEnvKey(existing, "ULTRABASE_ADMIN_KEY") {
+			key, err := randomPassword()
+			if err != nil {
+				return "", fmt.Errorf("generate admin key: %w", err)
+			}
+			adminKey = key
+			updates = append(updates, envKV{Key: "ULTRABASE_ADMIN_KEY", Val: adminKey})
+		}
+		content = mergeEnvFile(existing, updates)
 	}
 	if err := os.WriteFile(envFile, []byte(content), 0o644); err != nil {
-		return fmt.Errorf("write %s: %w", envFile, err)
+		return "", fmt.Errorf("write %s: %w", envFile, err)
 	}
-	return nil
+	return adminKey, nil
 }
 
 func rolesFromEnv() domain.Roles {

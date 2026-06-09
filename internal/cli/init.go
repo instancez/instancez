@@ -415,8 +415,9 @@ func scaffoldProductionEnvExample() string {
 ULTRABASE_OWNER_DATABASE_URL=postgres://ultrabase_owner:CHANGE_ME@host:5432/dbname?sslmode=require
 ULTRABASE_AUTH_DATABASE_URL=postgres://authenticator:CHANGE_ME@host:5432/dbname?sslmode=require
 
-# Optional: admin key for /api/_admin endpoints
-# ULTRABASE_ADMIN_KEY=CHANGE_ME
+# Admin key for the dashboard and /api/_admin endpoints. Leave unset to disable
+# them entirely (they return 404). Set a strong, unique value before deploying.
+ULTRABASE_ADMIN_KEY=CHANGE_ME
 
 # Optional: email provider
 # ULTRABASE_EMAIL_API_KEY=re_xxx
@@ -429,16 +430,23 @@ func scaffoldDevelopmentEnvExample() string {
 # ultrabase_owner + authenticator + the API roles from it and writes the derived
 # owner/authenticator DSNs back into .development.env, so subsequent runs reuse
 # them. After the first run you can remove ULTRABASE_DATABASE_URL.
+#
+# 'ultra dev' also generates a random ULTRABASE_ADMIN_KEY into .development.env
+# on first run (printed to the console, used to log into the dashboard). Set one
+# here yourself to pin a known value instead.
 
 ULTRABASE_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres
+# ULTRABASE_ADMIN_KEY=CHANGE_ME
 `
 }
 
-func scaffoldDevelopmentEnv(ownerDSN, authDSN string) string {
+func scaffoldDevelopmentEnv(ownerDSN, authDSN, adminKey string) string {
 	return fmt.Sprintf(`# Owner + authenticator DSNs provisioned by 'ultra dev' from ULTRABASE_DATABASE_URL.
 ULTRABASE_OWNER_DATABASE_URL=%s
 ULTRABASE_AUTH_DATABASE_URL=%s
-`, ownerDSN, authDSN)
+# Random admin key for the dashboard and /api/_admin endpoints. Change freely.
+ULTRABASE_ADMIN_KEY=%s
+`, ownerDSN, authDSN, adminKey)
 }
 
 // writeAction tells the file-write dispatcher what happened, so the printed
@@ -534,6 +542,18 @@ func extractEnvKey(line string) string {
 		return ""
 	}
 	return s[:eq]
+}
+
+// hasActiveEnvKey reports whether existing contains an active (non-comment)
+// assignment for key. A commented "# KEY=…" line counts as absent, since
+// extractEnvKey treats the leading "#" as part of the key.
+func hasActiveEnvKey(existing, key string) bool {
+	for _, line := range strings.Split(existing, "\n") {
+		if extractEnvKey(line) == key {
+			return true
+		}
+	}
+	return false
 }
 
 func lookupKV(updates []envKV, key string) (string, bool) {

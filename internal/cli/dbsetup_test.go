@@ -154,8 +154,12 @@ func TestPersistDSNsCreatesAndMerges(t *testing.T) {
 	envFile := filepath.Join(dir, ".development.env")
 
 	// Create-from-empty path.
-	if err := persistDSNs(envFile, "postgres://owner@h/db", "postgres://auth@h/db"); err != nil {
+	adminKey, err := persistDSNs(envFile, "postgres://owner@h/db", "postgres://auth@h/db")
+	if err != nil {
 		t.Fatalf("persistDSNs (create): %v", err)
+	}
+	if adminKey == "" {
+		t.Error("create path did not generate an admin key")
 	}
 	data, err := os.ReadFile(envFile)
 	if err != nil {
@@ -165,18 +169,24 @@ func TestPersistDSNsCreatesAndMerges(t *testing.T) {
 	for _, want := range []string{
 		"ULTRABASE_OWNER_DATABASE_URL=postgres://owner@h/db",
 		"ULTRABASE_AUTH_DATABASE_URL=postgres://auth@h/db",
+		"ULTRABASE_ADMIN_KEY=" + adminKey,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("created env file missing %q\n--- got ---\n%s", want, got)
 		}
 	}
 
-	// Merge path: a user-added line survives; the DSNs are updated in place.
+	// Merge path: a user-added line survives; the DSNs are updated in place; and
+	// an admin key is appended since the file has none.
 	if err := os.WriteFile(envFile, []byte("MY_CUSTOM=keep\nULTRABASE_OWNER_DATABASE_URL=old\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := persistDSNs(envFile, "postgres://owner@h/db2", "postgres://auth@h/db2"); err != nil {
+	adminKey, err = persistDSNs(envFile, "postgres://owner@h/db2", "postgres://auth@h/db2")
+	if err != nil {
 		t.Fatalf("persistDSNs (merge): %v", err)
+	}
+	if adminKey == "" {
+		t.Error("merge path did not generate an admin key when none present")
 	}
 	data, _ = os.ReadFile(envFile)
 	got = string(data)
@@ -188,5 +198,29 @@ func TestPersistDSNsCreatesAndMerges(t *testing.T) {
 	}
 	if !strings.Contains(got, "ULTRABASE_AUTH_DATABASE_URL=postgres://auth@h/db2") {
 		t.Errorf("merge did not append auth DSN:\n%s", got)
+	}
+	if !strings.Contains(got, "ULTRABASE_ADMIN_KEY="+adminKey) {
+		t.Errorf("merge did not append admin key:\n%s", got)
+	}
+
+	// Idempotent merge: a file that already declares an admin key keeps it
+	// untouched, and no new key is generated.
+	if err := os.WriteFile(envFile, []byte("ULTRABASE_ADMIN_KEY=mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	adminKey, err = persistDSNs(envFile, "postgres://owner@h/db3", "postgres://auth@h/db3")
+	if err != nil {
+		t.Fatalf("persistDSNs (idempotent): %v", err)
+	}
+	if adminKey != "" {
+		t.Errorf("persistDSNs regenerated admin key when one already present: %q", adminKey)
+	}
+	data, _ = os.ReadFile(envFile)
+	got = string(data)
+	if !strings.Contains(got, "ULTRABASE_ADMIN_KEY=mine") {
+		t.Errorf("persistDSNs overwrote existing admin key:\n%s", got)
+	}
+	if strings.Count(got, "ULTRABASE_ADMIN_KEY=") != 1 {
+		t.Errorf("expected exactly one admin key line:\n%s", got)
 	}
 }
