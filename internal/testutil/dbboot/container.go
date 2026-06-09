@@ -58,6 +58,40 @@ func StartContainer(t *testing.T, image ...string) (domain.OwnerDB, domain.Reque
 	return owner, auth
 }
 
+// StartRawContainer launches a postgres testcontainer and returns the superuser
+// connection string WITHOUT provisioning any ultrabase roles. Use it to test
+// code that must bootstrap the role layout itself (e.g. ensureRoles).
+func StartRawContainer(t *testing.T, image ...string) string {
+	t.Helper()
+	img := "postgres:16-alpine"
+	if len(image) > 0 {
+		img = image[0]
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	container, err := pgcontainer.Run(ctx, img,
+		pgcontainer.WithDatabase("ultrabase_test"),
+		pgcontainer.WithUsername("postgres"),
+		pgcontainer.WithPassword("postgres"),
+		tc.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).
+				WithStartupTimeout(90*time.Second),
+		),
+	)
+	if err != nil {
+		t.Fatalf("start postgres: %v", err)
+	}
+	t.Cleanup(func() { _ = container.Terminate(context.Background()) })
+
+	url, err := container.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		t.Fatalf("connection string: %v", err)
+	}
+	return url
+}
+
 // StartContainerWithRawAuth is like StartContainer but additionally returns a
 // *postgres.DB connected as the authenticator login role WITHOUT the
 // role-switching wrapper. This exposes the NOINHERIT behaviour: the
