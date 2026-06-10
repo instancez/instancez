@@ -17,12 +17,12 @@ import (
 // match the names dbboot uses for integration tests so a dev-bootstrapped
 // project behaves identically to a test-container project.
 const (
-	ownerRole         = "ultrabase_owner"
+	ownerRole         = "instancez_owner"
 	authenticatorRole = "authenticator"
 )
 
 // bootstrapDB connects to privilegedDSN as a CREATEROLE-capable login, ensures
-// the ultrabase role layout exists (ultrabase_owner + authenticator + the three
+// the ultrabase role layout exists (instancez_owner + authenticator + the three
 // API roles), and returns DSNs derived from privilegedDSN pointing at the two
 // login roles with freshly generated passwords.
 //

@@ -138,7 +138,7 @@ func TestIntegration_IdempotentRerun(t *testing.T) {
 	}
 
 	// Verify only one migration was recorded.
-	rows, err := db.Query(ctx, "SELECT id FROM _ultrabase_migrations")
+	rows, err := db.Query(ctx, "SELECT id FROM _instancez_migrations")
 	if err != nil {
 		t.Fatalf("query migrations: %v", err)
 	}
@@ -1714,7 +1714,7 @@ func TestIntegration_ThreeStepMigration(t *testing.T) {
 	}
 
 	// Verify migration history has 3 records.
-	rows, err := db.Query(ctx, "SELECT id FROM _ultrabase_migrations ORDER BY id")
+	rows, err := db.Query(ctx, "SELECT id FROM _instancez_migrations ORDER BY id")
 	if err != nil {
 		t.Fatalf("query migrations: %v", err)
 	}
@@ -2181,7 +2181,7 @@ func TestIntegration_DiffSQL_StoredNotFullDDL(t *testing.T) {
 		t.Fatalf("v2 apply: %v", err)
 	}
 
-	rows, err := db.Query(ctx, "SELECT sql FROM _ultrabase_migrations ORDER BY id")
+	rows, err := db.Query(ctx, "SELECT sql FROM _instancez_migrations ORDER BY id")
 	if err != nil {
 		t.Fatalf("query migrations: %v", err)
 	}

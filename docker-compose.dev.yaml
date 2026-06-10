@@ -2,16 +2,16 @@ services:
   postgres:
     image: postgres:17-alpine
     environment:
-      POSTGRES_USER: ultrabase
-      POSTGRES_PASSWORD: ultrabase
-      POSTGRES_DB: ultrabase
+      POSTGRES_USER: instancez
+      POSTGRES_PASSWORD: instancez
+      POSTGRES_DB: instancez
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./scripts/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "ultrabase"]
+      test: ["CMD", "pg_isready", "-U", "instancez"]
       interval: 2s
       timeout: 3s
       retries: 10
@@ -27,9 +27,9 @@ services:
     ports:
       - "8080:8080"
     environment:
-      INSTANCEZ_OWNER_DATABASE_URL: postgres://ultrabase_owner:ultrabase@postgres:5432/ultrabase?sslmode=disable
-      INSTANCEZ_AUTH_DATABASE_URL: postgres://authenticator:ultrabase@postgres:5432/ultrabase?sslmode=disable
-      INSTANCEZ_ADMIN_KEY: ultrabase-dev-key
+      INSTANCEZ_OWNER_DATABASE_URL: postgres://instancez_owner:instancez@postgres:5432/instancez?sslmode=disable
+      INSTANCEZ_AUTH_DATABASE_URL: postgres://authenticator:instancez@postgres:5432/instancez?sslmode=disable
+      INSTANCEZ_ADMIN_KEY: instancez-dev-key
       JWT_SECRET: dev-jwt-secret-change-me
     volumes:
       - ./instancez.yaml:/app/instancez.yaml

@@ -412,7 +412,7 @@ func scaffoldProductionEnvExample() string {
 # Two-pool layout: the owner DSN runs migrations/seeding; the authenticator
 # DSN handles request traffic (NOINHERIT login that SET LOCAL ROLEs per query).
 
-INSTANCEZ_OWNER_DATABASE_URL=postgres://ultrabase_owner:CHANGE_ME@host:5432/dbname?sslmode=require
+INSTANCEZ_OWNER_DATABASE_URL=postgres://instancez_owner:CHANGE_ME@host:5432/dbname?sslmode=require
 INSTANCEZ_AUTH_DATABASE_URL=postgres://authenticator:CHANGE_ME@host:5432/dbname?sslmode=require
 
 # Admin key for the dashboard and /api/_admin endpoints. Leave unset to disable
@@ -427,7 +427,7 @@ INSTANCEZ_ADMIN_KEY=CHANGE_ME
 func scaffoldDevelopmentEnvExample() string {
 	return `# Local development config — copy to .development.env (gitignored), then set a
 # superuser/privileged Postgres DSN below. On first run, 'inz dev' provisions
-# ultrabase_owner + authenticator + the API roles from it and writes the derived
+# instancez_owner + authenticator + the API roles from it and writes the derived
 # owner/authenticator DSNs back into .development.env, so subsequent runs reuse
 # them. After the first run you can remove INSTANCEZ_DATABASE_URL.
 #

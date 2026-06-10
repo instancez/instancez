@@ -1,6 +1,6 @@
 // Package dbboot provisions the two-login Postgres setup for integration
 // tests. It connects as the testcontainer's superuser, creates the
-// ultrabase_owner and authenticator login roles, transfers schema
+// instancez_owner and authenticator login roles, transfers schema
 // ownership, and returns wrappers ready for the engine.
 package dbboot
 
@@ -16,7 +16,7 @@ import (
 )
 
 // OwnerRole is the login role used for migrations/seeding/replication.
-const OwnerRole = "ultrabase_owner"
+const OwnerRole = "instancez_owner"
 
 // AuthenticatorRole is the login role used by the request pool.
 const AuthenticatorRole = "authenticator"

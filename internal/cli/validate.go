@@ -87,7 +87,7 @@ func runValidate(ctx context.Context, configPath string, jsonOutput bool, useDSN
 }
 
 // planAgainstDSN opens an owner pool, reads the last applied config from
-// _ultrabase_migrations (if present), and prints the DDL diff. Errors from
+// _instancez_migrations (if present), and prints the DDL diff. Errors from
 // the planner surface back so the user sees concretely what would break.
 func planAgainstDSN(ctx context.Context, cfg *domain.Config, dsn string, jsonOutput bool) error {
 	owner, err := postgres.NewOwner(ctx, dsn, cfg.Database.Pool)
@@ -132,7 +132,7 @@ func planAgainstDSN(ctx context.Context, cfg *domain.Config, dsn string, jsonOut
 }
 
 // loadAppliedConfig returns the last applied config from
-// _ultrabase_migrations, or nil if the table does not yet exist (fresh DB)
+// _instancez_migrations, or nil if the table does not yet exist (fresh DB)
 // or has no rows. Any other error is fatal because we cannot safely plan
 // without knowing prior state.
 func loadAppliedConfig(ctx context.Context, owner domain.OwnerDB) (*domain.Config, error) {
@@ -162,7 +162,7 @@ func loadAppliedConfig(ctx context.Context, owner domain.OwnerDB) (*domain.Confi
 // cheaper to reason about and never aborts a transaction.
 func migrationsTableExists(ctx context.Context, owner domain.OwnerDB) (bool, error) {
 	row, err := owner.QueryRow(ctx,
-		`SELECT COUNT(*) AS n FROM pg_tables WHERE schemaname = current_schema() AND tablename = '_ultrabase_migrations'`,
+		`SELECT COUNT(*) AS n FROM pg_tables WHERE schemaname = current_schema() AND tablename = '_instancez_migrations'`,
 	)
 	if err != nil {
 		return false, err

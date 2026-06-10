@@ -204,7 +204,7 @@ func buildConfig() *domain.Config {
 }
 
 func TestMain(m *testing.M) {
-	// Superuser URL — dbboot.Bootstrap creates ultrabase_owner +
+	// Superuser URL — dbboot.Bootstrap creates instancez_owner +
 	// authenticator from this connection before tests start.
 	dbURL := os.Getenv("INSTANCEZ_TEST_DATABASE_URL")
 	if dbURL == "" {

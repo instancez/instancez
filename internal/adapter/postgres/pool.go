@@ -94,10 +94,10 @@ func (db *DB) Pool() *pgxpool.Pool {
 	return db.pool
 }
 
-// EnsureMigrationsTable creates the _ultrabase_migrations table if it doesn't exist.
+// EnsureMigrationsTable creates the _instancez_migrations table if it doesn't exist.
 func (db *DB) EnsureMigrationsTable(ctx context.Context) error {
 	_, err := db.pool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS _ultrabase_migrations (
+		CREATE TABLE IF NOT EXISTS _instancez_migrations (
 			id BIGSERIAL PRIMARY KEY,
 			checksum TEXT NOT NULL,
 			sql TEXT NOT NULL,
@@ -110,7 +110,7 @@ func (db *DB) EnsureMigrationsTable(ctx context.Context) error {
 	}
 	// Additive column for existing deployments that predate config storage.
 	_, err = db.pool.Exec(ctx,
-		`ALTER TABLE _ultrabase_migrations ADD COLUMN IF NOT EXISTS config_json TEXT NOT NULL DEFAULT '{}'`)
+		`ALTER TABLE _instancez_migrations ADD COLUMN IF NOT EXISTS config_json TEXT NOT NULL DEFAULT '{}'`)
 	if err != nil {
 		return &domain.DatabaseError{Op: "ensure_migrations_table", Err: err}
 	}
@@ -120,7 +120,7 @@ func (db *DB) EnsureMigrationsTable(ctx context.Context) error {
 // GetLastMigration returns the most recently applied migration, or nil if none.
 func (db *DB) GetLastMigration(ctx context.Context) (*domain.Migration, error) {
 	row := db.pool.QueryRow(ctx,
-		`SELECT id, checksum, sql, config_json, applied_at FROM _ultrabase_migrations ORDER BY id DESC LIMIT 1`)
+		`SELECT id, checksum, sql, config_json, applied_at FROM _instancez_migrations ORDER BY id DESC LIMIT 1`)
 
 	var m domain.Migration
 	err := row.Scan(&m.ID, &m.Checksum, &m.SQL, &m.ConfigJSON, &m.AppliedAt)
@@ -136,7 +136,7 @@ func (db *DB) GetLastMigration(ctx context.Context) (*domain.Migration, error) {
 // RecordMigration stores a new migration record.
 func (db *DB) RecordMigration(ctx context.Context, checksum, sql, configJSON string) error {
 	_, err := db.pool.Exec(ctx,
-		`INSERT INTO _ultrabase_migrations (checksum, sql, config_json) VALUES ($1, $2, $3)`,
+		`INSERT INTO _instancez_migrations (checksum, sql, config_json) VALUES ($1, $2, $3)`,
 		checksum, sql, configJSON)
 	if err != nil {
 		return &domain.DatabaseError{Op: "record_migration", Err: err}

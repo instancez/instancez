@@ -57,7 +57,7 @@ func TestEnsureRolesBootstrapsFromSuperuser(t *testing.T) {
 	}
 	defer conn.Close(ctx)
 
-	for _, role := range []string{"ultrabase_owner", "authenticator", "anon", "authenticated", "service_role"} {
+	for _, role := range []string{"instancez_owner", "authenticator", "anon", "authenticated", "service_role"} {
 		var exists bool
 		if err := conn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)`, role).Scan(&exists); err != nil {
 			t.Fatalf("query role %s: %v", role, err)

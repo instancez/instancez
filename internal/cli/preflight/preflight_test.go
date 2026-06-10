@@ -180,7 +180,7 @@ func (f *fakeRoleReporter) AuthenticatorGrants() (map[string]bool, error) {
 
 func allExpectedRoles() map[string]bool {
 	return map[string]bool{
-		"ultrabase_owner": true,
+		"instancez_owner": true,
 		"authenticator":   true,
 		"anon":            true,
 		"authenticated":   true,

@@ -45,7 +45,7 @@ go test -tags=integration -race ./...                  # full integration (needs
 go test -run TestSupabaseJSCompat -tags=integration -race ./internal/adapter/http/...   # the supabase-js compat suite
 go test -run <RegExp> ./internal/...                   # single test
 ```
-Integration tests are gated behind `//go:build integration` and use `internal/testutil/dbboot` to provision `ultrabase_owner` + `authenticator` roles inside a fresh testcontainers Postgres. They need `docker` on `PATH`; the supabase-js harness additionally needs `node` + `npm`.
+Integration tests are gated behind `//go:build integration` and use `internal/testutil/dbboot` to provision `instancez_owner` + `authenticator` roles inside a fresh testcontainers Postgres. They need `docker` on `PATH`; the supabase-js harness additionally needs `node` + `npm`.
 
 **Dashboard (in `dashboard/`):**
 ```sh
@@ -98,6 +98,6 @@ internal/adapter/     postgres (pgx pool), http (Gin handlers + PostgREST surfac
 - **`auth.uid()` and `auth.is_authenticated()`** are Postgres functions installed by migrations, used inside RLS policy expressions. They read session GUCs set by the request middleware, not application memory. They live in the `auth` schema and are typically referenced from RLS policies on tables that FK to `auth.users.id`.
 - **No auto-added columns, not even `id`.** The migrator does not inject primary keys. Every column, including PKs, must be declared in YAML.
 - **Reserved schemas:** `auth` and `storage`. The migrator owns these schemas; user tables declaring `schema: auth` or `schema: storage` are rejected at validation. The auth user record lives at `auth.users`; profile data is a regular user-defined table FK'd to `auth.users.id`.
-- **Underscore-prefixed names** are still reserved for framework-internal tables (`_ultrabase_migrations`).
+- **Underscore-prefixed names** are still reserved for framework-internal tables (`_instancez_migrations`).
 - **The Lambda image is per-arch.** `Dockerfile.lambda` is built once per platform (`-lambda-amd64`, `-lambda-arm64`) because Lambda rejects multi-arch manifest lists. Don't "fix" this back to a manifest list.
 </gotchas>

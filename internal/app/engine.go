@@ -134,7 +134,7 @@ func (e *Engine) sourceDescription() string {
 
 // applyMigrationsWithFallback runs migrations against e.cfg. On success it
 // returns a DriftTracker in OK state. On failure, it attempts to load the
-// last-known-good config from _ultrabase_migrations.config_json and
+// last-known-good config from _instancez_migrations.config_json and
 // continues running with that config, returning a DriftTracker in drift
 // state. If no last-known-good exists (first boot), it returns the original
 // migration error so the caller can fail fast.

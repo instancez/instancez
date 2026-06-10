@@ -30,7 +30,7 @@ const (
 func expectedRoleNames() []string {
 	r := domain.DefaultRoles()
 	return []string{
-		"ultrabase_owner", // bootstrap.go ownerRole const
+		"instancez_owner", // bootstrap.go ownerRole const
 		r.Authenticator,
 		r.Anon,
 		r.Authenticated,
@@ -428,7 +428,7 @@ func roleLayoutDecision(existing, grants map[string]bool) Result {
 }
 
 // RoleLayoutCheck returns a Check that verifies the five ultrabase roles
-// (ultrabase_owner, authenticator, anon, authenticated, service_role) exist
+// (instancez_owner, authenticator, anon, authenticated, service_role) exist
 // in the database, and that authenticator has been granted the three API roles.
 // It uses the injected RoleReporter so the decision logic can be exercised
 // without a real database connection.

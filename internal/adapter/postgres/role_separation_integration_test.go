@@ -110,7 +110,7 @@ func TestRequestPool_ServiceRoleUserIDIsNull(t *testing.T) {
 }
 
 // TestOwnerPool_NoRoleSwitching confirms the owner pool stays as
-// ultrabase_owner — no SET LOCAL ROLE is ever issued on it.
+// instancez_owner — no SET LOCAL ROLE is ever issued on it.
 func TestOwnerPool_NoRoleSwitching(t *testing.T) {
 	owner, _ := dbboot.StartContainer(t)
 	ctx := context.Background()

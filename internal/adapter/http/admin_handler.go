@@ -81,7 +81,7 @@ func (h *AdminHandler) Mount(api *gin.RouterGroup) {
 func (h *AdminHandler) handleListMigrations(c *gin.Context) {
 	ctx := c.Request.Context()
 	rows, err := h.db.Query(ctx,
-		"SELECT id, checksum, applied_at FROM _ultrabase_migrations ORDER BY id DESC LIMIT 100")
+		"SELECT id, checksum, applied_at FROM _instancez_migrations ORDER BY id DESC LIMIT 100")
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to query migrations")
 		return
