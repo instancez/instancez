@@ -1,4 +1,4 @@
-// Package cloud provides the CLI-side client for Ultrabase Cloud (v2 backend).
+// Package cloud provides the CLI-side client for Instancez Cloud (v2 backend).
 package cloud
 
 import (
@@ -14,7 +14,7 @@ import (
 var ErrNoCredentials = errors.New("no credentials; run `inz login` first")
 
 // Credentials are the minimal state needed to authenticate against the
-// Ultrabase Cloud API. PAT is a Personal Access Token returned by the
+// Instancez Cloud API. PAT is a Personal Access Token returned by the
 // device-code flow. Email is informational (printed in `whoami`-style
 // messages); never derived from the token client-side.
 type Credentials struct {

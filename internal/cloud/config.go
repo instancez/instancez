@@ -7,11 +7,11 @@ import (
 	"strings"
 )
 
-// defaultCloudAPI is the Ultrabase Cloud API endpoint. Can be overridden by
+// defaultCloudAPI is the Instancez Cloud API endpoint. Can be overridden by
 // INSTANCEZ_CLOUD_API env var or project.cloud.api_url in instancez.yaml.
 const defaultCloudAPI = "https://my.instancez.dev/api"
 
-// APIURL returns the base URL for the Ultrabase Cloud API, considering only
+// APIURL returns the base URL for the Instancez Cloud API, considering only
 // the environment variable. Used by commands that run without a project
 // context (login, logout).
 func APIURL() string {

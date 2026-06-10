@@ -18,8 +18,8 @@ func newLoginCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "login",
-		Short: "Authenticate against Ultrabase Cloud via device-code flow",
-		Long: `Sign in to Ultrabase Cloud. Opens a browser to confirm a one-time
+		Short: "Authenticate against instancez Cloud via device-code flow",
+		Long: `Sign in to instancez Cloud. Opens a browser to confirm a one-time
 code, then stores a Personal Access Token at ~/.instancez/credentials for
 subsequent commands.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -132,7 +132,7 @@ func ensureLoggedIn(opts ensureLoginOpts) (cloud.Credentials, error) {
 	}
 
 	// 3. Interactive: confirm intent (unless --yes), then run the flow.
-	fmt.Println("This requires signing in to Ultrabase Cloud.")
+	fmt.Println("This requires signing in to instancez Cloud.")
 	if !opts.assumeYes {
 		if !opts.confirm("Sign in now? [Y/n] ") {
 			return cloud.Credentials{}, errors.New("login required — run `inz login` to sign in")

@@ -25,9 +25,9 @@ import (
 )
 
 const (
-	contextKeySession   = "ultrabase_session"
-	contextKeyUserID    = "ultrabase_user_id"
-	contextKeyRequestID = "ultrabase_request_id"
+	contextKeySession   = "instancez_session"
+	contextKeyUserID    = "instancez_user_id"
+	contextKeyRequestID = "instancez_request_id"
 )
 
 // requestIDSafe restricts incoming X-Request-Id values to characters that
@@ -316,7 +316,7 @@ func isAdmin(c *gin.Context) bool {
 	return v == true
 }
 
-// errTypeToCode maps ultrabase's error-type slugs onto PostgREST-compatible
+// errTypeToCode maps instancez's error-type slugs onto PostgREST-compatible
 // error codes. Postgres SQLSTATEs are used where they fit; PGRST* codes are
 // reserved for API-level errors that have no underlying SQLSTATE.
 var errTypeToCode = map[string]string{

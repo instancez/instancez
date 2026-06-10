@@ -108,7 +108,7 @@ func runDev(opts devOptions) error {
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 
-	fmt.Printf("  Ultrabase v%s\n\n", version)
+	fmt.Printf("  instancez v%s\n\n", version)
 	fmt.Printf("  ✓ Schema valid\n")
 
 	if opts.dashboard != DashboardReadwrite {

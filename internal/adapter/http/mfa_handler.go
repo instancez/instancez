@@ -44,7 +44,7 @@ func (h *AuthHandler) handleEnrollFactor(c *gin.Context) {
 
 	issuer := req.Issuer
 	if issuer == "" {
-		issuer = "ultrabase"
+		issuer = "instancez"
 	}
 	accountName := session.Email
 	if accountName == "" {

@@ -15,7 +15,7 @@ func newStatusCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "Show the linked Ultrabase Cloud project's state",
+		Short: "Show the linked instancez Cloud project's state",
 		Long: `Show the cloud project's current state: name, id, and url; the
 production deploy status; and whether the local draft has unpublished changes
 relative to production.
@@ -45,7 +45,7 @@ func runStatus(configPath string) error {
 		return fmt.Errorf("parse %s: %w", configPath, err)
 	}
 	if projectID == "" {
-		return errors.New("no project.cloud.project_id in instancez.yaml; run `inz init --with-cloud` to link this project to Ultrabase Cloud")
+		return errors.New("no project.cloud.project_id in instancez.yaml; run `inz init --with-cloud` to link this project to instancez Cloud")
 	}
 
 	// Inline login: returns existing creds, prompts on a TTY, or hard-errors

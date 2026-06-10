@@ -12,7 +12,7 @@ func newDoctorCmd() *cobra.Command {
 	var configPath string
 	cmd := &cobra.Command{
 		Use:   "doctor",
-		Short: "Check prerequisites for running ultrabase locally",
+		Short: "Check prerequisites for running instancez locally",
 		Long: `Run a set of preflight checks that verify the environment is ready for
 inz dev and inz serve: config file validity, database DSNs, and the
 required Postgres role layout.

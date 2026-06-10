@@ -1,4 +1,4 @@
-// Package preflight provides composable health checks for the ultrabase CLI.
+// Package preflight provides composable health checks for the instancez CLI.
 // Checks are constructed with injected dependencies so the decision logic can
 // be unit-tested without a live database or real environment.
 package preflight
@@ -23,7 +23,7 @@ const (
 )
 
 // expectedRoleNames returns the full set of Postgres role names that an
-// ultrabase-bootstrapped database must contain. The owner login role is the
+// instancez-bootstrapped database must contain. The owner login role is the
 // hard-coded const from bootstrap.go; the remaining three come from
 // domain.DefaultRoles() (overrides via INSTANCEZ_DB_* env vars are not
 // reflected here — the check targets the defaults used by `inz init`).
@@ -427,7 +427,7 @@ func roleLayoutDecision(existing, grants map[string]bool) Result {
 	return Result{Name: "role layout", OK: true}
 }
 
-// RoleLayoutCheck returns a Check that verifies the five ultrabase roles
+// RoleLayoutCheck returns a Check that verifies the five instancez roles
 // (instancez_owner, authenticator, anon, authenticated, service_role) exist
 // in the database, and that authenticator has been granted the three API roles.
 // It uses the injected RoleReporter so the decision logic can be exercised

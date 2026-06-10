@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/logo.svg" alt="Ultrabase" width="80" height="80" />
+  <img src="docs/logo.svg" alt="Instancez" width="80" height="80" />
 </p>
 
-<h1 align="center">ultrabase</h1>
+<h1 align="center">instancez</h1>
 
 <p align="center">
   Define your backend in YAML. Get a production-ready REST API.
@@ -18,7 +18,7 @@
 
 ---
 
-Ultrabase is a declarative backend framework. A single YAML file defines your tables, authentication, file storage, and custom SQL functions. A single Go binary reads that file and produces a fully functional REST API powered by PostgreSQL.
+Instancez is a declarative backend framework. A single YAML file defines your tables, authentication, file storage, and custom SQL functions. A single Go binary reads that file and produces a fully functional REST API powered by PostgreSQL.
 
 No backend code. No migrations to write. No ORM to learn.
 
@@ -55,7 +55,7 @@ inz dev
 
 ## How It Differs
 
-| | Ultrabase | Supabase | Firebase | Hasura |
+| | Instancez | Supabase | Firebase | Hasura |
 |---|---|---|---|---|
 | Config format | YAML (declarative) | Dashboard / SQL | Dashboard / JSON | Console / metadata |
 | Query interface | PostgREST-compatible | PostgREST | Proprietary SDK | GraphQL |
@@ -70,12 +70,12 @@ inz dev
 ### Using Docker Compose
 
 ```sh
-git clone https://github.com/user/ultrabase.git
-cd ultrabase
+git clone https://github.com/user/instancez.git
+cd instancez
 docker compose -f docker-compose.dev.yaml up
 ```
 
-This starts PostgreSQL 17, the Ultrabase API server on port `8080`, and the dashboard on port `5173`.
+This starts PostgreSQL 17, the Instancez API server on port `8080`, and the dashboard on port `5173`.
 
 ### From Source
 
@@ -110,7 +110,7 @@ inz version
 
 ### Tables & Auto-Migrations
 
-Define tables in YAML. Ultrabase diffs your schema against the database and applies migrations automatically on startup.
+Define tables in YAML. Instancez diffs your schema against the database and applies migrations automatically on startup.
 
 ```yaml
 tables:
@@ -189,7 +189,7 @@ curl -X POST /auth/v1/token?grant_type=password -d '{"email": "me@example.com", 
 
 ### File Storage
 
-Named buckets with MIME type restrictions, size limits, and RLS policies. Ultrabase returns signed URLs; clients upload and download directly to/from the storage provider.
+Named buckets with MIME type restrictions, size limits, and RLS policies. Instancez returns signed URLs; clients upload and download directly to/from the storage provider.
 
 ```yaml
 providers:
@@ -263,11 +263,11 @@ export default async function handler(req, ctx) {
 ```
 
 ```sh
-curl -X POST /functions/v1/hello -d '{"name": "ultrabase"}'
-# → {"hello":"ultrabase"}
+curl -X POST /functions/v1/hello -d '{"name": "instancez"}'
+# → {"hello":"instancez"}
 ```
 
-The `ctx` argument provides: `supabase` (caller-RLS client), `serviceClient` (service_role), `claims` (JWT claims or null for anonymous callers), `env` (resolved secrets), `log`, and `signal` (AbortSignal). Secrets are resolved from the `INSTANCEZ_ENV_*` namespace at startup and never written to the worker's process environment. Set `auth_required: true` on a function to have Ultrabase return 401 for unauthenticated callers before the handler is invoked; handlers can still inspect `ctx.claims` for finer-grained authorization.
+The `ctx` argument provides: `supabase` (caller-RLS client), `serviceClient` (service_role), `claims` (JWT claims or null for anonymous callers), `env` (resolved secrets), `log`, and `signal` (AbortSignal). Secrets are resolved from the `INSTANCEZ_ENV_*` namespace at startup and never written to the worker's process environment. Set `auth_required: true` on a function to have Instancez return 401 for unauthenticated callers before the handler is invoked; handlers can still inspect `ctx.claims` for finer-grained authorization.
 
 ### Dashboard
 
@@ -344,7 +344,7 @@ Environment variables:
 |---|---|---|
 | `INSTANCEZ_DATABASE_URL` | No (dev only) | Superuser/privileged DSN. `inz dev` provisions the role layout from it, writes the derived owner/authenticator DSNs to `.development.env`, and generates a random `INSTANCEZ_ADMIN_KEY` there if one isn't already set. Not used by `serve`. |
 | `INSTANCEZ_OWNER_DATABASE_URL` | Yes | Privileged login (migrations, seeding, replication). Role needs `CREATEROLE`, `CREATEDB`, `BYPASSRLS`, `REPLICATION`. |
-| `INSTANCEZ_AUTH_DATABASE_URL` | Yes | Authenticator login for HTTP requests. `NOINHERIT`; ultrabase issues `SET LOCAL ROLE` per transaction (CRUD: from JWT; system endpoints: `service_role`). |
+| `INSTANCEZ_AUTH_DATABASE_URL` | Yes | Authenticator login for HTTP requests. `NOINHERIT`; instancez issues `SET LOCAL ROLE` per transaction (CRUD: from JWT; system endpoints: `service_role`). |
 | `INSTANCEZ_DB_AUTHENTICATOR_ROLE` | No | Override the authenticator role name (default: `authenticator`). |
 | `INSTANCEZ_DB_ANON_ROLE` | No | Override the anon role name (default: `anon`). |
 | `INSTANCEZ_DB_AUTHENTICATED_ROLE` | No | Override the authenticated role name (default: `authenticated`). |

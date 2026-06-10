@@ -24,8 +24,8 @@ func newInitCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "init [name]",
-		Short: "Scaffold a new Ultrabase project in the current directory",
-		Long: `Scaffold a new Ultrabase project.
+		Short: "Scaffold a new instancez project in the current directory",
+		Long: `Scaffold a new instancez project.
 
 The project is created in the current directory by default. The project name
 defaults to the directory's basename when not given as a positional argument.
@@ -43,7 +43,7 @@ init only writes scaffolding files; it never touches a database. A
 	}
 
 	cmd.Flags().StringVar(&opts.dir, "dir", ".", "output directory")
-	cmd.Flags().BoolVar(&opts.withCloud, "with-cloud", false, "create a project in Ultrabase Cloud (requires `inz login`)")
+	cmd.Flags().BoolVar(&opts.withCloud, "with-cloud", false, "create a project in instancez Cloud (requires `inz login`)")
 	cmd.Flags().StringVar(&opts.generateLike, "generate-like", "", "generate instancez.yaml from a free-form prompt (requires `inz login`)")
 	cmd.Flags().BoolVar(&opts.force, "force", false, "overwrite existing scaffolding files")
 	return cmd
@@ -211,7 +211,7 @@ func runInit(opts initOptions) error {
 		if linkedID != "" {
 			fmt.Printf("  = already linked to project %s\n", linkedID)
 		} else {
-			fmt.Println("  Creating Ultrabase Cloud project...")
+			fmt.Println("  Creating instancez Cloud project...")
 			creds, _ := cloud.Load()
 			c := cloud.NewClient(cloud.APIURL(), creds.PAT)
 			resp, err := c.CreateProject(name)
@@ -318,7 +318,7 @@ functions:
   todos:
     runtime: node
     file: functions/todos.js
-    auth_required: true   # ultrabase returns 401 for anonymous callers
+    auth_required: true   # instancez returns 401 for anonymous callers
 `, name)
 }
 

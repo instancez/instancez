@@ -1,6 +1,6 @@
 //go:build integration
 
-// Package pgrupstream runs postgrest-go against a live Ultrabase server. This
+// Package pgrupstream runs postgrest-go against a live Instancez server. This
 // file owns the harness (TestMain, schema, seed, buildConfig) and one baseline
 // smoke test; behavioral coverage lives in conformance_test.go.
 package pgrupstream
@@ -62,7 +62,7 @@ CREATE TABLE messages (
 );
 
 -- Stored functions used by TestConf_RPC. Declared here (instead of via
--- the ultrabase Migrator) so the conformance schema stays self-contained
+-- the instancez Migrator) so the conformance schema stays self-contained
 -- and doesn't couple function DDL generation to the RPC test.
 CREATE OR REPLACE FUNCTION public.add_numbers(a int, b int)
 RETURNS int LANGUAGE sql IMMUTABLE AS $$ SELECT a + b $$;
@@ -79,7 +79,7 @@ CREATE OR REPLACE FUNCTION public.touch_nothing()
 RETURNS void LANGUAGE plpgsql VOLATILE AS $$ BEGIN RETURN; END $$;
 
 -- Deliberately mis-declared: claims to be STABLE but attempts a write.
--- Used by TestConf_RPC to verify ultrabase pins stable/immutable RPC
+-- Used by TestConf_RPC to verify instancez pins stable/immutable RPC
 -- transactions to read-only mode as a defense-in-depth guard.
 CREATE OR REPLACE FUNCTION public.sneaky_insert()
 RETURNS int LANGUAGE plpgsql STABLE AS $$

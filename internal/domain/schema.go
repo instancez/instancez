@@ -1,4 +1,4 @@
-// Package domain contains pure types and interfaces (ports) for Ultrabase.
+// Package domain contains pure types and interfaces (ports) for Instancez.
 // This package has zero imports from adapter/, app/, or external packages.
 package domain
 
@@ -10,7 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config is the top-level Ultrabase configuration parsed from YAML.
+// Config is the top-level Instancez configuration parsed from YAML.
 type Config struct {
 	Version    int                     `yaml:"version" json:"version"`
 	Project    Project                 `yaml:"project" json:"project"`
@@ -102,7 +102,7 @@ type Providers struct {
 
 type EmailProvider struct {
 	Type      string `yaml:"type" json:"type"`             // resend | sendgrid | ses
-	FromEmail string `yaml:"from_email" json:"from_email"` // e.g. "Ultrabase <noreply@example.com>"
+	FromEmail string `yaml:"from_email" json:"from_email"` // e.g. "instancez <noreply@example.com>"
 }
 
 type StorageProvider struct {

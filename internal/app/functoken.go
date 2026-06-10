@@ -38,7 +38,7 @@ func MintServiceToken(ctx context.Context, km *JWTKeyManager, ttl time.Duration)
 
 	now := time.Now()
 	claims := jwt.MapClaims{
-		"iss":  "ultrabase",
+		"iss":  "instancez",
 		"sub":  serviceTokenSub,
 		"aud":  "authenticated",
 		"role": "service_role",
@@ -86,7 +86,7 @@ func MintAnonToken(ctx context.Context, km *JWTKeyManager, ttl time.Duration) (s
 
 	now := time.Now()
 	claims := jwt.MapClaims{
-		"iss":  "ultrabase",
+		"iss":  "instancez",
 		"role": "anon",
 		"iat":  now.Unix(),
 		"exp":  now.Add(ttl).Unix(),

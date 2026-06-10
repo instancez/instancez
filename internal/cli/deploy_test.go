@@ -50,11 +50,11 @@ func TestRunDeployHappyPathYes(t *testing.T) {
 		calls = append(calls, r.Method+" "+r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.Method == "PUT" && r.URL.Path == "/ultrabase/projects/abc/yaml":
+		case r.Method == "PUT" && r.URL.Path == "/instancez/projects/abc/yaml":
 			w.WriteHeader(http.StatusOK)
-		case r.Method == "GET" && r.URL.Path == "/ultrabase/projects/abc/migration-preview":
+		case r.Method == "GET" && r.URL.Path == "/instancez/projects/abc/migration-preview":
 			_ = json.NewEncoder(w).Encode(map[string]any{"diff": "+ table users"})
-		case r.Method == "POST" && r.URL.Path == "/ultrabase/projects/abc/deploy":
+		case r.Method == "POST" && r.URL.Path == "/instancez/projects/abc/deploy":
 			_ = json.NewEncoder(w).Encode(map[string]any{"version_id": "v1"})
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -74,9 +74,9 @@ func TestRunDeployHappyPathYes(t *testing.T) {
 	require.NoError(t, runDeploy(cfg, true, ""))
 
 	require.Equal(t, []string{
-		"PUT /ultrabase/projects/abc/yaml",
-		"GET /ultrabase/projects/abc/migration-preview",
-		"POST /ultrabase/projects/abc/deploy",
+		"PUT /instancez/projects/abc/yaml",
+		"GET /instancez/projects/abc/migration-preview",
+		"POST /instancez/projects/abc/deploy",
 	}, calls, "upload → preview → deploy, in that order")
 }
 
@@ -125,11 +125,11 @@ func TestRunDeployConfirmDeclineAborts(t *testing.T) {
 		calls = append(calls, r.Method+" "+r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.Method == "PUT" && r.URL.Path == "/ultrabase/projects/abc/yaml":
+		case r.Method == "PUT" && r.URL.Path == "/instancez/projects/abc/yaml":
 			w.WriteHeader(http.StatusOK)
-		case r.Method == "GET" && r.URL.Path == "/ultrabase/projects/abc/migration-preview":
+		case r.Method == "GET" && r.URL.Path == "/instancez/projects/abc/migration-preview":
 			_ = json.NewEncoder(w).Encode(map[string]any{"diff": "+ table users"})
-		case r.Method == "POST" && r.URL.Path == "/ultrabase/projects/abc/deploy":
+		case r.Method == "POST" && r.URL.Path == "/instancez/projects/abc/deploy":
 			t.Error("deploy must not be called after the user declines")
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -150,8 +150,8 @@ func TestRunDeployConfirmDeclineAborts(t *testing.T) {
 	require.NoError(t, err, "declining is a user choice, not a failure")
 	assert.True(t, confirmCalled, "confirm prompt must be shown when yes=false")
 	assert.Equal(t, []string{
-		"PUT /ultrabase/projects/abc/yaml",
-		"GET /ultrabase/projects/abc/migration-preview",
+		"PUT /instancez/projects/abc/yaml",
+		"GET /instancez/projects/abc/migration-preview",
 	}, calls, "upload + preview happen, but no deploy after decline")
 }
 
@@ -166,11 +166,11 @@ func TestRunDeployConfirmAcceptPromotes(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.Method == "PUT" && r.URL.Path == "/ultrabase/projects/abc/yaml":
+		case r.Method == "PUT" && r.URL.Path == "/instancez/projects/abc/yaml":
 			w.WriteHeader(http.StatusOK)
-		case r.Method == "GET" && r.URL.Path == "/ultrabase/projects/abc/migration-preview":
+		case r.Method == "GET" && r.URL.Path == "/instancez/projects/abc/migration-preview":
 			_ = json.NewEncoder(w).Encode(map[string]any{"diff": ""}) // no changes
-		case r.Method == "POST" && r.URL.Path == "/ultrabase/projects/abc/deploy":
+		case r.Method == "POST" && r.URL.Path == "/instancez/projects/abc/deploy":
 			deployHit = true
 			_ = json.NewEncoder(w).Encode(map[string]any{"version_id": "v9"})
 		}

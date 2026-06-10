@@ -84,7 +84,7 @@ func runServe(opts serveOptions) error {
 	// the logger so prod stdout stays a single parseable JSON stream.
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	logger.Info("starting ultrabase",
+	logger.Info("starting instancez",
 		"version", version,
 		"mode", "production",
 		"config_source", source.Describe())
@@ -94,7 +94,7 @@ func runServe(opts serveOptions) error {
 		"watch_interval", opts.watchInterval.String(),
 		"dashboard", opts.dashboard.String())
 
-	logger.Warn("ultrabase is designed for single-replica deployments; multi-replica support is planned")
+	logger.Warn("instancez is designed for single-replica deployments; multi-replica support is planned")
 
 	// Connect to database (owner + authenticator pools).
 	ownerDB, authDB, roles, err := dbConnections(ctx, cfg.Database.Pool)
@@ -140,7 +140,7 @@ func runServe(opts serveOptions) error {
 	// version without recreating the HTTP handler.
 	var funcRuntime domain.FunctionRuntime
 	var swapRT *funcs.SwapRuntime
-	extractParent := filepath.Join(os.TempDir(), "ultrabase-functions")
+	extractParent := filepath.Join(os.TempDir(), "instancez-functions")
 	if len(cfg.Functions) > 0 {
 		rt, _, ferr := buildServeFuncRuntime(ctx, cfg, filepath.Dir(adminConfigPath), extractParent, km, logger)
 		if ferr != nil {

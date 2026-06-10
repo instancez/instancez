@@ -33,7 +33,7 @@ import (
 )
 
 // TestSupabaseJSCompat boots a real Postgres in a container, runs migrations,
-// starts the ultrabase HTTP handler via httptest, then shells out to a Node
+// starts the instancez HTTP handler via httptest, then shells out to a Node
 // harness that drives @supabase/supabase-js against the URL. The harness exits
 // non-zero on any assertion failure and streams its output to the test log.
 //
@@ -53,9 +53,9 @@ func TestSupabaseJSCompat(t *testing.T) {
 	// ---- 1. Spin up Postgres ----
 	container, err := pgcontainer.Run(ctx,
 		"postgres:16-alpine",
-		pgcontainer.WithDatabase("ultrabase_test"),
-		pgcontainer.WithUsername("ultrabase"),
-		pgcontainer.WithPassword("ultrabase"),
+		pgcontainer.WithDatabase("instancez_test"),
+		pgcontainer.WithUsername("instancez"),
+		pgcontainer.WithPassword("instancez"),
 		tc.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).
@@ -617,7 +617,7 @@ func runPasswordResetFlow(t *testing.T, baseURL string, emails *captureEmailSend
 func signAnonKey(key *app.JWTKey) (string, error) {
 	now := time.Now()
 	claims := jwt.MapClaims{
-		"iss":  "ultrabase",
+		"iss":  "instancez",
 		"role": "anon",
 		"iat":  now.Unix(),
 		"exp":  now.Add(24 * time.Hour).Unix(),

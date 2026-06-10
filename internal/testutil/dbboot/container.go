@@ -28,7 +28,7 @@ func StartContainer(t *testing.T, image ...string) (domain.OwnerDB, domain.Reque
 	defer cancel()
 
 	container, err := pgcontainer.Run(ctx, img,
-		pgcontainer.WithDatabase("ultrabase_test"),
+		pgcontainer.WithDatabase("instancez_test"),
 		pgcontainer.WithUsername("postgres"),
 		pgcontainer.WithPassword("postgres"),
 		tc.WithWaitStrategy(
@@ -59,7 +59,7 @@ func StartContainer(t *testing.T, image ...string) (domain.OwnerDB, domain.Reque
 }
 
 // StartRawContainer launches a postgres testcontainer and returns the superuser
-// connection string WITHOUT provisioning any ultrabase roles. Use it to test
+// connection string WITHOUT provisioning any instancez roles. Use it to test
 // code that must bootstrap the role layout itself (e.g. ensureRoles).
 func StartRawContainer(t *testing.T, image ...string) string {
 	t.Helper()
@@ -71,7 +71,7 @@ func StartRawContainer(t *testing.T, image ...string) string {
 	defer cancel()
 
 	container, err := pgcontainer.Run(ctx, img,
-		pgcontainer.WithDatabase("ultrabase_test"),
+		pgcontainer.WithDatabase("instancez_test"),
 		pgcontainer.WithUsername("postgres"),
 		pgcontainer.WithPassword("postgres"),
 		tc.WithWaitStrategy(
@@ -107,7 +107,7 @@ func StartContainerWithRawAuth(t *testing.T, image ...string) (domain.OwnerDB, d
 	defer cancel()
 
 	container, err := pgcontainer.Run(ctx, img,
-		pgcontainer.WithDatabase("ultrabase_test"),
+		pgcontainer.WithDatabase("instancez_test"),
 		pgcontainer.WithUsername("postgres"),
 		pgcontainer.WithPassword("postgres"),
 		tc.WithWaitStrategy(

@@ -1,6 +1,6 @@
 version: 1
 project:
-    name: Ultrabase Devx
+    name: instancez-dev
     description: Local development project
 extensions:
     - pgcrypto
@@ -379,7 +379,7 @@ storage:
         webhook:
             url: https://httpbin.org/post
             headers:
-                X-Source: ultrabase
+                X-Source: instancez
             retry:
                 max: 3
                 backoff: exponential
@@ -406,7 +406,7 @@ data:
     announcements:
         - body: This is a sample announcement.
           published: true
-          title: Welcome to Ultrabase
+          title: Welcome to Instancez
     teams:
         - id: 1
           name: Acme Corp

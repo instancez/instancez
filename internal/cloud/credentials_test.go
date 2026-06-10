@@ -17,7 +17,7 @@ func TestCredentialsRoundtrip(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNoCredentials)
 
 	// Save then Load returns the same value.
-	saved := Credentials{PAT: "ultra_pat_abc123", Email: "me@example.com"}
+	saved := Credentials{PAT: "instancez_pat_abc123", Email: "me@example.com"}
 	assert.NoError(t, Save(saved))
 
 	loaded, err := Load()

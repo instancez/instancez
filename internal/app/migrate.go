@@ -434,7 +434,7 @@ func generateAuthTables(auth *domain.Auth) []string {
 
 	// auth.mfa_factors / auth.mfa_challenges — TOTP MFA. Always emitted
 	// (the migration cost is trivial and gating on a config flag would
-	// force callers to restart ultrabase just to enable 2FA).
+	// force callers to restart instancez just to enable 2FA).
 	ddl = append(ddl, `CREATE TABLE IF NOT EXISTS auth.mfa_factors (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -457,7 +457,7 @@ func generateAuthTables(auth *domain.Auth) []string {
 	// auth.flow_state — consolidates PKCE auth codes and OAuth state into one
 	// Supabase-shaped table. provider_type distinguishes the two flows
 	// ('pkce' vs. 'oauth'); auth_code holds the PKCE code or the OAuth
-	// state token. redirect_to and linking_user_id are carry-overs ultrabase
+	// state token. redirect_to and linking_user_id are carry-overs instancez
 	// needs that Supabase doesn't represent natively.
 	ddl = append(ddl, `CREATE TABLE IF NOT EXISTS auth.flow_state (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -735,7 +735,7 @@ $$ LANGUAGE SQL STABLE;`,
 $$ LANGUAGE SQL STABLE;`,
 
 		// Legacy helper kept for backwards compatibility with any existing
-		// RLS policies written against older ultrabase versions.
+		// RLS policies written against older instancez versions.
 		`CREATE OR REPLACE FUNCTION auth.is_authenticated() RETURNS BOOLEAN AS $$
   SELECT auth.role() = 'authenticated' OR auth.role() = 'service_role';
 $$ LANGUAGE SQL STABLE;`,

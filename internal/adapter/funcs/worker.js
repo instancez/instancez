@@ -119,7 +119,7 @@ function firstVals(q) {
 }
 
 // buildCtx assembles the second argument passed to a function handler. It
-// builds two @supabase/supabase-js clients pointed at ultrabase's own REST API
+// builds two @supabase/supabase-js clients pointed at instancez's own REST API
 // over loopback:
 //   - supabase: carries the caller's JWT, so RLS applies as the caller.
 //   - serviceClient: carries an inz-minted service_role JWT (BYPASSRLS) for

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// Client talks to the Ultrabase Cloud API. Bearer is the PAT (or "" for
+// Client talks to the Instancez Cloud API. Bearer is the PAT (or "" for
 // unauthenticated calls like the device-flow start). HTTP is the underlying
 // http.Client; tests inject one bound to httptest.Server.
 type Client struct {
@@ -62,24 +62,24 @@ func (c *Client) DeviceToken(deviceCode string) (string, error) {
 	return out.Token, nil
 }
 
-// CreateProjectResponse mirrors POST /ultrabase/projects.
+// CreateProjectResponse mirrors POST /instancez/projects.
 type CreateProjectResponse struct {
 	ProjectID string `json:"project_id"`
 	Slug      string `json:"slug"`
 	Name      string `json:"name"`
 }
 
-// CreateProject creates a new backend-only App in Ultrabase Cloud. Requires
+// CreateProject creates a new backend-only App in Instancez Cloud. Requires
 // a Bearer PAT.
 func (c *Client) CreateProject(name string) (*CreateProjectResponse, error) {
 	var out CreateProjectResponse
-	if err := c.do("POST", "/ultrabase/projects", map[string]string{"name": name}, &out); err != nil {
+	if err := c.do("POST", "/instancez/projects", map[string]string{"name": name}, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-// DeployResponse mirrors POST /ultrabase/projects/:id/deploy. The version_id
+// DeployResponse mirrors POST /instancez/projects/:id/deploy. The version_id
 // can be polled via GET /data/apps/:id to track status.
 type DeployResponse struct {
 	VersionID string `json:"version_id"`
@@ -89,13 +89,13 @@ type DeployResponse struct {
 // Deploy triggers a production deploy for the given project.
 func (c *Client) Deploy(projectID string) (*DeployResponse, error) {
 	var out DeployResponse
-	if err := c.do("POST", "/ultrabase/projects/"+projectID+"/deploy", nil, &out); err != nil {
+	if err := c.do("POST", "/instancez/projects/"+projectID+"/deploy", nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-// MigrationPreviewResponse mirrors GET /ultrabase/projects/:id/migration-preview.
+// MigrationPreviewResponse mirrors GET /instancez/projects/:id/migration-preview.
 // The exact shape of `diff` depends on v2 — keep it loose so we can adapt
 // once the server-side response stabilizes.
 type MigrationPreviewResponse struct {
@@ -106,7 +106,7 @@ type MigrationPreviewResponse struct {
 // what's deployed to the cloud project.
 func (c *Client) MigrationPreview(projectID string) (*MigrationPreviewResponse, error) {
 	var out MigrationPreviewResponse
-	if err := c.do("GET", "/ultrabase/projects/"+projectID+"/migration-preview", nil, &out); err != nil {
+	if err := c.do("GET", "/instancez/projects/"+projectID+"/migration-preview", nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -135,10 +135,10 @@ func (c *Client) GenerateYAML(prompt string) (*GenerateYAMLResponse, error) {
 // draft Defs. Called by `inz deploy` and `inz validate --project` before
 // their respective actions so the server sees the latest local source.
 func (c *Client) UploadYAML(projectID, yamlContent string) error {
-	return c.do("PUT", "/ultrabase/projects/"+projectID+"/yaml", map[string]string{"yaml": yamlContent}, nil)
+	return c.do("PUT", "/instancez/projects/"+projectID+"/yaml", map[string]string{"yaml": yamlContent}, nil)
 }
 
-// GetAppResponse mirrors GET /ultrabase/projects/:id. It carries the project
+// GetAppResponse mirrors GET /instancez/projects/:id. It carries the project
 // fields plus the PRODUCTION version's deploy state (Deployment) and whether the
 // draft has unpublished changes vs production (DraftDirty). Note: Status is the
 // project lifecycle status, distinct from Deployment.Status (the deploy state).
@@ -165,13 +165,13 @@ type DeploymentInfo struct {
 // production deploy status, and draft dirtiness.
 func (c *Client) GetApp(projectID string) (*GetAppResponse, error) {
 	var out GetAppResponse
-	if err := c.do("GET", "/ultrabase/projects/"+projectID, nil, &out); err != nil {
+	if err := c.do("GET", "/instancez/projects/"+projectID, nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-// WhoamiResponse mirrors GET /ultrabase/whoami.
+// WhoamiResponse mirrors GET /instancez/whoami.
 type WhoamiResponse struct {
 	Email  string `json:"email"`
 	UserID string `json:"user_id"`
@@ -181,7 +181,7 @@ type WhoamiResponse struct {
 // and as a post-login sanity check.
 func (c *Client) Whoami() (*WhoamiResponse, error) {
 	var out WhoamiResponse
-	if err := c.do("GET", "/ultrabase/whoami", nil, &out); err != nil {
+	if err := c.do("GET", "/instancez/whoami", nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

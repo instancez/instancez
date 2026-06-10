@@ -16,9 +16,9 @@ Do not push, open a PR, or claim work is "done" until these pass locally. CI run
 </feedback_loop>
 
 <supabase_js_compat>
-**Ultrabase must stay wire-compatible with `@supabase/supabase-js`.** This is a load-bearing product promise, not a nice-to-have.
+**Instancez must stay wire-compatible with `@supabase/supabase-js`.** This is a load-bearing product promise, not a nice-to-have.
 
-The contract is enforced by `internal/adapter/http/supabase_integration_test.go` (`TestSupabaseJSCompat`), which spins up Postgres in a container, boots the real ultrabase HTTP handler, then shells out to the Node harness in `test/integration/supabase-js/run.mjs` to drive `@supabase/supabase-js` against it. Any change touching auth, REST/PostgREST behavior, RPC, storage endpoints, error shapes, headers, or JWT/role handling MUST keep this test green.
+The contract is enforced by `internal/adapter/http/supabase_integration_test.go` (`TestSupabaseJSCompat`), which spins up Postgres in a container, boots the real instancez HTTP handler, then shells out to the Node harness in `test/integration/supabase-js/run.mjs` to drive `@supabase/supabase-js` against it. Any change touching auth, REST/PostgREST behavior, RPC, storage endpoints, error shapes, headers, or JWT/role handling MUST keep this test green.
 
 Concrete rules that fall out of this:
 - JWT `role` claim values are Supabase wire tokens (`anon`, `authenticated`, `service_role`) and must not be renamed even though the Postgres role names are configurable. See `internal/domain/database.go`.

@@ -97,7 +97,7 @@ func interpolateEnvVarsLenient(input string) string {
 
 // EnvRefs returns the unique names of all ${VAR} references in data, extracted
 // with the canonical interpolation pattern. Exposed so external policy checks
-// scan exactly what ultrabase interpolates.
+// scan exactly what instancez interpolates.
 func EnvRefs(data []byte) []string {
 	var names []string
 	seen := map[string]bool{}

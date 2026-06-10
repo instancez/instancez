@@ -1,4 +1,4 @@
-// Package cli defines the cobra command tree for the ultrabase binary.
+// Package cli defines the cobra command tree for the instancez binary.
 package cli
 
 import (
@@ -19,8 +19,8 @@ var errReported = errors.New("reported")
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "inz",
-		Short:         "Ultrabase — declarative backend from a single YAML file",
-		Long:          "Ultrabase turns a YAML config into a full backend: Postgres CRUD, auth, storage, events, and more.",
+		Short:         "instancez — declarative backend from a single YAML file",
+		Long:          "instancez turns a YAML config into a full backend: Postgres CRUD, auth, storage, events, and more.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
@@ -56,7 +56,7 @@ func newVersionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Print the version",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("ultrabase v%s\n", version)
+			fmt.Printf("instancez v%s\n", version)
 		},
 	}
 }

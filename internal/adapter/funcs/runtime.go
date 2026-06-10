@@ -72,7 +72,7 @@ type Options struct {
 	Dir       string
 	Functions map[string]domain.CodeFunction
 
-	// LoopbackURL is the base URL of ultrabase's own HTTP API, reachable over
+	// LoopbackURL is the base URL of instancez's own HTTP API, reachable over
 	// loopback from the worker. Injected into the data-access clients the shim
 	// builds (ctx.supabase / ctx.serviceClient).
 	LoopbackURL string

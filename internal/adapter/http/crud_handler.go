@@ -57,7 +57,7 @@ func (h *CRUDHandler) allTables() map[string]domain.Table {
 }
 
 // Mount registers PostgREST-compatible routes at /rest/v1/<table> so that
-// @supabase/supabase-js can drive ultrabase without a custom URL prefix.
+// @supabase/supabase-js can drive instancez without a custom URL prefix.
 func (h *CRUDHandler) Mount(root *gin.RouterGroup) {
 	rest := root.Group("/rest/v1")
 	var schemas []string
@@ -964,7 +964,7 @@ func parseHandlingPrefer(prefer string) string {
 	return "lenient"
 }
 
-// knownPreferDirectives lists every Prefer token Ultrabase recognizes.
+// knownPreferDirectives lists every Prefer token Instancez recognizes.
 // In handling=strict mode we reject any incoming directive not in this set.
 var knownPreferDirectives = map[string]bool{
 	"return":       true,
@@ -1011,7 +1011,7 @@ func parseCountPrefer(prefer string) string {
 
 // parseMissingPrefer extracts `missing=default` from a Prefer header.
 // Returns true when the client explicitly asked for the default-substitution
-// behavior for omitted columns on bulk insert. Ultrabase already emits
+// behavior for omitted columns on bulk insert. Instancez already emits
 // DEFAULT for missing keys unconditionally (see renderRowTuples), so this
 // is only used to echo Preference-Applied for clients that probe for it.
 func parseMissingPrefer(prefer string) bool {

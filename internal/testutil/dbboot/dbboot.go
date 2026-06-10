@@ -23,7 +23,7 @@ const AuthenticatorRole = "authenticator"
 
 // rolePassword is shared across both login roles in tests; not exported
 // because production deployments must set their own credentials.
-const rolePassword = "ultrabase_test"
+const rolePassword = "instancez_test"
 
 // Bootstrap creates the four required roles on the testcontainer's superuser
 // connection, transfers database ownership to OwnerRole, and returns the

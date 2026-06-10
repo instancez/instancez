@@ -22,7 +22,7 @@ const (
 )
 
 // bootstrapDB connects to privilegedDSN as a CREATEROLE-capable login, ensures
-// the ultrabase role layout exists (instancez_owner + authenticator + the three
+// the instancez role layout exists (instancez_owner + authenticator + the three
 // API roles), and returns DSNs derived from privilegedDSN pointing at the two
 // login roles with freshly generated passwords.
 //

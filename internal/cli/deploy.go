@@ -22,7 +22,7 @@ func newDeployCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "deploy",
-		Short: "Push the current instancez.yaml to an Ultrabase Cloud project",
+		Short: "Push the current instancez.yaml to an instancez Cloud project",
 		Long: `Deploy the current project's instancez.yaml to the cloud. The
 project_id is read from project.cloud.project_id inside instancez.yaml. Run
 inz init --with-cloud first if no project is set yet.
@@ -98,7 +98,7 @@ func projectIDPresentCheck(configPath string) preflight.Check {
 				Name:    "project_id present",
 				OK:      false,
 				Detail:  "project.cloud.project_id is not set",
-				FixHint: "run `inz init --with-cloud` to link this project to Ultrabase Cloud",
+				FixHint: "run `inz init --with-cloud` to link this project to instancez Cloud",
 			}
 		}
 		return preflight.Result{Name: "project_id present", OK: true}
@@ -196,7 +196,7 @@ func runDeploy(configPath string, yes bool, bundleDest string) error {
 	}
 
 	fmt.Printf("  ✓ Promoted — deploying (version_id: %s)\n", resp.VersionID)
-	fmt.Println("  Track progress in the Ultrabase Cloud dashboard.")
+	fmt.Println("  Track progress in the instancez Cloud dashboard.")
 	return nil
 }
 

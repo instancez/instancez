@@ -39,7 +39,7 @@ func ctxWithRequestMeta(ctx context.Context, c *gin.Context) context.Context {
 
 // AuthHandler serves GoTrue-compatible authentication endpoints under
 // /auth/v1/*. Response shapes mirror Supabase's gotrue-js contract so that
-// @supabase/supabase-js can drive ultrabase unmodified.
+// @supabase/supabase-js can drive instancez unmodified.
 type AuthHandler struct {
 	cfg     *domain.Config
 	db      domain.Database
@@ -1742,7 +1742,7 @@ func decodeJSONB(v any) map[string]any {
 }
 
 // issuer returns the JWT `iss` claim — the canonical base URL of this
-// ultrabase instance with /auth/v1 appended, matching GoTrue's convention.
+// instancez instance with /auth/v1 appended, matching GoTrue's convention.
 func (h *AuthHandler) issuer() string {
 	return h.baseURL() + "/auth/v1"
 }

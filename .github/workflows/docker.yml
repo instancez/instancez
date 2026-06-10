@@ -129,7 +129,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           provenance: false
-          tags: ${{ steps.login-ecr.outputs.registry }}/ultrabase/${{ steps.env.outputs.env }}:${{ steps.vars.outputs.short_sha }}
+          tags: ${{ steps.login-ecr.outputs.registry }}/instancez/${{ steps.env.outputs.env }}:${{ steps.vars.outputs.short_sha }}
 
       - name: Build and push Lambda image (amd64)
         uses: docker/build-push-action@v6
@@ -139,7 +139,7 @@ jobs:
           platforms: linux/amd64
           push: true
           provenance: false
-          tags: ${{ steps.login-ecr.outputs.registry }}/ultrabase/${{ steps.env.outputs.env }}:${{ steps.vars.outputs.short_sha }}-lambda-amd64
+          tags: ${{ steps.login-ecr.outputs.registry }}/instancez/${{ steps.env.outputs.env }}:${{ steps.vars.outputs.short_sha }}-lambda-amd64
 
       - name: Build and push Lambda image (arm64)
         uses: docker/build-push-action@v6
@@ -149,7 +149,7 @@ jobs:
           platforms: linux/arm64
           push: true
           provenance: false
-          tags: ${{ steps.login-ecr.outputs.registry }}/ultrabase/${{ steps.env.outputs.env }}:${{ steps.vars.outputs.short_sha }}-lambda-arm64
+          tags: ${{ steps.login-ecr.outputs.registry }}/instancez/${{ steps.env.outputs.env }}:${{ steps.vars.outputs.short_sha }}-lambda-arm64
 
       - name: Set image URIs
         id: set-uri
@@ -157,6 +157,6 @@ jobs:
           REGISTRY=${{ steps.login-ecr.outputs.registry }}
           ENV=${{ steps.env.outputs.env }}
           SHA=${{ steps.vars.outputs.short_sha }}
-          echo "image_uri=${REGISTRY}/ultrabase/${ENV}:${SHA}" >> $GITHUB_OUTPUT
-          echo "lambda_image_uri_amd64=${REGISTRY}/ultrabase/${ENV}:${SHA}-lambda-amd64" >> $GITHUB_OUTPUT
-          echo "lambda_image_uri_arm64=${REGISTRY}/ultrabase/${ENV}:${SHA}-lambda-arm64" >> $GITHUB_OUTPUT
+          echo "image_uri=${REGISTRY}/instancez/${ENV}:${SHA}" >> $GITHUB_OUTPUT
+          echo "lambda_image_uri_amd64=${REGISTRY}/instancez/${ENV}:${SHA}-lambda-amd64" >> $GITHUB_OUTPUT
+          echo "lambda_image_uri_arm64=${REGISTRY}/instancez/${ENV}:${SHA}-lambda-arm64" >> $GITHUB_OUTPUT

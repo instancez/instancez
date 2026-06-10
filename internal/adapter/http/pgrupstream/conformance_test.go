@@ -238,7 +238,7 @@ func TestConf_Errors(t *testing.T) {
 // Conformance tests inspired by
 // https://github.com/supabase/supabase-js/tree/master/packages/core/postgrest-js
 // and the postgrest-conformance-tests suite. Only cases that map onto
-// ultrabase's existing feature set and the users/channels/messages seed are
+// instancez's existing feature set and the users/channels/messages seed are
 // covered — RPC, views, ranges, tsvector, PostGIS, multi-schema, polymorphic
 // funcs, EXPLAIN, abort and geojson are intentionally skipped.
 
@@ -1003,7 +1003,7 @@ func TestConf_Mutations(t *testing.T) {
 	})
 
 	// Without the missing=default preference the server still substitutes
-	// DEFAULT (ultrabase's permissive default), but must NOT emit the
+	// DEFAULT (instancez's permissive default), but must NOT emit the
 	// Preference-Applied echo.
 	t.Run("no missing=default preference → no Preference-Applied echo", func(t *testing.T) {
 		uname := fmt.Sprintf("mdflt_none_%d", time.Now().UnixNano())

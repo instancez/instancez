@@ -35,7 +35,7 @@ type WatchEvent struct {
 // should re-Read and retry. An empty expected version skips the check.
 var ErrConfigVersionMismatch = errors.New("config: version mismatch")
 
-// Source is a read/write source of ultrabase configuration.
+// Source is a read/write source of instancez configuration.
 // Implementations include local files and S3 objects.
 type Source interface {
 	// Load fetches, parses, and validates the config. Convenience wrapper
@@ -112,7 +112,7 @@ func (s *FileSource) Write(ctx context.Context, data []byte, expectedVersion str
 	}
 
 	dir := filepath.Dir(s.Path)
-	tmp, err := os.CreateTemp(dir, ".ultrabase-config-*")
+	tmp, err := os.CreateTemp(dir, ".instancez-config-*")
 	if err != nil {
 		return "", &domain.ConfigError{Path: s.Path, Message: "create temp file", Err: err}
 	}

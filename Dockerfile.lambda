@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 # Per-arch Lambda image (Lambda rejects multi-arch manifest lists), built
-# once per platform as ultrabase:-lambda-amd64 / -lambda-arm64. The
+# once per platform as instancez:-lambda-amd64 / -lambda-arm64. The
 # WITH_DASHBOARD flag mirrors the main Dockerfile: true (default) embeds
 # the SPA, false produces a slim binary that 404s on /dashboard.
 ARG WITH_DASHBOARD=true

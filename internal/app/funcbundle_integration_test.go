@@ -31,7 +31,7 @@ import (
 
 // TestServeConsumesBundleEndToEnd proves the serve consumption path: a built
 // .tar.gz bundle is FetchAndExtract'd, a funcs.Runtime is created pointing at
-// the EXTRACTED tree, the real ultrabase HTTP handler is booted with that
+// the EXTRACTED tree, the real instancez HTTP handler is booted with that
 // runtime, and invoking /functions/v1/<name> returns 200 with the expected
 // body. This exercises extract → run → serve without a deploy/S3 round-trip
 // (the bundle is built inline and fetched from a local path).
@@ -49,9 +49,9 @@ func TestServeConsumesBundleEndToEnd(t *testing.T) {
 	// ---- 1. Postgres + pools (for JWT keys / auth) ----
 	container, err := pgcontainer.Run(ctx,
 		"postgres:16-alpine",
-		pgcontainer.WithDatabase("ultrabase_test"),
-		pgcontainer.WithUsername("ultrabase"),
-		pgcontainer.WithPassword("ultrabase"),
+		pgcontainer.WithDatabase("instancez_test"),
+		pgcontainer.WithUsername("instancez"),
+		pgcontainer.WithPassword("instancez"),
 		tc.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).
@@ -139,7 +139,7 @@ func TestServeConsumesBundleEndToEnd(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = rt.Close() })
 
-	// ---- 5. Boot the real ultrabase HTTP handler with the runtime. ----
+	// ---- 5. Boot the real instancez HTTP handler with the runtime. ----
 	storageDir := filepath.Join(t.TempDir(), "storage")
 	localStorage, err := cli.NewLocalStore(storageDir, "")
 	if err != nil {

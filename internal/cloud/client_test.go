@@ -14,14 +14,14 @@ import (
 func TestClientDeviceTokenSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"token": "ultra_pat_xyz"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"token": "instancez_pat_xyz"})
 	}))
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "")
 	token, err := c.DeviceToken("dc_abc")
 	assert.NoError(t, err)
-	assert.Equal(t, "ultra_pat_xyz", token)
+	assert.Equal(t, "instancez_pat_xyz", token)
 }
 
 func TestClientDeviceTokenPending(t *testing.T) {
@@ -49,7 +49,7 @@ func TestPollDeviceTokenSucceedsAfterPending(t *testing.T) {
 			w.WriteHeader(400)
 			_ = json.NewEncoder(w).Encode(map[string]any{"error": "authorization_pending"})
 		case 3:
-			_ = json.NewEncoder(w).Encode(map[string]any{"token": "ultra_pat_ok"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"token": "instancez_pat_ok"})
 		}
 	}))
 	defer srv.Close()
@@ -57,7 +57,7 @@ func TestPollDeviceTokenSucceedsAfterPending(t *testing.T) {
 	c := NewClient(srv.URL, "")
 	token, err := pollDeviceToken(c, "dc_abc", 30*time.Second, 1*time.Millisecond, func(time.Duration) {})
 	assert.NoError(t, err)
-	assert.Equal(t, "ultra_pat_ok", token)
+	assert.Equal(t, "instancez_pat_ok", token)
 	assert.Equal(t, int32(3), calls.Load())
 }
 
@@ -77,8 +77,8 @@ func TestPollDeviceTokenDenied(t *testing.T) {
 func TestClientCreateProject(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/ultrabase/projects", r.URL.Path)
-		assert.Equal(t, "Bearer ultra_pat_test", r.Header.Get("Authorization"))
+		assert.Equal(t, "/instancez/projects", r.URL.Path)
+		assert.Equal(t, "Bearer instancez_pat_test", r.Header.Get("Authorization"))
 
 		var body struct {
 			Name string `json:"name"`
@@ -94,7 +94,7 @@ func TestClientCreateProject(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(srv.URL, "ultra_pat_test")
+	c := NewClient(srv.URL, "instancez_pat_test")
 	resp, err := c.CreateProject("myapp")
 	assert.NoError(t, err)
 	assert.Equal(t, "app-uuid", resp.ProjectID)
@@ -103,13 +103,13 @@ func TestClientCreateProject(t *testing.T) {
 func TestClientDeploy(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/ultrabase/projects/app-uuid/deploy", r.URL.Path)
+		assert.Equal(t, "/instancez/projects/app-uuid/deploy", r.URL.Path)
 
 		_ = json.NewEncoder(w).Encode(map[string]any{"version_id": "v-1"})
 	}))
 	defer srv.Close()
 
-	c := NewClient(srv.URL, "ultra_pat_test")
+	c := NewClient(srv.URL, "instancez_pat_test")
 	resp, err := c.Deploy("app-uuid")
 	assert.NoError(t, err)
 	assert.Equal(t, "v-1", resp.VersionID)
@@ -118,7 +118,7 @@ func TestClientDeploy(t *testing.T) {
 func TestClientMigrationPreview(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/ultrabase/projects/app-uuid/migration-preview", r.URL.Path)
+		assert.Equal(t, "/instancez/projects/app-uuid/migration-preview", r.URL.Path)
 
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"diff": "+ added table todos",
@@ -126,7 +126,7 @@ func TestClientMigrationPreview(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(srv.URL, "ultra_pat_test")
+	c := NewClient(srv.URL, "instancez_pat_test")
 	resp, err := c.MigrationPreview("app-uuid")
 	assert.NoError(t, err)
 	assert.Contains(t, resp.Diff, "todos")
@@ -150,7 +150,7 @@ func TestClientGenerateYAML(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(srv.URL, "ultra_pat_test")
+	c := NewClient(srv.URL, "instancez_pat_test")
 	resp, err := c.GenerateYAML("twitter clone")
 	assert.NoError(t, err)
 	assert.Contains(t, resp.YAML, "version: 1")
@@ -161,7 +161,7 @@ func TestClientGenerateYAML(t *testing.T) {
 func TestClientUploadYAML(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "PUT", r.Method)
-		assert.Equal(t, "/ultrabase/projects/app-uuid/yaml", r.URL.Path)
+		assert.Equal(t, "/instancez/projects/app-uuid/yaml", r.URL.Path)
 
 		var body struct {
 			YAML string `json:"yaml"`
@@ -173,7 +173,7 @@ func TestClientUploadYAML(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(srv.URL, "ultra_pat_test")
+	c := NewClient(srv.URL, "instancez_pat_test")
 	err := c.UploadYAML("app-uuid", "version: 1\n")
 	assert.NoError(t, err)
 }
@@ -181,8 +181,8 @@ func TestClientUploadYAML(t *testing.T) {
 func TestClientWhoami(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/ultrabase/whoami", r.URL.Path)
-		assert.Equal(t, "Bearer ultra_pat_test", r.Header.Get("Authorization"))
+		assert.Equal(t, "/instancez/whoami", r.URL.Path)
+		assert.Equal(t, "Bearer instancez_pat_test", r.Header.Get("Authorization"))
 
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"email":   "me@example.com",
@@ -191,7 +191,7 @@ func TestClientWhoami(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(srv.URL, "ultra_pat_test")
+	c := NewClient(srv.URL, "instancez_pat_test")
 	resp, err := c.Whoami()
 	assert.NoError(t, err)
 	assert.Equal(t, "me@example.com", resp.Email)
@@ -201,14 +201,14 @@ func TestClientGetApp(t *testing.T) {
 	deployedAt := "2026-06-01T12:00:00Z"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/ultrabase/projects/app-uuid", r.URL.Path)
-		assert.Equal(t, "Bearer ultra_pat_test", r.Header.Get("Authorization"))
+		assert.Equal(t, "/instancez/projects/app-uuid", r.URL.Path)
+		assert.Equal(t, "Bearer instancez_pat_test", r.Header.Get("Authorization"))
 
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"id":     "app-uuid",
 			"name":   "My App",
 			"slug":   "my-app",
-			"url":    "https://my-app.ultrabase.app",
+			"url":    "https://my-app.instancez.app",
 			"status": "DEPLOYED",
 			"deployment": map[string]any{
 				"status":      "deploy_done",
@@ -220,12 +220,12 @@ func TestClientGetApp(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(srv.URL, "ultra_pat_test")
+	c := NewClient(srv.URL, "instancez_pat_test")
 	resp, err := c.GetApp("app-uuid")
 	assert.NoError(t, err)
 	assert.Equal(t, "app-uuid", resp.ID)
 	assert.Equal(t, "My App", resp.Name)
-	assert.Equal(t, "https://my-app.ultrabase.app", resp.URL)
+	assert.Equal(t, "https://my-app.instancez.app", resp.URL)
 	assert.Equal(t, "DEPLOYED", resp.Status)
 	assert.Equal(t, "deploy_done", resp.Deployment.Status)
 	if assert.NotNil(t, resp.Deployment.DeployedAt) {
@@ -251,7 +251,7 @@ func TestClientGetAppNullDeployedAt(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(srv.URL, "ultra_pat_test")
+	c := NewClient(srv.URL, "instancez_pat_test")
 	resp, err := c.GetApp("app-uuid")
 	assert.NoError(t, err)
 	assert.Equal(t, "not_ready", resp.Deployment.Status)

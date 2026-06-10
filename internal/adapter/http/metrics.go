@@ -67,8 +67,8 @@ func metricsMiddleware() gin.HandlerFunc {
 func handleMetrics(c *gin.Context) {
 	var sb strings.Builder
 
-	sb.WriteString("# HELP ultrabase_http_requests_total Total HTTP requests\n")
-	sb.WriteString("# TYPE ultrabase_http_requests_total counter\n")
+	sb.WriteString("# HELP instancez_http_requests_total Total HTTP requests\n")
+	sb.WriteString("# TYPE instancez_http_requests_total counter\n")
 
 	globalMetrics.mu.RLock()
 	defer globalMetrics.mu.RUnlock()
@@ -88,12 +88,12 @@ func handleMetrics(c *gin.Context) {
 		method, path, status := parts[0], parts[1], parts[2]
 		count := globalMetrics.requestCount[key].Load()
 		sb.WriteString(fmt.Sprintf(
-			"ultrabase_http_requests_total{method=%q,path=%q,status=%q} %d\n",
+			"instancez_http_requests_total{method=%q,path=%q,status=%q} %d\n",
 			method, path, status, count))
 	}
 
-	sb.WriteString("\n# HELP ultrabase_http_request_duration_seconds HTTP request duration\n")
-	sb.WriteString("# TYPE ultrabase_http_request_duration_seconds summary\n")
+	sb.WriteString("\n# HELP instancez_http_request_duration_seconds HTTP request duration\n")
+	sb.WriteString("# TYPE instancez_http_request_duration_seconds summary\n")
 
 	durKeys := make([]string, 0, len(globalMetrics.requestDurations))
 	for k := range globalMetrics.requestDurations {
@@ -119,19 +119,19 @@ func handleMetrics(c *gin.Context) {
 		avg := sum / float64(len(durations))
 
 		sb.WriteString(fmt.Sprintf(
-			"ultrabase_http_request_duration_seconds{method=%q,path=%q,quantile=\"0.5\"} %g\n",
+			"instancez_http_request_duration_seconds{method=%q,path=%q,quantile=\"0.5\"} %g\n",
 			method, path, avg))
 		sb.WriteString(fmt.Sprintf(
-			"ultrabase_http_request_duration_seconds_count{method=%q,path=%q} %d\n",
+			"instancez_http_request_duration_seconds_count{method=%q,path=%q} %d\n",
 			method, path, len(durations)))
 		sb.WriteString(fmt.Sprintf(
-			"ultrabase_http_request_duration_seconds_sum{method=%q,path=%q} %g\n",
+			"instancez_http_request_duration_seconds_sum{method=%q,path=%q} %g\n",
 			method, path, sum))
 	}
 
-	sb.WriteString(fmt.Sprintf("\n# HELP ultrabase_http_active_requests Current active requests\n"))
-	sb.WriteString(fmt.Sprintf("# TYPE ultrabase_http_active_requests gauge\n"))
-	sb.WriteString(fmt.Sprintf("ultrabase_http_active_requests %d\n", globalMetrics.activeRequests.Load()))
+	sb.WriteString(fmt.Sprintf("\n# HELP instancez_http_active_requests Current active requests\n"))
+	sb.WriteString(fmt.Sprintf("# TYPE instancez_http_active_requests gauge\n"))
+	sb.WriteString(fmt.Sprintf("instancez_http_active_requests %d\n", globalMetrics.activeRequests.Load()))
 
 	c.Header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	c.String(200, sb.String())

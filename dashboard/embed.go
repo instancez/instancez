@@ -1,5 +1,5 @@
 // Package dashboard embeds the built SPA assets into the Go binary so a
-// single `ultrabase` executable can serve the dashboard at /dashboard/*
+// single `instancez` executable can serve the dashboard at /dashboard/*
 // without a separate Node process. The asset tree comes from `npm run
 // build` inside this directory (produces dist/). Run `make build` from
 // the repo root to chain the npm build into a release binary.

@@ -12,7 +12,7 @@ func newWhoamiCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "whoami",
-		Short: "Print the currently logged-in Ultrabase Cloud user",
+		Short: "Print the currently logged-in instancez Cloud user",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runWhoami(configPath)
 		},

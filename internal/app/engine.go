@@ -25,7 +25,7 @@ type HTTPServer interface {
 	Shutdown(ctx context.Context) error
 }
 
-// Engine orchestrates the full Ultrabase lifecycle.
+// Engine orchestrates the full Instancez lifecycle.
 type Engine struct {
 	// mu guards cfg and drift, both of which are reassigned by the watcher
 	// goroutine on reload while the request path and admin endpoints read
@@ -251,7 +251,7 @@ func (e *Engine) runWatcher(ctx context.Context, interval time.Duration) {
 func (e *Engine) Start(ctx context.Context) error {
 	start := time.Now()
 
-	e.logger.Info("starting ultrabase", "mode", e.modeStr())
+	e.logger.Info("starting instancez", "mode", e.modeStr())
 
 	// 1. Migrate (with last-known-good fallback)
 	t := time.Now()

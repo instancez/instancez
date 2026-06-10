@@ -13,7 +13,7 @@ func TestRenderStatusDirtyWithDeploy(t *testing.T) {
 	app := &cloud.GetAppResponse{
 		ID:     "app-uuid",
 		Name:   "My App",
-		URL:    "https://my-app.ultrabase.app",
+		URL:    "https://my-app.instancez.app",
 		Status: "DEPLOYED",
 		Deployment: cloud.DeploymentInfo{
 			Status:     "deploy_done",
@@ -29,7 +29,7 @@ func TestRenderStatusDirtyWithDeploy(t *testing.T) {
 
 	assert.Contains(t, out, "My App")
 	assert.Contains(t, out, "app-uuid")
-	assert.Contains(t, out, "https://my-app.ultrabase.app")
+	assert.Contains(t, out, "https://my-app.instancez.app")
 	assert.Contains(t, out, "deploy_done")
 	assert.Contains(t, out, deployedAt)
 	assert.Contains(t, out, "has unpublished changes")

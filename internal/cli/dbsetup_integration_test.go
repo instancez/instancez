@@ -14,7 +14,7 @@ import (
 )
 
 // TestEnsureRolesBootstrapsFromSuperuser drives the full dev bootstrap path:
-// against a raw superuser container with no ultrabase roles, ensureRoles must
+// against a raw superuser container with no instancez roles, ensureRoles must
 // provision the layout, set the derived DSNs into the env, persist them, and
 // leave a database the owner DSN can connect to with all five roles present.
 func TestEnsureRolesBootstrapsFromSuperuser(t *testing.T) {

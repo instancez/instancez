@@ -76,7 +76,7 @@ func shouldBootstrap(ownerDSN, authDSN, superuserDSN string) bool {
 	return !bothPresent && superuserDSN != ""
 }
 
-// ensureRoles provisions the ultrabase role layout from a privileged/superuser
+// ensureRoles provisions the instancez role layout from a privileged/superuser
 // DSN when the two role DSNs are absent, writing the derived owner +
 // authenticator DSNs into the process env (so the unchanged preflight checks
 // and dbConnections pick them up) and persisting them to envFile for reuse on

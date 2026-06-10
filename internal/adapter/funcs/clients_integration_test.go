@@ -28,7 +28,7 @@ import (
 )
 
 // TestInjectedClientsRLSAndEscalation proves the two injected data-access
-// clients behave correctly against ultrabase's own loopback REST API:
+// clients behave correctly against instancez's own loopback REST API:
 //
 //   - ctx.supabase carries the CALLER's JWT, so RLS applies as the caller: an
 //     authenticated user (U1) can insert/read only its own rows, and a row
@@ -54,9 +54,9 @@ func TestInjectedClientsRLSAndEscalation(t *testing.T) {
 	// ---- 1. Postgres ----
 	container, err := pgcontainer.Run(ctx,
 		"postgres:16-alpine",
-		pgcontainer.WithDatabase("ultrabase_test"),
-		pgcontainer.WithUsername("ultrabase"),
-		pgcontainer.WithPassword("ultrabase"),
+		pgcontainer.WithDatabase("instancez_test"),
+		pgcontainer.WithUsername("instancez"),
+		pgcontainer.WithPassword("instancez"),
 		tc.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).
@@ -303,7 +303,7 @@ func TestInjectedClientsRLSAndEscalation(t *testing.T) {
 func mintAnonKey(key *app.JWTKey) (string, error) {
 	now := time.Now()
 	return signClaims(key, jwt.MapClaims{
-		"iss":  "ultrabase",
+		"iss":  "instancez",
 		"role": "anon",
 		"iat":  now.Unix(),
 		"exp":  now.Add(24 * time.Hour).Unix(),
@@ -314,7 +314,7 @@ func mintAnonKey(key *app.JWTKey) (string, error) {
 func mintUserToken(key *app.JWTKey, sub string) (string, error) {
 	now := time.Now()
 	return signClaims(key, jwt.MapClaims{
-		"iss":  "ultrabase",
+		"iss":  "instancez",
 		"sub":  sub,
 		"aud":  "authenticated",
 		"role": "authenticated",

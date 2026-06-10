@@ -86,7 +86,7 @@ func MountDashboard(r *gin.Engine, assets fs.FS, devMode bool, mode DashboardMod
 const devDashboardHTML = `<!DOCTYPE html>
 <html>
 <head>
-  <title>Ultrabase Dashboard (Dev)</title>
+  <title>instancez Dashboard (Dev)</title>
   <meta charset="utf-8" />
   <meta http-equiv="refresh" content="0;url=http://localhost:5173" />
 </head>

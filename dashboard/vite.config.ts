@@ -13,7 +13,7 @@ const apiTarget = process.env.API_URL || "http://localhost:8080";
 // every build so the chain is self-healing regardless of how vite is
 // invoked (make build, raw npm run build, IDE plugins, etc.).
 const preserveGitkeep = {
-  name: "ultrabase:preserve-gitkeep",
+  name: "instancez:preserve-gitkeep",
   closeBundle() {
     writeFileSync(resolve(__dirname, "dist", ".gitkeep"), "");
   },

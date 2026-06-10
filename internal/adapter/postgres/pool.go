@@ -144,10 +144,10 @@ func (db *DB) RecordMigration(ctx context.Context, checksum, sql, configJSON str
 	return nil
 }
 
-// EnsureDataTable creates the _ultrabase_data tracking table if it doesn't exist.
+// EnsureDataTable creates the _instancez_data tracking table if it doesn't exist.
 func (db *DB) EnsureDataTable(ctx context.Context) error {
 	_, err := db.pool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS _ultrabase_data (
+		CREATE TABLE IF NOT EXISTS _instancez_data (
 			key        TEXT PRIMARY KEY,
 			table_name TEXT NOT NULL,
 			source     TEXT NOT NULL,
@@ -165,7 +165,7 @@ func (db *DB) EnsureDataTable(ctx context.Context) error {
 // GetAppliedData returns all previously applied data import records.
 func (db *DB) GetAppliedData(ctx context.Context) ([]domain.DataRecord, error) {
 	rows, err := db.pool.Query(ctx,
-		`SELECT key, table_name, source, checksum, row_count, applied_at FROM _ultrabase_data`)
+		`SELECT key, table_name, source, checksum, row_count, applied_at FROM _instancez_data`)
 	if err != nil {
 		return nil, &domain.DatabaseError{Op: "get_applied_data", Err: err}
 	}
@@ -188,7 +188,7 @@ func (db *DB) GetAppliedData(ctx context.Context) ([]domain.DataRecord, error) {
 // RecordData inserts a data import tracking record within the given transaction.
 func (db *DB) RecordData(ctx context.Context, tx domain.Tx, key, tableName, source, checksum string, rowCount int) error {
 	_, err := tx.Exec(ctx,
-		`INSERT INTO _ultrabase_data (key, table_name, source, checksum, row_count) VALUES ($1, $2, $3, $4, $5)`,
+		`INSERT INTO _instancez_data (key, table_name, source, checksum, row_count) VALUES ($1, $2, $3, $4, $5)`,
 		key, tableName, source, checksum, rowCount)
 	if err != nil {
 		return &domain.DatabaseError{Op: "record_data", Err: err}
