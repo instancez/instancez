@@ -17,7 +17,7 @@ func TestApplyEnvDefaults(t *testing.T) {
 		var config string
 		fs.StringVar(&config, "config", "default.yaml", "")
 
-		if _, err := applyEnvDefaults(fs, nil, lookupFrom(map[string]string{"ULTRABASE_CONFIG": "from-env.yaml"})); err != nil {
+		if _, err := applyEnvDefaults(fs, nil, lookupFrom(map[string]string{"INSTANCEZ_CONFIG": "from-env.yaml"})); err != nil {
 			t.Fatalf("applyEnvDefaults: %v", err)
 		}
 		if config != "from-env.yaml" {
@@ -31,7 +31,7 @@ func TestApplyEnvDefaults(t *testing.T) {
 		fs.StringVar(&config, "config", "default.yaml", "")
 		_ = fs.Set("config", "explicit.yaml") // marks Changed=true
 
-		if _, err := applyEnvDefaults(fs, nil, lookupFrom(map[string]string{"ULTRABASE_CONFIG": "from-env.yaml"})); err != nil {
+		if _, err := applyEnvDefaults(fs, nil, lookupFrom(map[string]string{"INSTANCEZ_CONFIG": "from-env.yaml"})); err != nil {
 			t.Fatalf("applyEnvDefaults: %v", err)
 		}
 		if config != "explicit.yaml" {
@@ -57,7 +57,7 @@ func TestApplyEnvDefaults(t *testing.T) {
 		var allow bool
 		fs.BoolVar(&allow, "allow-destructive", false, "")
 
-		if _, err := applyEnvDefaults(fs, nil, lookupFrom(map[string]string{"ULTRABASE_ALLOW_DESTRUCTIVE": "true"})); err != nil {
+		if _, err := applyEnvDefaults(fs, nil, lookupFrom(map[string]string{"INSTANCEZ_ALLOW_DESTRUCTIVE": "true"})); err != nil {
 			t.Fatalf("applyEnvDefaults: %v", err)
 		}
 		if !allow {
@@ -70,7 +70,7 @@ func TestApplyEnvDefaults(t *testing.T) {
 		var port int
 		fs.IntVar(&port, "port", 0, "")
 
-		if _, err := applyEnvDefaults(fs, nil, lookupFrom(map[string]string{"ULTRABASE_PORT": "9090"})); err != nil {
+		if _, err := applyEnvDefaults(fs, nil, lookupFrom(map[string]string{"INSTANCEZ_PORT": "9090"})); err != nil {
 			t.Fatalf("applyEnvDefaults: %v", err)
 		}
 		if port != 9090 {
@@ -84,10 +84,10 @@ func TestApplyEnvDefaults(t *testing.T) {
 		fs.StringVar(&config, "config", "default.yaml", "")
 
 		setBy, err := applyEnvDefaults(fs,
-			map[string][]string{"config": {"ULTRABASE_CONFIG_SOURCE", "ULTRABASE_CONFIG"}},
+			map[string][]string{"config": {"INSTANCEZ_CONFIG_SOURCE", "INSTANCEZ_CONFIG"}},
 			lookupFrom(map[string]string{
-				"ULTRABASE_CONFIG_SOURCE": "primary.yaml",
-				"ULTRABASE_CONFIG":        "legacy.yaml",
+				"INSTANCEZ_CONFIG_SOURCE": "primary.yaml",
+				"INSTANCEZ_CONFIG":        "legacy.yaml",
 			}))
 		if err != nil {
 			t.Fatalf("applyEnvDefaults: %v", err)
@@ -95,8 +95,8 @@ func TestApplyEnvDefaults(t *testing.T) {
 		if config != "primary.yaml" {
 			t.Errorf("got %q, want primary.yaml", config)
 		}
-		if setBy["config"] != "ULTRABASE_CONFIG_SOURCE" {
-			t.Errorf("setBy[config] = %q, want ULTRABASE_CONFIG_SOURCE", setBy["config"])
+		if setBy["config"] != "INSTANCEZ_CONFIG_SOURCE" {
+			t.Errorf("setBy[config] = %q, want INSTANCEZ_CONFIG_SOURCE", setBy["config"])
 		}
 	})
 
@@ -107,7 +107,7 @@ func TestApplyEnvDefaults(t *testing.T) {
 
 		if _, err := applyEnvDefaults(fs,
 			map[string][]string{"verbose": {}},
-			lookupFrom(map[string]string{"ULTRABASE_VERBOSE": "true"})); err != nil {
+			lookupFrom(map[string]string{"INSTANCEZ_VERBOSE": "true"})); err != nil {
 			t.Fatalf("applyEnvDefaults: %v", err)
 		}
 		if verbose {
@@ -121,13 +121,13 @@ func TestApplyEnvDefaults(t *testing.T) {
 		fs.BoolVar(&watch, "watch", false, "")
 
 		_, err := applyEnvDefaults(fs,
-			map[string][]string{"watch": {"ULTRABASE_CONFIG_WATCH"}},
-			lookupFrom(map[string]string{"ULTRABASE_CONFIG_WATCH": "garbage"}))
+			map[string][]string{"watch": {"INSTANCEZ_CONFIG_WATCH"}},
+			lookupFrom(map[string]string{"INSTANCEZ_CONFIG_WATCH": "garbage"}))
 		if err == nil {
 			t.Fatal("expected error for invalid bool")
 		}
-		if !strings.Contains(err.Error(), "ULTRABASE_CONFIG_WATCH") {
-			t.Errorf("error %q should name ULTRABASE_CONFIG_WATCH", err.Error())
+		if !strings.Contains(err.Error(), "INSTANCEZ_CONFIG_WATCH") {
+			t.Errorf("error %q should name INSTANCEZ_CONFIG_WATCH", err.Error())
 		}
 	})
 }

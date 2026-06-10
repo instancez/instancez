@@ -8,14 +8,14 @@ import (
 )
 
 // defaultCloudAPI is the Ultrabase Cloud API endpoint. Can be overridden by
-// ULTRABASE_CLOUD_API env var or project.cloud.api_url in ultrabase.yaml.
+// INSTANCEZ_CLOUD_API env var or project.cloud.api_url in ultrabase.yaml.
 const defaultCloudAPI = "https://my.instancez.dev/api"
 
 // APIURL returns the base URL for the Ultrabase Cloud API, considering only
 // the environment variable. Used by commands that run without a project
 // context (login, logout).
 func APIURL() string {
-	if v := os.Getenv("ULTRABASE_CLOUD_API"); v != "" {
+	if v := os.Getenv("INSTANCEZ_CLOUD_API"); v != "" {
 		return strings.TrimRight(v, "/")
 	}
 	return defaultCloudAPI

@@ -115,7 +115,7 @@ func TestInitStorageProvider_UnsupportedType(t *testing.T) {
 
 func TestInitStorageProvider_Local(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("ULTRABASE_LOCAL_STORAGE_PATH", dir)
+	t.Setenv("INSTANCEZ_LOCAL_STORAGE_PATH", dir)
 
 	cfg := &domain.Config{
 		Providers: domain.Providers{

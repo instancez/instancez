@@ -53,7 +53,7 @@ func (s *stubSource) Watch(ctx context.Context, _ time.Duration) (<-chan config.
 
 // newAdminTestRouter wires a minimal gin engine with PUT /api/_admin/config
 // directly to the handler. It deliberately skips adminKeyAuth so the tests
-// can exercise the gating logic without needing ULTRABASE_ADMIN_KEY plumbing.
+// can exercise the gating logic without needing INSTANCEZ_ADMIN_KEY plumbing.
 func newAdminTestRouter(h *AdminHandler) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

@@ -240,7 +240,7 @@ func runInit(opts initOptions) error {
 	case opts.withCloud:
 		fmt.Println("  ultra deploy            # push your YAML to the cloud project")
 	default:
-		fmt.Println("  cp .development.env.example .development.env   # set ULTRABASE_DATABASE_URL")
+		fmt.Println("  cp .development.env.example .development.env   # set INSTANCEZ_DATABASE_URL")
 		fmt.Println("  ultra dev")
 	}
 	return nil
@@ -412,15 +412,15 @@ func scaffoldProductionEnvExample() string {
 # Two-pool layout: the owner DSN runs migrations/seeding; the authenticator
 # DSN handles request traffic (NOINHERIT login that SET LOCAL ROLEs per query).
 
-ULTRABASE_OWNER_DATABASE_URL=postgres://ultrabase_owner:CHANGE_ME@host:5432/dbname?sslmode=require
-ULTRABASE_AUTH_DATABASE_URL=postgres://authenticator:CHANGE_ME@host:5432/dbname?sslmode=require
+INSTANCEZ_OWNER_DATABASE_URL=postgres://ultrabase_owner:CHANGE_ME@host:5432/dbname?sslmode=require
+INSTANCEZ_AUTH_DATABASE_URL=postgres://authenticator:CHANGE_ME@host:5432/dbname?sslmode=require
 
 # Admin key for the dashboard and /api/_admin endpoints. Leave unset to disable
 # them entirely (they return 404). Set a strong, unique value before deploying.
-ULTRABASE_ADMIN_KEY=CHANGE_ME
+INSTANCEZ_ADMIN_KEY=CHANGE_ME
 
 # Optional: email provider
-# ULTRABASE_EMAIL_API_KEY=re_xxx
+# INSTANCEZ_EMAIL_API_KEY=re_xxx
 `
 }
 
@@ -429,23 +429,23 @@ func scaffoldDevelopmentEnvExample() string {
 # superuser/privileged Postgres DSN below. On first run, 'ultra dev' provisions
 # ultrabase_owner + authenticator + the API roles from it and writes the derived
 # owner/authenticator DSNs back into .development.env, so subsequent runs reuse
-# them. After the first run you can remove ULTRABASE_DATABASE_URL.
+# them. After the first run you can remove INSTANCEZ_DATABASE_URL.
 #
-# 'ultra dev' also generates a random ULTRABASE_ADMIN_KEY into .development.env
+# 'ultra dev' also generates a random INSTANCEZ_ADMIN_KEY into .development.env
 # on first run (printed to the console, used to log into the dashboard). Set one
 # here yourself to pin a known value instead.
 
-ULTRABASE_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres
-# ULTRABASE_ADMIN_KEY=CHANGE_ME
+INSTANCEZ_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres
+# INSTANCEZ_ADMIN_KEY=CHANGE_ME
 `
 }
 
 func scaffoldDevelopmentEnv(ownerDSN, authDSN, adminKey string) string {
-	return fmt.Sprintf(`# Owner + authenticator DSNs provisioned by 'ultra dev' from ULTRABASE_DATABASE_URL.
-ULTRABASE_OWNER_DATABASE_URL=%s
-ULTRABASE_AUTH_DATABASE_URL=%s
+	return fmt.Sprintf(`# Owner + authenticator DSNs provisioned by 'ultra dev' from INSTANCEZ_DATABASE_URL.
+INSTANCEZ_OWNER_DATABASE_URL=%s
+INSTANCEZ_AUTH_DATABASE_URL=%s
 # Random admin key for the dashboard and /api/_admin endpoints. Change freely.
-ULTRABASE_ADMIN_KEY=%s
+INSTANCEZ_ADMIN_KEY=%s
 `, ownerDSN, authDSN, adminKey)
 }
 

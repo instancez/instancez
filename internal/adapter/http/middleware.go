@@ -179,7 +179,7 @@ func jwtAuth(keys *app.JWTKeyManager, required bool) gin.HandlerFunc {
 
 		// Check admin key first — treated as service_role, the GoTrue name
 		// for a server-side bypass key.
-		adminKey := os.Getenv("ULTRABASE_ADMIN_KEY")
+		adminKey := os.Getenv("INSTANCEZ_ADMIN_KEY")
 		if adminKey != "" && header == "Bearer "+adminKey {
 			c.Set(contextKeySession, domain.Session{
 				Role:            "service_role",
@@ -284,7 +284,7 @@ func jwtAuth(keys *app.JWTKeyManager, required bool) gin.HandlerFunc {
 // adminKeyAuth protects admin endpoints.
 func adminKeyAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		adminKey := os.Getenv("ULTRABASE_ADMIN_KEY")
+		adminKey := os.Getenv("INSTANCEZ_ADMIN_KEY")
 		if adminKey == "" {
 			c.JSON(404, gin.H{"error": "not found"})
 			c.Abort()

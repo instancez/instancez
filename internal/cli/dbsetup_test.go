@@ -13,10 +13,10 @@ import (
 
 func TestRolesFromEnv_Defaults(t *testing.T) {
 	for _, k := range []string{
-		"ULTRABASE_DB_AUTHENTICATOR_ROLE",
-		"ULTRABASE_DB_ANON_ROLE",
-		"ULTRABASE_DB_AUTHENTICATED_ROLE",
-		"ULTRABASE_DB_SERVICE_ROLE",
+		"INSTANCEZ_DB_AUTHENTICATOR_ROLE",
+		"INSTANCEZ_DB_ANON_ROLE",
+		"INSTANCEZ_DB_AUTHENTICATED_ROLE",
+		"INSTANCEZ_DB_SERVICE_ROLE",
 	} {
 		t.Setenv(k, "")
 	}
@@ -27,10 +27,10 @@ func TestRolesFromEnv_Defaults(t *testing.T) {
 }
 
 func TestRolesFromEnv_Overrides(t *testing.T) {
-	t.Setenv("ULTRABASE_DB_AUTHENTICATOR_ROLE", "rest_login")
-	t.Setenv("ULTRABASE_DB_ANON_ROLE", "guest")
-	t.Setenv("ULTRABASE_DB_AUTHENTICATED_ROLE", "member")
-	t.Setenv("ULTRABASE_DB_SERVICE_ROLE", "admin_role")
+	t.Setenv("INSTANCEZ_DB_AUTHENTICATOR_ROLE", "rest_login")
+	t.Setenv("INSTANCEZ_DB_ANON_ROLE", "guest")
+	t.Setenv("INSTANCEZ_DB_AUTHENTICATED_ROLE", "member")
+	t.Setenv("INSTANCEZ_DB_SERVICE_ROLE", "admin_role")
 
 	got := rolesFromEnv()
 	want := domain.Roles{
@@ -48,10 +48,10 @@ func TestRolesFromEnv_Overrides(t *testing.T) {
 }
 
 func TestRolesFromEnv_PartialOverride(t *testing.T) {
-	t.Setenv("ULTRABASE_DB_AUTHENTICATOR_ROLE", "")
-	t.Setenv("ULTRABASE_DB_ANON_ROLE", "guest")
-	t.Setenv("ULTRABASE_DB_AUTHENTICATED_ROLE", "")
-	t.Setenv("ULTRABASE_DB_SERVICE_ROLE", "")
+	t.Setenv("INSTANCEZ_DB_AUTHENTICATOR_ROLE", "")
+	t.Setenv("INSTANCEZ_DB_ANON_ROLE", "guest")
+	t.Setenv("INSTANCEZ_DB_AUTHENTICATED_ROLE", "")
+	t.Setenv("INSTANCEZ_DB_SERVICE_ROLE", "")
 
 	got := rolesFromEnv()
 	if got.Anon != "guest" {
@@ -85,8 +85,8 @@ func TestShouldBootstrap(t *testing.T) {
 
 func TestEnsureRolesSkipsWhenRoleDSNsPresent(t *testing.T) {
 	// Both role DSNs set → ensureRoles must be a no-op and never touch a DB.
-	t.Setenv("ULTRABASE_OWNER_DATABASE_URL", "postgres://owner@localhost/db")
-	t.Setenv("ULTRABASE_AUTH_DATABASE_URL", "postgres://auth@localhost/db")
+	t.Setenv("INSTANCEZ_OWNER_DATABASE_URL", "postgres://owner@localhost/db")
+	t.Setenv("INSTANCEZ_AUTH_DATABASE_URL", "postgres://auth@localhost/db")
 
 	res, err := ensureRoles(context.Background(), "postgres://super@localhost/db", filepath.Join(t.TempDir(), ".development.env"))
 	if err != nil {
@@ -107,17 +107,17 @@ func TestEnsureRolesSkipsAfterDotenvPersist(t *testing.T) {
 	dir := t.TempDir()
 	envFile := filepath.Join(dir, ".development.env")
 	if err := os.WriteFile(envFile, []byte(
-		"ULTRABASE_OWNER_DATABASE_URL=postgres://owner@h/db\n"+
-			"ULTRABASE_AUTH_DATABASE_URL=postgres://auth@h/db\n"), 0o644); err != nil {
+		"INSTANCEZ_OWNER_DATABASE_URL=postgres://owner@h/db\n"+
+			"INSTANCEZ_AUTH_DATABASE_URL=postgres://auth@h/db\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	// Register restoration of any ambient values, then unset so LoadDotenv (which
 	// never overrides a real env var) actually populates from the file.
-	t.Setenv("ULTRABASE_OWNER_DATABASE_URL", "")
-	t.Setenv("ULTRABASE_AUTH_DATABASE_URL", "")
-	os.Unsetenv("ULTRABASE_OWNER_DATABASE_URL")
-	os.Unsetenv("ULTRABASE_AUTH_DATABASE_URL")
+	t.Setenv("INSTANCEZ_OWNER_DATABASE_URL", "")
+	t.Setenv("INSTANCEZ_AUTH_DATABASE_URL", "")
+	os.Unsetenv("INSTANCEZ_OWNER_DATABASE_URL")
+	os.Unsetenv("INSTANCEZ_AUTH_DATABASE_URL")
 
 	if err := config.LoadDotenv(envFile); err != nil {
 		t.Fatalf("LoadDotenv: %v", err)
@@ -137,8 +137,8 @@ func TestEnsureRolesSkipsAfterDotenvPersist(t *testing.T) {
 
 func TestEnsureRolesNoopWhenNothingToDo(t *testing.T) {
 	// No role DSNs and no superuser → no-op (the caller's missing-DSN path fires).
-	t.Setenv("ULTRABASE_OWNER_DATABASE_URL", "")
-	t.Setenv("ULTRABASE_AUTH_DATABASE_URL", "")
+	t.Setenv("INSTANCEZ_OWNER_DATABASE_URL", "")
+	t.Setenv("INSTANCEZ_AUTH_DATABASE_URL", "")
 
 	res, err := ensureRoles(context.Background(), "", filepath.Join(t.TempDir(), ".development.env"))
 	if err != nil {
@@ -167,9 +167,9 @@ func TestPersistDSNsCreatesAndMerges(t *testing.T) {
 	}
 	got := string(data)
 	for _, want := range []string{
-		"ULTRABASE_OWNER_DATABASE_URL=postgres://owner@h/db",
-		"ULTRABASE_AUTH_DATABASE_URL=postgres://auth@h/db",
-		"ULTRABASE_ADMIN_KEY=" + adminKey,
+		"INSTANCEZ_OWNER_DATABASE_URL=postgres://owner@h/db",
+		"INSTANCEZ_AUTH_DATABASE_URL=postgres://auth@h/db",
+		"INSTANCEZ_ADMIN_KEY=" + adminKey,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("created env file missing %q\n--- got ---\n%s", want, got)
@@ -178,7 +178,7 @@ func TestPersistDSNsCreatesAndMerges(t *testing.T) {
 
 	// Merge path: a user-added line survives; the DSNs are updated in place; and
 	// an admin key is appended since the file has none.
-	if err := os.WriteFile(envFile, []byte("MY_CUSTOM=keep\nULTRABASE_OWNER_DATABASE_URL=old\n"), 0o644); err != nil {
+	if err := os.WriteFile(envFile, []byte("MY_CUSTOM=keep\nINSTANCEZ_OWNER_DATABASE_URL=old\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	adminKey, err = persistDSNs(envFile, "postgres://owner@h/db2", "postgres://auth@h/db2")
@@ -193,19 +193,19 @@ func TestPersistDSNsCreatesAndMerges(t *testing.T) {
 	if !strings.Contains(got, "MY_CUSTOM=keep") {
 		t.Errorf("merge dropped user line:\n%s", got)
 	}
-	if !strings.Contains(got, "ULTRABASE_OWNER_DATABASE_URL=postgres://owner@h/db2") {
+	if !strings.Contains(got, "INSTANCEZ_OWNER_DATABASE_URL=postgres://owner@h/db2") {
 		t.Errorf("merge did not update owner DSN:\n%s", got)
 	}
-	if !strings.Contains(got, "ULTRABASE_AUTH_DATABASE_URL=postgres://auth@h/db2") {
+	if !strings.Contains(got, "INSTANCEZ_AUTH_DATABASE_URL=postgres://auth@h/db2") {
 		t.Errorf("merge did not append auth DSN:\n%s", got)
 	}
-	if !strings.Contains(got, "ULTRABASE_ADMIN_KEY="+adminKey) {
+	if !strings.Contains(got, "INSTANCEZ_ADMIN_KEY="+adminKey) {
 		t.Errorf("merge did not append admin key:\n%s", got)
 	}
 
 	// Idempotent merge: a file that already declares an admin key keeps it
 	// untouched, and no new key is generated.
-	if err := os.WriteFile(envFile, []byte("ULTRABASE_ADMIN_KEY=mine\n"), 0o644); err != nil {
+	if err := os.WriteFile(envFile, []byte("INSTANCEZ_ADMIN_KEY=mine\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	adminKey, err = persistDSNs(envFile, "postgres://owner@h/db3", "postgres://auth@h/db3")
@@ -217,10 +217,10 @@ func TestPersistDSNsCreatesAndMerges(t *testing.T) {
 	}
 	data, _ = os.ReadFile(envFile)
 	got = string(data)
-	if !strings.Contains(got, "ULTRABASE_ADMIN_KEY=mine") {
+	if !strings.Contains(got, "INSTANCEZ_ADMIN_KEY=mine") {
 		t.Errorf("persistDSNs overwrote existing admin key:\n%s", got)
 	}
-	if strings.Count(got, "ULTRABASE_ADMIN_KEY=") != 1 {
+	if strings.Count(got, "INSTANCEZ_ADMIN_KEY=") != 1 {
 		t.Errorf("expected exactly one admin key line:\n%s", got)
 	}
 }

@@ -221,7 +221,7 @@ type bundleUploader interface {
 
 // s3BundleUploader uploads bundles to S3 using the s3 adapter. The bucket and
 // key come from the parsed s3://bucket/key URI — NOT from S3_BUCKET — and no
-// ULTRABASE_STORAGE_KEY_PREFIX is applied (that prefix is for user storage
+// INSTANCEZ_STORAGE_KEY_PREFIX is applied (that prefix is for user storage
 // objects and would corrupt the bundle key). Region/endpoint/credentials still
 // come from the standard S3_* env vars.
 type s3BundleUploader struct{}

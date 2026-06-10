@@ -40,7 +40,7 @@ jobs:
       # Superuser URL consumed only by the pgrupstream integration test;
       # application code never reads this. dbboot.Bootstrap connects with
       # it and creates ultrabase_owner + authenticator before tests run.
-      ULTRABASE_TEST_DATABASE_URL: postgres://ultrabase:ultrabase@localhost:5432/ultrabase?sslmode=disable
+      INSTANCEZ_TEST_DATABASE_URL: postgres://ultrabase:ultrabase@localhost:5432/ultrabase?sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

@@ -13,7 +13,7 @@ import (
 )
 
 // DashboardMode controls whether and how the dashboard SPA + config-mutation
-// endpoints are served. Set via --dashboard or ULTRABASE_DASHBOARD env var.
+// endpoints are served. Set via --dashboard or INSTANCEZ_DASHBOARD env var.
 type DashboardMode int
 
 const (
@@ -115,8 +115,8 @@ func requireLocalConfig(path string) error {
 
 // devNoEnvBinding lists dev flags that intentionally have NO env-var binding:
 // no-watch is pure CLI sugar (the env way to disable watching is
-// ULTRABASE_WATCH=false) and use-dsn is a deprecated no-op. Every other flag
-// resolves through applyEnvDefaults' generic ULTRABASE_<FLAG_UPPER_SNAKE> rule.
+// INSTANCEZ_WATCH=false) and use-dsn is a deprecated no-op. Every other flag
+// resolves through applyEnvDefaults' generic INSTANCEZ_<FLAG_UPPER_SNAKE> rule.
 var devNoEnvBinding = map[string][]string{
 	"no-watch": {},
 	"use-dsn":  {},
@@ -125,7 +125,7 @@ var devNoEnvBinding = map[string][]string{
 // applyEnvDefaults is the single env-var fallback mechanism for the whole CLI.
 // For every flag the user did NOT pass explicitly, it sets the flag from the
 // first non-empty env var that backs it — either an entry in the aliases map
-// argument, or the generic ULTRABASE_<FLAG_UPPER_SNAKE> name when aliases has
+// argument, or the generic INSTANCEZ_<FLAG_UPPER_SNAKE> name when aliases has
 // no entry for the flag (or is nil) — letting pflag do the type parsing. It
 // returns flag-name → env-var-name for the flags it set, so callers can
 // attribute downstream validation errors to the env var.
@@ -138,7 +138,7 @@ func applyEnvDefaults(fs *pflag.FlagSet, aliases map[string][]string, lookup fun
 		}
 		names, ok := aliases[f.Name]
 		if !ok {
-			names = []string{"ULTRABASE_" + strings.ToUpper(strings.ReplaceAll(f.Name, "-", "_"))}
+			names = []string{"INSTANCEZ_" + strings.ToUpper(strings.ReplaceAll(f.Name, "-", "_"))}
 		}
 		for _, n := range names {
 			v := lookup(n)
@@ -198,13 +198,13 @@ type serveFlagSet struct {
 func newServeFlagSet() *serveFlagSet {
 	fs := &serveFlagSet{flags: pflag.NewFlagSet("serve", pflag.ContinueOnError)}
 	fs.flags.IntVar(&fs.port, "port", 0, "server port (default: from config or 8080)")
-	fs.flags.StringVar(&fs.configPath, "config", "ultrabase.yaml", "config source (file path or s3://bucket/key; env: ULTRABASE_CONFIG)")
+	fs.flags.StringVar(&fs.configPath, "config", "ultrabase.yaml", "config source (file path or s3://bucket/key; env: INSTANCEZ_CONFIG)")
 	fs.flags.BoolVar(&fs.loadData, "data", false, "apply CSV data imports on startup")
 	fs.flags.BoolVar(&fs.migrate, "migrate", false, "run pending migrations on startup")
 	fs.flags.BoolVar(&fs.allowDestructive, "allow-destructive", false, "permit DROP TABLE/COLUMN in migrations")
-	fs.flags.BoolVar(&fs.watch, "watch", false, "watch the config source for changes (env: ULTRABASE_WATCH)")
-	fs.flags.DurationVar(&fs.watchInterval, "watch-interval", 60*time.Second, "S3-watch poll interval; min 10s (env: ULTRABASE_WATCH_INTERVAL)")
-	fs.flags.StringVar(&fs.dashboard, "dashboard", "disabled", "dashboard mode: disabled | readonly | readwrite (env: ULTRABASE_DASHBOARD)")
+	fs.flags.BoolVar(&fs.watch, "watch", false, "watch the config source for changes (env: INSTANCEZ_WATCH)")
+	fs.flags.DurationVar(&fs.watchInterval, "watch-interval", 60*time.Second, "S3-watch poll interval; min 10s (env: INSTANCEZ_WATCH_INTERVAL)")
+	fs.flags.StringVar(&fs.dashboard, "dashboard", "disabled", "dashboard mode: disabled | readonly | readwrite (env: INSTANCEZ_DASHBOARD)")
 	fs.flags.SetOutput(io.Discard)
 	return fs
 }
@@ -291,7 +291,7 @@ type devFlagSet struct {
 func newDevFlagSet() *devFlagSet {
 	fs := &devFlagSet{flags: pflag.NewFlagSet("dev", pflag.ContinueOnError)}
 	fs.flags.IntVar(&fs.port, "port", 0, "server port (default: from config or 8080)")
-	fs.flags.StringVar(&fs.configPath, "config", "ultrabase.yaml", "config source (file path or s3://bucket/key; env: ULTRABASE_CONFIG)")
+	fs.flags.StringVar(&fs.configPath, "config", "ultrabase.yaml", "config source (file path or s3://bucket/key; env: INSTANCEZ_CONFIG)")
 	fs.flags.BoolVar(&fs.noWatch, "no-watch", false, "disable hot-reload (alias for --watch=false)")
 	fs.flags.BoolVar(&fs.watch, "watch", true, "watch the config source for changes")
 	fs.flags.DurationVar(&fs.watchInterval, "watch-interval", 60*time.Second, "S3-watch poll interval; min 10s")

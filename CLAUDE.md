@@ -32,7 +32,7 @@ Concrete rules that fall out of this:
 **Build & run:**
 ```sh
 go build -o ultra ./cmd/ultra
-./ultra dev              # hot-reload dev server (set ULTRABASE_DATABASE_URL — a superuser DSN — and dev provisions the two role DSNs on first run; or set them directly. JWT keys are DB-managed via auth.jwt_keys)
+./ultra dev              # hot-reload dev server (set INSTANCEZ_DATABASE_URL — a superuser DSN — and dev provisions the two role DSNs on first run; or set them directly. JWT keys are DB-managed via auth.jwt_keys)
 ./ultra serve            # production mode
 ./ultra validate         # YAML syntax check, no DB
 docker compose -f docker-compose.dev.yaml up   # full stack: postgres + backend + dashboard
@@ -80,10 +80,10 @@ internal/adapter/     postgres (pgx pool), http (Gin handlers + PostgREST surfac
 ```
 
 **Two Postgres logins, by design.** This is non-obvious and load-bearing:
-- `ULTRABASE_OWNER_DATABASE_URL` → privileged login (`CREATEROLE CREATEDB BYPASSRLS REPLICATION`). Used for migrations and seeding. Lives behind `domain.OwnerDB`.
-- `ULTRABASE_AUTH_DATABASE_URL` → `authenticator` login (`NOINHERIT`) that is granted `anon` / `authenticated` / `service_role`. Every query the request pool runs goes through a tx that issues `SET LOCAL ROLE`: CRUD endpoints pick the role from the validated JWT, system endpoints (auth/admin/mfa/storage) default to `service_role`. NOINHERIT is load-bearing — without an explicit role switch the login carries no table privileges, which is exactly what we want as a regression guard. Lives behind `domain.RequestDB`. See `internal/adapter/postgres/context.go` and `pool.go` (`buildSessionSetup`, the auto-wrap on `Query`/`QueryRow`/`Exec`).
+- `INSTANCEZ_OWNER_DATABASE_URL` → privileged login (`CREATEROLE CREATEDB BYPASSRLS REPLICATION`). Used for migrations and seeding. Lives behind `domain.OwnerDB`.
+- `INSTANCEZ_AUTH_DATABASE_URL` → `authenticator` login (`NOINHERIT`) that is granted `anon` / `authenticated` / `service_role`. Every query the request pool runs goes through a tx that issues `SET LOCAL ROLE`: CRUD endpoints pick the role from the validated JWT, system endpoints (auth/admin/mfa/storage) default to `service_role`. NOINHERIT is load-bearing — without an explicit role switch the login carries no table privileges, which is exactly what we want as a regression guard. Lives behind `domain.RequestDB`. See `internal/adapter/postgres/context.go` and `pool.go` (`buildSessionSetup`, the auto-wrap on `Query`/`QueryRow`/`Exec`).
 
-**RLS is the only authorization layer.** There is no HTTP-level RBAC and no application-side role table. All access decisions are Postgres policies declared in `ultrabase.yaml` under each table's `rls:` block. The middleware's job is to validate the JWT and pick the right Postgres role; everything else is RLS. The `service_role` (used by the admin key path) has `BYPASSRLS`. See `internal/domain/database.go` for the `Roles` struct — wire JWT values (`anon`/`authenticated`/`service_role`) are fixed for supabase-js compat, but the Postgres role identifiers are configurable via `ULTRABASE_DB_*_ROLE` env vars.
+**RLS is the only authorization layer.** There is no HTTP-level RBAC and no application-side role table. All access decisions are Postgres policies declared in `ultrabase.yaml` under each table's `rls:` block. The middleware's job is to validate the JWT and pick the right Postgres role; everything else is RLS. The `service_role` (used by the admin key path) has `BYPASSRLS`. See `internal/domain/database.go` for the `Roles` struct — wire JWT values (`anon`/`authenticated`/`service_role`) are fixed for supabase-js compat, but the Postgres role identifiers are configurable via `INSTANCEZ_DB_*_ROLE` env vars.
 
 **YAML is the source of truth.** On boot, `internal/app/migrate.go` diffs `ultrabase.yaml` against the live database and applies migrations (gated by `--allow-destructive` for drops). `migrate_config_diff.go` is where the diff lives. The dev watcher (`watcher.go`) re-applies on file change.
 

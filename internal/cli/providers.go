@@ -52,11 +52,11 @@ func initStorageProvider(ctx context.Context, cfg *domain.Config) (domain.Object
 		return newS3Store(ctx)
 
 	case "local":
-		path := os.Getenv("ULTRABASE_LOCAL_STORAGE_PATH")
+		path := os.Getenv("INSTANCEZ_LOCAL_STORAGE_PATH")
 		if path == "" {
 			path = "./uploads"
 		}
-		return NewLocalStore(path, os.Getenv("ULTRABASE_STORAGE_KEY_PREFIX"))
+		return NewLocalStore(path, os.Getenv("INSTANCEZ_STORAGE_KEY_PREFIX"))
 
 	case "":
 		return nil, nil
@@ -104,7 +104,7 @@ func newS3Store(ctx context.Context) (*s3.Store, error) {
 		Endpoint:        os.Getenv("S3_ENDPOINT"),
 		AccessKeyID:     os.Getenv("S3_ACCESS_KEY_ID"),
 		SecretAccessKey: os.Getenv("S3_SECRET_ACCESS_KEY"),
-		KeyPrefix:       os.Getenv("ULTRABASE_STORAGE_KEY_PREFIX"),
+		KeyPrefix:       os.Getenv("INSTANCEZ_STORAGE_KEY_PREFIX"),
 	}
 
 	return s3.New(ctx, s3Cfg)

@@ -15,7 +15,7 @@ func ReadProjectID(src []byte) (string, error) {
 
 // ReadAPIURL extracts project.cloud.api_url from a YAML document. Returns
 // "" if the field is not present. Used by APIURLFromConfig to allow a
-// project to pin its own cloud endpoint (overrides ULTRABASE_CLOUD_API).
+// project to pin its own cloud endpoint (overrides INSTANCEZ_CLOUD_API).
 func ReadAPIURL(src []byte) (string, error) {
 	return readCloudScalar(src, "api_url")
 }

@@ -88,10 +88,10 @@ go build -o ultra ./cmd/ultra
 ./ultra init
 
 export JWT_SECRET="your-secret"
-export ULTRABASE_ADMIN_KEY="your-admin-key"
+export INSTANCEZ_ADMIN_KEY="your-admin-key"
 
 # 1. point ultra at a superuser DSN
-export ULTRABASE_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres
+export INSTANCEZ_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres
 # 2. dev provisions roles on first run
 ./ultra dev
 ```
@@ -251,7 +251,7 @@ functions:
     file: functions/hello.js
     timeout: 30s
     env:
-      API_KEY: "${ULTRA_ENV_MY_API_KEY}"
+      API_KEY: "${INSTANCEZ_ENV_MY_API_KEY}"
 ```
 
 ```js
@@ -267,7 +267,7 @@ curl -X POST /functions/v1/hello -d '{"name": "ultrabase"}'
 # → {"hello":"ultrabase"}
 ```
 
-The `ctx` argument provides: `supabase` (caller-RLS client), `serviceClient` (service_role), `claims` (JWT claims or null for anonymous callers), `env` (resolved secrets), `log`, and `signal` (AbortSignal). Secrets are resolved from the `ULTRA_ENV_*` namespace at startup and never written to the worker's process environment. Set `auth_required: true` on a function to have Ultrabase return 401 for unauthenticated callers before the handler is invoked; handlers can still inspect `ctx.claims` for finer-grained authorization.
+The `ctx` argument provides: `supabase` (caller-RLS client), `serviceClient` (service_role), `claims` (JWT claims or null for anonymous callers), `env` (resolved secrets), `log`, and `signal` (AbortSignal). Secrets are resolved from the `INSTANCEZ_ENV_*` namespace at startup and never written to the worker's process environment. Set `auth_required: true` on a function to have Ultrabase return 401 for unauthenticated callers before the handler is invoked; handlers can still inspect `ctx.claims` for finer-grained authorization.
 
 ### Dashboard
 
@@ -342,15 +342,15 @@ Environment variables:
 
 | Variable | Required | Description |
 |---|---|---|
-| `ULTRABASE_DATABASE_URL` | No (dev only) | Superuser/privileged DSN. `ultra dev` provisions the role layout from it, writes the derived owner/authenticator DSNs to `.development.env`, and generates a random `ULTRABASE_ADMIN_KEY` there if one isn't already set. Not used by `serve`. |
-| `ULTRABASE_OWNER_DATABASE_URL` | Yes | Privileged login (migrations, seeding, replication). Role needs `CREATEROLE`, `CREATEDB`, `BYPASSRLS`, `REPLICATION`. |
-| `ULTRABASE_AUTH_DATABASE_URL` | Yes | Authenticator login for HTTP requests. `NOINHERIT`; ultrabase issues `SET LOCAL ROLE` per transaction (CRUD: from JWT; system endpoints: `service_role`). |
-| `ULTRABASE_DB_AUTHENTICATOR_ROLE` | No | Override the authenticator role name (default: `authenticator`). |
-| `ULTRABASE_DB_ANON_ROLE` | No | Override the anon role name (default: `anon`). |
-| `ULTRABASE_DB_AUTHENTICATED_ROLE` | No | Override the authenticated role name (default: `authenticated`). |
-| `ULTRABASE_DB_SERVICE_ROLE` | No | Override the service role name (default: `service_role`). |
+| `INSTANCEZ_DATABASE_URL` | No (dev only) | Superuser/privileged DSN. `ultra dev` provisions the role layout from it, writes the derived owner/authenticator DSNs to `.development.env`, and generates a random `INSTANCEZ_ADMIN_KEY` there if one isn't already set. Not used by `serve`. |
+| `INSTANCEZ_OWNER_DATABASE_URL` | Yes | Privileged login (migrations, seeding, replication). Role needs `CREATEROLE`, `CREATEDB`, `BYPASSRLS`, `REPLICATION`. |
+| `INSTANCEZ_AUTH_DATABASE_URL` | Yes | Authenticator login for HTTP requests. `NOINHERIT`; ultrabase issues `SET LOCAL ROLE` per transaction (CRUD: from JWT; system endpoints: `service_role`). |
+| `INSTANCEZ_DB_AUTHENTICATOR_ROLE` | No | Override the authenticator role name (default: `authenticator`). |
+| `INSTANCEZ_DB_ANON_ROLE` | No | Override the anon role name (default: `anon`). |
+| `INSTANCEZ_DB_AUTHENTICATED_ROLE` | No | Override the authenticated role name (default: `authenticated`). |
+| `INSTANCEZ_DB_SERVICE_ROLE` | No | Override the service role name (default: `service_role`). |
 | `JWT_SECRET` | Yes | Secret for signing JWTs |
-| `ULTRABASE_ADMIN_KEY` | Yes | Admin API + dashboard authentication key. Leave unset to disable those endpoints (they return 404). `ultra dev` auto-generates one into `.development.env`. |
+| `INSTANCEZ_ADMIN_KEY` | Yes | Admin API + dashboard authentication key. Leave unset to disable those endpoints (they return 404). `ultra dev` auto-generates one into `.development.env`. |
 | `PORT` | No | Override server port (default: from YAML or 8080) |
 
 ## Contributing

@@ -62,7 +62,7 @@ func TestRunDeployHappyPathYes(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	t.Setenv("ULTRABASE_CLOUD_API", srv.URL)
+	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
 
 	// yes=true must skip the prompt; fail loudly if the confirm hook fires.
 	t.Cleanup(swapPromptConfirm(func(string) bool {
@@ -89,7 +89,7 @@ func TestRunDeployMissingProjectID(t *testing.T) {
 
 	// Point the API at a dead address: any network call would error, proving
 	// the preflight short-circuit happens before we touch the network.
-	t.Setenv("ULTRABASE_CLOUD_API", "http://127.0.0.1:1")
+	t.Setenv("INSTANCEZ_CLOUD_API", "http://127.0.0.1:1")
 
 	p := filepath.Join(home, "ultrabase.yaml")
 	require.NoError(t, os.WriteFile(p, []byte("version: 1\n"), 0o644))
@@ -104,7 +104,7 @@ func TestRunDeployInvalidYAML(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "tok-123"}))
-	t.Setenv("ULTRABASE_CLOUD_API", "http://127.0.0.1:1")
+	t.Setenv("INSTANCEZ_CLOUD_API", "http://127.0.0.1:1")
 
 	p := filepath.Join(home, "ultrabase.yaml")
 	require.NoError(t, os.WriteFile(p, []byte("version: 99\n"), 0o644)) // unsupported version
@@ -137,7 +137,7 @@ func TestRunDeployConfirmDeclineAborts(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	t.Setenv("ULTRABASE_CLOUD_API", srv.URL)
+	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
 
 	confirmCalled := false
 	t.Cleanup(swapPromptConfirm(func(string) bool {
@@ -176,7 +176,7 @@ func TestRunDeployConfirmAcceptPromotes(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	t.Setenv("ULTRABASE_CLOUD_API", srv.URL)
+	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
 
 	t.Cleanup(swapPromptConfirm(func(string) bool { return true }))
 

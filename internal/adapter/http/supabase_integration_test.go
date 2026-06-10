@@ -303,14 +303,14 @@ func TestSupabaseJSCompat(t *testing.T) {
 	// server middleware reads this from the process env, so set it for the
 	// harness subprocess *and* the in-process server goroutine.
 	adminKey := "test-admin-key-" + fmt.Sprintf("%d", time.Now().UnixNano())
-	t.Setenv("ULTRABASE_ADMIN_KEY", adminKey)
+	t.Setenv("INSTANCEZ_ADMIN_KEY", adminKey)
 
 	cmd := exec.CommandContext(ctx, "node", "run.mjs")
 	cmd.Dir = harnessDir
 	cmd.Env = append(os.Environ(),
-		"ULTRABASE_URL="+ts.URL,
-		"ULTRABASE_ANON_KEY="+anonKey,
-		"ULTRABASE_ADMIN_KEY="+adminKey,
+		"INSTANCEZ_URL="+ts.URL,
+		"INSTANCEZ_ANON_KEY="+anonKey,
+		"INSTANCEZ_ADMIN_KEY="+adminKey,
 	)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr

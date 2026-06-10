@@ -10,17 +10,17 @@ import (
 )
 
 func TestAPIURLDefault(t *testing.T) {
-	t.Setenv("ULTRABASE_CLOUD_API", "")
+	t.Setenv("INSTANCEZ_CLOUD_API", "")
 	assert.Equal(t, defaultCloudAPI, APIURL())
 }
 
 func TestAPIURLFromEnv(t *testing.T) {
-	t.Setenv("ULTRABASE_CLOUD_API", "https://staging.cloud.example.com")
+	t.Setenv("INSTANCEZ_CLOUD_API", "https://staging.cloud.example.com")
 	assert.Equal(t, "https://staging.cloud.example.com", APIURL())
 }
 
 func TestAPIURLTrimsTrailingSlash(t *testing.T) {
-	t.Setenv("ULTRABASE_CLOUD_API", "https://x.example.com/")
+	t.Setenv("INSTANCEZ_CLOUD_API", "https://x.example.com/")
 	assert.Equal(t, "https://x.example.com", APIURL())
 }
 
@@ -34,7 +34,7 @@ project:
     api_url: https://project-pinned.example.com
 `), 0o644))
 
-	t.Setenv("ULTRABASE_CLOUD_API", "https://env.example.com")
+	t.Setenv("INSTANCEZ_CLOUD_API", "https://env.example.com")
 	got, err := APIURLFromConfig(yamlPath)
 	assert.NoError(t, err)
 	assert.Equal(t, "https://project-pinned.example.com", got)
@@ -49,14 +49,14 @@ project:
   name: x
 `), 0o644))
 
-	t.Setenv("ULTRABASE_CLOUD_API", "https://env.example.com")
+	t.Setenv("INSTANCEZ_CLOUD_API", "https://env.example.com")
 	got, err := APIURLFromConfig(yamlPath)
 	assert.NoError(t, err)
 	assert.Equal(t, "https://env.example.com", got)
 }
 
 func TestAPIURLFromConfigMissingFile(t *testing.T) {
-	t.Setenv("ULTRABASE_CLOUD_API", "https://env.example.com")
+	t.Setenv("INSTANCEZ_CLOUD_API", "https://env.example.com")
 	// Missing file → fall back to env, no error.
 	got, err := APIURLFromConfig("/no/such/file.yaml")
 	assert.NoError(t, err)

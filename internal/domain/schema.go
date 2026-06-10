@@ -302,7 +302,7 @@ type CodeFunction struct {
 	File         string            `yaml:"file" json:"file"`       // path relative to config root
 	AuthRequired bool              `yaml:"auth_required" json:"auth_required"`
 	Timeout      string            `yaml:"timeout" json:"timeout"` // e.g. "30s"; default applied at runtime
-	Env          map[string]string `yaml:"env" json:"env"`         // name -> literal or ${ULTRA_ENV_*}
+	Env          map[string]string `yaml:"env" json:"env"`         // name -> literal or ${INSTANCEZ_ENV_*}
 }
 
 // --- Runtime types (not from YAML) ---

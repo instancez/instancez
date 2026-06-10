@@ -38,11 +38,11 @@ async function generateTOTP(secret, when = Date.now()) {
   return (code % 1_000_000).toString().padStart(6, '0')
 }
 
-const URL = process.env.ULTRABASE_URL
-const ANON_KEY = process.env.ULTRABASE_ANON_KEY
-const ADMIN_KEY = process.env.ULTRABASE_ADMIN_KEY
+const URL = process.env.INSTANCEZ_URL
+const ANON_KEY = process.env.INSTANCEZ_ANON_KEY
+const ADMIN_KEY = process.env.INSTANCEZ_ADMIN_KEY
 if (!URL || !ANON_KEY) {
-  console.error('ULTRABASE_URL and ULTRABASE_ANON_KEY must be set')
+  console.error('INSTANCEZ_URL and INSTANCEZ_ANON_KEY must be set')
   process.exit(2)
 }
 

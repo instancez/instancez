@@ -21,8 +21,8 @@ func TestEnsureRolesBootstrapsFromSuperuser(t *testing.T) {
 	superURL := dbboot.StartRawContainer(t)
 
 	// No role DSNs in env → ensureRoles must bootstrap.
-	t.Setenv("ULTRABASE_OWNER_DATABASE_URL", "")
-	t.Setenv("ULTRABASE_AUTH_DATABASE_URL", "")
+	t.Setenv("INSTANCEZ_OWNER_DATABASE_URL", "")
+	t.Setenv("INSTANCEZ_AUTH_DATABASE_URL", "")
 
 	envFile := filepath.Join(t.TempDir(), ".development.env")
 	res, err := ensureRoles(context.Background(), superURL, envFile)
@@ -34,8 +34,8 @@ func TestEnsureRolesBootstrapsFromSuperuser(t *testing.T) {
 	}
 
 	// Derived DSNs were exported into the env.
-	ownerDSN := os.Getenv("ULTRABASE_OWNER_DATABASE_URL")
-	if ownerDSN == "" || os.Getenv("ULTRABASE_AUTH_DATABASE_URL") == "" {
+	ownerDSN := os.Getenv("INSTANCEZ_OWNER_DATABASE_URL")
+	if ownerDSN == "" || os.Getenv("INSTANCEZ_AUTH_DATABASE_URL") == "" {
 		t.Fatal("ensureRoles did not set the derived DSNs in the env")
 	}
 
@@ -44,8 +44,8 @@ func TestEnsureRolesBootstrapsFromSuperuser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read persisted env file: %v", err)
 	}
-	if !strings.Contains(string(data), "ULTRABASE_OWNER_DATABASE_URL=") ||
-		!strings.Contains(string(data), "ULTRABASE_AUTH_DATABASE_URL=") {
+	if !strings.Contains(string(data), "INSTANCEZ_OWNER_DATABASE_URL=") ||
+		!strings.Contains(string(data), "INSTANCEZ_AUTH_DATABASE_URL=") {
 		t.Fatalf("env file missing derived DSNs:\n%s", data)
 	}
 

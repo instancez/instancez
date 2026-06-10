@@ -142,7 +142,7 @@ func GenerateOpenAPI(cfg *domain.Config) map[string]any {
 				"adminKey": map[string]any{
 					"type":        "http",
 					"scheme":      "bearer",
-					"description": "Admin API key (ULTRABASE_ADMIN_KEY)",
+					"description": "Admin API key (INSTANCEZ_ADMIN_KEY)",
 				},
 			},
 		},

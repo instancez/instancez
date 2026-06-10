@@ -7,35 +7,35 @@ import (
 	"github.com/saedx1/instancez/internal/domain"
 )
 
-// TestAsUltraEnvRef exercises the ref-detection helper at the unit level.
-func TestAsUltraEnvRef(t *testing.T) {
+// TestAsInstancezEnvRef exercises the ref-detection helper at the unit level.
+func TestAsInstancezEnvRef(t *testing.T) {
 	cases := []struct {
 		in      string
 		wantRef string
 		wantOK  bool
 	}{
-		{"${ULTRA_ENV_FOO}", "ULTRA_ENV_FOO", true},
-		{"${ULTRA_ENV_STRIPE_KEY}", "ULTRA_ENV_STRIPE_KEY", true},
-		{"${ULTRA_ENV_A_1_B}", "ULTRA_ENV_A_1_B", true},
+		{"${INSTANCEZ_ENV_FOO}", "INSTANCEZ_ENV_FOO", true},
+		{"${INSTANCEZ_ENV_STRIPE_KEY}", "INSTANCEZ_ENV_STRIPE_KEY", true},
+		{"${INSTANCEZ_ENV_A_1_B}", "INSTANCEZ_ENV_A_1_B", true},
 		// literals — must not match
 		{"https://api.stripe.com", "", false},
-		{"${FOO}", "", false},              // missing ULTRA_ENV_ prefix
-		{"${ULTRABASE_DSN}", "", false},    // ULTRABASE_ not ULTRA_ENV_
-		{"ULTRA_ENV_FOO", "", false},       // no ${} wrapper
-		{"${ULTRA_ENV_}", "", false},       // empty suffix
-		{" ${ULTRA_ENV_FOO}", "", false},   // leading space
-		{"${ULTRA_ENV_FOO} ", "", false},   // trailing space
+		{"${FOO}", "", false},              // missing INSTANCEZ_ENV_ prefix
+		{"${INSTANCEZ_DSN}", "", false},    // INSTANCEZ_ not INSTANCEZ_ENV_
+		{"INSTANCEZ_ENV_FOO", "", false},       // no ${} wrapper
+		{"${INSTANCEZ_ENV_}", "", false},       // empty suffix
+		{" ${INSTANCEZ_ENV_FOO}", "", false},   // leading space
+		{"${INSTANCEZ_ENV_FOO} ", "", false},   // trailing space
 	}
 	for _, tc := range cases {
-		ref, ok := asUltraEnvRef(tc.in)
+		ref, ok := asInstancezEnvRef(tc.in)
 		if ok != tc.wantOK || ref != tc.wantRef {
-			t.Errorf("asUltraEnvRef(%q) = (%q, %v), want (%q, %v)", tc.in, ref, ok, tc.wantRef, tc.wantOK)
+			t.Errorf("asInstancezEnvRef(%q) = (%q, %v), want (%q, %v)", tc.in, ref, ok, tc.wantRef, tc.wantOK)
 		}
 	}
 }
 
 // TestNewFailsEarlyOnMissingEnvRef verifies that New returns an error when a
-// function references a ${ULTRA_ENV_*} key that is absent from EnvMap — and
+// function references a ${INSTANCEZ_ENV_*} key that is absent from EnvMap — and
 // does so BEFORE spawning node (no node required to run this test).
 func TestNewFailsEarlyOnMissingEnvRef(t *testing.T) {
 	opts := Options{
@@ -44,20 +44,20 @@ func TestNewFailsEarlyOnMissingEnvRef(t *testing.T) {
 			"pay": {
 				Runtime: "node",
 				File:    "pay.js",
-				Env:     map[string]string{"STRIPE_KEY": "${ULTRA_ENV_MISSING}"},
+				Env:     map[string]string{"STRIPE_KEY": "${INSTANCEZ_ENV_MISSING}"},
 			},
 		},
 		EnvMap: map[string]string{
-			// ULTRA_ENV_MISSING is intentionally absent
+			// INSTANCEZ_ENV_MISSING is intentionally absent
 		},
 	}
 	_, err := New(opts)
 	if err == nil {
-		t.Fatal("expected error for missing ULTRA_ENV_ ref, got nil")
+		t.Fatal("expected error for missing INSTANCEZ_ENV_ ref, got nil")
 	}
 	// Error message should name the function and the missing ref.
 	errStr := err.Error()
-	if !containsAll(errStr, "pay", "ULTRA_ENV_MISSING") {
+	if !containsAll(errStr, "pay", "INSTANCEZ_ENV_MISSING") {
 		t.Fatalf("error message %q did not mention function name and ref", errStr)
 	}
 }
@@ -84,7 +84,7 @@ func TestNewAcceptsLiteralEnvValues(t *testing.T) {
 	// The error (if any) must NOT be the fail-early validation error —
 	// it may be a file-write or node-spawn error.
 	if err != nil {
-		if containsAll(err.Error(), "not in ULTRA_ENV_ namespace") {
+		if containsAll(err.Error(), "not in INSTANCEZ_ENV_ namespace") {
 			t.Fatalf("literal env value triggered fail-early: %v", err)
 		}
 		// Any other error (shim write / node start) is expected in a unit

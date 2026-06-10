@@ -2055,7 +2055,7 @@ func (h *AuthHandler) sendPasswordResetEmail(email, token, redirectTo string) {
 }
 
 func (h *AuthHandler) baseURL() string {
-	if base := os.Getenv("ULTRABASE_BASE_URL"); base != "" {
+	if base := os.Getenv("INSTANCEZ_BASE_URL"); base != "" {
 		return strings.TrimRight(base, "/")
 	}
 	return fmt.Sprintf("http://localhost:%d", h.cfg.Server.Port)

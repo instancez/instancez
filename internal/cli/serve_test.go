@@ -24,9 +24,9 @@ func TestParseServeFlagsDefaults(t *testing.T) {
 
 func TestParseServeFlagsEnvFallbacks(t *testing.T) {
 	env := map[string]string{
-		"ULTRABASE_WATCH":          "true",
-		"ULTRABASE_WATCH_INTERVAL": "30s",
-		"ULTRABASE_DASHBOARD":      "readwrite",
+		"INSTANCEZ_WATCH":          "true",
+		"INSTANCEZ_WATCH_INTERVAL": "30s",
+		"INSTANCEZ_DASHBOARD":      "readwrite",
 	}
 	got, err := parseServeFlags([]string{}, func(k string) string { return env[k] })
 	if err != nil {
@@ -40,7 +40,7 @@ func TestParseServeFlagsEnvFallbacks(t *testing.T) {
 func TestParseServeFlagsConfigEnv(t *testing.T) {
 	// The single standardized name sets the config path.
 	got, err := parseServeFlags([]string{}, func(k string) string {
-		return map[string]string{"ULTRABASE_CONFIG": "s3://bucket/new"}[k]
+		return map[string]string{"INSTANCEZ_CONFIG": "s3://bucket/new"}[k]
 	})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -49,20 +49,20 @@ func TestParseServeFlagsConfigEnv(t *testing.T) {
 		t.Fatalf("configPath = %q, want s3://bucket/new", got.configPath)
 	}
 
-	// The old ULTRABASE_CONFIG_SOURCE name is no longer bound.
+	// The old INSTANCEZ_CONFIG_SOURCE name is no longer bound.
 	got, err = parseServeFlags([]string{}, func(k string) string {
-		return map[string]string{"ULTRABASE_CONFIG_SOURCE": "s3://bucket/old"}[k]
+		return map[string]string{"INSTANCEZ_CONFIG_SOURCE": "s3://bucket/old"}[k]
 	})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	if got.configPath != "ultrabase.yaml" {
-		t.Fatalf("ULTRABASE_CONFIG_SOURCE should no longer bind; configPath = %q, want default", got.configPath)
+		t.Fatalf("INSTANCEZ_CONFIG_SOURCE should no longer bind; configPath = %q, want default", got.configPath)
 	}
 }
 
 func TestParseServeFlagsExplicitWinsOverEnv(t *testing.T) {
-	env := map[string]string{"ULTRABASE_DASHBOARD": "readwrite"}
+	env := map[string]string{"INSTANCEZ_DASHBOARD": "readwrite"}
 	got, err := parseServeFlags([]string{"--dashboard", "readonly"}, func(k string) string { return env[k] })
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -97,14 +97,14 @@ func TestParseServeFlagsValidation(t *testing.T) {
 		{
 			name:    "env var below minimum attributed to env name",
 			args:    []string{},
-			env:     map[string]string{"ULTRABASE_WATCH_INTERVAL": "5s"},
-			wantErr: "ULTRABASE_WATCH_INTERVAL must be at least 10s",
+			env:     map[string]string{"INSTANCEZ_WATCH_INTERVAL": "5s"},
+			wantErr: "INSTANCEZ_WATCH_INTERVAL must be at least 10s",
 		},
 		{
 			name:    "bad dashboard env attributed to env name",
 			args:    []string{},
-			env:     map[string]string{"ULTRABASE_DASHBOARD": "bogus"},
-			wantErr: "ULTRABASE_DASHBOARD: --dashboard must be one of",
+			env:     map[string]string{"INSTANCEZ_DASHBOARD": "bogus"},
+			wantErr: "INSTANCEZ_DASHBOARD: --dashboard must be one of",
 		},
 	}
 	for _, tc := range cases {

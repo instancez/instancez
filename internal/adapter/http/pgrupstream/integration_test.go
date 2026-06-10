@@ -206,13 +206,13 @@ func buildConfig() *domain.Config {
 func TestMain(m *testing.M) {
 	// Superuser URL — dbboot.Bootstrap creates ultrabase_owner +
 	// authenticator from this connection before tests start.
-	dbURL := os.Getenv("ULTRABASE_TEST_DATABASE_URL")
+	dbURL := os.Getenv("INSTANCEZ_TEST_DATABASE_URL")
 	if dbURL == "" {
-		fmt.Println("pgrupstream: ULTRABASE_TEST_DATABASE_URL not set, skipping upstream integration tests")
+		fmt.Println("pgrupstream: INSTANCEZ_TEST_DATABASE_URL not set, skipping upstream integration tests")
 		os.Exit(0)
 	}
 
-	os.Setenv("ULTRABASE_ADMIN_KEY", testAdminKey)
+	os.Setenv("INSTANCEZ_ADMIN_KEY", testAdminKey)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

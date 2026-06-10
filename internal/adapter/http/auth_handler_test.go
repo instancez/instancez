@@ -649,7 +649,7 @@ func TestSignupGating_NilFlags_PreservesBackwardCompat(t *testing.T) {
 // it must keep working even with allow_signup=false.
 func TestSignupGating_AdminCreateUser_IgnoresAllowSignup(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	t.Setenv("ULTRABASE_ADMIN_KEY", "test-admin-key")
+	t.Setenv("INSTANCEZ_ADMIN_KEY", "test-admin-key")
 
 	h, _ := signupGatingHandler(t, ptrBool(false), ptrBool(false))
 	r := gin.New()
@@ -674,7 +674,7 @@ func TestSignupGating_AdminCreateUser_IgnoresAllowSignup(t *testing.T) {
 
 func TestSignupGating_AdminInvite_IgnoresAllowSignup(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	t.Setenv("ULTRABASE_ADMIN_KEY", "test-admin-key")
+	t.Setenv("INSTANCEZ_ADMIN_KEY", "test-admin-key")
 
 	h, _ := signupGatingHandler(t, ptrBool(false), ptrBool(false))
 	r := gin.New()

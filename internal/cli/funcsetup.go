@@ -26,7 +26,7 @@ const anonTokenTTL = 365 * 24 * time.Hour
 const serviceTokenTTL = 5 * time.Minute
 
 // sharedFuncOptions builds the funcs.Options fields common to dev and serve:
-// the loopback URL, the anon/service token wiring, the ULTRA_ENV_ namespace,
+// the loopback URL, the anon/service token wiring, the INSTANCEZ_ENV_ namespace,
 // and the logger. Dir is left for the caller to set (it differs between dev,
 // which runs from the project tree, and serve, which runs from an extracted
 // bundle).
@@ -37,7 +37,7 @@ func sharedFuncOptions(
 	km *app.JWTKeyManager,
 	logger *slog.Logger,
 ) (funcs.Options, error) {
-	envMap, err := config.LoadUltraEnv(envDir, mode)
+	envMap, err := config.LoadInstancezEnv(envDir, mode)
 	if err != nil {
 		return funcs.Options{}, fmt.Errorf("functions: load env: %w", err)
 	}
@@ -110,9 +110,9 @@ func buildDevFuncRuntime(
 // when no functions are declared.
 //
 // extractParent is the directory under which the bundle is extracted (each
-// version gets its own subdir). envDir is where LoadUltraEnv looks for .env
+// version gets its own subdir). envDir is where LoadInstancezEnv looks for .env
 // files; for an S3-sourced serve those files won't exist locally and only the
-// process-env ULTRA_ENV_* overlay applies, which is correct for prod.
+// process-env INSTANCEZ_ENV_* overlay applies, which is correct for prod.
 func buildServeFuncRuntime(
 	ctx context.Context,
 	cfg *domain.Config,

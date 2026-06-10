@@ -145,8 +145,8 @@ func TestRunInitDevelopmentEnvExampleDocumentsSuperuser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read .development.env.example: %v", err)
 	}
-	if !strings.Contains(string(data), "ULTRABASE_DATABASE_URL=") {
-		t.Errorf(".development.env.example should document ULTRABASE_DATABASE_URL\n--- got ---\n%s", data)
+	if !strings.Contains(string(data), "INSTANCEZ_DATABASE_URL=") {
+		t.Errorf(".development.env.example should document INSTANCEZ_DATABASE_URL\n--- got ---\n%s", data)
 	}
 }
 
@@ -254,7 +254,7 @@ func TestRunInitGenerateLikeRefusesWhenYAMLExists(t *testing.T) {
 // already carries project.cloud.project_id must NOT call CreateProject.
 //
 // The proof is twofold and network-free:
-//   - We point ULTRABASE_CLOUD_API at a dead address. If the guard regressed
+//   - We point INSTANCEZ_CLOUD_API at a dead address. If the guard regressed
 //     and CreateProject were reached, it would hit that address and runInit
 //     would return an error. So err==nil IS the evidence the guard fired.
 //   - The existing project_id read is purely local, so valid creds-on-disk let
@@ -272,7 +272,7 @@ func TestRunInitWithCloudSkipsCreateWhenAlreadyLinked(t *testing.T) {
 	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "test-pat"}))
 
 	// Any CreateProject call would hit this unreachable address and error.
-	t.Setenv("ULTRABASE_CLOUD_API", "http://127.0.0.1:1")
+	t.Setenv("INSTANCEZ_CLOUD_API", "http://127.0.0.1:1")
 
 	// Seed a yaml that already declares project.cloud.project_id. Use the real
 	// helper so the field lands exactly where ReadProjectID looks for it.
@@ -340,12 +340,12 @@ func TestMergeEnvFile(t *testing.T) {
 		},
 		{
 			name:     "user-added line between our keys is preserved",
-			existing: "ULTRABASE_OWNER_DATABASE_URL=oldowner\nMY_CUSTOM=value\nULTRABASE_AUTH_DATABASE_URL=oldauth\n",
+			existing: "INSTANCEZ_OWNER_DATABASE_URL=oldowner\nMY_CUSTOM=value\nINSTANCEZ_AUTH_DATABASE_URL=oldauth\n",
 			updates: []envKV{
-				{"ULTRABASE_OWNER_DATABASE_URL", "newowner"},
-				{"ULTRABASE_AUTH_DATABASE_URL", "newauth"},
+				{"INSTANCEZ_OWNER_DATABASE_URL", "newowner"},
+				{"INSTANCEZ_AUTH_DATABASE_URL", "newauth"},
 			},
-			want: "ULTRABASE_OWNER_DATABASE_URL=newowner\nMY_CUSTOM=value\nULTRABASE_AUTH_DATABASE_URL=newauth\n",
+			want: "INSTANCEZ_OWNER_DATABASE_URL=newowner\nMY_CUSTOM=value\nINSTANCEZ_AUTH_DATABASE_URL=newauth\n",
 		},
 		{
 			name:     "missing trailing newline gets normalized",
@@ -465,7 +465,7 @@ func TestRunInitPreservesProductionEnvExample(t *testing.T) {
 	}
 
 	examplePath := filepath.Join(dir, ".production.env.example")
-	customContent := "# my custom production notes\nULTRABASE_OWNER_DATABASE_URL=postgres://i-edited-this\n"
+	customContent := "# my custom production notes\nINSTANCEZ_OWNER_DATABASE_URL=postgres://i-edited-this\n"
 	if err := os.WriteFile(examplePath, []byte(customContent), 0o644); err != nil {
 		t.Fatal(err)
 	}

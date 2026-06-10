@@ -49,14 +49,14 @@ var (
 // parse. Config validation rejects unparseable values, but we parse defensively.
 const defaultTimeout = 30 * time.Second
 
-// ultraEnvRefPattern matches ${ULTRA_ENV_FOO} (and only that prefix/pattern).
-// The submatch at index 1 is the full key name (e.g. "ULTRA_ENV_FOO").
-var ultraEnvRefPattern = regexp.MustCompile(`^\$\{(ULTRA_ENV_[A-Za-z0-9_]+)\}$`)
+// instancezEnvRefPattern matches ${INSTANCEZ_ENV_FOO} (and only that prefix/pattern).
+// The submatch at index 1 is the full key name (e.g. "INSTANCEZ_ENV_FOO").
+var instancezEnvRefPattern = regexp.MustCompile(`^\$\{(INSTANCEZ_ENV_[A-Za-z0-9_]+)\}$`)
 
-// asUltraEnvRef returns (refName, true) when v is an ULTRA_ENV_ reference
-// expression like "${ULTRA_ENV_FOO}", or ("", false) for a plain literal.
-func asUltraEnvRef(v string) (string, bool) {
-	m := ultraEnvRefPattern.FindStringSubmatch(v)
+// asInstancezEnvRef returns (refName, true) when v is an INSTANCEZ_ENV_ reference
+// expression like "${INSTANCEZ_ENV_FOO}", or ("", false) for a plain literal.
+func asInstancezEnvRef(v string) (string, bool) {
+	m := instancezEnvRefPattern.FindStringSubmatch(v)
 	if m == nil {
 		return "", false
 	}
@@ -88,9 +88,9 @@ type Options struct {
 	// anon key, i.e. no escalation).
 	MintService func(ctx context.Context) (string, error)
 
-	// EnvMap is the in-memory ULTRA_ENV_ namespace (built by config.LoadUltraEnv).
+	// EnvMap is the in-memory INSTANCEZ_ENV_ namespace (built by config.LoadInstancezEnv).
 	// Each function's env: values are resolved against this map at invoke time.
-	// Keys must carry the "ULTRA_ENV_" prefix. This map is NEVER written to
+	// Keys must carry the "INSTANCEZ_ENV_" prefix. This map is NEVER written to
 	// process env — it is passed to the worker via the X-Ultra-Context header.
 	EnvMap map[string]string
 
@@ -323,15 +323,15 @@ func New(opts Options) (*Runtime, error) {
 		opts.MaxInFlight = opts.PoolSize * 64
 	}
 
-	// Fail-early validation: check that every ${ULTRA_ENV_*} ref in every
+	// Fail-early validation: check that every ${INSTANCEZ_ENV_*} ref in every
 	// function's env: map is present in opts.EnvMap. This must run BEFORE any
 	// resource is allocated (shim file write, node spawn) so a missing secret
 	// fails cleanly with no leaked goroutines or files.
 	for name, fn := range opts.Functions {
 		for _, v := range fn.Env {
-			if ref, ok := asUltraEnvRef(v); ok {
+			if ref, ok := asInstancezEnvRef(v); ok {
 				if _, found := opts.EnvMap[ref]; !found {
-					return nil, fmt.Errorf("funcs: function %q: ${%s} not in ULTRA_ENV_ namespace", name, ref)
+					return nil, fmt.Errorf("funcs: function %q: ${%s} not in INSTANCEZ_ENV_ namespace", name, ref)
 				}
 			}
 		}
@@ -421,7 +421,7 @@ func (r *Runtime) spawnWorker(fnSpec string) (*worker, error) {
 	}
 
 	// Spawn with an explicitly constructed, minimal environment so the worker
-	// cannot read parent secrets (AWS_*, ULTRABASE_*, IRSA token files, etc.).
+	// cannot read parent secrets (AWS_*, INSTANCEZ_*, IRSA token files, etc.).
 	// PATH is needed to find node itself; NODE_ENV and HOME are harmless
 	// defaults. Node module resolution is filesystem-based (walks node_modules
 	// upward from the importing file) and does NOT depend on env vars, so
@@ -576,13 +576,13 @@ func (r *Runtime) Invoke(ctx context.Context, in domain.FunctionRequest) (*domai
 	}
 
 	// Resolve the function's env: map at invoke time.
-	// Refs (${ULTRA_ENV_*}) are resolved from EnvMap; literals pass through as-is.
+	// Refs (${INSTANCEZ_ENV_*}) are resolved from EnvMap; literals pass through as-is.
 	// Guaranteed: any ref present in the function config was validated at New time,
 	// so opts.EnvMap[ref] is always populated here.
 	resolved := make(map[string]string)
 	if fn, ok := r.opts.Functions[in.Name]; ok {
 		for k, v := range fn.Env {
-			if ref, isRef := asUltraEnvRef(v); isRef {
+			if ref, isRef := asInstancezEnvRef(v); isRef {
 				resolved[k] = r.envmap[ref]
 			} else {
 				resolved[k] = v // literal

@@ -137,7 +137,7 @@ func TestInvokeNonJSONBodyDoesNotHang(t *testing.T) {
 	}
 }
 
-// TestEnvRefResolution verifies that a ${ULTRA_ENV_*} reference in a function's
+// TestEnvRefResolution verifies that a ${INSTANCEZ_ENV_*} reference in a function's
 // env: config is resolved from EnvMap at invoke time and is accessible as ctx.env.
 func TestEnvRefResolution(t *testing.T) {
 	dir := t.TempDir()
@@ -152,11 +152,11 @@ func TestEnvRefResolution(t *testing.T) {
 			"pay": {
 				Runtime: "node",
 				File:    "pay.js",
-				Env:     map[string]string{"STRIPE_KEY": "${ULTRA_ENV_STRIPE_KEY}"},
+				Env:     map[string]string{"STRIPE_KEY": "${INSTANCEZ_ENV_STRIPE_KEY}"},
 			},
 		},
 		EnvMap: map[string]string{
-			"ULTRA_ENV_STRIPE_KEY": "sk_test_123",
+			"INSTANCEZ_ENV_STRIPE_KEY": "sk_test_123",
 		},
 	})
 	if err != nil {
@@ -233,11 +233,11 @@ func TestEnvNotInProcessEnv(t *testing.T) {
 			"peek": {
 				Runtime: "node",
 				File:    "peek.js",
-				Env:     map[string]string{"STRIPE_KEY": "${ULTRA_ENV_STRIPE_KEY}"},
+				Env:     map[string]string{"STRIPE_KEY": "${INSTANCEZ_ENV_STRIPE_KEY}"},
 			},
 		},
 		EnvMap: map[string]string{
-			"ULTRA_ENV_STRIPE_KEY": "sk_test_should_not_leak",
+			"INSTANCEZ_ENV_STRIPE_KEY": "sk_test_should_not_leak",
 		},
 	})
 	if err != nil {

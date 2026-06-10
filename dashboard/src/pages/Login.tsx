@@ -24,7 +24,7 @@ export function Login({ onSuccess }: LoginProps) {
       sessionStorage.setItem("ultrabase_admin_key", key.trim());
       onSuccess();
     } else {
-      setError("Invalid admin key. Check ULTRABASE_ADMIN_KEY.");
+      setError("Invalid admin key. Check INSTANCEZ_ADMIN_KEY.");
     }
     setLoading(false);
   }
@@ -61,7 +61,7 @@ export function Login({ onSuccess }: LoginProps) {
                 type="password"
                 value={key}
                 onChange={(e) => setKey(e.target.value)}
-                placeholder="ULTRABASE_ADMIN_KEY"
+                placeholder="INSTANCEZ_ADMIN_KEY"
                 autoFocus
                 className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-border bg-input text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-ring transition-colors"
               />

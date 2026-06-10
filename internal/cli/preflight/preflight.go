@@ -18,14 +18,14 @@ import (
 // DSN env-var names used by dbConnections.  Exported so tests can reference
 // the exact names without duplicating the string literals.
 const (
-	EnvOwnerDSN = "ULTRABASE_OWNER_DATABASE_URL"
-	EnvAuthDSN  = "ULTRABASE_AUTH_DATABASE_URL"
+	EnvOwnerDSN = "INSTANCEZ_OWNER_DATABASE_URL"
+	EnvAuthDSN  = "INSTANCEZ_AUTH_DATABASE_URL"
 )
 
 // expectedRoleNames returns the full set of Postgres role names that an
 // ultrabase-bootstrapped database must contain. The owner login role is the
 // hard-coded const from bootstrap.go; the remaining three come from
-// domain.DefaultRoles() (overrides via ULTRABASE_DB_* env vars are not
+// domain.DefaultRoles() (overrides via INSTANCEZ_DB_* env vars are not
 // reflected here — the check targets the defaults used by `ultra init`).
 func expectedRoleNames() []string {
 	r := domain.DefaultRoles()
@@ -120,21 +120,21 @@ func DSNPresentCheck(lookup func(string) string) Check {
 				Name:    "DSN env vars present",
 				OK:      false,
 				Detail:  EnvOwnerDSN + " and " + EnvAuthDSN + " are not set",
-				FixHint: "set ULTRABASE_DATABASE_URL (a superuser DSN) in .development.env and run `ultra dev`, or set " + EnvOwnerDSN + " + " + EnvAuthDSN + " directly",
+				FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) in .development.env and run `ultra dev`, or set " + EnvOwnerDSN + " + " + EnvAuthDSN + " directly",
 			}
 		case owner == "":
 			return Result{
 				Name:    "DSN env vars present",
 				OK:      false,
 				Detail:  EnvOwnerDSN + " is not set",
-				FixHint: "set ULTRABASE_DATABASE_URL (a superuser DSN) and run `ultra dev`, or set " + EnvOwnerDSN + " in .development.env",
+				FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) and run `ultra dev`, or set " + EnvOwnerDSN + " in .development.env",
 			}
 		case auth == "":
 			return Result{
 				Name:    "DSN env vars present",
 				OK:      false,
 				Detail:  EnvAuthDSN + " is not set",
-				FixHint: "set ULTRABASE_DATABASE_URL (a superuser DSN) and run `ultra dev`, or set " + EnvAuthDSN + " in .development.env",
+				FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) and run `ultra dev`, or set " + EnvAuthDSN + " in .development.env",
 			}
 		default:
 			return Result{Name: "DSN env vars present", OK: true}
@@ -247,7 +247,7 @@ func ConnectCheck(name, dsn string) Check {
 				Name:    name,
 				OK:      false,
 				Detail:  "DSN is empty",
-				FixHint: "set ULTRABASE_DATABASE_URL (a superuser DSN) and run `ultra dev`, or set the role DSNs in .development.env",
+				FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) and run `ultra dev`, or set the role DSNs in .development.env",
 			}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
@@ -258,7 +258,7 @@ func ConnectCheck(name, dsn string) Check {
 				Name:    name,
 				OK:      false,
 				Detail:  "could not open pool: " + err.Error(),
-				FixHint: "set ULTRABASE_DATABASE_URL (a superuser DSN) so `ultra dev` provisions the database",
+				FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) so `ultra dev` provisions the database",
 			}
 		}
 		defer pool.Close()
@@ -395,7 +395,7 @@ func roleLayoutDecision(existing, grants map[string]bool) Result {
 			Name:    "role layout",
 			OK:      false,
 			Detail:  detail,
-			FixHint: "set ULTRABASE_DATABASE_URL (a superuser DSN) and run `ultra dev` to provision the roles",
+			FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) and run `ultra dev` to provision the roles",
 		}
 	}
 
@@ -420,7 +420,7 @@ func roleLayoutDecision(existing, grants map[string]bool) Result {
 			Name:    "role layout",
 			OK:      false,
 			Detail:  detail,
-			FixHint: "set ULTRABASE_DATABASE_URL (a superuser DSN) and run `ultra dev` to provision the roles",
+			FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) and run `ultra dev` to provision the roles",
 		}
 	}
 
@@ -440,7 +440,7 @@ func RoleLayoutCheck(roles RoleReporter) Check {
 				Name:    "role layout",
 				OK:      false,
 				Detail:  "could not query pg_roles: " + err.Error(),
-				FixHint: "set ULTRABASE_DATABASE_URL (a superuser DSN) and run `ultra dev` to provision the roles",
+				FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) and run `ultra dev` to provision the roles",
 			}
 		}
 		grants, err := roles.AuthenticatorGrants()
@@ -449,7 +449,7 @@ func RoleLayoutCheck(roles RoleReporter) Check {
 				Name:    "role layout",
 				OK:      false,
 				Detail:  "could not query pg_auth_members: " + err.Error(),
-				FixHint: "set ULTRABASE_DATABASE_URL (a superuser DSN) and run `ultra dev` to provision the roles",
+				FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) and run `ultra dev` to provision the roles",
 			}
 		}
 		return roleLayoutDecision(existing, grants)

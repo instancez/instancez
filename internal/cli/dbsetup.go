@@ -13,15 +13,15 @@ import (
 // dbConnections opens the owner and authenticator pools from environment.
 // Both URLs are required.
 func dbConnections(ctx context.Context, poolCfg domain.PoolConfig) (domain.OwnerDB, domain.RequestDB, domain.Roles, error) {
-	ownerURL := os.Getenv("ULTRABASE_OWNER_DATABASE_URL")
+	ownerURL := os.Getenv("INSTANCEZ_OWNER_DATABASE_URL")
 	if ownerURL == "" {
 		return domain.OwnerDB{}, domain.RequestDB{}, domain.Roles{},
-			fmt.Errorf("ULTRABASE_OWNER_DATABASE_URL not set (privileged login for migrations/seeding)")
+			fmt.Errorf("INSTANCEZ_OWNER_DATABASE_URL not set (privileged login for migrations/seeding)")
 	}
-	authURL := os.Getenv("ULTRABASE_AUTH_DATABASE_URL")
+	authURL := os.Getenv("INSTANCEZ_AUTH_DATABASE_URL")
 	if authURL == "" {
 		return domain.OwnerDB{}, domain.RequestDB{}, domain.Roles{},
-			fmt.Errorf("ULTRABASE_AUTH_DATABASE_URL not set (authenticator login for HTTP request path)")
+			fmt.Errorf("INSTANCEZ_AUTH_DATABASE_URL not set (authenticator login for HTTP request path)")
 	}
 
 	roles := rolesFromEnv()
@@ -83,8 +83,8 @@ func shouldBootstrap(ownerDSN, authDSN, superuserDSN string) bool {
 // the next run. It is a no-op when both role DSNs are already set or when no
 // superuser DSN is available.
 func ensureRoles(ctx context.Context, superuserDSN, envFile string) (roleBootstrap, error) {
-	owner := os.Getenv("ULTRABASE_OWNER_DATABASE_URL")
-	auth := os.Getenv("ULTRABASE_AUTH_DATABASE_URL")
+	owner := os.Getenv("INSTANCEZ_OWNER_DATABASE_URL")
+	auth := os.Getenv("INSTANCEZ_AUTH_DATABASE_URL")
 	if !shouldBootstrap(owner, auth, superuserDSN) {
 		return roleBootstrap{}, nil
 	}
@@ -93,8 +93,8 @@ func ensureRoles(ctx context.Context, superuserDSN, envFile string) (roleBootstr
 	if err != nil {
 		return roleBootstrap{}, err
 	}
-	os.Setenv("ULTRABASE_OWNER_DATABASE_URL", ownerDSN)
-	os.Setenv("ULTRABASE_AUTH_DATABASE_URL", authDSN)
+	os.Setenv("INSTANCEZ_OWNER_DATABASE_URL", ownerDSN)
+	os.Setenv("INSTANCEZ_AUTH_DATABASE_URL", authDSN)
 
 	adminKey, err := persistDSNs(envFile, ownerDSN, authDSN)
 	if err != nil {
@@ -106,7 +106,7 @@ func ensureRoles(ctx context.Context, superuserDSN, envFile string) (roleBootstr
 // persistDSNs writes the derived owner + authenticator DSNs into envFile. When
 // the file is absent it is created from the scaffold template; when present the
 // two keys are merged in (preserving the user's other lines and comments). A
-// random ULTRABASE_ADMIN_KEY is generated and added unless the file already
+// random INSTANCEZ_ADMIN_KEY is generated and added unless the file already
 // declares one; the generated key is returned (empty when an existing key was
 // kept) so the caller can surface it to the user.
 func persistDSNs(envFile, ownerDSN, authDSN string) (string, error) {
@@ -127,16 +127,16 @@ func persistDSNs(envFile, ownerDSN, authDSN string) (string, error) {
 		content = scaffoldDevelopmentEnv(ownerDSN, authDSN, adminKey)
 	} else {
 		updates := []envKV{
-			{Key: "ULTRABASE_OWNER_DATABASE_URL", Val: ownerDSN},
-			{Key: "ULTRABASE_AUTH_DATABASE_URL", Val: authDSN},
+			{Key: "INSTANCEZ_OWNER_DATABASE_URL", Val: ownerDSN},
+			{Key: "INSTANCEZ_AUTH_DATABASE_URL", Val: authDSN},
 		}
-		if !hasActiveEnvKey(existing, "ULTRABASE_ADMIN_KEY") {
+		if !hasActiveEnvKey(existing, "INSTANCEZ_ADMIN_KEY") {
 			key, err := randomPassword()
 			if err != nil {
 				return "", fmt.Errorf("generate admin key: %w", err)
 			}
 			adminKey = key
-			updates = append(updates, envKV{Key: "ULTRABASE_ADMIN_KEY", Val: adminKey})
+			updates = append(updates, envKV{Key: "INSTANCEZ_ADMIN_KEY", Val: adminKey})
 		}
 		content = mergeEnvFile(existing, updates)
 	}
@@ -148,16 +148,16 @@ func persistDSNs(envFile, ownerDSN, authDSN string) (string, error) {
 
 func rolesFromEnv() domain.Roles {
 	r := domain.DefaultRoles()
-	if v := os.Getenv("ULTRABASE_DB_AUTHENTICATOR_ROLE"); v != "" {
+	if v := os.Getenv("INSTANCEZ_DB_AUTHENTICATOR_ROLE"); v != "" {
 		r.Authenticator = v
 	}
-	if v := os.Getenv("ULTRABASE_DB_ANON_ROLE"); v != "" {
+	if v := os.Getenv("INSTANCEZ_DB_ANON_ROLE"); v != "" {
 		r.Anon = v
 	}
-	if v := os.Getenv("ULTRABASE_DB_AUTHENTICATED_ROLE"); v != "" {
+	if v := os.Getenv("INSTANCEZ_DB_AUTHENTICATED_ROLE"); v != "" {
 		r.Authenticated = v
 	}
-	if v := os.Getenv("ULTRABASE_DB_SERVICE_ROLE"); v != "" {
+	if v := os.Getenv("INSTANCEZ_DB_SERVICE_ROLE"); v != "" {
 		r.Service = v
 	}
 	return r
