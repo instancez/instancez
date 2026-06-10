@@ -147,10 +147,10 @@ export function StorageDetail() {
                                 return { ...b, rls };
                               })
                             }
-                            className={`px-2.5 py-1 rounded text-xs font-medium transition-colors cursor-pointer ${
+                            className={`px-2.5 py-1 rounded-sm text-xs font-medium transition-colors cursor-pointer ${
                               (policy.type || "permissive") === t
                                 ? t === "restrictive"
-                                  ? "bg-amber-500/15 text-amber-400 border border-amber-500/30"
+                                  ? "hazard border border-dashed border-foreground/40 text-foreground"
                                   : "bg-accent/15 text-accent border border-accent/30"
                                 : "border border-border text-muted-foreground hover:text-foreground hover:bg-surface-hover"
                             }`}
@@ -188,7 +188,7 @@ export function StorageDetail() {
                         rls: (b.rls || []).filter((_, j) => j !== i),
                       }))
                     }
-                    className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
+                    className="p-1.5 rounded-sm hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
                   >
                     <Trash2 size={14} />
                   </button>

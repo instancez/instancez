@@ -2,7 +2,33 @@ import { useRef, useEffect } from "react";
 import { EditorView, basicSetup } from "codemirror";
 import { EditorState } from "@codemirror/state";
 import { sql } from "@codemirror/lang-sql";
-import { oneDark } from "@codemirror/theme-one-dark";
+import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { tags as t } from "@lezer/highlight";
+
+/* Monochrome "ink" syntax theme: hierarchy is carried by weight, brightness
+   and italics instead of hue, matching the dashboard's black & white design. */
+const inkHighlight = HighlightStyle.define([
+  { tag: t.keyword, color: "#f4f4f4", fontWeight: "600" },
+  { tag: [t.string, t.special(t.string)], color: "#bdbdbd", fontStyle: "italic" },
+  { tag: t.comment, color: "#5c5c5c", fontStyle: "italic" },
+  { tag: [t.number, t.bool, t.null], color: "#e8e8e8" },
+  { tag: [t.operator, t.punctuation], color: "#8f8f8f" },
+  { tag: [t.typeName, t.className], color: "#dcdcdc" },
+  { tag: [t.function(t.variableName), t.propertyName], color: "#cfcfcf" },
+]);
+
+const inkTheme = EditorView.theme(
+  {
+    "&": { color: "#e6e6e6" },
+    ".cm-cursor, .cm-dropCursor": { borderLeftColor: "#ffffff" },
+    ".cm-activeLine": { backgroundColor: "rgb(255 255 255 / 0.04)" },
+    ".cm-activeLineGutter": { backgroundColor: "rgb(255 255 255 / 0.06)" },
+    "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection":
+      { backgroundColor: "rgb(255 255 255 / 0.18) !important" },
+    ".cm-gutters": { color: "#5c5c5c" },
+  },
+  { dark: true }
+);
 
 interface CodeEditorProps {
   value: string;
@@ -31,7 +57,8 @@ export function CodeEditor({
 
     const extensions = [
       basicSetup,
-      oneDark,
+      inkTheme,
+      syntaxHighlighting(inkHighlight),
       EditorView.theme({
         "&": { minHeight, backgroundColor: "transparent" },
         ".cm-content": { fontFamily: "var(--font-mono)", fontSize: "13px" },
@@ -74,5 +101,5 @@ export function CodeEditor({
     }
   }, [value]);
 
-  return <div ref={containerRef} className="rounded-lg overflow-hidden" />;
+  return <div ref={containerRef} className="overflow-hidden" />;
 }

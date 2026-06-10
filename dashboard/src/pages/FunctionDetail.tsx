@@ -153,7 +153,7 @@ export function FunctionDetail() {
                 if (!key?.trim()) return;
                 updateFn((f) => ({ ...f, env: { ...(f.env || {}), [key.trim()]: "" } }));
               }}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded border border-dashed border-border text-xs text-muted-foreground hover:text-foreground hover:border-border-hover transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-sm border border-dashed border-border text-xs text-muted-foreground hover:text-foreground hover:border-border-hover transition-colors cursor-pointer"
             >
               <Plus size={12} />
               Add Var
@@ -173,7 +173,7 @@ export function FunctionDetail() {
                     onChange={(e) =>
                       updateFn((f) => ({ ...f, env: { ...(f.env || {}), [key]: e.target.value } }))
                     }
-                    className="flex-1 px-2 py-1 rounded border border-border bg-input text-xs font-mono text-foreground focus:outline-none focus:border-ring"
+                    className="flex-1 px-2 py-1 rounded-sm border border-border bg-input text-xs font-mono text-foreground focus:outline-none focus:border-ring"
                   />
                   <button
                     onClick={() =>
@@ -183,7 +183,7 @@ export function FunctionDetail() {
                         return { ...f, env: next };
                       })
                     }
-                    className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
+                    className="p-1 rounded-sm hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
                   >
                     <Trash2 size={13} />
                   </button>

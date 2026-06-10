@@ -23,17 +23,17 @@ export function Toggle({ checked, onChange, label, disabled, ...rest }: TogglePr
       aria-checked={checked}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`relative w-11 h-6 rounded-full transition-all shrink-0 ${
+      className={`relative w-10 h-5 border transition-colors shrink-0 ${
         disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"
       } ${
         checked
-          ? "bg-accent shadow-[inset_0_1px_2px_rgb(0_0_0/0.2),0_0_10px_rgb(255_255_255/0.15)]"
-          : "bg-secondary shadow-[inset_0_1px_2px_rgb(0_0_0/0.5)]"
+          ? "bg-foreground border-foreground"
+          : "bg-input border-input-border hover:border-border-hover"
       }`}
       {...rest}
     >
       <span
-        className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full transition-all shadow-[inset_0_1px_0_rgb(255_255_255/0.25),0_1px_2px_rgb(0_0_0/0.4)] ${
+        className={`absolute top-[3px] left-[3px] w-3 h-3 transition-transform ${
           checked ? "translate-x-5 bg-background" : "bg-muted-foreground"
         }`}
       />

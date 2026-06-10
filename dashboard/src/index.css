@@ -1,39 +1,47 @@
 @import "tailwindcss";
 
+/*
+ * instancez — monochrome "technical print" theme.
+ *
+ * Design language: pure-black canvas with a faint dot grid, hairline borders,
+ * zero border radius (the radius tokens below are 0 on purpose — `rounded-*`
+ * utilities across the app intentionally resolve to sharp corners), inverted
+ * white blocks for primary/active states, and mono uppercase micro-labels.
+ * The only non-grayscale color is `destructive` red, kept for safety on
+ * irreversible actions. "Warning" is expressed with hazard stripes (.hazard),
+ * not color.
+ */
 @theme {
-  --color-background: #060606;
-  --color-foreground: #F7F7F7;
-  --color-primary: #0D0D0D;
-  --color-on-primary: #F7F7F7;
-  --color-secondary: #222222;
-  --color-accent: #FFFFFF;
-  --color-accent-hover: #D6D6D6;
-  --color-muted: #1A1A1A;
-  --color-muted-foreground: #9C9C9C;
-  --color-border: #262626;
-  --color-border-hover: #525252;
-  --color-destructive: #D84040;
-  --color-destructive-hover: #C03636;
-  --color-warning: #E0A030;
-  --color-info: #9C9C9C;
-  --color-surface: #0D0D0D;
-  --color-surface-hover: #161616;
-  --color-ring: #999999;
-  --color-input: #0A0A0A;
+  --color-background: #000000;
+  --color-foreground: #f4f4f4;
+  --color-primary: #0a0a0a;
+  --color-on-primary: #f4f4f4;
+  --color-secondary: #262626;
+  --color-accent: #ffffff;
+  --color-accent-hover: #cfcfcf;
+  --color-muted: #161616;
+  --color-muted-foreground: #8f8f8f;
+  --color-border: #232323;
+  --color-border-hover: #4d4d4d;
+  --color-destructive: #e05252;
+  --color-destructive-hover: #c74444;
+  --color-warning: #d8d8d8;
+  --color-info: #8f8f8f;
+  --color-surface: #0a0a0a;
+  --color-surface-hover: #151515;
+  --color-ring: #ffffff;
+  --color-input: #050505;
   --color-input-border: #383838;
 
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Fira Code", ui-monospace, monospace;
+  --font-sans: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
 
-  --radius-sm: 0.375rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-  --radius-xl: 1rem;
-
-  /* Glossy surface: hairline top highlight + soft drop shade. Pair with a
-     faint top-down white gradient (see .sheen) for the full effect. */
-  --shadow-gloss: inset 0 1px 0 0 rgb(255 255 255 / 0.06),
-    0 1px 2px 0 rgb(0 0 0 / 0.5);
+  /* Sharp corners everywhere — see header comment. */
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --radius-2xl: 0px;
 }
 
 * {
@@ -44,28 +52,78 @@ body {
   font-family: var(--font-sans);
 }
 
-/* Faint top-down sheen layered over a token background color. The gradient is
-   a background-image, so it stacks with (and lets through) bg-* utilities,
-   including hover color changes. */
-.sheen {
-  background-image: linear-gradient(
-    to bottom,
-    rgb(255 255 255 / 0.035),
-    transparent 45%
-  );
+::selection {
+  background: var(--color-foreground);
+  color: var(--color-background);
 }
 
-/* Overhead light for full-page shells: a wide, very soft white radial at the
-   top edge so the near-black canvas reads as lit glass, not a void. */
-.sheen-canvas {
+:focus-visible {
+  outline: 1px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+/* Faint dot grid over the page canvas — reads as graph paper, keeps the
+   pure-black background from feeling like a void. */
+.grid-canvas {
   background-image: radial-gradient(
-    90% 50% at 50% -10%,
-    rgb(255 255 255 / 0.05),
-    transparent 70%
+    rgb(255 255 255 / 0.055) 1px,
+    transparent 1px
+  );
+  background-size: 26px 26px;
+}
+
+/* Monochrome caution tape: diagonal hairline stripes. Carries "warning"
+   semantics without color (pair with an icon + text). */
+.hazard {
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgb(255 255 255 / 0.06) 0,
+    rgb(255 255 255 / 0.06) 1px,
+    transparent 1px,
+    transparent 9px
   );
 }
 
-/* Scrollbar styling */
+/* Bracket tick marks on opposing corners — the signature card frame.
+   Requires `position: relative` on the element. */
+.frame-ticks::before,
+.frame-ticks::after {
+  content: "";
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  pointer-events: none;
+  transition: border-color 150ms ease;
+}
+.frame-ticks::before {
+  top: -1px;
+  left: -1px;
+  border-top: 1px solid rgb(255 255 255 / 0.4);
+  border-left: 1px solid rgb(255 255 255 / 0.4);
+}
+.frame-ticks::after {
+  bottom: -1px;
+  right: -1px;
+  border-bottom: 1px solid rgb(255 255 255 / 0.4);
+  border-right: 1px solid rgb(255 255 255 / 0.4);
+}
+.frame-ticks:hover::before,
+.frame-ticks:hover::after {
+  border-color: rgb(255 255 255 / 0.9);
+}
+
+/* Mono uppercase micro-label used for section headings, card titles and
+   overlines throughout the dashboard. */
+.t-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-muted-foreground);
+}
+
+/* Scrollbar styling — square thumb to match the shape language. */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -77,7 +135,6 @@ body {
 
 ::-webkit-scrollbar-thumb {
   background: var(--color-secondary);
-  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -88,7 +145,6 @@ body {
 .cm-editor {
   font-family: var(--font-mono) !important;
   font-size: 13px;
-  border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
   background: var(--color-primary) !important;
 }
@@ -101,4 +157,14 @@ body {
 .cm-gutters {
   background: var(--color-muted) !important;
   border-right: 1px solid var(--color-border) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

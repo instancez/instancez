@@ -158,7 +158,7 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
           }`}
         >
           <div
-            className={`relative w-full max-w-[420px] mx-4 overflow-hidden rounded-2xl border sheen shadow-2xl shadow-black/50 transition-all duration-200 ease-out ${
+            className={`relative frame-ticks w-full max-w-[420px] mx-4 border transition-all duration-200 ease-out ${
               dialog.type === "confirm" && dialog.destructive
                 ? "border-destructive/30 bg-surface"
                 : "border-border bg-surface"
@@ -181,7 +181,7 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
               <>
                 <div className="px-6 pt-6 pb-5">
                   <div className="space-y-3">
-                    <label htmlFor="dialog-input" className="block text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                    <label htmlFor="dialog-input" className="t-label block">
                       {dialog.title}
                     </label>
                     <input
@@ -223,7 +223,7 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
               <>
                 <div className="px-6 pt-6 pb-5">
                   <div className="space-y-3">
-                    <label htmlFor="dialog-select" className="block text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                    <label htmlFor="dialog-select" className="t-label block">
                       {dialog.title}
                     </label>
                     <select
@@ -265,8 +265,8 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
             ) : dialog.type === "confirm" && dialog.destructive ? (
               /* ── Destructive confirm variant ── */
               <>
-                {/* Red top accent bar */}
-                <div className="h-1 bg-destructive/60" />
+                {/* Hazard-stripe top bar */}
+                <div className="h-2 hazard bg-destructive/20 border-b border-destructive/30" />
 
                 <div className="px-6 pt-5 pb-2">
                   <div className="flex items-start gap-3.5">

@@ -141,7 +141,7 @@ export function ProvidersPage() {
                   (v) => (
                     <code
                       key={v}
-                      className="px-2 py-0.5 rounded bg-background border border-border text-xs font-mono text-muted-foreground"
+                      className="px-2 py-0.5 rounded-sm bg-background border border-border text-xs font-mono text-muted-foreground"
                     >
                       {v}
                     </code>
@@ -213,7 +213,7 @@ export function ProvidersPage() {
                   (v) => (
                     <code
                       key={v}
-                      className="px-2 py-0.5 rounded bg-background border border-border text-xs font-mono text-muted-foreground"
+                      className="px-2 py-0.5 rounded-sm bg-background border border-border text-xs font-mono text-muted-foreground"
                     >
                       {v}
                     </code>

@@ -239,7 +239,7 @@ export function RpcDetail() {
                   args: [...(f.args || []), { name: argName.trim(), type: "text", required: false }],
                 }));
               }}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded border border-dashed border-border text-xs text-muted-foreground hover:text-foreground hover:border-border-hover transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-sm border border-dashed border-border text-xs text-muted-foreground hover:text-foreground hover:border-border-hover transition-colors cursor-pointer"
             >
               <Plus size={12} />
               Add Arg
@@ -264,7 +264,7 @@ export function RpcDetail() {
                         return { ...f, args: newArgs };
                       })
                     }
-                    className="px-2 py-1 rounded border border-border bg-input text-xs font-mono text-foreground cursor-pointer focus:outline-none focus:border-ring"
+                    className="px-2 py-1 rounded-sm border border-border bg-input text-xs font-mono text-foreground cursor-pointer focus:outline-none focus:border-ring"
                   >
                     {POSTGRES_TYPES.map((t) => (
                       <option key={t} value={t}>{t}</option>
@@ -290,7 +290,7 @@ export function RpcDetail() {
                         args: (f.args || []).filter((_, i) => i !== idx),
                       }))
                     }
-                    className="ml-auto p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
+                    className="ml-auto p-1 rounded-sm hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
                   >
                     <Trash2 size={13} />
                   </button>

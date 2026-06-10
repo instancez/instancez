@@ -20,8 +20,9 @@ const ProvidersPage = lazy(() => import("./pages/Providers").then((m) => ({ defa
 
 function PageLoader() {
   return (
-    <div className="flex items-center justify-center py-24">
+    <div className="flex flex-col items-center justify-center gap-3 py-24">
       <Loader2 size={20} className="animate-spin text-accent" />
+      <p className="t-label">Loading</p>
     </div>
   );
 }

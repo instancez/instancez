@@ -277,7 +277,7 @@ export function TableDetail() {
                         indexes: (t.indexes || []).filter((_, j) => j !== i),
                       }))
                     }
-                    className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
+                    className="p-1.5 rounded-sm hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
                   >
                     <Trash2 size={14} />
                   </button>
@@ -325,10 +325,10 @@ export function TableDetail() {
                                   return { ...tbl, rls };
                                 })
                               }
-                              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors cursor-pointer ${
+                              className={`px-2.5 py-1 rounded-sm text-xs font-medium transition-colors cursor-pointer ${
                                 (policy.type || "permissive") === t
                                   ? t === "restrictive"
-                                    ? "bg-amber-500/15 text-amber-400 border border-amber-500/30"
+                                    ? "hazard border border-dashed border-foreground/40 text-foreground"
                                     : "bg-accent/15 text-accent border border-accent/30"
                                   : "border border-border text-muted-foreground hover:text-foreground hover:bg-surface-hover"
                               }`}
@@ -369,7 +369,7 @@ export function TableDetail() {
                           rls: (t.rls || []).filter((_, j) => j !== i),
                         }))
                       }
-                      className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
+                      className="p-1.5 rounded-sm hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
                     >
                       <Trash2 size={14} />
                     </button>
@@ -401,7 +401,7 @@ export function TableDetail() {
                               return { ...t, rls };
                             })
                           }
-                          className="px-2 py-1 rounded border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
+                          className="px-2 py-1 rounded-sm border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
                         >
                           {label}
                         </button>
@@ -581,7 +581,7 @@ function SeedsTab({
                               updated[rowIdx] = { ...updated[rowIdx]!, [fieldName]: e.target.value };
                               onChange(updated);
                             }}
-                            className="w-full px-2 py-0.5 rounded border border-border bg-input text-xs font-mono text-foreground cursor-pointer focus:outline-none focus:border-ring"
+                            className="w-full px-2 py-0.5 rounded-sm border border-border bg-input text-xs font-mono text-foreground cursor-pointer focus:outline-none focus:border-ring"
                           >
                             <option value="">—</option>
                             {field.enum.map((v) => (
@@ -602,7 +602,7 @@ function SeedsTab({
                               onChange(updated);
                             }}
                             placeholder="—"
-                            className="w-full px-2 py-0.5 rounded border border-border bg-input text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-ring transition-colors"
+                            className="w-full px-2 py-0.5 rounded-sm border border-border bg-input text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-ring transition-colors"
                           />
                         )}
                       </td>
@@ -613,7 +613,7 @@ function SeedsTab({
                           if (!(await dialog.confirm(`Delete row ${rowIdx + 1}?`))) return;
                           onChange(seeds.filter((_, i) => i !== rowIdx));
                         }}
-                        className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
+                        className="p-1 rounded-sm hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
                       >
                         <Trash2 size={12} />
                       </button>
@@ -683,7 +683,7 @@ function FieldRow({
                 if (localName !== name && localName.trim()) onRename(localName.trim());
               }
             }}
-            className="w-full px-2 py-0.5 rounded border border-ring bg-input text-sm font-mono text-foreground focus:outline-none"
+            className="w-full px-2 py-0.5 rounded-sm border border-ring bg-input text-sm font-mono text-foreground focus:outline-none"
           />
         ) : (
           <button
@@ -698,7 +698,7 @@ function FieldRow({
         <select
           value={field.type || (field.foreign_key ? "bigint" : "text")}
           onChange={(e) => onChange({ ...field, type: e.target.value })}
-          className="w-full px-2 py-0.5 rounded border border-border bg-input text-sm font-mono text-foreground focus:outline-none focus:border-ring transition-colors cursor-pointer"
+          className="w-full px-2 py-0.5 rounded-sm border border-border bg-input text-sm font-mono text-foreground focus:outline-none focus:border-ring transition-colors cursor-pointer"
         >
           {POSTGRES_TYPES.map((t) => (
             <option key={t} value={t}>
@@ -743,7 +743,7 @@ function FieldRow({
           }
           placeholder="—"
           list="sql-defaults"
-          className="w-full px-2 py-0.5 rounded border border-border bg-input text-sm font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-ring transition-colors"
+          className="w-full px-2 py-0.5 rounded-sm border border-border bg-input text-sm font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-ring transition-colors"
         />
         <datalist id="sql-defaults">
           {SQL_DEFAULTS.map((d) => (
@@ -762,7 +762,7 @@ function FieldRow({
                 : undefined,
             })
           }
-          className="w-full px-2 py-0.5 rounded border border-border bg-input text-sm font-mono text-foreground focus:outline-none focus:border-ring transition-colors cursor-pointer"
+          className="w-full px-2 py-0.5 rounded-sm border border-border bg-input text-sm font-mono text-foreground focus:outline-none focus:border-ring transition-colors cursor-pointer"
         >
           <option value="">—</option>
           {fkOptions.map((fk) => (
@@ -775,7 +775,7 @@ function FieldRow({
       <td className="px-1 py-2">
         <button
           onClick={onDelete}
-          className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
+          className="p-1 rounded-sm hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
           aria-label={`Delete field ${name}`}
         >
           <Trash2 size={13} />

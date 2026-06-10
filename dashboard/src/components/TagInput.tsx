@@ -51,7 +51,7 @@ export function TagInput({
         {value.map((tag, i) => (
           <span
             key={i}
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-accent/15 text-accent text-xs font-medium"
+            className="inline-flex items-center gap-1 px-2 py-0.5 border border-foreground/25 bg-foreground/10 text-foreground font-mono text-xs"
           >
             {tag}
             <button
@@ -79,7 +79,7 @@ export function TagInput({
         />
       </div>
       {showSuggestions && filteredSuggestions.length > 0 && (
-        <div className="absolute z-50 mt-1 w-full max-h-40 overflow-y-auto rounded-lg border border-border bg-surface shadow-lg">
+        <div className="absolute z-50 mt-1 w-full max-h-40 overflow-y-auto border border-border-hover bg-surface">
           {filteredSuggestions.map((s) => (
             <button
               key={s}

@@ -16,17 +16,22 @@ export function PageHeader({
   return (
     <div
       className={cn(
-        "flex items-start justify-between gap-4 px-8 pt-8 pb-6",
+        "flex items-start justify-between gap-4 px-8 pt-8 pb-6 mb-6 border-b border-border",
         className
       )}
     >
-      <div>
-        <h1 className="text-xl font-semibold text-foreground">{title}</h1>
+      <div className="min-w-0">
+        <h1 className="flex items-center gap-3 text-2xl font-medium tracking-tight text-foreground">
+          <span aria-hidden="true" className="w-2 h-2 bg-foreground shrink-0" />
+          <span className="truncate">{title}</span>
+        </h1>
         {description && (
-          <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+          <p className="mt-1.5 pl-5 text-sm text-muted-foreground">
+            {description}
+          </p>
         )}
       </div>
-      {actions && <div className="flex items-center gap-2">{actions}</div>}
+      {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
     </div>
   );
 }

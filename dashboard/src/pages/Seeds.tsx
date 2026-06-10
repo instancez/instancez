@@ -185,7 +185,7 @@ export function Seeds() {
                                   }));
                                   setDirty(true);
                                 }}
-                                className="w-full px-2 py-0.5 rounded border border-border bg-input text-xs font-mono text-foreground cursor-pointer focus:outline-none focus:border-ring"
+                                className="w-full px-2 py-0.5 rounded-sm border border-border bg-input text-xs font-mono text-foreground cursor-pointer focus:outline-none focus:border-ring"
                               >
                                 <option value="">—</option>
                                 {field.enum.map((v) => (
@@ -215,7 +215,7 @@ export function Seeds() {
                                   setDirty(true);
                                 }}
                                 placeholder="—"
-                                className="w-full px-2 py-0.5 rounded border border-border bg-input text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-ring transition-colors"
+                                className="w-full px-2 py-0.5 rounded-sm border border-border bg-input text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-ring transition-colors"
                               />
                             )}
                           </td>
@@ -233,7 +233,7 @@ export function Seeds() {
                               }));
                               setDirty(true);
                             }}
-                            className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
+                            className="p-1 rounded-sm hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
                           >
                             <Trash2 size={12} />
                           </button>

@@ -39,7 +39,7 @@ export function DiffViewer({ statements, isDestructive }: DiffViewerProps) {
             <pre
               key={i}
               className={cn(
-                "text-xs font-mono p-2 rounded leading-relaxed whitespace-pre-wrap",
+                "text-xs font-mono p-2 rounded-sm leading-relaxed whitespace-pre-wrap",
                 isDrop || isAlterDrop
                   ? "bg-destructive/10 text-destructive"
                   : isAdd

@@ -34,13 +34,13 @@ export function SaveToast() {
   return (
     <div
       role="status"
-      className="fixed bottom-4 right-4 max-w-md rounded-md bg-emerald-50 border border-emerald-200 text-emerald-900 px-4 py-3 shadow-md text-sm z-50"
+      className="fixed bottom-4 right-4 max-w-md bg-foreground text-background px-4 py-3 text-sm z-50"
     >
       <div>
-        Saved to <code>{state.source}</code>. Migrations applied:{" "}
+        Saved to <code className="font-mono">{state.source}</code>. Migrations applied:{" "}
         <strong>{state.statementCount} statement(s)</strong>.
       </div>
-      <div className="mt-1 text-xs text-emerald-700">
+      <div className="mt-1 text-xs text-background/70">
         Reminder: update your git source to match, or your next external update will revert this.
       </div>
     </div>

@@ -12,13 +12,13 @@ export function SaveBar({ onSave, saving, errors, dirty = true }: SaveBarProps) 
   if (!dirty && errors.length === 0) return null;
 
   return (
-    <div className="fixed bottom-0 left-[272px] right-0 z-30 border-t border-border bg-surface/95 backdrop-blur-sm px-8 py-3">
+    <div className="fixed bottom-0 left-[272px] right-0 z-30 border-t border-border-hover bg-background/95 backdrop-blur-sm px-8 py-3">
       <div className="flex items-center justify-between gap-4">
         <div className="flex-1 min-w-0">
           {errors.length > 0 && (
             <div className="space-y-1">
               {errors.slice(0, 3).map((err, i) => (
-                <p key={i} className="text-xs text-destructive truncate">
+                <p key={i} className="text-xs font-mono text-destructive truncate">
                   {err.path && (
                     <span className="font-mono font-medium">{err.path}: </span>
                   )}
