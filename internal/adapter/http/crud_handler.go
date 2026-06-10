@@ -1666,6 +1666,19 @@ func parseFilterValue(val string) (op, operand, config string, err error) {
 		return "", "", "", fmt.Errorf("unknown operator %q", op)
 	}
 
+	// The `is` operator is the one comparison whose right-hand side is not
+	// emitted as a bind parameter (Postgres `IS` requires a keyword literal,
+	// not an expression). Restrict it to the four SQL truth keywords so a
+	// caller can never smuggle arbitrary SQL into the WHERE clause via
+	// `col=is.<anything>`. PostgREST applies the same restriction.
+	if op == "is" {
+		switch strings.ToLower(strings.TrimSpace(operand)) {
+		case "null", "true", "false", "unknown":
+		default:
+			return "", "", "", fmt.Errorf(`operator "is" only accepts null, true, false, or unknown`)
+		}
+	}
+
 	return op, operand, config, nil
 }
 
@@ -2380,11 +2393,17 @@ func buildFilterCondition(f Filter, argIdx int) (string, []any, int) {
 
 	switch switchOp {
 	case "is":
-		val := strings.ToUpper(f.Value)
-		if val == "NULL" || val == "TRUE" || val == "FALSE" {
-			return fmt.Sprintf("%s IS %s", colExpr, val), nil, argIdx
+		// parseFilterValue has already constrained f.Value to one of the
+		// four SQL truth keywords, so only the keyword literal is ever
+		// interpolated here. The default arm is defensive: should an
+		// unvalidated value ever reach this point, compare via a bind
+		// parameter instead of interpolating raw input into SQL.
+		switch strings.ToUpper(strings.TrimSpace(f.Value)) {
+		case "NULL", "TRUE", "FALSE", "UNKNOWN":
+			return fmt.Sprintf("%s IS %s", colExpr, strings.ToUpper(strings.TrimSpace(f.Value))), nil, argIdx
+		default:
+			return fmt.Sprintf("%s IS NOT DISTINCT FROM $%d", colExpr, argIdx), []any{f.Value}, argIdx + 1
 		}
-		return fmt.Sprintf("%s IS %s", colExpr, f.Value), nil, argIdx
 
 	case "isdistinct":
 		// PostgREST: `col=isdistinct.NULL` / `col=isdistinct.val`.
@@ -2867,4 +2886,43 @@ func findGeometryColumn(table domain.Table) string {
 		}
 	}
 	return ""
+}
+
+// parseRequestBody parses POST/PUT body as records (CSV, JSON array, or single JSON object).
+// On failure it writes a problemJSON response and returns nil, err. Callers must return on non-nil err.
+func parseRequestBody(c *gin.Context, table domain.Table) ([]map[string]any, error) {
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		problemJSON(c, 400, "bad_request", "Cannot read request body")
+		return nil, err
+	}
+	var records []map[string]any
+	if contentTypeIsCSV(c.GetHeader("Content-Type")) {
+		records, err = csvReadRecords(body)
+		if err != nil {
+			problemJSON(c, 400, "bad_request", err.Error())
+			return nil, err
+		}
+		records = csvCoerceRecords(records, table)
+	} else {
+		trimmed := strings.TrimSpace(string(body))
+		if strings.HasPrefix(trimmed, "[") {
+			if err := json.Unmarshal(body, &records); err != nil {
+				problemJSON(c, 400, "bad_request", "Invalid JSON array")
+				return nil, err
+			}
+		} else {
+			var single map[string]any
+			if err := json.Unmarshal(body, &single); err != nil {
+				problemJSON(c, 400, "bad_request", "Invalid JSON")
+				return nil, err
+			}
+			records = []map[string]any{single}
+		}
+	}
+	if len(records) == 0 {
+		problemJSON(c, 400, "bad_request", "Empty request body")
+		return nil, fmt.Errorf("empty body")
+	}
+	return records, nil
 }
