@@ -12,7 +12,7 @@ import (
 func TestConfigWatcher_DetectsChange(t *testing.T) {
 	// Create a temp config file
 	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "ultrabase.yaml")
+	cfgPath := filepath.Join(dir, "instancez.yaml")
 
 	initial := `version: 1
 project:

@@ -18,7 +18,7 @@ import (
 )
 
 // writeBundleFixture builds a projectDir with a functions/ subtree and an
-// ultrabase.yaml declaring those functions. It deliberately omits
+// instancez.yaml declaring those functions. It deliberately omits
 // functions/package.json so BuildBundle skips `npm ci` — the test stays
 // offline and deterministic.
 func writeBundleFixture(t *testing.T) string {
@@ -37,7 +37,7 @@ func writeBundleFixture(t *testing.T) string {
 		[]byte("// runtime artifact\n"), 0o644))
 
 	yaml := "version: 1\nfunctions:\n  a:\n    runtime: node\n    file: functions/a.js\n"
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "ultrabase.yaml"), []byte(yaml), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "instancez.yaml"), []byte(yaml), 0o644))
 	return dir
 }
 
@@ -142,7 +142,7 @@ func TestBuildBundleOfflineNoPackageJSON(t *testing.T) {
 
 func TestBuildBundleNoFunctionsDir(t *testing.T) {
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "ultrabase.yaml"),
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "instancez.yaml"),
 		[]byte("version: 1\n"), 0o644))
 	_, err := BuildBundle(dir)
 	assert.Error(t, err, "missing functions/ dir is an error")
@@ -246,7 +246,7 @@ func TestBuildBundleNpmCIFailureAborts(t *testing.T) {
 	// Invalid JSON causes npm to exit non-zero immediately without network access.
 	require.NoError(t, os.WriteFile(filepath.Join(fnDir, "package.json"),
 		[]byte("{INVALID JSON"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "ultrabase.yaml"),
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "instancez.yaml"),
 		[]byte("version: 1\n"), 0o644))
 
 	_, err := BuildBundle(dir)

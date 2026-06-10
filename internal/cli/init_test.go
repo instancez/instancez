@@ -47,7 +47,7 @@ func TestRunInitScaffoldStartsCleanly(t *testing.T) {
 		t.Fatalf("runInit: %v", err)
 	}
 
-	cfg, err := config.Load(filepath.Join(dir, "ultrabase.yaml"))
+	cfg, err := config.Load(filepath.Join(dir, "instancez.yaml"))
 	if err != nil {
 		t.Fatalf("load scaffolded config: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestRunInitScaffoldStartsCleanly(t *testing.T) {
 }
 
 // TestRunInitScaffoldsFunctions verifies init drops a working starter code
-// function (package.json + handler) and wires it into ultrabase.yaml so
+// function (package.json + handler) and wires it into instancez.yaml so
 // `ultra dev` can serve it immediately.
 func TestRunInitScaffoldsFunctions(t *testing.T) {
 	dir := t.TempDir()
@@ -93,13 +93,13 @@ func TestRunInitScaffoldsFunctions(t *testing.T) {
 	assert.Contains(t, string(fn), "ctx.supabase")
 
 	// Wired into the config as a code function.
-	cfg, err := config.Load(filepath.Join(dir, "ultrabase.yaml"))
+	cfg, err := config.Load(filepath.Join(dir, "instancez.yaml"))
 	require.NoError(t, err)
 	if errs := config.Validate(cfg); errs != nil {
 		t.Fatalf("scaffolded config failed validation: %v", errs)
 	}
 	todosFn, ok := cfg.Functions["todos"]
-	require.True(t, ok, "ultrabase.yaml should declare the todos code function")
+	require.True(t, ok, "instancez.yaml should declare the todos code function")
 	assert.Equal(t, "node", todosFn.Runtime)
 	assert.Equal(t, "functions/todos.js", todosFn.File)
 	assert.True(t, todosFn.AuthRequired)
@@ -151,7 +151,7 @@ func TestRunInitDevelopmentEnvExampleDocumentsSuperuser(t *testing.T) {
 }
 
 // TestRunInitIdempotent verifies that re-running init without --force is safe:
-// it succeeds (no error), leaves the existing ultrabase.yaml bytes unchanged,
+// it succeeds (no error), leaves the existing instancez.yaml bytes unchanged,
 // and still completes the rest of the init steps (gitignore, env example, etc).
 func TestRunInitIdempotent(t *testing.T) {
 	dir := t.TempDir()
@@ -159,7 +159,7 @@ func TestRunInitIdempotent(t *testing.T) {
 		t.Fatalf("first runInit: %v", err)
 	}
 
-	yamlPath := filepath.Join(dir, "ultrabase.yaml")
+	yamlPath := filepath.Join(dir, "instancez.yaml")
 	originalBytes, err := os.ReadFile(yamlPath)
 	if err != nil {
 		t.Fatalf("read yaml after first init: %v", err)
@@ -175,7 +175,7 @@ func TestRunInitIdempotent(t *testing.T) {
 		t.Fatalf("read yaml after re-init: %v", err)
 	}
 	if string(afterBytes) != string(originalBytes) {
-		t.Errorf("ultrabase.yaml was modified on re-run without --force\n--- before ---\n%s--- after ---\n%s",
+		t.Errorf("instancez.yaml was modified on re-run without --force\n--- before ---\n%s--- after ---\n%s",
 			originalBytes, afterBytes)
 	}
 }
@@ -188,7 +188,7 @@ func TestRunInitForceOverwrites(t *testing.T) {
 	}
 
 	// Inject custom content so we can detect whether it was replaced.
-	yamlPath := filepath.Join(dir, "ultrabase.yaml")
+	yamlPath := filepath.Join(dir, "instancez.yaml")
 	customContent := "# custom content that --force should replace\n"
 	if err := os.WriteFile(yamlPath, []byte(customContent), 0o644); err != nil {
 		t.Fatalf("write custom yaml: %v", err)
@@ -203,7 +203,7 @@ func TestRunInitForceOverwrites(t *testing.T) {
 		t.Fatalf("read yaml after --force re-init: %v", err)
 	}
 	if string(afterBytes) == customContent {
-		t.Error("ultrabase.yaml was NOT overwritten despite --force")
+		t.Error("instancez.yaml was NOT overwritten despite --force")
 	}
 }
 
@@ -215,7 +215,7 @@ func TestRunInitGenerateLikeRefusesWhenYAMLExists(t *testing.T) {
 	dir := t.TempDir()
 
 	// Write an existing yaml directly (no credentials needed for this step).
-	yamlPath := filepath.Join(dir, "ultrabase.yaml")
+	yamlPath := filepath.Join(dir, "instancez.yaml")
 	existingContent := scaffoldYAML("demo")
 	if err := os.WriteFile(yamlPath, []byte(existingContent), 0o644); err != nil {
 		t.Fatalf("write yaml: %v", err)
@@ -245,7 +245,7 @@ func TestRunInitGenerateLikeRefusesWhenYAMLExists(t *testing.T) {
 		t.Fatalf("read yaml after failed generate-like: %v", err2)
 	}
 	if string(afterBytes) != existingContent {
-		t.Error("ultrabase.yaml was modified despite the guard error")
+		t.Error("instancez.yaml was modified despite the guard error")
 	}
 }
 
@@ -278,7 +278,7 @@ func TestRunInitWithCloudSkipsCreateWhenAlreadyLinked(t *testing.T) {
 	// helper so the field lands exactly where ReadProjectID looks for it.
 	linked, err := cloud.WriteProjectID([]byte(scaffoldYAML("demo")), "proj_existing")
 	require.NoError(t, err)
-	yamlPath := filepath.Join(dir, "ultrabase.yaml")
+	yamlPath := filepath.Join(dir, "instancez.yaml")
 	require.NoError(t, os.WriteFile(yamlPath, linked, 0o644))
 
 	err = runInit(initOptions{name: "demo", dir: dir, withCloud: true})

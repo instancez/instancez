@@ -8,7 +8,7 @@ import (
 )
 
 // defaultCloudAPI is the Ultrabase Cloud API endpoint. Can be overridden by
-// INSTANCEZ_CLOUD_API env var or project.cloud.api_url in ultrabase.yaml.
+// INSTANCEZ_CLOUD_API env var or project.cloud.api_url in instancez.yaml.
 const defaultCloudAPI = "https://my.instancez.dev/api"
 
 // APIURL returns the base URL for the Ultrabase Cloud API, considering only
@@ -22,7 +22,7 @@ func APIURL() string {
 }
 
 // APIURLFromConfig returns the base URL with project-level override applied.
-// Reads project.cloud.api_url from the given ultrabase.yaml; falls back to
+// Reads project.cloud.api_url from the given instancez.yaml; falls back to
 // APIURL() if the file is missing or has no api_url field.
 //
 // Returns an error only on malformed YAML — a missing file or absent field

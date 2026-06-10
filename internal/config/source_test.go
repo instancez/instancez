@@ -10,7 +10,7 @@ import (
 )
 
 func TestNewSourceDispatch(t *testing.T) {
-	s3, err := NewSource("s3://bucket/path/ultrabase.yaml")
+	s3, err := NewSource("s3://bucket/path/instancez.yaml")
 	if err != nil {
 		t.Fatalf("s3 spec: %v", err)
 	}
@@ -18,7 +18,7 @@ func TestNewSourceDispatch(t *testing.T) {
 		t.Fatalf("s3:// spec returned %T, want *S3Source", s3)
 	}
 
-	file, err := NewSource("ultrabase.yaml")
+	file, err := NewSource("instancez.yaml")
 	if err != nil {
 		t.Fatalf("file spec: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestNewSourceDispatch(t *testing.T) {
 func writeTemp(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "ultrabase.yaml")
+	path := filepath.Join(dir, "instancez.yaml")
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("write: %v", err)
 	}

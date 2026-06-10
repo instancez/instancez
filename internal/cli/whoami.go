@@ -19,7 +19,7 @@ func newWhoamiCmd() *cobra.Command {
 	}
 	// configPath is optional: whoami works outside a project too. When
 	// provided (and the file exists), we honor project.cloud.api_url.
-	cmd.Flags().StringVar(&configPath, "config", "ultrabase.yaml", "path to ultrabase.yaml (used to honor project.cloud.api_url; ignored if missing)")
+	cmd.Flags().StringVar(&configPath, "config", "instancez.yaml", "path to instancez.yaml (used to honor project.cloud.api_url; ignored if missing)")
 	return cmd
 }
 

@@ -12,7 +12,7 @@ import (
 )
 
 func TestConfigStatusOK(t *testing.T) {
-	tracker := app.NewDriftTracker("file://./ultrabase.yaml")
+	tracker := app.NewDriftTracker("file://./instancez.yaml")
 	tracker.MarkOK("abcd1234", time.Now())
 
 	gin.SetMode(gin.TestMode)

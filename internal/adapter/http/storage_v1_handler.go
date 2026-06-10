@@ -124,15 +124,15 @@ func (h *StorageV1Handler) getBucket(c *gin.Context) {
 
 func (h *StorageV1Handler) createBucket(c *gin.Context) {
 	// Buckets are YAML-defined; runtime creation is not supported.
-	c.JSON(400, gin.H{"statusCode": "400", "error": "not_supported", "message": "Buckets are defined in ultrabase.yaml. Runtime creation is not supported."})
+	c.JSON(400, gin.H{"statusCode": "400", "error": "not_supported", "message": "Buckets are defined in instancez.yaml. Runtime creation is not supported."})
 }
 
 func (h *StorageV1Handler) updateBucket(c *gin.Context) {
-	c.JSON(400, gin.H{"statusCode": "400", "error": "not_supported", "message": "Buckets are defined in ultrabase.yaml. Runtime modification is not supported."})
+	c.JSON(400, gin.H{"statusCode": "400", "error": "not_supported", "message": "Buckets are defined in instancez.yaml. Runtime modification is not supported."})
 }
 
 func (h *StorageV1Handler) deleteBucket(c *gin.Context) {
-	c.JSON(400, gin.H{"statusCode": "400", "error": "not_supported", "message": "Buckets are defined in ultrabase.yaml. Runtime deletion is not supported."})
+	c.JSON(400, gin.H{"statusCode": "400", "error": "not_supported", "message": "Buckets are defined in instancez.yaml. Runtime deletion is not supported."})
 }
 
 func (h *StorageV1Handler) emptyBucket(c *gin.Context) {

@@ -32,7 +32,7 @@ services:
       INSTANCEZ_ADMIN_KEY: ultrabase-dev-key
       JWT_SECRET: dev-jwt-secret-change-me
     volumes:
-      - ./ultrabase.yaml:/app/ultrabase.yaml
+      - ./instancez.yaml:/app/instancez.yaml
     depends_on:
       postgres:
         condition: service_healthy

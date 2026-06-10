@@ -11,7 +11,7 @@ import (
 	"github.com/saedx1/instancez/internal/domain"
 )
 
-// ConfigWatcher watches ultrabase.yaml for changes and triggers re-migration.
+// ConfigWatcher watches instancez.yaml for changes and triggers re-migration.
 type ConfigWatcher struct {
 	configPath string
 	db         domain.Database

@@ -18,8 +18,8 @@ func TestValidateHasProjectFlag(t *testing.T) {
 func TestPlanAgainstProjectRequiresCredentials(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
-	// Write an ultrabase.yaml with a project_id.
-	yamlPath := filepath.Join(dir, "ultrabase.yaml")
+	// Write an instancez.yaml with a project_id.
+	yamlPath := filepath.Join(dir, "instancez.yaml")
 	require.NoError(t, os.WriteFile(yamlPath, []byte("version: 1\nproject:\n  cloud:\n    project_id: abc\n"), 0o644))
 
 	err := planAgainstProject(context.Background(), yamlPath, false)

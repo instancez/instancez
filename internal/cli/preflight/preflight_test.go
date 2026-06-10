@@ -84,7 +84,7 @@ func TestConfigValidCheckSource_LenientEnvVars(t *testing.T) {
 }
 
 func TestConfigValidCheck_LocalFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "ultrabase.yaml")
+	path := filepath.Join(t.TempDir(), "instancez.yaml")
 	if err := os.WriteFile(path, []byte("version: 1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -65,17 +65,17 @@ func TestDoctorRunnerAllPassing(t *testing.T) {
 
 // TestDoctorChecksNoLiveDB verifies that doctorChecks can be built and run
 // without a live database.  The config check will fail because no
-// ultrabase.yaml exists in the test directory, but the runner must not panic.
+// instancez.yaml exists in the test directory, but the runner must not panic.
 func TestDoctorChecksNoLiveDB(t *testing.T) {
 	noEnv := func(string) string { return "" }
-	checks := doctorChecks("ultrabase.yaml", noEnv)
+	checks := doctorChecks("instancez.yaml", noEnv)
 	results := preflight.RunAll(checks)
 	if len(results) != len(checks) {
 		t.Fatalf("RunAll returned %d results, want %d", len(results), len(checks))
 	}
 	// At least the config check should have failed (no file in cwd).
 	if !preflight.AnyFailed(results) {
-		t.Log("Note: unexpectedly all checks passed; may run from a directory with a valid ultrabase.yaml")
+		t.Log("Note: unexpectedly all checks passed; may run from a directory with a valid instancez.yaml")
 	}
 }
 
@@ -84,7 +84,7 @@ func TestDoctorChecksNoLiveDB(t *testing.T) {
 // is accidentally removed this test will fail, preventing a silent regression.
 func TestDoctorChecksContainsExpectedChecks(t *testing.T) {
 	noEnv := func(string) string { return "" }
-	checks := doctorChecks("ultrabase.yaml", noEnv)
+	checks := doctorChecks("instancez.yaml", noEnv)
 
 	// Run each check against the empty env and collect result Names.
 	names := make(map[string]bool, len(checks))

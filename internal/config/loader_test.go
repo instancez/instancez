@@ -10,7 +10,7 @@ import (
 
 func TestLoad_MinimalValid(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "ultrabase.yaml")
+	path := filepath.Join(dir, "instancez.yaml")
 	content := `
 version: 1
 project:
@@ -44,7 +44,7 @@ tables:
 
 func TestLoad_Defaults(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "ultrabase.yaml")
+	path := filepath.Join(dir, "instancez.yaml")
 	content := `
 version: 1
 project:
@@ -75,7 +75,7 @@ project:
 
 func TestLoad_EnvVarInterpolation(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "ultrabase.yaml")
+	path := filepath.Join(dir, "instancez.yaml")
 	content := `
 version: 1
 project:
@@ -96,7 +96,7 @@ project:
 
 func TestLoad_EnvVarDefault(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "ultrabase.yaml")
+	path := filepath.Join(dir, "instancez.yaml")
 	content := `
 version: 1
 project:
@@ -115,7 +115,7 @@ project:
 
 func TestLoad_MissingEnvVar(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "ultrabase.yaml")
+	path := filepath.Join(dir, "instancez.yaml")
 	content := `
 version: 1
 project:
@@ -137,7 +137,7 @@ project:
 }
 
 func TestLoad_FileNotFound(t *testing.T) {
-	_, err := Load("/nonexistent/ultrabase.yaml")
+	_, err := Load("/nonexistent/instancez.yaml")
 	if err == nil {
 		t.Fatal("expected error for missing file")
 	}
@@ -145,7 +145,7 @@ func TestLoad_FileNotFound(t *testing.T) {
 
 func TestLoad_InvalidYAML(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "ultrabase.yaml")
+	path := filepath.Join(dir, "instancez.yaml")
 	os.WriteFile(path, []byte("{{invalid yaml"), 0o644)
 
 	_, err := Load(path)
@@ -164,7 +164,7 @@ MY_TEST_KEY=hello
 MY_QUOTED="world"
 `), 0o644)
 
-	configPath := filepath.Join(dir, "ultrabase.yaml")
+	configPath := filepath.Join(dir, "instancez.yaml")
 	os.WriteFile(configPath, []byte(`
 version: 1
 project:
@@ -196,7 +196,7 @@ func TestLoadDotenv_RealEnvTakesPriority(t *testing.T) {
 	envPath := filepath.Join(dir, ".env")
 	os.WriteFile(envPath, []byte("MY_PRIO_TEST=from-dotenv\n"), 0o644)
 
-	configPath := filepath.Join(dir, "ultrabase.yaml")
+	configPath := filepath.Join(dir, "instancez.yaml")
 	os.WriteFile(configPath, []byte(`
 version: 1
 project:
@@ -217,7 +217,7 @@ project:
 func TestLoad_EnvVarDefaultEmpty(t *testing.T) {
 	// ${VAR:-} with empty default should resolve to empty string
 	dir := t.TempDir()
-	path := filepath.Join(dir, "ultrabase.yaml")
+	path := filepath.Join(dir, "instancez.yaml")
 	content := `
 version: 1
 project:
@@ -238,7 +238,7 @@ project:
 func TestLoad_EnvVarDefaultOverriddenByReal(t *testing.T) {
 	// ${VAR:-default} should use real env var if set, not the default
 	dir := t.TempDir()
-	path := filepath.Join(dir, "ultrabase.yaml")
+	path := filepath.Join(dir, "instancez.yaml")
 	content := `
 version: 1
 project:
@@ -258,7 +258,7 @@ project:
 
 func TestLoad_MultipleEnvVarsInOneString(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "ultrabase.yaml")
+	path := filepath.Join(dir, "instancez.yaml")
 	content := `
 version: 1
 project:
@@ -279,7 +279,7 @@ project:
 
 func TestLoad_MultipleMissingEnvVarsReportedAtOnce(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "ultrabase.yaml")
+	path := filepath.Join(dir, "instancez.yaml")
 	content := `
 version: 1
 project:
@@ -305,7 +305,7 @@ project:
 
 func TestLoad_EnvVarDefaultWithSpecialChars(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "ultrabase.yaml")
+	path := filepath.Join(dir, "instancez.yaml")
 	content := `
 version: 1
 project:

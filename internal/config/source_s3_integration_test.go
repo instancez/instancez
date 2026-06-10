@@ -72,7 +72,7 @@ func newTestS3Source(t *testing.T, bucket, key, endpoint, ak, sk string) *S3Sour
 
 func TestS3SourceReadWriteOptimistic(t *testing.T) {
 	endpoint, ak, sk := startMinIO(t)
-	src := newTestS3Source(t, "ub-test", "ultrabase.yaml", endpoint, ak, sk)
+	src := newTestS3Source(t, "ub-test", "instancez.yaml", endpoint, ak, sk)
 	ctx := context.Background()
 
 	ver1, err := src.Write(ctx, []byte("version: 1\n"), "")

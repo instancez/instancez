@@ -56,7 +56,7 @@ func TestParseServeFlagsConfigEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if got.configPath != "ultrabase.yaml" {
+	if got.configPath != "instancez.yaml" {
 		t.Fatalf("INSTANCEZ_CONFIG_SOURCE should no longer bind; configPath = %q, want default", got.configPath)
 	}
 }

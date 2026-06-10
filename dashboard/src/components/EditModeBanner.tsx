@@ -11,7 +11,7 @@ export function EditModeBanner({ status }: Props) {
     >
       <strong>Live edit mode.</strong>{" "}
       Changes you make here are written directly to <code>{status.config_source}</code>{" "}
-      and applied to the database. If your team manages <code>ultrabase.yaml</code>{" "}
+      and applied to the database. If your team manages <code>instancez.yaml</code>{" "}
       in git, mirror these changes there — anything written here will be overwritten the
       next time the source is updated outside the dashboard.
     </div>

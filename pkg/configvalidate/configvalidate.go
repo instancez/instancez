@@ -1,4 +1,4 @@
-// Package configvalidate is the public surface for validating an ultrabase.yaml
+// Package configvalidate is the public surface for validating an instancez.yaml
 // document without a database or the runtime environment. It wraps ultrabase's
 // canonical parser + validator and returns plain structs, so callers outside the
 // ultrabase module never import internal types.
@@ -16,7 +16,7 @@ type Problem struct {
 // ValidateYAML parses config bytes with missing-env-tolerant interpolation, then
 // runs the canonical ultrabase validator. Returns nil when the config is valid.
 func ValidateYAML(data []byte) []Problem {
-	cfg, err := config.ParseBytesLenient(data, "ultrabase.yaml")
+	cfg, err := config.ParseBytesLenient(data, "instancez.yaml")
 	if err != nil {
 		return []Problem{{Path: "", Message: err.Error()}}
 	}

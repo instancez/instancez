@@ -63,7 +63,7 @@ func BuildBundle(projectDir string) (bundlePath string, err error) {
 	// a lenient parse: the manifest only needs function names/files/runtime, so
 	// unresolved ${VAR} references elsewhere in the config must not block the
 	// build.
-	cfgPath := filepath.Join(projectDir, "ultrabase.yaml")
+	cfgPath := filepath.Join(projectDir, "instancez.yaml")
 	cfgBytes, err := os.ReadFile(cfgPath)
 	if err != nil {
 		return "", fmt.Errorf("read config for bundle manifest: %w", err)

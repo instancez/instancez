@@ -20,7 +20,7 @@ describe("DriftBanner", () => {
     render(
       <DriftBanner status={{
         status: "drift",
-        config_source: "s3://bucket/ultrabase.yaml",
+        config_source: "s3://bucket/instancez.yaml",
         running: { checksum: "a", applied_at: "2026-05-08T12:00:00Z" },
         source: { checksum: "b", last_seen_at: "2026-05-08T12:01:00Z" },
         last_error: "ERROR: column \"foo\" cannot be cast",
@@ -28,7 +28,7 @@ describe("DriftBanner", () => {
       }} />
     );
     expect(screen.getByText(/Configuration drift/i)).toBeTruthy();
-    expect(screen.getByText(/s3:\/\/bucket\/ultrabase.yaml/)).toBeTruthy();
+    expect(screen.getByText(/s3:\/\/bucket\/instancez.yaml/)).toBeTruthy();
     expect(screen.getByText(/cannot be cast/)).toBeTruthy();
   });
 });

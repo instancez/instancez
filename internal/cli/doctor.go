@@ -22,7 +22,7 @@ Exits non-zero if any check fails.`,
 			return runDoctor(configPath)
 		},
 	}
-	cmd.Flags().StringVar(&configPath, "config", "ultrabase.yaml", "path to ultrabase.yaml")
+	cmd.Flags().StringVar(&configPath, "config", "instancez.yaml", "path to instancez.yaml")
 	return cmd
 }
 

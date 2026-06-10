@@ -32,7 +32,7 @@ const validDeployYAML = "version: 1\nproject:\n  cloud:\n    project_id: abc\n"
 
 func writeDeployConfig(t *testing.T, dir string) string {
 	t.Helper()
-	p := filepath.Join(dir, "ultrabase.yaml")
+	p := filepath.Join(dir, "instancez.yaml")
 	require.NoError(t, os.WriteFile(p, []byte(validDeployYAML), 0o644))
 	return p
 }
@@ -91,7 +91,7 @@ func TestRunDeployMissingProjectID(t *testing.T) {
 	// the preflight short-circuit happens before we touch the network.
 	t.Setenv("INSTANCEZ_CLOUD_API", "http://127.0.0.1:1")
 
-	p := filepath.Join(home, "ultrabase.yaml")
+	p := filepath.Join(home, "instancez.yaml")
 	require.NoError(t, os.WriteFile(p, []byte("version: 1\n"), 0o644))
 
 	err := runDeploy(p, true, "")
@@ -106,7 +106,7 @@ func TestRunDeployInvalidYAML(t *testing.T) {
 	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "tok-123"}))
 	t.Setenv("INSTANCEZ_CLOUD_API", "http://127.0.0.1:1")
 
-	p := filepath.Join(home, "ultrabase.yaml")
+	p := filepath.Join(home, "instancez.yaml")
 	require.NoError(t, os.WriteFile(p, []byte("version: 99\n"), 0o644)) // unsupported version
 
 	err := runDeploy(p, true, "")

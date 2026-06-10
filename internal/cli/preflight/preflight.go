@@ -175,7 +175,7 @@ func ConfigValidCheck(configPath string) Check {
 				Name:    "config file valid",
 				OK:      false,
 				Detail:  err.Error(),
-				FixHint: "run `ultra init` to create ultrabase.yaml",
+				FixHint: "run `ultra init` to create instancez.yaml",
 			}
 		}
 		return ConfigValidCheckSource(src)()
@@ -192,7 +192,7 @@ func ConfigValidCheckSource(src ConfigSource) Check {
 
 		data, _, err := src.Read(ctx)
 		if err != nil {
-			fixHint := "run `ultra init` to create ultrabase.yaml"
+			fixHint := "run `ultra init` to create instancez.yaml"
 			if strings.HasPrefix(src.Describe(), "s3://") {
 				fixHint = "verify the s3:// object exists and credentials grant s3:GetObject"
 			}
@@ -209,7 +209,7 @@ func ConfigValidCheckSource(src ConfigSource) Check {
 				Name:    "config file valid",
 				OK:      false,
 				Detail:  err.Error(),
-				FixHint: "check ultrabase.yaml for YAML syntax errors",
+				FixHint: "check instancez.yaml for YAML syntax errors",
 			}
 		}
 		if errs := config.Validate(cfg); errs != nil {

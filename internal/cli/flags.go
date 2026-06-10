@@ -198,7 +198,7 @@ type serveFlagSet struct {
 func newServeFlagSet() *serveFlagSet {
 	fs := &serveFlagSet{flags: pflag.NewFlagSet("serve", pflag.ContinueOnError)}
 	fs.flags.IntVar(&fs.port, "port", 0, "server port (default: from config or 8080)")
-	fs.flags.StringVar(&fs.configPath, "config", "ultrabase.yaml", "config source (file path or s3://bucket/key; env: INSTANCEZ_CONFIG)")
+	fs.flags.StringVar(&fs.configPath, "config", "instancez.yaml", "config source (file path or s3://bucket/key; env: INSTANCEZ_CONFIG)")
 	fs.flags.BoolVar(&fs.loadData, "data", false, "apply CSV data imports on startup")
 	fs.flags.BoolVar(&fs.migrate, "migrate", false, "run pending migrations on startup")
 	fs.flags.BoolVar(&fs.allowDestructive, "allow-destructive", false, "permit DROP TABLE/COLUMN in migrations")
@@ -291,7 +291,7 @@ type devFlagSet struct {
 func newDevFlagSet() *devFlagSet {
 	fs := &devFlagSet{flags: pflag.NewFlagSet("dev", pflag.ContinueOnError)}
 	fs.flags.IntVar(&fs.port, "port", 0, "server port (default: from config or 8080)")
-	fs.flags.StringVar(&fs.configPath, "config", "ultrabase.yaml", "config source (file path or s3://bucket/key; env: INSTANCEZ_CONFIG)")
+	fs.flags.StringVar(&fs.configPath, "config", "instancez.yaml", "config source (file path or s3://bucket/key; env: INSTANCEZ_CONFIG)")
 	fs.flags.BoolVar(&fs.noWatch, "no-watch", false, "disable hot-reload (alias for --watch=false)")
 	fs.flags.BoolVar(&fs.watch, "watch", true, "watch the config source for changes")
 	fs.flags.DurationVar(&fs.watchInterval, "watch-interval", 60*time.Second, "S3-watch poll interval; min 10s")

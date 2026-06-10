@@ -20,7 +20,7 @@ func newStatusCmd() *cobra.Command {
 production deploy status; and whether the local draft has unpublished changes
 relative to production.
 
-The project_id is read from project.cloud.project_id inside ultrabase.yaml. Run
+The project_id is read from project.cloud.project_id inside instancez.yaml. Run
 ultra init --with-cloud first if no project is linked yet.
 
 This is distinct from ultra doctor, which checks local environment health.`,
@@ -28,7 +28,7 @@ This is distinct from ultra doctor, which checks local environment health.`,
 			return runStatus(configPath)
 		},
 	}
-	cmd.Flags().StringVar(&configPath, "config", "ultrabase.yaml", "path to ultrabase.yaml")
+	cmd.Flags().StringVar(&configPath, "config", "instancez.yaml", "path to instancez.yaml")
 	return cmd
 }
 
@@ -45,7 +45,7 @@ func runStatus(configPath string) error {
 		return fmt.Errorf("parse %s: %w", configPath, err)
 	}
 	if projectID == "" {
-		return errors.New("no project.cloud.project_id in ultrabase.yaml; run `ultra init --with-cloud` to link this project to Ultrabase Cloud")
+		return errors.New("no project.cloud.project_id in instancez.yaml; run `ultra init --with-cloud` to link this project to Ultrabase Cloud")
 	}
 
 	// Inline login: returns existing creds, prompts on a TTY, or hard-errors

@@ -9,9 +9,9 @@ describe("downloadYamlFromConfig", () => {
     const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
     vi.spyOn(URL, "createObjectURL").mockImplementation(() => "blob:fake");
 
-    downloadYamlFromConfig({ version: 1, project: { name: "x" } } as any, "ultrabase.yaml");
+    downloadYamlFromConfig({ version: 1, project: { name: "x" } } as any, "instancez.yaml");
     expect(click).toHaveBeenCalled();
-    expect(anchor.download).toBe("ultrabase.yaml");
+    expect(anchor.download).toBe("instancez.yaml");
     expect(revoke).toHaveBeenCalled();
   });
 });

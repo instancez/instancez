@@ -44,7 +44,7 @@ init only writes scaffolding files; it never touches a database. A
 
 	cmd.Flags().StringVar(&opts.dir, "dir", ".", "output directory")
 	cmd.Flags().BoolVar(&opts.withCloud, "with-cloud", false, "create a project in Ultrabase Cloud (requires `ultra login`)")
-	cmd.Flags().StringVar(&opts.generateLike, "generate-like", "", "generate ultrabase.yaml from a free-form prompt (requires `ultra login`)")
+	cmd.Flags().StringVar(&opts.generateLike, "generate-like", "", "generate instancez.yaml from a free-form prompt (requires `ultra login`)")
 	cmd.Flags().BoolVar(&opts.force, "force", false, "overwrite existing scaffolding files")
 	return cmd
 }
@@ -68,7 +68,7 @@ func runInit(opts initOptions) error {
 	if err != nil {
 		return fmt.Errorf("resolve dir: %w", err)
 	}
-	yamlPath := filepath.Join(dir, "ultrabase.yaml")
+	yamlPath := filepath.Join(dir, "instancez.yaml")
 	_, statErr := os.Stat(yamlPath)
 	yamlExists := statErr == nil
 
@@ -76,7 +76,7 @@ func runInit(opts initOptions) error {
 	// produce output that is immediately discarded. Fail fast before any
 	// network or login call.
 	if opts.generateLike != "" && yamlExists && !opts.force {
-		return fmt.Errorf("ultrabase.yaml already exists; pass --force to regenerate it from --generate-like")
+		return fmt.Errorf("instancez.yaml already exists; pass --force to regenerate it from --generate-like")
 	}
 
 	// Cloud-dependent flags require credentials. On an interactive terminal
@@ -102,7 +102,7 @@ func runInit(opts initOptions) error {
 	// instead of using the static scaffold.
 	var generatedYAML string
 	if opts.generateLike != "" {
-		fmt.Println("  Generating ultrabase.yaml from prompt...")
+		fmt.Println("  Generating instancez.yaml from prompt...")
 		creds, _ := cloud.Load()
 		c := cloud.NewClient(cloud.APIURL(), creds.PAT)
 		resp, err := c.GenerateYAML(opts.generateLike)
@@ -113,13 +113,13 @@ func runInit(opts initOptions) error {
 		fmt.Printf("  ✓ Generated (%d input + %d output tokens)\n", resp.Tokens.Input, resp.Tokens.Output)
 	}
 
-	// ultrabase.yaml: keep existing content when the file is already present
+	// instancez.yaml: keep existing content when the file is already present
 	// and --force is not set. The rest of init (role provisioning, cloud
 	// linking, next-steps) still runs so a re-run is fully idempotent.
 	if yamlExists && !opts.force {
-		fmt.Println("  = ultrabase.yaml (unchanged)")
+		fmt.Println("  = instancez.yaml (unchanged)")
 	} else {
-		if err := applyWrite(dir, "ultrabase.yaml", func(_ string) (string, writeAction) {
+		if err := applyWrite(dir, "instancez.yaml", func(_ string) (string, writeAction) {
 			if generatedYAML != "" {
 				return generatedYAML, actionCreate
 			}
@@ -192,7 +192,7 @@ func runInit(opts initOptions) error {
 		return err
 	}
 
-	// Create cloud project and bake project_id into ultrabase.yaml.
+	// Create cloud project and bake project_id into instancez.yaml.
 	//
 	// Guard against duplicate creation: init is idempotent (it keeps an
 	// existing yaml), so a re-run of --with-cloud reaches this block over a
@@ -202,7 +202,7 @@ func runInit(opts initOptions) error {
 	if opts.withCloud {
 		existing, err := os.ReadFile(yamlPath)
 		if err != nil {
-			return fmt.Errorf("re-reading ultrabase.yaml: %w", err)
+			return fmt.Errorf("re-reading instancez.yaml: %w", err)
 		}
 		linkedID, err := cloud.ReadProjectID(existing)
 		if err != nil {
@@ -225,9 +225,9 @@ func runInit(opts initOptions) error {
 				return fmt.Errorf("injecting project_id: %w", err)
 			}
 			if err := os.WriteFile(yamlPath, updated, 0o644); err != nil {
-				return fmt.Errorf("writing ultrabase.yaml: %w", err)
+				return fmt.Errorf("writing instancez.yaml: %w", err)
 			}
-			fmt.Println("  ~ ultrabase.yaml (added project.cloud.project_id)")
+			fmt.Println("  ~ instancez.yaml (added project.cloud.project_id)")
 		}
 	}
 

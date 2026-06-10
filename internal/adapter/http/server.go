@@ -37,7 +37,7 @@ type ServerDeps struct {
 	Email           domain.EmailSender
 	Storage         domain.ObjectStore
 	JWTKeys         *app.JWTKeyManager // signing/verification keys (managed in DB)
-	ConfigPath      string             // path to ultrabase.yaml (for dashboard config editing)
+	ConfigPath      string             // path to instancez.yaml (for dashboard config editing)
 	DashboardAssets fs.FS              // embedded SPA assets (nil in dev mode)
 
 	DashboardMode DashboardMode            // disabled | readonly | readwrite

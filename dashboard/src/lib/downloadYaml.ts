@@ -1,7 +1,7 @@
 import yaml from "js-yaml";
 import type { Config } from "./types";
 
-export function downloadYamlFromConfig(cfg: Config, filename: string = "ultrabase.yaml"): void {
+export function downloadYamlFromConfig(cfg: Config, filename: string = "instancez.yaml"): void {
   const clean = JSON.parse(JSON.stringify(cfg));
   delete (clean as any)._checksum;
 

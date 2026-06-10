@@ -22,9 +22,9 @@ func newDeployCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "deploy",
-		Short: "Push the current ultrabase.yaml to an Ultrabase Cloud project",
-		Long: `Deploy the current project's ultrabase.yaml to the cloud. The
-project_id is read from project.cloud.project_id inside ultrabase.yaml. Run
+		Short: "Push the current instancez.yaml to an Ultrabase Cloud project",
+		Long: `Deploy the current project's instancez.yaml to the cloud. The
+project_id is read from project.cloud.project_id inside instancez.yaml. Run
 ultra init --with-cloud first if no project is set yet.
 
 Deploy uploads the local yaml to the project's draft, shows a migration
@@ -38,7 +38,7 @@ to upload the bundle to an s3:// destination so that ultra serve can fetch it.`,
 			return runDeploy(configPath, yes, bundleDest)
 		},
 	}
-	cmd.Flags().StringVar(&configPath, "config", "ultrabase.yaml", "path to ultrabase.yaml")
+	cmd.Flags().StringVar(&configPath, "config", "instancez.yaml", "path to instancez.yaml")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation prompt")
 	cmd.Flags().StringVar(&bundleDest, "functions-bundle-dest", "",
 		"s3://bucket/key (or s3://bucket/prefix/) to upload the built functions bundle to")
@@ -81,7 +81,7 @@ func projectIDPresentCheck(configPath string) preflight.Check {
 				Name:    "project_id present",
 				OK:      false,
 				Detail:  err.Error(),
-				FixHint: "run `ultra init` to create ultrabase.yaml",
+				FixHint: "run `ultra init` to create instancez.yaml",
 			}
 		}
 		id, err := cloud.ReadProjectID(src)
@@ -90,7 +90,7 @@ func projectIDPresentCheck(configPath string) preflight.Check {
 				Name:    "project_id present",
 				OK:      false,
 				Detail:  "parse error: " + err.Error(),
-				FixHint: "check ultrabase.yaml for YAML syntax errors",
+				FixHint: "check instancez.yaml for YAML syntax errors",
 			}
 		}
 		if id == "" {
@@ -140,7 +140,7 @@ func runDeploy(configPath string, yes bool, bundleDest string) error {
 		return fmt.Errorf("parse %s: %w", configPath, err)
 	}
 	if projectID == "" {
-		return errors.New("no project.cloud.project_id in ultrabase.yaml; run `ultra init --with-cloud` first")
+		return errors.New("no project.cloud.project_id in instancez.yaml; run `ultra init --with-cloud` first")
 	}
 
 	apiURL, err := cloud.APIURLFromConfig(configPath)
@@ -152,7 +152,7 @@ func runDeploy(configPath string, yes bool, bundleDest string) error {
 	// 1. Push the local YAML to the project's draft Defs so the server sees
 	// exactly what's on disk — this must happen BEFORE the preview so the
 	// migration plan reflects the just-uploaded draft.
-	fmt.Println("  Uploading ultrabase.yaml...")
+	fmt.Println("  Uploading instancez.yaml...")
 	if err := c.UploadYAML(projectID, string(src)); err != nil {
 		return fmt.Errorf("upload yaml: %w", err)
 	}

@@ -102,7 +102,7 @@ type MigrationPreviewResponse struct {
 	Diff string `json:"diff"`
 }
 
-// MigrationPreview returns the diff between the current ultrabase.yaml and
+// MigrationPreview returns the diff between the current instancez.yaml and
 // what's deployed to the cloud project.
 func (c *Client) MigrationPreview(projectID string) (*MigrationPreviewResponse, error) {
 	var out MigrationPreviewResponse
@@ -121,7 +121,7 @@ type GenerateYAMLResponse struct {
 	} `json:"tokens"`
 }
 
-// GenerateYAML asks the AI service to produce a starter ultrabase.yaml from
+// GenerateYAML asks the AI service to produce a starter instancez.yaml from
 // a free-form prompt (≤ 256 chars).
 func (c *Client) GenerateYAML(prompt string) (*GenerateYAMLResponse, error) {
 	var out GenerateYAMLResponse
@@ -131,7 +131,7 @@ func (c *Client) GenerateYAML(prompt string) (*GenerateYAMLResponse, error) {
 	return &out, nil
 }
 
-// UploadYAML pushes the local ultrabase.yaml to the project's server-side
+// UploadYAML pushes the local instancez.yaml to the project's server-side
 // draft Defs. Called by `ultra deploy` and `ultra validate --project` before
 // their respective actions so the server sees the latest local source.
 func (c *Client) UploadYAML(projectID, yamlContent string) error {

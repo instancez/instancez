@@ -25,7 +25,7 @@ export function Functions() {
           <EmptyState
             icon={Code2}
             title="No edge functions"
-            description="Declare a function in ultrabase.yaml with a runtime and a .js file under functions/ (served at /functions/v1/<name>)."
+            description="Declare a function in instancez.yaml with a runtime and a .js file under functions/ (served at /functions/v1/<name>)."
           />
         ) : (
           <div className="space-y-2">

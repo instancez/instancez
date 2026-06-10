@@ -287,7 +287,7 @@ A built-in admin dashboard for managing your config, browsing data, and previewi
 
 ## YAML Schema
 
-Top-level sections in `ultrabase.yaml`:
+Top-level sections in `instancez.yaml`:
 
 ```yaml
 version: 1                     # Schema version

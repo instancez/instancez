@@ -26,7 +26,7 @@ func newValidateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "validate",
 		Short: "Validate config without starting the server",
-		Long: `Validate ultrabase.yaml structure and references.
+		Long: `Validate instancez.yaml structure and references.
 
 With --use-dsn, validate also connects to the given Postgres and prints
 the migration that would bring the database in sync with the yaml. The
@@ -45,10 +45,10 @@ project.cloud.project_id) and prints the diff vs. the deployed version.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&configPath, "config", "ultrabase.yaml", "config source (env: INSTANCEZ_CONFIG)")
+	cmd.Flags().StringVar(&configPath, "config", "instancez.yaml", "config source (env: INSTANCEZ_CONFIG)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output errors as JSON (for CI)")
 	cmd.Flags().StringVar(&useDSN, "use-dsn", "", "after syntax check, plan a migration against this owner-class DSN")
-	cmd.Flags().BoolVar(&useProject, "project", false, "preview migration against the cloud project from ultrabase.yaml")
+	cmd.Flags().BoolVar(&useProject, "project", false, "preview migration against the cloud project from instancez.yaml")
 	return cmd
 }
 
@@ -177,7 +177,7 @@ func printPrettyErrors(errs domain.ValidationErrors) error {
 	for _, e := range errs {
 		fmt.Fprintf(os.Stderr, "\n  ✗ Error: %s\n", e.Path)
 		if e.Line > 0 {
-			fmt.Fprintf(os.Stderr, "    at ultrabase.yaml:%d\n", e.Line)
+			fmt.Fprintf(os.Stderr, "    at instancez.yaml:%d\n", e.Line)
 		}
 		fmt.Fprintf(os.Stderr, "    %s\n", e.Message)
 		if e.Suggestion != "" {
@@ -240,7 +240,7 @@ func planAgainstProject(ctx context.Context, configPath string, jsonOutput bool)
 		return fmt.Errorf("parse %s: %w", configPath, err)
 	}
 	if projectID == "" {
-		return errors.New("no project.cloud.project_id in ultrabase.yaml; run `ultra init --with-cloud` first")
+		return errors.New("no project.cloud.project_id in instancez.yaml; run `ultra init --with-cloud` first")
 	}
 
 	apiURL, err := cloud.APIURLFromConfig(configPath)

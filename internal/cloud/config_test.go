@@ -26,7 +26,7 @@ func TestAPIURLTrimsTrailingSlash(t *testing.T) {
 
 func TestAPIURLFromConfigPrefersYAML(t *testing.T) {
 	dir := t.TempDir()
-	yamlPath := filepath.Join(dir, "ultrabase.yaml")
+	yamlPath := filepath.Join(dir, "instancez.yaml")
 	require.NoError(t, os.WriteFile(yamlPath, []byte(`
 version: 1
 project:
@@ -42,7 +42,7 @@ project:
 
 func TestAPIURLFromConfigFallsBackToEnv(t *testing.T) {
 	dir := t.TempDir()
-	yamlPath := filepath.Join(dir, "ultrabase.yaml")
+	yamlPath := filepath.Join(dir, "instancez.yaml")
 	require.NoError(t, os.WriteFile(yamlPath, []byte(`
 version: 1
 project:
