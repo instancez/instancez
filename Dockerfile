@@ -32,13 +32,13 @@ COPY . .
 # before `go build` reads the //go:embed directive.
 COPY --from=dashboard /out/dist ./dashboard/dist
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -o /ultra ./cmd/ultra
+    go build -o /inz ./cmd/inz
 
 FROM alpine:3.21
-# nodejs runs code-function workers (serve + dev). npm is needed by `ultra dev`,
+# nodejs runs code-function workers (serve + dev). npm is needed by `inz dev`,
 # which builds functions on the fly; serve consumes a pre-built bundle and
 # doesn't use npm.
 RUN apk add --no-cache ca-certificates nodejs npm
-COPY --from=builder /ultra /usr/local/bin/ultra
+COPY --from=builder /inz /usr/local/bin/inz
 WORKDIR /app
-CMD ["ultra", "serve"]
+CMD ["inz", "serve"]

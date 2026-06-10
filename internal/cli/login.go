@@ -20,7 +20,7 @@ func newLoginCmd() *cobra.Command {
 		Use:   "login",
 		Short: "Authenticate against Ultrabase Cloud via device-code flow",
 		Long: `Sign in to Ultrabase Cloud. Opens a browser to confirm a one-time
-code, then stores a Personal Access Token at ~/.ultra/credentials for
+code, then stores a Personal Access Token at ~/.instancez/credentials for
 subsequent commands.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runLogin(force)
@@ -53,7 +53,7 @@ func runLogin(force bool) error {
 
 // runDeviceCodeFlow performs the OAuth device-code flow: request a code, print
 // it (and open the browser), poll for the token, and persist credentials. It is
-// the single source of truth for the flow — both `ultra login` and the inline
+// the single source of truth for the flow — both `inz login` and the inline
 // login path (ensureLoggedIn) call through here. On success the credentials are
 // already saved to disk and also returned to the caller.
 func runDeviceCodeFlow() (cloud.Credentials, error) {
@@ -80,7 +80,7 @@ func runDeviceCodeFlow() (cloud.Credentials, error) {
 		case errors.Is(err, cloud.ErrDeviceAccessDenied):
 			return cloud.Credentials{}, errors.New("authorization denied")
 		case errors.Is(err, cloud.ErrDeviceExpired):
-			return cloud.Credentials{}, errors.New("code expired before confirmation; run `ultra login` again")
+			return cloud.Credentials{}, errors.New("code expired before confirmation; run `inz login` again")
 		default:
 			return cloud.Credentials{}, fmt.Errorf("polling for token: %w", err)
 		}
@@ -107,7 +107,7 @@ type ensureLoginOpts struct {
 // ensureLoggedIn returns existing valid credentials, or — on an interactive
 // terminal — prompts the user and runs the device-code flow, saving and
 // returning the new credentials. In a non-interactive (non-TTY) session it
-// returns a hard error pointing at `ultra login` rather than hanging on a
+// returns a hard error pointing at `inz login` rather than hanging on a
 // browser that can never be opened.
 func ensureLoggedIn(opts ensureLoginOpts) (cloud.Credentials, error) {
 	if opts.isTTY == nil {
@@ -128,14 +128,14 @@ func ensureLoggedIn(opts ensureLoginOpts) (cloud.Credentials, error) {
 	// 2. Can't prompt in a non-interactive session — fail pointing at login.
 	if !opts.isTTY() {
 		return cloud.Credentials{}, errors.New(
-			"not logged in — run `ultra login` first (cannot prompt in a non-interactive session)")
+			"not logged in — run `inz login` first (cannot prompt in a non-interactive session)")
 	}
 
 	// 3. Interactive: confirm intent (unless --yes), then run the flow.
 	fmt.Println("This requires signing in to Ultrabase Cloud.")
 	if !opts.assumeYes {
 		if !opts.confirm("Sign in now? [Y/n] ") {
-			return cloud.Credentials{}, errors.New("login required — run `ultra login` to sign in")
+			return cloud.Credentials{}, errors.New("login required — run `inz login` to sign in")
 		}
 	}
 	return opts.runFlow()

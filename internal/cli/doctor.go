@@ -14,7 +14,7 @@ func newDoctorCmd() *cobra.Command {
 		Use:   "doctor",
 		Short: "Check prerequisites for running ultrabase locally",
 		Long: `Run a set of preflight checks that verify the environment is ready for
-ultra dev and ultra serve: config file validity, database DSNs, and the
+inz dev and inz serve: config file validity, database DSNs, and the
 required Postgres role layout.
 
 Exits non-zero if any check fails.`,
@@ -28,7 +28,7 @@ Exits non-zero if any check fails.`,
 
 func runDoctor(configPath string) error {
 	// Load the development dotenv before querying env vars so DSN checks
-	// reflect the same environment that `ultra dev` would see.
+	// reflect the same environment that `inz dev` would see.
 	_ = config.LoadDotenv(".development.env")
 
 	checks := doctorChecks(configPath, os.Getenv)

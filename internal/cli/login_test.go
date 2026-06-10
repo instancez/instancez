@@ -40,7 +40,7 @@ func TestEnsureLoggedInValidCreds(t *testing.T) {
 }
 
 // TestEnsureLoggedInNonTTY: no creds + not a TTY → hard error pointing at
-// `ultra login`; the flow is never invoked.
+// `inz login`; the flow is never invoked.
 func TestEnsureLoggedInNonTTY(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // no creds
 
@@ -53,7 +53,7 @@ func TestEnsureLoggedInNonTTY(t *testing.T) {
 		},
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "ultra login")
+	assert.Contains(t, err.Error(), "inz login")
 	assert.False(t, flowCalled, "runFlow must not be called in a non-TTY session")
 }
 
@@ -72,7 +72,7 @@ func TestEnsureLoggedInNonTTYAssumeYes(t *testing.T) {
 		},
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "ultra login")
+	assert.Contains(t, err.Error(), "inz login")
 	assert.False(t, flowCalled, "assumeYes must not bypass the non-TTY guard")
 }
 

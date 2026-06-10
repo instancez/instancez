@@ -41,7 +41,7 @@ func ParseBytes(data []byte, origin string) (*domain.Config, error) {
 }
 
 // LoadWithDotenv loads a .env file (if present) into the process environment,
-// then loads the config. Used by `ultra dev` with `.development.env`.
+// then loads the config. Used by `inz dev` with `.development.env`.
 func LoadWithDotenv(configPath, dotenvPath string) (*domain.Config, error) {
 	if err := LoadDotenv(dotenvPath); err != nil {
 		return nil, err

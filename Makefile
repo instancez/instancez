@@ -22,15 +22,15 @@ help:
 	@echo "make test-go            — go unit tests"
 	@echo "make test-integration   — go integration tests (requires Docker)"
 	@echo "make test-dashboard     — dashboard vitest"
-	@echo "make clean              — remove ultra binary + dashboard/dist contents"
+	@echo "make clean              — remove inz binary + dashboard/dist contents"
 
 build: build-dashboard build-go
 	@mkdir -p $(BINDIR)
-	mv ultra $(BINDIR)/ultra
-	@echo "Installed ultra → $(BINDIR)/ultra"
+	mv inz $(BINDIR)/inz
+	@echo "Installed inz → $(BINDIR)/inz"
 
 build-go:
-	go build -ldflags "$(LDFLAGS)" -o ultra ./cmd/ultra
+	go build -ldflags "$(LDFLAGS)" -o inz ./cmd/inz
 
 build-dashboard: $(NODE_MODULES_STAMP)
 	cd $(DASHBOARD_DIR) && npm run build
@@ -51,6 +51,6 @@ test-dashboard: $(NODE_MODULES_STAMP)
 	cd $(DASHBOARD_DIR) && npm test
 
 clean:
-	rm -f ultra
+	rm -f inz
 	find $(DASHBOARD_DIST) -mindepth 1 ! -name .gitkeep -delete 2>/dev/null || true
 	@touch $(DASHBOARD_DIST)/.gitkeep

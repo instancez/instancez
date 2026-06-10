@@ -10,8 +10,8 @@ import (
 )
 
 // ErrNoCredentials means no credentials file exists yet. Callers typically
-// translate this into "run `ultra login` first".
-var ErrNoCredentials = errors.New("no credentials; run `ultra login` first")
+// translate this into "run `inz login` first".
+var ErrNoCredentials = errors.New("no credentials; run `inz login` first")
 
 // Credentials are the minimal state needed to authenticate against the
 // Ultrabase Cloud API. PAT is a Personal Access Token returned by the
@@ -22,14 +22,14 @@ type Credentials struct {
 	Email string `json:"email,omitempty"`
 }
 
-// credentialsPath returns the absolute path to ~/.ultra/credentials.
+// credentialsPath returns the absolute path to ~/.instancez/credentials.
 // Honors HOME for testability.
 func credentialsPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve home: %w", err)
 	}
-	return filepath.Join(home, ".ultra", "credentials"), nil
+	return filepath.Join(home, ".instancez", "credentials"), nil
 }
 
 // Load reads credentials from disk. Returns ErrNoCredentials if the file
@@ -54,7 +54,7 @@ func Load() (Credentials, error) {
 	return c, nil
 }
 
-// Save writes credentials to ~/.ultra/credentials with mode 0600. Creates
+// Save writes credentials to ~/.instancez/credentials with mode 0600. Creates
 // the parent directory (mode 0700) if missing. Overwrites any existing
 // file atomically (write-to-temp + rename).
 func Save(c Credentials) error {

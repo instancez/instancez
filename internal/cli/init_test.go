@@ -24,7 +24,7 @@ func TestInitGenerateLikeRequiresLogin(t *testing.T) {
 
 	opts := initOptions{dir: dir, generateLike: "twitter"}
 	err := runInit(opts)
-	assert.ErrorContains(t, err, "ultra login")
+	assert.ErrorContains(t, err, "inz login")
 }
 
 func TestInitWithCloudRequiresLogin(t *testing.T) {
@@ -33,13 +33,13 @@ func TestInitWithCloudRequiresLogin(t *testing.T) {
 
 	opts := initOptions{dir: dir, withCloud: true, name: "myapp"}
 	err := runInit(opts)
-	assert.ErrorContains(t, err, "ultra login")
+	assert.ErrorContains(t, err, "inz login")
 }
 
 // TestRunInitScaffoldStartsCleanly guards the generated project: it must both
 // validate AND describe migratable DDL. The todos.user_id FK must reference
 // auth.users.id (3-part) — a 2-part `users.id` validates fine but the migrator
-// resolves it to a nonexistent public.users table, so `ultra dev` would
+// resolves it to a nonexistent public.users table, so `inz dev` would
 // die at migration time.
 func TestRunInitScaffoldStartsCleanly(t *testing.T) {
 	dir := t.TempDir()
@@ -73,7 +73,7 @@ func TestRunInitScaffoldStartsCleanly(t *testing.T) {
 
 // TestRunInitScaffoldsFunctions verifies init drops a working starter code
 // function (package.json + handler) and wires it into instancez.yaml so
-// `ultra dev` can serve it immediately.
+// `inz dev` can serve it immediately.
 func TestRunInitScaffoldsFunctions(t *testing.T) {
 	dir := t.TempDir()
 	if err := runInit(initOptions{name: "demo", dir: dir}); err != nil {
@@ -127,7 +127,7 @@ func TestRunInitWritesProductionEnvExample(t *testing.T) {
 		}
 	}
 	// init never touches a database, so it must NOT write a live .development.env
-	// (that is now written by `ultra dev` after bootstrapping). Only the example
+	// (that is now written by `inz dev` after bootstrapping). Only the example
 	// template is written here.
 	if _, err := os.Stat(filepath.Join(dir, ".development.env")); !os.IsNotExist(err) {
 		t.Errorf("init wrote a live .development.env (expected only .development.env.example)")
@@ -135,7 +135,7 @@ func TestRunInitWritesProductionEnvExample(t *testing.T) {
 }
 
 // TestRunInitDevelopmentEnvExampleDocumentsSuperuser verifies the dev example
-// points users at the single superuser DSN that `ultra dev` bootstraps from.
+// points users at the single superuser DSN that `inz dev` bootstraps from.
 func TestRunInitDevelopmentEnvExampleDocumentsSuperuser(t *testing.T) {
 	dir := t.TempDir()
 	if err := runInit(initOptions{name: "demo", dir: dir}); err != nil {
@@ -222,7 +222,7 @@ func TestRunInitGenerateLikeRefusesWhenYAMLExists(t *testing.T) {
 	}
 
 	// Use a fresh HOME with no credentials — if the guard fires before the
-	// login check, the error must NOT mention "ultra login".
+	// login check, the error must NOT mention "inz login".
 	t.Setenv("HOME", t.TempDir())
 
 	opts := initOptions{dir: dir, generateLike: "twitter"}
@@ -235,7 +235,7 @@ func TestRunInitGenerateLikeRefusesWhenYAMLExists(t *testing.T) {
 	}
 	// The guard must fire before the login check — verify the error is NOT
 	// the login error.
-	if strings.Contains(err.Error(), "ultra login") {
+	if strings.Contains(err.Error(), "inz login") {
 		t.Errorf("guard should fire before login check, but got login error: %v", err)
 	}
 
@@ -250,7 +250,7 @@ func TestRunInitGenerateLikeRefusesWhenYAMLExists(t *testing.T) {
 }
 
 // TestRunInitWithCloudSkipsCreateWhenAlreadyLinked guards against duplicate
-// cloud-project creation: re-running `ultra init --with-cloud` over a yaml that
+// cloud-project creation: re-running `inz init --with-cloud` over a yaml that
 // already carries project.cloud.project_id must NOT call CreateProject.
 //
 // The proof is twofold and network-free:
@@ -306,7 +306,7 @@ func TestReadProjectIDGuardDecision(t *testing.T) {
 }
 
 // TestMergeEnvFile pins the dotenv merge semantics that protect user edits
-// in .development.env (and the example file) across re-runs of `ultra init`.
+// in .development.env (and the example file) across re-runs of `inz init`.
 func TestMergeEnvFile(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -427,7 +427,7 @@ func TestMergeGitignore(t *testing.T) {
 }
 
 // TestRunInitPreservesUserGitignore guards the regression that
-// `ultra init [--force]` would clobber a user-edited .gitignore. Re-running
+// `inz init [--force]` would clobber a user-edited .gitignore. Re-running
 // init must add any missing entries from our template but never reorder or
 // remove the user's lines.
 func TestRunInitPreservesUserGitignore(t *testing.T) {
@@ -455,7 +455,7 @@ func TestRunInitPreservesUserGitignore(t *testing.T) {
 }
 
 // TestRunInitPreservesProductionEnvExample guards the regression that
-// `ultra init --force` would clobber a user-edited .production.env.example.
+// `inz init --force` would clobber a user-edited .production.env.example.
 // Once the user has touched the example file we treat their copy as
 // authoritative — re-init must not rewrite it.
 func TestRunInitPreservesProductionEnvExample(t *testing.T) {

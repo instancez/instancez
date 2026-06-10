@@ -33,7 +33,7 @@ func writeBundleFixture(t *testing.T) string {
 	require.NoError(t, os.WriteFile(filepath.Join(fnDir, "node_modules", "leftpad", "index.js"),
 		[]byte("module.exports = () => {}\n"), 0o644))
 	// A runtime shim that must be skipped.
-	require.NoError(t, os.WriteFile(filepath.Join(fnDir, ".ultra-worker-xyz.mjs"),
+	require.NoError(t, os.WriteFile(filepath.Join(fnDir, ".inz-worker-xyz.mjs"),
 		[]byte("// runtime artifact\n"), 0o644))
 
 	yaml := "version: 1\nfunctions:\n  a:\n    runtime: node\n    file: functions/a.js\n"
@@ -128,7 +128,7 @@ func TestBuildBundleOfflineNoPackageJSON(t *testing.T) {
 	assert.Contains(t, names, "functions/node_modules/leftpad/index.js",
 		"vendored node_modules must be packed")
 	for _, n := range names {
-		assert.NotContains(t, n, ".ultra-worker-", "runtime shim must be skipped")
+		assert.NotContains(t, n, ".inz-worker-", "runtime shim must be skipped")
 	}
 
 	// Manifest reflects the declared function.
@@ -189,7 +189,7 @@ func TestBuildAndRecordBundlePrefixDest(t *testing.T) {
 
 	assert.True(t, len(up.calledDest) > len("s3://my-bucket/bundles/"),
 		"a trailing-slash dest is a prefix: a filename gets appended")
-	assert.Contains(t, up.calledDest, "s3://my-bucket/bundles/ultra-functions-bundle-")
+	assert.Contains(t, up.calledDest, "s3://my-bucket/bundles/inz-functions-bundle-")
 	assert.Contains(t, up.calledDest, ".tar.gz")
 	assert.Equal(t, up.calledDest+"#v1", pointer)
 	assert.Equal(t, pointer, cfg.FunctionsBundle)
@@ -275,13 +275,13 @@ func TestResolveBundleDest(t *testing.T) {
 		{
 			name:       "trailing-slash prefix appends generated filename",
 			dest:       "s3://b/p/",
-			wantPrefix: "s3://b/p/ultra-functions-bundle-",
+			wantPrefix: "s3://b/p/inz-functions-bundle-",
 			wantSuffix: ".tar.gz",
 		},
 		{
 			name:       "bare bucket appends generated filename",
 			dest:       "s3://b",
-			wantPrefix: "s3://b/ultra-functions-bundle-",
+			wantPrefix: "s3://b/inz-functions-bundle-",
 			wantSuffix: ".tar.gz",
 		},
 	}

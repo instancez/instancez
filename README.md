@@ -49,7 +49,7 @@ storage:
 ```
 
 ```sh
-ultra dev
+inz dev
 # REST API on :8080, dashboard on :5173
 ```
 
@@ -82,28 +82,28 @@ This starts PostgreSQL 17, the Ultrabase API server on port `8080`, and the dash
 ```sh
 # Prerequisites: Go 1.25+, PostgreSQL 17+, Node.js 20+ (for dashboard)
 
-go build -o ultra ./cmd/ultra
+go build -o inz ./cmd/inz
 
 # Scaffold project files (no DB calls).
-./ultra init
+./inz init
 
 export JWT_SECRET="your-secret"
 export INSTANCEZ_ADMIN_KEY="your-admin-key"
 
-# 1. point ultra at a superuser DSN
+# 1. point inz at a superuser DSN
 export INSTANCEZ_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres
 # 2. dev provisions roles on first run
-./ultra dev
+./inz dev
 ```
 
 ### CLI Commands
 
 ```sh
-ultra init                           # Scaffold project (no DB calls)
-ultra dev                            # Start dev server with hot-reload
-ultra serve                          # Production mode (reads .production.env)
-ultra validate [--use-dsn <url>]     # YAML syntax check; with DSN, also plan a migration
-ultra version
+inz init                           # Scaffold project (no DB calls)
+inz dev                            # Start dev server with hot-reload
+inz serve                          # Production mode (reads .production.env)
+inz validate [--use-dsn <url>]     # YAML syntax check; with DSN, also plan a migration
+inz version
 ```
 
 ## Features
@@ -342,7 +342,7 @@ Environment variables:
 
 | Variable | Required | Description |
 |---|---|---|
-| `INSTANCEZ_DATABASE_URL` | No (dev only) | Superuser/privileged DSN. `ultra dev` provisions the role layout from it, writes the derived owner/authenticator DSNs to `.development.env`, and generates a random `INSTANCEZ_ADMIN_KEY` there if one isn't already set. Not used by `serve`. |
+| `INSTANCEZ_DATABASE_URL` | No (dev only) | Superuser/privileged DSN. `inz dev` provisions the role layout from it, writes the derived owner/authenticator DSNs to `.development.env`, and generates a random `INSTANCEZ_ADMIN_KEY` there if one isn't already set. Not used by `serve`. |
 | `INSTANCEZ_OWNER_DATABASE_URL` | Yes | Privileged login (migrations, seeding, replication). Role needs `CREATEROLE`, `CREATEDB`, `BYPASSRLS`, `REPLICATION`. |
 | `INSTANCEZ_AUTH_DATABASE_URL` | Yes | Authenticator login for HTTP requests. `NOINHERIT`; ultrabase issues `SET LOCAL ROLE` per transaction (CRUD: from JWT; system endpoints: `service_role`). |
 | `INSTANCEZ_DB_AUTHENTICATOR_ROLE` | No | Override the authenticator role name (default: `authenticator`). |
@@ -350,7 +350,7 @@ Environment variables:
 | `INSTANCEZ_DB_AUTHENTICATED_ROLE` | No | Override the authenticated role name (default: `authenticated`). |
 | `INSTANCEZ_DB_SERVICE_ROLE` | No | Override the service role name (default: `service_role`). |
 | `JWT_SECRET` | Yes | Secret for signing JWTs |
-| `INSTANCEZ_ADMIN_KEY` | Yes | Admin API + dashboard authentication key. Leave unset to disable those endpoints (they return 404). `ultra dev` auto-generates one into `.development.env`. |
+| `INSTANCEZ_ADMIN_KEY` | Yes | Admin API + dashboard authentication key. Leave unset to disable those endpoints (they return 404). `inz dev` auto-generates one into `.development.env`. |
 | `PORT` | No | Override server port (default: from YAML or 8080) |
 
 ## Contributing

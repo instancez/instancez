@@ -58,14 +58,14 @@ func TestConfigValidCheckSource_ReadError(t *testing.T) {
 
 func TestConfigValidCheckSource_S3ReadErrorHint(t *testing.T) {
 	// An s3 read failure (missing object / AccessDenied) must not advise
-	// `ultra init` — that's local-file advice and useless for the s3 case.
+	// `inz init` — that's local-file advice and useless for the s3 case.
 	src := fakeConfigSource{describe: "s3://bucket/key", err: errors.New("get object: AccessDenied")}
 	r := preflight.ConfigValidCheckSource(src)()
 	if r.OK {
 		t.Fatalf("expected failure on s3 read error")
 	}
-	if strings.Contains(r.FixHint, "ultra init") {
-		t.Fatalf("FixHint = %q, should not suggest `ultra init` for an s3 read error", r.FixHint)
+	if strings.Contains(r.FixHint, "inz init") {
+		t.Fatalf("FixHint = %q, should not suggest `inz init` for an s3 read error", r.FixHint)
 	}
 	if !strings.Contains(strings.ToLower(r.FixHint), "s3") {
 		t.Fatalf("FixHint = %q, want it to reference the s3 source", r.FixHint)

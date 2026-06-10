@@ -84,7 +84,7 @@ func checkConfigBackend(path string) error {
 }
 
 // requireConfigFile asserts that a local config path exists, returning a
-// helpful error that points users at `ultra init`. s3:// sources skip the
+// helpful error that points users at `inz init`. s3:// sources skip the
 // check (the s3 client validates existence at fetch time, and we don't want
 // to make HEAD calls just to produce a nicer error message).
 func requireConfigFile(path string) error {
@@ -93,7 +93,7 @@ func requireConfigFile(path string) error {
 	}
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("no %s in this directory; run `ultra init` first", path)
+			return fmt.Errorf("no %s in this directory; run `inz init` first", path)
 		}
 		return fmt.Errorf("stat %s: %w", path, err)
 	}
@@ -256,7 +256,7 @@ func parseServeFlags(args []string, envLookup func(string) string) (serveOptions
 	return resolveServeFlags(fs, envLookup)
 }
 
-// DevDBSource picks which data-source path `ultra dev` takes.
+// DevDBSource picks which data-source path `inz dev` takes.
 type DevDBSource int
 
 const (
@@ -300,7 +300,7 @@ func newDevFlagSet() *devFlagSet {
 	fs.flags.BoolVar(&fs.useDSN, "use-dsn", false, "deprecated no-op; dev uses the DSN by default")
 	_ = fs.flags.MarkHidden("use-dsn")
 	_ = fs.flags.MarkDeprecated("use-dsn", "dev now uses the DSN by default; flag is a no-op")
-	fs.flags.BoolVar(&fs.useCloud, "use-cloud", false, "run against the cloud project's draft database (requires `ultra init --with-cloud`)")
+	fs.flags.BoolVar(&fs.useCloud, "use-cloud", false, "run against the cloud project's draft database (requires `inz init --with-cloud`)")
 	fs.flags.SetOutput(io.Discard)
 	return fs
 }

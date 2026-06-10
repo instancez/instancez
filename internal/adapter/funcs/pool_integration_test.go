@@ -154,7 +154,7 @@ func TestPoolCloseDuringRestart(t *testing.T) {
 	dir := t.TempDir()
 	writeFn(t, dir, "boom.js", `
 export default async (req) => {
-  if (req.headers["x-ultra-crash"]) {
+  if (req.headers["x-inz-crash"]) {
     setTimeout(() => process.exit(1), 0);
     await new Promise(r => setTimeout(r, 1000));
     return { status: 200, body: { unreachable: true } };
@@ -175,7 +175,7 @@ export default async (req) => {
 	_, err = rt.Invoke(context.Background(), domain.FunctionRequest{
 		Name:    "boom",
 		Method:  "GET",
-		Headers: map[string][]string{"X-Ultra-Crash": {"1"}},
+		Headers: map[string][]string{"X-Inz-Crash": {"1"}},
 	})
 	if !errors.Is(err, funcs.ErrWorkerFailed) {
 		t.Fatalf("crash invoke: got err %v, want ErrWorkerFailed", err)
@@ -249,11 +249,11 @@ func TestPoolTimeout(t *testing.T) {
 // restart path.
 func TestPoolCrashRecovery(t *testing.T) {
 	dir := t.TempDir()
-	// The handler crashes the whole process only when x-ultra-crash header is
+	// The handler crashes the whole process only when x-inz-crash header is
 	// set; otherwise it returns 200. This isolates the crash to the first call.
 	writeFn(t, dir, "boom.js", `
 export default async (req) => {
-  if (req.headers["x-ultra-crash"]) {
+  if (req.headers["x-inz-crash"]) {
     // Kill the worker process to simulate a hard crash.
     setTimeout(() => process.exit(1), 0);
     // Give the timer a tick so the connection is severed by process death.
@@ -277,7 +277,7 @@ export default async (req) => {
 	_, err = rt.Invoke(context.Background(), domain.FunctionRequest{
 		Name:    "boom",
 		Method:  "GET",
-		Headers: map[string][]string{"X-Ultra-Crash": {"1"}},
+		Headers: map[string][]string{"X-Inz-Crash": {"1"}},
 	})
 	if !errors.Is(err, funcs.ErrWorkerFailed) {
 		t.Fatalf("crash invoke: got err %v, want ErrWorkerFailed", err)

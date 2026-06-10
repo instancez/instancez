@@ -18,7 +18,7 @@ var errReported = errors.New("reported")
 
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "ultra",
+		Use:           "inz",
 		Short:         "Ultrabase — declarative backend from a single YAML file",
 		Long:          "Ultrabase turns a YAML config into a full backend: Postgres CRUD, auth, storage, events, and more.",
 		SilenceUsage:  true,

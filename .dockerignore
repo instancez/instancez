@@ -3,7 +3,7 @@
 # freshly-installed ones in the dashboard stage.
 .git
 .github
-ultra
+inz
 **/node_modules
 dashboard/dist
 *.test

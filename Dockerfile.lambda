@@ -28,14 +28,14 @@ RUN go mod download
 COPY . .
 COPY --from=dashboard /out/dist ./dashboard/dist
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -o /ultra ./cmd/ultra
+    go build -o /inz ./cmd/inz
 
 FROM alpine:3.21
 # nodejs runs code-function workers. Lambda only runs `serve` (consumes a
 # pre-built bundle), so npm is not needed here.
 RUN apk add --no-cache ca-certificates nodejs
-COPY --from=builder /ultra /usr/local/bin/ultra
+COPY --from=builder /inz /usr/local/bin/inz
 COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.9.1 /lambda-adapter /opt/extensions/lambda-adapter
 WORKDIR /app
 EXPOSE 8080
-CMD ["ultra", "serve", "--data", "--migrate"]
+CMD ["inz", "serve", "--data", "--migrate"]

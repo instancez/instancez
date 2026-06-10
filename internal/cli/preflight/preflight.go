@@ -26,7 +26,7 @@ const (
 // ultrabase-bootstrapped database must contain. The owner login role is the
 // hard-coded const from bootstrap.go; the remaining three come from
 // domain.DefaultRoles() (overrides via INSTANCEZ_DB_* env vars are not
-// reflected here — the check targets the defaults used by `ultra init`).
+// reflected here — the check targets the defaults used by `inz init`).
 func expectedRoleNames() []string {
 	r := domain.DefaultRoles()
 	return []string{
@@ -120,21 +120,21 @@ func DSNPresentCheck(lookup func(string) string) Check {
 				Name:    "DSN env vars present",
 				OK:      false,
 				Detail:  EnvOwnerDSN + " and " + EnvAuthDSN + " are not set",
-				FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) in .development.env and run `ultra dev`, or set " + EnvOwnerDSN + " + " + EnvAuthDSN + " directly",
+				FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) in .development.env and run `inz dev`, or set " + EnvOwnerDSN + " + " + EnvAuthDSN + " directly",
 			}
 		case owner == "":
 			return Result{
 				Name:    "DSN env vars present",
 				OK:      false,
 				Detail:  EnvOwnerDSN + " is not set",
-				FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) and run `ultra dev`, or set " + EnvOwnerDSN + " in .development.env",
+				FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) and run `inz dev`, or set " + EnvOwnerDSN + " in .development.env",
 			}
 		case auth == "":
 			return Result{
 				Name:    "DSN env vars present",
 				OK:      false,
 				Detail:  EnvAuthDSN + " is not set",
-				FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) and run `ultra dev`, or set " + EnvAuthDSN + " in .development.env",
+				FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) and run `inz dev`, or set " + EnvAuthDSN + " in .development.env",
 			}
 		default:
 			return Result{Name: "DSN env vars present", OK: true}
@@ -175,7 +175,7 @@ func ConfigValidCheck(configPath string) Check {
 				Name:    "config file valid",
 				OK:      false,
 				Detail:  err.Error(),
-				FixHint: "run `ultra init` to create instancez.yaml",
+				FixHint: "run `inz init` to create instancez.yaml",
 			}
 		}
 		return ConfigValidCheckSource(src)()
@@ -192,7 +192,7 @@ func ConfigValidCheckSource(src ConfigSource) Check {
 
 		data, _, err := src.Read(ctx)
 		if err != nil {
-			fixHint := "run `ultra init` to create instancez.yaml"
+			fixHint := "run `inz init` to create instancez.yaml"
 			if strings.HasPrefix(src.Describe(), "s3://") {
 				fixHint = "verify the s3:// object exists and credentials grant s3:GetObject"
 			}
@@ -217,7 +217,7 @@ func ConfigValidCheckSource(src ConfigSource) Check {
 				Name:    "config file valid",
 				OK:      false,
 				Detail:  errs[0].Message,
-				FixHint: "run `ultra validate` for a full error report",
+				FixHint: "run `inz validate` for a full error report",
 			}
 		}
 		return Result{Name: "config file valid", OK: true}
@@ -247,7 +247,7 @@ func ConnectCheck(name, dsn string) Check {
 				Name:    name,
 				OK:      false,
 				Detail:  "DSN is empty",
-				FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) and run `ultra dev`, or set the role DSNs in .development.env",
+				FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) and run `inz dev`, or set the role DSNs in .development.env",
 			}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
@@ -258,7 +258,7 @@ func ConnectCheck(name, dsn string) Check {
 				Name:    name,
 				OK:      false,
 				Detail:  "could not open pool: " + err.Error(),
-				FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) so `ultra dev` provisions the database",
+				FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) so `inz dev` provisions the database",
 			}
 		}
 		defer pool.Close()
@@ -395,7 +395,7 @@ func roleLayoutDecision(existing, grants map[string]bool) Result {
 			Name:    "role layout",
 			OK:      false,
 			Detail:  detail,
-			FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) and run `ultra dev` to provision the roles",
+			FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) and run `inz dev` to provision the roles",
 		}
 	}
 
@@ -420,7 +420,7 @@ func roleLayoutDecision(existing, grants map[string]bool) Result {
 			Name:    "role layout",
 			OK:      false,
 			Detail:  detail,
-			FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) and run `ultra dev` to provision the roles",
+			FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) and run `inz dev` to provision the roles",
 		}
 	}
 
@@ -440,7 +440,7 @@ func RoleLayoutCheck(roles RoleReporter) Check {
 				Name:    "role layout",
 				OK:      false,
 				Detail:  "could not query pg_roles: " + err.Error(),
-				FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) and run `ultra dev` to provision the roles",
+				FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) and run `inz dev` to provision the roles",
 			}
 		}
 		grants, err := roles.AuthenticatorGrants()
@@ -449,7 +449,7 @@ func RoleLayoutCheck(roles RoleReporter) Check {
 				Name:    "role layout",
 				OK:      false,
 				Detail:  "could not query pg_auth_members: " + err.Error(),
-				FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) and run `ultra dev` to provision the roles",
+				FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) and run `inz dev` to provision the roles",
 			}
 		}
 		return roleLayoutDecision(existing, grants)

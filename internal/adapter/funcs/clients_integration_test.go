@@ -33,7 +33,7 @@ import (
 //   - ctx.supabase carries the CALLER's JWT, so RLS applies as the caller: an
 //     authenticated user (U1) can insert/read only its own rows, and a row
 //     owned by a different user (U2) is HIDDEN from it.
-//   - ctx.serviceClient carries an ultra-minted service_role JWT (BYPASSRLS),
+//   - ctx.serviceClient carries an inz-minted service_role JWT (BYPASSRLS),
 //     so the SAME U2 row IS visible through it — proving explicit escalation.
 //
 // The function returns both result sets; the Go side asserts the RLS boundary.

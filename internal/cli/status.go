@@ -21,9 +21,9 @@ production deploy status; and whether the local draft has unpublished changes
 relative to production.
 
 The project_id is read from project.cloud.project_id inside instancez.yaml. Run
-ultra init --with-cloud first if no project is linked yet.
+inz init --with-cloud first if no project is linked yet.
 
-This is distinct from ultra doctor, which checks local environment health.`,
+This is distinct from inz doctor, which checks local environment health.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runStatus(configPath)
 		},
@@ -45,11 +45,11 @@ func runStatus(configPath string) error {
 		return fmt.Errorf("parse %s: %w", configPath, err)
 	}
 	if projectID == "" {
-		return errors.New("no project.cloud.project_id in instancez.yaml; run `ultra init --with-cloud` to link this project to Ultrabase Cloud")
+		return errors.New("no project.cloud.project_id in instancez.yaml; run `inz init --with-cloud` to link this project to Ultrabase Cloud")
 	}
 
 	// Inline login: returns existing creds, prompts on a TTY, or hard-errors
-	// in a non-interactive session pointing at `ultra login`.
+	// in a non-interactive session pointing at `inz login`.
 	creds, err := ensureLoggedIn(ensureLoginOpts{})
 	if err != nil {
 		return err

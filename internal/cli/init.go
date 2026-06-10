@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// initOptions captures the resolved positional + flags for `ultra init`.
+// initOptions captures the resolved positional + flags for `inz init`.
 type initOptions struct {
 	name         string
 	dir          string
@@ -32,7 +32,7 @@ defaults to the directory's basename when not given as a positional argument.
 
 init only writes scaffolding files; it never touches a database. A
 '.development.env.example' is written documenting the single superuser DSN that
-'ultra dev' uses to provision roles on first run.`,
+'inz dev' uses to provision roles on first run.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 1 {
@@ -43,8 +43,8 @@ init only writes scaffolding files; it never touches a database. A
 	}
 
 	cmd.Flags().StringVar(&opts.dir, "dir", ".", "output directory")
-	cmd.Flags().BoolVar(&opts.withCloud, "with-cloud", false, "create a project in Ultrabase Cloud (requires `ultra login`)")
-	cmd.Flags().StringVar(&opts.generateLike, "generate-like", "", "generate instancez.yaml from a free-form prompt (requires `ultra login`)")
+	cmd.Flags().BoolVar(&opts.withCloud, "with-cloud", false, "create a project in Ultrabase Cloud (requires `inz login`)")
+	cmd.Flags().StringVar(&opts.generateLike, "generate-like", "", "generate instancez.yaml from a free-form prompt (requires `inz login`)")
 	cmd.Flags().BoolVar(&opts.force, "force", false, "overwrite existing scaffolding files")
 	return cmd
 }
@@ -82,7 +82,7 @@ func runInit(opts initOptions) error {
 	// Cloud-dependent flags require credentials. On an interactive terminal
 	// ensureLoggedIn prompts and runs the device-code flow inline (saving creds
 	// to disk so the cloud calls below pick them up); in a non-interactive
-	// session it returns a hard error pointing at `ultra login`.
+	// session it returns a hard error pointing at `inz login`.
 	if opts.withCloud || opts.generateLike != "" {
 		if _, err := ensureLoggedIn(ensureLoginOpts{}); err != nil {
 			return err
@@ -147,7 +147,7 @@ func runInit(opts initOptions) error {
 
 	// functions/: a working starter code function (served at /functions/v1/todos)
 	// plus its shared package.json. Written once; user edits are preserved on
-	// re-run. `ultra dev` runs `npm ci` here on boot.
+	// re-run. `inz dev` runs `npm ci` here on boot.
 	if err := os.MkdirAll(filepath.Join(dir, "functions"), 0o755); err != nil {
 		return fmt.Errorf("creating functions dir: %w", err)
 	}
@@ -181,7 +181,7 @@ func runInit(opts initOptions) error {
 	}
 
 	// .development.env.example: write once. Documents the superuser DSN that
-	// `ultra dev` bootstraps roles from. Treated as authoritative after first
+	// `inz dev` bootstraps roles from. Treated as authoritative after first
 	// write — user edits are preserved on re-run.
 	if err := applyWrite(dir, ".development.env.example", func(existing string) (string, writeAction) {
 		if existing != "" {
@@ -238,10 +238,10 @@ func runInit(opts initOptions) error {
 	}
 	switch {
 	case opts.withCloud:
-		fmt.Println("  ultra deploy            # push your YAML to the cloud project")
+		fmt.Println("  inz deploy            # push your YAML to the cloud project")
 	default:
 		fmt.Println("  cp .development.env.example .development.env   # set INSTANCEZ_DATABASE_URL")
-		fmt.Println("  ultra dev")
+		fmt.Println("  inz dev")
 	}
 	return nil
 }
@@ -407,7 +407,7 @@ export default async function handler(req, ctx) {
 
 func scaffoldProductionEnvExample() string {
 	return `# Production runtime config — copy to .production.env (gitignored) before
-# running 'ultra serve'. Shell env vars always take precedence over this file.
+# running 'inz serve'. Shell env vars always take precedence over this file.
 #
 # Two-pool layout: the owner DSN runs migrations/seeding; the authenticator
 # DSN handles request traffic (NOINHERIT login that SET LOCAL ROLEs per query).
@@ -426,12 +426,12 @@ INSTANCEZ_ADMIN_KEY=CHANGE_ME
 
 func scaffoldDevelopmentEnvExample() string {
 	return `# Local development config — copy to .development.env (gitignored), then set a
-# superuser/privileged Postgres DSN below. On first run, 'ultra dev' provisions
+# superuser/privileged Postgres DSN below. On first run, 'inz dev' provisions
 # ultrabase_owner + authenticator + the API roles from it and writes the derived
 # owner/authenticator DSNs back into .development.env, so subsequent runs reuse
 # them. After the first run you can remove INSTANCEZ_DATABASE_URL.
 #
-# 'ultra dev' also generates a random INSTANCEZ_ADMIN_KEY into .development.env
+# 'inz dev' also generates a random INSTANCEZ_ADMIN_KEY into .development.env
 # on first run (printed to the console, used to log into the dashboard). Set one
 # here yourself to pin a known value instead.
 
@@ -441,7 +441,7 @@ INSTANCEZ_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres
 }
 
 func scaffoldDevelopmentEnv(ownerDSN, authDSN, adminKey string) string {
-	return fmt.Sprintf(`# Owner + authenticator DSNs provisioned by 'ultra dev' from INSTANCEZ_DATABASE_URL.
+	return fmt.Sprintf(`# Owner + authenticator DSNs provisioned by 'inz dev' from INSTANCEZ_DATABASE_URL.
 INSTANCEZ_OWNER_DATABASE_URL=%s
 INSTANCEZ_AUTH_DATABASE_URL=%s
 # Random admin key for the dashboard and /api/_admin endpoints. Change freely.

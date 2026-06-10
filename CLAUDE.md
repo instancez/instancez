@@ -31,10 +31,10 @@ Concrete rules that fall out of this:
 <commands>
 **Build & run:**
 ```sh
-go build -o ultra ./cmd/ultra
-./ultra dev              # hot-reload dev server (set INSTANCEZ_DATABASE_URL — a superuser DSN — and dev provisions the two role DSNs on first run; or set them directly. JWT keys are DB-managed via auth.jwt_keys)
-./ultra serve            # production mode
-./ultra validate         # YAML syntax check, no DB
+go build -o inz ./cmd/inz
+./inz dev              # hot-reload dev server (set INSTANCEZ_DATABASE_URL — a superuser DSN — and dev provisions the two role DSNs on first run; or set them directly. JWT keys are DB-managed via auth.jwt_keys)
+./inz serve            # production mode
+./inz validate         # YAML syntax check, no DB
 docker compose -f docker-compose.dev.yaml up   # full stack: postgres + backend + dashboard
 ```
 
@@ -63,7 +63,7 @@ npm run build     # tsc -b && vite build
 Hexagonal layout under `internal/`:
 
 ```
-cmd/ultra/main.go
+cmd/inz/main.go
         │
         ▼
 internal/cli/         cobra commands (dev, serve, init, validate, deploy, doctor, status, login, …)

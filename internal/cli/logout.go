@@ -11,7 +11,7 @@ func newLogoutCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "logout",
 		Short: "Forget local Ultrabase Cloud credentials",
-		Long: `Remove the PAT stored at ~/.ultra/credentials. The token itself
+		Long: `Remove the PAT stored at ~/.instancez/credentials. The token itself
 remains valid server-side until you revoke it from the dashboard.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := cloud.Delete(); err != nil {

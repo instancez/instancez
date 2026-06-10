@@ -25,7 +25,7 @@ func newDeployCmd() *cobra.Command {
 		Short: "Push the current instancez.yaml to an Ultrabase Cloud project",
 		Long: `Deploy the current project's instancez.yaml to the cloud. The
 project_id is read from project.cloud.project_id inside instancez.yaml. Run
-ultra init --with-cloud first if no project is set yet.
+inz init --with-cloud first if no project is set yet.
 
 Deploy uploads the local yaml to the project's draft, shows a migration
 preview (production → draft), and — after confirmation — promotes the draft
@@ -33,7 +33,7 @@ to production.
 
 When the project declares code functions, deploy also builds the functions
 bundle (running npm ci to vendor node_modules). Pass --functions-bundle-dest
-to upload the bundle to an s3:// destination so that ultra serve can fetch it.`,
+to upload the bundle to an s3:// destination so that inz serve can fetch it.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runDeploy(configPath, yes, bundleDest)
 		},
@@ -81,7 +81,7 @@ func projectIDPresentCheck(configPath string) preflight.Check {
 				Name:    "project_id present",
 				OK:      false,
 				Detail:  err.Error(),
-				FixHint: "run `ultra init` to create instancez.yaml",
+				FixHint: "run `inz init` to create instancez.yaml",
 			}
 		}
 		id, err := cloud.ReadProjectID(src)
@@ -98,7 +98,7 @@ func projectIDPresentCheck(configPath string) preflight.Check {
 				Name:    "project_id present",
 				OK:      false,
 				Detail:  "project.cloud.project_id is not set",
-				FixHint: "run `ultra init --with-cloud` to link this project to Ultrabase Cloud",
+				FixHint: "run `inz init --with-cloud` to link this project to Ultrabase Cloud",
 			}
 		}
 		return preflight.Result{Name: "project_id present", OK: true}
@@ -125,7 +125,7 @@ func runDeploy(configPath string, yes bool, bundleDest string) error {
 	}
 
 	// Inline login: returns existing creds, prompts on a TTY, or hard-errors
-	// in a non-interactive session pointing at `ultra login`.
+	// in a non-interactive session pointing at `inz login`.
 	creds, err := ensureLoggedIn(ensureLoginOpts{})
 	if err != nil {
 		return err
@@ -140,7 +140,7 @@ func runDeploy(configPath string, yes bool, bundleDest string) error {
 		return fmt.Errorf("parse %s: %w", configPath, err)
 	}
 	if projectID == "" {
-		return errors.New("no project.cloud.project_id in instancez.yaml; run `ultra init --with-cloud` first")
+		return errors.New("no project.cloud.project_id in instancez.yaml; run `inz init --with-cloud` first")
 	}
 
 	apiURL, err := cloud.APIURLFromConfig(configPath)
@@ -240,7 +240,7 @@ func deployFunctionsBundle(configPath, bundleDest string) error {
 		_ = os.Remove(bundlePath)
 		fmt.Fprintln(os.Stderr,
 			"  ⚠ functions bundle built but not shipped: pass --functions-bundle-dest "+
-				"s3://bucket/key so `ultra serve` can fetch it.")
+				"s3://bucket/key so `inz serve` can fetch it.")
 		return nil
 	}
 
@@ -252,6 +252,6 @@ func deployFunctionsBundle(configPath, bundleDest string) error {
 	// Print the pointer clearly. Persisting it into the cloud draft config is
 	// out of scope (see doc comment); self-host records it via this pointer.
 	fmt.Printf("  ✓ Functions bundle uploaded — pointer: %s\n", pointer)
-	fmt.Println("    Set `functions_bundle` to this value where `ultra serve` reads its config.")
+	fmt.Println("    Set `functions_bundle` to this value where `inz serve` reads its config.")
 	return nil
 }

@@ -91,7 +91,7 @@ type Options struct {
 	// EnvMap is the in-memory INSTANCEZ_ENV_ namespace (built by config.LoadInstancezEnv).
 	// Each function's env: values are resolved against this map at invoke time.
 	// Keys must carry the "INSTANCEZ_ENV_" prefix. This map is NEVER written to
-	// process env — it is passed to the worker via the X-Ultra-Context header.
+	// process env — it is passed to the worker via the X-Inz-Context header.
 	EnvMap map[string]string
 
 	// Logger receives log lines emitted by function handlers (both ctx.log.*
@@ -347,12 +347,12 @@ func New(opts Options) (*Runtime, error) {
 	// and throws ERR_MODULE_NOT_FOUND, causing ctx.supabase / ctx.serviceClient
 	// to fail on every invocation.
 	// The leading dot makes the filename match bundle.go's skip-check
-	// (`.ultra-worker-*`) so a shim left in the functions/ tree is never
+	// (`.inz-worker-*`) so a shim left in the functions/ tree is never
 	// packed into a deploy bundle.
 	// Must be .mjs so Node treats it as ESM (top-level await + import).
 	// The shim is SHARED across all workers (same embedded content); it is
 	// written once here and removed once in Close.
-	shimName := ".ultra-worker-" + randHex(8) + ".mjs"
+	shimName := ".inz-worker-" + randHex(8) + ".mjs"
 	var shimDir string
 	if opts.Dir == "" {
 		shimDir = os.TempDir()
@@ -407,7 +407,7 @@ func New(opts Options) (*Runtime, error) {
 func (r *Runtime) spawnWorker(fnSpec string) (*worker, error) {
 	// Generate a unique socket path using random bytes. Do NOT create the file —
 	// node's server.listen() fails with EADDRINUSE if a regular file already exists.
-	sock := filepath.Join(os.TempDir(), "ultra-fn-"+randHex(8)+".sock")
+	sock := filepath.Join(os.TempDir(), "inz-fn-"+randHex(8)+".sock")
 
 	cmd := exec.Command("node", r.shim, sock, fnSpec)
 	// Pipes must be obtained BEFORE cmd.Start().
@@ -426,7 +426,7 @@ func (r *Runtime) spawnWorker(fnSpec string) (*worker, error) {
 	// defaults. Node module resolution is filesystem-based (walks node_modules
 	// upward from the importing file) and does NOT depend on env vars, so
 	// @supabase/supabase-js and other vendored deps keep working.
-	// Per-function env vars are added per-invoke via X-Ultra-Context, not here.
+	// Per-function env vars are added per-invoke via X-Inz-Context, not here.
 	cmd.Env = []string{
 		"PATH=" + os.Getenv("PATH"),
 		"NODE_ENV=production",
@@ -536,7 +536,7 @@ func (r *Runtime) Invoke(ctx context.Context, in domain.FunctionRequest) (*domai
 		return nil, ErrWorkerFailed
 	}
 
-	// Build the headers map for X-Ultra-Context, defaulting Content-Type to
+	// Build the headers map for X-Inz-Context, defaulting Content-Type to
 	// application/json when the caller did not set one. This keeps
 	// TestInvokeHelloFunction passing (it sends a JSON body with no explicit CT)
 	// while still allowing callers to override with e.g. text/plain.
@@ -616,8 +616,8 @@ func (r *Runtime) Invoke(ctx context.Context, in domain.FunctionRequest) (*domai
 	defer cancel()
 
 	req, _ := http.NewRequestWithContext(reqCtx, "POST", "http://unix/invoke", bytes.NewReader(in.Body))
-	req.Header.Set("x-ultra-fn", in.Name)
-	req.Header.Set("x-ultra-context", base64.StdEncoding.EncodeToString(ctxJSON))
+	req.Header.Set("x-inz-fn", in.Name)
+	req.Header.Set("x-inz-context", base64.StdEncoding.EncodeToString(ctxJSON))
 	resp, err := w.client.Do(req)
 	if err != nil {
 		return nil, r.classifyDoErr(ctx, reqCtx, w, err)

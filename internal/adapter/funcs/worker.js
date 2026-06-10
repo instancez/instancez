@@ -78,7 +78,7 @@ try {
 } catch (e) {
   // not vendored; data-access clients throw on first access (see buildCtx).
   // Use stderr so this warning doesn't pollute the NDJSON stdout stream.
-  process.stderr.write("ultra-worker: @supabase/supabase-js not available: " + String(e && e.message || e) + "\n");
+  process.stderr.write("inz-worker: @supabase/supabase-js not available: " + String(e && e.message || e) + "\n");
 }
 
 // args: <socketPath> <fnName=absPath,...>
@@ -91,7 +91,7 @@ for (const pair of fnSpec.split(",").filter(Boolean)) {
     fns[name] = mod.default;
   } catch (e) {
     // Import errors go to stderr (not stdout) so they don't corrupt NDJSON.
-    process.stderr.write("ultra-worker: failed to import " + name + " (" + file + "): " + String(e && e.message || e) + "\n");
+    process.stderr.write("inz-worker: failed to import " + name + " (" + file + "): " + String(e && e.message || e) + "\n");
   }
 }
 
@@ -122,9 +122,9 @@ function firstVals(q) {
 // builds two @supabase/supabase-js clients pointed at ultrabase's own REST API
 // over loopback:
 //   - supabase: carries the caller's JWT, so RLS applies as the caller.
-//   - serviceClient: carries an ultra-minted service_role JWT (BYPASSRLS) for
+//   - serviceClient: carries an inz-minted service_role JWT (BYPASSRLS) for
 //     explicit escalation.
-// Credentials arrive in the decoded X-Ultra-Context (uctx.dataPlane), never the
+// Credentials arrive in the decoded X-Inz-Context (uctx.dataPlane), never the
 // child env. env/log are placeholders filled by later tasks.
 function buildCtx(uctx) {
   const dp = uctx.dataPlane || {};
@@ -166,7 +166,7 @@ function addCtxSignal(ctx, signal) {
 
 const server = http.createServer(async (req, res) => {
   if (req.url === "/healthz") { res.writeHead(200); res.end("ok"); return; }
-  const fnName = req.headers["x-ultra-fn"];
+  const fnName = req.headers["x-inz-fn"];
   const handler = fns[fnName];
   if (!handler) { res.writeHead(404); res.end(JSON.stringify({ message: "unknown fn" })); return; }
 
@@ -204,7 +204,7 @@ const server = http.createServer(async (req, res) => {
     for await (const c of req) chunks.push(c);
     const rawBody = Buffer.concat(chunks);
 
-    const uctx = JSON.parse(Buffer.from(req.headers["x-ultra-context"], "base64").toString());
+    const uctx = JSON.parse(Buffer.from(req.headers["x-inz-context"], "base64").toString());
     requestId = uctx.requestId;
     const headers = lowerFirst(uctx.headers);
     const ct = headers["content-type"] || "";

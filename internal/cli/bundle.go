@@ -85,7 +85,7 @@ func BuildBundle(projectDir string) (bundlePath string, err error) {
 		manifest.Functions[name] = manifestFunction{File: fn.File, Runtime: runtime}
 	}
 
-	out, err := os.CreateTemp("", "ultra-functions-bundle-*.tar.gz")
+	out, err := os.CreateTemp("", "inz-functions-bundle-*.tar.gz")
 	if err != nil {
 		return "", fmt.Errorf("create bundle temp file: %w", err)
 	}
@@ -119,7 +119,7 @@ func BuildBundle(projectDir string) (bundlePath string, err error) {
 			return nil
 		}
 		// Skip the runtime shim — it's a runtime artifact, not source.
-		if strings.HasPrefix(fi.Name(), ".ultra-worker-") && strings.HasSuffix(fi.Name(), ".mjs") {
+		if strings.HasPrefix(fi.Name(), ".inz-worker-") && strings.HasSuffix(fi.Name(), ".mjs") {
 			return nil
 		}
 		// Symlinks (e.g. node_modules/.bin/*) must be written as symlink tar
@@ -277,11 +277,11 @@ func parseS3URI(uri string) (bucket, key string, err error) {
 // content-addressed.
 func resolveBundleDest(dest, version string) string {
 	if strings.HasSuffix(dest, "/") {
-		return dest + "ultra-functions-bundle-" + version + ".tar.gz"
+		return dest + "inz-functions-bundle-" + version + ".tar.gz"
 	}
 	// A bare s3://bucket (no key) is also a prefix.
 	if rest, ok := strings.CutPrefix(dest, "s3://"); ok && !strings.Contains(rest, "/") {
-		return dest + "/ultra-functions-bundle-" + version + ".tar.gz"
+		return dest + "/inz-functions-bundle-" + version + ".tar.gz"
 	}
 	return dest
 }

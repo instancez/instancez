@@ -240,7 +240,7 @@ func planAgainstProject(ctx context.Context, configPath string, jsonOutput bool)
 		return fmt.Errorf("parse %s: %w", configPath, err)
 	}
 	if projectID == "" {
-		return errors.New("no project.cloud.project_id in instancez.yaml; run `ultra init --with-cloud` first")
+		return errors.New("no project.cloud.project_id in instancez.yaml; run `inz init --with-cloud` first")
 	}
 
 	apiURL, err := cloud.APIURLFromConfig(configPath)

@@ -26,7 +26,7 @@ type Config struct {
 	Data       map[string]TableData    `yaml:"data" json:"data"`
 
 	// FunctionsBundle is a pointer to the pre-built functions bundle that
-	// `serve` consumes at runtime (it never builds). `ultra deploy` builds the
+	// `serve` consumes at runtime (it never builds). `inz deploy` builds the
 	// bundle (vendoring node_modules), uploads it, and records the pointer here.
 	// The value is an object URI carrying a version token, e.g.
 	// "s3://bucket/key#<sha256>". Empty when the project has no code functions

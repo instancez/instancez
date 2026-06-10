@@ -23,5 +23,5 @@ func TestPlanAgainstProjectRequiresCredentials(t *testing.T) {
 	require.NoError(t, os.WriteFile(yamlPath, []byte("version: 1\nproject:\n  cloud:\n    project_id: abc\n"), 0o644))
 
 	err := planAgainstProject(context.Background(), yamlPath, false)
-	assert.ErrorContains(t, err, "ultra login")
+	assert.ErrorContains(t, err, "inz login")
 }

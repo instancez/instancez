@@ -348,7 +348,7 @@ func buildSessionSetup(ctx context.Context, roles *domain.Roles) string {
 		// For service_role we deliberately leave app.user_id empty so that
 		// auth.uid() (NULLIF(current_setting('app.user_id',true),'')::uuid)
 		// resolves to NULL, matching Supabase — a service_role token has no
-		// subject. ultra-minted service tokens carry a synthetic all-zeros
+		// subject. inz-minted service tokens carry a synthetic all-zeros
 		// `sub` only to satisfy the middleware's non-empty-sub requirement;
 		// that synthetic value must NOT leak into auth.uid(). service_role has
 		// BYPASSRLS, so RLS does not depend on auth.uid() here anyway.

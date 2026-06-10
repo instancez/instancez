@@ -7,7 +7,7 @@ dist/
 /dashboard/dist/*
 !/dashboard/dist/.gitkeep
 *.exe
-/ultra
+/inz
 
 # TypeScript
 tsconfig.tsbuildinfo

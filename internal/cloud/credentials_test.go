@@ -25,7 +25,7 @@ func TestCredentialsRoundtrip(t *testing.T) {
 	assert.Equal(t, saved, loaded)
 
 	// File mode is 0600.
-	info, err := os.Stat(filepath.Join(dir, ".ultra", "credentials"))
+	info, err := os.Stat(filepath.Join(dir, ".instancez", "credentials"))
 	assert.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 

@@ -8,7 +8,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// serviceTokenSub is the synthetic subject used for ultra-minted service-role
+// serviceTokenSub is the synthetic subject used for inz-minted service-role
 // tokens. The request middleware downgrades tokens with an empty `sub` claim
 // to the anon role (see internal/adapter/http/middleware.go), which would
 // silently defeat escalation, so a stable non-empty UUID is always emitted.
