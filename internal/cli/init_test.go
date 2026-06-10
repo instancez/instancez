@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/saedx1/ultrabase/internal/cloud"
-	"github.com/saedx1/ultrabase/internal/config"
+	"github.com/saedx1/instancez/internal/cloud"
+	"github.com/saedx1/instancez/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

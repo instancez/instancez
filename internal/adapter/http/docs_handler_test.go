@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/saedx1/ultrabase/internal/domain"
+	"github.com/saedx1/instancez/internal/domain"
 )
 
 // handleDocs must reference openapi.json with a path *relative* to the docs

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/saedx1/ultrabase/internal/app"
-	"github.com/saedx1/ultrabase/internal/domain"
-	"github.com/saedx1/ultrabase/internal/testutil/dbboot"
+	"github.com/saedx1/instancez/internal/app"
+	"github.com/saedx1/instancez/internal/domain"
+	"github.com/saedx1/instancez/internal/testutil/dbboot"
 )
 
 // TestRequestPool_SetLocalRole verifies that the request-pool Begin issues

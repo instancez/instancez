@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/saedx1/ultrabase/internal/adapter/funcs"
-	"github.com/saedx1/ultrabase/internal/domain"
+	"github.com/saedx1/instancez/internal/adapter/funcs"
+	"github.com/saedx1/instancez/internal/domain"
 )
 
 // writeFn writes a function source file into dir and returns nothing; it fails

@@ -21,12 +21,12 @@ import (
 	pgcontainer "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/saedx1/ultrabase/internal/adapter/funcs"
-	ultrahttp "github.com/saedx1/ultrabase/internal/adapter/http"
-	"github.com/saedx1/ultrabase/internal/app"
-	"github.com/saedx1/ultrabase/internal/cli"
-	"github.com/saedx1/ultrabase/internal/domain"
-	"github.com/saedx1/ultrabase/internal/testutil/dbboot"
+	"github.com/saedx1/instancez/internal/adapter/funcs"
+	instancezhttp "github.com/saedx1/instancez/internal/adapter/http"
+	"github.com/saedx1/instancez/internal/app"
+	"github.com/saedx1/instancez/internal/cli"
+	"github.com/saedx1/instancez/internal/domain"
+	"github.com/saedx1/instancez/internal/testutil/dbboot"
 )
 
 // TestServeConsumesBundleEndToEnd proves the serve consumption path: a built
@@ -146,7 +146,7 @@ func TestServeConsumesBundleEndToEnd(t *testing.T) {
 		t.Fatalf("local storage: %v", err)
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	srv := ultrahttp.NewServer(ultrahttp.ServerDeps{
+	srv := instancezhttp.NewServer(instancezhttp.ServerDeps{
 		Config:          cfg,
 		DB:              authDB,
 		Logger:          logger,

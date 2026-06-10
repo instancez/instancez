@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/saedx1/ultrabase/internal/adapter/funcs"
-	"github.com/saedx1/ultrabase/internal/domain"
+	"github.com/saedx1/instancez/internal/adapter/funcs"
+	"github.com/saedx1/instancez/internal/domain"
 )
 
 // lockedWriter is a mutex-guarded io.Writer that allows concurrent writes to

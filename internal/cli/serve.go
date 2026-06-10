@@ -7,13 +7,13 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/saedx1/ultrabase/dashboard"
-	"github.com/saedx1/ultrabase/internal/adapter/funcs"
-	ultrahttp "github.com/saedx1/ultrabase/internal/adapter/http"
-	"github.com/saedx1/ultrabase/internal/app"
-	"github.com/saedx1/ultrabase/internal/cli/preflight"
-	"github.com/saedx1/ultrabase/internal/config"
-	"github.com/saedx1/ultrabase/internal/domain"
+	"github.com/saedx1/instancez/dashboard"
+	"github.com/saedx1/instancez/internal/adapter/funcs"
+	instancezhttp "github.com/saedx1/instancez/internal/adapter/http"
+	"github.com/saedx1/instancez/internal/app"
+	"github.com/saedx1/instancez/internal/cli/preflight"
+	"github.com/saedx1/instancez/internal/config"
+	"github.com/saedx1/instancez/internal/domain"
 	"github.com/spf13/cobra"
 )
 
@@ -156,7 +156,7 @@ func runServe(opts serveOptions) error {
 	// below) so the handlers see live engine state once Start has run; before
 	// Start they fall back to nil/cfg.
 	var engine *app.Engine
-	httpServer := ultrahttp.NewServer(ultrahttp.ServerDeps{
+	httpServer := instancezhttp.NewServer(instancezhttp.ServerDeps{
 		Config:          cfg,
 		DB:              authDB,
 		Logger:          logger,

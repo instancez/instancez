@@ -5,7 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/saedx1/ultrabase/internal/domain"
+	"github.com/saedx1/instancez/internal/domain"
 )
 
 var _ domain.FunctionRuntime = (*SwapRuntime)(nil)

@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/saedx1/ultrabase/internal/cloud"
+	"github.com/saedx1/instancez/internal/cloud"
 	"github.com/spf13/cobra"
 )
 

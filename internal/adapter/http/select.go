@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/saedx1/ultrabase/internal/domain"
+	"github.com/saedx1/instancez/internal/domain"
 )
 
 // identRe matches a safe SQL identifier (alias or cast type). Casts are

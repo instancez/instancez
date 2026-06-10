@@ -11,8 +11,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/saedx1/ultrabase/internal/adapter/funcs"
-	"github.com/saedx1/ultrabase/internal/domain"
+	"github.com/saedx1/instancez/internal/adapter/funcs"
+	"github.com/saedx1/instancez/internal/domain"
 )
 
 // bearerToken extracts the raw token from an "Authorization: Bearer <token>"

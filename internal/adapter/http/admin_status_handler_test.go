@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/saedx1/ultrabase/internal/app"
+	"github.com/saedx1/instancez/internal/app"
 )
 
 func TestConfigStatusOK(t *testing.T) {

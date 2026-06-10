@@ -19,8 +19,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/saedx1/ultrabase/internal/app"
-	"github.com/saedx1/ultrabase/internal/domain"
+	"github.com/saedx1/instancez/internal/app"
+	"github.com/saedx1/instancez/internal/domain"
 	"golang.org/x/crypto/bcrypt"
 )
 

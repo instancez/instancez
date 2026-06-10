@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/saedx1/ultrabase/internal/config"
+	"github.com/saedx1/instancez/internal/config"
 )
 
 func TestLoadUltraEnvPrecedenceAndScope(t *testing.T) {

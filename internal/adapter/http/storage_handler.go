@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/saedx1/ultrabase/internal/app"
-	"github.com/saedx1/ultrabase/internal/domain"
+	"github.com/saedx1/instancez/internal/app"
+	"github.com/saedx1/instancez/internal/domain"
 )
 
 // StorageHandler serves serverless-friendly storage endpoints that return

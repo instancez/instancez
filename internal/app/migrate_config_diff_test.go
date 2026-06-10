@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/saedx1/ultrabase/internal/domain"
+	"github.com/saedx1/instancez/internal/domain"
 )
 
 func TestDiffConfigs_NilOld(t *testing.T) {

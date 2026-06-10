@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/saedx1/ultrabase/internal/domain"
+	"github.com/saedx1/instancez/internal/domain"
 )
 
 // LocalStore implements domain.ObjectStore using the local filesystem.

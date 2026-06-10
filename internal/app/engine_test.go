@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/saedx1/ultrabase/internal/config"
-	"github.com/saedx1/ultrabase/internal/domain"
+	"github.com/saedx1/instancez/internal/config"
+	"github.com/saedx1/instancez/internal/domain"
 	"golang.org/x/crypto/bcrypt"
 )
 

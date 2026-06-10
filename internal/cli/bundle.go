@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/saedx1/ultrabase/internal/adapter/s3"
-	"github.com/saedx1/ultrabase/internal/config"
-	"github.com/saedx1/ultrabase/internal/domain"
+	"github.com/saedx1/instancez/internal/adapter/s3"
+	"github.com/saedx1/instancez/internal/config"
+	"github.com/saedx1/instancez/internal/domain"
 )
 
 // bundleManifest is written to the tar root as manifest.json. `serve` (Task 12)

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/saedx1/ultrabase/internal/domain"
+	"github.com/saedx1/instancez/internal/domain"
 )
 
 // identRE enforces safe SQL identifiers for all user-defined names (tables,

@@ -4,7 +4,7 @@
 // ultrabase module never import internal types.
 package configvalidate
 
-import "github.com/saedx1/ultrabase/internal/config"
+import "github.com/saedx1/instancez/internal/config"
 
 // Problem is a single validation finding.
 type Problem struct {

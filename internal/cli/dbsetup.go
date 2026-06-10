@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/saedx1/ultrabase/internal/adapter/postgres"
-	"github.com/saedx1/ultrabase/internal/domain"
+	"github.com/saedx1/instancez/internal/adapter/postgres"
+	"github.com/saedx1/instancez/internal/domain"
 	"golang.org/x/sync/errgroup"
 )
 

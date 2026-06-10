@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/saedx1/ultrabase/internal/domain"
+	"github.com/saedx1/instancez/internal/domain"
 )
 
 // Migrator generates and applies DDL migrations from config.

@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/saedx1/ultrabase/internal/adapter/postgres"
-	"github.com/saedx1/ultrabase/internal/app"
-	"github.com/saedx1/ultrabase/internal/domain"
-	"github.com/saedx1/ultrabase/internal/testutil/dbboot"
+	"github.com/saedx1/instancez/internal/adapter/postgres"
+	"github.com/saedx1/instancez/internal/app"
+	"github.com/saedx1/instancez/internal/domain"
+	"github.com/saedx1/instancez/internal/testutil/dbboot"
 )
 
 func startPostgres(t *testing.T) *postgres.DB {

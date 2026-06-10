@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/saedx1/ultrabase/internal/cli/preflight"
+	"github.com/saedx1/instancez/internal/cli/preflight"
 )
 
 // ---------------------------------------------------------------------------

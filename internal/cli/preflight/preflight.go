@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/saedx1/ultrabase/internal/config"
-	"github.com/saedx1/ultrabase/internal/domain"
+	"github.com/saedx1/instancez/internal/config"
+	"github.com/saedx1/instancez/internal/domain"
 )
 
 // DSN env-var names used by dbConnections.  Exported so tests can reference

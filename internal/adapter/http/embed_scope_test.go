@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/saedx1/ultrabase/internal/domain"
+	"github.com/saedx1/instancez/internal/domain"
 )
 
 // postsAuthorTables builds a two-table fixture where `posts` has a

@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/saedx1/ultrabase/internal/config"
-	"github.com/saedx1/ultrabase/internal/domain"
+	"github.com/saedx1/instancez/internal/config"
+	"github.com/saedx1/instancez/internal/domain"
 )
 
 // ConfigWatcher watches ultrabase.yaml for changes and triggers re-migration.

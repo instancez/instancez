@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	pgadapter "github.com/saedx1/ultrabase/internal/adapter/postgres"
-	"github.com/saedx1/ultrabase/internal/app"
-	"github.com/saedx1/ultrabase/internal/config"
-	"github.com/saedx1/ultrabase/internal/testutil/dbboot"
+	pgadapter "github.com/saedx1/instancez/internal/adapter/postgres"
+	"github.com/saedx1/instancez/internal/app"
+	"github.com/saedx1/instancez/internal/config"
+	"github.com/saedx1/instancez/internal/testutil/dbboot"
 )
 
 // startExamplesPostgres spins up a postgres:15-alpine container (image cached locally).

@@ -9,7 +9,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/saedx1/ultrabase/internal/domain"
+	"github.com/saedx1/instancez/internal/domain"
 )
 
 const apiURL = "https://api.sendgrid.com/v3/mail/send"

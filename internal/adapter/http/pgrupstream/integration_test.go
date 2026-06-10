@@ -16,10 +16,10 @@ import (
 	"testing"
 	"time"
 
-	ultrahttp "github.com/saedx1/ultrabase/internal/adapter/http"
-	"github.com/saedx1/ultrabase/internal/adapter/postgres"
-	"github.com/saedx1/ultrabase/internal/domain"
-	"github.com/saedx1/ultrabase/internal/testutil/dbboot"
+	instancezhttp "github.com/saedx1/instancez/internal/adapter/http"
+	"github.com/saedx1/instancez/internal/adapter/postgres"
+	"github.com/saedx1/instancez/internal/domain"
+	"github.com/saedx1/instancez/internal/testutil/dbboot"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -237,7 +237,7 @@ func TestMain(m *testing.M) {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	server := ultrahttp.NewServer(ultrahttp.ServerDeps{
+	server := instancezhttp.NewServer(instancezhttp.ServerDeps{
 		Config:  buildConfig(),
 		DB:      authDB,
 		Logger:  logger,

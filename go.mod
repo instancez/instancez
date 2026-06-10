@@ -1,4 +1,4 @@
-module github.com/saedx1/ultrabase
+module github.com/saedx1/instancez
 
 go 1.25.0
 

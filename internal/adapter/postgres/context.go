@@ -3,7 +3,7 @@ package postgres
 import (
 	"context"
 
-	"github.com/saedx1/ultrabase/internal/domain"
+	"github.com/saedx1/instancez/internal/domain"
 )
 
 type contextKey int

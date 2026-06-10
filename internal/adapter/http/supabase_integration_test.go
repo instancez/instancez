@@ -25,11 +25,11 @@ import (
 	pgcontainer "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	ultrahttp "github.com/saedx1/ultrabase/internal/adapter/http"
-	"github.com/saedx1/ultrabase/internal/app"
-	"github.com/saedx1/ultrabase/internal/cli"
-	"github.com/saedx1/ultrabase/internal/domain"
-	"github.com/saedx1/ultrabase/internal/testutil/dbboot"
+	instancezhttp "github.com/saedx1/instancez/internal/adapter/http"
+	"github.com/saedx1/instancez/internal/app"
+	"github.com/saedx1/instancez/internal/cli"
+	"github.com/saedx1/instancez/internal/domain"
+	"github.com/saedx1/instancez/internal/testutil/dbboot"
 )
 
 // TestSupabaseJSCompat boots a real Postgres in a container, runs migrations,
@@ -271,7 +271,7 @@ func TestSupabaseJSCompat(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	capturedEmail := &captureEmailSender{}
-	srv := ultrahttp.NewServer(ultrahttp.ServerDeps{
+	srv := instancezhttp.NewServer(instancezhttp.ServerDeps{
 		Config:  cfg,
 		DB:      authDB,
 		Logger:  logger,

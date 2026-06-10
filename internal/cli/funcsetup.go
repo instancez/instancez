@@ -9,10 +9,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/saedx1/ultrabase/internal/adapter/funcs"
-	"github.com/saedx1/ultrabase/internal/app"
-	"github.com/saedx1/ultrabase/internal/config"
-	"github.com/saedx1/ultrabase/internal/domain"
+	"github.com/saedx1/instancez/internal/adapter/funcs"
+	"github.com/saedx1/instancez/internal/app"
+	"github.com/saedx1/instancez/internal/config"
+	"github.com/saedx1/instancez/internal/domain"
 )
 
 // anonTokenTTL is the lifetime of the boot-minted anon "apikey" forwarded to
