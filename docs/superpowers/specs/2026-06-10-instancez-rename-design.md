@@ -38,7 +38,6 @@ Branding (logo + color scheme) is adopted from the sibling project
 | `ULTRA_ENV_*` passthrough prefix | `INSTANCEZ_ENV_*` |
 | `_ultrabase_migrations` table | `_instancez_migrations` |
 | `ultrabase_owner` Postgres role | `instancez_owner` |
-| `ultrabase.` GUC prefix (session settings) | `instancez.` |
 | `~/.ultra/credentials` | `~/.instancez/credentials` |
 | `ultrabase-dashboard` (npm package name) | `instancez-dashboard` |
 | `ultrahttp` import alias | `instancezhttp` |
@@ -62,8 +61,9 @@ promise (`TestSupabaseJSCompat`):
   `INSTANCEZ_AUTH_DATABASE_URL` NOINHERIT authenticator) — names change,
   semantics do not.
 - `auth` / `storage` reserved schemas and `auth.uid()` /
-  `auth.is_authenticated()` function names (they read the renamed
-  `instancez.` GUCs internally).
+  `auth.is_authenticated()` function names. (Correction during planning:
+  the session GUCs these read are `app.*` — e.g. `app.user_id`, `app.role` —
+  not `ultrabase.*`, so no GUC rename is needed.)
 
 ## Branding (dashboard)
 
@@ -117,8 +117,8 @@ its relevant tests before the next begins:
 2. Env vars, config file default (`instancez.yaml`), CLI binary
    (`cmd/inz`), file renames (`ultraenv.go` → `instancezenv.go`),
    credentials path, CLI help text / command strings.
-3. DB-persisted identifiers (`_instancez_migrations`, `instancez_owner`,
-   `instancez.` GUCs) + `internal/testutil/dbboot`.
+3. DB-persisted identifiers (`_instancez_migrations`, `instancez_owner`)
+   + `internal/testutil/dbboot`.
 4. Dashboard branding: logo, favicon, title, theme tokens, npm package name.
 5. Infra: `.github/workflows/*`, `Dockerfile`, `Dockerfile.lambda`,
    `docker-compose.dev.yaml`, `Makefile`, `test/integration/supabase-js`
