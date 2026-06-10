@@ -16,6 +16,7 @@ import { SaveBar } from "../components/SaveBar";
 import { CodeEditor } from "../components/CodeEditor";
 import { TagInput } from "../components/TagInput";
 import { Toggle } from "../components/Toggle";
+import { Checkbox } from "../components/Checkbox";
 import { DiffViewer } from "../components/DiffViewer";
 import { getConfigDiff } from "../api/client";
 import { POSTGRES_TYPES, SQL_DEFAULTS, RLS_OPERATIONS, SEARCH_CONFIGS } from "../lib/utils";
@@ -341,27 +342,22 @@ export function TableDetail() {
                         <label className="block text-xs font-medium text-muted-foreground mb-2">Operations</label>
                         <div className="flex gap-2">
                           {RLS_OPERATIONS.map((op) => (
-                            <label
+                            <Checkbox
                               key={op}
-                              className="flex items-center gap-1.5 text-xs text-foreground cursor-pointer"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={(policy.operations || []).includes(op)}
-                                onChange={(e) =>
-                                  updateTable((t) => {
-                                    const rls = [...(t.rls || [])];
-                                    const ops = e.target.checked
-                                      ? [...(rls[i]!.operations || []), op]
-                                      : (rls[i]!.operations || []).filter((o) => o !== op);
-                                    rls[i] = { ...rls[i]!, operations: ops };
-                                    return { ...t, rls };
-                                  })
-                                }
-                                className="rounded border-border"
-                              />
-                              {op}
-                            </label>
+                              className="text-xs"
+                              label={op}
+                              checked={(policy.operations || []).includes(op)}
+                              onChange={(c) =>
+                                updateTable((t) => {
+                                  const rls = [...(t.rls || [])];
+                                  const ops = c
+                                    ? [...(rls[i]!.operations || []), op]
+                                    : (rls[i]!.operations || []).filter((o) => o !== op);
+                                  rls[i] = { ...rls[i]!, operations: ops };
+                                  return { ...t, rls };
+                                })
+                              }
+                            />
                           ))}
                         </div>
                       </div>
@@ -457,25 +453,20 @@ export function TableDetail() {
                   {fieldEntries
                     .filter(([_, f]) => f.type === "text" || f.type?.startsWith("varchar"))
                     .map(([fieldName]) => (
-                      <label
+                      <Checkbox
                         key={fieldName}
-                        className="flex items-center gap-2 text-sm text-foreground cursor-pointer"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={(table.searchable || []).includes(fieldName)}
-                          onChange={(e) =>
-                            updateTable((t) => ({
-                              ...t,
-                              searchable: e.target.checked
-                                ? [...(t.searchable || []), fieldName]
-                                : (t.searchable || []).filter((s) => s !== fieldName),
-                            }))
-                          }
-                          className="rounded border-border"
-                        />
-                        <span className="font-mono">{fieldName}</span>
-                      </label>
+                        className="text-sm"
+                        label={<span className="font-mono">{fieldName}</span>}
+                        checked={(table.searchable || []).includes(fieldName)}
+                        onChange={(c) =>
+                          updateTable((t) => ({
+                            ...t,
+                            searchable: c
+                              ? [...(t.searchable || []), fieldName]
+                              : (t.searchable || []).filter((s) => s !== fieldName),
+                          }))
+                        }
+                      />
                     ))}
                 </div>
               </div>

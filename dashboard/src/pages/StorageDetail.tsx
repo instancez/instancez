@@ -8,6 +8,7 @@ import { SaveBar } from "../components/SaveBar";
 import { TagInput } from "../components/TagInput";
 import { CodeEditor } from "../components/CodeEditor";
 import { Toggle } from "../components/Toggle";
+import { Checkbox } from "../components/Checkbox";
 import { RLS_OPERATIONS } from "../lib/utils";
 import type { Bucket } from "../lib/types";
 
@@ -161,27 +162,22 @@ export function StorageDetail() {
                     </div>
                     <div className="flex gap-2">
                       {RLS_OPERATIONS.map((op) => (
-                        <label
+                        <Checkbox
                           key={op}
-                          className="flex items-center gap-1.5 text-xs text-foreground cursor-pointer"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={(policy.operations || []).includes(op)}
-                            onChange={(e) =>
-                              updateBucket((b) => {
-                                const rls = [...(b.rls || [])];
-                                const ops = e.target.checked
-                                  ? [...(rls[i]!.operations || []), op]
-                                  : (rls[i]!.operations || []).filter((o) => o !== op);
-                                rls[i] = { ...rls[i]!, operations: ops };
-                                return { ...b, rls };
-                              })
-                            }
-                            className="rounded border-border"
-                          />
-                          {op}
-                        </label>
+                          className="text-xs"
+                          label={op}
+                          checked={(policy.operations || []).includes(op)}
+                          onChange={(c) =>
+                            updateBucket((b) => {
+                              const rls = [...(b.rls || [])];
+                              const ops = c
+                                ? [...(rls[i]!.operations || []), op]
+                                : (rls[i]!.operations || []).filter((o) => o !== op);
+                              rls[i] = { ...rls[i]!, operations: ops };
+                              return { ...b, rls };
+                            })
+                          }
+                        />
                       ))}
                     </div>
                   </div>
