@@ -30,7 +30,7 @@ export function Login({ onSuccess }: LoginProps) {
   }
 
   return (
-    <div className="min-h-dvh bg-background flex items-center justify-center px-4">
+    <div className="min-h-dvh bg-background sheen-canvas flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="flex flex-col items-center mb-8">

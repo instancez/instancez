@@ -51,7 +51,7 @@ export function Layout() {
 
   return (
     <ConfigContext.Provider value={configState}>
-      <div className="h-dvh bg-background flex flex-col overflow-hidden">
+      <div className="h-dvh bg-background sheen-canvas flex flex-col overflow-hidden">
         {/* Banners sit at the top of the shell so they push the sidebar AND
             content down, rather than being overlapped by a fixed sidebar. */}
         <StatusBanners />

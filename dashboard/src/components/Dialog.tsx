@@ -158,10 +158,10 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
           }`}
         >
           <div
-            className={`relative w-full max-w-[420px] mx-4 overflow-hidden rounded-2xl border shadow-2xl shadow-black/30 transition-all duration-200 ease-out ${
+            className={`relative w-full max-w-[420px] mx-4 overflow-hidden rounded-2xl border sheen shadow-2xl shadow-black/50 transition-all duration-200 ease-out ${
               dialog.type === "confirm" && dialog.destructive
-                ? "border-destructive/30 bg-background"
-                : "border-border bg-background"
+                ? "border-destructive/30 bg-surface"
+                : "border-border bg-surface"
             } ${
               visible
                 ? "opacity-100 scale-100 translate-y-0"

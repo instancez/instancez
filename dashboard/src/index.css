@@ -44,6 +44,27 @@ body {
   font-family: var(--font-sans);
 }
 
+/* Faint top-down sheen layered over a token background color. The gradient is
+   a background-image, so it stacks with (and lets through) bg-* utilities,
+   including hover color changes. */
+.sheen {
+  background-image: linear-gradient(
+    to bottom,
+    rgb(255 255 255 / 0.035),
+    transparent 45%
+  );
+}
+
+/* Overhead light for full-page shells: a wide, very soft white radial at the
+   top edge so the near-black canvas reads as lit glass, not a void. */
+.sheen-canvas {
+  background-image: radial-gradient(
+    90% 50% at 50% -10%,
+    rgb(255 255 255 / 0.05),
+    transparent 70%
+  );
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 6px;
@@ -55,7 +76,7 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-muted);
+  background: var(--color-secondary);
   border-radius: 3px;
 }
 

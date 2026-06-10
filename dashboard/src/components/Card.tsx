@@ -17,7 +17,7 @@ export function Card({
     <div
       onClick={onClick}
       className={cn(
-        "rounded-xl border border-border bg-surface p-5",
+        "rounded-xl border border-border bg-surface sheen shadow-gloss p-5",
         hoverable &&
           "hover:bg-surface-hover hover:border-border-hover transition-colors cursor-pointer",
         onClick && "cursor-pointer",
