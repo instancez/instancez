@@ -6,10 +6,10 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/saedx1/instancez/internal/adapter/resend"
-	"github.com/saedx1/instancez/internal/adapter/s3"
-	"github.com/saedx1/instancez/internal/adapter/sendgrid"
-	"github.com/saedx1/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/adapter/resend"
+	"github.com/instancez/instancez/internal/adapter/s3"
+	"github.com/instancez/instancez/internal/adapter/sendgrid"
+	"github.com/instancez/instancez/internal/domain"
 )
 
 // initEmailProvider creates the email sender based on provider config.

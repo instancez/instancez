@@ -1,4 +1,4 @@
-module github.com/saedx1/instancez
+module github.com/instancez/instancez
 
 go 1.25.0
 

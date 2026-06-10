@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/saedx1/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/domain"
 )
 
 func TestGenerateTable_Basic(t *testing.T) {

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/saedx1/instancez/internal/adapter/funcs"
-	"github.com/saedx1/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/adapter/funcs"
+	"github.com/instancez/instancez/internal/domain"
 )
 
 func TestInvokeRequestFidelity(t *testing.T) {

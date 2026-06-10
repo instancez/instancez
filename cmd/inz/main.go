@@ -1,6 +1,6 @@
 package main
 
-import "github.com/saedx1/instancez/internal/cli"
+import "github.com/instancez/instancez/internal/cli"
 
 func main() {
 	cli.Execute()

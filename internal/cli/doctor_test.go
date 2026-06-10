@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/saedx1/instancez/internal/cli/preflight"
+	"github.com/instancez/instancez/internal/cli/preflight"
 )
 
 // TestDoctorRunnerAllFailing verifies that doctorChecks-equivalent logic

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/saedx1/instancez/internal/csvutil"
-	"github.com/saedx1/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/csvutil"
+	"github.com/instancez/instancez/internal/domain"
 )
 
 func contentTypeIsCSV(ct string) bool {

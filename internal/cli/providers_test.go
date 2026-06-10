@@ -3,7 +3,7 @@ package cli
 import (
 	"testing"
 
-	"github.com/saedx1/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/domain"
 )
 
 func TestInitEmailProvider_Nil(t *testing.T) {

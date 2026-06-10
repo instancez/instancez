@@ -16,10 +16,10 @@ import (
 	"testing"
 	"time"
 
-	instancezhttp "github.com/saedx1/instancez/internal/adapter/http"
-	"github.com/saedx1/instancez/internal/adapter/postgres"
-	"github.com/saedx1/instancez/internal/domain"
-	"github.com/saedx1/instancez/internal/testutil/dbboot"
+	instancezhttp "github.com/instancez/instancez/internal/adapter/http"
+	"github.com/instancez/instancez/internal/adapter/postgres"
+	"github.com/instancez/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/testutil/dbboot"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 

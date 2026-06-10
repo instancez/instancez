@@ -25,7 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/saedx1/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/domain"
 )
 
 // Typed errors the HTTP handler maps to status codes:

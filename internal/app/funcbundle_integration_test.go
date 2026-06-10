@@ -21,12 +21,12 @@ import (
 	pgcontainer "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/saedx1/instancez/internal/adapter/funcs"
-	instancezhttp "github.com/saedx1/instancez/internal/adapter/http"
-	"github.com/saedx1/instancez/internal/app"
-	"github.com/saedx1/instancez/internal/cli"
-	"github.com/saedx1/instancez/internal/domain"
-	"github.com/saedx1/instancez/internal/testutil/dbboot"
+	"github.com/instancez/instancez/internal/adapter/funcs"
+	instancezhttp "github.com/instancez/instancez/internal/adapter/http"
+	"github.com/instancez/instancez/internal/app"
+	"github.com/instancez/instancez/internal/cli"
+	"github.com/instancez/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/testutil/dbboot"
 )
 
 // TestServeConsumesBundleEndToEnd proves the serve consumption path: a built

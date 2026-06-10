@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/saedx1/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/domain"
 )
 
 func TestSwapRuntimeNilBehavesEmpty(t *testing.T) {

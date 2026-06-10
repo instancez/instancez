@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/saedx1/instancez/internal/adapter/funcs"
-	"github.com/saedx1/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/adapter/funcs"
+	"github.com/instancez/instancez/internal/domain"
 )
 
 // TestSupabaseJSImportResolvesUnderRealLayout is the regression test for the

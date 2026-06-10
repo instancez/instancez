@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/saedx1/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/domain"
 )
 
 func TestEnsureBucket_IsNoOp(t *testing.T) {

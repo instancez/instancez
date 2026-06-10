@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/saedx1/instancez/internal/testutil/dbboot"
+	"github.com/instancez/instancez/internal/testutil/dbboot"
 )
 
 // TestEnsureRolesBootstrapsFromSuperuser drives the full dev bootstrap path:

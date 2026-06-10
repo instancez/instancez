@@ -80,7 +80,7 @@ export function Sidebar() {
       {/* Footer */}
       <div className="px-3 py-4 border-t border-border mt-auto">
         <a
-          href="https://github.com/saedx1/instancez"
+          href="https://github.com/instancez/instancez"
           target="_blank"
           rel="noopener noreferrer"
           className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"

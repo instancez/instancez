@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/saedx1/instancez/internal/config"
-	"github.com/saedx1/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/config"
+	"github.com/instancez/instancez/internal/domain"
 )
 
 // stubSource is a fake config.Source for admin handler tests. Read returns

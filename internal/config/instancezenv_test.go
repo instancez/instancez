@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/saedx1/instancez/internal/config"
+	"github.com/instancez/instancez/internal/config"
 )
 
 func TestLoadInstancezEnvPrecedenceAndScope(t *testing.T) {

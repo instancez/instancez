@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/saedx1/instancez/internal/cloud"
+	"github.com/instancez/instancez/internal/cloud"
 	"github.com/stretchr/testify/assert"
 )
 

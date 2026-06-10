@@ -9,8 +9,8 @@ import (
 	pgcontainer "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/saedx1/instancez/internal/adapter/postgres"
-	"github.com/saedx1/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/adapter/postgres"
+	"github.com/instancez/instancez/internal/domain"
 )
 
 // StartContainer launches a postgres testcontainer, bootstraps the owner +

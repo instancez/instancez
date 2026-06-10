@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/saedx1/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/domain"
 )
 
 // GenerateOpenAPI builds an OpenAPI 3.0 spec from the config.

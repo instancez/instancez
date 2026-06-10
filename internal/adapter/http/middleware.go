@@ -20,8 +20,8 @@ import (
 	"github.com/didip/tollbooth/v7/limiter"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/saedx1/instancez/internal/app"
-	"github.com/saedx1/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/app"
+	"github.com/instancez/instancez/internal/domain"
 )
 
 const (

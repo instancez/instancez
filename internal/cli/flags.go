@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	instancezhttp "github.com/saedx1/instancez/internal/adapter/http"
+	instancezhttp "github.com/instancez/instancez/internal/adapter/http"
 	"github.com/spf13/pflag"
 )
 

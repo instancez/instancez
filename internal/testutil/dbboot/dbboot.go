@@ -11,8 +11,8 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/saedx1/instancez/internal/adapter/postgres"
-	"github.com/saedx1/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/adapter/postgres"
+	"github.com/instancez/instancez/internal/domain"
 )
 
 // OwnerRole is the login role used for migrations/seeding/replication.

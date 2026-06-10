@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/saedx1/instancez/internal/config"
-	"github.com/saedx1/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/config"
+	"github.com/instancez/instancez/internal/domain"
 )
 
 // ConfigWatcher watches instancez.yaml for changes and triggers re-migration.

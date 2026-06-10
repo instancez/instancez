@@ -13,9 +13,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/saedx1/instancez/internal/config"
-	"github.com/saedx1/instancez/internal/csvutil"
-	"github.com/saedx1/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/config"
+	"github.com/instancez/instancez/internal/csvutil"
+	"github.com/instancez/instancez/internal/domain"
 	"golang.org/x/crypto/bcrypt"
 )
 

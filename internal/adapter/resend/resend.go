@@ -9,7 +9,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/saedx1/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/domain"
 )
 
 const apiURL = "https://api.resend.com/emails"

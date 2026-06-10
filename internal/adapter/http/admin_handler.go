@@ -7,9 +7,9 @@ import (
 	"log/slog"
 
 	"github.com/gin-gonic/gin"
-	"github.com/saedx1/instancez/internal/app"
-	"github.com/saedx1/instancez/internal/config"
-	"github.com/saedx1/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/app"
+	"github.com/instancez/instancez/internal/config"
+	"github.com/instancez/instancez/internal/domain"
 	"gopkg.in/yaml.v3"
 )
 

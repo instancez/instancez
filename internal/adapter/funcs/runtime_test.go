@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/saedx1/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/domain"
 )
 
 // TestAsInstancezEnvRef exercises the ref-detection helper at the unit level.

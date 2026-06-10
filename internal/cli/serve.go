@@ -7,13 +7,13 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/saedx1/instancez/dashboard"
-	"github.com/saedx1/instancez/internal/adapter/funcs"
-	instancezhttp "github.com/saedx1/instancez/internal/adapter/http"
-	"github.com/saedx1/instancez/internal/app"
-	"github.com/saedx1/instancez/internal/cli/preflight"
-	"github.com/saedx1/instancez/internal/config"
-	"github.com/saedx1/instancez/internal/domain"
+	"github.com/instancez/instancez/dashboard"
+	"github.com/instancez/instancez/internal/adapter/funcs"
+	instancezhttp "github.com/instancez/instancez/internal/adapter/http"
+	"github.com/instancez/instancez/internal/app"
+	"github.com/instancez/instancez/internal/cli/preflight"
+	"github.com/instancez/instancez/internal/config"
+	"github.com/instancez/instancez/internal/domain"
 	"github.com/spf13/cobra"
 )
 

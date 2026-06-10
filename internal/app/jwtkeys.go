@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/saedx1/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/domain"
 )
 
 // JWTKey is a signing key used to sign and verify JWTs.

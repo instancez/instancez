@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/saedx1/instancez/internal/adapter/s3"
+	"github.com/instancez/instancez/internal/adapter/s3"
 )
 
 // maxBundleEntryBytes caps the size of any single regular file extracted from a

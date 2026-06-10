@@ -16,8 +16,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/saedx1/instancez/internal/app"
-	"github.com/saedx1/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/app"
+	"github.com/instancez/instancez/internal/domain"
 )
 
 // CRUDHandler serves PostgREST-compatible table endpoints.

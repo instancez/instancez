@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/saedx1/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/domain"
 )
 
 // configDiff holds the DDL statements needed to reconcile the old config with

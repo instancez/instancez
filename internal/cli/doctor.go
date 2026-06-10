@@ -3,8 +3,8 @@ package cli
 import (
 	"os"
 
-	"github.com/saedx1/instancez/internal/cli/preflight"
-	"github.com/saedx1/instancez/internal/config"
+	"github.com/instancez/instancez/internal/cli/preflight"
+	"github.com/instancez/instancez/internal/config"
 	"github.com/spf13/cobra"
 )
 

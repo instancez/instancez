@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/saedx1/instancez/internal/adapter/postgres"
-	"github.com/saedx1/instancez/internal/app"
-	"github.com/saedx1/instancez/internal/cloud"
-	"github.com/saedx1/instancez/internal/config"
-	"github.com/saedx1/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/adapter/postgres"
+	"github.com/instancez/instancez/internal/app"
+	"github.com/instancez/instancez/internal/cloud"
+	"github.com/instancez/instancez/internal/config"
+	"github.com/instancez/instancez/internal/domain"
 	"github.com/spf13/cobra"
 )
 

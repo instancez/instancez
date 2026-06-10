@@ -1,26 +1,26 @@
 @import "tailwindcss";
 
 @theme {
-  --color-background: #111111;
-  --color-foreground: #EEEEEE;
-  --color-primary: #1a1a1a;
-  --color-on-primary: #EEEEEE;
-  --color-secondary: #2d2d2d;
+  --color-background: #060606;
+  --color-foreground: #F7F7F7;
+  --color-primary: #0D0D0D;
+  --color-on-primary: #F7F7F7;
+  --color-secondary: #222222;
   --color-accent: #FFFFFF;
-  --color-accent-hover: #E0E0E0;
-  --color-muted: #2d2d2d;
-  --color-muted-foreground: #A0A0A0;
-  --color-border: #333333;
-  --color-border-hover: #555555;
+  --color-accent-hover: #D6D6D6;
+  --color-muted: #1A1A1A;
+  --color-muted-foreground: #9C9C9C;
+  --color-border: #262626;
+  --color-border-hover: #525252;
   --color-destructive: #D84040;
   --color-destructive-hover: #C03636;
   --color-warning: #E0A030;
-  --color-info: #A0A0A0;
-  --color-surface: #1a1a1a;
-  --color-surface-hover: #2d2d2d;
-  --color-ring: #666666;
-  --color-input: #1a1a1a;
-  --color-input-border: #444444;
+  --color-info: #9C9C9C;
+  --color-surface: #0D0D0D;
+  --color-surface-hover: #161616;
+  --color-ring: #999999;
+  --color-input: #0A0A0A;
+  --color-input-border: #383838;
 
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Fira Code", ui-monospace, monospace;
@@ -29,6 +29,11 @@
   --radius-md: 0.5rem;
   --radius-lg: 0.75rem;
   --radius-xl: 1rem;
+
+  /* Glossy surface: hairline top highlight + soft drop shade. Pair with a
+     faint top-down white gradient (see .sheen) for the full effect. */
+  --shadow-gloss: inset 0 1px 0 0 rgb(255 255 255 / 0.06),
+    0 1px 2px 0 rgb(0 0 0 / 0.5);
 }
 
 * {

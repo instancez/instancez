@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/saedx1/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/domain"
 	"gopkg.in/yaml.v3"
 )
 
