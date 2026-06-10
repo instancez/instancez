@@ -18,7 +18,7 @@ Branding (logo + color scheme) is adopted from the sibling project
 - **Binary name:** `inz` (`inz dev`, `inz deploy`, …). `inz` is used for the
   binary **only** — all packages, aliases, file names, env vars, and paths use
   the full `instancez` name.
-- **Go module path:** `github.com/saedx1/instancez` (GitHub repo to be renamed
+- **Go module path:** `github.com/instancez/instancez` (GitHub repo to be renamed
   to match at release; manual step).
 - **Env prefixes:** `INSTANCEZ_*` for framework config,
   `INSTANCEZ_ENV_*` for the user-function env passthrough prefix.
@@ -31,7 +31,7 @@ Branding (logo + color scheme) is adopted from the sibling project
 
 | Current | New |
 |---|---|
-| module `github.com/saedx1/ultrabase` | `github.com/saedx1/instancez` |
+| module `github.com/saedx1/ultrabase` | `github.com/instancez/instancez` |
 | binary `ultra`, `cmd/ultra/` | `inz`, `cmd/inz/` |
 | `ultrabase.yaml` (default config path) | `instancez.yaml` |
 | `ULTRABASE_*` env vars (~28) | `INSTANCEZ_*` |
@@ -139,7 +139,9 @@ sequential — imports must change before anything compiles).
   excluded from the grep gate. `README.md` gets a mechanical find-replace
   only (no rewrite).
 - **Manual / external steps (user follow-ups, listed in plan):**
-  - Rename the GitHub repo to `instancez` at release.
+  - Rename the GitHub repo `instancez/ultrabase` → `instancez/instancez` at
+    release (decided during execution: the repo lives in the `instancez` org,
+    so the module path is `github.com/instancez/instancez`).
   - Create/repoint ECR repos `instancez/<env>` (IaC) before the renamed
     `docker.yml` can push.
   - Optionally rename the local checkout dir `~/repos/ultrabase`.
