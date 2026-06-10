@@ -8,7 +8,7 @@ import { SaveBar } from "../components/SaveBar";
 import { Toggle } from "../components/Toggle";
 import type { CodeFunction } from "../lib/types";
 
-// Code-function runtimes ultrabase supports. validateCodeFunctions rejects
+// Code-function runtimes instancez supports. validateCodeFunctions rejects
 // anything else, so this is a closed set rendered as a dropdown.
 const RUNTIMES = ["node"];
 

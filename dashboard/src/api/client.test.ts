@@ -13,7 +13,7 @@ const mockFetch = vi.fn();
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubGlobal("fetch", mockFetch);
-  sessionStorage.setItem("ultrabase_admin_key", "test-key");
+  sessionStorage.setItem("instancez_admin_key", "test-key");
 });
 
 afterEach(() => {
@@ -124,7 +124,7 @@ describe("validateAdminKey", () => {
 
 describe("getConfigStatus", () => {
   beforeEach(() => {
-    sessionStorage.setItem("ultrabase_admin_key", "test-key");
+    sessionStorage.setItem("instancez_admin_key", "test-key");
   });
 
   afterEach(() => {
@@ -177,7 +177,7 @@ describe("error handling", () => {
     );
 
     await expect(getStatus()).rejects.toThrow("Unauthorized");
-    expect(sessionStorage.getItem("ultrabase_admin_key")).toBeNull();
+    expect(sessionStorage.getItem("instancez_admin_key")).toBeNull();
   });
 
   it("throws with error body on non-401 errors", async () => {

@@ -20,7 +20,7 @@ describe("Login", () => {
 
   it("renders login form", () => {
     render(<Login onSuccess={onSuccess} />);
-    expect(screen.getByText("Ultrabase Dashboard")).toBeInTheDocument();
+    expect(screen.getByText("instancez dashboard")).toBeInTheDocument();
     expect(screen.getByLabelText("Admin Key")).toBeInTheDocument();
     expect(screen.getByText("Continue")).toBeInTheDocument();
   });
@@ -77,6 +77,6 @@ describe("Login", () => {
     await userEvent.type(screen.getByLabelText("Admin Key"), "stored-key");
     await userEvent.click(screen.getByRole("button", { name: "Continue" }));
 
-    expect(sessionStorage.getItem("ultrabase_admin_key")).toBe("stored-key");
+    expect(sessionStorage.getItem("instancez_admin_key")).toBe("stored-key");
   });
 });

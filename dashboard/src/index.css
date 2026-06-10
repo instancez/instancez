@@ -1,26 +1,26 @@
 @import "tailwindcss";
 
 @theme {
-  --color-background: #1D1616;
+  --color-background: #111111;
   --color-foreground: #EEEEEE;
-  --color-primary: #161010;
+  --color-primary: #1a1a1a;
   --color-on-primary: #EEEEEE;
-  --color-secondary: #8E1616;
-  --color-accent: #D84040;
-  --color-accent-hover: #C03636;
-  --color-muted: #2A1E1E;
-  --color-muted-foreground: #A89999;
-  --color-border: #3D2828;
-  --color-border-hover: #8E1616;
+  --color-secondary: #2d2d2d;
+  --color-accent: #FFFFFF;
+  --color-accent-hover: #E0E0E0;
+  --color-muted: #2d2d2d;
+  --color-muted-foreground: #A0A0A0;
+  --color-border: #333333;
+  --color-border-hover: #555555;
   --color-destructive: #D84040;
   --color-destructive-hover: #C03636;
   --color-warning: #E0A030;
-  --color-info: #D84040;
-  --color-surface: #161010;
-  --color-surface-hover: #2A1E1E;
-  --color-ring: #D84040;
-  --color-input: #161010;
-  --color-input-border: #8E1616;
+  --color-info: #A0A0A0;
+  --color-surface: #1a1a1a;
+  --color-surface-hover: #2d2d2d;
+  --color-ring: #666666;
+  --color-input: #1a1a1a;
+  --color-input-border: #444444;
 
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Fira Code", ui-monospace, monospace;

@@ -42,7 +42,7 @@ export function SaveBar({ onSave, saving, errors, dirty = true }: SaveBarProps) 
         <button
           onClick={onSave}
           disabled={saving}
-          className="inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-hover transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+          className="inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-accent text-background text-sm font-medium hover:bg-accent-hover transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
         >
           {saving ? (
             <Loader2 size={14} className="animate-spin" />

@@ -29,7 +29,7 @@ export function Checkbox({ checked, onChange, label, className, disabled, ...res
         disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"
       } ${
         checked
-          ? "bg-accent border-accent text-white"
+          ? "bg-accent border-accent text-background"
           : "bg-input border-border hover:border-border-hover"
       }`}
       {...rest}

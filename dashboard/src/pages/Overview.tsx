@@ -59,7 +59,7 @@ export function Overview() {
   return (
     <div className="pb-8">
       <PageHeader
-        title={config.project.name || "Ultrabase Project"}
+        title={config.project.name || "instancez project"}
         description={config.project.description || "Project overview and health"}
         actions={
           <div className="flex items-center gap-2">

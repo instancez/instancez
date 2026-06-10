@@ -9,7 +9,7 @@ import type {
 const BASE = "/api/_admin";
 
 function getAdminKey(): string {
-  return sessionStorage.getItem("ultrabase_admin_key") || "";
+  return sessionStorage.getItem("instancez_admin_key") || "";
 }
 
 async function request<T>(
@@ -29,7 +29,7 @@ async function request<T>(
   });
 
   if (res.status === 401) {
-    sessionStorage.removeItem("ultrabase_admin_key");
+    sessionStorage.removeItem("instancez_admin_key");
     window.location.reload();
     throw new Error("Unauthorized");
   }

@@ -211,7 +211,7 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
                   <button
                     onClick={handleConfirm}
                     disabled={!inputValue.trim()}
-                    className="px-5 py-2 rounded-lg text-sm font-medium bg-accent text-white hover:bg-accent-hover transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="px-5 py-2 rounded-lg text-sm font-medium bg-accent text-background hover:bg-accent-hover transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     Create
                   </button>
@@ -255,7 +255,7 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
                   <button
                     onClick={handleConfirm}
                     disabled={!selectValue}
-                    className="px-5 py-2 rounded-lg text-sm font-medium bg-accent text-white hover:bg-accent-hover transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="px-5 py-2 rounded-lg text-sm font-medium bg-accent text-background hover:bg-accent-hover transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     Select
                   </button>
@@ -357,7 +357,7 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
                   )}
                   <button
                     onClick={handleConfirm}
-                    className="px-5 py-2 rounded-lg text-sm font-medium bg-accent text-white hover:bg-accent-hover transition-all cursor-pointer"
+                    className="px-5 py-2 rounded-lg text-sm font-medium bg-accent text-background hover:bg-accent-hover transition-all cursor-pointer"
                   >
                     {dialog.type === "alert"
                       ? "OK"

@@ -21,7 +21,7 @@ export function Login({ onSuccess }: LoginProps) {
 
     const valid = await validateAdminKey(key.trim());
     if (valid) {
-      sessionStorage.setItem("ultrabase_admin_key", key.trim());
+      sessionStorage.setItem("instancez_admin_key", key.trim());
       onSuccess();
     } else {
       setError("Invalid admin key. Check INSTANCEZ_ADMIN_KEY.");
@@ -36,7 +36,7 @@ export function Login({ onSuccess }: LoginProps) {
         <div className="flex flex-col items-center mb-8">
           <Logo size={48} className="mb-4" />
           <h1 className="text-lg font-semibold text-foreground">
-            Ultrabase Dashboard
+            instancez dashboard
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Enter your admin key to continue
@@ -78,7 +78,7 @@ export function Login({ onSuccess }: LoginProps) {
           <button
             type="submit"
             disabled={loading || !key.trim()}
-            className="w-full py-2.5 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-hover transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            className="w-full py-2.5 rounded-lg bg-accent text-background text-sm font-medium hover:bg-accent-hover transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             {loading && <Loader2 size={14} className="animate-spin" />}
             {loading ? "Verifying..." : "Continue"}

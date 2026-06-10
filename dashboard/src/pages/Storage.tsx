@@ -47,7 +47,7 @@ export function Storage() {
         actions={
           <button
             onClick={addBucket}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-hover transition-colors cursor-pointer"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-accent text-background text-sm font-medium hover:bg-accent-hover transition-colors cursor-pointer"
           >
             <Plus size={14} />
             Add Bucket
@@ -64,7 +64,7 @@ export function Storage() {
             action={
               <button
                 onClick={addBucket}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-hover transition-colors cursor-pointer"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-accent text-background text-sm font-medium hover:bg-accent-hover transition-colors cursor-pointer"
               >
                 <Plus size={14} />
                 Add Bucket

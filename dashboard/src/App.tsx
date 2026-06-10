@@ -28,12 +28,12 @@ function PageLoader() {
 
 export function App() {
   const [hasKey, setHasKey] = useState(
-    () => !!sessionStorage.getItem("ultrabase_admin_key")
+    () => !!sessionStorage.getItem("instancez_admin_key")
   );
 
   useEffect(() => {
     const handler = () => {
-      setHasKey(!!sessionStorage.getItem("ultrabase_admin_key"));
+      setHasKey(!!sessionStorage.getItem("instancez_admin_key"));
     };
     window.addEventListener("storage", handler);
     return () => window.removeEventListener("storage", handler);

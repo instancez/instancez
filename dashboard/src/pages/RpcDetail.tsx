@@ -73,7 +73,7 @@ export function RpcDetail() {
     setTestLoading(true);
     setTestResult(null);
     try {
-      const key = sessionStorage.getItem("ultrabase_admin_key") || "";
+      const key = sessionStorage.getItem("instancez_admin_key") || "";
       const args: Record<string, unknown> = {};
       for (const a of fn.args || []) {
         if (testInputs[a.name] !== undefined && testInputs[a.name] !== "") {
@@ -329,7 +329,7 @@ export function RpcDetail() {
               <button
                 onClick={runTest}
                 disabled={testLoading}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-hover transition-colors disabled:opacity-50 cursor-pointer"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-accent text-background text-sm font-medium hover:bg-accent-hover transition-colors disabled:opacity-50 cursor-pointer"
               >
                 {testLoading ? (
                   <Loader2 size={14} className="animate-spin" />
