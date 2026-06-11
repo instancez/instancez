@@ -23,7 +23,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          NAMES=("Go unit tests" "Go integration tests" "Dashboard tests")
           for i in $(seq 1 60); do
             JSON=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
               --jq '[.check_runs[] | select(.name == "Go unit tests" or .name == "Go integration tests" or .name == "Dashboard tests")]')
@@ -110,6 +109,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           provenance: false
+          cache-from: type=gha,scope=standalone
+          cache-to: type=gha,mode=max,scope=standalone
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ steps.version.outputs.version }}
@@ -128,6 +129,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           provenance: false
+          cache-from: type=gha,scope=lambda
+          cache-to: type=gha,mode=max,scope=lambda
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ steps.version.outputs.version }}
@@ -188,4 +191,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --generate-notes dist/*
+          # Idempotent on re-runs: if the release already exists, refresh assets.
+          gh release create "$GITHUB_REF_NAME" --generate-notes dist/* \
+            || gh release upload "$GITHUB_REF_NAME" dist/* --clobber
