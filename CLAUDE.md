@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `go test -tags=integration -race ./...` (integration, requires a running Docker daemon) succeeds for any package you touched
 - `npm test` inside `dashboard/` succeeds for any frontend change
 
-Do not push, open a PR, or claim work is "done" until these pass locally. CI runs the same three jobs (`Go unit tests`, `Go integration tests`, `Dashboard tests`) in `.github/workflows/ci.yml` and gates the Docker build job on them. If you find yourself bypassing the loop ("I'll just push and let CI catch it"), stop and fix the loop first — a broken local feedback loop is a higher-priority bug than whatever you were working on.
+Do not push, open a PR, or claim work is "done" until these pass locally. CI runs the same three jobs (`Go unit tests`, `Go integration tests`, `Dashboard tests`) in `.github/workflows/ci.yml`; `.github/workflows/publish.yml` (ghcr images + release binaries) gates on them. If you find yourself bypassing the loop ("I'll just push and let CI catch it"), stop and fix the loop first — a broken local feedback loop is a higher-priority bug than whatever you were working on.
 </feedback_loop>
 
 <supabase_js_compat>
@@ -99,5 +99,5 @@ internal/adapter/     postgres (pgx pool), http (Gin handlers + PostgREST surfac
 - **No auto-added columns, not even `id`.** The migrator does not inject primary keys. Every column, including PKs, must be declared in YAML.
 - **Reserved schemas:** `auth` and `storage`. The migrator owns these schemas; user tables declaring `schema: auth` or `schema: storage` are rejected at validation. The auth user record lives at `auth.users`; profile data is a regular user-defined table FK'd to `auth.users.id`.
 - **Underscore-prefixed names** are still reserved for framework-internal tables (`_instancez_migrations`).
-- **The Lambda image is per-arch.** `Dockerfile.lambda` is built once per platform (`-lambda-amd64`, `-lambda-arm64`) because Lambda rejects multi-arch manifest lists. Don't "fix" this back to a manifest list.
+- **Lambda images and registries.** AWS Lambda only pulls single-arch images from private ECR — never manifest lists, never ghcr. The public `ghcr.io/instancez/instancez:<ver>-lambda` tag built by `publish.yml` is intentionally a multi-arch manifest list (nothing feeds it to Lambda). The per-arch ECR image Lambda actually runs (`instancez/<env>:<sha>-lambda-arm64`) is built from instancez source by instancez-platform's `docker-services.yml`. Don't "simplify" that ECR build into a manifest list.
 </gotchas>
