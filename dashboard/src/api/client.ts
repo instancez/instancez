@@ -69,6 +69,23 @@ export async function getConfigStatus(): Promise<ConfigStatus> {
   return request<ConfigStatus>("/config/status");
 }
 
+export interface EnvVarsResponse {
+  vars: Record<string, { set: boolean }>;
+}
+
+export async function getEnvVars(): Promise<EnvVarsResponse> {
+  return request<EnvVarsResponse>("/config/env-vars");
+}
+
+export async function putDotenv(
+  vars: Record<string, string>
+): Promise<{ message: string }> {
+  return request("/config/dotenv", {
+    method: "PUT",
+    body: JSON.stringify(vars),
+  });
+}
+
 // Stats
 export async function getStats(): Promise<StatsResponse> {
   return request<StatsResponse>("/stats");
@@ -96,6 +113,37 @@ export async function getUsers(): Promise<
 // API keys (anon key only — the admin key never leaves the browser)
 export async function getKeys(): Promise<{ anon_key: string }> {
   return request("/keys");
+}
+
+// Function code (dev / readwrite mode only)
+export async function getFunctionCode(name: string): Promise<{ content: string; file: string }> {
+  return request(`/functions/${encodeURIComponent(name)}/code`);
+}
+
+export async function putFunctionCode(name: string, content: string): Promise<{ message: string }> {
+  return request(`/functions/${encodeURIComponent(name)}/code`, {
+    method: "PUT",
+    body: JSON.stringify({ content }),
+  });
+}
+
+// Function npm dependencies
+export async function getFunctionDeps(): Promise<{
+  dependencies: Record<string, string>;
+  has_lock: boolean;
+  readonly: boolean;
+}> {
+  return request("/functions/deps");
+}
+
+export async function postFunctionDeps(
+  add: string[],
+  remove: string[]
+): Promise<{ dependencies: Record<string, string>; has_lock: boolean; readonly: boolean }> {
+  return request("/functions/deps", {
+    method: "POST",
+    body: JSON.stringify({ add, remove }),
+  });
 }
 
 // Validate admin key by calling status

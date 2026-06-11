@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   getConfig,
   getConfigStatus,
+  getEnvVars,
   getStats,
   getStatus,
   putConfig,
+  putDotenv,
   validateAdminKey,
 } from "./client";
 
@@ -155,6 +157,45 @@ describe("getConfigStatus", () => {
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: "Bearer test-key" }),
       }),
+    );
+  });
+});
+
+describe("getEnvVars", () => {
+  it("fetches env var status from /config/env-vars", async () => {
+    const mockVars = {
+      vars: {
+        INSTANCEZ_RESEND_API_KEY: { set: true },
+        INSTANCEZ_GOOGLE_CLIENT_ID: { set: false },
+      },
+    };
+    mockFetch.mockReturnValueOnce(jsonResponse(mockVars));
+
+    const result = await getEnvVars();
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/_admin/config/env-vars",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer test-key" }),
+      })
+    );
+    expect(result).toEqual(mockVars);
+  });
+});
+
+describe("putDotenv", () => {
+  it("PUTs to /config/dotenv with var map", async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ message: "ok" }));
+
+    await putDotenv({ INSTANCEZ_RESEND_API_KEY: "re_test" });
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/_admin/config/dotenv",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ INSTANCEZ_RESEND_API_KEY: "re_test" }),
+        headers: expect.objectContaining({ Authorization: "Bearer test-key" }),
+      })
     );
   });
 });
