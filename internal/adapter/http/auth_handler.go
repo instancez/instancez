@@ -20,6 +20,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/instancez/instancez/internal/app"
+	adapterauth "github.com/instancez/instancez/internal/adapter/auth"
 	"github.com/instancez/instancez/internal/domain"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -1466,13 +1467,32 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 			return
 		}
 
-		oauthToken, err := h.exchangeCode(provider, code)
+		var providerCfg *domain.OAuthProvider
+		switch provider {
+		case "google":
+			providerCfg = h.cfg.Auth.Google
+		case "github":
+			providerCfg = h.cfg.Auth.GitHub
+		}
+		if providerCfg == nil {
+			problemJSON(c, 400, "bad_request", "Unconfigured provider: "+provider)
+			return
+		}
+		oauthToken, err := adapterauth.ExchangeCode(provider, providerCfg, code)
 		if err != nil {
 			h.logger.Error("oauth code exchange failed", "provider", provider, "error", err)
 			problemJSON(c, 502, "oauth_error", "Failed to exchange authorization code")
 			return
 		}
-		userInfo, err := h.fetchUserInfo(provider, oauthToken)
+		var userInfo *adapterauth.OAuthUserInfo
+		switch provider {
+		case "google":
+			userInfo, err = adapterauth.FetchGoogleUser(oauthToken)
+		case "github":
+			userInfo, err = adapterauth.FetchGitHubUser(oauthToken)
+		default:
+			err = fmt.Errorf("unsupported provider: %s", provider)
+		}
 		if err != nil {
 			h.logger.Error("oauth user info failed", "provider", provider, "error", err)
 			problemJSON(c, 502, "oauth_error", "Failed to fetch user info from provider")
@@ -1821,186 +1841,6 @@ func decodeJSONB(v any) map[string]any {
 // instancez instance with /auth/v1 appended, matching GoTrue's convention.
 func (h *AuthHandler) issuer() string {
 	return h.baseURL() + "/auth/v1"
-}
-
-// ---------- OAuth provider helpers (unchanged) ----------
-
-// oauthUserInfo holds provider user details.
-type oauthUserInfo struct {
-	Email      string
-	Name       string
-	ProviderID string
-}
-
-func (h *AuthHandler) exchangeCode(provider, code string) (string, error) {
-	var cfg *domain.OAuthProvider
-	var tokenURL string
-
-	switch provider {
-	case "google":
-		cfg = h.cfg.Auth.Google
-		tokenURL = "https://oauth2.googleapis.com/token"
-	case "github":
-		cfg = h.cfg.Auth.GitHub
-		tokenURL = "https://github.com/login/oauth/access_token"
-	default:
-		return "", fmt.Errorf("unsupported provider: %s", provider)
-	}
-
-	data := url.Values{
-		"client_id":     {cfg.ClientID},
-		"client_secret": {cfg.ClientSecret},
-		"code":          {code},
-		"redirect_uri":  {cfg.RedirectURL},
-		"grant_type":    {"authorization_code"},
-	}
-
-	req, err := http.NewRequest("POST", tokenURL, strings.NewReader(data.Encode()))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("token request failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("token endpoint returned %d: %s", resp.StatusCode, body)
-	}
-
-	var tokenResp struct {
-		AccessToken string `json:"access_token"`
-		Error       string `json:"error"`
-	}
-	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return "", fmt.Errorf("failed to parse token response: %w", err)
-	}
-	if tokenResp.Error != "" {
-		return "", fmt.Errorf("oauth error: %s", tokenResp.Error)
-	}
-	if tokenResp.AccessToken == "" {
-		return "", fmt.Errorf("no access_token in response")
-	}
-
-	return tokenResp.AccessToken, nil
-}
-
-func (h *AuthHandler) fetchUserInfo(provider, accessToken string) (*oauthUserInfo, error) {
-	switch provider {
-	case "google":
-		return h.fetchGoogleUser(accessToken)
-	case "github":
-		return h.fetchGitHubUser(accessToken)
-	default:
-		return nil, fmt.Errorf("unsupported provider: %s", provider)
-	}
-}
-
-func (h *AuthHandler) fetchGoogleUser(accessToken string) (*oauthUserInfo, error) {
-	req, _ := http.NewRequest("GET", "https://www.googleapis.com/oauth2/v2/userinfo", nil)
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("google userinfo returned %d: %s", resp.StatusCode, body)
-	}
-
-	var info struct {
-		ID    string `json:"id"`
-		Email string `json:"email"`
-		Name  string `json:"name"`
-	}
-	if err := json.Unmarshal(body, &info); err != nil {
-		return nil, err
-	}
-
-	return &oauthUserInfo{
-		Email:      info.Email,
-		Name:       info.Name,
-		ProviderID: info.ID,
-	}, nil
-}
-
-func (h *AuthHandler) fetchGitHubUser(accessToken string) (*oauthUserInfo, error) {
-	req, _ := http.NewRequest("GET", "https://api.github.com/user", nil)
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("github user returned %d: %s", resp.StatusCode, body)
-	}
-
-	var user struct {
-		ID    int64  `json:"id"`
-		Email string `json:"email"`
-		Name  string `json:"name"`
-		Login string `json:"login"`
-	}
-	if err := json.Unmarshal(body, &user); err != nil {
-		return nil, err
-	}
-
-	if user.Email == "" {
-		user.Email, _ = h.fetchGitHubPrimaryEmail(accessToken)
-	}
-
-	return &oauthUserInfo{
-		Email:      user.Email,
-		Name:       user.Name,
-		ProviderID: fmt.Sprintf("%d", user.ID),
-	}, nil
-}
-
-func (h *AuthHandler) fetchGitHubPrimaryEmail(accessToken string) (string, error) {
-	req, _ := http.NewRequest("GET", "https://api.github.com/user/emails", nil)
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, _ := io.ReadAll(resp.Body)
-	var emails []struct {
-		Email    string `json:"email"`
-		Primary  bool   `json:"primary"`
-		Verified bool   `json:"verified"`
-	}
-	if err := json.Unmarshal(body, &emails); err != nil {
-		return "", err
-	}
-
-	for _, e := range emails {
-		if e.Primary && e.Verified {
-			return e.Email, nil
-		}
-	}
-	for _, e := range emails {
-		if e.Verified {
-			return e.Email, nil
-		}
-	}
-	return "", fmt.Errorf("no verified email found")
 }
 
 // ---------- email templates ----------
