@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -96,9 +97,15 @@ func corsMiddleware(cfg domain.CORS, devMode bool) gin.HandlerFunc {
 
 		origin := c.GetHeader("Origin")
 		allowed := false
+		viaWildcard := false
 		for _, o := range origins {
-			if o == "*" || o == origin {
+			if o == origin {
 				allowed = true
+				break
+			}
+			if o == "*" {
+				allowed = true
+				viaWildcard = true
 				break
 			}
 		}
@@ -132,7 +139,10 @@ func corsMiddleware(cfg domain.CORS, devMode bool) gin.HandlerFunc {
 		c.Header("Access-Control-Allow-Headers", strings.Join(headers, ", "))
 		c.Header("Access-Control-Expose-Headers", "Content-Range, Content-Profile, Location")
 
-		if cfg.Credentials {
+		// Never combine credentials with a wildcard-matched (reflected) origin:
+		// that would let any site make credentialed cross-origin requests.
+		// Credentials are only advertised for an explicitly configured origin.
+		if cfg.Credentials && allowed && !viaWildcard && origin != "" {
 			c.Header("Access-Control-Allow-Credentials", "true")
 		}
 
@@ -178,9 +188,10 @@ func jwtAuth(keys *app.JWTKeyManager, required bool) gin.HandlerFunc {
 		header := c.GetHeader("Authorization")
 
 		// Check admin key first — treated as service_role, the GoTrue name
-		// for a server-side bypass key.
+		// for a server-side bypass key. Constant-time compare so the key is
+		// not recoverable via response-timing analysis.
 		adminKey := os.Getenv("INSTANCEZ_ADMIN_KEY")
-		if adminKey != "" && header == "Bearer "+adminKey {
+		if adminKey != "" && constantTimeEqual(header, "Bearer "+adminKey) {
 			c.Set(contextKeySession, domain.Session{
 				Role:            "service_role",
 				IsAuthenticated: true,
@@ -292,7 +303,7 @@ func adminKeyAuth() gin.HandlerFunc {
 		}
 
 		header := c.GetHeader("Authorization")
-		if header != "Bearer "+adminKey {
+		if !constantTimeEqual(header, "Bearer "+adminKey) {
 			problemJSON(c, 401, "unauthorized", "Invalid admin key")
 			c.Abort()
 			return
@@ -300,6 +311,12 @@ func adminKeyAuth() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// constantTimeEqual reports whether a and b are equal without leaking their
+// relationship through comparison timing. Used for bearer/admin-key checks.
+func constantTimeEqual(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
 // getSession retrieves the session from context.
@@ -448,7 +465,17 @@ func rateLimitMiddleware(maxPerSecond float64) gin.HandlerFunc {
 		DefaultExpirationTTL: 10 * time.Minute,
 	})
 	lmt.SetBurst(int(maxPerSecond * 5))
-	lmt.SetIPLookups([]string{"X-Forwarded-For", "X-Real-IP", "RemoteAddr"})
+	// Default to the real connection IP. X-Forwarded-For / X-Real-IP are
+	// client-supplied and trivially spoofable, so honouring them by default
+	// lets an attacker rotate the header to get a fresh rate-limit bucket
+	// (defeating brute-force protection on login/OTP/recover). Only trust the
+	// forwarded headers when explicitly told we sit behind a trusted proxy
+	// that overwrites them.
+	ipLookups := []string{"RemoteAddr"}
+	if os.Getenv("INSTANCEZ_TRUST_PROXY_HEADERS") == "true" {
+		ipLookups = []string{"X-Forwarded-For", "X-Real-IP", "RemoteAddr"}
+	}
+	lmt.SetIPLookups(ipLookups)
 	lmt.SetMessage(`{"code":"rate_limit","message":"Too many requests"}`)
 	lmt.SetMessageContentType("application/json; charset=utf-8")
 

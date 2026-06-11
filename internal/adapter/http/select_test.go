@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/instancez/instancez/internal/adapter/http/postgrest"
 	"github.com/instancez/instancez/internal/domain"
 )
 
@@ -24,7 +25,7 @@ func TestParseSelectItem(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.in, func(t *testing.T) {
-			got := parseSelectItem(tt.in)
+			got := postgrest.ParseSelectItem(tt.in)
 			if got.Alias != tt.alias || got.Col != tt.col || got.Cast != tt.cast {
 				t.Errorf("got %+v", got)
 			}
@@ -36,26 +37,26 @@ func TestValidateSelectItem(t *testing.T) {
 	table := testTable()
 	cases := []struct {
 		name    string
-		item    SelectItem
+		item    postgrest.SelectItem
 		wantErr bool
 	}{
-		{"known col", SelectItem{Col: "title"}, false},
-		{"star", SelectItem{Col: "*"}, false},
-		{"aliased known", SelectItem{Alias: "t", Col: "title"}, false},
-		{"cast known", SelectItem{Col: "priority", Cast: "text"}, false},
-		{"alias + cast", SelectItem{Alias: "p", Col: "priority", Cast: "text"}, false},
-		{"jsonb", SelectItem{Col: "metadata->>theme"}, false},
+		{"known col", postgrest.SelectItem{Col: "title"}, false},
+		{"star", postgrest.SelectItem{Col: "*"}, false},
+		{"aliased known", postgrest.SelectItem{Alias: "t", Col: "title"}, false},
+		{"cast known", postgrest.SelectItem{Col: "priority", Cast: "text"}, false},
+		{"alias + cast", postgrest.SelectItem{Alias: "p", Col: "priority", Cast: "text"}, false},
+		{"jsonb", postgrest.SelectItem{Col: "metadata->>theme"}, false},
 
-		{"unknown col", SelectItem{Col: "bogus"}, true},
-		{"bad alias", SelectItem{Alias: "a b", Col: "title"}, true},
-		{"alias sqli", SelectItem{Alias: "x;DROP", Col: "title"}, true},
-		{"bad cast", SelectItem{Col: "priority", Cast: "text; DROP"}, true},
-		{"alias on star", SelectItem{Alias: "x", Col: "*"}, true},
-		{"cast on star", SelectItem{Col: "*", Cast: "text"}, true},
+		{"unknown col", postgrest.SelectItem{Col: "bogus"}, true},
+		{"bad alias", postgrest.SelectItem{Alias: "a b", Col: "title"}, true},
+		{"alias sqli", postgrest.SelectItem{Alias: "x;DROP", Col: "title"}, true},
+		{"bad cast", postgrest.SelectItem{Col: "priority", Cast: "text; DROP"}, true},
+		{"alias on star", postgrest.SelectItem{Alias: "x", Col: "*"}, true},
+		{"cast on star", postgrest.SelectItem{Col: "*", Cast: "text"}, true},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateSelectItem(table, tt.item)
+			err := postgrest.ValidateSelectItem(table, tt.item)
 			if tt.wantErr && err == nil {
 				t.Errorf("expected error")
 			}
@@ -69,20 +70,20 @@ func TestValidateSelectItem(t *testing.T) {
 func TestRenderSelectItem(t *testing.T) {
 	tests := []struct {
 		name string
-		item SelectItem
+		item postgrest.SelectItem
 		want string
 	}{
-		{"plain col", SelectItem{Col: "title"}, "todos.title"},
-		{"star", SelectItem{Col: "*"}, "todos.*"},
-		{"alias", SelectItem{Alias: "t", Col: "title"}, "todos.title AS t"},
-		{"cast", SelectItem{Col: "priority", Cast: "text"}, "(todos.priority)::text"},
-		{"alias + cast", SelectItem{Alias: "p", Col: "priority", Cast: "text"}, "(todos.priority)::text AS p"},
-		{"jsonb", SelectItem{Col: "metadata->>theme"}, "todos.metadata->>'theme'"},
-		{"jsonb aliased", SelectItem{Alias: "theme", Col: "metadata->>theme"}, "todos.metadata->>'theme' AS theme"},
+		{"plain col", postgrest.SelectItem{Col: "title"}, "todos.title"},
+		{"star", postgrest.SelectItem{Col: "*"}, "todos.*"},
+		{"alias", postgrest.SelectItem{Alias: "t", Col: "title"}, "todos.title AS t"},
+		{"cast", postgrest.SelectItem{Col: "priority", Cast: "text"}, "(todos.priority)::text"},
+		{"alias + cast", postgrest.SelectItem{Alias: "p", Col: "priority", Cast: "text"}, "(todos.priority)::text AS p"},
+		{"jsonb", postgrest.SelectItem{Col: "metadata->>theme"}, "todos.metadata->>'theme'"},
+		{"jsonb aliased", postgrest.SelectItem{Alias: "theme", Col: "metadata->>theme"}, "todos.metadata->>'theme' AS theme"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := renderSelectItem("todos", tt.item)
+			got := postgrest.RenderSelectItem("todos", tt.item)
 			if got != tt.want {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
@@ -148,7 +149,7 @@ func TestParseEmbedHint(t *testing.T) {
 		{"tasks!inner!assignee", "tasks", true, "assignee"},
 	}
 	for _, tc := range cases {
-		name, inner, fk := parseEmbedHint(tc.in)
+		name, inner, fk := postgrest.ParseEmbedHint(tc.in)
 		if name != tc.name || inner != tc.inner || fk != tc.fkHint {
 			t.Errorf("%q → (%q, %v, %q), want (%q, %v, %q)", tc.in, name, inner, fk, tc.name, tc.inner, tc.fkHint)
 		}
@@ -183,7 +184,7 @@ func TestParseSelectItem_Aggregate(t *testing.T) {
 	}
 	for _, tt := range cases {
 		t.Run(tt.in, func(t *testing.T) {
-			got := parseSelectItem(tt.in)
+			got := postgrest.ParseSelectItem(tt.in)
 			if got.Alias != tt.alias || got.Col != tt.col || got.Cast != tt.cast || got.Agg != tt.agg {
 				t.Errorf("got %+v", got)
 			}
@@ -198,21 +199,21 @@ func TestParseSelectItem_Aggregate(t *testing.T) {
 func TestRenderSelectItem_Aggregate(t *testing.T) {
 	tests := []struct {
 		name string
-		item SelectItem
+		item postgrest.SelectItem
 		want string
 	}{
-		{"count col", SelectItem{Col: "id", Agg: "count"}, "COUNT(todos.id) AS count"},
-		{"count col aliased", SelectItem{Alias: "total", Col: "id", Agg: "count"}, "COUNT(todos.id) AS total"},
-		{"bare count", SelectItem{Agg: "count"}, "COUNT(*) AS count"},
-		{"sum", SelectItem{Col: "hours", Agg: "sum"}, "SUM(todos.hours) AS sum"},
-		{"avg", SelectItem{Col: "score", Agg: "avg"}, "AVG(todos.score) AS avg"},
-		{"min", SelectItem{Col: "price", Agg: "min"}, "MIN(todos.price) AS min"},
-		{"max", SelectItem{Col: "price", Agg: "max"}, "MAX(todos.price) AS max"},
-		{"cast", SelectItem{Col: "id", Agg: "sum", Cast: "text"}, "(SUM(todos.id))::text AS sum"},
+		{"count col", postgrest.SelectItem{Col: "id", Agg: "count"}, "COUNT(todos.id) AS count"},
+		{"count col aliased", postgrest.SelectItem{Alias: "total", Col: "id", Agg: "count"}, "COUNT(todos.id) AS total"},
+		{"bare count", postgrest.SelectItem{Agg: "count"}, "COUNT(*) AS count"},
+		{"sum", postgrest.SelectItem{Col: "hours", Agg: "sum"}, "SUM(todos.hours) AS sum"},
+		{"avg", postgrest.SelectItem{Col: "score", Agg: "avg"}, "AVG(todos.score) AS avg"},
+		{"min", postgrest.SelectItem{Col: "price", Agg: "min"}, "MIN(todos.price) AS min"},
+		{"max", postgrest.SelectItem{Col: "price", Agg: "max"}, "MAX(todos.price) AS max"},
+		{"cast", postgrest.SelectItem{Col: "id", Agg: "sum", Cast: "text"}, "(SUM(todos.id))::text AS sum"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := renderSelectItem("todos", tt.item)
+			got := postgrest.RenderSelectItem("todos", tt.item)
 			if got != tt.want {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
@@ -237,7 +238,7 @@ func TestIsAggSelectEntry(t *testing.T) {
 		"metadata->>theme": false,
 	}
 	for in, want := range cases {
-		if got := isAggSelectEntry(in); got != want {
+		if got := postgrest.IsAggSelectEntry(in); got != want {
 			t.Errorf("%q → %v, want %v", in, got, want)
 		}
 	}
@@ -349,7 +350,7 @@ func TestSplitEmbedAlias(t *testing.T) {
 		{"a::b:c", "", "a::b:c"},
 	}
 	for _, tc := range cases {
-		alias, name := splitEmbedAlias(tc.in)
+		alias, name := postgrest.SplitEmbedAlias(tc.in)
 		if alias != tc.wantAlias || name != tc.wantName {
 			t.Errorf("%q → (%q, %q), want (%q, %q)", tc.in, alias, name, tc.wantAlias, tc.wantName)
 		}
@@ -424,8 +425,8 @@ func TestResolveEmbeds_Alias(t *testing.T) {
 		if e.IsReverse || e.Inner {
 			t.Errorf("expected belongs-to LEFT, got IsReverse=%v Inner=%v", e.IsReverse, e.Inner)
 		}
-		if e.outputKey() != "category" {
-			t.Errorf("outputKey = %q, want category", e.outputKey())
+		if e.OutputKey() != "category" {
+			t.Errorf("outputKey = %q, want category", e.OutputKey())
 		}
 	})
 

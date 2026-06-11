@@ -4,13 +4,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/instancez/instancez/internal/adapter/http/postgrest"
 	"github.com/instancez/instancez/internal/domain"
 )
 
 func TestParseWhere_SimpleLeaf(t *testing.T) {
 	table := testTable()
 	c := testContext("status=eq.active")
-	w, err := parseWhere(c, "todos", table)
+	w, err := postgrest.ParseWhere(c.Request.URL.Query(), "todos", table)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -29,7 +30,7 @@ func TestParseWhere_SimpleLeaf(t *testing.T) {
 func TestParseWhere_NegatedLeaf(t *testing.T) {
 	table := testTable()
 	c := testContext("status=not.eq.done")
-	w, err := parseWhere(c, "todos", table)
+	w, err := postgrest.ParseWhere(c.Request.URL.Query(), "todos", table)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -41,7 +42,7 @@ func TestParseWhere_NegatedLeaf(t *testing.T) {
 		t.Errorf("leaf payload = %+v", leaf.Leaf)
 	}
 
-	sql, _, _ := w.buildSQL(1)
+	sql, _, _ := w.BuildSQL(1)
 	if !strings.Contains(sql, "NOT (status = $1)") {
 		t.Errorf("SQL = %q, want NOT (status = $1)", sql)
 	}
@@ -50,7 +51,7 @@ func TestParseWhere_NegatedLeaf(t *testing.T) {
 func TestParseWhere_OrAtTopLevel(t *testing.T) {
 	table := testTable()
 	c := testContext("or=(status.eq.active,priority.gte.3)")
-	w, err := parseWhere(c, "todos", table)
+	w, err := postgrest.ParseWhere(c.Request.URL.Query(), "todos", table)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -61,7 +62,7 @@ func TestParseWhere_OrAtTopLevel(t *testing.T) {
 	if or.Op != "or" || len(or.Children) != 2 {
 		t.Fatalf("or node = %+v", or)
 	}
-	sql, args, _ := w.buildSQL(1)
+	sql, args, _ := w.BuildSQL(1)
 	want := "(status = $1 OR priority >= $2)"
 	if sql != want {
 		t.Errorf("SQL = %q, want %q", sql, want)
@@ -74,11 +75,11 @@ func TestParseWhere_OrAtTopLevel(t *testing.T) {
 func TestParseWhere_AndAtTopLevel(t *testing.T) {
 	table := testTable()
 	c := testContext("and=(status.eq.active,priority.gte.3)")
-	w, err := parseWhere(c, "todos", table)
+	w, err := postgrest.ParseWhere(c.Request.URL.Query(), "todos", table)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	sql, _, _ := w.buildSQL(1)
+	sql, _, _ := w.BuildSQL(1)
 	if !strings.Contains(sql, "status = $1") || !strings.Contains(sql, "priority >= $2") {
 		t.Errorf("SQL = %q", sql)
 	}
@@ -90,11 +91,11 @@ func TestParseWhere_AndAtTopLevel(t *testing.T) {
 func TestParseWhere_NestedOrInsideAnd(t *testing.T) {
 	table := testTable()
 	c := testContext("and=(status.eq.active,or(priority.gte.3,priority.lt.0))")
-	w, err := parseWhere(c, "todos", table)
+	w, err := postgrest.ParseWhere(c.Request.URL.Query(), "todos", table)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	sql, args, _ := w.buildSQL(1)
+	sql, args, _ := w.BuildSQL(1)
 	want := "(status = $1 AND (priority >= $2 OR priority < $3))"
 	if sql != want {
 		t.Errorf("SQL = %q, want %q", sql, want)
@@ -107,11 +108,11 @@ func TestParseWhere_NestedOrInsideAnd(t *testing.T) {
 func TestParseWhere_TopLevelMixed(t *testing.T) {
 	table := testTable()
 	c := testContext("status=eq.active&or=(priority.lt.1,priority.gt.9)")
-	w, err := parseWhere(c, "todos", table)
+	w, err := postgrest.ParseWhere(c.Request.URL.Query(), "todos", table)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	sql, args, _ := w.buildSQL(1)
+	sql, args, _ := w.BuildSQL(1)
 	// Root is AND over both children. Child order is map-iteration-dependent,
 	// so accept either ordering.
 	ok := sql == "(status = $1 AND (priority < $2 OR priority > $3))" ||
@@ -127,11 +128,11 @@ func TestParseWhere_TopLevelMixed(t *testing.T) {
 func TestParseWhere_LogicListWithNegatedLeaf(t *testing.T) {
 	table := testTable()
 	c := testContext("or=(status.not.eq.done,priority.eq.5)")
-	w, err := parseWhere(c, "todos", table)
+	w, err := postgrest.ParseWhere(c.Request.URL.Query(), "todos", table)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	sql, _, _ := w.buildSQL(1)
+	sql, _, _ := w.BuildSQL(1)
 	if !strings.Contains(sql, "NOT (status = $1)") {
 		t.Errorf("SQL = %q, want NOT leaf inside", sql)
 	}
@@ -143,11 +144,11 @@ func TestParseWhere_LogicListWithNegatedLeaf(t *testing.T) {
 func TestParseWhere_NotOnNestedGroup(t *testing.T) {
 	table := testTable()
 	c := testContext("and=(status.eq.active,not.or(priority.lt.1,priority.gt.9))")
-	w, err := parseWhere(c, "todos", table)
+	w, err := postgrest.ParseWhere(c.Request.URL.Query(), "todos", table)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	sql, _, _ := w.buildSQL(1)
+	sql, _, _ := w.BuildSQL(1)
 	if !strings.Contains(sql, "NOT (priority < $2 OR priority > $3)") {
 		t.Errorf("SQL = %q", sql)
 	}
@@ -156,7 +157,7 @@ func TestParseWhere_NotOnNestedGroup(t *testing.T) {
 func TestParseWhere_UnbalancedParens(t *testing.T) {
 	table := testTable()
 	c := testContext("or=(status.eq.a,priority.eq.1")
-	if _, err := parseWhere(c, "todos", table); err == nil {
+	if _, err := postgrest.ParseWhere(c.Request.URL.Query(), "todos", table); err == nil {
 		t.Error("expected error for unbalanced parens")
 	}
 }
@@ -164,7 +165,7 @@ func TestParseWhere_UnbalancedParens(t *testing.T) {
 func TestParseWhere_UnknownColumnInsideLogicList(t *testing.T) {
 	table := testTable()
 	c := testContext("or=(bogus.eq.1,status.eq.x)")
-	if _, err := parseWhere(c, "todos", table); err == nil {
+	if _, err := postgrest.ParseWhere(c.Request.URL.Query(), "todos", table); err == nil {
 		t.Error("expected rejection for unknown column inside logic list")
 	}
 }
@@ -173,11 +174,11 @@ func TestParseWhere_JSONBInsideLogicList(t *testing.T) {
 	table := testTable()
 	// metadata->>theme URL-encoded inside an or() list
 	c := testContext("or=(metadata-%3E%3Etheme.eq.dark,status.eq.x)")
-	w, err := parseWhere(c, "todos", table)
+	w, err := postgrest.ParseWhere(c.Request.URL.Query(), "todos", table)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	sql, _, _ := w.buildSQL(1)
+	sql, _, _ := w.BuildSQL(1)
 	if !strings.Contains(sql, "metadata->>'theme' = $1") {
 		t.Errorf("SQL = %q", sql)
 	}
@@ -186,14 +187,14 @@ func TestParseWhere_JSONBInsideLogicList(t *testing.T) {
 func TestParseWhere_Empty(t *testing.T) {
 	table := testTable()
 	c := testContext("")
-	w, err := parseWhere(c, "todos", table)
+	w, err := postgrest.ParseWhere(c.Request.URL.Query(), "todos", table)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if w != nil {
 		t.Errorf("expected nil tree, got %+v", w)
 	}
-	sql, _, _ := w.buildSQL(1)
+	sql, _, _ := w.BuildSQL(1)
 	if sql != "" {
 		t.Errorf("buildSQL on nil = %q, want empty", sql)
 	}
@@ -201,11 +202,11 @@ func TestParseWhere_Empty(t *testing.T) {
 
 func TestWhereNodeBuildSQL_ArgIndexing(t *testing.T) {
 	// An UPDATE path starts its WHERE args after the SET placeholders.
-	w := andLeaves(
-		Filter{Column: "status", Operator: "eq", Value: "active"},
-		Filter{Column: "priority", Operator: "gt", Value: "3"},
+	w := postgrest.AndLeaves(
+		postgrest.Filter{Column: "status", Operator: "eq", Value: "active"},
+		postgrest.Filter{Column: "priority", Operator: "gt", Value: "3"},
 	)
-	sql, args, next := w.buildSQL(5)
+	sql, args, next := w.BuildSQL(5)
 	want := "(status = $5 AND priority > $6)"
 	if sql != want {
 		t.Errorf("SQL = %q, want %q", sql, want)
@@ -229,7 +230,7 @@ func TestSplitTopLevel(t *testing.T) {
 		{"", []string{""}},
 	}
 	for _, tc := range cases {
-		got, err := splitTopLevel(tc.in, ',')
+		got, err := postgrest.SplitTopLevel(tc.in, ',')
 		if err != nil {
 			t.Errorf("%q: unexpected error %v", tc.in, err)
 			continue
@@ -245,7 +246,7 @@ func TestSplitTopLevel(t *testing.T) {
 		}
 	}
 
-	if _, err := splitTopLevel("a,(b,c", ','); err == nil {
+	if _, err := postgrest.SplitTopLevel("a,(b,c", ','); err == nil {
 		t.Error("expected unbalanced-parens error")
 	}
 }
@@ -287,7 +288,7 @@ func TestParseWhere_FTSColumnTypeValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c := testContext(tt.query)
-			_, err := parseWhere(c, "todos", tableWithTSVector)
+			_, err := postgrest.ParseWhere(c.Request.URL.Query(), "todos", tableWithTSVector)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("err = %v, wantErr = %v", err, tt.wantErr)
 			}
@@ -299,13 +300,13 @@ func TestIsFTSCompatibleType(t *testing.T) {
 	ok := []string{"text", "citext", "tsvector", "varchar", "varchar(255)",
 		"character varying", "char(10)", "character(5)", "bpchar", "TEXT", " text "}
 	for _, s := range ok {
-		if !isFTSCompatibleType(s) {
+		if !postgrest.IsFTSCompatibleType(s) {
 			t.Errorf("%q: want compatible", s)
 		}
 	}
 	bad := []string{"int", "bigint", "jsonb", "jsonb[]", "text[]", "boolean", "", "tsquery"}
 	for _, s := range bad {
-		if isFTSCompatibleType(s) {
+		if postgrest.IsFTSCompatibleType(s) {
 			t.Errorf("%q: want incompatible", s)
 		}
 	}

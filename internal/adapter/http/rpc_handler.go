@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/instancez/instancez/internal/adapter/http/postgrest"
 	"github.com/instancez/instancez/internal/domain"
 )
 
@@ -368,11 +369,11 @@ func buildRPCCall(name string, fn domain.Function, callArgs map[string]any) (str
 // can replay it with a fresh placeholder numbering. orderClauses is kept
 // structured for the same reason even though order never carries params.
 type rpcChainSQL struct {
-	where       *WhereNode
-	having      *WhereNode   // HAVING clause for aggregate filtering
-	selectItems []SelectItem // non-empty → project these instead of SELECT *
-	embeds      []Embed      // resolved embeds when RPC returns SETOF <known table>
-	order       []OrderClause
+	where       *postgrest.WhereNode
+	having      *postgrest.WhereNode // HAVING clause for aggregate filtering
+	selectItems []postgrest.SelectItem // non-empty → project these instead of SELECT *
+	embeds      []postgrest.Embed    // resolved embeds when RPC returns SETOF <known table>
+	order       []postgrest.OrderClause
 	hasLimit    bool
 	limit       int
 	hasOffset   bool
@@ -409,10 +410,10 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 	target := parseSetofTarget(fn.Returns.Type)
 	targetTable, targetFound := h.resolveRPCTargetTable(fn)
 
-	var validate colValidator
+	var validate postgrest.ColValidator
 	if targetFound {
 		tbl := targetTable
-		validate = func(col string) error { return validateColumn(tbl, col) }
+		validate = func(col string) error { return postgrest.ValidateColumn(tbl, col) }
 	} else {
 		validate = permissiveColValidator
 	}
@@ -421,24 +422,24 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 		table := targetTable
 		tableFound := targetFound
 		var embedParams []string
-		for _, raw := range parseSelectParam(sel) {
+		for _, raw := range postgrest.ParseSelectParam(sel) {
 			if raw == "" {
 				continue
 			}
-			if strings.Contains(raw, "(") && !isAggSelectEntry(raw) {
+			if strings.Contains(raw, "(") && !postgrest.IsAggSelectEntry(raw) {
 				if !tableFound {
 					return nil, nil, fmt.Errorf("embeds are not supported on RPC results returning unknown tables")
 				}
 				embedParams = append(embedParams, raw)
 				continue
 			}
-			item := parseSelectItem(raw)
+			item := postgrest.ParseSelectItem(raw)
 			if item.Col == "*" {
 				chain.selectItems = nil
 				break
 			}
 			if target != "" {
-				if err := validateSelectItem(table, item); err != nil {
+				if err := postgrest.ValidateSelectItem(table, item); err != nil {
 					return nil, nil, fmt.Errorf("invalid select item: %w", err)
 				}
 			} else {
@@ -462,7 +463,7 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 		}
 		// Resolve embeds against the target table's FK graph.
 		if len(embedParams) > 0 {
-			resolved, err := resolveEmbeds(target, table, embedParams, h.allTables())
+			resolved, err := postgrest.ResolveEmbeds(target, table, embedParams, h.allTables())
 			if err != nil {
 				return nil, nil, fmt.Errorf("invalid embed: %w", err)
 			}
@@ -471,7 +472,7 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 	}
 
 	// WHERE tree.
-	where, err := parseWhereWith(c, validate, nil, argNames)
+	where, err := postgrest.ParseWhereWith(c.Request.URL.Query(), validate, nil, argNames)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -496,7 +497,7 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 				selStrings = append(selStrings, raw)
 			}
 		}
-		havingNode, err := parseHavingParam(havingRaw, "_rpc", targetTable, selStrings)
+		havingNode, err := postgrest.ParseHavingParam(havingRaw, "_rpc", targetTable, selStrings)
 		if err != nil {
 			return nil, nil, fmt.Errorf("invalid having: %w", err)
 		}
@@ -505,7 +506,7 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 
 	// ORDER.
 	if ord := c.Query("order"); ord != "" {
-		clauses, err := parseOrderValueWith(ord, validate)
+		clauses, err := postgrest.ParseOrderValueWith(ord, validate)
 		if err != nil {
 			return nil, nil, fmt.Errorf("invalid order: %w", err)
 		}
@@ -549,7 +550,7 @@ func renderRPCChain(chain *rpcChainSQL, argIdx int) (string, []any) {
 	var b strings.Builder
 	var args []any
 	if chain.where != nil {
-		sql, whereArgs, next := chain.where.buildSQL(argIdx)
+		sql, whereArgs, next := chain.where.BuildSQL(argIdx)
 		if sql != "" {
 			b.WriteString(" WHERE ")
 			b.WriteString(sql)
@@ -558,7 +559,7 @@ func renderRPCChain(chain *rpcChainSQL, argIdx int) (string, []any) {
 		}
 	}
 	if chain.having != nil {
-		sql, havingArgs, next := chain.having.buildSQL(argIdx)
+		sql, havingArgs, next := chain.having.BuildSQL(argIdx)
 		if sql != "" {
 			b.WriteString(" HAVING ")
 			b.WriteString(sql)
@@ -629,9 +630,9 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 	// ambiguous against the joined table's `id`. Mirrors the same fix in
 	// buildSelectQueryFull for direct CRUD queries.
 	renderChain := chain
-	if hasEmbeds && hasBelongsToJoin(chain.embeds) && chain.where != nil {
+	if hasEmbeds && postgrest.HasBelongsToJoin(chain.embeds) && chain.where != nil {
 		clone := *chain
-		clone.where = aliasWhereColumns(chain.where, "_rpc")
+		clone.where = postgrest.AliasWhereColumns(chain.where, "_rpc")
 		renderChain = &clone
 	}
 	suffix, _ := renderRPCChain(renderChain, baseArgIdx)
@@ -639,7 +640,7 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 	if len(chain.selectItems) > 0 {
 		parts := make([]string, 0, len(chain.selectItems))
 		for _, it := range chain.selectItems {
-			parts = append(parts, renderSelectItem("_rpc", it))
+			parts = append(parts, postgrest.RenderSelectItem("_rpc", it))
 		}
 		projection = strings.Join(parts, ", ")
 	}
@@ -662,7 +663,7 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 		alias := "_emb_" + emb.Name
 		if emb.IsReverse {
 			// Has-many: correlated scalar subselect with json_agg.
-			rowExpr, rowArgs, nextIdx := buildEmbedRowExpr(emb, emb.RefTable, nil, argIdx)
+			rowExpr, rowArgs, nextIdx := postgrest.BuildEmbedRowExpr(emb, emb.RefTable, nil, argIdx)
 			embedArgs = append(embedArgs, rowArgs...)
 			argIdx = nextIdx
 
@@ -672,12 +673,12 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 			}
 			sub := fmt.Sprintf("SELECT coalesce(json_agg(%s", rowExpr)
 			if len(emb.Order) > 0 {
-				sub += " ORDER BY " + renderOrderBy(emb.Order)
+				sub += " ORDER BY " + postgrest.RenderOrderBy(emb.Order)
 			}
 			sub += fmt.Sprintf("), '[]'::json) FROM %s WHERE %s.%s = _rpc.%s",
 				emb.RefTable, emb.RefTable, emb.FKColumn, refPK)
 			if emb.Where != nil {
-				clauseSQL, clauseArgs, next := emb.Where.buildSQL(argIdx)
+				clauseSQL, clauseArgs, next := emb.Where.BuildSQL(argIdx)
 				if clauseSQL != "" {
 					sub += " AND " + clauseSQL
 					embedArgs = append(embedArgs, clauseArgs...)

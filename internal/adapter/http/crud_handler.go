@@ -9,13 +9,13 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/instancez/instancez/internal/adapter/http/postgrest"
 	"github.com/instancez/instancez/internal/app"
 	"github.com/instancez/instancez/internal/domain"
 )
@@ -141,7 +141,7 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 		}
 
 		// Build SQL
-		query, args := buildSelectQueryFull(tableName, qp, table, allTbls)
+		query, args := postgrest.BuildSelectQueryFull(tableName, qp, table, allTbls)
 
 		// Set RLS context
 		reqCtx := c.Request.Context()
@@ -331,20 +331,20 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 			return
 		}
 
-		allowedCols, err := parseColumnsParam(c.Query("columns"), table)
+		allowedCols, err := postgrest.ParseColumnsParam(c.Query("columns"), table)
 		if err != nil {
 			problemJSON(c, 400, "bad_request", err.Error())
 			return
 		}
-		records = filterRecordsByColumns(records, allowedCols)
-		if recordsAllEmpty(records) {
+		records = postgrest.FilterRecordsByColumns(records, allowedCols)
+		if postgrest.RecordsAllEmpty(records) {
 			problemJSON(c, 400, "bad_request", "No insertable columns after applying columns= filter")
 			return
 		}
 
 		fieldMap := table.FieldMap()
 		for _, rec := range records {
-			if unknowns := findUnknownFields(rec, fieldMap); len(unknowns) > 0 {
+			if unknowns := postgrest.FindUnknownFields(rec, fieldMap); len(unknowns) > 0 {
 				problemJSON(c, 400, "bad_request",
 					fmt.Sprintf("Unknown fields: %s", strings.Join(unknowns, ", ")))
 				return
@@ -363,7 +363,7 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 
 		var pkCols []string
 		if resolution != "" {
-			customCols, err := parseOnConflictParam(c.Query("on_conflict"), table)
+			customCols, err := postgrest.ParseOnConflictParam(c.Query("on_conflict"), table)
 			if err != nil {
 				problemJSON(c, 400, "bad_request", err.Error())
 				return
@@ -371,7 +371,7 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 			if len(customCols) > 0 {
 				pkCols = customCols
 			} else {
-				pkCols = primaryKeyColumns(table)
+				pkCols = postgrest.PrimaryKeyColumns(table)
 			}
 			if len(pkCols) == 0 {
 				problemJSON(c, 400, "bad_request", "Cannot upsert: table has no primary key and no on_conflict")
@@ -382,9 +382,9 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 		var query string
 		var args []any
 		if resolution != "" {
-			query, args = buildBulkUpsertQuery(tableName, records, pkCols, resolution, returnMode == "representation")
+			query, args = postgrest.BuildBulkUpsertQuery(tableName, records, pkCols, resolution, returnMode == "representation")
 		} else {
-			query, args = buildBulkInsertQuery(tableName, records, returnMode == "representation")
+			query, args = postgrest.BuildBulkInsertQuery(tableName, records, returnMode == "representation")
 		}
 
 		if returnMode == "representation" {
@@ -427,7 +427,7 @@ func (h *CRUDHandler) handleUpsert(tableName string, table domain.Table) gin.Han
 			return
 		}
 
-		pkCols := primaryKeyColumns(table)
+		pkCols := postgrest.PrimaryKeyColumns(table)
 		if len(pkCols) == 0 {
 			problemJSON(c, 400, "bad_request", "Cannot upsert: table has no primary key")
 			return
@@ -435,7 +435,7 @@ func (h *CRUDHandler) handleUpsert(tableName string, table domain.Table) gin.Han
 
 		upsertFieldMap := table.FieldMap()
 		for _, rec := range records {
-			if unknowns := findUnknownFields(rec, upsertFieldMap); len(unknowns) > 0 {
+			if unknowns := postgrest.FindUnknownFields(rec, upsertFieldMap); len(unknowns) > 0 {
 				problemJSON(c, 400, "bad_request",
 					fmt.Sprintf("Unknown fields: %s", strings.Join(unknowns, ", ")))
 				return
@@ -460,7 +460,7 @@ func (h *CRUDHandler) handleUpsert(tableName string, table domain.Table) gin.Han
 		returnMode := parseReturnPrefer(prefer)
 		var results []map[string]any
 
-		query, args := buildBulkUpsertQuery(tableName, records, pkCols, "merge", returnMode == "representation")
+		query, args := postgrest.BuildBulkUpsertQuery(tableName, records, pkCols, "merge", returnMode == "representation")
 		if returnMode == "representation" {
 			rows, err := tx.Query(ctx, query, args...)
 			if err != nil {
@@ -506,13 +506,13 @@ func (h *CRUDHandler) handleUpdate(tableName string, table domain.Table) gin.Han
 			return
 		}
 
-		if unknowns := findUnknownFields(updates, table.FieldMap()); len(unknowns) > 0 {
+		if unknowns := postgrest.FindUnknownFields(updates, table.FieldMap()); len(unknowns) > 0 {
 			problemJSON(c, 400, "bad_request",
 				fmt.Sprintf("Unknown fields: %s", strings.Join(unknowns, ", ")))
 			return
 		}
 
-		where, err := parseWhere(c, tableName, table)
+		where, err := postgrest.ParseWhere(c.Request.URL.Query(), tableName, table)
 		if err != nil {
 			problemJSON(c, 400, "bad_request", err.Error())
 			return
@@ -527,7 +527,7 @@ func (h *CRUDHandler) handleUpdate(tableName string, table domain.Table) gin.Han
 		returnMode := parseReturnPrefer(prefer)
 		maxAffected, hasMax := parseMaxAffectedPrefer(prefer)
 
-		query, args := buildUpdateQuery(tableName, updates, where, returnMode == "representation")
+		query, args := postgrest.BuildUpdateQuery(tableName, updates, where, returnMode == "representation")
 
 		if returnMode == "representation" {
 			rows, err := tx.Query(ctx, query, args...)
@@ -576,7 +576,7 @@ func (h *CRUDHandler) handleDelete(tableName string, table domain.Table) gin.Han
 			return
 		}
 
-		where, err := parseWhere(c, tableName, table)
+		where, err := postgrest.ParseWhere(c.Request.URL.Query(), tableName, table)
 		if err != nil {
 			problemJSON(c, 400, "bad_request", err.Error())
 			return
@@ -597,7 +597,7 @@ func (h *CRUDHandler) handleDelete(tableName string, table domain.Table) gin.Han
 
 		returnMode := parseReturnPrefer(prefer)
 		maxAffected, hasMax := parseMaxAffectedPrefer(prefer)
-		query, args := buildDeleteQuery(tableName, where, returnMode == "representation")
+		query, args := postgrest.BuildDeleteQuery(tableName, where, returnMode == "representation")
 
 		if returnMode == "representation" {
 			rows, err := tx.Query(ctx, query, args...)
@@ -665,7 +665,7 @@ func (h *CRUDHandler) executeCount(ctx interface{ Value(any) any }, tableName st
 
 func (h *CRUDHandler) executeExactCount(ctx context.Context, tableName string, qp *QueryParams) (int, error) {
 	sql := fmt.Sprintf("SELECT COUNT(*) AS count FROM %s", tableName)
-	whereSQL, args, _ := qp.Where.buildSQL(1)
+	whereSQL, args, _ := qp.Where.BuildSQL(1)
 	if whereSQL != "" {
 		sql += " WHERE " + whereSQL
 	}
@@ -687,7 +687,7 @@ func (h *CRUDHandler) executeExactCount(ctx context.Context, tableName string, q
 
 func (h *CRUDHandler) executePlannedCount(ctx context.Context, tableName string, qp *QueryParams) (int, error) {
 	innerSQL := fmt.Sprintf("SELECT 1 FROM %s", tableName)
-	whereSQL, args, _ := qp.Where.buildSQL(1)
+	whereSQL, args, _ := qp.Where.BuildSQL(1)
 	if whereSQL != "" {
 		innerSQL += " WHERE " + whereSQL
 	}
@@ -733,18 +733,6 @@ func (h *CRUDHandler) executeEstimateCount(ctx context.Context, tableName string
 		}
 	}
 	return -1, nil
-}
-
-// findUnknownFields returns field names not in the provided field map.
-func findUnknownFields(record map[string]any, fieldMap map[string]domain.Field) []string {
-	var unknowns []string
-	for key := range record {
-		if _, ok := fieldMap[key]; !ok {
-			unknowns = append(unknowns, key)
-		}
-	}
-	sort.Strings(unknowns)
-	return unknowns
 }
 
 // joinPrefer concatenates all Prefer header values on the request into a
@@ -1016,72 +1004,12 @@ func suggestHintForPgError(pgErr *pgconn.PgError) string {
 
 // --- SQL Query Building ---
 
-// Embed represents a relation embed in the select clause (e.g., author(id,name)).
-type Embed struct {
-	Name      string   // relation name (e.g., "author")
-	Alias     string   // optional output key from "alias:name" prefix (PostgREST)
-	Columns   []string // columns to select from the related table (empty = *)
-	FKColumn  string   // the FK column on this table (e.g., "author_id")
-	RefTable  string   // the referenced table (e.g., "users")
-	RefColumn string   // the referenced column (e.g., "id")
-	IsReverse bool     // true for has-many (reverse FK)
-	Inner     bool     // true → INNER JOIN hint (!inner)
-	Spread    bool     // true → flatten columns into parent row (... prefix)
-	Children  []Embed  // nested embeds (e.g., author(*, posts(*)))
-
-	// Nested (PostgREST) scoping applied via "embedname.<...>" query params.
-	// Where applies to either side; Order and Limit are only valid for
-	// has-many (reverse) embeds where the result is a row set.
-	Where  *WhereNode
-	Order  []OrderClause
-	Limit  *int
-	Offset *int
-}
-
-// outputKey returns the JSON object key for this embed in the response, and
-// the SQL alias seed used internally. Aliased embeds (`category:categories`)
-// surface under the alias; otherwise the relation Name is used.
-func (e Embed) outputKey() string {
-	if e.Alias != "" {
-		return e.Alias
-	}
-	return e.Name
-}
-
-// QueryParams holds parsed PostgREST query parameters.
-type QueryParams struct {
-	Select []string
-	Embeds []Embed
-	Where  *WhereNode
-	Having *WhereNode // HAVING clause filters applied after GROUP BY
-	Order  []OrderClause
-	Limit  int
-	Offset int
-}
-
-type Filter struct {
-	Column   string
-	Operator string
-	Value    string
-	// Config carries an inline parameter parsed from operator syntax like
-	// `fts(english).query`. Currently only used by the FTS family to
-	// choose the Postgres text-search configuration at query time.
-	Config string
-}
-
-type OrderClause struct {
-	Column string
-	Desc   bool
-	Nulls  string // "", "first", or "last"
-	// IsAlias marks clauses whose Column refers to a select-list alias
-	// (explicit or the default key of an aggregate like "count") rather
-	// than a real table column. Such clauses skip column validation at
-	// parse time and are emitted as a double-quoted identifier so
-	// Postgres resolves them from the output list — matching PostgREST's
-	// behaviour where `order=count.desc` sorts by the aggregate selected
-	// as `...,id.count()`.
-	IsAlias bool
-}
+// Type aliases so the rest of this package can reference them without the
+// postgrest. prefix while we complete the migration.
+type Embed = postgrest.Embed
+type QueryParams = postgrest.QueryParams
+type Filter = postgrest.Filter
+type OrderClause = postgrest.OrderClause
 
 func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allTables map[string]domain.Table) (*QueryParams, error) {
 	qp := &QueryParams{
@@ -1091,13 +1019,13 @@ func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allT
 
 	// Parse select
 	if sel := c.Query("select"); sel != "" {
-		qp.Select = parseSelectParam(sel)
+		qp.Select = postgrest.ParseSelectParam(sel)
 		for _, s := range qp.Select {
-			if strings.Contains(s, "(") && !isAggSelectEntry(s) {
+			if strings.Contains(s, "(") && !postgrest.IsAggSelectEntry(s) {
 				continue // embed — validated via resolveEmbeds
 			}
-			item := parseSelectItem(s)
-			if err := validateSelectItem(table, item); err != nil {
+			item := postgrest.ParseSelectItem(s)
+			if err := postgrest.ValidateSelectItem(table, item); err != nil {
 				return nil, fmt.Errorf("invalid select: %w", err)
 			}
 		}
@@ -1108,28 +1036,28 @@ func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allT
 	if allTables != nil {
 		var embedParams []string
 		for _, s := range qp.Select {
-			if strings.Contains(s, "(") && !isAggSelectEntry(s) {
+			if strings.Contains(s, "(") && !postgrest.IsAggSelectEntry(s) {
 				embedParams = append(embedParams, s)
 			}
 		}
 		if len(embedParams) > 0 {
-			resolved, err := resolveEmbeds(tableName, table, embedParams, allTables)
+			resolved, err := postgrest.ResolveEmbeds(tableName, table, embedParams, allTables)
 			if err != nil {
 				return nil, fmt.Errorf("invalid embed: %w", err)
 			}
 			qp.Embeds = resolved
 		}
 	}
-	embedByName := map[string]*Embed{}
+	embedByName := map[string]*postgrest.Embed{}
 	for i := range qp.Embeds {
-		embedByName[qp.Embeds[i].outputKey()] = &qp.Embeds[i]
+		embedByName[qp.Embeds[i].OutputKey()] = &qp.Embeds[i]
 	}
 
 	// Parse order. Format per PostgREST: col[.asc|.desc][.nullsfirst|.nullslast].
 	// Select-list aliases (including aggregate default keys) are resolved
 	// first so `order=count.desc` works against `select=...,id.count()`.
 	if order := c.Query("order"); order != "" {
-		clauses, err := parseOrderValueWithSelect(order, table, qp.Select)
+		clauses, err := postgrest.ParseOrderValueWithSelect(order, table, qp.Select)
 		if err != nil {
 			return nil, fmt.Errorf("invalid order: %w", err)
 		}
@@ -1158,7 +1086,7 @@ func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allT
 	// before the outer WHERE parse so those keys don't get routed to the
 	// outer filter.
 	if len(embedByName) > 0 {
-		if err := parseEmbedScopedParams(c, embedByName, allTables); err != nil {
+		if err := postgrest.ParseEmbedScopedParams(c.Request.URL.Query(), embedByName, allTables); err != nil {
 			return nil, err
 		}
 	}
@@ -1168,7 +1096,7 @@ func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allT
 	}
 
 	// Parse filters (including or/and/not logic trees)
-	where, err := parseWhereSkip(c, tableName, table, skipPrefixes)
+	where, err := postgrest.ParseWhereSkip(c.Request.URL.Query(), tableName, table, skipPrefixes)
 	if err != nil {
 		return nil, err
 	}
@@ -1180,7 +1108,7 @@ func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allT
 	//   ?having=count.gt.5
 	//   ?having=sum.gte.100
 	if havingRaw := c.Query("having"); havingRaw != "" {
-		havingNode, err := parseHavingParam(havingRaw, tableName, table, qp.Select)
+		havingNode, err := postgrest.ParseHavingParam(havingRaw, tableName, table, qp.Select)
 		if err != nil {
 			return nil, fmt.Errorf("invalid having: %w", err)
 		}
@@ -1190,1443 +1118,17 @@ func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allT
 	return qp, nil
 }
 
-// parseOrderValue parses a comma-separated PostgREST order list into
-// OrderClauses. Each entry is col[.asc|.desc][.nullsfirst|.nullslast];
-// modifiers are stripped right-to-left so the remaining prefix is the
-// column name (default ASC, server default nulls order).
-func parseOrderValue(val string, table domain.Table) ([]OrderClause, error) {
-	return parseOrderValueWith(val, func(col string) error { return validateColumn(table, col) })
-}
 
-// parseOrderValueWithSelect is parseOrderValue with knowledge of the
-// select list, so order tokens that match a select alias (explicit or
-// the default key of an aggregate) bypass column validation and are
-// emitted as quoted output-list references in the generated SQL. This
-// mirrors PostgREST, where `order=count.desc` against a select of
-// `...,id.count()` sorts by the aggregate output rather than failing
-// with "unknown column".
-func parseOrderValueWithSelect(val string, table domain.Table, selectItems []string) ([]OrderClause, error) {
-	aliases := collectSelectAliases(selectItems)
-	validate := func(col string) error {
-		if _, ok := aliases[col]; ok {
-			return nil
-		}
-		return validateColumn(table, col)
-	}
-	clauses, err := parseOrderValueWith(val, validate)
-	if err != nil {
-		return nil, err
-	}
-	for i := range clauses {
-		if _, ok := aliases[clauses[i].Column]; ok {
-			clauses[i].IsAlias = true
-		}
-	}
-	return clauses, nil
-}
-
-// collectSelectAliases returns the set of output-list names produced by
-// a parsed select list: explicit aliases (`nick:name`) and the default
-// alias key for aggregates without an explicit alias (`id.count()` →
-// "count"). Embed entries are skipped.
-func collectSelectAliases(selectItems []string) map[string]struct{} {
-	out := map[string]struct{}{}
-	for _, s := range selectItems {
-		if strings.Contains(s, "(") && !isAggSelectEntry(s) {
-			continue
-		}
-		item := parseSelectItem(s)
-		switch {
-		case item.Alias != "":
-			out[item.Alias] = struct{}{}
-		case item.Agg != "":
-			out[item.Agg] = struct{}{}
-		}
-	}
-	return out
-}
-
-// parseOrderValueWith is parseOrderValue with a pluggable column validator,
-// used by the RPC path when there is no single domain.Table to validate against.
-func parseOrderValueWith(val string, validate colValidator) ([]OrderClause, error) {
-	var out []OrderClause
-	for _, part := range strings.Split(val, ",") {
-		part = strings.TrimSpace(part)
-		oc := OrderClause{}
-		for {
-			switch {
-			case strings.HasSuffix(part, ".nullsfirst"):
-				oc.Nulls = "first"
-				part = strings.TrimSuffix(part, ".nullsfirst")
-				continue
-			case strings.HasSuffix(part, ".nullslast"):
-				oc.Nulls = "last"
-				part = strings.TrimSuffix(part, ".nullslast")
-				continue
-			case strings.HasSuffix(part, ".desc"):
-				oc.Desc = true
-				part = strings.TrimSuffix(part, ".desc")
-				continue
-			case strings.HasSuffix(part, ".asc"):
-				part = strings.TrimSuffix(part, ".asc")
-				continue
-			}
-			break
-		}
-		oc.Column = part
-		if err := validate(oc.Column); err != nil {
-			return nil, err
-		}
-		out = append(out, oc)
-	}
-	return out, nil
-}
-
-// parseEmbedScopedParams routes "<embed>.*" query parameters into the
-// corresponding Embed's Where/Order/Limit fields. The embed table is
-// used to validate columns. Order and Limit are only allowed for has-many
-// (reverse) embeds — belongs-to embeds are joined to a single row, so
-// ordering or limiting the join has no meaning.
-func parseEmbedScopedParams(c *gin.Context, embedByName map[string]*Embed, allTables map[string]domain.Table) error {
-	for key, values := range c.Request.URL.Query() {
-		for embName, emb := range embedByName {
-			prefix := embName + "."
-			if !strings.HasPrefix(key, prefix) {
-				continue
-			}
-			suffix := strings.TrimPrefix(key, prefix)
-			embTable, ok := allTables[emb.RefTable]
-			if !ok {
-				return fmt.Errorf("embed %q references unknown table %q", embName, emb.RefTable)
-			}
-			// Embed-scoped filters and order may reference select-list
-			// aliases (explicit or aggregate defaults) in the embed's own
-			// projection, e.g. `posts.count.gt=0` against `posts(id.count())`.
-			aliasSet := collectSelectAliases(emb.Columns)
-			embValidate := func(col string) error {
-				if _, ok := aliasSet[col]; ok {
-					return nil
-				}
-				return validateColumn(embTable, col)
-			}
-			switch suffix {
-			case "or", "and":
-				for _, v := range values {
-					node, err := parseLogicListWith(suffix, v, embValidate)
-					if err != nil {
-						return fmt.Errorf("invalid %s for embed %q: %w", suffix, embName, err)
-					}
-					if emb.Where == nil {
-						emb.Where = &WhereNode{Op: "and"}
-					}
-					emb.Where.Children = append(emb.Where.Children, node)
-				}
-			case "order":
-				if !emb.IsReverse {
-					return fmt.Errorf("order not allowed on belongs-to embed %q", embName)
-				}
-				for _, v := range values {
-					clauses, err := parseOrderValueWithSelect(v, embTable, emb.Columns)
-					if err != nil {
-						return fmt.Errorf("invalid order for embed %q: %w", embName, err)
-					}
-					emb.Order = append(emb.Order, clauses...)
-				}
-			case "limit":
-				if !emb.IsReverse {
-					return fmt.Errorf("limit not allowed on belongs-to embed %q", embName)
-				}
-				if len(values) == 0 {
-					break
-				}
-				n, err := strconv.Atoi(values[0])
-				if err != nil || n < 0 {
-					return fmt.Errorf("invalid limit for embed %q: %s", embName, values[0])
-				}
-				emb.Limit = &n
-			case "offset":
-				if !emb.IsReverse {
-					return fmt.Errorf("offset not allowed on belongs-to embed %q", embName)
-				}
-				if len(values) == 0 {
-					break
-				}
-				n, err := strconv.Atoi(values[0])
-				if err != nil || n < 0 {
-					return fmt.Errorf("invalid offset for embed %q: %s", embName, values[0])
-				}
-				emb.Offset = &n
-			case "select":
-				// Reserved name inside an embed scope: column projection is
-				// controlled by the parentheses syntax (posts(col1,col2))
-				// rather than a separate posts.select= param.
-				return fmt.Errorf("embed param %q.%s not supported", embName, suffix)
-			default:
-				if err := validateColumn(embTable, suffix); err != nil {
-					return fmt.Errorf("invalid filter on embed %q: %w", embName, err)
-				}
-				for _, v := range values {
-					leaf, err := parseLeafValue(suffix, v)
-					if err != nil {
-						return fmt.Errorf("invalid filter on embed %q: %w", embName, err)
-					}
-					if emb.Where == nil {
-						emb.Where = &WhereNode{Op: "and"}
-					}
-					emb.Where.Children = append(emb.Where.Children, leaf)
-				}
-			}
-			break
-		}
-	}
-	return nil
-}
-
-// hasBelongsToJoin reports whether any embed will produce a JOIN on the
-// outer FROM clause. Reverse (has-many) embeds become correlated subselects
-// and don't widen the outer scope; belongs-to embeds do.
-func hasBelongsToJoin(embeds []Embed) bool {
-	for _, e := range embeds {
-		if !e.IsReverse {
-			return true
-		}
-	}
-	return false
-}
-
-// qualifyOrderColumns prefixes each non-alias ORDER clause column with
-// "<table>." so it's unambiguous against joined embed columns. IsAlias
-// clauses resolve against the SELECT output list and are left untouched.
-func qualifyOrderColumns(clauses []OrderClause, tableName string) []OrderClause {
-	if len(clauses) == 0 {
-		return clauses
-	}
-	out := make([]OrderClause, len(clauses))
-	for i, oc := range clauses {
-		out[i] = oc
-		if !oc.IsAlias && !strings.Contains(oc.Column, ".") {
-			out[i].Column = tableName + "." + oc.Column
-		}
-	}
-	return out
-}
-
-// aliasWhereColumns returns a clone of n with every leaf column prefixed
-// with "<alias>.". Used to qualify belongs-to embed filters against the
-// join alias when they're emitted into the outer WHERE clause.
-func aliasWhereColumns(n *WhereNode, alias string) *WhereNode {
-	if n == nil {
-		return nil
-	}
-	if n.Leaf != nil {
-		f := *n.Leaf
-		f.Column = alias + "." + f.Column
-		return &WhereNode{Leaf: &f, Not: n.Not}
-	}
-	clone := &WhereNode{Op: n.Op, Not: n.Not}
-	for _, c := range n.Children {
-		clone.Children = append(clone.Children, aliasWhereColumns(c, alias))
-	}
-	return clone
-}
-
-// reservedParams are non-filter query parameters. The or/and keys are not
-// listed here because they are handled explicitly in parseWhere's switch.
-var reservedParams = map[string]bool{
-	"select": true,
-	"order":  true,
-	"limit":  true,
-	"offset": true,
-	"having": true,
-}
-
-// jsonKeyRe restricts JSONB path keys to safe identifiers. Keys are
-// interpolated into SQL as single-quoted literals, so we refuse anything
-// that could break out of the quoting.
-var jsonKeyRe = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
-
-// validateColumn ensures col references a field declared on the table.
-// JSONB access expressions (e.g. "metadata->>theme") are accepted when the
-// base column exists and the path key is a safe identifier.
-func validateColumn(table domain.Table, col string) error {
-	if col == "" {
-		return fmt.Errorf("empty column name")
-	}
-	base, steps := splitJSONBPath(col)
-	if _, ok := table.GetField(base); !ok {
-		return fmt.Errorf("unknown column %q", base)
-	}
-	for _, s := range steps {
-		if s.key == "" {
-			return fmt.Errorf("empty JSONB key in %q", col)
-		}
-		if !s.isInt && !jsonKeyRe.MatchString(s.key) {
-			return fmt.Errorf("invalid JSONB key %q", s.key)
-		}
-	}
-	return nil
-}
-
-var validOps = map[string]string{
-	"eq":         "=",
-	"neq":        "!=",
-	"gt":         ">",
-	"gte":        ">=",
-	"lt":         "<",
-	"lte":        "<=",
-	"like":       "LIKE",
-	"ilike":      "ILIKE",
-	"match":      "~",  // POSIX regex match
-	"imatch":     "~*", // POSIX regex match, case-insensitive
-	"is":         "IS",
-	"isdistinct": "IS DISTINCT FROM",
-	"in":         "IN",
-	"cs":         "@>",
-	"cd":         "<@",
-	"ov":         "&&",
-	"fts":        "@@",
-	"plfts":      "@@",
-	"phfts":      "@@",
-	"wfts":       "@@",
-	// Range operators (PostgREST). Values are Postgres range literals like
-	// "(1,10)" or "[1,10)"; we pass them as text params and rely on
-	// Postgres to infer the range type from the target column.
-	"sl":  "<<",  // strictly left of
-	"sr":  ">>",  // strictly right of
-	"nxl": "&>",  // does not extend to the left of
-	"nxr": "&<",  // does not extend to the right of
-	"adj": "-|-", // adjacent to
-	// like(all)/like(any) families. SQL form is handled in
-	// buildFilterCondition; map values here are placeholders only.
-	"like(all)":  "LIKE",
-	"like(any)":  "LIKE",
-	"ilike(all)": "ILIKE",
-	"ilike(any)": "ILIKE",
-}
-
-// parseFilterValue splits "eq.active" into ("eq", "active", "", nil).
-// Operators may carry an inline parameter in parentheses — currently
-// used by the FTS family to choose a text-search configuration:
-//
-//	fts(english).query → op="fts", config="english", value="query"
-//
-// For JSONB access, the column may contain "->" or "->>" operators,
-// e.g. "metadata->>theme=eq.dark" is parsed in parseFilters with column="metadata->>theme".
-func parseFilterValue(val string) (op, operand, config string, err error) {
-	idx := strings.Index(val, ".")
-	if idx == -1 {
-		return "", "", "", fmt.Errorf("expected operator.value format, got %q", val)
-	}
-	op = val[:idx]
-	operand = val[idx+1:]
-
-	// Inline config: strip "(…)" from the op token.
-	if lp := strings.Index(op, "("); lp != -1 {
-		if !strings.HasSuffix(op, ")") {
-			return "", "", "", fmt.Errorf("malformed operator %q", op)
-		}
-		config = op[lp+1 : len(op)-1]
-		op = op[:lp]
-		if config == "" {
-			return "", "", "", fmt.Errorf("empty config in operator %q", val[:idx])
-		}
-		if !identRe.MatchString(config) {
-			return "", "", "", fmt.Errorf("invalid config %q", config)
-		}
-	}
-
-	if _, ok := validOps[op]; !ok {
-		return "", "", "", fmt.Errorf("unknown operator %q", op)
-	}
-
-	// The `is` operator is the one comparison whose right-hand side is not
-	// emitted as a bind parameter (Postgres `IS` requires a keyword literal,
-	// not an expression). Restrict it to the four SQL truth keywords so a
-	// caller can never smuggle arbitrary SQL into the WHERE clause via
-	// `col=is.<anything>`. PostgREST applies the same restriction.
-	if op == "is" {
-		switch strings.ToLower(strings.TrimSpace(operand)) {
-		case "null", "true", "false", "unknown":
-		default:
-			return "", "", "", fmt.Errorf(`operator "is" only accepts null, true, false, or unknown`)
-		}
-	}
-
-	return op, operand, config, nil
-}
-
-// parsePatternList parses the value portion of a like(all)/like(any) filter.
-// PostgREST accepts curly-brace form ({a,b,c}) and we also accept parenthesized
-// form ((a,b,c)) for symmetry with in.(...). An empty list yields [""] so a
-// degenerate filter still produces a LIKE comparison rather than an empty
-// ARRAY[] (which Postgres cannot type-infer).
-func parsePatternList(raw string) []string {
-	s := strings.TrimSpace(raw)
-	if len(s) >= 2 {
-		if (s[0] == '{' && s[len(s)-1] == '}') || (s[0] == '(' && s[len(s)-1] == ')') {
-			s = s[1 : len(s)-1]
-		}
-	}
-	if s == "" {
-		return []string{""}
-	}
-	parts := strings.Split(s, ",")
-	out := make([]string, len(parts))
-	for i, p := range parts {
-		out[i] = strings.TrimSpace(p)
-	}
-	return out
-}
-
-// jsonPathStep is one link of a JSONB accessor chain. An integer key
-// (isInt = true) is rendered into SQL unquoted so Postgres treats it as
-// an array index; a text key is rendered as a single-quoted literal.
-type jsonPathStep struct {
-	op    string // "->" or "->>"
-	key   string
-	isInt bool
-}
-
-// splitJSONBPath parses a filter/select column like "data->items->0->>name"
-// into the base column ("data") and an ordered list of JSONB access steps.
-// A column with no path operators returns (col, nil).
-func splitJSONBPath(col string) (string, []jsonPathStep) {
-	idx := strings.Index(col, "->")
-	if idx == -1 {
-		return col, nil
-	}
-	base := col[:idx]
-	rest := col[idx:]
-	var steps []jsonPathStep
-	for len(rest) > 0 {
-		if !strings.HasPrefix(rest, "->") {
-			break
-		}
-		op := "->"
-		keyStart := 2
-		if len(rest) > 2 && rest[2] == '>' {
-			op = "->>"
-			keyStart = 3
-		}
-		tail := rest[keyStart:]
-		next := strings.Index(tail, "->")
-		var key string
-		if next == -1 {
-			key = tail
-			rest = ""
-		} else {
-			key = tail[:next]
-			rest = tail[next:]
-		}
-		steps = append(steps, jsonPathStep{op: op, key: key, isInt: isAllDigits(key)})
-	}
-	return base, steps
-}
-
-// renderJSONBSuffix serializes a JSONB access chain onto a prefix like
-// "tbl.col" or "col", emitting integer keys unquoted and text keys as
-// single-quoted literals (jsonKeyRe has already validated text keys).
-func renderJSONBSuffix(steps []jsonPathStep) string {
-	var b strings.Builder
-	for _, s := range steps {
-		b.WriteString(s.op)
-		if s.isInt {
-			b.WriteString(s.key)
-		} else {
-			b.WriteByte('\'')
-			b.WriteString(s.key)
-			b.WriteByte('\'')
-		}
-	}
-	return b.String()
-}
-
-// lastJSONBOp reports the operator of the final step in a JSONB chain,
-// which determines the result type: "->>" yields text, "->" yields jsonb.
-func lastJSONBOp(steps []jsonPathStep) string {
-	if len(steps) == 0 {
-		return ""
-	}
-	return steps[len(steps)-1].op
-}
-
-func isAllDigits(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
-}
-
-func parseSelectParam(sel string) []string {
-	// Simple parsing — just split on commas at top level (respecting parentheses)
-	var result []string
-	depth := 0
-	start := 0
-	for i, ch := range sel {
-		switch ch {
-		case '(':
-			depth++
-		case ')':
-			depth--
-		case ',':
-			if depth == 0 {
-				result = append(result, strings.TrimSpace(sel[start:i]))
-				start = i + 1
-			}
-		}
-	}
-	if start < len(sel) {
-		result = append(result, strings.TrimSpace(sel[start:]))
-	}
-	return result
-}
-
-// buildEmbedRowExpr returns the JSON expression representing a single row of an
-// embed, including nested child subselects. parentTable is the table the embed's
-// FK column references from (for correlation). srcAlias is the qualifier used to
-// reference the embed's columns (e.g., the table name in a subselect, or an alias
-// for a LEFT JOINed belongs-to).
-func buildEmbedRowExpr(emb Embed, srcAlias string, allTables map[string]domain.Table, argIdx int) (string, []any, int) {
-	var allArgs []any
-
-	// If no explicit columns AND no children → row_to_json(t.*)
-	if len(emb.Columns) == 0 && len(emb.Children) == 0 {
-		return fmt.Sprintf("row_to_json(%s.*)", srcAlias), nil, argIdx
-	}
-
-	// Build json_build_object entries for scalar columns and child embeds.
-	var entries []string
-
-	// Scalar columns: if columns are empty but children exist, use all fields
-	// from the table (i.e., "*" with children means all scalar cols + children).
-	scalarCols := emb.Columns
-	if len(scalarCols) == 0 && len(emb.Children) > 0 {
-		// Emit all fields from the referenced table as scalar columns.
-		if allTables != nil {
-			if refTbl, ok := allTables[emb.RefTable]; ok {
-				for _, f := range refTbl.Fields {
-					scalarCols = append(scalarCols, f.Name)
-				}
-				sort.Strings(scalarCols)
-			}
-		}
-	}
-
-	for _, c := range scalarCols {
-		entries = append(entries, fmt.Sprintf("'%s', %s.%s", c, srcAlias, c))
-	}
-
-	// Nested child embeds → scalar subselects.
-	for _, child := range emb.Children {
-		childExpr, childArgs, nextIdx := buildChildEmbedSubselect(child, srcAlias, allTables, argIdx)
-		entries = append(entries, fmt.Sprintf("'%s', %s", child.outputKey(), childExpr))
-		allArgs = append(allArgs, childArgs...)
-		argIdx = nextIdx
-	}
-
-	return fmt.Sprintf("json_build_object(%s)", strings.Join(entries, ", ")), allArgs, argIdx
-}
-
-// buildChildEmbedSubselect builds a complete scalar subselect expression for a
-// nested child embed, correlated to the parent via parentAlias.
-func buildChildEmbedSubselect(child Embed, parentAlias string, allTables map[string]domain.Table, argIdx int) (string, []any, int) {
-	var allArgs []any
-
-	if child.IsReverse {
-		// Has-many child: (SELECT coalesce(json_agg(rowExpr), '[]'::json) FROM T WHERE T.fk = parent.pk)
-		rowExpr, rowArgs, nextIdx := buildEmbedRowExpr(child, child.RefTable, allTables, argIdx)
-		allArgs = append(allArgs, rowArgs...)
-		argIdx = nextIdx
-
-		refPK := child.RefColumn
-		if refPK == "" {
-			refPK = "id"
-		}
-		sub := fmt.Sprintf("SELECT coalesce(json_agg(%s", rowExpr)
-		if len(child.Order) > 0 {
-			sub += " ORDER BY " + renderOrderBy(child.Order)
-		}
-		sub += fmt.Sprintf("), '[]'::json) FROM %s WHERE %s.%s = %s.%s",
-			child.RefTable, child.RefTable, child.FKColumn, parentAlias, refPK)
-		if child.Where != nil {
-			clauseSQL, clauseArgs, next := child.Where.buildSQL(argIdx)
-			if clauseSQL != "" {
-				sub += " AND " + clauseSQL
-				allArgs = append(allArgs, clauseArgs...)
-				argIdx = next
-			}
-		}
-		if child.Limit != nil {
-			sub += fmt.Sprintf(" LIMIT %d", *child.Limit)
-		}
-		if child.Offset != nil {
-			sub += fmt.Sprintf(" OFFSET %d", *child.Offset)
-		}
-		return fmt.Sprintf("(%s)", sub), allArgs, argIdx
-	}
-
-	// Belongs-to child: (SELECT row_to_json/json_build_object FROM T WHERE T.pk = parent.fk LIMIT 1)
-	rowExpr, rowArgs, nextIdx := buildEmbedRowExpr(child, child.RefTable, allTables, argIdx)
-	allArgs = append(allArgs, rowArgs...)
-	argIdx = nextIdx
-
-	sub := fmt.Sprintf("SELECT %s FROM %s WHERE %s.%s = %s.%s LIMIT 1",
-		rowExpr, child.RefTable, child.RefTable, child.RefColumn, parentAlias, child.FKColumn)
-	return fmt.Sprintf("(%s)", sub), allArgs, argIdx
-}
-
-// buildSelectQuery builds a SELECT SQL from QueryParams, including LEFT JOINs for embeds.
-func buildSelectQuery(tableName string, qp *QueryParams, table domain.Table) (string, []any) {
-	return buildSelectQueryFull(tableName, qp, table, nil)
-}
-
-// buildSelectQueryFull is the full version of buildSelectQuery that accepts allTables
-// for resolving nested embed schemas.
-func buildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table, allTables map[string]domain.Table) (string, []any) {
-	// SELECT clause — base table columns
-	var selectParts []string
-	var groupByExprs []string
-	var hasAgg bool
-	if len(qp.Select) > 0 {
-		var items []SelectItem
-		for _, s := range qp.Select {
-			if strings.Contains(s, "(") && !isAggSelectEntry(s) {
-				continue // embed handled below
-			}
-			item := parseSelectItem(s)
-			items = append(items, item)
-			if item.Agg != "" {
-				hasAgg = true
-			}
-		}
-		for _, item := range items {
-			selectParts = append(selectParts, renderSelectItem(tableName, item))
-			if hasAgg && item.Agg == "" {
-				if expr := renderSelectItemGroupByExpr(tableName, item); expr != "" {
-					groupByExprs = append(groupByExprs, expr)
-				}
-			}
-		}
-	}
-	if len(selectParts) == 0 {
-		if len(table.Searchable) > 0 {
-			// Exclude the internal _tsv tsvector column from default SELECT.
-			for _, f := range table.Fields {
-				selectParts = append(selectParts, tableName+"."+f.Name)
-			}
-		} else {
-			selectParts = append(selectParts, tableName+".*")
-		}
-	}
-
-	var allArgs []any
-	argIdx := 1
-	var belongsToWhere []string
-
-	// Add embed columns with aliases. belongs-to embeds reference a single
-	// joined row by alias; has-many embeds are emitted as a correlated
-	// scalar subselect that aggregates children into a JSON array.
-	for _, emb := range qp.Embeds {
-		alias := "_emb_" + emb.outputKey()
-		hasChildren := len(emb.Children) > 0
-		if emb.IsReverse {
-			// Has-many embed → correlated scalar subselect with json_agg.
-			rowExpr, rowArgs, nextIdx := buildEmbedRowExpr(emb, emb.RefTable, allTables, argIdx)
-			allArgs = append(allArgs, rowArgs...)
-			argIdx = nextIdx
-
-			refPK := emb.RefColumn
-			if refPK == "" {
-				refPK = "id"
-			}
-
-			needsInnerSubquery := emb.Limit != nil || emb.Offset != nil
-
-			if needsInnerSubquery {
-				// When LIMIT/OFFSET is requested, wrap the source rows in a
-				// subquery so pagination applies before aggregation.
-				inner := fmt.Sprintf("SELECT * FROM %s WHERE %s.%s = %s.%s",
-					emb.RefTable, emb.RefTable, emb.FKColumn, tableName, refPK)
-				if emb.Where != nil {
-					clauseSQL, clauseArgs, next := emb.Where.buildSQL(argIdx)
-					if clauseSQL != "" {
-						inner += " AND " + clauseSQL
-						allArgs = append(allArgs, clauseArgs...)
-						argIdx = next
-					}
-				}
-				if len(emb.Order) > 0 {
-					inner += " ORDER BY " + renderOrderBy(emb.Order)
-				}
-				if emb.Limit != nil {
-					inner += fmt.Sprintf(" LIMIT %d", *emb.Limit)
-				}
-				if emb.Offset != nil {
-					inner += fmt.Sprintf(" OFFSET %d", *emb.Offset)
-				}
-				sub := fmt.Sprintf(
-					"SELECT coalesce(json_agg(%s), '[]'::json) FROM (%s) %s",
-					rowExpr, inner, emb.RefTable)
-				selectParts = append(selectParts, fmt.Sprintf("(%s) AS %s", sub, emb.outputKey()))
-			} else {
-				sub := fmt.Sprintf(
-					"SELECT coalesce(json_agg(%s", rowExpr)
-				if len(emb.Order) > 0 {
-					sub += " ORDER BY " + renderOrderBy(emb.Order)
-				}
-				sub += fmt.Sprintf("), '[]'::json) FROM %s WHERE %s.%s = %s.%s",
-					emb.RefTable, emb.RefTable, emb.FKColumn, tableName, refPK)
-				if emb.Where != nil {
-					clauseSQL, clauseArgs, next := emb.Where.buildSQL(argIdx)
-					if clauseSQL != "" {
-						sub += " AND " + clauseSQL
-						allArgs = append(allArgs, clauseArgs...)
-						argIdx = next
-					}
-				}
-				selectParts = append(selectParts, fmt.Sprintf("(%s) AS %s", sub, emb.outputKey()))
-			}
-		} else if emb.Spread {
-			// Spread belongs-to: inline columns into parent SELECT.
-			spreadCols := emb.Columns
-			if len(spreadCols) == 0 {
-				refTbl := allTables[emb.RefTable]
-				for _, f := range refTbl.Fields {
-					spreadCols = append(spreadCols, f.Name)
-				}
-				sort.Strings(spreadCols)
-			}
-			for _, c := range spreadCols {
-				selectParts = append(selectParts, fmt.Sprintf("%s.%s", alias, c))
-			}
-			// Nested children of a spread embed also become top-level select parts.
-			for _, child := range emb.Children {
-				childExpr, childArgs, nextIdx := buildChildEmbedSubselect(child, alias, allTables, argIdx)
-				selectParts = append(selectParts, fmt.Sprintf("%s AS %s", childExpr, child.outputKey()))
-				allArgs = append(allArgs, childArgs...)
-				argIdx = nextIdx
-			}
-		} else if hasChildren {
-			// Belongs-to with nested children → json_build_object.
-			rowExpr, rowArgs, nextIdx := buildEmbedRowExpr(emb, alias, allTables, argIdx)
-			allArgs = append(allArgs, rowArgs...)
-			argIdx = nextIdx
-			selectParts = append(selectParts, fmt.Sprintf("%s AS %s", rowExpr, emb.outputKey()))
-		} else {
-			// Simple belongs-to (no children, no spread).
-			if len(emb.Columns) == 0 {
-				selectParts = append(selectParts,
-					fmt.Sprintf("row_to_json(%s.*) AS %s", alias, emb.outputKey()))
-			} else {
-				var embCols []string
-				for _, c := range emb.Columns {
-					embCols = append(embCols, fmt.Sprintf("'%s', %s.%s", c, alias, c))
-				}
-				selectParts = append(selectParts,
-					fmt.Sprintf("json_build_object(%s) AS %s", strings.Join(embCols, ", "), emb.outputKey()))
-			}
-		}
-	}
-
-	sql := fmt.Sprintf("SELECT %s FROM %s", strings.Join(selectParts, ", "), tableName)
-
-	// JOINs for belongs-to embeds only. !inner converts LEFT → INNER.
-	for _, emb := range qp.Embeds {
-		if emb.IsReverse {
-			continue
-		}
-		alias := "_emb_" + emb.outputKey()
-		joinKind := "LEFT JOIN"
-		if emb.Inner {
-			joinKind = "INNER JOIN"
-		}
-		sql += fmt.Sprintf(" %s %s AS %s ON %s.%s = %s.%s",
-			joinKind, emb.RefTable, alias, tableName, emb.FKColumn, alias, emb.RefColumn)
-		if emb.Where != nil {
-			clauseSQL, clauseArgs, next := aliasWhereColumns(emb.Where, alias).buildSQL(argIdx)
-			if clauseSQL != "" {
-				belongsToWhere = append(belongsToWhere, clauseSQL)
-				allArgs = append(allArgs, clauseArgs...)
-				argIdx = next
-			}
-		}
-	}
-
-	// Outer WHERE: combine main filters with belongs-to embed filters.
-	// When belongs-to embeds added JOINs above, parent filter columns must be
-	// qualified with the base table name; otherwise references like `id` are
-	// ambiguous against the joined table's columns.
-	parentWhere := qp.Where
-	if hasBelongsToJoin(qp.Embeds) {
-		parentWhere = aliasWhereColumns(qp.Where, tableName)
-	}
-	whereSQL, whereArgs, nextArgIdx := parentWhere.buildSQL(argIdx)
-	if whereSQL != "" {
-		allArgs = append(allArgs, whereArgs...)
-	}
-	argIdx = nextArgIdx
-	var whereParts []string
-	if whereSQL != "" {
-		whereParts = append(whereParts, whereSQL)
-	}
-	whereParts = append(whereParts, belongsToWhere...)
-
-	// has-many !inner: filter parent rows to those with at least one
-	// matching child via WHERE EXISTS (...). PostgREST treats the !inner
-	// hint on a reverse embed as an existence predicate on the parent,
-	// independent of the json_agg subselect that still materializes the
-	// child array. The embed WHERE is re-rendered here with a fresh
-	// argIdx so placeholder numbering continues after the outer WHERE.
-	for _, emb := range qp.Embeds {
-		if !emb.IsReverse || !emb.Inner {
-			continue
-		}
-		refPK := emb.RefColumn
-		if refPK == "" {
-			refPK = "id"
-		}
-		existsSQL := fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s.%s = %s.%s",
-			emb.RefTable, emb.RefTable, emb.FKColumn, tableName, refPK)
-		if emb.Where != nil {
-			clauseSQL, clauseArgs, next := emb.Where.buildSQL(argIdx)
-			if clauseSQL != "" {
-				existsSQL += " AND " + clauseSQL
-				allArgs = append(allArgs, clauseArgs...)
-				argIdx = next
-			}
-		}
-		existsSQL += ")"
-		whereParts = append(whereParts, existsSQL)
-	}
-
-	if len(whereParts) > 0 {
-		sql += " WHERE " + strings.Join(whereParts, " AND ")
-	}
-
-	// GROUP BY — added whenever aggregates are mixed with plain columns.
-	if len(groupByExprs) > 0 {
-		sql += " GROUP BY " + strings.Join(groupByExprs, ", ")
-	}
-
-	// HAVING — aggregate filters applied after GROUP BY.
-	if qp.Having != nil {
-		havingSQL, havingArgs, nextIdx := qp.Having.buildSQL(argIdx)
-		if havingSQL != "" {
-			sql += " HAVING " + havingSQL
-			allArgs = append(allArgs, havingArgs...)
-			argIdx = nextIdx
-		}
-	}
-
-	// ORDER BY. Same ambiguity story as WHERE: when JOINs are present, a
-	// non-alias clause like `order=id.asc` must be qualified to the base table
-	// for any column that's also present on a joined embed table. Postgres
-	// resolves output-list aliases first, so columns explicitly in the SELECT
-	// are safe; we qualify the rest. IsAlias clauses are already double-quoted
-	// against the output list and never need a table prefix.
-	if len(qp.Order) > 0 {
-		order := qp.Order
-		if hasBelongsToJoin(qp.Embeds) {
-			order = qualifyOrderColumns(qp.Order, tableName)
-		}
-		sql += " ORDER BY " + renderOrderBy(order)
-	}
-
-	// LIMIT & OFFSET
-	sql += fmt.Sprintf(" LIMIT %d OFFSET %d", qp.Limit, qp.Offset)
-
-	return sql, allArgs
-}
-
-// renderOrderBy emits a comma-separated ORDER BY list from OrderClauses.
-// Alias-resolved clauses are double-quoted so Postgres resolves them
-// from the select output list rather than the underlying table.
-func renderOrderBy(clauses []OrderClause) string {
-	parts := make([]string, 0, len(clauses))
-	for _, o := range clauses {
-		dir := "ASC"
-		if o.Desc {
-			dir = "DESC"
-		}
-		col := o.Column
-		if o.IsAlias {
-			col = `"` + strings.ReplaceAll(o.Column, `"`, `""`) + `"`
-		}
-		c := fmt.Sprintf("%s %s", col, dir)
-		switch o.Nulls {
-		case "first":
-			c += " NULLS FIRST"
-		case "last":
-			c += " NULLS LAST"
-		}
-		parts = append(parts, c)
-	}
-	return strings.Join(parts, ", ")
-}
-
-// resolveEmbeds resolves embed names to FK relationships using the table config.
-// It recurses to resolve nested embeds (e.g., author(*, posts(*))).
-func resolveEmbeds(tableName string, table domain.Table, embedNames []string, allTables map[string]domain.Table) ([]Embed, error) {
-	var embeds []Embed
-
-	for _, raw := range embedNames {
-		name, alias, cols, nested, spread := parseEmbedParam(raw)
-		name, inner, fkHint := parseEmbedHint(name)
-		if spread && alias != "" {
-			return nil, fmt.Errorf("alias not allowed on spread embed %q", alias+":"+name)
-		}
-
-		// Check for belongs-to: this table has a FK column pointing to the embed name
-		// Convention: FK column name matches embed name + "_id" or references the embed table
-		found := false
-		for _, field := range table.Fields {
-			if field.ForeignKey == nil {
-				continue
-			}
-			fieldName := field.Name
-			ref := field.ForeignKey.References
-			parts := strings.SplitN(ref, ".", 2)
-			if len(parts) != 2 {
-				continue
-			}
-			refTable, refCol := parts[0], parts[1]
-
-			// When an FK hint was given, the caller is disambiguating between
-			// multiple FKs to the same table — only match the column whose name
-			// (or column-minus-_id) equals the hint.
-			if fkHint != "" {
-				if fieldName != fkHint && strings.TrimSuffix(fieldName, "_id") != fkHint {
-					continue
-				}
-				if refTable != name {
-					continue
-				}
-			} else if !(refTable == name || strings.TrimSuffix(fieldName, "_id") == name) {
-				continue
-			}
-			emb := Embed{
-				Name:      name,
-				Alias:     alias,
-				Columns:   cols,
-				FKColumn:  fieldName,
-				RefTable:  refTable,
-				RefColumn: refCol,
-				Inner:     inner,
-				Spread:    spread,
-			}
-			if len(nested) > 0 {
-				refTbl, ok := allTables[refTable]
-				if !ok {
-					return nil, fmt.Errorf("embed %q references unknown table %q", name, refTable)
-				}
-				children, err := resolveEmbeds(refTable, refTbl, nested, allTables)
-				if err != nil {
-					return nil, fmt.Errorf("nested embed in %q: %w", name, err)
-				}
-				emb.Children = children
-			}
-			embeds = append(embeds, emb)
-			found = true
-			break
-		}
-
-		if found {
-			continue
-		}
-
-		// Check for has-many: another table has a FK pointing to this table
-		for otherName, otherTable := range allTables {
-			if otherName == tableName {
-				continue
-			}
-			if otherName != name {
-				continue
-			}
-			if spread {
-				return nil, fmt.Errorf("spread (...) not allowed on has-many embed %q", name)
-			}
-			for _, field := range otherTable.Fields {
-				if field.ForeignKey == nil {
-					continue
-				}
-				fieldName := field.Name
-				ref := field.ForeignKey.References
-				parts := strings.SplitN(ref, ".", 2)
-				if len(parts) != 2 {
-					continue
-				}
-				if parts[0] == tableName {
-					// Respect FK disambiguation hint: when set, only match the
-					// reverse FK whose column name equals the hint. This lets
-					// callers pick a specific FK when two tables reference the
-					// same parent.
-					if fkHint != "" && fieldName != fkHint && strings.TrimSuffix(fieldName, "_id") != fkHint {
-						continue
-					}
-					emb := Embed{
-						Name:      name,
-						Alias:     alias,
-						Columns:   cols,
-						FKColumn:  fieldName,
-						RefTable:  otherName,
-						RefColumn: parts[1],
-						IsReverse: true,
-						Inner:     inner,
-					}
-					// Recurse for nested embeds
-					if len(nested) > 0 {
-						children, err := resolveEmbeds(otherName, otherTable, nested, allTables)
-						if err != nil {
-							return nil, fmt.Errorf("nested embed in %q: %w", name, err)
-						}
-						emb.Children = children
-					}
-					embeds = append(embeds, emb)
-					found = true
-					break
-				}
-			}
-		}
-
-		if !found {
-			return nil, fmt.Errorf("could not find a relationship between %q and %q in the schema", tableName, name)
-		}
-	}
-
-	return embeds, nil
-}
-
-// parseEmbedParam parses "author(id,name)" into name, alias, cols, and nested
-// embed raw strings. Items containing "(" are returned in nested; others in
-// cols. A "..." prefix on the name sets spread=true. A "alias:" prefix
-// (PostgREST renaming) is stripped from name and returned in alias.
-func parseEmbedParam(s string) (name, alias string, cols []string, nested []string, spread bool) {
-	idx := strings.Index(s, "(")
-	if idx == -1 {
-		name = s
-		if strings.HasPrefix(name, "...") {
-			spread = true
-			name = name[3:]
-		}
-		alias, name = splitEmbedAlias(name)
-		return
-	}
-	name = s[:idx]
-	if strings.HasPrefix(name, "...") {
-		spread = true
-		name = name[3:]
-	}
-	alias, name = splitEmbedAlias(name)
-	inner := s[idx+1 : len(s)-1] // strip parens
-	if inner == "*" || inner == "" {
-		return
-	}
-	items, err := splitTopLevel(inner, ',')
-	if err != nil {
-		// Fallback: treat entire inner as a single column (shouldn't happen
-		// with well-formed input).
-		cols = []string{inner}
-		return
-	}
-	for _, item := range items {
-		item = strings.TrimSpace(item)
-		if item == "" || item == "*" {
-			continue
-		}
-		if strings.Contains(item, "(") {
-			nested = append(nested, item)
-		} else {
-			cols = append(cols, item)
-		}
-	}
-	return
-}
-
-func buildFilterCondition(f Filter, argIdx int) (string, []any, int) {
-	// Handle JSONB access operators in column name (e.g. "metadata->>theme",
-	// "data->items->0->>name"). splitJSONBPath returns the base column plus
-	// an ordered chain of ->/->> steps, which we render back onto the base.
-	colExpr := f.Column
-	baseCol, steps := splitJSONBPath(f.Column)
-	if len(steps) > 0 {
-		colExpr = baseCol + renderJSONBSuffix(steps)
-	}
-
-	// like(all)/like(any)/ilike(all)/ilike(any) are parsed as op="like" config="any"
-	// by parseFilterValue. Reconstruct the composite key for the switch below.
-	switchOp := f.Operator
-	if f.Config == "all" || f.Config == "any" {
-		switchOp = f.Operator + "(" + f.Config + ")"
-	}
-
-	switch switchOp {
-	case "is":
-		// parseFilterValue has already constrained f.Value to one of the
-		// four SQL truth keywords, so only the keyword literal is ever
-		// interpolated here. The default arm is defensive: should an
-		// unvalidated value ever reach this point, compare via a bind
-		// parameter instead of interpolating raw input into SQL.
-		isVal := strings.ToUpper(strings.TrimSpace(f.Value))
-		switch isVal {
-		case "NULL", "TRUE", "FALSE", "UNKNOWN":
-			return fmt.Sprintf("%s IS %s", colExpr, isVal), nil, argIdx
-		default:
-			return fmt.Sprintf("%s IS NOT DISTINCT FROM $%d", colExpr, argIdx), []any{f.Value}, argIdx + 1
-		}
-
-	case "isdistinct":
-		// PostgREST: `col=isdistinct.NULL` / `col=isdistinct.val`.
-		val := strings.ToUpper(f.Value)
-		if val == "NULL" || val == "TRUE" || val == "FALSE" {
-			return fmt.Sprintf("%s IS DISTINCT FROM %s", colExpr, val), nil, argIdx
-		}
-		return fmt.Sprintf("%s IS DISTINCT FROM $%d", colExpr, argIdx),
-			[]any{f.Value}, argIdx + 1
-
-	case "in":
-		// in.(val1,val2,val3)
-		inner := strings.TrimPrefix(f.Value, "(")
-		inner = strings.TrimSuffix(inner, ")")
-		vals := strings.Split(inner, ",")
-		placeholders := make([]string, len(vals))
-		var args []any
-		for i, v := range vals {
-			placeholders[i] = fmt.Sprintf("$%d", argIdx)
-			args = append(args, strings.TrimSpace(v))
-			argIdx++
-		}
-		return fmt.Sprintf("%s IN (%s)", colExpr, strings.Join(placeholders, ", ")), args, argIdx
-
-	case "fts", "plfts", "phfts", "wfts":
-		fn := map[string]string{
-			"fts":   "to_tsquery",
-			"plfts": "plainto_tsquery",
-			"phfts": "phraseto_tsquery",
-			"wfts":  "websearch_to_tsquery",
-		}[f.Operator]
-		// `fts(english).query` surfaces as Config="english"; emit it as
-		// the first arg to the text-search function, matching
-		// PostgREST's fts(<config>).<query> wire format.
-		if f.Config != "" {
-			return fmt.Sprintf("%s @@ %s('%s', $%d)", colExpr, fn, f.Config, argIdx),
-				[]any{f.Value}, argIdx + 1
-		}
-		return fmt.Sprintf("%s @@ %s($%d)", colExpr, fn, argIdx), []any{f.Value}, argIdx + 1
-
-	case "cs":
-		return fmt.Sprintf("%s @> $%d", colExpr, argIdx), []any{f.Value}, argIdx + 1
-	case "cd":
-		return fmt.Sprintf("%s <@ $%d", colExpr, argIdx), []any{f.Value}, argIdx + 1
-	case "ov":
-		return fmt.Sprintf("%s && $%d", colExpr, argIdx), []any{f.Value}, argIdx + 1
-
-	case "sl", "sr", "nxl", "nxr", "adj":
-		return fmt.Sprintf("%s %s $%d", colExpr, validOps[f.Operator], argIdx),
-			[]any{f.Value}, argIdx + 1
-
-	case "like(all)", "like(any)", "ilike(all)", "ilike(any)":
-		sqlOp := "LIKE"
-		if strings.HasPrefix(switchOp, "ilike") {
-			sqlOp = "ILIKE"
-		}
-		quant := "ALL"
-		if strings.HasSuffix(switchOp, "(any)") {
-			quant = "ANY"
-		}
-		patterns := parsePatternList(f.Value)
-		placeholders := make([]string, len(patterns))
-		args := make([]any, len(patterns))
-		for i, p := range patterns {
-			placeholders[i] = fmt.Sprintf("$%d", argIdx)
-			args[i] = p
-			argIdx++
-		}
-		return fmt.Sprintf("%s %s %s(ARRAY[%s])",
-			colExpr, sqlOp, quant, strings.Join(placeholders, ", ")), args, argIdx
-
-	default:
-		sqlOp := validOps[f.Operator]
-		return fmt.Sprintf("%s %s $%d", colExpr, sqlOp, argIdx), []any{f.Value}, argIdx + 1
-	}
-}
-
-// buildBulkInsertQuery emits a single INSERT statement covering every record
-// in one multi-VALUES clause. Columns are the union of keys across records;
-// records missing a column get DEFAULT so tables with server-side defaults
-// (sequences, timestamps) still work. When len(records) == 1 the result is
-// equivalent to buildInsertQuery with lower overhead.
-func buildBulkInsertQuery(tableName string, records []map[string]any, returning bool) (string, []any) {
-	cols := unionColumns(records)
-	args, rowSQLs := renderRowTuples(records, cols, 1)
-
-	sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES %s",
-		tableName,
-		strings.Join(cols, ", "),
-		strings.Join(rowSQLs, ", "))
-	if returning {
-		sql += " RETURNING *"
-	}
-	return sql, args
-}
-
-// buildBulkUpsertQuery is the bulk counterpart to buildUpsertQuery. It
-// emits one multi-VALUES INSERT with an ON CONFLICT clause. resolution is
-// "merge" or "ignore".
-func buildBulkUpsertQuery(tableName string, records []map[string]any, conflictCols []string, resolution string, returning bool) (string, []any) {
-	cols := unionColumns(records)
-	args, rowSQLs := renderRowTuples(records, cols, 1)
-
-	sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES %s ON CONFLICT (%s) ",
-		tableName,
-		strings.Join(cols, ", "),
-		strings.Join(rowSQLs, ", "),
-		strings.Join(conflictCols, ", "))
-
-	if resolution == "ignore" {
-		sql += "DO NOTHING"
-	} else {
-		conflictSet := make(map[string]bool, len(conflictCols))
-		for _, c := range conflictCols {
-			conflictSet[c] = true
-		}
-		var setParts []string
-		for _, col := range cols {
-			if conflictSet[col] {
-				continue
-			}
-			setParts = append(setParts, fmt.Sprintf("%s = EXCLUDED.%s", col, col))
-		}
-		if len(setParts) == 0 {
-			sql += "DO NOTHING"
-		} else {
-			sql += "DO UPDATE SET " + strings.Join(setParts, ", ")
-		}
-	}
-	if returning {
-		sql += " RETURNING *"
-	}
-	return sql, args
-}
-
-// recordsAllEmpty reports whether every record has no keys. This guards
-// against emitting "INSERT INTO t () VALUES ()" after columns= stripped
-// every field.
-func recordsAllEmpty(records []map[string]any) bool {
-	for _, r := range records {
-		if len(r) > 0 {
-			return false
-		}
-	}
-	return true
-}
-
-// unionColumns returns the sorted union of keys across all records.
-func unionColumns(records []map[string]any) []string {
-	set := map[string]bool{}
-	for _, r := range records {
-		for k := range r {
-			set[k] = true
-		}
-	}
-	cols := make([]string, 0, len(set))
-	for c := range set {
-		cols = append(cols, c)
-	}
-	sort.Strings(cols)
-	return cols
-}
-
-// renderRowTuples builds the VALUES tuples for a list of records against a
-// fixed column order. Missing values become the literal token DEFAULT so
-// the database supplies any configured default. Placeholder numbering starts
-// at startArg.
-func renderRowTuples(records []map[string]any, cols []string, startArg int) ([]any, []string) {
-	var args []any
-	argIdx := startArg
-	rowSQLs := make([]string, 0, len(records))
-	for _, rec := range records {
-		parts := make([]string, len(cols))
-		for i, col := range cols {
-			if v, ok := rec[col]; ok {
-				parts[i] = fmt.Sprintf("$%d", argIdx)
-				args = append(args, v)
-				argIdx++
-			} else {
-				parts[i] = "DEFAULT"
-			}
-		}
-		rowSQLs = append(rowSQLs, "("+strings.Join(parts, ", ")+")")
-	}
-	return args, rowSQLs
-}
-
-func buildInsertQuery(tableName string, record map[string]any, returning bool) (string, []any) {
-	cols := sortedMapKeys(record)
-	placeholders := make([]string, len(cols))
-	args := make([]any, len(cols))
-
-	for i, col := range cols {
-		placeholders[i] = fmt.Sprintf("$%d", i+1)
-		args[i] = record[col]
-	}
-
-	sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
-		tableName,
-		strings.Join(cols, ", "),
-		strings.Join(placeholders, ", "))
-
-	if returning {
-		sql += " RETURNING *"
-	}
-
-	return sql, args
-}
-
-// parseColumnsParam parses a "columns=a,b" query param into an allow-set
-// of column names. PostgREST uses this hint to restrict which keys from
-// the request body are inserted; unlisted keys are silently dropped so
-// the server-side default (or NULL) is used instead.
-func parseColumnsParam(val string, table domain.Table) (map[string]bool, error) {
-	val = strings.TrimSpace(val)
-	if val == "" {
-		return nil, nil
-	}
-	cols := map[string]bool{}
-	for _, c := range strings.Split(val, ",") {
-		c = strings.TrimSpace(c)
-		// PostgREST clients quote column identifiers ("username"). Strip the
-		// enclosing quotes so we match against the bare column name.
-		if len(c) >= 2 && c[0] == '"' && c[len(c)-1] == '"' {
-			c = c[1 : len(c)-1]
-		}
-		if c == "" {
-			return nil, fmt.Errorf("empty column in columns hint")
-		}
-		if _, ok := table.GetField(c); !ok {
-			return nil, fmt.Errorf("unknown column %q in columns hint", c)
-		}
-		cols[c] = true
-	}
-	return cols, nil
-}
-
-// filterRecordsByColumns returns a copy of records where each record only
-// retains keys present in allowed. A nil allow-set is a passthrough.
-func filterRecordsByColumns(records []map[string]any, allowed map[string]bool) []map[string]any {
-	if allowed == nil {
-		return records
-	}
-	out := make([]map[string]any, len(records))
-	for i, rec := range records {
-		filtered := make(map[string]any, len(rec))
-		for k, v := range rec {
-			if allowed[k] {
-				filtered[k] = v
-			}
-		}
-		out[i] = filtered
-	}
-	return out
-}
-
-// parseOnConflictParam parses a "on_conflict=a,b" query param into the
-// list of conflict-target columns. Each column is validated against the
-// table schema. Returns nil (with no error) when val is empty.
-func parseOnConflictParam(val string, table domain.Table) ([]string, error) {
-	val = strings.TrimSpace(val)
-	if val == "" {
-		return nil, nil
-	}
-	var cols []string
-	for _, c := range strings.Split(val, ",") {
-		c = strings.TrimSpace(c)
-		if c == "" {
-			return nil, fmt.Errorf("empty column in on_conflict")
-		}
-		if err := validateColumn(table, c); err != nil {
-			return nil, fmt.Errorf("invalid on_conflict column: %w", err)
-		}
-		cols = append(cols, c)
-	}
-	return cols, nil
-}
-
-// primaryKeyColumns returns the PK field names for a table, sorted. An empty
-// result means the table has no declared primary key — callers must treat
-// this as a configuration error when building upsert SQL.
-func primaryKeyColumns(table domain.Table) []string {
-	var pks []string
-	for _, f := range table.Fields {
-		if f.PrimaryKey {
-			pks = append(pks, f.Name)
-		}
-	}
-	sort.Strings(pks)
-	return pks
-}
-
-// buildUpsertQuery emits INSERT ... ON CONFLICT (pk) DO {UPDATE|NOTHING}.
-// resolution is "merge" (update existing) or "ignore" (skip existing).
-// conflictCols must be non-empty and must all exist as columns in record or
-// on the base table; validation is the caller's responsibility.
-func buildUpsertQuery(tableName string, record map[string]any, conflictCols []string, resolution string, returning bool) (string, []any) {
-	cols := sortedMapKeys(record)
-	placeholders := make([]string, len(cols))
-	args := make([]any, len(cols))
-
-	for i, col := range cols {
-		placeholders[i] = fmt.Sprintf("$%d", i+1)
-		args[i] = record[col]
-	}
-
-	sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) ",
-		tableName,
-		strings.Join(cols, ", "),
-		strings.Join(placeholders, ", "),
-		strings.Join(conflictCols, ", "))
-
-	if resolution == "ignore" {
-		sql += "DO NOTHING"
-	} else {
-		// Build SET list excluding conflict columns — we don't overwrite the
-		// target key with itself.
-		conflictSet := make(map[string]bool, len(conflictCols))
-		for _, c := range conflictCols {
-			conflictSet[c] = true
-		}
-		var setParts []string
-		for _, col := range cols {
-			if conflictSet[col] {
-				continue
-			}
-			setParts = append(setParts, fmt.Sprintf("%s = EXCLUDED.%s", col, col))
-		}
-		if len(setParts) == 0 {
-			// Nothing to update (body was PK-only) — fall back to DO NOTHING.
-			sql += "DO NOTHING"
-		} else {
-			sql += "DO UPDATE SET " + strings.Join(setParts, ", ")
-		}
-	}
-
-	if returning {
-		sql += " RETURNING *"
-	}
-	return sql, args
-}
+// identRe matches a safe SQL identifier (alias or cast type). Casts are
+// interpolated directly into SQL, so we refuse anything outside alnum/_.
+// Kept here (duplicated from postgrest package) because rpc_handler.go
+// references it directly within the same package.
+var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // parseRangeHeader parses a simple "start-end" Range value (as PostgREST
 // expects with Range-Unit: items). Both bounds are inclusive and 0-based.
-// A missing end is treated as invalid — we require a closed interval so the
-// caller can compute limit without a second round-trip.
 func parseRangeHeader(h string) (start, end int, ok bool) {
 	h = strings.TrimSpace(h)
-	// Accept optional "items=" prefix.
 	if strings.HasPrefix(h, "items=") {
 		h = strings.TrimPrefix(h, "items=")
 	}
@@ -2646,7 +1148,6 @@ func parseRangeHeader(h string) (start, end int, ok bool) {
 }
 
 // parseResolutionPrefer extracts "merge" or "ignore" from a Prefer header.
-// Returns "" when no resolution is specified.
 func parseResolutionPrefer(prefer string) string {
 	for _, part := range strings.Split(prefer, ",") {
 		part = strings.TrimSpace(part)
@@ -2661,59 +1162,6 @@ func parseResolutionPrefer(prefer string) string {
 		}
 	}
 	return ""
-}
-
-func buildUpdateQuery(tableName string, updates map[string]any, where *WhereNode, returning bool) (string, []any) {
-	cols := sortedMapKeys(updates)
-	var args []any
-	argIdx := 1
-
-	setParts := make([]string, len(cols))
-	for i, col := range cols {
-		setParts[i] = fmt.Sprintf("%s = $%d", col, argIdx)
-		args = append(args, updates[col])
-		argIdx++
-	}
-
-	sql := fmt.Sprintf("UPDATE %s SET %s", tableName, strings.Join(setParts, ", "))
-
-	whereSQL, whereArgs, _ := where.buildSQL(argIdx)
-	if whereSQL != "" {
-		sql += " WHERE " + whereSQL
-		args = append(args, whereArgs...)
-	}
-
-	if returning {
-		sql += " RETURNING *"
-	}
-
-	return sql, args
-}
-
-func buildDeleteQuery(tableName string, where *WhereNode, returning bool) (string, []any) {
-	sql := fmt.Sprintf("DELETE FROM %s", tableName)
-	whereSQL, args, _ := where.buildSQL(1)
-	if whereSQL != "" {
-		sql += " WHERE " + whereSQL
-	}
-	if returning {
-		sql += " RETURNING *"
-	}
-	return sql, args
-}
-
-func sortedMapKeys(m map[string]any) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func (c *QueryParams) String() string {
-	return fmt.Sprintf("select=%v where=%v order=%v limit=%d offset=%d",
-		c.Select, c.Where != nil, c.Order, c.Limit, c.Offset)
 }
 
 // handleNotFound returns a handler for /api/<table> endpoints not in the config
@@ -2810,12 +1258,12 @@ func parseRequestBody(c *gin.Context, table domain.Table) ([]map[string]any, err
 	}
 	var records []map[string]any
 	if contentTypeIsCSV(c.GetHeader("Content-Type")) {
-		records, err = csvReadRecords(body)
+		records, err = postgrest.CsvReadRecords(body)
 		if err != nil {
 			problemJSON(c, 400, "bad_request", err.Error())
 			return nil, err
 		}
-		records = csvCoerceRecords(records, table)
+		records = postgrest.CsvCoerceRecords(records, table)
 	} else {
 		trimmed := strings.TrimSpace(string(body))
 		if strings.HasPrefix(trimmed, "[") {

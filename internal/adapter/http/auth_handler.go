@@ -564,6 +564,15 @@ func (h *AuthHandler) handleUpdateUser(c *gin.Context) {
 		sets = append(sets, fmt.Sprintf("email = $%d", argIdx))
 		args = append(args, *req.Email)
 		argIdx++
+		// A newly-set address is unverified until the user proves control of
+		// it. Carrying over the previous verified status to an unconfirmed
+		// address would let a stolen session quietly swap in an attacker email
+		// while keeping it "verified". (Full GoTrue-style double-confirm — send
+		// a token to the new address and only swap on verify — is a larger
+		// follow-up; at minimum we must not keep the verified flag.)
+		if !strings.EqualFold(strings.TrimSpace(*req.Email), strings.TrimSpace(session.Email)) {
+			sets = append(sets, "email_verified = false", "email_confirmed_at = NULL")
+		}
 	}
 	if req.Password != nil && *req.Password != "" {
 		if len(*req.Password) < 8 {
@@ -644,6 +653,14 @@ func (h *AuthHandler) handleRecover(c *gin.Context) {
 		return
 	}
 
+	// Drop a disallowed redirect_to rather than emailing an attacker URL.
+	// The flow still succeeds (and still returns 200) using the base URL.
+	redirectTo := req.RedirectTo
+	if !h.redirectAllowed(redirectTo) {
+		h.logger.Warn("rejected disallowed recovery redirect_to", "redirect_to", redirectTo)
+		redirectTo = ""
+	}
+
 	ctx := c.Request.Context()
 	row, err := h.db.QueryRow(ctx, "SELECT id::text FROM auth.users WHERE email = $1", req.Email)
 	if err == nil && row != nil {
@@ -654,7 +671,7 @@ func (h *AuthHandler) handleRecover(c *gin.Context) {
 			"INSERT INTO auth.one_time_tokens (user_id, token, purpose, expires_at) VALUES ($1::uuid, $2, 'recovery', $3)",
 			userID, token, expiresAt)
 		if h.email != nil {
-			go h.sendPasswordResetEmail(req.Email, token, req.RedirectTo)
+			go h.sendPasswordResetEmail(req.Email, token, redirectTo)
 		}
 	}
 	// Always return 200 (email enumeration protection).
@@ -662,6 +679,11 @@ func (h *AuthHandler) handleRecover(c *gin.Context) {
 }
 
 // ---------- /verify ----------
+
+// maxOTPAttempts is the number of failed verifications a single numeric OTP
+// row tolerates before it is destroyed, bounding brute-force of the 10^6 code
+// space to a handful of guesses per issued code.
+const maxOTPAttempts = 5
 
 // handleVerify implements POST /verify {type, token, email} — the
 // supabase-js verifyOtp entrypoint. On success it consumes the token and
@@ -691,17 +713,50 @@ func (h *AuthHandler) handleVerify(c *gin.Context) {
 		return r < '0' || r > '9'
 	}) == -1
 	if isNumericCode && req.Email != "" {
-		row, err = h.db.QueryRow(ctx,
-			"SELECT user_id::text, purpose, expires_at, token FROM auth.one_time_tokens WHERE email = $1 AND code = $2",
-			req.Email, req.Token)
+		// Numeric codes live in a 10^6 space, so the verify endpoint must be
+		// brute-force resistant. Fetch the most recent code-bearing token for
+		// the email, enforce a per-token attempt cap, and compare the code in
+		// constant time. On too many failures the token is destroyed so the
+		// attacker has to trigger a fresh send (rate-limited elsewhere). All
+		// failure paths return the same generic error to avoid leaking whether
+		// the email or attempt budget exists.
+		cand, cerr := h.db.QueryRow(ctx,
+			`SELECT id, user_id::text, purpose, expires_at, token, code, attempts
+			   FROM auth.one_time_tokens
+			  WHERE email = $1 AND code IS NOT NULL
+			  ORDER BY created_at DESC LIMIT 1`,
+			req.Email)
+		if cerr != nil || cand == nil {
+			problemJSON(c, 401, "invalid_grant", "Invalid or expired token")
+			return
+		}
+		if ts, _ := cand["expires_at"].(time.Time); time.Now().After(ts) {
+			h.db.Exec(ctx, "DELETE FROM auth.one_time_tokens WHERE id = $1", cand["id"])
+			problemJSON(c, 401, "invalid_grant", "Token expired")
+			return
+		}
+		attempts := asInt64(cand["attempts"])
+		codeOK := constantTimeEqual(asString(cand["code"]), req.Token)
+		if attempts >= maxOTPAttempts || !codeOK {
+			// Burn the token once the budget is exhausted (or on the attempt
+			// that reaches it); otherwise just record the failed try.
+			if !codeOK && attempts+1 < maxOTPAttempts {
+				h.db.Exec(ctx, "UPDATE auth.one_time_tokens SET attempts = attempts + 1 WHERE id = $1", cand["id"])
+			} else {
+				h.db.Exec(ctx, "DELETE FROM auth.one_time_tokens WHERE id = $1", cand["id"])
+			}
+			problemJSON(c, 401, "invalid_grant", "Invalid or expired token")
+			return
+		}
+		row = cand
 	} else {
 		row, err = h.db.QueryRow(ctx,
 			"SELECT user_id::text, purpose, expires_at, token FROM auth.one_time_tokens WHERE token = $1",
 			req.Token)
-	}
-	if err != nil || row == nil {
-		problemJSON(c, 401, "invalid_grant", "Invalid or expired token")
-		return
+		if err != nil || row == nil {
+			problemJSON(c, 401, "invalid_grant", "Invalid or expired token")
+			return
+		}
 	}
 	// Row token (the 32-byte hex) is the canonical delete key; req.Token
 	// may be the 6-digit code.
@@ -827,10 +882,10 @@ func (h *AuthHandler) handleVerifyGET(c *gin.Context) {
 			tokenType = "bearer"
 		}
 
-		redirectTo := c.Query("redirect_to")
-		if redirectTo == "" {
-			redirectTo = h.baseURL()
-		}
+		// resolveRedirect falls back to the base URL for an empty or
+		// disallowed target — critical here because the fragment carries the
+		// user's access and refresh tokens.
+		redirectTo := h.resolveRedirect(c.Query("redirect_to"))
 		fragment := fmt.Sprintf("access_token=%s&token_type=%s&expires_in=%s&refresh_token=%s&type=recovery",
 			accessToken, tokenType, expiresIn, refreshToken)
 		c.Redirect(303, redirectTo+"#"+fragment)
@@ -840,9 +895,8 @@ func (h *AuthHandler) handleVerifyGET(c *gin.Context) {
 	// Default: email verification — mark as verified and show confirmation.
 	h.db.Exec(ctx, "UPDATE auth.users SET email_verified = true, email_confirmed_at = NOW(), updated_at = NOW() WHERE id = $1::uuid", userID)
 
-	redirectTo := c.Query("redirect_to")
-	if redirectTo != "" {
-		c.Redirect(303, redirectTo)
+	if rt := c.Query("redirect_to"); rt != "" && h.redirectAllowed(rt) {
+		c.Redirect(303, rt)
 		return
 	}
 	c.String(200, "Email verified successfully")
@@ -1322,6 +1376,13 @@ func (h *AuthHandler) handleAuthorize(c *gin.Context) {
 	codeChallenge := c.Query("code_challenge")
 	codeChallengeMethod := c.Query("code_challenge_method")
 
+	// Reject a disallowed redirect_to up front so an attacker URL never gets
+	// stored in flow_state / a cookie and later receives the auth code.
+	if !h.redirectAllowed(redirectTo) {
+		problemJSON(c, 400, "bad_request", "redirect_to is not an allowed URL")
+		return
+	}
+
 	var cfg *domain.OAuthProvider
 	switch provider {
 	case "google":
@@ -1429,7 +1490,7 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 				 VALUES ($1::uuid, $2, $3, $4, NOW(), NOW())
 				 ON CONFLICT (provider, provider_user_id) DO NOTHING`,
 				linkingUserID, provider, userInfo.ProviderID, userInfo.Email)
-			if redirectTo != "" {
+			if redirectTo != "" && h.redirectAllowed(redirectTo) {
 				c.Redirect(http.StatusFound, redirectTo+"#message=identity_linked")
 				return
 			}
@@ -1495,7 +1556,7 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 				problemJSON(c, 500, "internal", "Failed to store auth code")
 				return
 			}
-			if redirectTo != "" {
+			if redirectTo != "" && h.redirectAllowed(redirectTo) {
 				sep := "?"
 				if strings.Contains(redirectTo, "?") {
 					sep = "&"
@@ -1514,7 +1575,7 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 			return
 		}
 
-		if redirectTo != "" {
+		if redirectTo != "" && h.redirectAllowed(redirectTo) {
 			frag := url.Values{}
 			frag.Set("access_token", session["access_token"].(string))
 			if rt, ok := session["refresh_token"].(string); ok && rt != "" {
@@ -1696,6 +1757,21 @@ func asString(v any) string {
 		return fmt.Sprintf("%x-%x-%x-%x-%x", x[0:4], x[4:6], x[6:8], x[8:10], x[10:16])
 	default:
 		return fmt.Sprintf("%v", x)
+	}
+}
+
+// asInt64 coerces an integer-typed column value (pgx may decode as int32/int64)
+// to int64, returning 0 for nil/unknown types.
+func asInt64(v any) int64 {
+	switch x := v.(type) {
+	case int64:
+		return x
+	case int32:
+		return int64(x)
+	case int:
+		return int64(x)
+	default:
+		return 0
 	}
 }
 
@@ -2022,7 +2098,7 @@ func (h *AuthHandler) sendPasswordResetEmail(email, token, redirectTo string) {
 	// GoTrue flow that supabase-js expects.
 	verifyLink := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=recovery", h.baseURL(), token)
 	if redirectTo != "" {
-		verifyLink += "&redirect_to=" + redirectTo
+		verifyLink += "&redirect_to=" + url.QueryEscape(redirectTo)
 	}
 	body := fmt.Sprintf("Reset your password by clicking this link: %s", verifyLink)
 
@@ -2061,6 +2137,26 @@ func (h *AuthHandler) baseURL() string {
 	return fmt.Sprintf("http://localhost:%d", h.cfg.Server.Port)
 }
 
+// redirectAllowed reports whether target is a safe redirect/return destination
+// under the configured allowlist (see domain.Auth.IsRedirectAllowed).
+func (h *AuthHandler) redirectAllowed(target string) bool {
+	return h.cfg.Auth.IsRedirectAllowed(target, h.baseURL())
+}
+
+// resolveRedirect returns target when it is an allowed destination, otherwise
+// the server base URL. A rejected non-empty target is logged. This is the
+// chokepoint that prevents an attacker-supplied redirect_to from receiving the
+// session tokens or auth code appended to post-auth redirects.
+func (h *AuthHandler) resolveRedirect(target string) string {
+	if h.redirectAllowed(target) && target != "" {
+		return target
+	}
+	if target != "" {
+		h.logger.Warn("rejected disallowed redirect_to", "redirect_to", target)
+	}
+	return h.baseURL()
+}
+
 func renderAuthTemplate(tmpl string, vars map[string]string) string {
 	result := tmpl
 	for k, v := range vars {
@@ -2075,11 +2171,26 @@ func renderAuthTemplate(tmpl string, vars map[string]string) string {
 // collisions on the small 10^n space.
 func generateNumericCode(n int) string {
 	const digits = "0123456789"
-	b := make([]byte, n)
-	rand.Read(b)
-	out := make([]byte, n)
-	for i := 0; i < n; i++ {
-		out[i] = digits[int(b[i])%10]
+	out := make([]byte, 0, n)
+	// Rejection sampling: only accept bytes in [0,250) so each maps to a digit
+	// with uniform probability (250 is the largest multiple of 10 ≤ 256).
+	// Using b%10 over the full byte range would bias digits 0–5. crypto/rand
+	// failures are fatal for token security, so panic rather than emit a
+	// predictable code.
+	buf := make([]byte, n)
+	for len(out) < n {
+		if _, err := rand.Read(buf); err != nil {
+			panic("crypto/rand failed: " + err.Error())
+		}
+		for _, x := range buf {
+			if x >= 250 {
+				continue
+			}
+			out = append(out, digits[x%10])
+			if len(out) == n {
+				break
+			}
+		}
 	}
 	return string(out)
 }
@@ -2107,7 +2218,10 @@ func marshalJSONBDefault(v any) []byte {
 
 func generateRandomToken() string {
 	b := make([]byte, 32)
-	rand.Read(b)
+	// A read failure would otherwise yield an all-zero (predictable) token.
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
 	return hex.EncodeToString(b)
 }
 

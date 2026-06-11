@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/instancez/instancez/internal/adapter/http/postgrest"
 	"github.com/instancez/instancez/internal/csvutil"
 	"github.com/instancez/instancez/internal/domain"
 )
@@ -51,7 +52,7 @@ func csvRenderRows(rows []map[string]any) ([]byte, error) {
 	if len(rows) == 0 {
 		return nil, nil
 	}
-	cols := unionColumns(rows)
+	cols := postgrest.UnionColumns(rows)
 	var buf bytes.Buffer
 	w := csv.NewWriter(&buf)
 	if err := w.Write(cols); err != nil {

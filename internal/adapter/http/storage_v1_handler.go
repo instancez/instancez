@@ -142,7 +142,7 @@ func (h *StorageV1Handler) emptyBucket(c *gin.Context) {
 		return
 	}
 
-	ctx := c.Request.Context()
+	ctx := h.rlsCtx(c)
 	rows, err := h.db.Query(ctx, "SELECT name FROM storage.objects WHERE bucket_id = $1", id)
 	if err != nil {
 		h.logger.Error("empty bucket query", "error", err)
@@ -162,6 +162,27 @@ func (h *StorageV1Handler) emptyBucket(c *gin.Context) {
 func (h *StorageV1Handler) getBucketConfig(name string) (domain.Bucket, bool) {
 	b, ok := h.cfg.Storage[name]
 	return b, ok
+}
+
+// rlsCtx returns a request context bound to the caller's effective Postgres
+// role so that RLS policies on storage.objects are enforced for the query that
+// runs under it. Without this, storage queries fall through to the system
+// service_role default (BYPASSRLS) and any caller could read or modify any
+// object. An unauthenticated request resolves to the `anon` role (only public
+// buckets are visible); an admin-key request keeps service_role.
+//
+// This is the authorization boundary for object access — the metadata row a
+// query can see/insert/update/delete is exactly what the bucket's policies
+// allow, and the actual S3 bytes are only reachable once the metadata row is.
+func (h *StorageV1Handler) rlsCtx(c *gin.Context) context.Context {
+	session := getSession(c)
+	ctx, err := h.db.WithRLS(c.Request.Context(), session)
+	if err != nil {
+		// WithRLS only stashes the session on the context; it does not perform
+		// I/O and never errors in practice. Fall back to the raw context.
+		return c.Request.Context()
+	}
+	return ctx
 }
 
 func (h *StorageV1Handler) cleanPath(p string) string {
@@ -252,6 +273,62 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 
 	limitedBody := http.MaxBytesReader(c.Writer, io.NopCloser(body), maxBytes)
 
+	var uploadedBy any
+	if session.UserID != "" {
+		uploadedBy = session.UserID
+	}
+	if size < 0 {
+		size = 0
+	}
+
+	// Write the metadata row FIRST, inside a transaction bound to the caller's
+	// role, so that RLS authorizes the write before any bytes reach the object
+	// store. If the policy denies the write we roll back and never touch S3;
+	// the actual upload only happens once the metadata insert/update succeeds.
+	ctx := h.rlsCtx(c)
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		c.JSON(500, gin.H{"statusCode": "500", "error": "internal", "message": "Upload failed"})
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	if isUpdate {
+		n, err := tx.Exec(ctx,
+			"UPDATE storage.objects SET size = $1, mime = $2, uploaded_at = NOW(), uploaded_by = $3 WHERE bucket_id = $4 AND name = $5",
+			size, contentType, uploadedBy, bucketName, objPath)
+		if err != nil {
+			h.uploadWriteError(c, err)
+			return
+		}
+		if n == 0 {
+			// No row the caller is permitted to update (RLS-filtered or absent).
+			c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Object not found"})
+			return
+		}
+	} else {
+		upsert := c.GetHeader("x-upsert") == "true"
+		if upsert {
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by)
+				 VALUES ($1, $2, $3, $4, $5)
+				 ON CONFLICT (bucket_id, name)
+				 DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime, uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW()`,
+				bucketName, objPath, size, contentType, uploadedBy); err != nil {
+				h.uploadWriteError(c, err)
+				return
+			}
+		} else {
+			if _, err := tx.Exec(ctx,
+				"INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by) VALUES ($1, $2, $3, $4, $5)",
+				bucketName, objPath, size, contentType, uploadedBy); err != nil {
+				h.uploadWriteError(c, err)
+				return
+			}
+		}
+	}
+
+	// Metadata write authorized — now stream the bytes to the object store.
 	key := bucketName + "/" + objPath
 	if err := h.storage.Upload(c.Request.Context(), key, limitedBody, contentType, size); err != nil {
 		if strings.Contains(err.Error(), "http: request body too large") {
@@ -263,50 +340,33 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 		return
 	}
 
-	ctx := c.Request.Context()
-	var uploadedBy any
-	if session.UserID != "" {
-		uploadedBy = session.UserID
-	}
-
-	if size < 0 {
-		size = 0
-	}
-
-	if isUpdate {
-		h.db.Exec(ctx,
-			"UPDATE storage.objects SET size = $1, mime = $2, uploaded_at = NOW(), uploaded_by = $3 WHERE bucket_id = $4 AND name = $5",
-			size, contentType, uploadedBy, bucketName, objPath)
-	} else {
-		// Upsert: if the path already exists, update it (matches Supabase behavior with upsert header)
-		upsert := c.GetHeader("x-upsert") == "true"
-		if upsert {
-			h.db.Exec(ctx,
-				`INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by)
-				 VALUES ($1, $2, $3, $4, $5)
-				 ON CONFLICT (bucket_id, name)
-				 DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime, uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW()`,
-				bucketName, objPath, size, contentType, uploadedBy)
-		} else {
-			_, err := h.db.Exec(ctx,
-				"INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by) VALUES ($1, $2, $3, $4, $5)",
-				bucketName, objPath, size, contentType, uploadedBy)
-			if err != nil {
-				if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "23505") {
-					c.JSON(409, gin.H{"statusCode": "409", "error": "duplicate", "message": "The resource already exists"})
-					return
-				}
-				h.logger.Error("insert object", "error", err)
-				c.JSON(500, gin.H{"statusCode": "500", "error": "internal", "message": "Failed to record object"})
-				return
-			}
-		}
+	if err := tx.Commit(ctx); err != nil {
+		// Best-effort cleanup of the now-orphaned object; the metadata never
+		// committed so it would be invisible anyway.
+		_ = h.storage.Delete(c.Request.Context(), key)
+		c.JSON(500, gin.H{"statusCode": "500", "error": "internal", "message": "Upload failed"})
+		return
 	}
 
 	c.JSON(200, gin.H{
 		"Key": bucketName + "/" + objPath,
 		"Id":  objPath,
 	})
+}
+
+// uploadWriteError maps a failed metadata write to the right client response:
+// duplicate key → 409, an RLS/permission denial → 403, anything else → 500.
+func (h *StorageV1Handler) uploadWriteError(c *gin.Context, err error) {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "duplicate key") || strings.Contains(msg, "23505"):
+		c.JSON(409, gin.H{"statusCode": "409", "error": "duplicate", "message": "The resource already exists"})
+	case strings.Contains(msg, "row-level security") || strings.Contains(msg, "42501") || strings.Contains(msg, "permission denied"):
+		c.JSON(403, gin.H{"statusCode": "403", "error": "forbidden", "message": "Not authorized to write this object"})
+	default:
+		h.logger.Error("record object", "error", err)
+		c.JSON(500, gin.H{"statusCode": "500", "error": "internal", "message": "Failed to record object"})
+	}
 }
 
 func (h *StorageV1Handler) objectGetDispatch(c *gin.Context) {
@@ -377,7 +437,7 @@ func (h *StorageV1Handler) serveDownload(c *gin.Context, bucketName, objPath str
 		return
 	}
 
-	ctx := c.Request.Context()
+	ctx := h.rlsCtx(c)
 	row, err := h.db.QueryRow(ctx, "SELECT id FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
 	if err != nil || row == nil {
 		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Object not found"})
@@ -430,7 +490,7 @@ func (h *StorageV1Handler) listObjects(c *gin.Context) {
 		req.Limit = 100
 	}
 
-	ctx := c.Request.Context()
+	ctx := h.rlsCtx(c)
 
 	query := "SELECT name, size, mime, uploaded_at, metadata FROM storage.objects WHERE bucket_id = $1"
 	args := []any{bucketName}
@@ -500,7 +560,7 @@ func (h *StorageV1Handler) listObjectsV2(c *gin.Context) {
 		req.Limit = 100
 	}
 
-	ctx := c.Request.Context()
+	ctx := h.rlsCtx(c)
 
 	// Fetch one extra row to determine hasNext.
 	fetchLimit := req.Limit + 1
@@ -600,7 +660,7 @@ func (h *StorageV1Handler) objectInfo(c *gin.Context) {
 		return
 	}
 
-	ctx := c.Request.Context()
+	ctx := h.rlsCtx(c)
 	row, err := h.db.QueryRow(ctx,
 		"SELECT id, name, size, mime, uploaded_at, uploaded_by, metadata FROM storage.objects WHERE bucket_id = $1 AND name = $2",
 		bucketName, objPath)
@@ -629,7 +689,7 @@ func (h *StorageV1Handler) objectExists(c *gin.Context) {
 		return
 	}
 
-	ctx := c.Request.Context()
+	ctx := h.rlsCtx(c)
 	row, err := h.db.QueryRow(ctx, "SELECT id FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
 	if err != nil || row == nil {
 		c.Status(404)
@@ -653,7 +713,7 @@ func (h *StorageV1Handler) removeObjects(c *gin.Context) {
 		return
 	}
 
-	ctx := c.Request.Context()
+	ctx := h.rlsCtx(c)
 	var deleted []gin.H
 	for _, p := range req.Prefixes {
 		p = strings.TrimPrefix(p, "/")
@@ -698,7 +758,7 @@ func (h *StorageV1Handler) moveObject(c *gin.Context) {
 		return
 	}
 
-	ctx := c.Request.Context()
+	ctx := h.rlsCtx(c)
 	srcKey := srcBucket + "/" + req.SourceKey
 	dstKey := dstBucket + "/" + req.DestinationKey
 
@@ -746,7 +806,7 @@ func (h *StorageV1Handler) copyObject(c *gin.Context) {
 		return
 	}
 
-	ctx := c.Request.Context()
+	ctx := h.rlsCtx(c)
 	srcKey := srcBucket + "/" + req.SourceKey
 	dstKey := dstBucket + "/" + req.DestinationKey
 
@@ -784,7 +844,7 @@ func (h *StorageV1Handler) createSignedURL(c *gin.Context) {
 		req.ExpiresIn = 3600
 	}
 
-	ctx := c.Request.Context()
+	ctx := h.rlsCtx(c)
 	row, err := h.db.QueryRow(ctx, "SELECT id FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
 	if err != nil || row == nil {
 		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Object not found"})
@@ -820,7 +880,7 @@ func (h *StorageV1Handler) createSignedURLs(c *gin.Context) {
 		req.ExpiresIn = 3600
 	}
 
-	ctx := c.Request.Context()
+	ctx := h.rlsCtx(c)
 	var results []gin.H
 	for _, p := range req.Paths {
 		p = strings.TrimPrefix(p, "/")
@@ -892,6 +952,9 @@ func (h *StorageV1Handler) uploadToSignedURL(c *gin.Context) {
 		return
 	}
 
+	// The HMAC upload token is the authorization for this route (there is no
+	// jwtAuth on it), so the metadata write runs as service_role rather than
+	// the anonymous caller — equivalent to an S3 presigned PUT.
 	ctx := c.Request.Context()
 	size := c.Request.ContentLength
 	if size < 0 {
@@ -911,15 +974,22 @@ func (h *StorageV1Handler) uploadToSignedURL(c *gin.Context) {
 	})
 }
 
-// signUploadToken creates an HMAC token for signed uploads.
+// signUploadToken creates an HMAC token for signed uploads. Returns "" when
+// no signing secret is available; callers treat an empty token as a failure
+// so we never emit a token an attacker could trivially forge.
 func (h *StorageV1Handler) signUploadToken(bucket, objPath string) string {
 	active, err := h.jwtKeys.Active(context.Background())
 	if err != nil {
 		return ""
 	}
+	secret := active.SymmetricSecret()
+	if len(secret) == 0 {
+		h.logger.Error("storage upload token: active JWT key has no usable secret")
+		return ""
+	}
 	expiry := time.Now().Add(storageUploadTokenExpiry).Unix()
 	payload := fmt.Sprintf("%s/%s:%d", bucket, objPath, expiry)
-	mac := hmac.New(sha256.New, active.Secret)
+	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte(payload))
 	sig := hex.EncodeToString(mac.Sum(nil))
 	return fmt.Sprintf("%d.%s", expiry, sig)
@@ -943,9 +1013,15 @@ func (h *StorageV1Handler) verifyUploadToken(token, bucket, objPath string) bool
 	if err != nil {
 		return false
 	}
+	secret := active.SymmetricSecret()
+	if len(secret) == 0 {
+		// Fail closed: with no secret we cannot verify, so reject rather
+		// than HMAC with an empty (forgeable) key.
+		return false
+	}
 
 	payload := fmt.Sprintf("%s/%s:%d", bucket, objPath, expiry)
-	mac := hmac.New(sha256.New, active.Secret)
+	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte(payload))
 	expected := hex.EncodeToString(mac.Sum(nil))
 	return hmac.Equal([]byte(parts[1]), []byte(expected))
