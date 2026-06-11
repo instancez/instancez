@@ -17,25 +17,19 @@ func initEmailProvider(cfg *domain.Config) (domain.EmailSender, error) {
 	if cfg.Providers.Email == nil {
 		return nil, nil
 	}
-
 	switch cfg.Providers.Email.Type {
 	case "resend":
-		apiKey := os.Getenv("RESEND_API_KEY")
-		if apiKey == "" {
-			return nil, fmt.Errorf("RESEND_API_KEY not set")
+		if cfg.Providers.Email.APIKey == "" {
+			return nil, fmt.Errorf("INSTANCEZ_RESEND_API_KEY not set (required for resend provider)")
 		}
-		return resend.New(apiKey), nil
-
+		return resend.New(cfg.Providers.Email.APIKey), nil
 	case "sendgrid":
-		apiKey := os.Getenv("SENDGRID_API_KEY")
-		if apiKey == "" {
-			return nil, fmt.Errorf("SENDGRID_API_KEY not set")
+		if cfg.Providers.Email.APIKey == "" {
+			return nil, fmt.Errorf("INSTANCEZ_SENDGRID_API_KEY not set (required for sendgrid provider)")
 		}
-		return sendgrid.New(apiKey), nil
-
+		return sendgrid.New(cfg.Providers.Email.APIKey), nil
 	case "":
 		return nil, nil
-
 	default:
 		return nil, fmt.Errorf("unsupported email provider: %s (supported: resend, sendgrid)", cfg.Providers.Email.Type)
 	}
@@ -49,18 +43,15 @@ func initStorageProvider(ctx context.Context, cfg *domain.Config) (domain.Object
 
 	switch cfg.Providers.Storage.Type {
 	case "s3":
-		return newS3Store(ctx)
-
+		return newS3Store(ctx, cfg.Providers.Storage)
 	case "local":
-		path := os.Getenv("INSTANCEZ_LOCAL_STORAGE_PATH")
+		path := cfg.Providers.Storage.Path
 		if path == "" {
 			path = "./uploads"
 		}
 		return NewLocalStore(path, os.Getenv("INSTANCEZ_STORAGE_KEY_PREFIX"))
-
 	case "":
 		return nil, nil
-
 	default:
 		return nil, fmt.Errorf("unsupported storage provider: %s (supported: s3, local)", cfg.Providers.Storage.Type)
 	}
@@ -92,21 +83,18 @@ func checkStorageHealth(ctx context.Context, store domain.ObjectStore, cfg *doma
 	return nil
 }
 
-func newS3Store(ctx context.Context) (*s3.Store, error) {
-	bucket := os.Getenv("S3_BUCKET")
-	if bucket == "" {
-		return nil, fmt.Errorf("S3_BUCKET not set")
+func newS3Store(ctx context.Context, p *domain.StorageProvider) (*s3.Store, error) {
+	if p.Bucket == "" {
+		return nil, fmt.Errorf("INSTANCEZ_S3_BUCKET not set (required for s3 provider)")
 	}
-
 	s3Cfg := s3.Config{
-		Bucket:          bucket,
-		Region:          os.Getenv("S3_REGION"),
-		Endpoint:        os.Getenv("S3_ENDPOINT"),
-		AccessKeyID:     os.Getenv("S3_ACCESS_KEY_ID"),
-		SecretAccessKey: os.Getenv("S3_SECRET_ACCESS_KEY"),
+		Bucket:          p.Bucket,
+		Region:          p.Region,
+		Endpoint:        p.Endpoint,
+		AccessKeyID:     p.AccessKeyID,
+		SecretAccessKey: p.SecretAccessKey,
 		KeyPrefix:       os.Getenv("INSTANCEZ_STORAGE_KEY_PREFIX"),
 	}
-
 	return s3.New(ctx, s3Cfg)
 }
 
