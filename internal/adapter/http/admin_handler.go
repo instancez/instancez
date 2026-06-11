@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -31,6 +32,8 @@ type AdminHandler struct {
 	dashboardMode  DashboardMode
 	driftFn        func() *app.DriftTracker
 	jwtKeys        *app.JWTKeyManager
+	dotenvWritable bool
+	dotenvPath     string
 }
 
 func NewAdminHandler(deps ServerDeps) *AdminHandler {
@@ -46,6 +49,8 @@ func NewAdminHandler(deps ServerDeps) *AdminHandler {
 		dashboardMode:  deps.DashboardMode,
 		driftFn:        deps.DriftFn,
 		jwtKeys:        deps.JWTKeys,
+		dotenvWritable: deps.DotenvWritable,
+		dotenvPath:     deps.DotenvPath,
 	}
 }
 
@@ -98,6 +103,7 @@ func (h *AdminHandler) Mount(api *gin.RouterGroup) {
 	admin.GET("/config/status", h.handleConfigStatus)
 	admin.GET("/config/diff", h.handleConfigDiff)
 	admin.GET("/config/env-vars", h.handleGetEnvVars)
+	admin.PUT("/config/dotenv", h.handlePutDotenv)
 	admin.GET("/stats", h.handleStats)
 
 	// API keys (dashboard Settings → API equivalent). The admin key itself is
@@ -694,6 +700,64 @@ func (h *AdminHandler) handlePostFunctionDeps(c *gin.Context) {
 		"has_lock":     lockErr == nil,
 		"readonly":     false,
 	})
+}
+
+// handlePutDotenv writes a map of var-name → value pairs to the dotenv file.
+// Only available when --dashboard-write-dotenv is active.
+func (h *AdminHandler) handlePutDotenv(c *gin.Context) {
+	if !h.dotenvWritable {
+		c.JSON(403, gin.H{
+			"error":   "dotenv_writes_disabled",
+			"message": "Secret writing is disabled. Pass --dashboard-write-dotenv and --dotenv-path to enable.",
+		})
+		return
+	}
+	var vars map[string]string
+	if err := c.ShouldBindJSON(&vars); err != nil {
+		problemJSON(c, 400, "invalid_body", "Expected a JSON object of VAR_NAME: value pairs")
+		return
+	}
+	if err := writeDotenvVars(h.dotenvPath, vars); err != nil {
+		problemJSON(c, 500, "internal", "Failed to write .env file: "+err.Error())
+		return
+	}
+	c.JSON(200, gin.H{"message": "Secrets written to " + h.dotenvPath})
+}
+
+// writeDotenvVars upserts key=value pairs in a dotenv file.
+// Existing entries for a key are updated in-place; new keys are appended.
+func writeDotenvVars(path string, vars map[string]string) error {
+	existing, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	lines := strings.Split(string(existing), "\n")
+	updated := make(map[string]bool)
+
+	for i, line := range lines {
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		if val, ok := vars[key]; ok {
+			lines[i] = key + "=" + val
+			updated[key] = true
+		}
+	}
+
+	for key, val := range vars {
+		if !updated[key] {
+			lines = append(lines, key+"="+val)
+		}
+	}
+
+	result := strings.Join(lines, "\n")
+	if !strings.HasSuffix(result, "\n") {
+		result += "\n"
+	}
+	return os.WriteFile(path, []byte(result), 0o600)
 }
 
 // splitStatements splits SQL on semicolons (simple split, not a full parser).

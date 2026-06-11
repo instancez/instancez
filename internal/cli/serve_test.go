@@ -120,3 +120,55 @@ func TestParseServeFlagsValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestParseDotenvFlag_ServeDefault(t *testing.T) {
+	opts, err := parseServeFlags([]string{}, func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if opts.dotenvWritable {
+		t.Error("expected dotenvWritable=false by default for serve")
+	}
+}
+
+func TestParseDotenvFlag_ServeExplicit(t *testing.T) {
+	opts, err := parseServeFlags(
+		[]string{"--dashboard-write-dotenv", "--dotenv-path", "/etc/app.env"},
+		func(string) string { return "" },
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !opts.dotenvWritable {
+		t.Error("expected dotenvWritable=true")
+	}
+	if opts.dotenvPath != "/etc/app.env" {
+		t.Errorf("dotenvPath = %q, want /etc/app.env", opts.dotenvPath)
+	}
+}
+
+func TestParseDotenvFlag_ServeRequiresDotenvPath(t *testing.T) {
+	_, err := parseServeFlags(
+		[]string{"--dashboard-write-dotenv"},
+		func(string) string { return "" },
+	)
+	if err == nil {
+		t.Fatal("expected error when --dashboard-write-dotenv set without --dotenv-path")
+	}
+	if !strings.Contains(err.Error(), "dotenv-path") {
+		t.Errorf("error %q should mention dotenv-path", err.Error())
+	}
+}
+
+func TestParseDotenvFlag_DevDefault(t *testing.T) {
+	opts, err := parseDevFlags([]string{}, func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !opts.dotenvWritable {
+		t.Error("expected dotenvWritable=true by default for dev")
+	}
+	if opts.dotenvPath != ".development.env" {
+		t.Errorf("dotenvPath = %q, want .development.env", opts.dotenvPath)
+	}
+}

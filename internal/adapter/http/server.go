@@ -47,6 +47,9 @@ type ServerDeps struct {
 	ConfigFn       func() *domain.Config    // engine running config (lastGood when drifted)
 	UpdateConfigFn func(*domain.Config)     // called after a successful PUT so GET reflects it immediately
 
+	DotenvWritable bool   // true → PUT /config/dotenv is enabled
+	DotenvPath     string // path to the .env file to write
+
 	FunctionRuntime domain.FunctionRuntime // nil → /functions/v1 returns 501
 }
 

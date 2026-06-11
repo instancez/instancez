@@ -11,16 +11,18 @@ import (
 func (h *AdminHandler) handleConfigStatus(c *gin.Context) {
 	if h.driftFn == nil {
 		c.JSON(200, gin.H{
-			"status":         "unknown",
-			"dashboard_mode": h.dashboardMode.String(),
+			"status":          "unknown",
+			"dashboard_mode":  h.dashboardMode.String(),
+			"dotenv_writable": h.dotenvWritable,
 		})
 		return
 	}
 	tracker := h.driftFn()
 	if tracker == nil {
 		c.JSON(200, gin.H{
-			"status":         "unknown",
-			"dashboard_mode": h.dashboardMode.String(),
+			"status":          "unknown",
+			"dashboard_mode":  h.dashboardMode.String(),
+			"dotenv_writable": h.dotenvWritable,
 		})
 		return
 	}
@@ -36,7 +38,8 @@ func (h *AdminHandler) handleConfigStatus(c *gin.Context) {
 			"checksum":     state.SourceChecksum,
 			"last_seen_at": state.SourceLastSeenAt,
 		},
-		"last_error":     state.LastError,
-		"dashboard_mode": h.dashboardMode.String(),
+		"last_error":      state.LastError,
+		"dashboard_mode":  h.dashboardMode.String(),
+		"dotenv_writable": h.dotenvWritable,
 	})
 }

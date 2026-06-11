@@ -159,6 +159,7 @@ func runServe(opts serveOptions) error {
 	httpServer := instancezhttp.NewServer(instancezhttp.ServerDeps{
 		Config:          cfg,
 		DB:              authDB,
+		OwnerDB:         ownerDB,
 		Logger:          logger,
 		DevMode:         false,
 		Email:           email,
@@ -181,6 +182,13 @@ func runServe(opts serveOptions) error {
 			}
 			return engine.Config()
 		},
+		UpdateConfigFn: func(c *domain.Config) {
+			if engine != nil {
+				engine.SetConfig(c)
+			}
+		},
+		DotenvWritable: opts.dotenvWritable,
+		DotenvPath:     opts.dotenvPath,
 	})
 
 	engineOpts := []app.EngineOption{

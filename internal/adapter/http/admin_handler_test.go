@@ -10,6 +10,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -399,5 +402,47 @@ auth:
 	}
 	if resp.Vars["INSTANCEZ_GOOGLE_CLIENT_ID"].Set {
 		t.Error("expected INSTANCEZ_GOOGLE_CLIENT_ID to be unset")
+	}
+}
+
+func TestHandlePutDotenv_Disabled(t *testing.T) {
+	h := &AdminHandler{dotenvWritable: false, logger: slog.Default()}
+	r := gin.New()
+	r.PUT("/config/dotenv", h.handlePutDotenv)
+
+	body := `{"INSTANCEZ_RESEND_API_KEY": "re_test"}`
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/config/dotenv", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	if w.Code != 403 {
+		t.Fatalf("status = %d, want 403", w.Code)
+	}
+}
+
+func TestHandlePutDotenv_WritesFile(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, ".env")
+
+	h := &AdminHandler{dotenvWritable: true, dotenvPath: path, logger: slog.Default()}
+	r := gin.New()
+	r.PUT("/config/dotenv", h.handlePutDotenv)
+
+	body := `{"INSTANCEZ_RESEND_API_KEY": "re_test_key"}`
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/config/dotenv", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read dotenv: %v", err)
+	}
+	if !strings.Contains(string(data), "INSTANCEZ_RESEND_API_KEY=re_test_key") {
+		t.Errorf("dotenv file missing expected line, got: %s", string(data))
 	}
 }

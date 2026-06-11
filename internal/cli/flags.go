@@ -177,6 +177,9 @@ type serveOptions struct {
 	watch         bool
 	watchInterval time.Duration
 	dashboard     DashboardMode
+
+	dotenvWritable bool
+	dotenvPath     string
 }
 
 // serveFlagSet owns the single definition of serve's flags. The cobra command
@@ -193,6 +196,8 @@ type serveFlagSet struct {
 	watch            bool
 	watchInterval    time.Duration
 	dashboard        string
+	dotenvWritable   bool
+	dotenvPath       string
 }
 
 func newServeFlagSet() *serveFlagSet {
@@ -205,6 +210,8 @@ func newServeFlagSet() *serveFlagSet {
 	fs.flags.BoolVar(&fs.watch, "watch", false, "watch the config source for changes (env: INSTANCEZ_WATCH)")
 	fs.flags.DurationVar(&fs.watchInterval, "watch-interval", 60*time.Second, "S3-watch poll interval; min 10s (env: INSTANCEZ_WATCH_INTERVAL)")
 	fs.flags.StringVar(&fs.dashboard, "dashboard", "disabled", "dashboard mode: disabled | readonly | readwrite (env: INSTANCEZ_DASHBOARD)")
+	fs.flags.BoolVar(&fs.dotenvWritable, "dashboard-write-dotenv", false, "allow dashboard to write secrets to a .env file (env: INSTANCEZ_DASHBOARD_WRITE_DOTENV)")
+	fs.flags.StringVar(&fs.dotenvPath, "dotenv-path", "", "path to .env file when --dashboard-write-dotenv is set (env: INSTANCEZ_DOTENV_PATH)")
 	fs.flags.SetOutput(io.Discard)
 	return fs
 }
@@ -230,6 +237,10 @@ func resolveServeFlags(fs *serveFlagSet, lookup func(string) string) (serveOptio
 		return serveOptions{}, err
 	}
 
+	if fs.dotenvWritable && fs.dotenvPath == "" {
+		return serveOptions{}, fmt.Errorf("--dotenv-path is required when --dashboard-write-dotenv is set")
+	}
+
 	if err := checkConfigBackend(fs.configPath); err != nil {
 		return serveOptions{}, err
 	}
@@ -243,6 +254,8 @@ func resolveServeFlags(fs *serveFlagSet, lookup func(string) string) (serveOptio
 		watch:            fs.watch,
 		watchInterval:    fs.watchInterval,
 		dashboard:        mode,
+		dotenvWritable:   fs.dotenvWritable,
+		dotenvPath:       fs.dotenvPath,
 	}, nil
 }
 
@@ -283,6 +296,8 @@ type devFlagSet struct {
 	watchInterval time.Duration
 	dashboard     string
 	verbose       bool
+	dotenvWritable bool
+	dotenvPath     string
 
 	useDSN   bool
 	useCloud bool
@@ -297,6 +312,8 @@ func newDevFlagSet() *devFlagSet {
 	fs.flags.DurationVar(&fs.watchInterval, "watch-interval", 60*time.Second, "S3-watch poll interval; min 10s")
 	fs.flags.StringVar(&fs.dashboard, "dashboard", "readwrite", "dashboard mode: disabled | readonly | readwrite")
 	fs.flags.BoolVar(&fs.verbose, "verbose", false, "debug logging")
+	fs.flags.BoolVar(&fs.dotenvWritable, "dashboard-write-dotenv", true, "allow dashboard to write secrets to .development.env")
+	fs.flags.StringVar(&fs.dotenvPath, "dotenv-path", ".development.env", "path to .env file for dashboard secret writing")
 	fs.flags.BoolVar(&fs.useDSN, "use-dsn", false, "deprecated no-op; dev uses the DSN by default")
 	_ = fs.flags.MarkHidden("use-dsn")
 	_ = fs.flags.MarkDeprecated("use-dsn", "dev now uses the DSN by default; flag is a no-op")
@@ -343,13 +360,15 @@ func resolveDevFlags(fs *devFlagSet, lookup func(string) string) (devOptions, er
 
 	return devOptions{
 		serveOptions: serveOptions{
-			port:          fs.port,
-			configPath:    fs.configPath,
-			migrate:       true, // dev always migrates
-			loadData:      true, // dev always seeds
-			watch:         watch,
-			watchInterval: fs.watchInterval,
-			dashboard:     mode,
+			port:           fs.port,
+			configPath:     fs.configPath,
+			migrate:        true, // dev always migrates
+			loadData:       true, // dev always seeds
+			watch:          watch,
+			watchInterval:  fs.watchInterval,
+			dashboard:      mode,
+			dotenvWritable: fs.dotenvWritable,
+			dotenvPath:     fs.dotenvPath,
 		},
 		noWatch: fs.noWatch,
 		verbose: fs.verbose,

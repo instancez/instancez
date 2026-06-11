@@ -5,9 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/instancez/instancez/dashboard"
 	instancezhttp "github.com/instancez/instancez/internal/adapter/http"
+	"github.com/instancez/instancez/internal/adapter/funcs"
 	"github.com/instancez/instancez/internal/app"
 	"github.com/instancez/instancez/internal/cli/preflight"
 	"github.com/instancez/instancez/internal/config"
@@ -90,12 +94,10 @@ func runDev(opts devOptions) error {
 		return printPrettyErrors(errs)
 	}
 
-	// Build a Source handle for the engine + http deps (Tasks 10/11/12 use it
-	// for the watch loop and the admin PUT endpoint).
-	source, err := config.NewSource(opts.configPath)
-	if err != nil {
-		return err
-	}
+	// Build a Source handle for the engine + http deps.
+	// In dev mode we also watch .development.env so changes to env vars are
+	// picked up without a server restart.
+	source := config.NewFileSourceWithEnv(opts.configPath, ".development.env")
 
 	if opts.port > 0 {
 		cfg.Server.Port = opts.port
@@ -142,15 +144,29 @@ func runDev(opts devOptions) error {
 	// Function runtime (dev builds: `npm ci` runs in functions/ when a
 	// package.json is present, then a worker pool is spawned pointing at the
 	// project tree). Nil when no functions are declared.
-	var funcRuntime domain.FunctionRuntime
 	funcRT, err := buildDevFuncRuntime(ctx, cfg, opts.configPath, km, logger)
 	if err != nil {
 		return err
 	}
+	swap := funcs.NewSwapRuntime(funcRT)
+	defer func() { _ = swap.Close() }()
+	var funcRuntime domain.FunctionRuntime = swap
 	if funcRT != nil {
-		funcRuntime = funcRT
-		defer func() { _ = funcRT.Close() }()
 		fmt.Printf("  ✓ Functions: %d (runtime ready)\n", len(cfg.Functions))
+	}
+
+	// reloadFuncs rebuilds workers from updated code/config without npm ci.
+	reloadFuncs := func(newCfg *domain.Config) {
+		rt, err := buildDevFuncRuntimeFast(ctx, newCfg, opts.configPath, km, logger)
+		if err != nil {
+			logger.Error("functions: reload failed", "error", err)
+			return
+		}
+		prev := swap.Swap(rt)
+		if prev != nil {
+			_ = prev.Close()
+		}
+		logger.Info("functions: reloaded", "count", len(newCfg.Functions))
 	}
 
 	// Create HTTP server. The Drift/Config closures capture `engine` (declared
@@ -160,6 +176,7 @@ func runDev(opts devOptions) error {
 	httpServer := instancezhttp.NewServer(instancezhttp.ServerDeps{
 		Config:          cfg,
 		DB:              authDB,
+		OwnerDB:         ownerDB,
 		Logger:          logger,
 		DevMode:         true,
 		Email:           email,
@@ -182,6 +199,13 @@ func runDev(opts devOptions) error {
 			}
 			return engine.Config()
 		},
+		UpdateConfigFn: func(c *domain.Config) {
+			if engine != nil {
+				engine.SetConfig(c)
+			}
+		},
+		DotenvWritable: opts.dotenvWritable,
+		DotenvPath:     opts.dotenvPath,
 	})
 
 	// Create and start engine with HTTP server
@@ -195,6 +219,7 @@ func runDev(opts devOptions) error {
 		app.WithConfigSource(source),
 		app.WithLogger(logger),
 		app.WithHTTPServer(httpServer),
+		app.WithFunctionReload(reloadFuncs),
 	)
 
 	fmt.Printf("\n  API:       http://localhost:%d\n", cfg.Server.Port)
@@ -206,8 +231,63 @@ func runDev(opts devOptions) error {
 
 	if opts.watch {
 		fmt.Printf("\n  Watching for changes... (Ctrl+C to stop)\n")
+		// Watch the functions/ directory for JS/TS code edits that don't
+		// touch instancez.yaml — those won't trigger the config watcher.
+		functionsDir := filepath.Join(filepath.Dir(opts.configPath), "functions")
+		if _, err := os.Stat(functionsDir); err == nil {
+			go watchFunctionsDir(ctx, functionsDir, cfg, reloadFuncs, logger)
+		}
 	}
 
 	// Start engine (blocks until shutdown signal)
 	return engine.Start(ctx)
+}
+
+// watchFunctionsDir watches a functions directory and calls reload whenever
+// any file inside it changes. It uses a 300ms debounce to coalesce saves.
+func watchFunctionsDir(
+	ctx context.Context,
+	dir string,
+	cfg *domain.Config,
+	reload func(*domain.Config),
+	logger *slog.Logger,
+) {
+	w, err := fsnotify.NewWatcher()
+	if err != nil {
+		logger.Warn("functions watcher: init failed", "error", err)
+		return
+	}
+	defer func() { _ = w.Close() }()
+
+	if err := w.Add(dir); err != nil {
+		logger.Warn("functions watcher: watch failed", "dir", dir, "error", err)
+		return
+	}
+
+	var debounce *time.Timer
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev, ok := <-w.Events:
+			if !ok {
+				return
+			}
+			if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) == 0 {
+				continue
+			}
+			if debounce != nil {
+				debounce.Stop()
+			}
+			debounce = time.AfterFunc(300*time.Millisecond, func() {
+				logger.Info("functions: code change detected, reloading", "file", filepath.Base(ev.Name))
+				reload(cfg)
+			})
+		case err, ok := <-w.Errors:
+			if !ok {
+				return
+			}
+			logger.Warn("functions watcher: error", "error", err)
+		}
+	}
 }
