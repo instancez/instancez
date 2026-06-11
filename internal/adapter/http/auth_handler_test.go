@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -470,6 +471,149 @@ func (s *stubDB) WithRLS(ctx context.Context, session domain.Session) (context.C
 	return ctx, nil
 }
 func (s *stubDB) Begin(ctx context.Context) (domain.Tx, error) { return nil, nil }
+
+// ---------- stubAuthService ----------
+
+// stubAuthService implements domain.AuthService with hookable function fields.
+// Only the methods a given test exercises need non-nil functions; everything
+// else has a safe no-op default.
+type stubAuthService struct {
+	createUserFn          func(ctx context.Context, p domain.CreateUserParams) (map[string]any, error)
+	getUserByEmailFn      func(ctx context.Context, email string) (map[string]any, error)
+	getUserByIDFn         func(ctx context.Context, id string) (map[string]any, error)
+	getUserByPhoneFn      func(ctx context.Context, phone string) (map[string]any, error)
+	updateUserFn          func(ctx context.Context, id string, p domain.UpdateUserParams) (map[string]any, error)
+	deleteUserFn          func(ctx context.Context, id string) error
+	listUsersFn           func(ctx context.Context, page, perPage int) ([]map[string]any, int, error)
+	verifyPasswordFn      func(ctx context.Context, email, password string) (map[string]any, error)
+	createSessionFn       func(ctx context.Context, userID string) (string, string, error)
+	verifyRefreshTokenFn  func(ctx context.Context, token string) (map[string]any, string, error)
+	createOTPCodeFn       func(ctx context.Context, userID, kind string) (string, string, error)
+	verifyOTPTokenFn      func(ctx context.Context, token, kind string) (map[string]any, error)
+	getOrCreateIdentityFn func(ctx context.Context, provider, providerID string, userMeta map[string]any) (map[string]any, bool, error)
+}
+
+// Compile-time check that stubAuthService satisfies the interface.
+var _ domain.AuthService = (*stubAuthService)(nil)
+
+func (s *stubAuthService) CreateUser(ctx context.Context, p domain.CreateUserParams) (map[string]any, error) {
+	if s.createUserFn != nil {
+		return s.createUserFn(ctx, p)
+	}
+	return map[string]any{"id": "user-1", "email": p.Email}, nil
+}
+func (s *stubAuthService) GetUserByID(ctx context.Context, id string) (map[string]any, error) {
+	if s.getUserByIDFn != nil {
+		return s.getUserByIDFn(ctx, id)
+	}
+	return nil, domain.ErrNotFound
+}
+func (s *stubAuthService) GetUserByEmail(ctx context.Context, email string) (map[string]any, error) {
+	if s.getUserByEmailFn != nil {
+		return s.getUserByEmailFn(ctx, email)
+	}
+	return nil, domain.ErrNotFound
+}
+func (s *stubAuthService) GetUserByPhone(ctx context.Context, phone string) (map[string]any, error) {
+	if s.getUserByPhoneFn != nil {
+		return s.getUserByPhoneFn(ctx, phone)
+	}
+	return nil, domain.ErrNotFound
+}
+func (s *stubAuthService) UpdateUser(ctx context.Context, id string, p domain.UpdateUserParams) (map[string]any, error) {
+	if s.updateUserFn != nil {
+		return s.updateUserFn(ctx, id, p)
+	}
+	return map[string]any{"id": id}, nil
+}
+func (s *stubAuthService) DeleteUser(ctx context.Context, id string) error {
+	if s.deleteUserFn != nil {
+		return s.deleteUserFn(ctx, id)
+	}
+	return nil
+}
+func (s *stubAuthService) ListUsers(ctx context.Context, page, perPage int) ([]map[string]any, int, error) {
+	if s.listUsersFn != nil {
+		return s.listUsersFn(ctx, page, perPage)
+	}
+	return nil, 0, nil
+}
+func (s *stubAuthService) VerifyPassword(ctx context.Context, email, password string) (map[string]any, error) {
+	if s.verifyPasswordFn != nil {
+		return s.verifyPasswordFn(ctx, email, password)
+	}
+	return nil, domain.ErrUnauthorized
+}
+func (s *stubAuthService) SetPassword(ctx context.Context, userID, bcryptHash string) error {
+	return nil
+}
+func (s *stubAuthService) CreateSession(ctx context.Context, userID string) (string, string, error) {
+	if s.createSessionFn != nil {
+		return s.createSessionFn(ctx, userID)
+	}
+	return "sess-1", "refresh-token-1", nil
+}
+func (s *stubAuthService) VerifyRefreshToken(ctx context.Context, token string) (map[string]any, string, error) {
+	if s.verifyRefreshTokenFn != nil {
+		return s.verifyRefreshTokenFn(ctx, token)
+	}
+	return nil, "", domain.ErrUnauthorized
+}
+func (s *stubAuthService) RevokeSession(ctx context.Context, sessionID string) error {
+	return nil
+}
+func (s *stubAuthService) RevokeAllUserSessions(ctx context.Context, userID string) error {
+	return nil
+}
+func (s *stubAuthService) CreateOTPCode(ctx context.Context, userID, kind string) (string, string, error) {
+	if s.createOTPCodeFn != nil {
+		return s.createOTPCodeFn(ctx, userID, kind)
+	}
+	return "token-1", "123456", nil
+}
+func (s *stubAuthService) VerifyOTPToken(ctx context.Context, token, kind string) (map[string]any, error) {
+	if s.verifyOTPTokenFn != nil {
+		return s.verifyOTPTokenFn(ctx, token, kind)
+	}
+	return nil, domain.ErrUnauthorized
+}
+func (s *stubAuthService) VerifyOTPCode(ctx context.Context, userID, kind, code string) error {
+	return nil
+}
+func (s *stubAuthService) CreateFlowState(ctx context.Context, provider, codeChallenge, method string) (string, error) {
+	return "auth-code-1", nil
+}
+func (s *stubAuthService) GetFlowState(ctx context.Context, authCode string) (string, string, string, error) {
+	return "", "", "", domain.ErrNotFound
+}
+func (s *stubAuthService) DeleteFlowState(ctx context.Context, authCode string) error {
+	return nil
+}
+func (s *stubAuthService) GetOrCreateIdentity(ctx context.Context, provider, providerID string, userMeta map[string]any) (map[string]any, bool, error) {
+	if s.getOrCreateIdentityFn != nil {
+		return s.getOrCreateIdentityFn(ctx, provider, providerID, userMeta)
+	}
+	return map[string]any{"id": "user-1"}, false, nil
+}
+func (s *stubAuthService) ListIdentities(ctx context.Context, userID string) ([]map[string]any, error) {
+	return nil, nil
+}
+func (s *stubAuthService) DeleteIdentity(ctx context.Context, userID, provider string) error {
+	return nil
+}
+func (s *stubAuthService) CreateFactor(ctx context.Context, userID, factorType, friendlyName string) (map[string]any, error) {
+	return nil, nil
+}
+func (s *stubAuthService) VerifyFactor(ctx context.Context, factorID, code string) error {
+	return nil
+}
+func (s *stubAuthService) DeleteFactor(ctx context.Context, factorID string) error {
+	return nil
+}
+func (s *stubAuthService) ListFactors(ctx context.Context, userID string) ([]map[string]any, error) {
+	return nil, nil
+}
+func (s *stubAuthService) RecordSignIn(ctx context.Context, userID string) {}
 
 // ---------- signup dispatch / anonymous ----------
 
@@ -1458,5 +1602,273 @@ func TestHandleVerifyGET_EmailVerificationStillWorks(t *testing.T) {
 	}
 	if !emailVerified {
 		t.Error("email_verified should have been set to true")
+	}
+}
+
+// ---------- handlers that use h.authSvc ----------
+
+// TestHandleGetUser_ReturnsUser verifies that GET /auth/v1/user returns the
+// user row from authSvc.GetUserByID when a valid JWT is present.
+func TestHandleGetUser_ReturnsUser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	km := stubKeys(t)
+
+	svc := &stubAuthService{
+		getUserByIDFn: func(ctx context.Context, id string) (map[string]any, error) {
+			return map[string]any{
+				"id":                 id,
+				"email":              "user@example.com",
+				"email_verified":     true,
+				"email_confirmed_at": time.Now(),
+				"raw_app_meta_data":  `{"provider":"email"}`,
+				"raw_user_meta_data": `{}`,
+				"created_at":         time.Now(),
+				"updated_at":         time.Now(),
+			}, nil
+		},
+	}
+	h := &AuthHandler{
+		cfg:     &domain.Config{Auth: &domain.Auth{}},
+		authSvc: svc,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		jwtKeys: km,
+	}
+
+	tok := signToken(t, km, jwt.MapClaims{
+		"sub":   "11111111-2222-3333-4444-555555555555",
+		"role":  "authenticated",
+		"aud":   "authenticated",
+		"email": "user@example.com",
+		"iat":   time.Now().Unix(),
+		"exp":   time.Now().Add(time.Hour).Unix(),
+	})
+
+	r := gin.New()
+	r.GET("/auth/v1/user", jwtAuth(km, true), h.handleGetUser)
+
+	req := httptest.NewRequest("GET", "/auth/v1/user", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["email"] != "user@example.com" {
+		t.Errorf("email = %v", body["email"])
+	}
+}
+
+// TestHandleGetUser_NotFound verifies that GET /auth/v1/user returns 404 when
+// authSvc.GetUserByID returns ErrNotFound (the default stub behaviour).
+func TestHandleGetUser_NotFound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	km := stubKeys(t)
+
+	// Default stub returns ErrNotFound for GetUserByID.
+	h := &AuthHandler{
+		cfg:     &domain.Config{Auth: &domain.Auth{}},
+		authSvc: &stubAuthService{},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		jwtKeys: km,
+	}
+
+	tok := signToken(t, km, jwt.MapClaims{
+		"sub":   "11111111-2222-3333-4444-555555555555",
+		"role":  "authenticated",
+		"aud":   "authenticated",
+		"email": "ghost@example.com",
+		"iat":   time.Now().Unix(),
+		"exp":   time.Now().Add(time.Hour).Unix(),
+	})
+
+	r := gin.New()
+	r.GET("/auth/v1/user", jwtAuth(km, true), h.handleGetUser)
+
+	req := httptest.NewRequest("GET", "/auth/v1/user", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 404 {
+		t.Errorf("expected 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleAdminGetUser_ReturnsUser verifies the happy path for
+// GET /auth/v1/admin/users/:uid via authSvc.GetUserByID.
+func TestHandleAdminGetUser_ReturnsUser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	svc := &stubAuthService{
+		getUserByIDFn: func(ctx context.Context, id string) (map[string]any, error) {
+			return map[string]any{
+				"id":                 id,
+				"email":              "admin@example.com",
+				"email_verified":     true,
+				"email_confirmed_at": time.Now(),
+				"raw_app_meta_data":  `{}`,
+				"raw_user_meta_data": `{}`,
+				"created_at":         time.Now(),
+				"updated_at":         time.Now(),
+			}, nil
+		},
+	}
+	h := &AuthHandler{
+		cfg:     &domain.Config{Auth: &domain.Auth{}},
+		authSvc: svc,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	r := gin.New()
+	r.GET("/auth/v1/admin/users/:uid", h.handleAdminGetUser)
+
+	req := httptest.NewRequest("GET", "/auth/v1/admin/users/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["email"] != "admin@example.com" {
+		t.Errorf("email = %v", body["email"])
+	}
+}
+
+// TestHandleAdminGetUser_NotFound verifies that a missing user returns 404.
+func TestHandleAdminGetUser_NotFound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	h := &AuthHandler{
+		cfg:     &domain.Config{Auth: &domain.Auth{}},
+		authSvc: &stubAuthService{}, // default: GetUserByID returns ErrNotFound
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	r := gin.New()
+	r.GET("/auth/v1/admin/users/:uid", h.handleAdminGetUser)
+
+	req := httptest.NewRequest("GET", "/auth/v1/admin/users/no-such-user", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 404 {
+		t.Errorf("expected 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleAdminListUsers_ReturnsPaginatedUsers verifies the happy path for
+// GET /auth/v1/admin/users — checks the users array and x-total-count header.
+func TestHandleAdminListUsers_ReturnsPaginatedUsers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	svc := &stubAuthService{
+		listUsersFn: func(ctx context.Context, page, perPage int) ([]map[string]any, int, error) {
+			return []map[string]any{
+				{
+					"id":                 "11111111-2222-3333-4444-555555555555",
+					"email":              "a@example.com",
+					"email_verified":     true,
+					"email_confirmed_at": time.Now(),
+					"raw_app_meta_data":  `{}`,
+					"raw_user_meta_data": `{}`,
+					"created_at":         time.Now(),
+					"updated_at":         time.Now(),
+				},
+			}, 1, nil
+		},
+	}
+	h := &AuthHandler{
+		cfg:     &domain.Config{Auth: &domain.Auth{}},
+		authSvc: svc,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	r := gin.New()
+	r.GET("/auth/v1/admin/users", h.handleAdminListUsers)
+
+	req := httptest.NewRequest("GET", "/auth/v1/admin/users", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if w.Header().Get("x-total-count") != "1" {
+		t.Errorf("x-total-count = %q, want 1", w.Header().Get("x-total-count"))
+	}
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	users, _ := body["users"].([]any)
+	if len(users) != 1 {
+		t.Errorf("expected 1 user, got %d", len(users))
+	}
+	if body["aud"] != "authenticated" {
+		t.Errorf("aud = %v", body["aud"])
+	}
+}
+
+// TestHandleAdminDeleteUser_Success verifies that DELETE /auth/v1/admin/users/:uid
+// returns 200 {} on success via authSvc.DeleteUser.
+func TestHandleAdminDeleteUser_Success(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	deleted := ""
+	svc := &stubAuthService{
+		deleteUserFn: func(ctx context.Context, id string) error {
+			deleted = id
+			return nil
+		},
+	}
+	h := &AuthHandler{
+		cfg:     &domain.Config{Auth: &domain.Auth{}},
+		authSvc: svc,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	r := gin.New()
+	r.DELETE("/auth/v1/admin/users/:uid", h.handleAdminDeleteUser)
+
+	req := httptest.NewRequest("DELETE", "/auth/v1/admin/users/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if deleted != "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" {
+		t.Errorf("deleted uid = %q, want aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", deleted)
+	}
+}
+
+// TestHandleAdminDeleteUser_NotFound verifies that a "not found" error from
+// authSvc.DeleteUser maps to a 404 response.
+func TestHandleAdminDeleteUser_NotFound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	svc := &stubAuthService{
+		deleteUserFn: func(ctx context.Context, id string) error {
+			return fmt.Errorf("user not found")
+		},
+	}
+	h := &AuthHandler{
+		cfg:     &domain.Config{Auth: &domain.Auth{}},
+		authSvc: svc,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	r := gin.New()
+	r.DELETE("/auth/v1/admin/users/:uid", h.handleAdminDeleteUser)
+
+	req := httptest.NewRequest("DELETE", "/auth/v1/admin/users/no-such-user", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 404 {
+		t.Errorf("expected 404, got %d: %s", w.Code, w.Body.String())
 	}
 }
