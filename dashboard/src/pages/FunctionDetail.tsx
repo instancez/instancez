@@ -1,12 +1,14 @@
 import { useParams, useNavigate } from "react-router-dom";
-import { useState, useEffect } from "react";
-import { Trash2, Plus, Settings2, KeyRound } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { Trash2, Plus, Settings2, KeyRound, Code2 } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
 import { useDialog } from "../components/Dialog";
 import { PageHeader } from "../components/PageHeader";
 import { SaveBar } from "../components/SaveBar";
 import { Toggle } from "../components/Toggle";
+import { CodeEditor } from "../components/CodeEditor";
 import { Button, Field, Input, Panel, Section, Select } from "../components/ui";
+import { getFunctionCode, putFunctionCode } from "../api/client";
 import type { CodeFunction } from "../lib/types";
 
 // Code-function runtimes instancez supports. validateCodeFunctions rejects
@@ -20,6 +22,10 @@ export function FunctionDetail() {
   const dialog = useDialog();
   const [fn, setFn] = useState<CodeFunction | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [code, setCode] = useState<string | null>(null);
+  const [codeDirty, setCodeDirty] = useState(false);
+  const [codeSaving, setCodeSaving] = useState(false);
+  const [codeError, setCodeError] = useState<string | null>(null);
 
   useEffect(() => {
     if (config && name && (config.functions || {})[name]) {
@@ -27,6 +33,27 @@ export function FunctionDetail() {
       setDirty(false);
     }
   }, [config, name]);
+
+  useEffect(() => {
+    if (!name) return;
+    getFunctionCode(name)
+      .then((r) => setCode(r.content))
+      .catch(() => setCode(null)); // not available (e.g. readonly mode / no configPath)
+  }, [name]);
+
+  const handleCodeSave = useCallback(async () => {
+    if (!name || code === null) return;
+    setCodeSaving(true);
+    setCodeError(null);
+    try {
+      await putFunctionCode(name, code);
+      setCodeDirty(false);
+    } catch (e: any) {
+      setCodeError(e.message || "Failed to save");
+    } finally {
+      setCodeSaving(false);
+    }
+  }, [name, code]);
 
   function updateFn(updater: (prev: CodeFunction) => CodeFunction) {
     setFn((prev) => {
@@ -183,6 +210,36 @@ export function FunctionDetail() {
             <p className="text-sm text-muted-foreground">No environment variables.</p>
           )}
         </Section>
+        {code !== null && (
+          <Section
+            title="Code"
+            description={<span className="font-mono text-foreground">{fn.file}</span>}
+            icon={Code2}
+            actions={
+              codeDirty ? (
+                <Button
+                  size="sm"
+                  onClick={handleCodeSave}
+                  disabled={codeSaving}
+                >
+                  {codeSaving ? "Saving…" : "Save code"}
+                </Button>
+              ) : null
+            }
+          >
+            {codeError && (
+              <p className="text-sm text-destructive mb-2">{codeError}</p>
+            )}
+            <div className="rounded-md border border-border overflow-hidden">
+              <CodeEditor
+                value={code}
+                onChange={(v) => { setCode(v); setCodeDirty(true); }}
+                language="javascript"
+                minHeight="320px"
+              />
+            </div>
+          </Section>
+        )}
       </div>
 
       <SaveBar onSave={handleSave} saving={saving} errors={saveErrors} dirty={dirty} />

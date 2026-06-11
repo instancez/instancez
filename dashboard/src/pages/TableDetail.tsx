@@ -38,10 +38,15 @@ export function TableDetail() {
   const [dirty, setDirty] = useState(false);
   const [diff, setDiff] = useState<DiffResponse | null>(null);
 
+  // true when the data entry for this table uses CSV-file references (read-only in the UI)
+  const tableData = config?.data?.[name ?? ""];
+  const isCSVData = tableData !== undefined && !Array.isArray(tableData);
+
   useEffect(() => {
     if (config && name && config.tables[name]) {
       setTable(structuredClone(config.tables[name]!));
-      setSeeds(structuredClone(config.seeds?.[name] || []));
+      const entry = config.data?.[name];
+      setSeeds(structuredClone(Array.isArray(entry) ? entry : []));
       setDirty(false);
     }
   }, [config, name]);
@@ -60,16 +65,18 @@ export function TableDetail() {
 
   async function handleSave() {
     if (!config || !table || !name) return;
-    const updatedSeeds = { ...config.seeds };
-    if (seeds.length > 0) {
-      updatedSeeds[name] = seeds;
-    } else {
-      delete updatedSeeds[name];
+    const updatedData = { ...config.data };
+    if (!isCSVData) {
+      if (seeds.length > 0) {
+        updatedData[name] = seeds;
+      } else {
+        delete updatedData[name];
+      }
     }
     const updated = {
       ...config,
       tables: { ...config.tables, [name]: table },
-      seeds: updatedSeeds,
+      data: updatedData,
     };
     await save(updated);
     setDirty(false);
@@ -101,14 +108,14 @@ export function TableDetail() {
     );
   }
 
-  const fieldEntries = Object.entries(table.fields || {});
-  const allTableColumns = fieldEntries.map(([n]) => n);
+  const fieldEntries = table.fields || [];
+  const allTableColumns = fieldEntries.map((x) => x.name);
 
   // FK options: all table.column pairs
   const fkOptions: string[] = [];
   for (const [tName, t] of Object.entries(config.tables)) {
-    for (const fName of Object.keys(t.fields || {})) {
-      fkOptions.push(`${tName}.${fName}`);
+    for (const f of (t.fields || [])) {
+      fkOptions.push(`${tName}.${f.name}`);
     }
   }
   fkOptions.push("users.id");
@@ -154,30 +161,30 @@ export function TableDetail() {
                   </tr>
                 </thead>
                 <tbody>
-                  {fieldEntries.map(([fieldName, field]) => (
+                  {fieldEntries.map((field, fieldIdx) => (
                     <FieldRow
-                      key={fieldName}
-                      name={fieldName}
+                      key={field.name}
+                      name={field.name}
                       field={field}
                       fkOptions={fkOptions}
                       onChange={(updated) =>
                         updateTable((t) => ({
                           ...t,
-                          fields: { ...t.fields, [fieldName]: updated },
+                          fields: t.fields.map((f, i) => i === fieldIdx ? updated : f),
                         }))
                       }
                       onRename={(newName) => {
-                        updateTable((t) => {
-                          const { [fieldName]: f, ...rest } = t.fields;
-                          return { ...t, fields: { ...rest, [newName]: f! } };
-                        });
+                        updateTable((t) => ({
+                          ...t,
+                          fields: t.fields.map((f, i) => i === fieldIdx ? { ...f, name: newName } : f),
+                        }));
                       }}
                       onDelete={async () => {
-                        if (!(await dialog.confirm(`Delete field "${fieldName}"?`, { message: "This may cause data loss." }))) return;
-                        updateTable((t) => {
-                          const { [fieldName]: _, ...rest } = t.fields;
-                          return { ...t, fields: rest };
-                        });
+                        if (!(await dialog.confirm(`Delete field "${field.name}"?`, { message: "This may cause data loss." }))) return;
+                        updateTable((t) => ({
+                          ...t,
+                          fields: t.fields.filter((_, i) => i !== fieldIdx),
+                        }));
                       }}
                     />
                   ))}
@@ -192,10 +199,7 @@ export function TableDetail() {
                 const fieldName = `new_field_${fieldEntries.length + 1}`;
                 updateTable((t) => ({
                   ...t,
-                  fields: {
-                    ...t.fields,
-                    [fieldName]: { type: "text" },
-                  },
+                  fields: [...t.fields, { name: fieldName, type: "text" }],
                 }));
               }}
             >
@@ -330,14 +334,20 @@ export function TableDetail() {
 
           {/* Seeds Tab */}
           <Tabs.Content value="seeds">
-            <SeedsTab
-              tableFields={fieldEntries}
-              seeds={seeds}
-              onChange={(rows) => {
-                setSeeds(rows);
-                setDirty(true);
-              }}
-            />
+            {isCSVData ? (
+              <p className="text-sm text-muted-foreground">
+                Seed data for this table uses CSV files and cannot be edited here.
+              </p>
+            ) : (
+              <SeedsTab
+                tableFields={fieldEntries}
+                seeds={seeds}
+                onChange={(rows) => {
+                  setSeeds(rows);
+                  setDirty(true);
+                }}
+              />
+            )}
           </Tabs.Content>
 
         </Tabs.Root>
@@ -385,7 +395,7 @@ function SeedsTab({
   seeds,
   onChange,
 }: {
-  tableFields: [string, Field][];
+  tableFields: Field[];
   seeds: Record<string, unknown>[];
   onChange: (rows: Record<string, unknown>[]) => void;
 }) {
@@ -402,12 +412,12 @@ function SeedsTab({
               <thead>
                 <tr className="border-b border-border">
                   <th className="w-10 px-2 py-2 text-xs font-medium text-muted-foreground">#</th>
-                  {tableFields.map(([fieldName, field]) => (
+                  {tableFields.map((field) => (
                     <th
-                      key={fieldName}
+                      key={field.name}
                       className="text-left px-3 py-2 text-xs font-medium text-muted-foreground"
                     >
-                      <span className="font-mono">{fieldName}</span>
+                      <span className="font-mono">{field.name}</span>
                       <span className="ml-1 text-muted-foreground/50">{field.type || (field.foreign_key ? "bigint" : "text")}</span>
                     </th>
                   ))}
@@ -423,15 +433,15 @@ function SeedsTab({
                     <td className="px-2 py-1.5 text-xs text-muted-foreground tabular-nums">
                       {rowIdx + 1}
                     </td>
-                    {tableFields.map(([fieldName, field]) => (
-                      <td key={fieldName} className="px-3 py-1.5">
+                    {tableFields.map((field) => (
+                      <td key={field.name} className="px-3 py-1.5">
                         {field.type === "boolean" ? (
                           <Toggle
-                            aria-label={fieldName}
-                            checked={!!row[fieldName]}
+                            aria-label={field.name}
+                            checked={!!row[field.name]}
                             onChange={(v) => {
                               const updated = [...seeds];
-                              updated[rowIdx] = { ...updated[rowIdx]!, [fieldName]: v };
+                              updated[rowIdx] = { ...updated[rowIdx]!, [field.name]: v };
                               onChange(updated);
                             }}
                           />
@@ -439,10 +449,10 @@ function SeedsTab({
                           <Select
                             mono
                             inputSize="sm"
-                            value={String(row[fieldName] ?? "")}
+                            value={String(row[field.name] ?? "")}
                             onChange={(e) => {
                               const updated = [...seeds];
-                              updated[rowIdx] = { ...updated[rowIdx]!, [fieldName]: e.target.value };
+                              updated[rowIdx] = { ...updated[rowIdx]!, [field.name]: e.target.value };
                               onChange(updated);
                             }}
                           >
@@ -460,10 +470,10 @@ function SeedsTab({
                                 ? "number"
                                 : "text"
                             }
-                            value={String(row[fieldName] ?? "")}
+                            value={String(row[field.name] ?? "")}
                             onChange={(e) => {
                               const updated = [...seeds];
-                              updated[rowIdx] = { ...updated[rowIdx]!, [fieldName]: e.target.value };
+                              updated[rowIdx] = { ...updated[rowIdx]!, [field.name]: e.target.value };
                               onChange(updated);
                             }}
                             placeholder="—"
@@ -496,8 +506,8 @@ function SeedsTab({
             className="mt-3"
             onClick={() => {
               const newRow: Record<string, unknown> = {};
-              tableFields.forEach(([fieldName]) => {
-                newRow[fieldName] = "";
+              tableFields.forEach((field) => {
+                newRow[field.name] = "";
               });
               onChange([...seeds, newRow]);
             }}

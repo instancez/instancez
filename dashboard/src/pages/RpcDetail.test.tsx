@@ -36,7 +36,7 @@ const baseConfig: Config = {
     },
   },
   functions: {},
-  seeds: {},
+  data: {},
   providers: { email: null, storage: null },
   server: {
     port: 8080,

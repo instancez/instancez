@@ -22,10 +22,12 @@ const baseConfig: Config = {
   extensions: [],
   tables: {
     todos: {
-      fields: { id: { type: "bigserial", primary_key: true }, title: { type: "text" } },
+      fields: [
+        { name: "id", type: "bigserial", primary_key: true },
+        { name: "title", type: "text" },
+      ],
       indexes: [],
       rls: [],
-      
     },
   },
   auth: { jwt_expiry: "15m", refresh_tokens: true, refresh_token_expiry: "7d", email: { verify_email: false, templates: {} }, google: null, github: null },
@@ -34,7 +36,7 @@ const baseConfig: Config = {
   },
   rpc: {},
   functions: {},
-  seeds: {},
+  data: {},
   providers: { email: null, storage: null },
   server: {
     port: 8080,

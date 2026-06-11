@@ -15,7 +15,7 @@ const baseConfig: Config = {
   storage: {},
   rpc: {},
   functions: {},
-  seeds: {},
+  data: {},
   providers: { email: null, storage: null },
   server: {
     port: 8080,
@@ -61,11 +61,11 @@ describe("Tables", () => {
     const config = {
       ...baseConfig,
       tables: {
-        zebras: { fields: { id: { type: "bigserial", primary_key: true } }, indexes: [], rls: [] },
-        apples: { fields: { id: { type: "bigserial", primary_key: true }, name: { type: "text" } }, indexes: [], rls: [] },
+        zebras: { fields: [{ name: "id", type: "bigserial", primary_key: true }], indexes: [], rls: [] },
+        apples: { fields: [{ name: "id", type: "bigserial", primary_key: true }, { name: "name", type: "text" }], indexes: [], rls: [] },
       },
     };
-    renderTables(config as any);
+    renderTables(config);
 
     const buttons = screen.getAllByRole("button").filter((b) => b.textContent?.includes("field"));
     expect(buttons[0]!.textContent).toContain("apples");
@@ -77,14 +77,17 @@ describe("Tables", () => {
       ...baseConfig,
       tables: {
         todos: {
-          fields: { id: { type: "bigserial", primary_key: true }, title: { type: "text" }, done: { type: "boolean" } },
+          fields: [
+            { name: "id", type: "bigserial", primary_key: true },
+            { name: "title", type: "text" },
+            { name: "done", type: "boolean" },
+          ],
           indexes: [],
           rls: [],
-          
         },
       },
     };
-    renderTables(config as any);
+    renderTables(config);
     expect(screen.getByText("3 fields")).toBeInTheDocument();
   });
 
@@ -93,14 +96,13 @@ describe("Tables", () => {
       ...baseConfig,
       tables: {
         todos: {
-          fields: { id: { type: "bigserial", primary_key: true } },
+          fields: [{ name: "id", type: "bigserial", primary_key: true }],
           indexes: [],
           rls: [{ operations: ["select"], check: "true" }],
-          
         },
       },
     };
-    renderTables(config as any);
+    renderTables(config);
     expect(screen.getByText("1 RLS")).toBeInTheDocument();
   });
 
@@ -109,11 +111,11 @@ describe("Tables", () => {
     const config = {
       ...baseConfig,
       tables: {
-        a: { fields: {}, indexes: [], rls: [] },
-        b: { fields: {}, indexes: [], rls: [] },
+        a: { fields: [], indexes: [], rls: [] },
+        b: { fields: [], indexes: [], rls: [] },
       },
     };
-    renderTables(config as any);
+    renderTables(config);
     expect(screen.getByText("2 tables defined")).toBeInTheDocument();
   });
 });

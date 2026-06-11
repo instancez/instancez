@@ -12,10 +12,10 @@ const baseConfig: Config = {
   extensions: [],
   tables: {
     todos: {
-      fields: {
-        id: { type: "uuid", primary_key: true, required: true },
-        title: { type: "text", required: true },
-      },
+      fields: [
+        { name: "id", type: "uuid", primary_key: true, required: true },
+        { name: "title", type: "text", required: true },
+      ],
       indexes: [],
       rls: [],
     },
@@ -24,7 +24,7 @@ const baseConfig: Config = {
   storage: {},
   rpc: {},
   functions: {},
-  seeds: {},
+  data: {},
   providers: { email: null, storage: null },
   server: {
     port: 8080,

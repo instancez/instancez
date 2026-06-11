@@ -22,7 +22,7 @@ const baseConfig: Config = {
   },
   rpc: {},
   functions: {},
-  seeds: {},
+  data: {},
   providers: { email: null, storage: null },
   server: {
     port: 8080,

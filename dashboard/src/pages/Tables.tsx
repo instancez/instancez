@@ -28,10 +28,10 @@ export function Tables() {
       tables: {
         ...config!.tables,
         [tableName]: {
-          fields: {
-            id: { type: "bigserial", primary_key: true },
-            created_at: { type: "timestamptz", default: "now()" },
-          },
+          fields: [
+            { name: "id", type: "bigserial", primary_key: true },
+            { name: "created_at", type: "timestamptz", default: "now()" },
+          ],
           indexes: [],
           rls: [],
         },
@@ -68,7 +68,7 @@ export function Tables() {
         ) : (
           <div className="space-y-2">
             {tables.map(([name, table]) => {
-              const fieldCount = Object.keys(table.fields || {}).length;
+              const fieldCount = (table.fields || []).length;
               const rlsCount = (table.rls || []).length;
               const indexCount = (table.indexes || []).length;
 

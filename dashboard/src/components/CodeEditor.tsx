@@ -2,6 +2,7 @@ import { useRef, useEffect } from "react";
 import { EditorView, basicSetup } from "codemirror";
 import { EditorState } from "@codemirror/state";
 import { sql } from "@codemirror/lang-sql";
+import { javascript } from "@codemirror/lang-javascript";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
 
@@ -30,7 +31,7 @@ const brandTheme = EditorView.theme({
 interface CodeEditorProps {
   value: string;
   onChange: (value: string) => void;
-  language?: "sql" | "text";
+  language?: "sql" | "javascript" | "text";
   placeholder?: string;
   minHeight?: string;
   readOnly?: boolean;
@@ -69,6 +70,7 @@ export function CodeEditor({
     ];
 
     if (language === "sql") extensions.push(sql());
+    if (language === "javascript") extensions.push(javascript());
     if (readOnly) extensions.push(EditorState.readOnly.of(true));
     if (placeholder) {
       extensions.push(

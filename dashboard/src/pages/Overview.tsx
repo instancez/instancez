@@ -150,7 +150,7 @@ export function Overview() {
                   key={name}
                   icon={Table2}
                   title={name}
-                  meta={`${Object.keys(table.fields || {}).length} fields`}
+                  meta={`${(table.fields || []).length} fields`}
                   onClick={() => navigate(`/tables/${name}`)}
                 />
               ))}
