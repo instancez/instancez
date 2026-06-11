@@ -267,6 +267,36 @@ func TestGenerateStorageRLS_Public(t *testing.T) {
 	mustContain(t, joined, "FOR INSERT WITH CHECK")
 }
 
+// TestGenerateStorageRLSAll_GatingModel locks in the storage authorization
+// model: RLS is only enabled on storage.objects when a bucket opts in by
+// declaring policies, and opt-out buckets stay open via a default-allow policy.
+func TestGenerateStorageRLSAll_GatingModel(t *testing.T) {
+	// No bucket declares RLS → RLS stays disabled (open behaviour preserved).
+	noRLS := map[string]domain.Bucket{
+		"avatars":   {Public: true},
+		"documents": {Public: false},
+	}
+	joined := strings.Join(generateStorageRLSAll(noRLS), "\n")
+	if strings.Contains(joined, "ENABLE ROW LEVEL SECURITY") {
+		t.Errorf("RLS must not be enabled when no bucket declares policies:\n%s", joined)
+	}
+
+	// One bucket opts in → RLS enabled table-wide; the opt-out bucket gets a
+	// permissive default so it remains open; the opt-in bucket is enforced.
+	withRLS := map[string]domain.Bucket{
+		"secrets": {RLS: []domain.RLSPolicy{
+			{Operations: []string{"select"}, Check: "uploaded_by = auth.uid()"},
+		}},
+		"documents": {Public: false},
+	}
+	joined = strings.Join(generateStorageRLSAll(withRLS), "\n")
+	mustContain(t, joined, "ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY")
+	mustContain(t, joined, "ALTER TABLE storage.objects FORCE ROW LEVEL SECURITY")
+	mustContain(t, joined, "storage_secrets_select_0") // enforced policy
+	mustContain(t, joined, "documents_default_all")    // opt-out stays open
+	mustContain(t, joined, "uploaded_by = auth.uid()")
+}
+
 func TestOrderTables_NoDeps(t *testing.T) {
 	tables := map[string]domain.Table{
 		"a": {Fields: []domain.Field{{Name: "id", Type: "bigserial"}}},

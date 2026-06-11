@@ -172,10 +172,16 @@ func (h *AuthHandler) handleVerifyFactor(c *gin.Context) {
 	}
 
 	if req.ChallengeID != "" {
-		h.db.Exec(ctx, "UPDATE auth.mfa_challenges SET verified_at = NOW() WHERE id = $1::uuid", req.ChallengeID)
+		if _, err := h.db.Exec(ctx, "UPDATE auth.mfa_challenges SET verified_at = NOW() WHERE id = $1::uuid", req.ChallengeID); err != nil {
+			problemJSON(c, 500, "internal", "Failed to mark challenge verified")
+			return
+		}
 	}
 	if status == "unverified" {
-		h.db.Exec(ctx, "UPDATE auth.mfa_factors SET status = 'verified', updated_at = NOW() WHERE id = $1::uuid", factorID)
+		if _, err := h.db.Exec(ctx, "UPDATE auth.mfa_factors SET status = 'verified', updated_at = NOW() WHERE id = $1::uuid", factorID); err != nil {
+			problemJSON(c, 500, "internal", "Failed to verify factor")
+			return
+		}
 	}
 
 	userRow, err := h.db.QueryRow(ctx,

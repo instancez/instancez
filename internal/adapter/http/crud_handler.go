@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -168,13 +167,16 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 				problemJSON(c, 500, "internal", "Failed to start transaction")
 				return
 			}
-			defer tx.Rollback(ctx)
+			defer func() { _ = tx.Rollback(ctx) }()
 			rows, err := tx.Query(ctx, explainQuery, args...)
 			if err != nil {
 				handleDBError(c, err)
 				return
 			}
-			tx.Commit(ctx)
+			if err := tx.Commit(ctx); err != nil {
+				problemJSON(c, 500, "internal", "Failed to commit explain transaction")
+				return
+			}
 			if strings.Contains(accept, "+text") {
 				var lines []string
 				for _, r := range rows {
@@ -195,11 +197,11 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 			problemJSON(c, 500, "internal", "Failed to start transaction")
 			return
 		}
-		defer tx.Rollback(ctx)
+		defer func() { _ = tx.Rollback(ctx) }()
 
 		if schema, _ := c.Get("_schema"); schema != nil {
 			if s, ok := schema.(string); ok && s != "" && s != "public" {
-				tx.Exec(ctx, fmt.Sprintf("SET LOCAL search_path TO %s, public", s))
+				_, _ = tx.Exec(ctx, fmt.Sprintf("SET LOCAL search_path TO %s, public", s))
 			}
 		}
 
@@ -593,7 +595,7 @@ func (h *CRUDHandler) handleDelete(tableName string, table domain.Table) gin.Han
 			problemJSON(c, 500, "internal", "Failed to start transaction")
 			return
 		}
-		defer tx.Rollback(ctx)
+		defer func() { _ = tx.Rollback(ctx) }()
 
 		returnMode := parseReturnPrefer(prefer)
 		maxAffected, hasMax := parseMaxAffectedPrefer(prefer)
@@ -797,7 +799,7 @@ func parseTxPrefer(prefer string) string {
 // rolled back by the deferred tx.Rollback in the caller.
 func maxAffectedError(c *gin.Context, affected, limit int) {
 	pgJSON(c, 400, "PGRST124",
-		fmt.Sprintf("Query result exceeds max-affected preference constraint"),
+		"Query result exceeds max-affected preference constraint",
 		fmt.Sprintf("The query affects %d rows, exceeding the max-affected=%d limit", affected, limit),
 		"")
 }
@@ -1129,9 +1131,7 @@ var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // expects with Range-Unit: items). Both bounds are inclusive and 0-based.
 func parseRangeHeader(h string) (start, end int, ok bool) {
 	h = strings.TrimSpace(h)
-	if strings.HasPrefix(h, "items=") {
-		h = strings.TrimPrefix(h, "items=")
-	}
+	h = strings.TrimPrefix(h, "items=")
 	parts := strings.SplitN(h, "-", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return 0, 0, false
@@ -1162,15 +1162,6 @@ func parseResolutionPrefer(prefer string) string {
 		}
 	}
 	return ""
-}
-
-// handleNotFound returns a handler for /api/<table> endpoints not in the config
-func handleNotFound() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusNotFound)
-		fmt.Fprintf(w, `{"code":"PGRST106","message":"Resource not found","details":"","hint":""}`)
-	}
 }
 
 // withDBTimeout wraps ctx with the configured db_query timeout. If
@@ -1224,7 +1215,7 @@ func setupMutationTx(c *gin.Context, db domain.Database, session domain.Session)
 		problemJSON(c, 500, "internal", "Failed to start transaction")
 		return nil, nil, noop, err
 	}
-	return ctx, tx, func(ctx context.Context) { tx.Rollback(ctx) }, nil
+	return ctx, tx, func(ctx context.Context) { _ = tx.Rollback(ctx) }, nil
 }
 
 // writeMutationResponse writes the HTTP response for a mutation.

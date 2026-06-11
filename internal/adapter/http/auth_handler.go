@@ -1866,7 +1866,7 @@ func (h *AuthHandler) exchangeCode(provider, code string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("token request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
@@ -1909,7 +1909,7 @@ func (h *AuthHandler) fetchGoogleUser(accessToken string) (*oauthUserInfo, error
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
@@ -1941,7 +1941,7 @@ func (h *AuthHandler) fetchGitHubUser(accessToken string) (*oauthUserInfo, error
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
@@ -1978,7 +1978,7 @@ func (h *AuthHandler) fetchGitHubPrimaryEmail(accessToken string) (string, error
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(resp.Body)
 	var emails []struct {

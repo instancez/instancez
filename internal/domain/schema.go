@@ -4,6 +4,7 @@ package domain
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -123,9 +124,82 @@ type Auth struct {
 	RefreshTokenExpiry string         `yaml:"refresh_token_expiry" json:"refresh_token_expiry"`
 	AllowSignup        *bool          `yaml:"allow_signup" json:"allow_signup"`
 	AllowAnonymous     *bool          `yaml:"allow_anonymous" json:"allow_anonymous"`
-	Email              *AuthEmail     `yaml:"email" json:"email"`
-	Google             *OAuthProvider `yaml:"google" json:"google"`
-	GitHub             *OAuthProvider `yaml:"github" json:"github"`
+	// RedirectURLs is the allowlist of external origins that post-auth flows
+	// (password recovery, email verification, OAuth) may redirect to. The
+	// server's own base URL is always allowed; relative same-origin paths are
+	// always allowed. Anything else must match one of these origins, otherwise
+	// the flow falls back to the base URL. This prevents an attacker-supplied
+	// redirect_to from exfiltrating the session tokens placed in the redirect.
+	RedirectURLs []string       `yaml:"redirect_urls" json:"redirect_urls"`
+	Email        *AuthEmail     `yaml:"email" json:"email"`
+	Google       *OAuthProvider `yaml:"google" json:"google"`
+	GitHub       *OAuthProvider `yaml:"github" json:"github"`
+}
+
+// IsRedirectAllowed reports whether target is a safe post-auth redirect
+// destination. baseURL is the server's own external origin and is always
+// allowed. An empty target is allowed (callers substitute the base URL).
+// Relative paths ("/foo") are same-origin and allowed; protocol-relative
+// ("//host"), non-http(s), and parser-differential (backslash/NUL) targets are
+// rejected; absolute URLs must match the origin of baseURL or a configured
+// allowlist entry.
+func (a *Auth) IsRedirectAllowed(target, baseURL string) bool {
+	if target == "" {
+		return true
+	}
+	// Browsers treat backslashes as forward slashes; Go's url.Parse does not.
+	// Reject them (and NULs) outright to avoid parser-differential bypasses.
+	if strings.ContainsAny(target, "\\\x00") {
+		return false
+	}
+	u, err := url.Parse(target)
+	if err != nil {
+		return false
+	}
+	// Relative same-origin path. A protocol-relative "//host" has Host set and
+	// is therefore NOT treated as relative here.
+	if u.Scheme == "" && u.Host == "" {
+		return strings.HasPrefix(target, "/")
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return false
+	}
+	targetOrigin := strings.ToLower(u.Scheme + "://" + u.Host)
+	for _, allowed := range a.allowedOrigins(baseURL) {
+		if targetOrigin == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+// allowedOrigins returns the lowercased scheme://host origins that redirects
+// may target: the server base URL plus each configured allowlist entry. Safe
+// to call on a nil receiver.
+func (a *Auth) allowedOrigins(baseURL string) []string {
+	out := make([]string, 0, 4)
+	if o := redirectOrigin(baseURL); o != "" {
+		out = append(out, o)
+	}
+	if a != nil {
+		for _, entry := range a.RedirectURLs {
+			if o := redirectOrigin(entry); o != "" {
+				out = append(out, o)
+			}
+		}
+	}
+	return out
+}
+
+func redirectOrigin(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return strings.ToLower(u.Scheme + "://" + u.Host)
 }
 
 // SignupAllowed reports whether public /auth/v1/signup with credentials is

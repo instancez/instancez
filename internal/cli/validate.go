@@ -94,7 +94,7 @@ func planAgainstDSN(ctx context.Context, cfg *domain.Config, dsn string, jsonOut
 	if err != nil {
 		return fmt.Errorf("connect owner DSN: %w", err)
 	}
-	defer owner.Close()
+	defer func() { _ = owner.Close() }()
 
 	oldCfg, err := loadAppliedConfig(ctx, owner)
 	if err != nil {
@@ -207,7 +207,9 @@ func printJSONErrors(errs domain.ValidationErrors) error {
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	enc.Encode(out)
+	if err := enc.Encode(out); err != nil {
+		return fmt.Errorf("encode json: %w", err)
+	}
 	return errReported
 }
 
@@ -215,7 +217,9 @@ func printJSONError(err error) error {
 	out := []jsonError{{Path: "", Message: err.Error()}}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	enc.Encode(out)
+	if encErr := enc.Encode(out); encErr != nil {
+		return fmt.Errorf("encode json error: %w", encErr)
+	}
 	return errReported
 }
 

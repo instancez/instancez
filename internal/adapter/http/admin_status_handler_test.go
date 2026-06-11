@@ -98,7 +98,9 @@ func TestConfigStatusUnknownWhenTrackerNil(t *testing.T) {
 		t.Fatalf("status %d", w.Code)
 	}
 	var got map[string]any
-	json.Unmarshal(w.Body.Bytes(), &got)
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
 	if got["status"] != "unknown" {
 		t.Fatalf("status = %v", got["status"])
 	}

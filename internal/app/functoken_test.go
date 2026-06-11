@@ -61,10 +61,10 @@ func TestMintServiceToken(t *testing.T) {
 	if err != nil || exp == nil {
 		t.Fatalf("exp claim: %v", err)
 	}
-	if !exp.Time.After(time.Now()) {
+	if !exp.After(time.Now()) {
 		t.Fatalf("token already expired: exp=%v", exp.Time)
 	}
-	if exp.Time.After(time.Now().Add(2 * time.Minute)) {
+	if exp.After(time.Now().Add(2 * time.Minute)) {
 		t.Fatalf("token exp too far out for ttl=30s: exp=%v", exp.Time)
 	}
 }

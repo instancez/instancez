@@ -69,7 +69,7 @@ func getJWKS(provider string) (map[string]*rsa.PublicKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fetch JWKS: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var jwks struct {
 		Keys []struct {

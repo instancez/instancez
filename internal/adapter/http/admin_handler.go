@@ -105,7 +105,10 @@ func (h *AdminHandler) handleDisableUser(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	// Delete refresh tokens to force logout
-	h.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE user_id = $1", id)
+	if _, err := h.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE user_id = $1", id); err != nil {
+		c.JSON(500, gin.H{"error": "internal", "message": "Failed to revoke sessions"})
+		return
+	}
 
 	c.JSON(200, gin.H{"message": "User disabled", "user_id": id})
 }
@@ -116,9 +119,12 @@ func (h *AdminHandler) handleAdminResetPassword(c *gin.Context) {
 
 	// Generate a temporary token
 	token := generateRandomToken()
-	h.db.Exec(ctx,
+	if _, err := h.db.Exec(ctx,
 		"INSERT INTO auth.one_time_tokens (user_id, token, expires_at) VALUES ($1, $2, NOW() + INTERVAL '24 hours')",
-		id, token)
+		id, token); err != nil {
+		c.JSON(500, gin.H{"error": "internal", "message": "Failed to initiate password reset"})
+		return
+	}
 
 	c.JSON(200, gin.H{"message": "Password reset initiated", "token": token})
 }

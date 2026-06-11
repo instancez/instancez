@@ -67,7 +67,7 @@ func (s *LocalStore) Upload(_ context.Context, key string, r io.Reader, _ string
 	if err != nil {
 		return fmt.Errorf("create file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := io.Copy(f, r); err != nil {
 		return fmt.Errorf("write file: %w", err)
 	}
@@ -83,7 +83,10 @@ func (s *LocalStore) Download(_ context.Context, key string) (io.ReadCloser, str
 	buf := make([]byte, 512)
 	n, _ := f.Read(buf)
 	ct := http.DetectContentType(buf[:n])
-	f.Seek(0, io.SeekStart)
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		_ = f.Close()
+		return nil, "", fmt.Errorf("seek file: %w", err)
+	}
 	return f, ct, nil
 }
 
@@ -97,12 +100,12 @@ func (s *LocalStore) Copy(_ context.Context, srcKey, dstKey string) error {
 	if err != nil {
 		return fmt.Errorf("open source: %w", err)
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 	dst, err := os.Create(dstPath)
 	if err != nil {
 		return fmt.Errorf("create dest: %w", err)
 	}
-	defer dst.Close()
+	defer func() { _ = dst.Close() }()
 	if _, err := io.Copy(dst, src); err != nil {
 		return fmt.Errorf("copy: %w", err)
 	}

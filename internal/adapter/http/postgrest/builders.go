@@ -191,7 +191,7 @@ func ResolveEmbeds(tableName string, table domain.Table, embedNames []string, al
 				if refTable != name {
 					continue
 				}
-			} else if !(refTable == name || strings.TrimSuffix(fieldName, "_id") == name) {
+			} else if refTable != name && strings.TrimSuffix(fieldName, "_id") != name {
 				continue
 			}
 			emb := Embed{
@@ -571,11 +571,9 @@ func BuildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 	}
 
 	if qp.Having != nil {
-		havingSQL, havingArgs, nextIdx := qp.Having.BuildSQL(argIdx)
-		if havingSQL != "" {
+		if havingSQL, havingArgs, _ := qp.Having.BuildSQL(argIdx); havingSQL != "" {
 			sql += " HAVING " + havingSQL
 			allArgs = append(allArgs, havingArgs...)
-			argIdx = nextIdx
 		}
 	}
 

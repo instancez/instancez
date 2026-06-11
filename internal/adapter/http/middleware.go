@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -407,23 +406,6 @@ func problemJSON(c *gin.Context, status int, errType, detail string) {
 		code = "PGRST000"
 	}
 	pgJSON(c, status, code, detail, "", "")
-}
-
-// problemJSONWithParams writes a validation error that carries per-field
-// diagnostics. The params list is rendered as a JSON string in `details` so
-// the top-level shape stays PostgREST-compatible.
-func problemJSONWithParams(c *gin.Context, status int, errType, detail string, params []gin.H) {
-	code, ok := errTypeToCode[errType]
-	if !ok {
-		code = "PGRST000"
-	}
-	details := ""
-	if len(params) > 0 {
-		if b, err := json.Marshal(params); err == nil {
-			details = string(b)
-		}
-	}
-	pgJSON(c, status, code, detail, details, "")
 }
 
 // parseSizeBytes parses "1MB", "500KB", etc. into bytes.

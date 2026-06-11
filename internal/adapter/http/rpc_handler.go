@@ -113,7 +113,7 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 			problemJSON(c, http.StatusInternalServerError, "internal", "Failed to start transaction")
 			return
 		}
-		defer tx.Rollback(ctx)
+		defer func() { _ = tx.Rollback(ctx) }()
 
 		// Defense-in-depth: non-volatile functions are documented as
 		// side-effect-free, so pin the transaction to read-only. Postgres
@@ -572,14 +572,13 @@ func renderRPCChain(chain *rpcChainSQL, argIdx int) (string, []any) {
 		b.WriteString(buildOrderSQL(chain.order))
 	}
 	if chain.hasLimit {
-		b.WriteString(fmt.Sprintf(" LIMIT $%d", argIdx))
+		fmt.Fprintf(&b, " LIMIT $%d", argIdx)
 		args = append(args, chain.limit)
 		argIdx++
 	}
 	if chain.hasOffset {
-		b.WriteString(fmt.Sprintf(" OFFSET $%d", argIdx))
+		fmt.Fprintf(&b, " OFFSET $%d", argIdx)
 		args = append(args, chain.offset)
-		argIdx++
 	}
 	return b.String(), args
 }

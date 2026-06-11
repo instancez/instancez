@@ -215,7 +215,7 @@ func (db *DB) Query(ctx context.Context, query string, args ...any) ([]map[strin
 		if err != nil {
 			return nil, err
 		}
-		defer tx.Rollback(ctx)
+		defer func() { _ = tx.Rollback(ctx) }()
 		rows, err := tx.Query(ctx, query, args...)
 		if err != nil {
 			return nil, err
@@ -241,7 +241,7 @@ func (db *DB) QueryRow(ctx context.Context, query string, args ...any) (map[stri
 		if err != nil {
 			return nil, err
 		}
-		defer tx.Rollback(ctx)
+		defer func() { _ = tx.Rollback(ctx) }()
 		row, err := tx.QueryRow(ctx, query, args...)
 		if err != nil {
 			return nil, err
@@ -275,7 +275,7 @@ func (db *DB) Exec(ctx context.Context, query string, args ...any) (int64, error
 		if err != nil {
 			return 0, err
 		}
-		defer tx.Rollback(ctx)
+		defer func() { _ = tx.Rollback(ctx) }()
 		n, err := tx.Exec(ctx, query, args...)
 		if err != nil {
 			return 0, err
@@ -310,7 +310,7 @@ func (db *DB) Begin(ctx context.Context) (domain.Tx, error) {
 
 	if stmt := buildSessionSetup(ctx, db.roles); stmt != "" {
 		if _, err := tx.Exec(ctx, stmt); err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
 			return nil, &domain.DatabaseError{Op: "set_session_vars", Err: err}
 		}
 	}

@@ -50,10 +50,10 @@ func MountDashboard(r *gin.Engine, assets fs.FS, devMode bool, mode DashboardMod
 			c.Status(http.StatusNotFound)
 			return
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		c.Header("Content-Type", "text/html; charset=utf-8")
 		c.Status(http.StatusOK)
-		io.Copy(c.Writer, f)
+		_, _ = io.Copy(c.Writer, f)
 	}
 
 	handler := func(c *gin.Context) {
@@ -68,7 +68,7 @@ func MountDashboard(r *gin.Engine, assets fs.FS, devMode bool, mode DashboardMod
 		// Try to serve the file directly
 		trimmed := strings.TrimPrefix(assetPath, "/")
 		if f, err := assets.Open(trimmed); err == nil {
-			f.Close()
+			_ = f.Close()
 			c.Request.URL.Path = assetPath
 			fileServer.ServeHTTP(c.Writer, c.Request)
 			c.Request.URL.Path = path // restore

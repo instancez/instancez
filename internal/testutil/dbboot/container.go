@@ -52,8 +52,8 @@ func StartContainer(t *testing.T, image ...string) (domain.OwnerDB, domain.Reque
 		t.Fatalf("bootstrap roles: %v", err)
 	}
 	t.Cleanup(func() {
-		owner.Close()
-		auth.Close()
+		_ = owner.Close()
+		_ = auth.Close()
 	})
 	return owner, auth
 }
@@ -131,8 +131,8 @@ func StartContainerWithRawAuth(t *testing.T, image ...string) (domain.OwnerDB, d
 		t.Fatalf("bootstrap roles: %v", err)
 	}
 	t.Cleanup(func() {
-		owner.Close()
-		auth.Close()
+		_ = owner.Close()
+		_ = auth.Close()
 	})
 
 	rawAuthURL := withUserPass(superURL, AuthenticatorRole, rolePassword)
@@ -140,7 +140,7 @@ func StartContainerWithRawAuth(t *testing.T, image ...string) (domain.OwnerDB, d
 	if err != nil {
 		t.Fatalf("raw authenticator pool: %v", err)
 	}
-	t.Cleanup(func() { rawAuth.Close() })
+	t.Cleanup(func() { _ = rawAuth.Close() })
 
 	return owner, auth, rawAuth
 }

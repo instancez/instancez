@@ -72,9 +72,13 @@ func TestLocalStore_Delete(t *testing.T) {
 
 	// Create a file to delete
 	subdir := filepath.Join(dir, "bucket")
-	os.MkdirAll(subdir, 0o755)
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
 	filePath := filepath.Join(subdir, "test.txt")
-	os.WriteFile(filePath, []byte("hello"), 0o644)
+	if err := os.WriteFile(filePath, []byte("hello"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
 
 	err = store.Delete(context.Background(), "bucket/test.txt")
 	if err != nil {

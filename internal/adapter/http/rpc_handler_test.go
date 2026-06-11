@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/instancez/instancez/internal/adapter/http/postgrest"
 	"github.com/instancez/instancez/internal/domain"
 )
 
@@ -259,7 +260,7 @@ func TestWrapRPCCallForChain_WithLimit(t *testing.T) {
 func TestWrapRPCCallForChain_WithSelectProjection(t *testing.T) {
 	call := `SELECT * FROM public."f"()`
 	chain := &rpcChainSQL{
-		selectItems: []SelectItem{
+		selectItems: []postgrest.SelectItem{
 			{Col: "username"},
 			{Col: "age"},
 		},
@@ -276,9 +277,9 @@ func TestWrapRPCCallForChain_WithSelectProjection(t *testing.T) {
 // placeholder numbering.
 func TestWrapRPCCallForChain_SelectWithFilter(t *testing.T) {
 	call := `SELECT * FROM public."f"()`
-	where := andLeaves(Filter{Column: "status", Operator: "eq", Value: "active"})
+	where := postgrest.AndLeaves(postgrest.Filter{Column: "status", Operator: "eq", Value: "active"})
 	chain := &rpcChainSQL{
-		selectItems: []SelectItem{{Col: "id"}},
+		selectItems: []postgrest.SelectItem{{Col: "id"}},
 		where:       where,
 	}
 	got, _ := wrapRPCCallForChain(call, chain, 1)

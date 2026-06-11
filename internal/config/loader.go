@@ -156,7 +156,9 @@ func loadDotenv(path string) error {
 	for key, val := range pairs {
 		// Don't override real env vars
 		if _, exists := os.LookupEnv(key); !exists {
-			os.Setenv(key, val)
+			if err := os.Setenv(key, val); err != nil {
+				return fmt.Errorf("set env %s: %w", key, err)
+			}
 		}
 	}
 

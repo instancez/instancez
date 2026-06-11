@@ -203,7 +203,7 @@ func addTarFile(tw *tar.Writer, path, name string, fi os.FileInfo) error {
 	if err != nil {
 		return fmt.Errorf("open %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := io.Copy(tw, f); err != nil {
 		return fmt.Errorf("copy %s into tar: %w", name, err)
 	}
@@ -299,7 +299,7 @@ func buildAndRecordBundle(ctx context.Context, projectDir, dest string, up bundl
 	if err != nil {
 		return "", err
 	}
-	defer os.Remove(bundlePath)
+	defer func() { _ = os.Remove(bundlePath) }()
 
 	data, err := os.ReadFile(bundlePath)
 	if err != nil {

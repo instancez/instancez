@@ -63,7 +63,7 @@ func (s *Sender) Send(ctx context.Context, msg domain.EmailMessage) error {
 	if err != nil {
 		return fmt.Errorf("resend: send: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)

@@ -132,7 +132,7 @@ func fetchBundle(ctx context.Context, uri string) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("funcbundle: download %s: %w", uri, err)
 		}
-		defer rc.Close()
+		defer func() { _ = rc.Close() }()
 		data, err := io.ReadAll(rc)
 		if err != nil {
 			return nil, fmt.Errorf("funcbundle: read %s: %w", uri, err)
@@ -154,7 +154,7 @@ func extractTarGz(data []byte, root string) error {
 	if err != nil {
 		return fmt.Errorf("funcbundle: gzip: %w", err)
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 
 	// Resolve root to an absolute, symlink-free base so containment checks are
 	// reliable regardless of how destParent was provided.
@@ -184,7 +184,7 @@ func extractTarGz(data []byte, root string) error {
 			if err := os.MkdirAll(target, 0o755); err != nil {
 				return fmt.Errorf("funcbundle: mkdir %s: %w", hdr.Name, err)
 			}
-		case tar.TypeReg, tar.TypeRegA:
+		case tar.TypeReg:
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return fmt.Errorf("funcbundle: mkdir parent of %s: %w", hdr.Name, err)
 			}
@@ -213,7 +213,7 @@ func writeReg(target string, r io.Reader, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := io.Copy(f, io.LimitReader(r, maxBundleEntryBytes+1)); err != nil {
 		return err
 	}

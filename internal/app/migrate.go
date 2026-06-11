@@ -111,9 +111,7 @@ func planFromScratchStatements(cfg *domain.Config, roles domain.Roles) []string 
 		table := cfg.Tables[name]
 		ddl = append(ddl, generateRLSPolicies(name, table)...)
 	}
-	for bucketName, bucket := range cfg.Storage {
-		ddl = append(ddl, generateStorageRLS(bucketName, bucket)...)
-	}
+	ddl = append(ddl, generateStorageRLSAll(cfg.Storage)...)
 
 	// Search indexes
 	for _, name := range ordered {
@@ -192,9 +190,7 @@ func planUpdateStatements(oldCfg, newCfg *domain.Config, roles domain.Roles) []s
 	for _, name := range ordered {
 		ddl = append(ddl, generateRLSPolicies(name, newCfg.Tables[name])...)
 	}
-	for bucketName, bucket := range newCfg.Storage {
-		ddl = append(ddl, generateStorageRLS(bucketName, bucket)...)
-	}
+	ddl = append(ddl, generateStorageRLSAll(newCfg.Storage)...)
 
 	// Search (ADD COLUMN IF NOT EXISTS + CREATE INDEX IF NOT EXISTS)
 	for _, name := range ordered {
@@ -426,9 +422,13 @@ func generateAuthTables(auth *domain.Auth) []string {
   purpose TEXT NOT NULL DEFAULT 'signup',
   email TEXT,
   code TEXT,
+  attempts INT NOT NULL DEFAULT 0,
   expires_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );`)
+		// Additive column for deployments whose one_time_tokens table predates
+		// OTP attempt-limiting.
+		ddl = append(ddl, `ALTER TABLE auth.one_time_tokens ADD COLUMN IF NOT EXISTS attempts INT NOT NULL DEFAULT 0;`)
 		ddl = append(ddl, `CREATE INDEX IF NOT EXISTS idx_one_time_tokens_email_code ON auth.one_time_tokens (email, code);`)
 	}
 
@@ -778,6 +778,64 @@ func generateRLSPolicies(tableName string, table domain.Table) []string {
 		}
 	}
 
+	return ddl
+}
+
+// generateStorageRLSAll decides whether to enforce RLS on the shared
+// storage.objects table and emits the per-bucket policies.
+//
+// The model mirrors regular tables: RLS is only turned on when at least one
+// bucket declares `rls:` policies. A project that declares no storage policies
+// keeps the previous open behaviour (object access is gated by the route-level
+// auth + the bucket's public flag, exactly as before) — this is what keeps the
+// supabase-js storage compat checks green.
+//
+// Once any bucket opts in, RLS is enabled table-wide (it's one table for all
+// buckets), so buckets that did NOT declare policies receive a permissive
+// default policy to preserve their open behaviour. Buckets WITH declared
+// policies are enforced — closing the gap where those policies were previously
+// inert because the table never had RLS enabled and the handlers ran as
+// service_role. service_role (admin key) has BYPASSRLS throughout.
+func generateStorageRLSAll(storage map[string]domain.Bucket) []string {
+	if len(storage) == 0 {
+		return nil
+	}
+	anyRLS := false
+	for _, b := range storage {
+		if len(b.RLS) > 0 {
+			anyRLS = true
+			break
+		}
+	}
+
+	var ddl []string
+	if anyRLS {
+		ddl = append(ddl,
+			`ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;`,
+			`ALTER TABLE storage.objects FORCE ROW LEVEL SECURITY;`,
+		)
+	}
+
+	for _, name := range sortedKeys(storage) {
+		bucket := storage[name]
+		switch {
+		case len(bucket.RLS) > 0:
+			ddl = append(ddl, generateStorageRLS(name, bucket)...)
+		case anyRLS:
+			// RLS is on table-wide but this bucket opted out: keep it open so
+			// behaviour matches a table without RLS. Route-level auth still
+			// gates anonymous writes (upload routes require a JWT).
+			policyName := fmt.Sprintf("%s_default_all", name)
+			ddl = append(ddl, fmt.Sprintf("DROP POLICY IF EXISTS %s ON storage.objects;", policyName))
+			ddl = append(ddl, fmt.Sprintf(
+				"CREATE POLICY %s ON storage.objects FOR ALL USING (bucket_id = '%s') WITH CHECK (bucket_id = '%s');",
+				policyName, name, name))
+		case bucket.Public:
+			// No RLS anywhere — the public-select policy is inert without RLS
+			// but kept for parity and in case RLS is enabled later.
+			ddl = append(ddl, generateStorageRLS(name, bucket)...)
+		}
+	}
 	return ddl
 }
 

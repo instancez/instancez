@@ -390,7 +390,7 @@ func New(opts Options) (*Runtime, error) {
 	for i := 0; i < opts.PoolSize; i++ {
 		w, err := rt.spawnWorker(fnSpec)
 		if err != nil {
-			rt.Close()
+			_ = rt.Close()
 			return nil, err
 		}
 		rt.slots[i].Store(w)
@@ -469,7 +469,7 @@ func waitHealthy(client *http.Client, d time.Duration) error {
 	for time.Now().Before(deadline) {
 		req, _ := http.NewRequest("GET", "http://unix/healthz", nil)
 		if resp, err := client.Do(req); err == nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil
 		} else {
 			lastErr = err
@@ -622,7 +622,7 @@ func (r *Runtime) Invoke(ctx context.Context, in domain.FunctionRequest) (*domai
 	if err != nil {
 		return nil, r.classifyDoErr(ctx, reqCtx, w, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body := new(bytes.Buffer)
 	if _, err := body.ReadFrom(resp.Body); err != nil {
 		// The deadline can fire mid-read; classify the same way as Do.

@@ -946,10 +946,13 @@ func TestHandleVerify_NumericCodeLookup(t *testing.T) {
 				lookupQ = q
 				lookupArgs = args
 				return map[string]any{
+					"id":         int64(1),
 					"user_id":    "11111111-2222-3333-4444-555555555555",
 					"purpose":    "magiclink",
 					"expires_at": time.Now().Add(1 * time.Hour),
 					"token":      "longtoken",
+					"code":       "123456",
+					"attempts":   int64(0),
 				}, nil
 			}
 			if strings.Contains(q, "FROM auth.users WHERE id") {
@@ -987,11 +990,119 @@ func TestHandleVerify_NumericCodeLookup(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(lookupQ, "email = $1 AND code = $2") {
+	if !strings.Contains(lookupQ, "email = $1") || !strings.Contains(lookupQ, "code IS NOT NULL") {
 		t.Errorf("wrong lookup query: %s", lookupQ)
 	}
-	if len(lookupArgs) != 2 || lookupArgs[0] != "otp@example.com" || lookupArgs[1] != "123456" {
+	if len(lookupArgs) != 1 || lookupArgs[0] != "otp@example.com" {
 		t.Errorf("lookup args = %v", lookupArgs)
+	}
+}
+
+// TestHandleVerify_NumericCodeAttemptLimit verifies that a wrong 6-digit code
+// increments the attempt counter, and that once the cap is reached the token
+// is destroyed — bounding brute-force of the 10^6 OTP space.
+func TestHandleVerify_NumericCodeAttemptLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var incremented, deleted bool
+	db := &stubDB{
+		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+			if strings.Contains(q, "auth.one_time_tokens") && strings.Contains(q, "code") {
+				return map[string]any{
+					"id":         int64(7),
+					"user_id":    "11111111-2222-3333-4444-555555555555",
+					"purpose":    "magiclink",
+					"expires_at": time.Now().Add(1 * time.Hour),
+					"token":      "longtoken",
+					"code":       "123456",
+					"attempts":   int64(0),
+				}, nil
+			}
+			return nil, nil
+		},
+		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
+			if strings.Contains(q, "SET attempts = attempts + 1") {
+				incremented = true
+			}
+			if strings.Contains(q, "DELETE FROM auth.one_time_tokens") {
+				deleted = true
+			}
+			return 1, nil
+		},
+	}
+	h := &AuthHandler{
+		cfg:     &domain.Config{Auth: &domain.Auth{JWTExpiry: "1h", Email: &domain.AuthEmail{}}},
+		db:      db,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		jwtKeys: stubKeys(t),
+	}
+	r := gin.New()
+	r.POST("/auth/v1/verify", h.handleVerify)
+
+	// Wrong code with attempts=0 → 401 and the counter is bumped (not deleted).
+	req := httptest.NewRequest("POST", "/auth/v1/verify",
+		strings.NewReader(`{"type":"email","email":"otp@example.com","token":"000000"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != 401 {
+		t.Fatalf("wrong code should be rejected, got %d", w.Code)
+	}
+	if !incremented {
+		t.Error("expected attempts to be incremented on a wrong guess")
+	}
+	if deleted {
+		t.Error("token should not be deleted on the first wrong guess")
+	}
+}
+
+// TestHandleVerify_NumericCodeBurnsTokenAtCap verifies the token is destroyed
+// once the attempt budget is exhausted.
+func TestHandleVerify_NumericCodeBurnsTokenAtCap(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var deleted bool
+	db := &stubDB{
+		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+			if strings.Contains(q, "auth.one_time_tokens") && strings.Contains(q, "code") {
+				return map[string]any{
+					"id":         int64(7),
+					"user_id":    "11111111-2222-3333-4444-555555555555",
+					"purpose":    "magiclink",
+					"expires_at": time.Now().Add(1 * time.Hour),
+					"token":      "longtoken",
+					"code":       "123456",
+					"attempts":   int64(maxOTPAttempts), // budget already exhausted
+				}, nil
+			}
+			return nil, nil
+		},
+		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
+			if strings.Contains(q, "DELETE FROM auth.one_time_tokens") {
+				deleted = true
+			}
+			return 1, nil
+		},
+	}
+	h := &AuthHandler{
+		cfg:     &domain.Config{Auth: &domain.Auth{JWTExpiry: "1h", Email: &domain.AuthEmail{}}},
+		db:      db,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		jwtKeys: stubKeys(t),
+	}
+	r := gin.New()
+	r.POST("/auth/v1/verify", h.handleVerify)
+
+	// Even the *correct* code is rejected once the budget is gone, and the
+	// token is burned.
+	req := httptest.NewRequest("POST", "/auth/v1/verify",
+		strings.NewReader(`{"type":"email","email":"otp@example.com","token":"123456"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != 401 {
+		t.Fatalf("over-budget verify should be rejected, got %d", w.Code)
+	}
+	if !deleted {
+		t.Error("token should be destroyed once the attempt budget is exhausted")
 	}
 }
 
@@ -1171,7 +1282,10 @@ func TestHandleVerifyGET_RecoveryRedirectsWithToken(t *testing.T) {
 		},
 	}
 	h := &AuthHandler{
-		cfg:     &domain.Config{Auth: &domain.Auth{JWTExpiry: "15m"}},
+		// app.local must be allowlisted, otherwise the redirect (which carries
+		// the session tokens) falls back to the base URL — see the
+		// disallowed-origin assertion below.
+		cfg:     &domain.Config{Auth: &domain.Auth{JWTExpiry: "15m", RedirectURLs: []string{"http://app.local"}}},
 		db:      db,
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		jwtKeys: stubKeys(t),
@@ -1202,6 +1316,60 @@ func TestHandleVerifyGET_RecoveryRedirectsWithToken(t *testing.T) {
 	}
 	if !deleted {
 		t.Error("recovery token was not consumed (DELETE not called)")
+	}
+}
+
+// TestHandleVerifyGET_RecoveryRejectsDisallowedRedirect verifies that an
+// attacker-supplied redirect_to that is not on the allowlist does NOT receive
+// the recovery session tokens — the redirect falls back to the base URL.
+// Regression test for the open-redirect token-leak (account takeover) finding.
+func TestHandleVerifyGET_RecoveryRejectsDisallowedRedirect(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := &stubDB{
+		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+			if strings.Contains(q, "auth.one_time_tokens") {
+				return map[string]any{
+					"user_id":    "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+					"purpose":    "recovery",
+					"expires_at": time.Now().Add(30 * time.Minute),
+				}, nil
+			}
+			if strings.Contains(q, "FROM auth.users") {
+				return map[string]any{
+					"id":                 "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+					"email":              "user@example.com",
+					"email_verified":     true,
+					"raw_app_meta_data":  `{}`,
+					"raw_user_meta_data": `{}`,
+					"created_at":         time.Now(),
+					"updated_at":         time.Now(),
+				}, nil
+			}
+			return nil, nil
+		},
+		execFn: func(ctx context.Context, q string, args ...any) (int64, error) { return 1, nil },
+	}
+	h := &AuthHandler{
+		// No allowlist entry for evil.com.
+		cfg:     &domain.Config{Auth: &domain.Auth{JWTExpiry: "15m"}},
+		db:      db,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		jwtKeys: stubKeys(t),
+	}
+	r := gin.New()
+	r.GET("/auth/v1/verify", h.handleVerifyGET)
+
+	req := httptest.NewRequest("GET",
+		"/auth/v1/verify?token=abc123&type=recovery&redirect_to=https://evil.com", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	loc := w.Header().Get("Location")
+	if strings.Contains(loc, "evil.com") {
+		t.Fatalf("tokens must not be redirected to a disallowed origin, got %s", loc)
+	}
+	if !strings.Contains(loc, "access_token=") {
+		t.Errorf("expected fallback redirect to still carry the fragment, got %s", loc)
 	}
 }
 

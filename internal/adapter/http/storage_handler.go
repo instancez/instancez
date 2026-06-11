@@ -148,7 +148,7 @@ func (h *StorageHandler) handleDelete(bucketName string, bucket domain.Bucket) g
 			return
 		}
 
-		h.db.Exec(ctx, "DELETE FROM storage.objects WHERE name = $1 AND bucket_id = $2", name, bucketName)
+		_, _ = h.db.Exec(ctx, "DELETE FROM storage.objects WHERE name = $1 AND bucket_id = $2", name, bucketName)
 
 		c.Status(204)
 	}

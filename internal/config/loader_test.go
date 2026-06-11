@@ -8,6 +8,22 @@ import (
 	"github.com/instancez/instancez/internal/domain"
 )
 
+// mustWriteFile writes data to path and fatals the test on error.
+func mustWriteFile(t *testing.T, path string, data []byte) {
+	t.Helper()
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("write file %s: %v", path, err)
+	}
+}
+
+// mustUnsetenv unsets an env var and fatals the test on error.
+func mustUnsetenv(t *testing.T, key string) {
+	t.Helper()
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatalf("unsetenv %s: %v", key, err)
+	}
+}
+
 func TestLoad_MinimalValid(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "instancez.yaml")
@@ -25,7 +41,7 @@ tables:
         type: text
         required: true
 `
-	os.WriteFile(path, []byte(content), 0o644)
+	mustWriteFile(t, path, []byte(content))
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -50,7 +66,7 @@ version: 1
 project:
   name: "test"
 `
-	os.WriteFile(path, []byte(content), 0o644)
+	mustWriteFile(t, path, []byte(content))
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -81,7 +97,7 @@ version: 1
 project:
   name: "${TEST_PROJECT_NAME}"
 `
-	os.WriteFile(path, []byte(content), 0o644)
+	mustWriteFile(t, path, []byte(content))
 
 	t.Setenv("TEST_PROJECT_NAME", "my-app")
 
@@ -102,7 +118,7 @@ version: 1
 project:
   name: "${MISSING_VAR:-fallback}"
 `
-	os.WriteFile(path, []byte(content), 0o644)
+	mustWriteFile(t, path, []byte(content))
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -121,10 +137,10 @@ version: 1
 project:
   name: "${TOTALLY_MISSING_VAR}"
 `
-	os.WriteFile(path, []byte(content), 0o644)
+	mustWriteFile(t, path, []byte(content))
 
 	// Make sure the var is not set
-	os.Unsetenv("TOTALLY_MISSING_VAR")
+	mustUnsetenv(t, "TOTALLY_MISSING_VAR")
 
 	_, err := Load(path)
 	if err == nil {
@@ -146,7 +162,7 @@ func TestLoad_FileNotFound(t *testing.T) {
 func TestLoad_InvalidYAML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "instancez.yaml")
-	os.WriteFile(path, []byte("{{invalid yaml"), 0o644)
+	mustWriteFile(t, path, []byte("{{invalid yaml"))
 
 	_, err := Load(path)
 	if err == nil {
@@ -158,22 +174,22 @@ func TestLoadDotenv(t *testing.T) {
 	dir := t.TempDir()
 
 	envPath := filepath.Join(dir, ".env")
-	os.WriteFile(envPath, []byte(`
+	mustWriteFile(t, envPath, []byte(`
 # comment
 MY_TEST_KEY=hello
 MY_QUOTED="world"
-`), 0o644)
+`))
 
 	configPath := filepath.Join(dir, "instancez.yaml")
-	os.WriteFile(configPath, []byte(`
+	mustWriteFile(t, configPath, []byte(`
 version: 1
 project:
   name: "${MY_TEST_KEY}"
-`), 0o644)
+`))
 
 	// Clear just in case
-	os.Unsetenv("MY_TEST_KEY")
-	os.Unsetenv("MY_QUOTED")
+	mustUnsetenv(t, "MY_TEST_KEY")
+	mustUnsetenv(t, "MY_QUOTED")
 
 	cfg, err := LoadWithDotenv(configPath, envPath)
 	if err != nil {
@@ -185,8 +201,8 @@ project:
 
 	// Check .env doesn't override real env vars
 	t.Cleanup(func() {
-		os.Unsetenv("MY_TEST_KEY")
-		os.Unsetenv("MY_QUOTED")
+		mustUnsetenv(t, "MY_TEST_KEY")
+		mustUnsetenv(t, "MY_QUOTED")
 	})
 }
 
@@ -194,14 +210,14 @@ func TestLoadDotenv_RealEnvTakesPriority(t *testing.T) {
 	dir := t.TempDir()
 
 	envPath := filepath.Join(dir, ".env")
-	os.WriteFile(envPath, []byte("MY_PRIO_TEST=from-dotenv\n"), 0o644)
+	mustWriteFile(t, envPath, []byte("MY_PRIO_TEST=from-dotenv\n"))
 
 	configPath := filepath.Join(dir, "instancez.yaml")
-	os.WriteFile(configPath, []byte(`
+	mustWriteFile(t, configPath, []byte(`
 version: 1
 project:
   name: "${MY_PRIO_TEST}"
-`), 0o644)
+`))
 
 	t.Setenv("MY_PRIO_TEST", "from-real-env")
 
@@ -223,8 +239,8 @@ version: 1
 project:
   name: "${UNSET_VAR_EMPTY:-}"
 `
-	os.WriteFile(path, []byte(content), 0o644)
-	os.Unsetenv("UNSET_VAR_EMPTY")
+	mustWriteFile(t, path, []byte(content))
+	mustUnsetenv(t, "UNSET_VAR_EMPTY")
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -244,7 +260,7 @@ version: 1
 project:
   name: "${DEFAULT_OVERRIDE_TEST:-fallback}"
 `
-	os.WriteFile(path, []byte(content), 0o644)
+	mustWriteFile(t, path, []byte(content))
 	t.Setenv("DEFAULT_OVERRIDE_TEST", "real-value")
 
 	cfg, err := Load(path)
@@ -264,9 +280,9 @@ version: 1
 project:
   name: "${MULTI_A}-${MULTI_B:-world}"
 `
-	os.WriteFile(path, []byte(content), 0o644)
+	mustWriteFile(t, path, []byte(content))
 	t.Setenv("MULTI_A", "hello")
-	os.Unsetenv("MULTI_B")
+	mustUnsetenv(t, "MULTI_B")
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -286,9 +302,9 @@ project:
   name: "${MISS_A}"
   description: "${MISS_B}"
 `
-	os.WriteFile(path, []byte(content), 0o644)
-	os.Unsetenv("MISS_A")
-	os.Unsetenv("MISS_B")
+	mustWriteFile(t, path, []byte(content))
+	mustUnsetenv(t, "MISS_A")
+	mustUnsetenv(t, "MISS_B")
 
 	_, err := Load(path)
 	if err == nil {
@@ -311,8 +327,8 @@ version: 1
 project:
   name: "${SPECIAL_DEFAULT:-admin123}"
 `
-	os.WriteFile(path, []byte(content), 0o644)
-	os.Unsetenv("SPECIAL_DEFAULT")
+	mustWriteFile(t, path, []byte(content))
+	mustUnsetenv(t, "SPECIAL_DEFAULT")
 
 	cfg, err := Load(path)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/instancez/instancez/internal/adapter/http/postgrest"
 	"github.com/instancez/instancez/internal/domain"
 )
 
@@ -192,7 +193,7 @@ func TestBuildSelectQuery_HasManyEmbedWithFilterOrderLimit(t *testing.T) {
 		Embeds: []Embed{{
 			Name: "posts", IsReverse: true,
 			FKColumn: "author_id", RefTable: "posts", RefColumn: "id",
-			Where: andLeaves(Filter{Column: "status", Operator: "eq", Value: "published"}),
+			Where: postgrest.AndLeaves(postgrest.Filter{Column: "status", Operator: "eq", Value: "published"}),
 			Order: []OrderClause{{Column: "title", Desc: false}},
 			Limit: &limit,
 		}},
@@ -226,7 +227,7 @@ func TestBuildSelectQuery_BelongsToFilterGoesToOuterWhere(t *testing.T) {
 			FKColumn:  "author_id",
 			RefTable:  "authors",
 			RefColumn: "id",
-			Where:     andLeaves(Filter{Column: "name", Operator: "eq", Value: "bob"}),
+			Where:     postgrest.AndLeaves(postgrest.Filter{Column: "name", Operator: "eq", Value: "bob"}),
 		}},
 		Limit: 20,
 	}
@@ -257,7 +258,7 @@ func TestBuildSelectQuery_ParentWhereQualifiedWhenBelongsToJoinPresent(t *testin
 			RefTable:  "authors",
 			RefColumn: "id",
 		}},
-		Where: andLeaves(Filter{Column: "id", Operator: "eq", Value: "1"}),
+		Where: postgrest.AndLeaves(postgrest.Filter{Column: "id", Operator: "eq", Value: "1"}),
 		Limit: 20,
 	}
 	sql, _ := buildSelectQuery("posts", qp, tables["posts"])
@@ -273,7 +274,7 @@ func TestBuildSelectQuery_ParentWhereUnqualifiedWithoutBelongsToJoin(t *testing.
 	tables := postsAuthorTables()
 	qp := &QueryParams{
 		Select: []string{"*"},
-		Where:  andLeaves(Filter{Column: "id", Operator: "eq", Value: "1"}),
+		Where:  postgrest.AndLeaves(postgrest.Filter{Column: "id", Operator: "eq", Value: "1"}),
 		Limit:  20,
 	}
 	sql, _ := buildSelectQuery("posts", qp, tables["posts"])
@@ -289,7 +290,7 @@ func TestBuildSelectQuery_ParentWhereUnqualifiedWithoutBelongsToJoin(t *testing.
 			Name: "posts", IsReverse: true,
 			FKColumn: "author_id", RefTable: "posts", RefColumn: "id",
 		}},
-		Where: andLeaves(Filter{Column: "id", Operator: "eq", Value: "1"}),
+		Where: postgrest.AndLeaves(postgrest.Filter{Column: "id", Operator: "eq", Value: "1"}),
 		Limit: 20,
 	}
 	sql, _ = buildSelectQueryFull("authors", qpHasMany, tables["authors"], tables)
@@ -356,9 +357,9 @@ func TestBuildSelectQuery_HasManyInnerWithFilterAndOuterFilter(t *testing.T) {
 		Embeds: []Embed{{
 			Name: "posts", IsReverse: true, Inner: true,
 			FKColumn: "author_id", RefTable: "posts", RefColumn: "id",
-			Where: andLeaves(Filter{Column: "status", Operator: "eq", Value: "published"}),
+			Where: postgrest.AndLeaves(postgrest.Filter{Column: "status", Operator: "eq", Value: "published"}),
 		}},
-		Where: andLeaves(Filter{Column: "active", Operator: "eq", Value: "true"}),
+		Where: postgrest.AndLeaves(postgrest.Filter{Column: "active", Operator: "eq", Value: "true"}),
 		Limit: 20,
 	}
 	sql, args := buildSelectQueryFull("authors", qp, tables["authors"], tables)
@@ -413,9 +414,9 @@ func TestBuildSelectQuery_EmbedFilterAndOuterFilterArgOrdering(t *testing.T) {
 		Embeds: []Embed{{
 			Name: "posts", IsReverse: true,
 			FKColumn: "author_id", RefTable: "posts", RefColumn: "id",
-			Where: andLeaves(Filter{Column: "status", Operator: "eq", Value: "published"}),
+			Where: postgrest.AndLeaves(postgrest.Filter{Column: "status", Operator: "eq", Value: "published"}),
 		}},
-		Where: andLeaves(Filter{Column: "active", Operator: "eq", Value: "true"}),
+		Where: postgrest.AndLeaves(postgrest.Filter{Column: "active", Operator: "eq", Value: "true"}),
 		Limit: 20,
 	}
 	sql, args := buildSelectQuery("authors", qp, tables["authors"])
@@ -458,16 +459,16 @@ func TestParseQueryParams_EmbedLogicTree_RejectsBadColumn(t *testing.T) {
 
 func TestBuildSelectQuery_EmbedOrLogicEmitsOR(t *testing.T) {
 	tables := postsAuthorTables()
-	or := &WhereNode{Op: "or", Children: []*WhereNode{
-		{Leaf: &Filter{Column: "status", Operator: "eq", Value: "published"}},
-		{Leaf: &Filter{Column: "status", Operator: "eq", Value: "draft"}},
+	or := &postgrest.WhereNode{Op: "or", Children: []*postgrest.WhereNode{
+		{Leaf: &postgrest.Filter{Column: "status", Operator: "eq", Value: "published"}},
+		{Leaf: &postgrest.Filter{Column: "status", Operator: "eq", Value: "draft"}},
 	}}
 	qp := &QueryParams{
 		Select: []string{"*", "posts(*)"},
 		Embeds: []Embed{{
 			Name: "posts", IsReverse: true,
 			FKColumn: "author_id", RefTable: "posts", RefColumn: "id",
-			Where: &WhereNode{Op: "and", Children: []*WhereNode{or}},
+			Where: &postgrest.WhereNode{Op: "and", Children: []*postgrest.WhereNode{or}},
 		}},
 		Limit: 20,
 	}
@@ -808,9 +809,9 @@ func TestBuildSelectQuery_NestedEmbedArgIndexing(t *testing.T) {
 				Name: "author", FKColumn: "author_id", RefTable: "authors", RefColumn: "id",
 				Columns: []string{"name"},
 			}},
-			Where: andLeaves(Filter{Column: "status", Operator: "eq", Value: "published"}),
+			Where: postgrest.AndLeaves(postgrest.Filter{Column: "status", Operator: "eq", Value: "published"}),
 		}},
-		Where: andLeaves(Filter{Column: "name", Operator: "eq", Value: "alice"}),
+		Where: postgrest.AndLeaves(postgrest.Filter{Column: "name", Operator: "eq", Value: "alice"}),
 		Limit: 20,
 	}
 	sql, args := buildSelectQueryFull("authors", qp, tables["authors"], tables)
@@ -828,11 +829,11 @@ func TestBuildSelectQuery_NestedEmbedArgIndexing(t *testing.T) {
 }
 
 func TestAliasWhereColumns_LeafAndTree(t *testing.T) {
-	tree := &WhereNode{
+	tree := &postgrest.WhereNode{
 		Op: "or",
-		Children: []*WhereNode{
-			{Leaf: &Filter{Column: "name", Operator: "eq", Value: "bob"}},
-			{Leaf: &Filter{Column: "active", Operator: "eq", Value: "true"}, Not: true},
+		Children: []*postgrest.WhereNode{
+			{Leaf: &postgrest.Filter{Column: "name", Operator: "eq", Value: "bob"}},
+			{Leaf: &postgrest.Filter{Column: "active", Operator: "eq", Value: "true"}, Not: true},
 		},
 	}
 	got := aliasWhereColumns(tree, "_emb_author")

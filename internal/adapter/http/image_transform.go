@@ -45,7 +45,7 @@ func parseTransformParams(c *gin.Context) *transformParams {
 
 func applyTransform(reader io.ReadCloser, contentType string, params *transformParams) (io.ReadCloser, string, error) {
 	data, err := io.ReadAll(reader)
-	reader.Close()
+	_ = reader.Close()
 	if err != nil {
 		return nil, "", err
 	}

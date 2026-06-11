@@ -153,7 +153,7 @@ func (h *StorageV1Handler) emptyBucket(c *gin.Context) {
 		name, _ := row["name"].(string)
 		_ = h.storage.Delete(ctx, id+"/"+name)
 	}
-	h.db.Exec(ctx, "DELETE FROM storage.objects WHERE bucket_id = $1", id)
+	_, _ = h.db.Exec(ctx, "DELETE FROM storage.objects WHERE bucket_id = $1", id)
 	c.JSON(200, gin.H{"message": "Successfully emptied"})
 }
 
@@ -237,14 +237,14 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 				break
 			}
 			if part.FileName() == "" {
-				part.Close()
+				_ = part.Close()
 				continue
 			}
 			body = part
 			contentType = part.Header.Get("Content-Type")
 			size = -1
 			found = true
-			defer part.Close()
+			defer func() { _ = part.Close() }()
 			break
 		}
 		if !found {
@@ -291,7 +291,7 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 		c.JSON(500, gin.H{"statusCode": "500", "error": "internal", "message": "Upload failed"})
 		return
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if isUpdate {
 		n, err := tx.Exec(ctx,
@@ -451,7 +451,7 @@ func (h *StorageV1Handler) serveDownload(c *gin.Context, bucketName, objPath str
 		c.JSON(500, gin.H{"statusCode": "500", "error": "internal", "message": "Download failed"})
 		return
 	}
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 
 	// Image transforms
 	if tp := parseTransformParams(c); tp != nil && strings.HasPrefix(contentType, "image/") {
@@ -467,7 +467,7 @@ func (h *StorageV1Handler) serveDownload(c *gin.Context, bucketName, objPath str
 	}
 	c.Header("Cache-Control", "public, max-age=3600")
 	c.Status(200)
-	io.Copy(c.Writer, body)
+	_, _ = io.Copy(c.Writer, body)
 }
 
 func (h *StorageV1Handler) listObjects(c *gin.Context) {
@@ -483,7 +483,7 @@ func (h *StorageV1Handler) listObjects(c *gin.Context) {
 		Offset int    `json:"offset"`
 		Search string `json:"search"`
 	}
-	c.ShouldBindJSON(&req)
+	_ = c.ShouldBindJSON(&req)
 
 	prefix := strings.TrimPrefix(req.Prefix, "/")
 	if req.Limit <= 0 {
@@ -553,7 +553,7 @@ func (h *StorageV1Handler) listObjectsV2(c *gin.Context) {
 			Order  string `json:"order"`
 		} `json:"sortBy"`
 	}
-	c.ShouldBindJSON(&req)
+	_ = c.ShouldBindJSON(&req)
 
 	prefix := strings.TrimPrefix(req.Prefix, "/")
 	if req.Limit <= 0 {
@@ -722,7 +722,7 @@ func (h *StorageV1Handler) removeObjects(c *gin.Context) {
 			continue
 		}
 		_ = h.storage.Delete(ctx, bucketName+"/"+p)
-		h.db.Exec(ctx, "DELETE FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, p)
+		_, _ = h.db.Exec(ctx, "DELETE FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, p)
 		deleted = append(deleted, gin.H{"name": p, "bucket_id": bucketName})
 	}
 	if deleted == nil {
@@ -772,7 +772,7 @@ func (h *StorageV1Handler) moveObject(c *gin.Context) {
 	}
 
 	// Update DB
-	h.db.Exec(ctx,
+	_, _ = h.db.Exec(ctx,
 		"UPDATE storage.objects SET bucket_id = $1, name = $2 WHERE bucket_id = $3 AND name = $4",
 		dstBucket, req.DestinationKey, srcBucket, req.SourceKey)
 
@@ -817,7 +817,7 @@ func (h *StorageV1Handler) copyObject(c *gin.Context) {
 	}
 
 	// Copy DB row
-	h.db.Exec(ctx,
+	_, _ = h.db.Exec(ctx,
 		`INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by, metadata)
 		 SELECT $1, $2, size, mime, uploaded_by, metadata FROM storage.objects WHERE bucket_id = $3 AND name = $4
 		 ON CONFLICT (bucket_id, name) DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime, uploaded_at = NOW()`,
@@ -960,7 +960,7 @@ func (h *StorageV1Handler) uploadToSignedURL(c *gin.Context) {
 	if size < 0 {
 		size = 0
 	}
-	h.db.Exec(ctx,
+	_, _ = h.db.Exec(ctx,
 		`INSERT INTO storage.objects (bucket_id, name, size, mime)
 		 VALUES ($1, $2, $3, $4)
 		 ON CONFLICT (bucket_id, name)

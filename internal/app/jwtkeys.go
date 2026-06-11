@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
@@ -20,6 +21,27 @@ type JWTKey struct {
 	Algorithm  string // "HS256" or "RS256"
 	PrivateKey *rsa.PrivateKey
 	PublicKey  *rsa.PublicKey
+}
+
+// SymmetricSecret returns a non-empty key suitable for HMAC operations that
+// are not JWTs themselves (e.g. signed storage upload tokens). For HS256 keys
+// it is the secret directly; for RS256 keys — where Secret is nil — it is
+// derived deterministically from the private key material so the value stays
+// stable across restarts yet remains unguessable to anyone without the key.
+// Returns nil only when the key carries no usable secret material, in which
+// case callers MUST fail closed rather than HMAC with an empty key.
+func (k *JWTKey) SymmetricSecret() []byte {
+	if k == nil {
+		return nil
+	}
+	if len(k.Secret) > 0 {
+		return k.Secret
+	}
+	if k.PrivateKey != nil {
+		sum := sha256.Sum256(x509.MarshalPKCS1PrivateKey(k.PrivateKey))
+		return sum[:]
+	}
+	return nil
 }
 
 // JWTKeyManager loads and caches JWT signing keys from the database.

@@ -93,7 +93,11 @@ func TestSupabaseJSCompat(t *testing.T) {
 		Auth: &domain.Auth{
 			JWTExpiry:     "1h",
 			RefreshTokens: true,
-			Email:         &domain.AuthEmail{VerifyEmail: verifyEmail},
+			// The recovery/verify flow redirects to the app; the allowlist must
+			// include it or the redirect (which carries the session tokens)
+			// falls back to the base URL. See the redirect-allowlist hardening.
+			RedirectURLs: []string{"http://app.local"},
+			Email:        &domain.AuthEmail{VerifyEmail: verifyEmail},
 		},
 		Tables: map[string]domain.Table{
 			"todos": {

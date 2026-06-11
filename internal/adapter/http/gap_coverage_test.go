@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/instancez/instancez/internal/adapter/http/postgrest"
 	"github.com/instancez/instancez/internal/domain"
 )
 
@@ -19,9 +20,9 @@ func TestBuildSelectQuery_BelongsToFilterAndOuterWhere_ArgOrdering(t *testing.T)
 			FKColumn:  "author_id",
 			RefTable:  "authors",
 			RefColumn: "id",
-			Where:     andLeaves(Filter{Column: "name", Operator: "eq", Value: "bob"}),
+			Where:     postgrest.AndLeaves(postgrest.Filter{Column: "name", Operator: "eq", Value: "bob"}),
 		}},
-		Where: andLeaves(Filter{Column: "status", Operator: "eq", Value: "published"}),
+		Where: postgrest.AndLeaves(postgrest.Filter{Column: "status", Operator: "eq", Value: "published"}),
 		Limit: 20,
 	}
 	sql, args := buildSelectQuery("posts", qp, tables["posts"])
@@ -238,7 +239,7 @@ func TestBuildSelectQuery_Having(t *testing.T) {
 	table := testTable()
 	qp := &QueryParams{
 		Select: []string{"status", "id.count()"},
-		Having: andLeaves(Filter{Column: "count", Operator: "gt", Value: "5"}),
+		Having: postgrest.AndLeaves(postgrest.Filter{Column: "count", Operator: "gt", Value: "5"}),
 		Limit:  20,
 	}
 	sql, args := buildSelectQuery("todos", qp, table)
@@ -263,7 +264,7 @@ func TestBuildSelectQuery_Having(t *testing.T) {
 func TestParseHavingParam_RejectsNonAggregate(t *testing.T) {
 	table := testTable()
 	// No aggregates in select → "count" is not a valid alias.
-	_, err := parseHavingParam("count.gt.5", "test", table, []string{"status"})
+	_, err := postgrest.ParseHavingParam("count.gt.5", "test", table, []string{"status"})
 	if err == nil {
 		t.Error("expected error for HAVING on non-aggregate column")
 	}
@@ -272,7 +273,7 @@ func TestParseHavingParam_RejectsNonAggregate(t *testing.T) {
 // Gap 6c: HAVING accepts real table columns (grouped columns).
 func TestParseHavingParam_AcceptsGroupedColumn(t *testing.T) {
 	table := testTable()
-	node, err := parseHavingParam("status.eq.active", "test", table, []string{"status", "id.count()"})
+	node, err := postgrest.ParseHavingParam("status.eq.active", "test", table, []string{"status", "id.count()"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

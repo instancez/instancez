@@ -87,9 +87,9 @@ func handleMetrics(c *gin.Context) {
 		}
 		method, path, status := parts[0], parts[1], parts[2]
 		count := globalMetrics.requestCount[key].Load()
-		sb.WriteString(fmt.Sprintf(
+		fmt.Fprintf(&sb,
 			"instancez_http_requests_total{method=%q,path=%q,status=%q} %d\n",
-			method, path, status, count))
+			method, path, status, count)
 	}
 
 	sb.WriteString("\n# HELP instancez_http_request_duration_seconds HTTP request duration\n")
@@ -118,20 +118,20 @@ func handleMetrics(c *gin.Context) {
 		}
 		avg := sum / float64(len(durations))
 
-		sb.WriteString(fmt.Sprintf(
+		fmt.Fprintf(&sb,
 			"instancez_http_request_duration_seconds{method=%q,path=%q,quantile=\"0.5\"} %g\n",
-			method, path, avg))
-		sb.WriteString(fmt.Sprintf(
+			method, path, avg)
+		fmt.Fprintf(&sb,
 			"instancez_http_request_duration_seconds_count{method=%q,path=%q} %d\n",
-			method, path, len(durations)))
-		sb.WriteString(fmt.Sprintf(
+			method, path, len(durations))
+		fmt.Fprintf(&sb,
 			"instancez_http_request_duration_seconds_sum{method=%q,path=%q} %g\n",
-			method, path, sum))
+			method, path, sum)
 	}
 
-	sb.WriteString(fmt.Sprintf("\n# HELP instancez_http_active_requests Current active requests\n"))
-	sb.WriteString(fmt.Sprintf("# TYPE instancez_http_active_requests gauge\n"))
-	sb.WriteString(fmt.Sprintf("instancez_http_active_requests %d\n", globalMetrics.activeRequests.Load()))
+	sb.WriteString("\n# HELP instancez_http_active_requests Current active requests\n")
+	sb.WriteString("# TYPE instancez_http_active_requests gauge\n")
+	fmt.Fprintf(&sb, "instancez_http_active_requests %d\n", globalMetrics.activeRequests.Load())
 
 	c.Header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	c.String(200, sb.String())
@@ -152,7 +152,7 @@ func isLikelyID(s string) bool {
 	// Heuristic: pure numeric or UUID-like
 	if len(s) > 8 {
 		for _, c := range s {
-			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || c == '-') {
+			if (c < '0' || c > '9') && (c < 'a' || c > 'f') && c != '-' {
 				return false
 			}
 		}

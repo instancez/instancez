@@ -148,7 +148,7 @@ func runServe(opts serveOptions) error {
 		}
 		swapRT = funcs.NewSwapRuntime(rt)
 		funcRuntime = swapRT
-		defer swapRT.Close()
+		defer func() { _ = swapRT.Close() }()
 		logger.Info("function runtime ready", "functions", len(cfg.Functions), "bundle", cfg.FunctionsBundle)
 	}
 

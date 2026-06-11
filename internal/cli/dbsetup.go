@@ -51,10 +51,10 @@ func dbConnections(ctx context.Context, poolCfg domain.PoolConfig) (domain.Owner
 	})
 	if err := g.Wait(); err != nil {
 		if owner.Database != nil {
-			owner.Close()
+			_ = owner.Close()
 		}
 		if auth.Database != nil {
-			auth.Close()
+			_ = auth.Close()
 		}
 		return domain.OwnerDB{}, domain.RequestDB{}, domain.Roles{}, err
 	}
@@ -93,8 +93,12 @@ func ensureRoles(ctx context.Context, superuserDSN, envFile string) (roleBootstr
 	if err != nil {
 		return roleBootstrap{}, err
 	}
-	os.Setenv("INSTANCEZ_OWNER_DATABASE_URL", ownerDSN)
-	os.Setenv("INSTANCEZ_AUTH_DATABASE_URL", authDSN)
+	if err := os.Setenv("INSTANCEZ_OWNER_DATABASE_URL", ownerDSN); err != nil {
+		return roleBootstrap{}, fmt.Errorf("set env INSTANCEZ_OWNER_DATABASE_URL: %w", err)
+	}
+	if err := os.Setenv("INSTANCEZ_AUTH_DATABASE_URL", authDSN); err != nil {
+		return roleBootstrap{}, fmt.Errorf("set env INSTANCEZ_AUTH_DATABASE_URL: %w", err)
+	}
 
 	adminKey, err := persistDSNs(envFile, ownerDSN, authDSN)
 	if err != nil {

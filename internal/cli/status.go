@@ -75,13 +75,13 @@ func runStatus(configPath string) error {
 // app.Deployment — NOT the top-level project Status), and a draft line derived
 // from app.DraftDirty. Pure (no I/O beyond w) so it can be unit-tested.
 func renderStatus(w io.Writer, app *cloud.GetAppResponse) {
-	fmt.Fprintf(w, "Project:    %s\n", app.Name)
-	fmt.Fprintf(w, "ID:         %s\n", app.ID)
+	_, _ = fmt.Fprintf(w, "Project:    %s\n", app.Name)
+	_, _ = fmt.Fprintf(w, "ID:         %s\n", app.ID)
 	if app.URL != "" {
-		fmt.Fprintf(w, "URL:        %s\n", app.URL)
+		_, _ = fmt.Fprintf(w, "URL:        %s\n", app.URL)
 	}
 
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
 
 	// Production deploy state. Render the raw status string as the server
 	// reports it (e.g. build_done, not_ready) — no friendly remapping.
@@ -89,17 +89,17 @@ func renderStatus(w io.Writer, app *cloud.GetAppResponse) {
 	if status == "" {
 		status = "unknown"
 	}
-	fmt.Fprintf(w, "Production: %s\n", status)
+	_, _ = fmt.Fprintf(w, "Production: %s\n", status)
 	if app.Deployment.DeployedAt != nil && *app.Deployment.DeployedAt != "" {
-		fmt.Fprintf(w, "Deployed:   %s\n", *app.Deployment.DeployedAt)
+		_, _ = fmt.Fprintf(w, "Deployed:   %s\n", *app.Deployment.DeployedAt)
 	}
 	if app.Deployment.Error != "" {
-		fmt.Fprintf(w, "Error:      %s\n", app.Deployment.Error)
+		_, _ = fmt.Fprintf(w, "Error:      %s\n", app.Deployment.Error)
 	}
 
 	draft := "clean"
 	if app.DraftDirty {
 		draft = "has unpublished changes"
 	}
-	fmt.Fprintf(w, "Draft:      %s\n", draft)
+	_, _ = fmt.Fprintf(w, "Draft:      %s\n", draft)
 }

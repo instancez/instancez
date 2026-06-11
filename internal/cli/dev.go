@@ -149,7 +149,7 @@ func runDev(opts devOptions) error {
 	}
 	if funcRT != nil {
 		funcRuntime = funcRT
-		defer funcRT.Close()
+		defer func() { _ = funcRT.Close() }()
 		fmt.Printf("  ✓ Functions: %d (runtime ready)\n", len(cfg.Functions))
 	}
 

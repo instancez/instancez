@@ -43,7 +43,7 @@ func bootstrapDB(ctx context.Context, privilegedDSN string) (ownerDSN, authDSN s
 	if err != nil {
 		return "", "", fmt.Errorf("connect: %w", err)
 	}
-	defer conn.Close(ctx)
+	defer func() { _ = conn.Close(ctx) }()
 
 	// Ask Postgres for the connected database rather than parsing it out of the
 	// DSN — libpq accepts URLs without a path, URLs with just "/", and keyword

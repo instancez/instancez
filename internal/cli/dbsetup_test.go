@@ -116,8 +116,12 @@ func TestEnsureRolesSkipsAfterDotenvPersist(t *testing.T) {
 	// never overrides a real env var) actually populates from the file.
 	t.Setenv("INSTANCEZ_OWNER_DATABASE_URL", "")
 	t.Setenv("INSTANCEZ_AUTH_DATABASE_URL", "")
-	os.Unsetenv("INSTANCEZ_OWNER_DATABASE_URL")
-	os.Unsetenv("INSTANCEZ_AUTH_DATABASE_URL")
+	if err := os.Unsetenv("INSTANCEZ_OWNER_DATABASE_URL"); err != nil {
+		t.Fatalf("unsetenv: %v", err)
+	}
+	if err := os.Unsetenv("INSTANCEZ_AUTH_DATABASE_URL"); err != nil {
+		t.Fatalf("unsetenv: %v", err)
+	}
 
 	if err := config.LoadDotenv(envFile); err != nil {
 		t.Fatalf("LoadDotenv: %v", err)

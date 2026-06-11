@@ -117,10 +117,10 @@ func (s *FileSource) Write(ctx context.Context, data []byte, expectedVersion str
 		return "", &domain.ConfigError{Path: s.Path, Message: "create temp file", Err: err}
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath) // best-effort if rename failed
+	defer func() { _ = os.Remove(tmpPath) }() // best-effort if rename failed
 
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return "", &domain.ConfigError{Path: s.Path, Message: "write temp file", Err: err}
 	}
 	if err := tmp.Close(); err != nil {
@@ -147,14 +147,14 @@ func (s *FileSource) Watch(ctx context.Context, _ time.Duration) (<-chan WatchEv
 		return nil, fmt.Errorf("file watch: %w", err)
 	}
 	if err := w.Add(s.Path); err != nil {
-		w.Close()
+		_ = w.Close()
 		return nil, fmt.Errorf("file watch %s: %w", s.Path, err)
 	}
 
 	out := make(chan WatchEvent, 1)
 	go func() {
 		defer close(out)
-		defer w.Close()
+		defer func() { _ = w.Close() }()
 
 		var debounce *time.Timer
 		emit := func() {
@@ -255,7 +255,7 @@ func (s *S3Source) Read(ctx context.Context) ([]byte, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("s3 config %s: get object: %w", s.Describe(), err)
 	}
-	defer out.Body.Close()
+	defer func() { _ = out.Body.Close() }()
 	data, err := io.ReadAll(out.Body)
 	if err != nil {
 		return nil, "", fmt.Errorf("s3 config %s: read body: %w", s.Describe(), err)

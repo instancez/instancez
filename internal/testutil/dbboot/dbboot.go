@@ -47,7 +47,7 @@ func Bootstrap(ctx context.Context, superURL string, poolCfg domain.PoolConfig) 
 	if err != nil {
 		return domain.OwnerDB{}, domain.RequestDB{}, fmt.Errorf("connect superuser: %w", err)
 	}
-	defer conn.Close(ctx)
+	defer func() { _ = conn.Close(ctx) }()
 
 	roles := domain.DefaultRoles()
 	apiRoles := fmt.Sprintf("%s, %s, %s", roles.Anon, roles.Authenticated, roles.Service)
@@ -102,7 +102,7 @@ func Bootstrap(ctx context.Context, superURL string, poolCfg domain.PoolConfig) 
 	}
 	auth, err := postgres.NewRequest(ctx, withUserPass(superURL, AuthenticatorRole, rolePassword), poolCfg, roles)
 	if err != nil {
-		owner.Close()
+		_ = owner.Close()
 		return domain.OwnerDB{}, domain.RequestDB{}, fmt.Errorf("auth pool: %w", err)
 	}
 	return owner, auth, nil

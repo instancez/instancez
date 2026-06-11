@@ -89,15 +89,15 @@ func AnyFailed(results []Result) bool {
 func Render(w io.Writer, results []Result) {
 	for _, r := range results {
 		if r.OK {
-			fmt.Fprintf(w, "  ✓ %s\n", r.Name)
+			_, _ = fmt.Fprintf(w, "  ✓ %s\n", r.Name)
 		} else {
-			fmt.Fprintf(w, "  ✗ %s", r.Name)
+			_, _ = fmt.Fprintf(w, "  ✗ %s", r.Name)
 			if r.Detail != "" {
-				fmt.Fprintf(w, " — %s", r.Detail)
+				_, _ = fmt.Fprintf(w, " — %s", r.Detail)
 			}
-			fmt.Fprintln(w)
+			_, _ = fmt.Fprintln(w)
 			if r.FixHint != "" {
-				fmt.Fprintf(w, "    hint: %s\n", r.FixHint)
+				_, _ = fmt.Fprintf(w, "    hint: %s\n", r.FixHint)
 			}
 		}
 	}

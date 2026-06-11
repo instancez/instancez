@@ -35,7 +35,7 @@ func (w *ConfigWatcher) Watch(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("create file watcher: %w", err)
 	}
-	defer watcher.Close()
+	defer func() { _ = watcher.Close() }()
 
 	if err := watcher.Add(w.configPath); err != nil {
 		return fmt.Errorf("watch %s: %w", w.configPath, err)

@@ -352,7 +352,7 @@ func (e *Engine) applyData(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("begin data transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	anyNew := false
 	for _, tableName := range ordered {
@@ -373,19 +373,19 @@ func (e *Engine) applyData(ctx context.Context) error {
 			}
 
 			if err := e.validateDataColumns(tableName, td.Rows); err != nil {
-				tx.Rollback(ctx)
+				_ = tx.Rollback(ctx)
 				return fmt.Errorf("data %s: %w", compositeKey, err)
 			}
 
 			for _, row := range td.Rows {
 				if err := e.applyDataRow(ctx, tx, tableName, compositeKey, row); err != nil {
-					tx.Rollback(ctx)
+					_ = tx.Rollback(ctx)
 					return err
 				}
 			}
 
 			if err := e.ownerDB.RecordData(ctx, tx, compositeKey, tableName, "inline", checksum, len(td.Rows)); err != nil {
-				tx.Rollback(ctx)
+				_ = tx.Rollback(ctx)
 				return fmt.Errorf("data %s: record: %w", compositeKey, err)
 			}
 			e.logger.Info("data imported", "key", compositeKey, "rows", len(td.Rows))
@@ -405,7 +405,7 @@ func (e *Engine) applyData(ctx context.Context) error {
 
 				fileBytes, err := os.ReadFile(absPath)
 				if err != nil {
-					tx.Rollback(ctx)
+					_ = tx.Rollback(ctx)
 					return fmt.Errorf("data %s: read %s: %w", compositeKey, csvPath, err)
 				}
 				checksum := fmt.Sprintf("%x", sha256.Sum256(fileBytes))
@@ -425,12 +425,12 @@ func (e *Engine) applyData(ctx context.Context) error {
 
 				records, err := csvutil.ReadRecords(fileBytes)
 				if err != nil {
-					tx.Rollback(ctx)
+					_ = tx.Rollback(ctx)
 					return fmt.Errorf("data %s: parse csv: %w", compositeKey, err)
 				}
 
 				if err := e.validateDataColumns(tableName, records); err != nil {
-					tx.Rollback(ctx)
+					_ = tx.Rollback(ctx)
 					return fmt.Errorf("data %s: %w", compositeKey, err)
 				}
 
@@ -441,13 +441,13 @@ func (e *Engine) applyData(ctx context.Context) error {
 
 				for _, row := range records {
 					if err := e.applyDataRow(ctx, tx, tableName, compositeKey, row); err != nil {
-						tx.Rollback(ctx)
+						_ = tx.Rollback(ctx)
 						return err
 					}
 				}
 
 				if err := e.ownerDB.RecordData(ctx, tx, compositeKey, tableName, csvPath, checksum, len(records)); err != nil {
-					tx.Rollback(ctx)
+					_ = tx.Rollback(ctx)
 					return fmt.Errorf("data %s: record: %w", compositeKey, err)
 				}
 				e.logger.Info("data imported", "key", compositeKey, "rows", len(records))

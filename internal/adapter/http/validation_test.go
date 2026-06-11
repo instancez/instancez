@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/instancez/instancez/internal/adapter/http/postgrest"
 	"github.com/instancez/instancez/internal/domain"
 )
 
@@ -74,7 +75,7 @@ func TestValidateColumn(t *testing.T) {
 func TestParseFilters_RejectsUnknownColumn(t *testing.T) {
 	table := testTable()
 	c := testContext("bogus=eq.1")
-	_, err := parseWhere(c, "todos", table)
+	_, err := postgrest.ParseWhere(c.Request.URL.Query(), "todos", table)
 	if err == nil {
 		t.Fatal("expected error for unknown filter column")
 	}
@@ -92,7 +93,7 @@ func TestParseFilters_RejectsSQLInjectionColumn(t *testing.T) {
 	for _, raw := range cases {
 		t.Run(raw, func(t *testing.T) {
 			c := testContext(raw)
-			if _, err := parseWhere(c, "todos", table); err == nil {
+			if _, err := postgrest.ParseWhere(c.Request.URL.Query(), "todos", table); err == nil {
 				t.Errorf("expected rejection for %q", raw)
 			}
 		})
@@ -104,7 +105,7 @@ func TestParseFilters_RejectsJSONBKeyInjection(t *testing.T) {
 	// metadata->>theme'; DROP-- — URL-encoded
 	raw := "metadata-%3E%3Etheme%27%3B+DROP--=eq.dark"
 	c := testContext(raw)
-	if _, err := parseWhere(c, "todos", table); err == nil {
+	if _, err := postgrest.ParseWhere(c.Request.URL.Query(), "todos", table); err == nil {
 		t.Error("expected rejection for JSONB key with SQL injection")
 	}
 }
@@ -112,7 +113,7 @@ func TestParseFilters_RejectsJSONBKeyInjection(t *testing.T) {
 func TestParseFilters_AcceptsKnownColumn(t *testing.T) {
 	table := testTable()
 	c := testContext("status=eq.active&priority=gte.3")
-	where, err := parseWhere(c, "todos", table)
+	where, err := postgrest.ParseWhere(c.Request.URL.Query(), "todos", table)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -124,7 +125,7 @@ func TestParseFilters_AcceptsKnownColumn(t *testing.T) {
 func TestParseFilters_AcceptsJSONBPath(t *testing.T) {
 	table := testTable()
 	c := testContext("metadata-%3E%3Etheme=eq.dark")
-	where, err := parseWhere(c, "todos", table)
+	where, err := postgrest.ParseWhere(c.Request.URL.Query(), "todos", table)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
