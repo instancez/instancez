@@ -73,7 +73,16 @@ func NewSource(spec string) (Source, error) {
 
 // FileSource loads config from a local file.
 type FileSource struct {
-	Path string
+	Path    string
+	EnvPath string // optional: also watch this file and force-reload its vars before re-reading Path
+}
+
+// NewFileSourceWithEnv returns a FileSource that watches both configPath and
+// envPath. When envPath changes, its vars are force-loaded into the process
+// environment before the YAML is re-read, so ${VAR} interpolation picks up
+// the new values. Intended for `inz dev` with .development.env.
+func NewFileSourceWithEnv(configPath, envPath string) *FileSource {
+	return &FileSource{Path: configPath, EnvPath: envPath}
 }
 
 func (s *FileSource) Load(ctx context.Context) (*domain.Config, error) {
@@ -150,6 +159,12 @@ func (s *FileSource) Watch(ctx context.Context, _ time.Duration) (<-chan WatchEv
 		_ = w.Close()
 		return nil, fmt.Errorf("file watch %s: %w", s.Path, err)
 	}
+	if s.EnvPath != "" {
+		if err := w.Add(s.EnvPath); err != nil {
+			_ = w.Close()
+			return nil, fmt.Errorf("file watch %s: %w", s.EnvPath, err)
+		}
+	}
 
 	out := make(chan WatchEvent, 1)
 	go func() {
@@ -157,7 +172,12 @@ func (s *FileSource) Watch(ctx context.Context, _ time.Duration) (<-chan WatchEv
 		defer func() { _ = w.Close() }()
 
 		var debounce *time.Timer
-		emit := func() {
+		emit := func(envChanged bool) {
+			if envChanged {
+				// Force-reload env vars so ${VAR} interpolation in the YAML
+				// picks up the new values before Read() is called.
+				_ = ForceLoadDotenv(s.EnvPath)
+			}
 			data, ver, err := s.Read(ctx)
 			select {
 			case out <- WatchEvent{Data: data, Version: ver, Err: err}:
@@ -176,10 +196,11 @@ func (s *FileSource) Watch(ctx context.Context, _ time.Duration) (<-chan WatchEv
 				if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) == 0 {
 					continue
 				}
+				envChanged := s.EnvPath != "" && ev.Name == s.EnvPath
 				if debounce != nil {
 					debounce.Stop()
 				}
-				debounce = time.AfterFunc(500*time.Millisecond, emit)
+				debounce = time.AfterFunc(500*time.Millisecond, func() { emit(envChanged) })
 			case err, ok := <-w.Errors:
 				if !ok {
 					return

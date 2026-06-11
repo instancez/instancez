@@ -79,14 +79,20 @@ func buildDevFuncRuntime(
 	configDir := filepath.Dir(configPath)
 	functionsDir := filepath.Join(configDir, "functions")
 
-	// dev is allowed to build: vendor deps when a package.json exists.
+	// dev is allowed to build: install deps when a package.json exists.
+	// Use `npm ci` when a lock file is present (reproducible install), or
+	// `npm install` to create the lock file on first run.
 	if _, err := os.Stat(filepath.Join(functionsDir, "package.json")); err == nil {
-		cmd := exec.CommandContext(ctx, "npm", "ci")
+		npmCmd := "ci"
+		if _, err := os.Stat(filepath.Join(functionsDir, "package-lock.json")); os.IsNotExist(err) {
+			npmCmd = "install"
+		}
+		cmd := exec.CommandContext(ctx, "npm", npmCmd)
 		cmd.Dir = functionsDir
 		cmd.Stdout = os.Stderr
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
-			return nil, fmt.Errorf("functions: npm ci in %s: %w", functionsDir, err)
+			return nil, fmt.Errorf("functions: npm %s in %s: %w", npmCmd, functionsDir, err)
 		}
 	}
 
@@ -101,6 +107,27 @@ func buildDevFuncRuntime(
 		return nil, fmt.Errorf("functions: start runtime: %w", err)
 	}
 	return rt, nil
+}
+
+// buildDevFuncRuntimeFast is like buildDevFuncRuntime but skips `npm ci`.
+// Used for hot-reload: deps don't change when only code files are edited.
+func buildDevFuncRuntimeFast(
+	ctx context.Context,
+	cfg *domain.Config,
+	configPath string,
+	km *app.JWTKeyManager,
+	logger *slog.Logger,
+) (*funcs.Runtime, error) {
+	if len(cfg.Functions) == 0 {
+		return nil, nil
+	}
+	configDir := filepath.Dir(configPath)
+	opts, err := sharedFuncOptions(ctx, cfg, configDir, "development", km, logger)
+	if err != nil {
+		return nil, err
+	}
+	opts.Dir = configDir
+	return funcs.New(opts)
 }
 
 // buildServeFuncRuntime constructs the function runtime for `serve`. serve

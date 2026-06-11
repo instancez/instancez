@@ -120,6 +120,14 @@ func (e *Engine) Config() *domain.Config {
 	return e.cfg
 }
 
+// SetConfig replaces the live config immediately (used by the dashboard PUT
+// path so GET /config reflects the change before the file watcher fires).
+func (e *Engine) SetConfig(cfg *domain.Config) {
+	e.mu.Lock()
+	e.cfg = cfg
+	e.mu.Unlock()
+}
+
 // sourceDescription returns a stable, human-readable identifier for the
 // active config source for use in logs and the drift snapshot.
 func (e *Engine) sourceDescription() string {
