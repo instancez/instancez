@@ -503,6 +503,14 @@ type stubAuthService struct {
 	listIdentitiesFn      func(ctx context.Context, userID string) ([]map[string]any, error)
 	consumeOAuthFlowFn    func(ctx context.Context, state string) (domain.FlowState, error)
 	deleteFactorForUserFn func(ctx context.Context, factorID, userID string) error
+
+	enrollFactorFn            func(ctx context.Context, userID, friendlyName, secret string) (string, error)
+	createChallengeFn         func(ctx context.Context, factorID, userID string) (string, time.Time, error)
+	getFactorForVerifyFn      func(ctx context.Context, factorID, userID string) (domain.MFAFactor, error)
+	validateChallengeFn       func(ctx context.Context, challengeID, factorID string) error
+	markChallengeVerifiedFn   func(ctx context.Context, challengeID string) error
+	promoteFactorToVerifiedFn func(ctx context.Context, factorID string) error
+	listFactorsFn             func(ctx context.Context, userID string) ([]map[string]any, error)
 }
 
 // Compile-time check that stubAuthService satisfies the interface.
@@ -672,6 +680,48 @@ func (s *stubAuthService) DeleteFactorForUser(ctx context.Context, factorID, use
 		return s.deleteFactorForUserFn(ctx, factorID, userID)
 	}
 	return nil
+}
+func (s *stubAuthService) EnrollFactor(ctx context.Context, userID, friendlyName, secret string) (string, error) {
+	if s.enrollFactorFn != nil {
+		return s.enrollFactorFn(ctx, userID, friendlyName, secret)
+	}
+	return "factor-1", nil
+}
+func (s *stubAuthService) CreateChallenge(ctx context.Context, factorID, userID string) (string, time.Time, error) {
+	if s.createChallengeFn != nil {
+		return s.createChallengeFn(ctx, factorID, userID)
+	}
+	return "challenge-1", time.Now(), nil
+}
+func (s *stubAuthService) GetFactorForVerify(ctx context.Context, factorID, userID string) (domain.MFAFactor, error) {
+	if s.getFactorForVerifyFn != nil {
+		return s.getFactorForVerifyFn(ctx, factorID, userID)
+	}
+	return domain.MFAFactor{}, domain.ErrNotFound
+}
+func (s *stubAuthService) ValidateChallenge(ctx context.Context, challengeID, factorID string) error {
+	if s.validateChallengeFn != nil {
+		return s.validateChallengeFn(ctx, challengeID, factorID)
+	}
+	return nil
+}
+func (s *stubAuthService) MarkChallengeVerified(ctx context.Context, challengeID string) error {
+	if s.markChallengeVerifiedFn != nil {
+		return s.markChallengeVerifiedFn(ctx, challengeID)
+	}
+	return nil
+}
+func (s *stubAuthService) PromoteFactorToVerified(ctx context.Context, factorID string) error {
+	if s.promoteFactorToVerifiedFn != nil {
+		return s.promoteFactorToVerifiedFn(ctx, factorID)
+	}
+	return nil
+}
+func (s *stubAuthService) ListFactors(ctx context.Context, userID string) ([]map[string]any, error) {
+	if s.listFactorsFn != nil {
+		return s.listFactorsFn(ctx, userID)
+	}
+	return nil, nil
 }
 
 // ---------- signup dispatch / anonymous ----------

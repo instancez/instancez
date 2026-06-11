@@ -13,12 +13,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/pquerna/otp/totp"
+
 	"github.com/instancez/instancez/internal/domain"
 )
 
 // mfaHarness wires a jwtAuth-protected /factors router against a stub
-// DB, signs a bearer token for the caller, and returns helpers to drive
-// requests through gin the same way the real server would.
+// AuthService, signs a bearer token for the caller, and returns helpers to
+// drive requests through gin the same way the real server would.
 type mfaHarness struct {
 	t       *testing.T
 	h       *AuthHandler
@@ -29,7 +30,7 @@ type mfaHarness struct {
 	lastReq *httptest.ResponseRecorder
 }
 
-func newMFAHarness(t *testing.T, db *stubDB) *mfaHarness {
+func newMFAHarness(t *testing.T, svc *stubAuthService) *mfaHarness {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	km := stubKeys(t)
@@ -39,7 +40,7 @@ func newMFAHarness(t *testing.T, db *stubDB) *mfaHarness {
 			RefreshTokens: false,
 			Email:         &domain.AuthEmail{},
 		}},
-		db:      db,
+		authSvc: svc,
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		jwtKeys: km,
 	}
@@ -70,32 +71,18 @@ func (m *mfaHarness) do(method, path, body string) *httptest.ResponseRecorder {
 }
 
 // TestMFA_EnrollCreatesUnverifiedFactor drives POST /factors and asserts
-// the response exposes the shared secret + otpauth URI, while the row is
-// written with status='unverified'.
+// the response exposes the shared secret + otpauth URI, while EnrollFactor
+// receives the generated secret to persist (status='unverified' is fixed by
+// the service SQL).
 func TestMFA_EnrollCreatesUnverifiedFactor(t *testing.T) {
-	var insertedStatus string
-	var insertedSecret string
-	db := &stubDB{
-		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "INSERT INTO auth.mfa_factors") {
-				// args: user_id, friendly_name, secret
-				if len(args) >= 3 {
-					insertedSecret, _ = args[2].(string)
-				}
-				insertedStatus = "unverified"
-				return map[string]any{
-					"id":            "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-					"friendly_name": "iPhone",
-					"factor_type":   "totp",
-					"status":        "unverified",
-					"created_at":    time.Now(),
-					"updated_at":    time.Now(),
-				}, nil
-			}
-			return nil, nil
+	var enrolledSecret string
+	svc := &stubAuthService{
+		enrollFactorFn: func(ctx context.Context, userID, friendlyName, secret string) (string, error) {
+			enrolledSecret = secret
+			return "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", nil
 		},
 	}
-	m := newMFAHarness(t, db)
+	m := newMFAHarness(t, svc)
 	w := m.do("POST", "/auth/v1/factors", `{"factor_type":"totp","friendly_name":"iPhone"}`)
 	if w.Code != 200 {
 		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
@@ -110,21 +97,18 @@ func TestMFA_EnrollCreatesUnverifiedFactor(t *testing.T) {
 		t.Fatalf("missing totp block: %s", w.Body.String())
 	}
 	secret, _ := totpBlock["secret"].(string)
-	if secret == "" || secret != insertedSecret {
-		t.Errorf("returned secret %q != inserted %q", secret, insertedSecret)
+	if secret == "" || secret != enrolledSecret {
+		t.Errorf("returned secret %q != enrolled %q", secret, enrolledSecret)
 	}
 	if uri, _ := totpBlock["uri"].(string); !strings.HasPrefix(uri, "otpauth://totp/") {
 		t.Errorf("uri missing otpauth prefix: %q", uri)
 	}
-	if insertedStatus != "unverified" {
-		t.Errorf("factor should be unverified until verify succeeds, got %q", insertedStatus)
-	}
 }
 
-// TestMFA_VerifyGoodCodeFlipsFactorAndReturnsAAL2 enrolls via stub, then
-// drives /verify with a code freshly computed against the stored secret.
-// It asserts the factor flips to 'verified' and the issued session JWT
-// carries aal=aal2 in app_metadata.
+// TestMFA_VerifyGoodCodeFlipsFactorAndReturnsAAL2 stubs an unverified factor,
+// then drives /verify with a code freshly computed against the stored secret.
+// It asserts the factor flips to 'verified' and the issued session JWT carries
+// aal=aal2 in app_metadata.
 func TestMFA_VerifyGoodCodeFlipsFactorAndReturnsAAL2(t *testing.T) {
 	// Known secret so the test can compute a valid TOTP.
 	secret := "JBSWY3DPEHPK3PXP"
@@ -132,43 +116,27 @@ func TestMFA_VerifyGoodCodeFlipsFactorAndReturnsAAL2(t *testing.T) {
 	uid := "11111111-2222-3333-4444-555555555555"
 
 	flipped := false
-	db := &stubDB{
-		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			switch {
-			case strings.Contains(q, "SELECT user_id::text, secret, status FROM auth.mfa_factors"):
-				return map[string]any{
-					"user_id": uid,
-					"secret":  secret,
-					"status":  "unverified",
-				}, nil
-			case strings.Contains(q, "FROM auth.users WHERE id"):
-				return map[string]any{
-					"id":                 uid,
-					"email":              "u@e.com",
-					"email_verified":     true,
-					"raw_app_meta_data":  `{}`,
-					"raw_user_meta_data": `{}`,
-					"created_at":         time.Now(),
-					"updated_at":         time.Now(),
-				}, nil
-			}
-			return nil, nil
+	svc := &stubAuthService{
+		getFactorForVerifyFn: func(ctx context.Context, fID, userID string) (domain.MFAFactor, error) {
+			return domain.MFAFactor{Secret: secret, Status: "unverified"}, nil
 		},
-		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
-			if strings.Contains(q, "UPDATE auth.mfa_factors SET status = 'verified'") {
-				flipped = true
-			}
-			return 1, nil
+		promoteFactorToVerifiedFn: func(ctx context.Context, fID string) error {
+			flipped = true
+			return nil
+		},
+		getUserByIDFn: func(ctx context.Context, id string) (map[string]any, error) {
+			return map[string]any{
+				"id":                 uid,
+				"email":              "u@e.com",
+				"email_verified":     true,
+				"raw_app_meta_data":  `{}`,
+				"raw_user_meta_data": `{}`,
+				"created_at":         time.Now(),
+				"updated_at":         time.Now(),
+			}, nil
 		},
 	}
-	m := newMFAHarness(t, db)
-	// Override userID to match the stubbed factor.
-	m.userID = uid
-	m.token = signToken(t, m.h.jwtKeys, jwt.MapClaims{
-		"sub": uid, "role": "authenticated", "aud": "authenticated",
-		"email": "u@e.com",
-		"iat":   time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix(),
-	})
+	m := newMFAHarness(t, svc)
 
 	code, err := totp.GenerateCode(secret, time.Now())
 	if err != nil {
@@ -204,28 +172,17 @@ func TestMFA_VerifyGoodCodeFlipsFactorAndReturnsAAL2(t *testing.T) {
 // unverified.
 func TestMFA_VerifyBadCodeRejected(t *testing.T) {
 	secret := "JBSWY3DPEHPK3PXP"
-	uid := "11111111-2222-3333-4444-555555555555"
 	flipped := false
-	db := &stubDB{
-		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "SELECT user_id::text, secret, status FROM auth.mfa_factors") {
-				return map[string]any{"user_id": uid, "secret": secret, "status": "unverified"}, nil
-			}
-			return nil, nil
+	svc := &stubAuthService{
+		getFactorForVerifyFn: func(ctx context.Context, fID, userID string) (domain.MFAFactor, error) {
+			return domain.MFAFactor{Secret: secret, Status: "unverified"}, nil
 		},
-		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
-			if strings.Contains(q, "status = 'verified'") {
-				flipped = true
-			}
-			return 1, nil
+		promoteFactorToVerifiedFn: func(ctx context.Context, fID string) error {
+			flipped = true
+			return nil
 		},
 	}
-	m := newMFAHarness(t, db)
-	m.userID = uid
-	m.token = signToken(t, m.h.jwtKeys, jwt.MapClaims{
-		"sub": uid, "role": "authenticated", "aud": "authenticated",
-		"iat": time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix(),
-	})
+	m := newMFAHarness(t, svc)
 	w := m.do("POST", "/auth/v1/factors/any/verify", `{"code":"000000"}`)
 	if w.Code != 401 {
 		t.Fatalf("expected 401 for bad code, got %d: %s", w.Code, w.Body.String())
@@ -236,19 +193,15 @@ func TestMFA_VerifyBadCodeRejected(t *testing.T) {
 }
 
 // TestMFA_UnenrollRejectsWrongOwner asserts a user can't delete another
-// user's factor: the DELETE's WHERE clause pins user_id so 0 rows are
-// affected and the handler returns 404.
+// user's factor: DeleteFactorForUser returns ErrNotFound (0 rows matched,
+// the WHERE clause pins user_id) and the handler returns 404.
 func TestMFA_UnenrollRejectsWrongOwner(t *testing.T) {
-	db := &stubDB{
-		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
-			if strings.Contains(q, "DELETE FROM auth.mfa_factors") {
-				// Simulate no rows matched (factor belongs to someone else).
-				return 0, nil
-			}
-			return 0, nil
+	svc := &stubAuthService{
+		deleteFactorForUserFn: func(ctx context.Context, factorID, userID string) error {
+			return domain.ErrNotFound
 		},
 	}
-	m := newMFAHarness(t, db)
+	m := newMFAHarness(t, svc)
 	w := m.do("DELETE", "/auth/v1/factors/some-factor-id", ``)
 	if w.Code != 404 {
 		t.Errorf("expected 404, got %d: %s", w.Code, w.Body.String())
@@ -258,8 +211,8 @@ func TestMFA_UnenrollRejectsWrongOwner(t *testing.T) {
 // TestMFA_ListFactorsPartitionsByType seeds two factors of different
 // types and asserts the response is partitioned into {totp, phone}.
 func TestMFA_ListFactorsPartitionsByType(t *testing.T) {
-	db := &stubDB{
-		queryFn: func(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
+	svc := &stubAuthService{
+		listFactorsFn: func(ctx context.Context, userID string) ([]map[string]any, error) {
 			return []map[string]any{
 				{
 					"id":            "f1",
@@ -272,7 +225,7 @@ func TestMFA_ListFactorsPartitionsByType(t *testing.T) {
 			}, nil
 		},
 	}
-	m := newMFAHarness(t, db)
+	m := newMFAHarness(t, svc)
 	w := m.do("GET", "/auth/v1/factors", ``)
 	if w.Code != 200 {
 		t.Fatalf("status = %d: %s", w.Code, w.Body.String())

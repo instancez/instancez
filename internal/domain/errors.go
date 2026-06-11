@@ -18,6 +18,13 @@ var (
 	ErrTokenExpired     = errors.New("token expired")
 	ErrInvalidToken     = errors.New("invalid or expired token")
 	ErrPurposeMismatch  = errors.New("token purpose mismatch")
+
+	// MFA challenge sentinels. ErrChallengeUsed is a challenge whose
+	// verified_at is already set (replay); ErrChallengeExpired is past its
+	// 5-minute window. Both are distinct from ErrNotFound so the handler can
+	// map them to GoTrue-compatible status codes (400 vs 401 vs 404).
+	ErrChallengeUsed    = errors.New("challenge already verified")
+	ErrChallengeExpired = errors.New("challenge expired")
 )
 
 // ValidationError represents a single schema validation error with location info.

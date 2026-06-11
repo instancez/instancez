@@ -638,6 +638,110 @@ func (s *Service) DeleteIdentityByID(ctx context.Context, identityID, userID str
 
 // ---------- MFA ----------
 
+// challengeTTL bounds how long an MFA challenge can be verified after creation.
+const challengeTTL = 5 * time.Minute
+
+func (s *Service) EnrollFactor(ctx context.Context, userID, friendlyName, secret string) (string, error) {
+	row, err := s.db.QueryRow(ctx,
+		`INSERT INTO auth.mfa_factors (user_id, friendly_name, factor_type, status, secret)
+		 VALUES ($1::uuid, $2, 'totp', 'unverified', $3)
+		 RETURNING id::text, friendly_name, factor_type, status, created_at, updated_at`,
+		userID, friendlyName, secret)
+	if err != nil {
+		return "", err
+	}
+	if row == nil {
+		return "", fmt.Errorf("enroll factor returned no row")
+	}
+	return asString(row["id"]), nil
+}
+
+func (s *Service) CreateChallenge(ctx context.Context, factorID, userID string) (string, time.Time, error) {
+	// Ownership check: factor must belong to the caller.
+	owner, err := s.db.QueryRow(ctx,
+		"SELECT user_id::text FROM auth.mfa_factors WHERE id = $1::uuid", factorID)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	if owner == nil || asString(owner["user_id"]) != userID {
+		return "", time.Time{}, domain.ErrNotFound
+	}
+
+	row, err := s.db.QueryRow(ctx,
+		`INSERT INTO auth.mfa_challenges (factor_id) VALUES ($1::uuid)
+		 RETURNING id::text, created_at`,
+		factorID)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	if row == nil {
+		return "", time.Time{}, fmt.Errorf("create challenge returned no row")
+	}
+	createdAt, _ := row["created_at"].(time.Time)
+	return asString(row["id"]), createdAt, nil
+}
+
+func (s *Service) GetFactorForVerify(ctx context.Context, factorID, userID string) (domain.MFAFactor, error) {
+	row, err := s.db.QueryRow(ctx,
+		"SELECT user_id::text, secret, status FROM auth.mfa_factors WHERE id = $1::uuid",
+		factorID)
+	if err != nil {
+		return domain.MFAFactor{}, err
+	}
+	if row == nil || asString(row["user_id"]) != userID {
+		return domain.MFAFactor{}, domain.ErrNotFound
+	}
+	secret, _ := row["secret"].(string)
+	status, _ := row["status"].(string)
+	return domain.MFAFactor{Secret: secret, Status: status}, nil
+}
+
+func (s *Service) ValidateChallenge(ctx context.Context, challengeID, factorID string) error {
+	ch, err := s.db.QueryRow(ctx,
+		"SELECT factor_id::text, verified_at, created_at FROM auth.mfa_challenges WHERE id = $1::uuid",
+		challengeID)
+	if err != nil {
+		return err
+	}
+	if ch == nil || asString(ch["factor_id"]) != factorID {
+		return domain.ErrNotFound
+	}
+	if _, verified := ch["verified_at"].(time.Time); verified {
+		return domain.ErrChallengeUsed
+	}
+	createdAt, _ := ch["created_at"].(time.Time)
+	if time.Since(createdAt) > challengeTTL {
+		return domain.ErrChallengeExpired
+	}
+	return nil
+}
+
+func (s *Service) MarkChallengeVerified(ctx context.Context, challengeID string) error {
+	_, err := s.db.Exec(ctx,
+		"UPDATE auth.mfa_challenges SET verified_at = NOW() WHERE id = $1::uuid", challengeID)
+	return err
+}
+
+func (s *Service) PromoteFactorToVerified(ctx context.Context, factorID string) error {
+	_, err := s.db.Exec(ctx,
+		"UPDATE auth.mfa_factors SET status = 'verified', updated_at = NOW() WHERE id = $1::uuid", factorID)
+	return err
+}
+
+func (s *Service) ListFactors(ctx context.Context, userID string) ([]map[string]any, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT id::text, friendly_name, factor_type, status, created_at, updated_at
+		 FROM auth.mfa_factors WHERE user_id = $1::uuid ORDER BY created_at ASC`,
+		userID)
+	if err != nil {
+		return nil, err
+	}
+	if rows == nil {
+		return []map[string]any{}, nil
+	}
+	return rows, nil
+}
+
 func (s *Service) DeleteFactorForUser(ctx context.Context, factorID, userID string) error {
 	affected, err := s.db.Exec(ctx,
 		"DELETE FROM auth.mfa_factors WHERE id = $1::uuid AND user_id = $2::uuid",

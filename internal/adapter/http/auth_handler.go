@@ -20,8 +20,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/instancez/instancez/internal/app"
 	adapterauth "github.com/instancez/instancez/internal/adapter/auth"
+	"github.com/instancez/instancez/internal/app"
 	"github.com/instancez/instancez/internal/domain"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -44,7 +44,6 @@ func ctxWithRequestMeta(ctx context.Context, c *gin.Context) context.Context {
 // @supabase/supabase-js can drive instancez unmodified.
 type AuthHandler struct {
 	cfg     *domain.Config
-	db      domain.Database
 	logger  *slog.Logger
 	email   domain.EmailSender
 	jwtKeys *app.JWTKeyManager
@@ -54,7 +53,6 @@ type AuthHandler struct {
 func NewAuthHandler(deps ServerDeps) *AuthHandler {
 	return &AuthHandler{
 		cfg:     deps.Config,
-		db:      deps.DB.Database,
 		logger:  deps.Logger,
 		email:   deps.Email,
 		jwtKeys: deps.JWTKeys,
@@ -65,20 +63,26 @@ func NewAuthHandler(deps ServerDeps) *AuthHandler {
 // Mount registers the /auth/v1/* routes on the root router group.
 func (h *AuthHandler) Mount(root *gin.RouterGroup) {
 	auth := root.Group("/auth/v1")
-	authRL := rateLimitMiddleware(10) // 10 req/s per IP on sensitive endpoints
-	auth.POST("/signup", authRL, h.handleSignupDispatch)
-	auth.POST("/token", authRL, h.handleToken)
+	// Per-IP rate limiting for these sensitive endpoints is enforced at the
+	// edge (Traefik, configured by the deployer) rather than here: in the
+	// hosted deployment the backend runs as a Lambda behind a proxy, so it
+	// can't see the real client IP and an in-memory limiter wouldn't survive
+	// across Lambda execution environments. The per-token OTP attempt cap in
+	// handleVerify is the credential-level brute-force defense and stays in the
+	// app (it's backed by the database, shared across invocations).
+	auth.POST("/signup", h.handleSignupDispatch)
+	auth.POST("/token", h.handleToken)
 	auth.GET("/user", jwtAuth(h.jwtKeys, true), h.handleGetUser)
 	auth.PUT("/user", jwtAuth(h.jwtKeys, true), h.handleUpdateUser)
 	auth.POST("/logout", jwtAuth(h.jwtKeys, true), h.handleLogout)
 	auth.GET("/settings", h.handleSettings)
 
 	if h.cfg.Auth.Email != nil {
-		auth.POST("/recover", authRL, h.handleRecover)
-		auth.POST("/verify", authRL, h.handleVerify)
+		auth.POST("/recover", h.handleRecover)
+		auth.POST("/verify", h.handleVerify)
 		auth.GET("/verify", h.handleVerifyGET)
-		auth.POST("/otp", authRL, h.handleOTP)
-		auth.POST("/resend", authRL, h.handleResend)
+		auth.POST("/otp", h.handleOTP)
+		auth.POST("/resend", h.handleResend)
 		auth.POST("/reauthenticate", jwtAuth(h.jwtKeys, true), h.handleReauthenticate)
 	}
 	auth.POST("/token/verify", h.handleTokenVerify)

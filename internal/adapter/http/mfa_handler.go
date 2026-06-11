@@ -1,10 +1,13 @@
 package http
 
 import (
+	"errors"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pquerna/otp/totp"
+
+	"github.com/instancez/instancez/internal/domain"
 )
 
 // MountMFA registers /auth/v1/factors/* endpoints. TOTP is the only
@@ -62,19 +65,15 @@ func (h *AuthHandler) handleEnrollFactor(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	row, err := h.db.QueryRow(ctx,
-		`INSERT INTO auth.mfa_factors (user_id, friendly_name, factor_type, status, secret)
-		 VALUES ($1::uuid, $2, 'totp', 'unverified', $3)
-		 RETURNING id::text, friendly_name, factor_type, status, created_at, updated_at`,
-		session.UserID, req.FriendlyName, key.Secret())
-	if err != nil || row == nil {
+	factorID, err := h.authSvc.EnrollFactor(ctx, session.UserID, req.FriendlyName, key.Secret())
+	if err != nil {
 		h.logger.Error("mfa enroll insert failed", "error", err)
 		problemJSON(c, 500, "internal", "Failed to enroll factor")
 		return
 	}
 
 	c.JSON(200, gin.H{
-		"id":            asString(row["id"]),
+		"id":            factorID,
 		"type":          "totp",
 		"friendly_name": req.FriendlyName,
 		"totp": gin.H{
@@ -96,25 +95,17 @@ func (h *AuthHandler) handleChallengeFactor(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 
-	// Ownership check: factor must belong to the caller.
-	owner, err := h.db.QueryRow(ctx,
-		"SELECT user_id::text FROM auth.mfa_factors WHERE id = $1::uuid", factorID)
-	if err != nil || owner == nil || asString(owner["user_id"]) != session.UserID {
+	challengeID, createdAt, err := h.authSvc.CreateChallenge(ctx, factorID, session.UserID)
+	if errors.Is(err, domain.ErrNotFound) {
 		problemJSON(c, 404, "not_found", "Factor not found")
 		return
 	}
-
-	row, err := h.db.QueryRow(ctx,
-		`INSERT INTO auth.mfa_challenges (factor_id) VALUES ($1::uuid)
-		 RETURNING id::text, created_at`,
-		factorID)
-	if err != nil || row == nil {
+	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to create challenge")
 		return
 	}
-	createdAt, _ := row["created_at"].(time.Time)
 	c.JSON(200, gin.H{
-		"id":         asString(row["id"]),
+		"id":         challengeID,
 		"type":       "totp",
 		"expires_at": createdAt.Add(5 * time.Minute).Unix(),
 	})
@@ -136,57 +127,47 @@ func (h *AuthHandler) handleVerifyFactor(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 
-	factorRow, err := h.db.QueryRow(ctx,
-		"SELECT user_id::text, secret, status FROM auth.mfa_factors WHERE id = $1::uuid",
-		factorID)
-	if err != nil || factorRow == nil || asString(factorRow["user_id"]) != session.UserID {
+	factor, err := h.authSvc.GetFactorForVerify(ctx, factorID, session.UserID)
+	if err != nil {
 		problemJSON(c, 404, "not_found", "Factor not found")
 		return
 	}
-	secret, _ := factorRow["secret"].(string)
-	status, _ := factorRow["status"].(string)
 
 	// Challenge must exist, belong to this factor, and be unverified.
 	if req.ChallengeID != "" {
-		ch, err := h.db.QueryRow(ctx,
-			"SELECT factor_id::text, verified_at, created_at FROM auth.mfa_challenges WHERE id = $1::uuid",
-			req.ChallengeID)
-		if err != nil || ch == nil || asString(ch["factor_id"]) != factorID {
-			problemJSON(c, 404, "not_found", "Challenge not found")
-			return
-		}
-		if _, verified := ch["verified_at"].(time.Time); verified {
+		err := h.authSvc.ValidateChallenge(ctx, req.ChallengeID, factorID)
+		switch {
+		case errors.Is(err, domain.ErrChallengeUsed):
 			problemJSON(c, 400, "bad_request", "Challenge already verified")
 			return
-		}
-		createdAt, _ := ch["created_at"].(time.Time)
-		if time.Since(createdAt) > 5*time.Minute {
+		case errors.Is(err, domain.ErrChallengeExpired):
 			problemJSON(c, 401, "expired", "Challenge expired")
+			return
+		case err != nil:
+			problemJSON(c, 404, "not_found", "Challenge not found")
 			return
 		}
 	}
 
-	if !totp.Validate(req.Code, secret) {
+	if !totp.Validate(req.Code, factor.Secret) {
 		problemJSON(c, 401, "invalid_code", "Invalid TOTP code")
 		return
 	}
 
 	if req.ChallengeID != "" {
-		if _, err := h.db.Exec(ctx, "UPDATE auth.mfa_challenges SET verified_at = NOW() WHERE id = $1::uuid", req.ChallengeID); err != nil {
+		if err := h.authSvc.MarkChallengeVerified(ctx, req.ChallengeID); err != nil {
 			problemJSON(c, 500, "internal", "Failed to mark challenge verified")
 			return
 		}
 	}
-	if status == "unverified" {
-		if _, err := h.db.Exec(ctx, "UPDATE auth.mfa_factors SET status = 'verified', updated_at = NOW() WHERE id = $1::uuid", factorID); err != nil {
+	if factor.Status == "unverified" {
+		if err := h.authSvc.PromoteFactorToVerified(ctx, factorID); err != nil {
 			problemJSON(c, 500, "internal", "Failed to verify factor")
 			return
 		}
 	}
 
-	userRow, err := h.db.QueryRow(ctx,
-		`SELECT id::text, email, email_verified, email_confirmed_at, last_sign_in_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at
-		 FROM auth.users WHERE id = $1::uuid`, session.UserID)
+	userRow, err := h.authSvc.GetUserByID(ctx, session.UserID)
 	if err != nil || userRow == nil {
 		problemJSON(c, 500, "internal", "User not found")
 		return
@@ -217,15 +198,13 @@ func (h *AuthHandler) handleUnenrollFactor(c *gin.Context) {
 	factorID := c.Param("factor_id")
 	ctx := c.Request.Context()
 
-	n, err := h.db.Exec(ctx,
-		"DELETE FROM auth.mfa_factors WHERE id = $1::uuid AND user_id = $2::uuid",
-		factorID, session.UserID)
-	if err != nil {
-		problemJSON(c, 500, "internal", "Failed to unenroll factor")
+	err := h.authSvc.DeleteFactorForUser(ctx, factorID, session.UserID)
+	if errors.Is(err, domain.ErrNotFound) {
+		problemJSON(c, 404, "not_found", "Factor not found")
 		return
 	}
-	if n == 0 {
-		problemJSON(c, 404, "not_found", "Factor not found")
+	if err != nil {
+		problemJSON(c, 500, "internal", "Failed to unenroll factor")
 		return
 	}
 	c.JSON(200, gin.H{"id": factorID})
@@ -238,10 +217,7 @@ func (h *AuthHandler) handleListFactors(c *gin.Context) {
 	session := getSession(c)
 	ctx := c.Request.Context()
 
-	rows, err := h.db.Query(ctx,
-		`SELECT id::text, friendly_name, factor_type, status, created_at, updated_at
-		 FROM auth.mfa_factors WHERE user_id = $1::uuid ORDER BY created_at ASC`,
-		session.UserID)
+	rows, err := h.authSvc.ListFactors(ctx, session.UserID)
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to list factors")
 		return

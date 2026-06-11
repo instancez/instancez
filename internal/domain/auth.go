@@ -1,6 +1,9 @@
 package domain
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // CreateUserParams holds fields for auth user creation.
 type CreateUserParams struct {
@@ -51,6 +54,14 @@ type FlowState struct {
 	CodeChallengeMethod string
 	RedirectTo          string
 	LinkingUserID       string
+}
+
+// MFAFactor is the secret + status of a TOTP factor, read for verification.
+// The handler validates the TOTP code (a CPU operation, not a query) against
+// Secret; Status drives the one-time promotion to 'verified'.
+type MFAFactor struct {
+	Secret string
+	Status string
 }
 
 // AuthService is the port for all authentication data operations.
@@ -143,6 +154,32 @@ type AuthService interface {
 	// ErrNotFound if no row matched.
 	DeleteIdentityByID(ctx context.Context, identityID, userID string) error
 
-	// ---- MFA (kept only where mfa_handler already matches; migration TBD) ----
+	// ---- MFA ----
+	// EnrollFactor inserts an unverified TOTP factor with the given shared
+	// secret and returns the new factor id. The handler generates the secret
+	// and otpauth URI; the service only persists.
+	EnrollFactor(ctx context.Context, userID, friendlyName, secret string) (factorID string, err error)
+	// CreateChallenge verifies the factor belongs to userID, then inserts a
+	// challenge row. Returns the challenge id and its created_at (the handler
+	// derives expires_at = created_at + 5m). Errors: ErrNotFound.
+	CreateChallenge(ctx context.Context, factorID, userID string) (challengeID string, createdAt time.Time, err error)
+	// GetFactorForVerify returns the factor's secret + status when it belongs
+	// to userID, so the handler can validate the TOTP code. Errors: ErrNotFound.
+	GetFactorForVerify(ctx context.Context, factorID, userID string) (MFAFactor, error)
+	// ValidateChallenge checks that the challenge exists, belongs to factorID,
+	// is unverified, and is within its 5-minute window. Called before the TOTP
+	// code is validated, mirroring GoTrue's ordering. Errors: ErrNotFound,
+	// ErrChallengeUsed, ErrChallengeExpired.
+	ValidateChallenge(ctx context.Context, challengeID, factorID string) error
+	// MarkChallengeVerified stamps verified_at on the challenge. Security-
+	// critical: the caller MUST surface an error as a 500, never swallow it.
+	MarkChallengeVerified(ctx context.Context, challengeID string) error
+	// PromoteFactorToVerified flips an unverified factor to 'verified' on the
+	// first successful TOTP. Security-critical: errors must surface as 500.
+	PromoteFactorToVerified(ctx context.Context, factorID string) error
+	// ListFactors returns the caller's factors (secret excluded) ordered by
+	// created_at, for the GoTrue listFactors response.
+	ListFactors(ctx context.Context, userID string) ([]map[string]any, error)
+	// DeleteFactorForUser removes a factor owned by userID. Errors: ErrNotFound.
 	DeleteFactorForUser(ctx context.Context, factorID, userID string) error
 }
