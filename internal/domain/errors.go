@@ -8,6 +8,16 @@ import (
 var (
 	ErrNotFound     = errors.New("not found")
 	ErrUnauthorized = errors.New("unauthorized")
+
+	// Auth-specific sentinels returned by domain.AuthService so the HTTP
+	// handler can map domain failures to GoTrue-compatible responses without
+	// inspecting error strings.
+	ErrOAuthOnlyAccount = errors.New("account uses oauth login")
+	ErrRefreshExpired   = errors.New("refresh token expired")
+	ErrRefreshReuse     = errors.New("refresh token reuse detected")
+	ErrTokenExpired     = errors.New("token expired")
+	ErrInvalidToken     = errors.New("invalid or expired token")
+	ErrPurposeMismatch  = errors.New("token purpose mismatch")
 )
 
 // ValidationError represents a single schema validation error with location info.

@@ -11,9 +11,3 @@ linters:
     - wrapcheck
     - exhaustive
     - exhaustruct
-  exclusions:
-    rules:
-      # Best-effort last_sign_in_at update in auth_handler.go — intentionally fire-and-forget
-      - linters: [errcheck]
-        text: "h\\.db\\.Exec"
-        path: "auth_handler\\.go"

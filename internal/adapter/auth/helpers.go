@@ -1,10 +1,16 @@
 package auth
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
-	"time"
 )
+
+// constantTimeEqual reports whether a and b are equal without leaking their
+// relationship through comparison timing. Used for OTP code comparison.
+func constantTimeEqual(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
 
 func asString(v any) string {
 	if v == nil {
@@ -20,20 +26,6 @@ func asString(v any) string {
 	}
 }
 
-func asTimeString(v any) string {
-	if v == nil {
-		return ""
-	}
-	switch t := v.(type) {
-	case time.Time:
-		return t.UTC().Format(time.RFC3339Nano)
-	case string:
-		return t
-	default:
-		return fmt.Sprintf("%v", t)
-	}
-}
-
 func asInt64(v any) int64 {
 	switch n := v.(type) {
 	case int64:
@@ -44,26 +36,6 @@ func asInt64(v any) int64 {
 		return int64(n)
 	default:
 		return 0
-	}
-}
-
-func decodeJSONB(v any) map[string]any {
-	if v == nil {
-		return map[string]any{}
-	}
-	switch j := v.(type) {
-	case map[string]any:
-		return j
-	case []byte:
-		var m map[string]any
-		_ = json.Unmarshal(j, &m)
-		return m
-	case string:
-		var m map[string]any
-		_ = json.Unmarshal([]byte(j), &m)
-		return m
-	default:
-		return map[string]any{}
 	}
 }
 

@@ -480,17 +480,29 @@ func (s *stubDB) Begin(ctx context.Context) (domain.Tx, error) { return nil, nil
 type stubAuthService struct {
 	createUserFn          func(ctx context.Context, p domain.CreateUserParams) (map[string]any, error)
 	getUserByEmailFn      func(ctx context.Context, email string) (map[string]any, error)
+	getUserIDByEmailFn    func(ctx context.Context, email string) (string, error)
 	getUserByIDFn         func(ctx context.Context, id string) (map[string]any, error)
-	getUserByPhoneFn      func(ctx context.Context, phone string) (map[string]any, error)
 	updateUserFn          func(ctx context.Context, id string, p domain.UpdateUserParams) (map[string]any, error)
 	deleteUserFn          func(ctx context.Context, id string) error
 	listUsersFn           func(ctx context.Context, page, perPage int) ([]map[string]any, int, error)
 	verifyPasswordFn      func(ctx context.Context, email, password string) (map[string]any, error)
-	createSessionFn       func(ctx context.Context, userID string) (string, string, error)
-	verifyRefreshTokenFn  func(ctx context.Context, token string) (map[string]any, string, error)
-	createOTPCodeFn       func(ctx context.Context, userID, kind string) (string, string, error)
-	verifyOTPTokenFn      func(ctx context.Context, token, kind string) (map[string]any, error)
-	getOrCreateIdentityFn func(ctx context.Context, provider, providerID string, userMeta map[string]any) (map[string]any, bool, error)
+	getUserEmailFn        func(ctx context.Context, userID string) (string, error)
+	hasPasswordFn         func(ctx context.Context, userID string) (bool, error)
+	consumeRefreshFn      func(ctx context.Context, token string) (map[string]any, error)
+	createOneTimeTokenFn  func(ctx context.Context, userID, token, purpose string, expiresAt int64) error
+	createOTPCodeFn       func(ctx context.Context, userID, token, code, email, purpose string, expiresAt int64) error
+	verifyOTPFn           func(ctx context.Context, token, email string, allowedPurposes []string) (domain.OTPRow, error)
+	peekOneTimeTokenFn    func(ctx context.Context, token string) (domain.OTPRow, error)
+	deleteOneTimeTokenFn  func(ctx context.Context, token string) error
+	markEmailVerifiedFn   func(ctx context.Context, userID string)
+	insertRefreshTokenFn  func(ctx context.Context, userID, token string, meta domain.SessionMeta, expiresAt int64) error
+	getPKCEFlowStateFn    func(ctx context.Context, authCode string) (string, string, string, error)
+	countIdentitiesFn     func(ctx context.Context, userID string) (int, error)
+	deleteIdentityByIDFn  func(ctx context.Context, identityID, userID string) error
+	upsertOAuthUserFn     func(ctx context.Context, provider, providerUserID, email, name string) (map[string]any, error)
+	listIdentitiesFn      func(ctx context.Context, userID string) ([]map[string]any, error)
+	consumeOAuthFlowFn    func(ctx context.Context, state string) (domain.FlowState, error)
+	deleteFactorForUserFn func(ctx context.Context, factorID, userID string) error
 }
 
 // Compile-time check that stubAuthService satisfies the interface.
@@ -514,11 +526,11 @@ func (s *stubAuthService) GetUserByEmail(ctx context.Context, email string) (map
 	}
 	return nil, domain.ErrNotFound
 }
-func (s *stubAuthService) GetUserByPhone(ctx context.Context, phone string) (map[string]any, error) {
-	if s.getUserByPhoneFn != nil {
-		return s.getUserByPhoneFn(ctx, phone)
+func (s *stubAuthService) GetUserIDByEmail(ctx context.Context, email string) (string, error) {
+	if s.getUserIDByEmailFn != nil {
+		return s.getUserIDByEmailFn(ctx, email)
 	}
-	return nil, domain.ErrNotFound
+	return "", domain.ErrNotFound
 }
 func (s *stubAuthService) UpdateUser(ctx context.Context, id string, p domain.UpdateUserParams) (map[string]any, error) {
 	if s.updateUserFn != nil {
@@ -544,76 +556,123 @@ func (s *stubAuthService) VerifyPassword(ctx context.Context, email, password st
 	}
 	return nil, domain.ErrUnauthorized
 }
-func (s *stubAuthService) SetPassword(ctx context.Context, userID, bcryptHash string) error {
+func (s *stubAuthService) GetUserEmail(ctx context.Context, userID string) (string, error) {
+	if s.getUserEmailFn != nil {
+		return s.getUserEmailFn(ctx, userID)
+	}
+	return "", domain.ErrNotFound
+}
+func (s *stubAuthService) HasPassword(ctx context.Context, userID string) (bool, error) {
+	if s.hasPasswordFn != nil {
+		return s.hasPasswordFn(ctx, userID)
+	}
+	return false, nil
+}
+func (s *stubAuthService) RecordSignIn(ctx context.Context, userID string) {}
+func (s *stubAuthService) InsertRefreshToken(ctx context.Context, userID, token string, meta domain.SessionMeta, expiresAt int64) error {
+	if s.insertRefreshTokenFn != nil {
+		return s.insertRefreshTokenFn(ctx, userID, token, meta, expiresAt)
+	}
 	return nil
 }
-func (s *stubAuthService) CreateSession(ctx context.Context, userID string) (string, string, error) {
-	if s.createSessionFn != nil {
-		return s.createSessionFn(ctx, userID)
-	}
-	return "sess-1", "refresh-token-1", nil
-}
-func (s *stubAuthService) VerifyRefreshToken(ctx context.Context, token string) (map[string]any, string, error) {
-	if s.verifyRefreshTokenFn != nil {
-		return s.verifyRefreshTokenFn(ctx, token)
-	}
-	return nil, "", domain.ErrUnauthorized
-}
-func (s *stubAuthService) RevokeSession(ctx context.Context, sessionID string) error {
-	return nil
-}
-func (s *stubAuthService) RevokeAllUserSessions(ctx context.Context, userID string) error {
-	return nil
-}
-func (s *stubAuthService) CreateOTPCode(ctx context.Context, userID, kind string) (string, string, error) {
-	if s.createOTPCodeFn != nil {
-		return s.createOTPCodeFn(ctx, userID, kind)
-	}
-	return "token-1", "123456", nil
-}
-func (s *stubAuthService) VerifyOTPToken(ctx context.Context, token, kind string) (map[string]any, error) {
-	if s.verifyOTPTokenFn != nil {
-		return s.verifyOTPTokenFn(ctx, token, kind)
+func (s *stubAuthService) ConsumeRefreshToken(ctx context.Context, token string) (map[string]any, error) {
+	if s.consumeRefreshFn != nil {
+		return s.consumeRefreshFn(ctx, token)
 	}
 	return nil, domain.ErrUnauthorized
 }
-func (s *stubAuthService) VerifyOTPCode(ctx context.Context, userID, kind, code string) error {
-	return nil
-}
-func (s *stubAuthService) CreateFlowState(ctx context.Context, provider, codeChallenge, method string) (string, error) {
-	return "auth-code-1", nil
-}
-func (s *stubAuthService) GetFlowState(ctx context.Context, authCode string) (string, string, string, error) {
-	return "", "", "", domain.ErrNotFound
-}
-func (s *stubAuthService) DeleteFlowState(ctx context.Context, authCode string) error {
-	return nil
-}
-func (s *stubAuthService) GetOrCreateIdentity(ctx context.Context, provider, providerID string, userMeta map[string]any) (map[string]any, bool, error) {
-	if s.getOrCreateIdentityFn != nil {
-		return s.getOrCreateIdentityFn(ctx, provider, providerID, userMeta)
+func (s *stubAuthService) RevokeSessionByID(ctx context.Context, sessionID string) error      { return nil }
+func (s *stubAuthService) RevokeOtherSessions(ctx context.Context, userID, keep string) error { return nil }
+func (s *stubAuthService) RevokeAllUserSessions(ctx context.Context, userID string) error     { return nil }
+func (s *stubAuthService) CreateOneTimeToken(ctx context.Context, userID, token, purpose string, expiresAt int64) error {
+	if s.createOneTimeTokenFn != nil {
+		return s.createOneTimeTokenFn(ctx, userID, token, purpose, expiresAt)
 	}
-	return map[string]any{"id": "user-1"}, false, nil
+	return nil
+}
+func (s *stubAuthService) CreateOTPCode(ctx context.Context, userID, token, code, email, purpose string, expiresAt int64) error {
+	if s.createOTPCodeFn != nil {
+		return s.createOTPCodeFn(ctx, userID, token, code, email, purpose, expiresAt)
+	}
+	return nil
+}
+func (s *stubAuthService) DeleteUserTokensByPurpose(ctx context.Context, userID, purpose string) error {
+	return nil
+}
+func (s *stubAuthService) DeleteOneTimeToken(ctx context.Context, token string) error {
+	if s.deleteOneTimeTokenFn != nil {
+		return s.deleteOneTimeTokenFn(ctx, token)
+	}
+	return nil
+}
+func (s *stubAuthService) VerifyOTP(ctx context.Context, token, email string, allowedPurposes []string) (domain.OTPRow, error) {
+	if s.verifyOTPFn != nil {
+		return s.verifyOTPFn(ctx, token, email, allowedPurposes)
+	}
+	return domain.OTPRow{}, domain.ErrInvalidToken
+}
+func (s *stubAuthService) PeekOneTimeToken(ctx context.Context, token string) (domain.OTPRow, error) {
+	if s.peekOneTimeTokenFn != nil {
+		return s.peekOneTimeTokenFn(ctx, token)
+	}
+	return domain.OTPRow{}, domain.ErrInvalidToken
+}
+func (s *stubAuthService) MarkEmailVerified(ctx context.Context, userID string) {
+	if s.markEmailVerifiedFn != nil {
+		s.markEmailVerifiedFn(ctx, userID)
+	}
+}
+func (s *stubAuthService) GetPKCEFlowState(ctx context.Context, authCode string) (string, string, string, error) {
+	if s.getPKCEFlowStateFn != nil {
+		return s.getPKCEFlowStateFn(ctx, authCode)
+	}
+	return "", "", "", domain.ErrInvalidToken
+}
+func (s *stubAuthService) DeletePKCEFlowState(ctx context.Context, authCode string) error { return nil }
+func (s *stubAuthService) CreatePKCEFlowState(ctx context.Context, authCode, userID, codeChallenge, method string) error {
+	return nil
+}
+func (s *stubAuthService) CreateOAuthFlowState(ctx context.Context, state, codeChallenge, method, redirectTo, linkingUserID string) error {
+	return nil
+}
+func (s *stubAuthService) ConsumeOAuthFlowState(ctx context.Context, state string) (domain.FlowState, error) {
+	if s.consumeOAuthFlowFn != nil {
+		return s.consumeOAuthFlowFn(ctx, state)
+	}
+	return domain.FlowState{}, domain.ErrNotFound
+}
+func (s *stubAuthService) UpsertOAuthUser(ctx context.Context, provider, providerUserID, email, name string) (map[string]any, error) {
+	if s.upsertOAuthUserFn != nil {
+		return s.upsertOAuthUserFn(ctx, provider, providerUserID, email, name)
+	}
+	return map[string]any{"id": "user-1"}, nil
+}
+func (s *stubAuthService) LinkIdentity(ctx context.Context, userID, provider, providerUserID, email string) {
 }
 func (s *stubAuthService) ListIdentities(ctx context.Context, userID string) ([]map[string]any, error) {
+	if s.listIdentitiesFn != nil {
+		return s.listIdentitiesFn(ctx, userID)
+	}
 	return nil, nil
 }
-func (s *stubAuthService) DeleteIdentity(ctx context.Context, userID, provider string) error {
+func (s *stubAuthService) CountIdentities(ctx context.Context, userID string) (int, error) {
+	if s.countIdentitiesFn != nil {
+		return s.countIdentitiesFn(ctx, userID)
+	}
+	return 0, nil
+}
+func (s *stubAuthService) DeleteIdentityByID(ctx context.Context, identityID, userID string) error {
+	if s.deleteIdentityByIDFn != nil {
+		return s.deleteIdentityByIDFn(ctx, identityID, userID)
+	}
 	return nil
 }
-func (s *stubAuthService) CreateFactor(ctx context.Context, userID, factorType, friendlyName string) (map[string]any, error) {
-	return nil, nil
-}
-func (s *stubAuthService) VerifyFactor(ctx context.Context, factorID, code string) error {
+func (s *stubAuthService) DeleteFactorForUser(ctx context.Context, factorID, userID string) error {
+	if s.deleteFactorForUserFn != nil {
+		return s.deleteFactorForUserFn(ctx, factorID, userID)
+	}
 	return nil
 }
-func (s *stubAuthService) DeleteFactor(ctx context.Context, factorID string) error {
-	return nil
-}
-func (s *stubAuthService) ListFactors(ctx context.Context, userID string) ([]map[string]any, error) {
-	return nil, nil
-}
-func (s *stubAuthService) RecordSignIn(ctx context.Context, userID string) {}
 
 // ---------- signup dispatch / anonymous ----------
 
@@ -622,26 +681,26 @@ func (s *stubAuthService) RecordSignIn(ctx context.Context, userID string) {}
 // being rejected by the `required,email` binding on the struct.
 func TestHandleSignupDispatch_AnonymousOnEmptyBody(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := &stubDB{
-		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "INSERT INTO auth.users") {
-				return map[string]any{
-					"id":                 "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-					"email":              nil,
-					"email_verified":     false,
-					"raw_app_meta_data":  `{"is_anonymous":true}`,
-					"raw_user_meta_data": `{}`,
-					"created_at":         time.Now(),
-					"updated_at":         time.Now(),
-					"is_anonymous":       true,
-				}, nil
+	svc := &stubAuthService{
+		createUserFn: func(ctx context.Context, p domain.CreateUserParams) (map[string]any, error) {
+			if !p.Anonymous {
+				t.Errorf("expected anonymous create, got %+v", p)
 			}
-			return nil, nil
+			return map[string]any{
+				"id":                 "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+				"email":              nil,
+				"email_verified":     false,
+				"raw_app_meta_data":  `{"is_anonymous":true}`,
+				"raw_user_meta_data": `{}`,
+				"created_at":         time.Now(),
+				"updated_at":         time.Now(),
+				"is_anonymous":       true,
+			}, nil
 		},
 	}
 	h := &AuthHandler{
 		cfg:     &domain.Config{Auth: &domain.Auth{JWTExpiry: "15m"}},
-		db:      db,
+		authSvc: svc,
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		jwtKeys: stubKeys(t),
 	}
@@ -675,22 +734,19 @@ func TestHandleSignupDispatch_AnonymousOnEmptyBody(t *testing.T) {
 
 // ---------- signup gating (allow_signup / allow_anonymous) ----------
 
-func signupGatingHandler(t *testing.T, allowSignup, allowAnonymous *bool) (*AuthHandler, *stubDB) {
+func signupGatingHandler(t *testing.T, allowSignup, allowAnonymous *bool) (*AuthHandler, *stubAuthService) {
 	t.Helper()
-	db := &stubDB{
-		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "INSERT INTO auth.users") {
-				return map[string]any{
-					"id":                 "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-					"email":              "user@example.com",
-					"email_verified":     false,
-					"raw_app_meta_data":  `{}`,
-					"raw_user_meta_data": `{}`,
-					"created_at":         time.Now(),
-					"updated_at":         time.Now(),
-				}, nil
-			}
-			return nil, nil
+	svc := &stubAuthService{
+		createUserFn: func(ctx context.Context, p domain.CreateUserParams) (map[string]any, error) {
+			return map[string]any{
+				"id":                 "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+				"email":              "user@example.com",
+				"email_verified":     false,
+				"raw_app_meta_data":  `{}`,
+				"raw_user_meta_data": `{}`,
+				"created_at":         time.Now(),
+				"updated_at":         time.Now(),
+			}, nil
 		},
 	}
 	h := &AuthHandler{
@@ -699,11 +755,11 @@ func signupGatingHandler(t *testing.T, allowSignup, allowAnonymous *bool) (*Auth
 			AllowSignup:    allowSignup,
 			AllowAnonymous: allowAnonymous,
 		}},
-		db:      db,
+		authSvc: svc,
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		jwtKeys: stubKeys(t),
 	}
-	return h, db
+	return h, svc
 }
 
 func ptrBool(b bool) *bool { return &b }
@@ -847,32 +903,25 @@ func TestHandleOTP_CreatesTokenForNewUser(t *testing.T) {
 	userLookups := 0
 	inserts := 0
 	insertedPurpose := ""
-	db := &stubDB{
-		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "SELECT id::text FROM auth.users WHERE email") {
-				userLookups++
-				return nil, nil
-			}
-			if strings.Contains(q, "INSERT INTO auth.users") {
-				return map[string]any{"id": "11111111-2222-3333-4444-555555555555"}, nil
-			}
-			return nil, nil
+	svc := &stubAuthService{
+		getUserIDByEmailFn: func(ctx context.Context, email string) (string, error) {
+			userLookups++
+			return "", domain.ErrNotFound
 		},
-		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
-			if strings.Contains(q, "auth.one_time_tokens") {
-				inserts++
-				if strings.Contains(q, "'magiclink'") {
-					insertedPurpose = "magiclink"
-				}
-			}
-			return 1, nil
+		createUserFn: func(ctx context.Context, p domain.CreateUserParams) (map[string]any, error) {
+			return map[string]any{"id": "11111111-2222-3333-4444-555555555555"}, nil
+		},
+		createOTPCodeFn: func(ctx context.Context, userID, token, code, email, purpose string, expiresAt int64) error {
+			inserts++
+			insertedPurpose = purpose
+			return nil
 		},
 	}
 	h := &AuthHandler{
 		cfg: &domain.Config{Auth: &domain.Auth{
 			Email: &domain.AuthEmail{},
 		}},
-		db:      db,
+		authSvc: svc,
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		jwtKeys: stubKeys(t),
 	}
@@ -903,19 +952,20 @@ func TestHandleOTP_CreatesTokenForNewUser(t *testing.T) {
 func TestHandleOTP_NoCreateUserWhenDisabled(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	userInserts := 0
-	db := &stubDB{
-		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "INSERT INTO auth.users") {
-				userInserts++
-			}
-			return nil, nil
+	svc := &stubAuthService{
+		getUserIDByEmailFn: func(ctx context.Context, email string) (string, error) {
+			return "", domain.ErrNotFound
+		},
+		createUserFn: func(ctx context.Context, p domain.CreateUserParams) (map[string]any, error) {
+			userInserts++
+			return map[string]any{"id": "x"}, nil
 		},
 	}
 	h := &AuthHandler{
 		cfg: &domain.Config{Auth: &domain.Auth{
 			Email: &domain.AuthEmail{},
 		}},
-		db:      db,
+		authSvc: svc,
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		jwtKeys: stubKeys(t),
 	}
@@ -942,31 +992,26 @@ func TestHandleOTP_NoCreateUserWhenDisabled(t *testing.T) {
 func TestHandleGenerateLink_MagiclinkExistingUser(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	tokenInserts := 0
-	db := &stubDB{
-		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "FROM auth.users WHERE email") {
-				return map[string]any{
-					"id":                 "11111111-2222-3333-4444-555555555555",
-					"email":              "user@example.com",
-					"email_verified":     true,
-					"raw_app_meta_data":  `{}`,
-					"raw_user_meta_data": `{}`,
-					"created_at":         time.Now(),
-					"updated_at":         time.Now(),
-				}, nil
-			}
-			return nil, nil
+	svc := &stubAuthService{
+		getUserByEmailFn: func(ctx context.Context, email string) (map[string]any, error) {
+			return map[string]any{
+				"id":                 "11111111-2222-3333-4444-555555555555",
+				"email":              "user@example.com",
+				"email_verified":     true,
+				"raw_app_meta_data":  `{}`,
+				"raw_user_meta_data": `{}`,
+				"created_at":         time.Now(),
+				"updated_at":         time.Now(),
+			}, nil
 		},
-		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
-			if strings.Contains(q, "auth.one_time_tokens") {
-				tokenInserts++
-			}
-			return 1, nil
+		createOneTimeTokenFn: func(ctx context.Context, userID, token, purpose string, expiresAt int64) error {
+			tokenInserts++
+			return nil
 		},
 	}
 	h := &AuthHandler{
 		cfg:     &domain.Config{Auth: &domain.Auth{}},
-		db:      db,
+		authSvc: svc,
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		jwtKeys: stubKeys(t),
 	}
@@ -1031,29 +1076,21 @@ func TestGenerateNumericCode_ShapeAndEntropy(t *testing.T) {
 func TestHandleOTP_StoresCodeAndEmail(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	var capturedCode, capturedEmail string
-	db := &stubDB{
-		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "SELECT id::text FROM auth.users") {
-				return map[string]any{"id": "11111111-2222-3333-4444-555555555555"}, nil
-			}
-			return nil, nil
+	svc := &stubAuthService{
+		getUserIDByEmailFn: func(ctx context.Context, email string) (string, error) {
+			return "11111111-2222-3333-4444-555555555555", nil
 		},
-		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
-			if strings.Contains(q, "auth.one_time_tokens") && strings.Contains(q, "code") {
-				// (user_id, token, code, email, 'magiclink', expires_at)
-				if len(args) >= 4 {
-					capturedCode, _ = args[2].(string)
-					capturedEmail, _ = args[3].(string)
-				}
-			}
-			return 1, nil
+		createOTPCodeFn: func(ctx context.Context, userID, token, code, email, purpose string, expiresAt int64) error {
+			capturedCode = code
+			capturedEmail = email
+			return nil
 		},
 	}
 	h := &AuthHandler{
 		cfg: &domain.Config{Auth: &domain.Auth{
 			Email: &domain.AuthEmail{},
 		}},
-		db:      db,
+		authSvc: svc,
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		jwtKeys: stubKeys(t),
 	}
@@ -1077,48 +1114,38 @@ func TestHandleOTP_StoresCodeAndEmail(t *testing.T) {
 	}
 }
 
-// TestHandleVerify_NumericCodeLookup asserts that a {type:'email',
-// email:..., token:<6 digits>} request hits the (email, code) lookup
-// branch instead of the token-only path.
-func TestHandleVerify_NumericCodeLookup(t *testing.T) {
+// TestHandleVerify_NumericCode passes the email + 6-digit token through to the
+// service's VerifyOTP and, on success, marks the email verified and issues a
+// session. The numeric-code lookup, attempt tracking, and token consumption now
+// live in the service layer (covered by auth.Service tests).
+func TestHandleVerify_NumericCode(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	var lookupQ string
-	var lookupArgs []any
-	db := &stubDB{
-		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "auth.one_time_tokens") && strings.Contains(q, "code") {
-				lookupQ = q
-				lookupArgs = args
-				return map[string]any{
-					"id":         int64(1),
-					"user_id":    "11111111-2222-3333-4444-555555555555",
-					"purpose":    "magiclink",
-					"expires_at": time.Now().Add(1 * time.Hour),
-					"token":      "longtoken",
-					"code":       "123456",
-					"attempts":   int64(0),
-				}, nil
-			}
-			if strings.Contains(q, "FROM auth.users WHERE id") {
-				return map[string]any{
-					"id":                 "11111111-2222-3333-4444-555555555555",
-					"email":              "otp@example.com",
-					"email_verified":     true,
-					"raw_app_meta_data":  `{}`,
-					"raw_user_meta_data": `{}`,
-					"created_at":         time.Now(),
-					"updated_at":         time.Now(),
-				}, nil
-			}
-			return nil, nil
+	var gotToken, gotEmail string
+	var gotPurposes []string
+	marked := false
+	svc := &stubAuthService{
+		verifyOTPFn: func(ctx context.Context, token, email string, allowedPurposes []string) (domain.OTPRow, error) {
+			gotToken = token
+			gotEmail = email
+			gotPurposes = allowedPurposes
+			return domain.OTPRow{UserID: "11111111-2222-3333-4444-555555555555", Purpose: "magiclink"}, nil
+		},
+		markEmailVerifiedFn: func(ctx context.Context, userID string) { marked = true },
+		getUserByIDFn: func(ctx context.Context, id string) (map[string]any, error) {
+			return map[string]any{
+				"id":                 id,
+				"email":              "otp@example.com",
+				"email_verified":     true,
+				"raw_app_meta_data":  `{}`,
+				"raw_user_meta_data": `{}`,
+				"created_at":         time.Now(),
+				"updated_at":         time.Now(),
+			}, nil
 		},
 	}
 	h := &AuthHandler{
-		cfg: &domain.Config{Auth: &domain.Auth{
-			JWTExpiry: "1h",
-			Email:     &domain.AuthEmail{},
-		}},
-		db:      db,
+		cfg:     &domain.Config{Auth: &domain.Auth{JWTExpiry: "1h", Email: &domain.AuthEmail{}}},
+		authSvc: svc,
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		jwtKeys: stubKeys(t),
 	}
@@ -1134,156 +1161,73 @@ func TestHandleVerify_NumericCodeLookup(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(lookupQ, "email = $1") || !strings.Contains(lookupQ, "code IS NOT NULL") {
-		t.Errorf("wrong lookup query: %s", lookupQ)
+	if gotToken != "123456" || gotEmail != "otp@example.com" {
+		t.Errorf("VerifyOTP called with token=%q email=%q", gotToken, gotEmail)
 	}
-	if len(lookupArgs) != 1 || lookupArgs[0] != "otp@example.com" {
-		t.Errorf("lookup args = %v", lookupArgs)
+	// type "email" must accept signup + magiclink purposes.
+	if len(gotPurposes) != 2 || gotPurposes[0] != "signup" || gotPurposes[1] != "magiclink" {
+		t.Errorf("allowed purposes = %v", gotPurposes)
+	}
+	if !marked {
+		t.Error("email verification type should mark the address verified")
 	}
 }
 
-// TestHandleVerify_NumericCodeAttemptLimit verifies that a wrong 6-digit code
-// increments the attempt counter, and that once the cap is reached the token
-// is destroyed — bounding brute-force of the 10^6 OTP space.
-func TestHandleVerify_NumericCodeAttemptLimit(t *testing.T) {
+// TestHandleVerify_InvalidTokenMapsTo401 asserts the service's ErrInvalidToken
+// surfaces as a 401 invalid_grant (the brute-force-resistant failure path).
+func TestHandleVerify_InvalidTokenMapsTo401(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	var incremented, deleted bool
-	db := &stubDB{
-		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "auth.one_time_tokens") && strings.Contains(q, "code") {
-				return map[string]any{
-					"id":         int64(7),
-					"user_id":    "11111111-2222-3333-4444-555555555555",
-					"purpose":    "magiclink",
-					"expires_at": time.Now().Add(1 * time.Hour),
-					"token":      "longtoken",
-					"code":       "123456",
-					"attempts":   int64(0),
-				}, nil
-			}
-			return nil, nil
-		},
-		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
-			if strings.Contains(q, "SET attempts = attempts + 1") {
-				incremented = true
-			}
-			if strings.Contains(q, "DELETE FROM auth.one_time_tokens") {
-				deleted = true
-			}
-			return 1, nil
+	svc := &stubAuthService{
+		verifyOTPFn: func(ctx context.Context, token, email string, allowedPurposes []string) (domain.OTPRow, error) {
+			return domain.OTPRow{}, domain.ErrInvalidToken
 		},
 	}
 	h := &AuthHandler{
 		cfg:     &domain.Config{Auth: &domain.Auth{JWTExpiry: "1h", Email: &domain.AuthEmail{}}},
-		db:      db,
+		authSvc: svc,
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		jwtKeys: stubKeys(t),
 	}
 	r := gin.New()
 	r.POST("/auth/v1/verify", h.handleVerify)
 
-	// Wrong code with attempts=0 → 401 and the counter is bumped (not deleted).
 	req := httptest.NewRequest("POST", "/auth/v1/verify",
 		strings.NewReader(`{"type":"email","email":"otp@example.com","token":"000000"}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != 401 {
-		t.Fatalf("wrong code should be rejected, got %d", w.Code)
-	}
-	if !incremented {
-		t.Error("expected attempts to be incremented on a wrong guess")
-	}
-	if deleted {
-		t.Error("token should not be deleted on the first wrong guess")
+		t.Fatalf("invalid token should be rejected with 401, got %d", w.Code)
 	}
 }
 
-// TestHandleVerify_NumericCodeBurnsTokenAtCap verifies the token is destroyed
-// once the attempt budget is exhausted.
-func TestHandleVerify_NumericCodeBurnsTokenAtCap(t *testing.T) {
+// TestHandleVerify_MagiclinkType asserts the magiclink verify type accepts any
+// stored purpose (nil allowed-set) and does not mark the email verified.
+func TestHandleVerify_MagiclinkType(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	var deleted bool
-	db := &stubDB{
-		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "auth.one_time_tokens") && strings.Contains(q, "code") {
-				return map[string]any{
-					"id":         int64(7),
-					"user_id":    "11111111-2222-3333-4444-555555555555",
-					"purpose":    "magiclink",
-					"expires_at": time.Now().Add(1 * time.Hour),
-					"token":      "longtoken",
-					"code":       "123456",
-					"attempts":   int64(maxOTPAttempts), // budget already exhausted
-				}, nil
-			}
-			return nil, nil
+	marked := false
+	var gotPurposes []string
+	svc := &stubAuthService{
+		verifyOTPFn: func(ctx context.Context, token, email string, allowedPurposes []string) (domain.OTPRow, error) {
+			gotPurposes = allowedPurposes
+			return domain.OTPRow{UserID: "11111111-2222-3333-4444-555555555555", Purpose: "magiclink"}, nil
 		},
-		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
-			if strings.Contains(q, "DELETE FROM auth.one_time_tokens") {
-				deleted = true
-			}
-			return 1, nil
+		markEmailVerifiedFn: func(ctx context.Context, userID string) { marked = true },
+		getUserByIDFn: func(ctx context.Context, id string) (map[string]any, error) {
+			return map[string]any{
+				"id":                 id,
+				"email":              "u@e.com",
+				"email_verified":     true,
+				"raw_app_meta_data":  `{}`,
+				"raw_user_meta_data": `{}`,
+				"created_at":         time.Now(),
+				"updated_at":         time.Now(),
+			}, nil
 		},
 	}
 	h := &AuthHandler{
 		cfg:     &domain.Config{Auth: &domain.Auth{JWTExpiry: "1h", Email: &domain.AuthEmail{}}},
-		db:      db,
-		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-		jwtKeys: stubKeys(t),
-	}
-	r := gin.New()
-	r.POST("/auth/v1/verify", h.handleVerify)
-
-	// Even the *correct* code is rejected once the budget is gone, and the
-	// token is burned.
-	req := httptest.NewRequest("POST", "/auth/v1/verify",
-		strings.NewReader(`{"type":"email","email":"otp@example.com","token":"123456"}`))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	if w.Code != 401 {
-		t.Fatalf("over-budget verify should be rejected, got %d", w.Code)
-	}
-	if !deleted {
-		t.Error("token should be destroyed once the attempt budget is exhausted")
-	}
-}
-
-// TestHandleVerify_LongTokenFallsBackToTokenLookup asserts that a 32-byte
-// hex token (magic link click) still uses the token-only lookup even
-// when an email is supplied.
-func TestHandleVerify_LongTokenFallsBackToTokenLookup(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	var lookupQ string
-	db := &stubDB{
-		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "auth.one_time_tokens") {
-				lookupQ = q
-				return map[string]any{
-					"user_id":    "11111111-2222-3333-4444-555555555555",
-					"purpose":    "magiclink",
-					"expires_at": time.Now().Add(1 * time.Hour),
-					"token":      "aaaaaaaabbbbbbbbccccccccdddddddd",
-				}, nil
-			}
-			if strings.Contains(q, "FROM auth.users WHERE id") {
-				return map[string]any{
-					"id":                 "11111111-2222-3333-4444-555555555555",
-					"email":              "u@e.com",
-					"email_verified":     true,
-					"raw_app_meta_data":  `{}`,
-					"raw_user_meta_data": `{}`,
-					"created_at":         time.Now(),
-					"updated_at":         time.Now(),
-				}, nil
-			}
-			return nil, nil
-		},
-	}
-	h := &AuthHandler{
-		cfg:     &domain.Config{Auth: &domain.Auth{JWTExpiry: "1h", Email: &domain.AuthEmail{}}},
-		db:      db,
+		authSvc: svc,
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		jwtKeys: stubKeys(t),
 	}
@@ -1299,11 +1243,11 @@ func TestHandleVerify_LongTokenFallsBackToTokenLookup(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
 	}
-	if strings.Contains(lookupQ, "code = $2") {
-		t.Errorf("long token should use token-only lookup, got: %s", lookupQ)
+	if gotPurposes != nil {
+		t.Errorf("magiclink type should allow any purpose (nil), got %v", gotPurposes)
 	}
-	if !strings.Contains(lookupQ, "WHERE token = $1") {
-		t.Errorf("wrong lookup query: %s", lookupQ)
+	if marked {
+		t.Error("magiclink verify must not mark the email verified")
 	}
 }
 
@@ -1312,7 +1256,7 @@ func TestHandleGenerateLink_UnsupportedType(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := &AuthHandler{
 		cfg:     &domain.Config{Auth: &domain.Auth{}},
-		db:      &stubDB{},
+		authSvc: &stubAuthService{},
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		jwtKeys: stubKeys(t),
 	}
@@ -1338,24 +1282,18 @@ func TestHandleGenerateLink_UnsupportedType(t *testing.T) {
 func TestHandleRecover_AlwaysReturns200(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	var storedPurpose string
-	db := &stubDB{
-		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "SELECT id::text FROM auth.users") {
-				return map[string]any{"id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}, nil
-			}
-			return nil, nil
+	svc := &stubAuthService{
+		getUserIDByEmailFn: func(ctx context.Context, email string) (string, error) {
+			return "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", nil
 		},
-		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
-			if strings.Contains(q, "auth.one_time_tokens") {
-				// args: userID, token, expiresAt — purpose is hardcoded in SQL
-				storedPurpose = "recovery" // verified via the SQL literal
-			}
-			return 1, nil
+		createOneTimeTokenFn: func(ctx context.Context, userID, token, purpose string, expiresAt int64) error {
+			storedPurpose = purpose
+			return nil
 		},
 	}
 	h := &AuthHandler{
 		cfg:     &domain.Config{Auth: &domain.Auth{}},
-		db:      db,
+		authSvc: svc,
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		jwtKeys: stubKeys(t),
 	}
@@ -1376,8 +1314,8 @@ func TestHandleRecover_AlwaysReturns200(t *testing.T) {
 	}
 
 	// Unknown email — still 200
-	db.queryRowFn = func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-		return nil, nil
+	svc.getUserIDByEmailFn = func(ctx context.Context, email string) (string, error) {
+		return "", domain.ErrNotFound
 	}
 	req2 := httptest.NewRequest("POST", "/auth/v1/recover",
 		strings.NewReader(`{"email":"nobody@example.com"}`))
@@ -1396,41 +1334,32 @@ func TestHandleRecover_AlwaysReturns200(t *testing.T) {
 func TestHandleVerifyGET_RecoveryRedirectsWithToken(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	deleted := false
-	db := &stubDB{
-		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "auth.one_time_tokens") {
-				return map[string]any{
-					"user_id":    "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-					"purpose":    "recovery",
-					"expires_at": time.Now().Add(30 * time.Minute),
-				}, nil
-			}
-			if strings.Contains(q, "FROM auth.users") {
-				return map[string]any{
-					"id":                 "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-					"email":              "user@example.com",
-					"email_verified":     true,
-					"raw_app_meta_data":  `{}`,
-					"raw_user_meta_data": `{}`,
-					"created_at":         time.Now(),
-					"updated_at":         time.Now(),
-				}, nil
-			}
-			return nil, nil
+	svc := &stubAuthService{
+		peekOneTimeTokenFn: func(ctx context.Context, token string) (domain.OTPRow, error) {
+			return domain.OTPRow{UserID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", Purpose: "recovery"}, nil
 		},
-		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
-			if strings.Contains(q, "DELETE FROM auth.one_time_tokens") {
-				deleted = true
-			}
-			return 1, nil
+		getUserByIDFn: func(ctx context.Context, id string) (map[string]any, error) {
+			return map[string]any{
+				"id":                 "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+				"email":              "user@example.com",
+				"email_verified":     true,
+				"raw_app_meta_data":  `{}`,
+				"raw_user_meta_data": `{}`,
+				"created_at":         time.Now(),
+				"updated_at":         time.Now(),
+			}, nil
 		},
+	}
+	svc.deleteOneTimeTokenFn = func(ctx context.Context, token string) error {
+		deleted = true
+		return nil
 	}
 	h := &AuthHandler{
 		// app.local must be allowlisted, otherwise the redirect (which carries
 		// the session tokens) falls back to the base URL — see the
 		// disallowed-origin assertion below.
 		cfg:     &domain.Config{Auth: &domain.Auth{JWTExpiry: "15m", RedirectURLs: []string{"http://app.local"}}},
-		db:      db,
+		authSvc: svc,
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		jwtKeys: stubKeys(t),
 	}
@@ -1469,34 +1398,26 @@ func TestHandleVerifyGET_RecoveryRedirectsWithToken(t *testing.T) {
 // Regression test for the open-redirect token-leak (account takeover) finding.
 func TestHandleVerifyGET_RecoveryRejectsDisallowedRedirect(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := &stubDB{
-		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "auth.one_time_tokens") {
-				return map[string]any{
-					"user_id":    "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-					"purpose":    "recovery",
-					"expires_at": time.Now().Add(30 * time.Minute),
-				}, nil
-			}
-			if strings.Contains(q, "FROM auth.users") {
-				return map[string]any{
-					"id":                 "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-					"email":              "user@example.com",
-					"email_verified":     true,
-					"raw_app_meta_data":  `{}`,
-					"raw_user_meta_data": `{}`,
-					"created_at":         time.Now(),
-					"updated_at":         time.Now(),
-				}, nil
-			}
-			return nil, nil
+	svc := &stubAuthService{
+		peekOneTimeTokenFn: func(ctx context.Context, token string) (domain.OTPRow, error) {
+			return domain.OTPRow{UserID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", Purpose: "recovery"}, nil
 		},
-		execFn: func(ctx context.Context, q string, args ...any) (int64, error) { return 1, nil },
+		getUserByIDFn: func(ctx context.Context, id string) (map[string]any, error) {
+			return map[string]any{
+				"id":                 "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+				"email":              "user@example.com",
+				"email_verified":     true,
+				"raw_app_meta_data":  `{}`,
+				"raw_user_meta_data": `{}`,
+				"created_at":         time.Now(),
+				"updated_at":         time.Now(),
+			}, nil
+		},
 	}
 	h := &AuthHandler{
 		// No allowlist entry for evil.com.
 		cfg:     &domain.Config{Auth: &domain.Auth{JWTExpiry: "15m"}},
-		db:      db,
+		authSvc: svc,
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		jwtKeys: stubKeys(t),
 	}
@@ -1522,27 +1443,17 @@ func TestHandleVerifyGET_RecoveryRejectsDisallowedRedirect(t *testing.T) {
 func TestHandleVerifyGET_ExpiredTokenRejected(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	deleted := false
-	db := &stubDB{
-		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "auth.one_time_tokens") {
-				return map[string]any{
-					"user_id":    "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-					"purpose":    "recovery",
-					"expires_at": time.Now().Add(-10 * time.Minute), // expired
-				}, nil
-			}
-			return nil, nil
-		},
-		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
-			if strings.Contains(q, "DELETE FROM auth.one_time_tokens") {
-				deleted = true
-			}
-			return 1, nil
+	svc := &stubAuthService{
+		// PeekOneTimeToken owns the expiry check and the delete-on-expiry; it
+		// returns ErrTokenExpired for an expired token.
+		peekOneTimeTokenFn: func(ctx context.Context, token string) (domain.OTPRow, error) {
+			deleted = true
+			return domain.OTPRow{}, domain.ErrTokenExpired
 		},
 	}
 	h := &AuthHandler{
 		cfg:     &domain.Config{Auth: &domain.Auth{}},
-		db:      db,
+		authSvc: svc,
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		jwtKeys: stubKeys(t),
 	}
@@ -1566,27 +1477,17 @@ func TestHandleVerifyGET_ExpiredTokenRejected(t *testing.T) {
 func TestHandleVerifyGET_EmailVerificationStillWorks(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	emailVerified := false
-	db := &stubDB{
-		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "auth.one_time_tokens") {
-				return map[string]any{
-					"user_id":    "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-					"purpose":    "signup",
-					"expires_at": time.Now().Add(30 * time.Minute),
-				}, nil
-			}
-			return nil, nil
+	svc := &stubAuthService{
+		peekOneTimeTokenFn: func(ctx context.Context, token string) (domain.OTPRow, error) {
+			return domain.OTPRow{UserID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", Purpose: "signup"}, nil
 		},
-		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
-			if strings.Contains(q, "email_verified = true") {
-				emailVerified = true
-			}
-			return 1, nil
+		markEmailVerifiedFn: func(ctx context.Context, userID string) {
+			emailVerified = true
 		},
 	}
 	h := &AuthHandler{
 		cfg:     &domain.Config{Auth: &domain.Auth{}},
-		db:      db,
+		authSvc: svc,
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		jwtKeys: stubKeys(t),
 	}
