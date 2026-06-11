@@ -321,52 +321,16 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		session := getSession(c)
-
 		prefer := joinPrefer(c)
 		if !enforceStrictPrefer(c, prefer) {
 			return
 		}
 
-		body, err := io.ReadAll(c.Request.Body)
+		records, err := parseRequestBody(c, table)
 		if err != nil {
-			problemJSON(c, 400, "bad_request", "Cannot read request body")
 			return
 		}
 
-		// Determine if bulk or single
-		var records []map[string]any
-		if contentTypeIsCSV(c.GetHeader("Content-Type")) {
-			records, err = csvReadRecords(body)
-			if err != nil {
-				problemJSON(c, 400, "bad_request", err.Error())
-				return
-			}
-			records = csvCoerceRecords(records, table)
-		} else {
-			trimmed := strings.TrimSpace(string(body))
-			if strings.HasPrefix(trimmed, "[") {
-				if err := json.Unmarshal(body, &records); err != nil {
-					problemJSON(c, 400, "bad_request", "Invalid JSON array")
-					return
-				}
-			} else {
-				var single map[string]any
-				if err := json.Unmarshal(body, &single); err != nil {
-					problemJSON(c, 400, "bad_request", "Invalid JSON")
-					return
-				}
-				records = []map[string]any{single}
-			}
-		}
-
-		if len(records) == 0 {
-			problemJSON(c, 400, "bad_request", "Empty request body")
-			return
-		}
-
-		// columns= hint: restrict the inserted column set. Keys outside the
-		// hint are dropped (yielding server-side defaults). Applied before
-		// unknown-field validation so "unknown + dropped" isn't an error.
 		allowedCols, err := parseColumnsParam(c.Query("columns"), table)
 		if err != nil {
 			problemJSON(c, 400, "bad_request", err.Error())
@@ -378,7 +342,6 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 			return
 		}
 
-		// Validate fields — reject unknown
 		fieldMap := table.FieldMap()
 		for _, rec := range records {
 			if unknowns := findUnknownFields(rec, fieldMap); len(unknowns) > 0 {
@@ -388,27 +351,16 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 			}
 		}
 
-		ctx, err := h.db.WithRLS(c.Request.Context(), session)
+		ctx, tx, rollback, err := setupMutationTx(c, h.db, session)
 		if err != nil {
-			problemJSON(c, 500, "internal", "Failed to set RLS context")
 			return
 		}
-
-		tx, err := h.db.Begin(ctx)
-		if err != nil {
-			problemJSON(c, 500, "internal", "Failed to start transaction")
-			return
-		}
-		defer tx.Rollback(ctx)
+		defer rollback(ctx)
 
 		returnMode := parseReturnPrefer(prefer)
 		resolution := parseResolutionPrefer(prefer)
 		var results []map[string]any
 
-		// When an upsert resolution is requested, determine the conflict
-		// target: prefer the on_conflict= query param, otherwise the
-		// table's primary key. Tables without a PK and without an
-		// on_conflict param cannot use ON CONFLICT.
 		var pkCols []string
 		if resolution != "" {
 			customCols, err := parseOnConflictParam(c.Query("on_conflict"), table)
@@ -434,6 +386,7 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 		} else {
 			query, args = buildBulkInsertQuery(tableName, records, returnMode == "representation")
 		}
+
 		if returnMode == "representation" {
 			rows, err := tx.Query(ctx, query, args...)
 			if err != nil {
@@ -451,27 +404,10 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 		if !finishTx(c, tx, ctx, parseTxPrefer(prefer)) {
 			return
 		}
-
 		if parseMissingPrefer(prefer) {
 			c.Header("Preference-Applied", "missing=default")
 		}
-
-		switch returnMode {
-		case "representation":
-			if c.GetHeader("Accept") == "application/vnd.pgrst.object+json" && len(results) == 1 {
-				c.JSON(201, results[0])
-			} else {
-				if results == nil {
-					results = []map[string]any{}
-				}
-				c.JSON(201, results)
-			}
-		case "headers-only":
-			c.Header("Preference-Applied", "return=headers-only")
-			c.Status(201)
-		default:
-			c.Status(201)
-		}
+		writeMutationResponse(c, 201, returnMode, results)
 	}
 }
 
@@ -481,45 +417,13 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 func (h *CRUDHandler) handleUpsert(tableName string, table domain.Table) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		session := getSession(c)
-
 		prefer := joinPrefer(c)
 		if !enforceStrictPrefer(c, prefer) {
 			return
 		}
 
-		body, err := io.ReadAll(c.Request.Body)
+		records, err := parseRequestBody(c, table)
 		if err != nil {
-			problemJSON(c, 400, "bad_request", "Cannot read request body")
-			return
-		}
-
-		var records []map[string]any
-		if contentTypeIsCSV(c.GetHeader("Content-Type")) {
-			records, err = csvReadRecords(body)
-			if err != nil {
-				problemJSON(c, 400, "bad_request", err.Error())
-				return
-			}
-			records = csvCoerceRecords(records, table)
-		} else {
-			trimmed := strings.TrimSpace(string(body))
-			if strings.HasPrefix(trimmed, "[") {
-				if err := json.Unmarshal(body, &records); err != nil {
-					problemJSON(c, 400, "bad_request", "Invalid JSON array")
-					return
-				}
-			} else {
-				var single map[string]any
-				if err := json.Unmarshal(body, &single); err != nil {
-					problemJSON(c, 400, "bad_request", "Invalid JSON")
-					return
-				}
-				records = []map[string]any{single}
-			}
-		}
-
-		if len(records) == 0 {
-			problemJSON(c, 400, "bad_request", "Empty request body")
 			return
 		}
 
@@ -547,18 +451,11 @@ func (h *CRUDHandler) handleUpsert(tableName string, table domain.Table) gin.Han
 			}
 		}
 
-		ctx, err := h.db.WithRLS(c.Request.Context(), session)
+		ctx, tx, rollback, err := setupMutationTx(c, h.db, session)
 		if err != nil {
-			problemJSON(c, 500, "internal", "Failed to set RLS context")
 			return
 		}
-
-		tx, err := h.db.Begin(ctx)
-		if err != nil {
-			problemJSON(c, 500, "internal", "Failed to start transaction")
-			return
-		}
-		defer tx.Rollback(ctx)
+		defer rollback(ctx)
 
 		returnMode := parseReturnPrefer(prefer)
 		var results []map[string]any
@@ -581,27 +478,10 @@ func (h *CRUDHandler) handleUpsert(tableName string, table domain.Table) gin.Han
 		if !finishTx(c, tx, ctx, parseTxPrefer(prefer)) {
 			return
 		}
-
 		if parseMissingPrefer(prefer) {
 			c.Header("Preference-Applied", "missing=default")
 		}
-
-		switch returnMode {
-		case "representation":
-			if c.GetHeader("Accept") == "application/vnd.pgrst.object+json" && len(results) == 1 {
-				c.JSON(200, results[0])
-			} else {
-				if results == nil {
-					results = []map[string]any{}
-				}
-				c.JSON(200, results)
-			}
-		case "headers-only":
-			c.Header("Preference-Applied", "return=headers-only")
-			c.Status(200)
-		default:
-			c.Status(200)
-		}
+		writeMutationResponse(c, 200, returnMode, results)
 	}
 }
 
@@ -638,21 +518,14 @@ func (h *CRUDHandler) handleUpdate(tableName string, table domain.Table) gin.Han
 			return
 		}
 
-		ctx, err := h.db.WithRLS(c.Request.Context(), session)
+		ctx, tx, rollback, err := setupMutationTx(c, h.db, session)
 		if err != nil {
-			problemJSON(c, 500, "internal", "Failed to set RLS context")
 			return
 		}
+		defer rollback(ctx)
 
 		returnMode := parseReturnPrefer(prefer)
 		maxAffected, hasMax := parseMaxAffectedPrefer(prefer)
-
-		tx, err := h.db.Begin(ctx)
-		if err != nil {
-			problemJSON(c, 500, "internal", "Failed to start transaction")
-			return
-		}
-		defer tx.Rollback(ctx)
 
 		query, args := buildUpdateQuery(tableName, updates, where, returnMode == "representation")
 
@@ -2398,9 +2271,10 @@ func buildFilterCondition(f Filter, argIdx int) (string, []any, int) {
 		// interpolated here. The default arm is defensive: should an
 		// unvalidated value ever reach this point, compare via a bind
 		// parameter instead of interpolating raw input into SQL.
-		switch strings.ToUpper(strings.TrimSpace(f.Value)) {
+		isVal := strings.ToUpper(strings.TrimSpace(f.Value))
+		switch isVal {
 		case "NULL", "TRUE", "FALSE", "UNKNOWN":
-			return fmt.Sprintf("%s IS %s", colExpr, strings.ToUpper(strings.TrimSpace(f.Value))), nil, argIdx
+			return fmt.Sprintf("%s IS %s", colExpr, isVal), nil, argIdx
 		default:
 			return fmt.Sprintf("%s IS NOT DISTINCT FROM $%d", colExpr, argIdx), []any{f.Value}, argIdx + 1
 		}
@@ -2886,6 +2760,44 @@ func findGeometryColumn(table domain.Table) string {
 		}
 	}
 	return ""
+}
+
+// setupMutationTx creates an RLS context and begins a transaction.
+// On failure it writes a problemJSON to c and returns non-nil error. Callers must return immediately.
+func setupMutationTx(c *gin.Context, db domain.Database, session domain.Session) (context.Context, domain.Tx, func(context.Context), error) {
+	noop := func(context.Context) {}
+	ctx, err := db.WithRLS(c.Request.Context(), session)
+	if err != nil {
+		problemJSON(c, 500, "internal", "Failed to set RLS context")
+		return nil, nil, noop, err
+	}
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		problemJSON(c, 500, "internal", "Failed to start transaction")
+		return nil, nil, noop, err
+	}
+	return ctx, tx, func(ctx context.Context) { tx.Rollback(ctx) }, nil
+}
+
+// writeMutationResponse writes the HTTP response for a mutation.
+// status is 201 for create, 200 for upsert/update.
+func writeMutationResponse(c *gin.Context, status int, returnMode string, results []map[string]any) {
+	switch returnMode {
+	case "representation":
+		if c.GetHeader("Accept") == "application/vnd.pgrst.object+json" && len(results) == 1 {
+			c.JSON(status, results[0])
+		} else {
+			if results == nil {
+				results = []map[string]any{}
+			}
+			c.JSON(status, results)
+		}
+	case "headers-only":
+		c.Header("Preference-Applied", "return=headers-only")
+		c.Status(status)
+	default:
+		c.Status(status)
+	}
 }
 
 // parseRequestBody parses POST/PUT body as records (CSV, JSON array, or single JSON object).
