@@ -23,6 +23,8 @@ FROM dashboard-${WITH_DASHBOARD} AS dashboard
 FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
 
 ARG TARGETOS TARGETARCH
+ARG VERSION=dev
+ARG COMMIT=unknown
 
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -32,7 +34,8 @@ COPY . .
 # before `go build` reads the //go:embed directive.
 COPY --from=dashboard /out/dist ./dashboard/dist
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -o /inz ./cmd/inz
+    go build -ldflags "-X github.com/instancez/instancez/internal/cli.version=${VERSION} -X github.com/instancez/instancez/internal/cli.commit=${COMMIT}" \
+    -o /inz ./cmd/inz
 
 FROM alpine:3.21
 # nodejs runs code-function workers (serve + dev). npm is needed by `inz dev`,

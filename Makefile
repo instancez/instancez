@@ -10,7 +10,8 @@ PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
 
 VERSION := $(shell git describe --tags --always 2>/dev/null || echo dev)
-LDFLAGS := -X github.com/instancez/instancez/internal/cli.version=$(VERSION)
+COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+LDFLAGS := -X github.com/instancez/instancez/internal/cli.version=$(VERSION) -X github.com/instancez/instancez/internal/cli.commit=$(COMMIT)
 
 .PHONY: build build-go build-dashboard test test-go test-integration test-dashboard clean help
 
