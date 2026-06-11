@@ -11,7 +11,7 @@ export interface Config {
   storage: Record<string, Bucket>;
   rpc: Record<string, RpcFunction>;
   functions: Record<string, CodeFunction>;
-  seeds: Record<string, Record<string, unknown>[]>;
+  data: Record<string, Record<string, unknown>[] | Record<string, string>>;
   _checksum?: string;
 }
 
@@ -51,9 +51,26 @@ export interface PoolConfig {
   idle_timeout: string;
 }
 
+export interface EmailProviderConfig {
+  type: string;
+  api_key: string;
+  default_from_email: string;
+}
+
+export interface StorageProviderConfig {
+  type: string;
+  bucket: string;
+  region: string;
+  access_key_id: string;
+  secret_access_key: string;
+  endpoint: string;
+  credentials: string;
+  path: string;
+}
+
 export interface Providers {
-  email: { type: string } | null;
-  storage: { type: string } | null;
+  email: EmailProviderConfig | null;
+  storage: StorageProviderConfig | null;
 }
 
 export interface Auth {
@@ -83,12 +100,13 @@ export interface OAuthProvider {
 }
 
 export interface Table {
-  fields: Record<string, Field>;
+  fields: Field[];
   indexes: Index[];
   rls: RLSPolicy[];
 }
 
 export interface Field {
+  name: string;
   type: string;
   primary_key?: boolean;
   required?: boolean;

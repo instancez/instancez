@@ -3,6 +3,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -54,6 +55,43 @@ func (td *TableData) UnmarshalYAML(value *yaml.Node) error {
 	}
 }
 
+func (td TableData) MarshalYAML() (any, error) {
+	if td.CSVFiles != nil {
+		return td.CSVFiles, nil
+	}
+	return td.Rows, nil
+}
+
+// MarshalJSON encodes TableData with the same dual-shape semantics as YAML:
+// inline rows serialize as a JSON array; CSV-file maps serialize as an object.
+func (td TableData) MarshalJSON() ([]byte, error) {
+	if td.CSVFiles != nil {
+		return json.Marshal(td.CSVFiles)
+	}
+	if td.Rows != nil {
+		return json.Marshal(td.Rows)
+	}
+	return []byte("[]"), nil
+}
+
+// UnmarshalJSON mirrors UnmarshalYAML: array → Rows, object → CSVFiles.
+func (td *TableData) UnmarshalJSON(data []byte) error {
+	// Peek at the first non-whitespace byte to distinguish array from object.
+	for _, b := range data {
+		switch b {
+		case ' ', '\t', '\r', '\n':
+			continue
+		case '[':
+			return json.Unmarshal(data, &td.Rows)
+		case '{':
+			return json.Unmarshal(data, &td.CSVFiles)
+		default:
+			return fmt.Errorf("data entry must be a JSON array (inline rows) or object (csv files)")
+		}
+	}
+	return fmt.Errorf("data entry must be a JSON array (inline rows) or object (csv files)")
+}
+
 // Project holds display-only metadata.
 type Project struct {
 	Name        string `yaml:"name" json:"name"`
@@ -102,12 +140,20 @@ type Providers struct {
 }
 
 type EmailProvider struct {
-	Type      string `yaml:"type" json:"type"`             // resend | sendgrid | ses
-	FromEmail string `yaml:"from_email" json:"from_email"` // e.g. "instancez <noreply@example.com>"
+	Type             string `yaml:"type" json:"type"`
+	APIKey           string `yaml:"api_key" json:"api_key"`
+	DefaultFromEmail string `yaml:"default_from_email" json:"default_from_email"`
 }
 
 type StorageProvider struct {
-	Type string `yaml:"type" json:"type"` // s3 | local
+	Type            string `yaml:"type" json:"type"`
+	Bucket          string `yaml:"bucket" json:"bucket"`
+	Region          string `yaml:"region" json:"region"`
+	AccessKeyID     string `yaml:"access_key_id" json:"access_key_id"`
+	SecretAccessKey string `yaml:"secret_access_key" json:"secret_access_key"`
+	Endpoint        string `yaml:"endpoint" json:"endpoint"`
+	Credentials     string `yaml:"credentials" json:"credentials"`
+	Path            string `yaml:"path" json:"path"`
 }
 
 // Auth configures authentication. Custom user fields are defined in

@@ -1560,7 +1560,7 @@ func (h *AuthHandler) sendVerificationEmail(userID, email string) {
 
 	var fromEmail string
 	if h.cfg.Providers.Email != nil {
-		fromEmail = h.cfg.Providers.Email.FromEmail
+		fromEmail = h.cfg.Providers.Email.DefaultFromEmail
 	}
 	subject := "Verify your email"
 	body := fmt.Sprintf("Please verify your email by clicking this link: %s/auth/v1/verify?token=%s", h.baseURL(), token)
@@ -1595,7 +1595,7 @@ func (h *AuthHandler) sendVerificationEmail(userID, email string) {
 func (h *AuthHandler) sendMagicLinkEmail(email, token, code string) {
 	var fromEmail string
 	if h.cfg.Providers.Email != nil {
-		fromEmail = h.cfg.Providers.Email.FromEmail
+		fromEmail = h.cfg.Providers.Email.DefaultFromEmail
 	}
 	subject := "Your magic sign-in link"
 	link := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=magiclink", h.baseURL(), token)
@@ -1633,7 +1633,7 @@ func (h *AuthHandler) sendMagicLinkEmail(email, token, code string) {
 func (h *AuthHandler) sendPasswordResetEmail(email, token, redirectTo string) {
 	var fromEmail string
 	if h.cfg.Providers.Email != nil {
-		fromEmail = h.cfg.Providers.Email.FromEmail
+		fromEmail = h.cfg.Providers.Email.DefaultFromEmail
 	}
 	subject := "Reset your password"
 	// Build the verification link that points to GET /auth/v1/verify so the
