@@ -29,7 +29,7 @@ function GitHubIcon({ size = 16 }: { size?: number }) {
   );
 }
 
-const OAUTH_VARS: Record<string, Record<string, string>> = {
+const OAUTH_VARS: Record<"google" | "github", Record<"client_id" | "client_secret" | "redirect_url", string>> = {
   google: {
     client_id: "INSTANCEZ_GOOGLE_CLIENT_ID",
     client_secret: "INSTANCEZ_GOOGLE_CLIENT_SECRET",

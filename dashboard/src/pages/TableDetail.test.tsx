@@ -45,6 +45,7 @@ function renderTableDetail(config: Config, tableName: string) {
     checksum: "abc",
     saving: false,
     saveErrors: [] as ValidationError[],
+    dotenvWritable: false,
     refresh: vi.fn(),
     save: vi.fn().mockResolvedValue(true),
     updateConfig: vi.fn(),
