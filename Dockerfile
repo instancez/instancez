@@ -34,7 +34,7 @@ COPY . .
 # before `go build` reads the //go:embed directive.
 COPY --from=dashboard /out/dist ./dashboard/dist
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -ldflags "-X github.com/instancez/instancez/internal/cli.version=${VERSION} -X github.com/instancez/instancez/internal/cli.commit=${COMMIT}" \
+    go build -ldflags "-X 'github.com/instancez/instancez/internal/cli.version=${VERSION}' -X 'github.com/instancez/instancez/internal/cli.commit=${COMMIT}'" \
     -o /inz ./cmd/inz
 
 FROM alpine:3.21
