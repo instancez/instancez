@@ -9,7 +9,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var version = "dev"
+// version/commit are injected at build time via
+// -ldflags "-X github.com/instancez/instancez/internal/cli.version=… -X github.com/instancez/instancez/internal/cli.commit=…"
+var (
+	version = "dev"
+	commit  = "unknown"
+)
 
 // errReported marks an error whose details were already printed to the user
 // (e.g. a formatted validation report). Execute exits non-zero for it without
@@ -56,7 +61,7 @@ func newVersionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Print the version",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("instancez v%s\n", version)
+			cmd.Printf("instancez v%s (%s)\n", version, commit)
 		},
 	}
 }
