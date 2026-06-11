@@ -6,7 +6,7 @@ import {
   useCallback,
   type ReactNode,
 } from "react";
-import { getConfig, putConfig } from "../api/client";
+import { getConfig, getConfigStatus, putConfig } from "../api/client";
 import { showSaveToast } from "../components/SaveToast";
 import type { Config, ValidationError } from "../lib/types";
 
@@ -17,6 +17,7 @@ interface ConfigState {
   checksum: string;
   saving: boolean;
   saveErrors: ValidationError[];
+  dotenvWritable: boolean;
   refresh: () => Promise<void>;
   save: (updated: Config) => Promise<boolean>;
   updateConfig: (updater: (prev: Config) => Config) => void;
@@ -39,14 +40,19 @@ export function useConfigState(): ConfigState {
   const [checksum, setChecksum] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveErrors, setSaveErrors] = useState<ValidationError[]>([]);
+  const [dotenvWritable, setDotenvWritable] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      const cfg = await getConfig();
+      const [cfg, status] = await Promise.all([
+        getConfig(),
+        getConfigStatus().catch(() => null),
+      ]);
       setChecksum(cfg._checksum || "");
       setConfig(cfg);
+      setDotenvWritable(status?.dotenv_writable ?? false);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -99,6 +105,7 @@ export function useConfigState(): ConfigState {
     checksum,
     saving,
     saveErrors,
+    dotenvWritable,
     refresh,
     save,
     updateConfig,

@@ -201,4 +201,5 @@ export type ConfigStatus = {
   source: { checksum: string; last_seen_at: string };
   last_error: string | null;
   dashboard_mode: "disabled" | "readonly" | "readwrite";
+  dotenv_writable?: boolean;
 };
