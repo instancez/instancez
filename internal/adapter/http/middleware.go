@@ -16,8 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/didip/tollbooth/v7"
-	"github.com/didip/tollbooth/v7/limiter"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/instancez/instancez/internal/app"
@@ -437,41 +435,4 @@ func computeHMACSignature(secret, timestamp, body string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(timestamp + "." + body))
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
-}
-
-// rateLimitMiddleware returns a gin middleware that limits requests per IP
-// using a token-bucket algorithm. maxPerSecond is the sustained rate;
-// short bursts up to 5x are allowed.
-func rateLimitMiddleware(maxPerSecond float64) gin.HandlerFunc {
-	lmt := tollbooth.NewLimiter(maxPerSecond, &limiter.ExpirableOptions{
-		DefaultExpirationTTL: 10 * time.Minute,
-	})
-	lmt.SetBurst(int(maxPerSecond * 5))
-	// Default to the real connection IP. X-Forwarded-For / X-Real-IP are
-	// client-supplied and trivially spoofable, so honouring them by default
-	// lets an attacker rotate the header to get a fresh rate-limit bucket
-	// (defeating brute-force protection on login/OTP/recover). Only trust the
-	// forwarded headers when explicitly told we sit behind a trusted proxy
-	// that overwrites them.
-	ipLookups := []string{"RemoteAddr"}
-	if os.Getenv("INSTANCEZ_TRUST_PROXY_HEADERS") == "true" {
-		ipLookups = []string{"X-Forwarded-For", "X-Real-IP", "RemoteAddr"}
-	}
-	lmt.SetIPLookups(ipLookups)
-	lmt.SetMessage(`{"code":"rate_limit","message":"Too many requests"}`)
-	lmt.SetMessageContentType("application/json; charset=utf-8")
-
-	return func(c *gin.Context) {
-		httpError := tollbooth.LimitByRequest(lmt, c.Writer, c.Request)
-		if httpError != nil {
-			c.Header("Content-Type", "application/json; charset=utf-8")
-			c.Header("Retry-After", "1")
-			c.AbortWithStatusJSON(httpError.StatusCode, gin.H{
-				"code":    "rate_limit",
-				"message": httpError.Message,
-			})
-			return
-		}
-		c.Next()
-	}
 }
