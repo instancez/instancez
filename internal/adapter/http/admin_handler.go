@@ -1,10 +1,15 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/instancez/instancez/internal/app"
@@ -15,27 +20,42 @@ import (
 
 // AdminHandler serves /api/_admin/* endpoints.
 type AdminHandler struct {
-	cfg           *domain.Config
-	configFn      func() *domain.Config // returns the LIVE engine config (lastGood when drifted)
-	db            domain.Database
-	logger        *slog.Logger
-	configSource  config.Source
-	dashboardMode DashboardMode
-	driftFn       func() *app.DriftTracker
-	jwtKeys       *app.JWTKeyManager
+	cfg            *domain.Config
+	configFn       func() *domain.Config // returns the LIVE engine config (lastGood when drifted)
+	updateConfigFn func(*domain.Config)  // updates engine config immediately after PUT
+	db             domain.Database
+	ownerDB        domain.OwnerDB // privileged pool for migrations (nil in tests that don't wire it)
+	logger         *slog.Logger
+	configSource   config.Source
+	configPath     string // path to instancez.yaml; used to derive functions dir
+	dashboardMode  DashboardMode
+	driftFn        func() *app.DriftTracker
+	jwtKeys        *app.JWTKeyManager
 }
 
 func NewAdminHandler(deps ServerDeps) *AdminHandler {
 	return &AdminHandler{
-		cfg:           deps.Config,
-		configFn:      deps.ConfigFn,
-		db:            deps.DB.Database,
-		logger:        deps.Logger,
-		configSource:  deps.ConfigSource,
-		dashboardMode: deps.DashboardMode,
-		driftFn:       deps.DriftFn,
-		jwtKeys:       deps.JWTKeys,
+		cfg:            deps.Config,
+		configFn:       deps.ConfigFn,
+		updateConfigFn: deps.UpdateConfigFn,
+		db:             deps.DB.Database,
+		ownerDB:        deps.OwnerDB,
+		logger:         deps.Logger,
+		configSource:   deps.ConfigSource,
+		configPath:     deps.ConfigPath,
+		dashboardMode:  deps.DashboardMode,
+		driftFn:        deps.DriftFn,
+		jwtKeys:        deps.JWTKeys,
 	}
+}
+
+// migrationDB returns the privileged owner DB when available, falling back to
+// the request DB for test paths that don't wire an owner pool.
+func (h *AdminHandler) migrationDB() domain.Database {
+	if h.ownerDB.Database != nil {
+		return h.ownerDB.Database
+	}
+	return h.db
 }
 
 // liveConfig returns the engine's current running config. Falls back to the
@@ -82,6 +102,14 @@ func (h *AdminHandler) Mount(api *gin.RouterGroup) {
 	// API keys (dashboard Settings → API equivalent). The admin key itself is
 	// never echoed back — the dashboard already holds it from login.
 	admin.GET("/keys", h.handleKeys)
+
+	// Function code (dev / readwrite mode only)
+	admin.GET("/functions/:name/code", h.handleGetFunctionCode)
+	admin.PUT("/functions/:name/code", h.handlePutFunctionCode)
+
+	// npm dependencies (shared across all functions)
+	admin.GET("/functions/deps", h.handleGetFunctionDeps)
+	admin.POST("/functions/deps", h.handlePostFunctionDeps)
 }
 
 // handleKeys returns the project's publishable anon key. The token is
@@ -189,24 +217,41 @@ func (h *AdminHandler) handleSchema(c *gin.Context) {
 // `_checksum` field carrying the source's current version token, which clients
 // can echo back on PUT via `If-Match` for optimistic concurrency.
 func (h *AdminHandler) handleGetConfig(c *gin.Context) {
-	cfg := h.liveConfig()
-	jsonData, err := json.Marshal(cfg)
-	if err != nil {
-		problemJSON(c, 500, "internal", "Failed to serialize config")
-		return
-	}
+	// Read raw bytes from source so ${VAR} refs are preserved — secret values
+	// must never transit the dashboard API.
 	var result map[string]any
-	if err := json.Unmarshal(jsonData, &result); err != nil {
-		problemJSON(c, 500, "internal", "Failed to round-trip config")
-		return
-	}
-
-	// Surface the source's current version token as `_checksum` so PUT can
-	// pass it back via If-Match. When no source is wired (test path) the
-	// field is omitted.
 	if h.configSource != nil {
-		if _, ver, err := h.configSource.Read(c.Request.Context()); err == nil {
-			result["_checksum"] = ver
+		raw, ver, err := h.configSource.Read(c.Request.Context())
+		if err != nil {
+			problemJSON(c, 500, "internal", "Failed to read config source: "+err.Error())
+			return
+		}
+		cfg, err := config.ParseBytesRaw(raw, h.sourceDescribe())
+		if err != nil {
+			problemJSON(c, 500, "internal", "Failed to parse config: "+err.Error())
+			return
+		}
+		jsonData, err := json.Marshal(cfg)
+		if err != nil {
+			problemJSON(c, 500, "internal", "Failed to serialize config")
+			return
+		}
+		if err := json.Unmarshal(jsonData, &result); err != nil {
+			problemJSON(c, 500, "internal", "Failed to round-trip config")
+			return
+		}
+		result["_checksum"] = ver
+	} else {
+		// Test path: no source wired, fall back to live config (already resolved).
+		cfg := h.liveConfig()
+		jsonData, err := json.Marshal(cfg)
+		if err != nil {
+			problemJSON(c, 500, "internal", "Failed to serialize config")
+			return
+		}
+		if err := json.Unmarshal(jsonData, &result); err != nil {
+			problemJSON(c, 500, "internal", "Failed to round-trip config")
+			return
 		}
 	}
 	c.JSON(200, result)
@@ -282,7 +327,7 @@ func (h *AdminHandler) handlePutConfig(c *gin.Context) {
 	// Migration first: run via the migrator. If it fails, leave the backend
 	// untouched. Migrator failures are infrastructure errors at this point —
 	// user-fixable validation already ran above — so surface as 500.
-	migrator := app.NewMigrator(h.db)
+	migrator := app.NewMigrator(h.migrationDB())
 	if err := migrator.Apply(c.Request.Context(), &newCfg); err != nil {
 		h.logger.Error("migration failed",
 			"source", h.sourceDescribe(),
@@ -334,6 +379,14 @@ func (h *AdminHandler) handlePutConfig(c *gin.Context) {
 		return
 	}
 
+	// Re-parse the written YAML with env var resolution so the live runtime
+	// config reflects the change immediately.
+	if h.updateConfigFn != nil {
+		if resolved, err := config.ParseBytesLenient(yamlData, h.sourceDescribe()); err == nil {
+			h.updateConfigFn(resolved)
+		}
+	}
+
 	c.JSON(200, gin.H{
 		"message":       "Config saved",
 		"config_source": h.sourceDescribe(),
@@ -345,7 +398,7 @@ func (h *AdminHandler) handlePutConfig(c *gin.Context) {
 func (h *AdminHandler) handleConfigDiff(c *gin.Context) {
 	ctx := c.Request.Context()
 
-	migrator := app.NewMigrator(h.db)
+	migrator := app.NewMigrator(h.migrationDB())
 	sql, err := migrator.Plan(ctx, nil, h.cfg)
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to generate migration diff")
@@ -420,6 +473,205 @@ func (h *AdminHandler) handleStats(c *gin.Context) {
 	result["storage"] = storage
 
 	c.JSON(200, result)
+}
+
+// handleGetFunctionCode reads the source file for a declared code function.
+func (h *AdminHandler) handleGetFunctionCode(c *gin.Context) {
+	name := c.Param("name")
+	cfg := h.liveConfig()
+	fn, ok := cfg.Functions[name]
+	if !ok {
+		problemJSON(c, 404, "not_found", "Function not found")
+		return
+	}
+	if h.configPath == "" {
+		problemJSON(c, 501, "not_implemented", "Config path not available")
+		return
+	}
+	absPath := filepath.Join(filepath.Dir(h.configPath), fn.File)
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Return empty content so the editor can create the file.
+			c.JSON(200, gin.H{"content": "", "file": fn.File})
+			return
+		}
+		problemJSON(c, 500, "internal", "Failed to read function file")
+		return
+	}
+	c.JSON(200, gin.H{"content": string(data), "file": fn.File})
+}
+
+// handlePutFunctionCode writes the source file for a declared code function.
+// Triggers the functions-dir file watcher which hot-reloads the workers.
+func (h *AdminHandler) handlePutFunctionCode(c *gin.Context) {
+	if h.dashboardMode != DashboardReadwrite {
+		c.JSON(403, gin.H{
+			"error":   "dashboard_readonly",
+			"message": "Function code editing requires readwrite dashboard mode.",
+		})
+		return
+	}
+	name := c.Param("name")
+	cfg := h.liveConfig()
+	fn, ok := cfg.Functions[name]
+	if !ok {
+		problemJSON(c, 404, "not_found", "Function not found")
+		return
+	}
+	if h.configPath == "" {
+		problemJSON(c, 501, "not_implemented", "Config path not available")
+		return
+	}
+
+	var body struct {
+		Content string `json:"content"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		problemJSON(c, 400, "invalid_body", "Expected {\"content\": \"...\"}")
+		return
+	}
+
+	absPath := filepath.Join(filepath.Dir(h.configPath), fn.File)
+	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+		problemJSON(c, 500, "internal", "Failed to create function directory")
+		return
+	}
+	if err := os.WriteFile(absPath, []byte(body.Content), 0o644); err != nil {
+		problemJSON(c, 500, "internal", "Failed to write function file")
+		return
+	}
+	c.JSON(200, gin.H{"message": "Function code saved", "file": fn.File})
+}
+
+// handleGetFunctionDeps returns npm dependencies from functions/package.json.
+// Works in all dashboard modes — writes are gated in handlePostFunctionDeps.
+func (h *AdminHandler) handleGetFunctionDeps(c *gin.Context) {
+	if h.configPath == "" {
+		problemJSON(c, 501, "not_implemented", "Config path not available")
+		return
+	}
+	functionsDir := filepath.Join(filepath.Dir(h.configPath), "functions")
+	pkgPath := filepath.Join(functionsDir, "package.json")
+
+	readonly := h.dashboardMode != DashboardReadwrite
+
+	data, err := os.ReadFile(pkgPath)
+	if os.IsNotExist(err) {
+		c.JSON(200, gin.H{"dependencies": map[string]any{}, "has_lock": false, "readonly": readonly})
+		return
+	}
+	if err != nil {
+		problemJSON(c, 500, "internal", "Failed to read package.json")
+		return
+	}
+
+	var pkg map[string]any
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		problemJSON(c, 500, "internal", "Failed to parse package.json")
+		return
+	}
+
+	deps, _ := pkg["dependencies"].(map[string]any)
+	if deps == nil {
+		deps = map[string]any{}
+	}
+
+	_, lockErr := os.Stat(filepath.Join(functionsDir, "package-lock.json"))
+	c.JSON(200, gin.H{
+		"dependencies": deps,
+		"has_lock":     lockErr == nil,
+		"readonly":     readonly,
+	})
+}
+
+// handlePostFunctionDeps installs or removes npm packages via the npm CLI.
+// Requires readwrite dashboard mode. Runs npm in a background context so a
+// client disconnect does not kill a long-running install.
+func (h *AdminHandler) handlePostFunctionDeps(c *gin.Context) {
+	if h.dashboardMode != DashboardReadwrite {
+		c.JSON(403, gin.H{"error": "dashboard_readonly", "message": "Requires readwrite dashboard mode."})
+		return
+	}
+	if h.configPath == "" {
+		problemJSON(c, 501, "not_implemented", "Config path not available")
+		return
+	}
+
+	var body struct {
+		Add    []string `json:"add"`
+		Remove []string `json:"remove"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		problemJSON(c, 400, "invalid_body", "Expected {add?: string[], remove?: string[]}")
+		return
+	}
+	if len(body.Add) == 0 && len(body.Remove) == 0 {
+		problemJSON(c, 400, "invalid_body", "Provide at least one package in add or remove")
+		return
+	}
+
+	functionsDir := filepath.Join(filepath.Dir(h.configPath), "functions")
+	if err := os.MkdirAll(functionsDir, 0o755); err != nil {
+		problemJSON(c, 500, "internal", "Failed to create functions directory")
+		return
+	}
+
+	pkgPath := filepath.Join(functionsDir, "package.json")
+	if _, err := os.Stat(pkgPath); os.IsNotExist(err) {
+		init := []byte(`{"name":"functions","version":"1.0.0","dependencies":{}}` + "\n")
+		if err := os.WriteFile(pkgPath, init, 0o644); err != nil {
+			problemJSON(c, 500, "internal", "Failed to create package.json")
+			return
+		}
+	}
+
+	// Use a background context so the install is not aborted if the HTTP
+	// client disconnects mid-flight (npm install can take tens of seconds).
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	if len(body.Remove) > 0 {
+		args := append([]string{"uninstall"}, body.Remove...)
+		cmd := exec.CommandContext(ctx, "npm", args...)
+		cmd.Dir = functionsDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			c.JSON(500, gin.H{"error": "npm_error", "message": "npm uninstall failed", "detail": string(out)})
+			return
+		}
+	}
+
+	if len(body.Add) > 0 {
+		args := append([]string{"install"}, body.Add...)
+		cmd := exec.CommandContext(ctx, "npm", args...)
+		cmd.Dir = functionsDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			c.JSON(500, gin.H{"error": "npm_error", "message": "npm install failed", "detail": string(out)})
+			return
+		}
+	}
+
+	// Return the updated state so the UI can refresh without a separate GET.
+	data, err := os.ReadFile(pkgPath)
+	if err != nil {
+		problemJSON(c, 500, "internal", "Failed to read updated package.json")
+		return
+	}
+	var pkg map[string]any
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		problemJSON(c, 500, "internal", "Failed to parse updated package.json")
+		return
+	}
+	deps, _ := pkg["dependencies"].(map[string]any)
+	if deps == nil {
+		deps = map[string]any{}
+	}
+	_, lockErr := os.Stat(filepath.Join(functionsDir, "package-lock.json"))
+	c.JSON(200, gin.H{
+		"dependencies": deps,
+		"has_lock":     lockErr == nil,
+		"readonly":     false,
+	})
 }
 
 // splitStatements splits SQL on semicolons (simple split, not a full parser).

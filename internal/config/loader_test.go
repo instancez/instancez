@@ -366,6 +366,49 @@ func TestParseBytesLenient_EmptyDefault(t *testing.T) {
 	}
 }
 
+func TestParseBytesRaw_PreservesEnvRefs(t *testing.T) {
+	t.Setenv("TEST_API_KEY", "actual_secret")
+
+	yamlData := `
+version: 1
+project:
+  name: test
+providers:
+  email:
+    type: resend
+    api_key: ${TEST_API_KEY}
+`
+	cfg, err := ParseBytesRaw([]byte(yamlData), "test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Providers.Email == nil {
+		t.Fatal("expected email provider, got nil")
+	}
+	if cfg.Providers.Email.APIKey != "${TEST_API_KEY}" {
+		t.Errorf("api_key = %q, want %q", cfg.Providers.Email.APIKey, "${TEST_API_KEY}")
+	}
+}
+
+func TestParseBytesRaw_PreservesDefaultSyntax(t *testing.T) {
+	yamlData := `
+version: 1
+project:
+  name: test
+providers:
+  email:
+    type: resend
+    api_key: ${TEST_KEY:-fallback}
+`
+	cfg, err := ParseBytesRaw([]byte(yamlData), "test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Providers.Email.APIKey != "${TEST_KEY:-fallback}" {
+		t.Errorf("api_key = %q, want literal ref string", cfg.Providers.Email.APIKey)
+	}
+}
+
 func TestEnvRefs_ReturnsUniqueNames(t *testing.T) {
 	data := []byte("a: ${FOO}\nb: ${BAR:-x}\nc: ${FOO}\n")
 	got := EnvRefs(data)

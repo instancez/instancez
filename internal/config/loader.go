@@ -62,6 +62,30 @@ func LoadDotenv(path string) error {
 	return nil
 }
 
+// ForceLoadDotenv is like LoadDotenv but unconditionally updates every key
+// found in the file, including ones already set. Used by the dev watcher
+// when .development.env changes mid-run so the new values are picked up
+// on the next config read/interpolation cycle.
+func ForceLoadDotenv(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("loading %s: %w", path, err)
+	}
+	pairs, err := parseDotenvBytes(data)
+	if err != nil {
+		return fmt.Errorf("loading %s: %w", path, err)
+	}
+	for key, val := range pairs {
+		if err := os.Setenv(key, val); err != nil {
+			return fmt.Errorf("set env %s: %w", key, err)
+		}
+	}
+	return nil
+}
+
 // ParseBytesLenient is like ParseBytes but substitutes a harmless placeholder
 // for any missing ${VAR} instead of returning MissingEnvError. This lets static
 // structural validation run without the runtime environment (used by
@@ -71,6 +95,18 @@ func ParseBytesLenient(data []byte, origin string) (*domain.Config, error) {
 	interpolated := interpolateEnvVarsLenient(string(data))
 	var cfg domain.Config
 	if err := yaml.Unmarshal([]byte(interpolated), &cfg); err != nil {
+		return nil, &domain.ConfigError{Path: origin, Message: "invalid YAML", Err: err}
+	}
+	applyDefaults(&cfg)
+	return &cfg, nil
+}
+
+// ParseBytesRaw parses YAML without any env var interpolation — ${VAR} and
+// ${VAR:-default} references are preserved as-is. Used by GET /config so
+// secret values never transit the dashboard API layer.
+func ParseBytesRaw(data []byte, origin string) (*domain.Config, error) {
+	var cfg domain.Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, &domain.ConfigError{Path: origin, Message: "invalid YAML", Err: err}
 	}
 	applyDefaults(&cfg)
