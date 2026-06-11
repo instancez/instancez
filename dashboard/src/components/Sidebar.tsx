@@ -7,9 +7,7 @@ import {
   Code2,
   Database,
   Plug,
-  ExternalLink,
 } from "lucide-react";
-import { Logo } from "./Logo";
 
 const NAV_ITEMS = [
   { to: "/", icon: LayoutDashboard, label: "Overview" },
@@ -23,29 +21,18 @@ const NAV_ITEMS = [
 
 export function Sidebar() {
   return (
-    <aside className="w-[272px] shrink-0 h-full bg-background border-r border-border flex flex-col">
-      {/* Logo */}
-      <div className="px-5 pt-6 pb-5 border-b border-border">
-        <div className="flex items-center gap-3">
-          <Logo size={34} />
-          <p className="text-sm font-semibold text-foreground tracking-tight">
-            instancez
-          </p>
-        </div>
-      </div>
-
-      {/* Navigation */}
-      <nav className="flex-1 px-3 py-5 overflow-y-auto">
-        <ul className="space-y-px">
+    <aside className="w-60 shrink-0 flex flex-col px-3 py-4 bg-surface border border-border rounded-xl shadow-card">
+      <nav className="flex-1 overflow-y-auto">
+        <ul className="space-y-1">
           {NAV_ITEMS.map(({ to, icon: Icon, label }) => (
             <li key={to}>
               <NavLink
                 to={to}
                 end={to === "/"}
                 className={({ isActive }) =>
-                  `group flex items-center gap-2.5 px-2.5 py-2 text-[13px] transition-colors cursor-pointer ${
+                  `group flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
                     isActive
-                      ? "bg-foreground text-background font-medium"
+                      ? "bg-accent text-background shadow-card"
                       : "text-muted-foreground hover:text-foreground hover:bg-surface-hover"
                   }`
                 }
@@ -53,7 +40,7 @@ export function Sidebar() {
                 {({ isActive }) => (
                   <>
                     <Icon
-                      size={15}
+                      size={16}
                       strokeWidth={isActive ? 2 : 1.6}
                       className="shrink-0"
                     />
@@ -66,21 +53,9 @@ export function Sidebar() {
         </ul>
       </nav>
 
-      {/* Footer */}
-      <div className="px-3 py-4 border-t border-border mt-auto">
-        <a
-          href="https://github.com/instancez/instancez"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
-        >
-          <ExternalLink size={12} />
-          GitHub
-        </a>
-        <p className="px-2.5 mt-2 text-[10px] text-muted-foreground/40 font-mono tracking-widest">
-          v0.1.0
-        </p>
-      </div>
+      <p className="px-3 pt-4 text-[11px] text-muted-foreground/60 font-mono">
+        v0.1.0
+      </p>
     </aside>
   );
 }

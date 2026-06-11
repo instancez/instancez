@@ -8,10 +8,10 @@ export function EditModeBanner({ status }: Props) {
   return (
     <div
       role="status"
-      className="bg-muted border-b border-border px-4 py-3 text-sm text-foreground"
+      className="border-t border-info/30 bg-info/10 px-4 py-2.5 text-sm text-foreground"
     >
       <span className="inline-flex items-start gap-2">
-        <PencilLine size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+        <PencilLine size={14} className="mt-0.5 shrink-0 text-info" aria-hidden="true" />
         <span>
           <strong>Live edit mode.</strong>{" "}
           Changes you make here are written directly to{" "}

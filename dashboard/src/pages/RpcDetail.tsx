@@ -1,22 +1,23 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
-import {
-  ArrowLeft,
-  Trash2,
-  Plus,
-  Play,
-  ChevronDown,
-  ChevronUp,
-  Loader2,
-} from "lucide-react";
+import { Trash2, Plus, Play, FileCode2, Braces } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
 import { useDialog } from "../components/Dialog";
 import { PageHeader } from "../components/PageHeader";
 import { SaveBar } from "../components/SaveBar";
 import { CodeEditor } from "../components/CodeEditor";
 import { Toggle } from "../components/Toggle";
+import {
+  Button,
+  Disclosure,
+  Field,
+  Input,
+  Panel,
+  Section,
+  Select,
+} from "../components/ui";
 import { POSTGRES_TYPES } from "../lib/utils";
-import type { RpcFunction, FuncArg } from "../lib/types";
+import type { RpcFunction } from "../lib/types";
 
 const LANGUAGES = ["plpgsql", "sql"];
 const VOLATILITIES = ["volatile", "stable", "immutable"];
@@ -29,7 +30,6 @@ export function RpcDetail() {
   const dialog = useDialog();
   const [fn, setFn] = useState<RpcFunction | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [showTest, setShowTest] = useState(false);
   const [testInputs, setTestInputs] = useState<Record<string, string>>({});
   const [testResult, setTestResult] = useState<string | null>(null);
   const [testLoading, setTestLoading] = useState(false);
@@ -116,121 +116,98 @@ export function RpcDetail() {
       <PageHeader
         title={name}
         description={fn.description || "RPC function"}
-        actions={
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => navigate("/rpc")}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
-            >
-              <ArrowLeft size={14} />
-              Back
-            </button>
-            <button
-              onClick={deleteFunction}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-destructive/30 text-sm text-destructive hover:bg-destructive/10 transition-colors cursor-pointer"
-            >
-              <Trash2 size={14} />
-              Delete
-            </button>
-          </div>
-        }
+        backTo="/rpc"
+        onDelete={deleteFunction}
       />
 
-      <div className="px-8 space-y-6 max-w-3xl">
-        {/* Basic Info */}
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">Description</label>
-            <input
-              type="text"
-              value={fn.description}
-              onChange={(e) => updateFn((f) => ({ ...f, description: e.target.value }))}
-              placeholder="What does this function do?"
-              className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-ring transition-colors"
+      <div className="px-8 pb-8 space-y-6 max-w-3xl">
+        <Section
+          title="Definition"
+          description="How the function is declared and exposed at /rest/v1/rpc"
+          icon={FileCode2}
+        >
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Description">
+              <Input
+                value={fn.description}
+                onChange={(e) => updateFn((f) => ({ ...f, description: e.target.value }))}
+                placeholder="What does this function do?"
+              />
+            </Field>
+            <div className="flex items-end pb-2">
+              <Toggle
+                checked={fn.auth_required}
+                onChange={(v) => updateFn((f) => ({ ...f, auth_required: v }))}
+                label="Auth required"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-4">
+            <Field label="Language">
+              <Select
+                value={fn.language || "plpgsql"}
+                onChange={(e) => updateFn((f) => ({ ...f, language: e.target.value }))}
+              >
+                {LANGUAGES.map((l) => (
+                  <option key={l} value={l}>{l}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Volatility">
+              <Select
+                value={fn.volatility || "volatile"}
+                onChange={(e) => updateFn((f) => ({ ...f, volatility: e.target.value }))}
+              >
+                {VOLATILITIES.map((v) => (
+                  <option key={v} value={v}>{v}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Security">
+              <Select
+                value={fn.security || "invoker"}
+                onChange={(e) => updateFn((f) => ({ ...f, security: e.target.value }))}
+              >
+                {SECURITIES.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+
+          <Field label="Return Type">
+            <Input
+              mono
+              value={fn.returns?.type || ""}
+              onChange={(e) =>
+                updateFn((f) => ({
+                  ...f,
+                  returns: { ...f.returns, type: e.target.value },
+                }))
+              }
+              placeholder="void, int, setof posts, etc."
             />
-          </div>
-          <div className="flex items-end pb-2">
-            <Toggle
-              checked={fn.auth_required}
-              onChange={(v) => updateFn((f) => ({ ...f, auth_required: v }))}
-              label="Auth required"
+          </Field>
+
+          <Field label="Function Body">
+            <CodeEditor
+              value={fn.body || ""}
+              onChange={(val) => updateFn((f) => ({ ...f, body: val }))}
+              language="sql"
+              minHeight="160px"
             />
-          </div>
-        </div>
+          </Field>
+        </Section>
 
-        {/* Function Properties */}
-        <div className="grid grid-cols-3 gap-4">
-          <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">Language</label>
-            <select
-              value={fn.language || "plpgsql"}
-              onChange={(e) => updateFn((f) => ({ ...f, language: e.target.value }))}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm text-foreground focus:outline-none focus:border-ring transition-colors cursor-pointer"
-            >
-              {LANGUAGES.map((l) => (
-                <option key={l} value={l}>{l}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">Volatility</label>
-            <select
-              value={fn.volatility || "volatile"}
-              onChange={(e) => updateFn((f) => ({ ...f, volatility: e.target.value }))}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm text-foreground focus:outline-none focus:border-ring transition-colors cursor-pointer"
-            >
-              {VOLATILITIES.map((v) => (
-                <option key={v} value={v}>{v}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">Security</label>
-            <select
-              value={fn.security || "invoker"}
-              onChange={(e) => updateFn((f) => ({ ...f, security: e.target.value }))}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm text-foreground focus:outline-none focus:border-ring transition-colors cursor-pointer"
-            >
-              {SECURITIES.map((s) => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {/* Return Type */}
-        <div>
-          <label className="block text-xs font-medium text-muted-foreground mb-1">Return Type</label>
-          <input
-            type="text"
-            value={fn.returns?.type || ""}
-            onChange={(e) =>
-              updateFn((f) => ({
-                ...f,
-                returns: { ...f.returns, type: e.target.value },
-              }))
-            }
-            placeholder="void, int, setof posts, etc."
-            className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-ring transition-colors"
-          />
-        </div>
-
-        {/* Function Body */}
-        <div>
-          <label className="block text-sm font-medium text-foreground mb-2">Function Body</label>
-          <CodeEditor
-            value={fn.body || ""}
-            onChange={(val) => updateFn((f) => ({ ...f, body: val }))}
-            language="sql"
-            minHeight="160px"
-          />
-        </div>
-
-        {/* Arguments */}
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <label className="text-sm font-medium text-foreground">Arguments</label>
-            <button
+        <Section
+          title="Arguments"
+          description="Parameters callers pass in the request body"
+          icon={Braces}
+          actions={
+            <Button
+              variant="dashed"
+              size="sm"
               onClick={async () => {
                 const argName = await dialog.prompt("Argument name:");
                 if (!argName?.trim()) return;
@@ -239,21 +216,21 @@ export function RpcDetail() {
                   args: [...(f.args || []), { name: argName.trim(), type: "text", required: false }],
                 }));
               }}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded-sm border border-dashed border-border text-xs text-muted-foreground hover:text-foreground hover:border-border-hover transition-colors cursor-pointer"
             >
-              <Plus size={12} />
+              <Plus size={14} />
               Add Arg
-            </button>
-          </div>
+            </Button>
+          }
+        >
           {args.length > 0 ? (
             <div className="space-y-2">
               {args.map((arg, idx) => (
-                <div
-                  key={arg.name}
-                  className="flex items-center gap-3 px-3 py-2 rounded-lg border border-border bg-primary"
-                >
+                <Panel key={arg.name} className="flex items-center gap-3 px-3 py-2">
                   <span className="text-sm font-mono text-foreground min-w-[100px]">{arg.name}</span>
-                  <select
+                  <Select
+                    mono
+                    inputSize="sm"
+                    className="w-auto"
                     value={arg.type}
                     onChange={(e) =>
                       updateFn((f) => {
@@ -264,12 +241,11 @@ export function RpcDetail() {
                         return { ...f, args: newArgs };
                       })
                     }
-                    className="px-2 py-1 rounded-sm border border-border bg-input text-xs font-mono text-foreground cursor-pointer focus:outline-none focus:border-ring"
                   >
                     {POSTGRES_TYPES.map((t) => (
                       <option key={t} value={t}>{t}</option>
                     ))}
-                  </select>
+                  </Select>
                   <Toggle
                     checked={arg.required}
                     onChange={(v) =>
@@ -283,69 +259,52 @@ export function RpcDetail() {
                     }
                     label="Required"
                   />
-                  <button
+                  <Button
+                    variant="danger-ghost"
+                    size="icon"
+                    className="ml-auto"
+                    aria-label={`Delete ${arg.name}`}
                     onClick={() =>
                       updateFn((f) => ({
                         ...f,
                         args: (f.args || []).filter((_, i) => i !== idx),
                       }))
                     }
-                    className="ml-auto p-1 rounded-sm hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
                   >
                     <Trash2 size={13} />
-                  </button>
-                </div>
+                  </Button>
+                </Panel>
               ))}
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">No arguments defined.</p>
           )}
-        </div>
+        </Section>
 
-        {/* Test Pane */}
-        <div className="border-t border-border pt-4">
-          <button
-            onClick={() => setShowTest(!showTest)}
-            className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-          >
-            {showTest ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-            Test Function
-          </button>
-          {showTest && (
-            <div className="mt-3 space-y-3">
-              {args.map((arg) => (
-                <div key={arg.name}>
-                  <label className="block text-xs font-medium text-muted-foreground mb-1">{arg.name}</label>
-                  <input
-                    type="text"
-                    value={testInputs[arg.name] || ""}
-                    onChange={(e) =>
-                      setTestInputs((prev) => ({ ...prev, [arg.name]: e.target.value }))
-                    }
-                    className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm font-mono text-foreground focus:outline-none focus:border-ring transition-colors"
-                  />
-                </div>
-              ))}
-              <button
-                onClick={runTest}
-                disabled={testLoading}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-accent text-background text-sm font-medium hover:bg-accent-hover transition-colors disabled:opacity-50 cursor-pointer"
-              >
-                {testLoading ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : (
-                  <Play size={14} />
-                )}
-                Run
-              </button>
-              {testResult && (
-                <pre className="p-4 rounded-lg bg-primary border border-border text-xs font-mono text-foreground overflow-x-auto max-h-64 overflow-y-auto">
-                  {testResult}
-                </pre>
-              )}
-            </div>
-          )}
-        </div>
+        <Disclosure label="Test Function">
+          <div className="space-y-3">
+            {args.map((arg) => (
+              <Field key={arg.name} label={arg.name}>
+                <Input
+                  mono
+                  value={testInputs[arg.name] || ""}
+                  onChange={(e) =>
+                    setTestInputs((prev) => ({ ...prev, [arg.name]: e.target.value }))
+                  }
+                />
+              </Field>
+            ))}
+            <Button onClick={runTest} loading={testLoading}>
+              {!testLoading && <Play size={14} />}
+              Run
+            </Button>
+            {testResult && (
+              <Panel className="p-4 overflow-x-auto max-h-64 overflow-y-auto">
+                <pre className="text-xs font-mono text-foreground">{testResult}</pre>
+              </Panel>
+            )}
+          </div>
+        </Disclosure>
       </div>
 
       <SaveBar onSave={handleSave} saving={saving} errors={saveErrors} dirty={dirty} />

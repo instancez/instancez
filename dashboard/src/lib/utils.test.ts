@@ -7,7 +7,6 @@ import {
   POSTGRES_TYPES,
   SQL_DEFAULTS,
   RLS_OPERATIONS,
-  SEARCH_CONFIGS,
   CORS_METHODS,
 } from "./utils";
 
@@ -116,11 +115,6 @@ describe("constants", () => {
 
   it("RLS_OPERATIONS has CRUD operations", () => {
     expect(RLS_OPERATIONS).toEqual(["select", "insert", "update", "delete"]);
-  });
-
-  it("SEARCH_CONFIGS includes english", () => {
-    expect(SEARCH_CONFIGS).toContain("english");
-    expect(SEARCH_CONFIGS).toContain("simple");
   });
 
   it("CORS_METHODS has standard methods", () => {

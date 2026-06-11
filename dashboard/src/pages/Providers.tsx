@@ -2,8 +2,9 @@ import { useState, useEffect } from "react";
 import { useConfig } from "../hooks/useConfig";
 import { PageHeader } from "../components/PageHeader";
 import { SaveBar } from "../components/SaveBar";
+import { CheckCard, Panel, Section } from "../components/ui";
 import type { Config } from "../lib/types";
-import { Mail, HardDrive, CheckCircle2 } from "lucide-react";
+import { Mail, HardDrive } from "lucide-react";
 
 const EMAIL_PROVIDERS = [
   {
@@ -47,6 +48,65 @@ const STORAGE_PROVIDERS = [
   },
 ] as const;
 
+interface ProviderOption {
+  readonly value: string;
+  readonly label: string;
+  readonly description: string;
+  readonly envVars: readonly string[];
+}
+
+/** Provider picker + required-env readout, shared by both provider kinds. */
+function ProviderPicker({
+  options,
+  selected,
+  onSelect,
+  emptyNote,
+}: {
+  options: readonly ProviderOption[];
+  selected: string | null;
+  onSelect: (value: string | null) => void;
+  emptyNote: string;
+}) {
+  const active = options.find((p) => p.value === selected);
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-3">
+        {options.map((provider) => (
+          <CheckCard
+            key={provider.value}
+            selected={selected === provider.value}
+            onClick={() =>
+              onSelect(selected === provider.value ? null : provider.value)
+            }
+            title={provider.label}
+            description={provider.description}
+          />
+        ))}
+      </div>
+
+      {active ? (
+        <Panel className="px-4 py-3 space-y-2">
+          <p className="text-xs font-medium text-foreground">
+            Required environment variables
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {active.envVars.map((v) => (
+              <code
+                key={v}
+                className="px-2 py-0.5 rounded-md bg-muted border border-border text-xs font-mono text-muted-foreground"
+              >
+                {v}
+              </code>
+            ))}
+          </div>
+        </Panel>
+      ) : (
+        <p className="text-xs text-muted-foreground/60 italic">{emptyNote}</p>
+      )}
+    </>
+  );
+}
+
 export function ProvidersPage() {
   const { config, save, saving, saveErrors } = useConfig();
   const [local, setLocal] = useState<Config | null>(null);
@@ -85,150 +145,48 @@ export function ProvidersPage() {
         description="Configure email and storage providers for your project"
       />
 
-      <div className="px-8 space-y-10 max-w-3xl">
-        {/* Email Provider */}
-        <section className="space-y-4">
-          <div className="flex items-center gap-2">
-            <Mail size={16} className="text-muted-foreground" />
-            <h2 className="text-sm font-semibold text-foreground">Email Provider</h2>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Used for sending verification emails, password resets, and event notifications.
-          </p>
+      <div className="px-8 pb-8 space-y-6 max-w-3xl">
+        <Section
+          title="Email Provider"
+          description="Used for sending verification emails, password resets, and event notifications"
+          icon={Mail}
+        >
+          <ProviderPicker
+            options={EMAIL_PROVIDERS}
+            selected={selectedEmail}
+            onSelect={(value) =>
+              update((c) => ({
+                ...c,
+                providers: {
+                  ...c.providers,
+                  email: value ? { type: value } : null,
+                },
+              }))
+            }
+            emptyNote="No email provider configured. Email-dependent features (verification, notifications) will be disabled."
+          />
+        </Section>
 
-          <div className="grid grid-cols-2 gap-3">
-            {EMAIL_PROVIDERS.map((provider) => {
-              const active = selectedEmail === provider.value;
-              return (
-                <button
-                  key={provider.value}
-                  type="button"
-                  onClick={() =>
-                    update((c) => ({
-                      ...c,
-                      providers: {
-                        ...c.providers,
-                        email: active ? null : { type: provider.value },
-                      },
-                    }))
-                  }
-                  className={`relative text-left px-4 py-3 rounded-lg border transition-all cursor-pointer ${
-                    active
-                      ? "border-accent bg-accent/5"
-                      : "border-border bg-surface hover:border-border-hover"
-                  }`}
-                >
-                  {active && (
-                    <CheckCircle2
-                      size={14}
-                      className="absolute top-3 right-3 text-accent"
-                    />
-                  )}
-                  <p className="text-sm font-medium text-foreground">{provider.label}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {provider.description}
-                  </p>
-                </button>
-              );
-            })}
-          </div>
-
-          {selectedEmail && (
-            <div className="rounded-lg border border-border bg-surface/50 px-4 py-3 space-y-2">
-              <p className="text-xs font-medium text-foreground">Required environment variables</p>
-              <div className="flex flex-wrap gap-2">
-                {EMAIL_PROVIDERS.find((p) => p.value === selectedEmail)?.envVars.map(
-                  (v) => (
-                    <code
-                      key={v}
-                      className="px-2 py-0.5 rounded-sm bg-background border border-border text-xs font-mono text-muted-foreground"
-                    >
-                      {v}
-                    </code>
-                  )
-                )}
-              </div>
-            </div>
-          )}
-
-          {!selectedEmail && (
-            <p className="text-xs text-muted-foreground/60 italic">
-              No email provider configured. Email-dependent features (verification, notifications) will be disabled.
-            </p>
-          )}
-        </section>
-
-        {/* Storage Provider */}
-        <section className="space-y-4">
-          <div className="flex items-center gap-2">
-            <HardDrive size={16} className="text-muted-foreground" />
-            <h2 className="text-sm font-semibold text-foreground">Storage Provider</h2>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Used for file uploads and object storage via storage buckets.
-          </p>
-
-          <div className="grid grid-cols-2 gap-3">
-            {STORAGE_PROVIDERS.map((provider) => {
-              const active = selectedStorage === provider.value;
-              return (
-                <button
-                  key={provider.value}
-                  type="button"
-                  onClick={() =>
-                    update((c) => ({
-                      ...c,
-                      providers: {
-                        ...c.providers,
-                        storage: active ? null : { type: provider.value },
-                      },
-                    }))
-                  }
-                  className={`relative text-left px-4 py-3 rounded-lg border transition-all cursor-pointer ${
-                    active
-                      ? "border-accent bg-accent/5"
-                      : "border-border bg-surface hover:border-border-hover"
-                  }`}
-                >
-                  {active && (
-                    <CheckCircle2
-                      size={14}
-                      className="absolute top-3 right-3 text-accent"
-                    />
-                  )}
-                  <p className="text-sm font-medium text-foreground">{provider.label}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {provider.description}
-                  </p>
-                </button>
-              );
-            })}
-          </div>
-
-          {selectedStorage && (
-            <div className="rounded-lg border border-border bg-surface/50 px-4 py-3 space-y-2">
-              <p className="text-xs font-medium text-foreground">Required environment variables</p>
-              <div className="flex flex-wrap gap-2">
-                {STORAGE_PROVIDERS.find((p) => p.value === selectedStorage)?.envVars.map(
-                  (v) => (
-                    <code
-                      key={v}
-                      className="px-2 py-0.5 rounded-sm bg-background border border-border text-xs font-mono text-muted-foreground"
-                    >
-                      {v}
-                    </code>
-                  )
-                )}
-              </div>
-            </div>
-          )}
-
-          {!selectedStorage && (
-            <p className="text-xs text-muted-foreground/60 italic">
-              No storage provider configured. File upload features will be disabled.
-            </p>
-          )}
-        </section>
+        <Section
+          title="Storage Provider"
+          description="Used for file uploads and object storage via storage buckets"
+          icon={HardDrive}
+        >
+          <ProviderPicker
+            options={STORAGE_PROVIDERS}
+            selected={selectedStorage}
+            onSelect={(value) =>
+              update((c) => ({
+                ...c,
+                providers: {
+                  ...c.providers,
+                  storage: value ? { type: value } : null,
+                },
+              }))
+            }
+            emptyNote="No storage provider configured. File upload features will be disabled."
+          />
+        </Section>
       </div>
 
       <SaveBar onSave={handleSave} saving={saving} errors={saveErrors} dirty={dirty} />

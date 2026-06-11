@@ -1,14 +1,7 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useState, useEffect, useCallback } from "react";
 import * as Tabs from "@radix-ui/react-tabs";
-import {
-  ArrowLeft,
-  Plus,
-  Trash2,
-  GripVertical,
-  ChevronDown,
-  ChevronUp,
-} from "lucide-react";
+import { Plus, Trash2, GripVertical } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
 import { useDialog } from "../components/Dialog";
 import { PageHeader } from "../components/PageHeader";
@@ -16,11 +9,24 @@ import { SaveBar } from "../components/SaveBar";
 import { CodeEditor } from "../components/CodeEditor";
 import { TagInput } from "../components/TagInput";
 import { Toggle } from "../components/Toggle";
-import { Checkbox } from "../components/Checkbox";
 import { DiffViewer } from "../components/DiffViewer";
+import { RlsPolicyCard } from "../components/RlsPolicyCard";
+import {
+  Button,
+  Disclosure,
+  Field as UiField,
+  Input,
+  Panel,
+  Select,
+} from "../components/ui";
 import { getConfigDiff } from "../api/client";
-import { POSTGRES_TYPES, SQL_DEFAULTS, RLS_OPERATIONS, SEARCH_CONFIGS } from "../lib/utils";
-import type { Table, Field, Index, RLSPolicy, DiffResponse } from "../lib/types";
+import { POSTGRES_TYPES, SQL_DEFAULTS } from "../lib/utils";
+import type { Table, Field, DiffResponse } from "../lib/types";
+
+const RLS_QUICK_FILLS = [
+  { label: "Owner only", expr: "user_id = auth.uid()" },
+  { label: "Authenticated", expr: "auth.is_authenticated()" },
+];
 
 export function TableDetail() {
   const { name } = useParams<{ name: string }>();
@@ -30,7 +36,6 @@ export function TableDetail() {
   const [table, setTable] = useState<Table | null>(null);
   const [seeds, setSeeds] = useState<Record<string, unknown>[]>([]);
   const [dirty, setDirty] = useState(false);
-  const [showPreview, setShowPreview] = useState(false);
   const [diff, setDiff] = useState<DiffResponse | null>(null);
 
   useEffect(() => {
@@ -79,10 +84,6 @@ export function TableDetail() {
     }
   }
 
-  useEffect(() => {
-    if (showPreview) loadDiff();
-  }, [showPreview]);
-
   async function deleteTable() {
     if (!config || !name) return;
     if (!(await dialog.confirm(`Delete table "${name}"?`, { message: "This will drop the table and all its data.", confirmText: name }))) return;
@@ -117,30 +118,14 @@ export function TableDetail() {
       <PageHeader
         title={name}
         description={`${fieldEntries.length} fields, ${(table.indexes || []).length} indexes, ${(table.rls || []).length} RLS policies`}
-        actions={
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => navigate("/tables")}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
-            >
-              <ArrowLeft size={14} />
-              Back
-            </button>
-            <button
-              onClick={deleteTable}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-destructive/30 text-sm text-destructive hover:bg-destructive/10 transition-colors cursor-pointer"
-            >
-              <Trash2 size={14} />
-              Delete
-            </button>
-          </div>
-        }
+        backTo="/tables"
+        onDelete={deleteTable}
       />
 
-      <div className="px-8">
+      <div className="px-8 pb-8">
         <Tabs.Root defaultValue="fields">
           <Tabs.List className="flex gap-1 border-b border-border mb-6">
-            {["Fields", "Indexes", "RLS", "Search", "Seeds"].map((tab) => (
+            {["Fields", "Indexes", "RLS", "Seeds"].map((tab) => (
               <Tabs.Trigger
                 key={tab}
                 value={tab.toLowerCase()}
@@ -199,7 +184,10 @@ export function TableDetail() {
                 </tbody>
               </table>
             </div>
-            <button
+            <Button
+              variant="dashed"
+              size="sm"
+              className="mt-3"
               onClick={() => {
                 const fieldName = `new_field_${fieldEntries.length + 1}`;
                 updateTable((t) => ({
@@ -210,24 +198,19 @@ export function TableDetail() {
                   },
                 }));
               }}
-              className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dashed border-border text-sm text-muted-foreground hover:text-foreground hover:border-border-hover transition-colors cursor-pointer"
             >
               <Plus size={14} />
               Add Field
-            </button>
+            </Button>
           </Tabs.Content>
 
           {/* Indexes Tab */}
           <Tabs.Content value="indexes">
             <div className="space-y-3">
               {(table.indexes || []).map((idx, i) => (
-                <div
-                  key={i}
-                  className="flex items-start gap-3 p-4 rounded-lg border border-border bg-primary"
-                >
+                <Panel key={i} className="flex items-start gap-3 p-4">
                   <div className="flex-1 space-y-3">
-                    <div>
-                      <label className="block text-xs font-medium text-muted-foreground mb-1">Columns</label>
+                    <UiField label="Columns">
                       <TagInput
                         value={idx.columns}
                         onChange={(cols) =>
@@ -240,7 +223,7 @@ export function TableDetail() {
                         suggestions={allTableColumns}
                         placeholder="Select columns..."
                       />
-                    </div>
+                    </UiField>
                     <div className="flex gap-4">
                       <Toggle
                         checked={idx.unique}
@@ -254,8 +237,8 @@ export function TableDetail() {
                         label="Unique"
                       />
                       <div className="flex-1">
-                        <input
-                          type="text"
+                        <Input
+                          mono
                           value={idx.where || ""}
                           onChange={(e) =>
                             updateTable((t) => {
@@ -265,25 +248,28 @@ export function TableDetail() {
                             })
                           }
                           placeholder="WHERE clause (optional)"
-                          className="w-full px-3 py-1.5 rounded-lg border border-border bg-input text-sm text-foreground font-mono placeholder:text-muted-foreground focus:outline-none focus:border-ring transition-colors"
                         />
                       </div>
                     </div>
                   </div>
-                  <button
+                  <Button
+                    variant="danger-ghost"
+                    size="icon"
+                    aria-label="Delete index"
                     onClick={() =>
                       updateTable((t) => ({
                         ...t,
                         indexes: (t.indexes || []).filter((_, j) => j !== i),
                       }))
                     }
-                    className="p-1.5 rounded-sm hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
                   >
                     <Trash2 size={14} />
-                  </button>
-                </div>
+                  </Button>
+                </Panel>
               ))}
-              <button
+              <Button
+                variant="dashed"
+                size="sm"
                 onClick={() =>
                   updateTable((t) => ({
                     ...t,
@@ -293,11 +279,10 @@ export function TableDetail() {
                     ],
                   }))
                 }
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dashed border-border text-sm text-muted-foreground hover:text-foreground hover:border-border-hover transition-colors cursor-pointer"
               >
                 <Plus size={14} />
                 Add Index
-              </button>
+              </Button>
             </div>
           </Tabs.Content>
 
@@ -305,112 +290,28 @@ export function TableDetail() {
           <Tabs.Content value="rls">
             <div className="space-y-3">
               {(table.rls || []).map((policy, i) => (
-                <div
+                <RlsPolicyCard
                   key={i}
-                  className="p-4 rounded-lg border border-border bg-primary space-y-3"
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="space-y-3">
-                      <div>
-                        <label className="block text-xs font-medium text-muted-foreground mb-2">Type</label>
-                        <div className="flex gap-1">
-                          {(["permissive", "restrictive"] as const).map((t) => (
-                            <button
-                              key={t}
-                              type="button"
-                              onClick={() =>
-                                updateTable((tbl) => {
-                                  const rls = [...(tbl.rls || [])];
-                                  rls[i] = { ...rls[i]!, type: t };
-                                  return { ...tbl, rls };
-                                })
-                              }
-                              className={`px-2.5 py-1 rounded-sm text-xs font-medium transition-colors cursor-pointer ${
-                                (policy.type || "permissive") === t
-                                  ? t === "restrictive"
-                                    ? "hazard border border-dashed border-foreground/40 text-foreground"
-                                    : "bg-accent/15 text-accent border border-accent/30"
-                                  : "border border-border text-muted-foreground hover:text-foreground hover:bg-surface-hover"
-                              }`}
-                            >
-                              {t}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-muted-foreground mb-2">Operations</label>
-                        <div className="flex gap-2">
-                          {RLS_OPERATIONS.map((op) => (
-                            <Checkbox
-                              key={op}
-                              className="text-xs"
-                              label={op}
-                              checked={(policy.operations || []).includes(op)}
-                              onChange={(c) =>
-                                updateTable((t) => {
-                                  const rls = [...(t.rls || [])];
-                                  const ops = c
-                                    ? [...(rls[i]!.operations || []), op]
-                                    : (rls[i]!.operations || []).filter((o) => o !== op);
-                                  rls[i] = { ...rls[i]!, operations: ops };
-                                  return { ...t, rls };
-                                })
-                              }
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() =>
-                        updateTable((t) => ({
-                          ...t,
-                          rls: (t.rls || []).filter((_, j) => j !== i),
-                        }))
-                      }
-                      className="p-1.5 rounded-sm hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-muted-foreground mb-1">Check Expression</label>
-                    <CodeEditor
-                      value={policy.check || ""}
-                      onChange={(val) =>
-                        updateTable((t) => {
-                          const rls = [...(t.rls || [])];
-                          rls[i] = { ...rls[i]!, check: val };
-                          return { ...t, rls };
-                        })
-                      }
-                      minHeight="60px"
-                    />
-                    <div className="flex gap-2 mt-2">
-                      {[
-                        { label: "Owner only", expr: "user_id = auth.uid()" },
-                        { label: "Authenticated", expr: "auth.is_authenticated()" },
-                      ].map(({ label, expr }) => (
-                        <button
-                          key={label}
-                          onClick={() =>
-                            updateTable((t) => {
-                              const rls = [...(t.rls || [])];
-                              rls[i] = { ...rls[i]!, check: expr };
-                              return { ...t, rls };
-                            })
-                          }
-                          className="px-2 py-1 rounded-sm border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
+                  policy={policy}
+                  quickFills={RLS_QUICK_FILLS}
+                  onChange={(p) =>
+                    updateTable((t) => {
+                      const rls = [...(t.rls || [])];
+                      rls[i] = p;
+                      return { ...t, rls };
+                    })
+                  }
+                  onDelete={() =>
+                    updateTable((t) => ({
+                      ...t,
+                      rls: (t.rls || []).filter((_, j) => j !== i),
+                    }))
+                  }
+                />
               ))}
-              <button
+              <Button
+                variant="dashed"
+                size="sm"
                 onClick={() =>
                   updateTable((t) => ({
                     ...t,
@@ -420,56 +321,10 @@ export function TableDetail() {
                     ],
                   }))
                 }
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dashed border-border text-sm text-muted-foreground hover:text-foreground hover:border-border-hover transition-colors cursor-pointer"
               >
                 <Plus size={14} />
                 Add RLS Policy
-              </button>
-            </div>
-          </Tabs.Content>
-
-          {/* Search Tab */}
-          <Tabs.Content value="search">
-            <div className="space-y-4 max-w-lg">
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-2">Search Config</label>
-                <select
-                  value={table.search_config || "english"}
-                  onChange={(e) =>
-                    updateTable((t) => ({ ...t, search_config: e.target.value }))
-                  }
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm text-foreground focus:outline-none focus:border-ring transition-colors cursor-pointer"
-                >
-                  {SEARCH_CONFIGS.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-2">Searchable Columns</label>
-                <div className="space-y-1.5">
-                  {fieldEntries
-                    .filter(([_, f]) => f.type === "text" || f.type?.startsWith("varchar"))
-                    .map(([fieldName]) => (
-                      <Checkbox
-                        key={fieldName}
-                        className="text-sm"
-                        label={<span className="font-mono">{fieldName}</span>}
-                        checked={(table.searchable || []).includes(fieldName)}
-                        onChange={(c) =>
-                          updateTable((t) => ({
-                            ...t,
-                            searchable: c
-                              ? [...(t.searchable || []), fieldName]
-                              : (t.searchable || []).filter((s) => s !== fieldName),
-                          }))
-                        }
-                      />
-                    ))}
-                </div>
-              </div>
+              </Button>
             </div>
           </Tabs.Content>
 
@@ -488,22 +343,10 @@ export function TableDetail() {
         </Tabs.Root>
 
         {/* Preview Pane */}
-        <div className="mt-8 border-t border-border pt-4">
-          <button
-            onClick={() => setShowPreview(!showPreview)}
-            className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-          >
-            {showPreview ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-            Migration Preview
-          </button>
-          {showPreview && diff && (
-            <div className="mt-3">
-              <DiffViewer
-                statements={diff.statements}
-                isDestructive={diff.is_destructive}
-              />
-            </div>
-          )}
+        <div className="mt-8">
+          <Disclosure label="Migration Preview">
+            <MigrationPreview diff={diff} onOpen={loadDiff} />
+          </Disclosure>
         </div>
       </div>
 
@@ -514,6 +357,25 @@ export function TableDetail() {
         dirty={dirty}
       />
     </div>
+  );
+}
+
+function MigrationPreview({
+  diff,
+  onOpen,
+}: {
+  diff: DiffResponse | null;
+  onOpen: () => void;
+}) {
+  // Fetch the diff when the pane is first revealed.
+  useEffect(() => {
+    onOpen();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (!diff) return null;
+  return (
+    <DiffViewer statements={diff.statements} isDestructive={diff.is_destructive} />
   );
 }
 
@@ -574,22 +436,25 @@ function SeedsTab({
                             }}
                           />
                         ) : field.enum && field.enum.length > 0 ? (
-                          <select
+                          <Select
+                            mono
+                            inputSize="sm"
                             value={String(row[fieldName] ?? "")}
                             onChange={(e) => {
                               const updated = [...seeds];
                               updated[rowIdx] = { ...updated[rowIdx]!, [fieldName]: e.target.value };
                               onChange(updated);
                             }}
-                            className="w-full px-2 py-0.5 rounded-sm border border-border bg-input text-xs font-mono text-foreground cursor-pointer focus:outline-none focus:border-ring"
                           >
                             <option value="">—</option>
                             {field.enum.map((v) => (
                               <option key={v} value={v}>{v}</option>
                             ))}
-                          </select>
+                          </Select>
                         ) : (
-                          <input
+                          <Input
+                            mono
+                            inputSize="sm"
                             type={
                               field.type === "integer" || field.type === "bigint"
                                 ? "number"
@@ -602,21 +467,22 @@ function SeedsTab({
                               onChange(updated);
                             }}
                             placeholder="—"
-                            className="w-full px-2 py-0.5 rounded-sm border border-border bg-input text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-ring transition-colors"
                           />
                         )}
                       </td>
                     ))}
                     <td className="px-1 py-1.5">
-                      <button
+                      <Button
+                        variant="danger-ghost"
+                        size="icon"
+                        aria-label={`Delete row ${rowIdx + 1}`}
                         onClick={async () => {
                           if (!(await dialog.confirm(`Delete row ${rowIdx + 1}?`))) return;
                           onChange(seeds.filter((_, i) => i !== rowIdx));
                         }}
-                        className="p-1 rounded-sm hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
                       >
                         <Trash2 size={12} />
-                      </button>
+                      </Button>
                     </td>
                   </tr>
                 ))}
@@ -624,7 +490,10 @@ function SeedsTab({
             </table>
           </div>
 
-          <button
+          <Button
+            variant="dashed"
+            size="sm"
+            className="mt-3"
             onClick={() => {
               const newRow: Record<string, unknown> = {};
               tableFields.forEach(([fieldName]) => {
@@ -632,11 +501,10 @@ function SeedsTab({
               });
               onChange([...seeds, newRow]);
             }}
-            className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dashed border-border text-sm text-muted-foreground hover:text-foreground hover:border-border-hover transition-colors cursor-pointer"
           >
             <Plus size={14} />
             Add Row
-          </button>
+          </Button>
         </>
       )}
     </div>
@@ -669,7 +537,9 @@ function FieldRow({
       </td>
       <td className="px-3 py-2">
         {editingName ? (
-          <input
+          <Input
+            mono
+            inputSize="sm"
             autoFocus
             value={localName}
             onChange={(e) => setLocalName(e.target.value)}
@@ -683,7 +553,6 @@ function FieldRow({
                 if (localName !== name && localName.trim()) onRename(localName.trim());
               }
             }}
-            className="w-full px-2 py-0.5 rounded-sm border border-ring bg-input text-sm font-mono text-foreground focus:outline-none"
           />
         ) : (
           <button
@@ -695,17 +564,18 @@ function FieldRow({
         )}
       </td>
       <td className="px-3 py-2">
-        <select
+        <Select
+          mono
+          inputSize="sm"
           value={field.type || (field.foreign_key ? "bigint" : "text")}
           onChange={(e) => onChange({ ...field, type: e.target.value })}
-          className="w-full px-2 py-0.5 rounded-sm border border-border bg-input text-sm font-mono text-foreground focus:outline-none focus:border-ring transition-colors cursor-pointer"
         >
           {POSTGRES_TYPES.map((t) => (
             <option key={t} value={t}>
               {t}
             </option>
           ))}
-        </select>
+        </Select>
       </td>
       <td className="px-2 py-2">
         <div className="flex justify-center">
@@ -735,15 +605,15 @@ function FieldRow({
         </div>
       </td>
       <td className="px-3 py-2">
-        <input
-          type="text"
+        <Input
+          mono
+          inputSize="sm"
           value={String(field.default ?? "")}
           onChange={(e) =>
             onChange({ ...field, default: e.target.value || undefined })
           }
           placeholder="—"
           list="sql-defaults"
-          className="w-full px-2 py-0.5 rounded-sm border border-border bg-input text-sm font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-ring transition-colors"
         />
         <datalist id="sql-defaults">
           {SQL_DEFAULTS.map((d) => (
@@ -752,7 +622,9 @@ function FieldRow({
         </datalist>
       </td>
       <td className="px-3 py-2">
-        <select
+        <Select
+          mono
+          inputSize="sm"
           value={field.foreign_key?.references || ""}
           onChange={(e) =>
             onChange({
@@ -762,7 +634,6 @@ function FieldRow({
                 : undefined,
             })
           }
-          className="w-full px-2 py-0.5 rounded-sm border border-border bg-input text-sm font-mono text-foreground focus:outline-none focus:border-ring transition-colors cursor-pointer"
         >
           <option value="">—</option>
           {fkOptions.map((fk) => (
@@ -770,16 +641,17 @@ function FieldRow({
               {fk}
             </option>
           ))}
-        </select>
+        </Select>
       </td>
       <td className="px-1 py-2">
-        <button
-          onClick={onDelete}
-          className="p-1 rounded-sm hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
+        <Button
+          variant="danger-ghost"
+          size="icon"
           aria-label={`Delete field ${name}`}
+          onClick={onDelete}
         >
           <Trash2 size={13} />
-        </button>
+        </Button>
       </td>
     </tr>
   );

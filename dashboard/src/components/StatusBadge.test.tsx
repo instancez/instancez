@@ -11,7 +11,7 @@ describe("StatusBadge", () => {
   it("applies success variant styles", () => {
     render(<StatusBadge variant="success">OK</StatusBadge>);
     const badge = screen.getByText("OK");
-    expect(badge.className).toContain("text-accent");
+    expect(badge.className).toContain("text-success");
   });
 
   it("applies error variant styles", () => {

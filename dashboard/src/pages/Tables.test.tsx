@@ -61,8 +61,8 @@ describe("Tables", () => {
     const config = {
       ...baseConfig,
       tables: {
-        zebras: { fields: { id: { type: "bigserial", primary_key: true } }, indexes: [], rls: [], searchable: [], search_config: "" },
-        apples: { fields: { id: { type: "bigserial", primary_key: true }, name: { type: "text" } }, indexes: [], rls: [], searchable: [], search_config: "" },
+        zebras: { fields: { id: { type: "bigserial", primary_key: true } }, indexes: [], rls: [] },
+        apples: { fields: { id: { type: "bigserial", primary_key: true }, name: { type: "text" } }, indexes: [], rls: [] },
       },
     };
     renderTables(config as any);
@@ -81,8 +81,6 @@ describe("Tables", () => {
           indexes: [],
           rls: [],
           
-          searchable: [],
-          search_config: "",
         },
       },
     };
@@ -99,8 +97,6 @@ describe("Tables", () => {
           indexes: [],
           rls: [{ operations: ["select"], check: "true" }],
           
-          searchable: [],
-          search_config: "",
         },
       },
     };
@@ -113,8 +109,8 @@ describe("Tables", () => {
     const config = {
       ...baseConfig,
       tables: {
-        a: { fields: {}, indexes: [], rls: [], searchable: [], search_config: "" },
-        b: { fields: {}, indexes: [], rls: [], searchable: [], search_config: "" },
+        a: { fields: {}, indexes: [], rls: [] },
+        b: { fields: {}, indexes: [], rls: [] },
       },
     };
     renderTables(config as any);

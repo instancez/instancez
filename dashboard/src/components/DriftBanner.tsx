@@ -8,10 +8,10 @@ export function DriftBanner({ status }: Props) {
   return (
     <div
       role="alert"
-      className="hazard bg-background border-b border-border-hover px-4 py-3 text-sm text-foreground"
+      className="border-t border-warning/30 bg-warning/10 px-4 py-2.5 text-sm text-foreground"
     >
       <span className="inline-flex items-start gap-2">
-        <TriangleAlert size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+        <TriangleAlert size={14} className="mt-0.5 shrink-0 text-warning" aria-hidden="true" />
         <span>
           <strong>Configuration drift.</strong>{" "}
           The source <code className="font-mono">{status.config_source}</code> has changes that

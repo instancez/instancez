@@ -1,4 +1,5 @@
-import { Loader2, Save } from "lucide-react";
+import { Save } from "lucide-react";
+import { Button } from "./ui";
 import type { ValidationError } from "../lib/types";
 
 interface SaveBarProps {
@@ -11,8 +12,10 @@ interface SaveBarProps {
 export function SaveBar({ onSave, saving, errors, dirty = true }: SaveBarProps) {
   if (!dirty && errors.length === 0) return null;
 
+  // Floats inside the content card: 8px page margin + 240px sidebar +
+  // 8px gap + 16px inset = 272px from the viewport's left edge.
   return (
-    <div className="fixed bottom-0 left-[272px] right-0 z-30 border-t border-border-hover bg-background/95 backdrop-blur-sm px-8 py-3">
+    <div className="fixed bottom-6 left-[272px] right-6 z-30 rounded-xl border border-border bg-surface shadow-lifted px-5 py-3 animate-rise">
       <div className="flex items-center justify-between gap-4">
         <div className="flex-1 min-w-0">
           {errors.length > 0 && (
@@ -39,18 +42,10 @@ export function SaveBar({ onSave, saving, errors, dirty = true }: SaveBarProps) 
             </div>
           )}
         </div>
-        <button
-          onClick={onSave}
-          disabled={saving}
-          className="inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-accent text-background text-sm font-medium hover:bg-accent-hover transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
-        >
-          {saving ? (
-            <Loader2 size={14} className="animate-spin" />
-          ) : (
-            <Save size={14} />
-          )}
+        <Button onClick={onSave} loading={saving}>
+          {!saving && <Save size={14} />}
           {saving ? "Saving..." : "Save Changes"}
-        </button>
+        </Button>
       </div>
     </div>
   );

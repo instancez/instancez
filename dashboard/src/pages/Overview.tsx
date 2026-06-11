@@ -1,18 +1,13 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import {
-  Table2,
-  Shield,
-  HardDrive,
-  Server,
-  RefreshCw,
-} from "lucide-react";
+import { Table2, Shield, HardDrive, RefreshCw } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
 import { getStats, getStatus, getConfig } from "../api/client";
 import { downloadYamlFromConfig } from "../lib/downloadYaml";
 import { PageHeader } from "../components/PageHeader";
 import { Card, CardTitle, CardValue } from "../components/Card";
 import { StatusBadge } from "../components/StatusBadge";
+import { Button, ListRow, Section } from "../components/ui";
 import { formatBytes } from "../lib/utils";
 import type { StatsResponse } from "../lib/types";
 
@@ -49,7 +44,6 @@ export function Overview() {
 
   const tableCount = Object.keys(config.tables || {}).length;
   const bucketCount = Object.keys(config.storage || {}).length;
-  const functionCount = Object.keys(config.functions || {}).length;
   const authEnabled = !!config.auth;
 
   const totalStorage = stats
@@ -62,22 +56,20 @@ export function Overview() {
         title={config.project.name || "instancez project"}
         description={config.project.description || "Project overview and health"}
         actions={
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleDownload}
-              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
-            >
+          <>
+            <Button variant="outline" size="sm" onClick={handleDownload}>
               Download config as YAML
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               onClick={loadData}
               disabled={loading}
-              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
             >
               <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
               Refresh
-            </button>
-          </div>
+            </Button>
+          </>
         }
       />
 
@@ -105,7 +97,7 @@ export function Overview() {
         </div>
 
         {/* Summary Cards */}
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 animate-rise">
           <Card hoverable onClick={() => navigate("/tables")}>
             <div className="flex items-center justify-between">
               <CardTitle>Tables</CardTitle>
@@ -143,71 +135,52 @@ export function Overview() {
               {formatBytes(totalStorage)} used
             </p>
           </Card>
-
         </div>
 
         {/* Tables Detail */}
         {tableCount > 0 && (
-          <Card>
-            <h3 className="text-sm font-medium text-foreground mb-4">
-              Tables
-            </h3>
+          <Section title="Tables">
             <div className="space-y-2">
               {Object.entries(config.tables).map(([name, table]) => (
-                <button
+                <ListRow
                   key={name}
+                  icon={Table2}
+                  title={name}
+                  meta={`${Object.keys(table.fields || {}).length} fields`}
                   onClick={() => navigate(`/tables/${name}`)}
-                  className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-surface-hover transition-colors cursor-pointer text-left"
-                >
-                  <div className="flex items-center gap-3">
-                    <Table2 size={14} className="text-muted-foreground" />
-                    <span className="text-sm font-mono text-foreground">
-                      {name}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {Object.keys(table.fields || {}).length} fields
-                    </span>
-                  </div>
-                </button>
+                />
               ))}
             </div>
-          </Card>
+          </Section>
         )}
 
         {/* Storage Buckets */}
         {bucketCount > 0 && stats && (
-          <Card>
-            <h3 className="text-sm font-medium text-foreground mb-4">
-              Storage Buckets
-            </h3>
+          <Section title="Storage Buckets">
             <div className="space-y-2">
               {Object.entries(config.storage).map(([name, bucket]) => (
-                <button
+                <ListRow
                   key={name}
+                  icon={HardDrive}
+                  title={name}
                   onClick={() => navigate(`/storage/${name}`)}
-                  className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-surface-hover transition-colors cursor-pointer text-left"
-                >
-                  <div className="flex items-center gap-3">
-                    <HardDrive size={14} className="text-muted-foreground" />
-                    <span className="text-sm font-mono text-foreground">
-                      {name}
-                    </span>
-                    {bucket.public && (
-                      <StatusBadge variant="info">public</StatusBadge>
-                    )}
-                  </div>
-                  <div className="text-right">
-                    <span className="text-sm text-muted-foreground tabular-nums">
-                      {stats.storage[name]?.object_count ?? 0} objects
-                    </span>
-                    <span className="text-xs text-muted-foreground ml-3">
-                      {formatBytes(stats.storage[name]?.total_bytes ?? 0)}
-                    </span>
-                  </div>
-                </button>
+                  badges={
+                    <>
+                      {bucket.public && (
+                        <StatusBadge variant="info">public</StatusBadge>
+                      )}
+                      <span className="text-sm text-muted-foreground tabular-nums">
+                        {stats.storage[name]?.object_count ?? 0} objects
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {formatBytes(stats.storage[name]?.total_bytes ?? 0)}
+                      </span>
+                    </>
+                  }
+                />
               ))}
             </div>
-          </Card>
+          </Section>
         )}
       </div>
     </div>

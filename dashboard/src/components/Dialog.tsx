@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useRef, useEffect, useCallback } from "react";
 import { X, AlertTriangle, Info, Trash2 } from "lucide-react";
+import { Button } from "./ui";
 
 type DialogType = "prompt" | "confirm" | "alert" | "select";
 
@@ -158,7 +159,7 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
           }`}
         >
           <div
-            className={`relative frame-ticks w-full max-w-[420px] mx-4 border transition-all duration-200 ease-out ${
+            className={`relative w-full max-w-[420px] mx-4 rounded-2xl overflow-hidden border shadow-lifted transition-all duration-200 ease-out ${
               dialog.type === "confirm" && dialog.destructive
                 ? "border-destructive/30 bg-surface"
                 : "border-border bg-surface"
@@ -194,7 +195,7 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
                         if (e.key === "Enter" && inputValue.trim()) handleConfirm();
                       }}
                       placeholder={dialog.placeholder || "Enter a name\u2026"}
-                      className="w-full px-4 py-3 rounded-xl border border-border bg-surface text-[15px] text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all font-medium"
+                      className="w-full px-4 py-3 rounded-lg border border-input-border bg-input text-[15px] text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all font-medium"
                     />
                     {dialog.message && (
                       <p className="text-xs text-muted-foreground/70 leading-relaxed">{dialog.message}</p>
@@ -202,19 +203,12 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
                   </div>
                 </div>
                 <div className="flex items-center justify-end gap-2.5 px-6 pb-5">
-                  <button
-                    onClick={handleCancel}
-                    className="px-4 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
-                  >
+                  <Button variant="ghost" onClick={handleCancel}>
                     Cancel
-                  </button>
-                  <button
-                    onClick={handleConfirm}
-                    disabled={!inputValue.trim()}
-                    className="px-5 py-2 rounded-lg text-sm font-medium bg-accent text-background hover:bg-accent-hover transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
+                  </Button>
+                  <Button onClick={handleConfirm} disabled={!inputValue.trim()}>
                     Create
-                  </button>
+                  </Button>
                 </div>
               </>
 
@@ -234,7 +228,7 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && selectValue) handleConfirm();
                       }}
-                      className="w-full px-4 py-3 rounded-xl border border-border bg-surface text-[15px] text-foreground focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all font-medium font-mono cursor-pointer appearance-none"
+                      className="w-full px-4 py-3 rounded-lg border border-input-border bg-input text-[15px] text-foreground focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all font-medium font-mono cursor-pointer appearance-none"
                     >
                       {(dialog.options || []).map((opt) => (
                         <option key={opt} value={opt}>{opt}</option>
@@ -246,27 +240,20 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
                   </div>
                 </div>
                 <div className="flex items-center justify-end gap-2.5 px-6 pb-5">
-                  <button
-                    onClick={handleCancel}
-                    className="px-4 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
-                  >
+                  <Button variant="ghost" onClick={handleCancel}>
                     Cancel
-                  </button>
-                  <button
-                    onClick={handleConfirm}
-                    disabled={!selectValue}
-                    className="px-5 py-2 rounded-lg text-sm font-medium bg-accent text-background hover:bg-accent-hover transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
+                  </Button>
+                  <Button onClick={handleConfirm} disabled={!selectValue}>
                     Select
-                  </button>
+                  </Button>
                 </div>
               </>
 
             ) : dialog.type === "confirm" && dialog.destructive ? (
               /* ── Destructive confirm variant ── */
               <>
-                {/* Hazard-stripe top bar */}
-                <div className="h-2 hazard bg-destructive/20 border-b border-destructive/30" />
+                {/* Danger accent top bar */}
+                <div className="h-1.5 bg-destructive/70" />
 
                 <div className="px-6 pt-5 pb-2">
                   <div className="flex items-start gap-3.5">
@@ -300,7 +287,7 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
                       placeholder={dialog.confirmText}
                       spellCheck={false}
                       autoComplete="off"
-                      className="w-full px-4 py-2.5 rounded-xl border border-destructive/30 bg-surface text-sm font-mono text-foreground placeholder:text-muted-foreground/30 focus:outline-none focus:border-destructive focus:ring-2 focus:ring-destructive/20 transition-all"
+                      className="w-full px-4 py-2.5 rounded-lg border border-destructive/30 bg-input text-sm font-mono text-foreground placeholder:text-muted-foreground/30 focus:outline-none focus:border-destructive focus:ring-2 focus:ring-destructive/20 transition-all"
                     />
                   </div>
                 )}
@@ -314,19 +301,16 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
                 </div>
 
                 <div className="flex items-center justify-end gap-2.5 px-6 pt-4 pb-5">
-                  <button
-                    onClick={handleCancel}
-                    className="px-4 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
-                  >
+                  <Button variant="ghost" onClick={handleCancel}>
                     Cancel
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    variant="danger"
                     onClick={handleConfirm}
                     disabled={confirmLocked}
-                    className="px-5 py-2 rounded-lg text-sm font-medium bg-destructive text-white hover:bg-destructive-hover transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     {dialog.confirmLabel || "Delete"}
-                  </button>
+                  </Button>
                 </div>
               </>
 
@@ -335,8 +319,8 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
               <>
                 <div className="px-6 pt-6 pb-2">
                   <div className="flex items-start gap-3.5">
-                    <div className="shrink-0 w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center">
-                      <Info size={18} className="text-accent" />
+                    <div className="shrink-0 w-10 h-10 rounded-xl bg-info/10 flex items-center justify-center">
+                      <Info size={18} className="text-info" />
                     </div>
                     <div className="min-w-0 pt-0.5">
                       <h2 className="text-[15px] font-semibold text-foreground leading-tight pr-8">{dialog.title}</h2>
@@ -348,21 +332,15 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
                 </div>
                 <div className="flex items-center justify-end gap-2.5 px-6 pt-4 pb-5">
                   {dialog.type !== "alert" && (
-                    <button
-                      onClick={handleCancel}
-                      className="px-4 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
-                    >
+                    <Button variant="ghost" onClick={handleCancel}>
                       Cancel
-                    </button>
+                    </Button>
                   )}
-                  <button
-                    onClick={handleConfirm}
-                    className="px-5 py-2 rounded-lg text-sm font-medium bg-accent text-background hover:bg-accent-hover transition-all cursor-pointer"
-                  >
+                  <Button onClick={handleConfirm}>
                     {dialog.type === "alert"
                       ? "OK"
                       : dialog.confirmLabel || "Confirm"}
-                  </button>
+                  </Button>
                 </div>
               </>
             )}

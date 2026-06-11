@@ -5,6 +5,7 @@ import { useDialog } from "../components/Dialog";
 import { PageHeader } from "../components/PageHeader";
 import { EmptyState } from "../components/EmptyState";
 import { StatusBadge } from "../components/StatusBadge";
+import { Button, ListRow } from "../components/ui";
 
 export function Rpc() {
   const { config, save } = useConfig();
@@ -43,71 +44,51 @@ export function Rpc() {
     if (ok) navigate(`/rpc/${fnName}`);
   }
 
+  const addButton = (
+    <Button onClick={addFunction}>
+      <Plus size={14} />
+      Add Function
+    </Button>
+  );
+
   return (
     <div>
       <PageHeader
         title="Database Functions"
         description={`${functions.length} SQL function${functions.length !== 1 ? "s" : ""}`}
-        actions={
-          <button
-            onClick={addFunction}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-accent text-background text-sm font-medium hover:bg-accent-hover transition-colors cursor-pointer"
-          >
-            <Plus size={14} />
-            Add Function
-          </button>
-        }
+        actions={addButton}
       />
 
-      <div className="px-8">
+      <div className="px-8 pb-8">
         {functions.length === 0 ? (
           <EmptyState
             icon={Database}
             title="No SQL functions yet"
             description="Create Postgres functions exposed at /rest/v1/rpc."
-            action={
-              <button
-                onClick={addFunction}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-accent text-background text-sm font-medium hover:bg-accent-hover transition-colors cursor-pointer"
-              >
-                <Plus size={14} />
-                Add Function
-              </button>
-            }
+            action={addButton}
           />
         ) : (
           <div className="space-y-2">
             {functions.map(([name, fn]) => (
-              <button
+              <ListRow
                 key={name}
+                icon={Database}
+                title={name}
+                meta={fn.description || undefined}
                 onClick={() => navigate(`/rpc/${name}`)}
-                className="w-full flex items-center justify-between px-5 py-3.5 rounded-lg border border-border bg-surface hover:bg-surface-hover hover:border-border-hover transition-colors cursor-pointer text-left group"
-              >
-                <div className="flex items-center gap-3">
-                  <Database
-                    size={16}
-                    className="text-muted-foreground group-hover:text-foreground transition-colors"
-                  />
-                  <span className="text-sm font-mono font-medium text-foreground">
-                    {name}
-                  </span>
-                  {fn.description && (
-                    <span className="text-xs text-muted-foreground">
-                      {fn.description}
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  <StatusBadge variant="info">{fn.language}</StatusBadge>
-                  {fn.auth_required && (
-                    <StatusBadge variant="info">auth</StatusBadge>
-                  )}
-                  <StatusBadge variant="muted">
-                    {(fn.args || []).length} arg
-                    {(fn.args || []).length !== 1 ? "s" : ""}
-                  </StatusBadge>
-                </div>
-              </button>
+                badges={
+                  <>
+                    <StatusBadge variant="info">{fn.language}</StatusBadge>
+                    {fn.auth_required && (
+                      <StatusBadge variant="info">auth</StatusBadge>
+                    )}
+                    <StatusBadge variant="muted">
+                      {(fn.args || []).length} arg
+                      {(fn.args || []).length !== 1 ? "s" : ""}
+                    </StatusBadge>
+                  </>
+                }
+              />
             ))}
           </div>
         )}

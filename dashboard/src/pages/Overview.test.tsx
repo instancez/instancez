@@ -25,8 +25,6 @@ const baseConfig: Config = {
       indexes: [],
       rls: [],
       
-      searchable: [],
-      search_config: "",
     },
   },
   auth: { jwt_expiry: "15m", refresh_tokens: true, refresh_token_expiry: "7d", email: { verify_email: false, templates: {} }, google: null, github: null },

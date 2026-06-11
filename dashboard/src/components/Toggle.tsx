@@ -23,18 +23,18 @@ export function Toggle({ checked, onChange, label, disabled, ...rest }: TogglePr
       aria-checked={checked}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`relative w-10 h-5 border transition-colors shrink-0 ${
+      className={`relative w-9 h-5 rounded-full border transition-colors shrink-0 ${
         disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"
       } ${
         checked
-          ? "bg-foreground border-foreground"
-          : "bg-input border-input-border hover:border-border-hover"
+          ? "bg-accent border-accent"
+          : "bg-muted border-input-border hover:border-border-hover"
       }`}
       {...rest}
     >
       <span
-        className={`absolute top-[3px] left-[3px] w-3 h-3 transition-transform ${
-          checked ? "translate-x-5 bg-background" : "bg-muted-foreground"
+        className={`absolute top-[3px] left-[3px] w-3 h-3 rounded-full transition-transform ${
+          checked ? "translate-x-4 bg-background" : "bg-muted-foreground"
         }`}
       />
     </button>

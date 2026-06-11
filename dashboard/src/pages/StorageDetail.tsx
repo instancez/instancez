@@ -1,15 +1,14 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
-import { ArrowLeft, Trash2, Plus } from "lucide-react";
+import { Plus, Settings2, ShieldCheck } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
 import { useDialog } from "../components/Dialog";
 import { PageHeader } from "../components/PageHeader";
 import { SaveBar } from "../components/SaveBar";
 import { TagInput } from "../components/TagInput";
-import { CodeEditor } from "../components/CodeEditor";
 import { Toggle } from "../components/Toggle";
-import { Checkbox } from "../components/Checkbox";
-import { RLS_OPERATIONS } from "../lib/utils";
+import { RlsPolicyCard } from "../components/RlsPolicyCard";
+import { Button, Field, Input, Section } from "../components/ui";
 import type { Bucket } from "../lib/types";
 
 export function StorageDetail() {
@@ -67,159 +66,94 @@ export function StorageDetail() {
       <PageHeader
         title={name}
         description="Storage bucket configuration"
-        actions={
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => navigate("/storage")}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
-            >
-              <ArrowLeft size={14} />
-              Back
-            </button>
-            <button
-              onClick={deleteBucket}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-destructive/30 text-sm text-destructive hover:bg-destructive/10 transition-colors cursor-pointer"
-            >
-              <Trash2 size={14} />
-              Delete
-            </button>
-          </div>
-        }
+        backTo="/storage"
+        onDelete={deleteBucket}
       />
 
-      <div className="px-8 space-y-6 max-w-2xl">
-        <div>
-          <label className="block text-sm font-medium text-foreground mb-1">Max File Size</label>
-          <input
-            type="text"
-            value={bucket.max_size}
-            onChange={(e) => updateBucket((b) => ({ ...b, max_size: e.target.value }))}
-            placeholder="5MB"
-            className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm font-mono text-foreground focus:outline-none focus:border-ring transition-colors"
+      <div className="px-8 pb-8 space-y-6 max-w-2xl">
+        <Section
+          title="Bucket Settings"
+          description="Upload limits and access rules for this bucket"
+          icon={Settings2}
+        >
+          <Field label="Max File Size">
+            <Input
+              mono
+              value={bucket.max_size}
+              onChange={(e) => updateBucket((b) => ({ ...b, max_size: e.target.value }))}
+              placeholder="5MB"
+            />
+          </Field>
+
+          <Field label="Allowed MIME Types">
+            <TagInput
+              value={bucket.types || []}
+              onChange={(types) => updateBucket((b) => ({ ...b, types }))}
+              placeholder="e.g. image/*, application/pdf"
+              suggestions={["image/*", "image/png", "image/jpeg", "image/webp", "application/pdf", "video/*", "audio/*"]}
+            />
+          </Field>
+
+          <Toggle
+            checked={bucket.public}
+            onChange={(v) => updateBucket((b) => ({ ...b, public: v }))}
+            label={
+              <>
+                Public bucket{" "}
+                <span className="text-xs text-muted-foreground">
+                  (allows unauthenticated downloads)
+                </span>
+              </>
+            }
           />
-        </div>
+        </Section>
 
-        <div>
-          <label className="block text-sm font-medium text-foreground mb-1">Allowed MIME Types</label>
-          <TagInput
-            value={bucket.types || []}
-            onChange={(types) => updateBucket((b) => ({ ...b, types }))}
-            placeholder="e.g. image/*, application/pdf"
-            suggestions={["image/*", "image/png", "image/jpeg", "image/webp", "application/pdf", "video/*", "audio/*"]}
-          />
-        </div>
-
-        <Toggle
-          checked={bucket.public}
-          onChange={(v) => updateBucket((b) => ({ ...b, public: v }))}
-          label={
-            <>
-              Public bucket{" "}
-              <span className="text-xs text-muted-foreground">
-                (allows unauthenticated downloads)
-              </span>
-            </>
-          }
-        />
-
-        {/* RLS Policies */}
-        <div>
-          <h2 className="text-sm font-medium text-foreground mb-3">RLS Policies</h2>
-          <div className="space-y-3">
-            {(bucket.rls || []).map((policy, i) => (
-              <div
-                key={i}
-                className="p-4 rounded-lg border border-border bg-primary space-y-3"
-              >
-                <div className="flex items-start justify-between">
-                  <div className="space-y-3">
-                    <div>
-                      <label className="block text-xs font-medium text-muted-foreground mb-2">Type</label>
-                      <div className="flex gap-1">
-                        {(["permissive", "restrictive"] as const).map((t) => (
-                          <button
-                            key={t}
-                            type="button"
-                            onClick={() =>
-                              updateBucket((b) => {
-                                const rls = [...(b.rls || [])];
-                                rls[i] = { ...rls[i]!, type: t };
-                                return { ...b, rls };
-                              })
-                            }
-                            className={`px-2.5 py-1 rounded-sm text-xs font-medium transition-colors cursor-pointer ${
-                              (policy.type || "permissive") === t
-                                ? t === "restrictive"
-                                  ? "hazard border border-dashed border-foreground/40 text-foreground"
-                                  : "bg-accent/15 text-accent border border-accent/30"
-                                : "border border-border text-muted-foreground hover:text-foreground hover:bg-surface-hover"
-                            }`}
-                          >
-                            {t}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="flex gap-2">
-                      {RLS_OPERATIONS.map((op) => (
-                        <Checkbox
-                          key={op}
-                          className="text-xs"
-                          label={op}
-                          checked={(policy.operations || []).includes(op)}
-                          onChange={(c) =>
-                            updateBucket((b) => {
-                              const rls = [...(b.rls || [])];
-                              const ops = c
-                                ? [...(rls[i]!.operations || []), op]
-                                : (rls[i]!.operations || []).filter((o) => o !== op);
-                              rls[i] = { ...rls[i]!, operations: ops };
-                              return { ...b, rls };
-                            })
-                          }
-                        />
-                      ))}
-                    </div>
-                  </div>
-                  <button
-                    onClick={() =>
-                      updateBucket((b) => ({
-                        ...b,
-                        rls: (b.rls || []).filter((_, j) => j !== i),
-                      }))
-                    }
-                    className="p-1.5 rounded-sm hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-                <CodeEditor
-                  value={policy.check || ""}
-                  onChange={(val) =>
-                    updateBucket((b) => {
-                      const rls = [...(b.rls || [])];
-                      rls[i] = { ...rls[i]!, check: val };
-                      return { ...b, rls };
-                    })
-                  }
-                  minHeight="60px"
-                />
-              </div>
-            ))}
-            <button
+        <Section
+          title="RLS Policies"
+          description="Row-level security rules applied to objects in this bucket"
+          icon={ShieldCheck}
+          actions={
+            <Button
+              variant="dashed"
+              size="sm"
               onClick={() =>
                 updateBucket((b) => ({
                   ...b,
                   rls: [...(b.rls || []), { operations: ["select"], check: "" }],
                 }))
               }
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dashed border-border text-sm text-muted-foreground hover:text-foreground hover:border-border-hover transition-colors cursor-pointer"
             >
               <Plus size={14} />
               Add RLS Policy
-            </button>
-          </div>
-        </div>
+            </Button>
+          }
+        >
+          {(bucket.rls || []).length === 0 ? (
+            <p className="text-sm text-muted-foreground">No policies defined.</p>
+          ) : (
+            <div className="space-y-3">
+              {(bucket.rls || []).map((policy, i) => (
+                <RlsPolicyCard
+                  key={i}
+                  policy={policy}
+                  onChange={(p) =>
+                    updateBucket((b) => {
+                      const rls = [...(b.rls || [])];
+                      rls[i] = p;
+                      return { ...b, rls };
+                    })
+                  }
+                  onDelete={() =>
+                    updateBucket((b) => ({
+                      ...b,
+                      rls: (b.rls || []).filter((_, j) => j !== i),
+                    }))
+                  }
+                />
+              ))}
+            </div>
+          )}
+        </Section>
       </div>
 
       <SaveBar onSave={handleSave} saving={saving} errors={saveErrors} dirty={dirty} />

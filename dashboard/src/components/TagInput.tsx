@@ -47,17 +47,17 @@ export function TagInput({
 
   return (
     <div className="relative">
-      <div className="flex flex-wrap gap-1.5 p-2 rounded-lg border border-border bg-input min-h-[40px] focus-within:border-ring transition-colors">
+      <div className="flex flex-wrap gap-1.5 p-2 rounded-lg border border-input-border bg-input min-h-[40px] focus-within:border-ring transition-colors">
         {value.map((tag, i) => (
           <span
             key={i}
-            className="inline-flex items-center gap-1 px-2 py-0.5 border border-foreground/25 bg-foreground/10 text-foreground font-mono text-xs"
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-border bg-muted text-foreground font-mono text-xs"
           >
             {tag}
             <button
               type="button"
               onClick={() => removeTag(i)}
-              className="hover:text-accent/70 transition-colors cursor-pointer"
+              className="text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
               aria-label={`Remove ${tag}`}
             >
               <X size={12} />
@@ -79,7 +79,7 @@ export function TagInput({
         />
       </div>
       {showSuggestions && filteredSuggestions.length > 0 && (
-        <div className="absolute z-50 mt-1 w-full max-h-40 overflow-y-auto border border-border-hover bg-surface">
+        <div className="absolute z-50 mt-1 w-full max-h-40 overflow-y-auto rounded-lg border border-border bg-surface shadow-lifted">
           {filteredSuggestions.map((s) => (
             <button
               key={s}

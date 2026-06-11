@@ -50,7 +50,7 @@ describe("DiffViewer", () => {
     expect(stmt.className).toContain("text-destructive");
   });
 
-  it("highlights ADD/CREATE statements with accent styling", () => {
+  it("highlights ADD/CREATE statements with success styling", () => {
     render(
       <DiffViewer
         statements={["CREATE TABLE new_table (id serial);"]}
@@ -58,6 +58,6 @@ describe("DiffViewer", () => {
       />
     );
     const stmt = screen.getByText("CREATE TABLE new_table (id serial);");
-    expect(stmt.className).toContain("text-accent");
+    expect(stmt.className).toContain("text-success");
   });
 });

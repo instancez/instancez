@@ -61,25 +61,6 @@ export const RLS_OPERATIONS = [
   "delete",
 ] as const;
 
-export const SEARCH_CONFIGS = [
-  "english",
-  "simple",
-  "german",
-  "french",
-  "spanish",
-  "italian",
-  "portuguese",
-  "dutch",
-  "swedish",
-  "norwegian",
-  "danish",
-  "finnish",
-  "hungarian",
-  "turkish",
-  "russian",
-  "arabic",
-] as const;
-
 export const CORS_METHODS = [
   "GET",
   "POST",

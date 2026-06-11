@@ -1,11 +1,12 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
-import { ArrowLeft, Trash2, Plus } from "lucide-react";
+import { Trash2, Plus, Settings2, KeyRound } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
 import { useDialog } from "../components/Dialog";
 import { PageHeader } from "../components/PageHeader";
 import { SaveBar } from "../components/SaveBar";
 import { Toggle } from "../components/Toggle";
+import { Button, Field, Input, Panel, Section, Select } from "../components/ui";
 import type { CodeFunction } from "../lib/types";
 
 // Code-function runtimes instancez supports. validateCodeFunctions rejects
@@ -74,108 +75,97 @@ export function FunctionDetail() {
       <PageHeader
         title={name}
         description="Code function served at /functions/v1/"
-        actions={
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => navigate("/functions")}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
-            >
-              <ArrowLeft size={14} />
-              Back
-            </button>
-            <button
-              onClick={deleteFunction}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-destructive/30 text-sm text-destructive hover:bg-destructive/10 transition-colors cursor-pointer"
-            >
-              <Trash2 size={14} />
-              Delete
-            </button>
-          </div>
-        }
+        backTo="/functions"
+        onDelete={deleteFunction}
       />
 
-      <div className="px-8 space-y-6 max-w-3xl">
-        <p className="text-sm text-muted-foreground">
-          Edit the handler source in{" "}
-          <span className="font-mono text-foreground">{fn.file}</span>.
-        </p>
+      <div className="px-8 pb-8 space-y-6 max-w-3xl">
+        <Section
+          title="Runtime"
+          description={
+            <>
+              Edit the handler source in{" "}
+              <span className="font-mono text-foreground">{fn.file}</span>
+            </>
+          }
+          icon={Settings2}
+        >
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Runtime">
+              <Select
+                value={fn.runtime || "node"}
+                onChange={(e) => updateFn((f) => ({ ...f, runtime: e.target.value }))}
+              >
+                {RUNTIMES.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="File">
+              <Input
+                mono
+                value={fn.file || ""}
+                onChange={(e) => updateFn((f) => ({ ...f, file: e.target.value }))}
+                placeholder="functions/name.js"
+              />
+            </Field>
+            <Field label="Timeout">
+              <Input
+                mono
+                value={fn.timeout || ""}
+                onChange={(e) => updateFn((f) => ({ ...f, timeout: e.target.value }))}
+                placeholder="30s"
+              />
+            </Field>
+            <div className="flex items-end pb-2">
+              <Toggle
+                checked={fn.auth_required}
+                onChange={(v) => updateFn((f) => ({ ...f, auth_required: v }))}
+                label="Auth required"
+              />
+            </div>
+          </div>
+        </Section>
 
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">Runtime</label>
-            <select
-              value={fn.runtime || "node"}
-              onChange={(e) => updateFn((f) => ({ ...f, runtime: e.target.value }))}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm text-foreground focus:outline-none focus:border-ring transition-colors cursor-pointer"
-            >
-              {RUNTIMES.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">File</label>
-            <input
-              type="text"
-              value={fn.file || ""}
-              onChange={(e) => updateFn((f) => ({ ...f, file: e.target.value }))}
-              placeholder="functions/name.js"
-              className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm font-mono text-foreground focus:outline-none focus:border-ring transition-colors"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">Timeout</label>
-            <input
-              type="text"
-              value={fn.timeout || ""}
-              onChange={(e) => updateFn((f) => ({ ...f, timeout: e.target.value }))}
-              placeholder="30s"
-              className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm font-mono text-foreground focus:outline-none focus:border-ring transition-colors"
-            />
-          </div>
-          <div className="flex items-end pb-2">
-            <Toggle
-              checked={fn.auth_required}
-              onChange={(v) => updateFn((f) => ({ ...f, auth_required: v }))}
-              label="Auth required"
-            />
-          </div>
-        </div>
-
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <label className="text-sm font-medium text-foreground">Environment</label>
-            <button
+        <Section
+          title="Environment"
+          description="Variables injected into the function's worker process"
+          icon={KeyRound}
+          actions={
+            <Button
+              variant="dashed"
+              size="sm"
               onClick={async () => {
                 const key = await dialog.prompt("Env variable name:");
                 if (!key?.trim()) return;
                 updateFn((f) => ({ ...f, env: { ...(f.env || {}), [key.trim()]: "" } }));
               }}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded-sm border border-dashed border-border text-xs text-muted-foreground hover:text-foreground hover:border-border-hover transition-colors cursor-pointer"
             >
-              <Plus size={12} />
+              <Plus size={14} />
               Add Var
-            </button>
-          </div>
+            </Button>
+          }
+        >
           {envEntries.length > 0 ? (
             <div className="space-y-2">
               {envEntries.map(([key, val]) => (
-                <div
-                  key={key}
-                  className="flex items-center gap-3 px-3 py-2 rounded-lg border border-border bg-primary"
-                >
+                <Panel key={key} className="flex items-center gap-3 px-3 py-2">
                   <span className="text-sm font-mono text-foreground min-w-[140px]">{key}</span>
-                  <input
-                    type="text"
+                  <Input
+                    mono
+                    inputSize="sm"
+                    className="flex-1"
                     value={val}
                     onChange={(e) =>
                       updateFn((f) => ({ ...f, env: { ...(f.env || {}), [key]: e.target.value } }))
                     }
-                    className="flex-1 px-2 py-1 rounded-sm border border-border bg-input text-xs font-mono text-foreground focus:outline-none focus:border-ring"
                   />
-                  <button
+                  <Button
+                    variant="danger-ghost"
+                    size="icon"
+                    aria-label={`Delete ${key}`}
                     onClick={() =>
                       updateFn((f) => {
                         const next = { ...(f.env || {}) };
@@ -183,17 +173,16 @@ export function FunctionDetail() {
                         return { ...f, env: next };
                       })
                     }
-                    className="p-1 rounded-sm hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
                   >
                     <Trash2 size={13} />
-                  </button>
-                </div>
+                  </Button>
+                </Panel>
               ))}
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">No environment variables.</p>
           )}
-        </div>
+        </Section>
       </div>
 
       <SaveBar onSave={handleSave} saving={saving} errors={saveErrors} dirty={dirty} />

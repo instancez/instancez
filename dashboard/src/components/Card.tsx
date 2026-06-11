@@ -1,4 +1,4 @@
-import { cn } from "../lib/utils";
+import { Panel } from "./ui";
 
 interface CardProps {
   children: React.ReactNode;
@@ -7,6 +7,7 @@ interface CardProps {
   hoverable?: boolean;
 }
 
+/** Padded Panel — kept as the stat/summary card shape. */
 export function Card({
   children,
   className,
@@ -14,18 +15,13 @@ export function Card({
   hoverable = false,
 }: CardProps) {
   return (
-    <div
+    <Panel
       onClick={onClick}
-      className={cn(
-        "relative frame-ticks border border-border bg-surface p-5",
-        hoverable &&
-          "hover:bg-surface-hover hover:border-border-hover transition-colors cursor-pointer",
-        onClick && "cursor-pointer",
-        className
-      )}
+      hoverable={hoverable}
+      className={`p-5 ${className ?? ""}`}
     >
       {children}
-    </div>
+    </Panel>
   );
 }
 
@@ -35,7 +31,7 @@ export function CardTitle({ children }: { children: React.ReactNode }) {
 
 export function CardValue({ children }: { children: React.ReactNode }) {
   return (
-    <p className="mt-2 text-3xl font-light tracking-tight text-foreground tabular-nums">
+    <p className="mt-2 text-3xl font-semibold tracking-tight text-foreground tabular-nums">
       {children}
     </p>
   );

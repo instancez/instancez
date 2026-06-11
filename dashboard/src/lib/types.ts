@@ -86,8 +86,6 @@ export interface Table {
   fields: Record<string, Field>;
   indexes: Index[];
   rls: RLSPolicy[];
-  searchable: string[];
-  search_config: string;
 }
 
 export interface Field {

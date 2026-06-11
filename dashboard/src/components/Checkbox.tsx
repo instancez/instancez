@@ -15,7 +15,7 @@ type CheckboxProps = {
 /**
  * Checkbox is the styled multi-select control used where a Toggle would be the
  * wrong mental model — i.e. "pick which of N" rather than a single on/off
- * setting (RLS operations, searchable fields). For single booleans use Toggle.
+ * setting (e.g. RLS operations). For single booleans use Toggle.
  */
 export function Checkbox({ checked, onChange, label, className, disabled, ...rest }: CheckboxProps) {
   const box = (
@@ -30,7 +30,7 @@ export function Checkbox({ checked, onChange, label, className, disabled, ...res
       } ${
         checked
           ? "bg-accent border-accent text-background"
-          : "bg-input border-border hover:border-border-hover"
+          : "bg-input border-input-border hover:border-border-hover"
       }`}
       {...rest}
     >

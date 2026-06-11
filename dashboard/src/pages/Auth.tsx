@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
-import { Shield } from "lucide-react";
+import { Shield, KeySquare, MailCheck, Plug2 } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
 import { PageHeader } from "../components/PageHeader";
 import { SaveBar } from "../components/SaveBar";
 import { CodeEditor } from "../components/CodeEditor";
 import { EmptyState } from "../components/EmptyState";
 import { Toggle } from "../components/Toggle";
+import { Field, Input, Panel, Section } from "../components/ui";
 import type { Auth } from "../lib/types";
 
 function GoogleIcon({ size = 16 }: { size?: number }) {
@@ -83,21 +84,20 @@ export function AuthPage() {
         description="Configure auth providers and JWT settings"
       />
 
-      <div className="px-8 space-y-6">
+      <div className="px-8 pb-8 space-y-6 max-w-3xl">
         {/* Enable/Disable Toggle */}
-        <div className="flex items-center justify-between p-4 rounded-xl border border-border bg-surface">
-          <div>
-            <p className="text-sm font-medium text-foreground">Authentication</p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Enable email/password and OAuth authentication
-            </p>
-          </div>
-          <Toggle
-            aria-label="Enable authentication"
-            checked={enabled}
-            onChange={toggleAuth}
-          />
-        </div>
+        <Section
+          title="Enable Authentication"
+          description="Email/password and OAuth authentication"
+          icon={Shield}
+          actions={
+            <Toggle
+              aria-label="Enable authentication"
+              checked={enabled}
+              onChange={toggleAuth}
+            />
+          }
+        />
 
         {!enabled ? (
           <EmptyState
@@ -107,41 +107,41 @@ export function AuthPage() {
           />
         ) : auth ? (
           <>
-            {/* JWT Settings */}
-            <section className="space-y-4">
-              <h2 className="text-sm font-medium text-foreground">JWT Settings</h2>
+            <Section
+              title="JWT Settings"
+              description="Token lifetimes for issued sessions"
+              icon={KeySquare}
+            >
               <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-medium text-muted-foreground mb-1">JWT Expiry</label>
-                  <input
-                    type="text"
+                <Field label="JWT Expiry">
+                  <Input
+                    mono
                     value={auth.jwt_expiry}
                     onChange={(e) => updateAuth((a) => ({ ...a, jwt_expiry: e.target.value }))}
                     placeholder="15m"
-                    className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm font-mono text-foreground focus:outline-none focus:border-ring transition-colors"
                   />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-muted-foreground mb-1">Refresh Token Expiry</label>
-                  <input
-                    type="text"
+                </Field>
+                <Field label="Refresh Token Expiry">
+                  <Input
+                    mono
                     value={auth.refresh_token_expiry}
                     onChange={(e) => updateAuth((a) => ({ ...a, refresh_token_expiry: e.target.value }))}
                     placeholder="7d"
-                    className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm font-mono text-foreground focus:outline-none focus:border-ring transition-colors"
                   />
-                </div>
+                </Field>
               </div>
               <Toggle
                 checked={auth.refresh_tokens}
                 onChange={(v) => updateAuth((a) => ({ ...a, refresh_tokens: v }))}
                 label="Enable refresh tokens"
               />
-            </section>
+            </Section>
 
-            {/* Email Verification */}
-            <section className="space-y-4">
-              <h2 className="text-sm font-medium text-foreground">Email Verification</h2>
+            <Section
+              title="Email Verification"
+              description="Require users to confirm their address before signing in"
+              icon={MailCheck}
+            >
               <Toggle
                 checked={auth.email?.verify_email || false}
                 onChange={(v) =>
@@ -157,7 +157,7 @@ export function AuthPage() {
               />
 
               {auth.email?.verify_email && (
-                <div className="space-y-4 pl-6 border-l-2 border-border">
+                <div className="space-y-4">
                   {["verify", "reset"].map((templateName) => {
                     const template = auth.email?.templates?.[templateName] || {
                       subject: "",
@@ -165,28 +165,25 @@ export function AuthPage() {
                       body_file: "",
                     };
                     return (
-                      <div key={templateName} className="space-y-2">
-                        <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                          {templateName} Template
-                        </h3>
-                        <input
-                          type="text"
-                          value={template.subject}
-                          onChange={(e) =>
-                            updateAuth((a) => ({
-                              ...a,
-                              email: {
-                                ...a.email!,
-                                templates: {
-                                  ...a.email!.templates,
-                                  [templateName]: { ...template, subject: e.target.value },
+                      <Panel key={templateName} className="p-4 space-y-3">
+                        <Field label={`${templateName} template`}>
+                          <Input
+                            value={template.subject}
+                            onChange={(e) =>
+                              updateAuth((a) => ({
+                                ...a,
+                                email: {
+                                  ...a.email!,
+                                  templates: {
+                                    ...a.email!.templates,
+                                    [templateName]: { ...template, subject: e.target.value },
+                                  },
                                 },
-                              },
-                            }))
-                          }
-                          placeholder="Subject"
-                          className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-ring transition-colors"
-                        />
+                              }))
+                            }
+                            placeholder="Subject"
+                          />
+                        </Field>
                         <CodeEditor
                           value={template.body}
                           onChange={(val) =>
@@ -205,23 +202,24 @@ export function AuthPage() {
                           placeholder="Template body... Use {{link}}, {{data.display_name}}, {{project.name}}"
                           minHeight="80px"
                         />
-                      </div>
+                      </Panel>
                     );
                   })}
                 </div>
               )}
-            </section>
+            </Section>
 
-            {/* OAuth Providers */}
-            <section className="space-y-4">
-              <h2 className="text-sm font-medium text-foreground">OAuth Providers</h2>
-
+            <Section
+              title="OAuth Providers"
+              description="Third-party sign-in via OAuth 2.0"
+              icon={Plug2}
+            >
               {(["google", "github"] as const).map((provider) => {
-                const config = auth[provider];
-                const isEnabled = !!config;
+                const providerConfig = auth[provider];
+                const isEnabled = !!providerConfig;
 
                 return (
-                  <div key={provider} className="p-4 rounded-xl border border-border bg-surface space-y-3">
+                  <Panel key={provider} className="p-4 space-y-3">
                     <div className="flex items-center justify-between">
                       <span className="flex items-center gap-2 text-sm font-medium text-foreground capitalize">
                         {provider === "google" ? <GoogleIcon size={18} /> : <GitHubIcon size={18} />}
@@ -241,16 +239,14 @@ export function AuthPage() {
                       />
                     </div>
 
-                    {isEnabled && config && (
+                    {isEnabled && providerConfig && (
                       <div className="grid grid-cols-1 gap-3">
                         {(["client_id", "client_secret", "redirect_url"] as const).map((field) => (
-                          <div key={field}>
-                            <label className="block text-xs font-medium text-muted-foreground mb-1">
-                              {field.replace(/_/g, " ")}
-                            </label>
-                            <input
+                          <Field key={field} label={field.replace(/_/g, " ")}>
+                            <Input
+                              mono
                               type={field === "client_secret" ? "password" : "text"}
-                              value={config[field]}
+                              value={providerConfig[field]}
                               onChange={(e) =>
                                 updateAuth((a) => ({
                                   ...a,
@@ -258,20 +254,19 @@ export function AuthPage() {
                                 }))
                               }
                               placeholder={`\${${provider.toUpperCase()}_${field.toUpperCase()}}`}
-                              className="w-full px-3 py-2 rounded-lg border border-border bg-input text-sm font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-ring transition-colors"
                             />
-                          </div>
+                          </Field>
                         ))}
                         <p className="text-xs text-muted-foreground">
-                          Use <code className="font-mono text-accent">${"{ENV_VAR}"}</code> syntax for
+                          Use <code className="font-mono text-foreground">${"{ENV_VAR}"}</code> syntax for
                           env var interpolation at runtime.
                         </p>
                       </div>
                     )}
-                  </div>
+                  </Panel>
                 );
               })}
-            </section>
+            </Section>
           </>
         ) : null}
       </div>

@@ -18,8 +18,6 @@ const baseConfig: Config = {
       },
       indexes: [],
       rls: [],
-      searchable: [],
-      search_config: "",
     },
   },
   auth: null,

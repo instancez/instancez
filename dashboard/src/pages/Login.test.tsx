@@ -20,7 +20,7 @@ describe("Login", () => {
 
   it("renders login form", () => {
     render(<Login onSuccess={onSuccess} />);
-    expect(screen.getByText("instancez dashboard")).toBeInTheDocument();
+    expect(screen.getByText("Welcome back")).toBeInTheDocument();
     expect(screen.getByLabelText("Admin Key")).toBeInTheDocument();
     expect(screen.getByText("Continue")).toBeInTheDocument();
   });
