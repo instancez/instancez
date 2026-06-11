@@ -129,11 +129,11 @@ func TestMintStableAnonKey(t *testing.T) {
 	if err != nil || iat == nil {
 		t.Fatalf("iat claim: %v", err)
 	}
-	if got, want := exp.Time, iat.Time.AddDate(10, 0, 0); !got.Equal(want) {
+	if got, want := exp.Time, iat.AddDate(10, 0, 0); !got.Equal(want) {
 		t.Fatalf("exp = %v, want iat+10y = %v", got, want)
 	}
-	if !iat.Time.Equal(active.CreatedAt.Truncate(time.Second)) {
-		t.Fatalf("iat = %v, want key CreatedAt %v", iat.Time, active.CreatedAt)
+	if !iat.Equal(active.CreatedAt.Truncate(time.Second)) {
+		t.Fatalf("iat = %v, want key CreatedAt %v", iat, active.CreatedAt)
 	}
 }
 
