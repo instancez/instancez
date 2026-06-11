@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Shield, KeySquare, MailCheck, Plug2 } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
 import { PageHeader } from "../components/PageHeader";
@@ -7,6 +7,7 @@ import { CodeEditor } from "../components/CodeEditor";
 import { EmptyState } from "../components/EmptyState";
 import { Toggle } from "../components/Toggle";
 import { Field, Input, Panel, Section } from "../components/ui";
+import { getEnvVars, putDotenv } from "../api/client";
 import type { Auth } from "../lib/types";
 
 function GoogleIcon({ size = 16 }: { size?: number }) {
@@ -28,6 +29,19 @@ function GitHubIcon({ size = 16 }: { size?: number }) {
   );
 }
 
+const OAUTH_VARS: Record<string, Record<string, string>> = {
+  google: {
+    client_id: "INSTANCEZ_GOOGLE_CLIENT_ID",
+    client_secret: "INSTANCEZ_GOOGLE_CLIENT_SECRET",
+    redirect_url: "INSTANCEZ_GOOGLE_REDIRECT_URL",
+  },
+  github: {
+    client_id: "INSTANCEZ_GITHUB_CLIENT_ID",
+    client_secret: "INSTANCEZ_GITHUB_CLIENT_SECRET",
+    redirect_url: "INSTANCEZ_GITHUB_REDIRECT_URL",
+  },
+};
+
 const DEFAULT_AUTH: Auth = {
   jwt_expiry: "15m",
   refresh_tokens: true,
@@ -37,11 +51,52 @@ const DEFAULT_AUTH: Auth = {
   github: null,
 };
 
+interface VarRowProps {
+  name: string;
+  isSet: boolean;
+  canWrite: boolean;
+  inputValue: string;
+  onInputChange: (value: string) => void;
+}
+
+function VarRow({ name, isSet, canWrite, inputValue, onInputChange }: VarRowProps) {
+  return (
+    <div className="flex items-center gap-3 py-1">
+      <code className="flex-1 min-w-0 text-xs font-mono text-foreground truncate">{name}</code>
+      <span
+        className={`shrink-0 text-xs font-medium ${isSet ? "text-green-600 dark:text-green-400" : "text-destructive"}`}
+      >
+        {isSet ? "✓ set" : "✗ unset"}
+      </span>
+      {canWrite && (
+        <Input
+          type="password"
+          placeholder="enter value…"
+          value={inputValue}
+          onChange={(e) => onInputChange(e.target.value)}
+          className="w-48 h-7 text-xs"
+        />
+      )}
+    </div>
+  );
+}
+
 export function AuthPage() {
-  const { config, save, saving, saveErrors } = useConfig();
+  const { config, save, saving, saveErrors, dotenvWritable } = useConfig();
   const [auth, setAuth] = useState<Auth | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [envVarStatus, setEnvVarStatus] = useState<Record<string, { set: boolean }>>({});
+  const [pendingDotenv, setPendingDotenv] = useState<Record<string, string>>({});
+
+  const loadEnvVars = useCallback(async () => {
+    try {
+      const resp = await getEnvVars();
+      setEnvVarStatus(resp.vars);
+    } catch {
+      // badges fall back to "✗ unset" when status unavailable
+    }
+  }, []);
 
   useEffect(() => {
     if (config) {
@@ -51,6 +106,10 @@ export function AuthPage() {
     }
   }, [config]);
 
+  useEffect(() => {
+    loadEnvVars();
+  }, [loadEnvVars]);
+
   function updateAuth(updater: (prev: Auth) => Auth) {
     setAuth((prev) => {
       if (!prev) return prev;
@@ -59,11 +118,26 @@ export function AuthPage() {
     });
   }
 
+  function setPendingVar(name: string, value: string) {
+    setPendingDotenv((prev) => ({ ...prev, [name]: value }));
+    setDirty(true);
+  }
+
   async function handleSave() {
     if (!config) return;
     const updated = { ...config, auth: enabled ? auth : null };
-    await save(updated);
-    setDirty(false);
+    const ok = await save(updated);
+    if (ok) {
+      const toWrite = Object.fromEntries(
+        Object.entries(pendingDotenv).filter(([, v]) => v !== "")
+      );
+      if (dotenvWritable && Object.keys(toWrite).length > 0) {
+        await putDotenv(toWrite).catch(() => {});
+      }
+      setPendingDotenv({});
+      await loadEnvVars();
+      setDirty(false);
+    }
   }
 
   function toggleAuth() {
@@ -73,6 +147,28 @@ export function AuthPage() {
       setDirty(true);
       return next;
     });
+  }
+
+  function toggleOAuth(provider: "google" | "github", isEnabled: boolean) {
+    if (isEnabled) {
+      const vars = OAUTH_VARS[provider];
+      setPendingDotenv((prev) => {
+        const next = { ...prev };
+        Object.values(vars).forEach((v) => delete next[v]);
+        return next;
+      });
+      updateAuth((a) => ({ ...a, [provider]: null }));
+    } else {
+      const vars = OAUTH_VARS[provider];
+      updateAuth((a) => ({
+        ...a,
+        [provider]: {
+          client_id: `\${${vars.client_id}}`,
+          client_secret: `\${${vars.client_secret}}`,
+          redirect_url: `\${${vars.redirect_url}}`,
+        },
+      }));
+    }
   }
 
   if (!config) return null;
@@ -217,6 +313,7 @@ export function AuthPage() {
               {(["google", "github"] as const).map((provider) => {
                 const providerConfig = auth[provider];
                 const isEnabled = !!providerConfig;
+                const vars = OAUTH_VARS[provider];
 
                 return (
                   <Panel key={provider} className="p-4 space-y-3">
@@ -228,39 +325,25 @@ export function AuthPage() {
                       <Toggle
                         aria-label={`Enable ${provider}`}
                         checked={isEnabled}
-                        onChange={() =>
-                          updateAuth((a) => ({
-                            ...a,
-                            [provider]: isEnabled
-                              ? null
-                              : { client_id: "", client_secret: "", redirect_url: "" },
-                          }))
-                        }
+                        onChange={() => toggleOAuth(provider, isEnabled)}
                       />
                     </div>
 
-                    {isEnabled && providerConfig && (
-                      <div className="grid grid-cols-1 gap-3">
-                        {(["client_id", "client_secret", "redirect_url"] as const).map((field) => (
-                          <Field key={field} label={field.replace(/_/g, " ")}>
-                            <Input
-                              mono
-                              type={field === "client_secret" ? "password" : "text"}
-                              value={providerConfig[field]}
-                              onChange={(e) =>
-                                updateAuth((a) => ({
-                                  ...a,
-                                  [provider]: { ...a[provider]!, [field]: e.target.value },
-                                }))
-                              }
-                              placeholder={`\${${provider.toUpperCase()}_${field.toUpperCase()}}`}
+                    {isEnabled && (
+                      <div className="space-y-1">
+                        {(["client_id", "client_secret", "redirect_url"] as const).map((field) => {
+                          const varName = vars[field];
+                          return (
+                            <VarRow
+                              key={field}
+                              name={varName}
+                              isSet={envVarStatus[varName]?.set ?? false}
+                              canWrite={dotenvWritable}
+                              inputValue={pendingDotenv[varName] ?? ""}
+                              onInputChange={(v) => setPendingVar(varName, v)}
                             />
-                          </Field>
-                        ))}
-                        <p className="text-xs text-muted-foreground">
-                          Use <code className="font-mono text-foreground">${"{ENV_VAR}"}</code> syntax for
-                          env var interpolation at runtime.
-                        </p>
+                          );
+                        })}
                       </div>
                     )}
                   </Panel>

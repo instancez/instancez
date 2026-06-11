@@ -1,11 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { AuthPage } from "./Auth";
 import { DialogProvider } from "../components/Dialog";
 import { ConfigContext } from "../hooks/useConfig";
 import type { Config, ValidationError } from "../lib/types";
+import * as api from "../api/client";
+
+vi.mock("../api/client", async (importOriginal) => {
+  const real = await importOriginal<typeof api>();
+  return {
+    ...real,
+    getEnvVars: vi.fn().mockResolvedValue({ vars: {} }),
+    putDotenv: vi.fn().mockResolvedValue({ message: "ok" }),
+  };
+});
 
 const makeConfig = (authEnabled: boolean): Config => ({
   version: 1,
@@ -25,7 +35,7 @@ const makeConfig = (authEnabled: boolean): Config => ({
   storage: {},
   rpc: {},
   functions: {},
-  seeds: {},
+  data: {},
   providers: { email: null, storage: null },
   server: {
     port: 8080,
@@ -38,7 +48,7 @@ const makeConfig = (authEnabled: boolean): Config => ({
   },
 });
 
-function renderAuth(config: Config) {
+function renderAuth(config: Config, dotenvWritable = false) {
   const save = vi.fn().mockResolvedValue(true);
   const ctx = {
     config,
@@ -47,6 +57,7 @@ function renderAuth(config: Config) {
     checksum: "abc",
     saving: false,
     saveErrors: [] as ValidationError[],
+    dotenvWritable,
     refresh: vi.fn(),
     save,
     updateConfig: vi.fn(),
@@ -64,6 +75,11 @@ function renderAuth(config: Config) {
 }
 
 describe("AuthPage", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.getEnvVars).mockResolvedValue({ vars: {} });
+  });
+
   it("renders page title", () => {
     renderAuth(makeConfig(true));
     expect(screen.getByRole("heading", { name: "Authentication" })).toBeInTheDocument();
@@ -92,12 +108,10 @@ describe("AuthPage", () => {
     renderAuth(makeConfig(false));
     expect(screen.getByText("Auth is disabled")).toBeInTheDocument();
 
-    // Click the auth enable/disable toggle (the first switch on the page)
     const toggles = screen.getAllByRole("switch");
     const authToggle = toggles[0]!;
     await userEvent.click(authToggle);
 
-    // Should now show JWT settings
     expect(screen.getByText("JWT Settings")).toBeInTheDocument();
     expect(screen.queryByText("Auth is disabled")).not.toBeInTheDocument();
   });
@@ -116,6 +130,7 @@ describe("AuthPage", () => {
       checksum: "",
       saving: false,
       saveErrors: [] as ValidationError[],
+      dotenvWritable: false,
       refresh: vi.fn(),
       save: vi.fn(),
       updateConfig: vi.fn(),
@@ -130,5 +145,54 @@ describe("AuthPage", () => {
       </ConfigContext.Provider>
     );
     expect(container.innerHTML).toBe("");
+  });
+
+  it("shows Google OAuth var names when Google is enabled", async () => {
+    const config = makeConfig(true);
+    config.auth!.google = {
+      client_id: "${INSTANCEZ_GOOGLE_CLIENT_ID}",
+      client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
+      redirect_url: "${INSTANCEZ_GOOGLE_REDIRECT_URL}",
+    };
+    renderAuth(config);
+    expect(screen.getByText("INSTANCEZ_GOOGLE_CLIENT_ID")).toBeInTheDocument();
+    expect(screen.getByText("INSTANCEZ_GOOGLE_CLIENT_SECRET")).toBeInTheDocument();
+    expect(screen.getByText("INSTANCEZ_GOOGLE_REDIRECT_URL")).toBeInTheDocument();
+  });
+
+  it("shows var status as set when getEnvVars returns set=true", async () => {
+    vi.mocked(api.getEnvVars).mockResolvedValue({
+      vars: { INSTANCEZ_GOOGLE_CLIENT_ID: { set: true } },
+    });
+    const config = makeConfig(true);
+    config.auth!.google = {
+      client_id: "${INSTANCEZ_GOOGLE_CLIENT_ID}",
+      client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
+      redirect_url: "${INSTANCEZ_GOOGLE_REDIRECT_URL}",
+    };
+    renderAuth(config);
+    await waitFor(() => expect(screen.getByText("✓ set")).toBeInTheDocument());
+  });
+
+  it("shows dotenv input when dotenvWritable=true and provider is enabled", () => {
+    const config = makeConfig(true);
+    config.auth!.google = {
+      client_id: "${INSTANCEZ_GOOGLE_CLIENT_ID}",
+      client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
+      redirect_url: "${INSTANCEZ_GOOGLE_REDIRECT_URL}",
+    };
+    renderAuth(config, true);
+    expect(screen.getAllByPlaceholderText("enter value…").length).toBeGreaterThan(0);
+  });
+
+  it("hides dotenv inputs when dotenvWritable=false", () => {
+    const config = makeConfig(true);
+    config.auth!.google = {
+      client_id: "${INSTANCEZ_GOOGLE_CLIENT_ID}",
+      client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
+      redirect_url: "${INSTANCEZ_GOOGLE_REDIRECT_URL}",
+    };
+    renderAuth(config, false);
+    expect(screen.queryByPlaceholderText("enter value…")).not.toBeInTheDocument();
   });
 });
