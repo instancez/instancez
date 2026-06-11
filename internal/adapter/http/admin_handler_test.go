@@ -354,3 +354,50 @@ type lastMigrationStubDB struct {
 func (l *lastMigrationStubDB) GetLastMigration(ctx context.Context) (*domain.Migration, error) {
 	return &domain.Migration{Checksum: l.checksum, ConfigJSON: "{}"}, nil
 }
+
+func TestHandleGetEnvVars(t *testing.T) {
+	t.Setenv("INSTANCEZ_RESEND_API_KEY", "re_test")
+
+	raw := []byte(`version: 1
+project:
+  name: test
+providers:
+  email:
+    type: resend
+    api_key: ${INSTANCEZ_RESEND_API_KEY}
+auth:
+  google:
+    client_id: ${INSTANCEZ_GOOGLE_CLIENT_ID}
+    client_secret: ${INSTANCEZ_GOOGLE_CLIENT_SECRET}
+    redirect_url: ${INSTANCEZ_GOOGLE_REDIRECT_URL}
+`)
+	src := &stubSource{readBytes: raw, readVersion: "v1"}
+	h := &AdminHandler{
+		configSource:  src,
+		dashboardMode: DashboardReadwrite,
+		logger:        slog.Default(),
+	}
+
+	r := gin.New()
+	r.GET("/config/env-vars", h.handleGetEnvVars)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/config/env-vars", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var resp struct {
+		Vars map[string]struct{ Set bool } `json:"vars"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp.Vars["INSTANCEZ_RESEND_API_KEY"].Set {
+		t.Error("expected INSTANCEZ_RESEND_API_KEY to be set")
+	}
+	if resp.Vars["INSTANCEZ_GOOGLE_CLIENT_ID"].Set {
+		t.Error("expected INSTANCEZ_GOOGLE_CLIENT_ID to be unset")
+	}
+}

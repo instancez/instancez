@@ -97,6 +97,7 @@ func (h *AdminHandler) Mount(api *gin.RouterGroup) {
 	admin.PUT("/config", h.handlePutConfig)
 	admin.GET("/config/status", h.handleConfigStatus)
 	admin.GET("/config/diff", h.handleConfigDiff)
+	admin.GET("/config/env-vars", h.handleGetEnvVars)
 	admin.GET("/stats", h.handleStats)
 
 	// API keys (dashboard Settings → API equivalent). The admin key itself is
@@ -432,6 +433,27 @@ func (h *AdminHandler) handleConfigDiff(c *gin.Context) {
 		"statements":     statements,
 		"is_destructive": isDestructive,
 	})
+}
+
+// handleGetEnvVars returns which ${VAR} references in the current raw config
+// source are set vs missing in the server process. Values are never returned.
+func (h *AdminHandler) handleGetEnvVars(c *gin.Context) {
+	if h.configSource == nil {
+		c.JSON(200, gin.H{"vars": gin.H{}})
+		return
+	}
+	raw, _, err := h.configSource.Read(c.Request.Context())
+	if err != nil {
+		problemJSON(c, 500, "internal", "Failed to read config source: "+err.Error())
+		return
+	}
+	names := config.EnvRefs(raw)
+	vars := make(map[string]any, len(names))
+	for _, name := range names {
+		_, set := os.LookupEnv(name)
+		vars[name] = gin.H{"set": set}
+	}
+	c.JSON(200, gin.H{"vars": vars})
 }
 
 // handleStats returns aggregate stats for the overview page.
