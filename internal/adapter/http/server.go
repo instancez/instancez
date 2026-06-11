@@ -32,6 +32,7 @@ type Server struct {
 type ServerDeps struct {
 	Config          *domain.Config
 	DB              domain.RequestDB
+	OwnerDB         domain.OwnerDB // privileged pool used for migrations from the dashboard
 	Logger          *slog.Logger
 	DevMode         bool
 	Email           domain.EmailSender
@@ -40,10 +41,11 @@ type ServerDeps struct {
 	ConfigPath      string             // path to instancez.yaml (for dashboard config editing)
 	DashboardAssets fs.FS              // embedded SPA assets (nil in dev mode)
 
-	DashboardMode DashboardMode            // disabled | readonly | readwrite
-	ConfigSource  config.Source            // for the watch + admin PUT
-	DriftFn       func() *app.DriftTracker // engine drift state (live closure; nil before Start)
-	ConfigFn      func() *domain.Config    // engine running config (lastGood when drifted)
+	DashboardMode  DashboardMode            // disabled | readonly | readwrite
+	ConfigSource   config.Source            // for the watch + admin PUT
+	DriftFn        func() *app.DriftTracker // engine drift state (live closure; nil before Start)
+	ConfigFn       func() *domain.Config    // engine running config (lastGood when drifted)
+	UpdateConfigFn func(*domain.Config)     // called after a successful PUT so GET reflects it immediately
 
 	FunctionRuntime domain.FunctionRuntime // nil → /functions/v1 returns 501
 }
