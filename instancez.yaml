@@ -101,10 +101,6 @@ tables:
                 auth.uid() IN (
                   SELECT user_id FROM team_members WHERE role = 'owner'
                 )
-        searchable:
-            - title
-            - body
-        search_config: ""
     categories:
         fields:
             - name: color
@@ -133,8 +129,6 @@ tables:
                 - update
                 - delete
               check: team_id IN (SELECT team_id FROM team_members WHERE user_id = auth.uid())
-        searchable: []
-        search_config: ""
     comments:
         fields:
             - name: body
@@ -175,8 +169,6 @@ tables:
             - operations:
                 - delete
               check: user_id = auth.uid()
-        searchable: []
-        search_config: ""
     some_table:
         fields:
             - name: created_at
@@ -187,8 +179,6 @@ tables:
               primary_key: true
         indexes: []
         rls: []
-        searchable: []
-        search_config: english
     team_members:
         fields:
             - name: id
@@ -242,8 +232,6 @@ tables:
                   SELECT team_id FROM team_members
                   WHERE user_id = auth.uid() AND role = 'owner'
                 )
-        searchable: []
-        search_config: ""
     teams:
         fields:
             - name: created_at
@@ -279,8 +267,6 @@ tables:
                   SELECT team_id FROM team_members
                   WHERE user_id = auth.uid() AND role = 'owner'
                 )
-        searchable: []
-        search_config: ""
     todos:
         fields:
             - name: body
@@ -354,10 +340,6 @@ tables:
                 - update
                 - delete
               check: user_id = auth.uid()
-        searchable:
-            - title
-            - body
-        search_config: english
 storage:
     another_bucket:
         max_size: 5MB

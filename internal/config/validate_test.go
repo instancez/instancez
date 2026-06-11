@@ -187,16 +187,6 @@ func TestValidate_RLSInvalidOp(t *testing.T) {
 	assertHasErrorAt(t, errs, "tables.todos.rls[0].operations")
 }
 
-func TestValidate_SearchableUnknownColumn(t *testing.T) {
-	cfg := validBaseConfig()
-	table := cfg.Tables["todos"]
-	table.Searchable = []string{"nonexistent"}
-	cfg.Tables["todos"] = table
-
-	errs := Validate(cfg)
-	assertHasErrorAt(t, errs, "tables.todos.searchable")
-}
-
 func TestValidate_EnumOnNonStringType(t *testing.T) {
 	cfg := validBaseConfig()
 	table := cfg.Tables["todos"]
@@ -370,7 +360,6 @@ func TestValidate_FullExampleConfig(t *testing.T) {
 					{Name: "title", Type: "text", Required: true},
 					{Name: "status", Type: "text", Required: true, Enum: []string{"pending", "active", "done"}, Default: "pending"},
 				},
-				Searchable: []string{"title"},
 				RLS: []domain.RLSPolicy{
 					{Operations: []string{"select"}, Check: "user_id = auth.uid()"},
 				},

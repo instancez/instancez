@@ -27,8 +27,7 @@ The project's user identity lives in `auth.users` (managed by ultrabase).
 Profile data lives in `profiles`, a user-defined table FK'd to `auth.users.id`.
 
 - **categories** — simple lookup table, public read/write
-- **products** — `text[]` tags, `jsonb` metadata, enum `status`, booleans,
-  `searchable: [name, description]` with `search_config: english` for FTS
+- **products** — `text[]` tags, `jsonb` metadata, enum `status`, booleans
 - **reviews** — has-many on `products`, FK to `auth.users.id` via `user_id`.
   Public **select**, but **insert/update/delete** are gated by RLS:
   `user_id = auth.uid()` — only the row owner can touch their own review

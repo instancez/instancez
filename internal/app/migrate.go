@@ -113,12 +113,6 @@ func planFromScratchStatements(cfg *domain.Config, roles domain.Roles) []string 
 	}
 	ddl = append(ddl, generateStorageRLSAll(cfg.Storage)...)
 
-	// Search indexes
-	for _, name := range ordered {
-		table := cfg.Tables[name]
-		ddl = append(ddl, generateSearch(name, table)...)
-	}
-
 	// RPC functions (Postgres stored functions)
 	if len(cfg.RPC) > 0 {
 		fnNames := sortedKeys(cfg.RPC)
@@ -191,11 +185,6 @@ func planUpdateStatements(oldCfg, newCfg *domain.Config, roles domain.Roles) []s
 		ddl = append(ddl, generateRLSPolicies(name, newCfg.Tables[name])...)
 	}
 	ddl = append(ddl, generateStorageRLSAll(newCfg.Storage)...)
-
-	// Search (ADD COLUMN IF NOT EXISTS + CREATE INDEX IF NOT EXISTS)
-	for _, name := range ordered {
-		ddl = append(ddl, generateSearch(name, newCfg.Tables[name])...)
-	}
 
 	// RPC functions (CREATE OR REPLACE FUNCTION)
 	if len(newCfg.RPC) > 0 {
@@ -874,36 +863,6 @@ func generateStorageRLS(bucketName string, bucket domain.Bucket) []string {
 			}
 		}
 	}
-
-	return ddl
-}
-
-func generateSearch(tableName string, table domain.Table) []string {
-	if len(table.Searchable) == 0 {
-		return nil
-	}
-
-	searchConfig := table.SearchConfig
-	if searchConfig == "" {
-		searchConfig = "english"
-	}
-
-	// Build tsvector expression with COALESCE for nullable columns
-	parts := make([]string, len(table.Searchable))
-	for i, col := range table.Searchable {
-		parts[i] = fmt.Sprintf("to_tsvector('%s', COALESCE(%s, ''))", searchConfig, col)
-	}
-	tsvExpr := strings.Join(parts, " || ")
-
-	colName := "_tsv"
-
-	var ddl []string
-	ddl = append(ddl,
-		fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s TSVECTOR GENERATED ALWAYS AS (%s) STORED;",
-			tableName, colName, tsvExpr))
-	ddl = append(ddl,
-		fmt.Sprintf("CREATE INDEX IF NOT EXISTS idx_%s_tsv ON %s USING GIN (%s);",
-			tableName, tableName, colName))
 
 	return ddl
 }

@@ -241,12 +241,10 @@ type OAuthProvider struct {
 
 // Table defines a database table.
 type Table struct {
-	Schema       string      `yaml:"schema" json:"schema"`
-	Fields       []Field     `yaml:"fields" json:"fields"`
-	Indexes      []Index     `yaml:"indexes" json:"indexes"`
-	RLS          []RLSPolicy `yaml:"rls" json:"rls"`
-	Searchable   []string    `yaml:"searchable" json:"searchable"`
-	SearchConfig string      `yaml:"search_config" json:"search_config"`
+	Schema  string      `yaml:"schema" json:"schema"`
+	Fields  []Field     `yaml:"fields" json:"fields"`
+	Indexes []Index     `yaml:"indexes" json:"indexes"`
+	RLS     []RLSPolicy `yaml:"rls" json:"rls"`
 }
 
 // EffectiveSchema returns the table's schema, defaulting to "public".

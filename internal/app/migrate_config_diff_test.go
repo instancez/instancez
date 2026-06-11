@@ -661,57 +661,6 @@ func TestDiffConfigs_NewStorage(t *testing.T) {
 	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS storage.objects")
 }
 
-func TestDiffConfigs_NewSearch(t *testing.T) {
-	old := &domain.Config{
-		Tables: map[string]domain.Table{
-			"articles": {
-				Fields: []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}, {Name: "title", Type: "text"}},
-			},
-		},
-	}
-	new := &domain.Config{
-		Tables: map[string]domain.Table{
-			"articles": {
-				Fields:       []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}, {Name: "title", Type: "text"}},
-				Searchable:   []string{"title"},
-				SearchConfig: "english",
-			},
-		},
-	}
-
-	// Search is re-emitted as idempotent DDL in planUpdate, not tracked in
-	// diff.Additions. Just verify no spurious removals.
-	diff := diffConfigs(old, new)
-	if len(diff.Removals) != 0 {
-		t.Errorf("expected no removals for new search, got: %v", diff.Removals)
-	}
-}
-
-func TestDiffConfigs_SearchRemoved(t *testing.T) {
-	old := &domain.Config{
-		Tables: map[string]domain.Table{
-			"articles": {
-				Fields:       []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}, {Name: "title", Type: "text"}},
-				Searchable:   []string{"title"},
-				SearchConfig: "english",
-			},
-		},
-	}
-	new := &domain.Config{
-		Tables: map[string]domain.Table{
-			"articles": {
-				Fields: []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}, {Name: "title", Type: "text"}},
-			},
-		},
-	}
-
-	diff := diffConfigs(old, new)
-	joined := strings.Join(diff.Removals, "\n")
-
-	mustContain(t, joined, "DROP INDEX IF EXISTS idx_articles_tsv")
-	mustContain(t, joined, "ALTER TABLE articles DROP COLUMN IF EXISTS _tsv")
-}
-
 func TestDiffConfigs_NewTableWithIndexes(t *testing.T) {
 	old := &domain.Config{
 		Tables: map[string]domain.Table{},

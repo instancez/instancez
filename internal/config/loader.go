@@ -217,14 +217,6 @@ func applyDefaults(cfg *domain.Config) {
 		}
 	}
 
-	// Search config default
-	for name, t := range cfg.Tables {
-		if len(t.Searchable) > 0 && t.SearchConfig == "" {
-			t.SearchConfig = "english"
-			cfg.Tables[name] = t
-		}
-	}
-
 	// RPC: fill defaults and derive ReturnCategory.
 	for name, fn := range cfg.RPC {
 		if fn.Language == "" {

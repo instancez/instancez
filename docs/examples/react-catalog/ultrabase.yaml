@@ -146,10 +146,6 @@ tables:
                 - update
                 - delete
               check: "true"
-        searchable:
-            - name
-            - description
-        search_config: english
 
     reviews:
         fields:

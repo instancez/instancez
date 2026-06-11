@@ -127,7 +127,6 @@ tables:
       - columns: [team_id, status]
       - columns: [due_date]
         where: "status != 'done'"
-    searchable: [title]
 ```
 
 Every table gets a PostgREST-compatible REST API:

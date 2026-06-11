@@ -399,17 +399,6 @@ func validateTables(tables map[string]domain.Table, auth *domain.Auth) domain.Va
 
 		// Validate RLS
 		errs = append(errs, validateRLS(path, table.RLS)...)
-
-		// Validate searchable columns exist
-		for _, col := range table.Searchable {
-			if _, ok := table.GetField(col); !ok {
-				errs = append(errs, &domain.ValidationError{
-					Path:       path + ".searchable",
-					Message:    fmt.Sprintf("searchable column %q not found in table fields", col),
-					Suggestion: fmt.Sprintf("Add %q to the fields section", col),
-				})
-			}
-		}
 	}
 
 	return errs

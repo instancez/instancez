@@ -26,14 +26,13 @@ func diffConfigs(old, new *domain.Config) configDiff {
 		return diff
 	}
 
-	// Removals (order: policies → indexes → columns → tables → storage → functions → search)
+	// Removals (order: policies → indexes → columns → tables → storage → functions)
 	diff.Removals = append(diff.Removals, diffRemovedRLSPolicies(old, new)...)
 	diff.Removals = append(diff.Removals, diffRemovedIndexes(old, new)...)
 	diff.Removals = append(diff.Removals, diffRemovedColumns(old, new)...)
 	diff.Removals = append(diff.Removals, diffRemovedTables(old, new)...)
 	diff.Removals = append(diff.Removals, diffRemovedStorageRLS(old, new)...)
 	diff.Removals = append(diff.Removals, diffRemovedRPCFunctions(old, new)...)
-	diff.Removals = append(diff.Removals, diffRemovedSearch(old, new)...)
 
 	// Additions (order: extensions → auth → tables → columns → storage → events)
 	diff.Additions = append(diff.Additions, diffNewExtensions(old, new)...)
@@ -202,26 +201,6 @@ func rpcFunctionDropSig(fn domain.Function) string {
 		types[i] = a.Type
 	}
 	return strings.Join(types, ", ")
-}
-
-// diffRemovedSearch returns DDL to drop TSVECTOR columns and GIN indexes for
-// tables that had searchable config in old but not in new.
-func diffRemovedSearch(old, new *domain.Config) []string {
-	var ddl []string
-	for tableName, oldTable := range old.Tables {
-		if len(oldTable.Searchable) == 0 {
-			continue
-		}
-		newTable, exists := new.Tables[tableName]
-		if !exists {
-			continue // table being dropped, CASCADE handles it
-		}
-		if len(newTable.Searchable) == 0 {
-			ddl = append(ddl, fmt.Sprintf("DROP INDEX IF EXISTS idx_%s_tsv;", tableName))
-			ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s DROP COLUMN IF EXISTS _tsv;", tableName))
-		}
-	}
-	return ddl
 }
 
 // --- Addition functions ---

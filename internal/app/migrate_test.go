@@ -217,20 +217,6 @@ func TestGenerateRLSPolicies_NoRLS(t *testing.T) {
 	}
 }
 
-func TestGenerateSearch(t *testing.T) {
-	table := domain.Table{
-		Searchable:   []string{"title", "body"},
-		SearchConfig: "english",
-	}
-	ddl := generateSearch("todos", table)
-	joined := strings.Join(ddl, "\n")
-
-	mustContain(t, joined, "ADD COLUMN IF NOT EXISTS _tsv TSVECTOR")
-	mustContain(t, joined, "to_tsvector('english', COALESCE(title, ''))")
-	mustContain(t, joined, "to_tsvector('english', COALESCE(body, ''))")
-	mustContain(t, joined, "USING GIN")
-}
-
 func TestGenerateStorageTablesUsesStorageSchema(t *testing.T) {
 	cfg := &domain.Config{
 		Storage: map[string]domain.Bucket{"avatars": {}},

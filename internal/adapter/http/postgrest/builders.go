@@ -394,13 +394,7 @@ func BuildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 		}
 	}
 	if len(selectParts) == 0 {
-		if len(table.Searchable) > 0 {
-			for _, f := range table.Fields {
-				selectParts = append(selectParts, tableName+"."+f.Name)
-			}
-		} else {
-			selectParts = append(selectParts, tableName+".*")
-		}
+		selectParts = append(selectParts, tableName+".*")
 	}
 
 	var allArgs []any
