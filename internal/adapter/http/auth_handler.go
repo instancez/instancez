@@ -47,6 +47,7 @@ type AuthHandler struct {
 	logger  *slog.Logger
 	email   domain.EmailSender
 	jwtKeys *app.JWTKeyManager
+	authSvc domain.AuthService // auth data operations via the service port
 }
 
 func NewAuthHandler(deps ServerDeps) *AuthHandler {
@@ -56,6 +57,7 @@ func NewAuthHandler(deps ServerDeps) *AuthHandler {
 		logger:  deps.Logger,
 		email:   deps.Email,
 		jwtKeys: deps.JWTKeys,
+		authSvc: adapterauth.NewService(deps.DB.Database, deps.Config, deps.Logger),
 	}
 }
 
@@ -536,8 +538,7 @@ func (h *AuthHandler) handleGetUser(c *gin.Context) {
 	session := getSession(c)
 	ctx := c.Request.Context()
 
-	row, err := h.db.QueryRow(ctx,
-		fmt.Sprintf("SELECT %s FROM auth.users WHERE id = $1::uuid", userSelectCols), session.UserID)
+	row, err := h.authSvc.GetUserByID(ctx, session.UserID)
 	if err != nil || row == nil {
 		problemJSON(c, 404, "not_found", "User not found")
 		return
@@ -1143,31 +1144,17 @@ func (h *AuthHandler) handleAdminListUsers(c *gin.Context) {
 	if perPage < 1 || perPage > 1000 {
 		perPage = 50
 	}
-	offset := (page - 1) * perPage
 
 	ctx := c.Request.Context()
 
-	rows, err := h.db.Query(ctx,
-		fmt.Sprintf("SELECT %s, count(*) OVER() AS _total FROM auth.users ORDER BY created_at DESC LIMIT $1 OFFSET $2", userSelectCols),
-		perPage, offset)
+	rows, total, err := h.authSvc.ListUsers(ctx, page, perPage)
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to list users")
 		return
 	}
 
-	total := 0
 	users := make([]gin.H, 0, len(rows))
 	for _, row := range rows {
-		if total == 0 {
-			switch n := row["_total"].(type) {
-			case int64:
-				total = int(n)
-			case int32:
-				total = int(n)
-			case float64:
-				total = int(n)
-			}
-		}
 		users = append(users, h.buildUser(asString(row["id"]), row))
 	}
 
@@ -1193,8 +1180,7 @@ func (h *AuthHandler) handleAdminGetUser(c *gin.Context) {
 	uid := c.Param("uid")
 	ctx := c.Request.Context()
 
-	row, err := h.db.QueryRow(ctx,
-		fmt.Sprintf("SELECT %s FROM auth.users WHERE id = $1::uuid", userSelectCols), uid)
+	row, err := h.authSvc.GetUserByID(ctx, uid)
 	if err != nil || row == nil {
 		problemJSON(c, 404, "user_not_found", "User not found")
 		return
@@ -1287,19 +1273,13 @@ func (h *AuthHandler) handleAdminDeleteUser(c *gin.Context) {
 	uid := c.Param("uid")
 	ctx := c.Request.Context()
 
-	// Clean up auth artifacts first.
-	h.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE user_id = $1::uuid", uid)
-	h.db.Exec(ctx, "DELETE FROM auth.one_time_tokens WHERE user_id = $1::uuid", uid)
-	h.db.Exec(ctx, "DELETE FROM auth.mfa_factors WHERE user_id = $1::uuid", uid)
-
-	affected, err := h.db.Exec(ctx, "DELETE FROM auth.users WHERE id = $1::uuid", uid)
-	if err != nil {
+	if err := h.authSvc.DeleteUser(ctx, uid); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			problemJSON(c, 404, "user_not_found", "User not found")
+			return
+		}
 		h.logger.Error("admin delete user failed", "error", err)
 		problemJSON(c, 500, "internal", "Failed to delete user")
-		return
-	}
-	if affected == 0 {
-		problemJSON(c, 404, "user_not_found", "User not found")
 		return
 	}
 
@@ -2252,9 +2232,7 @@ func (h *AuthHandler) handleJWKS(c *gin.Context) {
 func (h *AuthHandler) handleListIdentities(c *gin.Context) {
 	session := getSession(c)
 	ctx := c.Request.Context()
-	rows, err := h.db.Query(ctx,
-		"SELECT id::text, provider, provider_user_id, identity_data, email, last_sign_in_at, created_at, updated_at FROM auth.identities WHERE user_id = $1::uuid ORDER BY created_at",
-		session.UserID)
+	rows, err := h.authSvc.ListIdentities(ctx, session.UserID)
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to list identities")
 		return
@@ -2348,7 +2326,7 @@ func (h *AuthHandler) handleUnlinkIdentity(c *gin.Context) {
 func (h *AuthHandler) handleAdminSignOut(c *gin.Context) {
 	uid := c.Param("uid")
 	ctx := c.Request.Context()
-	h.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE user_id = $1::uuid", uid)
+	_ = h.authSvc.RevokeAllUserSessions(ctx, uid)
 	c.Status(204)
 }
 
