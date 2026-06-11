@@ -143,7 +143,7 @@ var validEmailProviders = map[string]bool{
 }
 
 var validStorageProviders = map[string]bool{
-	"s3": true, "local": true,
+	"s3": true, "local": true, "gcs": true, "minio": true,
 }
 
 // allowedDefaults is the allowlist of SQL functions usable in field defaults.
@@ -189,6 +189,7 @@ func Validate(cfg *domain.Config) domain.ValidationErrors {
 
 func validateProviders(p *domain.Providers) domain.ValidationErrors {
 	var errs domain.ValidationErrors
+
 	if p.Email != nil {
 		if !validEmailProviders[p.Email.Type] {
 			errs = append(errs, &domain.ValidationError{
@@ -196,17 +197,31 @@ func validateProviders(p *domain.Providers) domain.ValidationErrors {
 				Message:    fmt.Sprintf("unknown email provider type %q", p.Email.Type),
 				Suggestion: "Supported types: resend, sendgrid, ses",
 			})
+		} else if p.Email.APIKey == "" {
+			errs = append(errs, &domain.ValidationError{
+				Path:       "providers.email.api_key",
+				Message:    "required",
+				Suggestion: "Set the env var referenced here or add it to your .env file",
+			})
 		}
 	}
+
 	if p.Storage != nil {
 		if !validStorageProviders[p.Storage.Type] {
 			errs = append(errs, &domain.ValidationError{
 				Path:       "providers.storage.type",
 				Message:    fmt.Sprintf("unknown storage provider type %q", p.Storage.Type),
-				Suggestion: "Supported types: s3, local",
+				Suggestion: "Supported types: s3, local, gcs, minio",
+			})
+		} else if p.Storage.Type == "s3" && p.Storage.Bucket == "" {
+			errs = append(errs, &domain.ValidationError{
+				Path:       "providers.storage.bucket",
+				Message:    "required for s3 provider",
+				Suggestion: "Set INSTANCEZ_S3_BUCKET in your environment or .env file",
 			})
 		}
 	}
+
 	return errs
 }
 

@@ -334,8 +334,8 @@ func TestValidate_FullExampleConfig(t *testing.T) {
 		Project:    domain.Project{Name: "Acme Todo App"},
 		Extensions: []string{"pgcrypto", "pg_trgm"},
 		Providers: domain.Providers{
-			Email:   &domain.EmailProvider{Type: "resend"},
-			Storage: &domain.StorageProvider{Type: "s3"},
+			Email:   &domain.EmailProvider{Type: "resend", APIKey: "${INSTANCEZ_RESEND_API_KEY}"},
+			Storage: &domain.StorageProvider{Type: "s3", Bucket: "${INSTANCEZ_S3_BUCKET}"},
 		},
 		Auth: &domain.Auth{
 			JWTExpiry:     "15m",
@@ -401,20 +401,16 @@ func TestValidate_FullExampleConfig(t *testing.T) {
 	}
 }
 
-func TestValidate_MinioStorageRejected(t *testing.T) {
+func TestValidate_MinioStorageAccepted(t *testing.T) {
 	cfg, err := ParseBytes([]byte("version: 1\nproviders:\n  storage:\n    type: minio\n"), "t")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	errs := Validate(cfg)
-	found := false
 	for _, e := range errs {
 		if e.Path == "providers.storage.type" {
-			found = true
+			t.Fatalf("expected minio to be accepted as a valid storage provider type, got error: %s", e.Message)
 		}
-	}
-	if !found {
-		t.Fatal("expected minio to be rejected as an unknown storage provider type")
 	}
 }
 
@@ -793,6 +789,78 @@ func TestEmptyCodeFunctionReportsRequiredFields(t *testing.T) {
 	}
 	errs := Validate(cfg)
 	assertHasErrorAt(t, errs, "functions.my-fn")
+}
+
+func TestValidateProviders_ResendRequiresAPIKey(t *testing.T) {
+	cfg := &domain.Config{
+		Version: 1,
+		Project: domain.Project{Name: "test"},
+		Providers: domain.Providers{
+			Email: &domain.EmailProvider{Type: "resend"},
+		},
+	}
+	errs := Validate(cfg)
+	found := false
+	for _, e := range errs {
+		if e.Path == "providers.email.api_key" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected providers.email.api_key error, got: %v", errs)
+	}
+}
+
+func TestValidateProviders_ResendWithAPIKey_Valid(t *testing.T) {
+	cfg := &domain.Config{
+		Version: 1,
+		Project: domain.Project{Name: "test"},
+		Providers: domain.Providers{
+			Email: &domain.EmailProvider{Type: "resend", APIKey: "${INSTANCEZ_RESEND_API_KEY}"},
+		},
+	}
+	errs := Validate(cfg)
+	for _, e := range errs {
+		if e.Path == "providers.email.api_key" {
+			t.Errorf("unexpected api_key error when set: %v", e.Message)
+		}
+	}
+}
+
+func TestValidateProviders_S3RequiresBucket(t *testing.T) {
+	cfg := &domain.Config{
+		Version: 1,
+		Project: domain.Project{Name: "test"},
+		Providers: domain.Providers{
+			Storage: &domain.StorageProvider{Type: "s3"},
+		},
+	}
+	errs := Validate(cfg)
+	found := false
+	for _, e := range errs {
+		if e.Path == "providers.storage.bucket" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected providers.storage.bucket error, got: %v", errs)
+	}
+}
+
+func TestValidateProviders_S3WithBucket_Valid(t *testing.T) {
+	cfg := &domain.Config{
+		Version: 1,
+		Project: domain.Project{Name: "test"},
+		Providers: domain.Providers{
+			Storage: &domain.StorageProvider{Type: "s3", Bucket: "${INSTANCEZ_S3_BUCKET}"},
+		},
+	}
+	errs := Validate(cfg)
+	for _, e := range errs {
+		if e.Path == "providers.storage.bucket" {
+			t.Errorf("unexpected bucket error when set: %v", e.Message)
+		}
+	}
 }
 
 // Names that contain or extend a reserved word but aren't reserved
