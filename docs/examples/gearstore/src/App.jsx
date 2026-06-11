@@ -172,9 +172,9 @@ function Catalog({ session }) {
   return (
     <main>
       <header>
-        <h1>Ultrabase × React Catalog</h1>
+        <h1>instancez × Gearstore</h1>
         <p className="hint">
-          A React app driving Ultrabase with{' '}
+          A React app driving instancez with{' '}
           <code>@supabase/supabase-js</code>: full-text search, JSONB filters,
           array contains, <code>or=()</code> logic, embeds with scoped filters,
           range pagination, and an authenticated reviews flow (sign up / sign

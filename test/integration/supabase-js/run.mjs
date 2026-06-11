@@ -455,7 +455,7 @@ await step('rest: nested embed — has-many with nested belongs-to', async () =>
 })
 
 await step('rest: aliased belongs-to embed — parent:todos(title) on comments', async () => {
-  // Regression for the docs/examples/react-catalog bug where
+  // Regression for the docs/examples/gearstore bug where
   // `category:categories!left(...)` was rejected with "could not find a
   // relationship between 'products' and 'category:categories'". The alias
   // prefix must be stripped from the relation lookup and surfaced as the

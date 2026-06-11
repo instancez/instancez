@@ -5,6 +5,7 @@ import { useConfig } from "../hooks/useConfig";
 import { getStats, getStatus, getConfig } from "../api/client";
 import { downloadYamlFromConfig } from "../lib/downloadYaml";
 import { PageHeader } from "../components/PageHeader";
+import { ApiKeys } from "../components/ApiKeys";
 import { Card, CardTitle, CardValue } from "../components/Card";
 import { StatusBadge } from "../components/StatusBadge";
 import { Button, ListRow, Section } from "../components/ui";
@@ -136,6 +137,9 @@ export function Overview() {
             </p>
           </Card>
         </div>
+
+        {/* API keys for connecting clients */}
+        <ApiKeys />
 
         {/* Tables Detail */}
         {tableCount > 0 && (

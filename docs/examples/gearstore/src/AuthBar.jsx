@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react'
-import { supabase, DEV_ADMIN_KEY, ULTRABASE_URL } from './supabase.js'
+import { supabase, DEV_ADMIN_KEY, INSTANCEZ_URL } from './supabase.js'
 
 // AuthBar exercises the full auth surface of supabase-js against
-// Ultrabase:
+// Instancez:
 //   - supabase.auth.signUp / signInWithPassword              (password)
 //   - supabase.auth.signInWithOtp + verifyOtp({ token_hash }) (magic link)
 //   - supabase.auth.signInWithOtp + verifyOtp({ token, type:'email' }) (6-digit OTP)
 //   - supabase.auth.signInAnonymously                         (guest)
 //   - supabase.auth.signOut / getSession / onAuthStateChange  (lifecycle)
 //
-// Ultrabase has no email provider configured in this demo, so the
+// Instancez has no email provider configured in this demo, so the
 // magic-link and OTP tabs fetch their token via the admin generate_link
 // endpoint (dev-only) and then hand it back to supabase-js to complete
 // the verification — this keeps the client-side call shape identical to
@@ -79,7 +79,7 @@ export function AuthBar({ variant = 'bar' }) {
   // admin endpoint. In a real app an email provider would deliver this;
   // here we surface it client-side so the whole flow can be demonstrated.
   async function devGenerateLink(type) {
-    const resp = await fetch(`${ULTRABASE_URL}/auth/v1/admin/generate_link`, {
+    const resp = await fetch(`${INSTANCEZ_URL}/auth/v1/admin/generate_link`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${DEV_ADMIN_KEY}`,
@@ -228,9 +228,9 @@ export function AuthBar({ variant = 'bar' }) {
     <aside className={wrapperClass}>
       {variant === 'page' && (
         <div className="login-header">
-          <h1>Ultrabase × React Catalog</h1>
+          <h1>instancez × Gearstore</h1>
           <p className="hint">
-            Four supabase-js auth flows, all wired to the same Ultrabase
+            Four supabase-js auth flows, all wired to the same instancez
             backend.
           </p>
         </div>
@@ -269,6 +269,12 @@ export function AuthBar({ variant = 'bar' }) {
               Sign up
             </button>
           </div>
+          {mode === 'signin' && (
+            <p className="hint small">
+              Seeded demo user: <code>alex@example.com</code> /{' '}
+              <code>demo-password</code>
+            </p>
+          )}
           <label>
             Email
             <input
@@ -386,7 +392,7 @@ export function AuthBar({ variant = 'bar' }) {
       {error && <div className="error inline">{error}</div>}
       {variant === 'page' && (
         <p className="login-foot hint small">
-          Backed by Ultrabase auth via <code>@supabase/supabase-js</code>.
+          Backed by instancez auth via <code>@supabase/supabase-js</code>.
         </p>
       )}
     </aside>

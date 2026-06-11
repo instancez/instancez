@@ -93,6 +93,11 @@ export async function getUsers(): Promise<
   return request("/users");
 }
 
+// API keys (anon key only — the admin key never leaves the browser)
+export async function getKeys(): Promise<{ anon_key: string }> {
+  return request("/keys");
+}
+
 // Validate admin key by calling status
 export async function validateAdminKey(key: string): Promise<boolean> {
   try {

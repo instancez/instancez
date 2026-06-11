@@ -1,7 +1,7 @@
 version: 1
 project:
-    name: React Catalog Example
-    description: Product catalog demonstrating Ultrabase + supabase-js (auth, filtering, FTS, JSONB, arrays, embeds, RLS, file storage)
+    name: Gearstore Example
+    description: Desk-gear catalog demonstrating Instancez + supabase-js (auth, seeded users, filtering, FTS, JSONB, arrays, embeds, RLS, file storage)
 extensions:
     - pgcrypto
     - pg_trgm
@@ -208,7 +208,7 @@ storage:
         public: true
 
 # Code functions: JavaScript HTTP handlers served at /functions/v1/<name>.
-# Source lives in ./functions (shared deps in functions/package.json). `ultra dev`
+# Source lives in ./functions (shared deps in functions/package.json). `inz dev`
 # runs `npm ci` there on boot; restart dev to pick up code edits.
 functions:
     # Minimal handler — try this first: curl localhost:8080/functions/v1/hello -d '{"name":"you"}'
@@ -224,7 +224,7 @@ functions:
         file: functions/echo.js
         auth_required: false
         env:
-            API_KEY: "${ULTRA_ENV_DEMO_API_KEY:-demo}"
+            API_KEY: "${INSTANCEZ_ENV_DEMO_API_KEY:-demo}"
 
     # The signed-in user's reviews. auth_required → 401 for anonymous callers.
     # Uses ctx.supabase (RLS as the caller) + the `zod` npm dep.
@@ -236,15 +236,39 @@ functions:
 
     # Import a review from an external system: HMAC-verified, written via
     # service_role (BYPASSRLS). Uses `nanoid` + node:crypto. Set
-    # ULTRA_ENV_WEBHOOK_SECRET in your env/.env for a real secret.
+    # INSTANCEZ_ENV_WEBHOOK_SECRET in your env/.env for a real secret.
     webhook:
         runtime: node
         file: functions/webhook.js
         auth_required: false
         env:
-            WEBHOOK_SECRET: "${ULTRA_ENV_WEBHOOK_SECRET:-dev-secret}"
+            WEBHOOK_SECRET: "${INSTANCEZ_ENV_WEBHOOK_SECRET:-dev-secret}"
 
 data:
+    # Seeded demo users. Rows under auth.users are special-cased by the
+    # importer: `password` is bcrypt-hashed into password_hash, and the
+    # columns are validated against the auth.users schema. Explicit ids let
+    # the profiles and reviews seeds below reference the same users. Imports
+    # are checksummed and applied once — edits after the first boot are
+    # skipped (wipe the pgdata volume to re-seed).
+    auth.users:
+        - id: 00000000-0000-4000-8000-000000000001
+          email: alex@example.com
+          password: demo-password
+          email_verified: true
+          raw_user_meta_data: {"display_name": "Alex"}
+        - id: 00000000-0000-4000-8000-000000000002
+          email: sam@example.com
+          password: demo-password
+          email_verified: true
+          raw_user_meta_data: {"display_name": "Sam"}
+
+    profiles:
+        - id: 00000000-0000-4000-8000-000000000001
+          display_name: Alex
+        - id: 00000000-0000-4000-8000-000000000002
+          display_name: Sam
+
     categories:
         - id: 1
           slug: keyboards
@@ -362,11 +386,18 @@ data:
           category_id: 1
 
     reviews:
+        # The first two reviews carry the seeded demo users' user_id, so
+        # signing in as alex@example.com immediately shows the owner-scoped
+        # Edit/Delete buttons and a non-empty /functions/v1/my-reviews
+        # response. The rest stay unattributed (user_id null), like rows
+        # imported via the webhook function.
         - product_id: 1
+          user_id: 00000000-0000-4000-8000-000000000001
           author: Alex
           rating: 5
           body: Life-changing ergonomics. Worth every penny.
         - product_id: 1
+          user_id: 00000000-0000-4000-8000-000000000002
           author: Sam
           rating: 4
           body: Steep learning curve but incredible once adapted.

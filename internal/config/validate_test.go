@@ -272,26 +272,37 @@ func TestValidate_DataUnknownTable(t *testing.T) {
 	assertHasErrorAt(t, errs, "data.nonexistent")
 }
 
-func TestValidate_DataUsersOK(t *testing.T) {
+func TestValidate_DataAuthUsersOK(t *testing.T) {
 	cfg := validBaseConfig()
+	cfg.Auth = &domain.Auth{}
 	cfg.Data = map[string]domain.TableData{
-		"users": {CSVFiles: map[string]string{"demo": "./seeds/users.csv"}},
+		"auth.users": {Rows: []map[string]any{{"email": "a@example.com", "password": "secret-pass"}}},
 	}
 
 	errs := Validate(cfg)
 	if errs != nil {
-		t.Errorf("expected no errors for data.users, got: %v", errs)
+		t.Errorf("expected no errors for data.auth.users with auth configured, got: %v", errs)
 	}
+}
+
+func TestValidate_DataAuthUsersRequiresAuth(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Data = map[string]domain.TableData{
+		"auth.users": {Rows: []map[string]any{{"email": "a@example.com"}}},
+	}
+
+	errs := Validate(cfg)
+	assertHasErrorAt(t, errs, "data.auth.users")
 }
 
 func TestValidate_DataEmptySource(t *testing.T) {
 	cfg := validBaseConfig()
 	cfg.Data = map[string]domain.TableData{
-		"users": {CSVFiles: map[string]string{"demo": ""}},
+		"todos": {CSVFiles: map[string]string{"demo": ""}},
 	}
 
 	errs := Validate(cfg)
-	assertHasErrorAt(t, errs, "data.users.demo")
+	assertHasErrorAt(t, errs, "data.todos.demo")
 }
 
 func TestValidate_StorageInvalidSize(t *testing.T) {

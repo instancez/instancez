@@ -1,7 +1,7 @@
 /**
  * my-reviews — list and create the signed-in user's product reviews.
  *
- * Served at /functions/v1/my-reviews. auth_required: true, so ultrabase returns
+ * Served at /functions/v1/my-reviews. auth_required: true, so instancez returns
  * 401 for anonymous callers before this runs.
  *
  * Demonstrates:

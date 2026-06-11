@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/instancez/instancez/internal/app"
 	"github.com/instancez/instancez/internal/config"
 	"github.com/instancez/instancez/internal/domain"
 )
@@ -277,6 +278,69 @@ func TestPutConfigSourceVersionMismatchReturns409(t *testing.T) {
 	}
 	if src.writeCalls != 1 {
 		t.Fatalf("expected exactly 1 Write call, got %d", src.writeCalls)
+	}
+}
+
+// TestGetKeysReturnsStableAnonKey asserts GET /api/_admin/keys returns the
+// publishable anon key and that it is identical across requests — the
+// dashboard displays it as "the" project anon key, Supabase-style.
+func TestGetKeysReturnsStableAnonKey(t *testing.T) {
+	km, err := app.NewInMemoryJWTKeyManager("kid1", nil)
+	if err != nil {
+		t.Fatalf("key manager: %v", err)
+	}
+	h := &AdminHandler{
+		cfg:     &domain.Config{},
+		db:      &stubDB{},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		jwtKeys: km,
+	}
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.GET("/api/_admin/keys", h.handleKeys)
+
+	fetch := func() string {
+		req := httptest.NewRequest(http.MethodGet, "/api/_admin/keys", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		var got map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode body: %v (raw %s)", err, w.Body.String())
+		}
+		key, _ := got["anon_key"].(string)
+		if key == "" {
+			t.Fatalf("missing anon_key in %s", w.Body.String())
+		}
+		return key
+	}
+
+	first := fetch()
+	second := fetch()
+	if first != second {
+		t.Fatalf("anon_key changed between requests:\n%s\n%s", first, second)
+	}
+}
+
+// TestGetKeysWithoutKeyManagerReturns501 covers the defensive nil-JWTKeys
+// branch (test wiring that never set deps.JWTKeys).
+func TestGetKeysWithoutKeyManagerReturns501(t *testing.T) {
+	h := &AdminHandler{
+		cfg:    &domain.Config{},
+		db:     &stubDB{},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.GET("/api/_admin/keys", h.handleKeys)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/_admin/keys", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusNotImplemented {
+		t.Fatalf("expected 501, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

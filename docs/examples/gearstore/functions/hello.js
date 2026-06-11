@@ -1,8 +1,8 @@
 /**
- * Example code function for docs/example-ultrabase.yaml.
+ * Example code function for the gearstore example's instancez.yaml.
  *
  * Served at: POST /functions/v1/hello
- * Invoke via supabase-js: supabase.functions.invoke('hello', { body: { name: 'ultrabase' } })
+ * Invoke via supabase-js: supabase.functions.invoke('hello', { body: { name: 'instancez' } })
  *
  * handler(req, ctx)
  *   req  – { method, path, query, headers, body }

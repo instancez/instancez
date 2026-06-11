@@ -8,6 +8,7 @@ import type { Config, ValidationError } from "../lib/types";
 vi.mock("../api/client", () => ({
   getStats: vi.fn(),
   getStatus: vi.fn(),
+  getKeys: vi.fn().mockResolvedValue({ anon_key: "test-anon-key" }),
 }));
 
 import { getStats, getStatus } from "../api/client";

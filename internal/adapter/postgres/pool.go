@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -47,6 +48,27 @@ func NewRequest(ctx context.Context, databaseURL string, poolCfg domain.PoolConf
 // New creates a new DB from a Postgres connection URL and pool config.
 // Most callers should use NewOwner or NewRequest instead.
 func New(ctx context.Context, databaseURL string, poolCfg domain.PoolConfig) (*DB, error) {
+	cfg, err := parsePoolConfig(databaseURL, poolCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, &domain.DatabaseError{Op: "connect", Err: err}
+	}
+
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, &domain.DatabaseError{Op: "ping", Err: err}
+	}
+
+	return &DB{pool: pool}, nil
+}
+
+// parsePoolConfig builds the pgxpool config from a connection URL and the
+// YAML pool settings.
+func parsePoolConfig(databaseURL string, poolCfg domain.PoolConfig) (*pgxpool.Config, error) {
 	cfg, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		return nil, &domain.DatabaseError{Op: "parse_url", Err: err}
@@ -67,18 +89,16 @@ func New(ctx context.Context, databaseURL string, poolCfg domain.PoolConfig) (*D
 	if poolCfg.Min > 0 {
 		cfg.MinConns = int32(poolCfg.Min)
 	}
-
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		return nil, &domain.DatabaseError{Op: "connect", Err: err}
+	if poolCfg.IdleTimeout != "" {
+		idle, err := time.ParseDuration(poolCfg.IdleTimeout)
+		if err != nil {
+			return nil, &domain.DatabaseError{Op: "parse_idle_timeout", Err: err}
+		}
+		// Closing idle connections promptly matters behind NLB/PrivateLink
+		// paths, which silently expire idle TCP flows (350s default).
+		cfg.MaxConnIdleTime = idle
 	}
-
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		return nil, &domain.DatabaseError{Op: "ping", Err: err}
-	}
-
-	return &DB{pool: pool}, nil
+	return cfg, nil
 }
 
 func (db *DB) Close() error {

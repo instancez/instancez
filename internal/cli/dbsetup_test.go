@@ -62,6 +62,27 @@ func TestRolesFromEnv_PartialOverride(t *testing.T) {
 	}
 }
 
+func TestOwnerPoolConfigShrinksPool(t *testing.T) {
+	got := ownerPoolConfig(domain.PoolConfig{Max: 20, Min: 5, IdleTimeout: "300s"})
+
+	if got.Max != 2 {
+		t.Errorf("Max = %d, want 2", got.Max)
+	}
+	if got.Min != 0 {
+		t.Errorf("Min = %d, want 0", got.Min)
+	}
+	if got.IdleTimeout != "300s" {
+		t.Errorf("IdleTimeout = %q, want %q (inherited)", got.IdleTimeout, "300s")
+	}
+}
+
+func TestOwnerPoolConfigRespectsSmallerUserMax(t *testing.T) {
+	got := ownerPoolConfig(domain.PoolConfig{Max: 1, Min: 1})
+	if got.Max != 1 {
+		t.Errorf("Max = %d, want 1 (never exceed the configured pool max)", got.Max)
+	}
+}
+
 func TestShouldBootstrap(t *testing.T) {
 	cases := []struct {
 		name                   string

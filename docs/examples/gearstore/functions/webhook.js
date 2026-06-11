@@ -7,8 +7,8 @@
  *
  * Demonstrates:
  *   - reading a raw (non-JSON) body + a custom header
- *   - a secret from ctx.env (declared as ${ULTRA_ENV_WEBHOOK_SECRET} in the YAML;
- *     resolved from the ULTRA_ENV_ namespace, never inherited from the host env)
+ *   - a secret from ctx.env (declared as ${INSTANCEZ_ENV_WEBHOOK_SECRET} in the YAML;
+ *     resolved from the INSTANCEZ_ENV_ namespace, never inherited from the host env)
  *   - a Node built-in (node:crypto) and a 3rd-party npm dep (nanoid)
  *   - ctx.serviceClient (BYPASSRLS), used *meaningfully*: the `reviews` INSERT
  *     policy is `user_id = auth.uid()`, so an anonymous client can't insert an
@@ -16,7 +16,7 @@
  *
  * Send it:
  *   BODY='{"product_id":1,"author":"Imported","rating":5,"body":"from partner site"}'
- *   SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$ULTRA_ENV_WEBHOOK_SECRET" | awk '{print $2}')
+ *   SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$INSTANCEZ_ENV_WEBHOOK_SECRET" | awk '{print $2}')
  *   curl -s localhost:8080/functions/v1/webhook -H "x-signature: $SIG" --data-raw "$BODY"
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
@@ -61,7 +61,7 @@ export default async function handler(req, ctx) {
       author: payload.author ?? "external",
       rating: payload.rating,
       body: payload.body ?? null,
-      user_id: null, // imported, not owned by an ultrabase user
+      user_id: null, // imported, not owned by an instancez user
     })
     .select("id")
     .single();

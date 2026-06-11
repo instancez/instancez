@@ -391,7 +391,7 @@ func TestParseEmbedParam_Alias(t *testing.T) {
 // TestResolveEmbeds_Alias asserts the PostgREST "alias:relation" prefix
 // resolves the relationship by the post-colon name and surfaces the embed
 // under the alias both as JSON output key and as the internal SQL alias.
-// This is the regression test for the docs/examples/react-catalog bug where
+// This is the regression test for the docs/examples/gearstore bug where
 // "category:categories!left(...)" was rejected with "could not find a
 // relationship between 'products' and 'category:categories'".
 func TestResolveEmbeds_Alias(t *testing.T) {

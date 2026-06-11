@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { supabase, ULTRABASE_URL } from './supabase.js'
+import { supabase, INSTANCEZ_URL } from './supabase.js'
 
 const BUCKET = 'product_images'
 

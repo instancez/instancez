@@ -144,12 +144,24 @@ func (s *Server) Handler() http.Handler {
 	return s.engine
 }
 
+// buildHTTPServer constructs the net/http server with connection timeouts.
+// IdleTimeout must stay below 350s: instancez deploys behind L4 load
+// balancers (AWS NLB) that silently expire idle flows at 350s, and the
+// server closing first avoids client-visible RSTs on keepalive reuse.
+// ReadHeaderTimeout bounds slowloris-style partial-header holds, which an
+// L4 balancer passes straight through.
+func buildHTTPServer(port int, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              fmt.Sprintf(":%d", port),
+		Handler:           handler,
+		IdleTimeout:       300 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+}
+
 // Start begins listening. Blocks until the server is stopped.
 func (s *Server) Start() error {
-	s.httpServer = &http.Server{
-		Addr:    fmt.Sprintf(":%d", s.cfg.Server.Port),
-		Handler: s.engine,
-	}
+	s.httpServer = buildHTTPServer(s.cfg.Server.Port, s.engine)
 
 	s.logger.Info("HTTP server listening", "addr", s.httpServer.Addr)
 	if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {

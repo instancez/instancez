@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from './supabase.js'
 
 // CatalogStats exercises PostgREST aggregate select — both the "single
-// row of aggregates" shape and the "group by" shape that Ultrabase
+// row of aggregates" shape and the "group by" shape that Instancez
 // infers automatically from mixing an unaggregated column with aggregate
 // columns in the same select.
 //
@@ -69,7 +69,7 @@ export function CatalogStats({ categories = [] }) {
     <section className="stats">
       <h2>Catalog stats</h2>
       <p className="hint small">
-        Aggregates returned directly by Ultrabase via{' '}
+        Aggregates returned directly by instancez via{' '}
         <code>price_cents.avg()</code> / <code>id.count()</code> — no
         client-side math.
       </p>

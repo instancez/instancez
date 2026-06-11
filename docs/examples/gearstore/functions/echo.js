@@ -1,5 +1,5 @@
 /**
- * echo — explore the request/ctx surface ultrabase hands a code function.
+ * echo — explore the request/ctx surface instancez hands a code function.
  *
  * Served at /functions/v1/echo (any method). No deps, no auth.
  *
@@ -17,7 +17,7 @@
  *                  string otherwise; undefined when there is no body
  *   ctx.claims   – the verified JWT payload, or null when the caller is anonymous
  *   ctx.env      – only the keys declared in this function's `env:` block
- *   ctx.log      – structured logger (debug/info/warn/error) → ultrabase logs
+ *   ctx.log      – structured logger (debug/info/warn/error) → instancez logs
  */
 export default async function handler(req, ctx) {
   ctx.log.info("echo called", { method: req.method, path: req.path });
@@ -33,7 +33,7 @@ export default async function handler(req, ctx) {
       userAgent: req.headers["user-agent"] ?? null,
       body: req.body ?? null,
       caller: ctx.claims ? { sub: ctx.claims.sub, role: ctx.claims.role } : null,
-      // ctx.env only exposes the function's declared env keys (see ultrabase.yaml):
+      // ctx.env only exposes the function's declared env keys (see instancez.yaml):
       apiKeyConfigured: Boolean(ctx.env.API_KEY),
     },
   };

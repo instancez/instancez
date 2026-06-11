@@ -28,7 +28,7 @@ export function SecurityPanel({ session }) {
       setError(error.message)
       return
     }
-    // supabase-js normalises to { totp, phone, all }; Ultrabase returns
+    // supabase-js normalises to { totp, phone, all }; Instancez returns
     // { totp, phone } directly. Prefer `all` if present, else merge.
     const list = data?.all ?? [...(data?.totp ?? []), ...(data?.phone ?? [])]
     setFactors(list)

@@ -9,7 +9,7 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 5174,
     watch: { usePolling: true },
-    // When running inside Docker Compose, proxy API requests to the ultrabase
+    // When running inside Docker Compose, proxy API requests to the instancez
     // container so the browser never makes cross-origin calls.
     ...(backend && {
       proxy: {

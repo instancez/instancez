@@ -10,6 +10,19 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// ownerPoolConfig derives the owner pool's sizing from the YAML pool config,
+// which sizes the request pool. The owner pool only runs migrations, seeding,
+// and extension installs — boot time and config changes — so it keeps no warm
+// connections (privileged logins shouldn't sit idle, and idle flows are what
+// NLB/PrivateLink paths silently expire) and caps out at 2.
+func ownerPoolConfig(poolCfg domain.PoolConfig) domain.PoolConfig {
+	poolCfg.Min = 0
+	if poolCfg.Max > 2 || poolCfg.Max == 0 {
+		poolCfg.Max = 2
+	}
+	return poolCfg
+}
+
 // dbConnections opens the owner and authenticator pools from environment.
 // Both URLs are required.
 func dbConnections(ctx context.Context, poolCfg domain.PoolConfig) (domain.OwnerDB, domain.RequestDB, domain.Roles, error) {
@@ -37,7 +50,7 @@ func dbConnections(ctx context.Context, poolCfg domain.PoolConfig) (domain.Owner
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		var err error
-		if owner, err = postgres.NewOwner(gctx, ownerURL, poolCfg); err != nil {
+		if owner, err = postgres.NewOwner(gctx, ownerURL, ownerPoolConfig(poolCfg)); err != nil {
 			return fmt.Errorf("owner pool: %w", err)
 		}
 		return nil

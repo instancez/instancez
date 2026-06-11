@@ -111,3 +111,53 @@ func MintAnonToken(ctx context.Context, km *JWTKeyManager, ttl time.Duration) (s
 	}
 	return signed, nil
 }
+
+// MintStableAnonKey signs the project's publishable anon key — the value the
+// dashboard shows for client apps to copy, mirroring Supabase's Settings → API
+// anon key. Unlike MintAnonToken its claims are anchored to the signing key's
+// creation time (iat = created_at, exp = created_at + 10 years, the Supabase
+// anon-key lifetime), so the token is byte-identical across requests and
+// restarts and only changes when the signing key rotates.
+func MintStableAnonKey(ctx context.Context, km *JWTKeyManager) (string, error) {
+	if km == nil {
+		return "", fmt.Errorf("anon key: nil key manager")
+	}
+	key, err := km.Active(ctx)
+	if err != nil {
+		return "", fmt.Errorf("anon key: active key: %w", err)
+	}
+
+	anchor := key.CreatedAt
+	if anchor.IsZero() {
+		// No creation time on the key (e.g. legacy rows read before created_at
+		// was selected). The token is still valid, just not stable.
+		anchor = time.Now().UTC()
+	}
+	anchor = anchor.Truncate(time.Second)
+
+	claims := jwt.MapClaims{
+		"iss":  "instancez",
+		"role": "anon",
+		"iat":  anchor.Unix(),
+		"exp":  anchor.AddDate(10, 0, 0).Unix(),
+	}
+
+	var signingMethod jwt.SigningMethod
+	var signingKey any
+	switch key.Algorithm {
+	case "RS256":
+		signingMethod = jwt.SigningMethodRS256
+		signingKey = key.PrivateKey
+	default:
+		signingMethod = jwt.SigningMethodHS256
+		signingKey = key.Secret
+	}
+
+	token := jwt.NewWithClaims(signingMethod, claims)
+	token.Header["kid"] = key.KID
+	signed, err := token.SignedString(signingKey)
+	if err != nil {
+		return "", fmt.Errorf("anon key: sign: %w", err)
+	}
+	return signed, nil
+}

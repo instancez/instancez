@@ -2,38 +2,38 @@ services:
   postgres:
     image: postgres:17-alpine
     environment:
-      POSTGRES_USER: ultrabase
-      POSTGRES_PASSWORD: ultrabase
-      POSTGRES_DB: ultrabase
+      POSTGRES_USER: instancez
+      POSTGRES_PASSWORD: instancez
+      POSTGRES_DB: instancez
     ports:
       - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "ultrabase"]
+      test: ["CMD", "pg_isready", "-U", "instancez"]
       interval: 2s
       timeout: 3s
       retries: 10
 
-  ultrabase:
+  instancez:
     build:
       context: ../../..
       dockerfile: Dockerfile
     # `dev` migrates, seeds, and builds the code functions on the fly (runs
     # `npm ci` in /app/functions). `serve` is the production mode, but it never
-    # builds functions — it consumes a pre-built bundle from `ultra deploy`.
-    command: ["ultra", "dev"]
+    # builds functions — it consumes a pre-built bundle from `inz deploy`.
+    command: ["inz", "dev"]
     ports:
       - "8080:8080"
     environment:
-      ULTRABASE_OWNER_DATABASE_URL: postgres://ultrabase_owner:ultrabase@postgres:5432/ultrabase?sslmode=disable
-      ULTRABASE_AUTH_DATABASE_URL: postgres://authenticator:ultrabase@postgres:5432/ultrabase?sslmode=disable
-      ULTRABASE_ADMIN_KEY: ultrabase-dev-key
+      INSTANCEZ_OWNER_DATABASE_URL: postgres://instancez_owner:instancez@postgres:5432/instancez?sslmode=disable
+      INSTANCEZ_AUTH_DATABASE_URL: postgres://authenticator:instancez@postgres:5432/instancez?sslmode=disable
+      INSTANCEZ_ADMIN_KEY: instancez-dev-key
       JWT_SECRET: dev-jwt-secret-change-me
     volumes:
-      - ./ultrabase.yaml:/app/ultrabase.yaml
-      - ./functions:/app/functions   # code functions; `ultra dev` runs npm ci here
+      - ./instancez.yaml:/app/instancez.yaml
+      - ./functions:/app/functions   # code functions; `inz dev` runs npm ci here
     depends_on:
       postgres:
         condition: service_healthy
@@ -43,18 +43,18 @@ services:
     ports:
       - "5174:5174"
     environment:
-      VITE_PROXY_TARGET: http://ultrabase:8080
+      VITE_PROXY_TARGET: http://instancez:8080
       # Exposed only because this is a localhost dev demo: the magic-link
       # and email-OTP tabs call /auth/v1/admin/generate_link to surface the
       # token that would normally arrive by email. Never ship an admin key
       # to a real browser.
-      VITE_ULTRABASE_ADMIN_KEY: ultrabase-dev-key
+      VITE_INSTANCEZ_ADMIN_KEY: instancez-dev-key
     volumes:
       - ./src:/app/src
       - ./index.html:/app/index.html
       - ./vite.config.js:/app/vite.config.js
     depends_on:
-      - ultrabase
+      - instancez
 
 volumes:
   pgdata:

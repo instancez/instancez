@@ -1,8 +1,8 @@
-# React Catalog Example
+# Gearstore Example
 
-A product catalog React app that talks to an Ultrabase backend with
+A desk-gear catalog React app that talks to an Instancez backend with
 [`@supabase/supabase-js`](https://github.com/supabase/supabase-js). It's
-deliberately dense — it exercises most of Ultrabase's query surface plus the
+deliberately dense — it exercises most of Instancez's query surface plus the
 full auth flow so you can see how the pieces fit together.
 
 ## Run it
@@ -16,14 +16,35 @@ docker compose up --build
 Then open:
 
 - Web app: http://localhost:5174
-- Ultrabase API: http://localhost:8080
+- Instancez API: http://localhost:8080
 - Docs UI: http://localhost:8080/api/docs
+
+## Seeded demo users
+
+The `data:` block in `instancez.yaml` seeds the catalog (categories, products,
+reviews) **and two ready-to-use accounts in `auth.users`**:
+
+| Email              | Password        |
+| ------------------ | --------------- |
+| `alex@example.com` | `demo-password` |
+| `sam@example.com`  | `demo-password` |
+
+Rows under `data.auth.users` are special-cased by the importer: the plaintext
+`password` is bcrypt-hashed into `password_hash` before insert, and columns
+are validated against the `auth.users` schema. The seeds use explicit UUIDs so
+the `profiles` rows and the first two catalog reviews can reference the same
+users — sign in as Alex and his review grows Edit/Delete buttons, and
+`/functions/v1/my-reviews` returns it.
+
+Data imports are tracked by content checksum and applied once: editing a seed
+after the first boot logs a warning and skips it. To re-seed from scratch,
+drop the volume: `docker compose down -v`.
 
 ## What it demonstrates
 
-Schema (see `ultrabase.yaml`):
+Schema (see `instancez.yaml`):
 
-The project's user identity lives in `auth.users` (managed by ultrabase).
+The project's user identity lives in `auth.users` (managed by instancez).
 Profile data lives in `profiles`, a user-defined table FK'd to `auth.users.id`.
 
 - **categories** — simple lookup table, public read/write
@@ -33,6 +54,8 @@ Profile data lives in `profiles`, a user-defined table FK'd to `auth.users.id`.
   `user_id = auth.uid()` — only the row owner can touch their own review
 - **profiles** — user-defined table FK'd to `auth.users.id`; `display_name`
   is promoted into `raw_user_meta_data` on signup
+- **auth.users seeding** — the `data:` block provisions the demo accounts
+  above, with passwords bcrypt-hashed at import (see "Seeded demo users")
 
 Auth flows (see `src/AuthBar.jsx`) — four tabs, all driven by supabase-js:
 
@@ -52,7 +75,7 @@ Auth flows (see `src/AuthBar.jsx`) — four tabs, all driven by supabase-js:
 Because this demo runs without an SMTP provider, the magic-link and
 email-OTP tabs call `/auth/v1/admin/generate_link` under the hood to
 retrieve the token that would normally arrive by email. That admin key
-is wired through `VITE_ULTRABASE_ADMIN_KEY` in docker-compose and is
+is wired through `VITE_INSTANCEZ_ADMIN_KEY` in docker-compose and is
 **never** safe to expose in a real browser.
 
 Aggregates (see `src/CatalogStats.jsx`):
@@ -61,7 +84,7 @@ Aggregates (see `src/CatalogStats.jsx`):
   `products.select('total:id.count(),avg_cents:price_cents.avg(),min_cents:price_cents.min(),max_cents:price_cents.max(),stock_total:stock.sum()')`
 - Group-by-category via
   `products.select('category_id,count:id.count(),avg_cents:price_cents.avg()')`
-  — Ultrabase infers the `GROUP BY category_id` automatically from the
+  — Instancez infers the `GROUP BY category_id` automatically from the
   unaggregated column.
 
 TOTP MFA (see `src/SecurityPanel.jsx`):
@@ -100,10 +123,10 @@ exactly what supabase-js sent the backend.
 
 ## Code functions
 
-`ultrabase.yaml` also declares a few JavaScript HTTP handlers (served at
+`instancez.yaml` also declares a few JavaScript HTTP handlers (served at
 `/functions/v1/<name>`); the source is in [`functions/`](functions/), with
 shared deps in [`functions/package.json`](functions/package.json). `docker
-compose up` runs them; locally, `ultra dev` runs `npm ci` there on boot.
+compose up` runs them; locally, `inz dev` runs `npm ci` there on boot.
 
 - **`hello`** — the minimum handler.
 - **`echo`** — reflects the request/ctx surface (method, path, query, headers, body, claims).
@@ -127,7 +150,7 @@ See [`../../functions.md`](../../functions.md) for the full code-functions refer
 
 supabase-js always requires an anon key at `createClient()` time. In a real
 Supabase project that key is a signed JWT with `role: "anon"`. For this demo
-we send a placeholder string — Ultrabase's JWT middleware fails to parse it
+we send a placeholder string — Instancez's JWT middleware fails to parse it
 and falls through to `role=anon`; table-level grants + RLS policies decide
 access from there. When a user signs in, supabase-js replaces the
 `Authorization` header with the real access token automatically, and RLS

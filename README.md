@@ -303,7 +303,7 @@ functions: { ... }             # Code functions — JS handlers (/functions/v1/<
 seeds:     { ... }             # Initial data
 ```
 
-See [docs/examples/react-catalog](docs/examples/react-catalog) for a complete, runnable example (`docker compose up`) covering tables, RLS, storage, auth, and code functions.
+See [docs/examples/gearstore](docs/examples/gearstore) for a complete, runnable example (`docker compose up`) covering tables, RLS, storage, auth, and code functions.
 
 ## Architecture
 

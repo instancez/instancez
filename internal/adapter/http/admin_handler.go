@@ -22,6 +22,7 @@ type AdminHandler struct {
 	configSource  config.Source
 	dashboardMode DashboardMode
 	driftFn       func() *app.DriftTracker
+	jwtKeys       *app.JWTKeyManager
 }
 
 func NewAdminHandler(deps ServerDeps) *AdminHandler {
@@ -33,6 +34,7 @@ func NewAdminHandler(deps ServerDeps) *AdminHandler {
 		configSource:  deps.ConfigSource,
 		dashboardMode: deps.DashboardMode,
 		driftFn:       deps.DriftFn,
+		jwtKeys:       deps.JWTKeys,
 	}
 }
 
@@ -76,6 +78,27 @@ func (h *AdminHandler) Mount(api *gin.RouterGroup) {
 	admin.GET("/config/status", h.handleConfigStatus)
 	admin.GET("/config/diff", h.handleConfigDiff)
 	admin.GET("/stats", h.handleStats)
+
+	// API keys (dashboard Settings → API equivalent). The admin key itself is
+	// never echoed back — the dashboard already holds it from login.
+	admin.GET("/keys", h.handleKeys)
+}
+
+// handleKeys returns the project's publishable anon key. The token is
+// deterministic for the active signing key (see app.MintStableAnonKey), so
+// the dashboard can present it as a stable value like Supabase's anon key.
+func (h *AdminHandler) handleKeys(c *gin.Context) {
+	if h.jwtKeys == nil {
+		c.JSON(501, gin.H{"error": "not_implemented", "message": "JWT key manager not configured"})
+		return
+	}
+	anonKey, err := app.MintStableAnonKey(c.Request.Context(), h.jwtKeys)
+	if err != nil {
+		h.logger.Error("mint anon key", "error", err)
+		c.JSON(500, gin.H{"error": "internal", "message": "failed to mint anon key"})
+		return
+	}
+	c.JSON(200, gin.H{"anon_key": anonKey})
 }
 
 func (h *AdminHandler) handleListMigrations(c *gin.Context) {

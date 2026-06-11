@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/instancez/instancez/internal/domain"
 )
@@ -21,6 +22,7 @@ type JWTKey struct {
 	Algorithm  string // "HS256" or "RS256"
 	PrivateKey *rsa.PrivateKey
 	PublicKey  *rsa.PublicKey
+	CreatedAt  time.Time // anchors deterministic claims (MintStableAnonKey); zero if unknown
 }
 
 // SymmetricSecret returns a non-empty key suitable for HMAC operations that
@@ -78,6 +80,7 @@ func NewInMemoryJWTKeyManager(kid string, privateKey *rsa.PrivateKey) (*JWTKeyMa
 		Algorithm:  "RS256",
 		PrivateKey: privateKey,
 		PublicKey:  &privateKey.PublicKey,
+		CreatedAt:  time.Now().UTC(),
 	}
 	return &JWTKeyManager{
 		active: key,
@@ -104,7 +107,7 @@ func (m *JWTKeyManager) Active(ctx context.Context) (*JWTKey, error) {
 
 	// Try to load the most recent non-retired key.
 	row, err := m.db.QueryRow(ctx,
-		`SELECT kid, secret, algorithm FROM auth.jwt_keys
+		`SELECT kid, secret, algorithm, created_at FROM auth.jwt_keys
 		 WHERE retired_at IS NULL ORDER BY created_at DESC LIMIT 1`)
 	if err == nil && row != nil {
 		key, kerr := rowToKey(row)
@@ -125,9 +128,12 @@ func (m *JWTKeyManager) Active(ctx context.Context) (*JWTKey, error) {
 		Type:  "RSA PRIVATE KEY",
 		Bytes: x509.MarshalPKCS1PrivateKey(key.PrivateKey),
 	})
+	// created_at is written explicitly (not left to the column default) so the
+	// in-memory key and the row agree — deterministic anon-key claims are
+	// anchored to it.
 	_, err = m.db.Exec(ctx,
-		`INSERT INTO auth.jwt_keys (kid, secret, algorithm) VALUES ($1, $2, $3)`,
-		key.KID, privPEM, key.Algorithm)
+		`INSERT INTO auth.jwt_keys (kid, secret, algorithm, created_at) VALUES ($1, $2, $3, $4)`,
+		key.KID, privPEM, key.Algorithm, key.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("jwt key: insert: %w", err)
 	}
@@ -151,7 +157,7 @@ func (m *JWTKeyManager) Get(ctx context.Context, kid string) (*JWTKey, error) {
 	m.mu.RUnlock()
 
 	row, err := m.db.QueryRow(ctx,
-		`SELECT kid, secret, algorithm FROM auth.jwt_keys WHERE kid = $1`, kid)
+		`SELECT kid, secret, algorithm, created_at FROM auth.jwt_keys WHERE kid = $1`, kid)
 	if err != nil {
 		return nil, fmt.Errorf("jwt key: lookup %s: %w", kid, err)
 	}
@@ -173,7 +179,7 @@ func (m *JWTKeyManager) Get(ctx context.Context, kid string) (*JWTKey, error) {
 // AllPublicKeys returns all non-retired public keys for the JWKS endpoint.
 func (m *JWTKeyManager) AllPublicKeys(ctx context.Context) ([]*JWTKey, error) {
 	rows, err := m.db.Query(ctx,
-		`SELECT kid, secret, algorithm FROM auth.jwt_keys WHERE retired_at IS NULL ORDER BY created_at DESC`)
+		`SELECT kid, secret, algorithm, created_at FROM auth.jwt_keys WHERE retired_at IS NULL ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -200,6 +206,9 @@ func rowToKey(row map[string]any) (*JWTKey, error) {
 	}
 
 	key := &JWTKey{KID: kid, Algorithm: alg}
+	if created, ok := row["created_at"].(time.Time); ok {
+		key.CreatedAt = created.UTC()
+	}
 
 	switch alg {
 	case "RS256":
@@ -247,5 +256,6 @@ func generateRS256Key() (*JWTKey, error) {
 		Algorithm:  "RS256",
 		PrivateKey: priv,
 		PublicKey:  &priv.PublicKey,
+		CreatedAt:  time.Now().UTC(),
 	}, nil
 }
