@@ -5,8 +5,7 @@
   "type": "module",
   "exports": {
     "./console": "./src/console/index.ts",
-    "./styles.css": "./src/index.css",
-    "./tailwind-preset": "./tailwind.preset.js"
+    "./styles.css": "./src/index.css"
   },
   "peerDependencies": {
     "react": "^19.0.0",
