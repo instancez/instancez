@@ -4,7 +4,13 @@
 // instancez module never import internal types.
 package configvalidate
 
-import "github.com/instancez/instancez/internal/config"
+import (
+	"encoding/json"
+
+	"github.com/instancez/instancez/internal/config"
+	"github.com/instancez/instancez/internal/domain"
+	"gopkg.in/yaml.v3"
+)
 
 // Problem is a single validation finding.
 type Problem struct {
@@ -32,4 +38,33 @@ func ValidateYAML(data []byte) []Problem {
 // extracted with instancez's canonical interpolation pattern.
 func ScanEnvRefs(data []byte) []string {
 	return config.EnvRefs(data)
+}
+
+// MarshalYAML parses a JSON-encoded instancez config into the canonical
+// domain.Config, validates it, and — when valid — emits the exact yaml.Marshal
+// bytes that the instancez admin API's PUT /config and POST /config/preview
+// write. This lets callers outside the instancez module (e.g. the platform's
+// console config endpoints) produce byte-identical instancez.yaml documents and
+// surface the same validation findings, without importing internal types.
+//
+// On a JSON decode failure it returns (nil, nil, err). When the config decodes
+// but fails validation it returns (nil, problems, nil) — the same shape the
+// dashboard renders. When valid it returns (yamlBytes, nil, nil).
+func MarshalYAML(jsonBytes []byte) ([]byte, []Problem, error) {
+	var cfg domain.Config
+	if err := json.Unmarshal(jsonBytes, &cfg); err != nil {
+		return nil, nil, err
+	}
+	if ves := config.Validate(&cfg); len(ves) > 0 {
+		probs := make([]Problem, 0, len(ves))
+		for _, ve := range ves {
+			probs = append(probs, Problem{Path: ve.Path, Message: ve.Message, Suggestion: ve.Suggestion})
+		}
+		return nil, probs, nil
+	}
+	out, err := yaml.Marshal(&cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	return out, nil, nil
 }
