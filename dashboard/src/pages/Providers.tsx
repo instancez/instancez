@@ -131,7 +131,7 @@ interface ProviderConfigPanelProps {
   provider: Record<string, unknown>;
   envVarStatus: Record<string, { set: boolean }>;
   pendingDotenv: Record<string, string>;
-  dotenvWritable: boolean;
+  canWriteSecrets: boolean;
   onPendingVar: (name: string, value: string) => void;
   onSettingChange: (key: string, value: string) => void;
 }
@@ -144,7 +144,7 @@ function ProviderConfigPanel({
   provider,
   envVarStatus,
   pendingDotenv,
-  dotenvWritable,
+  canWriteSecrets,
   onPendingVar,
   onSettingChange,
 }: ProviderConfigPanelProps) {
@@ -162,7 +162,7 @@ function ProviderConfigPanel({
               label={field.label}
               name={field.envVar}
               isSet={envVarStatus[field.envVar]?.set ?? false}
-              canWrite={dotenvWritable}
+              canWrite={canWriteSecrets}
               inputValue={pendingDotenv[field.envVar] ?? ""}
               onInputChange={(v) => onPendingVar(field.envVar, v)}
             />
@@ -193,7 +193,7 @@ function ProviderConfigPanel({
                 label={field.label}
                 name={name}
                 isSet={envVarStatus[name]?.set ?? false}
-                canWrite={dotenvWritable}
+                canWrite={canWriteSecrets}
                 inputValue={pendingDotenv[name] ?? ""}
                 onInputChange={(v) => onPendingVar(name, v)}
               />
@@ -208,6 +208,7 @@ function ProviderConfigPanel({
 export function ProvidersPage() {
   const backend = useBackend();
   const { config, save, saving, saveErrors, dotenvWritable } = useConfig();
+  const canWriteSecrets = backend.capabilities.canWriteSecrets && dotenvWritable;
   const [local, setLocal] = useState<Config | null>(null);
   const [envVarStatus, setEnvVarStatus] = useState<Record<string, { set: boolean }>>({});
   const [pendingDotenv, setPendingDotenv] = useState<Record<string, string>>({});
@@ -317,7 +318,7 @@ export function ProvidersPage() {
       })),
     });
     if (ok) {
-      if (dotenvWritable && staged.length > 0) {
+      if (canWriteSecrets && staged.length > 0) {
         await backend.writeSecrets(Object.fromEntries(staged)).catch(() => {});
       }
       setPendingDotenv({});
@@ -373,7 +374,7 @@ export function ProvidersPage() {
               provider={local.providers.email as unknown as Record<string, unknown>}
               envVarStatus={envVarStatus}
               pendingDotenv={pendingDotenv}
-              dotenvWritable={dotenvWritable}
+              canWriteSecrets={canWriteSecrets}
               onPendingVar={setPendingVar}
               onSettingChange={updateEmailSetting}
             />
@@ -423,7 +424,7 @@ export function ProvidersPage() {
                 provider={local.providers.storage as unknown as Record<string, unknown>}
                 envVarStatus={envVarStatus}
                 pendingDotenv={pendingDotenv}
-                dotenvWritable={dotenvWritable}
+                canWriteSecrets={canWriteSecrets}
                 onPendingVar={setPendingVar}
                 onSettingChange={updateStorageSetting}
               />

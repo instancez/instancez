@@ -125,6 +125,7 @@ const DEFAULT_AUTH: Auth = {
 export function AuthPage() {
   const backend = useBackend();
   const { config, save, saving, saveErrors, dotenvWritable } = useConfig();
+  const canWriteSecrets = backend.capabilities.canWriteSecrets && dotenvWritable;
   const [auth, setAuth] = useState<Auth | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [envVarStatus, setEnvVarStatus] = useState<Record<string, { set: boolean }>>({});
@@ -173,7 +174,7 @@ export function AuthPage() {
       })),
     });
     if (ok) {
-      if (dotenvWritable && staged.length > 0) {
+      if (canWriteSecrets && staged.length > 0) {
         await backend.writeSecrets(Object.fromEntries(staged)).catch(() => {});
       }
       setPendingDotenv({});
@@ -388,7 +389,7 @@ export function AuthPage() {
                               envVarStatus[envRefName(providerConfig.client_secret) ?? secretVar]
                                 ?.set ?? false
                             }
-                            canWrite={dotenvWritable}
+                            canWrite={canWriteSecrets}
                             inputValue={
                               pendingDotenv[
                                 envRefName(providerConfig.client_secret) ?? secretVar
@@ -412,7 +413,7 @@ export function AuthPage() {
                                   label={field.label}
                                   name={refName}
                                   isSet={envVarStatus[refName]?.set ?? false}
-                                  canWrite={dotenvWritable}
+                                  canWrite={canWriteSecrets}
                                   inputValue={pendingDotenv[refName] ?? ""}
                                   onInputChange={(v) => setPendingVar(refName, v)}
                                 />

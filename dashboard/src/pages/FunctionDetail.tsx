@@ -69,7 +69,7 @@ export function FunctionDetail() {
 
     // A changed file path must exist on disk before the save can conclude.
     const savedFile = (config.functions || {})[name]?.file ?? "";
-    if (fn.file && fn.file !== savedFile) {
+    if (backend.capabilities.canEditFunctionCode && fn.file && fn.file !== savedFile) {
       try {
         const { exists } = await backend.checkFunctionFile(fn.file);
         if (!exists) {
@@ -229,7 +229,7 @@ export function FunctionDetail() {
             <p className="text-sm text-muted-foreground">No environment variables.</p>
           )}
         </Section>
-        {code !== null && (
+        {backend.capabilities.canEditFunctionCode && code !== null && (
           <Section
             title="Code"
             icon={Code2}

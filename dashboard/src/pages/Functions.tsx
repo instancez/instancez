@@ -78,7 +78,7 @@ export function Functions() {
   );
 
   const depEntries = deps ? Object.entries(deps.dependencies).sort(([a], [b]) => a.localeCompare(b)) : [];
-  const canEdit = deps !== null && !deps.readonly;
+  const canEdit = backend.capabilities.canManageDeps && deps !== null && !deps.readonly;
 
   return (
     <div>
