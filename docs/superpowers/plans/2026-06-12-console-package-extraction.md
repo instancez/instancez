@@ -656,7 +656,6 @@ export {
   functionsRoutes,
   providersRoutes,
 } from "./routes";
-export { EmbeddedChromeProvider } from "./chrome"; // Task 7
 // Leaf components platform surfaces reuse outside the console mount:
 export { DiffViewer } from "../components/DiffViewer";
 export { ConfirmSaveDialog } from "../components/ConfirmSaveDialog";
@@ -679,15 +678,21 @@ git commit -m "feat(console): mountable consoleRoutes + ConsoleProvider; Layout 
 
 ---
 
-### Task 7: Embedded chrome mode (no stitched look in host apps)
+### Task 7: Chrome-free pages (structural fix — no embedded mode flag)
 
 **Files:**
-- Create: `dashboard/src/console/chrome.tsx`
-- Modify: `dashboard/src/components/PageHeader.tsx`
-- Modify: page root padding (see step 3)
+- Modify: every file in `dashboard/src/pages/` that renders `PageHeader` (grep `PageHeader` for the list)
+- Modify: `dashboard/src/components/Layout.tsx`
+- Modify: `dashboard/src/console/routes.tsx` (route `handle` metadata)
+- Modify: `dashboard/src/components/PageHeader.tsx` (drop now-unused `backTo`/`onDelete` props if nothing uses them after the move)
 - Test: `dashboard/src/console/chrome.test.tsx`
 
-When console pages render inside a host app's own tabs, the console's big page headers and page-level padding are what make it look bolted-on. An `EmbeddedChromeProvider` switches pages into a naked-content-pane mode: `PageHeader` collapses to a slim bar that keeps only what the host can't supply (back link on detail pages, the delete/actions row) and drops the title/description; the page root horizontal padding collapses so the host controls gutters.
+Instead of an "embedded mode" flag, pages stop owning page chrome entirely — then the stitched-look problem cannot exist in any host:
+
+1. **Pages lose `PageHeader` and page gutters.** Remove the `PageHeader` element from each page and the page-root horizontal padding (`px-8`) — the page root becomes a bare content pane. (Vertical spacing between sections stays.)
+2. **Detail-page actions move into content.** Pages that passed `backTo`/`onDelete` to PageHeader (TableDetail, RpcDetail, StorageDetail, FunctionDetail) render a slim toolbar row at the top of their content instead: back link (chevron + parent name, `Link to=".."` relative) on the left, the delete button on the right — reuse the exact button/danger styles PageHeader used. This row is content, so it looks native in any host.
+3. **The OSS shell owns titles.** `consoleRoutes()` (and each fragment) attaches `handle: { title, description }` to each route (static strings for list pages; for detail routes use `handle: { title: (params) => params.name, description: ... }`). `Layout.tsx` reads `useMatches()` and renders the existing `PageHeader` once, above the `<Outlet/>`, from the deepest match's handle — and applies the `px-8` gutter wrapper around the outlet so pages don't need it.
+4. **Dynamic header data:** Overview's title is the project name from config — give its route `handle: { title: null }` and have Layout fall back to rendering nothing for null titles; Overview keeps a slim in-content heading for the project name/description instead (it is content, not chrome).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -695,69 +700,58 @@ When console pages render inside a host app's own tabs, the console's big page h
 // dashboard/src/console/chrome.test.tsx
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
-import { EmbeddedChromeProvider } from "./chrome";
-import { PageHeader } from "../components/PageHeader";
+import { MemoryRouter, useRoutes } from "react-router-dom";
+import { ConsoleProvider } from "./ConsoleProvider";
+import { adminBackend } from "./adminBackend";
+import { tablesRoutes } from "./routes";
+import * as api from "../api/client";
 
-describe("embedded chrome", () => {
-  it("renders the full header by default", () => {
-    render(
-      <MemoryRouter>
-        <PageHeader title="Tables" description="All your tables" />
+vi.mock("../api/client", async (importOriginal) => {
+  const real = await importOriginal<typeof api>();
+  return {
+    ...real,
+    getConfig: vi.fn().mockResolvedValue({
+      version: 1, project: { name: "P", description: "" },
+      extensions: [], tables: { todos: { fields: [{ name: "id", type: "bigserial", primary_key: true }], indexes: [], rls: [] } },
+      auth: null, storage: {}, rpc: {}, functions: {}, data: {},
+      providers: { email: null, storage: null },
+      server: { port: 8080, max_body_size: "10MB", max_limit: 1000, docs_ui: true,
+        cors: { origins: [], methods: [], headers: [], credentials: false, max_age: 0 },
+        timeouts: { request: "30s", db_query: "10s", upload: "60s", shutdown: "10s" },
+        db: { pool: { max: 25, min: 5, idle_timeout: "5m" } } },
+      _checksum: "abc",
+    }),
+    getConfigStatus: vi.fn().mockResolvedValue({ dotenv_writable: false }),
+    getEnvVars: vi.fn().mockResolvedValue({ vars: {} }),
+  };
+});
+
+function Mounted() {
+  return useRoutes(tablesRoutes());
+}
+
+describe("chrome-free pages", () => {
+  it("a mounted fragment renders content without page chrome", async () => {
+    const { container } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <ConsoleProvider backend={adminBackend}>
+          <Mounted />
+        </ConsoleProvider>
       </MemoryRouter>
     );
-    expect(screen.getByText("Tables")).toBeInTheDocument();
-    expect(screen.getByText("All your tables")).toBeInTheDocument();
-  });
-
-  it("collapses title/description when embedded but keeps actions", () => {
-    const onDelete = vi.fn();
-    render(
-      <MemoryRouter>
-        <EmbeddedChromeProvider>
-          <PageHeader title="todos" description="should hide" backTo="/tables" onDelete={onDelete} />
-        </EmbeddedChromeProvider>
-      </MemoryRouter>
-    );
-    expect(screen.queryByText("should hide")).not.toBeInTheDocument();
-    // back affordance and delete action survive — match PageHeader's actual
-    // accessible names (read PageHeader.tsx first and adjust the queries)
-    expect(screen.getByRole("button", { name: /delete/i })).toBeInTheDocument();
+    expect(await screen.findByText("todos")).toBeInTheDocument();
+    // No <h1> page title and no page-level gutters in the fragment itself.
+    expect(container.querySelector("h1")).toBeNull();
   });
 });
 ```
 
-- [ ] **Step 2: Run: `cd dashboard && npx vitest run src/console/chrome.test.tsx` — expect FAIL**
+(Adjust the heading-level assertion to whatever element PageHeader actually renders — read PageHeader.tsx first; the point is: the title chrome must not appear inside a mounted fragment.)
 
-- [ ] **Step 3: Implement**
-
-```tsx
-// dashboard/src/console/chrome.tsx
-import { createContext, useContext, type ReactNode } from "react";
-
-const EmbeddedContext = createContext(false);
-
-/** Host apps (instancez-platform) wrap console fragments in this so pages
- * render as naked content panes: slim headers, no page-level gutters. */
-export function EmbeddedChromeProvider({ children }: { children: ReactNode }) {
-  return <EmbeddedContext.Provider value={true}>{children}</EmbeddedContext.Provider>;
-}
-
-export function useEmbeddedChrome(): boolean {
-  return useContext(EmbeddedContext);
-}
-```
-
-In `PageHeader.tsx`: `const embedded = useEmbeddedChrome();` — when embedded, render the slim variant (back link + actions row only; skip the `<h1>`/description block, reduce vertical padding). In each page's root `div`, replace the hardcoded `px-8` with a shared helper class driven by the same hook — simplest implementation: a tiny `usePageGutters()` returning `embedded ? "px-0" : "px-8"`, applied in the pages' content wrappers (`grep -rn '"px-8' dashboard/src/pages` for the list).
-
-- [ ] **Step 4: Run: `cd dashboard && npx vitest run src/console/chrome.test.tsx && npm test` — expect PASS, full suite green (default mode unchanged)**
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add dashboard/src
-git commit -m "feat(console): embedded chrome mode for host-app integration"
-```
+- [ ] **Step 2: Run it — expect FAIL (pages still render PageHeader)**
+- [ ] **Step 3: Implement the four structural changes above.** Update existing page tests that asserted PageHeader-rendered titles/descriptions: those assertions move to a new Layout-level test (`dashboard/src/components/Layout.test.tsx` if present, else adjust the page tests to assert the slim toolbar instead). Do NOT delete behavioral assertions — relocate them.
+- [ ] **Step 4: Run `npx vitest run src/console/chrome.test.tsx`, then the FULL suite + build — all green; `inz dev` dashboard must look unchanged (Layout now supplies what pages used to).**
+- [ ] **Step 5: Commit: `git commit -m "refactor(console): chrome-free pages — shell owns titles and gutters"`**
 
 ---
 
