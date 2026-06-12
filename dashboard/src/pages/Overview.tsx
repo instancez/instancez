@@ -82,7 +82,7 @@ export function Overview() {
       <div className="px-8 space-y-6">
         {/* Summary Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 animate-rise">
-          <Card hoverable onClick={() => navigate("/tables")}>
+          <Card hoverable onClick={() => navigate("tables", { relative: "path" })}>
             <div className="flex items-center justify-between">
               <CardTitle>Tables</CardTitle>
               <Table2 size={18} className="text-muted-foreground" />
@@ -93,7 +93,7 @@ export function Overview() {
             </CardValue>
           </Card>
 
-          <Card hoverable onClick={() => navigate("/auth")}>
+          <Card hoverable onClick={() => navigate("auth", { relative: "path" })}>
             <div className="flex items-center justify-between">
               <CardTitle>Auth</CardTitle>
               <Shield size={18} className="text-muted-foreground" />
@@ -112,7 +112,7 @@ export function Overview() {
             </p>
           </Card>
 
-          <Card hoverable onClick={() => navigate("/storage")}>
+          <Card hoverable onClick={() => navigate("storage", { relative: "path" })}>
             <div className="flex items-center justify-between">
               <CardTitle>Storage</CardTitle>
               <HardDrive size={18} className="text-muted-foreground" />

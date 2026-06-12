@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import { type ReactNode, Suspense } from "react";
 import { BackendProvider } from "./BackendContext";
 import type { ConsoleBackend } from "./backend";
 import { ConfigContext, useConfigState } from "../hooks/useConfig";
@@ -11,7 +11,9 @@ function ConfigShell({ children }: { children: ReactNode }) {
   return (
     <ConfigContext.Provider value={configState}>
       <DialogProvider>
-        {children}
+        <Suspense fallback={null}>
+          {children}
+        </Suspense>
         <SaveToast />
         {configState.pendingSave && (
           <ConfirmSaveDialog

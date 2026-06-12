@@ -1,15 +1,17 @@
+import { lazy } from "react";
 import type { RouteObject } from "react-router-dom";
-import { Overview } from "../pages/Overview";
-import { Tables } from "../pages/Tables";
-import { TableDetail } from "../pages/TableDetail";
-import { AuthPage } from "../pages/Auth";
-import { Storage } from "../pages/Storage";
-import { StorageDetail } from "../pages/StorageDetail";
-import { Rpc } from "../pages/Rpc";
-import { RpcDetail } from "../pages/RpcDetail";
-import { Functions } from "../pages/Functions";
-import { FunctionDetail } from "../pages/FunctionDetail";
-import { ProvidersPage } from "../pages/Providers";
+
+const Overview = lazy(() => import("../pages/Overview").then(m => ({ default: m.Overview })));
+const Tables = lazy(() => import("../pages/Tables").then(m => ({ default: m.Tables })));
+const TableDetail = lazy(() => import("../pages/TableDetail").then(m => ({ default: m.TableDetail })));
+const AuthPage = lazy(() => import("../pages/Auth").then(m => ({ default: m.AuthPage })));
+const Storage = lazy(() => import("../pages/Storage").then(m => ({ default: m.Storage })));
+const StorageDetail = lazy(() => import("../pages/StorageDetail").then(m => ({ default: m.StorageDetail })));
+const Rpc = lazy(() => import("../pages/Rpc").then(m => ({ default: m.Rpc })));
+const RpcDetail = lazy(() => import("../pages/RpcDetail").then(m => ({ default: m.RpcDetail })));
+const Functions = lazy(() => import("../pages/Functions").then(m => ({ default: m.Functions })));
+const FunctionDetail = lazy(() => import("../pages/FunctionDetail").then(m => ({ default: m.FunctionDetail })));
+const ProvidersPage = lazy(() => import("../pages/Providers").then(m => ({ default: m.ProvidersPage })));
 
 export const overviewRoutes = (): RouteObject[] => [{ index: true, element: <Overview /> }];
 
