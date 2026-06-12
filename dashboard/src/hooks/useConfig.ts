@@ -7,7 +7,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { getConfig, getConfigStatus, putConfig, previewConfig } from "../api/client";
+import { useBackend } from "../console/BackendContext";
 import { showSaveToast } from "../components/SaveToast";
 import type { DotenvChange } from "../components/ConfirmSaveDialog";
 import type { Config, ValidationError } from "../lib/types";
@@ -58,6 +58,7 @@ export function useConfig(): ConfigState {
 }
 
 export function useConfigState(): ConfigStateWithDialog {
+  const backend = useBackend();
   const [config, setConfig] = useState<Config | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -73,8 +74,8 @@ export function useConfigState(): ConfigStateWithDialog {
       setLoading(true);
       setError(null);
       const [cfg, status] = await Promise.all([
-        getConfig(),
-        getConfigStatus().catch(() => null),
+        backend.getConfig(),
+        backend.getConfigStatus().catch(() => null),
       ]);
       setChecksum(cfg._checksum || "");
       setConfig(cfg);
@@ -84,7 +85,7 @@ export function useConfigState(): ConfigStateWithDialog {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [backend]);
 
   const confirmPendingSave = useCallback(() => {
     pendingResolve.current?.(true);
@@ -105,7 +106,7 @@ export function useConfigState(): ConfigStateWithDialog {
       // Dry-run first: what would each file look like after this save?
       let preview;
       try {
-        preview = await previewConfig(body);
+        preview = await backend.previewConfig(body);
       } catch (e: any) {
         if (e.body?.errors) {
           setSaveErrors(e.body.errors);
@@ -128,7 +129,7 @@ export function useConfigState(): ConfigStateWithDialog {
 
       try {
         setSaving(true);
-        const resp = await putConfig(body, checksum);
+        const resp = await backend.putConfig(body, checksum);
         showSaveToast({ source: resp.config_source ?? "" });
         await refresh();
         return true;
@@ -144,7 +145,7 @@ export function useConfigState(): ConfigStateWithDialog {
         setPendingSave(null);
       }
     },
-    [checksum, refresh]
+    [backend, checksum, refresh]
   );
 
   const updateConfig = useCallback(
