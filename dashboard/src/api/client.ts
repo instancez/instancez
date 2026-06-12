@@ -61,6 +61,19 @@ export async function putConfig(
   });
 }
 
+export interface ConfigPreview {
+  current: string;
+  proposed: string;
+}
+
+/** Dry-run of a save: returns current and would-be instancez.yaml contents. */
+export async function previewConfig(config: Omit<Config, "_checksum">): Promise<ConfigPreview> {
+  return request<ConfigPreview>("/config/preview", {
+    method: "POST",
+    body: JSON.stringify(config),
+  });
+}
+
 export async function getConfigDiff(): Promise<DiffResponse> {
   return request<DiffResponse>("/config/diff");
 }
@@ -69,12 +82,20 @@ export async function getConfigStatus(): Promise<ConfigStatus> {
   return request<ConfigStatus>("/config/status");
 }
 
+/** Existence probe for a function file path (relative to the config root). */
+export async function checkFunctionFile(file: string): Promise<{ exists: boolean }> {
+  return request<{ exists: boolean }>(
+    `/functions/file-exists?file=${encodeURIComponent(file)}`
+  );
+}
+
 export interface EnvVarsResponse {
   vars: Record<string, { set: boolean }>;
 }
 
-export async function getEnvVars(): Promise<EnvVarsResponse> {
-  return request<EnvVarsResponse>("/config/env-vars");
+export async function getEnvVars(names?: string[]): Promise<EnvVarsResponse> {
+  const query = names?.length ? `?names=${encodeURIComponent(names.join(","))}` : "";
+  return request<EnvVarsResponse>(`/config/env-vars${query}`);
 }
 
 export async function putDotenv(

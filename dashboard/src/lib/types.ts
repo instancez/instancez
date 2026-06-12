@@ -64,7 +64,6 @@ export interface StorageProviderConfig {
   access_key_id: string;
   secret_access_key: string;
   endpoint: string;
-  credentials: string;
   path: string;
 }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { ProvidersPage } from "./Providers";
 import { ConfigContext } from "../hooks/useConfig";
@@ -37,7 +37,7 @@ const baseConfig: Config = {
   },
 };
 
-function renderProviders(config: Config, dotenvWritable = false) {
+function renderProvidersWithCtx(config: Config, dotenvWritable = false) {
   const ctx = {
     config,
     loading: false,
@@ -50,13 +50,18 @@ function renderProviders(config: Config, dotenvWritable = false) {
     save: vi.fn().mockResolvedValue(true),
     updateConfig: vi.fn(),
   };
-  return render(
+  render(
     <ConfigContext.Provider value={ctx}>
       <MemoryRouter>
         <ProvidersPage />
       </MemoryRouter>
     </ConfigContext.Provider>
   );
+  return ctx;
+}
+
+function renderProviders(config: Config, dotenvWritable = false) {
+  renderProvidersWithCtx(config, dotenvWritable);
 }
 
 describe("ProvidersPage", () => {
@@ -75,18 +80,35 @@ describe("ProvidersPage", () => {
     expect(screen.getByText("Storage Provider")).toBeInTheDocument();
   });
 
-  it("renders email provider options", () => {
+  it("renders only the supported email providers", () => {
     renderProviders(baseConfig);
     expect(screen.getByText("Resend")).toBeInTheDocument();
-    expect(screen.getByText("SendGrid")).toBeInTheDocument();
+    expect(screen.queryByText("SendGrid")).not.toBeInTheDocument();
   });
 
-  it("renders storage provider options", () => {
+  it("renders only the supported storage providers", () => {
     renderProviders(baseConfig);
     expect(screen.getByText("AWS S3")).toBeInTheDocument();
+    expect(screen.getByText("Local Filesystem")).toBeInTheDocument();
+    expect(screen.queryByText("MinIO")).not.toBeInTheDocument();
+    expect(screen.queryByText("Google Cloud Storage")).not.toBeInTheDocument();
   });
 
-  it("shows env var row when email provider is selected", () => {
+  it("requests status for all credential vars, even ones not yet saved in config", () => {
+    renderProviders(baseConfig);
+    expect(api.getEnvVars).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        "INSTANCEZ_RESEND_API_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+      ])
+    );
+    expect(api.getEnvVars).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["INSTANCEZ_SENDGRID_API_KEY"])
+    );
+  });
+
+  it("shows a labeled config row when email provider is selected", () => {
     const config: Config = {
       ...baseConfig,
       providers: {
@@ -99,7 +121,78 @@ describe("ProvidersPage", () => {
       },
     };
     renderProviders(config);
+    expect(screen.getByText("API key")).toBeInTheDocument();
     expect(screen.getByText("INSTANCEZ_RESEND_API_KEY")).toBeInTheDocument();
+  });
+
+  it("renders credentials at the top, before settings", () => {
+    const config: Config = {
+      ...baseConfig,
+      providers: {
+        email: {
+          type: "resend",
+          api_key: "${INSTANCEZ_RESEND_API_KEY}",
+          default_from_email: "noreply@x.com",
+        },
+        storage: null,
+      },
+    };
+    renderProviders(config);
+    // one untitled section: no "Credentials"/"Settings" sub-headings,
+    // credential rows simply come first
+    expect(screen.queryByText("Environment variables")).not.toBeInTheDocument();
+    expect(screen.queryByText("Credentials")).not.toBeInTheDocument();
+    expect(screen.queryByText("Settings")).not.toBeInTheDocument();
+    const apiKey = screen.getByText("API key");
+    const fromEmail = screen.getByText("Default from email");
+    expect(
+      apiKey.compareDocumentPosition(fromEmail) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  it("hides the save bar again when an edit is undone", () => {
+    const config: Config = {
+      ...baseConfig,
+      providers: {
+        email: null,
+        storage: {
+          type: "s3",
+          bucket: "my-bucket",
+          region: "eu-central-1",
+          access_key_id: "",
+          secret_access_key: "",
+          endpoint: "",
+          path: "",
+        },
+      },
+    };
+    renderProviders(config);
+    expect(screen.queryByRole("button", { name: /save changes/i })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Bucket"), { target: { value: "other" } });
+    expect(screen.getByRole("button", { name: /save changes/i })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Bucket"), { target: { value: "my-bucket" } });
+    expect(screen.queryByRole("button", { name: /save changes/i })).not.toBeInTheDocument();
+  });
+
+  it("renders literal settings as plain editable inputs", () => {
+    const config: Config = {
+      ...baseConfig,
+      providers: {
+        email: null,
+        storage: {
+          type: "s3",
+          bucket: "my-bucket",
+          region: "eu-central-1",
+          access_key_id: "",
+          secret_access_key: "",
+          endpoint: "",
+          path: "",
+        },
+      },
+    };
+    renderProviders(config);
+    expect(screen.getByLabelText("Bucket")).toHaveValue("my-bucket");
+    expect(screen.getByLabelText("Region")).toHaveValue("eu-central-1");
   });
 
   it("shows var as unset when getEnvVars returns set=false", async () => {
@@ -153,7 +246,7 @@ describe("ProvidersPage", () => {
       },
     };
     renderProviders(config, true);
-    expect(screen.getAllByPlaceholderText("enter value…").length).toBeGreaterThan(0);
+    expect(screen.getByLabelText("INSTANCEZ_RESEND_API_KEY")).toBeInTheDocument();
   });
 
   it("hides dotenv input fields when dotenvWritable=false", () => {
@@ -169,7 +262,7 @@ describe("ProvidersPage", () => {
       },
     };
     renderProviders(config, false);
-    expect(screen.queryByPlaceholderText("enter value…")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("INSTANCEZ_RESEND_API_KEY")).not.toBeInTheDocument();
   });
 
   it("shows S3 explicit credentials toggle for S3 provider", () => {
@@ -184,7 +277,6 @@ describe("ProvidersPage", () => {
           access_key_id: "",
           secret_access_key: "",
           endpoint: "",
-          credentials: "",
           path: "",
         },
       },
@@ -205,7 +297,6 @@ describe("ProvidersPage", () => {
           access_key_id: "",
           secret_access_key: "",
           endpoint: "",
-          credentials: "",
           path: "${INSTANCEZ_LOCAL_STORAGE_PATH}",
         },
       },
@@ -214,7 +305,7 @@ describe("ProvidersPage", () => {
     expect(screen.queryByText("Provide explicit AWS credentials")).not.toBeInTheDocument();
   });
 
-  it("shows S3 bucket and region vars", () => {
+  it("renders settings holding ${VAR} refs as env-managed rows", () => {
     const config: Config = {
       ...baseConfig,
       providers: {
@@ -226,13 +317,43 @@ describe("ProvidersPage", () => {
           access_key_id: "",
           secret_access_key: "",
           endpoint: "",
-          credentials: "",
           path: "",
         },
       },
     };
     renderProviders(config);
+    expect(screen.getByText("Bucket")).toBeInTheDocument();
     expect(screen.getByText("INSTANCEZ_S3_BUCKET")).toBeInTheDocument();
+    expect(screen.getByText("Region")).toBeInTheDocument();
     expect(screen.getByText("AWS_REGION")).toBeInTheDocument();
+    expect(api.getEnvVars).toHaveBeenCalledWith(
+      expect.arrayContaining(["INSTANCEZ_S3_BUCKET", "AWS_REGION"])
+    );
+  });
+
+  it("passes staged dotenv changes to save for the confirmation summary", async () => {
+    const config: Config = {
+      ...baseConfig,
+      providers: {
+        email: {
+          type: "resend",
+          api_key: "${INSTANCEZ_RESEND_API_KEY}",
+          default_from_email: "",
+        },
+        storage: null,
+      },
+    };
+    const { save } = renderProvidersWithCtx(config, true);
+    fireEvent.change(screen.getByLabelText("INSTANCEZ_RESEND_API_KEY"), {
+      target: { value: "re_secret_value_abcd" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() =>
+      expect(save).toHaveBeenCalledWith(expect.anything(), {
+        dotenvChanges: [
+          { name: "INSTANCEZ_RESEND_API_KEY", tail: "abcd", isUpdate: false },
+        ],
+      })
+    );
   });
 });

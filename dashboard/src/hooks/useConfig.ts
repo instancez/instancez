@@ -4,11 +4,24 @@ import {
   useState,
   useEffect,
   useCallback,
+  useRef,
   type ReactNode,
 } from "react";
-import { getConfig, getConfigStatus, putConfig } from "../api/client";
+import { getConfig, getConfigStatus, putConfig, previewConfig } from "../api/client";
 import { showSaveToast } from "../components/SaveToast";
+import type { DotenvChange } from "../components/ConfirmSaveDialog";
 import type { Config, ValidationError } from "../lib/types";
+
+export interface SaveOptions {
+  /** Staged .env writes shown (masked) in the save-confirmation dialog. */
+  dotenvChanges?: DotenvChange[];
+}
+
+export interface PendingSave {
+  current: string;
+  proposed: string;
+  dotenvChanges: DotenvChange[];
+}
 
 interface ConfigState {
   config: Config | null;
@@ -19,8 +32,19 @@ interface ConfigState {
   saveErrors: ValidationError[];
   dotenvWritable: boolean;
   refresh: () => Promise<void>;
-  save: (updated: Config) => Promise<boolean>;
+  save: (updated: Config, opts?: SaveOptions) => Promise<boolean>;
   updateConfig: (updater: (prev: Config) => Config) => void;
+}
+
+/**
+ * The full state returned by useConfigState. The save-confirmation dialog
+ * fields stay off the ConfigState context type so page-level consumers (and
+ * their test mocks) only see the save() API; Layout renders the dialog.
+ */
+export interface ConfigStateWithDialog extends ConfigState {
+  pendingSave: PendingSave | null;
+  confirmPendingSave: () => void;
+  cancelPendingSave: () => void;
 }
 
 const ConfigContext = createContext<ConfigState | null>(null);
@@ -33,7 +57,7 @@ export function useConfig(): ConfigState {
   return ctx;
 }
 
-export function useConfigState(): ConfigState {
+export function useConfigState(): ConfigStateWithDialog {
   const [config, setConfig] = useState<Config | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -41,6 +65,8 @@ export function useConfigState(): ConfigState {
   const [saving, setSaving] = useState(false);
   const [saveErrors, setSaveErrors] = useState<ValidationError[]>([]);
   const [dotenvWritable, setDotenvWritable] = useState(false);
+  const [pendingSave, setPendingSave] = useState<PendingSave | null>(null);
+  const pendingResolve = useRef<((confirmed: boolean) => void) | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -60,17 +86,50 @@ export function useConfigState(): ConfigState {
     }
   }, []);
 
+  const confirmPendingSave = useCallback(() => {
+    pendingResolve.current?.(true);
+    pendingResolve.current = null;
+  }, []);
+
+  const cancelPendingSave = useCallback(() => {
+    pendingResolve.current?.(false);
+    pendingResolve.current = null;
+    setPendingSave(null);
+  }, []);
+
   const save = useCallback(
-    async (updated: Config): Promise<boolean> => {
+    async (updated: Config, opts?: SaveOptions): Promise<boolean> => {
+      setSaveErrors([]);
+      const { _checksum, ...body } = updated;
+
+      // Dry-run first: what would each file look like after this save?
+      let preview;
+      try {
+        preview = await previewConfig(body);
+      } catch (e: any) {
+        if (e.body?.errors) {
+          setSaveErrors(e.body.errors);
+        } else {
+          setSaveErrors([{ path: "", message: e.message }]);
+        }
+        return false;
+      }
+
+      // Hold the save until the user confirms the per-file summary.
+      const confirmed = await new Promise<boolean>((resolve) => {
+        pendingResolve.current = resolve;
+        setPendingSave({
+          current: preview.current,
+          proposed: preview.proposed,
+          dotenvChanges: opts?.dotenvChanges ?? [],
+        });
+      });
+      if (!confirmed) return false;
+
       try {
         setSaving(true);
-        setSaveErrors([]);
-        const { _checksum, ...body } = updated;
         const resp = await putConfig(body, checksum);
-        showSaveToast({
-          source: resp.config_source ?? "",
-          statementCount: 0,
-        });
+        showSaveToast({ source: resp.config_source ?? "" });
         await refresh();
         return true;
       } catch (e: any) {
@@ -82,6 +141,7 @@ export function useConfigState(): ConfigState {
         return false;
       } finally {
         setSaving(false);
+        setPendingSave(null);
       }
     },
     [checksum, refresh]
@@ -109,5 +169,8 @@ export function useConfigState(): ConfigState {
     refresh,
     save,
     updateConfig,
+    pendingSave,
+    confirmPendingSave,
+    cancelPendingSave,
   };
 }

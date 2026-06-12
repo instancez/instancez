@@ -82,14 +82,14 @@ export function Functions() {
   return (
     <div>
       <PageHeader
-        title="Edge Functions"
+        title="Code Functions"
         description={`${functions.length} code function${functions.length !== 1 ? "s" : ""}`}
       />
       <div className="px-8 pb-8 space-y-6 max-w-3xl">
         {functions.length === 0 ? (
           <EmptyState
             icon={Code2}
-            title="No edge functions"
+            title="No code functions"
             description="Declare a function in instancez.yaml with a runtime and a .js file under functions/ (served at /functions/v1/<name>)."
           />
         ) : (
@@ -121,7 +121,6 @@ export function Functions() {
         {!depsLoading && deps !== null && (
           <Section
             title="Dependencies"
-            description="Shared npm packages available to all functions (functions/package.json)"
             icon={Package}
             actions={
               deps.has_lock ? (

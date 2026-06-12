@@ -81,11 +81,25 @@ export function RlsPolicyCard({
         </Button>
       </div>
       <Field label="Check Expression">
-        <CodeEditor
-          value={policy.check || ""}
-          onChange={(val) => onChange({ ...policy, check: val })}
-          minHeight="60px"
-        />
+        {/* The check is a boolean expression that slots into the generated
+            policy DDL — framed here so pasting a full statement is visibly
+            wrong (and rejected by validation). */}
+        <div className="rounded-lg border border-border overflow-hidden">
+          <div className="px-3 py-1.5 border-b border-border">
+            <code className="block text-[11px] font-mono text-muted-foreground">
+              CREATE POLICY … FOR {(policy.operations || []).join(", ") || "…"} USING (
+            </code>
+          </div>
+          <CodeEditor
+            value={policy.check || ""}
+            onChange={(val) => onChange({ ...policy, check: val })}
+            placeholder="user_id = auth.uid()"
+            minHeight="60px"
+          />
+          <div className="px-3 py-1.5 border-t border-border">
+            <code className="text-[11px] font-mono text-muted-foreground">)</code>
+          </div>
+        </div>
         {quickFills && quickFills.length > 0 && (
           <div className="flex gap-2 mt-2">
             {quickFills.map(({ label, expr }) => (

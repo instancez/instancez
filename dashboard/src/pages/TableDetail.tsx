@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 import * as Tabs from "@radix-ui/react-tabs";
 import { Plus, Trash2, GripVertical } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
+import { jsonEqual } from "../lib/jsonEqual";
 import { useDialog } from "../components/Dialog";
 import { PageHeader } from "../components/PageHeader";
 import { SaveBar } from "../components/SaveBar";
@@ -35,7 +36,6 @@ export function TableDetail() {
   const dialog = useDialog();
   const [table, setTable] = useState<Table | null>(null);
   const [seeds, setSeeds] = useState<Record<string, unknown>[]>([]);
-  const [dirty, setDirty] = useState(false);
   const [diff, setDiff] = useState<DiffResponse | null>(null);
 
   // true when the data entry for this table uses CSV-file references (read-only in the UI)
@@ -47,18 +47,12 @@ export function TableDetail() {
       setTable(structuredClone(config.tables[name]!));
       const entry = config.data?.[name];
       setSeeds(structuredClone(Array.isArray(entry) ? entry : []));
-      setDirty(false);
     }
   }, [config, name]);
 
   const updateTable = useCallback(
     (updater: (prev: Table) => Table) => {
-      setTable((prev) => {
-        if (!prev) return prev;
-        const next = updater(prev);
-        setDirty(true);
-        return next;
-      });
+      setTable((prev) => (prev ? updater(prev) : prev));
     },
     []
   );
@@ -79,7 +73,6 @@ export function TableDetail() {
       data: updatedData,
     };
     await save(updated);
-    setDirty(false);
   }
 
   async function loadDiff() {
@@ -107,6 +100,12 @@ export function TableDetail() {
       </div>
     );
   }
+
+  // Dirty is derived, not a sticky flag: undoing an edit hides the save bar.
+  const savedSeedsEntry = config.data?.[name];
+  const dirty =
+    !jsonEqual(table, config.tables[name] ?? null) ||
+    (!isCSVData && !jsonEqual(seeds, Array.isArray(savedSeedsEntry) ? savedSeedsEntry : []));
 
   const fieldEntries = table.fields || [];
   const allTableColumns = fieldEntries.map((x) => x.name);
@@ -342,10 +341,7 @@ export function TableDetail() {
               <SeedsTab
                 tableFields={fieldEntries}
                 seeds={seeds}
-                onChange={(rows) => {
-                  setSeeds(rows);
-                  setDirty(true);
-                }}
+                onChange={(rows) => setSeeds(rows)}
               />
             )}
           </Tabs.Content>

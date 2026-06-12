@@ -65,6 +65,14 @@ describe("ApiKeys", () => {
     expect(screen.queryByText("anon")).not.toBeInTheDocument();
   });
 
+  it("is compact: no per-key description paragraphs", async () => {
+    render(<ApiKeys />);
+    await waitFor(() => expect(screen.getByText(ANON_KEY)).toBeInTheDocument());
+    expect(screen.queryByText(/Pass as the first argument/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Safe to use in a browser/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/never ship it to a browser/)).not.toBeInTheDocument();
+  });
+
   it("hides the admin row when no admin key is stored", () => {
     sessionStorage.removeItem("instancez_admin_key");
     render(<ApiKeys />);

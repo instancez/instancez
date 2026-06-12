@@ -11,11 +11,13 @@ import type { Config, ValidationError } from "../lib/types";
 vi.mock("../api/client", () => ({
   getFunctionCode: vi.fn(),
   putFunctionCode: vi.fn(),
+  checkFunctionFile: vi.fn(),
 }));
 
-import { getFunctionCode, putFunctionCode } from "../api/client";
+import { getFunctionCode, putFunctionCode, checkFunctionFile } from "../api/client";
 const mockGetCode = vi.mocked(getFunctionCode);
 const mockPutCode = vi.mocked(putFunctionCode);
+const mockCheckFile = vi.mocked(checkFunctionFile);
 
 // --- fixtures -----------------------------------------------------------
 const baseConfig: Config = {
@@ -64,7 +66,7 @@ function renderFunctionDetail(config: Config, fnName: string) {
     save: vi.fn().mockResolvedValue(true),
     updateConfig: vi.fn(),
   };
-  return render(
+  render(
     <ConfigContext.Provider value={ctx}>
       <MemoryRouter initialEntries={[`/functions/${fnName}`]}>
         <DialogProvider>
@@ -75,6 +77,7 @@ function renderFunctionDetail(config: Config, fnName: string) {
       </MemoryRouter>
     </ConfigContext.Provider>
   );
+  return ctx;
 }
 
 // --- tests --------------------------------------------------------------
@@ -82,6 +85,66 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockGetCode.mockResolvedValue({ content: SAMPLE_CODE, file: "functions/process-image.js" });
   mockPutCode.mockResolvedValue({ message: "saved" });
+  mockCheckFile.mockResolvedValue({ exists: true });
+});
+
+describe("FunctionDetail – file existence on save", () => {
+  it("aborts the save when the changed file does not exist", async () => {
+    const user = userEvent.setup();
+    mockCheckFile.mockResolvedValue({ exists: false });
+    const ctx = renderFunctionDetail(structuredClone(baseConfig), "process_image");
+
+    const fileInput = screen.getByDisplayValue("functions/process-image.js");
+    await user.clear(fileInput);
+    await user.type(fileInput, "functions/renamed.js");
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+    await waitFor(() => expect(mockCheckFile).toHaveBeenCalledWith("functions/renamed.js"));
+    expect(ctx.save).not.toHaveBeenCalled();
+    expect(screen.getByText(/not found/i)).toBeInTheDocument();
+  });
+
+  it("saves when the changed file exists", async () => {
+    const user = userEvent.setup();
+    const ctx = renderFunctionDetail(structuredClone(baseConfig), "process_image");
+
+    const fileInput = screen.getByDisplayValue("functions/process-image.js");
+    await user.clear(fileInput);
+    await user.type(fileInput, "functions/renamed.js");
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+    await waitFor(() => expect(ctx.save).toHaveBeenCalled());
+  });
+
+  it("does not re-check the file when it is unchanged", async () => {
+    const user = userEvent.setup();
+    const ctx = renderFunctionDetail(structuredClone(baseConfig), "process_image");
+
+    const timeoutInput = screen.getByDisplayValue("60s");
+    await user.clear(timeoutInput);
+    await user.type(timeoutInput, "90s");
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+    await waitFor(() => expect(ctx.save).toHaveBeenCalled());
+    expect(mockCheckFile).not.toHaveBeenCalled();
+  });
+});
+
+describe("FunctionDetail – env vars", () => {
+  it("rejects adding an env var that already exists", async () => {
+    const user = userEvent.setup();
+    const config = structuredClone(baseConfig);
+    config.functions.process_image!.env = { FOO: "bar" };
+    renderFunctionDetail(config, "process_image");
+
+    await user.click(screen.getByRole("button", { name: /add var/i }));
+    await user.type(screen.getByLabelText("Env variable name:"), "FOO");
+    await user.click(screen.getByRole("button", { name: /create/i }));
+
+    expect(await screen.findByText(/already exists/i)).toBeInTheDocument();
+    // the existing value must not be clobbered
+    expect(screen.getByDisplayValue("bar")).toBeInTheDocument();
+  });
 });
 
 describe("FunctionDetail – config fields", () => {

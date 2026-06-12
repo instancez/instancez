@@ -15,7 +15,7 @@ const NAV_ITEMS = [
   { to: "/auth", icon: Shield, label: "Auth" },
   { to: "/storage", icon: HardDrive, label: "Storage" },
   { to: "/rpc", icon: Database, label: "Database Functions" },
-  { to: "/functions", icon: Code2, label: "Edge Functions" },
+  { to: "/functions", icon: Code2, label: "Code Functions" },
   { to: "/providers", icon: Plug, label: "Providers" },
 ] as const;
 

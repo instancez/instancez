@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { AuthPage } from "./Auth";
@@ -147,6 +147,96 @@ describe("AuthPage", () => {
     expect(container.innerHTML).toBe("");
   });
 
+  it("requests status for credential vars, even ones not yet saved in config", () => {
+    renderAuth(makeConfig(true));
+    expect(api.getEnvVars).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        "INSTANCEZ_GOOGLE_CLIENT_SECRET",
+        "INSTANCEZ_GITHUB_CLIENT_SECRET",
+      ])
+    );
+  });
+
+  it("requests status for ${VAR} refs found in saved OAuth settings", () => {
+    const config = makeConfig(true);
+    config.auth!.google = {
+      client_id: "${MY_CUSTOM_CLIENT_ID}",
+      client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
+      redirect_url: "https://app.example.com/callback",
+    };
+    renderAuth(config);
+    expect(api.getEnvVars).toHaveBeenCalledWith(
+      expect.arrayContaining(["MY_CUSTOM_CLIENT_ID"])
+    );
+  });
+
+  it("renders literal OAuth settings as plain editable inputs, creds first", () => {
+    const config = makeConfig(true);
+    config.auth!.google = {
+      client_id: "abc123",
+      client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
+      redirect_url: "https://app.example.com/callback",
+    };
+    renderAuth(config);
+    expect(screen.getByLabelText("Client ID")).toHaveValue("abc123");
+    expect(screen.getByLabelText("Redirect URL")).toHaveValue(
+      "https://app.example.com/callback"
+    );
+    // one untitled section: no sub-headings, credential row first
+    expect(screen.queryByText("Credentials")).not.toBeInTheDocument();
+    expect(screen.queryByText("Settings")).not.toBeInTheDocument();
+    const secret = screen.getByText("Client secret");
+    const clientId = screen.getByLabelText("Client ID");
+    expect(
+      secret.compareDocumentPosition(clientId) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  it("shows all three email template editors with default-subject placeholders", () => {
+    renderAuth(makeConfig(true));
+    expect(screen.getByText("Verification")).toBeInTheDocument();
+    expect(screen.getByText("Magic link")).toBeInTheDocument();
+    expect(screen.getByText("Password reset")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Confirm your email")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Your sign-in link")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Reset your password")).toBeInTheDocument();
+  });
+
+  it("reads template overrides from the backend's template keys", () => {
+    const config = makeConfig(true);
+    config.auth!.email = {
+      verify_email: true,
+      templates: {
+        verification: { subject: "Custom verify subject", body: "b", body_file: "" },
+      },
+    };
+    renderAuth(config);
+    expect(screen.getByDisplayValue("Custom verify subject")).toBeInTheDocument();
+  });
+
+  it("hides the save bar again when an edit is undone", () => {
+    const config = makeConfig(true);
+    config.auth!.google = {
+      client_id: "abc123",
+      client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
+      redirect_url: "https://app.example.com/callback",
+    };
+    renderAuth(config);
+    expect(screen.queryByRole("button", { name: /save changes/i })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Client ID"), { target: { value: "changed" } });
+    expect(screen.getByRole("button", { name: /save changes/i })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Client ID"), { target: { value: "abc123" } });
+    expect(screen.queryByRole("button", { name: /save changes/i })).not.toBeInTheDocument();
+  });
+
+  it("enabling a provider stages the secret as ${VAR} and settings as literals", () => {
+    renderAuth(makeConfig(true));
+    fireEvent.click(screen.getByLabelText("Enable google"));
+    expect(screen.getByText("INSTANCEZ_GOOGLE_CLIENT_SECRET")).toBeInTheDocument();
+    expect(screen.getByLabelText("Client ID")).toHaveValue("");
+    expect(screen.getByLabelText("Redirect URL")).toHaveValue("");
+  });
+
   it("shows Google OAuth var names when Google is enabled", async () => {
     const config = makeConfig(true);
     config.auth!.google = {
@@ -182,7 +272,26 @@ describe("AuthPage", () => {
       redirect_url: "${INSTANCEZ_GOOGLE_REDIRECT_URL}",
     };
     renderAuth(config, true);
-    expect(screen.getAllByPlaceholderText("enter value…").length).toBeGreaterThan(0);
+    for (const varName of [
+      "INSTANCEZ_GOOGLE_CLIENT_ID",
+      "INSTANCEZ_GOOGLE_CLIENT_SECRET",
+      "INSTANCEZ_GOOGLE_REDIRECT_URL",
+    ]) {
+      expect(screen.getByLabelText(varName)).toBeInTheDocument();
+    }
+  });
+
+  it("shows friendly field labels for OAuth config rows", () => {
+    const config = makeConfig(true);
+    config.auth!.google = {
+      client_id: "${INSTANCEZ_GOOGLE_CLIENT_ID}",
+      client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
+      redirect_url: "${INSTANCEZ_GOOGLE_REDIRECT_URL}",
+    };
+    renderAuth(config);
+    expect(screen.getByText("Client ID")).toBeInTheDocument();
+    expect(screen.getByText("Client secret")).toBeInTheDocument();
+    expect(screen.getByText("Redirect URL")).toBeInTheDocument();
   });
 
   it("hides dotenv inputs when dotenvWritable=false", () => {
@@ -193,6 +302,6 @@ describe("AuthPage", () => {
       redirect_url: "${INSTANCEZ_GOOGLE_REDIRECT_URL}",
     };
     renderAuth(config, false);
-    expect(screen.queryByPlaceholderText("enter value…")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("INSTANCEZ_GOOGLE_CLIENT_ID")).not.toBeInTheDocument();
   });
 });

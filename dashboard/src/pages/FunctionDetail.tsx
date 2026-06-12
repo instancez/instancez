@@ -2,13 +2,14 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useState, useEffect, useCallback } from "react";
 import { Trash2, Plus, Settings2, KeyRound, Code2 } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
+import { jsonEqual } from "../lib/jsonEqual";
 import { useDialog } from "../components/Dialog";
 import { PageHeader } from "../components/PageHeader";
 import { SaveBar } from "../components/SaveBar";
 import { Toggle } from "../components/Toggle";
 import { CodeEditor } from "../components/CodeEditor";
 import { Button, Field, Input, Panel, Section, Select } from "../components/ui";
-import { getFunctionCode, putFunctionCode } from "../api/client";
+import { checkFunctionFile, getFunctionCode, putFunctionCode } from "../api/client";
 import type { CodeFunction } from "../lib/types";
 
 // Code-function runtimes instancez supports. validateCodeFunctions rejects
@@ -21,16 +22,15 @@ export function FunctionDetail() {
   const { config, save, saving, saveErrors } = useConfig();
   const dialog = useDialog();
   const [fn, setFn] = useState<CodeFunction | null>(null);
-  const [dirty, setDirty] = useState(false);
   const [code, setCode] = useState<string | null>(null);
   const [codeDirty, setCodeDirty] = useState(false);
   const [codeSaving, setCodeSaving] = useState(false);
   const [codeError, setCodeError] = useState<string | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
 
   useEffect(() => {
     if (config && name && (config.functions || {})[name]) {
       setFn(structuredClone((config.functions || {})[name]!));
-      setDirty(false);
     }
   }, [config, name]);
 
@@ -58,19 +58,34 @@ export function FunctionDetail() {
   function updateFn(updater: (prev: CodeFunction) => CodeFunction) {
     setFn((prev) => {
       if (!prev) return prev;
-      setDirty(true);
       return updater(prev);
     });
   }
 
   async function handleSave() {
     if (!config || !fn || !name) return;
+    setFileError(null);
+
+    // A changed file path must exist on disk before the save can conclude.
+    const savedFile = (config.functions || {})[name]?.file ?? "";
+    if (fn.file && fn.file !== savedFile) {
+      try {
+        const { exists } = await checkFunctionFile(fn.file);
+        if (!exists) {
+          setFileError(`File not found: ${fn.file} — create it first or fix the path.`);
+          return;
+        }
+      } catch {
+        setFileError(`Could not verify that ${fn.file} exists; save aborted.`);
+        return;
+      }
+    }
+
     const updated = {
       ...config,
       functions: { ...(config.functions || {}), [name]: fn },
     };
     await save(updated);
-    setDirty(false);
   }
 
   async function deleteFunction() {
@@ -95,6 +110,9 @@ export function FunctionDetail() {
     );
   }
 
+  // Dirty is derived, not a sticky flag: undoing an edit hides the save bar.
+  const dirty = !jsonEqual(fn, (config.functions || {})[name] ?? null);
+
   const envEntries = Object.entries(fn.env || {});
 
   return (
@@ -109,12 +127,6 @@ export function FunctionDetail() {
       <div className="px-8 pb-8 space-y-6 max-w-3xl">
         <Section
           title="Runtime"
-          description={
-            <>
-              Edit the handler source in{" "}
-              <span className="font-mono text-foreground">{fn.file}</span>
-            </>
-          }
           icon={Settings2}
         >
           <div className="grid grid-cols-2 gap-4">
@@ -158,7 +170,6 @@ export function FunctionDetail() {
 
         <Section
           title="Environment"
-          description="Variables injected into the function's worker process"
           icon={KeyRound}
           actions={
             <Button
@@ -166,8 +177,15 @@ export function FunctionDetail() {
               size="sm"
               onClick={async () => {
                 const key = await dialog.prompt("Env variable name:");
-                if (!key?.trim()) return;
-                updateFn((f) => ({ ...f, env: { ...(f.env || {}), [key.trim()]: "" } }));
+                const trimmed = key?.trim();
+                if (!trimmed) return;
+                if (fn.env && trimmed in fn.env) {
+                  await dialog.alert(`Variable "${trimmed}" already exists`, {
+                    message: "Edit its value in the list instead of adding it again.",
+                  });
+                  return;
+                }
+                updateFn((f) => ({ ...f, env: { ...(f.env || {}), [trimmed]: "" } }));
               }}
             >
               <Plus size={14} />
@@ -213,7 +231,6 @@ export function FunctionDetail() {
         {code !== null && (
           <Section
             title="Code"
-            description={<span className="font-mono text-foreground">{fn.file}</span>}
             icon={Code2}
             actions={
               codeDirty ? (
@@ -242,7 +259,16 @@ export function FunctionDetail() {
         )}
       </div>
 
-      <SaveBar onSave={handleSave} saving={saving} errors={saveErrors} dirty={dirty} />
+      <SaveBar
+        onSave={handleSave}
+        saving={saving}
+        errors={
+          fileError
+            ? [...saveErrors, { path: `functions.${name}.file`, message: fileError }]
+            : saveErrors
+        }
+        dirty={dirty}
+      />
     </div>
   );
 }

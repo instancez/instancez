@@ -78,7 +78,8 @@ beforeEach(() => {
 describe("Functions – function list", () => {
   it("lists code functions with file and runtime", async () => {
     renderFunctions(baseConfig);
-    expect(screen.getByText("Edge Functions")).toBeInTheDocument();
+    expect(screen.getByText("Code Functions")).toBeInTheDocument();
+    expect(screen.queryByText(/edge/i)).not.toBeInTheDocument();
     expect(screen.getByText("todos")).toBeInTheDocument();
     expect(screen.getByText("functions/todos.js")).toBeInTheDocument();
     expect(screen.getByText("node")).toBeInTheDocument();
@@ -86,7 +87,7 @@ describe("Functions – function list", () => {
 
   it("shows empty state when no functions", async () => {
     renderFunctions({ ...baseConfig, functions: {} });
-    expect(screen.getByText("No edge functions")).toBeInTheDocument();
+    expect(screen.getByText("No code functions")).toBeInTheDocument();
   });
 });
 

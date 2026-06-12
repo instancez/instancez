@@ -6,6 +6,7 @@ import { DriftBanner } from "./DriftBanner";
 import { EditModeBanner } from "./EditModeBanner";
 import { useConfigStatus } from "../hooks/useConfigStatus";
 import { ConfigContext, useConfigState } from "../hooks/useConfig";
+import { ConfirmSaveDialog } from "./ConfirmSaveDialog";
 import { Loader2, AlertCircle, RefreshCw } from "lucide-react";
 
 function StatusBanners() {
@@ -67,6 +68,16 @@ export function Layout() {
             pushing the working area up rather than overlapping it. */}
         <StatusBanners />
       </div>
+      {configState.pendingSave && (
+        <ConfirmSaveDialog
+          current={configState.pendingSave.current}
+          proposed={configState.pendingSave.proposed}
+          dotenvChanges={configState.pendingSave.dotenvChanges}
+          saving={configState.saving}
+          onConfirm={configState.confirmPendingSave}
+          onCancel={configState.cancelPendingSave}
+        />
+      )}
     </ConfigContext.Provider>
   );
 }

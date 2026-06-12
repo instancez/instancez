@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Shield, KeySquare, MailCheck, Plug2 } from "lucide-react";
+import { Shield, KeySquare, MailCheck, Mails, Plug2 } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
 import { PageHeader } from "../components/PageHeader";
 import { SaveBar } from "../components/SaveBar";
@@ -7,7 +7,10 @@ import { CodeEditor } from "../components/CodeEditor";
 import { EmptyState } from "../components/EmptyState";
 import { Toggle } from "../components/Toggle";
 import { Field, Input, Panel, Section } from "../components/ui";
+import { VarRow } from "../components/VarRow";
 import { getEnvVars, putDotenv } from "../api/client";
+import { envRefName } from "../lib/envRef";
+import { jsonEqual } from "../lib/jsonEqual";
 import type { Auth } from "../lib/types";
 
 function GoogleIcon({ size = 16 }: { size?: number }) {
@@ -29,18 +32,86 @@ function GitHubIcon({ size = 16 }: { size?: number }) {
   );
 }
 
-const OAUTH_VARS: Record<"google" | "github", Record<"client_id" | "client_secret" | "redirect_url", string>> = {
-  google: {
-    client_id: "INSTANCEZ_GOOGLE_CLIENT_ID",
-    client_secret: "INSTANCEZ_GOOGLE_CLIENT_SECRET",
-    redirect_url: "INSTANCEZ_GOOGLE_REDIRECT_URL",
-  },
-  github: {
-    client_id: "INSTANCEZ_GITHUB_CLIENT_ID",
-    client_secret: "INSTANCEZ_GITHUB_CLIENT_SECRET",
-    redirect_url: "INSTANCEZ_GITHUB_REDIRECT_URL",
-  },
+// OAuth provider configs: the client secret is a credential (always a ${VAR}
+// ref in YAML, value in .env, rendered first); client ID and redirect URL are
+// ordinary settings stored as literal YAML values (a hand-edited ${VAR} ref
+// is respected and rendered as env-managed).
+const OAUTH_SECRET_VARS: Record<"google" | "github", string> = {
+  google: "INSTANCEZ_GOOGLE_CLIENT_SECRET",
+  github: "INSTANCEZ_GITHUB_CLIENT_SECRET",
 };
+
+const OAUTH_SETTINGS = [
+  { key: "client_id", label: "Client ID" },
+  { key: "redirect_url", label: "Redirect URL", placeholder: "https://example.com/auth/callback" },
+] as const;
+
+// Credential vars are probed for set/unset status even before their ${VAR}
+// refs are saved into the YAML (the backend only scans the YAML on its own).
+const OAUTH_CRED_VARS = Object.values(OAUTH_SECRET_VARS);
+
+// collectOAuthRefs finds ${VAR} refs in saved OAuth settings so their status
+// badges resolve too.
+function collectOAuthRefs(auth: Auth | null): string[] {
+  if (!auth) return [];
+  const names: string[] = [];
+  for (const provider of [auth.google, auth.github]) {
+    if (!provider) continue;
+    for (const value of Object.values(provider)) {
+      const name = envRefName(value);
+      if (name) names.push(name);
+    }
+  }
+  return names;
+}
+
+// Mirrors defaultEmailTemplates in internal/adapter/http/auth_email_defaults.go —
+// shown as placeholders so users see exactly what is sent without an override.
+const EMAIL_TEMPLATES = [
+  {
+    key: "verification",
+    label: "Verification",
+    vars: "{{link}}, {{token}}, {{email}}, {{base_url}}",
+    defaultSubject: "Confirm your email",
+    defaultBody: `Hi,
+
+Thanks for signing up. Confirm your email address by clicking the link below:
+
+{{link}}
+
+If you didn't create an account, you can safely ignore this email.`,
+  },
+  {
+    key: "magiclink",
+    label: "Magic link",
+    vars: "{{link}}, {{code}}, {{token}}, {{email}}, {{base_url}}",
+    defaultSubject: "Your sign-in link",
+    defaultBody: `Hi,
+
+Click the link below to sign in:
+
+{{link}}
+
+Or enter this one-time code: {{code}}
+
+If you didn't request this, you can safely ignore this email.`,
+  },
+  {
+    key: "reset",
+    label: "Password reset",
+    vars: "{{link}}, {{token}}, {{email}}, {{base_url}}",
+    defaultSubject: "Reset your password",
+    defaultBody: `Hi,
+
+We received a request to reset the password for {{email}}.
+
+Reset it by clicking the link below:
+
+{{link}}
+
+If you didn't request a reset, you can safely ignore this email — your password is unchanged.`,
+  },
+] as const;
 
 const DEFAULT_AUTH: Auth = {
   jwt_expiry: "15m",
@@ -51,58 +122,29 @@ const DEFAULT_AUTH: Auth = {
   github: null,
 };
 
-interface VarRowProps {
-  name: string;
-  isSet: boolean;
-  canWrite: boolean;
-  inputValue: string;
-  onInputChange: (value: string) => void;
-}
-
-function VarRow({ name, isSet, canWrite, inputValue, onInputChange }: VarRowProps) {
-  return (
-    <div className="flex items-center gap-3 py-1">
-      <code className="flex-1 min-w-0 text-xs font-mono text-foreground truncate">{name}</code>
-      <span
-        className={`shrink-0 text-xs font-medium ${isSet ? "text-green-600 dark:text-green-400" : "text-destructive"}`}
-      >
-        {isSet ? "✓ set" : "✗ unset"}
-      </span>
-      {canWrite && (
-        <Input
-          type="password"
-          placeholder="enter value…"
-          value={inputValue}
-          onChange={(e) => onInputChange(e.target.value)}
-          className="w-48 h-7 text-xs"
-        />
-      )}
-    </div>
-  );
-}
-
 export function AuthPage() {
   const { config, save, saving, saveErrors, dotenvWritable } = useConfig();
   const [auth, setAuth] = useState<Auth | null>(null);
   const [enabled, setEnabled] = useState(false);
-  const [dirty, setDirty] = useState(false);
   const [envVarStatus, setEnvVarStatus] = useState<Record<string, { set: boolean }>>({});
   const [pendingDotenv, setPendingDotenv] = useState<Record<string, string>>({});
 
   const loadEnvVars = useCallback(async () => {
     try {
-      const resp = await getEnvVars();
+      const resp = await getEnvVars([
+        ...OAUTH_CRED_VARS,
+        ...collectOAuthRefs(config?.auth ?? null),
+      ]);
       setEnvVarStatus(resp.vars);
     } catch {
       // badges fall back to "✗ unset" when status unavailable
     }
-  }, []);
+  }, [config]);
 
   useEffect(() => {
     if (config) {
       setAuth(config.auth ? structuredClone(config.auth) : null);
       setEnabled(!!config.auth);
-      setDirty(false);
     }
   }, [config]);
 
@@ -111,32 +153,30 @@ export function AuthPage() {
   }, [loadEnvVars]);
 
   function updateAuth(updater: (prev: Auth) => Auth) {
-    setAuth((prev) => {
-      if (!prev) return prev;
-      setDirty(true);
-      return updater(prev);
-    });
+    setAuth((prev) => (prev ? updater(prev) : prev));
   }
 
   function setPendingVar(name: string, value: string) {
     setPendingDotenv((prev) => ({ ...prev, [name]: value }));
-    setDirty(true);
   }
 
   async function handleSave() {
     if (!config) return;
     const updated = { ...config, auth: enabled ? auth : null };
-    const ok = await save(updated);
+    const staged = Object.entries(pendingDotenv).filter(([, v]) => v !== "");
+    const ok = await save(updated, {
+      dotenvChanges: staged.map(([name, value]) => ({
+        name,
+        tail: value.slice(-4),
+        isUpdate: envVarStatus[name]?.set ?? false,
+      })),
+    });
     if (ok) {
-      const toWrite = Object.fromEntries(
-        Object.entries(pendingDotenv).filter(([, v]) => v !== "")
-      );
-      if (dotenvWritable && Object.keys(toWrite).length > 0) {
-        await putDotenv(toWrite).catch(() => {});
+      if (dotenvWritable && staged.length > 0) {
+        await putDotenv(Object.fromEntries(staged)).catch(() => {});
       }
       setPendingDotenv({});
       await loadEnvVars();
-      setDirty(false);
     }
   }
 
@@ -144,34 +184,48 @@ export function AuthPage() {
     setEnabled((prev) => {
       const next = !prev;
       if (next && !auth) setAuth(structuredClone(DEFAULT_AUTH));
-      setDirty(true);
       return next;
     });
   }
 
   function toggleOAuth(provider: "google" | "github", isEnabled: boolean) {
     if (isEnabled) {
-      const vars = OAUTH_VARS[provider];
+      const secretVar = OAUTH_SECRET_VARS[provider];
       setPendingDotenv((prev) => {
         const next = { ...prev };
-        Object.values(vars).forEach((v) => delete next[v]);
+        delete next[secretVar];
         return next;
       });
       updateAuth((a) => ({ ...a, [provider]: null }));
     } else {
-      const vars = OAUTH_VARS[provider];
       updateAuth((a) => ({
         ...a,
         [provider]: {
-          client_id: `\${${vars.client_id}}`,
-          client_secret: `\${${vars.client_secret}}`,
-          redirect_url: `\${${vars.redirect_url}}`,
+          client_id: "",
+          client_secret: `\${${OAUTH_SECRET_VARS[provider]}}`,
+          redirect_url: "",
         },
       }));
     }
   }
 
+  function updateOAuthSetting(
+    provider: "google" | "github",
+    key: "client_id" | "redirect_url",
+    value: string
+  ) {
+    updateAuth((a) => ({
+      ...a,
+      [provider]: a[provider] ? { ...a[provider]!, [key]: value } : a[provider],
+    }));
+  }
+
   if (!config) return null;
+
+  // Dirty is derived, not a sticky flag: undoing an edit hides the save bar.
+  const dirty =
+    !jsonEqual(enabled ? auth : null, config.auth ?? null) ||
+    Object.values(pendingDotenv).some((v) => v !== "");
 
   return (
     <div className="pb-20">
@@ -184,7 +238,6 @@ export function AuthPage() {
         {/* Enable/Disable Toggle */}
         <Section
           title="Enable Authentication"
-          description="Email/password and OAuth authentication"
           icon={Shield}
           actions={
             <Toggle
@@ -205,7 +258,6 @@ export function AuthPage() {
           <>
             <Section
               title="JWT Settings"
-              description="Token lifetimes for issued sessions"
               icon={KeySquare}
             >
               <div className="grid grid-cols-2 gap-4">
@@ -235,7 +287,6 @@ export function AuthPage() {
 
             <Section
               title="Email Verification"
-              description="Require users to confirm their address before signing in"
               icon={MailCheck}
             >
               <Toggle
@@ -252,71 +303,67 @@ export function AuthPage() {
                 label="Require email verification"
               />
 
-              {auth.email?.verify_email && (
-                <div className="space-y-4">
-                  {["verify", "reset"].map((templateName) => {
-                    const template = auth.email?.templates?.[templateName] || {
-                      subject: "",
-                      body: "",
-                      body_file: "",
-                    };
-                    return (
-                      <Panel key={templateName} className="p-4 space-y-3">
-                        <Field label={`${templateName} template`}>
-                          <Input
-                            value={template.subject}
-                            onChange={(e) =>
-                              updateAuth((a) => ({
-                                ...a,
-                                email: {
-                                  ...a.email!,
-                                  templates: {
-                                    ...a.email!.templates,
-                                    [templateName]: { ...template, subject: e.target.value },
-                                  },
-                                },
-                              }))
-                            }
-                            placeholder="Subject"
-                          />
-                        </Field>
-                        <CodeEditor
-                          value={template.body}
-                          onChange={(val) =>
-                            updateAuth((a) => ({
-                              ...a,
-                              email: {
-                                ...a.email!,
-                                templates: {
-                                  ...a.email!.templates,
-                                  [templateName]: { ...template, body: val },
-                                },
-                              },
-                            }))
-                          }
-                          language="text"
-                          placeholder="Template body... Use {{link}}, {{data.display_name}}, {{project.name}}"
-                          minHeight="80px"
+            </Section>
+
+            <Section title="Email Templates" icon={Mails}>
+              <div className="space-y-4">
+                {EMAIL_TEMPLATES.map((kind) => {
+                  const template = auth.email?.templates?.[kind.key] || {
+                    subject: "",
+                    body: "",
+                    body_file: "",
+                  };
+                  const setTemplate = (patch: Partial<typeof template>) =>
+                    updateAuth((a) => ({
+                      ...a,
+                      email: {
+                        ...(a.email || { verify_email: false, templates: {} }),
+                        templates: {
+                          ...(a.email?.templates || {}),
+                          [kind.key]: { ...template, ...patch },
+                        },
+                      },
+                    }));
+                  return (
+                    <Panel key={kind.key} className="p-4 space-y-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm font-medium text-foreground">{kind.label}</span>
+                        <code className="text-[11px] font-mono text-muted-foreground/70 truncate">
+                          {kind.vars}
+                        </code>
+                      </div>
+                      <Field label="Subject" htmlFor={`tmpl-${kind.key}-subject`}>
+                        <Input
+                          id={`tmpl-${kind.key}-subject`}
+                          value={template.subject}
+                          onChange={(e) => setTemplate({ subject: e.target.value })}
+                          placeholder={kind.defaultSubject}
                         />
-                      </Panel>
-                    );
-                  })}
-                </div>
-              )}
+                      </Field>
+                      <CodeEditor
+                        value={template.body}
+                        onChange={(val) => setTemplate({ body: val })}
+                        language="text"
+                        placeholder={kind.defaultBody}
+                        minHeight="80px"
+                      />
+                    </Panel>
+                  );
+                })}
+              </div>
             </Section>
 
             <Section
               title="OAuth Providers"
-              description="Third-party sign-in via OAuth 2.0"
               icon={Plug2}
             >
               {(["google", "github"] as const).map((provider) => {
                 const providerConfig = auth[provider];
                 const isEnabled = !!providerConfig;
-                const vars = OAUTH_VARS[provider];
+                const secretVar = OAUTH_SECRET_VARS[provider];
 
                 return (
-                  <Panel key={provider} className="p-4 space-y-3">
+                  <Panel key={provider} className="p-4 space-y-4">
                     <div className="flex items-center justify-between">
                       <span className="flex items-center gap-2 text-sm font-medium text-foreground capitalize">
                         {provider === "google" ? <GoogleIcon size={18} /> : <GitHubIcon size={18} />}
@@ -329,19 +376,60 @@ export function AuthPage() {
                       />
                     </div>
 
-                    {isEnabled && (
-                      <div className="space-y-1">
-                        {(["client_id", "client_secret", "redirect_url"] as const).map((field) => {
-                          const varName = vars[field];
+                    {isEnabled && providerConfig && (
+                      <div className="space-y-3">
+                        {/* one untitled list — the credential always first, then settings */}
+                        <div className="divide-y divide-border">
+                          <VarRow
+                            label="Client secret"
+                            name={envRefName(providerConfig.client_secret) ?? secretVar}
+                            isSet={
+                              envVarStatus[envRefName(providerConfig.client_secret) ?? secretVar]
+                                ?.set ?? false
+                            }
+                            canWrite={dotenvWritable}
+                            inputValue={
+                              pendingDotenv[
+                                envRefName(providerConfig.client_secret) ?? secretVar
+                              ] ?? ""
+                            }
+                            onInputChange={(v) =>
+                              setPendingVar(
+                                envRefName(providerConfig.client_secret) ?? secretVar,
+                                v
+                              )
+                            }
+                          />
+                        </div>
+                        {OAUTH_SETTINGS.map((field) => {
+                          const value = providerConfig[field.key] ?? "";
+                          const refName = envRefName(value);
+                          if (refName) {
+                            return (
+                              <div key={field.key} className="divide-y divide-border">
+                                <VarRow
+                                  label={field.label}
+                                  name={refName}
+                                  isSet={envVarStatus[refName]?.set ?? false}
+                                  canWrite={dotenvWritable}
+                                  inputValue={pendingDotenv[refName] ?? ""}
+                                  onInputChange={(v) => setPendingVar(refName, v)}
+                                />
+                              </div>
+                            );
+                          }
+                          const id = `${provider}-${field.key}`;
                           return (
-                            <VarRow
-                              key={field}
-                              name={varName}
-                              isSet={envVarStatus[varName]?.set ?? false}
-                              canWrite={dotenvWritable}
-                              inputValue={pendingDotenv[varName] ?? ""}
-                              onInputChange={(v) => setPendingVar(varName, v)}
-                            />
+                            <Field key={field.key} label={field.label} htmlFor={id}>
+                              <Input
+                                id={id}
+                                placeholder={"placeholder" in field ? field.placeholder : undefined}
+                                value={value}
+                                onChange={(e) =>
+                                  updateOAuthSetting(provider, field.key, e.target.value)
+                                }
+                              />
+                            </Field>
                           );
                         })}
                       </div>

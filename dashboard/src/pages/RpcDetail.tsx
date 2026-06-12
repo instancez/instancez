@@ -2,6 +2,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { Trash2, Plus, Play, FileCode2, Braces } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
+import { jsonEqual } from "../lib/jsonEqual";
 import { useDialog } from "../components/Dialog";
 import { PageHeader } from "../components/PageHeader";
 import { SaveBar } from "../components/SaveBar";
@@ -29,7 +30,6 @@ export function RpcDetail() {
   const { config, save, saving, saveErrors } = useConfig();
   const dialog = useDialog();
   const [fn, setFn] = useState<RpcFunction | null>(null);
-  const [dirty, setDirty] = useState(false);
   const [testInputs, setTestInputs] = useState<Record<string, string>>({});
   const [testResult, setTestResult] = useState<string | null>(null);
   const [testLoading, setTestLoading] = useState(false);
@@ -37,14 +37,12 @@ export function RpcDetail() {
   useEffect(() => {
     if (config && name && (config.rpc || {})[name]) {
       setFn(structuredClone((config.rpc || {})[name]!));
-      setDirty(false);
     }
   }, [config, name]);
 
   function updateFn(updater: (prev: RpcFunction) => RpcFunction) {
     setFn((prev) => {
       if (!prev) return prev;
-      setDirty(true);
       return updater(prev);
     });
   }
@@ -56,7 +54,6 @@ export function RpcDetail() {
       rpc: { ...(config.rpc || {}), [name]: fn },
     };
     await save(updated);
-    setDirty(false);
   }
 
   async function deleteFunction() {
@@ -109,6 +106,9 @@ export function RpcDetail() {
     );
   }
 
+  // Dirty is derived, not a sticky flag: undoing an edit hides the save bar.
+  const dirty = !jsonEqual(fn, (config.rpc || {})[name] ?? null);
+
   const args = fn.args || [];
 
   return (
@@ -123,7 +123,6 @@ export function RpcDetail() {
       <div className="px-8 pb-8 space-y-6 max-w-3xl">
         <Section
           title="Definition"
-          description="How the function is declared and exposed at /rest/v1/rpc"
           icon={FileCode2}
         >
           <div className="grid grid-cols-2 gap-4">
@@ -191,18 +190,39 @@ export function RpcDetail() {
           </Field>
 
           <Field label="Function Body">
-            <CodeEditor
-              value={fn.body || ""}
-              onChange={(val) => updateFn((f) => ({ ...f, body: val }))}
-              language="sql"
-              minHeight="160px"
-            />
+            {/* The body slots into this fixed wrapper — a byte-faithful mirror
+                of what the migrator emits (generateRPCFunction): one clause per
+                line, $ub$ dollar-quoting. Every clause is derived from the live
+                Definition fields, so each dropdown change is reflected here.
+                Pasting full DDL into the editor is visibly wrong and rejected
+                by validation. */}
+            <div className="rounded-lg border border-border overflow-hidden">
+              <div className="px-3 py-2 border-b border-border">
+                <code className="block text-[11px] font-mono text-muted-foreground whitespace-pre-wrap">
+                  {`CREATE OR REPLACE FUNCTION public."${name}"(${(fn.args || [])
+                    .map((a) => `"${a.name}" ${a.type}`)
+                    .join(", ")})\nRETURNS ${fn.returns?.type || "void"}\nLANGUAGE ${(
+                    fn.language || "plpgsql"
+                  ).toLowerCase()}\n${(fn.volatility || "volatile").toUpperCase()}\nSECURITY ${(
+                    fn.security || "invoker"
+                  ).toUpperCase()}\nAS $ub$`}
+                </code>
+              </div>
+              <CodeEditor
+                value={fn.body || ""}
+                onChange={(val) => updateFn((f) => ({ ...f, body: val }))}
+                language="sql"
+                minHeight="160px"
+              />
+              <div className="px-3 py-1.5 border-t border-border">
+                <code className="text-[11px] font-mono text-muted-foreground">$ub$;</code>
+              </div>
+            </div>
           </Field>
         </Section>
 
         <Section
           title="Arguments"
-          description="Parameters callers pass in the request body"
           icon={Braces}
           actions={
             <Button

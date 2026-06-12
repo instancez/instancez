@@ -7,11 +7,11 @@ describe("SaveToast", () => {
     vi.useFakeTimers();
     render(<SaveToast />);
     act(() => {
-      showSaveToast({ source: "s3://bucket/key", statementCount: 3 });
+      showSaveToast({ source: "s3://bucket/key" });
     });
     expect(screen.getByText(/Saved to/)).toBeTruthy();
     expect(screen.getByText(/s3:\/\/bucket\/key/)).toBeTruthy();
-    expect(screen.getByText(/3 statement/)).toBeTruthy();
+    expect(screen.queryByText(/statement/)).toBeNull();
     expect(screen.getByText(/update your git source/i)).toBeTruthy();
 
     act(() => { vi.advanceTimersByTime(8000); });

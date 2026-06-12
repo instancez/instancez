@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { Overview } from "./Overview";
 import { ConfigContext } from "../hooks/useConfig";
@@ -86,39 +86,53 @@ describe("Overview", () => {
     expect(screen.getByText("My Project")).toBeInTheDocument();
   });
 
-  it("shows summary cards with correct counts", () => {
+  it("shows summary card counts with units", () => {
     renderOverview();
-    // Tables card
     expect(screen.getAllByText("Tables").length).toBeGreaterThan(0);
-    // Auth card
+    expect(screen.getByText("table")).toBeInTheDocument();
+    expect(screen.getByText("bucket")).toBeInTheDocument();
     expect(screen.getByText("Enabled")).toBeInTheDocument();
-    // Storage card shows bucket count
-    expect(screen.getAllByText("1").length).toBeGreaterThan(0);
   });
 
-  it("shows database connected status after loading", async () => {
+  it("does not show status badges", async () => {
     renderOverview();
-    await waitFor(() => {
-      expect(screen.getByText("Database Connected")).toBeInTheDocument();
-    });
+    expect(screen.queryByText("Database Connected")).not.toBeInTheDocument();
+    expect(screen.queryByText("Port 8080")).not.toBeInTheDocument();
+    expect(screen.queryByText("Auth Enabled")).not.toBeInTheDocument();
   });
 
-  it("shows auth enabled badge", () => {
+  it("does not list individual tables or buckets", async () => {
     renderOverview();
-    expect(screen.getByText("Auth Enabled")).toBeInTheDocument();
+    expect(screen.queryByText("2 fields")).not.toBeInTheDocument();
+    expect(screen.queryByText("avatars")).not.toBeInTheDocument();
+    expect(screen.queryByText("Storage Buckets")).not.toBeInTheDocument();
   });
 
-  it("shows port badge", () => {
+  it("shows client connection examples with the real URL and an ANON_KEY var", async () => {
     renderOverview();
-    expect(screen.getByText("Port 8080")).toBeInTheDocument();
+    expect(screen.getByText("JS/TS")).toBeInTheDocument();
+    expect(screen.queryByText("supabase-js")).not.toBeInTheDocument();
+    const snippet = await screen.findByTestId("connect-snippet");
+    expect(snippet.textContent).toContain(window.location.origin);
+    expect(snippet.textContent).toContain("createClient");
+    expect(snippet.textContent).toContain("ANON_KEY");
+    // the raw token never appears in the snippet — shorter, and safe to screenshot
+    expect(snippet.textContent).not.toContain("test-anon-key");
+    expect(snippet.textContent).toContain("from('todos')");
+
+    fireEvent.click(screen.getByRole("button", { name: "Python" }));
+    expect(screen.getByTestId("connect-snippet").textContent).toContain("create_client");
+
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    expect(screen.getByTestId("connect-snippet").textContent).toContain(
+      "supabase-community/supabase-go"
+    );
   });
 
-  it("shows table detail rows with field counts", async () => {
+  it("does not show section descriptions for API Keys and Connect", async () => {
     renderOverview();
-    await waitFor(() => {
-      expect(screen.getByText("todos")).toBeInTheDocument();
-      expect(screen.getByText("2 fields")).toBeInTheDocument();
-    });
+    expect(screen.queryByText(/browser-safe/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/same wire protocol/)).not.toBeInTheDocument();
   });
 
   it("renders nothing when config is null", () => {

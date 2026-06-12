@@ -2,6 +2,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { Plus, Settings2, ShieldCheck } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
+import { jsonEqual } from "../lib/jsonEqual";
 import { useDialog } from "../components/Dialog";
 import { PageHeader } from "../components/PageHeader";
 import { SaveBar } from "../components/SaveBar";
@@ -17,19 +18,16 @@ export function StorageDetail() {
   const { config, save, saving, saveErrors } = useConfig();
   const dialog = useDialog();
   const [bucket, setBucket] = useState<Bucket | null>(null);
-  const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
     if (config && name && config.storage[name]) {
       setBucket(structuredClone(config.storage[name]!));
-      setDirty(false);
     }
   }, [config, name]);
 
   function updateBucket(updater: (prev: Bucket) => Bucket) {
     setBucket((prev) => {
       if (!prev) return prev;
-      setDirty(true);
       return updater(prev);
     });
   }
@@ -41,7 +39,6 @@ export function StorageDetail() {
       storage: { ...config.storage, [name]: bucket },
     };
     await save(updated);
-    setDirty(false);
   }
 
   async function deleteBucket() {
@@ -61,6 +58,9 @@ export function StorageDetail() {
     );
   }
 
+  // Dirty is derived, not a sticky flag: undoing an edit hides the save bar.
+  const dirty = !jsonEqual(bucket, config.storage[name] ?? null);
+
   return (
     <div className="pb-20">
       <PageHeader
@@ -73,7 +73,6 @@ export function StorageDetail() {
       <div className="px-8 pb-8 space-y-6 max-w-2xl">
         <Section
           title="Bucket Settings"
-          description="Upload limits and access rules for this bucket"
           icon={Settings2}
         >
           <Field label="Max File Size">
@@ -110,7 +109,6 @@ export function StorageDetail() {
 
         <Section
           title="RLS Policies"
-          description="Row-level security rules applied to objects in this bucket"
           icon={ShieldCheck}
           actions={
             <Button

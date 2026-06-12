@@ -22,6 +22,7 @@
     "@radix-ui/react-tabs": "^1.1.2",
     "@radix-ui/react-tooltip": "^1.1.6",
     "codemirror": "^6.0.1",
+    "diff": "^9.0.0",
     "js-yaml": "^4.1.1",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
