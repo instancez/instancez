@@ -9,6 +9,7 @@ describe("ConsoleBackend types", () => {
     expect(caps.canEditFunctionCode).toBe(true);
     expect(caps.canManageDeps).toBe(true);
     expect(caps.hasStats).toBe(true);
+    expect(caps.canTestRpc).toBe(true);
   });
 
   it("a stub satisfies the interface", () => {

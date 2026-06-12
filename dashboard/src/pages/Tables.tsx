@@ -38,7 +38,7 @@ export function Tables() {
     };
 
     const ok = await save(updated);
-    if (ok) navigate(`/tables/${tableName}`);
+    if (ok) navigate(tableName, { relative: "path" });
   }
 
   const addButton = (
@@ -76,7 +76,7 @@ export function Tables() {
                   key={name}
                   icon={Table2}
                   title={name}
-                  onClick={() => navigate(`/tables/${name}`)}
+                  onClick={() => navigate(name, { relative: "path" })}
                   badges={
                     <>
                       <StatusBadge variant="muted">

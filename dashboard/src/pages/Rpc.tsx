@@ -40,7 +40,7 @@ export function Rpc() {
     };
 
     const ok = await save(updated);
-    if (ok) navigate(`/rpc/${fnName}`);
+    if (ok) navigate(fnName, { relative: "path" });
   }
 
   const addButton = (
@@ -74,7 +74,7 @@ export function Rpc() {
                 icon={Database}
                 title={name}
                 meta={fn.description || undefined}
-                onClick={() => navigate(`/rpc/${name}`)}
+                onClick={() => navigate(name, { relative: "path" })}
                 badges={
                   <>
                     <StatusBadge variant="info">{fn.language}</StatusBadge>

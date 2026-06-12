@@ -36,7 +36,7 @@ export function Storage() {
     };
 
     const ok = await save(updated);
-    if (ok) navigate(`/storage/${bucketName}`);
+    if (ok) navigate(bucketName, { relative: "path" });
   }
 
   const addButton = (
@@ -69,7 +69,7 @@ export function Storage() {
                 key={name}
                 icon={HardDrive}
                 title={name}
-                onClick={() => navigate(`/storage/${name}`)}
+                onClick={() => navigate(name, { relative: "path" })}
                 badges={
                   <>
                     <StatusBadge variant="muted">{bucket.max_size}</StatusBadge>

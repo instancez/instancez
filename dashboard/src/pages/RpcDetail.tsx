@@ -19,6 +19,7 @@ import {
 } from "../components/ui";
 import { POSTGRES_TYPES } from "../lib/utils";
 import type { RpcFunction } from "../lib/types";
+import { useBackend } from "../console/BackendContext";
 
 const LANGUAGES = ["plpgsql", "sql"];
 const VOLATILITIES = ["volatile", "stable", "immutable"];
@@ -29,6 +30,7 @@ export function RpcDetail() {
   const navigate = useNavigate();
   const { config, save, saving, saveErrors } = useConfig();
   const dialog = useDialog();
+  const backend = useBackend();
   const [fn, setFn] = useState<RpcFunction | null>(null);
   const [testInputs, setTestInputs] = useState<Record<string, string>>({});
   const [testResult, setTestResult] = useState<string | null>(null);
@@ -295,30 +297,32 @@ export function RpcDetail() {
           )}
         </Section>
 
-        <Disclosure label="Test Function">
-          <div className="space-y-3">
-            {args.map((arg) => (
-              <Field key={arg.name} label={arg.name}>
-                <Input
-                  mono
-                  value={testInputs[arg.name] || ""}
-                  onChange={(e) =>
-                    setTestInputs((prev) => ({ ...prev, [arg.name]: e.target.value }))
-                  }
-                />
-              </Field>
-            ))}
-            <Button onClick={runTest} loading={testLoading}>
-              {!testLoading && <Play size={14} />}
-              Run
-            </Button>
-            {testResult && (
-              <Panel className="p-4 overflow-x-auto max-h-64 overflow-y-auto">
-                <pre className="text-xs font-mono text-foreground">{testResult}</pre>
-              </Panel>
-            )}
-          </div>
-        </Disclosure>
+        {backend.capabilities.canTestRpc && (
+          <Disclosure label="Test Function">
+            <div className="space-y-3">
+              {args.map((arg) => (
+                <Field key={arg.name} label={arg.name}>
+                  <Input
+                    mono
+                    value={testInputs[arg.name] || ""}
+                    onChange={(e) =>
+                      setTestInputs((prev) => ({ ...prev, [arg.name]: e.target.value }))
+                    }
+                  />
+                </Field>
+              ))}
+              <Button onClick={runTest} loading={testLoading}>
+                {!testLoading && <Play size={14} />}
+                Run
+              </Button>
+              {testResult && (
+                <Panel className="p-4 overflow-x-auto max-h-64 overflow-y-auto">
+                  <pre className="text-xs font-mono text-foreground">{testResult}</pre>
+                </Panel>
+              )}
+            </div>
+          </Disclosure>
+        )}
       </div>
 
       <SaveBar onSave={handleSave} saving={saving} errors={saveErrors} dirty={dirty} />

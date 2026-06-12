@@ -99,7 +99,7 @@ export function Functions() {
                 icon={Code2}
                 title={name}
                 meta={<span className="font-mono">{fn.file}</span>}
-                onClick={() => navigate(`/functions/${name}`)}
+                onClick={() => navigate(name, { relative: "path" })}
                 badges={
                   <>
                     <StatusBadge variant="info">{fn.runtime || "node"}</StatusBadge>
