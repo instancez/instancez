@@ -37,22 +37,35 @@ export function fullCapabilities(): Capabilities {
 export interface ConsoleBackend {
   capabilities: Capabilities;
 
+  // config
   getConfig(): Promise<Config>;
   getConfigStatus(): Promise<ConfigStatus>;
   previewConfig(config: Omit<Config, "_checksum">): Promise<ConfigPreview>;
-  putConfig(config: Omit<Config, "_checksum">, checksum: string): Promise<{ message: string; config_source?: string }>;
+  putConfig(
+    config: Omit<Config, "_checksum">,
+    checksum: string
+  ): Promise<{ message: string; config_source?: string }>;
 
   // secrets — the write-back interface. Values are write-only; reads are existence-only via getEnvVars.
   getEnvVars(names?: string[]): Promise<EnvVarsResponse>;
   writeSecrets(vars: Record<string, string>): Promise<{ message: string }>;
 
+  // keys / stats / diff
   getKeys(): Promise<{ anon_key: string }>;
   getStats(): Promise<StatsResponse>;
   getConfigDiff(): Promise<DiffResponse>;
 
+  // code functions
   getFunctionCode(name: string): Promise<{ content: string; file: string }>;
   putFunctionCode(name: string, content: string): Promise<{ message: string }>;
   checkFunctionFile(file: string): Promise<{ exists: boolean }>;
-  getFunctionDeps(): Promise<{ dependencies: Record<string, string>; has_lock: boolean; readonly: boolean }>;
-  postFunctionDeps(add: string[], remove: string[]): Promise<{ dependencies: Record<string, string>; has_lock: boolean; readonly: boolean }>;
+  getFunctionDeps(): Promise<{
+    dependencies: Record<string, string>;
+    has_lock: boolean;
+    readonly: boolean;
+  }>;
+  postFunctionDeps(
+    add: string[],
+    remove: string[]
+  ): Promise<{ dependencies: Record<string, string>; has_lock: boolean; readonly: boolean }>;
 }

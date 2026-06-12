@@ -6,7 +6,11 @@ import * as api from "../api/client";
 
 vi.mock("../api/client", async (importOriginal) => {
   const real = await importOriginal<typeof api>();
-  return { ...real, getEnvVars: vi.fn().mockResolvedValue({ vars: { X: { set: true } } }) };
+  return {
+    ...real,
+    getEnvVars: vi.fn().mockResolvedValue({ vars: { X: { set: true } } }),
+    putDotenv: vi.fn().mockResolvedValue({ message: "ok" }),
+  };
 });
 
 describe("adminBackend", () => {
@@ -18,6 +22,11 @@ describe("adminBackend", () => {
 
   it("advertises full capabilities", () => {
     expect(adminBackend.capabilities.canWriteSecrets).toBe(true);
+  });
+
+  it("routes writeSecrets to putDotenv", async () => {
+    await adminBackend.writeSecrets({ K: "v" });
+    expect(api.putDotenv).toHaveBeenCalledWith({ K: "v" });
   });
 
   it("useBackend defaults to adminBackend and can be overridden", () => {

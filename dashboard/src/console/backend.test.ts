@@ -12,6 +12,7 @@ describe("ConsoleBackend types", () => {
   });
 
   it("a stub satisfies the interface", () => {
+    // Compile-time check that the interface is implementable.
     const stub: ConsoleBackend = {
       capabilities: fullCapabilities(),
       getConfig: async () => ({ version: 1 }) as any,
