@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Shield, KeySquare, MailCheck, Mails, Plug2 } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
-import { PageHeader } from "../components/PageHeader";
 import { SaveBar } from "../components/SaveBar";
 import { CodeEditor } from "../components/CodeEditor";
 import { EmptyState } from "../components/EmptyState";
@@ -231,12 +230,7 @@ export function AuthPage() {
 
   return (
     <div className="pb-20">
-      <PageHeader
-        title="Authentication"
-        description="Configure auth providers and JWT settings"
-      />
-
-      <div className="px-8 pb-8 space-y-6 max-w-3xl">
+      <div className="pb-8 space-y-6 max-w-3xl">
         {/* Enable/Disable Toggle */}
         <Section
           title="Enable Authentication"

@@ -3,6 +3,7 @@ export { fullCapabilities } from "./backend";
 export { adminBackend } from "./adminBackend";
 export { BackendProvider, useBackend } from "./BackendContext";
 export { ConsoleProvider } from "./ConsoleProvider";
+export type { ConsoleRouteHandle } from "./routes";
 export {
   consoleRoutes,
   overviewRoutes,

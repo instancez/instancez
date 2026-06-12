@@ -4,7 +4,7 @@ import { Plus, Settings2, ShieldCheck } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
 import { jsonEqual } from "../lib/jsonEqual";
 import { useDialog } from "../components/Dialog";
-import { PageHeader } from "../components/PageHeader";
+import { DetailToolbar } from "../components/DetailToolbar";
 import { SaveBar } from "../components/SaveBar";
 import { TagInput } from "../components/TagInput";
 import { Toggle } from "../components/Toggle";
@@ -63,14 +63,8 @@ export function StorageDetail() {
 
   return (
     <div className="pb-20">
-      <PageHeader
-        title={name}
-        description="Storage bucket configuration"
-        backTo="/storage"
-        onDelete={deleteBucket}
-      />
-
-      <div className="px-8 pb-8 space-y-6 max-w-2xl">
+      <DetailToolbar backLabel="Storage" onDelete={deleteBucket} />
+      <div className="pb-8 space-y-6 max-w-2xl">
         <Section
           title="Bucket Settings"
           icon={Settings2}

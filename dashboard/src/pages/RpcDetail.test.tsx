@@ -76,9 +76,11 @@ function renderRpcDetail(config: Config, fnName: string, save = vi.fn().mockReso
 }
 
 describe("RpcDetail", () => {
-  it("renders function name in the page", () => {
+  it("renders the back link to the Database Functions list", () => {
     renderRpcDetail(baseConfig, "get_todos");
-    expect(screen.getByText("get_todos")).toBeInTheDocument();
+    // The function name is now shell chrome (route handle); the page renders a
+    // chrome-free toolbar with a back link to the parent area.
+    expect(screen.getByRole("link", { name: /Database Functions/ })).toBeInTheDocument();
   });
 
   it("renders argument name", () => {

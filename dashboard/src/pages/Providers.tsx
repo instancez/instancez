@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
 import { useConfig } from "../hooks/useConfig";
-import { PageHeader } from "../components/PageHeader";
 import { SaveBar } from "../components/SaveBar";
 import { CheckCard, Panel, Section, Input, Field } from "../components/ui";
 import { Toggle } from "../components/Toggle";
@@ -343,12 +342,7 @@ export function ProvidersPage() {
 
   return (
     <div className="pb-20">
-      <PageHeader
-        title="Providers"
-        description="Configure email and storage providers for your project"
-      />
-
-      <div className="px-8 pb-8 space-y-6 max-w-3xl">
+      <div className="pb-8 space-y-6 max-w-3xl">
         <Section
           title="Email Provider"
           icon={Mail}

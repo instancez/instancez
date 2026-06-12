@@ -80,11 +80,6 @@ describe("AuthPage", () => {
     vi.mocked(api.getEnvVars).mockResolvedValue({ vars: {} });
   });
 
-  it("renders page title", () => {
-    renderAuth(makeConfig(true));
-    expect(screen.getByRole("heading", { name: "Authentication" })).toBeInTheDocument();
-  });
-
   it("shows JWT settings when auth is enabled", () => {
     renderAuth(makeConfig(true));
     expect(screen.getByText("JWT Settings")).toBeInTheDocument();

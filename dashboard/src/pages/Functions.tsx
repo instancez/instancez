@@ -2,7 +2,6 @@ import { useNavigate } from "react-router-dom";
 import { useState, useEffect, useCallback } from "react";
 import { Code2, Package, Trash2, CheckCircle, AlertCircle } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
-import { PageHeader } from "../components/PageHeader";
 import { EmptyState } from "../components/EmptyState";
 import { StatusBadge } from "../components/StatusBadge";
 import { Button, Field, Input, ListRow, Panel, Section } from "../components/ui";
@@ -82,11 +81,10 @@ export function Functions() {
 
   return (
     <div>
-      <PageHeader
-        title="Code Functions"
-        description={`${functions.length} code function${functions.length !== 1 ? "s" : ""}`}
-      />
-      <div className="px-8 pb-8 space-y-6 max-w-3xl">
+      <div className="pb-8 space-y-6 max-w-3xl">
+        <p className="text-sm text-muted-foreground">
+          {functions.length} code function{functions.length !== 1 ? "s" : ""}
+        </p>
         {functions.length === 0 ? (
           <EmptyState
             icon={Code2}

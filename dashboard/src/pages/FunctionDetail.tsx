@@ -4,7 +4,7 @@ import { Trash2, Plus, Settings2, KeyRound, Code2 } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
 import { jsonEqual } from "../lib/jsonEqual";
 import { useDialog } from "../components/Dialog";
-import { PageHeader } from "../components/PageHeader";
+import { DetailToolbar } from "../components/DetailToolbar";
 import { SaveBar } from "../components/SaveBar";
 import { Toggle } from "../components/Toggle";
 import { CodeEditor } from "../components/CodeEditor";
@@ -118,14 +118,8 @@ export function FunctionDetail() {
 
   return (
     <div className="pb-20">
-      <PageHeader
-        title={name}
-        description="Code function served at /functions/v1/"
-        backTo="/functions"
-        onDelete={deleteFunction}
-      />
-
-      <div className="px-8 pb-8 space-y-6 max-w-3xl">
+      <DetailToolbar backLabel="Code Functions" onDelete={deleteFunction} />
+      <div className="pb-8 space-y-6 max-w-3xl">
         <Section
           title="Runtime"
           icon={Settings2}

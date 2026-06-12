@@ -148,9 +148,11 @@ describe("FunctionDetail – env vars", () => {
 });
 
 describe("FunctionDetail – config fields", () => {
-  it("renders function name", () => {
+  it("renders the back link to the Code Functions list", () => {
     renderFunctionDetail(baseConfig, "process_image");
-    expect(screen.getByText("process_image")).toBeInTheDocument();
+    // The function name is now shell chrome (route handle); the page renders a
+    // chrome-free toolbar with a back link to the parent area.
+    expect(screen.getByRole("link", { name: /Code Functions/ })).toBeInTheDocument();
   });
 
   it("renders file path value", () => {

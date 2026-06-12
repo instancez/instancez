@@ -2,7 +2,6 @@ import { useNavigate } from "react-router-dom";
 import { Plus, Table2 } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
 import { useDialog } from "../components/Dialog";
-import { PageHeader } from "../components/PageHeader";
 import { EmptyState } from "../components/EmptyState";
 import { StatusBadge } from "../components/StatusBadge";
 import { Button, ListRow } from "../components/ui";
@@ -51,13 +50,13 @@ export function Tables() {
 
   return (
     <div>
-      <PageHeader
-        title="Tables"
-        description={`${tables.length} table${tables.length !== 1 ? "s" : ""} defined`}
-        actions={addButton}
-      />
-
-      <div className="px-8 pb-8">
+      <div className="pb-8">
+        <div className="flex items-center justify-between gap-4 pb-6">
+          <p className="text-sm text-muted-foreground">
+            {tables.length} table{tables.length !== 1 ? "s" : ""} defined
+          </p>
+          {addButton}
+        </div>
         {tables.length === 0 ? (
           <EmptyState
             icon={Table2}

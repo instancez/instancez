@@ -1,6 +1,8 @@
-import { Outlet } from "react-router-dom";
+import { Suspense } from "react";
+import { Outlet, useMatches, useParams } from "react-router-dom";
 import { Navbar } from "./Navbar";
 import { Sidebar } from "./Sidebar";
+import { PageHeader } from "./PageHeader";
 import { Button, SurfaceProvider } from "./ui";
 import { DriftBanner } from "./DriftBanner";
 import { EditModeBanner } from "./EditModeBanner";
@@ -8,7 +10,17 @@ import { useConfigStatus } from "../hooks/useConfigStatus";
 import { useConfig } from "../hooks/useConfig";
 import { ConsoleProvider } from "../console/ConsoleProvider";
 import { adminBackend } from "../console/adminBackend";
+import type { ConsoleRouteHandle } from "../console/routes";
 import { Loader2, AlertCircle, RefreshCw } from "lucide-react";
+
+function PageLoader() {
+  return (
+    <div className="flex flex-col items-center justify-center gap-3 py-24">
+      <Loader2 size={20} className="animate-spin text-muted-foreground" />
+      <p className="text-sm text-muted-foreground">Loading</p>
+    </div>
+  );
+}
 
 function StatusBanners() {
   const { data } = useConfigStatus();
@@ -18,6 +30,23 @@ function StatusBanners() {
       <EditModeBanner status={data} />
     </>
   );
+}
+
+/** Page chrome: reads the deepest matched route's handle and renders the
+ *  shared PageHeader once. Pages themselves are chrome-free; the shell owns
+ *  the title/description. A `null` title (e.g. Overview) renders nothing. */
+function ShellHeader() {
+  const matches = useMatches();
+  const params = useParams();
+  // Deepest match that carries a handle with a title wins.
+  const match = [...matches]
+    .reverse()
+    .find((m) => (m.handle as ConsoleRouteHandle | undefined)?.title !== undefined);
+  const handle = match?.handle as ConsoleRouteHandle | undefined;
+  if (!handle || handle.title === null) return null;
+  const title =
+    typeof handle.title === "function" ? handle.title(params) : handle.title;
+  return <PageHeader title={title} description={handle.description} />;
 }
 
 /** Inner shell: reads config state from ConsoleProvider's context for the
@@ -61,7 +90,14 @@ function Shell() {
               inside it render as gray insets, and their children flip
               back to surface — every box contrasts with its parent. */}
           <SurfaceProvider depth={1}>
-            <Outlet />
+            {/* The shell owns the title and the horizontal gutter; pages are
+                chrome-free bare content panes. */}
+            <ShellHeader />
+            <div className="px-8">
+              <Suspense fallback={<PageLoader />}>
+                <Outlet />
+              </Suspense>
+            </div>
           </SurfaceProvider>
         </main>
       </div>

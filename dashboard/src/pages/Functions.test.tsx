@@ -78,7 +78,6 @@ beforeEach(() => {
 describe("Functions – function list", () => {
   it("lists code functions with file and runtime", async () => {
     renderFunctions(baseConfig);
-    expect(screen.getByText("Code Functions")).toBeInTheDocument();
     expect(screen.queryByText(/edge/i)).not.toBeInTheDocument();
     expect(screen.getByText("todos")).toBeInTheDocument();
     expect(screen.getByText("functions/todos.js")).toBeInTheDocument();

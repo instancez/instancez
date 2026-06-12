@@ -2,7 +2,6 @@ import { useNavigate } from "react-router-dom";
 import { Plus, HardDrive } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
 import { useDialog } from "../components/Dialog";
-import { PageHeader } from "../components/PageHeader";
 import { EmptyState } from "../components/EmptyState";
 import { StatusBadge } from "../components/StatusBadge";
 import { Button, ListRow } from "../components/ui";
@@ -49,13 +48,13 @@ export function Storage() {
 
   return (
     <div>
-      <PageHeader
-        title="Storage"
-        description={`${buckets.length} bucket${buckets.length !== 1 ? "s" : ""} configured`}
-        actions={addButton}
-      />
-
-      <div className="px-8 pb-8">
+      <div className="pb-8">
+        <div className="flex items-center justify-between gap-4 pb-6">
+          <p className="text-sm text-muted-foreground">
+            {buckets.length} bucket{buckets.length !== 1 ? "s" : ""} configured
+          </p>
+          {addButton}
+        </div>
         {buckets.length === 0 ? (
           <EmptyState
             icon={HardDrive}

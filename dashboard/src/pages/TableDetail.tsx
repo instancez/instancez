@@ -5,7 +5,7 @@ import { Plus, Trash2, GripVertical } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
 import { jsonEqual } from "../lib/jsonEqual";
 import { useDialog } from "../components/Dialog";
-import { PageHeader } from "../components/PageHeader";
+import { DetailToolbar } from "../components/DetailToolbar";
 import { SaveBar } from "../components/SaveBar";
 import { CodeEditor } from "../components/CodeEditor";
 import { TagInput } from "../components/TagInput";
@@ -122,14 +122,8 @@ export function TableDetail() {
 
   return (
     <div className="pb-20">
-      <PageHeader
-        title={name}
-        description={`${fieldEntries.length} fields, ${(table.indexes || []).length} indexes, ${(table.rls || []).length} RLS policies`}
-        backTo="/tables"
-        onDelete={deleteTable}
-      />
-
-      <div className="px-8 pb-8">
+      <DetailToolbar backLabel="Tables" onDelete={deleteTable} />
+      <div className="pb-8">
         <Tabs.Root defaultValue="fields">
           <Tabs.List className="flex gap-1 border-b border-border mb-6">
             {["Fields", "Indexes", "RLS", "Seeds"].map((tab) => (

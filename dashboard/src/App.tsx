@@ -1,35 +1,9 @@
-import { useRoutes, Navigate } from "react-router-dom";
-import { useState, useEffect, Suspense } from "react";
-import { Loader2 } from "lucide-react";
+import { createBrowserRouter, RouterProvider, Navigate } from "react-router-dom";
+import { useState, useEffect, useMemo } from "react";
 import { Layout } from "./components/Layout";
 import { DialogProvider } from "./components/Dialog";
 import { Login } from "./pages/Login";
 import { consoleRoutes } from "./console/routes";
-
-function PageLoader() {
-  return (
-    <div className="flex flex-col items-center justify-center gap-3 py-24">
-      <Loader2 size={20} className="animate-spin text-muted-foreground" />
-      <p className="t-label">Loading</p>
-    </div>
-  );
-}
-
-function AppRoutes() {
-  return (
-    <Suspense fallback={<PageLoader />}>
-      {useRoutes([
-        {
-          element: <Layout />,
-          children: [
-            ...consoleRoutes(),
-            { path: "*", element: <Navigate to="/" replace /> },
-          ],
-        },
-      ])}
-    </Suspense>
-  );
-}
 
 export function App() {
   const [hasKey, setHasKey] = useState(
@@ -44,6 +18,25 @@ export function App() {
     return () => window.removeEventListener("storage", handler);
   }, []);
 
+  // A data router is required for useMatches()/route handles, which the shell
+  // uses to render page chrome. Built once the admin key is present.
+  const router = useMemo(
+    () =>
+      createBrowserRouter(
+        [
+          {
+            element: <Layout />,
+            children: [
+              ...consoleRoutes(),
+              { path: "*", element: <Navigate to="/" replace /> },
+            ],
+          },
+        ],
+        { basename: "/dashboard" }
+      ),
+    []
+  );
+
   if (!hasKey) {
     return (
       <DialogProvider>
@@ -52,5 +45,5 @@ export function App() {
     );
   }
 
-  return <AppRoutes />;
+  return <RouterProvider router={router} />;
 }

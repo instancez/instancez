@@ -2,7 +2,6 @@ import { useNavigate } from "react-router-dom";
 import { Plus, Database } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
 import { useDialog } from "../components/Dialog";
-import { PageHeader } from "../components/PageHeader";
 import { EmptyState } from "../components/EmptyState";
 import { StatusBadge } from "../components/StatusBadge";
 import { Button, ListRow } from "../components/ui";
@@ -53,13 +52,13 @@ export function Rpc() {
 
   return (
     <div>
-      <PageHeader
-        title="Database Functions"
-        description={`${functions.length} SQL function${functions.length !== 1 ? "s" : ""}`}
-        actions={addButton}
-      />
-
-      <div className="px-8 pb-8">
+      <div className="pb-8">
+        <div className="flex items-center justify-between gap-4 pb-6">
+          <p className="text-sm text-muted-foreground">
+            {functions.length} SQL function{functions.length !== 1 ? "s" : ""}
+          </p>
+          {addButton}
+        </div>
         {functions.length === 0 ? (
           <EmptyState
             icon={Database}

@@ -4,7 +4,6 @@ import { Table2, Shield, HardDrive, RefreshCw } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
 import { useBackend } from "../console/BackendContext";
 import { downloadYamlFromConfig } from "../lib/downloadYaml";
-import { PageHeader } from "../components/PageHeader";
 import { ApiKeys } from "../components/ApiKeys";
 import { ConnectExamples } from "../components/ConnectExamples";
 import { Card, CardTitle, CardValue } from "../components/Card";
@@ -57,29 +56,33 @@ export function Overview() {
     : 0;
 
   return (
-    <div className="pb-8">
-      <PageHeader
-        title={config.project.name || "instancez project"}
-        description={config.project.description || "Project overview and health"}
-        actions={
-          <>
-            <Button variant="outline" size="sm" onClick={handleDownload}>
-              Download config as YAML
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={loadData}
-              disabled={loading}
-            >
-              <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
-              Refresh
-            </Button>
-          </>
-        }
-      />
+    <div className="pt-8 pb-8">
+      <div className="flex items-start justify-between gap-4 pb-6">
+        <div className="min-w-0">
+          <h2 className="text-xl font-semibold tracking-tight text-foreground truncate">
+            {config.project.name || "instancez project"}
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {config.project.description || "Project overview and health"}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <Button variant="outline" size="sm" onClick={handleDownload}>
+            Download config as YAML
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={loadData}
+            disabled={loading}
+          >
+            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+            Refresh
+          </Button>
+        </div>
+      </div>
 
-      <div className="px-8 space-y-6">
+      <div className="space-y-6">
         {/* Summary Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 animate-rise">
           <Card hoverable onClick={() => navigate("tables", { relative: "path" })}>

@@ -62,9 +62,11 @@ function renderStorageDetail(config: Config, bucketName: string) {
 }
 
 describe("StorageDetail", () => {
-  it("renders bucket name", () => {
+  it("renders the back link to the Storage list", () => {
     renderStorageDetail(baseConfig, "avatars");
-    expect(screen.getByText("avatars")).toBeInTheDocument();
+    // The bucket name is now shell chrome (route handle); the page renders a
+    // chrome-free toolbar with a back link to the parent area.
+    expect(screen.getByRole("link", { name: /Storage/ })).toBeInTheDocument();
   });
 
   it("renders max file size value", () => {

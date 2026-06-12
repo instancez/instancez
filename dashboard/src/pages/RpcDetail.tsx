@@ -4,7 +4,7 @@ import { Trash2, Plus, Play, FileCode2, Braces } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
 import { jsonEqual } from "../lib/jsonEqual";
 import { useDialog } from "../components/Dialog";
-import { PageHeader } from "../components/PageHeader";
+import { DetailToolbar } from "../components/DetailToolbar";
 import { SaveBar } from "../components/SaveBar";
 import { CodeEditor } from "../components/CodeEditor";
 import { Toggle } from "../components/Toggle";
@@ -113,14 +113,8 @@ export function RpcDetail() {
 
   return (
     <div className="pb-20">
-      <PageHeader
-        title={name}
-        description={fn.description || "RPC function"}
-        backTo="/rpc"
-        onDelete={deleteFunction}
-      />
-
-      <div className="px-8 pb-8 space-y-6 max-w-3xl">
+      <DetailToolbar backLabel="Database Functions" onDelete={deleteFunction} />
+      <div className="pb-8 space-y-6 max-w-3xl">
         <Section
           title="Definition"
           icon={FileCode2}
