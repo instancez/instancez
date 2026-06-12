@@ -100,7 +100,7 @@ export function FunctionDetail() {
       return;
     const { [name]: _omit, ...rest } = config.functions || {};
     const ok = await save({ ...config, functions: rest });
-    if (ok) navigate("/functions");
+    if (ok) navigate("..", { relative: "path" });
   }
 
   if (!config || !fn || !name) {

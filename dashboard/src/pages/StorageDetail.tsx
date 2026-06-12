@@ -47,7 +47,7 @@ export function StorageDetail() {
     const { [name]: _, ...rest } = config.storage;
     const updated = { ...config, storage: rest };
     const ok = await save(updated);
-    if (ok) navigate("/storage");
+    if (ok) navigate("..", { relative: "path" });
   }
 
   if (!config || !bucket || !name) {

@@ -62,7 +62,7 @@ export function RpcDetail() {
     const { [name]: _, ...rest } = config.rpc || {};
     const updated = { ...config, rpc: rest };
     const ok = await save(updated);
-    if (ok) navigate("/rpc");
+    if (ok) navigate("..", { relative: "path" });
   }
 
   async function runTest() {

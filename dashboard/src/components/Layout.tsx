@@ -5,8 +5,9 @@ import { Button, SurfaceProvider } from "./ui";
 import { DriftBanner } from "./DriftBanner";
 import { EditModeBanner } from "./EditModeBanner";
 import { useConfigStatus } from "../hooks/useConfigStatus";
-import { ConfigContext, useConfigState } from "../hooks/useConfig";
-import { ConfirmSaveDialog } from "./ConfirmSaveDialog";
+import { useConfig } from "../hooks/useConfig";
+import { ConsoleProvider } from "../console/ConsoleProvider";
+import { adminBackend } from "../console/adminBackend";
 import { Loader2, AlertCircle, RefreshCw } from "lucide-react";
 
 function StatusBanners() {
@@ -19,9 +20,10 @@ function StatusBanners() {
   );
 }
 
-export function Layout() {
-  const configState = useConfigState();
-  const { loading, error, config, refresh } = configState;
+/** Inner shell: reads config state from ConsoleProvider's context for the
+ *  loading/error gate, then renders the full chrome + Outlet. */
+function Shell() {
+  const { loading, error, config, refresh } = useConfig();
 
   if (loading && !config) {
     return (
@@ -50,34 +52,33 @@ export function Layout() {
   }
 
   return (
-    <ConfigContext.Provider value={configState}>
-      <div className="h-dvh bg-background flex flex-col overflow-hidden">
-        <Navbar />
-        <div className="flex flex-1 min-h-0 gap-2 px-2 pb-2">
-          <Sidebar />
-          <main className="flex-1 min-w-0 overflow-y-auto bg-surface border border-border rounded-xl shadow-card">
-            {/* Depth 1: page content sits on the surface card, so Panels
-                inside it render as gray insets, and their children flip
-                back to surface — every box contrasts with its parent. */}
-            <SurfaceProvider depth={1}>
-              <Outlet />
-            </SurfaceProvider>
-          </main>
-        </div>
-        {/* Banners anchor to the bottom of the shell as full-width strips,
-            pushing the working area up rather than overlapping it. */}
-        <StatusBanners />
+    <div className="h-dvh bg-background flex flex-col overflow-hidden">
+      <Navbar />
+      <div className="flex flex-1 min-h-0 gap-2 px-2 pb-2">
+        <Sidebar />
+        <main className="flex-1 min-w-0 overflow-y-auto bg-surface border border-border rounded-xl shadow-card">
+          {/* Depth 1: page content sits on the surface card, so Panels
+              inside it render as gray insets, and their children flip
+              back to surface — every box contrasts with its parent. */}
+          <SurfaceProvider depth={1}>
+            <Outlet />
+          </SurfaceProvider>
+        </main>
       </div>
-      {configState.pendingSave && (
-        <ConfirmSaveDialog
-          current={configState.pendingSave.current}
-          proposed={configState.pendingSave.proposed}
-          dotenvChanges={configState.pendingSave.dotenvChanges}
-          saving={configState.saving}
-          onConfirm={configState.confirmPendingSave}
-          onCancel={configState.cancelPendingSave}
-        />
-      )}
-    </ConfigContext.Provider>
+      {/* Banners anchor to the bottom of the shell as full-width strips,
+          pushing the working area up rather than overlapping it. */}
+      <StatusBanners />
+    </div>
+  );
+}
+
+/** Route element — wraps the entire console subtree in ConsoleProvider
+ *  (BackendContext + ConfigContext + DialogProvider + SaveToast +
+ *  ConfirmSaveDialog), then renders the loading/error gate and chrome. */
+export function Layout() {
+  return (
+    <ConsoleProvider backend={adminBackend}>
+      <Shell />
+    </ConsoleProvider>
   );
 }

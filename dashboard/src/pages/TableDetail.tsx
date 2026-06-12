@@ -91,7 +91,7 @@ export function TableDetail() {
     const { [name]: _, ...rest } = config.tables;
     const updated = { ...config, tables: rest };
     const ok = await save(updated);
-    if (ok) navigate("/tables");
+    if (ok) navigate("..", { relative: "path" });
   }
 
   if (!config || !table || !name) {
