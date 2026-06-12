@@ -133,9 +133,14 @@ func NewServer(deps ServerDeps) *Server {
 		storageHandler.Mount(api)
 	}
 
-	// Admin endpoints
+	// Admin endpoints — mounted on both /api and root so that the /_admin/*
+	// paths survive the platform's Traefik middleware that strips the /api
+	// prefix before forwarding to Lambda (Host && PathPrefix(`/api`) → strip).
+	// The same handler set (including adminKeyAuth) is registered on both
+	// groups; no handler logic is duplicated.
 	adminHandler := NewAdminHandler(deps)
-	adminHandler.Mount(api)
+	adminHandler.Mount(api)  // /api/_admin/* — direct (non-proxied) access
+	adminHandler.Mount(root) // /_admin/*    — proxy-stripped access
 
 	// Dashboard SPA
 	MountDashboard(r, deps.DashboardAssets, deps.DevMode, deps.DashboardMode)
