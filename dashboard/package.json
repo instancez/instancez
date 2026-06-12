@@ -1,8 +1,18 @@
 {
-  "name": "instancez-dashboard",
+  "name": "@instancez/console",
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "exports": {
+    "./console": "./src/console/index.ts",
+    "./styles.css": "./src/index.css",
+    "./tailwind-preset": "./tailwind.preset.js"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.0.0"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
