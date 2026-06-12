@@ -106,6 +106,9 @@ func TestSupabaseJSCompat(t *testing.T) {
 					{Name: "title", Type: "text", Required: true},
 					{Name: "done", Type: "boolean", Default: false},
 					{Name: "priority", Type: "int", Default: 0},
+					// tags gives the harness an array column so it can exercise
+					// the array operators (.contains/.containedBy/.overlaps).
+					{Name: "tags", Type: "text[]"},
 					{Name: "user_id", ForeignKey: &domain.ForeignKey{References: "auth.users.id", OnDelete: "cascade"}},
 				},
 			},

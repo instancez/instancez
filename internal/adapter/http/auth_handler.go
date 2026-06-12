@@ -83,6 +83,9 @@ func (h *AuthHandler) Mount(root *gin.RouterGroup) {
 		auth.GET("/verify", h.handleVerifyGET)
 		auth.POST("/otp", h.handleOTP)
 		auth.POST("/resend", h.handleResend)
+		// supabase-js calls reauthenticate() over GET (matching GoTrue); keep
+		// POST too so existing direct callers don't break.
+		auth.GET("/reauthenticate", jwtAuth(h.jwtKeys, true), h.handleReauthenticate)
 		auth.POST("/reauthenticate", jwtAuth(h.jwtKeys, true), h.handleReauthenticate)
 	}
 	auth.POST("/token/verify", h.handleTokenVerify)
@@ -588,8 +591,10 @@ func (h *AuthHandler) handleRecover(c *gin.Context) {
 			go h.sendPasswordResetEmail(req.Email, token, redirectTo)
 		}
 	}
-	// Always return 200 (email enumeration protection).
-	c.Status(200)
+	// Always return 200 (email enumeration protection). supabase-js parses
+	// the response body as JSON, so emit an empty object rather than a bare
+	// status with no body (which trips "Unexpected end of JSON input").
+	c.JSON(200, gin.H{})
 }
 
 // ---------- /verify ----------
@@ -775,7 +780,7 @@ func (h *AuthHandler) handleOTP(c *gin.Context) {
 	userID, err := h.authSvc.GetUserIDByEmail(ctx, req.Email)
 	if err != nil || userID == "" {
 		if !createUser {
-			c.Status(200)
+			c.JSON(200, gin.H{})
 			return
 		}
 		newRow, cerr := h.authSvc.CreateUser(ctx, domain.CreateUserParams{
@@ -784,7 +789,7 @@ func (h *AuthHandler) handleOTP(c *gin.Context) {
 		})
 		if cerr != nil || newRow == nil {
 			h.logger.Error("otp create user failed", "error", cerr)
-			c.Status(200)
+			c.JSON(200, gin.H{})
 			return
 		}
 		userID = asString(newRow["id"])
@@ -795,13 +800,13 @@ func (h *AuthHandler) handleOTP(c *gin.Context) {
 	expiresAt := time.Now().Add(1 * time.Hour)
 	if err := h.authSvc.CreateOTPCode(ctx, userID, token, code, req.Email, "magiclink", expiresAt.Unix()); err != nil {
 		h.logger.Error("otp token insert failed", "error", err)
-		c.Status(200)
+		c.JSON(200, gin.H{})
 		return
 	}
 	if h.email != nil {
 		go h.sendMagicLinkEmail(req.Email, token, code)
 	}
-	c.Status(200)
+	c.JSON(200, gin.H{})
 }
 
 // ---------- /admin/generate_link ----------
@@ -1562,24 +1567,12 @@ func (h *AuthHandler) sendVerificationEmail(userID, email string) {
 	if h.cfg.Providers.Email != nil {
 		fromEmail = h.cfg.Providers.Email.DefaultFromEmail
 	}
-	subject := "Verify your email"
-	body := fmt.Sprintf("Please verify your email by clicking this link: %s/auth/v1/verify?token=%s", h.baseURL(), token)
-
-	if h.cfg.Auth.Email != nil && h.cfg.Auth.Email.Templates != nil {
-		if tmpl, ok := h.cfg.Auth.Email.Templates["verification"]; ok {
-			if tmpl.Subject != "" {
-				subject = tmpl.Subject
-			}
-			if tmpl.Body != "" {
-				body = renderAuthTemplate(tmpl.Body, map[string]string{
-					"token":    token,
-					"email":    email,
-					"base_url": h.baseURL(),
-					"link":     fmt.Sprintf("%s/auth/v1/verify?token=%s", h.baseURL(), token),
-				})
-			}
-		}
-	}
+	subject, body := h.resolveEmailTemplate("verification", map[string]string{
+		"token":    token,
+		"email":    email,
+		"base_url": h.baseURL(),
+		"link":     fmt.Sprintf("%s/auth/v1/verify?token=%s", h.baseURL(), token),
+	})
 
 	if err := h.email.Send(ctx, domain.EmailMessage{
 		To:      []string{email},
@@ -1597,26 +1590,14 @@ func (h *AuthHandler) sendMagicLinkEmail(email, token, code string) {
 	if h.cfg.Providers.Email != nil {
 		fromEmail = h.cfg.Providers.Email.DefaultFromEmail
 	}
-	subject := "Your magic sign-in link"
 	link := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=magiclink", h.baseURL(), token)
-	body := fmt.Sprintf("Click to sign in: %s\n\nOr enter this code: %s", link, code)
-
-	if h.cfg.Auth.Email != nil && h.cfg.Auth.Email.Templates != nil {
-		if tmpl, ok := h.cfg.Auth.Email.Templates["magiclink"]; ok {
-			if tmpl.Subject != "" {
-				subject = tmpl.Subject
-			}
-			if tmpl.Body != "" {
-				body = renderAuthTemplate(tmpl.Body, map[string]string{
-					"token":    token,
-					"code":     code,
-					"email":    email,
-					"base_url": h.baseURL(),
-					"link":     link,
-				})
-			}
-		}
-	}
+	subject, body := h.resolveEmailTemplate("magiclink", map[string]string{
+		"token":    token,
+		"code":     code,
+		"email":    email,
+		"base_url": h.baseURL(),
+		"link":     link,
+	})
 
 	ctx := context.Background()
 	if err := h.email.Send(ctx, domain.EmailMessage{
@@ -1635,7 +1616,6 @@ func (h *AuthHandler) sendPasswordResetEmail(email, token, redirectTo string) {
 	if h.cfg.Providers.Email != nil {
 		fromEmail = h.cfg.Providers.Email.DefaultFromEmail
 	}
-	subject := "Reset your password"
 	// Build the verification link that points to GET /auth/v1/verify so the
 	// handler can validate the token, generate a session, and redirect the
 	// user to the app with access_token in the URL fragment — matching the
@@ -1644,23 +1624,12 @@ func (h *AuthHandler) sendPasswordResetEmail(email, token, redirectTo string) {
 	if redirectTo != "" {
 		verifyLink += "&redirect_to=" + url.QueryEscape(redirectTo)
 	}
-	body := fmt.Sprintf("Reset your password by clicking this link: %s", verifyLink)
-
-	if h.cfg.Auth.Email != nil && h.cfg.Auth.Email.Templates != nil {
-		if tmpl, ok := h.cfg.Auth.Email.Templates["reset"]; ok {
-			if tmpl.Subject != "" {
-				subject = tmpl.Subject
-			}
-			if tmpl.Body != "" {
-				body = renderAuthTemplate(tmpl.Body, map[string]string{
-					"token":    token,
-					"email":    email,
-					"base_url": h.baseURL(),
-					"link":     verifyLink,
-				})
-			}
-		}
-	}
+	subject, body := h.resolveEmailTemplate("reset", map[string]string{
+		"token":    token,
+		"email":    email,
+		"base_url": h.baseURL(),
+		"link":     verifyLink,
+	})
 
 	ctx := context.Background()
 	if err := h.email.Send(ctx, domain.EmailMessage{
@@ -1803,7 +1772,7 @@ func (h *AuthHandler) handleResend(c *gin.Context) {
 	ctx := c.Request.Context()
 	userID, err := h.authSvc.GetUserIDByEmail(ctx, req.Email)
 	if err != nil || userID == "" {
-		c.Status(200)
+		c.JSON(200, gin.H{})
 		return
 	}
 
@@ -1814,13 +1783,13 @@ func (h *AuthHandler) handleResend(c *gin.Context) {
 	expiresAt := time.Now().Add(1 * time.Hour)
 	if err := h.authSvc.CreateOTPCode(ctx, userID, token, code, req.Email, purpose, expiresAt.Unix()); err != nil {
 		h.logger.Error("resend token insert failed", "error", err)
-		c.Status(200)
+		c.JSON(200, gin.H{})
 		return
 	}
 	if h.email != nil {
 		go h.sendMagicLinkEmail(req.Email, token, code)
 	}
-	c.Status(200)
+	c.JSON(200, gin.H{})
 }
 
 // ---------- /reauthenticate ----------
@@ -1854,7 +1823,7 @@ func (h *AuthHandler) handleReauthenticate(c *gin.Context) {
 	if h.email != nil {
 		go h.sendMagicLinkEmail(email, token, code)
 	}
-	c.Status(200)
+	c.JSON(200, gin.H{})
 }
 
 // ---------- /token/verify ----------

@@ -152,7 +152,6 @@ type StorageProvider struct {
 	AccessKeyID     string `yaml:"access_key_id" json:"access_key_id"`
 	SecretAccessKey string `yaml:"secret_access_key" json:"secret_access_key"`
 	Endpoint        string `yaml:"endpoint" json:"endpoint"`
-	Credentials     string `yaml:"credentials" json:"credentials"`
 	Path            string `yaml:"path" json:"path"`
 }
 

@@ -1823,3 +1823,47 @@ func TestHandleAdminDeleteUser_NotFound(t *testing.T) {
 		t.Errorf("expected 404, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+// TestResolveEmailTemplate covers the built-in default templates and the
+// override merge: every supported template kind ships a default subject and
+// a body that renders the verification link; configured overrides win.
+func TestResolveEmailTemplate(t *testing.T) {
+	vars := map[string]string{
+		"link":  "http://localhost:8080/auth/v1/verify?token=tok",
+		"code":  "123456",
+		"email": "user@example.com",
+	}
+
+	h := &AuthHandler{cfg: &domain.Config{Auth: &domain.Auth{}}}
+	for _, kind := range []string{"verification", "magiclink", "reset"} {
+		subject, body := h.resolveEmailTemplate(kind, vars)
+		if subject == "" {
+			t.Errorf("%s: default subject is empty", kind)
+		}
+		if !strings.Contains(body, vars["link"]) {
+			t.Errorf("%s: default body does not render {{link}}: %q", kind, body)
+		}
+		if strings.Contains(body, "{{link}}") {
+			t.Errorf("%s: body left {{link}} unrendered: %q", kind, body)
+		}
+	}
+
+	// magiclink must include the one-time code.
+	if _, body := h.resolveEmailTemplate("magiclink", vars); !strings.Contains(body, "123456") {
+		t.Errorf("magiclink default body does not render {{code}}: %q", body)
+	}
+
+	// Configured overrides win over the defaults.
+	h.cfg.Auth.Email = &domain.AuthEmail{
+		Templates: map[string]domain.EmailTemplate{
+			"reset": {Subject: "Custom subject", Body: "Custom {{link}}"},
+		},
+	}
+	subject, body := h.resolveEmailTemplate("reset", vars)
+	if subject != "Custom subject" {
+		t.Errorf("override subject not used: %q", subject)
+	}
+	if body != "Custom "+vars["link"] {
+		t.Errorf("override body not rendered: %q", body)
+	}
+}

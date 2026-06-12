@@ -76,7 +76,7 @@ internal/domain/      pure types + port interfaces (OwnerDB, RequestDB, Roles, C
         ▲
         │ implemented by
 internal/adapter/     postgres (pgx pool), http (Gin handlers + PostgREST surface),
-                      s3, resend, sendgrid
+                      s3, resend
 ```
 
 **Two Postgres logins, by design.** This is non-obvious and load-bearing:

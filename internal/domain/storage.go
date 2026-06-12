@@ -13,7 +13,7 @@ type ObjectInfo struct {
 	ContentType string
 }
 
-// ObjectStore is the port for object storage operations (S3, GCS, etc.).
+// ObjectStore is the port for object storage operations (S3, local disk, etc.).
 type ObjectStore interface {
 	SignUpload(ctx context.Context, key string, contentType string, expiry time.Duration) (string, error)
 	SignDownload(ctx context.Context, key string, expiry time.Duration) (string, error)

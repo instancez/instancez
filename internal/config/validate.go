@@ -139,11 +139,26 @@ var validRLSOps = map[string]bool{
 }
 
 var validEmailProviders = map[string]bool{
-	"resend": true, "sendgrid": true, "ses": true,
+	"resend": true, "ses": true,
 }
 
+// validEmailTemplateNames are the auth email kinds the backend actually
+// sends; see defaultEmailTemplates in internal/adapter/http.
+var validEmailTemplateNames = map[string]bool{
+	"verification": true, "magiclink": true, "reset": true,
+}
+
+// rpcBodyDDLRE detects a pasted CREATE [OR REPLACE] FUNCTION statement at the
+// start of an rpc body (allowing leading whitespace and -- comments). The
+// migrator emits that wrapper itself, so bodies must be bare.
+var rpcBodyDDLRE = regexp.MustCompile(`(?is)^\s*(--[^\n]*\n\s*)*create\s+(or\s+replace\s+)?function\b`)
+
+// rlsCheckDDLRE detects a pasted CREATE ... statement where a boolean
+// expression is expected.
+var rlsCheckDDLRE = regexp.MustCompile(`(?is)^\s*create\b`)
+
 var validStorageProviders = map[string]bool{
-	"s3": true, "local": true, "gcs": true, "minio": true,
+	"s3": true, "local": true,
 }
 
 // allowedDefaults is the allowlist of SQL functions usable in field defaults.
@@ -181,6 +196,9 @@ func Validate(cfg *domain.Config) domain.ValidationErrors {
 	// Cross-cutting: FK reference validation
 	errs = append(errs, validateForeignKeys(cfg.Tables)...)
 
+	// Cross-cutting: declared features must have the providers that back them
+	errs = append(errs, validateProviderRequirements(cfg)...)
+
 	if len(errs) == 0 {
 		return nil
 	}
@@ -195,7 +213,7 @@ func validateProviders(p *domain.Providers) domain.ValidationErrors {
 			errs = append(errs, &domain.ValidationError{
 				Path:       "providers.email.type",
 				Message:    fmt.Sprintf("unknown email provider type %q", p.Email.Type),
-				Suggestion: "Supported types: resend, sendgrid, ses",
+				Suggestion: "Supported types: resend, ses",
 			})
 		} else if p.Email.APIKey == "" {
 			errs = append(errs, &domain.ValidationError{
@@ -211,7 +229,7 @@ func validateProviders(p *domain.Providers) domain.ValidationErrors {
 			errs = append(errs, &domain.ValidationError{
 				Path:       "providers.storage.type",
 				Message:    fmt.Sprintf("unknown storage provider type %q", p.Storage.Type),
-				Suggestion: "Supported types: s3, local, gcs, minio",
+				Suggestion: "Supported types: s3, local",
 			})
 		} else if p.Storage.Type == "s3" && p.Storage.Bucket == "" {
 			errs = append(errs, &domain.ValidationError{
@@ -220,6 +238,33 @@ func validateProviders(p *domain.Providers) domain.ValidationErrors {
 				Suggestion: "Set INSTANCEZ_S3_BUCKET in your environment or .env file",
 			})
 		}
+	}
+
+	return errs
+}
+
+// validateProviderRequirements enforces cross-cutting dependencies between
+// declared features and the providers that back them: storage buckets need a
+// storage provider, and email-verified auth needs an email provider. Running
+// this in Validate means dev, serve, and `validate` all reject the same
+// misconfig instead of only serve catching it at boot.
+func validateProviderRequirements(cfg *domain.Config) domain.ValidationErrors {
+	var errs domain.ValidationErrors
+
+	if len(cfg.Storage) > 0 && cfg.Providers.Storage == nil {
+		errs = append(errs, &domain.ValidationError{
+			Path:       "providers.storage",
+			Message:    "storage buckets are configured but no storage provider is set",
+			Suggestion: "Add a providers.storage block (type: s3 or local)",
+		})
+	}
+
+	if cfg.Auth != nil && cfg.Auth.Email != nil && cfg.Auth.Email.VerifyEmail && cfg.Providers.Email == nil {
+		errs = append(errs, &domain.ValidationError{
+			Path:       "providers.email",
+			Message:    "auth.email.verify_email is true but no email provider is set",
+			Suggestion: "Add a providers.email block (type: resend), or set auth.email.verify_email: false",
+		})
 	}
 
 	return errs
@@ -235,6 +280,14 @@ func validateAuth(auth *domain.Auth) domain.ValidationErrors {
 	if auth.Email != nil {
 		for name, tmpl := range auth.Email.Templates {
 			path := fmt.Sprintf("auth.email.templates.%s", name)
+			if !validEmailTemplateNames[name] {
+				errs = append(errs, &domain.ValidationError{
+					Path:       path,
+					Message:    fmt.Sprintf("unknown email template %q", name),
+					Suggestion: "Supported templates: verification, magiclink, reset",
+				})
+				continue
+			}
 			if tmpl.Subject == "" {
 				errs = append(errs, &domain.ValidationError{
 					Path:    path + ".subject",
@@ -445,10 +498,26 @@ func validateRLS(parentPath string, policies []domain.RLSPolicy) domain.Validati
 				Suggestion: "Supported: permissive, restrictive",
 			})
 		}
-		if p.Check == "" {
+		switch {
+		case p.Check == "":
 			errs = append(errs, &domain.ValidationError{
 				Path:    ppath + ".check",
 				Message: "check expression is required",
+			})
+		case strings.Contains(p.Check, ";"):
+			// The check is interpolated verbatim into
+			// CREATE POLICY ... USING (<check>); a `;` would splice raw SQL
+			// into the generated DDL.
+			errs = append(errs, &domain.ValidationError{
+				Path:       ppath + ".check",
+				Message:    "check must be a single boolean expression without `;` — it is inserted into CREATE POLICY ... USING (...)",
+				Suggestion: "Example: user_id = auth.uid()",
+			})
+		case rlsCheckDDLRE.MatchString(p.Check):
+			errs = append(errs, &domain.ValidationError{
+				Path:       ppath + ".check",
+				Message:    "check must be a boolean expression, not a CREATE statement — instancez generates the policy DDL for you",
+				Suggestion: "Keep only the expression inside USING (...), e.g. user_id = auth.uid()",
 			})
 		}
 	}
@@ -523,6 +592,13 @@ func validateRPCFunction(path, name string, fn domain.Function) domain.Validatio
 			Path:       path + ".body",
 			Message:    "body must not contain the reserved dollar-quote tag $ub$",
 			Suggestion: "Rename any local dollar-quoted literals",
+		})
+	}
+	if rpcBodyDDLRE.MatchString(fn.Body) {
+		errs = append(errs, &domain.ValidationError{
+			Path:       path + ".body",
+			Message:    "body must be the bare function body — instancez wraps it in CREATE OR REPLACE FUNCTION for you",
+			Suggestion: "Remove the CREATE OR REPLACE FUNCTION ... AS $$ wrapper and keep only the body between the dollar quotes",
 		})
 	}
 

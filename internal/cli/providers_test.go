@@ -72,18 +72,14 @@ func TestInitEmailProvider_ResendWithKey(t *testing.T) {
 	}
 }
 
-func TestInitEmailProvider_SendGridWithKey(t *testing.T) {
+func TestInitEmailProvider_SendGridRemoved(t *testing.T) {
 	cfg := &domain.Config{
 		Providers: domain.Providers{
 			Email: &domain.EmailProvider{Type: "sendgrid", APIKey: "SG.test_key"},
 		},
 	}
-	sender, err := initEmailProvider(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sender == nil {
-		t.Error("expected non-nil sender")
+	if _, err := initEmailProvider(cfg); err == nil {
+		t.Fatal("expected error for removed sendgrid provider")
 	}
 }
 

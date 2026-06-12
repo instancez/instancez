@@ -8,7 +8,6 @@ import (
 
 	"github.com/instancez/instancez/internal/adapter/resend"
 	"github.com/instancez/instancez/internal/adapter/s3"
-	"github.com/instancez/instancez/internal/adapter/sendgrid"
 	"github.com/instancez/instancez/internal/domain"
 )
 
@@ -23,15 +22,10 @@ func initEmailProvider(cfg *domain.Config) (domain.EmailSender, error) {
 			return nil, fmt.Errorf("INSTANCEZ_RESEND_API_KEY not set (required for resend provider)")
 		}
 		return resend.New(cfg.Providers.Email.APIKey), nil
-	case "sendgrid":
-		if cfg.Providers.Email.APIKey == "" {
-			return nil, fmt.Errorf("INSTANCEZ_SENDGRID_API_KEY not set (required for sendgrid provider)")
-		}
-		return sendgrid.New(cfg.Providers.Email.APIKey), nil
 	case "":
 		return nil, nil
 	default:
-		return nil, fmt.Errorf("unsupported email provider: %s (supported: resend, sendgrid)", cfg.Providers.Email.Type)
+		return nil, fmt.Errorf("unsupported email provider: %s (supported: resend)", cfg.Providers.Email.Type)
 	}
 }
 

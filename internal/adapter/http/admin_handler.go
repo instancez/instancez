@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -104,6 +105,7 @@ func (h *AdminHandler) Mount(api *gin.RouterGroup) {
 	admin.GET("/config/diff", h.handleConfigDiff)
 	admin.GET("/config/env-vars", h.handleGetEnvVars)
 	admin.PUT("/config/dotenv", h.handlePutDotenv)
+	admin.POST("/config/preview", h.handlePreviewConfig)
 	admin.GET("/stats", h.handleStats)
 
 	// API keys (dashboard Settings → API equivalent). The admin key itself is
@@ -113,6 +115,7 @@ func (h *AdminHandler) Mount(api *gin.RouterGroup) {
 	// Function code (dev / readwrite mode only)
 	admin.GET("/functions/:name/code", h.handleGetFunctionCode)
 	admin.PUT("/functions/:name/code", h.handlePutFunctionCode)
+	admin.GET("/functions/file-exists", h.handleFunctionFileExists)
 
 	// npm dependencies (shared across all functions)
 	admin.GET("/functions/deps", h.handleGetFunctionDeps)
@@ -441,23 +444,95 @@ func (h *AdminHandler) handleConfigDiff(c *gin.Context) {
 	})
 }
 
-// handleGetEnvVars returns which ${VAR} references in the current raw config
-// source are set vs missing in the server process. Values are never returned.
-func (h *AdminHandler) handleGetEnvVars(c *gin.Context) {
-	if h.configSource == nil {
-		c.JSON(200, gin.H{"vars": gin.H{}})
+// handlePreviewConfig returns what a save would change without applying it:
+// the raw current source bytes and the YAML that PUT /config would write for
+// the given body. Gated like handlePutConfig; runs no migration and writes
+// nothing. Both YAML strings carry ${VAR} references, never secret values.
+func (h *AdminHandler) handlePreviewConfig(c *gin.Context) {
+	switch h.dashboardMode {
+	case DashboardDisabled:
+		c.JSON(403, gin.H{
+			"error":         "dashboard_disabled",
+			"message":       "The dashboard is disabled. To change the configuration, update the source and restart.",
+			"config_source": h.sourceDescribe(),
+		})
+		return
+	case DashboardReadonly:
+		c.JSON(403, gin.H{
+			"error":         "dashboard_readonly",
+			"message":       "This deployment is GitOps-managed. To change the configuration, update the source and redeploy.",
+			"config_source": h.sourceDescribe(),
+		})
 		return
 	}
+
+	if h.configSource == nil {
+		problemJSON(c, 501, "not_implemented", "Config source not available")
+		return
+	}
+
 	raw, _, err := h.configSource.Read(c.Request.Context())
 	if err != nil {
-		problemJSON(c, 500, "internal", "Failed to read config source: "+err.Error())
+		problemJSON(c, 500, "internal", "Failed to read current config: "+err.Error())
 		return
 	}
-	names := config.EnvRefs(raw)
-	vars := make(map[string]any, len(names))
-	for _, name := range names {
-		_, set := os.LookupEnv(name)
-		vars[name] = gin.H{"set": set}
+
+	var newCfg domain.Config
+	if err := c.ShouldBindJSON(&newCfg); err != nil {
+		problemJSON(c, 400, "invalid_body", "Invalid JSON body")
+		return
+	}
+	if errs := config.Validate(&newCfg); errs != nil {
+		var errList []gin.H
+		for _, e := range errs {
+			item := gin.H{"path": e.Path, "message": e.Message}
+			if e.Suggestion != "" {
+				item["suggestion"] = e.Suggestion
+			}
+			errList = append(errList, item)
+		}
+		c.JSON(400, gin.H{"errors": errList})
+		return
+	}
+
+	yamlData, err := yaml.Marshal(&newCfg)
+	if err != nil {
+		problemJSON(c, 500, "internal", "Failed to serialize config to YAML")
+		return
+	}
+	c.JSON(200, gin.H{"current": string(raw), "proposed": string(yamlData)})
+}
+
+// envVarNamePattern validates explicitly requested names so the endpoint only
+// ever probes well-formed env var identifiers.
+var envVarNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// handleGetEnvVars returns which env vars are set vs missing in the server
+// process. It covers every ${VAR} reference in the current raw config source
+// plus any names the client asks about via ?names=A,B (the dashboard shows
+// badges for provider vars before their refs are saved into the YAML).
+// Values are never returned.
+func (h *AdminHandler) handleGetEnvVars(c *gin.Context) {
+	vars := gin.H{}
+	if h.configSource != nil {
+		raw, _, err := h.configSource.Read(c.Request.Context())
+		if err != nil {
+			problemJSON(c, 500, "internal", "Failed to read config source: "+err.Error())
+			return
+		}
+		for _, name := range config.EnvRefs(raw) {
+			_, set := os.LookupEnv(name)
+			vars[name] = gin.H{"set": set}
+		}
+	}
+	if names := c.Query("names"); names != "" {
+		for _, name := range strings.Split(names, ",") {
+			if !envVarNamePattern.MatchString(name) {
+				continue
+			}
+			_, set := os.LookupEnv(name)
+			vars[name] = gin.H{"set": set}
+		}
 	}
 	c.JSON(200, gin.H{"vars": vars})
 }
@@ -570,6 +645,30 @@ func (h *AdminHandler) handlePutFunctionCode(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"message": "Function code saved", "file": fn.File})
+}
+
+// handleFunctionFileExists reports whether a function file path exists under
+// the config root. The dashboard calls this to verify a renamed function file
+// before concluding a save. Existence only; contents are never returned.
+func (h *AdminHandler) handleFunctionFileExists(c *gin.Context) {
+	if h.configPath == "" {
+		problemJSON(c, 501, "not_implemented", "Config path not available")
+		return
+	}
+	file := c.Query("file")
+	if file == "" {
+		problemJSON(c, 400, "invalid_request", "Missing file parameter")
+		return
+	}
+	root := filepath.Dir(h.configPath)
+	absPath := filepath.Join(root, file)
+	rel, err := filepath.Rel(root, absPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		problemJSON(c, 400, "invalid_request", "File path escapes the project root")
+		return
+	}
+	info, statErr := os.Stat(absPath)
+	c.JSON(200, gin.H{"exists": statErr == nil && !info.IsDir()})
 }
 
 // handleGetFunctionDeps returns npm dependencies from functions/package.json.

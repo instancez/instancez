@@ -193,7 +193,7 @@ Named buckets with MIME type restrictions, size limits, and RLS policies. Instan
 ```yaml
 providers:
   storage:
-    type: s3  # or gcs, minio, local
+    type: s3  # or local
 
 storage:
   avatars:
@@ -322,7 +322,7 @@ CLI (cobra)
            | implemented by
 +----------v-------------+
 |   adapter/             |    Postgres, HTTP/Gin, S3,
-|                        |    GCS, Resend, SendGrid
+|                        |    Resend
 +------------------------+
            |
       PostgreSQL

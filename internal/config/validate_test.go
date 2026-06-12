@@ -307,6 +307,7 @@ func TestValidate_DataEmptySource(t *testing.T) {
 
 func TestValidate_StorageInvalidSize(t *testing.T) {
 	cfg := validBaseConfig()
+	cfg.Providers.Storage = &domain.StorageProvider{Type: "local"}
 	cfg.Storage = map[string]domain.Bucket{
 		"avatars": {MaxSize: "invalid"},
 	}
@@ -317,6 +318,7 @@ func TestValidate_StorageInvalidSize(t *testing.T) {
 
 func TestValidate_StorageValidSize(t *testing.T) {
 	cfg := validBaseConfig()
+	cfg.Providers.Storage = &domain.StorageProvider{Type: "local"}
 	cfg.Storage = map[string]domain.Bucket{
 		"avatars": {MaxSize: "2MB"},
 	}
@@ -324,6 +326,46 @@ func TestValidate_StorageValidSize(t *testing.T) {
 	errs := Validate(cfg)
 	if errs != nil {
 		t.Errorf("expected no errors, got: %v", errs)
+	}
+}
+
+// TestValidate_StorageBucketsRequireProvider pins that declaring storage
+// buckets without a providers.storage backend is rejected. Without this guard,
+// `dev` and `validate` would accept the config and only `serve` would fail at
+// boot (and dev would later nil-panic on the first file operation).
+func TestValidate_StorageBucketsRequireProvider(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Storage = map[string]domain.Bucket{
+		"avatars": {MaxSize: "2MB"},
+	}
+
+	errs := Validate(cfg)
+	assertHasErrorAt(t, errs, "providers.storage")
+}
+
+// TestValidate_VerifyEmailRequiresProvider pins that enabling
+// auth.email.verify_email without a providers.email backend is rejected, so
+// signups can't be left permanently unconfirmable.
+func TestValidate_VerifyEmailRequiresProvider(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Auth = &domain.Auth{Email: &domain.AuthEmail{VerifyEmail: true}}
+
+	errs := Validate(cfg)
+	assertHasErrorAt(t, errs, "providers.email")
+}
+
+// TestValidate_VerifyEmailWithProviderOK confirms the verify_email guard is
+// satisfied once an email provider is present.
+func TestValidate_VerifyEmailWithProviderOK(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Providers.Email = &domain.EmailProvider{Type: "resend", APIKey: "re_x"}
+	cfg.Auth = &domain.Auth{Email: &domain.AuthEmail{VerifyEmail: true}}
+
+	errs := Validate(cfg)
+	for _, e := range errs {
+		if e.Path == "providers.email" {
+			t.Fatalf("did not expect providers.email error, got: %s", e.Message)
+		}
 	}
 }
 
@@ -401,17 +443,51 @@ func TestValidate_FullExampleConfig(t *testing.T) {
 	}
 }
 
-func TestValidate_MinioStorageAccepted(t *testing.T) {
-	cfg, err := ParseBytes([]byte("version: 1\nproviders:\n  storage:\n    type: minio\n"), "t")
-	if err != nil {
-		t.Fatalf("parse: %v", err)
+// TestValidate_UnknownEmailTemplateRejected pins the supported template
+// kinds: verification, magiclink, reset. Anything else (including the old
+// dashboard's "verify" key, which the backend never read) is an error.
+func TestValidate_UnknownEmailTemplateRejected(t *testing.T) {
+	withTemplates := func(templates map[string]domain.EmailTemplate) *domain.Config {
+		cfg := validBaseConfig()
+		cfg.Auth = &domain.Auth{
+			JWTExpiry:     "15m",
+			RefreshTokens: true,
+			Email:         &domain.AuthEmail{VerifyEmail: true, Templates: templates},
+		}
+		return cfg
 	}
-	errs := Validate(cfg)
+
+	errs := Validate(withTemplates(map[string]domain.EmailTemplate{
+		"verify": {Subject: "s", Body: "b"},
+	}))
+	assertHasErrorAt(t, errs, "auth.email.templates.verify")
+
+	errs = Validate(withTemplates(map[string]domain.EmailTemplate{
+		"verification": {Subject: "s", Body: "b"},
+		"magiclink":    {Subject: "s", Body: "b"},
+		"reset":        {Subject: "s", Body: "b"},
+	}))
 	for _, e := range errs {
-		if e.Path == "providers.storage.type" {
-			t.Fatalf("expected minio to be accepted as a valid storage provider type, got error: %s", e.Message)
+		if strings.HasPrefix(e.Path, "auth.email.templates") {
+			t.Fatalf("expected supported template names to validate, got %s: %s", e.Path, e.Message)
 		}
 	}
+}
+
+// TestValidate_RemovedProvidersRejected pins the removal of the gcs/minio
+// storage providers and the sendgrid email provider.
+func TestValidate_RemovedProvidersRejected(t *testing.T) {
+	for _, storageType := range []string{"minio", "gcs"} {
+		cfg := validBaseConfig()
+		cfg.Providers.Storage = &domain.StorageProvider{Type: storageType, Bucket: "b"}
+		errs := Validate(cfg)
+		assertHasErrorAt(t, errs, "providers.storage.type")
+	}
+
+	cfg := validBaseConfig()
+	cfg.Providers.Email = &domain.EmailProvider{Type: "sendgrid", APIKey: "SG.x"}
+	errs := Validate(cfg)
+	assertHasErrorAt(t, errs, "providers.email.type")
 }
 
 // assertHasErrorAt checks that at least one error has the given path prefix.
@@ -879,5 +955,82 @@ func TestValidate_NonReservedSimilarNames(t *testing.T) {
 	errs := Validate(cfg)
 	if errs != nil {
 		t.Fatalf("expected no errors for non-reserved names, got: %v", errs)
+	}
+}
+
+// TestValidate_RPCBodyShape pins the rpc body contract: the migrator wraps
+// the body in CREATE OR REPLACE FUNCTION itself, so a pasted full DDL
+// statement is rejected.
+func TestValidate_RPCBodyShape(t *testing.T) {
+	withBody := func(body string) *domain.Config {
+		cfg := validBaseConfig()
+		cfg.RPC = map[string]domain.Function{
+			"my_fn": {
+				Language:   "sql",
+				Volatility: "stable",
+				Security:   "invoker",
+				Returns:    domain.FuncReturn{Type: "void"},
+				Body:       body,
+			},
+		}
+		return cfg
+	}
+
+	for _, bad := range []string{
+		"CREATE OR REPLACE FUNCTION my_fn() RETURNS void AS $x$ SELECT 1 $x$;",
+		"create function my_fn() returns void as $x$ select 1 $x$;",
+		"  \n-- comment\nCREATE OR REPLACE FUNCTION f() RETURNS void AS $x$ SELECT 1 $x$;",
+	} {
+		errs := Validate(withBody(bad))
+		assertHasErrorAt(t, errs, "rpc.my_fn.body")
+	}
+
+	// Plain bodies — including ones that merely mention CREATE inside —
+	// stay valid.
+	for _, good := range []string{
+		"SELECT 1",
+		"BEGIN\n  EXECUTE 'CREATE TEMP TABLE t(x int)';\nEND;",
+	} {
+		for _, e := range Validate(withBody(good)) {
+			if strings.HasPrefix(e.Path, "rpc.my_fn.body") {
+				t.Fatalf("body %q should be valid, got %s: %s", good, e.Path, e.Message)
+			}
+		}
+	}
+}
+
+// TestValidate_RLSCheckShape pins the RLS check contract: a boolean
+// expression interpolated into CREATE POLICY ... USING (...). Statement
+// separators and pasted DDL are rejected — a stray `;` would otherwise be
+// spliced into the generated DDL verbatim.
+func TestValidate_RLSCheckShape(t *testing.T) {
+	withCheck := func(check string) *domain.Config {
+		cfg := validBaseConfig()
+		table := cfg.Tables["todos"]
+		table.RLS = []domain.RLSPolicy{
+			{Operations: []string{"select"}, Check: check},
+		}
+		cfg.Tables["todos"] = table
+		return cfg
+	}
+
+	for _, bad := range []string{
+		"user_id = auth.uid();",
+		"true); DROP TABLE todos; --",
+		"CREATE POLICY p ON todos USING (true)",
+	} {
+		errs := Validate(withCheck(bad))
+		assertHasErrorAt(t, errs, "tables.todos.rls[0].check")
+	}
+
+	for _, good := range []string{
+		"user_id = auth.uid()",
+		"auth.is_authenticated() AND status = 'active'",
+	} {
+		for _, e := range Validate(withCheck(good)) {
+			if strings.HasPrefix(e.Path, "tables.todos.rls[0].check") {
+				t.Fatalf("check %q should be valid, got %s: %s", good, e.Path, e.Message)
+			}
+		}
 	}
 }

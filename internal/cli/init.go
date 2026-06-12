@@ -264,6 +264,17 @@ func scaffoldYAML(name string) string {
 project:
   name: %q
 
+# Providers back the features declared below: a storage provider is required
+# whenever you declare storage buckets, and an email provider is required when
+# auth.email.verify_email is true. "local" writes uploads to ./uploads.
+providers:
+  storage:
+    type: local
+  # To send auth emails, add an email provider and set verify_email: true below:
+  # email:
+  #   type: resend
+  #   api_key: $INSTANCEZ_RESEND_API_KEY
+
 auth:
   jwt_expiry: 15m
   refresh_tokens: true
