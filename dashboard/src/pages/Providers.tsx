@@ -5,7 +5,7 @@ import { SaveBar } from "../components/SaveBar";
 import { CheckCard, Panel, Section, Input, Field } from "../components/ui";
 import { Toggle } from "../components/Toggle";
 import { VarRow } from "../components/VarRow";
-import { getEnvVars, putDotenv } from "../api/client";
+import { useBackend } from "../console/BackendContext";
 import { envRefName } from "../lib/envRef";
 import { jsonEqual } from "../lib/jsonEqual";
 import type { Config, EmailProviderConfig, StorageProviderConfig } from "../lib/types";
@@ -206,6 +206,7 @@ function ProviderConfigPanel({
 }
 
 export function ProvidersPage() {
+  const backend = useBackend();
   const { config, save, saving, saveErrors, dotenvWritable } = useConfig();
   const [local, setLocal] = useState<Config | null>(null);
   const [envVarStatus, setEnvVarStatus] = useState<Record<string, { set: boolean }>>({});
@@ -214,12 +215,12 @@ export function ProvidersPage() {
 
   const loadEnvVars = useCallback(async () => {
     try {
-      const resp = await getEnvVars([...CRED_VARS, ...collectEnvRefs(config)]);
+      const resp = await backend.getEnvVars([...CRED_VARS, ...collectEnvRefs(config)]);
       setEnvVarStatus(resp.vars);
     } catch {
       // badges fall back to "✗ unset" when status unavailable
     }
-  }, [config]);
+  }, [backend, config]);
 
   useEffect(() => {
     if (config) {
@@ -317,7 +318,7 @@ export function ProvidersPage() {
     });
     if (ok) {
       if (dotenvWritable && staged.length > 0) {
-        await putDotenv(Object.fromEntries(staged)).catch(() => {});
+        await backend.writeSecrets(Object.fromEntries(staged)).catch(() => {});
       }
       setPendingDotenv({});
       await loadEnvVars();

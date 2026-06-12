@@ -8,7 +8,7 @@ import { EmptyState } from "../components/EmptyState";
 import { Toggle } from "../components/Toggle";
 import { Field, Input, Panel, Section } from "../components/ui";
 import { VarRow } from "../components/VarRow";
-import { getEnvVars, putDotenv } from "../api/client";
+import { useBackend } from "../console/BackendContext";
 import { envRefName } from "../lib/envRef";
 import { jsonEqual } from "../lib/jsonEqual";
 import type { Auth } from "../lib/types";
@@ -123,6 +123,7 @@ const DEFAULT_AUTH: Auth = {
 };
 
 export function AuthPage() {
+  const backend = useBackend();
   const { config, save, saving, saveErrors, dotenvWritable } = useConfig();
   const [auth, setAuth] = useState<Auth | null>(null);
   const [enabled, setEnabled] = useState(false);
@@ -131,7 +132,7 @@ export function AuthPage() {
 
   const loadEnvVars = useCallback(async () => {
     try {
-      const resp = await getEnvVars([
+      const resp = await backend.getEnvVars([
         ...OAUTH_CRED_VARS,
         ...collectOAuthRefs(config?.auth ?? null),
       ]);
@@ -139,7 +140,7 @@ export function AuthPage() {
     } catch {
       // badges fall back to "✗ unset" when status unavailable
     }
-  }, [config]);
+  }, [backend, config]);
 
   useEffect(() => {
     if (config) {
@@ -173,7 +174,7 @@ export function AuthPage() {
     });
     if (ok) {
       if (dotenvWritable && staged.length > 0) {
-        await putDotenv(Object.fromEntries(staged)).catch(() => {});
+        await backend.writeSecrets(Object.fromEntries(staged)).catch(() => {});
       }
       setPendingDotenv({});
       await loadEnvVars();

@@ -6,7 +6,7 @@ import { PageHeader } from "../components/PageHeader";
 import { EmptyState } from "../components/EmptyState";
 import { StatusBadge } from "../components/StatusBadge";
 import { Button, Field, Input, ListRow, Panel, Section } from "../components/ui";
-import { getFunctionDeps, postFunctionDeps } from "../api/client";
+import { useBackend } from "../console/BackendContext";
 
 interface DepsState {
   dependencies: Record<string, string>;
@@ -15,6 +15,7 @@ interface DepsState {
 }
 
 export function Functions() {
+  const backend = useBackend();
   const { config } = useConfig();
   const navigate = useNavigate();
 
@@ -26,18 +27,18 @@ export function Functions() {
   const [installSuccess, setInstallSuccess] = useState<string | null>(null);
   useEffect(() => {
     setDepsLoading(true);
-    getFunctionDeps()
+    backend.getFunctionDeps()
       .then(setDeps)
       .catch(() => setDeps(null)) // 501 or auth error → feature unavailable
       .finally(() => setDepsLoading(false));
-  }, []);
+  }, [backend]);
 
   const runNpm = useCallback(async (add: string[], remove: string[]) => {
     setInstalling(true);
     setInstallError(null);
     setInstallSuccess(null);
     try {
-      const updated = await postFunctionDeps(add, remove);
+      const updated = await backend.postFunctionDeps(add, remove);
       setDeps(updated);
       if (add.length > 0) {
         setInstallSuccess(`Installed ${add.join(", ")}`);
@@ -53,7 +54,7 @@ export function Functions() {
     } finally {
       setInstalling(false);
     }
-  }, []);
+  }, [backend]);
 
   const handleAdd = useCallback(() => {
     const pkg = addPkg.trim();

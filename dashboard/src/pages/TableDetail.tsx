@@ -20,7 +20,7 @@ import {
   Panel,
   Select,
 } from "../components/ui";
-import { getConfigDiff } from "../api/client";
+import { useBackend } from "../console/BackendContext";
 import { POSTGRES_TYPES, SQL_DEFAULTS } from "../lib/utils";
 import type { Table, Field, DiffResponse } from "../lib/types";
 
@@ -30,6 +30,7 @@ const RLS_QUICK_FILLS = [
 ];
 
 export function TableDetail() {
+  const backend = useBackend();
   const { name } = useParams<{ name: string }>();
   const navigate = useNavigate();
   const { config, save, saving, saveErrors } = useConfig();
@@ -77,7 +78,7 @@ export function TableDetail() {
 
   async function loadDiff() {
     try {
-      const d = await getConfigDiff();
+      const d = await backend.getConfigDiff();
       setDiff(d);
     } catch {
       // ignore

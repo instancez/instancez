@@ -9,7 +9,7 @@ import { SaveBar } from "../components/SaveBar";
 import { Toggle } from "../components/Toggle";
 import { CodeEditor } from "../components/CodeEditor";
 import { Button, Field, Input, Panel, Section, Select } from "../components/ui";
-import { checkFunctionFile, getFunctionCode, putFunctionCode } from "../api/client";
+import { useBackend } from "../console/BackendContext";
 import type { CodeFunction } from "../lib/types";
 
 // Code-function runtimes instancez supports. validateCodeFunctions rejects
@@ -17,6 +17,7 @@ import type { CodeFunction } from "../lib/types";
 const RUNTIMES = ["node"];
 
 export function FunctionDetail() {
+  const backend = useBackend();
   const { name } = useParams<{ name: string }>();
   const navigate = useNavigate();
   const { config, save, saving, saveErrors } = useConfig();
@@ -36,24 +37,24 @@ export function FunctionDetail() {
 
   useEffect(() => {
     if (!name) return;
-    getFunctionCode(name)
+    backend.getFunctionCode(name)
       .then((r) => setCode(r.content))
       .catch(() => setCode(null)); // not available (e.g. readonly mode / no configPath)
-  }, [name]);
+  }, [backend, name]);
 
   const handleCodeSave = useCallback(async () => {
     if (!name || code === null) return;
     setCodeSaving(true);
     setCodeError(null);
     try {
-      await putFunctionCode(name, code);
+      await backend.putFunctionCode(name, code);
       setCodeDirty(false);
     } catch (e: any) {
       setCodeError(e.message || "Failed to save");
     } finally {
       setCodeSaving(false);
     }
-  }, [name, code]);
+  }, [backend, name, code]);
 
   function updateFn(updater: (prev: CodeFunction) => CodeFunction) {
     setFn((prev) => {
@@ -70,7 +71,7 @@ export function FunctionDetail() {
     const savedFile = (config.functions || {})[name]?.file ?? "";
     if (fn.file && fn.file !== savedFile) {
       try {
-        const { exists } = await checkFunctionFile(fn.file);
+        const { exists } = await backend.checkFunctionFile(fn.file);
         if (!exists) {
           setFileError(`File not found: ${fn.file} — create it first or fix the path.`);
           return;

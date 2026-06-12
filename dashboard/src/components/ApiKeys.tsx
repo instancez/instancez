@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Check, Copy, Eye, EyeOff, KeyRound } from "lucide-react";
-import { getKeys } from "../api/client";
+import { useBackend } from "../console/BackendContext";
 import { Section, useSurfaceBg } from "./ui";
 import { StatusBadge } from "./StatusBadge";
 import { cn } from "../lib/utils";
@@ -31,13 +31,14 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
 
 /** The publishable anon key, fetched once from /api/_admin/keys (null until loaded or when unavailable). */
 export function useAnonKey(): string | null {
+  const backend = useBackend();
   const [anonKey, setAnonKey] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const keys = await getKeys();
+        const keys = await backend.getKeys();
         if (!cancelled) setAnonKey(keys.anon_key);
       } catch {
         // Older backend without /keys — callers hide or use a placeholder.
@@ -46,7 +47,7 @@ export function useAnonKey(): string | null {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [backend]);
 
   return anonKey;
 }

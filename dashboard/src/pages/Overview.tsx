@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Table2, Shield, HardDrive, RefreshCw } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
-import { getStats, getConfig } from "../api/client";
+import { useBackend } from "../console/BackendContext";
 import { downloadYamlFromConfig } from "../lib/downloadYaml";
 import { PageHeader } from "../components/PageHeader";
 import { ApiKeys } from "../components/ApiKeys";
@@ -19,6 +19,7 @@ function Unit({ children }: { children: string }) {
 }
 
 export function Overview() {
+  const backend = useBackend();
   const { config } = useConfig();
   const navigate = useNavigate();
   const [stats, setStats] = useState<StatsResponse | null>(null);
@@ -27,7 +28,7 @@ export function Overview() {
   async function loadData() {
     setLoading(true);
     try {
-      setStats(await getStats());
+      setStats(await backend.getStats());
     } catch {
       // Stats may fail if no tables yet
     } finally {
@@ -36,7 +37,7 @@ export function Overview() {
   }
 
   async function handleDownload() {
-    const cfg = await getConfig();
+    const cfg = await backend.getConfig();
     downloadYamlFromConfig(cfg);
   }
 
