@@ -1,11 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter } from "react-router-dom";
 import { BackendProvider } from "./BackendContext";
 import { adminBackend } from "./adminBackend";
 import { ProvidersPage } from "../pages/Providers";
-import { RpcDetail } from "../pages/RpcDetail";
-import { DialogProvider } from "../components/Dialog";
 import { ConfigContext } from "../hooks/useConfig";
 import type { Config, ValidationError } from "../lib/types";
 
@@ -63,64 +61,3 @@ describe("capability gating", () => {
   });
 });
 
-const rpcConfig = {
-  version: 1,
-  project: { name: "P", description: "" },
-  extensions: [], tables: {}, auth: null, storage: {}, functions: {}, data: {},
-  rpc: {
-    get_todos: {
-      description: "",
-      auth_required: false,
-      language: "sql",
-      volatility: "stable",
-      security: "invoker",
-      args: [],
-      body: "SELECT 1",
-      returns: { type: "void" },
-    },
-  },
-  providers: { email: null, storage: null },
-  server: {
-    port: 8080, max_body_size: "10MB", max_limit: 1000, docs_ui: true,
-    cors: { origins: [], methods: [], headers: [], credentials: false, max_age: 0 },
-    timeouts: { request: "30s", db_query: "10s", upload: "60s", shutdown: "10s" },
-    db: { pool: { max: 25, min: 5, idle_timeout: "5m" } },
-  },
-} as unknown as Config;
-
-function renderRpcDetailWithCaps(canTestRpc: boolean) {
-  const backend = {
-    ...adminBackend,
-    capabilities: { ...adminBackend.capabilities, canTestRpc },
-  };
-  const ctx = {
-    config: rpcConfig, loading: false, error: null, checksum: "abc", saving: false,
-    saveErrors: [] as ValidationError[], dotenvWritable: false,
-    refresh: vi.fn(), save: vi.fn().mockResolvedValue(true), updateConfig: vi.fn(),
-  };
-  render(
-    <BackendProvider backend={backend}>
-      <ConfigContext.Provider value={ctx}>
-        <MemoryRouter initialEntries={["/rpc/get_todos"]}>
-          <DialogProvider>
-            <Routes>
-              <Route path="/rpc/:name" element={<RpcDetail />} />
-            </Routes>
-          </DialogProvider>
-        </MemoryRouter>
-      </ConfigContext.Provider>
-    </BackendProvider>
-  );
-}
-
-describe("canTestRpc capability gate", () => {
-  it("hides the Test Function panel when canTestRpc is false", () => {
-    renderRpcDetailWithCaps(false);
-    expect(screen.queryByText("Test Function")).not.toBeInTheDocument();
-  });
-
-  it("shows the Test Function panel when canTestRpc is true", () => {
-    renderRpcDetailWithCaps(true);
-    expect(screen.getByText("Test Function")).toBeInTheDocument();
-  });
-});

@@ -13,8 +13,6 @@ export interface Capabilities {
   canManageDeps: boolean;
   /** Live stats (row counts, storage usage) are available. */
   hasStats: boolean;
-  /** The instance REST endpoint is reachable for ad-hoc RPC test calls. */
-  canTestRpc: boolean;
 }
 
 export function fullCapabilities(): Capabilities {
@@ -24,7 +22,6 @@ export function fullCapabilities(): Capabilities {
     canEditFunctionCode: true,
     canManageDeps: true,
     hasStats: true,
-    canTestRpc: true,
   };
 }
 
