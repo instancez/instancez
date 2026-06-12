@@ -82,7 +82,7 @@ jobs:
 
   images:
     name: Publish Images
-    needs: [go-unit, go-integration, dashboard]
+    needs: [go-unit, go-integration, dashboard, lint]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
@@ -162,7 +162,7 @@ jobs:
 
   binaries:
     name: Release Binaries
-    needs: [go-unit, go-integration, dashboard]
+    needs: [go-unit, go-integration, dashboard, lint]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:

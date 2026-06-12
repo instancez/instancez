@@ -511,6 +511,30 @@ await step('rest: spread embed — ...todos(title) on comments', async () => {
   assert(row.todos === undefined, 'spread should not have nested todos key')
 })
 
+// --- Bulk insert ---
+await step('rest: bulk insert an array of rows', async () => {
+  const client = createClient(URL, ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { data, error } = await client
+    .from('todos')
+    .insert([
+      { title: 'bulk-a', priority: 10, user_id: userId },
+      { title: 'bulk-b', priority: 11, user_id: userId },
+      { title: 'bulk-c', priority: 12, user_id: userId },
+    ])
+    .select('id,title')
+  if (error) throw error
+  assert(Array.isArray(data), 'bulk insert returns an array')
+  assertEq(data.length, 3, 'all three rows inserted')
+  const titles = data.map(r => r.title).sort()
+  assertEq(JSON.stringify(titles), JSON.stringify(['bulk-a', 'bulk-b', 'bulk-c']), 'titles round-trip')
+  for (const r of data) {
+    await client.from('todos').delete().eq('id', r.id)
+  }
+})
+
 // --- Upsert tests ---
 await step('rest: upsert via Prefer resolution=merge-duplicates', async () => {
   const client = createClient(URL, ANON_KEY, {
@@ -710,6 +734,140 @@ await step('rest: .limit() and .range() pagination', async () => {
   assertEq(page2[1].title, 'delta')
 })
 
+await step('rest: .or() logical disjunction', async () => {
+  const client = createClient(URL, ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  // priority=1 OR priority=5 → alpha + epsilon.
+  const { data, error } = await client
+    .from('todos').select('title').in('id', filterIds)
+    .or('priority.eq.1,priority.eq.5').order('priority')
+  if (error) throw error
+  assertEq(data.length, 2, 'or() returns 2 rows')
+  assertEq(data[0].title, 'alpha')
+  assertEq(data[1].title, 'epsilon')
+})
+
+await step('rest: .not() negates a filter', async () => {
+  const client = createClient(URL, ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { data, error } = await client
+    .from('todos').select('title').in('id', filterIds)
+    .not('priority', 'eq', 3).order('priority')
+  if (error) throw error
+  assertEq(data.length, 4, 'not(eq 3) returns 4 rows')
+  assert(!data.some(r => r.title === 'gamma'), 'not excludes gamma')
+})
+
+await step('rest: .is() boolean check', async () => {
+  // The filter rows are inserted with the default done=false (the earlier
+  // patch that set done=true ran before they existed). Scope strictly by
+  // id so the count is deterministic.
+  const client = createClient(URL, ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { data, error } = await client
+    .from('todos').select('title').in('id', filterIds).is('done', false)
+  if (error) throw error
+  assertEq(data.length, 5, 'is(done,false) returns all 5 filter rows')
+})
+
+await step('rest: .textSearch() full-text search', async () => {
+  // fts → to_tsquery; the single-lexeme query 'beta' matches the 'beta'
+  // title via the text @@ tsquery operator.
+  const client = createClient(URL, ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { data, error } = await client
+    .from('todos').select('title').in('id', filterIds).textSearch('title', 'beta')
+  if (error) throw error
+  assertEq(data.length, 1, 'textSearch matches one row')
+  assertEq(data[0].title, 'beta')
+})
+
+await step('rest: select with exact count + head', async () => {
+  // head:true suppresses the body but the Content-Range-derived count must
+  // still come back. supabase-js exposes it as the `count` field.
+  const client = createClient(URL, ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { data, count, error } = await client
+    .from('todos').select('*', { count: 'exact', head: true }).in('id', filterIds)
+  if (error) throw error
+  assertEq(count, 5, 'exact head count')
+  assert(data === null || (Array.isArray(data) && data.length === 0), 'head suppresses rows')
+})
+
+await step('rest: select with exact count + rows', async () => {
+  const client = createClient(URL, ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { data, count, error } = await client
+    .from('todos').select('title', { count: 'exact' }).in('id', filterIds)
+  if (error) throw error
+  assertEq(count, 5, 'exact count alongside rows')
+  assertEq(data.length, 5, 'rows still returned with count')
+})
+
+await step('rest: .csv() returns text/csv body', async () => {
+  const client = createClient(URL, ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { data, error } = await client
+    .from('todos').select('title').in('id', filterIds).order('priority').csv()
+  if (error) throw error
+  assertEq(typeof data, 'string', 'csv body is a string')
+  const lines = data.trim().split('\n')
+  assertEq(lines[0].trim(), 'title', 'csv header row')
+  assert(lines.includes('alpha'), 'csv contains alpha')
+  assert(lines.includes('epsilon'), 'csv contains epsilon')
+})
+
+await step('rest: array operators (.contains/.containedBy/.overlaps)', async () => {
+  const client = createClient(URL, ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { data: ins, error: insErr } = await client
+    .from('todos')
+    .insert({ title: 'tagged', user_id: userId, tags: ['urgent', 'home'] })
+    .select('id')
+    .single()
+  if (insErr) throw insErr
+  const id = ins.id
+
+  // cs: tags @> {urgent}
+  const cs = await client.from('todos').select('title,tags').eq('id', id).contains('tags', ['urgent'])
+  if (cs.error) throw cs.error
+  assertEq(cs.data.length, 1, 'contains matches the tagged row')
+  assert(cs.data[0].tags.includes('home'), 'tags array round-trips')
+
+  // cs miss: a tag the row doesn't have
+  const csMiss = await client.from('todos').select('id').eq('id', id).contains('tags', ['missing'])
+  if (csMiss.error) throw csMiss.error
+  assertEq(csMiss.data.length, 0, 'contains excludes non-matching')
+
+  // ov: overlaps shares at least one element
+  const ov = await client.from('todos').select('id').eq('id', id).overlaps('tags', ['home', 'work'])
+  if (ov.error) throw ov.error
+  assertEq(ov.data.length, 1, 'overlaps matches on shared element')
+
+  // cd: tags <@ {urgent,home,extra} (the row's tags are a subset)
+  const cd = await client.from('todos').select('id').eq('id', id).containedBy('tags', ['urgent', 'home', 'extra'])
+  if (cd.error) throw cd.error
+  assertEq(cd.data.length, 1, 'containedBy matches subset')
+
+  await client.from('todos').delete().eq('id', id)
+})
+
 await step('rest: cleanup filter test rows', async () => {
   const client = createClient(URL, ANON_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -718,6 +876,63 @@ await step('rest: cleanup filter test rows', async () => {
   for (const id of filterIds) {
     await client.from('todos').delete().eq('id', id)
   }
+})
+
+// --- auth.updateUser / signInWithOtp / resetPasswordForEmail ---
+// These hit PUT /user, POST /otp, and POST /recover respectively.
+await step('auth.updateUser updates user_metadata', async () => {
+  // Metadata only — deliberately NOT touching email/password, since later
+  // steps still sign this shared user in by the original password.
+  // updateUser() reads from the client's in-memory session, so sign in on a
+  // dedicated client to populate it (a Bearer header alone isn't enough).
+  const client = createClient(URL, ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+  const { error: signInErr } = await client.auth.signInWithPassword({ email, password })
+  if (signInErr) throw signInErr
+  const { data, error } = await client.auth.updateUser({ data: { nickname: 'ace' } })
+  if (error) throw error
+  assertEq(data.user.user_metadata.nickname, 'ace', 'updated metadata round-trips')
+  // The original display_name must survive a partial metadata merge.
+  assertEq(data.user.user_metadata.display_name, 'Alice', 'existing metadata preserved')
+})
+
+await step('auth.signInWithOtp issues an OTP without erroring', async () => {
+  // No SMTP provider is configured in the harness, so this exercises the
+  // request/token path; GoTrue-style enumeration protection means it returns
+  // success regardless. Use a fresh address so create-user runs.
+  const otpEmail = `otp_${Date.now()}_${Math.floor(Math.random() * 1e6)}@example.com`
+  const { error } = await anon.auth.signInWithOtp({
+    email: otpEmail,
+    options: { shouldCreateUser: true },
+  })
+  if (error) throw error
+})
+
+await step('auth.resetPasswordForEmail returns success', async () => {
+  // Always-200 (enumeration protection). supabase-js surfaces no error.
+  const { error } = await anon.auth.resetPasswordForEmail(email)
+  if (error) throw error
+})
+
+await step('auth.resend returns success', async () => {
+  // Same empty-body-200 contract: supabase-js parses the response as JSON,
+  // so the handler must emit a body. (The pre-existing raw-fetch resend test
+  // only checked status, masking this.)
+  const { error } = await anon.auth.resend({ type: 'signup', email })
+  if (error) throw error
+})
+
+await step('auth.reauthenticate returns success', async () => {
+  // reauthenticate() reads the client's in-memory session, so sign in on a
+  // dedicated client first (a Bearer header alone isn't enough).
+  const client = createClient(URL, ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+  const { error: signInErr } = await client.auth.signInWithPassword({ email, password })
+  if (signInErr) throw signInErr
+  const { error } = await client.auth.reauthenticate()
+  if (error) throw error
 })
 
 // --- .rpc() tests ---
@@ -1102,6 +1317,72 @@ if (ADMIN_KEY) {
       body: JSON.stringify({ type: 'signup', token: actionToken }),
     })
     assertEq(resp.status, 401, 'reused token rejected')
+  })
+}
+
+// --- Admin user CRUD via supabase-js auth.admin.* ---
+// Drives createUser → getUserById → listUsers → updateUserById →
+// deleteUser, plus inviteUserByEmail, through the real supabase-js admin
+// client (service key). This is the GoTrue admin API surface; the response
+// envelopes (bare user, { users, aud }, …) are part of the wire contract.
+if (ADMIN_KEY) {
+  const adminClient = createClient(URL, ADMIN_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+  const adminEmail = `admin_${Date.now()}_${Math.floor(Math.random() * 1e6)}@example.com`
+  let adminUserId = ''
+
+  await step('admin.createUser provisions a user', async () => {
+    const { data, error } = await adminClient.auth.admin.createUser({
+      email: adminEmail,
+      password: 'hunter2hunter2',
+      email_confirm: true,
+      user_metadata: { plan: 'pro' },
+    })
+    if (error) throw error
+    assert(data.user, 'created user returned')
+    assertEq(data.user.email, adminEmail)
+    assertEq(data.user.user_metadata.plan, 'pro', 'user_metadata round-trips')
+    adminUserId = data.user.id
+  })
+
+  await step('admin.getUserById fetches the created user', async () => {
+    const { data, error } = await adminClient.auth.admin.getUserById(adminUserId)
+    if (error) throw error
+    assertEq(data.user.id, adminUserId)
+    assertEq(data.user.email, adminEmail)
+  })
+
+  await step('admin.listUsers includes the created user', async () => {
+    const { data, error } = await adminClient.auth.admin.listUsers({ page: 1, perPage: 1000 })
+    if (error) throw error
+    assert(Array.isArray(data.users), 'users is an array')
+    assert(data.users.some(u => u.id === adminUserId), 'created user appears in list')
+  })
+
+  await step('admin.updateUserById updates metadata', async () => {
+    const { data, error } = await adminClient.auth.admin.updateUserById(adminUserId, {
+      user_metadata: { plan: 'enterprise' },
+    })
+    if (error) throw error
+    assertEq(data.user.user_metadata.plan, 'enterprise', 'metadata updated')
+  })
+
+  await step('admin.deleteUser removes the user', async () => {
+    const { error } = await adminClient.auth.admin.deleteUser(adminUserId)
+    if (error) throw error
+    const { data: gone } = await adminClient.auth.admin.getUserById(adminUserId)
+    assert(!gone?.user, 'user should be gone after delete')
+  })
+
+  await step('admin.inviteUserByEmail creates an invited user', async () => {
+    const inviteEmail = `invite_${Date.now()}_${Math.floor(Math.random() * 1e6)}@example.com`
+    const { data, error } = await adminClient.auth.admin.inviteUserByEmail(inviteEmail)
+    if (error) throw error
+    assert(data.user, 'invited user returned')
+    assertEq(data.user.email, inviteEmail)
+    // Clean up so repeat runs don't collide.
+    await adminClient.auth.admin.deleteUser(data.user.id)
   })
 }
 
