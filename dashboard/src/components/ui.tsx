@@ -1,4 +1,4 @@
-import {
+import React, {
   createContext,
   useContext,
   useState,
@@ -299,7 +299,7 @@ export function Disclosure({ label, defaultOpen = false, children }: DisclosureP
     <Collapsible.Root open={open} onOpenChange={(e) => setOpen(e.open)}>
       <Box borderTopWidth="1px" pt="4">
         <Collapsible.Trigger asChild>
-          <HStack as="button" gap="2" fontSize="sm" color="fg.muted" _hover={{ color: "fg" }} cursor="pointer" onClick={() => setOpen(!open)}>
+          <HStack as="button" gap="2" fontSize="sm" color="fg.muted" _hover={{ color: "fg" }} cursor="pointer">
             {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             {label}
           </HStack>
