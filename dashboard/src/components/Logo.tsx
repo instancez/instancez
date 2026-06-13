@@ -1,5 +1,4 @@
 import logoUrl from "../assets/instancez-logo-only.svg";
-import { cn } from "../lib/utils";
 
 interface LogoProps {
   size?: number;
@@ -7,13 +6,14 @@ interface LogoProps {
 }
 
 export function Logo({ size = 36, className }: LogoProps) {
+  const classes = ["dark:invert", className].filter(Boolean).join(" ");
   return (
     <img
       src={logoUrl}
       width={size}
       height={size}
       alt="instancez"
-      className={cn("dark:invert", className)}
+      className={classes || undefined}
     />
   );
 }

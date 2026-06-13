@@ -1,8 +1,9 @@
 import { useState } from "react";
+import { Box, Center, HStack, Input, Text, VStack } from "@chakra-ui/react";
 import { KeyRound, AlertCircle } from "lucide-react";
 import { validateAdminKey } from "../api/client";
 import { Logo } from "../components/Logo";
-import { Button, Field, Input } from "../components/ui";
+import { Button, Field } from "../components/ui";
 
 interface LoginProps {
   onSuccess: () => void;
@@ -16,10 +17,8 @@ export function Login({ onSuccess }: LoginProps) {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!key.trim()) return;
-
     setLoading(true);
     setError("");
-
     const valid = await validateAdminKey(key.trim());
     if (valid) {
       sessionStorage.setItem("instancez_admin_key", key.trim());
@@ -31,64 +30,88 @@ export function Login({ onSuccess }: LoginProps) {
   }
 
   return (
-    <div className="min-h-dvh bg-background flex items-center justify-center px-4">
-      <div className="w-full max-w-md animate-rise">
-        <div className="bg-surface border border-border rounded-2xl shadow-card px-8 pt-10 pb-8">
-          {/* Brand */}
-          <div className="flex flex-col items-center mb-8 text-center">
-            <Logo size={56} className="mb-6" />
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">
-              Welcome back
-            </h1>
-            <p className="mt-1.5 text-sm text-muted-foreground">
-              Enter your admin key to open the dashboard
-            </p>
-          </div>
+    <Center minH="100dvh" bg="bg" px="4">
+      <Box w="full" maxW="md" className="animate-rise">
+        <Box
+          bg="bg.panel"
+          borderWidth="1px"
+          borderRadius="2xl"
+          boxShadow="lg"
+          px="8"
+          pt="10"
+          pb="8"
+        >
+          <VStack gap="8" mb="8" textAlign="center">
+            <Logo size={56} />
+            <Box>
+              <Text fontSize="2xl" fontWeight="bold" letterSpacing="tight" color="fg">
+                Welcome back
+              </Text>
+              <Text mt="1.5" fontSize="sm" color="fg.muted">
+                Enter your admin key to open the dashboard
+              </Text>
+            </Box>
+          </VStack>
 
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <VStack as="form" onSubmit={handleSubmit} gap="5">
             <Field label="Admin Key" htmlFor="admin-key">
-              <div className="relative">
-                <KeyRound
-                  size={16}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+              <Box position="relative">
+                <Box
+                  as={KeyRound}
+                  boxSize="4"
+                  position="absolute"
+                  left="3"
+                  top="50%"
+                  transform="translateY(-50%)"
+                  color="fg.muted"
+                  zIndex="1"
                 />
                 <Input
-                  mono
                   id="admin-key"
                   type="password"
                   value={key}
                   onChange={(e) => setKey(e.target.value)}
                   placeholder="INSTANCEZ_ADMIN_KEY"
                   autoFocus
-                  className="pl-10"
+                  fontFamily="mono"
+                  pl="9"
+                  size="sm"
                 />
-              </div>
+              </Box>
             </Field>
 
             {error && (
-              <div className="flex items-center gap-2 p-3 rounded-lg border border-destructive/40 bg-destructive/10">
-                <AlertCircle size={14} className="text-destructive shrink-0" />
-                <p className="text-xs text-destructive">{error}</p>
-              </div>
+              <HStack
+                p="3"
+                borderRadius="lg"
+                borderWidth="1px"
+                borderColor="red.300"
+                bg="red.50"
+                _dark={{ bg: "red.900/20", borderColor: "red.700" }}
+                gap="2"
+              >
+                <Box as={AlertCircle} boxSize="3.5" color="fg.error" flexShrink="0" />
+                <Text fontSize="xs" color="fg.error">{error}</Text>
+              </HStack>
             )}
 
             <Button
               type="submit"
-              className="w-full"
+              w="full"
               disabled={loading || !key.trim()}
               loading={loading}
             >
               {loading ? "Verifying..." : "Continue"}
             </Button>
-          </form>
-        </div>
+          </VStack>
+        </Box>
 
-        <p className="mt-6 text-center text-xs text-muted-foreground">
+        <Text mt="6" textAlign="center" fontSize="xs" color="fg.muted">
           The admin key is stored in{" "}
-          <span className="font-mono">sessionStorage</span> and cleared when you
-          close the tab.
-        </p>
-      </div>
-    </div>
+          <Box as="span" fontFamily="mono">sessionStorage</Box>{" "}
+          and cleared when you close the tab.
+        </Text>
+      </Box>
+    </Center>
   );
 }

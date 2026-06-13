@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Login } from "./Login";
+import { renderWithChakra } from "../test/helpers";
 
 vi.mock("../api/client", () => ({
   validateAdminKey: vi.fn(),
@@ -19,20 +20,20 @@ describe("Login", () => {
   });
 
   it("renders login form", () => {
-    render(<Login onSuccess={onSuccess} />);
+    renderWithChakra(<Login onSuccess={onSuccess} />);
     expect(screen.getByText("Welcome back")).toBeInTheDocument();
     expect(screen.getByLabelText("Admin Key")).toBeInTheDocument();
     expect(screen.getByText("Continue")).toBeInTheDocument();
   });
 
   it("disables button when input is empty", () => {
-    render(<Login onSuccess={onSuccess} />);
+    renderWithChakra(<Login onSuccess={onSuccess} />);
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
   });
 
   it("calls validateAdminKey and onSuccess for valid key", async () => {
     mockValidate.mockResolvedValue(true);
-    render(<Login onSuccess={onSuccess} />);
+    renderWithChakra(<Login onSuccess={onSuccess} />);
 
     const input = screen.getByLabelText("Admin Key");
     await userEvent.type(input, "my-secret-key");
@@ -44,7 +45,7 @@ describe("Login", () => {
 
   it("shows error for invalid key", async () => {
     mockValidate.mockResolvedValue(false);
-    render(<Login onSuccess={onSuccess} />);
+    renderWithChakra(<Login onSuccess={onSuccess} />);
 
     const input = screen.getByLabelText("Admin Key");
     await userEvent.type(input, "wrong-key");
@@ -59,7 +60,7 @@ describe("Login", () => {
     mockValidate.mockImplementation(
       () => new Promise((r) => { resolve = r; })
     );
-    render(<Login onSuccess={onSuccess} />);
+    renderWithChakra(<Login onSuccess={onSuccess} />);
 
     const input = screen.getByLabelText("Admin Key");
     await userEvent.type(input, "key");
@@ -72,7 +73,7 @@ describe("Login", () => {
 
   it("stores key in sessionStorage on success", async () => {
     mockValidate.mockResolvedValue(true);
-    render(<Login onSuccess={onSuccess} />);
+    renderWithChakra(<Login onSuccess={onSuccess} />);
 
     await userEvent.type(screen.getByLabelText("Admin Key"), "stored-key");
     await userEvent.click(screen.getByRole("button", { name: "Continue" }));
