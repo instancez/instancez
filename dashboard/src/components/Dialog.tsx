@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useRef, useEffect, useCallback } from "react";
 import { X, AlertTriangle, Info, Trash2 } from "lucide-react";
-import { Button } from "./ui";
+import { Box, HStack, Input, Portal, Text, VStack } from "@chakra-ui/react";
+import { Button, Field, Select } from "./ui";
 
 type DialogType = "prompt" | "confirm" | "alert" | "select";
 
@@ -41,7 +42,6 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const confirmInputRef = useRef<HTMLInputElement>(null);
   const selectRef = useRef<HTMLSelectElement>(null);
-  const backdropRef = useRef<HTMLDivElement>(null);
 
   const prompt = useCallback(
     (title: string, options?: { message?: string; defaultValue?: string; placeholder?: string }) =>
@@ -149,203 +149,173 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
     <DialogContext.Provider value={{ prompt, confirm, alert, select }}>
       {children}
       {dialog && (
-        <div
-          ref={backdropRef}
-          onClick={(e) => {
-            if (e.target === backdropRef.current) handleCancel();
-          }}
-          className={`fixed inset-0 z-50 flex items-center justify-center transition-all duration-200 ease-out ${
-            visible ? "bg-black/50 backdrop-blur-[2px]" : "bg-black/0"
-          }`}
-        >
-          <div
-            className={`relative w-full max-w-[420px] mx-4 rounded-2xl overflow-hidden border shadow-lifted transition-all duration-200 ease-out ${
-              dialog.type === "confirm" && dialog.destructive
-                ? "border-destructive/30 bg-surface"
-                : "border-border bg-surface"
-            } ${
-              visible
-                ? "opacity-100 scale-100 translate-y-0"
-                : "opacity-0 scale-95 translate-y-2"
-            }`}
+        <Portal>
+          <Box
+            position="fixed"
+            inset="0"
+            zIndex="overlay"
+            display="flex"
+            alignItems="center"
+            justifyContent="center"
+            bg={visible ? "blackAlpha.600" : "transparent"}
+            backdropFilter={visible ? "blur(2px)" : undefined}
+            transition="all 0.2s ease-out"
+            onClick={(e) => { if (e.target === e.currentTarget) handleCancel(); }}
           >
-            {/* Close button */}
-            <button
-              onClick={handleCancel}
-              className="absolute top-4 right-4 p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer z-10"
+            <Box
+              position="relative"
+              w="full"
+              maxW="420px"
+              mx="4"
+              borderRadius="2xl"
+              overflow="hidden"
+              borderWidth="1px"
+              borderColor={dialog.type === "confirm" && dialog.destructive ? "red.200" : "border"}
+              bg="bg.panel"
+              boxShadow="lg"
+              opacity={visible ? 1 : 0}
+              transform={visible ? "scale(1) translateY(0)" : "scale(0.95) translateY(8px)"}
+              transition="all 0.2s ease-out"
             >
-              <X size={14} />
-            </button>
+              {/* Close button */}
+              <Box
+                as="button"
+                onClick={handleCancel}
+                position="absolute"
+                top="4"
+                right="4"
+                p="1.5"
+                borderRadius="lg"
+                color="fg.muted"
+                _hover={{ color: "fg", bg: "bg.subtle" }}
+                cursor="pointer"
+                zIndex="1"
+              >
+                <X size={14} />
+              </Box>
 
-            {dialog.type === "prompt" ? (
-              /* ── Prompt variant ── */
-              <>
-                <div className="px-6 pt-6 pb-5">
-                  <div className="space-y-3">
-                    <label htmlFor="dialog-input" className="t-label block">
-                      {dialog.title}
-                    </label>
-                    <input
-                      ref={inputRef}
-                      id="dialog-input"
-                      type="text"
-                      value={inputValue}
-                      onChange={(e) => setInputValue(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && inputValue.trim()) handleConfirm();
-                      }}
-                      placeholder={dialog.placeholder || "Enter a name\u2026"}
-                      className="w-full px-4 py-3 rounded-lg border border-input-border bg-input text-[15px] text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all font-medium"
-                    />
-                    {dialog.message && (
-                      <p className="text-xs text-muted-foreground/70 leading-relaxed">{dialog.message}</p>
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center justify-end gap-2.5 px-6 pb-5">
-                  <Button variant="ghost" onClick={handleCancel}>
-                    Cancel
-                  </Button>
-                  <Button onClick={handleConfirm} disabled={!inputValue.trim()}>
-                    Create
-                  </Button>
-                </div>
-              </>
+              {/* Prompt variant */}
+              {dialog.type === "prompt" && (
+                <>
+                  <Box px="6" pt="6" pb="5">
+                    <VStack gap="3" align="stretch">
+                      <Field label={dialog.title} htmlFor="dialog-input">
+                        <Input
+                          ref={inputRef}
+                          id="dialog-input"
+                          type="text"
+                          value={inputValue}
+                          onChange={(e) => setInputValue(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter" && inputValue.trim()) handleConfirm(); }}
+                          placeholder={dialog.placeholder || "Enter a name…"}
+                          size="sm"
+                        />
+                      </Field>
+                      {dialog.message && <Text fontSize="xs" color="fg.muted">{dialog.message}</Text>}
+                    </VStack>
+                  </Box>
+                  <HStack justify="flex-end" gap="2.5" px="6" pb="5">
+                    <Button variant="ghost" onClick={handleCancel}>Cancel</Button>
+                    <Button onClick={handleConfirm} disabled={!inputValue.trim()}>Create</Button>
+                  </HStack>
+                </>
+              )}
 
-            ) : dialog.type === "select" ? (
-              /* ── Select variant ── */
-              <>
-                <div className="px-6 pt-6 pb-5">
-                  <div className="space-y-3">
-                    <label htmlFor="dialog-select" className="t-label block">
-                      {dialog.title}
-                    </label>
-                    <select
-                      ref={selectRef}
-                      id="dialog-select"
-                      value={selectValue}
-                      onChange={(e) => setSelectValue(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && selectValue) handleConfirm();
-                      }}
-                      className="w-full px-4 py-3 rounded-lg border border-input-border bg-input text-[15px] text-foreground focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all font-medium font-mono cursor-pointer appearance-none"
-                    >
-                      {(dialog.options || []).map((opt) => (
-                        <option key={opt} value={opt}>{opt}</option>
-                      ))}
-                    </select>
-                    {dialog.message && (
-                      <p className="text-xs text-muted-foreground/70 leading-relaxed">{dialog.message}</p>
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center justify-end gap-2.5 px-6 pb-5">
-                  <Button variant="ghost" onClick={handleCancel}>
-                    Cancel
-                  </Button>
-                  <Button onClick={handleConfirm} disabled={!selectValue}>
-                    Select
-                  </Button>
-                </div>
-              </>
+              {/* Select variant */}
+              {dialog.type === "select" && (
+                <>
+                  <Box px="6" pt="6" pb="5">
+                    <VStack gap="3" align="stretch">
+                      <Field label={dialog.title} htmlFor="dialog-select">
+                        <Select
+                          value={selectValue}
+                          onChange={(e) => setSelectValue((e.target as HTMLSelectElement).value)}
+                          mono
+                        >
+                          {(dialog.options || []).map((opt) => (
+                            <option key={opt} value={opt}>{opt}</option>
+                          ))}
+                        </Select>
+                      </Field>
+                      {dialog.message && <Text fontSize="xs" color="fg.muted">{dialog.message}</Text>}
+                    </VStack>
+                  </Box>
+                  <HStack justify="flex-end" gap="2.5" px="6" pb="5">
+                    <Button variant="ghost" onClick={handleCancel}>Cancel</Button>
+                    <Button onClick={handleConfirm} disabled={!selectValue}>Select</Button>
+                  </HStack>
+                </>
+              )}
 
-            ) : dialog.type === "confirm" && dialog.destructive ? (
-              /* ── Destructive confirm variant ── */
-              <>
-                {/* Danger accent top bar */}
-                <div className="h-1.5 bg-destructive/70" />
-
-                <div className="px-6 pt-5 pb-2">
-                  <div className="flex items-start gap-3.5">
-                    <div className="shrink-0 w-10 h-10 rounded-xl bg-destructive/15 flex items-center justify-center">
-                      <Trash2 size={18} className="text-destructive" />
-                    </div>
-                    <div className="min-w-0 pt-0.5 flex-1">
-                      <h2 className="text-[15px] font-semibold text-foreground leading-tight pr-8">{dialog.title}</h2>
-                      {dialog.message && (
-                        <p className="text-sm text-muted-foreground mt-1.5 leading-relaxed">{dialog.message}</p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Type-to-confirm input */}
-                {dialog.confirmText && (
-                  <div className="px-6 pt-3 pb-1">
-                    <label htmlFor="confirm-input" className="block text-xs text-muted-foreground mb-2 leading-relaxed">
-                      Type <span className="font-mono font-semibold text-foreground">{dialog.confirmText}</span> to confirm
-                    </label>
-                    <input
-                      ref={confirmInputRef}
-                      id="confirm-input"
-                      type="text"
-                      value={confirmInput}
-                      onChange={(e) => setConfirmInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !confirmLocked) handleConfirm();
-                      }}
-                      placeholder={dialog.confirmText}
-                      spellCheck={false}
-                      autoComplete="off"
-                      className="w-full px-4 py-2.5 rounded-lg border border-destructive/30 bg-input text-sm font-mono text-foreground placeholder:text-muted-foreground/30 focus:outline-none focus:border-destructive focus:ring-2 focus:ring-destructive/20 transition-all"
-                    />
-                  </div>
-                )}
-
-                {/* Warning box */}
-                <div className="mx-6 mt-4 px-3.5 py-2.5 rounded-lg bg-destructive/8 border border-destructive/15">
-                  <p className="text-xs text-destructive leading-relaxed flex items-center gap-2">
-                    <AlertTriangle size={12} className="shrink-0" />
-                    This action cannot be undone.
-                  </p>
-                </div>
-
-                <div className="flex items-center justify-end gap-2.5 px-6 pt-4 pb-5">
-                  <Button variant="ghost" onClick={handleCancel}>
-                    Cancel
-                  </Button>
-                  <Button
-                    variant="danger"
-                    onClick={handleConfirm}
-                    disabled={confirmLocked}
-                  >
-                    {dialog.confirmLabel || "Delete"}
-                  </Button>
-                </div>
-              </>
-
-            ) : (
-              /* ── Non-destructive confirm / Alert variant ── */
-              <>
-                <div className="px-6 pt-6 pb-2">
-                  <div className="flex items-start gap-3.5">
-                    <div className="shrink-0 w-10 h-10 rounded-xl bg-info/10 flex items-center justify-center">
-                      <Info size={18} className="text-info" />
-                    </div>
-                    <div className="min-w-0 pt-0.5">
-                      <h2 className="text-[15px] font-semibold text-foreground leading-tight pr-8">{dialog.title}</h2>
-                      {dialog.message && (
-                        <p className="text-sm text-muted-foreground mt-1.5 leading-relaxed">{dialog.message}</p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center justify-end gap-2.5 px-6 pt-4 pb-5">
-                  {dialog.type !== "alert" && (
-                    <Button variant="ghost" onClick={handleCancel}>
-                      Cancel
-                    </Button>
+              {/* Destructive confirm */}
+              {dialog.type === "confirm" && dialog.destructive && (
+                <>
+                  <Box h="1.5" bg="red.500" />
+                  <Box px="6" pt="5" pb="2">
+                    <HStack gap="3.5" align="start">
+                      <Box w="10" h="10" borderRadius="xl" bg="red.50" _dark={{ bg: "red.900/30" }} display="flex" alignItems="center" justifyContent="center" flexShrink="0">
+                        <Box as={Trash2} boxSize="4.5" color="fg.error" />
+                      </Box>
+                      <Box minW="0" pt="0.5" flex="1">
+                        <Text fontSize="md" fontWeight="semibold" color="fg" pr="8">{dialog.title}</Text>
+                        {dialog.message && <Text fontSize="sm" color="fg.muted" mt="1.5">{dialog.message}</Text>}
+                      </Box>
+                    </HStack>
+                  </Box>
+                  {dialog.confirmText && (
+                    <Box px="6" pt="3" pb="1">
+                      <Field label={<>Type <Box as="span" fontFamily="mono" fontWeight="semibold" color="fg">{dialog.confirmText}</Box> to confirm</>} htmlFor="confirm-input">
+                        <Input
+                          ref={confirmInputRef}
+                          id="confirm-input"
+                          value={confirmInput}
+                          onChange={(e) => setConfirmInput(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter" && !confirmLocked) handleConfirm(); }}
+                          placeholder={dialog.confirmText}
+                          spellCheck={false}
+                          autoComplete="off"
+                          size="sm"
+                          fontFamily="mono"
+                        />
+                      </Field>
+                    </Box>
                   )}
-                  <Button onClick={handleConfirm}>
-                    {dialog.type === "alert"
-                      ? "OK"
-                      : dialog.confirmLabel || "Confirm"}
-                  </Button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
+                  <Box mx="6" mt="4" px="3.5" py="2.5" borderRadius="lg" bg="red.50" _dark={{ bg: "red.900/20" }} borderWidth="1px" borderColor="red.200">
+                    <HStack gap="2" fontSize="xs" color="fg.error">
+                      <Box as={AlertTriangle} boxSize="3" flexShrink="0" />
+                      This action cannot be undone.
+                    </HStack>
+                  </Box>
+                  <HStack justify="flex-end" gap="2.5" px="6" pt="4" pb="5">
+                    <Button variant="ghost" onClick={handleCancel}>Cancel</Button>
+                    <Button variant="danger" onClick={handleConfirm} disabled={confirmLocked}>{dialog.confirmLabel || "Delete"}</Button>
+                  </HStack>
+                </>
+              )}
+
+              {/* Non-destructive confirm / Alert */}
+              {(dialog.type === "alert" || (dialog.type === "confirm" && !dialog.destructive)) && (
+                <>
+                  <Box px="6" pt="6" pb="2">
+                    <HStack gap="3.5" align="start">
+                      <Box w="10" h="10" borderRadius="xl" bg="blue.50" _dark={{ bg: "blue.900/30" }} display="flex" alignItems="center" justifyContent="center" flexShrink="0">
+                        <Box as={Info} boxSize="4.5" color="blue.600" _dark={{ color: "blue.300" }} />
+                      </Box>
+                      <Box minW="0" pt="0.5">
+                        <Text fontSize="md" fontWeight="semibold" color="fg" pr="8">{dialog.title}</Text>
+                        {dialog.message && <Text fontSize="sm" color="fg.muted" mt="1.5">{dialog.message}</Text>}
+                      </Box>
+                    </HStack>
+                  </Box>
+                  <HStack justify="flex-end" gap="2.5" px="6" pt="4" pb="5">
+                    {dialog.type !== "alert" && <Button variant="ghost" onClick={handleCancel}>Cancel</Button>}
+                    <Button onClick={handleConfirm}>{dialog.type === "alert" ? "OK" : dialog.confirmLabel || "Confirm"}</Button>
+                  </HStack>
+                </>
+              )}
+            </Box>
+          </Box>
+        </Portal>
       )}
     </DialogContext.Provider>
   );

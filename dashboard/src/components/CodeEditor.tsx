@@ -1,4 +1,5 @@
 import { useRef, useEffect } from "react";
+import { Box } from "@chakra-ui/react";
 import { EditorView, basicSetup } from "codemirror";
 import { EditorState } from "@codemirror/state";
 import { sql } from "@codemirror/lang-sql";
@@ -100,5 +101,5 @@ export function CodeEditor({
     }
   }, [value]);
 
-  return <div ref={containerRef} className="overflow-hidden" />;
+  return <Box ref={containerRef} overflow="hidden" borderRadius="lg" />;
 }

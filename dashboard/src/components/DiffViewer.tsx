@@ -1,4 +1,4 @@
-import { cn } from "../lib/utils";
+import { Box, Text, VStack } from "@chakra-ui/react";
 
 interface DiffViewerProps {
   statements: string[];
@@ -8,50 +8,54 @@ interface DiffViewerProps {
 export function DiffViewer({ statements, isDestructive }: DiffViewerProps) {
   if (statements.length === 0) {
     return (
-      <div className="rounded-xl border border-border bg-primary p-4">
-        <p className="text-sm text-muted-foreground text-center">
-          No pending migrations
-        </p>
-      </div>
+      <Box borderRadius="xl" borderWidth="1px" bg="bg.subtle" p="4">
+        <Text fontSize="sm" color="fg.muted" textAlign="center">No pending migrations</Text>
+      </Box>
     );
   }
 
   return (
-    <div className="rounded-xl border border-border bg-primary overflow-hidden">
+    <Box borderRadius="xl" borderWidth="1px" bg="bg.subtle" overflow="hidden">
       {isDestructive && (
-        <div className="px-4 py-2 bg-destructive/10 border-b border-destructive/20">
-          <p className="text-xs font-medium text-destructive">
+        <Box
+          px="4"
+          py="2"
+          bg="red.50"
+          _dark={{ bg: "red.900/20" }}
+          borderBottomWidth="1px"
+          borderColor="red.200"
+        >
+          <Text fontSize="xs" fontWeight="medium" color="fg.error">
             Warning: This migration contains destructive operations
-          </p>
-        </div>
+          </Text>
+        </Box>
       )}
-      <div className="p-4 space-y-2 overflow-x-auto">
+      <VStack gap="2" p="4" overflowX="auto" align="stretch">
         {statements.map((stmt, i) => {
-          const isDrop =
-            stmt.toUpperCase().includes("DROP") ||
-            stmt.toUpperCase().includes("DELETE");
-          const isAlterDrop = stmt.toUpperCase().includes("DROP COLUMN");
-          const isAdd =
-            stmt.toUpperCase().includes("ADD") ||
-            stmt.toUpperCase().includes("CREATE");
-
+          const isDrop = /DROP|DELETE/i.test(stmt);
+          const isAdd = /ADD|CREATE/i.test(stmt);
           return (
-            <pre
+            <Box
               key={i}
-              className={cn(
-                "text-xs font-mono p-2 rounded-md leading-relaxed whitespace-pre-wrap",
-                isDrop || isAlterDrop
-                  ? "bg-destructive/10 text-destructive"
-                  : isAdd
-                    ? "bg-success/10 text-success"
-                    : "bg-muted text-foreground"
-              )}
+              as="pre"
+              fontSize="xs"
+              fontFamily="mono"
+              p="2"
+              borderRadius="md"
+              whiteSpace="pre-wrap"
+              lineHeight="relaxed"
+              bg={isDrop ? "red.50" : isAdd ? "green.50" : "bg.muted"}
+              color={isDrop ? "fg.error" : isAdd ? "green.700" : "fg"}
+              _dark={{
+                bg: isDrop ? "red.900/30" : isAdd ? "green.900/30" : "bg.muted",
+                color: isDrop ? "red.300" : isAdd ? "green.300" : "fg",
+              }}
             >
               {stmt}
-            </pre>
+            </Box>
           );
         })}
-      </div>
-    </div>
+      </VStack>
+    </Box>
   );
 }
