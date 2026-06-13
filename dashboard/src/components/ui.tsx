@@ -203,7 +203,7 @@ export function Section({ title, description, icon: Icon, actions, children }: S
         </VStack>
         {actions && <HStack gap="2" flexShrink="0">{actions}</HStack>}
       </HStack>
-      {children != null && <Box px="5" py="4"><VStack gap="4">{children}</VStack></Box>}
+      {children != null && <Box px="5" py="4"><VStack gap="4" align="stretch">{children}</VStack></Box>}
     </Panel>
   );
 }
