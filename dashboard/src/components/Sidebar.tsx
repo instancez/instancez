@@ -1,3 +1,4 @@
+import { Box, Text, VStack } from "@chakra-ui/react";
 import { NavLink } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -21,41 +22,50 @@ const NAV_ITEMS = [
 
 export function Sidebar() {
   return (
-    <aside className="w-60 shrink-0 flex flex-col px-3 py-4 bg-surface border border-border rounded-xl shadow-card">
-      <nav className="flex-1 overflow-y-auto">
-        <ul className="space-y-1">
+    <Box
+      as="aside"
+      w="60"
+      flexShrink="0"
+      display="flex"
+      flexDirection="column"
+      px="3"
+      py="4"
+      bg="bg.panel"
+      borderWidth="1px"
+      borderRadius="xl"
+      boxShadow="xs"
+    >
+      <Box as="nav" flex="1" overflowY="auto">
+        <VStack gap="1" align="stretch">
           {NAV_ITEMS.map(({ to, icon: Icon, label }) => (
-            <li key={to}>
-              <NavLink
-                to={to}
-                end={to === "/"}
-                className={({ isActive }) =>
-                  `group flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
-                    isActive
-                      ? "bg-accent text-background shadow-card"
-                      : "text-muted-foreground hover:text-foreground hover:bg-surface-hover"
-                  }`
-                }
-              >
-                {({ isActive }) => (
-                  <>
-                    <Icon
-                      size={16}
-                      strokeWidth={isActive ? 2 : 1.6}
-                      className="shrink-0"
-                    />
-                    {label}
-                  </>
-                )}
-              </NavLink>
-            </li>
+            <NavLink key={to} to={to} end={to === "/"}>
+              {({ isActive }) => (
+                <Box
+                  display="flex"
+                  alignItems="center"
+                  gap="2.5"
+                  px="3"
+                  py="2"
+                  borderRadius="lg"
+                  fontSize="sm"
+                  fontWeight="medium"
+                  transition="colors"
+                  cursor="pointer"
+                  bg={isActive ? "fg" : "transparent"}
+                  color={isActive ? "bg" : "fg.muted"}
+                  _hover={isActive ? {} : { bg: "bg.subtle", color: "fg" }}
+                >
+                  <Box as={Icon} boxSize="4" flexShrink="0" strokeWidth={isActive ? 2 : 1.6} />
+                  {label}
+                </Box>
+              )}
+            </NavLink>
           ))}
-        </ul>
-      </nav>
-
-      <p className="px-3 pt-4 text-[11px] text-muted-foreground/60 font-mono">
+        </VStack>
+      </Box>
+      <Text px="3" pt="4" fontSize="11px" color="fg.subtle" fontFamily="mono">
         v0.1.0
-      </p>
-    </aside>
+      </Text>
+    </Box>
   );
 }

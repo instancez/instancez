@@ -1,6 +1,7 @@
-import { Moon, Sun, Github } from "lucide-react";
+import { Box, HStack, IconButton, Link } from "@chakra-ui/react";
+import { Github } from "lucide-react";
 import { Wordmark } from "./Logo";
-import { useColorMode } from "../hooks/useColorMode";
+import { ColorModeButton } from "./color-mode";
 
 /**
  * Floating pill navbar, matching the coder app's shell: a bordered
@@ -8,30 +9,40 @@ import { useColorMode } from "../hooks/useColorMode";
  * on the left and quick actions on the right.
  */
 export function Navbar() {
-  const { colorMode, toggleColorMode } = useColorMode();
-
   return (
-    <header className="shrink-0 m-2 px-4 py-2 flex items-center justify-between bg-surface border border-border rounded-xl shadow-card">
+    <Box
+      as="header"
+      flexShrink="0"
+      m="2"
+      px="4"
+      py="2"
+      display="flex"
+      alignItems="center"
+      justifyContent="space-between"
+      bg="bg.panel"
+      borderWidth="1px"
+      borderRadius="xl"
+      boxShadow="xs"
+    >
       <Wordmark />
-      <div className="flex items-center gap-1">
-        <a
+      <HStack gap="1">
+        <Link
           href="https://github.com/instancez/instancez"
           target="_blank"
           rel="noopener noreferrer"
           aria-label="GitHub repository"
-          className="p-2 rounded-full text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors"
         >
-          <Github size={16} />
-        </a>
-        <button
-          type="button"
-          onClick={toggleColorMode}
-          aria-label="Toggle dark mode"
-          className="p-2 rounded-full text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
-        >
-          {colorMode === "dark" ? <Sun size={16} /> : <Moon size={16} />}
-        </button>
-      </div>
-    </header>
+          <IconButton
+            variant="ghost"
+            size="sm"
+            colorPalette="gray"
+            aria-label="GitHub repository"
+          >
+            <Github size={16} />
+          </IconButton>
+        </Link>
+        <ColorModeButton />
+      </HStack>
+    </Box>
   );
 }

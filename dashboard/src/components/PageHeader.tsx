@@ -1,10 +1,10 @@
-import { cn } from "../lib/utils";
+import React from "react";
+import { Box, HStack, Text } from "@chakra-ui/react";
 
 interface PageHeaderProps {
   title: string;
   description?: string;
   actions?: React.ReactNode;
-  className?: string;
 }
 
 /**
@@ -13,32 +13,18 @@ interface PageHeaderProps {
  * chrome-free, so this no longer carries page-level back/delete affordances
  * (those moved into page content as DetailToolbar).
  */
-export function PageHeader({
-  title,
-  description,
-  actions,
-  className,
-}: PageHeaderProps) {
+export function PageHeader({ title, description, actions }: PageHeaderProps) {
   return (
-    <div
-      className={cn(
-        "flex items-start justify-between gap-4 px-8 pt-8 pb-6 mb-2",
-        className
-      )}
-    >
-      <div className="min-w-0">
-        <h1 className="text-2xl font-bold tracking-tight text-foreground truncate">
+    <HStack justify="space-between" gap="4" px="8" pt="8" pb="6" mb="2" align="start">
+      <Box minW="0">
+        <Text fontSize="2xl" fontWeight="bold" letterSpacing="tight" color="fg" truncate>
           {title}
-        </h1>
+        </Text>
         {description && (
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            {description}
-          </p>
+          <Text mt="1.5" fontSize="sm" color="fg.muted">{description}</Text>
         )}
-      </div>
-      {actions && (
-        <div className="flex items-center gap-2 shrink-0">{actions}</div>
-      )}
-    </div>
+      </Box>
+      {actions && <HStack gap="2" flexShrink="0">{actions}</HStack>}
+    </HStack>
   );
 }
