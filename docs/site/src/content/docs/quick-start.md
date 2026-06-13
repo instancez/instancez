@@ -11,6 +11,8 @@ curl -fsSL https://get.instancez.io | sh
 
 Installs `inz` to `~/.local/bin`. Check it works: `inz --version`.
 
+Windows or need a manual download? See the [Installation guide](/install/).
+
 ## Create a project
 
 ```bash

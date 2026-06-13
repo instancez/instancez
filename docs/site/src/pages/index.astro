@@ -30,11 +30,17 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '')
   .btn-primary { background: #fff; color: #080808; font-weight: 700; padding: 13px 28px; border-radius: 8px; text-decoration: none; font-size: 0.95rem; }
   .btn-secondary { color: #aaa; font-weight: 600; padding: 13px 20px; border-radius: 8px; text-decoration: none; font-size: 0.95rem; border: 1px solid #2e2e2e; }
 
-  .install-wrap { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .install-wrap { display: flex; flex-direction: column; align-items: center; gap: 12px; }
   .install-label { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: #777; }
+  .install-tabs { display: flex; gap: 2px; background: #151515; border: 1px solid #242424; border-radius: 8px; padding: 3px; }
+  .install-tab { font-size: 0.72rem; font-weight: 600; color: #666; background: transparent; border: none; padding: 5px 14px; border-radius: 6px; cursor: pointer; transition: color 0.15s, background 0.15s; }
+  .install-tab.active { background: #242424; color: #e8e8e8; }
   .install-block { display: inline-flex; align-items: center; gap: 14px; background: #101010; border: 1px solid #2a2a2a; border-radius: 10px; padding: 14px 22px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.9rem; }
   .install-block .prompt { color: #555; user-select: none; }
   .install-block .cmd { color: #fff; }
+  .install-cmd { display: none; width: 100%; }
+  .install-cmd.active { display: flex; }
+  .install-note { font-size: 0.75rem; color: #555; }
 
   .divider { border: none; border-top: 1px solid #181818; margin: 0; }
 
@@ -104,12 +110,47 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '')
     <a href="https://github.com/instancez/instancez" class="btn-secondary">View on GitHub ↗</a>
   </div>
   <div class="install-wrap">
-    <div class="install-label">Install in one command</div>
-    <div class="install-block">
-      <span class="prompt">$</span>
-      <span class="cmd">curl -fsSL https://get.instancez.io | sh</span>
+    <div class="install-label">Install</div>
+    <div class="install-tabs">
+      <button class="install-tab active" data-os="mac">macOS</button>
+      <button class="install-tab" data-os="linux">Linux</button>
+      <button class="install-tab" data-os="windows">Windows</button>
     </div>
+    <div class="install-cmd active" id="cmd-mac">
+      <div class="install-block">
+        <span class="prompt">$</span>
+        <span class="cmd">curl -fsSL https://get.instancez.io | sh</span>
+      </div>
+    </div>
+    <div class="install-cmd" id="cmd-linux">
+      <div class="install-block">
+        <span class="prompt">$</span>
+        <span class="cmd">curl -fsSL https://get.instancez.io | sh</span>
+      </div>
+    </div>
+    <div class="install-cmd" id="cmd-windows">
+      <div class="install-block">
+        <span class="prompt">PS&gt;</span>
+        <span class="cmd">irm https://get.instancez.io/windows | iex</span>
+      </div>
+    </div>
+    <a href={`${base}/install/`} class="install-note">All install options →</a>
   </div>
+
+  <script>
+    const tabs = document.querySelectorAll('.install-tab');
+    const cmds = document.querySelectorAll('.install-cmd');
+    function activate(os: string) {
+      tabs.forEach(t => t.classList.toggle('active', (t as HTMLElement).dataset.os === os));
+      cmds.forEach(c => c.classList.toggle('active', c.id === `cmd-${os}`));
+    }
+    tabs.forEach(tab => tab.addEventListener('click', () => activate((tab as HTMLElement).dataset.os!)));
+    // Auto-detect OS
+    const ua = navigator.userAgent;
+    if (/Windows/i.test(ua)) activate('windows');
+    else if (/Linux/i.test(ua)) activate('linux');
+    else activate('mac');
+  </script>
 </section>
 
 <hr class="divider">

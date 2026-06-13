@@ -1,0 +1,86 @@
+---
+title: Installation
+description: Install the inz CLI on macOS, Linux, or Windows.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+The `inz` CLI is a single binary — no runtime dependencies, no package manager required.
+
+## One-line install
+
+<Tabs>
+  <TabItem label="macOS">
+  ```bash
+  curl -fsSL https://get.instancez.io | sh
+  ```
+  Installs `inz` to `~/.local/bin`. If that directory isn't in your `PATH`, the script will tell you.
+  </TabItem>
+
+  <TabItem label="Linux">
+  ```bash
+  curl -fsSL https://get.instancez.io | sh
+  ```
+  Installs `inz` to `~/.local/bin`. Works on x86-64 and ARM64.
+  </TabItem>
+
+  <TabItem label="Windows">
+  ```powershell
+  irm https://get.instancez.io/windows | iex
+  ```
+  Installs `inz.exe` to `%LOCALAPPDATA%\instancez\bin`. Run in PowerShell 5.1+.
+
+  Alternatively, [download the `.exe` directly](#manual-download) and place it anywhere on your `PATH`.
+  </TabItem>
+</Tabs>
+
+Verify the install:
+
+```bash
+inz --version
+```
+
+## Manual download
+
+Download a pre-built binary from [GitHub Releases](https://github.com/instancez/instancez/releases/latest):
+
+| Platform | File |
+|---|---|
+| macOS (Apple Silicon) | `inz-darwin-arm64` |
+| macOS (Intel) | `inz-darwin-amd64` |
+| Linux x86-64 | `inz-linux-amd64` |
+| Linux ARM64 | `inz-linux-arm64` |
+| Windows x86-64 | `inz-windows-amd64.exe` |
+| Windows ARM64 | `inz-windows-arm64.exe` |
+
+Make the binary executable (macOS/Linux) and move it to a directory on your `PATH`:
+
+```bash
+chmod +x inz-darwin-arm64
+mv inz-darwin-arm64 /usr/local/bin/inz
+```
+
+## Updating
+
+Re-run the install command to update to the latest release. The script overwrites the existing binary.
+
+## Uninstalling
+
+Delete the binary:
+
+<Tabs>
+  <TabItem label="macOS / Linux">
+  ```bash
+  rm ~/.local/bin/inz
+  ```
+  </TabItem>
+  <TabItem label="Windows">
+  ```powershell
+  Remove-Item "$env:LOCALAPPDATA\instancez\bin\inz.exe"
+  ```
+  </TabItem>
+</Tabs>
+
+## What's next
+
+- [Quick Start](/quick-start/) — create a project and have an API running in minutes

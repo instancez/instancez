@@ -18,6 +18,7 @@ export default defineConfig({
         { icon: 'github', label: 'GitHub', href: 'https://github.com/instancez/instancez' },
       ],
       sidebar: [
+        { label: 'Installation', slug: 'install' },
         { label: 'Quick Start', slug: 'quick-start' },
         {
           label: 'Build',
