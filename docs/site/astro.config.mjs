@@ -10,6 +10,10 @@ export default defineConfig({
       title: 'instancez',
       description: 'Self-hosted Supabase-compatible backend',
       favicon: '/favicon.svg',
+      logo: {
+        src: './src/assets/logo.svg',
+        alt: 'instancez',
+      },
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/instancez/instancez' },
       ],
