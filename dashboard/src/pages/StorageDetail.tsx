@@ -1,6 +1,7 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { Plus, Settings2, ShieldCheck } from "lucide-react";
+import { Box, Text, VStack } from "@chakra-ui/react";
 import { useConfig } from "../hooks/useConfig";
 import { jsonEqual } from "../lib/jsonEqual";
 import { useDialog } from "../components/Dialog";
@@ -52,9 +53,9 @@ export function StorageDetail() {
 
   if (!config || !bucket || !name) {
     return (
-      <div className="p-8">
-        <p className="text-sm text-muted-foreground">Bucket not found.</p>
-      </div>
+      <Box p="8">
+        <Text fontSize="sm" color="fg.muted">Bucket not found.</Text>
+      </Box>
     );
   }
 
@@ -62,9 +63,9 @@ export function StorageDetail() {
   const dirty = !jsonEqual(bucket, config.storage[name] ?? null);
 
   return (
-    <div className="pb-20">
+    <Box pb="20">
       <DetailToolbar backLabel="Storage" onDelete={deleteBucket} />
-      <div className="pb-8 space-y-6 max-w-2xl">
+      <VStack pb="8" gap="6" maxW="2xl" align="stretch">
         <Section
           title="Bucket Settings"
           icon={Settings2}
@@ -93,9 +94,9 @@ export function StorageDetail() {
             label={
               <>
                 Public bucket{" "}
-                <span className="text-xs text-muted-foreground">
+                <Text as="span" fontSize="xs" color="fg.muted">
                   (allows unauthenticated downloads)
-                </span>
+                </Text>
               </>
             }
           />
@@ -121,9 +122,9 @@ export function StorageDetail() {
           }
         >
           {(bucket.rls || []).length === 0 ? (
-            <p className="text-sm text-muted-foreground">No policies defined.</p>
+            <Text fontSize="sm" color="fg.muted">No policies defined.</Text>
           ) : (
-            <div className="space-y-3">
+            <VStack gap="3" align="stretch">
               {(bucket.rls || []).map((policy, i) => (
                 <RlsPolicyCard
                   key={i}
@@ -143,12 +144,12 @@ export function StorageDetail() {
                   }
                 />
               ))}
-            </div>
+            </VStack>
           )}
         </Section>
-      </div>
+      </VStack>
 
       <SaveBar onSave={handleSave} saving={saving} errors={saveErrors} dirty={dirty} />
-    </div>
+    </Box>
   );
 }

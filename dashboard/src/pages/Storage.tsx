@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { Plus, HardDrive } from "lucide-react";
+import { Box, HStack, Text, VStack } from "@chakra-ui/react";
 import { useConfig } from "../hooks/useConfig";
 import { useDialog } from "../components/Dialog";
 import { EmptyState } from "../components/EmptyState";
@@ -47,14 +48,14 @@ export function Storage() {
   );
 
   return (
-    <div>
-      <div className="pb-8">
-        <div className="flex items-center justify-between gap-4 pb-6">
-          <p className="text-sm text-muted-foreground">
+    <Box>
+      <Box pb="8">
+        <HStack justify="space-between" gap="4" pb="6">
+          <Text fontSize="sm" color="fg.muted">
             {buckets.length} bucket{buckets.length !== 1 ? "s" : ""} configured
-          </p>
+          </Text>
           {addButton}
-        </div>
+        </HStack>
         {buckets.length === 0 ? (
           <EmptyState
             icon={HardDrive}
@@ -63,7 +64,7 @@ export function Storage() {
             action={addButton}
           />
         ) : (
-          <div className="space-y-2">
+          <VStack gap="2" align="stretch">
             {buckets.map(([name, bucket]) => (
               <ListRow
                 key={name}
@@ -90,9 +91,9 @@ export function Storage() {
                 }
               />
             ))}
-          </div>
+          </VStack>
         )}
-      </div>
-    </div>
+      </Box>
+    </Box>
   );
 }
