@@ -4,8 +4,7 @@ import starlight from '@astrojs/starlight';
 
 export default defineConfig({
   site: 'https://instancez.github.io',
-  // Uncomment and set base if deploying to a sub-path (no custom domain):
-  // base: '/instancez',
+  base: '/instancez',
   integrations: [
     starlight({
       title: 'instancez',

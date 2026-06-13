@@ -1,5 +1,6 @@
 ---
 // Custom landing page — uses no Starlight layout; standalone HTML
+const base = import.meta.env.BASE_URL.replace(/\/$/, '')
 ---
 <!DOCTYPE html>
 <html lang="en">
@@ -8,7 +9,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>instancez — Self-hosted Supabase-compatible backend</title>
 <meta name="description" content="A self-hosted Supabase-compatible backend. Define your schema in YAML, get a full Postgres API with auth, RLS, functions, and storage.">
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href={`${base}/favicon.svg`} type="image/svg+xml">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #080808; color: #e8e8e8; min-height: 100vh; }
@@ -82,12 +83,12 @@
 <nav>
   <div class="nav-logo">instancez</div>
   <div class="nav-links">
-    <a href="/quick-start/">Quick Start</a>
-    <a href="/build/schema/">Build</a>
-    <a href="/deploy/docker/">Deploy</a>
-    <a href="/api-reference/rest/">API Reference</a>
+    <a href={`${base}/quick-start/`}>Quick Start</a>
+    <a href={`${base}/build/schema/`}>Build</a>
+    <a href={`${base}/deploy/docker/`}>Deploy</a>
+    <a href={`${base}/api-reference/rest/`}>API Reference</a>
   </div>
-  <a href="/quick-start/" class="nav-cta">Get Started →</a>
+  <a href={`${base}/quick-start/`} class="nav-cta">Get Started →</a>
 </nav>
 
 <section class="hero">
@@ -95,7 +96,7 @@
   <h1>Your backend.<br>Your infrastructure.</h1>
   <p>A self-hosted Supabase-compatible backend. Define your schema in YAML and get a full Postgres-backed API with auth, RLS, functions, and storage — up and running in minutes.</p>
   <div class="hero-actions">
-    <a href="/quick-start/" class="btn-primary">Quick Start →</a>
+    <a href={`${base}/quick-start/`} class="btn-primary">Quick Start →</a>
     <a href="https://github.com/instancez/instancez" class="btn-secondary">View on GitHub ↗</a>
   </div>
   <div class="install-wrap">
@@ -213,7 +214,7 @@
   <div class="cta-inner">
     <h2>Ready to build?</h2>
     <p>One command to install. One YAML file to start. Running in minutes.</p>
-    <a href="/quick-start/" class="btn-primary">Get started →</a>
+    <a href={`${base}/quick-start/`} class="btn-primary">Get started →</a>
   </div>
 </div>
 
