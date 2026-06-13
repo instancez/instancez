@@ -1,6 +1,7 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { Trash2, Plus, FileCode2, Braces } from "lucide-react";
+import { Box, Grid, HStack, Text, VStack } from "@chakra-ui/react";
 import { useConfig } from "../hooks/useConfig";
 import { jsonEqual } from "../lib/jsonEqual";
 import { useDialog } from "../components/Dialog";
@@ -63,9 +64,9 @@ export function RpcDetail() {
 
   if (!config || !fn || !name) {
     return (
-      <div className="p-8">
-        <p className="text-sm text-muted-foreground">Function not found.</p>
-      </div>
+      <Box p="8">
+        <Text fontSize="sm" color="fg.muted">Function not found.</Text>
+      </Box>
     );
   }
 
@@ -75,14 +76,14 @@ export function RpcDetail() {
   const args = fn.args || [];
 
   return (
-    <div className="pb-20">
+    <Box pb="20">
       <DetailToolbar backLabel="Database Functions" onDelete={deleteFunction} />
-      <div className="pb-8 space-y-6 max-w-3xl">
+      <VStack pb="8" gap="6" maxW="3xl" align="stretch">
         <Section
           title="Definition"
           icon={FileCode2}
         >
-          <div className="grid grid-cols-2 gap-4">
+          <Grid gridTemplateColumns="repeat(2, 1fr)" gap="4">
             <Field label="Description">
               <Input
                 value={fn.description}
@@ -90,16 +91,16 @@ export function RpcDetail() {
                 placeholder="What does this function do?"
               />
             </Field>
-            <div className="flex items-end pb-2">
+            <HStack align="end" pb="2">
               <Toggle
                 checked={fn.auth_required}
                 onChange={(v) => updateFn((f) => ({ ...f, auth_required: v }))}
                 label="Auth required"
               />
-            </div>
-          </div>
+            </HStack>
+          </Grid>
 
-          <div className="grid grid-cols-3 gap-4">
+          <Grid gridTemplateColumns="repeat(3, 1fr)" gap="4">
             <Field label="Language">
               <Select
                 value={fn.language || "plpgsql"}
@@ -130,7 +131,7 @@ export function RpcDetail() {
                 ))}
               </Select>
             </Field>
-          </div>
+          </Grid>
 
           <Field label="Return Type">
             <Input
@@ -153,9 +154,16 @@ export function RpcDetail() {
                 Definition fields, so each dropdown change is reflected here.
                 Pasting full DDL into the editor is visibly wrong and rejected
                 by validation. */}
-            <div className="rounded-lg border border-border overflow-hidden">
-              <div className="px-3 py-2 border-b border-border">
-                <code className="block text-[11px] font-mono text-muted-foreground whitespace-pre-wrap">
+            <Box borderRadius="lg" borderWidth="1px" borderColor="border" overflow="hidden">
+              <Box px="3" py="2" borderBottomWidth="1px" borderColor="border">
+                <Text
+                  as="code"
+                  display="block"
+                  fontSize="11px"
+                  fontFamily="mono"
+                  color="fg.muted"
+                  whiteSpace="pre-wrap"
+                >
                   {`CREATE OR REPLACE FUNCTION public."${name}"(${(fn.args || [])
                     .map((a) => `"${a.name}" ${a.type}`)
                     .join(", ")})\nRETURNS ${fn.returns?.type || "void"}\nLANGUAGE ${(
@@ -163,18 +171,18 @@ export function RpcDetail() {
                   ).toLowerCase()}\n${(fn.volatility || "volatile").toUpperCase()}\nSECURITY ${(
                     fn.security || "invoker"
                   ).toUpperCase()}\nAS $ub$`}
-                </code>
-              </div>
+                </Text>
+              </Box>
               <CodeEditor
                 value={fn.body || ""}
                 onChange={(val) => updateFn((f) => ({ ...f, body: val }))}
                 language="sql"
                 minHeight="160px"
               />
-              <div className="px-3 py-1.5 border-t border-border">
-                <code className="text-[11px] font-mono text-muted-foreground">$ub$;</code>
-              </div>
-            </div>
+              <Box px="3" py="1.5" borderTopWidth="1px" borderColor="border">
+                <Text as="code" fontSize="11px" fontFamily="mono" color="fg.muted">$ub$;</Text>
+              </Box>
+            </Box>
           </Field>
         </Section>
 
@@ -200,14 +208,13 @@ export function RpcDetail() {
           }
         >
           {args.length > 0 ? (
-            <div className="space-y-2">
+            <VStack gap="2" align="stretch">
               {args.map((arg, idx) => (
-                <Panel key={arg.name} className="flex items-center gap-3 px-3 py-2">
-                  <span className="text-sm font-mono text-foreground min-w-[100px]">{arg.name}</span>
+                <Panel key={arg.name} display="flex" alignItems="center" gap="3" px="3" py="2">
+                  <Text fontSize="sm" fontFamily="mono" color="fg" minW="100px">{arg.name}</Text>
                   <Select
                     mono
                     inputSize="sm"
-                    className="w-auto"
                     value={arg.type}
                     onChange={(e) =>
                       updateFn((f) => {
@@ -239,7 +246,7 @@ export function RpcDetail() {
                   <Button
                     variant="danger-ghost"
                     size="icon"
-                    className="ml-auto"
+                    ml="auto"
                     aria-label={`Delete ${arg.name}`}
                     onClick={() =>
                       updateFn((f) => ({
@@ -252,15 +259,15 @@ export function RpcDetail() {
                   </Button>
                 </Panel>
               ))}
-            </div>
+            </VStack>
           ) : (
-            <p className="text-sm text-muted-foreground">No arguments defined.</p>
+            <Text fontSize="sm" color="fg.muted">No arguments defined.</Text>
           )}
         </Section>
 
-      </div>
+      </VStack>
 
       <SaveBar onSave={handleSave} saving={saving} errors={saveErrors} dirty={dirty} />
-    </div>
+    </Box>
   );
 }
