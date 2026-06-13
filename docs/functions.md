@@ -213,3 +213,6 @@ export default async function handler(req, ctx) {
                : { status: 200, body: { received: true, importId: nanoid(), reviewId: data.id } };
 }
 ```
+
+---
+*Audited 2026-06-13 — corrections applied to `docs/site/src/content/docs/build/functions.md` and `docs/site/src/content/docs/api-reference/functions.md`.*
