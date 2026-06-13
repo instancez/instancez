@@ -17,7 +17,7 @@ export function PageHeader({ title, description, actions }: PageHeaderProps) {
   return (
     <HStack justify="space-between" gap="4" px="8" pt="8" pb="6" mb="2" align="start">
       <Box minW="0">
-        <Text fontSize="2xl" fontWeight="bold" letterSpacing="tight" color="fg" truncate>
+        <Text as="h1" fontSize="2xl" fontWeight="bold" letterSpacing="tight" color="fg" truncate>
           {title}
         </Text>
         {description && (

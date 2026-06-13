@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { renderWithChakra } from "../test/helpers";
 import { useConfigState } from "./useConfig";
 import { ConfirmSaveDialog } from "../components/ConfirmSaveDialog";
 import type { Config } from "../lib/types";
@@ -69,7 +70,7 @@ describe("useConfigState save confirmation", () => {
 
   it("shows the preview dialog before saving and saves on confirm", async () => {
     const onResult = vi.fn();
-    render(<Harness onResult={onResult} />);
+    renderWithChakra(<Harness onResult={onResult} />);
     await waitFor(() => expect(screen.getByText("do-save")).toBeInTheDocument());
 
     fireEvent.click(screen.getByText("do-save"));
@@ -85,7 +86,7 @@ describe("useConfigState save confirmation", () => {
 
   it("does not save when the dialog is cancelled", async () => {
     const onResult = vi.fn();
-    render(<Harness onResult={onResult} />);
+    renderWithChakra(<Harness onResult={onResult} />);
     await waitFor(() => expect(screen.getByText("do-save")).toBeInTheDocument());
 
     fireEvent.click(screen.getByText("do-save"));
@@ -104,7 +105,7 @@ describe("useConfigState save confirmation", () => {
       })
     );
     const onResult = vi.fn();
-    render(<Harness onResult={onResult} />);
+    renderWithChakra(<Harness onResult={onResult} />);
     await waitFor(() => expect(screen.getByText("do-save")).toBeInTheDocument());
 
     fireEvent.click(screen.getByText("do-save"));

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { renderWithChakra } from "../test/helpers";
 import { StorageDetail } from "./StorageDetail";
 import { DialogProvider } from "../components/Dialog";
 import { ConfigContext } from "../hooks/useConfig";
@@ -48,7 +49,7 @@ function renderStorageDetail(config: Config, bucketName: string) {
     save: vi.fn().mockResolvedValue(true),
     updateConfig: vi.fn(),
   };
-  return render(
+  return renderWithChakra(
     <ConfigContext.Provider value={ctx}>
       <MemoryRouter initialEntries={[`/storage/${bucketName}`]}>
         <DialogProvider>

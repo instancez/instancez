@@ -1,5 +1,5 @@
 import React from "react";
-import { HStack, SwitchRoot, SwitchControl, SwitchThumb, Text } from "@chakra-ui/react";
+import { HStack, SwitchRoot, SwitchControl, SwitchThumb, SwitchHiddenInput, Text } from "@chakra-ui/react";
 
 type ToggleProps = {
   checked: boolean;
@@ -30,6 +30,7 @@ function SwitchWidget({
       colorPalette="gray"
       size="sm"
     >
+      <SwitchHiddenInput role="switch" />
       <SwitchControl>
         <SwitchThumb />
       </SwitchControl>

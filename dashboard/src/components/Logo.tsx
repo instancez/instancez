@@ -1,20 +1,20 @@
 import logoUrl from "../assets/instancez-logo-only.svg";
-import { Box, HStack, Text } from "@chakra-ui/react";
+import { Box, HStack, Text, chakra } from "@chakra-ui/react";
 
 interface LogoProps {
   size?: number;
-  className?: string;
 }
 
-export function Logo({ size = 36, className }: LogoProps) {
-  const classes = ["dark:invert", className].filter(Boolean).join(" ");
+const ChakraImg = chakra("img");
+
+export function Logo({ size = 36 }: LogoProps) {
   return (
-    <img
+    <ChakraImg
       src={logoUrl}
-      width={size}
-      height={size}
+      width={`${size}px`}
+      height={`${size}px`}
       alt="instancez"
-      className={classes || undefined}
+      _dark={{ filter: "invert(1)" }}
     />
   );
 }

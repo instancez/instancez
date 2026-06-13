@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { renderWithChakra } from "../test/helpers";
 import { FunctionDetail } from "./FunctionDetail";
 import { DialogProvider } from "../components/Dialog";
 import { ConfigContext } from "../hooks/useConfig";
@@ -66,7 +67,7 @@ function renderFunctionDetail(config: Config, fnName: string) {
     save: vi.fn().mockResolvedValue(true),
     updateConfig: vi.fn(),
   };
-  render(
+  renderWithChakra(
     <ConfigContext.Provider value={ctx}>
       <MemoryRouter initialEntries={[`/functions/${fnName}`]}>
         <DialogProvider>

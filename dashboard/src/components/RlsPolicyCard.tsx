@@ -65,20 +65,20 @@ export function RlsPolicyCard({
             <Field label="Operations">
               <HStack gap="2">
                 {RLS_OPERATIONS.map((op) => (
-                  <Checkbox
-                    key={op}
-                    className="text-xs"
-                    label={op}
-                    checked={(policy.operations || []).includes(op)}
-                    onChange={(c) =>
-                      onChange({
-                        ...policy,
-                        operations: c
-                          ? [...(policy.operations || []), op]
-                          : (policy.operations || []).filter((o) => o !== op),
-                      })
-                    }
-                  />
+                  <Box key={op} fontSize="xs">
+                    <Checkbox
+                      label={op}
+                      checked={(policy.operations || []).includes(op)}
+                      onChange={(c) =>
+                        onChange({
+                          ...policy,
+                          operations: c
+                            ? [...(policy.operations || []), op]
+                            : (policy.operations || []).filter((o) => o !== op),
+                        })
+                      }
+                    />
+                  </Box>
                 ))}
               </HStack>
             </Field>

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import { renderWithChakra } from "../test/helpers";
 import { Tables } from "./Tables";
 import { DialogProvider } from "../components/Dialog";
 import { ConfigContext } from "../hooks/useConfig";
@@ -41,7 +42,7 @@ function renderTables(config: Config) {
     save: vi.fn().mockResolvedValue(true),
     updateConfig: vi.fn(),
   };
-  return render(
+  return renderWithChakra(
     <ConfigContext.Provider value={ctx}>
       <MemoryRouter>
         <DialogProvider>

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { renderWithChakra } from "../test/helpers";
 import { RpcDetail } from "./RpcDetail";
 import { DialogProvider } from "../components/Dialog";
 import { ConfigContext } from "../hooks/useConfig";
@@ -62,7 +63,7 @@ function renderRpcDetail(config: Config, fnName: string, save = vi.fn().mockReso
     save,
     updateConfig: vi.fn(),
   };
-  return render(
+  return renderWithChakra(
     <ConfigContext.Provider value={ctx}>
       <MemoryRouter initialEntries={[`/rpc/${fnName}`]}>
         <DialogProvider>

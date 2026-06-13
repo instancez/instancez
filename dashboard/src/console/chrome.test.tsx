@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter, useRoutes } from "react-router-dom";
+import { renderWithChakra } from "../test/helpers";
 import { ConsoleProvider } from "./ConsoleProvider";
 import { adminBackend } from "./adminBackend";
 import { tablesRoutes } from "./routes";
@@ -32,7 +33,7 @@ function Mounted() {
 
 describe("chrome-free pages", () => {
   it("a mounted fragment renders content without page chrome", async () => {
-    const { container } = render(
+    const { container } = renderWithChakra(
       <MemoryRouter initialEntries={["/"]}>
         <ConsoleProvider backend={adminBackend}>
           <Mounted />

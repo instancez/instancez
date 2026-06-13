@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useRoutes } from "react-router-dom";
+import { renderWithChakra } from "../test/helpers";
 import { consoleRoutes } from "./routes";
 import { ConsoleProvider } from "./ConsoleProvider";
 import { adminBackend } from "./adminBackend";
@@ -33,7 +34,7 @@ function Console() {
 
 describe("consoleRoutes", () => {
   it("mounts the providers page standalone with an injected backend", async () => {
-    render(
+    renderWithChakra(
       <MemoryRouter initialEntries={["/providers"]}>
         <ConsoleProvider backend={adminBackend}>
           <Console />

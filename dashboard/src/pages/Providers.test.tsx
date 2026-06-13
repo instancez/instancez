@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import { renderWithChakra } from "../test/helpers";
 import { ProvidersPage } from "./Providers";
 import { ConfigContext } from "../hooks/useConfig";
 import type { Config, ValidationError } from "../lib/types";
@@ -50,7 +51,7 @@ function renderProvidersWithCtx(config: Config, dotenvWritable = false) {
     save: vi.fn().mockResolvedValue(true),
     updateConfig: vi.fn(),
   };
-  render(
+  renderWithChakra(
     <ConfigContext.Provider value={ctx}>
       <MemoryRouter>
         <ProvidersPage />

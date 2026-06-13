@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
+import { renderWithChakra } from "../test/helpers";
 import { AuthPage } from "./Auth";
 import { DialogProvider } from "../components/Dialog";
 import { ConfigContext } from "../hooks/useConfig";
@@ -62,7 +63,7 @@ function renderAuth(config: Config, dotenvWritable = false) {
     save,
     updateConfig: vi.fn(),
   };
-  const result = render(
+  const result = renderWithChakra(
     <ConfigContext.Provider value={ctx}>
       <MemoryRouter>
         <DialogProvider>
@@ -224,9 +225,9 @@ describe("AuthPage", () => {
     expect(screen.queryByRole("button", { name: /save changes/i })).not.toBeInTheDocument();
   });
 
-  it("enabling a provider stages the secret as ${VAR} and settings as literals", () => {
+  it("enabling a provider stages the secret as ${VAR} and settings as literals", async () => {
     renderAuth(makeConfig(true));
-    fireEvent.click(screen.getByLabelText("Enable google"));
+    await userEvent.click(screen.getByRole("switch", { name: /enable google/i }));
     expect(screen.getByText("INSTANCEZ_GOOGLE_CLIENT_SECRET")).toBeInTheDocument();
     expect(screen.getByLabelText("Client ID")).toHaveValue("");
     expect(screen.getByLabelText("Redirect URL")).toHaveValue("");

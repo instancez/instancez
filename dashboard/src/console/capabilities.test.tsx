@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import { renderWithChakra } from "../test/helpers";
 import { BackendProvider } from "./BackendContext";
 import { adminBackend } from "./adminBackend";
 import { ProvidersPage } from "../pages/Providers";
@@ -38,7 +39,7 @@ function renderWithCaps(canWriteSecrets: boolean) {
     saveErrors: [] as ValidationError[], dotenvWritable: true,
     refresh: vi.fn(), save: vi.fn().mockResolvedValue(true), updateConfig: vi.fn(),
   };
-  render(
+  renderWithChakra(
     <BackendProvider backend={backend}>
       <ConfigContext.Provider value={ctx}>
         <MemoryRouter>
