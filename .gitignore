@@ -46,3 +46,4 @@ prompts/
 
 # Claude Code local memory store
 memory/
+.superpowers/
