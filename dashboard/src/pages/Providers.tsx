@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { Box, Grid, Text, VStack } from "@chakra-ui/react";
 import { useConfig } from "../hooks/useConfig";
 import { SaveBar } from "../components/SaveBar";
 import { CheckCard, Panel, Section, Input, Field } from "../components/ui";
@@ -151,55 +152,57 @@ function ProviderConfigPanel({
   const literal = schema.settings.filter((f) => !envRefName(provider[f.key]));
 
   return (
-    <Panel className="px-4 py-3 space-y-3">
-      {/* one untitled list — credentials always first, then settings */}
-      {schema.credentials.length > 0 && (
-        <div className="divide-y divide-border">
-          {schema.credentials.map((field) => (
-            <VarRow
-              key={field.key}
-              label={field.label}
-              name={field.envVar}
-              isSet={envVarStatus[field.envVar]?.set ?? false}
-              canWrite={canWriteSecrets}
-              inputValue={pendingDotenv[field.envVar] ?? ""}
-              onInputChange={(v) => onPendingVar(field.envVar, v)}
-            />
-          ))}
-        </div>
-      )}
-      {literal.map((field) => {
-        const id = `${idPrefix}-${field.key}`;
-        return (
-          <Field key={field.key} label={field.label} htmlFor={id}>
-            <Input
-              id={id}
-              type={field.inputType ?? "text"}
-              placeholder={field.placeholder}
-              value={(provider[field.key] as string) ?? ""}
-              onChange={(e) => onSettingChange(field.key, e.target.value)}
-            />
-          </Field>
-        );
-      })}
-      {envManaged.length > 0 && (
-        <div className="divide-y divide-border">
-          {envManaged.map((field) => {
-            const name = envRefName(provider[field.key])!;
-            return (
+    <Panel px="4" py="3">
+      <VStack gap="3" align="stretch">
+        {/* one untitled list — credentials always first, then settings */}
+        {schema.credentials.length > 0 && (
+          <Box borderTopWidth="1px" borderColor="border">
+            {schema.credentials.map((field) => (
               <VarRow
                 key={field.key}
                 label={field.label}
-                name={name}
-                isSet={envVarStatus[name]?.set ?? false}
+                name={field.envVar}
+                isSet={envVarStatus[field.envVar]?.set ?? false}
                 canWrite={canWriteSecrets}
-                inputValue={pendingDotenv[name] ?? ""}
-                onInputChange={(v) => onPendingVar(name, v)}
+                inputValue={pendingDotenv[field.envVar] ?? ""}
+                onInputChange={(v) => onPendingVar(field.envVar, v)}
               />
-            );
-          })}
-        </div>
-      )}
+            ))}
+          </Box>
+        )}
+        {literal.map((field) => {
+          const id = `${idPrefix}-${field.key}`;
+          return (
+            <Field key={field.key} label={field.label} htmlFor={id}>
+              <Input
+                id={id}
+                type={field.inputType ?? "text"}
+                placeholder={field.placeholder}
+                value={(provider[field.key] as string) ?? ""}
+                onChange={(e) => onSettingChange(field.key, e.target.value)}
+              />
+            </Field>
+          );
+        })}
+        {envManaged.length > 0 && (
+          <Box borderTopWidth="1px" borderColor="border">
+            {envManaged.map((field) => {
+              const name = envRefName(provider[field.key])!;
+              return (
+                <VarRow
+                  key={field.key}
+                  label={field.label}
+                  name={name}
+                  isSet={envVarStatus[name]?.set ?? false}
+                  canWrite={canWriteSecrets}
+                  inputValue={pendingDotenv[name] ?? ""}
+                  onInputChange={(v) => onPendingVar(name, v)}
+                />
+              );
+            })}
+          </Box>
+        )}
+      </VStack>
     </Panel>
   );
 }
@@ -341,13 +344,13 @@ export function ProvidersPage() {
       : baseStorageSchema;
 
   return (
-    <div className="pb-20">
-      <div className="pb-8 space-y-6 max-w-3xl">
+    <Box pb="20">
+      <VStack pb="8" gap="6" maxW="3xl" align="stretch">
         <Section
           title="Email Provider"
           icon={Mail}
         >
-          <div className="grid grid-cols-2 gap-3">
+          <Grid gridTemplateColumns="repeat(2, 1fr)" gap="3">
             {EMAIL_PROVIDERS.map((p) => (
               <CheckCard
                 key={p.value}
@@ -359,7 +362,7 @@ export function ProvidersPage() {
                 description={p.description}
               />
             ))}
-          </div>
+          </Grid>
 
           {selectedEmail && emailSchema && local.providers.email ? (
             <ProviderConfigPanel
@@ -373,10 +376,10 @@ export function ProvidersPage() {
               onSettingChange={updateEmailSetting}
             />
           ) : (
-            <p className="text-xs text-muted-foreground/60 italic">
+            <Text fontSize="xs" color="fg.muted" opacity="0.6" fontStyle="italic">
               No email provider configured. Email-dependent features (verification, notifications)
               will be disabled.
-            </p>
+            </Text>
           )}
         </Section>
 
@@ -384,7 +387,7 @@ export function ProvidersPage() {
           title="Storage Provider"
           icon={HardDrive}
         >
-          <div className="grid grid-cols-2 gap-3">
+          <Grid gridTemplateColumns="repeat(2, 1fr)" gap="3">
             {STORAGE_PROVIDERS.map((p) => (
               <CheckCard
                 key={p.value}
@@ -396,21 +399,21 @@ export function ProvidersPage() {
                 description={p.description}
               />
             ))}
-          </div>
+          </Grid>
 
           {selectedStorage && storageSchema && local.providers.storage ? (
             <>
               {selectedStorage === "s3" && (
-                <div>
+                <Box>
                   <Toggle
                     checked={s3ExplicitCreds}
                     onChange={toggleS3ExplicitCreds}
                     label="Provide explicit AWS credentials"
                   />
-                  <p className="text-xs text-muted-foreground mt-1">
+                  <Text fontSize="xs" color="fg.muted" mt="1">
                     When disabled, the AWS SDK uses instance profiles or environment defaults.
-                  </p>
-                </div>
+                  </Text>
+                </Box>
               )}
               <ProviderConfigPanel
                 idPrefix="storage"
@@ -424,14 +427,14 @@ export function ProvidersPage() {
               />
             </>
           ) : (
-            <p className="text-xs text-muted-foreground/60 italic">
+            <Text fontSize="xs" color="fg.muted" opacity="0.6" fontStyle="italic">
               No storage provider configured. File upload features will be disabled.
-            </p>
+            </Text>
           )}
         </Section>
-      </div>
+      </VStack>
 
       <SaveBar onSave={handleSave} saving={saving} errors={saveErrors} dirty={dirty} />
-    </div>
+    </Box>
   );
 }
