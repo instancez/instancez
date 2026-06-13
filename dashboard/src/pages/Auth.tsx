@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Shield, KeySquare, MailCheck, Mails, Plug2 } from "lucide-react";
+import { Box, Grid, HStack, Text, VStack } from "@chakra-ui/react";
 import { useConfig } from "../hooks/useConfig";
 import { SaveBar } from "../components/SaveBar";
 import { CodeEditor } from "../components/CodeEditor";
@@ -229,8 +230,8 @@ export function AuthPage() {
     Object.values(pendingDotenv).some((v) => v !== "");
 
   return (
-    <div className="pb-20">
-      <div className="pb-8 space-y-6 max-w-3xl">
+    <Box pb="20">
+      <VStack pb="8" gap="6" maxW="3xl" align="stretch">
         {/* Enable/Disable Toggle */}
         <Section
           title="Enable Authentication"
@@ -256,7 +257,7 @@ export function AuthPage() {
               title="JWT Settings"
               icon={KeySquare}
             >
-              <div className="grid grid-cols-2 gap-4">
+              <Grid gridTemplateColumns="repeat(2, 1fr)" gap="4">
                 <Field label="JWT Expiry">
                   <Input
                     mono
@@ -273,7 +274,7 @@ export function AuthPage() {
                     placeholder="7d"
                   />
                 </Field>
-              </div>
+              </Grid>
               <Toggle
                 checked={auth.refresh_tokens}
                 onChange={(v) => updateAuth((a) => ({ ...a, refresh_tokens: v }))}
@@ -302,7 +303,7 @@ export function AuthPage() {
             </Section>
 
             <Section title="Email Templates" icon={Mails}>
-              <div className="space-y-4">
+              <VStack gap="4" align="stretch">
                 {EMAIL_TEMPLATES.map((kind) => {
                   const template = auth.email?.templates?.[kind.key] || {
                     subject: "",
@@ -321,32 +322,41 @@ export function AuthPage() {
                       },
                     }));
                   return (
-                    <Panel key={kind.key} className="p-4 space-y-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-sm font-medium text-foreground">{kind.label}</span>
-                        <code className="text-[11px] font-mono text-muted-foreground/70 truncate">
-                          {kind.vars}
-                        </code>
-                      </div>
-                      <Field label="Subject" htmlFor={`tmpl-${kind.key}-subject`}>
-                        <Input
-                          id={`tmpl-${kind.key}-subject`}
-                          value={template.subject}
-                          onChange={(e) => setTemplate({ subject: e.target.value })}
-                          placeholder={kind.defaultSubject}
+                    <Panel key={kind.key} p="4">
+                      <VStack gap="3" align="stretch">
+                        <HStack justify="space-between" gap="3">
+                          <Text fontSize="sm" fontWeight="medium" color="fg">{kind.label}</Text>
+                          <Text
+                            as="code"
+                            fontSize="11px"
+                            fontFamily="mono"
+                            color="fg.muted"
+                            opacity="0.7"
+                            truncate
+                          >
+                            {kind.vars}
+                          </Text>
+                        </HStack>
+                        <Field label="Subject" htmlFor={`tmpl-${kind.key}-subject`}>
+                          <Input
+                            id={`tmpl-${kind.key}-subject`}
+                            value={template.subject}
+                            onChange={(e) => setTemplate({ subject: e.target.value })}
+                            placeholder={kind.defaultSubject}
+                          />
+                        </Field>
+                        <CodeEditor
+                          value={template.body}
+                          onChange={(val) => setTemplate({ body: val })}
+                          language="text"
+                          placeholder={kind.defaultBody}
+                          minHeight="80px"
                         />
-                      </Field>
-                      <CodeEditor
-                        value={template.body}
-                        onChange={(val) => setTemplate({ body: val })}
-                        language="text"
-                        placeholder={kind.defaultBody}
-                        minHeight="80px"
-                      />
+                      </VStack>
                     </Panel>
                   );
                 })}
-              </div>
+              </VStack>
             </Section>
 
             <Section
@@ -359,86 +369,88 @@ export function AuthPage() {
                 const secretVar = OAUTH_SECRET_VARS[provider];
 
                 return (
-                  <Panel key={provider} className="p-4 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <span className="flex items-center gap-2 text-sm font-medium text-foreground capitalize">
-                        {provider === "google" ? <GoogleIcon size={18} /> : <GitHubIcon size={18} />}
-                        {provider}
-                      </span>
-                      <Toggle
-                        aria-label={`Enable ${provider}`}
-                        checked={isEnabled}
-                        onChange={() => toggleOAuth(provider, isEnabled)}
-                      />
-                    </div>
+                  <Panel key={provider} p="4">
+                    <VStack gap="4" align="stretch">
+                      <HStack justify="space-between">
+                        <HStack gap="2" fontSize="sm" fontWeight="medium" color="fg">
+                          {provider === "google" ? <GoogleIcon size={18} /> : <GitHubIcon size={18} />}
+                          <Text textTransform="capitalize">{provider}</Text>
+                        </HStack>
+                        <Toggle
+                          aria-label={`Enable ${provider}`}
+                          checked={isEnabled}
+                          onChange={() => toggleOAuth(provider, isEnabled)}
+                        />
+                      </HStack>
 
-                    {isEnabled && providerConfig && (
-                      <div className="space-y-3">
-                        {/* one untitled list — the credential always first, then settings */}
-                        <div className="divide-y divide-border">
-                          <VarRow
-                            label="Client secret"
-                            name={envRefName(providerConfig.client_secret) ?? secretVar}
-                            isSet={
-                              envVarStatus[envRefName(providerConfig.client_secret) ?? secretVar]
-                                ?.set ?? false
+                      {isEnabled && providerConfig && (
+                        <VStack gap="3" align="stretch">
+                          {/* one untitled list — the credential always first, then settings */}
+                          <Box borderTopWidth="1px" borderColor="border">
+                            <VarRow
+                              label="Client secret"
+                              name={envRefName(providerConfig.client_secret) ?? secretVar}
+                              isSet={
+                                envVarStatus[envRefName(providerConfig.client_secret) ?? secretVar]
+                                  ?.set ?? false
+                              }
+                              canWrite={canWriteSecrets}
+                              inputValue={
+                                pendingDotenv[
+                                  envRefName(providerConfig.client_secret) ?? secretVar
+                                ] ?? ""
+                              }
+                              onInputChange={(v) =>
+                                setPendingVar(
+                                  envRefName(providerConfig.client_secret) ?? secretVar,
+                                  v
+                                )
+                              }
+                            />
+                          </Box>
+                          {OAUTH_SETTINGS.map((field) => {
+                            const value = providerConfig[field.key] ?? "";
+                            const refName = envRefName(value);
+                            if (refName) {
+                              return (
+                                <Box key={field.key} borderTopWidth="1px" borderColor="border">
+                                  <VarRow
+                                    label={field.label}
+                                    name={refName}
+                                    isSet={envVarStatus[refName]?.set ?? false}
+                                    canWrite={canWriteSecrets}
+                                    inputValue={pendingDotenv[refName] ?? ""}
+                                    onInputChange={(v) => setPendingVar(refName, v)}
+                                  />
+                                </Box>
+                              );
                             }
-                            canWrite={canWriteSecrets}
-                            inputValue={
-                              pendingDotenv[
-                                envRefName(providerConfig.client_secret) ?? secretVar
-                              ] ?? ""
-                            }
-                            onInputChange={(v) =>
-                              setPendingVar(
-                                envRefName(providerConfig.client_secret) ?? secretVar,
-                                v
-                              )
-                            }
-                          />
-                        </div>
-                        {OAUTH_SETTINGS.map((field) => {
-                          const value = providerConfig[field.key] ?? "";
-                          const refName = envRefName(value);
-                          if (refName) {
+                            const id = `${provider}-${field.key}`;
                             return (
-                              <div key={field.key} className="divide-y divide-border">
-                                <VarRow
-                                  label={field.label}
-                                  name={refName}
-                                  isSet={envVarStatus[refName]?.set ?? false}
-                                  canWrite={canWriteSecrets}
-                                  inputValue={pendingDotenv[refName] ?? ""}
-                                  onInputChange={(v) => setPendingVar(refName, v)}
+                              <Field key={field.key} label={field.label} htmlFor={id}>
+                                <Input
+                                  id={id}
+                                  placeholder={"placeholder" in field ? field.placeholder : undefined}
+                                  value={value}
+                                  onChange={(e) =>
+                                    updateOAuthSetting(provider, field.key, e.target.value)
+                                  }
                                 />
-                              </div>
+                              </Field>
                             );
-                          }
-                          const id = `${provider}-${field.key}`;
-                          return (
-                            <Field key={field.key} label={field.label} htmlFor={id}>
-                              <Input
-                                id={id}
-                                placeholder={"placeholder" in field ? field.placeholder : undefined}
-                                value={value}
-                                onChange={(e) =>
-                                  updateOAuthSetting(provider, field.key, e.target.value)
-                                }
-                              />
-                            </Field>
-                          );
-                        })}
-                      </div>
-                    )}
+                          })}
+                        </VStack>
+                      )}
+                    </VStack>
                   </Panel>
                 );
               })}
             </Section>
           </>
         ) : null}
-      </div>
+      </VStack>
 
       <SaveBar onSave={handleSave} saving={saving} errors={saveErrors} dirty={dirty} />
-    </div>
+    </Box>
   );
 }
