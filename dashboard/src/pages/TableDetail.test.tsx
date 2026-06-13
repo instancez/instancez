@@ -1,9 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { TableDetail } from "./TableDetail";
 import { DialogProvider } from "../components/Dialog";
 import { ConfigContext } from "../hooks/useConfig";
+import { renderWithChakra } from "../test/helpers";
 import type { Config, ValidationError } from "../lib/types";
 
 const baseConfig: Config = {
@@ -50,7 +51,7 @@ function renderTableDetail(config: Config, tableName: string) {
     save: vi.fn().mockResolvedValue(true),
     updateConfig: vi.fn(),
   };
-  return render(
+  return renderWithChakra(
     <ConfigContext.Provider value={ctx}>
       <MemoryRouter initialEntries={[`/tables/${tableName}`]}>
         <DialogProvider>
@@ -66,8 +67,8 @@ function renderTableDetail(config: Config, tableName: string) {
 describe("TableDetail", () => {
   it("renders column names for a table with fields", () => {
     renderTableDetail(baseConfig, "todos");
-    expect(screen.getByText("id")).toBeInTheDocument();
-    expect(screen.getByText("title")).toBeInTheDocument();
+    expect(screen.getAllByText("id").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("title").length).toBeGreaterThan(0);
   });
 
   it("shows not-found message when table does not exist", () => {

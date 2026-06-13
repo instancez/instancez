@@ -1,13 +1,12 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useState, useEffect, useCallback } from "react";
-import * as Tabs from "@radix-ui/react-tabs";
+import { Tabs, Box, HStack, Text, VStack } from "@chakra-ui/react";
 import { Plus, Trash2, GripVertical } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
 import { jsonEqual } from "../lib/jsonEqual";
 import { useDialog } from "../components/Dialog";
 import { DetailToolbar } from "../components/DetailToolbar";
 import { SaveBar } from "../components/SaveBar";
-import { CodeEditor } from "../components/CodeEditor";
 import { TagInput } from "../components/TagInput";
 import { Toggle } from "../components/Toggle";
 import { DiffViewer } from "../components/DiffViewer";
@@ -96,9 +95,9 @@ export function TableDetail() {
 
   if (!config || !table || !name) {
     return (
-      <div className="p-8">
-        <p className="text-sm text-muted-foreground">Table not found.</p>
-      </div>
+      <Box p="8">
+        <Text fontSize="sm" color="fg.muted">Table not found.</Text>
+      </Box>
     );
   }
 
@@ -121,16 +120,24 @@ export function TableDetail() {
   fkOptions.push("users.id");
 
   return (
-    <div className="pb-20">
+    <Box pb="20">
       <DetailToolbar backLabel="Tables" onDelete={deleteTable} />
-      <div className="pb-8">
-        <Tabs.Root defaultValue="fields">
-          <Tabs.List className="flex gap-1 border-b border-border mb-6">
+      <Box pb="8">
+        <Tabs.Root defaultValue="fields" lazyMount unmountOnExit>
+          <Tabs.List borderBottomWidth="1px" mb="6" gap="1">
             {["Fields", "Indexes", "RLS", "Seeds"].map((tab) => (
               <Tabs.Trigger
                 key={tab}
                 value={tab.toLowerCase()}
-                className="px-4 py-2 text-sm font-medium text-muted-foreground data-[state=active]:text-accent data-[state=active]:border-b-2 data-[state=active]:border-accent -mb-px transition-colors cursor-pointer hover:text-foreground"
+                fontSize="sm"
+                fontWeight="medium"
+                color="fg.muted"
+                px="4"
+                py="2"
+                cursor="pointer"
+                _selected={{ color: "accent", borderBottomWidth: "2px", borderColor: "accent" } as any}
+                _hover={{ color: "fg" }}
+                mb="-1px"
               >
                 {tab}
               </Tabs.Trigger>
@@ -139,22 +146,22 @@ export function TableDetail() {
 
           {/* Fields Tab */}
           <Tabs.Content value="fields">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border">
-                    <th className="w-8" />
-                    <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Name</th>
-                    <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Type</th>
-                    <th className="text-center px-2 py-2 text-xs font-medium text-muted-foreground">PK</th>
-                    <th className="text-center px-2 py-2 text-xs font-medium text-muted-foreground">Required</th>
-                    <th className="text-center px-2 py-2 text-xs font-medium text-muted-foreground">Unique</th>
-                    <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Default</th>
-                    <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">FK</th>
-                    <th className="w-10" />
-                  </tr>
-                </thead>
-                <tbody>
+            <Box overflowX="auto">
+              <Box as="table" w="full" fontSize="sm">
+                <Box as="thead">
+                  <Box as="tr" borderBottomWidth="1px">
+                    <Box as="th" w="8" />
+                    <Box as="th" textAlign="left" px="3" py="2" fontSize="xs" fontWeight="medium" color="fg.muted">Name</Box>
+                    <Box as="th" textAlign="left" px="3" py="2" fontSize="xs" fontWeight="medium" color="fg.muted">Type</Box>
+                    <Box as="th" textAlign="center" px="2" py="2" fontSize="xs" fontWeight="medium" color="fg.muted">PK</Box>
+                    <Box as="th" textAlign="center" px="2" py="2" fontSize="xs" fontWeight="medium" color="fg.muted">Required</Box>
+                    <Box as="th" textAlign="center" px="2" py="2" fontSize="xs" fontWeight="medium" color="fg.muted">Unique</Box>
+                    <Box as="th" textAlign="left" px="3" py="2" fontSize="xs" fontWeight="medium" color="fg.muted">Default</Box>
+                    <Box as="th" textAlign="left" px="3" py="2" fontSize="xs" fontWeight="medium" color="fg.muted">FK</Box>
+                    <Box as="th" w="10" />
+                  </Box>
+                </Box>
+                <Box as="tbody">
                   {fieldEntries.map((field, fieldIdx) => (
                     <FieldRow
                       key={field.name}
@@ -182,13 +189,13 @@ export function TableDetail() {
                       }}
                     />
                   ))}
-                </tbody>
-              </table>
-            </div>
+                </Box>
+              </Box>
+            </Box>
             <Button
               variant="dashed"
               size="sm"
-              className="mt-3"
+              mt="3"
               onClick={() => {
                 const fieldName = `new_field_${fieldEntries.length + 1}`;
                 updateTable((t) => ({
@@ -204,52 +211,54 @@ export function TableDetail() {
 
           {/* Indexes Tab */}
           <Tabs.Content value="indexes">
-            <div className="space-y-3">
+            <VStack gap="3" align="stretch">
               {(table.indexes || []).map((idx, i) => (
-                <Panel key={i} className="flex items-start gap-3 p-4">
-                  <div className="flex-1 space-y-3">
-                    <UiField label="Columns">
-                      <TagInput
-                        value={idx.columns}
-                        onChange={(cols) =>
-                          updateTable((t) => {
-                            const indexes = [...(t.indexes || [])];
-                            indexes[i] = { ...indexes[i]!, columns: cols };
-                            return { ...t, indexes };
-                          })
-                        }
-                        suggestions={allTableColumns}
-                        placeholder="Select columns..."
-                      />
-                    </UiField>
-                    <div className="flex gap-4">
-                      <Toggle
-                        checked={idx.unique}
-                        onChange={(v) =>
-                          updateTable((t) => {
-                            const indexes = [...(t.indexes || [])];
-                            indexes[i] = { ...indexes[i]!, unique: v };
-                            return { ...t, indexes };
-                          })
-                        }
-                        label="Unique"
-                      />
-                      <div className="flex-1">
-                        <Input
-                          mono
-                          value={idx.where || ""}
-                          onChange={(e) =>
+                <Panel key={i} display="flex" alignItems="flex-start" gap="3" p="4">
+                  <Box flex="1">
+                    <VStack gap="3" align="stretch">
+                      <UiField label="Columns">
+                        <TagInput
+                          value={idx.columns}
+                          onChange={(cols) =>
                             updateTable((t) => {
                               const indexes = [...(t.indexes || [])];
-                              indexes[i] = { ...indexes[i]!, where: e.target.value };
+                              indexes[i] = { ...indexes[i]!, columns: cols };
                               return { ...t, indexes };
                             })
                           }
-                          placeholder="WHERE clause (optional)"
+                          suggestions={allTableColumns}
+                          placeholder="Select columns..."
                         />
-                      </div>
-                    </div>
-                  </div>
+                      </UiField>
+                      <HStack gap="4">
+                        <Toggle
+                          checked={idx.unique}
+                          onChange={(v) =>
+                            updateTable((t) => {
+                              const indexes = [...(t.indexes || [])];
+                              indexes[i] = { ...indexes[i]!, unique: v };
+                              return { ...t, indexes };
+                            })
+                          }
+                          label="Unique"
+                        />
+                        <Box flex="1">
+                          <Input
+                            mono
+                            value={idx.where || ""}
+                            onChange={(e) =>
+                              updateTable((t) => {
+                                const indexes = [...(t.indexes || [])];
+                                indexes[i] = { ...indexes[i]!, where: e.target.value };
+                                return { ...t, indexes };
+                              })
+                            }
+                            placeholder="WHERE clause (optional)"
+                          />
+                        </Box>
+                      </HStack>
+                    </VStack>
+                  </Box>
                   <Button
                     variant="danger-ghost"
                     size="icon"
@@ -281,12 +290,12 @@ export function TableDetail() {
                 <Plus size={14} />
                 Add Index
               </Button>
-            </div>
+            </VStack>
           </Tabs.Content>
 
           {/* RLS Tab */}
           <Tabs.Content value="rls">
-            <div className="space-y-3">
+            <VStack gap="3" align="stretch">
               {(table.rls || []).map((policy, i) => (
                 <RlsPolicyCard
                   key={i}
@@ -323,15 +332,15 @@ export function TableDetail() {
                 <Plus size={14} />
                 Add RLS Policy
               </Button>
-            </div>
+            </VStack>
           </Tabs.Content>
 
           {/* Seeds Tab */}
           <Tabs.Content value="seeds">
             {isCSVData ? (
-              <p className="text-sm text-muted-foreground">
+              <Text fontSize="sm" color="fg.muted">
                 Seed data for this table uses CSV files and cannot be edited here.
-              </p>
+              </Text>
             ) : (
               <SeedsTab
                 tableFields={fieldEntries}
@@ -344,12 +353,12 @@ export function TableDetail() {
         </Tabs.Root>
 
         {/* Preview Pane */}
-        <div className="mt-8">
+        <Box mt="8">
           <Disclosure label="Migration Preview">
             <MigrationPreview diff={diff} onOpen={loadDiff} />
           </Disclosure>
-        </div>
-      </div>
+        </Box>
+      </Box>
 
       <SaveBar
         onSave={handleSave}
@@ -357,7 +366,7 @@ export function TableDetail() {
         errors={saveErrors}
         dirty={dirty}
       />
-    </div>
+    </Box>
   );
 }
 
@@ -393,39 +402,47 @@ function SeedsTab({
   const dialog = useDialog();
 
   return (
-    <div>
+    <Box>
       {tableFields.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Add fields to the table first.</p>
+        <Text fontSize="sm" color="fg.muted">Add fields to the table first.</Text>
       ) : (
         <>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="w-10 px-2 py-2 text-xs font-medium text-muted-foreground">#</th>
+          <Box overflowX="auto">
+            <Box as="table" w="full" fontSize="sm">
+              <Box as="thead">
+                <Box as="tr" borderBottomWidth="1px">
+                  <Box as="th" w="10" px="2" py="2" fontSize="xs" fontWeight="medium" color="fg.muted">#</Box>
                   {tableFields.map((field) => (
-                    <th
+                    <Box
+                      as="th"
                       key={field.name}
-                      className="text-left px-3 py-2 text-xs font-medium text-muted-foreground"
+                      textAlign="left"
+                      px="3"
+                      py="2"
+                      fontSize="xs"
+                      fontWeight="medium"
+                      color="fg.muted"
                     >
-                      <span className="font-mono">{field.name}</span>
-                      <span className="ml-1 text-muted-foreground/50">{field.type || (field.foreign_key ? "bigint" : "text")}</span>
-                    </th>
+                      <Box as="span" fontFamily="mono">{field.name}</Box>
+                      <Box as="span" ml="1" color="fg.muted" opacity="0.5">{field.type || (field.foreign_key ? "bigint" : "text")}</Box>
+                    </Box>
                   ))}
-                  <th className="w-10" />
-                </tr>
-              </thead>
-              <tbody>
+                  <Box as="th" w="10" />
+                </Box>
+              </Box>
+              <Box as="tbody">
                 {seeds.map((row, rowIdx) => (
-                  <tr
+                  <Box
+                    as="tr"
                     key={rowIdx}
-                    className="border-b border-border/50 hover:bg-surface-hover/30"
+                    borderBottomWidth="1px"
+                    _hover={{ bg: "bg.subtle" }}
                   >
-                    <td className="px-2 py-1.5 text-xs text-muted-foreground tabular-nums">
+                    <Box as="td" px="2" py="1.5" fontSize="xs" color="fg.muted" fontVariantNumeric="tabular-nums">
                       {rowIdx + 1}
-                    </td>
+                    </Box>
                     {tableFields.map((field) => (
-                      <td key={field.name} className="px-3 py-1.5">
+                      <Box as="td" key={field.name} px="3" py="1.5">
                         {field.type === "boolean" ? (
                           <Toggle
                             aria-label={field.name}
@@ -470,9 +487,9 @@ function SeedsTab({
                             placeholder="—"
                           />
                         )}
-                      </td>
+                      </Box>
                     ))}
-                    <td className="px-1 py-1.5">
+                    <Box as="td" px="1" py="1.5">
                       <Button
                         variant="danger-ghost"
                         size="icon"
@@ -484,17 +501,17 @@ function SeedsTab({
                       >
                         <Trash2 size={12} />
                       </Button>
-                    </td>
-                  </tr>
+                    </Box>
+                  </Box>
                 ))}
-              </tbody>
-            </table>
-          </div>
+              </Box>
+            </Box>
+          </Box>
 
           <Button
             variant="dashed"
             size="sm"
-            className="mt-3"
+            mt="3"
             onClick={() => {
               const newRow: Record<string, unknown> = {};
               tableFields.forEach((field) => {
@@ -508,7 +525,7 @@ function SeedsTab({
           </Button>
         </>
       )}
-    </div>
+    </Box>
   );
 }
 
@@ -532,11 +549,11 @@ function FieldRow({
   const [localName, setLocalName] = useState(name);
 
   return (
-    <tr className="border-b border-border/50 hover:bg-surface-hover/30">
-      <td className="px-1 py-2 text-muted-foreground">
-        <GripVertical size={12} className="cursor-grab" />
-      </td>
-      <td className="px-3 py-2">
+    <Box as="tr" borderBottomWidth="1px" _hover={{ bg: "bg.subtle" }}>
+      <Box as="td" px="1" py="2" color="fg.muted">
+        <GripVertical size={12} style={{ cursor: "grab" }} />
+      </Box>
+      <Box as="td" px="3" py="2">
         {editingName ? (
           <Input
             mono
@@ -556,15 +573,24 @@ function FieldRow({
             }}
           />
         ) : (
-          <button
+          <Box
+            as="button"
             onClick={() => setEditingName(true)}
-            className="text-sm font-mono text-foreground hover:text-accent transition-colors cursor-pointer"
+            fontSize="sm"
+            fontFamily="mono"
+            color="fg"
+            _hover={{ color: "accent" }}
+            transition="colors"
+            cursor="pointer"
+            background="none"
+            border="none"
+            p="0"
           >
             {name}
-          </button>
+          </Box>
         )}
-      </td>
-      <td className="px-3 py-2">
+      </Box>
+      <Box as="td" px="3" py="2">
         <Select
           mono
           inputSize="sm"
@@ -577,35 +603,35 @@ function FieldRow({
             </option>
           ))}
         </Select>
-      </td>
-      <td className="px-2 py-2">
-        <div className="flex justify-center">
+      </Box>
+      <Box as="td" px="2" py="2">
+        <HStack justify="center">
           <Toggle
             aria-label="primary key"
             checked={field.primary_key || false}
             onChange={(v) => onChange({ ...field, primary_key: v })}
           />
-        </div>
-      </td>
-      <td className="px-2 py-2">
-        <div className="flex justify-center">
+        </HStack>
+      </Box>
+      <Box as="td" px="2" py="2">
+        <HStack justify="center">
           <Toggle
             aria-label="required"
             checked={field.required || false}
             onChange={(v) => onChange({ ...field, required: v })}
           />
-        </div>
-      </td>
-      <td className="px-2 py-2">
-        <div className="flex justify-center">
+        </HStack>
+      </Box>
+      <Box as="td" px="2" py="2">
+        <HStack justify="center">
           <Toggle
             aria-label="unique"
             checked={field.unique || false}
             onChange={(v) => onChange({ ...field, unique: v })}
           />
-        </div>
-      </td>
-      <td className="px-3 py-2">
+        </HStack>
+      </Box>
+      <Box as="td" px="3" py="2">
         <Input
           mono
           inputSize="sm"
@@ -621,8 +647,8 @@ function FieldRow({
             <option key={d} value={d} />
           ))}
         </datalist>
-      </td>
-      <td className="px-3 py-2">
+      </Box>
+      <Box as="td" px="3" py="2">
         <Select
           mono
           inputSize="sm"
@@ -643,8 +669,8 @@ function FieldRow({
             </option>
           ))}
         </Select>
-      </td>
-      <td className="px-1 py-2">
+      </Box>
+      <Box as="td" px="1" py="2">
         <Button
           variant="danger-ghost"
           size="icon"
@@ -653,7 +679,7 @@ function FieldRow({
         >
           <Trash2 size={13} />
         </Button>
-      </td>
-    </tr>
+      </Box>
+    </Box>
   );
 }
