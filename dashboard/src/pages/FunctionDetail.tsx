@@ -1,6 +1,7 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useState, useEffect, useCallback } from "react";
 import { Trash2, Plus, Settings2, KeyRound, Code2 } from "lucide-react";
+import { Box, Grid, HStack, Text, VStack } from "@chakra-ui/react";
 import { useConfig } from "../hooks/useConfig";
 import { jsonEqual } from "../lib/jsonEqual";
 import { useDialog } from "../components/Dialog";
@@ -105,9 +106,9 @@ export function FunctionDetail() {
 
   if (!config || !fn || !name) {
     return (
-      <div className="p-8">
-        <p className="text-sm text-muted-foreground">Function not found.</p>
-      </div>
+      <Box p="8">
+        <Text fontSize="sm" color="fg.muted">Function not found.</Text>
+      </Box>
     );
   }
 
@@ -117,14 +118,14 @@ export function FunctionDetail() {
   const envEntries = Object.entries(fn.env || {});
 
   return (
-    <div className="pb-20">
+    <Box pb="20">
       <DetailToolbar backLabel="Code Functions" onDelete={deleteFunction} />
-      <div className="pb-8 space-y-6 max-w-3xl">
+      <VStack pb="8" gap="6" maxW="3xl" align="stretch">
         <Section
           title="Runtime"
           icon={Settings2}
         >
-          <div className="grid grid-cols-2 gap-4">
+          <Grid gridTemplateColumns="repeat(2, 1fr)" gap="4">
             <Field label="Runtime">
               <Select
                 value={fn.runtime || "node"}
@@ -153,14 +154,14 @@ export function FunctionDetail() {
                 placeholder="30s"
               />
             </Field>
-            <div className="flex items-end pb-2">
+            <HStack align="end" pb="2">
               <Toggle
                 checked={fn.auth_required}
                 onChange={(v) => updateFn((f) => ({ ...f, auth_required: v }))}
                 label="Auth required"
               />
-            </div>
-          </div>
+            </HStack>
+          </Grid>
         </Section>
 
         <Section
@@ -189,18 +190,18 @@ export function FunctionDetail() {
           }
         >
           {envEntries.length > 0 ? (
-            <div className="space-y-2">
+            <VStack gap="2" align="stretch">
               {envEntries.map(([key, val]) => (
-                <Panel key={key} className="flex items-center gap-3 px-3 py-2">
-                  <span className="text-sm font-mono text-foreground min-w-[140px]">{key}</span>
+                <Panel key={key} display="flex" alignItems="center" gap="3" px="3" py="2">
+                  <Text fontSize="sm" fontFamily="mono" color="fg" minW="140px">{key}</Text>
                   <Input
                     mono
                     inputSize="sm"
-                    className="flex-1"
                     value={val}
                     onChange={(e) =>
                       updateFn((f) => ({ ...f, env: { ...(f.env || {}), [key]: e.target.value } }))
                     }
+                    style={{ flex: 1 }}
                   />
                   <Button
                     variant="danger-ghost"
@@ -218,9 +219,9 @@ export function FunctionDetail() {
                   </Button>
                 </Panel>
               ))}
-            </div>
+            </VStack>
           ) : (
-            <p className="text-sm text-muted-foreground">No environment variables.</p>
+            <Text fontSize="sm" color="fg.muted">No environment variables.</Text>
           )}
         </Section>
         {backend.capabilities.canEditFunctionCode && code !== null && (
@@ -240,19 +241,19 @@ export function FunctionDetail() {
             }
           >
             {codeError && (
-              <p className="text-sm text-destructive mb-2">{codeError}</p>
+              <Text fontSize="sm" color="fg.error" mb="2">{codeError}</Text>
             )}
-            <div className="rounded-md border border-border overflow-hidden">
+            <Box borderRadius="md" borderWidth="1px" borderColor="border" overflow="hidden">
               <CodeEditor
                 value={code}
                 onChange={(v) => { setCode(v); setCodeDirty(true); }}
                 language="javascript"
                 minHeight="320px"
               />
-            </div>
+            </Box>
           </Section>
         )}
-      </div>
+      </VStack>
 
       <SaveBar
         onSave={handleSave}
@@ -264,6 +265,6 @@ export function FunctionDetail() {
         }
         dirty={dirty}
       />
-    </div>
+    </Box>
   );
 }

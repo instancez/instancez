@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { useState, useEffect, useCallback } from "react";
 import { Code2, Package, Trash2, CheckCircle, AlertCircle } from "lucide-react";
+import { Box, HStack, Text, VStack } from "@chakra-ui/react";
 import { useConfig } from "../hooks/useConfig";
 import { EmptyState } from "../components/EmptyState";
 import { StatusBadge } from "../components/StatusBadge";
@@ -80,11 +81,11 @@ export function Functions() {
   const canEdit = backend.capabilities.canManageDeps && deps !== null && !deps.readonly;
 
   return (
-    <div>
-      <div className="pb-8 space-y-6 max-w-3xl">
-        <p className="text-sm text-muted-foreground">
+    <Box>
+      <VStack pb="8" gap="6" maxW="3xl" align="stretch">
+        <Text fontSize="sm" color="fg.muted">
           {functions.length} code function{functions.length !== 1 ? "s" : ""}
-        </p>
+        </Text>
         {functions.length === 0 ? (
           <EmptyState
             icon={Code2}
@@ -92,13 +93,13 @@ export function Functions() {
             description="Declare a function in instancez.yaml with a runtime and a .js file under functions/ (served at /functions/v1/<name>)."
           />
         ) : (
-          <div className="space-y-2">
+          <VStack gap="2" align="stretch">
             {functions.map(([name, fn]) => (
               <ListRow
                 key={name}
                 icon={Code2}
                 title={name}
-                meta={<span className="font-mono">{fn.file}</span>}
+                meta={<Text as="span" fontFamily="mono">{fn.file}</Text>}
                 onClick={() => navigate(name, { relative: "path" })}
                 badges={
                   <>
@@ -113,7 +114,7 @@ export function Functions() {
                 }
               />
             ))}
-          </div>
+          </VStack>
         )}
 
         {/* Dependencies panel — only shown when the endpoint is reachable */}
@@ -130,15 +131,15 @@ export function Functions() {
             }
           >
             {depEntries.length > 0 ? (
-              <div className="space-y-1.5">
+              <VStack gap="1.5" align="stretch">
                 {depEntries.map(([pkg, ver]) => (
-                  <Panel key={pkg} className="flex items-center gap-3 px-3 py-2">
-                    <span className="text-sm font-mono text-foreground flex-1 truncate">
+                  <Panel key={pkg} display="flex" alignItems="center" gap="3" px="3" py="2">
+                    <Text fontSize="sm" fontFamily="mono" color="fg" flex="1" truncate>
                       {pkg}
-                    </span>
-                    <span className="text-xs font-mono text-muted-foreground shrink-0">
+                    </Text>
+                    <Text fontSize="xs" fontFamily="mono" color="fg.muted" flexShrink="0">
                       {ver as string}
-                    </span>
+                    </Text>
                     {canEdit && (
                       <Button
                         variant="danger-ghost"
@@ -152,19 +153,18 @@ export function Functions() {
                     )}
                   </Panel>
                 ))}
-              </div>
+              </VStack>
             ) : (
-              <p className="text-sm text-muted-foreground">
+              <Text fontSize="sm" color="fg.muted">
                 No dependencies installed.
-              </p>
+              </Text>
             )}
 
             {canEdit && (
               <Field label="Add package">
-                <div className="flex gap-2">
+                <HStack gap="2">
                   <Input
                     mono
-                    className="flex-1"
                     placeholder="e.g. axios or axios@latest"
                     value={addPkg}
                     onChange={(e) => setAddPkg(e.target.value)}
@@ -172,6 +172,7 @@ export function Functions() {
                       if (e.key === "Enter") handleAdd();
                     }}
                     disabled={installing}
+                    style={{ flex: 1 }}
                   />
                   <Button
                     onClick={handleAdd}
@@ -179,30 +180,39 @@ export function Functions() {
                   >
                     {installing ? "Installing…" : "Install"}
                   </Button>
-                </div>
+                </HStack>
               </Field>
             )}
 
             {installSuccess && (
-              <div className="flex items-center gap-2 text-sm text-success">
-                <CheckCircle size={14} />
-                {installSuccess}
-              </div>
+              <HStack gap="2" fontSize="sm" color="green.600">
+                <Box as={CheckCircle} boxSize="3.5" />
+                <Text>{installSuccess}</Text>
+              </HStack>
             )}
             {installError && (
-              <div className="space-y-1">
-                <div className="flex items-center gap-2 text-sm text-destructive">
-                  <AlertCircle size={14} />
-                  npm failed
-                </div>
-                <pre className="text-xs text-muted-foreground bg-surface rounded p-2 overflow-x-auto whitespace-pre-wrap">
+              <VStack gap="1" align="stretch">
+                <HStack gap="2" fontSize="sm" color="fg.error">
+                  <Box as={AlertCircle} boxSize="3.5" />
+                  <Text>npm failed</Text>
+                </HStack>
+                <Box
+                  as="pre"
+                  fontSize="xs"
+                  color="fg.muted"
+                  bg="bg.panel"
+                  borderRadius="md"
+                  p="2"
+                  overflowX="auto"
+                  whiteSpace="pre-wrap"
+                >
                   {installError}
-                </pre>
-              </div>
+                </Box>
+              </VStack>
             )}
           </Section>
         )}
-      </div>
-    </div>
+      </VStack>
+    </Box>
   );
 }
