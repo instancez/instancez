@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
+import { renderWithChakra } from "../test/helpers";
 import { DriftBanner } from "./DriftBanner";
 
 describe("DriftBanner", () => {
   it("renders nothing when status is ok", () => {
-    const { container } = render(
+    renderWithChakra(
       <DriftBanner status={{
         status: "ok", config_source: "f",
         running: { checksum: "a", applied_at: "" },
@@ -13,11 +14,11 @@ describe("DriftBanner", () => {
         dashboard_mode: "readwrite",
       }} />
     );
-    expect(container.firstChild).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("shows the source and error when drifted", () => {
-    render(
+    renderWithChakra(
       <DriftBanner status={{
         status: "drift",
         config_source: "s3://bucket/instancez.yaml",

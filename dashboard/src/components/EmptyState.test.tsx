@@ -1,11 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import { Table2 } from "lucide-react";
+import { renderWithChakra } from "../test/helpers";
 import { EmptyState } from "./EmptyState";
 
 describe("EmptyState", () => {
   it("renders title and description", () => {
-    render(
+    renderWithChakra(
       <EmptyState
         icon={Table2}
         title="No tables"
@@ -17,7 +18,7 @@ describe("EmptyState", () => {
   });
 
   it("renders action when provided", () => {
-    render(
+    renderWithChakra(
       <EmptyState
         icon={Table2}
         title="Empty"
@@ -29,7 +30,7 @@ describe("EmptyState", () => {
   });
 
   it("does not render action container when no action", () => {
-    const { container } = render(
+    const { container } = renderWithChakra(
       <EmptyState icon={Table2} title="Empty" description="Nothing." />
     );
     expect(container.querySelector("button")).toBeNull();

@@ -1,17 +1,18 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { screen, fireEvent } from "@testing-library/react";
+import { renderWithChakra } from "../test/helpers";
 import { SaveBar } from "./SaveBar";
 
 describe("SaveBar", () => {
   it("renders nothing when not dirty and no errors", () => {
-    const { container } = render(
+    renderWithChakra(
       <SaveBar onSave={() => {}} saving={false} errors={[]} dirty={false} />
     );
-    expect(container.innerHTML).toBe("");
+    expect(screen.queryByText("Save Changes")).toBeNull();
   });
 
   it("renders save button when dirty", () => {
-    render(
+    renderWithChakra(
       <SaveBar onSave={() => {}} saving={false} errors={[]} dirty={true} />
     );
     expect(screen.getByText("Save Changes")).toBeInTheDocument();
@@ -19,7 +20,7 @@ describe("SaveBar", () => {
 
   it("calls onSave when button is clicked", () => {
     const onSave = vi.fn();
-    render(
+    renderWithChakra(
       <SaveBar onSave={onSave} saving={false} errors={[]} dirty={true} />
     );
     fireEvent.click(screen.getByText("Save Changes"));
@@ -27,14 +28,14 @@ describe("SaveBar", () => {
   });
 
   it("shows saving state", () => {
-    render(
+    renderWithChakra(
       <SaveBar onSave={() => {}} saving={true} errors={[]} dirty={true} />
     );
     expect(screen.getByText("Saving...")).toBeInTheDocument();
   });
 
   it("disables button while saving", () => {
-    render(
+    renderWithChakra(
       <SaveBar onSave={() => {}} saving={true} errors={[]} dirty={true} />
     );
     const button = screen.getByRole("button");
@@ -42,7 +43,7 @@ describe("SaveBar", () => {
   });
 
   it("renders validation errors", () => {
-    render(
+    renderWithChakra(
       <SaveBar
         onSave={() => {}}
         saving={false}
@@ -63,14 +64,14 @@ describe("SaveBar", () => {
       path: `field_${i}`,
       message: `Error ${i}`,
     }));
-    render(
+    renderWithChakra(
       <SaveBar onSave={() => {}} saving={false} errors={errors} dirty={true} />
     );
     expect(screen.getByText("+2 more errors")).toBeInTheDocument();
   });
 
   it("renders when errors exist even if not dirty", () => {
-    render(
+    renderWithChakra(
       <SaveBar
         onSave={() => {}}
         saving={false}

@@ -1,9 +1,9 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Check, Copy, Eye, EyeOff, KeyRound } from "lucide-react";
+import { Box, HStack, VStack } from "@chakra-ui/react";
 import { useBackend } from "../console/BackendContext";
 import { Section, useSurfaceBg } from "./ui";
 import { StatusBadge } from "./StatusBadge";
-import { cn } from "../lib/utils";
 
 export function CopyButton({ value, label }: { value: string; label: string }) {
   const [copied, setCopied] = useState(false);
@@ -19,13 +19,20 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
   }
 
   return (
-    <button
+    <Box
+      as="button"
       onClick={handleCopy}
       aria-label={label}
-      className="shrink-0 p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
+      flexShrink="0"
+      p="1.5"
+      borderRadius="md"
+      color="fg.muted"
+      _hover={{ color: "fg", bg: "bg.subtle" }}
+      transition="colors"
+      cursor="pointer"
     >
       {copied ? <Check size={14} /> : <Copy size={14} />}
-    </button>
+    </Box>
   );
 }
 
@@ -64,25 +71,42 @@ function KeyRow({ label, badge, value, secret }: KeyRowProps) {
   const hidden = secret && !revealed;
 
   return (
-    <div className="flex items-center gap-3 px-4 py-2.5">
-      <span className="shrink-0 w-24 flex items-center gap-2 text-xs font-medium text-foreground">
+    <HStack gap="3" px="4" py="2.5">
+      <HStack as="span" flexShrink="0" w="24" gap="2" fontSize="xs" fontWeight="medium" color="fg">
         {label}
         {badge}
-      </span>
-      <code className="min-w-0 flex-1 truncate text-xs font-mono text-muted-foreground">
+      </HStack>
+      <Box
+        as="code"
+        minW="0"
+        flex="1"
+        overflow="hidden"
+        textOverflow="ellipsis"
+        whiteSpace="nowrap"
+        fontSize="xs"
+        fontFamily="mono"
+        color="fg.muted"
+      >
         {hidden ? "•".repeat(40) : value}
-      </code>
+      </Box>
       {secret && (
-        <button
+        <Box
+          as="button"
           onClick={() => setRevealed((r) => !r)}
           aria-label={revealed ? `Hide ${label}` : `Reveal ${label}`}
-          className="shrink-0 p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
+          flexShrink="0"
+          p="1.5"
+          borderRadius="md"
+          color="fg.muted"
+          _hover={{ color: "fg", bg: "bg.subtle" }}
+          transition="colors"
+          cursor="pointer"
         >
           {revealed ? <EyeOff size={14} /> : <Eye size={14} />}
-        </button>
+        </Box>
       )}
       <CopyButton value={value} label={`Copy ${label}`} />
-    </div>
+    </HStack>
   );
 }
 
@@ -97,7 +121,7 @@ export function ApiKeys() {
 
   return (
     <Section title="API Keys" icon={KeyRound}>
-      <div className={cn(bg, "rounded-xl border border-border divide-y divide-border")}>
+      <VStack bg={bg} borderRadius="xl" borderWidth="1px" gap="0" align="stretch" divideY="1px">
         <KeyRow label="API URL" value={window.location.origin} />
         {anonKey !== null && (
           <KeyRow
@@ -114,7 +138,7 @@ export function ApiKeys() {
             secret
           />
         )}
-      </div>
+      </VStack>
     </Section>
   );
 }

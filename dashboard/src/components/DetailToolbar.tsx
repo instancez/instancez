@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { ChevronLeft, Trash2 } from "lucide-react";
+import { Box, HStack } from "@chakra-ui/react";
 import { Button } from "./ui";
 
 interface DetailToolbarProps {
@@ -17,19 +18,31 @@ interface DetailToolbarProps {
  */
 export function DetailToolbar({ backLabel, onDelete }: DetailToolbarProps) {
   return (
-    <div className="flex items-center justify-between gap-4 mb-6">
-      <Link
-        to=".."
-        relative="path"
-        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-border text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors"
+    <HStack justify="space-between" gap="4" mb="6">
+      <Box
+        asChild
+        display="inline-flex"
+        alignItems="center"
+        gap="1.5"
+        px="3"
+        py="1.5"
+        borderRadius="lg"
+        fontSize="sm"
+        fontWeight="medium"
+        borderWidth="1px"
+        color="fg.muted"
+        _hover={{ color: "fg", bg: "bg.subtle" }}
+        transition="colors"
       >
-        <ChevronLeft size={14} />
-        {backLabel}
-      </Link>
+        <Link to=".." relative="path">
+          <ChevronLeft size={14} />
+          {backLabel}
+        </Link>
+      </Box>
       <Button variant="danger-outline" size="sm" onClick={onDelete}>
         <Trash2 size={14} />
         Delete
       </Button>
-    </div>
+    </HStack>
   );
 }

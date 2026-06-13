@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, act } from "@testing-library/react";
+import { screen, act } from "@testing-library/react";
+import { renderWithChakra } from "../test/helpers";
 import { SaveToast, showSaveToast } from "./SaveToast";
 
 describe("SaveToast", () => {
   it("renders when triggered and disappears after the timeout", () => {
     vi.useFakeTimers();
-    render(<SaveToast />);
+    renderWithChakra(<SaveToast />);
     act(() => {
       showSaveToast({ source: "s3://bucket/key" });
     });
@@ -20,7 +21,7 @@ describe("SaveToast", () => {
   });
 
   it("does not render when never triggered", () => {
-    const { container } = render(<SaveToast />);
-    expect(container.firstChild).toBeNull();
+    renderWithChakra(<SaveToast />);
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });

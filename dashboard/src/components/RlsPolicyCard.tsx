@@ -1,9 +1,9 @@
 import { Trash2 } from "lucide-react";
+import { Box, HStack, VStack } from "@chakra-ui/react";
 import { Panel, Button, Field } from "./ui";
 import { Checkbox } from "./Checkbox";
 import { CodeEditor } from "./CodeEditor";
 import { RLS_OPERATIONS } from "../lib/utils";
-import { cn } from "../lib/utils";
 import type { RLSPolicy } from "../lib/types";
 
 interface RlsPolicyCardProps {
@@ -26,95 +26,108 @@ export function RlsPolicyCard({
   quickFills,
 }: RlsPolicyCardProps) {
   return (
-    <Panel className="p-4 space-y-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="space-y-3">
-          <Field label="Type">
-            <div className="flex gap-1">
-              {(["permissive", "restrictive"] as const).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => onChange({ ...policy, type: t })}
-                  className={cn(
-                    "px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer",
-                    (policy.type || "permissive") === t
-                      ? t === "restrictive"
-                        ? "bg-warning/10 text-warning border border-warning/30"
-                        : "bg-info/10 text-info border border-info/30"
-                      : "border border-border text-muted-foreground hover:text-foreground hover:bg-surface-hover"
-                  )}
+    <Panel p="4">
+      <VStack gap="3" align="stretch">
+        <HStack alignItems="start" justify="space-between" gap="3">
+          <VStack gap="3" align="start">
+            <Field label="Type">
+              <HStack gap="1">
+                {(["permissive", "restrictive"] as const).map((t) => {
+                  const isActive = (policy.type || "permissive") === t;
+                  const activeStyles = t === "restrictive"
+                    ? { bg: "orange.50", color: "orange.700", borderColor: "orange.300" }
+                    : { bg: "blue.50", color: "blue.700", borderColor: "blue.300" };
+                  return (
+                    <Box
+                      key={t}
+                      as="button"
+                      {...({ type: "button" } as object)}
+                      onClick={() => onChange({ ...policy, type: t })}
+                      px="2.5"
+                      py="1"
+                      borderRadius="md"
+                      fontSize="xs"
+                      fontWeight="medium"
+                      transition="colors"
+                      cursor="pointer"
+                      borderWidth="1px"
+                      bg={isActive ? activeStyles.bg : "transparent"}
+                      color={isActive ? activeStyles.color : "fg.muted"}
+                      borderColor={isActive ? activeStyles.borderColor : "border"}
+                      _hover={isActive ? undefined : { color: "fg", bg: "bg.subtle" }}
+                    >
+                      {t}
+                    </Box>
+                  );
+                })}
+              </HStack>
+            </Field>
+            <Field label="Operations">
+              <HStack gap="2">
+                {RLS_OPERATIONS.map((op) => (
+                  <Checkbox
+                    key={op}
+                    className="text-xs"
+                    label={op}
+                    checked={(policy.operations || []).includes(op)}
+                    onChange={(c) =>
+                      onChange({
+                        ...policy,
+                        operations: c
+                          ? [...(policy.operations || []), op]
+                          : (policy.operations || []).filter((o) => o !== op),
+                      })
+                    }
+                  />
+                ))}
+              </HStack>
+            </Field>
+          </VStack>
+          <Button
+            variant="danger-ghost"
+            size="icon"
+            aria-label="Delete policy"
+            onClick={onDelete}
+          >
+            <Trash2 size={14} />
+          </Button>
+        </HStack>
+        <Field label="Check Expression">
+          {/* The check is a boolean expression that slots into the generated
+              policy DDL — framed here so pasting a full statement is visibly
+              wrong (and rejected by validation). */}
+          <Box borderRadius="lg" borderWidth="1px" overflow="hidden">
+            <Box px="3" py="1.5" borderBottomWidth="1px">
+              <Box as="code" display="block" fontSize="11px" fontFamily="mono" color="fg.muted">
+                CREATE POLICY … FOR {(policy.operations || []).join(", ") || "…"} USING (
+              </Box>
+            </Box>
+            <CodeEditor
+              value={policy.check || ""}
+              onChange={(val) => onChange({ ...policy, check: val })}
+              placeholder="user_id = auth.uid()"
+              minHeight="60px"
+            />
+            <Box px="3" py="1.5" borderTopWidth="1px">
+              <Box as="code" fontSize="11px" fontFamily="mono" color="fg.muted">)</Box>
+            </Box>
+          </Box>
+          {quickFills && quickFills.length > 0 && (
+            <HStack gap="2" mt="2">
+              {quickFills.map(({ label, expr }) => (
+                <Button
+                  key={label}
+                  variant="outline"
+                  size="xs"
+                  onClick={() => onChange({ ...policy, check: expr })}
                 >
-                  {t}
-                </button>
+                  {label}
+                </Button>
               ))}
-            </div>
-          </Field>
-          <Field label="Operations">
-            <div className="flex gap-2">
-              {RLS_OPERATIONS.map((op) => (
-                <Checkbox
-                  key={op}
-                  className="text-xs"
-                  label={op}
-                  checked={(policy.operations || []).includes(op)}
-                  onChange={(c) =>
-                    onChange({
-                      ...policy,
-                      operations: c
-                        ? [...(policy.operations || []), op]
-                        : (policy.operations || []).filter((o) => o !== op),
-                    })
-                  }
-                />
-              ))}
-            </div>
-          </Field>
-        </div>
-        <Button
-          variant="danger-ghost"
-          size="icon"
-          aria-label="Delete policy"
-          onClick={onDelete}
-        >
-          <Trash2 size={14} />
-        </Button>
-      </div>
-      <Field label="Check Expression">
-        {/* The check is a boolean expression that slots into the generated
-            policy DDL — framed here so pasting a full statement is visibly
-            wrong (and rejected by validation). */}
-        <div className="rounded-lg border border-border overflow-hidden">
-          <div className="px-3 py-1.5 border-b border-border">
-            <code className="block text-[11px] font-mono text-muted-foreground">
-              CREATE POLICY … FOR {(policy.operations || []).join(", ") || "…"} USING (
-            </code>
-          </div>
-          <CodeEditor
-            value={policy.check || ""}
-            onChange={(val) => onChange({ ...policy, check: val })}
-            placeholder="user_id = auth.uid()"
-            minHeight="60px"
-          />
-          <div className="px-3 py-1.5 border-t border-border">
-            <code className="text-[11px] font-mono text-muted-foreground">)</code>
-          </div>
-        </div>
-        {quickFills && quickFills.length > 0 && (
-          <div className="flex gap-2 mt-2">
-            {quickFills.map(({ label, expr }) => (
-              <Button
-                key={label}
-                variant="outline"
-                size="xs"
-                onClick={() => onChange({ ...policy, check: expr })}
-              >
-                {label}
-              </Button>
-            ))}
-          </div>
-        )}
-      </Field>
+            </HStack>
+          )}
+        </Field>
+      </VStack>
     </Panel>
   );
 }

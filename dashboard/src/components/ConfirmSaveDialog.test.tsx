@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { screen, fireEvent } from "@testing-library/react";
+import { renderWithChakra } from "../test/helpers";
 import { ConfirmSaveDialog } from "./ConfirmSaveDialog";
 
 const CURRENT = "version: 1\nproject:\n  name: old\n";
@@ -7,7 +8,7 @@ const PROPOSED = "version: 1\nproject:\n  name: new\n";
 
 describe("ConfirmSaveDialog", () => {
   it("shows removed and added lines from the instancez.yaml diff", () => {
-    render(
+    renderWithChakra(
       <ConfirmSaveDialog
         current={CURRENT}
         proposed={PROPOSED}
@@ -23,7 +24,7 @@ describe("ConfirmSaveDialog", () => {
   });
 
   it("notes when instancez.yaml is unchanged", () => {
-    render(
+    renderWithChakra(
       <ConfirmSaveDialog
         current={CURRENT}
         proposed={CURRENT}
@@ -37,7 +38,7 @@ describe("ConfirmSaveDialog", () => {
   });
 
   it("lists .env changes masked with a last-4 tail", () => {
-    render(
+    renderWithChakra(
       <ConfirmSaveDialog
         current={CURRENT}
         proposed={CURRENT}
@@ -61,7 +62,7 @@ describe("ConfirmSaveDialog", () => {
   it("wires confirm and cancel buttons", () => {
     const onConfirm = vi.fn();
     const onCancel = vi.fn();
-    render(
+    renderWithChakra(
       <ConfirmSaveDialog
         current={CURRENT}
         proposed={PROPOSED}

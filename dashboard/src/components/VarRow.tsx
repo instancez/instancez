@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Box, HStack, Text } from "@chakra-ui/react";
 import { Input, Button } from "./ui";
 
 export interface VarRowProps {
@@ -23,32 +24,37 @@ export function VarRow({ label, name, isSet, canWrite, inputValue, onInputChange
   const showInput = canWrite && (!isSet || overriding || inputValue !== "");
 
   return (
-    <div className="py-2.5 space-y-1.5 first:pt-0 last:pb-0">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-xs font-medium text-foreground">{label}</span>
-        <span className="flex items-center gap-2">
-          <span
-            className={`shrink-0 text-[11px] font-medium ${isSet ? "text-green-600 dark:text-green-400" : "text-destructive"}`}
+    <Box py="2.5" spaceY="1.5">
+      <HStack justify="space-between" gap="3">
+        <Text as="span" fontSize="xs" fontWeight="medium" color="fg">{label}</Text>
+        <HStack as="span" gap="2">
+          <Text
+            as="span"
+            flexShrink="0"
+            fontSize="11px"
+            fontWeight="medium"
+            color={isSet ? "green.600" : "fg.error"}
           >
             {isSet ? "✓ set" : "✗ unset"}
-          </span>
+          </Text>
           {canWrite && isSet && !showInput && (
             <Button variant="dashed" size="sm" onClick={() => setOverriding(true)}>
               Override
             </Button>
           )}
-        </span>
-      </div>
+        </HStack>
+      </HStack>
       {showInput && (
-        <div className="flex items-center gap-2">
-          <Input
-            type="password"
-            aria-label={name}
-            placeholder={isSet ? "new value — overrides the current one…" : "enter value…"}
-            value={inputValue}
-            onChange={(e) => onInputChange(e.target.value)}
-            className="flex-1 h-8 text-xs"
-          />
+        <HStack gap="2">
+          <Box flex="1">
+            <Input
+              type="password"
+              aria-label={name}
+              placeholder={isSet ? "new value — overrides the current one…" : "enter value…"}
+              value={inputValue}
+              onChange={(e) => onInputChange(e.target.value)}
+            />
+          </Box>
           {isSet && (
             <Button
               variant="ghost"
@@ -61,11 +67,11 @@ export function VarRow({ label, name, isSet, canWrite, inputValue, onInputChange
               Keep current
             </Button>
           )}
-        </div>
+        </HStack>
       )}
-      <p className="text-[11px] text-muted-foreground/70">
-        env <code className="font-mono">{name}</code>
-      </p>
-    </div>
+      <Text fontSize="11px" color="fg.muted">
+        env <Box as="code" fontFamily="mono">{name}</Box>
+      </Text>
+    </Box>
   );
 }

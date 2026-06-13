@@ -1,5 +1,7 @@
 import { useState, type KeyboardEvent } from "react";
+import React from "react";
 import { X } from "lucide-react";
+import { Box, HStack } from "@chakra-ui/react";
 
 interface TagInputProps {
   value: string[];
@@ -46,23 +48,45 @@ export function TagInput({
   }
 
   return (
-    <div className="relative">
-      <div className="flex flex-wrap gap-1.5 p-2 rounded-lg border border-input-border bg-input min-h-[40px] focus-within:border-ring transition-colors">
+    <Box position="relative">
+      <Box
+        display="flex"
+        flexWrap="wrap"
+        gap="1.5"
+        p="2"
+        borderRadius="lg"
+        borderWidth="1px"
+        bg="bg"
+        minH="40px"
+        transition="colors"
+        _focusWithin={{ borderColor: "fg" }}
+      >
         {value.map((tag, i) => (
-          <span
+          <HStack
             key={i}
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-border bg-muted text-foreground font-mono text-xs"
+            as="span"
+            display="inline-flex"
+            alignItems="center"
+            gap="1"
+            px="2"
+            py="0.5"
+            borderRadius="md"
+            borderWidth="1px"
+            bg="bg.muted"
+            color="fg"
+            fontFamily="mono"
+            fontSize="xs"
           >
             {tag}
             <button
               type="button"
               onClick={() => removeTag(i)}
-              className="text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
               aria-label={`Remove ${tag}`}
+              style={{ display: "flex", alignItems: "center", color: "inherit", cursor: "pointer", background: "none", border: "none", padding: 0 }}
             >
               <X size={12} />
             </button>
-          </span>
+          </HStack>
         ))}
         <input
           type="text"
@@ -75,24 +99,51 @@ export function TagInput({
           onFocus={() => setShowSuggestions(true)}
           onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
           placeholder={value.length === 0 ? placeholder : ""}
-          className="flex-1 min-w-[120px] bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
+          style={{
+            flex: 1,
+            minWidth: "120px",
+            background: "transparent",
+            fontSize: "0.875rem",
+            outline: "none",
+            border: "none",
+          }}
         />
-      </div>
+      </Box>
       {showSuggestions && filteredSuggestions.length > 0 && (
-        <div className="absolute z-50 mt-1 w-full max-h-40 overflow-y-auto rounded-lg border border-border bg-surface shadow-lifted">
+        <Box
+          position="absolute"
+          zIndex="50"
+          mt="1"
+          w="full"
+          maxH="40"
+          overflowY="auto"
+          borderRadius="lg"
+          borderWidth="1px"
+          bg="bg.panel"
+          boxShadow="lg"
+        >
           {filteredSuggestions.map((s) => (
             <button
               key={s}
               type="button"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => addTag(s)}
-              className="w-full text-left px-3 py-1.5 text-sm text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
+              style={{
+                display: "block",
+                width: "100%",
+                textAlign: "left",
+                padding: "0.375rem 0.75rem",
+                fontSize: "0.875rem",
+                cursor: "pointer",
+                background: "none",
+                border: "none",
+              }}
             >
               {s}
             </button>
           ))}
-        </div>
+        </Box>
       )}
-    </div>
+    </Box>
   );
 }

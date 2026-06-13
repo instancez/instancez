@@ -1,13 +1,41 @@
-import type { ReactNode } from "react";
+import React from "react";
+import { HStack, SwitchRoot, SwitchControl, SwitchThumb, Text } from "@chakra-ui/react";
 
 type ToggleProps = {
   checked: boolean;
   onChange: (checked: boolean) => void;
   /** Optional text rendered to the right of the switch; clicking it also toggles. */
-  label?: ReactNode;
+  label?: React.ReactNode;
   "aria-label"?: string;
   disabled?: boolean;
 };
+
+function SwitchWidget({
+  checked,
+  onChange,
+  disabled,
+  ariaLabel,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+  ariaLabel?: string;
+}) {
+  return (
+    <SwitchRoot
+      checked={checked}
+      onCheckedChange={(e: { checked: boolean }) => onChange(e.checked)}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      colorPalette="gray"
+      size="sm"
+    >
+      <SwitchControl>
+        <SwitchThumb />
+      </SwitchControl>
+    </SwitchRoot>
+  );
+}
 
 /**
  * Toggle is the single switch control used across the dashboard for boolean
@@ -15,42 +43,16 @@ type ToggleProps = {
  * get the standard "switch + text" row, or omit it for a bare switch (e.g. in
  * a table cell, where you should pass `aria-label`).
  */
-export function Toggle({ checked, onChange, label, disabled, ...rest }: ToggleProps) {
-  const sw = (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      className={`relative w-9 h-5 rounded-full border transition-colors shrink-0 ${
-        disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"
-      } ${
-        checked
-          ? "bg-accent border-accent"
-          : "bg-muted border-input-border hover:border-border-hover"
-      }`}
-      {...rest}
-    >
-      <span
-        className={`absolute top-[3px] left-[3px] w-3 h-3 rounded-full transition-transform ${
-          checked ? "translate-x-4 bg-background" : "bg-muted-foreground"
-        }`}
-      />
-    </button>
-  );
-
-  if (label == null) return sw;
-
+export function Toggle({ checked, onChange, label, disabled, "aria-label": ariaLabel }: ToggleProps) {
+  if (label == null) {
+    return (
+      <SwitchWidget checked={checked} onChange={onChange} disabled={disabled} ariaLabel={ariaLabel} />
+    );
+  }
   return (
-    <span className="inline-flex items-center gap-3 text-sm text-foreground">
-      {sw}
-      <span
-        className={disabled ? "" : "cursor-pointer"}
-        onClick={() => !disabled && onChange(!checked)}
-      >
-        {label}
-      </span>
-    </span>
+    <HStack gap="3" fontSize="sm" color="fg" cursor={disabled ? "not-allowed" : "pointer"}>
+      <SwitchWidget checked={checked} onChange={onChange} disabled={disabled} />
+      <Text onClick={() => !disabled && onChange(!checked)}>{label}</Text>
+    </HStack>
   );
 }

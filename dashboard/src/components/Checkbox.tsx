@@ -1,5 +1,6 @@
 import { Check } from "lucide-react";
 import type { ReactNode } from "react";
+import { Box, HStack, Text } from "@chakra-ui/react";
 
 type CheckboxProps = {
   checked: boolean;
@@ -17,38 +18,57 @@ type CheckboxProps = {
  * wrong mental model — i.e. "pick which of N" rather than a single on/off
  * setting (e.g. RLS operations). For single booleans use Toggle.
  */
-export function Checkbox({ checked, onChange, label, className, disabled, ...rest }: CheckboxProps) {
+export function Checkbox({ checked, onChange, label, className, disabled, "aria-label": ariaLabel }: CheckboxProps) {
   const box = (
-    <button
-      type="button"
-      role="checkbox"
-      aria-checked={checked}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      className={`flex items-center justify-center w-[18px] h-[18px] rounded-md border transition-colors shrink-0 ${
-        disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"
-      } ${
-        checked
-          ? "bg-accent border-accent text-background"
-          : "bg-input border-input-border hover:border-border-hover"
-      }`}
-      {...rest}
+    <Box
+      asChild
+      display="flex"
+      alignItems="center"
+      justifyContent="center"
+      w="18px"
+      h="18px"
+      borderRadius="md"
+      borderWidth="1px"
+      transition="colors"
+      flexShrink="0"
+      opacity={disabled ? 0.5 : 1}
+      cursor={disabled ? "not-allowed" : "pointer"}
+      bg={checked ? "fg" : "transparent"}
+      borderColor={checked ? "fg" : "border"}
+      color={checked ? "bg" : undefined}
     >
-      {checked && <Check size={12} strokeWidth={3} />}
-    </button>
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={checked}
+        aria-label={ariaLabel}
+        disabled={disabled}
+        onClick={() => onChange(!checked)}
+      >
+        {checked && <Check size={12} strokeWidth={3} />}
+      </button>
+    </Box>
   );
 
   if (label == null) return box;
 
   return (
-    <span className={`inline-flex items-center gap-2 text-foreground ${className ?? ""}`}>
+    <HStack
+      as="span"
+      gap="2"
+      color="fg"
+      display="inline-flex"
+      alignItems="center"
+      className={className}
+    >
       {box}
-      <span
-        className={disabled ? "" : "cursor-pointer"}
+      <Text
+        as="span"
+        cursor={disabled ? undefined : "pointer"}
         onClick={() => !disabled && onChange(!checked)}
       >
         {label}
-      </span>
-    </span>
+      </Text>
+    </HStack>
   );
 }

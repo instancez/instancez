@@ -1,10 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { screen, fireEvent } from "@testing-library/react";
+import { renderWithChakra } from "../test/helpers";
 import { VarRow } from "./VarRow";
 
 function renderRow(props: Partial<Parameters<typeof VarRow>[0]> = {}) {
   const onInputChange = vi.fn();
-  render(
+  renderWithChakra(
     <VarRow
       label="API key"
       name="INSTANCEZ_RESEND_API_KEY"

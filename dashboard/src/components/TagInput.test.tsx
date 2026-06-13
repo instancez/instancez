@@ -1,18 +1,19 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { renderWithChakra } from "../test/helpers";
 import { TagInput } from "./TagInput";
 
 describe("TagInput", () => {
   it("renders existing tags", () => {
-    render(<TagInput value={["react", "vue"]} onChange={() => {}} />);
+    renderWithChakra(<TagInput value={["react", "vue"]} onChange={() => {}} />);
     expect(screen.getByText("react")).toBeInTheDocument();
     expect(screen.getByText("vue")).toBeInTheDocument();
   });
 
   it("adds a tag on Enter", async () => {
     const onChange = vi.fn();
-    render(<TagInput value={[]} onChange={onChange} />);
+    renderWithChakra(<TagInput value={[]} onChange={onChange} />);
 
     const input = screen.getByRole("textbox");
     await userEvent.type(input, "newtag{Enter}");
@@ -22,7 +23,7 @@ describe("TagInput", () => {
 
   it("adds a tag on comma", async () => {
     const onChange = vi.fn();
-    render(<TagInput value={[]} onChange={onChange} />);
+    renderWithChakra(<TagInput value={[]} onChange={onChange} />);
 
     const input = screen.getByRole("textbox");
     await userEvent.type(input, "tag1,");
@@ -32,7 +33,7 @@ describe("TagInput", () => {
 
   it("removes a tag when X button is clicked", async () => {
     const onChange = vi.fn();
-    render(<TagInput value={["a", "b", "c"]} onChange={onChange} />);
+    renderWithChakra(<TagInput value={["a", "b", "c"]} onChange={onChange} />);
 
     const removeButtons = screen.getAllByRole("button");
     await userEvent.click(removeButtons[1]!); // Remove "b"
@@ -42,7 +43,7 @@ describe("TagInput", () => {
 
   it("removes last tag on Backspace when input is empty", async () => {
     const onChange = vi.fn();
-    render(<TagInput value={["a", "b"]} onChange={onChange} />);
+    renderWithChakra(<TagInput value={["a", "b"]} onChange={onChange} />);
 
     const input = screen.getByRole("textbox");
     await userEvent.click(input);
@@ -53,7 +54,7 @@ describe("TagInput", () => {
 
   it("does not add duplicate tags", async () => {
     const onChange = vi.fn();
-    render(<TagInput value={["existing"]} onChange={onChange} />);
+    renderWithChakra(<TagInput value={["existing"]} onChange={onChange} />);
 
     const input = screen.getByRole("textbox");
     await userEvent.type(input, "existing{Enter}");
@@ -63,7 +64,7 @@ describe("TagInput", () => {
 
   it("does not add empty tags", async () => {
     const onChange = vi.fn();
-    render(<TagInput value={[]} onChange={onChange} />);
+    renderWithChakra(<TagInput value={[]} onChange={onChange} />);
 
     const input = screen.getByRole("textbox");
     await userEvent.type(input, "{Enter}");
@@ -72,21 +73,21 @@ describe("TagInput", () => {
   });
 
   it("shows placeholder when no tags", () => {
-    render(
+    renderWithChakra(
       <TagInput value={[]} onChange={() => {}} placeholder="Add tags..." />
     );
     expect(screen.getByPlaceholderText("Add tags...")).toBeInTheDocument();
   });
 
   it("hides placeholder when tags exist", () => {
-    render(
+    renderWithChakra(
       <TagInput value={["one"]} onChange={() => {}} placeholder="Add tags..." />
     );
     expect(screen.queryByPlaceholderText("Add tags...")).not.toBeInTheDocument();
   });
 
   it("shows filtered suggestions on focus", async () => {
-    render(
+    renderWithChakra(
       <TagInput
         value={[]}
         onChange={() => {}}

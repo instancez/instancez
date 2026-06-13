@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Box, Text } from "@chakra-ui/react";
 
 type ToastState = {
   visible: boolean;
@@ -31,16 +32,29 @@ export function SaveToast() {
   if (!state.visible) return null;
 
   return (
-    <div
+    <Box
       role="status"
-      className="fixed bottom-6 right-6 max-w-md rounded-xl border border-border bg-surface text-foreground shadow-lifted px-4 py-3 text-sm z-50 animate-rise"
+      position="fixed"
+      bottom="6"
+      right="6"
+      maxW="md"
+      borderRadius="xl"
+      borderWidth="1px"
+      bg="bg.panel"
+      color="fg"
+      boxShadow="lg"
+      px="4"
+      py="3"
+      fontSize="sm"
+      zIndex="50"
+      className="animate-rise"
     >
-      <div>
-        Saved to <code className="font-mono">{state.source}</code>.
-      </div>
-      <div className="mt-1 text-xs text-muted-foreground">
+      <Box>
+        Saved to <Box as="code" fontFamily="mono">{state.source}</Box>.
+      </Box>
+      <Text mt="1" fontSize="xs" color="fg.muted">
         Reminder: update your git source to match, or your next external update will revert this.
-      </div>
-    </div>
+      </Text>
+    </Box>
   );
 }

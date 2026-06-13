@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Cable } from "lucide-react";
+import { Box, HStack } from "@chakra-ui/react";
 import { Section, useSurfaceBg } from "./ui";
 import { CopyButton } from "./ApiKeys";
-import { cn } from "../lib/utils";
 
 interface ClientLib {
   id: string;
@@ -61,39 +61,61 @@ export function ConnectExamples({ exampleTable }: { exampleTable: string }) {
 
   return (
     <Section title="Connect" icon={Cable}>
-      <div className="flex items-center gap-1.5">
+      <HStack gap="1.5">
         {CLIENT_LIBS.map((lib) => (
-          <button
+          <Box
             key={lib.id}
+            as="button"
             onClick={() => setActiveId(lib.id)}
-            className={cn(
-              "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer",
-              lib.id === activeId
-                ? "bg-foreground text-background"
-                : "text-muted-foreground hover:text-foreground hover:bg-surface-hover"
-            )}
+            px="3"
+            py="1.5"
+            borderRadius="lg"
+            fontSize="xs"
+            fontWeight="medium"
+            transition="colors"
+            cursor="pointer"
+            bg={lib.id === activeId ? "fg" : "transparent"}
+            color={lib.id === activeId ? "bg" : "fg.muted"}
+            _hover={lib.id === activeId ? undefined : { color: "fg", bg: "bg.subtle" }}
           >
             {lib.label}
-          </button>
+          </Box>
         ))}
-      </div>
-      <div className={cn(bg, "rounded-xl border border-border overflow-hidden")}>
-        <div className="flex items-center gap-2 px-4 py-2 border-b border-border">
-          <code className="min-w-0 flex-1 truncate text-[11px] font-mono text-muted-foreground">
+      </HStack>
+      <Box bg={bg} borderRadius="xl" borderWidth="1px" overflow="hidden">
+        <HStack gap="2" px="4" py="2" borderBottomWidth="1px">
+          <Box
+            as="code"
+            minW="0"
+            flex="1"
+            overflow="hidden"
+            textOverflow="ellipsis"
+            whiteSpace="nowrap"
+            fontSize="11px"
+            fontFamily="mono"
+            color="fg.muted"
+          >
             $ {active.install}
-          </code>
+          </Box>
           <CopyButton value={active.install} label={`Copy ${active.label} install command`} />
-        </div>
-        <div className="flex items-start gap-2 px-4 py-3">
-          <pre
+        </HStack>
+        <HStack alignItems="start" gap="2" px="4" py="3">
+          <Box
+            as="pre"
             data-testid="connect-snippet"
-            className="min-w-0 flex-1 overflow-x-auto text-[11px] font-mono leading-5 text-foreground"
+            minW="0"
+            flex="1"
+            overflowX="auto"
+            fontSize="11px"
+            fontFamily="mono"
+            lineHeight="5"
+            color="fg"
           >
             {code}
-          </pre>
+          </Box>
           <CopyButton value={code} label={`Copy ${active.label} example`} />
-        </div>
-      </div>
+        </HStack>
+      </Box>
     </Section>
   );
 }

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { screen, waitFor, fireEvent } from "@testing-library/react";
+import { renderWithChakra } from "../test/helpers";
 import { ApiKeys } from "./ApiKeys";
 
 vi.mock("../api/client", () => ({
@@ -21,19 +22,19 @@ describe("ApiKeys", () => {
   });
 
   it("shows the API URL", () => {
-    render(<ApiKeys />);
+    renderWithChakra(<ApiKeys />);
     expect(screen.getByText(window.location.origin)).toBeInTheDocument();
   });
 
   it("shows the anon key in the clear once loaded", async () => {
-    render(<ApiKeys />);
+    renderWithChakra(<ApiKeys />);
     await waitFor(() => {
       expect(screen.getByText(ANON_KEY)).toBeInTheDocument();
     });
   });
 
   it("masks the admin key until revealed", async () => {
-    render(<ApiKeys />);
+    renderWithChakra(<ApiKeys />);
     expect(screen.queryByText(ADMIN_KEY)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByLabelText("Reveal admin"));
@@ -47,7 +48,7 @@ describe("ApiKeys", () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.assign(navigator, { clipboard: { writeText } });
 
-    render(<ApiKeys />);
+    renderWithChakra(<ApiKeys />);
     await waitFor(() => {
       expect(screen.getByText(ANON_KEY)).toBeInTheDocument();
     });
@@ -58,7 +59,7 @@ describe("ApiKeys", () => {
 
   it("hides the anon row when the keys endpoint fails", async () => {
     mockGetKeys.mockRejectedValue(new Error("404"));
-    render(<ApiKeys />);
+    renderWithChakra(<ApiKeys />);
     await waitFor(() => {
       expect(mockGetKeys).toHaveBeenCalled();
     });
@@ -66,7 +67,7 @@ describe("ApiKeys", () => {
   });
 
   it("is compact: no per-key description paragraphs", async () => {
-    render(<ApiKeys />);
+    renderWithChakra(<ApiKeys />);
     await waitFor(() => expect(screen.getByText(ANON_KEY)).toBeInTheDocument());
     expect(screen.queryByText(/Pass as the first argument/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Safe to use in a browser/)).not.toBeInTheDocument();
@@ -75,7 +76,7 @@ describe("ApiKeys", () => {
 
   it("hides the admin row when no admin key is stored", () => {
     sessionStorage.removeItem("instancez_admin_key");
-    render(<ApiKeys />);
+    renderWithChakra(<ApiKeys />);
     expect(screen.queryByText("admin")).not.toBeInTheDocument();
   });
 });

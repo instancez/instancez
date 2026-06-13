@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { structuredPatch } from "diff";
 import { FileDiff, X } from "lucide-react";
+import { Box, HStack, Text, VStack } from "@chakra-ui/react";
 import { Button } from "./ui";
 
 export interface DotenvChange {
@@ -21,10 +22,12 @@ interface ConfirmSaveDialogProps {
   onCancel: () => void;
 }
 
-function lineClass(line: string): string {
-  if (line.startsWith("+")) return "text-green-600 dark:text-green-400 bg-green-500/10";
-  if (line.startsWith("-")) return "text-destructive bg-destructive/10";
-  return "text-muted-foreground";
+type LineStyle = { color: string; bg?: string };
+
+function lineStyle(line: string): LineStyle {
+  if (line.startsWith("+")) return { color: "green.700", bg: "green.50" };
+  if (line.startsWith("-")) return { color: "red.600", bg: "red.50" };
+  return { color: "fg.muted" };
 }
 
 /**
@@ -45,72 +48,116 @@ export function ConfirmSaveDialog({
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
-      <div className="absolute inset-0 bg-black/40" onClick={onCancel} />
-      <div className="relative w-full max-w-2xl max-h-[80vh] flex flex-col rounded-xl border border-border bg-surface shadow-lifted">
-        <div className="flex items-center justify-between px-5 py-3 border-b border-border">
-          <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+    <Box position="fixed" inset="0" zIndex="50" display="flex" alignItems="center" justifyContent="center" p="6">
+      <Box position="absolute" inset="0" bg="blackAlpha.400" onClick={onCancel} />
+      <Box
+        position="relative"
+        w="full"
+        maxW="2xl"
+        maxH="80vh"
+        display="flex"
+        flexDir="column"
+        borderRadius="xl"
+        borderWidth="1px"
+        bg="bg.panel"
+        boxShadow="lg"
+      >
+        <HStack justify="space-between" px="5" py="3" borderBottomWidth="1px">
+          <HStack as="span" gap="2" fontSize="sm" fontWeight="medium" color="fg">
             <FileDiff size={15} />
-            Review changes before saving
-          </span>
+            <Text>Review changes before saving</Text>
+          </HStack>
           <Button variant="ghost" size="icon" aria-label="Close" onClick={onCancel}>
             <X size={14} />
           </Button>
-        </div>
+        </HStack>
 
-        <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-4">
-          <section>
-            <p className="text-xs font-medium text-foreground mb-2">instancez.yaml</p>
+        <VStack flex="1" minH="0" overflowY="auto" px="5" py="4" gap="4" align="stretch">
+          <Box as="section">
+            <Text fontSize="xs" fontWeight="medium" color="fg" mb="2">instancez.yaml</Text>
             {hunks.length === 0 ? (
-              <p className="text-xs text-muted-foreground italic">No changes</p>
+              <Text fontSize="xs" color="fg.muted" fontStyle="italic">No changes</Text>
             ) : (
-              <pre className="rounded-lg border border-border bg-background text-[11px] font-mono leading-5 overflow-x-auto">
+              <Box
+                as="pre"
+                borderRadius="lg"
+                borderWidth="1px"
+                bg="bg"
+                fontSize="11px"
+                fontFamily="mono"
+                lineHeight="5"
+                overflowX="auto"
+              >
                 {hunks.map((hunk, hi) => (
-                  <div key={hi} className={hi > 0 ? "border-t border-border" : ""}>
-                    <div className="px-3 text-muted-foreground/60 select-none">
+                  <Box key={hi} borderTopWidth={hi > 0 ? "1px" : undefined}>
+                    <Box px="3" color="fg.muted" userSelect="none">
                       @@ -{hunk.oldStart},{hunk.oldLines} +{hunk.newStart},{hunk.newLines} @@
-                    </div>
-                    {hunk.lines.map((line, li) => (
-                      <div key={li} className={`px-3 whitespace-pre ${lineClass(line)}`}>
-                        {line}
-                      </div>
-                    ))}
-                  </div>
+                    </Box>
+                    {hunk.lines.map((line, li) => {
+                      const s = lineStyle(line);
+                      return (
+                        <Box key={li} px="3" whiteSpace="pre" color={s.color} bg={s.bg}>
+                          {line}
+                        </Box>
+                      );
+                    })}
+                  </Box>
                 ))}
-              </pre>
+              </Box>
             )}
-          </section>
+          </Box>
 
           {dotenvChanges.length > 0 && (
-            <section>
-              <p className="text-xs font-medium text-foreground mb-2">.env</p>
-              <div className="rounded-lg border border-border bg-background divide-y divide-border">
+            <Box as="section">
+              <Text fontSize="xs" fontWeight="medium" color="fg" mb="2">.env</Text>
+              <VStack
+                borderRadius="lg"
+                borderWidth="1px"
+                bg="bg"
+                gap="0"
+                align="stretch"
+                divideY="1px"
+              >
                 {dotenvChanges.map((change) => (
-                  <div key={change.name} className="flex items-center gap-3 px-3 py-2">
-                    <code className="flex-1 min-w-0 text-[11px] font-mono text-foreground truncate">
-                      {change.name}=<span className="text-muted-foreground">••••{change.tail}</span>
-                    </code>
-                    <span
-                      className={`shrink-0 text-[11px] font-medium ${change.isUpdate ? "text-amber-600 dark:text-amber-400" : "text-green-600 dark:text-green-400"}`}
+                  <HStack key={change.name} gap="3" px="3" py="2">
+                    <Box
+                      as="code"
+                      flex="1"
+                      minW="0"
+                      fontSize="11px"
+                      fontFamily="mono"
+                      color="fg"
+                      overflow="hidden"
+                      textOverflow="ellipsis"
+                      whiteSpace="nowrap"
+                    >
+                      {change.name}=<Box as="span" color="fg.muted">••••{change.tail}</Box>
+                    </Box>
+                    <Text
+                      as="span"
+                      flexShrink="0"
+                      fontSize="11px"
+                      fontWeight="medium"
+                      color={change.isUpdate ? "orange.600" : "green.600"}
                     >
                       {change.isUpdate ? "updated" : "added"}
-                    </span>
-                  </div>
+                    </Text>
+                  </HStack>
                 ))}
-              </div>
-            </section>
+              </VStack>
+            </Box>
           )}
-        </div>
+        </VStack>
 
-        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border">
+        <HStack justify="end" gap="2" px="5" py="3" borderTopWidth="1px">
           <Button variant="ghost" onClick={onCancel} disabled={saving}>
             Cancel
           </Button>
           <Button onClick={onConfirm} loading={saving}>
             {saving ? "Saving..." : "Confirm & Save"}
           </Button>
-        </div>
-      </div>
-    </div>
+        </HStack>
+      </Box>
+    </Box>
   );
 }

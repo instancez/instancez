@@ -1,4 +1,5 @@
 import { PencilLine } from "lucide-react";
+import { Box, HStack, Text } from "@chakra-ui/react";
 import type { ConfigStatus } from "../lib/types";
 
 type Props = { status: ConfigStatus | null };
@@ -6,22 +7,28 @@ type Props = { status: ConfigStatus | null };
 export function EditModeBanner({ status }: Props) {
   if (!status || status.dashboard_mode !== "readwrite") return null;
   return (
-    <div
+    <Box
       role="status"
-      className="border-t border-info/30 bg-info/10 px-4 py-2.5 text-sm text-foreground"
+      borderTopWidth="1px"
+      borderColor="blue.300"
+      bg="blue.50"
+      px="4"
+      py="2.5"
+      fontSize="sm"
+      color="fg"
     >
-      <span className="inline-flex items-start gap-2">
-        <PencilLine size={14} className="mt-0.5 shrink-0 text-info" aria-hidden="true" />
-        <span>
-          <strong>Live edit mode.</strong>{" "}
+      <HStack as="span" alignItems="start" gap="2" display="inline-flex">
+        <PencilLine size={14} aria-hidden="true" style={{ marginTop: "2px", flexShrink: 0, color: "var(--chakra-colors-blue-600)" }} />
+        <Text as="span">
+          <Box as="strong">Live edit mode.</Box>{" "}
           Changes you make here are written directly to{" "}
-          <code className="font-mono">{status.config_source}</code>{" "}
+          <Box as="code" fontFamily="mono">{status.config_source}</Box>{" "}
           and applied to the database. If your team manages{" "}
-          <code className="font-mono">instancez.yaml</code> in git, mirror these changes there —
+          <Box as="code" fontFamily="mono">instancez.yaml</Box> in git, mirror these changes there —
           anything written here will be overwritten the next time the source is updated outside
           the dashboard.
-        </span>
-      </span>
-    </div>
+        </Text>
+      </HStack>
+    </Box>
   );
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
+import { renderWithChakra } from "../test/helpers";
 import { EditModeBanner } from "./EditModeBanner";
 
 const base = {
@@ -12,21 +13,21 @@ const base = {
 
 describe("EditModeBanner", () => {
   it("renders nothing when readonly", () => {
-    const { container } = render(
+    renderWithChakra(
       <EditModeBanner status={{ ...base, dashboard_mode: "readonly" }} />
     );
-    expect(container.firstChild).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("renders nothing when disabled", () => {
-    const { container } = render(
+    renderWithChakra(
       <EditModeBanner status={{ ...base, dashboard_mode: "disabled" }} />
     );
-    expect(container.firstChild).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("shows live edit warning when readwrite", () => {
-    render(<EditModeBanner status={{ ...base, dashboard_mode: "readwrite" }} />);
+    renderWithChakra(<EditModeBanner status={{ ...base, dashboard_mode: "readwrite" }} />);
     expect(screen.getByText(/Live edit mode/i)).toBeTruthy();
     expect(screen.getByText(/s3:\/\/bucket\/key/)).toBeTruthy();
   });

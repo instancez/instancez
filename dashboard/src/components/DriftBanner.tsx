@@ -1,4 +1,5 @@
 import { TriangleAlert } from "lucide-react";
+import { Box, HStack, Text } from "@chakra-ui/react";
 import type { ConfigStatus } from "../lib/types";
 
 type Props = { status: ConfigStatus | null };
@@ -6,21 +7,27 @@ type Props = { status: ConfigStatus | null };
 export function DriftBanner({ status }: Props) {
   if (!status || status.status !== "drift") return null;
   return (
-    <div
+    <Box
       role="alert"
-      className="border-t border-warning/30 bg-warning/10 px-4 py-2.5 text-sm text-foreground"
+      borderTopWidth="1px"
+      borderColor="orange.300"
+      bg="orange.50"
+      px="4"
+      py="2.5"
+      fontSize="sm"
+      color="fg"
     >
-      <span className="inline-flex items-start gap-2">
-        <TriangleAlert size={14} className="mt-0.5 shrink-0 text-warning" aria-hidden="true" />
-        <span>
-          <strong>Configuration drift.</strong>{" "}
-          The source <code className="font-mono">{status.config_source}</code> has changes that
-          failed to apply: <code className="font-mono">{status.last_error}</code>. The server is
+      <HStack as="span" alignItems="start" gap="2" display="inline-flex">
+        <TriangleAlert size={14} aria-hidden="true" style={{ marginTop: "2px", flexShrink: 0, color: "var(--chakra-colors-orange-600)" }} />
+        <Text as="span">
+          <Box as="strong">Configuration drift.</Box>{" "}
+          The source <Box as="code" fontFamily="mono">{status.config_source}</Box> has changes that
+          failed to apply: <Box as="code" fontFamily="mono">{status.last_error}</Box>. The server is
           running on the last successful config from{" "}
-          <time dateTime={status.running.applied_at}>{status.running.applied_at}</time>.{" "}
+          <Box as="time" {...({ dateTime: status.running.applied_at } as object)}>{status.running.applied_at}</Box>.{" "}
           Fix the source and restart, or revert the failing change.
-        </span>
-      </span>
-    </div>
+        </Text>
+      </HStack>
+    </Box>
   );
 }

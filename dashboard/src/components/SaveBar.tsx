@@ -1,4 +1,5 @@
 import { Save } from "lucide-react";
+import { Box, HStack, Text, VStack } from "@chakra-ui/react";
 import { Button } from "./ui";
 import type { ValidationError } from "../lib/types";
 
@@ -15,38 +16,42 @@ export function SaveBar({ onSave, saving, errors, dirty = true }: SaveBarProps) 
   // Floats inside the content card: 8px page margin + 240px sidebar +
   // 8px gap + 16px inset = 272px from the viewport's left edge.
   return (
-    <div className="fixed bottom-6 left-[272px] right-6 z-30 rounded-xl border border-border bg-surface shadow-lifted px-5 py-3 animate-rise">
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex-1 min-w-0">
+    <Box
+      position="fixed"
+      bottom="6"
+      left="272px"
+      right="6"
+      zIndex="30"
+      borderRadius="xl"
+      borderWidth="1px"
+      bg="bg.panel"
+      boxShadow="lg"
+      px="5"
+      py="3"
+      className="animate-rise"
+    >
+      <HStack justify="space-between" gap="4">
+        <Box flex="1" minW="0">
           {errors.length > 0 && (
-            <div className="space-y-1">
+            <VStack gap="1" align="start">
               {errors.slice(0, 3).map((err, i) => (
-                <p key={i} className="text-xs font-mono text-destructive truncate">
-                  {err.path && (
-                    <span className="font-mono font-medium">{err.path}: </span>
-                  )}
+                <Text key={i} fontSize="xs" fontFamily="mono" color="fg.error" truncate>
+                  {err.path && <Box as="span" fontWeight="medium">{err.path}: </Box>}
                   {err.message}
-                  {err.suggestion && (
-                    <span className="text-muted-foreground">
-                      {" "}
-                      — {err.suggestion}
-                    </span>
-                  )}
-                </p>
+                  {err.suggestion && <Box as="span" color="fg.muted"> — {err.suggestion}</Box>}
+                </Text>
               ))}
               {errors.length > 3 && (
-                <p className="text-xs text-muted-foreground">
-                  +{errors.length - 3} more errors
-                </p>
+                <Text fontSize="xs" color="fg.muted">+{errors.length - 3} more errors</Text>
               )}
-            </div>
+            </VStack>
           )}
-        </div>
+        </Box>
         <Button onClick={onSave} loading={saving}>
           {!saving && <Save size={14} />}
           {saving ? "Saving..." : "Save Changes"}
         </Button>
-      </div>
-    </div>
+      </HStack>
+    </Box>
   );
 }

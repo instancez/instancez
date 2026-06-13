@@ -1,3 +1,5 @@
+import React from "react";
+import { Text } from "@chakra-ui/react";
 import { Panel } from "./ui";
 
 interface CardProps {
@@ -18,7 +20,8 @@ export function Card({
     <Panel
       onClick={onClick}
       hoverable={hoverable}
-      className={`p-5 ${className ?? ""}`}
+      p="5"
+      className={className}
     >
       {children}
     </Panel>
@@ -26,13 +29,17 @@ export function Card({
 }
 
 export function CardTitle({ children }: { children: React.ReactNode }) {
-  return <h3 className="t-label">{children}</h3>;
+  return (
+    <Text as="h3" fontSize="xs" fontWeight="semibold" color="fg.muted" textTransform="uppercase" letterSpacing="wider">
+      {children}
+    </Text>
+  );
 }
 
 export function CardValue({ children }: { children: React.ReactNode }) {
   return (
-    <p className="mt-2 text-3xl font-semibold tracking-tight text-foreground tabular-nums">
+    <Text mt="2" fontSize="3xl" fontWeight="semibold" letterSpacing="tight" color="fg" fontVariantNumeric="tabular-nums">
       {children}
-    </p>
+    </Text>
   );
 }

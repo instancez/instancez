@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
+import { createSystem, defaultConfig, ChakraProvider } from "@chakra-ui/react";
 import { Layout } from "./Layout";
 import { consoleRoutes } from "../console/routes";
 import * as api from "../api/client";
@@ -31,12 +32,18 @@ vi.mock("../api/client", async (importOriginal) => {
   };
 });
 
+const system = createSystem(defaultConfig);
+
 function renderAt(path: string) {
   const router = createMemoryRouter(
     [{ element: <Layout />, children: consoleRoutes() }],
     { initialEntries: [path] }
   );
-  return render(<RouterProvider router={router} />);
+  return render(
+    <ChakraProvider value={system}>
+      <RouterProvider router={router} />
+    </ChakraProvider>
+  );
 }
 
 describe("Layout (shell owns titles)", () => {
