@@ -1,43 +1,23 @@
-@import "tailwindcss";
-
 /*
- * instancez — shared brand theme, ported from instancez-coder/web.
- *
- * Design language: Bricolage Grotesque type, a muted gray canvas with
- * white (light) / near-black (dark) cards framed by 1px borders and
- * generous rounded-xl corners, mono black<->white primary actions, and
- * restrained color accents (blue/green/orange/red) for status. Both
- * color modes are first-class; the `.dark` class on <html> flips every
- * token below.
+ * instancez dashboard — design tokens and global resets.
+ * Tailwind removed; CSS custom properties kept for CodeMirror brandTheme.
+ * Color mode is driven by next-themes which toggles class="dark" on <html>.
  */
 
-@custom-variant dark (&:where(.dark, .dark *));
-
 :root {
-  --c-background: #fafafa; /* page canvas (gray.50) */
+  --c-background: #fafafa;
   --c-foreground: #09090b;
-  --c-surface: #ffffff; /* cards, navbar, dialogs */
+  --c-surface: #ffffff;
   --c-surface-hover: #f4f4f5;
-  --c-primary: #fafafa; /* inset panels inside cards */
-  --c-on-primary: #09090b;
-  --c-muted: #f4f4f5;
+  --c-primary: #fafafa;
   --c-muted-foreground: #71717a;
   --c-border: #e4e4e7;
   --c-border-hover: #d4d4d8;
-  --c-accent: #09090b; /* mono "black palette" primary action */
-  --c-accent-hover: #27272a;
-  --c-secondary: #e4e4e7;
   --c-input: #ffffff;
   --c-input-border: #d4d4d8;
-  --c-ring: #09090b;
-  --c-destructive: #dc2626;
-  --c-destructive-hover: #b91c1c;
-  --c-success: #16a34a;
-  --c-warning: #ea580c;
-  --c-info: #2563eb;
-  --c-shadow: 0 1px 2px rgb(9 9 11 / 0.04);
-  --c-shadow-lifted: 0 12px 24px -8px rgb(9 9 11 / 0.16);
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
 
+  /* Syntax highlighting */
   --syn-keyword: #1d4ed8;
   --syn-string: #15803d;
   --syn-comment: #a1a1aa;
@@ -51,29 +31,16 @@
 }
 
 .dark {
-  --c-background: #18181b; /* page canvas (gray.900) */
+  --c-background: #18181b;
   --c-foreground: #fafafa;
   --c-surface: #09090b;
   --c-surface-hover: #1c1c1f;
   --c-primary: #18181b;
-  --c-on-primary: #fafafa;
-  --c-muted: #27272a;
   --c-muted-foreground: #a1a1aa;
   --c-border: #27272a;
   --c-border-hover: #3f3f46;
-  --c-accent: #ffffff;
-  --c-accent-hover: #e4e4e7;
-  --c-secondary: #3f3f46;
   --c-input: #18181b;
   --c-input-border: #3f3f46;
-  --c-ring: #ffffff;
-  --c-destructive: #f87171;
-  --c-destructive-hover: #ef4444;
-  --c-success: #4ade80;
-  --c-warning: #fb923c;
-  --c-info: #60a5fa;
-  --c-shadow: 0 1px 2px rgb(0 0 0 / 0.4);
-  --c-shadow-lifted: 0 12px 24px -8px rgb(0 0 0 / 0.6);
 
   --syn-keyword: #93c5fd;
   --syn-string: #86efac;
@@ -87,138 +54,45 @@
   --syn-selection: rgb(96 165 250 / 0.25);
 }
 
-@theme inline {
-  --color-background: var(--c-background);
-  --color-foreground: var(--c-foreground);
-  --color-surface: var(--c-surface);
-  --color-surface-hover: var(--c-surface-hover);
-  --color-primary: var(--c-primary);
-  --color-on-primary: var(--c-on-primary);
-  --color-muted: var(--c-muted);
-  --color-muted-foreground: var(--c-muted-foreground);
-  --color-border: var(--c-border);
-  --color-border-hover: var(--c-border-hover);
-  --color-accent: var(--c-accent);
-  --color-accent-hover: var(--c-accent-hover);
-  --color-secondary: var(--c-secondary);
-  --color-input: var(--c-input);
-  --color-input-border: var(--c-input-border);
-  --color-ring: var(--c-ring);
-  --color-destructive: var(--c-destructive);
-  --color-destructive-hover: var(--c-destructive-hover);
-  --color-success: var(--c-success);
-  --color-warning: var(--c-warning);
-  --color-info: var(--c-info);
-
-  --shadow-card: var(--c-shadow);
-  --shadow-lifted: var(--c-shadow-lifted);
-
-  --font-sans: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
-
-  /* Chakra-ish radii: small controls stay tight, cards are generous. */
-  --radius-sm: 0.2625rem;
-  --radius-md: 0.325rem;
-  --radius-lg: 0.45rem;
-  --radius-xl: 0.75rem;
-  --radius-2xl: 1rem;
-}
-
-* {
-  border-color: var(--color-border);
-}
-
-html {
-  background: var(--color-background);
-}
-
-body {
-  font-family: var(--font-sans);
-  background: var(--color-background);
-  color: var(--color-foreground);
-}
-
-::selection {
-  background: var(--syn-selection);
-}
-
-:focus-visible {
-  outline: 2px solid var(--color-ring);
-  outline-offset: 2px;
-}
-
-/* Small muted section/field label used throughout the dashboard. */
-.t-label {
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--color-muted-foreground);
-}
-
-/* Card entrance, matching the coder app's fade-in + slide-from-bottom. */
+/* Card entrance animation — used by Login */
 @keyframes rise-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
-
 .animate-rise {
   animation: rise-in 0.45s ease both;
 }
 
-/* Scrollbar — rounded thumb to match the shape language. */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--color-border-hover);
-  border-radius: 9999px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-muted-foreground);
-}
-
-/* CodeMirror chrome — colors come from the mode-aware vars above. */
+/* CodeMirror chrome */
 .cm-editor {
   font-family: var(--font-mono) !important;
   font-size: 13px;
-  border: 1px solid var(--color-input-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-input) !important;
+  border: 1px solid var(--c-input-border);
+  border-radius: 0.45rem;
+  background: var(--c-input) !important;
 }
-
 .cm-editor.cm-focused {
   outline: none;
-  border-color: var(--color-ring);
+  border-color: var(--c-foreground);
 }
-
-.cm-editor .cm-scroller {
-  border-radius: var(--radius-lg);
-}
-
+.cm-editor .cm-scroller { border-radius: 0.45rem; }
 .cm-gutters {
-  background: var(--color-muted) !important;
-  border-right: 1px solid var(--color-border) !important;
+  background: var(--c-surface-hover) !important;
+  border-right: 1px solid var(--c-border) !important;
 }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--c-border-hover);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--c-muted-foreground); }
 
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  *, *::before, *::after {
     animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
 }
