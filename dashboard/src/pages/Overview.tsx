@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Table2, Shield, HardDrive, RefreshCw } from "lucide-react";
+import { Box, Grid, HStack, Text, VStack } from "@chakra-ui/react";
 import { useConfig } from "../hooks/useConfig";
 import { useBackend } from "../console/BackendContext";
 import { downloadYamlFromConfig } from "../lib/downloadYaml";
@@ -13,7 +14,9 @@ import type { StatsResponse } from "../lib/types";
 
 function Unit({ children }: { children: string }) {
   return (
-    <span className="ml-1.5 text-sm font-normal text-muted-foreground">{children}</span>
+    <Text as="span" ml="1.5" fontSize="sm" fontWeight="normal" color="fg.muted">
+      {children}
+    </Text>
   );
 }
 
@@ -56,17 +59,17 @@ export function Overview() {
     : 0;
 
   return (
-    <div className="pt-8 pb-8">
-      <div className="flex items-start justify-between gap-4 pb-6">
-        <div className="min-w-0">
-          <h2 className="text-xl font-semibold tracking-tight text-foreground truncate">
+    <Box pt="8" pb="8">
+      <HStack align="start" justify="space-between" gap="4" pb="6">
+        <Box minW="0">
+          <Text fontSize="xl" fontWeight="semibold" letterSpacing="tight" color="fg" truncate>
             {config.project.name || "instancez project"}
-          </h2>
-          <p className="mt-1 text-sm text-muted-foreground">
+          </Text>
+          <Text mt="1" fontSize="sm" color="fg.muted">
             {config.project.description || "Project overview and health"}
-          </p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
+          </Text>
+        </Box>
+        <HStack gap="2" flexShrink="0">
           <Button variant="outline" size="sm" onClick={handleDownload}>
             Download config as YAML
           </Button>
@@ -79,17 +82,21 @@ export function Overview() {
             <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
             Refresh
           </Button>
-        </div>
-      </div>
+        </HStack>
+      </HStack>
 
-      <div className="space-y-6">
+      <VStack gap="6" align="stretch">
         {/* Summary Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 animate-rise">
+        <Grid
+          gridTemplateColumns={{ base: "1fr", sm: "repeat(2, 1fr)", lg: "repeat(3, 1fr)" }}
+          gap="4"
+          className="animate-rise"
+        >
           <Card hoverable onClick={() => navigate("tables", { relative: "path" })}>
-            <div className="flex items-center justify-between">
+            <HStack justify="space-between">
               <CardTitle>Tables</CardTitle>
-              <Table2 size={18} className="text-muted-foreground" />
-            </div>
+              <Box as={Table2} boxSize="4.5" color="fg.muted" />
+            </HStack>
             <CardValue>
               {tableCount}
               <Unit>{tableCount === 1 ? "table" : "tables"}</Unit>
@@ -97,12 +104,12 @@ export function Overview() {
           </Card>
 
           <Card hoverable onClick={() => navigate("auth", { relative: "path" })}>
-            <div className="flex items-center justify-between">
+            <HStack justify="space-between">
               <CardTitle>Auth</CardTitle>
-              <Shield size={18} className="text-muted-foreground" />
-            </div>
+              <Box as={Shield} boxSize="4.5" color="fg.muted" />
+            </HStack>
             <CardValue>{authEnabled ? "Enabled" : "Off"}</CardValue>
-            <p className="mt-1 text-xs text-muted-foreground">
+            <Text mt="1" fontSize="xs" color="fg.muted">
               {authEnabled
                 ? [
                     config.auth?.email ? "Email" : null,
@@ -112,30 +119,30 @@ export function Overview() {
                     .filter(Boolean)
                     .join(", ") || "No providers"
                 : "Not configured"}
-            </p>
+            </Text>
           </Card>
 
           <Card hoverable onClick={() => navigate("storage", { relative: "path" })}>
-            <div className="flex items-center justify-between">
+            <HStack justify="space-between">
               <CardTitle>Storage</CardTitle>
-              <HardDrive size={18} className="text-muted-foreground" />
-            </div>
+              <Box as={HardDrive} boxSize="4.5" color="fg.muted" />
+            </HStack>
             <CardValue>
               {bucketCount}
               <Unit>{bucketCount === 1 ? "bucket" : "buckets"}</Unit>
             </CardValue>
-            <p className="mt-1 text-xs text-muted-foreground">
+            <Text mt="1" fontSize="xs" color="fg.muted">
               {formatBytes(totalStorage)} used
-            </p>
+            </Text>
           </Card>
-        </div>
+        </Grid>
 
         {/* API keys for connecting clients */}
         <ApiKeys />
 
         {/* Ready-to-paste client snippets */}
         <ConnectExamples exampleTable={exampleTable} />
-      </div>
-    </div>
+      </VStack>
+    </Box>
   );
 }
