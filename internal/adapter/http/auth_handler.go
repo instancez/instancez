@@ -1478,6 +1478,7 @@ func (h *AuthHandler) buildUser(userID string, row map[string]any) gin.H {
 		"phone":              "",
 		"confirmed_at":       confirmedAt,
 		"last_sign_in_at":    lastSignInAt,
+		"banned_until":       asTimeString(row["banned_until"]),
 		"app_metadata":       appMeta,
 		"user_metadata":      userMeta,
 		"identities":         []any{},

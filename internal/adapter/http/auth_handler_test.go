@@ -82,6 +82,7 @@ func TestBuildUser_GoTrueFieldContract(t *testing.T) {
 		"email_verified":     true,
 		"email_confirmed_at": time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC),
 		"last_sign_in_at":    time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+		"banned_until":       nil,
 		"raw_app_meta_data":  `{"provider":"email","providers":["email"]}`,
 		"raw_user_meta_data": `{"display_name":"Alice"}`,
 		"created_at":         time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC),
@@ -91,7 +92,7 @@ func TestBuildUser_GoTrueFieldContract(t *testing.T) {
 
 	required := []string{
 		"id", "aud", "role", "email", "email_confirmed_at", "phone",
-		"confirmed_at", "last_sign_in_at", "app_metadata", "user_metadata",
+		"confirmed_at", "last_sign_in_at", "banned_until", "app_metadata", "user_metadata",
 		"identities", "created_at", "updated_at",
 	}
 	for _, k := range required {
