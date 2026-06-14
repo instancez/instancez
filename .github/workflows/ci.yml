@@ -196,16 +196,11 @@ jobs:
           mkdir -p dist
           for os in linux darwin windows; do
             for arch in amd64 arm64; do
-              bin="inz"
-              [ "$os" = "windows" ] && bin="inz.exe"
+              ext=""
+              [ "$os" = "windows" ] && ext=".exe"
+              out="dist/inz_${VERSION}_${os}_${arch}${ext}"
               CGO_ENABLED=0 GOOS=$os GOARCH=$arch \
-                go build -ldflags "$LDFLAGS" -o "$bin" ./cmd/inz
-              if [ "$os" = "windows" ]; then
-                zip -q "dist/inz_${VERSION}_${os}_${arch}.zip" "$bin"
-              else
-                tar -czf "dist/inz_${VERSION}_${os}_${arch}.tar.gz" "$bin"
-              fi
-              rm "$bin"
+                go build -ldflags "$LDFLAGS" -o "$out" ./cmd/inz
             done
           done
           (cd dist && sha256sum -- * > checksums.txt)
