@@ -20,7 +20,7 @@ services:
     build:
       context: ../../..
       dockerfile: Dockerfile
-    # `dev` migrates, seeds, and builds the code functions on the fly (runs
+    # `dev` migrates and builds the code functions on the fly (runs
     # `npm ci` in /app/functions). `serve` is the production mode, but it never
     # builds functions — it consumes a pre-built bundle from `inz deploy`.
     command: ["inz", "dev"]

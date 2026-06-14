@@ -69,7 +69,7 @@ cmd/inz/main.go
 internal/cli/         cobra commands (dev, serve, init, validate, deploy, doctor, status, login, …)
         │
         ▼
-internal/app/         engine.go orchestrates lifecycle: migrate → seed → http + watcher
+internal/app/         engine.go orchestrates lifecycle: migrate → http + watcher
         │             — depends only on internal/domain interfaces
         ▼
 internal/domain/      pure types + port interfaces (OwnerDB, RequestDB, Roles, Config, …)
@@ -80,7 +80,7 @@ internal/adapter/     postgres (pgx pool), http (Gin handlers + PostgREST surfac
 ```
 
 **Two Postgres logins, by design.** This is non-obvious and load-bearing:
-- `INSTANCEZ_OWNER_DATABASE_URL` → privileged login (`CREATEROLE CREATEDB BYPASSRLS REPLICATION`). Used for migrations and seeding. Lives behind `domain.OwnerDB`.
+- `INSTANCEZ_OWNER_DATABASE_URL` → privileged login (`CREATEROLE CREATEDB BYPASSRLS REPLICATION`). Used for migrations and DDL. Lives behind `domain.OwnerDB`.
 - `INSTANCEZ_AUTH_DATABASE_URL` → `authenticator` login (`NOINHERIT`) that is granted `anon` / `authenticated` / `service_role`. Every query the request pool runs goes through a tx that issues `SET LOCAL ROLE`: CRUD endpoints pick the role from the validated JWT, system endpoints (auth/admin/mfa/storage) default to `service_role`. NOINHERIT is load-bearing — without an explicit role switch the login carries no table privileges, which is exactly what we want as a regression guard. Lives behind `domain.RequestDB`. See `internal/adapter/postgres/context.go` and `pool.go` (`buildSessionSetup`, the auto-wrap on `Query`/`QueryRow`/`Exec`).
 
 **RLS is the only authorization layer.** There is no HTTP-level RBAC and no application-side role table. All access decisions are Postgres policies declared in `instancez.yaml` under each table's `rls:` block. The middleware's job is to validate the JWT and pick the right Postgres role; everything else is RLS. The `service_role` (used by the admin key path) has `BYPASSRLS`. See `internal/domain/database.go` for the `Roles` struct — wire JWT values (`anon`/`authenticated`/`service_role`) are fixed for supabase-js compat, but the Postgres role identifiers are configurable via `INSTANCEZ_DB_*_ROLE` env vars.
@@ -101,3 +101,5 @@ internal/adapter/     postgres (pgx pool), http (Gin handlers + PostgREST surfac
 - **Underscore-prefixed names** are still reserved for framework-internal tables (`_instancez_migrations`).
 - **Lambda images and registries.** AWS Lambda only pulls single-arch images from private ECR — never manifest lists, never ghcr. The public `ghcr.io/instancez/instancez:<ver>-lambda` tag built by `publish.yml` is intentionally a multi-arch manifest list (nothing feeds it to Lambda). The per-arch ECR image Lambda actually runs (`instancez/<env>:<sha>-lambda-arm64`) is built from instancez source by instancez-platform's `docker-services.yml`. Don't "simplify" that ECR build into a manifest list.
 </gotchas>
+
+## DO NOT FORGET TO UPDATE DOCS AND EXAMPLES EACH TIME A CODE, CONFIG, CLI, BEHAVIOR CHANGE HAPPENS - Located in docs/site/

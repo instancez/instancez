@@ -29,13 +29,6 @@ func (f *fakeDB) RecordMigration(ctx context.Context, checksum, sql, configJSON 
 	return nil
 }
 func (f *fakeDB) ExecDDL(ctx context.Context, sql string) error { return nil }
-func (f *fakeDB) EnsureDataTable(ctx context.Context) error     { return nil }
-func (f *fakeDB) GetAppliedData(ctx context.Context) ([]domain.DataRecord, error) {
-	return nil, nil
-}
-func (f *fakeDB) RecordData(ctx context.Context, tx domain.Tx, key, tableName, source, checksum string, rowCount int) error {
-	return nil
-}
 func (f *fakeDB) Query(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
 	if f.queryFn != nil {
 		return f.queryFn(ctx, q, args...)

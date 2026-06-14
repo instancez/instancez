@@ -29,7 +29,7 @@ docker push \
   123456789012.dkr.ecr.us-east-1.amazonaws.com/instancez/prod:${VERSION}-lambda-arm64
 ```
 
-The image includes `inz serve`, Node.js (for code functions), and the Lambda Web Adapter. The default CMD is `inz serve --data --migrate`, which runs migrations on every cold start.
+The image includes `inz serve`, Node.js (for code functions), and the Lambda Web Adapter. The default CMD is `inz serve --migrate`, which runs migrations on every cold start.
 
 ## Storage on Lambda
 

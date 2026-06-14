@@ -269,12 +269,6 @@ export function AuthBar({ variant = 'bar' }) {
               Sign up
             </button>
           </div>
-          {mode === 'signin' && (
-            <p className="hint small">
-              Seeded demo user: <code>alex@example.com</code> /{' '}
-              <code>demo-password</code>
-            </p>
-          )}
           <label>
             Email
             <input

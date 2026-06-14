@@ -262,49 +262,6 @@ func TestValidate_FunctionMissingBody(t *testing.T) {
 	assertHasErrorAt(t, errs, "rpc.bad.body")
 }
 
-func TestValidate_DataUnknownTable(t *testing.T) {
-	cfg := validBaseConfig()
-	cfg.Data = map[string]domain.TableData{
-		"nonexistent": {CSVFiles: map[string]string{"init": "./seeds/nonexistent.csv"}},
-	}
-
-	errs := Validate(cfg)
-	assertHasErrorAt(t, errs, "data.nonexistent")
-}
-
-func TestValidate_DataAuthUsersOK(t *testing.T) {
-	cfg := validBaseConfig()
-	cfg.Auth = &domain.Auth{}
-	cfg.Data = map[string]domain.TableData{
-		"auth.users": {Rows: []map[string]any{{"email": "a@example.com", "password": "secret-pass"}}},
-	}
-
-	errs := Validate(cfg)
-	if errs != nil {
-		t.Errorf("expected no errors for data.auth.users with auth configured, got: %v", errs)
-	}
-}
-
-func TestValidate_DataAuthUsersRequiresAuth(t *testing.T) {
-	cfg := validBaseConfig()
-	cfg.Data = map[string]domain.TableData{
-		"auth.users": {Rows: []map[string]any{{"email": "a@example.com"}}},
-	}
-
-	errs := Validate(cfg)
-	assertHasErrorAt(t, errs, "data.auth.users")
-}
-
-func TestValidate_DataEmptySource(t *testing.T) {
-	cfg := validBaseConfig()
-	cfg.Data = map[string]domain.TableData{
-		"todos": {CSVFiles: map[string]string{"demo": ""}},
-	}
-
-	errs := Validate(cfg)
-	assertHasErrorAt(t, errs, "data.todos.demo")
-}
-
 func TestValidate_StorageInvalidSize(t *testing.T) {
 	cfg := validBaseConfig()
 	cfg.Providers.Storage = &domain.StorageProvider{Type: "local"}
@@ -427,10 +384,6 @@ func TestValidate_FullExampleConfig(t *testing.T) {
 					{Operations: []string{"insert", "delete"}, Check: "uploaded_by = auth.uid()"},
 				},
 			},
-		},
-		Data: map[string]domain.TableData{
-			"users": {CSVFiles: map[string]string{"demo": "./seeds/users.csv"}},
-			"teams": {CSVFiles: map[string]string{"init": "./seeds/teams.csv"}},
 		},
 	}
 

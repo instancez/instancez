@@ -71,7 +71,6 @@ inz serve [flags]
 | `--config` | `instancez.yaml` | Config source: file path or `s3://bucket/key`. Env: `INSTANCEZ_CONFIG`. |
 | `--dashboard` | `disabled` | Dashboard mode. Env: `INSTANCEZ_DASHBOARD`. |
 | `--dashboard-write-dotenv` | `false` | Allow dashboard to write secrets to a .env file. Env: `INSTANCEZ_DASHBOARD_WRITE_DOTENV`. |
-| `--data` | `false` | Apply CSV data imports on startup. |
 | `--dotenv-path` | — | Path to .env file when `--dashboard-write-dotenv` is set. Env: `INSTANCEZ_DOTENV_PATH`. |
 | `--migrate` | `false` | Run pending migrations on startup. |
 | `--port` | (from config or `8080`) | Override server port. |

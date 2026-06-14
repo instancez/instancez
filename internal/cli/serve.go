@@ -186,7 +186,6 @@ func runServe(opts serveOptions) error {
 	engineOpts := []app.EngineOption{
 		app.WithMode(app.ModeProd),
 		app.WithMigrate(opts.migrate),
-		app.WithSeed(opts.loadData),
 		app.WithAllowDestructive(opts.allowDestructive),
 		app.WithWatch(opts.watch),
 		app.WithWatchInterval(opts.watchInterval),

@@ -420,7 +420,7 @@ func scaffoldProductionEnvExample() string {
 	return `# Production runtime config — copy to .production.env (gitignored) before
 # running 'inz serve'. Shell env vars always take precedence over this file.
 #
-# Two-pool layout: the owner DSN runs migrations/seeding; the authenticator
+# Two-pool layout: the owner DSN runs migrations; the authenticator
 # DSN handles request traffic (NOINHERIT login that SET LOCAL ROLEs per query).
 
 INSTANCEZ_OWNER_DATABASE_URL=postgres://instancez_owner:CHANGE_ME@host:5432/dbname?sslmode=require

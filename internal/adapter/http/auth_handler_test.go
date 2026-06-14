@@ -469,13 +469,6 @@ func (s *stubDB) RecordMigration(ctx context.Context, checksum, sql, configJSON 
 	return nil
 }
 func (s *stubDB) ExecDDL(ctx context.Context, sql string) error { return nil }
-func (s *stubDB) EnsureDataTable(ctx context.Context) error     { return nil }
-func (s *stubDB) GetAppliedData(ctx context.Context) ([]domain.DataRecord, error) {
-	return nil, nil
-}
-func (s *stubDB) RecordData(ctx context.Context, tx domain.Tx, key, tableName, source, checksum string, rowCount int) error {
-	return nil
-}
 func (s *stubDB) Query(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
 	if s.queryFn != nil {
 		return s.queryFn(ctx, q, args...)

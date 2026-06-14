@@ -21,7 +21,7 @@ type DB struct {
 	roles *domain.Roles
 }
 
-// NewOwner constructs the privileged pool used for migrations, seeding,
+// NewOwner constructs the privileged pool used for migrations,
 // replication slot creation, and extension installs.
 func NewOwner(ctx context.Context, databaseURL string, poolCfg domain.PoolConfig) (domain.OwnerDB, error) {
 	db, err := New(ctx, databaseURL, poolCfg)
@@ -164,57 +164,6 @@ func (db *DB) RecordMigration(ctx context.Context, checksum, sql, configJSON str
 	return nil
 }
 
-// EnsureDataTable creates the _instancez_data tracking table if it doesn't exist.
-func (db *DB) EnsureDataTable(ctx context.Context) error {
-	_, err := db.pool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS _instancez_data (
-			key        TEXT PRIMARY KEY,
-			table_name TEXT NOT NULL,
-			source     TEXT NOT NULL,
-			checksum   TEXT NOT NULL,
-			row_count  INTEGER NOT NULL,
-			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		)
-	`)
-	if err != nil {
-		return &domain.DatabaseError{Op: "ensure_data_table", Err: err}
-	}
-	return nil
-}
-
-// GetAppliedData returns all previously applied data import records.
-func (db *DB) GetAppliedData(ctx context.Context) ([]domain.DataRecord, error) {
-	rows, err := db.pool.Query(ctx,
-		`SELECT key, table_name, source, checksum, row_count, applied_at FROM _instancez_data`)
-	if err != nil {
-		return nil, &domain.DatabaseError{Op: "get_applied_data", Err: err}
-	}
-	defer rows.Close()
-
-	var records []domain.DataRecord
-	for rows.Next() {
-		var r domain.DataRecord
-		if err := rows.Scan(&r.Key, &r.TableName, &r.Source, &r.Checksum, &r.RowCount, &r.AppliedAt); err != nil {
-			return nil, &domain.DatabaseError{Op: "scan_data_record", Err: err}
-		}
-		records = append(records, r)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, &domain.DatabaseError{Op: "data_rows_iteration", Err: err}
-	}
-	return records, nil
-}
-
-// RecordData inserts a data import tracking record within the given transaction.
-func (db *DB) RecordData(ctx context.Context, tx domain.Tx, key, tableName, source, checksum string, rowCount int) error {
-	_, err := tx.Exec(ctx,
-		`INSERT INTO _instancez_data (key, table_name, source, checksum, row_count) VALUES ($1, $2, $3, $4, $5)`,
-		key, tableName, source, checksum, rowCount)
-	if err != nil {
-		return &domain.DatabaseError{Op: "record_data", Err: err}
-	}
-	return nil
-}
 
 // ExecDDL executes raw DDL (migration SQL).
 func (db *DB) ExecDDL(ctx context.Context, sql string) error {

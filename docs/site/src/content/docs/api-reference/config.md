@@ -277,24 +277,6 @@ functions:
 
 `INSTANCEZ_ENV_*` references are resolved from the process environment. Plain `${VAR}` references (without the `INSTANCEZ_ENV_` prefix) are not supported in `env:` — use them elsewhere in the config file for other values.
 
-## data
-
-Seed data applied on boot (when `--data` is passed to `inz serve` or `inz dev`). Supports inline rows or CSV file references.
-
-```yaml
-data:
-  # Inline rows
-  categories:
-    - id: 1
-      name: Fiction
-    - id: 2
-      name: Non-fiction
-
-  # CSV file references (label → file path)
-  products:
-    catalog: data/products.csv
-```
-
 ## functions_bundle
 
 Internal field written by `inz deploy`. Points to the pre-built functions bundle URI (e.g. `s3://bucket/key#<sha256>`). Do not set this manually.

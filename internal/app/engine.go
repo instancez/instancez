@@ -8,15 +8,12 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/instancez/instancez/internal/config"
-	"github.com/instancez/instancez/internal/csvutil"
 	"github.com/instancez/instancez/internal/domain"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // HTTPServer is the interface for the HTTP server managed by the engine.
@@ -34,7 +31,7 @@ type Engine struct {
 	mu       sync.RWMutex
 	cfg      *domain.Config
 	drift    *DriftTracker
-	ownerDB  domain.OwnerDB   // privileged: migrations and seeding
+	ownerDB  domain.OwnerDB   // privileged: migrations and DDL
 	authDB   domain.RequestDB // request path; SET LOCAL ROLE per tx
 	migrator *Migrator
 	logger   *slog.Logger
@@ -45,7 +42,6 @@ type Engine struct {
 	// Options
 	mode             Mode
 	migrate          bool
-	seed             bool
 	allowDestructive bool
 	watch            bool
 	watchInterval    time.Duration
@@ -72,7 +68,6 @@ type EngineOption func(*Engine)
 
 func WithMode(m Mode) EngineOption                   { return func(e *Engine) { e.mode = m } }
 func WithMigrate(v bool) EngineOption                { return func(e *Engine) { e.migrate = v } }
-func WithSeed(v bool) EngineOption                   { return func(e *Engine) { e.seed = v } }
 func WithAllowDestructive(v bool) EngineOption       { return func(e *Engine) { e.allowDestructive = v } }
 func WithWatch(v bool) EngineOption                  { return func(e *Engine) { e.watch = v } }
 func WithLogger(l *slog.Logger) EngineOption         { return func(e *Engine) { e.logger = l } }
@@ -95,10 +90,9 @@ func NewEngine(cfg *domain.Config, ownerDB domain.OwnerDB, authDB domain.Request
 		authDB:   authDB,
 		migrator: NewMigrator(ownerDB, roles),
 		logger:   slog.Default(),
-		mode:     ModeDev,
-		migrate:  true,
-		seed:     true,
-		watch:    true,
+		mode:    ModeDev,
+		migrate: true,
+		watch:   true,
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -307,16 +301,7 @@ func (e *Engine) Start(ctx context.Context) error {
 		go runDriftHeartbeat(ctx, e.drift, e.logger, 10*time.Minute, nil)
 	}
 
-	// 2. Data imports
-	if e.seed && len(e.cfg.Data) > 0 {
-		t := time.Now()
-		if err := e.applyData(ctx); err != nil {
-			return fmt.Errorf("data import failed: %w", err)
-		}
-		e.logger.Info("data imports applied", "duration", time.Since(t).Round(time.Millisecond))
-	}
-
-	// 3. Start HTTP server
+	// 2. Start HTTP server
 	if e.httpServer != nil {
 		go func() {
 			if err := e.httpServer.Start(); err != nil {
@@ -339,237 +324,6 @@ func (e *Engine) Start(ctx context.Context) error {
 	return e.waitForShutdown(ctx)
 }
 
-func (e *Engine) applyData(ctx context.Context) error {
-	if err := e.ownerDB.EnsureDataTable(ctx); err != nil {
-		return fmt.Errorf("ensure data table: %w", err)
-	}
-
-	applied, err := e.ownerDB.GetAppliedData(ctx)
-	if err != nil {
-		return fmt.Errorf("get applied data: %w", err)
-	}
-	appliedMap := make(map[string]domain.DataRecord, len(applied))
-	for _, r := range applied {
-		appliedMap[r.Key] = r
-	}
-
-	configDir := filepath.Dir(e.configPath)
-	ordered := orderDataTables(e.cfg)
-
-	tx, err := e.ownerDB.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin data transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	anyNew := false
-	for _, tableName := range ordered {
-		td := e.cfg.Data[tableName]
-
-		if td.Rows != nil {
-			// Inline rows
-			compositeKey := tableName + ".inline"
-			rowsJSON, _ := json.Marshal(td.Rows)
-			checksum := fmt.Sprintf("%x", sha256.Sum256(rowsJSON))
-
-			if prev, ok := appliedMap[compositeKey]; ok {
-				if prev.Checksum == checksum {
-					continue
-				}
-				e.logger.Warn("inline data changed, skipping (already applied)", "key", compositeKey)
-				continue
-			}
-
-			if err := e.validateDataColumns(tableName, td.Rows); err != nil {
-				_ = tx.Rollback(ctx)
-				return fmt.Errorf("data %s: %w", compositeKey, err)
-			}
-
-			for _, row := range td.Rows {
-				if err := e.applyDataRow(ctx, tx, tableName, compositeKey, row); err != nil {
-					_ = tx.Rollback(ctx)
-					return err
-				}
-			}
-
-			if err := e.ownerDB.RecordData(ctx, tx, compositeKey, tableName, "inline", checksum, len(td.Rows)); err != nil {
-				_ = tx.Rollback(ctx)
-				return fmt.Errorf("data %s: record: %w", compositeKey, err)
-			}
-			e.logger.Info("data imported", "key", compositeKey, "rows", len(td.Rows))
-			anyNew = true
-
-		} else {
-			// CSV file references
-			keys := sortedKeys(td.CSVFiles)
-			for _, key := range keys {
-				csvPath := td.CSVFiles[key]
-				compositeKey := tableName + "." + key
-
-				absPath := csvPath
-				if !filepath.IsAbs(csvPath) {
-					absPath = filepath.Join(configDir, csvPath)
-				}
-
-				fileBytes, err := os.ReadFile(absPath)
-				if err != nil {
-					_ = tx.Rollback(ctx)
-					return fmt.Errorf("data %s: read %s: %w", compositeKey, csvPath, err)
-				}
-				checksum := fmt.Sprintf("%x", sha256.Sum256(fileBytes))
-
-				if prev, ok := appliedMap[compositeKey]; ok {
-					if prev.Checksum == checksum && prev.Source == csvPath {
-						continue
-					}
-					if prev.Checksum != checksum {
-						e.logger.Warn("data file content changed, skipping", "key", compositeKey, "source", csvPath)
-					}
-					if prev.Source != csvPath {
-						e.logger.Warn("data file path changed, skipping", "key", compositeKey, "old_source", prev.Source, "new_source", csvPath)
-					}
-					continue
-				}
-
-				records, err := csvutil.ReadRecords(fileBytes)
-				if err != nil {
-					_ = tx.Rollback(ctx)
-					return fmt.Errorf("data %s: parse csv: %w", compositeKey, err)
-				}
-
-				if err := e.validateDataColumns(tableName, records); err != nil {
-					_ = tx.Rollback(ctx)
-					return fmt.Errorf("data %s: %w", compositeKey, err)
-				}
-
-				table, hasTable := e.cfg.Tables[tableName]
-				if hasTable {
-					records = csvutil.CoerceRecords(records, table)
-				}
-
-				for _, row := range records {
-					if err := e.applyDataRow(ctx, tx, tableName, compositeKey, row); err != nil {
-						_ = tx.Rollback(ctx)
-						return err
-					}
-				}
-
-				if err := e.ownerDB.RecordData(ctx, tx, compositeKey, tableName, csvPath, checksum, len(records)); err != nil {
-					_ = tx.Rollback(ctx)
-					return fmt.Errorf("data %s: record: %w", compositeKey, err)
-				}
-				e.logger.Info("data imported", "key", compositeKey, "rows", len(records))
-				anyNew = true
-			}
-		}
-	}
-
-	if anyNew {
-		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("commit data transaction: %w", err)
-		}
-	}
-	return nil
-}
-
-func (e *Engine) applyDataRow(ctx context.Context, tx domain.Tx, tableName, compositeKey string, row map[string]any) error {
-	if tableName == "auth.users" {
-		if pwd, ok := row["password"]; ok {
-			if pwdStr, ok := pwd.(string); ok {
-				hash, err := bcrypt.GenerateFromPassword([]byte(pwdStr), bcrypt.DefaultCost)
-				if err != nil {
-					return fmt.Errorf("data %s: hash password: %w", compositeKey, err)
-				}
-				row["password_hash"] = string(hash)
-				delete(row, "password")
-			}
-		}
-	}
-	if err := upsertRow(ctx, tx, e.cfg, tableName, row); err != nil {
-		return fmt.Errorf("data %s: upsert: %w", compositeKey, err)
-	}
-	return nil
-}
-
-func (e *Engine) validateDataColumns(tableName string, records []map[string]any) error {
-	if tableName == "auth.users" {
-		// Known auth.users columns. "password" is allowed (gets bcrypted to
-		// password_hash by applyDataRow). Custom profile fields belong in a
-		// separate user-defined table FK'd to auth.users.id, not here.
-		known := map[string]bool{
-			"id": true, "email": true, "password": true, "password_hash": true,
-			"email_verified": true, "email_confirmed_at": true,
-			"last_sign_in_at": true, "raw_app_meta_data": true,
-			"raw_user_meta_data": true, "is_anonymous": true,
-			"created_at": true, "updated_at": true,
-		}
-		for _, rec := range records {
-			for col := range rec {
-				if !known[col] {
-					return fmt.Errorf("unknown column %q in auth.users data", col)
-				}
-			}
-		}
-		return nil
-	}
-
-	table, ok := e.cfg.Tables[tableName]
-	if !ok {
-		return fmt.Errorf("unknown table %q", tableName)
-	}
-	fieldMap := table.FieldMap()
-	for _, rec := range records {
-		for col := range rec {
-			if _, exists := fieldMap[col]; !exists {
-				return fmt.Errorf("unknown column %q in table %q", col, tableName)
-			}
-		}
-	}
-	return nil
-}
-
-func upsertRow(ctx context.Context, tx domain.Tx, cfg *domain.Config, tableName string, row map[string]any) error {
-	if len(row) == 0 {
-		return nil
-	}
-
-	cols := sortedKeys(row)
-	placeholders := make([]string, len(cols))
-	values := make([]any, len(cols))
-	for i, col := range cols {
-		placeholders[i] = fmt.Sprintf("$%d", i+1)
-		values[i] = row[col]
-	}
-
-	pk := "id"
-	if table, ok := cfg.Tables[tableName]; ok {
-		for _, field := range table.Fields {
-			if field.PrimaryKey {
-				pk = field.Name
-				break
-			}
-		}
-	}
-
-	setClause := make([]string, 0, len(cols))
-	for _, col := range cols {
-		if col != pk {
-			setClause = append(setClause, fmt.Sprintf("%s = EXCLUDED.%s", col, col))
-		}
-	}
-
-	query := fmt.Sprintf(
-		"INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s",
-		tableName,
-		joinStrings(cols, ", "),
-		joinStrings(placeholders, ", "),
-		pk,
-		joinStrings(setClause, ", "),
-	)
-
-	_, err := tx.Exec(ctx, query, values...)
-	return err
-}
 
 func (e *Engine) waitForShutdown(ctx context.Context) error {
 	sigCh := make(chan os.Signal, 1)
@@ -614,22 +368,6 @@ func (e *Engine) modeStr() string {
 	return "production"
 }
 
-// orderDataTables returns data table names in a safe insertion order.
-// "auth.users" always comes first (the auth user record), then user-defined
-// tables ordered by FK deps.
-func orderDataTables(cfg *domain.Config) []string {
-	var result []string
-	if _, ok := cfg.Data["auth.users"]; ok {
-		result = append(result, "auth.users")
-	}
-	ordered := orderTables(cfg.Tables)
-	for _, name := range ordered {
-		if _, ok := cfg.Data[name]; ok {
-			result = append(result, name)
-		}
-	}
-	return result
-}
 
 // runDriftHeartbeat logs a loud error periodically while the tracker shows
 // drift, so the failure mode doesn't get buried in log volume. Returns when

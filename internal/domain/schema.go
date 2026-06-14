@@ -3,13 +3,10 @@
 package domain
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
 	"time"
-
-	"gopkg.in/yaml.v3"
 )
 
 // Config is the top-level Instancez configuration parsed from YAML.
@@ -25,8 +22,6 @@ type Config struct {
 	Storage    map[string]Bucket       `yaml:"storage" json:"storage"`
 	RPC        map[string]Function     `yaml:"rpc" json:"rpc"`
 	Functions  map[string]CodeFunction `yaml:"functions" json:"functions"`
-	Data       map[string]TableData    `yaml:"data" json:"data"`
-
 	// FunctionsBundle is a pointer to the pre-built functions bundle that
 	// `serve` consumes at runtime (it never builds). `inz deploy` builds the
 	// bundle (vendoring node_modules), uploads it, and records the pointer here.
@@ -37,60 +32,6 @@ type Config struct {
 	FunctionsBundle string `yaml:"functions_bundle" json:"functions_bundle"`
 }
 
-// TableData holds either inline rows (a list) or CSV file references (a label→path map).
-// The YAML value under data.<table> can be either format.
-type TableData struct {
-	Rows     []map[string]any  // set when YAML value is a sequence
-	CSVFiles map[string]string // set when YAML value is a mapping (label → file path)
-}
-
-func (td *TableData) UnmarshalYAML(value *yaml.Node) error {
-	switch value.Kind {
-	case yaml.SequenceNode:
-		return value.Decode(&td.Rows)
-	case yaml.MappingNode:
-		return value.Decode(&td.CSVFiles)
-	default:
-		return fmt.Errorf("data entry must be a sequence (inline rows) or mapping (csv files)")
-	}
-}
-
-func (td TableData) MarshalYAML() (any, error) {
-	if td.CSVFiles != nil {
-		return td.CSVFiles, nil
-	}
-	return td.Rows, nil
-}
-
-// MarshalJSON encodes TableData with the same dual-shape semantics as YAML:
-// inline rows serialize as a JSON array; CSV-file maps serialize as an object.
-func (td TableData) MarshalJSON() ([]byte, error) {
-	if td.CSVFiles != nil {
-		return json.Marshal(td.CSVFiles)
-	}
-	if td.Rows != nil {
-		return json.Marshal(td.Rows)
-	}
-	return []byte("[]"), nil
-}
-
-// UnmarshalJSON mirrors UnmarshalYAML: array → Rows, object → CSVFiles.
-func (td *TableData) UnmarshalJSON(data []byte) error {
-	// Peek at the first non-whitespace byte to distinguish array from object.
-	for _, b := range data {
-		switch b {
-		case ' ', '\t', '\r', '\n':
-			continue
-		case '[':
-			return json.Unmarshal(data, &td.Rows)
-		case '{':
-			return json.Unmarshal(data, &td.CSVFiles)
-		default:
-			return fmt.Errorf("data entry must be a JSON array (inline rows) or object (csv files)")
-		}
-	}
-	return fmt.Errorf("data entry must be a JSON array (inline rows) or object (csv files)")
-}
 
 // Project holds display-only metadata.
 type Project struct {
@@ -470,12 +411,3 @@ type Migration struct {
 	AppliedAt  time.Time `json:"applied_at"`
 }
 
-// DataRecord tracks an applied CSV data import.
-type DataRecord struct {
-	Key       string    `json:"key"`
-	TableName string    `json:"table_name"`
-	Source    string    `json:"source"`
-	Checksum  string    `json:"checksum"`
-	RowCount  int       `json:"row_count"`
-	AppliedAt time.Time `json:"applied_at"`
-}

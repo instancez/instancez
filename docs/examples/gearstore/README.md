@@ -19,27 +19,6 @@ Then open:
 - Instancez API: http://localhost:8080
 - Docs UI: http://localhost:8080/api/docs
 
-## Seeded demo users
-
-The `data:` block in `instancez.yaml` seeds the catalog (categories, products,
-reviews) **and two ready-to-use accounts in `auth.users`**:
-
-| Email              | Password        |
-| ------------------ | --------------- |
-| `alex@example.com` | `demo-password` |
-| `sam@example.com`  | `demo-password` |
-
-Rows under `data.auth.users` are special-cased by the importer: the plaintext
-`password` is bcrypt-hashed into `password_hash` before insert, and columns
-are validated against the `auth.users` schema. The seeds use explicit UUIDs so
-the `profiles` rows and the first two catalog reviews can reference the same
-users — sign in as Alex and his review grows Edit/Delete buttons, and
-`/functions/v1/my-reviews` returns it.
-
-Data imports are tracked by content checksum and applied once: editing a seed
-after the first boot logs a warning and skips it. To re-seed from scratch,
-drop the volume: `docker compose down -v`.
-
 ## What it demonstrates
 
 Schema (see `instancez.yaml`):
@@ -54,9 +33,6 @@ Profile data lives in `profiles`, a user-defined table FK'd to `auth.users.id`.
   `user_id = auth.uid()` — only the row owner can touch their own review
 - **profiles** — user-defined table FK'd to `auth.users.id`; `display_name`
   is promoted into `raw_user_meta_data` on signup
-- **auth.users seeding** — the `data:` block provisions the demo accounts
-  above, with passwords bcrypt-hashed at import (see "Seeded demo users")
-
 Auth flows (see `src/AuthBar.jsx`) — four tabs, all driven by supabase-js:
 
 - **Password** — `supabase.auth.signUp(...)` / `signInWithPassword(...)`

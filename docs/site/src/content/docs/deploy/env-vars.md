@@ -9,7 +9,7 @@ These three variables must be set before `inz serve` will start.
 
 | Variable | Description |
 |----------|-------------|
-| `INSTANCEZ_OWNER_DATABASE_URL` | Postgres DSN for the privileged login role (`instancez_owner`). Used for migrations and seeding. Requires `CREATEROLE CREATEDB BYPASSRLS REPLICATION`. |
+| `INSTANCEZ_OWNER_DATABASE_URL` | Postgres DSN for the privileged login role (`instancez_owner`). Used for migrations and DDL. Requires `CREATEROLE CREATEDB BYPASSRLS REPLICATION`. |
 | `INSTANCEZ_AUTH_DATABASE_URL` | Postgres DSN for the `authenticator` login role. Used for all request-pool queries. Must be `NOINHERIT` with `anon`, `authenticated`, and `service_role` granted to it. |
 | `INSTANCEZ_ADMIN_KEY` | Secret key for admin API access. Sent as the `apikey` header or `Authorization: Bearer` on admin routes. |
 
@@ -118,10 +118,9 @@ functions:
 
 Only variables matching the pattern `INSTANCEZ_ENV_*` are forwarded to function workers. They are never written to the worker process environment directly; they are passed via a secure in-memory channel. Set them in the host environment (or `.production.env`) and reference them with `${INSTANCEZ_ENV_YOUR_KEY}` in the YAML.
 
-## Migrations and data
+## Migrations
 
 | Variable | Flag equivalent | Default | Description |
 |----------|----------------|---------|-------------|
 | `INSTANCEZ_MIGRATE` | `--migrate` | `false` | Run pending schema migrations on startup |
-| `INSTANCEZ_DATA` | `--data` | `false` | Apply CSV data imports on startup |
 | `INSTANCEZ_ALLOW_DESTRUCTIVE` | `--allow-destructive` | `false` | Permit `DROP TABLE` / `DROP COLUMN` in migrations |

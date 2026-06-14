@@ -502,13 +502,6 @@ func (f *fakeDB) ExecDDL(ctx context.Context, sql string) error {
 	// a regression worth surfacing.
 	return fmt.Errorf("fakeDB.ExecDDL should not be called; Apply must use Begin/Commit")
 }
-func (f *fakeDB) EnsureDataTable(ctx context.Context) error { return nil }
-func (f *fakeDB) GetAppliedData(ctx context.Context) ([]domain.DataRecord, error) {
-	return nil, nil
-}
-func (f *fakeDB) RecordData(ctx context.Context, tx domain.Tx, key, tableName, source, checksum string, rowCount int) error {
-	return nil
-}
 func (f *fakeDB) Query(ctx context.Context, query string, args ...any) ([]map[string]any, error) {
 	return nil, nil
 }

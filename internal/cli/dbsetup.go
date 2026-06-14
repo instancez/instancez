@@ -11,7 +11,7 @@ import (
 )
 
 // ownerPoolConfig derives the owner pool's sizing from the YAML pool config,
-// which sizes the request pool. The owner pool only runs migrations, seeding,
+// which sizes the request pool. The owner pool only runs migrations
 // and extension installs — boot time and config changes — so it keeps no warm
 // connections (privileged logins shouldn't sit idle, and idle flows are what
 // NLB/PrivateLink paths silently expire) and caps out at 2.
@@ -29,7 +29,7 @@ func dbConnections(ctx context.Context, poolCfg domain.PoolConfig) (domain.Owner
 	ownerURL := os.Getenv("INSTANCEZ_OWNER_DATABASE_URL")
 	if ownerURL == "" {
 		return domain.OwnerDB{}, domain.RequestDB{}, domain.Roles{},
-			fmt.Errorf("INSTANCEZ_OWNER_DATABASE_URL not set (privileged login for migrations/seeding)")
+			fmt.Errorf("INSTANCEZ_OWNER_DATABASE_URL not set (privileged login for migrations)")
 	}
 	authURL := os.Getenv("INSTANCEZ_AUTH_DATABASE_URL")
 	if authURL == "" {

@@ -94,11 +94,6 @@ type Database interface {
 	RecordMigration(ctx context.Context, checksum, sql, configJSON string) error
 	ExecDDL(ctx context.Context, sql string) error
 
-	// Data imports
-	EnsureDataTable(ctx context.Context) error
-	GetAppliedData(ctx context.Context) ([]DataRecord, error)
-	RecordData(ctx context.Context, tx Tx, key, tableName, source, checksum string, rowCount int) error
-
 	// CRUD (called by PostgREST-compatible query engine)
 	Query(ctx context.Context, query string, args ...any) ([]map[string]any, error)
 	QueryRow(ctx context.Context, query string, args ...any) (map[string]any, error)
@@ -112,14 +107,14 @@ type Database interface {
 }
 
 // OwnerDB is the privileged database connection used for migrations,
-// seeding, replication slot creation, and extension installs. It MUST NOT
+// replication slot creation, and extension installs. It MUST NOT
 // be passed into HTTP request handling — the distinct named type makes
 // such a substitution a compile error at every API boundary.
 type OwnerDB struct{ Database }
 
 // RequestDB is the per-request database connection used by HTTP handlers.
 // Each transaction issues SET LOCAL ROLE to anon/authenticated/service_role
-// based on the inbound session. It MUST NOT be used for DDL or seeding.
+// based on the inbound session. It MUST NOT be used for DDL.
 type RequestDB struct{ Database }
 
 // Tx represents a database transaction.

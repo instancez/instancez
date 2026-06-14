@@ -191,7 +191,6 @@ func Validate(cfg *domain.Config) domain.ValidationErrors {
 	errs = append(errs, validateStorage(cfg.Storage)...)
 	errs = append(errs, validateRPC(cfg.RPC)...)
 	errs = append(errs, validateCodeFunctions(cfg.Functions)...)
-	errs = append(errs, validateData(cfg.Data, cfg.Tables, cfg.Auth)...)
 
 	// Cross-cutting: FK reference validation
 	errs = append(errs, validateForeignKeys(cfg.Tables)...)
@@ -722,52 +721,13 @@ func validateCodeFunctions(functions map[string]domain.CodeFunction) domain.Vali
 	return errs
 }
 
-func validateData(data map[string]domain.TableData, tables map[string]domain.Table, auth *domain.Auth) domain.ValidationErrors {
-	var errs domain.ValidationErrors
-	for tableName, td := range data {
-		basePath := fmt.Sprintf("data.%s", tableName)
-		// "auth.users" is the one non-user table the importer accepts: it
-		// seeds the auth user record (password is bcrypt-hashed at import).
-		// The table only exists when auth is configured.
-		if tableName == "auth.users" {
-			if auth == nil {
-				errs = append(errs, &domain.ValidationError{
-					Path:       basePath,
-					Message:    "seeding auth.users requires auth to be configured",
-					Suggestion: "Add an auth: block to enable the auth.users table",
-				})
-			}
-		} else if _, ok := tables[tableName]; !ok {
-			errs = append(errs, &domain.ValidationError{
-				Path:       basePath,
-				Message:    fmt.Sprintf("data references unknown table %q", tableName),
-				Suggestion: fmt.Sprintf("Define a %q table or check spelling", tableName),
-			})
-		}
-		if td.Rows != nil && len(td.Rows) == 0 {
-			errs = append(errs, &domain.ValidationError{
-				Path:    basePath,
-				Message: "data list is empty",
-			})
-		}
-		for key, source := range td.CSVFiles {
-			if source == "" {
-				errs = append(errs, &domain.ValidationError{
-					Path:    fmt.Sprintf("data.%s.%s", tableName, key),
-					Message: "source path is empty",
-				})
-			}
-		}
-	}
-	return errs
-}
 
 func validateForeignKeys(tables map[string]domain.Table) domain.ValidationErrors {
 	var errs domain.ValidationErrors
 
 	// Build set of known tables + their fields.
 	// The users table has implicit core columns (id, email, etc.) added by
-	// migrations, so seed them before merging user-declared fields.
+	// migrations, so pre-populate them before merging user-declared fields.
 	knownTables := map[string]map[string]domain.Field{
 		"users": {"id": {Type: "uuid", PrimaryKey: true}, "email": {Type: "text"}},
 	}

@@ -212,7 +212,6 @@ func runDev(opts devOptions) error {
 	engine = app.NewEngine(cfg, ownerDB, authDB, roles,
 		app.WithMode(app.ModeDev),
 		app.WithMigrate(true),
-		app.WithSeed(true),
 		app.WithWatch(opts.watch),
 		app.WithWatchInterval(opts.watchInterval),
 		app.WithConfigPath(opts.configPath),

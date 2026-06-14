@@ -170,7 +170,6 @@ func applyEnvDefaults(fs *pflag.FlagSet, aliases map[string][]string, lookup fun
 type serveOptions struct {
 	port             int
 	configPath       string
-	loadData         bool
 	migrate          bool
 	allowDestructive bool
 
@@ -190,7 +189,6 @@ type serveFlagSet struct {
 
 	port             int
 	configPath       string
-	loadData         bool
 	migrate          bool
 	allowDestructive bool
 	watch            bool
@@ -204,7 +202,6 @@ func newServeFlagSet() *serveFlagSet {
 	fs := &serveFlagSet{flags: pflag.NewFlagSet("serve", pflag.ContinueOnError)}
 	fs.flags.IntVar(&fs.port, "port", 0, "server port (default: from config or 8080)")
 	fs.flags.StringVar(&fs.configPath, "config", "instancez.yaml", "config source (file path or s3://bucket/key; env: INSTANCEZ_CONFIG)")
-	fs.flags.BoolVar(&fs.loadData, "data", false, "apply CSV data imports on startup")
 	fs.flags.BoolVar(&fs.migrate, "migrate", false, "run pending migrations on startup")
 	fs.flags.BoolVar(&fs.allowDestructive, "allow-destructive", false, "permit DROP TABLE/COLUMN in migrations")
 	fs.flags.BoolVar(&fs.watch, "watch", false, "watch the config source for changes (env: INSTANCEZ_WATCH)")
@@ -248,7 +245,6 @@ func resolveServeFlags(fs *serveFlagSet, lookup func(string) string) (serveOptio
 	return serveOptions{
 		port:             fs.port,
 		configPath:       fs.configPath,
-		loadData:         fs.loadData,
 		migrate:          fs.migrate,
 		allowDestructive: fs.allowDestructive,
 		watch:            fs.watch,
@@ -323,7 +319,7 @@ func newDevFlagSet() *devFlagSet {
 }
 
 // resolveDevFlags mirrors resolveServeFlags but with dev defaults: watch on,
-// dashboard readwrite, migrate+seed always on, plus the --no-watch alias.
+// dashboard readwrite, migrate always on, plus the --no-watch alias.
 // When no --use-* flag is given, dev defaults to the DSN path.
 func resolveDevFlags(fs *devFlagSet, lookup func(string) string) (devOptions, error) {
 	setBy, err := applyEnvDefaults(fs.flags, devNoEnvBinding, lookup)
@@ -360,11 +356,10 @@ func resolveDevFlags(fs *devFlagSet, lookup func(string) string) (devOptions, er
 
 	return devOptions{
 		serveOptions: serveOptions{
-			port:           fs.port,
-			configPath:     fs.configPath,
-			migrate:        true, // dev always migrates
-			loadData:       true, // dev always seeds
-			watch:          watch,
+			port:       fs.port,
+			configPath: fs.configPath,
+			migrate:    true, // dev always migrates
+			watch:      watch,
 			watchInterval:  fs.watchInterval,
 			dashboard:      mode,
 			dotenvWritable: fs.dotenvWritable,
