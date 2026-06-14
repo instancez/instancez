@@ -1,9 +1,9 @@
 ---
-title: RPC
+title: SQL Functions
 description: Call Postgres stored procedures at /rest/v1/rpc/<name>.
 ---
 
-`rpc:` declares Postgres stored procedures. This is distinct from `functions:`, which declares JavaScript code functions served at `/functions/v1/<name>`.
+`rpc:` declares Postgres stored procedures called via HTTP. This is distinct from `functions:`, which declares JavaScript [code functions](/instancez/build/functions/) served at `/functions/v1/<name>`.
 
 ## Declaring
 

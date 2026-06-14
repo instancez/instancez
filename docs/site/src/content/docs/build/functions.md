@@ -1,5 +1,5 @@
 ---
-title: Functions
+title: Code Functions
 description: JavaScript ESM HTTP handlers served at /functions/v1/<name>. Full access to ctx.supabase, secrets, and structured logging.
 ---
 
@@ -158,4 +158,4 @@ const { data, error } = await supabase.functions.invoke("todos", {
 
 ## What's next
 
-- [Functions API reference](/instancez/api-reference/functions/) — full handler contract, return value shape, and error envelope
+- [Code Functions API reference](/instancez/api-reference/functions/) — full handler contract, return value shape, and error envelope

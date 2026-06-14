@@ -287,6 +287,75 @@ Response `200`:
 }
 ```
 
+## Direct upload API (serverless)
+
+For serverless environments where routing the file bytes through instancez is too expensive, instancez exposes a separate presigned-URL API at `/api/storage/<bucket>`. The file never touches the instancez server — instancez only issues the URL.
+
+**Only available with the S3 storage provider.** The local provider returns a `file://` path (useful in dev, not in prod).
+
+### POST /api/storage/:bucket/sign — get presigned upload URL
+
+Validates content type and size against the bucket config, writes an object metadata row, and returns a presigned S3 PUT URL valid for 15 minutes.
+
+Requires `Authorization: Bearer <jwt>`.
+
+Request body (JSON):
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `content_type` | `string` | Yes | MIME type. Validated against `storage.<bucket>.types` if set. |
+| `size` | `number` | No | File size in bytes. Validated against `storage.<bucket>.max_size` if set. |
+
+Response `200`:
+
+```json
+{
+  "id": "c3d4e5f6",
+  "upload_url": "https://s3.amazonaws.com/my-bucket/avatars/c3d4e5f6?X-Amz-Signature=..."
+}
+```
+
+Then `PUT {upload_url}` with the raw file bytes directly to S3 — no instancez involved.
+
+### GET /api/storage/:bucket/:id — get presigned download URL
+
+Returns a presigned S3 GET URL valid for 15 minutes. No auth required on public buckets; JWT required on private buckets.
+
+Response `200`:
+
+```json
+{ "url": "https://s3.amazonaws.com/my-bucket/avatars/c3d4e5f6?X-Amz-Signature=..." }
+```
+
+### DELETE /api/storage/:bucket/:id — delete object
+
+Deletes the object from S3 and removes the metadata row. Requires JWT.
+
+Response `204` on success.
+
+### Example flow
+
+```js
+// 1. Get a presigned upload URL from instancez (one small API call)
+const { id, upload_url } = await fetch('/api/storage/avatars/sign', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${jwt}`,
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({ content_type: file.type, size: file.size }),
+}).then(r => r.json())
+
+// 2. Upload directly to S3 — instancez is not in this path
+await fetch(upload_url, {
+  method: 'PUT',
+  headers: { 'Content-Type': file.type },
+  body: file,
+})
+
+// 3. Store `id` to retrieve later
+```
+
 ## Authorization
 
 All object reads and writes go through RLS on `storage.objects`. The effective Postgres role is derived from the caller's JWT (`anon`, `authenticated`, or `service_role`). Declare RLS policies on the bucket in `instancez.yaml`:

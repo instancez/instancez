@@ -87,6 +87,24 @@ providers:
     endpoint: ""   # optional: set for non-AWS endpoints (e.g. Cloudflare R2)
 ```
 
+## Direct upload (serverless)
+
+When using the S3 provider, you can upload files directly to S3 without routing bytes through instancez. Call `POST /api/storage/<bucket>/sign` to get a presigned upload URL, then `PUT` the file straight to S3:
+
+```js
+const { id, upload_url } = await fetch('/api/storage/avatars/sign', {
+  method: 'POST',
+  headers: { 'Authorization': `Bearer ${jwt}`, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ content_type: file.type, size: file.size }),
+}).then(r => r.json())
+
+await fetch(upload_url, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file })
+```
+
+Use `GET /api/storage/<bucket>/<id>` to get a presigned download URL later.
+
+See the [Storage API reference](/instancez/api-reference/storage/) for the full direct upload endpoint spec.
+
 ## What's next
 
 - [Storage API reference](/instancez/api-reference/storage/) — full endpoint listing with request and response shapes
