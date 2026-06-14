@@ -146,6 +146,32 @@ func TestBuildUser_UnverifiedHasEmptyConfirmedAt(t *testing.T) {
 	}
 }
 
+// TestBuildUser_BannedUntilRendered verifies that a concrete banned_until
+// time.Time value is rendered as a non-empty RFC3339 string in the user
+// object. This catches the case where banned_until is present in the row
+// map but the column was never SELECTed (always nil → always "").
+func TestBuildUser_BannedUntilRendered(t *testing.T) {
+	h := &AuthHandler{cfg: &domain.Config{Auth: &domain.Auth{}}}
+	banTime := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
+	row := map[string]any{
+		"id":                 "uuid",
+		"email":              "u@e.com",
+		"email_verified":     false,
+		"email_confirmed_at": nil,
+		"last_sign_in_at":    nil,
+		"banned_until":       banTime,
+		"raw_app_meta_data":  nil,
+		"raw_user_meta_data": nil,
+		"created_at":         time.Now(),
+		"updated_at":         time.Now(),
+	}
+	u := h.buildUser("uuid", row)
+	v, _ := u["banned_until"].(string)
+	if v == "" {
+		t.Error("banned_until should be non-empty for a banned user")
+	}
+}
+
 // ---------- jwtAuth middleware: GoTrue claim shape ----------
 
 // stubKeys builds a trivial JWTKeyManager backed by an in-memory RS256 key.

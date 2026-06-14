@@ -30,7 +30,7 @@ func NewService(db domain.Database, cfg *domain.Config, logger *slog.Logger) *Se
 // userSelectCols is the canonical auth.users projection consumed by the HTTP
 // handler's buildUser/buildSession. mfa_handler.go keeps its own copy of this
 // column list; any change here must be mirrored there.
-const userSelectCols = `id::text, email, email_verified, email_confirmed_at, last_sign_in_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at`
+const userSelectCols = `id::text, email, email_verified, email_confirmed_at, last_sign_in_at, banned_until, raw_app_meta_data, raw_user_meta_data, created_at, updated_at`
 
 // maxOTPAttempts bounds brute-force of the 10^6 numeric-code space.
 const maxOTPAttempts = 5
