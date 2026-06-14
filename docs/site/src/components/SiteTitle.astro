@@ -12,26 +12,15 @@ if (!version) {
 ---
 
 <Default {...Astro.props}><slot /></Default>
-
 {version && (
-  <script define:vars={{ version, releaseUrl: `https://github.com/instancez/instancez/releases/tag/${version}` }}>
-    // Insert the badge after the site-title anchor, outside the title-wrapper,
-    // so it doesn't affect the header grid column sizing.
-    document.addEventListener('DOMContentLoaded', () => {
-      const titleWrapper = document.querySelector('.title-wrapper');
-      if (!titleWrapper || document.querySelector('.version-badge')) return;
-
-      const badge = document.createElement('a');
-      badge.href = releaseUrl;
-      badge.textContent = version;
-      badge.className = 'version-badge';
-      badge.target = '_blank';
-      badge.rel = 'noopener noreferrer';
-
-      // Insert after the title-wrapper, inside the header grid row
-      titleWrapper.parentElement.insertBefore(badge, titleWrapper.nextSibling);
-    });
-  </script>
+  <a
+    href={`https://github.com/instancez/instancez/releases/tag/${version}`}
+    class="version-badge"
+    target="_blank"
+    rel="noopener noreferrer"
+  >
+    {version}
+  </a>
 )}
 
 <style is:global>
