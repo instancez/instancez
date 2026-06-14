@@ -42,7 +42,7 @@ All keys are optional. Omit `auth:` entirely and JWT auth still works with the d
 
 ## Auth methods
 
-instancez implements the full `@supabase/supabase-js` auth surface. Call it exactly as you would against Supabase — no client changes needed.
+instancez implements the Supabase auth wire protocol, so any Supabase client library works. The examples below use `@supabase/supabase-js` — the same client the integration tests run against — but the Python, Swift, Flutter, and other clients work the same way.
 
 **Email + password** — `supabase.auth.signUp()` / `supabase.auth.signInWithPassword()`
 

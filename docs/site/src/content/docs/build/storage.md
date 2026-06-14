@@ -35,9 +35,9 @@ storage:
 
 Buckets are managed exclusively through `instancez.yaml` — the migrator creates or updates them on boot.
 
-## Using from supabase-js
+## Using from a Supabase client
 
-instancez implements the full `@supabase/supabase-js` storage surface. Call it exactly as you would against Supabase:
+instancez implements the Supabase storage wire protocol. Any Supabase client library works — examples below use `@supabase/supabase-js`:
 
 ```js
 // Upload

@@ -67,7 +67,7 @@ Content-Type: application/json
 {"key": "value", "nested": {"x": 1}}
 ```
 
-## Calling via supabase-js
+## Calling via a Supabase client
 
 ```ts
 const { data, error } = await supabase.rpc('team_stats', { team_id: 42 })

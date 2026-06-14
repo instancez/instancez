@@ -1,6 +1,6 @@
 ---
 title: Quick Start
-description: Install instancez and have a running Supabase-compatible API in under 5 minutes.
+description: Install instancez and have a Supabase-compatible API running in under 5 minutes.
 ---
 
 ## Install
@@ -40,6 +40,8 @@ Your API is live at `http://localhost:8080`. Save `instancez.yaml` and the schem
 Open the dashboard at `http://localhost:8080/dashboard`. The API Keys section shows your anon key — copy it from there.
 
 ## Query your data
+
+instancez implements the Supabase wire protocol — any Supabase client library works. Examples here use `@supabase/supabase-js`:
 
 Your project starts with a `todos` table. Paste the anon key you copied above:
 
