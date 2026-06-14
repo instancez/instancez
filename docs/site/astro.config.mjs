@@ -42,15 +42,6 @@ export default defineConfig({
           ],
         },
         {
-          label: 'API Reference',
-          items: [
-            { label: 'REST API', slug: 'api-reference/rest' },
-            { label: 'Auth API', slug: 'api-reference/auth' },
-            { label: 'Code Functions API', slug: 'api-reference/functions' },
-            { label: 'Storage API', slug: 'api-reference/storage' },
-          ],
-        },
-        {
           label: 'CLI Reference',
           items: [
             { label: 'CLI', slug: 'api-reference/cli' },

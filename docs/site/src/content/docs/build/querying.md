@@ -448,4 +448,3 @@ const { data } = await supabase.from('todos').select('title').order('priority').
 - [RLS](/instancez/build/rls/) — control access to rows with row-level security policies
 - [Auth](/instancez/build/auth/) — configure authentication and JWT handling
 - [RPC reference](/instancez/api-reference/rpc/) — call Postgres functions over HTTP
-- [REST reference](/instancez/api-reference/rest/) — full parameter and header reference

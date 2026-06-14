@@ -59,7 +59,6 @@ await supabase.storage.from('avatars').remove(['photo.png'])
 
 Uploading to an existing path without `upsert: true` returns a 409 error.
 
-See the [Storage API reference](/instancez/api-reference/storage/) for the full endpoint listing.
 
 ## Storage providers
 
@@ -103,8 +102,6 @@ await fetch(upload_url, { method: 'PUT', headers: { 'Content-Type': file.type },
 
 Use `GET /api/storage/<bucket>/<id>` to get a presigned download URL later.
 
-See the [Storage API reference](/instancez/api-reference/storage/) for the full direct upload endpoint spec.
 
 ## What's next
 
-- [Storage API reference](/instancez/api-reference/storage/) — full endpoint listing with request and response shapes

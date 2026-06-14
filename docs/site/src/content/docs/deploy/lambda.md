@@ -31,6 +31,23 @@ docker push \
 
 The image includes `inz serve`, Node.js (for code functions), and the Lambda Web Adapter. The default CMD is `inz serve --data --migrate`, which runs migrations on every cold start.
 
+## Storage on Lambda
+
+Lambda functions are stateless and ephemeral — use the S3 storage provider, not local. With S3 configured, instancez exposes a direct upload API at `/api/storage/<bucket>/sign` that returns a presigned S3 URL. The file bytes go straight to S3 without passing through the Lambda function:
+
+```js
+const { id, upload_url } = await fetch('/api/storage/avatars/sign', {
+  method: 'POST',
+  headers: { 'Authorization': `Bearer ${jwt}`, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ content_type: file.type, size: file.size }),
+}).then(r => r.json())
+
+// Upload directly to S3 — Lambda is not in this path
+await fetch(upload_url, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file })
+```
+
+This avoids Lambda's 6 MB payload limit and keeps large uploads off the function entirely. See [Storage — Direct upload](/instancez/build/storage/) for the full endpoint spec.
+
 ## Lambda configuration
 
 When creating or updating the function:

@@ -158,4 +158,3 @@ const { data, error } = await supabase.functions.invoke("todos", {
 
 ## What's next
 
-- [Code Functions API reference](/instancez/api-reference/functions/) — full handler contract, return value shape, and error envelope
