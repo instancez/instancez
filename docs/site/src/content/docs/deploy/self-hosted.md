@@ -29,9 +29,9 @@ INSTANCEZ_AUTH_DATABASE_URL=postgres://authenticator:password@localhost:5432/myd
 INSTANCEZ_ADMIN_KEY=your-secret-admin-key
 ```
 
-Postgres must already have the `instancez_owner` and `authenticator` roles provisioned before `inz serve` starts. See the [Docker guide](/deploy/docker/) for the init SQL, or run it manually against your database.
+Postgres must already have the `instancez_owner` and `authenticator` roles provisioned before `inz serve` starts. See the [Docker guide](/instancez/deploy/docker/) for the init SQL, or run it manually against your database.
 
-See [Environment Variables](/deploy/env-vars/) for the full list of available variables.
+See [Environment Variables](/instancez/deploy/env-vars/) for the full list of available variables.
 
 ## Validate config
 

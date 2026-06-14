@@ -147,5 +147,5 @@ Set `where:` for a partial index: `where: "status = 'published'"`.
 
 ## What's next
 
-- [RLS](/build/rls) — lock down table access with row-level security policies
-- [Auth](/build/auth) — configure authentication, JWT expiry, and OAuth providers
+- [RLS](/instancez/build/rls/) — lock down table access with row-level security policies
+- [Auth](/instancez/build/auth/) — configure authentication, JWT expiry, and OAuth providers

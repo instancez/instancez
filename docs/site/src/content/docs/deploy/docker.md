@@ -77,7 +77,7 @@ AUTH_DB_PASSWORD=change-me
 ADMIN_KEY=your-secret-admin-key
 ```
 
-Two database URLs are required — see [Environment Variables](/deploy/env-vars/) for why they are separate.
+Two database URLs are required — see [Environment Variables](/instancez/deploy/env-vars/) for why they are separate.
 
 Start everything:
 
@@ -107,7 +107,7 @@ docker run -d \
 | `ghcr.io/instancez/instancez:latest` | Latest release, multi-arch (linux/amd64 + linux/arm64) |
 | `ghcr.io/instancez/instancez:v1.2.3` | Pinned release |
 
-The `latest` tag is a multi-arch manifest list and works on both amd64 and arm64 hosts. For AWS Lambda, see the [Lambda deployment guide](/deploy/lambda/) — Lambda requires a single-arch image from a private ECR registry and cannot use these tags directly.
+The `latest` tag is a multi-arch manifest list and works on both amd64 and arm64 hosts. For AWS Lambda, see the [Lambda deployment guide](/instancez/deploy/lambda/) — Lambda requires a single-arch image from a private ECR registry and cannot use these tags directly.
 
 ## Health checks
 

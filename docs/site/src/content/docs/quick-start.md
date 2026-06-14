@@ -11,7 +11,7 @@ curl -fsSL https://get.instancez.io | sh
 
 Installs `inz` to `~/.local/bin`. Check it works: `inz --version`.
 
-Windows or need a manual download? See the [Installation guide](/install/).
+Windows or need a manual download? See the [Installation guide](/instancez/install/).
 
 ## Create a project
 
@@ -60,7 +60,7 @@ const { data, error } = await supabase
 
 ## What's next
 
-- [Schema](/build/schema/) — add tables, columns, and enums
-- [Auth](/build/auth/) — sign up, sign in, OAuth, MFA
-- [Querying](/build/querying/) — filters, embeds, pagination, aggregates
-- [Deploy](/deploy/docker/) — run in production
+- [Schema](/instancez/build/schema/) — add tables, columns, and enums
+- [Auth](/instancez/build/auth/) — sign up, sign in, OAuth, MFA
+- [Querying](/instancez/build/querying/) — filters, embeds, pagination, aggregates
+- [Deploy](/instancez/deploy/docker/) — run in production

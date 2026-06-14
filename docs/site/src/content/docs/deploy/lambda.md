@@ -53,7 +53,7 @@ Set these on the Lambda function:
 | `INSTANCEZ_ADMIN_KEY` | Yes | Secret for admin API access |
 | `INSTANCEZ_CONFIG` | No | Config source; defaults to `instancez.yaml` in the working directory. Set to `s3://bucket/key` to load from S3 (see below). |
 
-See [Environment Variables](/deploy/env-vars/) for the full reference.
+See [Environment Variables](/instancez/deploy/env-vars/) for the full reference.
 
 ## Config from S3
 

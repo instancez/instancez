@@ -64,7 +64,7 @@ Issues a JWT with `is_anonymous: true` and the `anon` Postgres role. Set `allow_
 
 **TOTP MFA** — the full `auth.mfa` surface is implemented: `enroll`, `challenge`, `verify`, `unenroll`, `listFactors`. A successful `verify` re-issues the session JWT with `aal: aal2`.
 
-See the [Auth API reference](/api-reference/auth/) for the endpoint listing and JWT claims structure.
+See the [Auth API reference](/instancez/api-reference/auth/) for the endpoint listing and JWT claims structure.
 
 ## Using auth in RLS
 
@@ -99,10 +99,10 @@ rls:
     check: "auth.is_authenticated()"
 ```
 
-See [RLS Policies](/build/rls/) for the full policy reference.
+See [RLS Policies](/instancez/build/rls/) for the full policy reference.
 
 ## What's next
 
-- [RLS Policies](/build/rls/) — write access rules in SQL expressions
-- [Schema](/build/schema/) — declare tables and fields in YAML
-- [Storage](/build/storage/) — file uploads wired to the same JWT
+- [RLS Policies](/instancez/build/rls/) — write access rules in SQL expressions
+- [Schema](/instancez/build/schema/) — declare tables and fields in YAML
+- [Storage](/instancez/build/storage/) — file uploads wired to the same JWT
