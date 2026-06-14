@@ -23,6 +23,7 @@ const RpcDetail = lazy(() => import("../pages/RpcDetail").then(m => ({ default: 
 const Functions = lazy(() => import("../pages/Functions").then(m => ({ default: m.Functions })));
 const FunctionDetail = lazy(() => import("../pages/FunctionDetail").then(m => ({ default: m.FunctionDetail })));
 const ProvidersPage = lazy(() => import("../pages/Providers").then(m => ({ default: m.ProvidersPage })));
+const UsersPage = lazy(() => import("../pages/Users").then(m => ({ default: m.UsersPage })));
 
 export const overviewRoutes = (): RouteObject[] => [
   { index: true, element: <Overview />, handle: { title: null } satisfies ConsoleRouteHandle },
@@ -58,11 +59,20 @@ export const providersRoutes = (): RouteObject[] => [
   { index: true, element: <ProvidersPage />, handle: { title: "Providers", description: "Configure email and storage providers for your project" } satisfies ConsoleRouteHandle },
 ];
 
+export const usersRoutes = (): RouteObject[] => [
+  {
+    index: true,
+    element: <UsersPage />,
+    handle: { title: "Users", description: "Manage authenticated users" } satisfies ConsoleRouteHandle,
+  },
+];
+
 export function consoleRoutes(): RouteObject[] {
   return [
     ...overviewRoutes(),
     { path: "tables", children: tablesRoutes() },
     { path: "auth", children: authRoutes() },
+    { path: "users", children: usersRoutes() },
     { path: "storage", children: storageRoutes() },
     { path: "rpc", children: rpcRoutes() },
     { path: "functions", children: functionsRoutes() },
