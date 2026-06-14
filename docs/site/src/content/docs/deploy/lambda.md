@@ -3,43 +3,33 @@ title: AWS Lambda
 description: Deploy instancez as an AWS Lambda container function.
 ---
 
-instancez runs on Lambda as a container function. The Lambda Web Adapter (bundled in `Dockerfile.lambda`) translates Lambda invocations into HTTP requests to `inz serve` listening on port 8080 — no handler shim required.
+instancez runs on Lambda as a container function. The Lambda Web Adapter translates Lambda invocations into HTTP requests to `inz serve` on port 8080 — no handler shim required.
 
-:::caution
-Lambda only pulls single-arch images from a private ECR registry. Never use the `ghcr.io/instancez/instancez` images with Lambda — they are multi-arch manifest lists and Lambda will reject them. Build and push a per-arch image to your own ECR repository.
-:::
+## Pull and push to ECR
 
-## Build the image
-
-Build a single-arch arm64 image from `Dockerfile.lambda`:
+Lambda requires a single-arch image in a private ECR repository. Pull the arm64 layer from the official instancez image and push it directly to your ECR repo — no local build needed:
 
 ```bash
-docker build \
-  --platform linux/arm64 \
-  -f Dockerfile.lambda \
-  -t instancez-lambda:latest \
-  .
-```
+VERSION=v0.1.0   # replace with the release you want to pin
 
-The resulting image includes `inz serve`, Node.js (for code functions), and the Lambda Web Adapter. The default CMD is `inz serve --data --migrate`, which runs migrations and data imports on every cold start.
-
-## Push to ECR
-
-Create a repository and push the image:
-
-```bash
 # Authenticate to ECR
 aws ecr get-login-password --region us-east-1 | \
   docker login --username AWS --password-stdin \
   123456789012.dkr.ecr.us-east-1.amazonaws.com
 
-# Tag and push
-docker tag instancez-lambda:latest \
-  123456789012.dkr.ecr.us-east-1.amazonaws.com/instancez/prod:latest-lambda-arm64
+# Pull the arm64 layer from ghcr, tag, and push to your ECR repo
+docker pull --platform linux/arm64 \
+  ghcr.io/instancez/instancez:${VERSION}-lambda
+
+docker tag \
+  ghcr.io/instancez/instancez:${VERSION}-lambda \
+  123456789012.dkr.ecr.us-east-1.amazonaws.com/instancez/prod:${VERSION}-lambda-arm64
 
 docker push \
-  123456789012.dkr.ecr.us-east-1.amazonaws.com/instancez/prod:latest-lambda-arm64
+  123456789012.dkr.ecr.us-east-1.amazonaws.com/instancez/prod:${VERSION}-lambda-arm64
 ```
+
+The image includes `inz serve`, Node.js (for code functions), and the Lambda Web Adapter. The default CMD is `inz serve --data --migrate`, which runs migrations on every cold start.
 
 ## Lambda configuration
 

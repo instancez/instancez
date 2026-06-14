@@ -3,9 +3,15 @@ title: Installation
 description: Install the inz CLI on macOS, Linux, or Windows.
 ---
 
-import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 
 The `inz` CLI is a single binary — no runtime dependencies, no package manager required.
+
+<Aside type="tip" title="Code functions require Node.js">
+If you plan to use [code functions](/build/functions/) (`functions:` block in `instancez.yaml`), you'll need **Node.js 18+** and **npm** installed. Everything else — auth, database, storage, RLS — works without them.
+
+Install Node.js (which includes npm) from [nodejs.org](https://nodejs.org) or via your system package manager.
+</Aside>
 
 ## One-line install
 
