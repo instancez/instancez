@@ -10,15 +10,17 @@ export function EditModeBanner({ status }: Props) {
     <Box
       role="status"
       borderTopWidth="1px"
-      borderColor="blue.300"
+      borderColor="blue.200"
       bg="blue.50"
+      _dark={{ bg: "blue.950", borderColor: "blue.800" }}
       px="4"
       py="2.5"
       fontSize="sm"
-      color="fg"
+      color="blue.900"
+      _dark={{ color: "blue.100" }}
     >
       <HStack as="span" alignItems="start" gap="2" display="inline-flex">
-        <PencilLine size={14} aria-hidden="true" style={{ marginTop: "2px", flexShrink: 0, color: "var(--chakra-colors-blue-600)" }} />
+        <PencilLine size={14} aria-hidden="true" style={{ marginTop: "2px", flexShrink: 0 }} />
         <Text as="span">
           <Box as="strong">Live edit mode.</Box>{" "}
           Changes you make here are written directly to{" "}
