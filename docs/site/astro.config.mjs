@@ -42,6 +42,14 @@ export default defineConfig({
           ],
         },
         {
+          label: 'Examples',
+          items: [
+            { label: 'Todo App', slug: 'examples/todo-app' },
+            { label: 'File Gallery', slug: 'examples/file-gallery' },
+            { label: 'Webhook Handler', slug: 'examples/webhook-function' },
+          ],
+        },
+        {
           label: 'CLI Reference',
           items: [
             { label: 'CLI', slug: 'api-reference/cli' },
