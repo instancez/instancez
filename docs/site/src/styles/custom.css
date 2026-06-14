@@ -2,13 +2,13 @@
 
 :root,
 :root[data-theme='dark'] {
-  /* Backgrounds */
-  --sl-color-bg: #080808;
-  --sl-color-bg-nav: #0a0a0a;
-  --sl-color-bg-sidebar: #080808;
-  --sl-color-bg-inline-code: #141414;
-  --sl-color-bg-badge: #1a1a1a;
-  --sl-color-black: #080808;
+  /* Backgrounds — three distinct depth layers */
+  --sl-color-bg: #040404;          /* page body — darkest */
+  --sl-color-bg-nav: #111111;      /* floating navbar */
+  --sl-color-bg-sidebar: #0e0e0e;  /* floating sidebar */
+  --sl-color-bg-inline-code: #1a1a1a;
+  --sl-color-bg-badge: #1e1e1e;
+  --sl-color-black: #040404;
 
   /* Text */
   --sl-color-text: #e8e8e8;
