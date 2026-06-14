@@ -137,11 +137,10 @@ export async function getUsers(): Promise<
 
 const AUTH_ADMIN_BASE = "/auth/v1/admin";
 
-async function authAdminRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
+async function rawAuthAdminFetch(path: string, options: RequestInit = {}): Promise<Response> {
   const key = getAdminKey();
   if (!key) throw new Error("No admin key configured");
-
-  const res = await fetch(`${AUTH_ADMIN_BASE}${path}`, {
+  return fetch(`${AUTH_ADMIN_BASE}${path}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -149,13 +148,15 @@ async function authAdminRequest<T>(path: string, options: RequestInit = {}): Pro
       ...options.headers,
     },
   });
+}
 
+async function authAdminRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const res = await rawAuthAdminFetch(path, options);
   if (res.status === 401) {
     sessionStorage.removeItem("instancez_admin_key");
     window.location.reload();
     throw new Error("Unauthorized");
   }
-
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     const err = new Error(body?.message || body?.error || `HTTP ${res.status}`);
@@ -163,7 +164,6 @@ async function authAdminRequest<T>(path: string, options: RequestInit = {}): Pro
     (err as any).body = body;
     throw err;
   }
-
   return res.json();
 }
 
@@ -171,14 +171,7 @@ export async function adminListUsers(
   page = 1,
   perPage = 50
 ): Promise<{ users: AdminUser[]; total: number }> {
-  const key = getAdminKey();
-  if (!key) throw new Error("No admin key configured");
-
-  const res = await fetch(
-    `${AUTH_ADMIN_BASE}/users?page=${page}&per_page=${perPage}`,
-    { headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` } }
-  );
-
+  const res = await rawAuthAdminFetch(`/users?page=${page}&per_page=${perPage}`);
   if (res.status === 401) {
     sessionStorage.removeItem("instancez_admin_key");
     window.location.reload();
@@ -188,10 +181,11 @@ export async function adminListUsers(
     const body = await res.json().catch(() => null);
     const err = new Error(body?.message || body?.error || `HTTP ${res.status}`);
     (err as any).status = res.status;
+    (err as any).body = body;
     throw err;
   }
-
-  const total = parseInt(res.headers.get("x-total-count") ?? "0", 10);
+  const raw = res.headers.get("x-total-count");
+  const total = raw !== null ? (parseInt(raw, 10) || 0) : 0;
   const data = await res.json();
   return { users: data.users ?? [], total };
 }
