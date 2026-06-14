@@ -52,12 +52,13 @@ starlight-theme-select { display: none; }
 @media (min-width: 50rem) {
   header.header {
     top: 10px;
-    left: 10px;
-    right: 10px;
-    width: auto;
-    border-bottom: none;
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    width: min(calc(100% - 20px), 1100px);
+    border: 1px solid rgba(255, 255, 255, 0.07);
     border-radius: 14px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.8);
   }
 
   /* Push content down to clear the floating header's top offset + gap */
@@ -70,9 +71,9 @@ starlight-theme-select { display: none; }
     left: 10px;
     bottom: 10px;
     width: calc(var(--sl-sidebar-width) - 10px);
-    border-inline-end: none;
+    border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: 14px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.04);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.7);
   }
 
   /* Right sidebar (TOC): offset for floating header */
