@@ -55,6 +55,24 @@ starlight-theme-select {
   width: auto;
 }
 
+/* Tables — wider and no premature wrapping */
+.sl-markdown-content table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  min-width: min(700px, 100%);
+}
+.sl-markdown-content th,
+.sl-markdown-content td {
+  white-space: nowrap;
+}
+/* Allow description/value cells to wrap — just not the short key/type columns */
+.sl-markdown-content td:last-child {
+  white-space: normal;
+  min-width: 200px;
+}
+
 /* Sharper headings */
 .sl-markdown-content h1,
 .sl-markdown-content h2,
