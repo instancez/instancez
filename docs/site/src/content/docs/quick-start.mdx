@@ -3,15 +3,34 @@ title: Quick Start
 description: Install instancez and have a Supabase-compatible API running in under 5 minutes.
 ---
 
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
 ## Install
 
-```bash
-curl -fsSL https://get.instancez.io | sh
-```
+<Tabs>
+  <TabItem label="macOS">
+  ```bash
+  curl -fsSL https://get.instancez.io | sh
+  ```
+  Installs `inz` to `~/.local/bin`. Check it works: `inz --version`.
+  </TabItem>
 
-Installs `inz` to `~/.local/bin`. Check it works: `inz --version`.
+  <TabItem label="Linux">
+  ```bash
+  curl -fsSL https://get.instancez.io | sh
+  ```
+  Works on x86-64 and ARM64. Installs `inz` to `~/.local/bin`. Check it works: `inz --version`.
+  </TabItem>
 
-Windows or need a manual download? See the [Installation guide](/instancez/install/).
+  <TabItem label="Windows">
+  ```powershell
+  irm https://get.instancez.io/windows | iex
+  ```
+  Installs `inz.exe` to `%LOCALAPPDATA%\instancez\bin`. Run in PowerShell 5.1+. Check it works: `inz --version`.
+  </TabItem>
+</Tabs>
+
+Need a manual download or more options? See the [Installation guide](/instancez/install/).
 
 ## Create a project
 
