@@ -37,16 +37,4 @@ await fetch(upload_url, { method: 'PUT', headers: { 'Content-Type': file.type },
 
 See [Storage](/instancez/build/storage/) for the full spec.
 
-## Other client libraries
-
-All other official Supabase SDKs implement the same wire protocol. The feature matrix above applies equally:
-
-| SDK | Language |
-|---|---|
-| [`supabase-py`](https://github.com/supabase/supabase-py) | Python |
-| [`supabase-swift`](https://github.com/supabase/supabase-swift) | Swift / iOS / macOS |
-| [`supabase-flutter`](https://github.com/supabase/supabase-flutter) | Flutter / Dart |
-| [`supabase-kt`](https://github.com/supabase-community/supabase-kt) | Kotlin / Android |
-| [`@supabase/ssr`](https://github.com/supabase/ssr) | SSR frameworks (Next.js, SvelteKit, …) |
-
-The integration test suite runs `@supabase/supabase-js` against a live instancez instance on every commit. Other SDKs are tested by community contributors — if you find a gap, [open an issue](https://github.com/instancez/instancez/issues).
+The integration test suite runs `@supabase/supabase-js` against a live instancez instance on every commit. If you find a gap, [open an issue](https://github.com/instancez/instancez/issues).
