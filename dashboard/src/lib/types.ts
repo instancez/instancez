@@ -202,3 +202,15 @@ export type ConfigStatus = {
   dashboard_mode: "disabled" | "readonly" | "readwrite";
   dotenv_writable?: boolean;
 };
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  email_confirmed_at: string;
+  banned_until: string;
+  last_sign_in_at: string;
+  app_metadata: Record<string, unknown>;
+  user_metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}

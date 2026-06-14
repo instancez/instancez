@@ -4,6 +4,7 @@ import type {
   StatsResponse,
   DiffResponse,
   ValidationError,
+  AdminUser,
 } from "../lib/types";
 
 const BASE = "/api/_admin";
@@ -129,6 +130,97 @@ export async function getUsers(): Promise<
   { id: number; email: string; email_verified: boolean; created_at: string }[]
 > {
   return request("/users");
+}
+
+// ── Auth admin user management (/auth/v1/admin/users) ────────────────────
+// Uses the Supabase-compatible endpoint surface, not /_admin/users.
+
+const AUTH_ADMIN_BASE = "/auth/v1/admin";
+
+async function authAdminRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const key = getAdminKey();
+  if (!key) throw new Error("No admin key configured");
+
+  const res = await fetch(`${AUTH_ADMIN_BASE}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${key}`,
+      ...options.headers,
+    },
+  });
+
+  if (res.status === 401) {
+    sessionStorage.removeItem("instancez_admin_key");
+    window.location.reload();
+    throw new Error("Unauthorized");
+  }
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    const err = new Error(body?.message || body?.error || `HTTP ${res.status}`);
+    (err as any).status = res.status;
+    (err as any).body = body;
+    throw err;
+  }
+
+  return res.json();
+}
+
+export async function adminListUsers(
+  page = 1,
+  perPage = 50
+): Promise<{ users: AdminUser[]; total: number }> {
+  const key = getAdminKey();
+  if (!key) throw new Error("No admin key configured");
+
+  const res = await fetch(
+    `${AUTH_ADMIN_BASE}/users?page=${page}&per_page=${perPage}`,
+    { headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` } }
+  );
+
+  if (res.status === 401) {
+    sessionStorage.removeItem("instancez_admin_key");
+    window.location.reload();
+    throw new Error("Unauthorized");
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    const err = new Error(body?.message || body?.error || `HTTP ${res.status}`);
+    (err as any).status = res.status;
+    throw err;
+  }
+
+  const total = parseInt(res.headers.get("x-total-count") ?? "0", 10);
+  const data = await res.json();
+  return { users: data.users ?? [], total };
+}
+
+export async function adminCreateUser(
+  email: string,
+  password: string,
+  emailConfirm: boolean
+): Promise<AdminUser> {
+  return authAdminRequest<AdminUser>("/users", {
+    method: "POST",
+    body: JSON.stringify({ email, password, email_confirm: emailConfirm }),
+  });
+}
+
+export async function adminUpdateUser(
+  id: string,
+  patch: { email?: string; password?: string; ban_duration?: string; email_confirm?: boolean }
+): Promise<AdminUser> {
+  return authAdminRequest<AdminUser>(`/users/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function adminDeleteUser(id: string): Promise<void> {
+  await authAdminRequest<unknown>(`/users/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
 }
 
 // API keys (anon key only — the admin key never leaves the browser)
