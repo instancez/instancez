@@ -1,8 +1,7 @@
 /* instancez brand: #080808 black, white text, no accent color */
 
 :root,
-:root[data-theme='dark'],
-:root[data-theme='light'] {
+:root[data-theme='dark'] {
   /* Backgrounds */
   --sl-color-bg: #080808;
   --sl-color-bg-nav: #0a0a0a;
