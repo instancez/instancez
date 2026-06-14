@@ -1,17 +1,15 @@
 ---
 import Default from '@astrojs/starlight/components/SiteTitle.astro';
 import type { Props } from '@astrojs/starlight/props';
+import { execSync } from 'child_process';
 
-let version: string | null = null;
-try {
-  const res = await fetch('https://api.github.com/repos/instancez/instancez/releases/latest', {
-    headers: { Accept: 'application/vnd.github+json' },
-  });
-  if (res.ok) {
-    const data = await res.json();
-    version = data.tag_name ?? null;
-  }
-} catch {}
+// CI sets DOCS_VERSION to the release tag. Fall back to `git describe` locally.
+let version: string | null = import.meta.env.DOCS_VERSION ?? null;
+if (!version) {
+  try {
+    version = execSync('git describe --tags --abbrev=0 2>/dev/null', { encoding: 'utf8' }).trim() || null;
+  } catch {}
+}
 ---
 
 <Default {...Astro.props}><slot /></Default>

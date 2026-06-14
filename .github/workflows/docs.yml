@@ -35,6 +35,8 @@ jobs:
       - name: Build
         run: npm run build
         working-directory: docs/site
+        env:
+          DOCS_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
