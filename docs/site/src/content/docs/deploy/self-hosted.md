@@ -53,67 +53,6 @@ inz serve --migrate
 
 On startup, `inz serve` logs a JSON stream to stdout. The server is ready when you see `"listening"`.
 
-## systemd unit
-
-Create `/etc/systemd/system/instancez.service`:
-
-```ini
-[Unit]
-Description=instancez API server
-After=network.target postgresql.service
-Wants=postgresql.service
-
-[Service]
-Type=simple
-User=instancez
-WorkingDirectory=/opt/instancez
-EnvironmentFile=/opt/instancez/.production.env
-ExecStart=/usr/local/bin/inz serve --migrate
-Restart=on-failure
-RestartSec=5s
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable and start it:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable instancez
-sudo systemctl start instancez
-```
-
-Check the logs:
-
-```bash
-journalctl -u instancez -f
-```
-
-## Nginx reverse proxy
-
-A minimal Nginx configuration:
-
-```nginx
-server {
-    listen 80;
-    server_name api.example.com;
-
-    location / {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 60s;
-    }
-}
-```
-
-instancez reads `X-Forwarded-Proto` and `X-Forwarded-Host` to construct the correct public base URL in the OpenAPI spec and auth redirect flows. Set these headers in Nginx if instancez sits behind a TLS terminator.
-
 ## Health checks
 
 | Endpoint | Behaviour |
