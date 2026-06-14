@@ -1,4 +1,4 @@
-import type { Config, ConfigStatus, StatsResponse, DiffResponse } from "../lib/types";
+import type { Config, ConfigStatus, StatsResponse, DiffResponse, AdminUser } from "../lib/types";
 import type { EnvVarsResponse, ConfigPreview } from "../api/client";
 
 /** What this consumer/deployment supports. Pages gate surfaces on these. */
@@ -68,4 +68,13 @@ export interface ConsoleBackend {
     add: string[],
     remove: string[]
   ): Promise<{ dependencies: Record<string, string>; has_lock: boolean; readonly: boolean }>;
+
+  // user management
+  listUsers(page?: number, perPage?: number): Promise<{ users: AdminUser[]; total: number }>;
+  createUser(email: string, password: string, emailConfirm: boolean): Promise<AdminUser>;
+  updateUser(
+    id: string,
+    patch: { email?: string; password?: string; ban_duration?: string; email_confirm?: boolean }
+  ): Promise<AdminUser>;
+  deleteUser(id: string): Promise<void>;
 }

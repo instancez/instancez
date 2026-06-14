@@ -23,4 +23,8 @@ export const adminBackend: ConsoleBackend = {
   checkFunctionFile: (file) => api.checkFunctionFile(file),
   getFunctionDeps: () => api.getFunctionDeps(),
   postFunctionDeps: (add, remove) => api.postFunctionDeps(add, remove),
+  listUsers: (page, perPage) => api.adminListUsers(page, perPage),
+  createUser: (email, password, emailConfirm) => api.adminCreateUser(email, password, emailConfirm),
+  updateUser: (id, patch) => api.adminUpdateUser(id, patch),
+  deleteUser: (id) => api.adminDeleteUser(id),
 };
