@@ -53,6 +53,9 @@ export default defineConfig({
           ],
         },
       ],
+      components: {
+        SiteTitle: './src/components/SiteTitle.astro',
+      },
       customCss: ['./src/styles/custom.css'],
       expressiveCode: {
         themes: ['material-theme-darker'],

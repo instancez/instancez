@@ -1,0 +1,47 @@
+---
+import Default from '@astrojs/starlight/components/SiteTitle.astro';
+import type { Props } from '@astrojs/starlight/props';
+
+let version: string | null = null;
+try {
+  const res = await fetch('https://api.github.com/repos/instancez/instancez/releases/latest', {
+    headers: { Accept: 'application/vnd.github+json' },
+  });
+  if (res.ok) {
+    const data = await res.json();
+    version = data.tag_name ?? null;
+  }
+} catch {}
+---
+
+<Default {...Astro.props}><slot /></Default>
+{version && (
+  <a
+    href={`https://github.com/instancez/instancez/releases/tag/${version}`}
+    class="version-badge"
+    target="_blank"
+    rel="noopener noreferrer"
+  >
+    {version}
+  </a>
+)}
+
+<style>
+  .version-badge {
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: #555;
+    border: 1px solid #2a2a2a;
+    border-radius: 99px;
+    padding: 2px 9px;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: color 0.15s, border-color 0.15s;
+    margin-left: 0.25rem;
+  }
+  .version-badge:hover {
+    color: #bbb;
+    border-color: #444;
+  }
+</style>
