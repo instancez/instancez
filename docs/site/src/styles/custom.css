@@ -55,6 +55,7 @@ starlight-theme-select {
   width: auto;
 }
 
+
 /* Tables — first column never wraps, rest wrap naturally */
 .sl-markdown-content table {
   display: block;
