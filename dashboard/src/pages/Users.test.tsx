@@ -164,4 +164,34 @@ describe("UsersPage", () => {
 
     await waitFor(() => expect(deleteUser).toHaveBeenCalledWith("u1"));
   });
+
+  it("shows error when createUser fails", async () => {
+    const createUser = vi.fn().mockRejectedValue(
+      Object.assign(new Error("Email already exists"), { body: { message: "Email already exists" } })
+    );
+    const backend = makeBackend({ createUser });
+    renderUsersPage(backend);
+    await screen.findByText("No users yet");
+
+    fireEvent.click(screen.getByRole("button", { name: /add user/i }));
+    fireEvent.change(screen.getByLabelText(/email/i), {
+      target: { value: "dupe@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText(/password/i), {
+      target: { value: "secret123" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /create user/i }));
+
+    expect(await screen.findByText("Email already exists")).toBeInTheDocument();
+  });
+
+  it("shows validation error when email is empty on create", async () => {
+    renderUsersPage(makeBackend());
+    await screen.findByText("No users yet");
+
+    fireEvent.click(screen.getByRole("button", { name: /add user/i }));
+    fireEvent.click(screen.getByRole("button", { name: /create user/i }));
+
+    expect(screen.getByText("Email is required.")).toBeInTheDocument();
+  });
 });

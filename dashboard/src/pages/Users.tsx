@@ -47,6 +47,10 @@ function UserModal({ user, onClose, onSaved }: UserModalProps) {
         if (password) patch.password = password;
         const wasBanned = isBanned(user!);
         if (banned !== wasBanned) patch.ban_duration = banned ? "infinity" : "none";
+        if (Object.keys(patch).length === 0) {
+          onClose();
+          return;
+        }
         await backend.updateUser(user!.id, patch);
       } else {
         if (!email) {
