@@ -100,6 +100,17 @@ rls:
 
 See [RLS Policies](/instancez/build/rls/) for the full policy reference.
 
+## Managing users in the dashboard
+
+The dashboard's **Users** section (top-level nav item) provides a full admin UI for user management:
+
+- **List users** — paginated table showing email, confirmed status, last sign-in, and ban status
+- **Create user** — email + password, with optional automatic email confirmation
+- **Edit user** — change email or password, ban/unban with one toggle
+- **Delete user** — gated by typing the user's email to confirm
+
+All operations go through the Supabase-compatible `/auth/v1/admin/users` endpoints using the admin key. The same endpoints work directly via `supabase-js` using the `admin` client surface (requires the service role key).
+
 ## What's next
 
 - [RLS Policies](/instancez/build/rls/) — write access rules in SQL expressions

@@ -69,7 +69,7 @@ export interface ConsoleBackend {
     remove: string[]
   ): Promise<{ dependencies: Record<string, string>; has_lock: boolean; readonly: boolean }>;
 
-  // user management
+  // user management — AdminUser.banned_until is "" (empty string) when not banned, never null/undefined
   listUsers(page?: number, perPage?: number): Promise<{ users: AdminUser[]; total: number }>;
   createUser(email: string, password: string, emailConfirm: boolean): Promise<AdminUser>;
   updateUser(
