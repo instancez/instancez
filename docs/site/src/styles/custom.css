@@ -3,12 +3,12 @@
 :root,
 :root[data-theme='dark'] {
   /* Backgrounds — three distinct depth layers */
-  --sl-color-bg: #040404;          /* page body — darkest */
-  --sl-color-bg-nav: #111111;      /* floating navbar */
-  --sl-color-bg-sidebar: #0e0e0e;  /* floating sidebar */
-  --sl-color-bg-inline-code: #1a1a1a;
-  --sl-color-bg-badge: #1e1e1e;
-  --sl-color-black: #040404;
+  --sl-color-bg: #030303;          /* page body — darkest */
+  --sl-color-bg-nav: #1a1a1a;      /* floating navbar — noticeably lifted */
+  --sl-color-bg-sidebar: #141414;  /* floating sidebar — mid layer */
+  --sl-color-bg-inline-code: #222222;
+  --sl-color-bg-badge: #252525;
+  --sl-color-black: #030303;
 
   /* Text */
   --sl-color-text: #e8e8e8;
@@ -56,9 +56,9 @@ starlight-theme-select { display: none; }
     right: auto;
     transform: translateX(-50%);
     width: min(calc(100% - 20px), 1100px);
-    border: 1px solid rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 14px;
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.8);
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.9);
   }
 
   /* Push content down to clear the floating header's top offset + gap */
@@ -71,9 +71,9 @@ starlight-theme-select { display: none; }
     left: 10px;
     bottom: 10px;
     width: calc(var(--sl-sidebar-width) - 10px);
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.09);
     border-radius: 14px;
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.7);
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.85);
   }
 
   /* Right sidebar (TOC): offset for floating header */

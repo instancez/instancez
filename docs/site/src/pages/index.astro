@@ -15,7 +15,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '')
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #080808; color: #e8e8e8; min-height: 100vh; }
 
-  nav { display: flex; align-items: center; justify-content: space-between; padding: 18px 48px; border-bottom: 1px solid #232323; position: sticky; top: 0; background: #080808cc; backdrop-filter: blur(8px); z-index: 10; }
+  nav { display: flex; align-items: center; justify-content: space-between; padding: 14px 32px; position: fixed; top: 10px; left: 50%; transform: translateX(-50%); width: min(calc(100% - 20px), 1100px); background: #1a1a1a; border: 1px solid rgba(255,255,255,0.12); border-radius: 14px; box-shadow: 0 12px 48px rgba(0,0,0,0.9); z-index: 10; }
   .nav-logo { display: flex; align-items: center; gap: 10px; font-size: 1.15rem; font-weight: 700; letter-spacing: -0.02em; color: #fff; text-decoration: none; }
   .nav-logo img { width: 30px; height: 30px; }
   .nav-links { display: flex; gap: 28px; font-size: 0.875rem; color: #999; }
@@ -23,7 +23,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '')
   .nav-links a:hover { color: #e8e8e8; }
   .nav-cta { background: #fff; color: #080808; font-size: 0.875rem; font-weight: 700; padding: 8px 18px; border-radius: 6px; text-decoration: none; }
 
-  .hero { text-align: center; padding: 100px 24px 84px; max-width: 760px; margin: 0 auto; }
+  .hero { text-align: center; padding: 120px 24px 84px; max-width: 760px; margin: 0 auto; }
   .hero-badge { display: inline-block; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #aaa; border: 1px solid #2e2e2e; padding: 5px 14px; border-radius: 99px; margin-bottom: 28px; }
   .hero h1 { font-size: 3.5rem; font-weight: 800; letter-spacing: -0.05em; line-height: 1.05; color: #fff; margin-bottom: 22px; }
   .hero p { font-size: 1.1rem; color: #bbb; line-height: 1.75; margin-bottom: 44px; max-width: 520px; margin-left: auto; margin-right: auto; }
