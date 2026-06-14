@@ -121,6 +121,6 @@ The request pool logs in as the `authenticator` role, which is `NOINHERIT`. With
 ## What's next
 
 - [Auth](/instancez/build/auth/) — how users sign up and get JWTs
-- [Schema](/instancez/build/schema/) — table and column definitions
+- [Tables / Schema](/instancez/build/schema/) — table and column definitions
 - [Storage](/instancez/build/storage/) — per-bucket RLS policies
 - [Querying](/instancez/build/querying/) — filtering and embedding from the client

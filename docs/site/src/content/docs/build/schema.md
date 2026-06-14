@@ -1,5 +1,5 @@
 ---
-title: Schema
+title: Tables / Schema
 description: Define tables, fields, types, and foreign keys in instancez.yaml. Changes apply automatically in dev mode.
 ---
 

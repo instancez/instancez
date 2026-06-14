@@ -60,7 +60,7 @@ const { data, error } = await supabase
 
 ## What's next
 
-- [Schema](/instancez/build/schema/) — add tables, columns, and enums
+- [Tables / Schema](/instancez/build/schema/) — add tables, columns, and enums
 - [Auth](/instancez/build/auth/) — sign up, sign in, OAuth, MFA
 - [Querying](/instancez/build/querying/) — filters, embeds, pagination, aggregates
 - [Deploy](/instancez/deploy/docker/) — run in production

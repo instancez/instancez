@@ -104,5 +104,5 @@ See [RLS Policies](/instancez/build/rls/) for the full policy reference.
 ## What's next
 
 - [RLS Policies](/instancez/build/rls/) — write access rules in SQL expressions
-- [Schema](/instancez/build/schema/) — declare tables and fields in YAML
+- [Tables / Schema](/instancez/build/schema/) — declare tables and fields in YAML
 - [Storage](/instancez/build/storage/) — file uploads wired to the same JWT

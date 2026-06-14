@@ -23,12 +23,12 @@ export default defineConfig({
         {
           label: 'Build',
           items: [
-            { label: 'Schema', slug: 'build/schema' },
+            { label: 'Tables / Schema', slug: 'build/schema' },
             { label: 'Auth', slug: 'build/auth' },
-            { label: 'Querying', slug: 'build/querying' },
             { label: 'RLS Policies', slug: 'build/rls' },
             { label: 'Functions', slug: 'build/functions' },
             { label: 'Storage', slug: 'build/storage' },
+            { label: 'Querying', slug: 'build/querying' },
           ],
         },
         {
