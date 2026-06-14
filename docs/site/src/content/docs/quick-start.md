@@ -41,7 +41,7 @@ Open the dashboard at `http://localhost:8080/dashboard`. The API Keys section sh
 
 ## Query your data
 
-instancez implements the Supabase wire protocol — any Supabase client library works. Examples here use `@supabase/supabase-js`:
+instancez speaks the same HTTP API as Supabase, so any Supabase client library works. Examples here use `@supabase/supabase-js`:
 
 Your project starts with a `todos` table. Paste the anon key you copied above:
 

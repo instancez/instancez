@@ -3,7 +3,7 @@ title: Querying
 description: Filter, embed, aggregate, and paginate with the PostgREST-compatible query API.
 ---
 
-instancez implements the PostgREST wire protocol, so any Supabase client library works — JavaScript, Python, Swift, Flutter, and others. Examples here use `@supabase/supabase-js` (which is also what the integration tests run against), but the raw HTTP parameters are shown so you can use any client or make requests directly.
+instancez exposes the same HTTP API as Supabase, so any Supabase client library works — JavaScript, Python, Swift, Flutter, and others. Examples here use `@supabase/supabase-js` (which is also what the integration tests run against), but the raw HTTP parameters are shown so you can use any client or make requests directly.
 
 ## Basic select
 

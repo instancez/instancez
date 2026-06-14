@@ -37,7 +37,7 @@ Buckets are managed exclusively through `instancez.yaml` — the migrator create
 
 ## Using from a Supabase client
 
-instancez implements the Supabase storage wire protocol. Any Supabase client library works — examples below use `@supabase/supabase-js`:
+instancez exposes the same storage API as Supabase. Any Supabase client library works — examples below use `@supabase/supabase-js`:
 
 ```js
 // Upload
