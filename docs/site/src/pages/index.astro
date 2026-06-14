@@ -1,5 +1,6 @@
 ---
 // Custom landing page — uses no Starlight layout; standalone HTML
+import logoUrl from '../assets/logo.svg'
 const base = import.meta.env.BASE_URL.replace(/\/$/, '')
 ---
 <!DOCTYPE html>
@@ -89,7 +90,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '')
 
 <nav>
   <a href={`${base}/`} class="nav-logo">
-    <img src={`${base}/favicon.svg`} alt="instancez" />
+    <img src={logoUrl.src ?? logoUrl} alt="instancez" />
     instancez
   </a>
   <div class="nav-links">
