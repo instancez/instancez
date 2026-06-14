@@ -358,6 +358,7 @@ func generateAuthTables(auth *domain.Auth) []string {
 		cols = append(cols, "email_verified BOOLEAN NOT NULL DEFAULT FALSE")
 		cols = append(cols, "email_confirmed_at TIMESTAMPTZ")
 		cols = append(cols, "last_sign_in_at TIMESTAMPTZ")
+		cols = append(cols, "banned_until TIMESTAMPTZ")
 		cols = append(cols, "raw_app_meta_data JSONB NOT NULL DEFAULT '{}'::jsonb")
 		cols = append(cols, "raw_user_meta_data JSONB NOT NULL DEFAULT '{}'::jsonb")
 		cols = append(cols, "is_anonymous BOOLEAN NOT NULL DEFAULT FALSE")
