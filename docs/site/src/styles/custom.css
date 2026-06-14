@@ -43,6 +43,44 @@
 /* Hide theme toggle — site is always dark */
 starlight-theme-select { display: none; }
 
+/* Wider content area — pushes TOC further right */
+:root {
+  --sl-content-width: 55rem;
+}
+
+/* Floating navbar and sidebar — desktop only */
+@media (min-width: 50rem) {
+  header.header {
+    top: 10px;
+    left: 10px;
+    right: 10px;
+    width: auto;
+    border-bottom: none;
+    border-radius: 14px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  }
+
+  /* Push content down to clear the floating header's top offset + gap */
+  .main-frame {
+    padding-top: calc(var(--sl-nav-height) + 20px);
+  }
+
+  .sidebar-pane {
+    top: calc(var(--sl-nav-height) + 20px);
+    left: 10px;
+    bottom: 10px;
+    width: calc(var(--sl-sidebar-width) - 10px);
+    border-inline-end: none;
+    border-radius: 14px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  }
+
+  /* Right sidebar (TOC): offset for floating header */
+  .right-sidebar {
+    padding-top: calc(var(--sl-nav-height) + 20px);
+  }
+}
+
 /* Logo + title — fixed size and tight gap */
 .site-title {
   gap: 0.5rem;

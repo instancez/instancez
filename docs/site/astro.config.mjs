@@ -20,7 +20,7 @@ export default defineConfig({
       sidebar: [
         { label: 'Quick Start', slug: 'quick-start' },
         { label: 'Installation', slug: 'install' },
-        { label: 'Client Compatibility', slug: 'client-compatibility' },
+        { label: 'Supabase SDK Compatibility', slug: 'supabase-compatibility' },
         {
           label: 'Build',
           items: [
