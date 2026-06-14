@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"os"
 	"strconv"
@@ -925,6 +926,10 @@ func (h *AuthHandler) handleAdminCreateUser(c *gin.Context) {
 		problemJSON(c, 400, "bad_request", "Email is required")
 		return
 	}
+	if _, err := mail.ParseAddress(req.Email); err != nil {
+		problemJSON(c, 400, "bad_request", "Invalid email address")
+		return
+	}
 
 	var hash string
 	if req.Password != "" {
@@ -1029,6 +1034,13 @@ func (h *AuthHandler) handleAdminUpdateUser(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		problemJSON(c, 400, "bad_request", "Invalid request: "+err.Error())
 		return
+	}
+
+	if req.Email != nil && *req.Email != "" {
+		if _, err := mail.ParseAddress(*req.Email); err != nil {
+			problemJSON(c, 400, "bad_request", "Invalid email address")
+			return
+		}
 	}
 
 	params := domain.UpdateUserParams{

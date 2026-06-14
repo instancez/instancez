@@ -19,6 +19,10 @@ function isBanned(user: AdminUser): boolean {
   return !!user.banned_until;
 }
 
+function isValidEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+}
+
 interface UserModalProps {
   user: AdminUser | null;
   onClose: () => void;
@@ -43,8 +47,14 @@ function UserModal({ user, onClose, onSaved }: UserModalProps) {
     try {
       if (isEdit) {
         const patch: { email?: string; password?: string; ban_duration?: string } = {};
-        if (email !== user!.email) patch.email = email;
-        if (password) patch.password = password;
+        if (email !== user!.email) {
+          if (!isValidEmail(email)) { setError("Enter a valid email address."); setSaving(false); return; }
+          patch.email = email.trim();
+        }
+        if (password) {
+          if (password.length < 6) { setError("Password must be at least 6 characters."); setSaving(false); return; }
+          patch.password = password;
+        }
         const wasBanned = isBanned(user!);
         if (banned !== wasBanned) patch.ban_duration = banned ? "infinity" : "none";
         if (Object.keys(patch).length === 0) {
@@ -53,17 +63,11 @@ function UserModal({ user, onClose, onSaved }: UserModalProps) {
         }
         await backend.updateUser(user!.id, patch);
       } else {
-        if (!email) {
-          setError("Email is required.");
-          setSaving(false);
-          return;
-        }
-        if (!password) {
-          setError("Password is required.");
-          setSaving(false);
-          return;
-        }
-        await backend.createUser(email, password, emailConfirm);
+        if (!email) { setError("Email is required."); setSaving(false); return; }
+        if (!isValidEmail(email)) { setError("Enter a valid email address."); setSaving(false); return; }
+        if (!password) { setError("Password is required."); setSaving(false); return; }
+        if (password.length < 6) { setError("Password must be at least 6 characters."); setSaving(false); return; }
+        await backend.createUser(email.trim(), password, emailConfirm);
       }
       onSaved();
       onClose();
