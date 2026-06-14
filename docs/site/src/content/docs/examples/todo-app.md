@@ -5,17 +5,22 @@ description: Auth, per-user data, and RLS in a minimal task manager.
 
 A complete example covering user sign-up, sign-in, per-user CRUD, and row-level security. Everything a real app needs before it gets interesting.
 
-## Schema
+## instancez.yaml
 
 ```yaml
 # instancez.yaml
+auth:
+  jwt_expiry: 1h
+  refresh_tokens: true
+  allow_signup: true
+
 tables:
   todos:
     columns:
-      id:     { type: uuid, default: gen_random_uuid(), primary_key: true }
-      user_id: { type: uuid, nullable: false }
-      title:  { type: text, nullable: false }
-      done:   { type: boolean, default: false }
+      id:         { type: uuid, default: gen_random_uuid(), primary_key: true }
+      user_id:    { type: uuid, nullable: false }
+      title:      { type: text, nullable: false }
+      done:       { type: boolean, default: false }
       created_at: { type: timestamptz, default: now() }
     rls:
       - operations: [select, insert, update, delete]

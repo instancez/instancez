@@ -5,10 +5,15 @@ description: Private image uploads, direct-to-S3 presigned URLs, and RLS on stor
 
 A private photo gallery where each user can upload images, list their own files, and get short-lived download links. Uploads go directly to S3 — the server never handles the bytes.
 
-## Storage config
+## instancez.yaml
 
 ```yaml
 # instancez.yaml
+auth:
+  jwt_expiry: 1h
+  refresh_tokens: true
+  allow_signup: true
+
 storage:
   photos:
     public: false
