@@ -46,6 +46,15 @@ starlight-theme-select {
   display: none;
 }
 
+/* Logo + title — fixed size and tight gap */
+.site-title {
+  gap: 0.5rem;
+}
+.site-title img {
+  height: 30px !important;
+  width: auto;
+}
+
 /* Sharper headings */
 .sl-markdown-content h1,
 .sl-markdown-content h2,
