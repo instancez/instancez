@@ -29,6 +29,10 @@ describe("ConsoleBackend types", () => {
       checkFunctionFile: async () => ({ exists: true }),
       getFunctionDeps: async () => ({ dependencies: {}, has_lock: false, readonly: true }),
       postFunctionDeps: async () => ({ dependencies: {}, has_lock: false, readonly: true }),
+      listUsers: async () => ({ users: [], total: 0 }),
+      createUser: async () => ({ id: "" }) as any,
+      updateUser: async () => ({ id: "" }) as any,
+      deleteUser: async () => {},
     };
     expect(stub.capabilities.canWriteConfig).toBe(true);
   });

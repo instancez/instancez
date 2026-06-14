@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Cable } from "lucide-react";
-import { Box, HStack } from "@chakra-ui/react";
+import { Box, HStack, chakra } from "@chakra-ui/react";
 import { Section, useSurfaceBg } from "./ui";
 import { CopyButton } from "./ApiKeys";
 
@@ -63,9 +63,9 @@ export function ConnectExamples({ exampleTable }: { exampleTable: string }) {
     <Section title="Connect" icon={Cable}>
       <HStack gap="1.5">
         {CLIENT_LIBS.map((lib) => (
-          <Box
+          <chakra.button
             key={lib.id}
-            as="button"
+            type="button"
             onClick={() => setActiveId(lib.id)}
             px="3"
             py="1.5"
@@ -79,7 +79,7 @@ export function ConnectExamples({ exampleTable }: { exampleTable: string }) {
             _hover={lib.id === activeId ? undefined : { color: "fg", bg: "bg.subtle" }}
           >
             {lib.label}
-          </Box>
+          </chakra.button>
         ))}
       </HStack>
       <Box bg={bg} borderRadius="xl" borderWidth="1px" overflow="hidden">
