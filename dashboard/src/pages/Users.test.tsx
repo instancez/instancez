@@ -194,4 +194,53 @@ describe("UsersPage", () => {
 
     expect(screen.getByText("Email is required.")).toBeInTheDocument();
   });
+
+  it("shows validation error for invalid email format on create", async () => {
+    renderUsersPage(makeBackend());
+    await screen.findByText("No users yet");
+
+    fireEvent.click(screen.getByRole("button", { name: /add user/i }));
+    fireEvent.change(screen.getByLabelText(/email/i), { target: { value: "notanemail" } });
+    fireEvent.click(screen.getByRole("button", { name: /create user/i }));
+
+    expect(screen.getByText("Enter a valid email address.")).toBeInTheDocument();
+  });
+
+  it("shows validation error when password is too short on create", async () => {
+    renderUsersPage(makeBackend());
+    await screen.findByText("No users yet");
+
+    fireEvent.click(screen.getByRole("button", { name: /add user/i }));
+    fireEvent.change(screen.getByLabelText(/email/i), { target: { value: "alice@example.com" } });
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: "abc" } });
+    fireEvent.click(screen.getByRole("button", { name: /create user/i }));
+
+    expect(screen.getByText("Password must be at least 6 characters.")).toBeInTheDocument();
+  });
+
+  it("shows validation error for invalid email format on edit", async () => {
+    const backend = makeBackend({
+      listUsers: vi.fn().mockResolvedValue({ users: [alice], total: 1 }),
+    });
+    renderUsersPage(backend);
+
+    fireEvent.click(await screen.findByText("alice@example.com"));
+    fireEvent.change(screen.getByLabelText(/email/i), { target: { value: "bademail" } });
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    expect(screen.getByText("Enter a valid email address.")).toBeInTheDocument();
+  });
+
+  it("shows validation error when password is too short on edit", async () => {
+    const backend = makeBackend({
+      listUsers: vi.fn().mockResolvedValue({ users: [alice], total: 1 }),
+    });
+    renderUsersPage(backend);
+
+    fireEvent.click(await screen.findByText("alice@example.com"));
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: "ab" } });
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    expect(screen.getByText("Password must be at least 6 characters.")).toBeInTheDocument();
+  });
 });

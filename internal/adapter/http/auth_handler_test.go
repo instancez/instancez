@@ -1894,3 +1894,95 @@ func TestResolveEmailTemplate(t *testing.T) {
 		t.Errorf("override body not rendered: %q", body)
 	}
 }
+
+// ---------- admin user validation ----------
+
+func adminUserHandler(t *testing.T) *AuthHandler {
+	t.Helper()
+	t.Setenv("INSTANCEZ_ADMIN_KEY", "admin-key")
+	svc := &stubAuthService{
+		createUserFn: func(_ context.Context, p domain.CreateUserParams) (map[string]any, error) {
+			return map[string]any{
+				"id": "u1", "email": p.Email,
+				"email_verified": false, "raw_app_meta_data": `{}`, "raw_user_meta_data": `{}`,
+				"created_at": time.Now(), "updated_at": time.Now(),
+			}, nil
+		},
+		updateUserFn: func(_ context.Context, id string, p domain.UpdateUserParams) (map[string]any, error) {
+			email := "orig@example.com"
+			if p.Email != nil {
+				email = *p.Email
+			}
+			return map[string]any{
+				"id": id, "email": email,
+				"email_verified": false, "raw_app_meta_data": `{}`, "raw_user_meta_data": `{}`,
+				"created_at": time.Now(), "updated_at": time.Now(),
+			}, nil
+		},
+	}
+	return &AuthHandler{
+		cfg:     &domain.Config{Auth: &domain.Auth{JWTExpiry: "15m"}},
+		authSvc: svc,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		jwtKeys: stubKeys(t),
+	}
+}
+
+func doAdminRequest(h *AuthHandler, method, path, body string) *httptest.ResponseRecorder {
+	r := gin.New()
+	h.Mount(r.Group(""))
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer admin-key")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w
+}
+
+func TestAdminCreateUser_EmailValidation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := adminUserHandler(t)
+
+	cases := []struct {
+		name    string
+		body    string
+		wantCode int
+	}{
+		{"valid email", `{"email":"alice@example.com","password":"secret123"}`, 200},
+		{"missing email", `{"password":"secret123"}`, 400},
+		{"not an email - no at", `{"email":"notanemail","password":"secret123"}`, 400},
+		{"not an email - no domain", `{"email":"user@","password":"secret123"}`, 400},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := doAdminRequest(h, "POST", "/auth/v1/admin/users", tc.body)
+			if w.Code != tc.wantCode {
+				t.Errorf("expected %d, got %d: %s", tc.wantCode, w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestAdminUpdateUser_EmailValidation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := adminUserHandler(t)
+
+	cases := []struct {
+		name     string
+		body     string
+		wantCode int
+	}{
+		{"valid email", `{"email":"new@example.com"}`, 200},
+		{"no email field - no change", `{}`, 200},
+		{"not an email - no at", `{"email":"notanemail"}`, 400},
+		{"not an email - no domain", `{"email":"user@"}`, 400},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := doAdminRequest(h, "PUT", "/auth/v1/admin/users/some-uid", tc.body)
+			if w.Code != tc.wantCode {
+				t.Errorf("expected %d, got %d: %s", tc.wantCode, w.Code, w.Body.String())
+			}
+		})
+	}
+}
