@@ -81,3 +81,57 @@ func TestParseDevFlagsRemovedFlagsUnknown(t *testing.T) {
 		}
 	}
 }
+
+// TestParseDevFlagsEmbeddedPG verifies --embedded-pg sets DevDBSourceEmbedded.
+func TestParseDevFlagsEmbeddedPG(t *testing.T) {
+	got, err := parseDevFlags([]string{"--embedded-pg"}, func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got.dbSrc != DevDBSourceEmbedded {
+		t.Fatalf("dbSrc = %v, want DevDBSourceEmbedded", got.dbSrc)
+	}
+	if got.resetPG {
+		t.Fatal("resetPG should be false when --reset-pg not passed")
+	}
+}
+
+// TestParseDevFlagsResetPGRequiresEmbedded verifies --reset-pg without --embedded-pg is an error.
+func TestParseDevFlagsResetPGRequiresEmbedded(t *testing.T) {
+	_, err := parseDevFlags([]string{"--reset-pg"}, func(string) string { return "" })
+	if err == nil {
+		t.Fatal("expected error for --reset-pg without --embedded-pg")
+	}
+	if !strings.Contains(err.Error(), "--reset-pg requires --embedded-pg") {
+		t.Fatalf("error %q should mention --reset-pg requires --embedded-pg", err.Error())
+	}
+}
+
+// TestParseDevFlagsEmbeddedPGWithReset verifies --embedded-pg --reset-pg is accepted.
+func TestParseDevFlagsEmbeddedPGWithReset(t *testing.T) {
+	got, err := parseDevFlags([]string{"--embedded-pg", "--reset-pg"}, func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got.dbSrc != DevDBSourceEmbedded {
+		t.Fatalf("dbSrc = %v, want DevDBSourceEmbedded", got.dbSrc)
+	}
+	if !got.resetPG {
+		t.Fatal("resetPG should be true when --reset-pg is passed")
+	}
+}
+
+// TestParseDevFlagsPGDataDir verifies pgDataDir is derived from configPath.
+func TestParseDevFlagsPGDataDir(t *testing.T) {
+	got, err := parseDevFlags(
+		[]string{"--embedded-pg", "--config", "/tmp/myproject/instancez.yaml"},
+		func(string) string { return "" },
+	)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	want := "/tmp/myproject/pgdata"
+	if got.pgDataDir != want {
+		t.Fatalf("pgDataDir = %q, want %q", got.pgDataDir, want)
+	}
+}

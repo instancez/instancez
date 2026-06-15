@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -120,6 +121,7 @@ func requireLocalConfig(path string) error {
 var devNoEnvBinding = map[string][]string{
 	"no-watch": {},
 	"use-dsn":  {},
+	"reset-pg": {},
 }
 
 // applyEnvDefaults is the single env-var fallback mechanism for the whole CLI.
@@ -271,30 +273,35 @@ type DevDBSource int
 const (
 	DevDBSourceUnset DevDBSource = iota
 	DevDBSourceDSN
+	DevDBSourceEmbedded
 )
 
 // devOptions are the parsed values for runDev. Same as serveOptions but
 // with dev-friendly defaults already filled in.
 type devOptions struct {
 	serveOptions
-	noWatch bool
-	verbose bool
-	dbSrc   DevDBSource
+	noWatch   bool
+	verbose   bool
+	dbSrc     DevDBSource
+	pgDataDir string
+	resetPG   bool
 }
 
 type devFlagSet struct {
-	flags         *pflag.FlagSet
-	port          int
-	configPath    string
-	noWatch       bool
-	watch         bool
-	watchInterval time.Duration
-	dashboard     string
-	verbose       bool
+	flags          *pflag.FlagSet
+	port           int
+	configPath     string
+	noWatch        bool
+	watch          bool
+	watchInterval  time.Duration
+	dashboard      string
+	verbose        bool
 	dotenvWritable bool
 	dotenvPath     string
 
-	useDSN bool
+	useDSN     bool
+	embeddedPG bool
+	resetPG    bool
 }
 
 func newDevFlagSet() *devFlagSet {
@@ -311,6 +318,8 @@ func newDevFlagSet() *devFlagSet {
 	fs.flags.BoolVar(&fs.useDSN, "use-dsn", false, "deprecated no-op; dev uses the DSN by default")
 	_ = fs.flags.MarkHidden("use-dsn")
 	_ = fs.flags.MarkDeprecated("use-dsn", "dev now uses the DSN by default; flag is a no-op")
+	fs.flags.BoolVar(&fs.embeddedPG, "embedded-pg", false, "start an embedded Postgres 16 (data at ./pgdata/); no external DB needed")
+	fs.flags.BoolVar(&fs.resetPG, "reset-pg", false, "wipe ./pgdata/ before starting (requires --embedded-pg)")
 	fs.flags.SetOutput(io.Discard)
 	return fs
 }
@@ -325,6 +334,13 @@ func resolveDevFlags(fs *devFlagSet, lookup func(string) string) (devOptions, er
 	}
 
 	dbSrc := DevDBSourceDSN
+	if fs.embeddedPG {
+		dbSrc = DevDBSourceEmbedded
+	}
+
+	if fs.resetPG && !fs.embeddedPG {
+		return devOptions{}, fmt.Errorf("--reset-pg requires --embedded-pg")
+	}
 
 	// --no-watch, when explicitly passed, wins over --watch / the env default.
 	watch := fs.watch
@@ -350,18 +366,20 @@ func resolveDevFlags(fs *devFlagSet, lookup func(string) string) (devOptions, er
 
 	return devOptions{
 		serveOptions: serveOptions{
-			port:       fs.port,
-			configPath: fs.configPath,
-			migrate:    true, // dev always migrates
-			watch:      watch,
+			port:           fs.port,
+			configPath:     fs.configPath,
+			migrate:        true, // dev always migrates
+			watch:          watch,
 			watchInterval:  fs.watchInterval,
 			dashboard:      mode,
 			dotenvWritable: fs.dotenvWritable,
 			dotenvPath:     fs.dotenvPath,
 		},
-		noWatch: fs.noWatch,
-		verbose: fs.verbose,
-		dbSrc:   dbSrc,
+		noWatch:   fs.noWatch,
+		verbose:   fs.verbose,
+		dbSrc:     dbSrc,
+		pgDataDir: filepath.Join(filepath.Dir(fs.configPath), "pgdata"),
+		resetPG:   fs.resetPG,
 	}, nil
 }
 
