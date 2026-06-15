@@ -12,31 +12,30 @@ import (
 	"github.com/instancez/instancez/internal/domain"
 )
 
-// ownerRole and authenticatorRole are the default login role names provisioned
-// by `inz dev` (via ensureRoles) when bootstrapping from a superuser DSN. They
-// match the names dbboot uses for integration tests so a dev-bootstrapped
-// project behaves identically to a test-container project.
-const (
-	ownerRole         = "instancez_owner"
-	authenticatorRole = "authenticator"
-)
+const ownerRole = "instancez_owner"
+
+// passwordFromDSN extracts the password component from a Postgres DSN URL.
+// Returns an empty string (no error) when no password is present.
+func passwordFromDSN(rawURL string) (string, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("parse DSN: %w", err)
+	}
+	pass, _ := u.User.Password()
+	return pass, nil
+}
 
 // bootstrapDB connects to privilegedDSN as a CREATEROLE-capable login, ensures
-// the instancez role layout exists (instancez_owner + authenticator + the three
-// API roles), and returns DSNs derived from privilegedDSN pointing at the two
-// login roles with freshly generated passwords.
+// the instancez role layout exists, and returns DSNs derived from privilegedDSN
+// for the owner and authenticator roles. All provisioned login roles receive the
+// same password as the superuser — rotation is a single-credential operation.
 //
-// Idempotent for role creation (IF NOT EXISTS), but always resets passwords
-// via ALTER ROLE so the returned DSNs are guaranteed to work — re-running
-// against an existing setup rotates credentials.
-func bootstrapDB(ctx context.Context, privilegedDSN string) (ownerDSN, authDSN string, err error) {
-	ownerPass, err := randomPassword()
+// Idempotent: CREATE ROLE IF NOT EXISTS + ALTER ROLE on every call so the
+// password is always synced to whatever the superuser URL carries.
+func bootstrapDB(ctx context.Context, privilegedDSN string, roles domain.Roles) (ownerDSN, authDSN string, err error) {
+	sharedPass, err := passwordFromDSN(privilegedDSN)
 	if err != nil {
-		return "", "", fmt.Errorf("generate owner password: %w", err)
-	}
-	authPass, err := randomPassword()
-	if err != nil {
-		return "", "", fmt.Errorf("generate authenticator password: %w", err)
+		return "", "", err
 	}
 
 	conn, err := pgx.Connect(ctx, privilegedDSN)
@@ -45,22 +44,14 @@ func bootstrapDB(ctx context.Context, privilegedDSN string) (ownerDSN, authDSN s
 	}
 	defer func() { _ = conn.Close(ctx) }()
 
-	// Ask Postgres for the connected database rather than parsing it out of the
-	// DSN — libpq accepts URLs without a path, URLs with just "/", and keyword
-	// DSNs like "host=… dbname=…", all of which url.Parse leaves with an empty
-	// Path. current_database() works for every shape.
 	var dbName string
 	if err := conn.QueryRow(ctx, `SELECT current_database()`).Scan(&dbName); err != nil {
 		return "", "", fmt.Errorf("resolve current database: %w", err)
 	}
 	dbIdent := pgx.Identifier{dbName}.Sanitize()
 
-	roles := domain.DefaultRoles()
 	apiRoles := fmt.Sprintf("%s, %s, %s", roles.Anon, roles.Authenticated, roles.Service)
 
-	// Quoting passwords with a literal " requires escaping; rand-generated
-	// passwords are base64 (no quote chars), so a single-quoted SQL literal
-	// is safe here.
 	stmts := []string{
 		fmt.Sprintf(`DO $$ BEGIN
 			IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '%s') THEN
@@ -69,14 +60,14 @@ func bootstrapDB(ctx context.Context, privilegedDSN string) (ownerDSN, authDSN s
 			ELSE
 				ALTER ROLE %s WITH LOGIN PASSWORD '%s';
 			END IF;
-		END $$;`, ownerRole, ownerRole, ownerPass, ownerRole, ownerPass),
+		END $$;`, ownerRole, ownerRole, sharedPass, ownerRole, sharedPass),
 		fmt.Sprintf(`DO $$ BEGIN
 			IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '%s') THEN
 				CREATE ROLE %s LOGIN PASSWORD '%s' NOINHERIT;
 			ELSE
 				ALTER ROLE %s WITH LOGIN PASSWORD '%s' NOINHERIT;
 			END IF;
-		END $$;`, authenticatorRole, authenticatorRole, authPass, authenticatorRole, authPass),
+		END $$;`, roles.Authenticator, roles.Authenticator, sharedPass, roles.Authenticator, sharedPass),
 		fmt.Sprintf(`DO $$ BEGIN
 			IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '%s') THEN
 				CREATE ROLE %s NOLOGIN;
@@ -92,7 +83,7 @@ func bootstrapDB(ctx context.Context, privilegedDSN string) (ownerDSN, authDSN s
 				CREATE ROLE %s NOLOGIN BYPASSRLS;
 			END IF;
 		END $$;`, roles.Service, roles.Service),
-		fmt.Sprintf(`GRANT %s TO %s;`, apiRoles, authenticatorRole),
+		fmt.Sprintf(`GRANT %s TO %s;`, apiRoles, roles.Authenticator),
 		fmt.Sprintf(`ALTER DATABASE %s OWNER TO %s;`, dbIdent, ownerRole),
 		fmt.Sprintf(`ALTER SCHEMA public OWNER TO %s;`, ownerRole),
 		fmt.Sprintf(`GRANT ALL ON SCHEMA public TO %s;`, ownerRole),
@@ -107,11 +98,11 @@ func bootstrapDB(ctx context.Context, privilegedDSN string) (ownerDSN, authDSN s
 		}
 	}
 
-	ownerDSN, err = withUserPass(privilegedDSN, ownerRole, ownerPass, dbName)
+	ownerDSN, err = withUserPass(privilegedDSN, ownerRole, sharedPass, dbName)
 	if err != nil {
 		return "", "", err
 	}
-	authDSN, err = withUserPass(privilegedDSN, authenticatorRole, authPass, dbName)
+	authDSN, err = withUserPass(privilegedDSN, roles.Authenticator, sharedPass, dbName)
 	if err != nil {
 		return "", "", err
 	}
@@ -119,7 +110,6 @@ func bootstrapDB(ctx context.Context, privilegedDSN string) (ownerDSN, authDSN s
 }
 
 // randomPassword returns a 24-byte base64-url-encoded password (~32 chars).
-// base64-url avoids the +/=/" chars that would need SQL escaping.
 func randomPassword() (string, error) {
 	b := make([]byte, 24)
 	if _, err := rand.Read(b); err != nil {
@@ -129,12 +119,7 @@ func randomPassword() (string, error) {
 }
 
 // withUserPass returns rawURL rewritten with the given userinfo and explicit
-// /dbname path. The dbname injection is load-bearing: a URL DSN with no path
-// (e.g. "postgres://postgres@host:5432") causes pgx to default the database to
-// the username at connect time, so the generated authenticator DSN would try
-// to connect to a "authenticator" database that doesn't exist. We pin the
-// resolved current_database() into the path so the persisted DSNs are
-// connect-target-explicit regardless of how the privileged DSN was shaped.
+// /dbname path.
 func withUserPass(rawURL, user, pass, dbName string) (string, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {

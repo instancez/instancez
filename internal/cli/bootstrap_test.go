@@ -2,6 +2,27 @@ package cli
 
 import "testing"
 
+func TestBootstrapDBPasswordFromDSN(t *testing.T) {
+	cases := []struct {
+		dsn  string
+		want string
+	}{
+		{"postgres://super:mysecret@host:5432/db", "mysecret"},
+		{"postgres://user@host/db", ""},              // no password
+		{"postgres://user:p%40ss@host/db", "p@ss"},   // percent-encoded
+	}
+	for _, tc := range cases {
+		got, err := passwordFromDSN(tc.dsn)
+		if err != nil {
+			t.Errorf("%q: unexpected error: %v", tc.dsn, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%q: got %q, want %q", tc.dsn, got, tc.want)
+		}
+	}
+}
+
 // TestWithUserPassInjectsDBName guards the regression where a privileged DSN
 // with no /dbname path produced rotated DSNs that also had no dbname, and pgx
 // defaulted the database to the user — so the auth pool tried to connect to
