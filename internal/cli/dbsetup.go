@@ -102,7 +102,7 @@ func ensureRoles(ctx context.Context, superuserDSN, envFile string) (roleBootstr
 		return roleBootstrap{}, nil
 	}
 
-	ownerDSN, authDSN, err := bootstrapDB(ctx, superuserDSN)
+	ownerDSN, authDSN, err := bootstrapDB(ctx, superuserDSN, rolesFromEnv())
 	if err != nil {
 		return roleBootstrap{}, err
 	}

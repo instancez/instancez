@@ -271,7 +271,6 @@ type DevDBSource int
 const (
 	DevDBSourceUnset DevDBSource = iota
 	DevDBSourceDSN
-	DevDBSourceCloud
 )
 
 // devOptions are the parsed values for runDev. Same as serveOptions but
@@ -295,8 +294,7 @@ type devFlagSet struct {
 	dotenvWritable bool
 	dotenvPath     string
 
-	useDSN   bool
-	useCloud bool
+	useDSN bool
 }
 
 func newDevFlagSet() *devFlagSet {
@@ -313,7 +311,6 @@ func newDevFlagSet() *devFlagSet {
 	fs.flags.BoolVar(&fs.useDSN, "use-dsn", false, "deprecated no-op; dev uses the DSN by default")
 	_ = fs.flags.MarkHidden("use-dsn")
 	_ = fs.flags.MarkDeprecated("use-dsn", "dev now uses the DSN by default; flag is a no-op")
-	fs.flags.BoolVar(&fs.useCloud, "use-cloud", false, "run against the cloud project's draft database (requires `inz init --with-cloud`)")
 	fs.flags.SetOutput(io.Discard)
 	return fs
 }
@@ -328,9 +325,6 @@ func resolveDevFlags(fs *devFlagSet, lookup func(string) string) (devOptions, er
 	}
 
 	dbSrc := DevDBSourceDSN
-	if fs.useCloud {
-		dbSrc = DevDBSourceCloud
-	}
 
 	// --no-watch, when explicitly passed, wins over --watch / the env default.
 	watch := fs.watch

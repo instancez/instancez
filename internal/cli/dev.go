@@ -75,15 +75,6 @@ func runDev(opts devOptions) error {
 		return errReported
 	}
 
-	switch opts.dbSrc {
-	case DevDBSourceCloud:
-		return fmt.Errorf("--use-cloud is not yet implemented in this build; omit it to use the DSN")
-	case DevDBSourceDSN:
-		// default path — env-var DSN
-	default:
-		return fmt.Errorf("internal: dev data source unset")
-	}
-
 	cfg, err := config.LoadWithDotenv(opts.configPath, ".development.env")
 	if err != nil {
 		return err

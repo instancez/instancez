@@ -53,17 +53,6 @@ func TestParseDevFlagsUseDSNDeprecated(t *testing.T) {
 	}
 }
 
-// TestParseDevFlagsUseCloud verifies that --use-cloud resolves to DevDBSourceCloud.
-func TestParseDevFlagsUseCloud(t *testing.T) {
-	got, err := parseDevFlags([]string{"--use-cloud"}, func(string) string { return "" })
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if got.dbSrc != DevDBSourceCloud {
-		t.Fatalf("dbSrc = %v, want DevDBSourceCloud", got.dbSrc)
-	}
-}
-
 // TestParseDevFlagsVerboseFromEnv verifies the standardized INSTANCEZ_VERBOSE
 // env var binds to the --verbose flag (it had no env binding before).
 func TestParseDevFlagsVerboseFromEnv(t *testing.T) {
@@ -81,7 +70,7 @@ func TestParseDevFlagsVerboseFromEnv(t *testing.T) {
 // TestParseDevFlagsRemovedFlagsUnknown verifies that the removed --use-docker
 // and --use-cloud-ephemeral flags are now unknown and cause a parse error.
 func TestParseDevFlagsRemovedFlagsUnknown(t *testing.T) {
-	for _, flag := range []string{"--use-docker", "--use-cloud-ephemeral"} {
+	for _, flag := range []string{"--use-docker", "--use-cloud-ephemeral", "--use-cloud"} {
 		_, err := parseDevFlags([]string{flag}, func(string) string { return "" })
 		if err == nil {
 			t.Errorf("%s: expected parse error for removed flag, got nil", flag)
