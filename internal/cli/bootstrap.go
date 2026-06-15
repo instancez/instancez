@@ -37,6 +37,7 @@ func bootstrapDB(ctx context.Context, privilegedDSN string, roles domain.Roles) 
 	if err != nil {
 		return "", "", err
 	}
+	escapedPass := pgEscapeString(sharedPass)
 
 	conn, err := pgx.Connect(ctx, privilegedDSN)
 	if err != nil {
@@ -60,14 +61,14 @@ func bootstrapDB(ctx context.Context, privilegedDSN string, roles domain.Roles) 
 			ELSE
 				ALTER ROLE %s WITH LOGIN PASSWORD '%s';
 			END IF;
-		END $$;`, ownerRole, ownerRole, sharedPass, ownerRole, sharedPass),
+		END $$;`, ownerRole, ownerRole, escapedPass, ownerRole, escapedPass),
 		fmt.Sprintf(`DO $$ BEGIN
 			IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '%s') THEN
 				CREATE ROLE %s LOGIN PASSWORD '%s' NOINHERIT;
 			ELSE
 				ALTER ROLE %s WITH LOGIN PASSWORD '%s' NOINHERIT;
 			END IF;
-		END $$;`, roles.Authenticator, roles.Authenticator, sharedPass, roles.Authenticator, sharedPass),
+		END $$;`, roles.Authenticator, roles.Authenticator, escapedPass, roles.Authenticator, escapedPass),
 		fmt.Sprintf(`DO $$ BEGIN
 			IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '%s') THEN
 				CREATE ROLE %s NOLOGIN;
@@ -135,4 +136,11 @@ func firstSQLLine(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// pgEscapeString escapes single quotes for embedding in SQL string literals.
+// It doubles single quotes, which is the standard SQL escaping mechanism
+// with standard_conforming_strings=on (default in modern Postgres).
+func pgEscapeString(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
 }
