@@ -9,7 +9,6 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./scripts/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "instancez"]
       interval: 2s
@@ -27,8 +26,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      INSTANCEZ_OWNER_DATABASE_URL: postgres://instancez_owner:instancez@postgres:5432/instancez?sslmode=disable
-      INSTANCEZ_AUTH_DATABASE_URL: postgres://authenticator:instancez@postgres:5432/instancez?sslmode=disable
+      INSTANCEZ_DATABASE_URL: postgres://instancez:instancez@postgres:5432/instancez?sslmode=disable
       INSTANCEZ_ADMIN_KEY: instancez-dev-key
       JWT_SECRET: dev-jwt-secret-change-me
     volumes:
