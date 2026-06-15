@@ -155,6 +155,24 @@ func TestDSNPresentCheck(t *testing.T) {
 	}
 }
 
+func TestSuperuserDSNPresentCheck(t *testing.T) {
+	absent := func(string) string { return "" }
+	present := func(string) string { return "postgres://super:pass@localhost/db" }
+
+	r := preflight.SuperuserDSNPresentCheck(absent)()
+	if r.OK {
+		t.Error("expected fail when INSTANCEZ_DATABASE_URL absent")
+	}
+	if !strings.Contains(r.Detail, "INSTANCEZ_DATABASE_URL") {
+		t.Errorf("detail should mention env var, got: %q", r.Detail)
+	}
+
+	r = preflight.SuperuserDSNPresentCheck(present)()
+	if !r.OK {
+		t.Errorf("expected pass when INSTANCEZ_DATABASE_URL present, got: %v", r.Detail)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // RoleLayoutCheck (via fake RoleReporter)
 // ---------------------------------------------------------------------------

@@ -18,8 +18,9 @@ import (
 // DSN env-var names used by dbConnections.  Exported so tests can reference
 // the exact names without duplicating the string literals.
 const (
-	EnvOwnerDSN = "INSTANCEZ_OWNER_DATABASE_URL"
-	EnvAuthDSN  = "INSTANCEZ_AUTH_DATABASE_URL"
+	EnvOwnerDSN      = "INSTANCEZ_OWNER_DATABASE_URL"
+	EnvAuthDSN       = "INSTANCEZ_AUTH_DATABASE_URL"
+	EnvSuperuserDSN  = "INSTANCEZ_DATABASE_URL"
 )
 
 // expectedRoleNames returns the full set of Postgres role names that an
@@ -139,6 +140,22 @@ func DSNPresentCheck(lookup func(string) string) Check {
 		default:
 			return Result{Name: "DSN env vars present", OK: true}
 		}
+	}
+}
+
+// SuperuserDSNPresentCheck returns a Check that fails when INSTANCEZ_DATABASE_URL
+// is not set. lookup is typically os.Getenv — injectable for testing.
+func SuperuserDSNPresentCheck(lookup func(string) string) Check {
+	return func() Result {
+		if lookup(EnvSuperuserDSN) == "" {
+			return Result{
+				Name:    "Superuser DSN present",
+				OK:      false,
+				Detail:  EnvSuperuserDSN + " is not set",
+				FixHint: "set " + EnvSuperuserDSN + " to a superuser Postgres DSN (e.g. postgres://postgres:pass@localhost:5432/instancez)",
+			}
+		}
+		return Result{Name: "Superuser DSN present", OK: true}
 	}
 }
 
