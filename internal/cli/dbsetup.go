@@ -10,6 +10,37 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// ensureAdminKey generates and writes INSTANCEZ_ADMIN_KEY into envFile when the
+// key is absent, returning true if a new key was generated.
+func ensureAdminKey(envFile string) (bool, error) {
+	var existing string
+	if data, err := os.ReadFile(envFile); err == nil {
+		existing = string(data)
+	} else if !os.IsNotExist(err) {
+		return false, fmt.Errorf("read %s: %w", envFile, err)
+	}
+
+	if hasActiveEnvKey(existing, "INSTANCEZ_ADMIN_KEY") {
+		return false, nil
+	}
+
+	key, err := randomPassword()
+	if err != nil {
+		return false, fmt.Errorf("generate admin key: %w", err)
+	}
+
+	var content string
+	if existing == "" {
+		content = "INSTANCEZ_ADMIN_KEY=" + key + "\n"
+	} else {
+		content = mergeEnvFile(existing, []envKV{{Key: "INSTANCEZ_ADMIN_KEY", Val: key}})
+	}
+	if err := os.WriteFile(envFile, []byte(content), 0o644); err != nil {
+		return false, fmt.Errorf("write %s: %w", envFile, err)
+	}
+	return true, nil
+}
+
 // ownerPoolConfig derives the owner pool's sizing from the YAML pool config,
 // which sizes the request pool. The owner pool only runs migrations
 // and extension installs — boot time and config changes — so it keeps no warm

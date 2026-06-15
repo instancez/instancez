@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -89,5 +90,28 @@ func TestDBConnectionsRequiresSuperuserURL(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "INSTANCEZ_DATABASE_URL") {
 		t.Errorf("error should mention env var name, got: %v", err)
+	}
+}
+
+func TestEnsureAdminKeyGeneratesWhenAbsent(t *testing.T) {
+	dir := t.TempDir()
+	envFile := filepath.Join(dir, ".development.env")
+
+	// No file — should generate
+	generated, err := ensureAdminKey(envFile)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !generated {
+		t.Error("expected generated=true on first call")
+	}
+
+	// File now exists with key — should be idempotent
+	generated, err = ensureAdminKey(envFile)
+	if err != nil {
+		t.Fatalf("unexpected error on second call: %v", err)
+	}
+	if generated {
+		t.Error("expected generated=false on second call (key already exists)")
 	}
 }
