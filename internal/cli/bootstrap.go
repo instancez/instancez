@@ -93,10 +93,20 @@ func bootstrapDB(ctx context.Context, privilegedDSN string, roles domain.Roles) 
 		fmt.Sprintf(`ALTER DEFAULT PRIVILEGES FOR ROLE %s IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO %s;`, ownerRole, apiRoles),
 		fmt.Sprintf(`ALTER DEFAULT PRIVILEGES FOR ROLE %s IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO %s;`, ownerRole, apiRoles),
 	}
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return "", "", fmt.Errorf("begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
 	for _, s := range stmts {
-		if _, err := conn.Exec(ctx, s); err != nil {
+		if _, err := tx.Exec(ctx, s); err != nil {
 			return "", "", fmt.Errorf("bootstrap (%s): %w", firstSQLLine(s), err)
 		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return "", "", fmt.Errorf("commit bootstrap: %w", err)
 	}
 
 	ownerDSN, err = withUserPass(privilegedDSN, ownerRole, sharedPass, dbName)

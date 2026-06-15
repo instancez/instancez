@@ -2,6 +2,25 @@ package cli
 
 import "testing"
 
+func TestPgEscapeString(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"simple", "simple"},
+		{"with'quote", "with''quote"},
+		{"two''quotes", "two''''quotes"},
+		{"", ""},
+		{"no special chars 123", "no special chars 123"},
+	}
+	for _, tc := range cases {
+		got := pgEscapeString(tc.input)
+		if got != tc.want {
+			t.Errorf("pgEscapeString(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
 func TestBootstrapDBPasswordFromDSN(t *testing.T) {
 	cases := []struct {
 		dsn  string
