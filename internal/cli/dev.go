@@ -46,16 +46,17 @@ func runDev(opts devOptions) error {
 	// Embedded Postgres: start before LoadDotenv so INSTANCEZ_DATABASE_URL is
 	// already set when loadDotenv runs (loadDotenv skips keys already in env).
 	if opts.dbSrc == DevDBSourceEmbedded {
-		fmt.Println("  Starting embedded Postgres 16...")
+		fmt.Printf("  Starting embedded Postgres 16...\n")
 		stop, superuserDSN, err := startEmbeddedPostgres(opts)
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "  hint: if this is a platform support error, use INSTANCEZ_DATABASE_URL with a full Postgres installation instead\n")
 			return err
 		}
 		defer stop()
 		if err := os.Setenv("INSTANCEZ_DATABASE_URL", superuserDSN); err != nil {
 			return fmt.Errorf("set INSTANCEZ_DATABASE_URL: %w", err)
 		}
-		fmt.Println("  ✓ Embedded Postgres ready")
+		fmt.Printf("  ✓ Embedded Postgres ready\n")
 	}
 
 	// Preflight: load dev dotenv first so DSN env vars are visible, then run

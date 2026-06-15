@@ -32,7 +32,7 @@ func startEmbeddedPostgres(opts devOptions) (stop func(), dsn string, err error)
 	)
 
 	if err := pg.Start(); err != nil {
-		return nil, "", fmt.Errorf("start embedded Postgres: %w\nhint: if this is a platform support error, use INSTANCEZ_DATABASE_URL with a full Postgres installation instead", err)
+		return nil, "", fmt.Errorf("start embedded Postgres: %w", err)
 	}
 
 	superuserDSN := fmt.Sprintf("postgres://postgres:postgres@localhost:%d/postgres?sslmode=disable", port)
@@ -40,6 +40,9 @@ func startEmbeddedPostgres(opts devOptions) (stop func(), dsn string, err error)
 }
 
 // freePort returns an available TCP port on localhost.
+// Note: there is a small TOCTOU window between closing l and the embedded-postgres
+// library binding the port; this is acceptable for dev tooling where the race is
+// negligible in practice.
 func freePort() (uint32, error) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
