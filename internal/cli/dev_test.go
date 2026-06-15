@@ -135,3 +135,33 @@ func TestParseDevFlagsPGDataDir(t *testing.T) {
 		t.Fatalf("pgDataDir = %q, want %q", got.pgDataDir, want)
 	}
 }
+
+// TestParseDevFlagsPGDataDirBareConfig verifies pgDataDir with the default
+// bare config filename ("instancez.yaml") resolves to "pgdata" (no leading
+// "./" — filepath.Join(".", "pgdata") returns "pgdata").
+func TestParseDevFlagsPGDataDirBareConfig(t *testing.T) {
+	got, err := parseDevFlags(
+		[]string{"--embedded-pg"},
+		func(string) string { return "" },
+	)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	want := "pgdata"
+	if got.pgDataDir != want {
+		t.Fatalf("pgDataDir = %q, want %q", got.pgDataDir, want)
+	}
+}
+
+// TestParseDevFlagsPGDataDirEmptyWithoutEmbedded verifies pgDataDir is empty
+// when --embedded-pg is not passed, so callers need not guard on dbSrc before
+// using pgDataDir.
+func TestParseDevFlagsPGDataDirEmptyWithoutEmbedded(t *testing.T) {
+	got, err := parseDevFlags([]string{}, func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got.pgDataDir != "" {
+		t.Fatalf("pgDataDir = %q, want empty string when --embedded-pg not set", got.pgDataDir)
+	}
+}

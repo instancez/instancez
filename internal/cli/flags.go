@@ -116,8 +116,10 @@ func requireLocalConfig(path string) error {
 
 // devNoEnvBinding lists dev flags that intentionally have NO env-var binding:
 // no-watch is pure CLI sugar (the env way to disable watching is
-// INSTANCEZ_WATCH=false) and use-dsn is a deprecated no-op. Every other flag
-// resolves through applyEnvDefaults' generic INSTANCEZ_<FLAG_UPPER_SNAKE> rule.
+// INSTANCEZ_WATCH=false); use-dsn is a deprecated no-op; reset-pg is a
+// destructive one-shot action that must always be explicit — an env-var
+// binding would risk data loss on every restart. Every other flag resolves
+// through applyEnvDefaults' generic INSTANCEZ_<FLAG_UPPER_SNAKE> rule.
 var devNoEnvBinding = map[string][]string{
 	"no-watch": {},
 	"use-dsn":  {},
@@ -378,7 +380,12 @@ func resolveDevFlags(fs *devFlagSet, lookup func(string) string) (devOptions, er
 		noWatch:   fs.noWatch,
 		verbose:   fs.verbose,
 		dbSrc:     dbSrc,
-		pgDataDir: filepath.Join(filepath.Dir(fs.configPath), "pgdata"),
+		pgDataDir: func() string {
+			if fs.embeddedPG {
+				return filepath.Join(filepath.Dir(fs.configPath), "pgdata")
+			}
+			return ""
+		}(),
 		resetPG:   fs.resetPG,
 	}, nil
 }
