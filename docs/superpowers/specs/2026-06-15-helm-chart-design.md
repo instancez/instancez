@@ -232,7 +232,33 @@ Runs `pg_isready` against the postgres service before the main container starts 
 
 ---
 
-## 10. Out of Scope
+## 10. Docs Updates Required
+
+All changes to CLI behaviour, env vars, and deployment configuration must be reflected in `docs/site/src/content/docs/`.
+
+**`deploy/env-vars.md`:**
+- Remove `INSTANCEZ_OWNER_DATABASE_URL` and `INSTANCEZ_AUTH_DATABASE_URL` entries
+- Update `INSTANCEZ_DATABASE_URL` — no longer dev-only; now used by both `inz dev` and `inz serve` as the single required database credential. Remove the mention of `.development.env` provisioning behaviour.
+
+**`deploy/docker.md`:**
+- Remove the init SQL section (`init/01-roles.sql`) — role provisioning now happens automatically via the CLI on startup
+- Replace `INSTANCEZ_OWNER_DATABASE_URL` and `INSTANCEZ_AUTH_DATABASE_URL` with `INSTANCEZ_DATABASE_URL` (superuser DSN) in all examples
+- Update the docker-compose example to reflect the new env var
+
+**`deploy/self-hosted.md`:**
+- Same env var changes as docker.md — remove owner/auth URLs, add superuser URL
+- Remove any manual role creation instructions
+
+**`deploy/kubernetes.md`** (new page):
+- Helm chart installation guide: `helm install`, required values (`adminKey`, `jwtSecret`, `postgres.password` or auto-generated), `config:` block
+- Bundled vs external Postgres (`postgres.enabled`)
+- Ingress configuration example
+- Secret management note (auto-generated credentials, where to find them post-install)
+- Upgrade and password rotation instructions
+
+---
+
+## 11. Out of Scope
 
 - Helm repository / OCI publishing (separate concern)
 - Horizontal pod autoscaling
