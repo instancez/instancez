@@ -9,7 +9,7 @@ import (
 
 // TestPlanFromScratch_NoRoleDDL asserts the migration does not emit
 // CREATE ROLE / GRANT … TO authenticator statements. Roles are infrastructure
-// (provisioned by the control plane in prod, by 01-roles.sql in dev); the
+// (provisioned by the CLI startup sequence (bootstrapDB) on every startup); the
 // migration must not touch them.
 func TestPlanFromScratch_NoRoleDDL(t *testing.T) {
 	plan := planFromScratch(&domain.Config{}, domain.DefaultRoles())
