@@ -82,8 +82,6 @@ func TestOwnerPoolConfigRespectsSmallerUserMax(t *testing.T) {
 
 func TestDBConnectionsRequiresSuperuserURL(t *testing.T) {
 	t.Setenv("INSTANCEZ_DATABASE_URL", "")
-	t.Setenv("INSTANCEZ_OWNER_DATABASE_URL", "postgres://owner:x@localhost/db")
-	t.Setenv("INSTANCEZ_AUTH_DATABASE_URL", "postgres://auth:x@localhost/db")
 
 	_, _, _, err := dbConnections(context.Background(), domain.PoolConfig{Max: 1})
 	if err == nil {

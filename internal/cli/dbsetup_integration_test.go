@@ -24,26 +24,27 @@ func TestDBConnectionsProvisionRoles(t *testing.T) {
 	defer auth.Close()
 
 	// Verify the owner role exists and can connect
-	var ownerName string
-	if err := owner.QueryRow(ctx, "SELECT current_user").Scan(&ownerName); err != nil {
+	ownerRow, err := owner.QueryRow(ctx, "SELECT current_user")
+	if err != nil {
 		t.Fatalf("owner query: %v", err)
 	}
+	ownerName, _ := ownerRow["current_user"].(string)
 	if ownerName != "instancez_owner" {
 		t.Errorf("owner user = %q, want instancez_owner", ownerName)
 	}
 
 	// Verify the authenticator role exists and can connect
-	_ = roles // roles validated by successful dbConnections
-	var authName string
-	if err := auth.QueryRow(ctx, "SELECT current_user").Scan(&authName); err != nil {
+	authRow, err := auth.QueryRow(ctx, "SELECT current_user")
+	if err != nil {
 		t.Fatalf("auth query: %v", err)
 	}
+	authName, _ := authRow["current_user"].(string)
 	if authName != roles.Authenticator {
 		t.Errorf("auth user = %q, want %q", authName, roles.Authenticator)
 	}
 }
 
-func TestDBConnectionsPasswordSyncsOnRestart(t *testing.T) {
+func TestDBConnectionsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	dsn := dbboot.StartRawContainer(t)
 
@@ -56,7 +57,7 @@ func TestDBConnectionsPasswordSyncsOnRestart(t *testing.T) {
 	owner1.Close()
 	auth1.Close()
 
-	// Second startup — roles already exist, bootstrapDB is idempotent
+	// Second startup — roles already exist, bootstrapDB must be a no-op
 	owner2, auth2, _, err := dbConnections(ctx, domain.PoolConfig{Max: 2})
 	if err != nil {
 		t.Fatalf("second dbConnections (idempotency check): %v", err)
@@ -64,10 +65,11 @@ func TestDBConnectionsPasswordSyncsOnRestart(t *testing.T) {
 	defer owner2.Close()
 	defer auth2.Close()
 
-	var u string
-	if err := owner2.QueryRow(ctx, "SELECT current_user").Scan(&u); err != nil {
+	row, err := owner2.QueryRow(ctx, "SELECT current_user")
+	if err != nil {
 		t.Fatalf("second owner query: %v", err)
 	}
+	u, _ := row["current_user"].(string)
 	if u != "instancez_owner" {
 		t.Errorf("second owner user = %q, want instancez_owner", u)
 	}
