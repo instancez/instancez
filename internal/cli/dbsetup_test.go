@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -113,5 +114,30 @@ func TestEnsureAdminKeyGeneratesWhenAbsent(t *testing.T) {
 	}
 	if generated {
 		t.Error("expected generated=false on second call (key already exists)")
+	}
+}
+
+func TestEnsureAdminKeySkipsCommentedKey(t *testing.T) {
+	dir := t.TempDir()
+	envFile := filepath.Join(dir, ".development.env")
+
+	// Write a file where the key is commented out
+	content := "# INSTANCEZ_ADMIN_KEY=someoldvalue\nOTHER_VAR=foo\n"
+	if err := os.WriteFile(envFile, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	generated, err := ensureAdminKey(envFile)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !generated {
+		t.Error("expected generated=true when key is only commented out")
+	}
+
+	// The file should now have an active INSTANCEZ_ADMIN_KEY line
+	data, _ := os.ReadFile(envFile)
+	if !hasActiveEnvKey(string(data), "INSTANCEZ_ADMIN_KEY") {
+		t.Error("expected active INSTANCEZ_ADMIN_KEY after generation")
 	}
 }
