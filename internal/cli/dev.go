@@ -49,21 +49,6 @@ func runDev(opts devOptions) error {
 	// database to start successfully.
 	_ = config.LoadDotenv(".development.env")
 
-	// Bootstrap the role layout from a superuser DSN when the two role DSNs are
-	// not already present. This runs BEFORE preflight: on a fresh superuser-only
-	// database the DSN/connect/role checks would otherwise all fail. ensureRoles
-	// sets the derived DSNs into the env (so the checks below read them) and
-	// persists them to .development.env for the next run.
-	if res, err := ensureRoles(context.Background(), os.Getenv("INSTANCEZ_DATABASE_URL"), ".development.env"); err != nil {
-		return fmt.Errorf("bootstrap roles: %w", err)
-	} else if res.Ran {
-		fmt.Println("  ✓ Provisioned roles from INSTANCEZ_DATABASE_URL (instancez_owner + authenticator + anon/authenticated/service_role)")
-		fmt.Printf("  ✓ Wrote derived owner + authenticator DSNs to %s\n", res.EnvFile)
-		if res.AdminKey != "" {
-			fmt.Printf("  ✓ Generated a random admin key for dashboard login (see INSTANCEZ_ADMIN_KEY in %s)\n", res.EnvFile)
-		}
-	}
-
 	if r, failed := preflight.RunUntilFail([]preflight.Check{
 		preflight.ConfigValidCheck(opts.configPath),
 		preflight.DSNPresentCheck(os.Getenv),

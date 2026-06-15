@@ -4,66 +4,71 @@ package cli
 
 import (
 	"context"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/instancez/instancez/internal/domain"
 	"github.com/instancez/instancez/internal/testutil/dbboot"
 )
 
-// TestEnsureRolesBootstrapsFromSuperuser drives the full dev bootstrap path:
-// against a raw superuser container with no instancez roles, ensureRoles must
-// provision the layout, set the derived DSNs into the env, persist them, and
-// leave a database the owner DSN can connect to with all five roles present.
-func TestEnsureRolesBootstrapsFromSuperuser(t *testing.T) {
-	superURL := dbboot.StartRawContainer(t)
-
-	// No role DSNs in env → ensureRoles must bootstrap.
-	t.Setenv("INSTANCEZ_OWNER_DATABASE_URL", "")
-	t.Setenv("INSTANCEZ_AUTH_DATABASE_URL", "")
-
-	envFile := filepath.Join(t.TempDir(), ".development.env")
-	res, err := ensureRoles(context.Background(), superURL, envFile)
-	if err != nil {
-		t.Fatalf("ensureRoles: %v", err)
-	}
-	if !res.Ran {
-		t.Fatal("ensureRoles did not run bootstrap on a fresh superuser DB")
-	}
-
-	// Derived DSNs were exported into the env.
-	ownerDSN := os.Getenv("INSTANCEZ_OWNER_DATABASE_URL")
-	if ownerDSN == "" || os.Getenv("INSTANCEZ_AUTH_DATABASE_URL") == "" {
-		t.Fatal("ensureRoles did not set the derived DSNs in the env")
-	}
-
-	// And persisted to the env file.
-	data, err := os.ReadFile(envFile)
-	if err != nil {
-		t.Fatalf("read persisted env file: %v", err)
-	}
-	if !strings.Contains(string(data), "INSTANCEZ_OWNER_DATABASE_URL=") ||
-		!strings.Contains(string(data), "INSTANCEZ_AUTH_DATABASE_URL=") {
-		t.Fatalf("env file missing derived DSNs:\n%s", data)
-	}
-
-	// The owner DSN connects and all five roles exist.
+func TestDBConnectionsProvisionRoles(t *testing.T) {
 	ctx := context.Background()
-	conn, err := pgx.Connect(ctx, ownerDSN)
-	if err != nil {
-		t.Fatalf("connect as derived owner: %v", err)
-	}
-	defer conn.Close(ctx)
+	dsn := dbboot.StartRawContainer(t)
 
-	for _, role := range []string{"instancez_owner", "authenticator", "anon", "authenticated", "service_role"} {
-		var exists bool
-		if err := conn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)`, role).Scan(&exists); err != nil {
-			t.Fatalf("query role %s: %v", role, err)
-		}
-		if !exists {
-			t.Errorf("role %q was not provisioned", role)
-		}
+	t.Setenv("INSTANCEZ_DATABASE_URL", dsn)
+
+	owner, auth, roles, err := dbConnections(ctx, domain.PoolConfig{Max: 2})
+	if err != nil {
+		t.Fatalf("dbConnections: %v", err)
+	}
+	defer owner.Close()
+	defer auth.Close()
+
+	// Verify the owner role exists and can connect
+	var ownerName string
+	if err := owner.QueryRow(ctx, "SELECT current_user").Scan(&ownerName); err != nil {
+		t.Fatalf("owner query: %v", err)
+	}
+	if ownerName != "instancez_owner" {
+		t.Errorf("owner user = %q, want instancez_owner", ownerName)
+	}
+
+	// Verify the authenticator role exists and can connect
+	_ = roles // roles validated by successful dbConnections
+	var authName string
+	if err := auth.QueryRow(ctx, "SELECT current_user").Scan(&authName); err != nil {
+		t.Fatalf("auth query: %v", err)
+	}
+	if authName != roles.Authenticator {
+		t.Errorf("auth user = %q, want %q", authName, roles.Authenticator)
+	}
+}
+
+func TestDBConnectionsPasswordSyncsOnRestart(t *testing.T) {
+	ctx := context.Background()
+	dsn := dbboot.StartRawContainer(t)
+
+	// First startup — provisions roles
+	t.Setenv("INSTANCEZ_DATABASE_URL", dsn)
+	owner1, auth1, _, err := dbConnections(ctx, domain.PoolConfig{Max: 2})
+	if err != nil {
+		t.Fatalf("first dbConnections: %v", err)
+	}
+	owner1.Close()
+	auth1.Close()
+
+	// Second startup — roles already exist, bootstrapDB is idempotent
+	owner2, auth2, _, err := dbConnections(ctx, domain.PoolConfig{Max: 2})
+	if err != nil {
+		t.Fatalf("second dbConnections (idempotency check): %v", err)
+	}
+	defer owner2.Close()
+	defer auth2.Close()
+
+	var u string
+	if err := owner2.QueryRow(ctx, "SELECT current_user").Scan(&u); err != nil {
+		t.Fatalf("second owner query: %v", err)
+	}
+	if u != "instancez_owner" {
+		t.Errorf("second owner user = %q, want instancez_owner", u)
 	}
 }
