@@ -1,0 +1,20 @@
+instancez has been deployed!
+
+{{- if .Values.postgres.enabled }}
+Bundled PostgreSQL is enabled. The database URL is managed internally.
+{{- else }}
+Using external PostgreSQL — make sure externalPostgres.url is set correctly.
+{{- end }}
+
+{{- if .Values.ingress.enabled }}
+Your instancez instance is accessible at: http{{ if .Values.ingress.tls }}s{{ end }}://{{ .Values.ingress.host }}
+{{- else }}
+To access instancez locally, run:
+  kubectl port-forward svc/{{ include "instancez.fullname" . }} 8080:{{ .Values.service.port }}
+Then visit http://localhost:8080
+{{- end }}
+
+IMPORTANT: If adminKey or jwtSecret were auto-generated, retrieve them with:
+  kubectl get secret {{ include "instancez.fullname" . }} -o jsonpath='{.data.adminKey}' | base64 -d
+  kubectl get secret {{ include "instancez.fullname" . }} -o jsonpath='{.data.jwtSecret}' | base64 -d
+Store these values securely — they will not be shown again.
