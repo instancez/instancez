@@ -37,6 +37,12 @@ func bootstrapDB(ctx context.Context, privilegedDSN string, roles domain.Roles) 
 	if err != nil {
 		return "", "", err
 	}
+	if sharedPass == "" {
+		sharedPass, err = randomPassword()
+		if err != nil {
+			return "", "", fmt.Errorf("generate password for passwordless DSN: %w", err)
+		}
+	}
 	escapedPass := pgEscapeString(sharedPass)
 
 	conn, err := pgx.Connect(ctx, privilegedDSN)
@@ -82,8 +88,10 @@ func bootstrapDB(ctx context.Context, privilegedDSN string, roles domain.Roles) 
 		fmt.Sprintf(`DO $$ BEGIN
 			IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '%s') THEN
 				CREATE ROLE %s NOLOGIN BYPASSRLS;
+			ELSE
+				ALTER ROLE %s WITH NOLOGIN BYPASSRLS;
 			END IF;
-		END $$;`, roles.Service, roles.Service),
+		END $$;`, roles.Service, roles.Service, roles.Service),
 		fmt.Sprintf(`GRANT %s TO %s;`, apiRoles, roles.Authenticator),
 		fmt.Sprintf(`ALTER DATABASE %s OWNER TO %s;`, dbIdent, ownerRole),
 		fmt.Sprintf(`ALTER SCHEMA public OWNER TO %s;`, ownerRole),
@@ -99,10 +107,19 @@ func bootstrapDB(ctx context.Context, privilegedDSN string, roles domain.Roles) 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	batch := &pgx.Batch{}
 	for _, s := range stmts {
-		if _, err := tx.Exec(ctx, s); err != nil {
+		batch.Queue(s)
+	}
+	br := tx.SendBatch(ctx, batch)
+	for _, s := range stmts {
+		if _, err := br.Exec(); err != nil {
+			_ = br.Close()
 			return "", "", fmt.Errorf("bootstrap (%s): %w", firstSQLLine(s), err)
 		}
+	}
+	if err := br.Close(); err != nil {
+		return "", "", fmt.Errorf("bootstrap flush: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {

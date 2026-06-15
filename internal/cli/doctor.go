@@ -14,8 +14,8 @@ func newDoctorCmd() *cobra.Command {
 		Use:   "doctor",
 		Short: "Check prerequisites for running instancez locally",
 		Long: `Run a set of preflight checks that verify the environment is ready for
-inz dev and inz serve: config file validity, database DSNs, and the
-required Postgres role layout.
+inz dev: config file validity, the INSTANCEZ_DATABASE_URL superuser DSN,
+a live database connection, and the required Postgres role layout.
 
 Exits non-zero if any check fails.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -44,18 +44,15 @@ func runDoctor(configPath string) error {
 // doctorChecks builds the full check list used by both runDoctor and
 // doctor_test.go (where it is called with injected dependencies).
 //
-// Dependency order: config → DSN env vars → owner connect → auth connect →
-// role layout.  Each check depends on the previous ones succeeding, but
-// RunAll runs them all and collects every failure so the user sees the full
+// Dependency order: config → superuser DSN present → connect → role layout.
+// RunAll runs all checks and collects every failure so the user sees the full
 // picture at once.
 func doctorChecks(configPath string, lookup func(string) string) []preflight.Check {
-	ownerDSN := lookup(preflight.EnvOwnerDSN)
-	authDSN := lookup(preflight.EnvAuthDSN)
+	superuserDSN := lookup(preflight.EnvSuperuserDSN)
 	return []preflight.Check{
 		preflight.ConfigValidCheck(configPath),
-		preflight.DSNPresentCheck(lookup),
-		preflight.OwnerConnectCheck(ownerDSN),
-		preflight.AuthConnectCheck(authDSN),
-		preflight.RoleLayoutCheck(preflight.PostgresRoleReporter(ownerDSN)),
+		preflight.SuperuserDSNPresentCheck(lookup),
+		preflight.ConnectCheck("database connect", superuserDSN),
+		preflight.RoleLayoutCheck(preflight.PostgresRoleReporter(superuserDSN)),
 	}
 }

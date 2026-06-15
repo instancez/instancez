@@ -1,12 +1,16 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import starlightThemeBlack from 'starlight-theme-black';
 
 export default defineConfig({
   site: 'https://instancez.github.io',
   base: '/instancez',
   integrations: [
     starlight({
+      plugins: [starlightThemeBlack({
+        footerText: 'instancez — self-hosted Supabase-compatible backend. [GitHub](https://github.com/instancez/instancez)',
+      })],
       title: 'instancez',
       description: 'Self-hosted Supabase-compatible backend',
       favicon: '/favicon.svg',
@@ -20,7 +24,6 @@ export default defineConfig({
       sidebar: [
         { label: 'Quick Start', slug: 'quick-start' },
         { label: 'Installation', slug: 'install' },
-        { label: 'Supabase SDK Compatibility', slug: 'supabase-compatibility' },
         {
           label: 'Build',
           items: [
@@ -31,6 +34,7 @@ export default defineConfig({
             { label: 'Code Functions', slug: 'build/functions' },
             { label: 'Storage', slug: 'build/storage' },
             { label: 'Querying', slug: 'build/querying' },
+            { label: 'Supabase SDK Compatibility', slug: 'supabase-compatibility' },
           ],
         },
         {

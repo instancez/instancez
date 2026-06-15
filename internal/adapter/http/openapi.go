@@ -8,7 +8,9 @@ import (
 )
 
 // GenerateOpenAPI builds an OpenAPI 3.0 spec from the config.
-func GenerateOpenAPI(cfg *domain.Config) map[string]any {
+// serverURL is the public base URL (e.g. "https://api.example.com") used as
+// the OpenAPI servers entry so Swagger/Scalar UI sends requests to the right host.
+func GenerateOpenAPI(cfg *domain.Config, serverURL string) map[string]any {
 	paths := map[string]any{}
 	schemas := map[string]any{}
 
@@ -128,7 +130,7 @@ func GenerateOpenAPI(cfg *domain.Config) map[string]any {
 			"version":     "1.0.0",
 		},
 		"servers": []map[string]any{
-			{"url": fmt.Sprintf("http://localhost:%d", cfg.Server.Port)},
+			{"url": serverURL},
 		},
 		"paths": paths,
 		"components": map[string]any{

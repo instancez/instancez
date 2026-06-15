@@ -36,8 +36,6 @@
   --sl-color-hairline-light: #222;
   --sl-color-hairline-shade: #141414;
 
-  /* Font */
-  --sl-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
 /* Hide theme toggle — site is always dark */
@@ -92,14 +90,23 @@ starlight-theme-select { display: none; }
 }
 
 
-/* Tables — first column never wraps, rest wrap naturally */
+/* Tables — scroll horizontally, all columns wrap */
 .sl-markdown-content table {
   display: block;
   overflow-x: auto;
 }
-.sl-markdown-content th:first-child,
-.sl-markdown-content td:first-child {
-  white-space: nowrap;
+
+/* Sidebar section labels — heavier than sub-links to create hierarchy */
+.sidebar .container-sidebar h4 {
+  font-weight: 600;
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Sidebar sub-links — reduce from 500 to 400 */
+.sidebar .container-group-link .entry-link {
+  font-weight: 400;
 }
 
 /* Sharper headings */

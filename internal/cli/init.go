@@ -437,10 +437,8 @@ INSTANCEZ_ADMIN_KEY=CHANGE_ME
 
 func scaffoldDevelopmentEnvExample() string {
 	return `# Local development config — copy to .development.env (gitignored), then set a
-# superuser/privileged Postgres DSN below. On first run, 'inz dev' provisions
-# instancez_owner + authenticator + the API roles from it and writes the derived
-# owner/authenticator DSNs back into .development.env, so subsequent runs reuse
-# them. After the first run you can remove INSTANCEZ_DATABASE_URL.
+# superuser/privileged Postgres DSN below. 'inz dev' reads this DSN on every
+# startup to provision instancez_owner + authenticator + the API roles.
 #
 # 'inz dev' also generates a random INSTANCEZ_ADMIN_KEY into .development.env
 # on first run (printed to the console, used to log into the dashboard). Set one

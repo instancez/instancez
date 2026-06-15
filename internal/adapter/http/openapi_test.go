@@ -30,7 +30,7 @@ func TestGenerateOpenAPI_Structure(t *testing.T) {
 		},
 	}
 
-	spec := GenerateOpenAPI(cfg)
+	spec := GenerateOpenAPI(cfg, "http://localhost:8080")
 
 	// Check top-level structure
 	if spec["openapi"] != "3.0.3" {
@@ -119,7 +119,7 @@ func TestGenerateOpenAPI_SignupDocuments403(t *testing.T) {
 		Auth:    &domain.Auth{JWTExpiry: "15m"},
 	}
 
-	spec := GenerateOpenAPI(cfg)
+	spec := GenerateOpenAPI(cfg, "http://localhost:8080")
 	paths := spec["paths"].(map[string]any)
 	signup, ok := paths["/auth/v1/signup"].(map[string]any)
 	if !ok {
@@ -163,7 +163,7 @@ func TestGenerateOpenAPI_RPCPaths(t *testing.T) {
 		},
 	}
 
-	spec := GenerateOpenAPI(cfg)
+	spec := GenerateOpenAPI(cfg, "http://localhost:8080")
 	paths := spec["paths"].(map[string]any)
 
 	// Every function gets a POST path.
@@ -251,7 +251,7 @@ func TestGenerateOpenAPI_NoAuth(t *testing.T) {
 		},
 	}
 
-	spec := GenerateOpenAPI(cfg)
+	spec := GenerateOpenAPI(cfg, "http://localhost:8080")
 	paths := spec["paths"].(map[string]any)
 
 	// Auth endpoints should NOT exist

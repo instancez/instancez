@@ -95,9 +95,8 @@ func TestDoctorChecksContainsExpectedChecks(t *testing.T) {
 
 	required := []string{
 		"config file valid",
-		"DSN env vars present",
-		"owner DB connect",
-		"auth DB connect",
+		"Superuser DSN present",
+		"database connect",
 		"role layout",
 	}
 	for _, want := range required {

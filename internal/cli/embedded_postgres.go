@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 
 	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
 )
@@ -13,21 +14,22 @@ import (
 // the data directory is wiped first. Returns a stop func (call on shutdown)
 // and the superuser DSN to inject as INSTANCEZ_DATABASE_URL.
 func startEmbeddedPostgres(opts devOptions) (stop func(), dsn string, err error) {
+	port, err := freePort()
+	if err != nil {
+		return nil, "", fmt.Errorf("find free port for embedded Postgres: %w", err)
+	}
+
 	if opts.resetPG {
 		if err := os.RemoveAll(opts.pgDataDir); err != nil {
 			return nil, "", fmt.Errorf("reset pgdata: %w", err)
 		}
 	}
 
-	port, err := freePort()
-	if err != nil {
-		return nil, "", fmt.Errorf("find free port for embedded Postgres: %w", err)
-	}
-
 	pg := embeddedpostgres.NewDatabase(
 		embeddedpostgres.DefaultConfig().
 			Version(embeddedpostgres.V16).
 			DataPath(opts.pgDataDir).
+			RuntimePath(filepath.Join(opts.pgDataDir, "runtime")).
 			Port(port),
 	)
 
@@ -36,7 +38,11 @@ func startEmbeddedPostgres(opts devOptions) (stop func(), dsn string, err error)
 	}
 
 	superuserDSN := fmt.Sprintf("postgres://postgres:postgres@localhost:%d/postgres?sslmode=disable", port)
-	return func() { _ = pg.Stop() }, superuserDSN, nil
+	return func() {
+		if err := pg.Stop(); err != nil {
+			fmt.Fprintf(os.Stderr, "embedded Postgres stop: %v\n", err)
+		}
+	}, superuserDSN, nil
 }
 
 // freePort returns an available TCP port on localhost.

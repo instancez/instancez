@@ -215,8 +215,29 @@ func (s *Server) handleReady(c *gin.Context) {
 }
 
 func (s *Server) handleOpenAPI(c *gin.Context) {
-	spec := GenerateOpenAPI(s.cfg)
+	spec := GenerateOpenAPI(s.cfg, publicBaseURL(c.Request))
 	c.JSON(200, spec)
+}
+
+// publicBaseURL derives the server's public base URL from the request.
+// It honours X-Forwarded-Proto, X-Forwarded-Host, and X-Forwarded-Prefix so
+// the OpenAPI spec reflects the real public address when instancez sits behind
+// a reverse proxy, not the internal bind address.
+func publicBaseURL(r *http.Request) string {
+	proto := r.Header.Get("X-Forwarded-Proto")
+	if proto == "" {
+		if r.TLS != nil {
+			proto = "https"
+		} else {
+			proto = "http"
+		}
+	}
+	host := r.Header.Get("X-Forwarded-Host")
+	if host == "" {
+		host = r.Host
+	}
+	prefix := r.Header.Get("X-Forwarded-Prefix")
+	return proto + "://" + host + prefix
 }
 
 func (s *Server) handleDocs(c *gin.Context) {
