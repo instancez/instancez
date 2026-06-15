@@ -3,21 +3,14 @@ title: Environment Variables
 description: Complete environment variable reference for instancez.
 ---
 
-## Required (production)
+## Required
 
-These three variables must be set before `inz serve` will start.
+These two variables must be set before `inz dev` or `inz serve` will start.
 
 | Variable | Description |
 |----------|-------------|
-| `INSTANCEZ_OWNER_DATABASE_URL` | Postgres DSN for the privileged login role (`instancez_owner`). Used for migrations and DDL. Requires `CREATEROLE CREATEDB BYPASSRLS REPLICATION`. |
-| `INSTANCEZ_AUTH_DATABASE_URL` | Postgres DSN for the `authenticator` login role. Used for all request-pool queries. Must be `NOINHERIT` with `anon`, `authenticated`, and `service_role` granted to it. |
+| `INSTANCEZ_DATABASE_URL` | Superuser Postgres DSN (e.g. `postgres://postgres:password@localhost:5432/mydb`). Used by both `inz dev` and `inz serve` as the single required database credential. Must be a superuser DSN. The CLI provisions all required roles (`instancez_owner`, `authenticator`, `anon`, `authenticated`, `service_role`) automatically on startup. |
 | `INSTANCEZ_ADMIN_KEY` | Secret key for admin API access. Sent as the `apikey` header or `Authorization: Bearer` on admin routes. |
-
-## Development shortcut
-
-| Variable | Description |
-|----------|-------------|
-| `INSTANCEZ_DATABASE_URL` | A superuser DSN (e.g. `postgres://postgres:postgres@localhost:5432/postgres`). Used only by `inz dev`. On first run, `inz dev` provisions the `instancez_owner` and `authenticator` roles, derives the two production DSNs, and writes them to `.development.env`. Subsequent runs read directly from `.development.env`. This variable has no effect on `inz serve`. |
 
 ## Config and watch
 

@@ -5,28 +5,9 @@ description: Run instancez with Docker or Docker Compose.
 
 ## Quick start with Docker Compose
 
-Before you can start instancez, Postgres needs the two login roles it expects (`instancez_owner` and `authenticator`). The init SQL below provisions them on first container boot.
+instancez provisions all required Postgres roles automatically on startup — no init SQL scripts needed.
 
 Create the following files in a new directory:
-
-**`init/01-roles.sql`**
-
-```sql
-CREATE ROLE instancez_owner LOGIN PASSWORD 'change-me'
-    CREATEROLE CREATEDB BYPASSRLS REPLICATION;
-
-CREATE ROLE authenticator LOGIN PASSWORD 'change-me' NOINHERIT;
-
-CREATE ROLE anon NOLOGIN;
-CREATE ROLE authenticated NOLOGIN;
-CREATE ROLE service_role NOLOGIN BYPASSRLS;
-
-GRANT anon, authenticated, service_role TO authenticator;
-
-ALTER DATABASE instancez OWNER TO instancez_owner;
-ALTER SCHEMA public OWNER TO instancez_owner;
-GRANT ALL ON SCHEMA public TO instancez_owner;
-```
 
 **`compose.yaml`**
 
@@ -40,7 +21,6 @@ services:
       POSTGRES_DB: instancez
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres"]
       interval: 2s
@@ -52,8 +32,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      INSTANCEZ_OWNER_DATABASE_URL: postgres://instancez_owner:${OWNER_DB_PASSWORD}@postgres:5432/instancez?sslmode=disable
-      INSTANCEZ_AUTH_DATABASE_URL: postgres://authenticator:${AUTH_DB_PASSWORD}@postgres:5432/instancez?sslmode=disable
+      INSTANCEZ_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/instancez?sslmode=disable
       INSTANCEZ_ADMIN_KEY: ${ADMIN_KEY}
     volumes:
       - ./instancez.yaml:/app/instancez.yaml
@@ -72,12 +51,10 @@ volumes:
 
 ```
 POSTGRES_PASSWORD=change-me
-OWNER_DB_PASSWORD=change-me
-AUTH_DB_PASSWORD=change-me
 ADMIN_KEY=your-secret-admin-key
 ```
 
-Two database URLs are required — see [Environment Variables](/instancez/deploy/env-vars/) for why they are separate.
+See [Environment Variables](/instancez/deploy/env-vars/) for the full variable reference.
 
 Start everything:
 
@@ -92,8 +69,7 @@ The API is ready at `http://localhost:8080` once the `instancez` container logs 
 ```bash
 docker run -d \
   -p 8080:8080 \
-  -e INSTANCEZ_OWNER_DATABASE_URL="postgres://instancez_owner:password@host:5432/instancez" \
-  -e INSTANCEZ_AUTH_DATABASE_URL="postgres://authenticator:password@host:5432/instancez" \
+  -e INSTANCEZ_DATABASE_URL="postgres://postgres:password@host:5432/instancez" \
   -e INSTANCEZ_ADMIN_KEY="your-admin-key" \
   -v $(pwd)/instancez.yaml:/app/instancez.yaml \
   ghcr.io/instancez/instancez:latest \

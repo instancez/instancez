@@ -24,12 +24,11 @@ Create a `.production.env` file next to `instancez.yaml`. `inz serve` loads this
 ```bash
 # .production.env — do not commit this file
 
-INSTANCEZ_OWNER_DATABASE_URL=postgres://instancez_owner:password@localhost:5432/mydb
-INSTANCEZ_AUTH_DATABASE_URL=postgres://authenticator:password@localhost:5432/mydb
+INSTANCEZ_DATABASE_URL=postgres://postgres:password@localhost:5432/mydb
 INSTANCEZ_ADMIN_KEY=your-secret-admin-key
 ```
 
-Postgres must already have the `instancez_owner` and `authenticator` roles provisioned before `inz serve` starts. See the [Docker guide](/instancez/deploy/docker/) for the init SQL, or run it manually against your database.
+Roles (`instancez_owner`, `authenticator`, `anon`, `authenticated`, `service_role`) are provisioned automatically by instancez on first startup.
 
 See [Environment Variables](/instancez/deploy/env-vars/) for the full list of available variables.
 
