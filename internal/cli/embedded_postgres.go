@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
 
 	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
 )
@@ -29,7 +28,6 @@ func startEmbeddedPostgres(opts devOptions) (stop func(), dsn string, err error)
 		embeddedpostgres.DefaultConfig().
 			Version(embeddedpostgres.V16).
 			DataPath(opts.pgDataDir).
-			RuntimePath(filepath.Join(opts.pgDataDir, "runtime")).
 			Port(port),
 	)
 
