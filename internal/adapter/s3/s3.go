@@ -187,8 +187,12 @@ func (s *Store) Head(ctx context.Context, key string) (domain.ObjectInfo, error)
 	if out.ContentLength != nil {
 		sz = *out.ContentLength
 	}
+	etag := ""
+	if out.ETag != nil {
+		etag = *out.ETag
+	}
 	// Return the caller's logical key, not the prefixed storage key sent to S3.
-	return domain.ObjectInfo{Key: key, Size: sz, ContentType: ct}, nil
+	return domain.ObjectInfo{Key: key, Size: sz, ContentType: ct, ETag: etag}, nil
 }
 
 func (s *Store) List(ctx context.Context, prefix string) ([]domain.ObjectInfo, error) {

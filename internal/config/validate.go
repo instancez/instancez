@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -858,4 +860,29 @@ func isValidSize(s string) bool {
 		}
 	}
 	return false
+}
+
+// ValidateFunctionFiles checks that each declared code function's file actually
+// exists on disk relative to projectDir. This is separate from Validate because
+// it requires filesystem access — call it from commands that have local project
+// context (inz bundle, inz validate).
+func ValidateFunctionFiles(cfg *domain.Config, projectDir string) domain.ValidationErrors {
+	if len(cfg.Functions) == 0 {
+		return nil
+	}
+	var errs domain.ValidationErrors
+	for name, fn := range cfg.Functions {
+		if fn.File == "" {
+			continue // already caught by Validate
+		}
+		p := filepath.Join(projectDir, fn.File)
+		if _, err := os.Stat(p); os.IsNotExist(err) {
+			errs = append(errs, &domain.ValidationError{
+				Path:       fmt.Sprintf("functions.%s.file", name),
+				Message:    fmt.Sprintf("file %q not found", fn.File),
+				Suggestion: fmt.Sprintf("Create %s relative to the project directory, or check the path", fn.File),
+			})
+		}
+	}
+	return errs
 }

@@ -108,6 +108,13 @@ func BuildBundle(projectDir string) (bundlePath string, err error) {
 		return "", err
 	}
 
+	// instancez.yaml at the tar root — the bundle is a self-contained artifact
+	// so serve can read the config directly from it (single S3 object, no race
+	// between config and bundle arriving at different times).
+	if err := writeTarFile(tw, "instancez.yaml", cfgBytes); err != nil {
+		return "", err
+	}
+
 	// Walk functions/ and add every file with paths relative to projectDir so
 	// entries look like functions/foo.js and functions/node_modules/...
 	// filepath.Walk uses Lstat, so fi.Mode()&os.ModeSymlink is detectable.

@@ -35,37 +35,54 @@ func newServeCmd() *cobra.Command {
 }
 
 func runServe(opts serveOptions) error {
-	// Preflight: structural config check before loading dotenv or opening pools.
-	// DSN env vars are not checked here because serve reads them from the
-	// orchestrator environment (not a local dotenv file), and dbConnections
-	// already returns a clear error when they are absent.
-	if r, failed := preflight.RunUntilFail([]preflight.Check{
-		preflight.ConfigValidCheck(opts.configPath),
-	}); failed {
-		fmt.Fprintf(os.Stderr, "  ✗ %s — %s\n    hint: %s\n", r.Name, r.Detail, r.FixHint)
-		return errReported
-	}
-
 	ctx := context.Background()
 
-	if err := requireConfigFile(opts.configPath); err != nil {
-		return err
-	}
+	extractParent := filepath.Join(os.TempDir(), "instancez-functions")
 
-	source, err := config.NewSource(opts.configPath)
-	if err != nil {
-		return err
-	}
+	// --- config source ---
+	//
+	// Bundle mode (--bundle): config comes from the bundle archive. A single
+	// S3 object is both config source and function code, eliminating the
+	// ordering race between config and bundle files. No local instancez.yaml
+	// required.
+	//
+	// Standard mode (--config): the existing file/S3 source path.
 
-	// serve loads .production.env when running against a local file source;
-	// shell env vars always take precedence. Skipped for s3:// sources
-	// since prod env vars come from the orchestrator (ConfigMap, secrets,
-	// etc.) in that deployment shape.
-	if _, ok := source.(*config.FileSource); ok {
-		if err := config.LoadDotenv(".production.env"); err != nil {
+	var bundleSource *BundleSource
+	var source config.Source
+
+	if opts.bundlePath != "" {
+		bundleSource = NewBundleSource(opts.bundlePath, extractParent)
+		source = bundleSource
+	} else {
+		if r, failed := preflight.RunUntilFail([]preflight.Check{
+			preflight.ConfigValidCheck(opts.configPath),
+		}); failed {
+			fmt.Fprintf(os.Stderr, "  ✗ %s — %s\n    hint: %s\n", r.Name, r.Detail, r.FixHint)
+			return errReported
+		}
+
+		if err := requireConfigFile(opts.configPath); err != nil {
 			return err
 		}
+
+		var err error
+		source, err = config.NewSource(opts.configPath)
+		if err != nil {
+			return err
+		}
+
+		// serve loads .production.env when running against a local file source;
+		// shell env vars always take precedence. Skipped for s3:// sources
+		// since prod env vars come from the orchestrator (ConfigMap, secrets,
+		// etc.) in that deployment shape.
+		if _, ok := source.(*config.FileSource); ok {
+			if err := config.LoadDotenv(".production.env"); err != nil {
+				return err
+			}
+		}
 	}
+
 	cfg, err := source.Load(ctx)
 	if err != nil {
 		return err
@@ -118,7 +135,8 @@ func runServe(opts serveOptions) error {
 	}
 
 	// Only expose a local config path to the admin handler when the source is
-	// a local file. For S3 sources the admin config endpoints return 501.
+	// a local file. For S3 and bundle sources the admin config endpoints return
+	// 501.
 	var adminConfigPath string
 	if fs, ok := source.(*config.FileSource); ok {
 		adminConfigPath = fs.Path
@@ -127,21 +145,36 @@ func runServe(opts serveOptions) error {
 	km := app.NewJWTKeyManager(ownerDB)
 
 	// Function runtime (serve consumes the pre-built bundle; it NEVER builds).
-	// The bundle is extracted under a writable temp dir and the runtime is
-	// wrapped in a SwapRuntime so the config watcher can hot-swap a new bundle
-	// version without recreating the HTTP handler.
+	// The runtime is wrapped in a SwapRuntime so the config watcher can
+	// hot-swap a new bundle version without recreating the HTTP handler.
 	var funcRuntime domain.FunctionRuntime
 	var swapRT *funcs.SwapRuntime
-	extractParent := filepath.Join(os.TempDir(), "instancez-functions")
-	if len(cfg.Functions) > 0 {
-		rt, _, ferr := buildServeFuncRuntime(ctx, cfg, filepath.Dir(adminConfigPath), extractParent, km, logger)
-		if ferr != nil {
-			return ferr
+	if bundleSource != nil {
+		// Bundle mode: always create a SwapRuntime even when the initial bundle
+		// has no functions, so a reload that adds functions can start the runtime
+		// without requiring a restart.
+		var rt *funcs.Runtime
+		if len(cfg.Functions) > 0 {
+			bundleDir := bundleSource.ExtractedDir()
+			rt, err = buildBundleFuncRuntime(ctx, cfg, bundleDir, km, logger)
+			if err != nil {
+				return err
+			}
+			logger.Info("function runtime ready", "functions", len(cfg.Functions), "bundle_dir", bundleDir)
 		}
 		swapRT = funcs.NewSwapRuntime(rt)
 		funcRuntime = swapRT
 		defer func() { _ = swapRT.Close() }()
+	} else if len(cfg.Functions) > 0 {
+		var rt *funcs.Runtime
+		rt, _, err = buildServeFuncRuntime(ctx, cfg, filepath.Dir(adminConfigPath), extractParent, km, logger)
+		if err != nil {
+			return err
+		}
 		logger.Info("function runtime ready", "functions", len(cfg.Functions), "bundle", cfg.FunctionsBundle)
+		swapRT = funcs.NewSwapRuntime(rt)
+		funcRuntime = swapRT
+		defer func() { _ = swapRT.Close() }()
 	}
 
 	// Create HTTP server. The Drift/Config closures capture `engine` (declared
@@ -194,30 +227,51 @@ func runServe(opts serveOptions) error {
 		app.WithConfigSource(source),
 	}
 
-	// Hot-reload: when the watcher applies a config whose functions bundle
-	// version changed, fetch+extract the new bundle, build a fresh runtime, and
-	// atomically swap it in (draining and closing the old one). Errors are
-	// logged and the previous runtime keeps serving.
+	// Hot-reload: when the watcher detects a new bundle version, rebuild the
+	// function runtime and atomically swap it in.
 	if swapRT != nil {
-		lastBundle := cfg.FunctionsBundle
-		engineOpts = append(engineOpts, app.WithFunctionReload(func(newCfg *domain.Config) {
-			if newCfg.FunctionsBundle == "" || newCfg.FunctionsBundle == lastBundle {
-				return
-			}
-			logger.Info("function bundle changed; reloading", "old", lastBundle, "new", newCfg.FunctionsBundle)
-			newRT, _, rerr := buildServeFuncRuntime(ctx, newCfg, filepath.Dir(adminConfigPath), extractParent, km, logger)
-			if rerr != nil {
-				logger.Error("function bundle reload failed; keeping previous runtime", "error", rerr)
-				return
-			}
-			lastBundle = newCfg.FunctionsBundle
-			if old := swapRT.Swap(newRT); old != nil {
-				if cerr := old.Close(); cerr != nil {
-					logger.Warn("closing previous function runtime", "error", cerr)
+		if bundleSource != nil {
+			// Bundle mode: Watch has already extracted the new bundle before
+			// emitting the WatchEvent, so ExtractedDir() points at the new tree
+			// by the time onFunctionReload is called.
+			engineOpts = append(engineOpts, app.WithFunctionReload(func(newCfg *domain.Config) {
+				newDir := bundleSource.ExtractedDir()
+				logger.Info("function bundle changed; reloading runtime", "new_dir", newDir)
+				newRT, rerr := buildBundleFuncRuntime(ctx, newCfg, newDir, km, logger)
+				if rerr != nil {
+					logger.Error("function bundle reload failed; keeping previous runtime", "error", rerr)
+					return
 				}
-			}
-			logger.Info("function runtime reloaded", "bundle", newCfg.FunctionsBundle)
-		}))
+				if old := swapRT.Swap(newRT); old != nil {
+					if cerr := old.Close(); cerr != nil {
+						logger.Warn("closing previous function runtime", "error", cerr)
+					}
+				}
+				logger.Info("function runtime reloaded", "bundle_dir", newDir)
+			}))
+		} else {
+			// Standard mode: the functions bundle pointer is embedded in the config.
+			// Reload when the pointer changes.
+			lastBundle := cfg.FunctionsBundle
+			engineOpts = append(engineOpts, app.WithFunctionReload(func(newCfg *domain.Config) {
+				if newCfg.FunctionsBundle == "" || newCfg.FunctionsBundle == lastBundle {
+					return
+				}
+				logger.Info("function bundle changed; reloading", "old", lastBundle, "new", newCfg.FunctionsBundle)
+				newRT, _, rerr := buildServeFuncRuntime(ctx, newCfg, filepath.Dir(adminConfigPath), extractParent, km, logger)
+				if rerr != nil {
+					logger.Error("function bundle reload failed; keeping previous runtime", "error", rerr)
+					return
+				}
+				lastBundle = newCfg.FunctionsBundle
+				if old := swapRT.Swap(newRT); old != nil {
+					if cerr := old.Close(); cerr != nil {
+						logger.Warn("closing previous function runtime", "error", cerr)
+					}
+				}
+				logger.Info("function runtime reloaded", "bundle", newCfg.FunctionsBundle)
+			}))
+		}
 	}
 
 	// Create engine with HTTP server

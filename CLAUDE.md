@@ -34,7 +34,12 @@ Concrete rules that fall out of this:
 go build -o inz ./cmd/inz
 ./inz dev              # hot-reload dev server (set INSTANCEZ_DATABASE_URL — a superuser DSN — and dev provisions the two role DSNs on first run; or set them directly. JWT keys are DB-managed via auth.jwt_keys)
 ./inz serve            # production mode
-./inz validate         # YAML syntax check, no DB
+./inz validate         # YAML syntax check + function file existence, no DB
+./inz validate --use-dsn <owner-dsn>   # also prints migration plan (plan only, never applied)
+./inz bundle           # build instancez.yaml + functions/ into a tar.gz artifact
+./inz bundle --output s3://bucket/key  # build + upload to S3, print pointer
+./inz serve --bundle s3://bucket/key#etag   # production mode using bundle (config + functions from single archive)
+./inz serve --bundle s3://bucket/key --migrate --watch  # same, with migrations + hot-reload on ETag change
 docker compose -f docker-compose.dev.yaml up   # full stack: postgres + backend + dashboard
 ```
 
@@ -85,7 +90,7 @@ internal/adapter/     postgres (pgx pool), http (Gin handlers + PostgREST surfac
 
 **RLS is the only authorization layer.** There is no HTTP-level RBAC and no application-side role table. All access decisions are Postgres policies declared in `instancez.yaml` under each table's `rls:` block. The middleware's job is to validate the JWT and pick the right Postgres role; everything else is RLS. The `service_role` (used by the admin key path) has `BYPASSRLS`. See `internal/domain/database.go` for the `Roles` struct — wire JWT values (`anon`/`authenticated`/`service_role`) are fixed for supabase-js compat, but the Postgres role identifiers are configurable via `INSTANCEZ_DB_*_ROLE` env vars.
 
-**YAML is the source of truth.** On boot, `internal/app/migrate.go` diffs `instancez.yaml` against the live database and applies migrations (gated by `--allow-destructive` for drops). `migrate_config_diff.go` is where the diff lives. The dev watcher (`watcher.go`) re-applies on file change.
+**YAML is the source of truth.** On boot, `internal/app/migrate.go` diffs `instancez.yaml` against the live database and applies migrations (gated by `--allow-destructive` for drops). `migrate_config_diff.go` is where the diff lives. `engine.go`'s `runWatcher` re-applies on source change (fsnotify for files, HEAD-poll for S3).
 
 **HTTP surface mirrors PostgREST + Supabase.** `internal/adapter/http/` contains `crud_handler.go`, `rpc_handler.go`, `storage_v1_handler.go`, `auth_handler.go`, `mfa_handler.go`. The `where.go` / `select.go` / `csv.go` files implement PostgREST query parsing. Handlers must stay parseable by `@supabase/supabase-js`. **Code functions** are served at `/functions/v1/<name>` by `functions_handler.go`; they run in Node.js worker processes managed by `internal/adapter/funcs/`. **The Postgres-RPC block was renamed from `functions:` to `rpc:` in Task 1** — `functions:` now declares code functions exclusively. Docs and examples must use `rpc:` for Postgres stored procedures.
 </architecture>

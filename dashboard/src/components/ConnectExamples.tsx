@@ -108,7 +108,7 @@ export function ConnectExamples({ exampleTable }: { exampleTable: string }) {
             overflowX="auto"
             fontSize="11px"
             fontFamily="mono"
-            lineHeight="5"
+            lineHeight="1.5"
             color="fg"
           >
             {code}

@@ -11,6 +11,7 @@ type ObjectInfo struct {
 	Key         string
 	Size        int64
 	ContentType string
+	ETag        string // content version; populated by S3, empty for local storage
 }
 
 // ObjectStore is the port for object storage operations (S3, local disk, etc.).

@@ -174,6 +174,7 @@ func applyEnvDefaults(fs *pflag.FlagSet, aliases map[string][]string, lookup fun
 type serveOptions struct {
 	port             int
 	configPath       string
+	bundlePath       string // --bundle: replaces --config when non-empty
 	migrate          bool
 	allowDestructive bool
 
@@ -193,6 +194,7 @@ type serveFlagSet struct {
 
 	port             int
 	configPath       string
+	bundlePath       string
 	migrate          bool
 	allowDestructive bool
 	watch            bool
@@ -206,6 +208,7 @@ func newServeFlagSet() *serveFlagSet {
 	fs := &serveFlagSet{flags: pflag.NewFlagSet("serve", pflag.ContinueOnError)}
 	fs.flags.IntVar(&fs.port, "port", 0, "server port (default: from config or 8080)")
 	fs.flags.StringVar(&fs.configPath, "config", "instancez.yaml", "config source (file path or s3://bucket/key; env: INSTANCEZ_CONFIG)")
+	fs.flags.StringVar(&fs.bundlePath, "bundle", "", "bundle pointer (file path or s3://bucket/key[#version]); replaces --config when set (env: INSTANCEZ_BUNDLE)")
 	fs.flags.BoolVar(&fs.migrate, "migrate", false, "run pending migrations on startup")
 	fs.flags.BoolVar(&fs.allowDestructive, "allow-destructive", false, "permit DROP TABLE/COLUMN in migrations")
 	fs.flags.BoolVar(&fs.watch, "watch", false, "watch the config source for changes (env: INSTANCEZ_WATCH)")
@@ -249,6 +252,7 @@ func resolveServeFlags(fs *serveFlagSet, lookup func(string) string) (serveOptio
 	return serveOptions{
 		port:             fs.port,
 		configPath:       fs.configPath,
+		bundlePath:       fs.bundlePath,
 		migrate:          fs.migrate,
 		allowDestructive: fs.allowDestructive,
 		watch:            fs.watch,

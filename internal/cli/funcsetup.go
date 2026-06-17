@@ -130,6 +130,33 @@ func buildDevFuncRuntimeFast(
 	return funcs.New(opts)
 }
 
+// buildBundleFuncRuntime constructs the function runtime for `serve --bundle`.
+// The bundle has already been extracted to bundleDir by BundleSource.Load(), so
+// we point the runtime directly at the extracted tree (no FetchAndExtract call).
+// Production env vars come from INSTANCEZ_ENV_* in the container environment; no
+// local .env file is expected.
+func buildBundleFuncRuntime(
+	ctx context.Context,
+	cfg *domain.Config,
+	bundleDir string,
+	km *app.JWTKeyManager,
+	logger *slog.Logger,
+) (*funcs.Runtime, error) {
+	if len(cfg.Functions) == 0 {
+		return nil, nil
+	}
+	opts, err := sharedFuncOptions(ctx, cfg, ".", "production", km, logger)
+	if err != nil {
+		return nil, err
+	}
+	opts.Dir = bundleDir
+	rt, err := funcs.New(opts)
+	if err != nil {
+		return nil, fmt.Errorf("functions: start runtime: %w", err)
+	}
+	return rt, nil
+}
+
 // buildServeFuncRuntime constructs the function runtime for `serve`. serve
 // NEVER builds: it consumes the pre-built bundle recorded in
 // cfg.FunctionsBundle, extracting it to a writable dir and pointing the runtime

@@ -17,7 +17,6 @@ export function EditModeBanner({ status }: Props) {
       py="2.5"
       fontSize="sm"
       color="blue.900"
-      _dark={{ color: "blue.100" }}
     >
       <HStack as="span" alignItems="start" gap="2" display="inline-flex">
         <PencilLine size={14} aria-hidden="true" style={{ marginTop: "2px", flexShrink: 0 }} />

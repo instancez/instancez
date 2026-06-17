@@ -160,6 +160,34 @@ func TestParseDotenvFlag_ServeRequiresDotenvPath(t *testing.T) {
 	}
 }
 
+func TestParseServeFlagsBundleFlag(t *testing.T) {
+	opts, err := parseServeFlags(
+		[]string{"--bundle", "s3://bucket/app.tar.gz#etag1"},
+		func(string) string { return "" },
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if opts.bundlePath != "s3://bucket/app.tar.gz#etag1" {
+		t.Errorf("bundlePath = %q, want s3://bucket/app.tar.gz#etag1", opts.bundlePath)
+	}
+}
+
+func TestParseServeFlagsBundleEnvFallback(t *testing.T) {
+	opts, err := parseServeFlags(
+		[]string{},
+		func(k string) string {
+			return map[string]string{"INSTANCEZ_BUNDLE": "s3://bucket/app.tar.gz"}[k]
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if opts.bundlePath != "s3://bucket/app.tar.gz" {
+		t.Errorf("bundlePath = %q, want s3://bucket/app.tar.gz", opts.bundlePath)
+	}
+}
+
 func TestParseDotenvFlag_DevDefault(t *testing.T) {
 	opts, err := parseDevFlags([]string{}, func(string) string { return "" })
 	if err != nil {

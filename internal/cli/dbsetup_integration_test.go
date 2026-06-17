@@ -37,11 +37,11 @@ func TestDBConnectionsProvisionRoles(t *testing.T) {
 	}
 
 	// Verify the authenticator role exists and can connect
-	authRow, err := auth.QueryRow(ctx, "SELECT current_user")
+	authRow, err := auth.QueryRow(ctx, "SELECT session_user")
 	if err != nil {
 		t.Fatalf("auth query: %v", err)
 	}
-	authName, _ := authRow["current_user"].(string)
+	authName, _ := authRow["session_user"].(string)
 	if authName != roles.Authenticator {
 		t.Errorf("auth user = %q, want %q", authName, roles.Authenticator)
 	}

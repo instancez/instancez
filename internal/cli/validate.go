@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/instancez/instancez/internal/adapter/postgres"
 	"github.com/instancez/instancez/internal/app"
@@ -71,6 +72,13 @@ func runValidate(ctx context.Context, configPath string, jsonOutput bool, useDSN
 			return printJSONErrors(errs)
 		}
 		return printPrettyErrors(errs)
+	}
+
+	if fileErrs := config.ValidateFunctionFiles(cfg, filepath.Dir(configPath)); fileErrs != nil {
+		if jsonOutput {
+			return printJSONErrors(fileErrs)
+		}
+		return printPrettyErrors(fileErrs)
 	}
 
 	if !jsonOutput {

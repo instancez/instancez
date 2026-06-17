@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -986,4 +987,52 @@ func TestValidate_RLSCheckShape(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestValidateFunctionFiles(t *testing.T) {
+	t.Run("empty functions returns nil", func(t *testing.T) {
+		cfg := validBaseConfig()
+		errs := ValidateFunctionFiles(cfg, t.TempDir())
+		if errs != nil {
+			t.Fatalf("expected nil, got %v", errs)
+		}
+	})
+
+	t.Run("present file returns nil", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(dir+"/handler.js", []byte("export default () => {}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cfg := validBaseConfig()
+		cfg.Functions = map[string]domain.CodeFunction{
+			"hello": {Runtime: "node", File: "handler.js"},
+		}
+		errs := ValidateFunctionFiles(cfg, dir)
+		if errs != nil {
+			t.Fatalf("expected nil, got %v", errs)
+		}
+	})
+
+	t.Run("missing file returns error", func(t *testing.T) {
+		cfg := validBaseConfig()
+		cfg.Functions = map[string]domain.CodeFunction{
+			"hello": {Runtime: "node", File: "missing.js"},
+		}
+		errs := ValidateFunctionFiles(cfg, t.TempDir())
+		if errs == nil {
+			t.Fatal("expected error for missing file")
+		}
+		assertHasErrorAt(t, errs, "functions.hello.file")
+	})
+
+	t.Run("empty file field skipped", func(t *testing.T) {
+		cfg := validBaseConfig()
+		cfg.Functions = map[string]domain.CodeFunction{
+			"hello": {Runtime: "node", File: ""},
+		}
+		errs := ValidateFunctionFiles(cfg, t.TempDir())
+		if errs != nil {
+			t.Fatalf("expected nil for empty file field, got %v", errs)
+		}
+	})
 }

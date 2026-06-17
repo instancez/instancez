@@ -33,6 +33,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(
 		newInitCmd(),
 		newValidateCmd(),
+		newBundleCmd(),
 		newDevCmd(),
 		newServeCmd(),
 		newVersionCmd(),

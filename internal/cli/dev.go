@@ -49,8 +49,8 @@ func runDev(opts devOptions) error {
 		fmt.Printf("  Starting embedded Postgres 16...\n")
 		stop, superuserDSN, err := startEmbeddedPostgres(opts)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  hint: if this is a platform support error, use INSTANCEZ_DATABASE_URL with a full Postgres installation instead\n")
-			return err
+			fmt.Fprintf(os.Stderr, "  ✗ embedded Postgres failed to start: %v\n    hint: %s\n", err, embeddedPGHint(err))
+			return errReported
 		}
 		defer stop()
 		if err := os.Setenv("INSTANCEZ_DATABASE_URL", superuserDSN); err != nil {

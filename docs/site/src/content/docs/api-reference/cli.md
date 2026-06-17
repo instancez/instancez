@@ -68,24 +68,31 @@ inz serve [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--allow-destructive` | `false` | Permit `DROP TABLE`/`COLUMN` in migrations. |
-| `--config` | `instancez.yaml` | Config source: file path or `s3://bucket/key`. Env: `INSTANCEZ_CONFIG`. |
+| `--bundle` | — | Bundle pointer: file path or `s3://bucket/key[#version]`. When set, reads config and functions from the bundle archive instead of `--config`. Env: `INSTANCEZ_BUNDLE`. |
+| `--config` | `instancez.yaml` | Config source: file path or `s3://bucket/key`. Ignored when `--bundle` is set. Env: `INSTANCEZ_CONFIG`. |
 | `--dashboard` | `disabled` | Dashboard mode. Env: `INSTANCEZ_DASHBOARD`. |
 | `--dashboard-write-dotenv` | `false` | Allow dashboard to write secrets to a .env file. Env: `INSTANCEZ_DASHBOARD_WRITE_DOTENV`. |
 | `--dotenv-path` | — | Path to .env file when `--dashboard-write-dotenv` is set. Env: `INSTANCEZ_DOTENV_PATH`. |
 | `--migrate` | `false` | Run pending migrations on startup. |
 | `--port` | (from config or `8080`) | Override server port. |
-| `--watch` | `false` | Watch the config source for changes. Env: `INSTANCEZ_WATCH`. |
+| `--watch` | `false` | Watch the config source for changes. In bundle mode, polls the bundle ETag (S3) or mtime (local) instead of the config file. Env: `INSTANCEZ_WATCH`. |
 | `--watch-interval` | `1m` | S3-watch poll interval. Env: `INSTANCEZ_WATCH_INTERVAL`. |
 
 ```bash
 inz serve --migrate --config instancez.yaml
+
+# Bundle mode: config + functions come from a single archive (no race condition)
+inz serve --bundle s3://my-bucket/bundles/app.tar.gz --migrate --watch
+inz serve --bundle /path/to/bundle.tar.gz --migrate
 ```
 
 ## inz validate
 
 Validate `instancez.yaml` structure and references without starting the server.
 
-With `--use-dsn`, also plans (but does not apply) the migration needed to bring the database in sync.
+Checks YAML structure, identifiers, cross-references, and verifies that each declared code function's `file:` exists on disk.
+
+With `--use-dsn`, also connects to the database and prints the migration plan (DDL diff) without applying it.
 
 ```
 inz validate [flags]
@@ -96,10 +103,34 @@ inz validate [flags]
 | `--config` | `instancez.yaml` | Config source. Env: `INSTANCEZ_CONFIG`. |
 | `--json` | `false` | Output errors as JSON (for CI). |
 | `--project` | `false` | Preview migration against the linked cloud project. |
-| `--use-dsn` | — | After syntax check, plan a migration against this owner-class DSN. |
+| `--use-dsn` | — | After syntax check, plan a migration against this owner-class DSN (plan only — never applied). |
 
 ```bash
+inz validate
 inz validate --use-dsn postgres://owner:pass@localhost/mydb
+```
+
+## inz bundle
+
+Build a self-contained tar.gz bundle from `instancez.yaml` and `functions/`.
+
+The bundle is the deployment artifact for projects that use code functions. It contains `instancez.yaml`, `functions/` (with vendored `node_modules/`), and a `manifest.json`. Upload it to S3 then set `functions_bundle:` in `instancez.yaml` to the returned pointer.
+
+Runs stateless validation (same as `inz validate`) including checking that each declared function's `file:` exists on disk.
+
+```
+inz bundle [flags]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--config` | `instancez.yaml` | Path to `instancez.yaml`. |
+| `--output` | — | Destination: local file path or `s3://bucket/key`. If omitted, writes to a temp file and prints the path. |
+
+```bash
+inz bundle                                       # write temp file, print path
+inz bundle --output bundle.tar.gz                # write to local file
+inz bundle --output s3://my-bucket/bundle.tar.gz # upload to S3, print pointer
 ```
 
 ## inz deploy

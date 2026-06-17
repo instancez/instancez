@@ -124,6 +124,7 @@ func TestBuildBundleOfflineNoPackageJSON(t *testing.T) {
 
 	names := tarEntries(t, bundlePath)
 	assert.Contains(t, names, "manifest.json")
+	assert.Contains(t, names, "instancez.yaml", "config must be included in the bundle")
 	assert.Contains(t, names, "functions/a.js")
 	assert.Contains(t, names, "functions/node_modules/leftpad/index.js",
 		"vendored node_modules must be packed")
@@ -138,6 +139,12 @@ func TestBuildBundleOfflineNoPackageJSON(t *testing.T) {
 	require.Contains(t, m.Functions, "a")
 	assert.Equal(t, "functions/a.js", m.Functions["a"].File)
 	assert.Equal(t, "node", m.Functions["a"].Runtime)
+
+	// The bundled instancez.yaml must match the source file.
+	origYAML, err := os.ReadFile(filepath.Join(dir, "instancez.yaml"))
+	require.NoError(t, err)
+	bundledYAML := readTarFile(t, bundlePath, "instancez.yaml")
+	assert.Equal(t, string(origYAML), string(bundledYAML), "bundled instancez.yaml must match source")
 }
 
 func TestBuildBundleNoFunctionsDir(t *testing.T) {
