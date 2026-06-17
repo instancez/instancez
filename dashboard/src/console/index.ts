@@ -9,6 +9,7 @@ export {
   overviewRoutes,
   tablesRoutes,
   authRoutes,
+  usersRoutes,
   storageRoutes,
   rpcRoutes,
   functionsRoutes,
