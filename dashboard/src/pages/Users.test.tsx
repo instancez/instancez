@@ -243,4 +243,20 @@ describe("UsersPage", () => {
 
     expect(screen.getByText("Password must be at least 6 characters.")).toBeInTheDocument();
   });
+
+  it("shows a skeleton while users are loading", () => {
+    const backend = makeBackend({
+      listUsers: vi.fn().mockReturnValue(new Promise(() => {})), // never resolves
+    });
+    renderWithChakra(
+      <MemoryRouter>
+        <BackendProvider backend={backend}>
+          <DialogProvider>
+            <UsersPage />
+          </DialogProvider>
+        </BackendProvider>
+      </MemoryRouter>
+    );
+    expect(screen.getByTestId("list-skeleton")).toBeInTheDocument();
+  });
 });

@@ -3,6 +3,7 @@ import { Users as UsersIcon, Plus, Check, Minus } from "lucide-react";
 import { Box, HStack, Text, VStack } from "@chakra-ui/react";
 import { useBackend } from "../console/BackendContext";
 import { useDialog } from "../components/Dialog";
+import { ListSkeleton } from "../components/Skeletons";
 import { EmptyState } from "../components/EmptyState";
 import { StatusBadge } from "../components/StatusBadge";
 import { Modal } from "../components/Modal";
@@ -228,6 +229,8 @@ export function UsersPage() {
           {loadError}
         </Text>
       )}
+
+      {loading && <ListSkeleton rows={6} />}
 
       {!loading && users.length === 0 && !loadError && (
         <EmptyState

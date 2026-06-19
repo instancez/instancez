@@ -7,6 +7,7 @@ import { EmptyState } from "../components/EmptyState";
 import { StatusBadge } from "../components/StatusBadge";
 import { Button, Field, Input, ListRow, Panel, Section } from "../components/ui";
 import { useBackend } from "../console/BackendContext";
+import { ListSkeleton } from "../components/Skeletons";
 
 interface DepsState {
   dependencies: Record<string, string>;
@@ -118,97 +119,105 @@ export function Functions() {
         )}
 
         {/* Dependencies panel — only shown when the endpoint is reachable */}
-        {!depsLoading && deps !== null && (
+        {(depsLoading || deps !== null) && (
           <Section
             title="Dependencies"
             icon={Package}
             actions={
-              deps.has_lock ? (
-                <StatusBadge variant="success">lock file</StatusBadge>
-              ) : depEntries.length > 0 ? (
-                <StatusBadge variant="warning">no lock file</StatusBadge>
+              !depsLoading && deps !== null ? (
+                deps.has_lock ? (
+                  <StatusBadge variant="success">lock file</StatusBadge>
+                ) : depEntries.length > 0 ? (
+                  <StatusBadge variant="warning">no lock file</StatusBadge>
+                ) : null
               ) : null
             }
           >
-            {depEntries.length > 0 ? (
-              <VStack gap="1.5" align="stretch">
-                {depEntries.map(([pkg, ver]) => (
-                  <Panel key={pkg} display="flex" alignItems="center" gap="3" px="3" py="2">
-                    <Text fontSize="sm" fontFamily="mono" color="fg" flex="1" truncate>
-                      {pkg}
-                    </Text>
-                    <Text fontSize="xs" fontFamily="mono" color="fg.muted" flexShrink="0">
-                      {ver as string}
-                    </Text>
-                    {canEdit && (
-                      <Button
-                        variant="danger-ghost"
-                        size="icon"
-                        aria-label={`Remove ${pkg}`}
-                        disabled={installing}
-                        onClick={() => handleRemove(pkg)}
-                      >
-                        <Trash2 size={13} />
-                      </Button>
-                    )}
-                  </Panel>
-                ))}
-              </VStack>
+            {depsLoading ? (
+              <ListSkeleton rows={3} />
             ) : (
-              <Text fontSize="sm" color="fg.muted">
-                No dependencies installed.
-              </Text>
-            )}
+              <>
+                {depEntries.length > 0 ? (
+                  <VStack gap="1.5" align="stretch">
+                    {depEntries.map(([pkg, ver]) => (
+                      <Panel key={pkg} display="flex" alignItems="center" gap="3" px="3" py="2">
+                        <Text fontSize="sm" fontFamily="mono" color="fg" flex="1" truncate>
+                          {pkg}
+                        </Text>
+                        <Text fontSize="xs" fontFamily="mono" color="fg.muted" flexShrink="0">
+                          {ver as string}
+                        </Text>
+                        {canEdit && (
+                          <Button
+                            variant="danger-ghost"
+                            size="icon"
+                            aria-label={`Remove ${pkg}`}
+                            disabled={installing}
+                            onClick={() => handleRemove(pkg)}
+                          >
+                            <Trash2 size={13} />
+                          </Button>
+                        )}
+                      </Panel>
+                    ))}
+                  </VStack>
+                ) : (
+                  <Text fontSize="sm" color="fg.muted">
+                    No dependencies installed.
+                  </Text>
+                )}
 
-            {canEdit && (
-              <Field label="Add package">
-                <HStack gap="2">
-                  <Input
-                    mono
-                    placeholder="e.g. axios or axios@latest"
-                    value={addPkg}
-                    onChange={(e) => setAddPkg(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleAdd();
-                    }}
-                    disabled={installing}
-                    style={{ flex: 1 }}
-                  />
-                  <Button
-                    onClick={handleAdd}
-                    disabled={installing || !addPkg.trim()}
-                  >
-                    {installing ? "Installing…" : "Install"}
-                  </Button>
-                </HStack>
-              </Field>
-            )}
+                {canEdit && (
+                  <Field label="Add package">
+                    <HStack gap="2">
+                      <Input
+                        mono
+                        placeholder="e.g. axios or axios@latest"
+                        value={addPkg}
+                        onChange={(e) => setAddPkg(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleAdd();
+                        }}
+                        disabled={installing}
+                        style={{ flex: 1 }}
+                      />
+                      <Button
+                        onClick={handleAdd}
+                        disabled={installing || !addPkg.trim()}
+                      >
+                        {installing ? "Installing…" : "Install"}
+                      </Button>
+                    </HStack>
+                  </Field>
+                )}
 
-            {installSuccess && (
-              <HStack gap="2" fontSize="sm" color="green.600">
-                <Box as={CheckCircle} boxSize="3.5" />
-                <Text>{installSuccess}</Text>
-              </HStack>
-            )}
-            {installError && (
-              <VStack gap="1" align="stretch">
-                <HStack gap="2" fontSize="sm" color="fg.error">
-                  <Box as={AlertCircle} boxSize="3.5" />
-                  <Text>npm failed</Text>
-                </HStack>
-                <Box
-                  as="pre"
-                  fontSize="xs"
-                  color="fg.muted"
-                  bg="bg.panel"
-                  borderRadius="md"
-                  p="2"
-                  overflowX="auto"
-                  whiteSpace="pre-wrap"
-                >
-                  {installError}
-                </Box>
-              </VStack>
+                {installSuccess && (
+                  <HStack gap="2" fontSize="sm" color="green.600">
+                    <Box as={CheckCircle} boxSize="3.5" />
+                    <Text>{installSuccess}</Text>
+                  </HStack>
+                )}
+                {installError && (
+                  <VStack gap="1" align="stretch">
+                    <HStack gap="2" fontSize="sm" color="fg.error">
+                      <Box as={AlertCircle} boxSize="3.5" />
+                      <Text>npm failed</Text>
+                    </HStack>
+                    <Box
+                      as="pre"
+                      fontSize="xs"
+                      color="fg.muted"
+                      bg="bg.panel"
+                      borderRadius="md"
+                      p="2"
+                      overflowX="auto"
+                      whiteSpace="pre-wrap"
+                    >
+                      {installError}
+                    </Box>
+                  </VStack>
+                )}
+              </>
             )}
           </Section>
         )}
