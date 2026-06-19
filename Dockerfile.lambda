@@ -43,4 +43,4 @@ COPY --from=builder /inz /usr/local/bin/inz
 COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.9.1 /lambda-adapter /opt/extensions/lambda-adapter
 WORKDIR /app
 EXPOSE 8080
-CMD ["inz", "serve", "--data", "--migrate"]
+CMD ["inz", "serve", "--migrate"]
