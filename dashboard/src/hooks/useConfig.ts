@@ -57,12 +57,12 @@ export function useConfig(): ConfigState {
   return ctx;
 }
 
-export function useConfigState(): ConfigStateWithDialog {
+export function useConfigState(initialConfig?: Config | null): ConfigStateWithDialog {
   const backend = useBackend();
-  const [config, setConfig] = useState<Config | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [config, setConfig] = useState<Config | null>(initialConfig ?? null);
+  const [loading, setLoading] = useState(initialConfig == null);
   const [error, setError] = useState<string | null>(null);
-  const [checksum, setChecksum] = useState("");
+  const [checksum, setChecksum] = useState(initialConfig?._checksum ?? "");
   const [saving, setSaving] = useState(false);
   const [saveErrors, setSaveErrors] = useState<ValidationError[]>([]);
   const [dotenvWritable, setDotenvWritable] = useState(false);
@@ -156,8 +156,20 @@ export function useConfigState(): ConfigStateWithDialog {
   );
 
   useEffect(() => {
+    // Seeded by the host: config is already in state, so skip the redundant
+    // getConfig() and only refresh the lightweight status (drives dotenvWritable).
+    // Unseeded (OSS dashboard): full refresh as before.
+    if (initialConfig != null) {
+      backend
+        .getConfigStatus()
+        .then((s) => setDotenvWritable(s?.dotenv_writable ?? false))
+        .catch(() => {});
+      return;
+    }
     refresh();
-  }, [refresh]);
+    // initialConfig is a one-time seed; intentionally not in deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refresh, backend]);
 
   return {
     config,

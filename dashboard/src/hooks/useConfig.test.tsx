@@ -114,3 +114,40 @@ describe("useConfigState save confirmation", () => {
     expect(api.putConfig).not.toHaveBeenCalled();
   });
 });
+
+describe("useConfigState seeding", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("seeds from initialConfig and skips the getConfig mount fetch", async () => {
+    const seeded = {
+      version: 1,
+      project: { name: "Seeded", description: "" },
+      tables: {},
+      _checksum: "seed-123",
+    } as unknown as Config & { _checksum: string };
+
+    function SeedHarness() {
+      const state = useConfigState(seeded);
+      return (
+        <div>
+          <span data-testid="loading">{String(state.loading)}</span>
+          <span data-testid="name">{state.config?.project.name ?? ""}</span>
+          <span data-testid="checksum">{state.checksum}</span>
+        </div>
+      );
+    }
+
+    renderWithChakra(<SeedHarness />);
+
+    // No loading flash and the seeded config is present on first paint.
+    expect(screen.getByTestId("loading").textContent).toBe("false");
+    expect(screen.getByTestId("name").textContent).toBe("Seeded");
+    expect(screen.getByTestId("checksum").textContent).toBe("seed-123");
+
+    // The mount fetch for config must NOT have fired (status may, and is inert in the mock).
+    await waitFor(() => expect(api.getConfigStatus).toHaveBeenCalled());
+    expect(api.getConfig).not.toHaveBeenCalled();
+  });
+});
