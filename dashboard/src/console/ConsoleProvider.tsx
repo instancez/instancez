@@ -6,13 +6,14 @@ import { ConfigContext, useConfigState } from "../hooks/useConfig";
 import { DialogProvider } from "../components/Dialog";
 import { ConfirmSaveDialog } from "../components/ConfirmSaveDialog";
 import { SaveToast } from "../components/SaveToast";
+import { ListSkeleton } from "../components/Skeletons";
 
 function ConfigShell({ initialConfig, children }: { initialConfig?: Config | null; children: ReactNode }) {
   const configState = useConfigState(initialConfig);
   return (
     <ConfigContext.Provider value={configState}>
       <DialogProvider>
-        <Suspense fallback={null}>
+        <Suspense fallback={<ListSkeleton rows={6} />}>
           {children}
         </Suspense>
         <SaveToast />
