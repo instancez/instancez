@@ -54,25 +54,41 @@ func ownerPoolConfig(poolCfg domain.PoolConfig) domain.PoolConfig {
 	return poolCfg
 }
 
-// dbConnections opens the owner and authenticator pools from environment.
-// It reads INSTANCEZ_DATABASE_URL (a superuser DSN), provisions the role
-// layout via bootstrapDB if needed, then opens both pools concurrently.
+// dbConnections opens the owner and authenticator pools from environment. It
+// accepts either of two inputs:
+//
+//   - the two scoped DSNs INSTANCEZ_OWNER_DATABASE_URL +
+//     INSTANCEZ_AUTH_DATABASE_URL, for when an external operator (e.g. the
+//     instancez platform) has already provisioned the role layout as superuser.
+//     The instance connects with them directly and never needs superuser — the
+//     correct model on a shared, multi-tenant cluster.
+//   - a single superuser DSN INSTANCEZ_DATABASE_URL, which bootstrapDB uses to
+//     provision the role layout and derive the scoped owner + authenticator
+//     DSNs (the self-hosted / `inz dev` path).
+//
+// It then opens both pools concurrently.
 func dbConnections(ctx context.Context, poolCfg domain.PoolConfig) (domain.OwnerDB, domain.RequestDB, domain.Roles, error) {
-	superuserURL := os.Getenv("INSTANCEZ_DATABASE_URL")
-	if superuserURL == "" {
-		return domain.OwnerDB{}, domain.RequestDB{}, domain.Roles{},
-			fmt.Errorf("INSTANCEZ_DATABASE_URL not set (superuser DSN required)")
-	}
-
 	roles := rolesFromEnv()
 	if err := roles.Validate(); err != nil {
 		return domain.OwnerDB{}, domain.RequestDB{}, domain.Roles{}, err
 	}
 
-	ownerURL, authURL, err := bootstrapDB(ctx, superuserURL, roles)
-	if err != nil {
-		return domain.OwnerDB{}, domain.RequestDB{}, domain.Roles{},
-			fmt.Errorf("provision roles: %w", err)
+	// Prefer pre-provisioned scoped DSNs; only bootstrap from a superuser DSN
+	// when both scoped DSNs are not already supplied.
+	ownerURL := os.Getenv("INSTANCEZ_OWNER_DATABASE_URL")
+	authURL := os.Getenv("INSTANCEZ_AUTH_DATABASE_URL")
+	if ownerURL == "" || authURL == "" {
+		superuserURL := os.Getenv("INSTANCEZ_DATABASE_URL")
+		if superuserURL == "" {
+			return domain.OwnerDB{}, domain.RequestDB{}, domain.Roles{},
+				fmt.Errorf("set INSTANCEZ_DATABASE_URL (superuser DSN) or both INSTANCEZ_OWNER_DATABASE_URL and INSTANCEZ_AUTH_DATABASE_URL")
+		}
+		var err error
+		ownerURL, authURL, err = bootstrapDB(ctx, superuserURL, roles)
+		if err != nil {
+			return domain.OwnerDB{}, domain.RequestDB{}, domain.Roles{},
+				fmt.Errorf("provision roles: %w", err)
+		}
 	}
 
 	// Open both pools concurrently — the TLS+SCRAM handshake on each is
