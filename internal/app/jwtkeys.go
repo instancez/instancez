@@ -6,9 +6,11 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
+	"math/big"
 	"sync"
 	"time"
 
@@ -44,6 +46,32 @@ func (k *JWTKey) SymmetricSecret() []byte {
 		return sum[:]
 	}
 	return nil
+}
+
+// PublicJWK returns the public half of an RS256 key as a JWK map. It never
+// includes private material, so it is safe to expose. Returns an error for keys
+// that carry no RSA public key.
+func (k *JWTKey) PublicJWK() (map[string]any, error) {
+	if k == nil || k.PublicKey == nil {
+		return nil, fmt.Errorf("jwt key: no RSA public key for kid %q", kidOf(k))
+	}
+	n := base64.RawURLEncoding.EncodeToString(k.PublicKey.N.Bytes())
+	e := base64.RawURLEncoding.EncodeToString(big.NewInt(int64(k.PublicKey.E)).Bytes())
+	return map[string]any{
+		"kty": "RSA",
+		"use": "sig",
+		"alg": "RS256",
+		"kid": k.KID,
+		"n":   n,
+		"e":   e,
+	}, nil
+}
+
+func kidOf(k *JWTKey) string {
+	if k == nil {
+		return ""
+	}
+	return k.KID
 }
 
 // JWTKeyManager loads and caches JWT signing keys from the database.
