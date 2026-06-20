@@ -1,10 +1,35 @@
 package cli
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	"github.com/instancez/instancez/internal/domain"
 )
+
+func TestStorageRegistryBuiltins(t *testing.T) {
+	registerBuiltins()
+	for _, name := range []string{"s3", "local"} {
+		if _, ok := storageRegistry[name]; !ok {
+			t.Errorf("storage factory %q not registered", name)
+		}
+	}
+	if _, ok := emailRegistry["resend"]; !ok {
+		t.Error("email factory \"resend\" not registered")
+	}
+}
+
+func TestUnsupportedStorageProviderError(t *testing.T) {
+	cfg := &domain.Config{Providers: domain.Providers{Storage: &domain.StorageProvider{Type: "gdrive"}}}
+	_, err := initStorageProvider(context.Background(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "gdrive") {
+		t.Fatalf("err = %v, want mention of gdrive", err)
+	}
+	if !strings.Contains(err.Error(), "s3") || !strings.Contains(err.Error(), "local") {
+		t.Errorf("error should list supported providers, got %q", err.Error())
+	}
+}
 
 func TestInitEmailProvider_Nil(t *testing.T) {
 	cfg := &domain.Config{}
