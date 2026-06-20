@@ -154,8 +154,8 @@ describe("TableDetail", () => {
     renderTableDetailNew({ tableName: "orders", seed: SEED, save });
     // The seed fields should be visible in the editor
     expect(screen.getAllByText("id").length).toBeGreaterThan(0);
-    // Config is untouched before save - "orders" table should not be in config
-    expect(baseConfig.tables["orders"]).toBeUndefined();
+    // Nothing is persisted before the user explicitly clicks Save
+    expect(save).not.toHaveBeenCalled();
     // Click Save
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /save/i }));
@@ -163,5 +163,17 @@ describe("TableDetail", () => {
     expect(save).toHaveBeenCalledTimes(1);
     const arg = save.mock.calls[0][0] as Config;
     expect(arg.tables["orders"]).toBeDefined();
+  });
+
+  it("discards in-memory table when leaving new mode without saving", () => {
+    const save = vi.fn().mockResolvedValue(true);
+    const { unmount } = renderTableDetailNew({ tableName: "invoices", seed: SEED, save });
+    // Seed fields rendered but save never called
+    expect(screen.getAllByText("id").length).toBeGreaterThan(0);
+    expect(save).not.toHaveBeenCalled();
+    // Simulate navigating away by unmounting
+    unmount();
+    // Save must still never have been called - no implicit persistence on exit
+    expect(save).not.toHaveBeenCalled();
   });
 });
