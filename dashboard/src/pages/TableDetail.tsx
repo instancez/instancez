@@ -169,6 +169,7 @@ export function TableDetail() {
                       name={field.name}
                       field={field}
                       fkOptions={fkOptions}
+                      canWrite={canWriteConfig}
                       onChange={(updated) =>
                         updateTable((t) => ({
                           ...t,
@@ -262,37 +263,41 @@ export function TableDetail() {
                       </HStack>
                     </VStack>
                   </Box>
-                  <Button
-                    variant="danger-ghost"
-                    size="icon"
-                    aria-label="Delete index"
-                    onClick={() =>
-                      updateTable((t) => ({
-                        ...t,
-                        indexes: (t.indexes || []).filter((_, j) => j !== i),
-                      }))
-                    }
-                  >
-                    <Trash2 size={14} />
-                  </Button>
+                  {canWriteConfig && (
+                    <Button
+                      variant="danger-ghost"
+                      size="icon"
+                      aria-label="Delete index"
+                      onClick={() =>
+                        updateTable((t) => ({
+                          ...t,
+                          indexes: (t.indexes || []).filter((_, j) => j !== i),
+                        }))
+                      }
+                    >
+                      <Trash2 size={14} />
+                    </Button>
+                  )}
                 </Panel>
               ))}
-              <Button
-                variant="dashed"
-                size="sm"
-                onClick={() =>
-                  updateTable((t) => ({
-                    ...t,
-                    indexes: [
-                      ...(t.indexes || []),
-                      { columns: [], unique: false, where: "" },
-                    ],
-                  }))
-                }
-              >
-                <Plus size={14} />
-                Add Index
-              </Button>
+              {canWriteConfig && (
+                <Button
+                  variant="dashed"
+                  size="sm"
+                  onClick={() =>
+                    updateTable((t) => ({
+                      ...t,
+                      indexes: [
+                        ...(t.indexes || []),
+                        { columns: [], unique: false, where: "" },
+                      ],
+                    }))
+                  }
+                >
+                  <Plus size={14} />
+                  Add Index
+                </Button>
+              )}
             </VStack>
           </Tabs.Content>
 
@@ -319,22 +324,24 @@ export function TableDetail() {
                   }
                 />
               ))}
-              <Button
-                variant="dashed"
-                size="sm"
-                onClick={() =>
-                  updateTable((t) => ({
-                    ...t,
-                    rls: [
-                      ...(t.rls || []),
-                      { operations: ["select"], check: "" },
-                    ],
-                  }))
-                }
-              >
-                <Plus size={14} />
-                Add RLS Policy
-              </Button>
+              {canWriteConfig && (
+                <Button
+                  variant="dashed"
+                  size="sm"
+                  onClick={() =>
+                    updateTable((t) => ({
+                      ...t,
+                      rls: [
+                        ...(t.rls || []),
+                        { operations: ["select"], check: "" },
+                      ],
+                    }))
+                  }
+                >
+                  <Plus size={14} />
+                  Add RLS Policy
+                </Button>
+              )}
             </VStack>
           </Tabs.Content>
 
@@ -349,6 +356,7 @@ export function TableDetail() {
                 tableFields={fieldEntries}
                 seeds={seeds}
                 onChange={(rows) => setSeeds(rows)}
+                canWrite={canWriteConfig}
               />
             )}
           </Tabs.Content>
@@ -399,10 +407,12 @@ function SeedsTab({
   tableFields,
   seeds,
   onChange,
+  canWrite,
 }: {
   tableFields: Field[];
   seeds: Record<string, unknown>[];
   onChange: (rows: Record<string, unknown>[]) => void;
+  canWrite: boolean;
 }) {
   const dialog = useDialog();
 
@@ -494,40 +504,44 @@ function SeedsTab({
                         )}
                       </Box>
                     ))}
-                    <Box as="td" px="1" py="1.5">
-                      <Button
-                        variant="danger-ghost"
-                        size="icon"
-                        aria-label={`Delete row ${rowIdx + 1}`}
-                        onClick={async () => {
-                          if (!(await dialog.confirm(`Delete row ${rowIdx + 1}?`))) return;
-                          onChange(seeds.filter((_, i) => i !== rowIdx));
-                        }}
-                      >
-                        <Trash2 size={12} />
-                      </Button>
-                    </Box>
+                    {canWrite && (
+                      <Box as="td" px="1" py="1.5">
+                        <Button
+                          variant="danger-ghost"
+                          size="icon"
+                          aria-label={`Delete row ${rowIdx + 1}`}
+                          onClick={async () => {
+                            if (!(await dialog.confirm(`Delete row ${rowIdx + 1}?`))) return;
+                            onChange(seeds.filter((_, i) => i !== rowIdx));
+                          }}
+                        >
+                          <Trash2 size={12} />
+                        </Button>
+                      </Box>
+                    )}
                   </Box>
                 ))}
               </Box>
             </Box>
           </Box>
 
-          <Button
-            variant="dashed"
-            size="sm"
-            mt="3"
-            onClick={() => {
-              const newRow: Record<string, unknown> = {};
-              tableFields.forEach((field) => {
-                newRow[field.name] = "";
-              });
-              onChange([...seeds, newRow]);
-            }}
-          >
-            <Plus size={14} />
-            Add Row
-          </Button>
+          {canWrite && (
+            <Button
+              variant="dashed"
+              size="sm"
+              mt="3"
+              onClick={() => {
+                const newRow: Record<string, unknown> = {};
+                tableFields.forEach((field) => {
+                  newRow[field.name] = "";
+                });
+                onChange([...seeds, newRow]);
+              }}
+            >
+              <Plus size={14} />
+              Add Row
+            </Button>
+          )}
         </>
       )}
     </Box>
@@ -539,6 +553,7 @@ function FieldRow({
   name,
   field,
   fkOptions,
+  canWrite,
   onChange,
   onRename,
   onDelete,
@@ -546,6 +561,7 @@ function FieldRow({
   name: string;
   field: Field;
   fkOptions: string[];
+  canWrite: boolean;
   onChange: (f: Field) => void;
   onRename: (newName: string) => void;
   onDelete: () => void;
@@ -676,14 +692,16 @@ function FieldRow({
         </Select>
       </Box>
       <Box as="td" px="1" py="2">
-        <Button
-          variant="danger-ghost"
-          size="icon"
-          aria-label={`Delete field ${name}`}
-          onClick={onDelete}
-        >
-          <Trash2 size={13} />
-        </Button>
+        {canWrite && (
+          <Button
+            variant="danger-ghost"
+            size="icon"
+            aria-label={`Delete field ${name}`}
+            onClick={onDelete}
+          >
+            <Trash2 size={13} />
+          </Button>
+        )}
       </Box>
     </Box>
   );

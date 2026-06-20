@@ -1,11 +1,14 @@
 import { describe, it, expect, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, fireEvent, act } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { TableDetail } from "./TableDetail";
 import { DialogProvider } from "../components/Dialog";
 import { ConfigContext } from "../hooks/useConfig";
+import { BackendProvider } from "../console/BackendContext";
+import { adminBackend } from "../console/adminBackend";
 import { renderWithChakra } from "../test/helpers";
 import type { Config, ValidationError } from "../lib/types";
+import type { ConsoleBackend } from "../console/backend";
 
 const baseConfig: Config = {
   version: 1,
@@ -17,7 +20,7 @@ const baseConfig: Config = {
         { name: "id", type: "uuid", primary_key: true, required: true },
         { name: "title", type: "text", required: true },
       ],
-      indexes: [],
+      indexes: [{ columns: ["title"], unique: false, where: "" }],
       rls: [],
     },
   },
@@ -38,7 +41,7 @@ const baseConfig: Config = {
   },
 };
 
-function renderTableDetail(config: Config, tableName: string) {
+function renderTableDetail(config: Config, tableName: string, backend: ConsoleBackend = adminBackend) {
   const ctx = {
     config,
     loading: false,
@@ -52,15 +55,17 @@ function renderTableDetail(config: Config, tableName: string) {
     updateConfig: vi.fn(),
   };
   return renderWithChakra(
-    <ConfigContext.Provider value={ctx}>
-      <MemoryRouter initialEntries={[`/tables/${tableName}`]}>
-        <DialogProvider>
-          <Routes>
-            <Route path="/tables/:name" element={<TableDetail />} />
-          </Routes>
-        </DialogProvider>
-      </MemoryRouter>
-    </ConfigContext.Provider>
+    <BackendProvider backend={backend}>
+      <ConfigContext.Provider value={ctx}>
+        <MemoryRouter initialEntries={[`/tables/${tableName}`]}>
+          <DialogProvider>
+            <Routes>
+              <Route path="/tables/:name" element={<TableDetail />} />
+            </Routes>
+          </DialogProvider>
+        </MemoryRouter>
+      </ConfigContext.Provider>
+    </BackendProvider>
   );
 }
 
@@ -74,5 +79,25 @@ describe("TableDetail", () => {
   it("shows not-found message when table does not exist", () => {
     renderTableDetail(baseConfig, "nonexistent");
     expect(screen.getByText("Table not found.")).toBeInTheDocument();
+  });
+
+  it("hides Add Index button when canWriteConfig is false", async () => {
+    const readOnlyBackend: ConsoleBackend = {
+      ...adminBackend,
+      capabilities: { ...adminBackend.capabilities, canWriteConfig: false },
+    };
+    renderTableDetail(baseConfig, "todos", readOnlyBackend);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: /indexes/i }));
+    });
+    expect(screen.queryByRole("button", { name: /add index/i })).not.toBeInTheDocument();
+  });
+
+  it("shows Add Index button when canWriteConfig is true", async () => {
+    renderTableDetail(baseConfig, "todos");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: /indexes/i }));
+    });
+    expect(screen.getByRole("button", { name: /add index/i })).toBeInTheDocument();
   });
 });
