@@ -20,6 +20,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// adminErr writes the internal /_admin error shape: {error, message}.
+// This surface is consumed by the dashboard, not by supabase-js.
+func adminErr(c *gin.Context, status int, errSlug, message string) {
+	c.JSON(status, gin.H{"error": errSlug, "message": message})
+}
+
 // AdminHandler serves /api/_admin/* endpoints.
 type AdminHandler struct {
 	cfg            *domain.Config
@@ -127,13 +133,13 @@ func (h *AdminHandler) Mount(api *gin.RouterGroup) {
 // the dashboard can present it as a stable value like Supabase's anon key.
 func (h *AdminHandler) handleKeys(c *gin.Context) {
 	if h.jwtKeys == nil {
-		c.JSON(501, gin.H{"error": "not_implemented", "message": "JWT key manager not configured"})
+		adminErr(c, 501, "not_implemented", "JWT key manager not configured")
 		return
 	}
 	anonKey, err := app.MintStableAnonKey(c.Request.Context(), h.jwtKeys)
 	if err != nil {
 		h.logger.Error("mint anon key", "error", err)
-		c.JSON(500, gin.H{"error": "internal", "message": "failed to mint anon key"})
+		adminErr(c, 500, "internal", "failed to mint anon key")
 		return
 	}
 	c.JSON(200, gin.H{"anon_key": anonKey})
@@ -167,7 +173,7 @@ func (h *AdminHandler) handleDisableUser(c *gin.Context) {
 
 	// Delete refresh tokens to force logout
 	if _, err := h.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE user_id = $1", id); err != nil {
-		c.JSON(500, gin.H{"error": "internal", "message": "Failed to revoke sessions"})
+		adminErr(c, 500, "internal", "Failed to revoke sessions")
 		return
 	}
 
@@ -183,7 +189,7 @@ func (h *AdminHandler) handleAdminResetPassword(c *gin.Context) {
 	if _, err := h.db.Exec(ctx,
 		"INSERT INTO auth.one_time_tokens (user_id, token, expires_at) VALUES ($1, $2, NOW() + INTERVAL '24 hours')",
 		id, token); err != nil {
-		c.JSON(500, gin.H{"error": "internal", "message": "Failed to initiate password reset"})
+		adminErr(c, 500, "internal", "Failed to initiate password reset")
 		return
 	}
 
@@ -609,10 +615,7 @@ func (h *AdminHandler) handleGetFunctionCode(c *gin.Context) {
 // Triggers the functions-dir file watcher which hot-reloads the workers.
 func (h *AdminHandler) handlePutFunctionCode(c *gin.Context) {
 	if h.dashboardMode != DashboardReadwrite {
-		c.JSON(403, gin.H{
-			"error":   "dashboard_readonly",
-			"message": "Function code editing requires readwrite dashboard mode.",
-		})
+		adminErr(c, 403, "dashboard_readonly", "Function code editing requires readwrite dashboard mode.")
 		return
 	}
 	name := c.Param("name")
@@ -717,7 +720,7 @@ func (h *AdminHandler) handleGetFunctionDeps(c *gin.Context) {
 // client disconnect does not kill a long-running install.
 func (h *AdminHandler) handlePostFunctionDeps(c *gin.Context) {
 	if h.dashboardMode != DashboardReadwrite {
-		c.JSON(403, gin.H{"error": "dashboard_readonly", "message": "Requires readwrite dashboard mode."})
+		adminErr(c, 403, "dashboard_readonly", "Requires readwrite dashboard mode.")
 		return
 	}
 	if h.configPath == "" {
@@ -805,10 +808,7 @@ func (h *AdminHandler) handlePostFunctionDeps(c *gin.Context) {
 // Only available when --dashboard-write-dotenv is active.
 func (h *AdminHandler) handlePutDotenv(c *gin.Context) {
 	if !h.dotenvWritable {
-		c.JSON(403, gin.H{
-			"error":   "dotenv_writes_disabled",
-			"message": "Secret writing is disabled. Pass --dashboard-write-dotenv and --dotenv-path to enable.",
-		})
+		adminErr(c, 403, "dotenv_writes_disabled", "Secret writing is disabled. Pass --dashboard-write-dotenv and --dotenv-path to enable.")
 		return
 	}
 	var vars map[string]string

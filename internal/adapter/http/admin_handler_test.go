@@ -618,3 +618,24 @@ func TestHandlePutDotenv_WritesFile(t *testing.T) {
 		t.Errorf("dotenv file missing expected line, got: %s", string(data))
 	}
 }
+
+func TestAdminErrShape(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	adminErr(c, 403, "dashboard_readonly", "Requires readwrite dashboard mode.")
+
+	if w.Code != 403 {
+		t.Fatalf("status = %d, want 403", w.Code)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["error"] != "dashboard_readonly" || body["message"] != "Requires readwrite dashboard mode." {
+		t.Errorf("body = %#v", body)
+	}
+	if _, hasStatusCode := body["statusCode"]; hasStatusCode {
+		t.Error("admin shape must not include statusCode")
+	}
+}
