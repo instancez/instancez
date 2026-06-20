@@ -119,6 +119,10 @@ func (h *AdminHandler) Mount(api *gin.RouterGroup) {
 	// never echoed back — the dashboard already holds it from login.
 	admin.GET("/keys", h.handleKeys)
 
+	// JWT signing keys (admin console)
+	admin.GET("/jwt-keys", h.handleJWTKey)
+	admin.POST("/jwt-keys/rotate", h.handleRotateJWTKey)
+
 	// Function code (dev / readwrite mode only)
 	admin.GET("/functions/:name/code", h.handleGetFunctionCode)
 	admin.PUT("/functions/:name/code", h.handlePutFunctionCode)
@@ -163,6 +167,32 @@ func (h *AdminHandler) handleJWTKey(c *gin.Context) {
 	jwk, err := key.PublicJWK()
 	if err != nil {
 		h.logger.Error("serialize jwt public key", "error", err)
+		adminErr(c, 500, "internal", "failed to serialize signing key")
+		return
+	}
+	c.JSON(200, gin.H{
+		"kid":       key.KID,
+		"algorithm": key.Algorithm,
+		"jwks":      gin.H{"keys": []any{jwk}},
+	})
+}
+
+// handleRotateJWTKey generates a new active signing key and retires the prior
+// one. Tokens signed before rotation still verify until they expire; new tokens
+// and the derived anon key use the new key. Returns the new public key.
+func (h *AdminHandler) handleRotateJWTKey(c *gin.Context) {
+	if h.jwtKeys == nil {
+		adminErr(c, 501, "not_implemented", "JWT key manager not configured")
+		return
+	}
+	key, err := h.jwtKeys.RotateActive(c.Request.Context())
+	if err != nil {
+		h.logger.Error("rotate jwt key", "error", err)
+		adminErr(c, 500, "internal", "failed to rotate signing key")
+		return
+	}
+	jwk, err := key.PublicJWK()
+	if err != nil {
 		adminErr(c, 500, "internal", "failed to serialize signing key")
 		return
 	}
