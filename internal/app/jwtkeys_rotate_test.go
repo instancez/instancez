@@ -45,3 +45,23 @@ func TestRotateActive_NoDB(t *testing.T) {
 		t.Fatal("expected error when manager has no db")
 	}
 }
+
+// TestRotateActive_RollsBackOnInsertFailure proves the retire and insert are
+// atomic: when the INSERT fails, the retire UPDATE must not commit, so the
+// table is never left with every key retired and none active. The in-memory
+// active pointer must also stay unchanged.
+func TestRotateActive_RollsBackOnInsertFailure(t *testing.T) {
+	db := &fakeDB{failOnStatementContaining: "INSERT"}
+	m := NewJWTKeyManager(db)
+
+	if _, err := m.RotateActive(context.Background()); err == nil {
+		t.Fatal("expected error when the INSERT fails")
+	}
+
+	if db.committedStatements != 0 {
+		t.Fatalf("want 0 committed statements after rollback, got %d", db.committedStatements)
+	}
+	if m.active != nil {
+		t.Fatalf("in-memory active key must stay nil after a failed rotation, got %q", m.active.KID)
+	}
+}

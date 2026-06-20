@@ -543,6 +543,7 @@ func (tx *fakeTx) Exec(ctx context.Context, query string, args ...any) (int64, e
 	if tx.db.failOnStatementContaining != "" && strings.Contains(query, tx.db.failOnStatementContaining) {
 		return 0, fmt.Errorf("fakeTx: simulated failure on statement containing %q", tx.db.failOnStatementContaining)
 	}
+	tx.db.execs = append(tx.db.execs, query)
 	tx.pending++
 	return 0, nil
 }

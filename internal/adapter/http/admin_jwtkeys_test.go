@@ -108,5 +108,19 @@ func (rotateFakeDB) WithRLS(ctx context.Context, session domain.Session) (contex
 	return ctx, nil
 }
 func (rotateFakeDB) Begin(ctx context.Context) (domain.Tx, error) {
+	return rotateFakeTx{}, nil
+}
+
+// rotateFakeTx is a no-op transaction whose Exec/Commit succeed, so
+// RotateActive's retire+insert commit cleanly.
+type rotateFakeTx struct{}
+
+func (rotateFakeTx) Query(ctx context.Context, q string, a ...any) ([]map[string]any, error) {
 	return nil, nil
 }
+func (rotateFakeTx) QueryRow(ctx context.Context, q string, a ...any) (map[string]any, error) {
+	return nil, nil
+}
+func (rotateFakeTx) Exec(ctx context.Context, q string, a ...any) (int64, error) { return 1, nil }
+func (rotateFakeTx) Commit(ctx context.Context) error                            { return nil }
+func (rotateFakeTx) Rollback(ctx context.Context) error                          { return nil }

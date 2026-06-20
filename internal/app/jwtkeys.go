@@ -273,8 +273,10 @@ func coerceBytes(v any) ([]byte, error) {
 // RotateActive generates a fresh RS256 signing key and makes it active. Every
 // previously active key is marked retired (retired_at = now()) so tokens it
 // signed still verify until they expire, while all new tokens use the new key.
-// The derived anon key changes as a result, since it is minted from the active
-// key. Requires a db-backed manager.
+// The retire and insert are committed in a single transaction so a partial
+// failure cannot leave the table with no active key. The derived anon key
+// changes as a result, since it is minted from the active key. Requires a
+// db-backed manager.
 func (m *JWTKeyManager) RotateActive(ctx context.Context) (*JWTKey, error) {
 	if m.db == nil {
 		return nil, fmt.Errorf("jwt key: rotate requires a database-backed manager")
@@ -292,16 +294,30 @@ func (m *JWTKeyManager) RotateActive(ctx context.Context) (*JWTKey, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, err := m.db.Exec(ctx,
+	// Retire and insert run in one transaction: a partial failure (retire
+	// commits, insert does not) would otherwise leave the table with every key
+	// retired and no active key.
+	tx, err := m.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("jwt key: begin: %w", err)
+	}
+	if _, err := tx.Exec(ctx,
 		`UPDATE auth.jwt_keys SET retired_at = now() WHERE retired_at IS NULL`); err != nil {
+		_ = tx.Rollback(ctx)
 		return nil, fmt.Errorf("jwt key: retire current: %w", err)
 	}
-	if _, err := m.db.Exec(ctx,
+	if _, err := tx.Exec(ctx,
 		`INSERT INTO auth.jwt_keys (kid, secret, algorithm, created_at) VALUES ($1, $2, $3, $4)`,
 		key.KID, privPEM, key.Algorithm, key.CreatedAt); err != nil {
+		_ = tx.Rollback(ctx)
 		return nil, fmt.Errorf("jwt key: insert new: %w", err)
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("jwt key: commit: %w", err)
+	}
 
+	// Only update in-memory state after the write commits, so a failed rotation
+	// leaves the manager pointing at the still-valid prior key.
 	m.active = key
 	m.byKID[key.KID] = key
 	return key, nil
