@@ -472,6 +472,7 @@ type fakeDB struct {
 	failOnStatementContaining     string
 	committedStatements           int
 	committedStatementsAfterFirst int
+	execs                         []string
 }
 
 func newFakeDB(t *testing.T) *fakeDB {
@@ -509,6 +510,7 @@ func (f *fakeDB) QueryRow(ctx context.Context, query string, args ...any) (map[s
 	return nil, nil
 }
 func (f *fakeDB) Exec(ctx context.Context, query string, args ...any) (int64, error) {
+	f.execs = append(f.execs, query)
 	return 0, nil
 }
 func (f *fakeDB) WithRLS(ctx context.Context, session domain.Session) (context.Context, error) {

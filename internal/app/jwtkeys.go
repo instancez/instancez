@@ -270,6 +270,43 @@ func coerceBytes(v any) ([]byte, error) {
 	}
 }
 
+// RotateActive generates a fresh RS256 signing key and makes it active. Every
+// previously active key is marked retired (retired_at = now()) so tokens it
+// signed still verify until they expire, while all new tokens use the new key.
+// The derived anon key changes as a result, since it is minted from the active
+// key. Requires a db-backed manager.
+func (m *JWTKeyManager) RotateActive(ctx context.Context) (*JWTKey, error) {
+	if m.db == nil {
+		return nil, fmt.Errorf("jwt key: rotate requires a database-backed manager")
+	}
+
+	key, err := generateRS256Key()
+	if err != nil {
+		return nil, fmt.Errorf("jwt key: generate: %w", err)
+	}
+	privPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key.PrivateKey),
+	})
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, err := m.db.Exec(ctx,
+		`UPDATE auth.jwt_keys SET retired_at = now() WHERE retired_at IS NULL`); err != nil {
+		return nil, fmt.Errorf("jwt key: retire current: %w", err)
+	}
+	if _, err := m.db.Exec(ctx,
+		`INSERT INTO auth.jwt_keys (kid, secret, algorithm, created_at) VALUES ($1, $2, $3, $4)`,
+		key.KID, privPEM, key.Algorithm, key.CreatedAt); err != nil {
+		return nil, fmt.Errorf("jwt key: insert new: %w", err)
+	}
+
+	m.active = key
+	m.byKID[key.KID] = key
+	return key, nil
+}
+
 func generateRS256Key() (*JWTKey, error) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
