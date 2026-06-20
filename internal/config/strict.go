@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -75,4 +76,26 @@ func friendlyYAMLFieldErr(sub string) string {
 		return fmt.Sprintf("line %s: unknown key %q under %s", line, field, section)
 	}
 	return fmt.Sprintf("line %s: unknown key %q", line, field)
+}
+
+// UnmarshalConfigJSON decodes a JSON config body, rejecting unknown fields. It
+// does not apply defaults; callers that need them call ApplyDefaults afterward,
+// matching the previous json.Unmarshal behavior.
+func UnmarshalConfigJSON(data []byte) (*domain.Config, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var cfg domain.Config
+	if err := dec.Decode(&cfg); err != nil {
+		return nil, translateJSONUnknownKeyErr(err)
+	}
+	return &cfg, nil
+}
+
+var jsonUnknownFieldRe = regexp.MustCompile(`^json: unknown field "(.+)"$`)
+
+func translateJSONUnknownKeyErr(err error) error {
+	if m := jsonUnknownFieldRe.FindStringSubmatch(err.Error()); m != nil {
+		return fmt.Errorf("unknown key %q", m[1])
+	}
+	return err
 }

@@ -62,3 +62,20 @@ func TestParseBytesRaw_RejectsUnknownKey(t *testing.T) {
 		t.Fatalf("ParseBytesRaw should reject unknown key, got: %v", err)
 	}
 }
+
+func TestUnmarshalConfigJSON_RejectsUnknownField(t *testing.T) {
+	_, err := UnmarshalConfigJSON([]byte(`{"version":1,"bogus":true}`))
+	if err == nil || !strings.Contains(err.Error(), `"bogus"`) {
+		t.Fatalf("expected unknown-field error, got: %v", err)
+	}
+}
+
+func TestUnmarshalConfigJSON_AcceptsValid(t *testing.T) {
+	cfg, err := UnmarshalConfigJSON([]byte(`{"version":1,"tables":{"todos":{"fields":[]}}}`))
+	if err != nil {
+		t.Fatalf("valid config rejected: %v", err)
+	}
+	if cfg.Version != 1 {
+		t.Errorf("version = %d", cfg.Version)
+	}
+}

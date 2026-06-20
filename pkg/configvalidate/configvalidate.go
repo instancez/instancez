@@ -5,10 +5,7 @@
 package configvalidate
 
 import (
-	"encoding/json"
-
 	"github.com/instancez/instancez/internal/config"
-	"github.com/instancez/instancez/internal/domain"
 	"gopkg.in/yaml.v3"
 )
 
@@ -51,18 +48,22 @@ func ScanEnvRefs(data []byte) []string {
 // but fails validation it returns (nil, problems, nil) — the same shape the
 // dashboard renders. When valid it returns (yamlBytes, nil, nil).
 func MarshalYAML(jsonBytes []byte) ([]byte, []Problem, error) {
-	var cfg domain.Config
-	if err := json.Unmarshal(jsonBytes, &cfg); err != nil {
+	cfg, err := config.UnmarshalConfigJSON(jsonBytes)
+	if err != nil {
 		return nil, nil, err
 	}
-	if ves := config.Validate(&cfg); len(ves) > 0 {
+	// JSON-decoded configs skip the ParseBytes* loaders, so fill defaults here
+	// before validating — otherwise defaultable fields (e.g. rpc.security) read
+	// as "" and Validate rejects them.
+	config.ApplyDefaults(cfg)
+	if ves := config.Validate(cfg); len(ves) > 0 {
 		probs := make([]Problem, 0, len(ves))
 		for _, ve := range ves {
 			probs = append(probs, Problem{Path: ve.Path, Message: ve.Message, Suggestion: ve.Suggestion})
 		}
 		return nil, probs, nil
 	}
-	out, err := yaml.Marshal(&cfg)
+	out, err := yaml.Marshal(cfg)
 	if err != nil {
 		return nil, nil, err
 	}

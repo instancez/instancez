@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -322,11 +323,17 @@ func (h *AdminHandler) handlePutConfig(c *gin.Context) {
 	}
 
 	// Parse + validate the proposed config.
-	var newCfg domain.Config
-	if err := c.ShouldBindJSON(&newCfg); err != nil {
+	body, readErr := io.ReadAll(c.Request.Body)
+	if readErr != nil {
 		problemJSON(c, 400, "invalid_body", "Invalid JSON body")
 		return
 	}
+	newCfgPtr, bindErr := config.UnmarshalConfigJSON(body)
+	if bindErr != nil {
+		problemJSON(c, 400, "invalid_body", bindErr.Error())
+		return
+	}
+	newCfg := *newCfgPtr
 	if errs := config.Validate(&newCfg); errs != nil {
 		var errList []gin.H
 		for _, e := range errs {
@@ -483,11 +490,17 @@ func (h *AdminHandler) handlePreviewConfig(c *gin.Context) {
 		return
 	}
 
-	var newCfg domain.Config
-	if err := c.ShouldBindJSON(&newCfg); err != nil {
+	body, readErr := io.ReadAll(c.Request.Body)
+	if readErr != nil {
 		problemJSON(c, 400, "invalid_body", "Invalid JSON body")
 		return
 	}
+	newCfgPtr, bindErr := config.UnmarshalConfigJSON(body)
+	if bindErr != nil {
+		problemJSON(c, 400, "invalid_body", bindErr.Error())
+		return
+	}
+	newCfg := *newCfgPtr
 	if errs := config.Validate(&newCfg); errs != nil {
 		var errList []gin.H
 		for _, e := range errs {
