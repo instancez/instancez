@@ -22,6 +22,7 @@ export function FunctionDetail() {
   const { name } = useParams<{ name: string }>();
   const navigate = useNavigate();
   const { config, save, saving, saveErrors } = useConfig();
+  const canWriteConfig = backend.capabilities.canWriteConfig;
   const dialog = useDialog();
   const [fn, setFn] = useState<CodeFunction | null>(null);
   const [code, setCode] = useState<string | null>(null);
@@ -138,12 +139,20 @@ export function FunctionDetail() {
                 ))}
               </Select>
             </Field>
-            <Field label="File">
+            <Field
+              label="File"
+              hint={
+                backend.capabilities.canEditFunctionFile
+                  ? undefined
+                  : "Managed by instancez — the function's file path can't be changed here."
+              }
+            >
               <Input
                 mono
                 value={fn.file || ""}
                 onChange={(e) => updateFn((f) => ({ ...f, file: e.target.value }))}
                 placeholder="functions/name.js"
+                readOnly={!backend.capabilities.canEditFunctionFile}
               />
             </Field>
             <Field label="Timeout">
@@ -255,16 +264,18 @@ export function FunctionDetail() {
         )}
       </VStack>
 
-      <SaveBar
-        onSave={handleSave}
-        saving={saving}
-        errors={
-          fileError
-            ? [...saveErrors, { path: `functions.${name}.file`, message: fileError }]
-            : saveErrors
-        }
-        dirty={dirty}
-      />
+      {canWriteConfig && (
+        <SaveBar
+          onSave={handleSave}
+          saving={saving}
+          errors={
+            fileError
+              ? [...saveErrors, { path: `functions.${name}.file`, message: fileError }]
+              : saveErrors
+          }
+          dirty={dirty}
+        />
+      )}
     </Box>
   );
 }

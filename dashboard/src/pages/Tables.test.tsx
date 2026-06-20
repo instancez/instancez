@@ -5,7 +5,10 @@ import { renderWithChakra } from "../test/helpers";
 import { Tables } from "./Tables";
 import { DialogProvider } from "../components/Dialog";
 import { ConfigContext } from "../hooks/useConfig";
+import { BackendProvider } from "../console/BackendContext";
+import { adminBackend } from "../console/adminBackend";
 import type { Config, ValidationError } from "../lib/types";
+import type { ConsoleBackend } from "../console/backend";
 
 const baseConfig: Config = {
   version: 1,
@@ -29,7 +32,7 @@ const baseConfig: Config = {
   },
 };
 
-function renderTables(config: Config) {
+function renderTables(config: Config, backend: ConsoleBackend = adminBackend) {
   const ctx = {
     config,
     loading: false,
@@ -43,13 +46,15 @@ function renderTables(config: Config) {
     updateConfig: vi.fn(),
   };
   return renderWithChakra(
-    <ConfigContext.Provider value={ctx}>
-      <MemoryRouter>
-        <DialogProvider>
-          <Tables />
-        </DialogProvider>
-      </MemoryRouter>
-    </ConfigContext.Provider>
+    <BackendProvider backend={backend}>
+      <ConfigContext.Provider value={ctx}>
+        <MemoryRouter>
+          <DialogProvider>
+            <Tables />
+          </DialogProvider>
+        </MemoryRouter>
+      </ConfigContext.Provider>
+    </BackendProvider>
   );
 }
 
@@ -119,5 +124,31 @@ describe("Tables", () => {
     };
     renderTables(config);
     expect(screen.getByText("2 tables defined")).toBeInTheDocument();
+  });
+
+  it("hides Add Table button when canWriteConfig is false", () => {
+    const config = {
+      ...baseConfig,
+      tables: {
+        todos: { fields: [{ name: "id", type: "bigserial", primary_key: true }], indexes: [], rls: [] },
+      },
+    };
+    const readOnlyBackend: ConsoleBackend = {
+      ...adminBackend,
+      capabilities: { ...adminBackend.capabilities, canWriteConfig: false },
+    };
+    renderTables(config, readOnlyBackend);
+    expect(screen.queryByRole("button", { name: /add table/i })).not.toBeInTheDocument();
+  });
+
+  it("shows Add Table button when canWriteConfig is true", () => {
+    const config = {
+      ...baseConfig,
+      tables: {
+        todos: { fields: [{ name: "id", type: "bigserial", primary_key: true }], indexes: [], rls: [] },
+      },
+    };
+    renderTables(config);
+    expect(screen.getByRole("button", { name: /add table/i })).toBeInTheDocument();
   });
 });

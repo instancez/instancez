@@ -6,11 +6,14 @@ import { useDialog } from "../components/Dialog";
 import { EmptyState } from "../components/EmptyState";
 import { StatusBadge } from "../components/StatusBadge";
 import { Button, ListRow } from "../components/ui";
+import { useBackend } from "../console/BackendContext";
 
 export function Tables() {
+  const backend = useBackend();
   const { config, save } = useConfig();
   const navigate = useNavigate();
   const dialog = useDialog();
+  const canWriteConfig = backend.capabilities.canWriteConfig;
 
   if (!config) return null;
 
@@ -42,12 +45,12 @@ export function Tables() {
     if (ok) navigate(tableName, { relative: "path" });
   }
 
-  const addButton = (
+  const addButton = canWriteConfig ? (
     <Button onClick={addTable}>
       <Plus size={14} />
       Add Table
     </Button>
-  );
+  ) : null;
 
   return (
     <Box>

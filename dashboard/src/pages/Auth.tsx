@@ -125,6 +125,7 @@ const DEFAULT_AUTH: Auth = {
 export function AuthPage() {
   const backend = useBackend();
   const { config, save, saving, saveErrors, dotenvWritable } = useConfig();
+  const canWriteConfig = backend.capabilities.canWriteConfig;
   const canWriteSecrets = backend.capabilities.canWriteSecrets && dotenvWritable;
   const [auth, setAuth] = useState<Auth | null>(null);
   const [enabled, setEnabled] = useState(false);
@@ -450,7 +451,9 @@ export function AuthPage() {
         ) : null}
       </VStack>
 
-      <SaveBar onSave={handleSave} saving={saving} errors={saveErrors} dirty={dirty} />
+      {canWriteConfig && (
+        <SaveBar onSave={handleSave} saving={saving} errors={saveErrors} dirty={dirty} />
+      )}
     </Box>
   );
 }

@@ -34,6 +34,7 @@ export function TableDetail() {
   const navigate = useNavigate();
   const { config, save, saving, saveErrors } = useConfig();
   const dialog = useDialog();
+  const canWriteConfig = backend.capabilities.canWriteConfig;
   const [table, setTable] = useState<Table | null>(null);
   const [seeds, setSeeds] = useState<Record<string, unknown>[]>([]);
   const [diff, setDiff] = useState<DiffResponse | null>(null);
@@ -121,7 +122,7 @@ export function TableDetail() {
 
   return (
     <Box pb="20">
-      <DetailToolbar backLabel="Tables" onDelete={deleteTable} />
+      <DetailToolbar backLabel="Tables" onDelete={canWriteConfig ? deleteTable : undefined} />
       <Box pb="8">
         <Tabs.Root defaultValue="fields" lazyMount unmountOnExit>
           <Tabs.List borderBottomWidth="1px" mb="6" gap="1">
@@ -192,21 +193,23 @@ export function TableDetail() {
                 </Box>
               </Box>
             </Box>
-            <Button
-              variant="dashed"
-              size="sm"
-              mt="3"
-              onClick={() => {
-                const fieldName = `new_field_${fieldEntries.length + 1}`;
-                updateTable((t) => ({
-                  ...t,
-                  fields: [...t.fields, { name: fieldName, type: "text" }],
-                }));
-              }}
-            >
-              <Plus size={14} />
-              Add Field
-            </Button>
+            {canWriteConfig && (
+              <Button
+                variant="dashed"
+                size="sm"
+                mt="3"
+                onClick={() => {
+                  const fieldName = `new_field_${fieldEntries.length + 1}`;
+                  updateTable((t) => ({
+                    ...t,
+                    fields: [...t.fields, { name: fieldName, type: "text" }],
+                  }));
+                }}
+              >
+                <Plus size={14} />
+                Add Field
+              </Button>
+            )}
           </Tabs.Content>
 
           {/* Indexes Tab */}
@@ -360,12 +363,14 @@ export function TableDetail() {
         </Box>
       </Box>
 
-      <SaveBar
-        onSave={handleSave}
-        saving={saving}
-        errors={saveErrors}
-        dirty={dirty}
-      />
+      {canWriteConfig && (
+        <SaveBar
+          onSave={handleSave}
+          saving={saving}
+          errors={saveErrors}
+          dirty={dirty}
+        />
+      )}
     </Box>
   );
 }
