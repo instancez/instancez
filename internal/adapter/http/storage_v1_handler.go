@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -110,7 +111,7 @@ func (h *StorageV1Handler) getBucket(c *gin.Context) {
 	id := c.Param("id")
 	b, ok := h.cfg.Storage[id]
 	if !ok {
-		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": fmt.Sprintf("Bucket %q not found", id)})
+		storageErr(c, 404, "not_found", fmt.Sprintf("Bucket %q not found", id))
 		return
 	}
 	c.JSON(200, gin.H{
@@ -124,21 +125,21 @@ func (h *StorageV1Handler) getBucket(c *gin.Context) {
 
 func (h *StorageV1Handler) createBucket(c *gin.Context) {
 	// Buckets are YAML-defined; runtime creation is not supported.
-	c.JSON(400, gin.H{"statusCode": "400", "error": "not_supported", "message": "Buckets are defined in instancez.yaml. Runtime creation is not supported."})
+	storageErr(c, 400, "not_supported", "Buckets are defined in instancez.yaml. Runtime creation is not supported.")
 }
 
 func (h *StorageV1Handler) updateBucket(c *gin.Context) {
-	c.JSON(400, gin.H{"statusCode": "400", "error": "not_supported", "message": "Buckets are defined in instancez.yaml. Runtime modification is not supported."})
+	storageErr(c, 400, "not_supported", "Buckets are defined in instancez.yaml. Runtime modification is not supported.")
 }
 
 func (h *StorageV1Handler) deleteBucket(c *gin.Context) {
-	c.JSON(400, gin.H{"statusCode": "400", "error": "not_supported", "message": "Buckets are defined in instancez.yaml. Runtime deletion is not supported."})
+	storageErr(c, 400, "not_supported", "Buckets are defined in instancez.yaml. Runtime deletion is not supported.")
 }
 
 func (h *StorageV1Handler) emptyBucket(c *gin.Context) {
 	id := c.Param("id")
 	if _, ok := h.cfg.Storage[id]; !ok {
-		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": fmt.Sprintf("Bucket %q not found", id)})
+		storageErr(c, 404, "not_found", fmt.Sprintf("Bucket %q not found", id))
 		return
 	}
 
@@ -146,7 +147,7 @@ func (h *StorageV1Handler) emptyBucket(c *gin.Context) {
 	rows, err := h.db.Query(ctx, "SELECT name FROM storage.objects WHERE bucket_id = $1", id)
 	if err != nil {
 		h.logger.Error("empty bucket query", "error", err)
-		c.JSON(500, gin.H{"statusCode": "500", "error": "internal", "message": "Failed to list objects"})
+		storageErr(c, 500, "internal", "Failed to list objects")
 		return
 	}
 	for _, row := range rows {
@@ -204,7 +205,7 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 
 	bucket, ok := h.getBucketConfig(bucketName)
 	if !ok {
-		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Bucket not found"})
+		storageErr(c, 404, "not_found", "Bucket not found")
 		return
 	}
 
@@ -227,7 +228,7 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 	if strings.HasPrefix(c.ContentType(), "multipart/form-data") {
 		mr, err := c.Request.MultipartReader()
 		if err != nil {
-			c.JSON(400, gin.H{"statusCode": "400", "error": "bad_request", "message": "Failed to parse multipart form"})
+			storageErr(c, 400, "bad_request", "Failed to parse multipart form")
 			return
 		}
 		var found bool
@@ -248,7 +249,7 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 			break
 		}
 		if !found {
-			c.JSON(400, gin.H{"statusCode": "400", "error": "bad_request", "message": "No file found in multipart upload"})
+			storageErr(c, 400, "bad_request", "No file found in multipart upload")
 			return
 		}
 	} else {
@@ -267,7 +268,7 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 
 	// Validate MIME
 	if len(bucket.Types) > 0 && !matchesMIME(contentType, bucket.Types) {
-		c.JSON(422, gin.H{"statusCode": "422", "error": "invalid_mime_type", "message": fmt.Sprintf("Content type %q not allowed", contentType)})
+		storageErr(c, 422, "invalid_mime_type", fmt.Sprintf("Content type %q not allowed", contentType))
 		return
 	}
 
@@ -288,7 +289,7 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 	ctx := h.rlsCtx(c)
 	tx, err := h.db.Begin(ctx)
 	if err != nil {
-		c.JSON(500, gin.H{"statusCode": "500", "error": "internal", "message": "Upload failed"})
+		storageErr(c, 500, "internal", "Upload failed")
 		return
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
@@ -303,7 +304,7 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 		}
 		if n == 0 {
 			// No row the caller is permitted to update (RLS-filtered or absent).
-			c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Object not found"})
+			storageErr(c, 404, "not_found", "Object not found")
 			return
 		}
 	} else {
@@ -332,11 +333,11 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 	key := bucketName + "/" + objPath
 	if err := h.storage.Upload(c.Request.Context(), key, limitedBody, contentType, size); err != nil {
 		if strings.Contains(err.Error(), "http: request body too large") {
-			c.JSON(413, gin.H{"statusCode": "413", "error": "payload_too_large", "message": fmt.Sprintf("File exceeds maximum size of %s", bucket.MaxSize)})
+			storageErr(c, 413, "payload_too_large", fmt.Sprintf("File exceeds maximum size of %s", bucket.MaxSize))
 			return
 		}
 		h.logger.Error("upload error", "error", err)
-		c.JSON(500, gin.H{"statusCode": "500", "error": "internal", "message": "Upload failed"})
+		storageErr(c, 500, "internal", "Upload failed")
 		return
 	}
 
@@ -344,7 +345,7 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 		// Best-effort cleanup of the now-orphaned object; the metadata never
 		// committed so it would be invisible anyway.
 		_ = h.storage.Delete(c.Request.Context(), key)
-		c.JSON(500, gin.H{"statusCode": "500", "error": "internal", "message": "Upload failed"})
+		storageErr(c, 500, "internal", "Upload failed")
 		return
 	}
 
@@ -354,18 +355,28 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 	})
 }
 
+// storageErr writes a storage-js compatible error body: {statusCode, error, message}.
+// statusCode is the HTTP status rendered as a string, matching @supabase/storage-js.
+func storageErr(c *gin.Context, status int, errSlug, message string) {
+	c.JSON(status, gin.H{
+		"statusCode": strconv.Itoa(status),
+		"error":      errSlug,
+		"message":    message,
+	})
+}
+
 // uploadWriteError maps a failed metadata write to the right client response:
 // duplicate key → 409, an RLS/permission denial → 403, anything else → 500.
 func (h *StorageV1Handler) uploadWriteError(c *gin.Context, err error) {
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "duplicate key") || strings.Contains(msg, "23505"):
-		c.JSON(409, gin.H{"statusCode": "409", "error": "duplicate", "message": "The resource already exists"})
+		storageErr(c, 409, "duplicate", "The resource already exists")
 	case strings.Contains(msg, "row-level security") || strings.Contains(msg, "42501") || strings.Contains(msg, "permission denied"):
-		c.JSON(403, gin.H{"statusCode": "403", "error": "forbidden", "message": "Not authorized to write this object"})
+		storageErr(c, 403, "forbidden", "Not authorized to write this object")
 	default:
 		h.logger.Error("record object", "error", err)
-		c.JSON(500, gin.H{"statusCode": "500", "error": "internal", "message": "Failed to record object"})
+		storageErr(c, 500, "internal", "Failed to record object")
 	}
 }
 
@@ -376,13 +387,13 @@ func (h *StorageV1Handler) objectGetDispatch(c *gin.Context) {
 	switch segments[0] {
 	case "public":
 		if len(segments) < 3 {
-			c.JSON(400, gin.H{"statusCode": "400", "error": "bad_request", "message": "Missing bucket or path"})
+			storageErr(c, 400, "bad_request", "Missing bucket or path")
 			return
 		}
 		h.serveDownload(c, segments[1], segments[2], true)
 	case "authenticated":
 		if len(segments) < 3 {
-			c.JSON(400, gin.H{"statusCode": "400", "error": "bad_request", "message": "Missing bucket or path"})
+			storageErr(c, 400, "bad_request", "Missing bucket or path")
 			return
 		}
 		jwtAuth(h.jwtKeys, true)(c)
@@ -392,7 +403,7 @@ func (h *StorageV1Handler) objectGetDispatch(c *gin.Context) {
 		h.serveDownload(c, segments[1], segments[2], false)
 	case "info":
 		if len(segments) < 2 {
-			c.JSON(400, gin.H{"statusCode": "400", "error": "bad_request", "message": "Missing path"})
+			storageErr(c, 400, "bad_request", "Missing path")
 			return
 		}
 		jwtAuth(h.jwtKeys, true)(c)
@@ -410,10 +421,10 @@ func (h *StorageV1Handler) objectGetDispatch(c *gin.Context) {
 			h.objectInfo(c)
 			return
 		}
-		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Not found"})
+		storageErr(c, 404, "not_found", "Not found")
 	default:
 		if len(segments) < 2 {
-			c.JSON(400, gin.H{"statusCode": "400", "error": "bad_request", "message": "Missing path"})
+			storageErr(c, 400, "bad_request", "Missing path")
 			return
 		}
 		jwtAuth(h.jwtKeys, true)(c)
@@ -429,18 +440,18 @@ func (h *StorageV1Handler) serveDownload(c *gin.Context, bucketName, objPath str
 
 	bucket, ok := h.getBucketConfig(bucketName)
 	if !ok {
-		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Bucket not found"})
+		storageErr(c, 404, "not_found", "Bucket not found")
 		return
 	}
 	if publicOnly && !bucket.Public {
-		c.JSON(400, gin.H{"statusCode": "400", "error": "not_public", "message": "Bucket is not public"})
+		storageErr(c, 400, "not_public", "Bucket is not public")
 		return
 	}
 
 	ctx := h.rlsCtx(c)
 	row, err := h.db.QueryRow(ctx, "SELECT id FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
 	if err != nil || row == nil {
-		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Object not found"})
+		storageErr(c, 404, "not_found", "Object not found")
 		return
 	}
 
@@ -448,7 +459,7 @@ func (h *StorageV1Handler) serveDownload(c *gin.Context, bucketName, objPath str
 	body, contentType, err := h.storage.Download(ctx, key)
 	if err != nil {
 		h.logger.Error("download error", "error", err)
-		c.JSON(500, gin.H{"statusCode": "500", "error": "internal", "message": "Download failed"})
+		storageErr(c, 500, "internal", "Download failed")
 		return
 	}
 	defer func() { _ = body.Close() }()
@@ -473,7 +484,7 @@ func (h *StorageV1Handler) serveDownload(c *gin.Context, bucketName, objPath str
 func (h *StorageV1Handler) listObjects(c *gin.Context) {
 	bucketName := c.Param("bucket")
 	if _, ok := h.getBucketConfig(bucketName); !ok {
-		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Bucket not found"})
+		storageErr(c, 404, "not_found", "Bucket not found")
 		return
 	}
 
@@ -513,7 +524,7 @@ func (h *StorageV1Handler) listObjects(c *gin.Context) {
 	rows, err := h.db.Query(ctx, query, args...)
 	if err != nil {
 		h.logger.Error("list objects", "error", err)
-		c.JSON(500, gin.H{"statusCode": "500", "error": "internal", "message": "Failed to list"})
+		storageErr(c, 500, "internal", "Failed to list")
 		return
 	}
 
@@ -539,7 +550,7 @@ func (h *StorageV1Handler) listObjects(c *gin.Context) {
 func (h *StorageV1Handler) listObjectsV2(c *gin.Context) {
 	bucketName := c.Param("bucket")
 	if _, ok := h.getBucketConfig(bucketName); !ok {
-		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Bucket not found"})
+		storageErr(c, 404, "not_found", "Bucket not found")
 		return
 	}
 
@@ -595,7 +606,7 @@ func (h *StorageV1Handler) listObjectsV2(c *gin.Context) {
 	rows, err := h.db.Query(ctx, query, args...)
 	if err != nil {
 		h.logger.Error("list objects v2", "error", err)
-		c.JSON(500, gin.H{"statusCode": "500", "error": "internal", "message": "Failed to list"})
+		storageErr(c, 500, "internal", "Failed to list")
 		return
 	}
 
@@ -656,7 +667,7 @@ func (h *StorageV1Handler) objectInfo(c *gin.Context) {
 	objPath := h.cleanPath(c.GetString("_path"))
 
 	if _, ok := h.getBucketConfig(bucketName); !ok {
-		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Bucket not found"})
+		storageErr(c, 404, "not_found", "Bucket not found")
 		return
 	}
 
@@ -665,7 +676,7 @@ func (h *StorageV1Handler) objectInfo(c *gin.Context) {
 		"SELECT id, name, size, mime, uploaded_at, uploaded_by, metadata FROM storage.objects WHERE bucket_id = $1 AND name = $2",
 		bucketName, objPath)
 	if err != nil || row == nil {
-		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Object not found"})
+		storageErr(c, 404, "not_found", "Object not found")
 		return
 	}
 
@@ -701,7 +712,7 @@ func (h *StorageV1Handler) objectExists(c *gin.Context) {
 func (h *StorageV1Handler) removeObjects(c *gin.Context) {
 	bucketName := c.Param("bucket")
 	if _, ok := h.getBucketConfig(bucketName); !ok {
-		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Bucket not found"})
+		storageErr(c, 404, "not_found", "Bucket not found")
 		return
 	}
 
@@ -709,7 +720,7 @@ func (h *StorageV1Handler) removeObjects(c *gin.Context) {
 		Prefixes []string `json:"prefixes"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"statusCode": "400", "error": "bad_request", "message": "Expected {prefixes: [...]}"})
+		storageErr(c, 400, "bad_request", "Expected {prefixes: [...]}")
 		return
 	}
 
@@ -739,7 +750,7 @@ func (h *StorageV1Handler) moveObject(c *gin.Context) {
 		DestinationBucket string `json:"destinationBucket"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"statusCode": "400", "error": "bad_request", "message": "Invalid request"})
+		storageErr(c, 400, "bad_request", "Invalid request")
 		return
 	}
 
@@ -750,11 +761,11 @@ func (h *StorageV1Handler) moveObject(c *gin.Context) {
 	}
 
 	if _, ok := h.getBucketConfig(srcBucket); !ok {
-		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Source bucket not found"})
+		storageErr(c, 404, "not_found", "Source bucket not found")
 		return
 	}
 	if _, ok := h.getBucketConfig(dstBucket); !ok {
-		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Destination bucket not found"})
+		storageErr(c, 404, "not_found", "Destination bucket not found")
 		return
 	}
 
@@ -764,7 +775,7 @@ func (h *StorageV1Handler) moveObject(c *gin.Context) {
 
 	if err := h.storage.Copy(ctx, srcKey, dstKey); err != nil {
 		h.logger.Error("move copy", "error", err)
-		c.JSON(500, gin.H{"statusCode": "500", "error": "internal", "message": "Move failed"})
+		storageErr(c, 500, "internal", "Move failed")
 		return
 	}
 	if err := h.storage.Delete(ctx, srcKey); err != nil {
@@ -787,7 +798,7 @@ func (h *StorageV1Handler) copyObject(c *gin.Context) {
 		DestinationBucket string `json:"destinationBucket"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"statusCode": "400", "error": "bad_request", "message": "Invalid request"})
+		storageErr(c, 400, "bad_request", "Invalid request")
 		return
 	}
 
@@ -798,11 +809,11 @@ func (h *StorageV1Handler) copyObject(c *gin.Context) {
 	}
 
 	if _, ok := h.getBucketConfig(srcBucket); !ok {
-		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Source bucket not found"})
+		storageErr(c, 404, "not_found", "Source bucket not found")
 		return
 	}
 	if _, ok := h.getBucketConfig(dstBucket); !ok {
-		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Destination bucket not found"})
+		storageErr(c, 404, "not_found", "Destination bucket not found")
 		return
 	}
 
@@ -812,7 +823,7 @@ func (h *StorageV1Handler) copyObject(c *gin.Context) {
 
 	if err := h.storage.Copy(ctx, srcKey, dstKey); err != nil {
 		h.logger.Error("copy", "error", err)
-		c.JSON(500, gin.H{"statusCode": "500", "error": "internal", "message": "Copy failed"})
+		storageErr(c, 500, "internal", "Copy failed")
 		return
 	}
 
@@ -833,7 +844,7 @@ func (h *StorageV1Handler) createSignedURL(c *gin.Context) {
 	objPath := h.cleanPath(c.Param("path"))
 
 	if _, ok := h.getBucketConfig(bucketName); !ok {
-		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Bucket not found"})
+		storageErr(c, 404, "not_found", "Bucket not found")
 		return
 	}
 
@@ -847,14 +858,14 @@ func (h *StorageV1Handler) createSignedURL(c *gin.Context) {
 	ctx := h.rlsCtx(c)
 	row, err := h.db.QueryRow(ctx, "SELECT id FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
 	if err != nil || row == nil {
-		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Object not found"})
+		storageErr(c, 404, "not_found", "Object not found")
 		return
 	}
 
 	url, err := h.storage.SignDownload(ctx, bucketName+"/"+objPath, time.Duration(req.ExpiresIn)*time.Second)
 	if err != nil {
 		h.logger.Error("sign download", "error", err)
-		c.JSON(500, gin.H{"statusCode": "500", "error": "internal", "message": "Failed to create signed URL"})
+		storageErr(c, 500, "internal", "Failed to create signed URL")
 		return
 	}
 
@@ -864,7 +875,7 @@ func (h *StorageV1Handler) createSignedURL(c *gin.Context) {
 func (h *StorageV1Handler) createSignedURLs(c *gin.Context) {
 	bucketName := c.Param("bucket")
 	if _, ok := h.getBucketConfig(bucketName); !ok {
-		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Bucket not found"})
+		storageErr(c, 404, "not_found", "Bucket not found")
 		return
 	}
 
@@ -873,7 +884,7 @@ func (h *StorageV1Handler) createSignedURLs(c *gin.Context) {
 		Paths     []string `json:"paths"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"statusCode": "400", "error": "bad_request", "message": "Invalid request"})
+		storageErr(c, 400, "bad_request", "Invalid request")
 		return
 	}
 	if req.ExpiresIn <= 0 {
@@ -899,11 +910,32 @@ func (h *StorageV1Handler) createSignedUploadURL(c *gin.Context) {
 	objPath := h.cleanPath(c.Param("path"))
 
 	if _, ok := h.getBucketConfig(bucketName); !ok {
-		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Bucket not found"})
+		storageErr(c, 404, "not_found", "Bucket not found")
 		return
 	}
 
-	token := h.signUploadToken(bucketName, objPath)
+	// Authorize before minting. A signed upload URL is a bearer capability whose
+	// redemption (uploadToSignedURL) runs as service_role, so this is the only
+	// point at which the caller's INSERT policy can be enforced. Probe the same
+	// metadata write the redemption will perform, under the caller's role, in a
+	// transaction that is always rolled back; if RLS denies it, no token is
+	// handed out. This mirrors the download path (createSignedURL probes a
+	// SELECT) and Supabase's signUploadObjectUrl, which runs canUpload first.
+	session := getSession(c)
+	var uploadedBy any
+	if session.UserID != "" {
+		uploadedBy = session.UserID
+	}
+	if err := h.probeUploadPermission(c, bucketName, objPath, uploadedBy); err != nil {
+		h.uploadWriteError(c, err)
+		return
+	}
+
+	token := h.signUploadToken(bucketName, objPath, session.UserID)
+	if token == "" {
+		storageErr(c, 500, "internal", "Failed to create signed upload URL")
+		return
+	}
 
 	c.JSON(200, gin.H{
 		"url":   fmt.Sprintf("/storage/v1/object/upload/sign/%s/%s", bucketName, objPath),
@@ -912,19 +944,49 @@ func (h *StorageV1Handler) createSignedUploadURL(c *gin.Context) {
 	})
 }
 
+// probeUploadPermission reports whether the bucket's RLS policies permit the
+// caller to write this object, without persisting anything. It runs the same
+// INSERT (or upsert, honouring x-upsert) the signed-upload redemption performs,
+// under the caller's Postgres role, inside a transaction that is always rolled
+// back, and returns the raw database error so callers can map an RLS denial to
+// 403, a duplicate to 409, etc. via uploadWriteError.
+func (h *StorageV1Handler) probeUploadPermission(c *gin.Context, bucketName, objPath string, uploadedBy any) error {
+	ctx := h.rlsCtx(c)
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if c.GetHeader("x-upsert") == "true" {
+		_, err = tx.Exec(ctx,
+			`INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by)
+			 VALUES ($1, $2, 0, '', $3)
+			 ON CONFLICT (bucket_id, name)
+			 DO UPDATE SET uploaded_at = NOW()`,
+			bucketName, objPath, uploadedBy)
+	} else {
+		_, err = tx.Exec(ctx,
+			"INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by) VALUES ($1, $2, 0, '', $3)",
+			bucketName, objPath, uploadedBy)
+	}
+	return err
+}
+
 func (h *StorageV1Handler) uploadToSignedURL(c *gin.Context) {
 	bucketName := c.Param("bucket")
 	objPath := h.cleanPath(c.Param("path"))
 
 	bucket, ok := h.getBucketConfig(bucketName)
 	if !ok {
-		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Bucket not found"})
+		storageErr(c, 404, "not_found", "Bucket not found")
 		return
 	}
 
 	token := c.Query("token")
-	if !h.verifyUploadToken(token, bucketName, objPath) {
-		c.JSON(400, gin.H{"statusCode": "400", "error": "invalid_token", "message": "Invalid or expired upload token"})
+	owner, ok := h.verifyUploadToken(token, bucketName, objPath)
+	if !ok {
+		storageErr(c, 400, "invalid_token", "Invalid or expired upload token")
 		return
 	}
 
@@ -944,28 +1006,34 @@ func (h *StorageV1Handler) uploadToSignedURL(c *gin.Context) {
 	key := bucketName + "/" + objPath
 	if err := h.storage.Upload(c.Request.Context(), key, limitedBody, contentType, c.Request.ContentLength); err != nil {
 		if strings.Contains(err.Error(), "http: request body too large") {
-			c.JSON(413, gin.H{"statusCode": "413", "error": "payload_too_large", "message": "File too large"})
+			storageErr(c, 413, "payload_too_large", "File too large")
 			return
 		}
 		h.logger.Error("signed upload error", "error", err)
-		c.JSON(500, gin.H{"statusCode": "500", "error": "internal", "message": "Upload failed"})
+		storageErr(c, 500, "internal", "Upload failed")
 		return
 	}
 
 	// The HMAC upload token is the authorization for this route (there is no
 	// jwtAuth on it), so the metadata write runs as service_role rather than
-	// the anonymous caller — equivalent to an S3 presigned PUT.
+	// the anonymous caller, equivalent to an S3 presigned PUT. The owner bound
+	// into the token at mint time is written to uploaded_by so owner-scoped RLS
+	// policies match the row the same way they matched the mint-time probe.
 	ctx := c.Request.Context()
 	size := c.Request.ContentLength
 	if size < 0 {
 		size = 0
 	}
+	var uploadedBy any
+	if owner != "" {
+		uploadedBy = owner
+	}
 	_, _ = h.db.Exec(ctx,
-		`INSERT INTO storage.objects (bucket_id, name, size, mime)
-		 VALUES ($1, $2, $3, $4)
+		`INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by)
+		 VALUES ($1, $2, $3, $4, $5)
 		 ON CONFLICT (bucket_id, name)
-		 DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime, uploaded_at = NOW()`,
-		bucketName, objPath, size, contentType)
+		 DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime, uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW()`,
+		bucketName, objPath, size, contentType, uploadedBy)
 
 	c.JSON(200, gin.H{
 		"Key":      bucketName + "/" + objPath,
@@ -974,10 +1042,13 @@ func (h *StorageV1Handler) uploadToSignedURL(c *gin.Context) {
 	})
 }
 
-// signUploadToken creates an HMAC token for signed uploads. Returns "" when
-// no signing secret is available; callers treat an empty token as a failure
-// so we never emit a token an attacker could trivially forge.
-func (h *StorageV1Handler) signUploadToken(bucket, objPath string) string {
+// signUploadToken creates an HMAC token for signed uploads. The owner (the
+// minting user's id, or "" for anonymous) is bound into the token so the
+// redemption can persist it as uploaded_by, keeping the stored row's ownership
+// consistent with the INSERT policy that authorized the mint. Returns "" when
+// no signing secret is available; callers treat an empty token as a failure so
+// we never emit a token an attacker could trivially forge.
+func (h *StorageV1Handler) signUploadToken(bucket, objPath, owner string) string {
 	active, err := h.jwtKeys.Active(context.Background())
 	if err != nil {
 		return ""
@@ -988,41 +1059,49 @@ func (h *StorageV1Handler) signUploadToken(bucket, objPath string) string {
 		return ""
 	}
 	expiry := time.Now().Add(storageUploadTokenExpiry).Unix()
-	payload := fmt.Sprintf("%s/%s:%d", bucket, objPath, expiry)
+	payload := fmt.Sprintf("%s/%s:%d:%s", bucket, objPath, expiry, owner)
 	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte(payload))
 	sig := hex.EncodeToString(mac.Sum(nil))
-	return fmt.Sprintf("%d.%s", expiry, sig)
+	// owner is a UUID or "", neither of which contains a '.', so it is safe to
+	// carry as its own dot-delimited segment.
+	return fmt.Sprintf("%d.%s.%s", expiry, owner, sig)
 }
 
-func (h *StorageV1Handler) verifyUploadToken(token, bucket, objPath string) bool {
-	parts := strings.SplitN(token, ".", 2)
-	if len(parts) != 2 {
-		return false
+// verifyUploadToken checks the token's signature, expiry, and path binding and
+// returns the owner bound into it. ok is false on any mismatch.
+func (h *StorageV1Handler) verifyUploadToken(token, bucket, objPath string) (owner string, ok bool) {
+	parts := strings.SplitN(token, ".", 3)
+	if len(parts) != 3 {
+		return "", false
 	}
+	owner = parts[1]
 
 	var expiry int64
 	if _, err := fmt.Sscanf(parts[0], "%d", &expiry); err != nil {
-		return false
+		return "", false
 	}
 	if time.Now().Unix() > expiry {
-		return false
+		return "", false
 	}
 
 	active, err := h.jwtKeys.Active(context.Background())
 	if err != nil {
-		return false
+		return "", false
 	}
 	secret := active.SymmetricSecret()
 	if len(secret) == 0 {
 		// Fail closed: with no secret we cannot verify, so reject rather
 		// than HMAC with an empty (forgeable) key.
-		return false
+		return "", false
 	}
 
-	payload := fmt.Sprintf("%s/%s:%d", bucket, objPath, expiry)
+	payload := fmt.Sprintf("%s/%s:%d:%s", bucket, objPath, expiry, owner)
 	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte(payload))
 	expected := hex.EncodeToString(mac.Sum(nil))
-	return hmac.Equal([]byte(parts[1]), []byte(expected))
+	if !hmac.Equal([]byte(parts[2]), []byte(expected)) {
+		return "", false
+	}
+	return owner, true
 }
