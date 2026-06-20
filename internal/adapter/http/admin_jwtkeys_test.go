@@ -73,7 +73,8 @@ func TestHandleRotateJWTKey(t *testing.T) {
 	}
 	var got map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &got)
-	if got["kid"] == "" || got["algorithm"] != "RS256" {
+	kid, _ := got["kid"].(string)
+	if kid == "" || got["algorithm"] != "RS256" {
 		t.Fatalf("unexpected body: %v", got)
 	}
 	body := w.Body.String()
