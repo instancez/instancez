@@ -115,17 +115,16 @@ Omit the `auth:` block entirely to disable authentication endpoints.
 | `auth.email.templates.<name>.body` | `string` | — | Inline HTML/text body. |
 | `auth.email.templates.<name>.body_file` | `string` | — | Path to a file containing the body (alternative to `body`). |
 
-### auth.google / auth.github
+### auth.oauth.&lt;name&gt;
 
-OAuth provider configuration.
+OAuth provider configuration. Providers are keyed by name under `auth.oauth`; the
+name (`google`, `github`, …) selects the built-in provider implementation.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `auth.google.client_id` | `string` | — | OAuth client ID. Supports `${VAR}`. |
-| `auth.google.client_secret` | `string` | — | OAuth client secret. Supports `${VAR}`. |
-| `auth.google.redirect_url` | `string` | — | OAuth callback URL registered with the provider. |
-
-Same keys apply for `auth.github`.
+| `auth.oauth.<name>.client_id` | `string` | — | OAuth client ID. Supports `${VAR}`. |
+| `auth.oauth.<name>.client_secret` | `string` | — | OAuth client secret. Supports `${VAR}`. |
+| `auth.oauth.<name>.redirect_url` | `string` | — | OAuth callback URL registered with the provider. |
 
 ## tables
 

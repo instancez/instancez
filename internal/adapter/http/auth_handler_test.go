@@ -457,6 +457,7 @@ type stubDB struct {
 	queryRowFn func(ctx context.Context, q string, args ...any) (map[string]any, error)
 	queryFn    func(ctx context.Context, q string, args ...any) ([]map[string]any, error)
 	execFn     func(ctx context.Context, q string, args ...any) (int64, error)
+	beginFn    func(ctx context.Context) (domain.Tx, error)
 }
 
 func (s *stubDB) Close() error                                    { return nil }
@@ -490,7 +491,53 @@ func (s *stubDB) Exec(ctx context.Context, q string, args ...any) (int64, error)
 func (s *stubDB) WithRLS(ctx context.Context, session domain.Session) (context.Context, error) {
 	return ctx, nil
 }
-func (s *stubDB) Begin(ctx context.Context) (domain.Tx, error) { return nil, nil }
+func (s *stubDB) Begin(ctx context.Context) (domain.Tx, error) {
+	if s.beginFn != nil {
+		return s.beginFn(ctx)
+	}
+	return nil, nil
+}
+
+// stubTx is an in-memory domain.Tx for handler tests. Each method delegates to
+// its function field when set, so a test only wires up the calls it cares about.
+type stubTx struct {
+	queryFn    func(ctx context.Context, q string, args ...any) ([]map[string]any, error)
+	queryRowFn func(ctx context.Context, q string, args ...any) (map[string]any, error)
+	execFn     func(ctx context.Context, q string, args ...any) (int64, error)
+	commitFn   func(ctx context.Context) error
+	rollbackFn func(ctx context.Context) error
+}
+
+func (t *stubTx) Query(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
+	if t.queryFn != nil {
+		return t.queryFn(ctx, q, args...)
+	}
+	return nil, nil
+}
+func (t *stubTx) QueryRow(ctx context.Context, q string, args ...any) (map[string]any, error) {
+	if t.queryRowFn != nil {
+		return t.queryRowFn(ctx, q, args...)
+	}
+	return nil, nil
+}
+func (t *stubTx) Exec(ctx context.Context, q string, args ...any) (int64, error) {
+	if t.execFn != nil {
+		return t.execFn(ctx, q, args...)
+	}
+	return 0, nil
+}
+func (t *stubTx) Commit(ctx context.Context) error {
+	if t.commitFn != nil {
+		return t.commitFn(ctx)
+	}
+	return nil
+}
+func (t *stubTx) Rollback(ctx context.Context) error {
+	if t.rollbackFn != nil {
+		return t.rollbackFn(ctx)
+	}
+	return nil
+}
 
 // ---------- stubAuthService ----------
 
@@ -1977,5 +2024,41 @@ func TestAdminUpdateUser_EmailValidation(t *testing.T) {
 				t.Errorf("expected %d, got %d: %s", tc.wantCode, w.Code, w.Body.String())
 			}
 		})
+	}
+}
+
+// TestHandleAuthorize_MapConfig verifies the OAuth provider is resolved from the
+// auth.oauth map and the provider registry, redirecting to the right IdP for a
+// configured provider and rejecting an unconfigured one.
+func TestHandleAuthorize_MapConfig(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &AuthHandler{
+		cfg: &domain.Config{Auth: &domain.Auth{
+			OAuth: map[string]*domain.OAuthProvider{
+				"google": {ClientID: "cid", ClientSecret: "sec", RedirectURL: "https://app/cb"},
+			},
+		}},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	// Configured provider → 307 redirect to Google with the client id.
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/auth/v1/authorize?provider=google", nil)
+	h.handleAuthorize(c)
+	if w.Code != http.StatusTemporaryRedirect {
+		t.Fatalf("google: status = %d, want 307: %s", w.Code, w.Body.String())
+	}
+	if loc := w.Header().Get("Location"); !strings.Contains(loc, "accounts.google.com") || !strings.Contains(loc, "client_id=cid") {
+		t.Errorf("google: Location = %q", loc)
+	}
+
+	// Unconfigured provider → 400.
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/auth/v1/authorize?provider=github", nil)
+	h.handleAuthorize(c)
+	if w.Code != 400 {
+		t.Errorf("github (unconfigured): status = %d, want 400", w.Code)
 	}
 }

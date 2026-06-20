@@ -113,11 +113,13 @@ func (h *AuthHandler) Mount(root *gin.RouterGroup) {
 
 	// OAuth (Supabase calls this /authorize)
 	auth.GET("/authorize", h.handleAuthorize)
-	if h.cfg.Auth.Google != nil {
-		auth.GET("/callback/google", h.handleOAuthCallback("google"))
-	}
-	if h.cfg.Auth.GitHub != nil {
-		auth.GET("/callback/github", h.handleOAuthCallback("github"))
+	for name, cfg := range h.cfg.Auth.OAuth {
+		if cfg == nil {
+			continue
+		}
+		if _, ok := adapterauth.OAuthRegistry(name); ok {
+			auth.GET("/callback/"+name, h.handleOAuthCallback(name))
+		}
 	}
 }
 
@@ -422,18 +424,16 @@ func (h *AuthHandler) handleIDTokenGrant(c *gin.Context) {
 		return
 	}
 
-	var clientID string
-	switch req.Provider {
-	case "google":
-		if h.cfg.Auth.Google == nil {
+	g := h.cfg.Auth.OAuth["google"]
+	if req.Provider != "google" || g == nil {
+		if req.Provider == "google" {
 			problemJSON(c, 400, "bad_request", "Google provider not configured")
 			return
 		}
-		clientID = h.cfg.Auth.Google.ClientID
-	default:
 		problemJSON(c, 400, "bad_request", "Unsupported provider for ID token: "+req.Provider)
 		return
 	}
+	clientID := g.ClientID
 
 	claims, err := verifyIDToken(req.Provider, req.Token, clientID, req.Nonce)
 	if err != nil {
@@ -1140,11 +1140,10 @@ func (h *AuthHandler) handleAdminInvite(c *gin.Context) {
 
 func (h *AuthHandler) handleSettings(c *gin.Context) {
 	providers := gin.H{}
-	if h.cfg.Auth.Google != nil {
-		providers["google"] = true
-	}
-	if h.cfg.Auth.GitHub != nil {
-		providers["github"] = true
+	for name, p := range h.cfg.Auth.OAuth {
+		if p != nil {
+			providers[name] = true
+		}
 	}
 	c.JSON(200, gin.H{
 		"external":           providers,
@@ -1172,14 +1171,9 @@ func (h *AuthHandler) handleAuthorize(c *gin.Context) {
 		return
 	}
 
-	var cfg *domain.OAuthProvider
-	switch provider {
-	case "google":
-		cfg = h.cfg.Auth.Google
-	case "github":
-		cfg = h.cfg.Auth.GitHub
-	}
-	if cfg == nil {
+	cfg := h.cfg.Auth.OAuth[provider]
+	prov, ok := adapterauth.OAuthRegistry(provider)
+	if cfg == nil || !ok {
 		problemJSON(c, 400, "bad_request", "Unsupported or unconfigured provider: "+provider)
 		return
 	}
@@ -1200,18 +1194,7 @@ func (h *AuthHandler) handleAuthorize(c *gin.Context) {
 		c.SetCookie("oauth_redirect_to", redirectTo, 600, "/", "", false, true)
 	}
 
-	var authURL string
-	switch provider {
-	case "google":
-		authURL = fmt.Sprintf(
-			"https://accounts.google.com/o/oauth2/v2/auth?client_id=%s&redirect_uri=%s&response_type=code&scope=openid+email+profile&state=%s",
-			cfg.ClientID, url.QueryEscape(cfg.RedirectURL), state)
-	case "github":
-		authURL = fmt.Sprintf(
-			"https://github.com/login/oauth/authorize?client_id=%s&redirect_uri=%s&scope=user:email&state=%s",
-			cfg.ClientID, url.QueryEscape(cfg.RedirectURL), state)
-	}
-	c.Redirect(http.StatusTemporaryRedirect, authURL)
+	c.Redirect(http.StatusTemporaryRedirect, prov.AuthorizeURL(cfg, state))
 }
 
 func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
@@ -1251,32 +1234,19 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 			return
 		}
 
-		var providerCfg *domain.OAuthProvider
-		switch provider {
-		case "google":
-			providerCfg = h.cfg.Auth.Google
-		case "github":
-			providerCfg = h.cfg.Auth.GitHub
-		}
-		if providerCfg == nil {
+		providerCfg := h.cfg.Auth.OAuth[provider]
+		prov, ok := adapterauth.OAuthRegistry(provider)
+		if providerCfg == nil || !ok {
 			problemJSON(c, 400, "bad_request", "Unconfigured provider: "+provider)
 			return
 		}
-		oauthToken, err := adapterauth.ExchangeCode(provider, providerCfg, code)
+		oauthToken, err := prov.ExchangeCode(providerCfg, code)
 		if err != nil {
 			h.logger.Error("oauth code exchange failed", "provider", provider, "error", err)
 			problemJSON(c, 502, "oauth_error", "Failed to exchange authorization code")
 			return
 		}
-		var userInfo *adapterauth.OAuthUserInfo
-		switch provider {
-		case "google":
-			userInfo, err = adapterauth.FetchGoogleUser(oauthToken)
-		case "github":
-			userInfo, err = adapterauth.FetchGitHubUser(oauthToken)
-		default:
-			err = fmt.Errorf("unsupported provider: %s", provider)
-		}
+		userInfo, err := prov.FetchUser(oauthToken)
 		if err != nil {
 			h.logger.Error("oauth user info failed", "provider", provider, "error", err)
 			problemJSON(c, 502, "oauth_error", "Failed to fetch user info from provider")
@@ -1938,14 +1908,9 @@ func (h *AuthHandler) handleLinkIdentity(c *gin.Context) {
 	provider := c.Query("provider")
 	redirectTo := c.Query("redirect_to")
 
-	var cfg *domain.OAuthProvider
-	switch provider {
-	case "google":
-		cfg = h.cfg.Auth.Google
-	case "github":
-		cfg = h.cfg.Auth.GitHub
-	}
-	if cfg == nil {
+	cfg := h.cfg.Auth.OAuth[provider]
+	prov, ok := adapterauth.OAuthRegistry(provider)
+	if cfg == nil || !ok {
 		problemJSON(c, 400, "bad_request", "Unsupported or unconfigured provider: "+provider)
 		return
 	}
@@ -1957,18 +1922,7 @@ func (h *AuthHandler) handleLinkIdentity(c *gin.Context) {
 		return
 	}
 
-	var authURL string
-	switch provider {
-	case "google":
-		authURL = fmt.Sprintf(
-			"https://accounts.google.com/o/oauth2/v2/auth?client_id=%s&redirect_uri=%s&response_type=code&scope=openid+email+profile&state=%s",
-			cfg.ClientID, url.QueryEscape(cfg.RedirectURL), state)
-	case "github":
-		authURL = fmt.Sprintf(
-			"https://github.com/login/oauth/authorize?client_id=%s&redirect_uri=%s&scope=user:email&state=%s",
-			cfg.ClientID, url.QueryEscape(cfg.RedirectURL), state)
-	}
-	c.JSON(200, gin.H{"url": authURL})
+	c.JSON(200, gin.H{"url": prov.AuthorizeURL(cfg, state)})
 }
 
 func (h *AuthHandler) handleUnlinkIdentity(c *gin.Context) {

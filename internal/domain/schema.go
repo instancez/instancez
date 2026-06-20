@@ -116,10 +116,12 @@ type Auth struct {
 	// always allowed. Anything else must match one of these origins, otherwise
 	// the flow falls back to the base URL. This prevents an attacker-supplied
 	// redirect_to from exfiltrating the session tokens placed in the redirect.
-	RedirectURLs []string       `yaml:"redirect_urls" json:"redirect_urls"`
-	Email        *AuthEmail     `yaml:"email" json:"email"`
-	Google       *OAuthProvider `yaml:"google" json:"google"`
-	GitHub       *OAuthProvider `yaml:"github" json:"github"`
+	RedirectURLs []string   `yaml:"redirect_urls" json:"redirect_urls"`
+	Email        *AuthEmail `yaml:"email" json:"email"`
+	// OAuth maps a provider name (e.g. "google", "github") to its credentials.
+	// The name keys into the OAuth provider registry in internal/adapter/auth,
+	// so adding a provider needs only a new registry entry plus a config block.
+	OAuth map[string]*OAuthProvider `yaml:"oauth" json:"oauth"`
 }
 
 // IsRedirectAllowed reports whether target is a safe post-auth redirect

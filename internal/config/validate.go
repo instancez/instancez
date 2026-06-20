@@ -311,20 +311,15 @@ func validateAuth(auth *domain.Auth) domain.ValidationErrors {
 	}
 
 	// Validate OAuth providers
-	if auth.Google != nil {
-		if auth.Google.ClientID == "" {
-			errs = append(errs, &domain.ValidationError{Path: "auth.google.client_id", Message: "required"})
+	for name, p := range auth.OAuth {
+		if p == nil {
+			continue
 		}
-		if auth.Google.ClientSecret == "" {
-			errs = append(errs, &domain.ValidationError{Path: "auth.google.client_secret", Message: "required"})
+		if p.ClientID == "" {
+			errs = append(errs, &domain.ValidationError{Path: "auth.oauth." + name + ".client_id", Message: "required"})
 		}
-	}
-	if auth.GitHub != nil {
-		if auth.GitHub.ClientID == "" {
-			errs = append(errs, &domain.ValidationError{Path: "auth.github.client_id", Message: "required"})
-		}
-		if auth.GitHub.ClientSecret == "" {
-			errs = append(errs, &domain.ValidationError{Path: "auth.github.client_secret", Message: "required"})
+		if p.ClientSecret == "" {
+			errs = append(errs, &domain.ValidationError{Path: "auth.oauth." + name + ".client_secret", Message: "required"})
 		}
 	}
 

@@ -18,18 +18,10 @@ type OAuthUserInfo struct {
 	ProviderID string
 }
 
-// ExchangeCode exchanges an OAuth authorization code for an access token.
-func ExchangeCode(provider string, cfg *domain.OAuthProvider, code string) (string, error) {
-	var tokenURL string
-	switch provider {
-	case "google":
-		tokenURL = "https://oauth2.googleapis.com/token"
-	case "github":
-		tokenURL = "https://github.com/login/oauth/access_token"
-	default:
-		return "", fmt.Errorf("unsupported provider: %s", provider)
-	}
-
+// exchangeOAuthCode exchanges an OAuth authorization code for an access token at
+// the given token endpoint. The endpoint is provider-specific and supplied by
+// the caller (see the per-provider implementations in oauthprovider.go).
+func exchangeOAuthCode(tokenURL string, cfg *domain.OAuthProvider, code string) (string, error) {
 	data := url.Values{
 		"client_id":     {cfg.ClientID},
 		"client_secret": {cfg.ClientSecret},
@@ -73,9 +65,10 @@ func ExchangeCode(provider string, cfg *domain.OAuthProvider, code string) (stri
 	return tokenResp.AccessToken, nil
 }
 
-// FetchGitHubUser fetches a GitHub user's profile using an OAuth access token.
-func FetchGitHubUser(accessToken string) (*OAuthUserInfo, error) {
-	req, _ := http.NewRequest("GET", "https://api.github.com/user", nil)
+// fetchGitHubUser fetches a GitHub user's profile using an OAuth access token.
+// Endpoints come from the provider so tests can redirect them.
+func fetchGitHubUser(g *githubProvider, accessToken string) (*OAuthUserInfo, error) {
+	req, _ := http.NewRequest("GET", g.userAPI, nil)
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Accept", "application/json")
 
@@ -100,8 +93,8 @@ func FetchGitHubUser(accessToken string) (*OAuthUserInfo, error) {
 		return nil, err
 	}
 
-	if user.Email == "" {
-		user.Email, _ = FetchGitHubPrimaryEmail(accessToken)
+	if user.Email == "" && g.emailAPI != "" {
+		user.Email, _ = fetchGitHubPrimaryEmail(g.emailAPI, accessToken)
 	}
 
 	return &OAuthUserInfo{
@@ -111,9 +104,9 @@ func FetchGitHubUser(accessToken string) (*OAuthUserInfo, error) {
 	}, nil
 }
 
-// FetchGitHubPrimaryEmail fetches the primary verified email from GitHub.
-func FetchGitHubPrimaryEmail(accessToken string) (string, error) {
-	req, _ := http.NewRequest("GET", "https://api.github.com/user/emails", nil)
+// fetchGitHubPrimaryEmail fetches the primary verified email from GitHub.
+func fetchGitHubPrimaryEmail(emailAPI, accessToken string) (string, error) {
+	req, _ := http.NewRequest("GET", emailAPI, nil)
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Accept", "application/json")
 
@@ -146,8 +139,8 @@ func FetchGitHubPrimaryEmail(accessToken string) (string, error) {
 	return "", fmt.Errorf("no verified email found")
 }
 
-// FetchGoogleUser fetches a Google user's profile using an OAuth access token.
-func FetchGoogleUser(accessToken string) (*OAuthUserInfo, error) {
+// fetchGoogleUser fetches a Google user's profile using an OAuth access token.
+func fetchGoogleUser(accessToken string) (*OAuthUserInfo, error) {
 	req, _ := http.NewRequest("GET", "https://www.googleapis.com/oauth2/v2/userinfo", nil)
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 

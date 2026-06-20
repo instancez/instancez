@@ -27,15 +27,18 @@ auth:
     # Requires an email provider under providers.email.
     verify_email: false
 
-  google:
-    client_id: YOUR_GOOGLE_CLIENT_ID
-    client_secret: YOUR_GOOGLE_CLIENT_SECRET
-    redirect_url: https://myapp.example.com/auth/callback
+  # OAuth providers are keyed by name under oauth. The name (google, github, …)
+  # selects the built-in provider implementation.
+  oauth:
+    google:
+      client_id: YOUR_GOOGLE_CLIENT_ID
+      client_secret: YOUR_GOOGLE_CLIENT_SECRET
+      redirect_url: https://myapp.example.com/auth/callback/google
 
-  github:
-    client_id: YOUR_GITHUB_CLIENT_ID
-    client_secret: YOUR_GITHUB_CLIENT_SECRET
-    redirect_url: https://myapp.example.com/auth/callback
+    github:
+      client_id: YOUR_GITHUB_CLIENT_ID
+      client_secret: YOUR_GITHUB_CLIENT_SECRET
+      redirect_url: https://myapp.example.com/auth/callback/github
 ```
 
 All keys are optional. Omit `auth:` entirely and JWT auth still works with the defaults (1h expiry, no refresh tokens, sign-up open).
