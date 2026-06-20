@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { TableDetail } from "./TableDetail";
 import { DialogProvider } from "../components/Dialog";
 import { ConfigContext } from "../hooks/useConfig";
+import type { SaveOptions } from "../hooks/useConfig";
 import { BackendProvider } from "../console/BackendContext";
 import { adminBackend } from "../console/adminBackend";
 import { renderWithChakra } from "../test/helpers";
@@ -77,7 +78,7 @@ function renderTableDetailNew({
 }: {
   tableName: string;
   seed: Table;
-  save: ReturnType<typeof vi.fn>;
+  save: (updated: Config, opts?: SaveOptions) => Promise<boolean>;
   backend?: ConsoleBackend;
 }) {
   const ctx = {
@@ -161,7 +162,7 @@ describe("TableDetail", () => {
       fireEvent.click(screen.getByRole("button", { name: /save/i }));
     });
     expect(save).toHaveBeenCalledTimes(1);
-    const arg = save.mock.calls[0][0] as Config;
+    const arg = save.mock.calls[0]![0] as Config;
     expect(arg.tables["orders"]).toBeDefined();
   });
 
