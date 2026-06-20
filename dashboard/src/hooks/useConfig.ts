@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { useBackend } from "../console/BackendContext";
-import { showSaveToast } from "../components/SaveToast";
+import { showSaveToast, showSaveErrorToast } from "../components/SaveToast";
 import type { DotenvChange } from "../components/ConfirmSaveDialog";
 import type { Config, ValidationError } from "../lib/types";
 
@@ -113,6 +113,10 @@ export function useConfigState(initialConfig?: Config | null): ConfigStateWithDi
         } else {
           setSaveErrors([{ path: "", message: e.message }]);
         }
+        const msg = e.body?.errors
+          ? `Couldn't save: ${e.body.errors.length} validation error${e.body.errors.length === 1 ? "" : "s"}`
+          : e.message || "Couldn't save";
+        showSaveErrorToast({ message: msg });
         return false;
       }
 
@@ -139,6 +143,10 @@ export function useConfigState(initialConfig?: Config | null): ConfigStateWithDi
         } else {
           setSaveErrors([{ path: "", message: e.message }]);
         }
+        const msg = e.body?.errors
+          ? `Couldn't save: ${e.body.errors.length} validation error${e.body.errors.length === 1 ? "" : "s"}`
+          : e.message || "Couldn't save";
+        showSaveErrorToast({ message: msg });
         return false;
       } finally {
         setSaving(false);

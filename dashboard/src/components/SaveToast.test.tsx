@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { screen, act } from "@testing-library/react";
 import { renderWithChakra } from "../test/helpers";
-import { SaveToast, showSaveToast } from "./SaveToast";
+import { SaveToast, showSaveToast, showSaveErrorToast } from "./SaveToast";
 
 describe("SaveToast", () => {
   it("renders when triggered and disappears after the timeout", () => {
@@ -23,5 +23,13 @@ describe("SaveToast", () => {
   it("does not render when never triggered", () => {
     renderWithChakra(<SaveToast />);
     expect(screen.queryByRole("status")).toBeNull();
+  });
+});
+
+describe("SaveToast error variant", () => {
+  it("renders the error message when showSaveErrorToast is called", () => {
+    renderWithChakra(<SaveToast />);
+    act(() => showSaveErrorToast({ message: "Couldn't save: boom" }));
+    expect(screen.getByText(/Couldn't save: boom/)).toBeInTheDocument();
   });
 });

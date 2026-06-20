@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import { renderWithChakra } from "../test/helpers";
 import { useConfigState } from "./useConfig";
 import { ConfirmSaveDialog } from "../components/ConfirmSaveDialog";
 import type { Config } from "../lib/types";
 import * as api from "../api/client";
+import { showSaveErrorToast } from "../components/SaveToast";
 
 vi.mock("../api/client", async (importOriginal) => {
   const real = await importOriginal<typeof api>();
@@ -19,6 +20,8 @@ vi.mock("../api/client", async (importOriginal) => {
 
 vi.mock("../components/SaveToast", () => ({
   showSaveToast: vi.fn(),
+  showSaveErrorToast: vi.fn(),
+  SaveToast: () => null,
 }));
 
 const baseConfig = {
@@ -79,7 +82,10 @@ describe("useConfigState save confirmation", () => {
     expect(api.putConfig).not.toHaveBeenCalled();
     expect(screen.getByText(/••••abcd/)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /confirm/i }));
+    fireEvent.change(screen.getByLabelText(/type CONFIRM/i), {
+      target: { value: "CONFIRM" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /confirm & save/i }));
     await waitFor(() => expect(api.putConfig).toHaveBeenCalled());
     await waitFor(() => expect(onResult).toHaveBeenCalledWith(true));
   });
@@ -149,5 +155,58 @@ describe("useConfigState seeding", () => {
     // The mount fetch for config must NOT have fired (status may, and is inert in the mock).
     await waitFor(() => expect(api.getConfigStatus).toHaveBeenCalled());
     expect(api.getConfig).not.toHaveBeenCalled();
+  });
+});
+
+describe("useConfigState error toast", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.getConfig).mockResolvedValue(structuredClone(baseConfig));
+    vi.mocked(api.getConfigStatus).mockResolvedValue({ dotenv_writable: true } as any);
+  });
+
+  it("shows an error toast when preview rejects with validation errors", async () => {
+    vi.mocked(api.previewConfig).mockRejectedValue(
+      Object.assign(new Error("Bad Request"), {
+        body: { errors: [{ path: "tables.x", message: "bad" }] },
+      })
+    );
+    const onResult = vi.fn();
+    renderWithChakra(<Harness onResult={onResult} />);
+    await waitFor(() => expect(screen.getByText("do-save")).toBeInTheDocument());
+
+    await act(async () => {
+      fireEvent.click(screen.getByText("do-save"));
+      await waitFor(() => expect(onResult).toHaveBeenCalledWith(false));
+    });
+
+    expect(showSaveErrorToast).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining("1 validation error") })
+    );
+  });
+
+  it("shows an error toast when putConfig rejects", async () => {
+    vi.mocked(api.previewConfig).mockResolvedValue({
+      current: "version: 1\n",
+      proposed: "version: 1\n",
+    });
+    vi.mocked(api.putConfig).mockRejectedValue(
+      Object.assign(new Error("server exploded"), { body: undefined })
+    );
+    const onResult = vi.fn();
+    renderWithChakra(<Harness onResult={onResult} />);
+    await waitFor(() => expect(screen.getByText("do-save")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("do-save"));
+    await waitFor(() => expect(screen.getByText("instancez.yaml")).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText(/type CONFIRM/i), {
+      target: { value: "CONFIRM" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /confirm & save/i }));
+    await waitFor(() => expect(onResult).toHaveBeenCalledWith(false));
+
+    expect(showSaveErrorToast).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "server exploded" })
+    );
   });
 });
