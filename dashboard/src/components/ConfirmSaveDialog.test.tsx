@@ -59,9 +59,8 @@ describe("ConfirmSaveDialog", () => {
     expect(screen.getByText("updated")).toBeInTheDocument();
   });
 
-  it("wires confirm and cancel buttons", () => {
+  it("keeps confirm disabled until CONFIRM is typed", () => {
     const onConfirm = vi.fn();
-    const onCancel = vi.fn();
     renderWithChakra(
       <ConfirmSaveDialog
         current={CURRENT}
@@ -69,12 +68,71 @@ describe("ConfirmSaveDialog", () => {
         dotenvChanges={[]}
         saving={false}
         onConfirm={onConfirm}
+        onCancel={vi.fn()}
+      />
+    );
+    const confirm = screen.getByRole("button", { name: /confirm & save/i });
+    expect(confirm).toBeDisabled();
+    fireEvent.click(confirm);
+    expect(onConfirm).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText(/type CONFIRM/i), {
+      target: { value: "CONFIRM" },
+    });
+    expect(confirm).not.toBeDisabled();
+    fireEvent.click(confirm);
+    expect(onConfirm).toHaveBeenCalled();
+  });
+
+  it("accepts the phrase case-insensitively and trims whitespace", () => {
+    const onConfirm = vi.fn();
+    renderWithChakra(
+      <ConfirmSaveDialog
+        current={CURRENT}
+        proposed={PROPOSED}
+        dotenvChanges={[]}
+        saving={false}
+        onConfirm={onConfirm}
+        onCancel={vi.fn()}
+      />
+    );
+    fireEvent.change(screen.getByLabelText(/type CONFIRM/i), {
+      target: { value: "  confirm  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /confirm & save/i }));
+    expect(onConfirm).toHaveBeenCalled();
+  });
+
+  it("wires the cancel button", () => {
+    const onCancel = vi.fn();
+    renderWithChakra(
+      <ConfirmSaveDialog
+        current={CURRENT}
+        proposed={PROPOSED}
+        dotenvChanges={[]}
+        saving={false}
+        onConfirm={vi.fn()}
         onCancel={onCancel}
       />
     );
-    fireEvent.click(screen.getByRole("button", { name: /confirm/i }));
-    expect(onConfirm).toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
     expect(onCancel).toHaveBeenCalled();
+  });
+
+  it("diff pre container uses compact lineHeight 1.5, not sprawling 5", () => {
+    const { container } = renderWithChakra(
+      <ConfirmSaveDialog
+        current={CURRENT}
+        proposed={PROPOSED}
+        dotenvChanges={[]}
+        saving={false}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    );
+    const pre = container.querySelector("pre");
+    expect(pre).not.toBeNull();
+    const style = window.getComputedStyle(pre!);
+    expect(style.lineHeight).not.toBe("5");
   });
 });

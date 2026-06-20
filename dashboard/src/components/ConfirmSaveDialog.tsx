@@ -1,8 +1,11 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { structuredPatch } from "diff";
 import { FileDiff, X } from "lucide-react";
 import { Box, HStack, Text, VStack } from "@chakra-ui/react";
-import { Button } from "./ui";
+import { Button, Input } from "./ui";
+
+/** Word the user must type to arm the Confirm button. */
+const CONFIRM_PHRASE = "CONFIRM";
 
 export interface DotenvChange {
   /** Env var name being written to .env */
@@ -47,6 +50,9 @@ export function ConfirmSaveDialog({
     [current, proposed]
   );
 
+  const [phrase, setPhrase] = useState("");
+  const armed = phrase.trim().toUpperCase() === CONFIRM_PHRASE;
+
   return (
     <Box position="fixed" inset="0" zIndex="50" display="flex" alignItems="center" justifyContent="center" p="6">
       <Box position="absolute" inset="0" bg="blackAlpha.400" onClick={onCancel} />
@@ -85,7 +91,7 @@ export function ConfirmSaveDialog({
                 bg="bg"
                 fontSize="11px"
                 fontFamily="mono"
-                lineHeight="5"
+                lineHeight="1.5"
                 overflowX="auto"
               >
                 {hunks.map((hunk, hi) => (
@@ -149,13 +155,32 @@ export function ConfirmSaveDialog({
           )}
         </VStack>
 
-        <HStack justify="end" gap="2" px="5" py="3" borderTopWidth="1px">
-          <Button variant="ghost" onClick={onCancel} disabled={saving}>
-            Cancel
-          </Button>
-          <Button onClick={onConfirm} loading={saving}>
-            {saving ? "Saving..." : "Confirm & Save"}
-          </Button>
+        <HStack justify="space-between" gap="3" px="5" py="3" borderTopWidth="1px">
+          <HStack gap="2" flex="1" minW="0">
+            <Box as="label" {...({ htmlFor: "confirm-phrase" } as object)} fontSize="xs" color="fg.muted" whiteSpace="nowrap">
+              Type <Box as="code" fontFamily="mono" color="fg">{CONFIRM_PHRASE}</Box> to apply
+            </Box>
+            <Box w="40" flexShrink="0">
+              <Input
+                id="confirm-phrase"
+                inputSize="sm"
+                mono
+                value={phrase}
+                onChange={(e) => setPhrase(e.target.value)}
+                placeholder={CONFIRM_PHRASE}
+                autoFocus
+                disabled={saving}
+              />
+            </Box>
+          </HStack>
+          <HStack gap="2" flexShrink="0">
+            <Button variant="ghost" onClick={onCancel} disabled={saving}>
+              Cancel
+            </Button>
+            <Button onClick={onConfirm} loading={saving} disabled={!armed}>
+              {saving ? "Saving..." : "Confirm & Save"}
+            </Button>
+          </HStack>
         </HStack>
       </Box>
     </Box>
