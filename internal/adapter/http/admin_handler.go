@@ -146,6 +146,32 @@ func (h *AdminHandler) handleKeys(c *gin.Context) {
 	c.JSON(200, gin.H{"anon_key": anonKey})
 }
 
+// handleJWTKey returns the active signing key's public material (JWKS form) plus
+// its kid and algorithm. Private key material is never included. Mirrors
+// handleKeys' nil-manager guard.
+func (h *AdminHandler) handleJWTKey(c *gin.Context) {
+	if h.jwtKeys == nil {
+		adminErr(c, 501, "not_implemented", "JWT key manager not configured")
+		return
+	}
+	key, err := h.jwtKeys.Active(c.Request.Context())
+	if err != nil {
+		h.logger.Error("active jwt key", "error", err)
+		adminErr(c, 500, "internal", "failed to load signing key")
+		return
+	}
+	jwk, err := key.PublicJWK()
+	if err != nil {
+		adminErr(c, 500, "internal", "failed to serialize signing key")
+		return
+	}
+	c.JSON(200, gin.H{
+		"kid":       key.KID,
+		"algorithm": key.Algorithm,
+		"jwks":      gin.H{"keys": []any{jwk}},
+	})
+}
+
 func (h *AdminHandler) handleListMigrations(c *gin.Context) {
 	ctx := c.Request.Context()
 	rows, err := h.db.Query(ctx,
