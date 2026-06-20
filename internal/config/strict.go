@@ -6,23 +6,32 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"strings"
+	"strconv"
 
 	"github.com/instancez/instancez/internal/domain"
 	"gopkg.in/yaml.v3"
 )
 
-// strictUnmarshalYAML decodes YAML into cfg and rejects any key that does not
-// map to a struct field. Map-keyed sections (tables, storage, rpc, functions,
-// auth.oauth, auth.email.templates) still accept arbitrary keys because
-// KnownFields only constrains struct fields.
-func strictUnmarshalYAML(data []byte, cfg *domain.Config) error {
+// decodeYAMLStrict decodes YAML into cfg and records any key that does not map
+// to a struct field on cfg.UnknownKeys (which Validate later surfaces). Unknown
+// keys are NOT fatal: the struct is still fully populated, so structural
+// validation runs and the caller sees every problem in one pass. Map-keyed
+// sections (tables, storage, rpc, functions, auth.oauth, auth.email.templates)
+// still accept arbitrary keys because KnownFields only constrains struct fields.
+// A genuine syntax error (not an unknown-field TypeError) is returned as fatal.
+func decodeYAMLStrict(data []byte, cfg *domain.Config) error {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
-	if err := dec.Decode(cfg); err != nil {
-		return translateUnknownKeyErr(err)
+	err := dec.Decode(cfg)
+	if err == nil {
+		return nil
 	}
-	return nil
+	var te *yaml.TypeError
+	if errors.As(err, &te) {
+		cfg.UnknownKeys = append(cfg.UnknownKeys, unknownKeyProblems(te)...)
+		return nil
+	}
+	return err
 }
 
 // yamlUnknownFieldRe matches yaml.v3's KnownFields error sub-message, e.g.
@@ -39,6 +48,7 @@ var yamlTypeToSection = map[string]string{
 	"domain.OAuthProvider":   "auth.oauth.<name>",
 	"domain.Server":          "server",
 	"domain.Project":         "project",
+	"domain.ProjectCloud":    "project.cloud",
 	"domain.Providers":       "providers",
 	"domain.EmailProvider":   "providers.email",
 	"domain.StorageProvider": "providers.storage",
@@ -52,50 +62,90 @@ var yamlTypeToSection = map[string]string{
 	"domain.Bucket":          "storage.<name>",
 }
 
-// translateUnknownKeyErr converts a yaml.v3 TypeError into a readable message
-// listing every unknown key. Non-TypeErrors pass through unchanged.
-func translateUnknownKeyErr(err error) error {
-	var te *yaml.TypeError
-	if !errors.As(err, &te) {
-		return err
-	}
-	msgs := make([]string, 0, len(te.Errors))
+// unknownKeyProblems converts a yaml.v3 TypeError into one ValidationError per
+// unknown key. A sub-message that doesn't match the known shape is passed
+// through verbatim so nothing is silently lost.
+func unknownKeyProblems(te *yaml.TypeError) domain.ValidationErrors {
+	out := make(domain.ValidationErrors, 0, len(te.Errors))
 	for _, sub := range te.Errors {
-		msgs = append(msgs, friendlyYAMLFieldErr(sub))
+		m := yamlUnknownFieldRe.FindStringSubmatch(sub)
+		if m == nil {
+			out = append(out, &domain.ValidationError{Message: sub})
+			continue
+		}
+		line, _ := strconv.Atoi(m[1])
+		field, typ := m[2], m[3]
+		path := "(top level)"
+		if section, ok := yamlTypeToSection[typ]; ok {
+			path = section
+		}
+		out = append(out, &domain.ValidationError{
+			Path:    path,
+			Line:    line,
+			Message: fmt.Sprintf("unknown key %q", field),
+		})
 	}
-	return errors.New(strings.Join(msgs, "; "))
+	return out
 }
 
-func friendlyYAMLFieldErr(sub string) string {
-	m := yamlUnknownFieldRe.FindStringSubmatch(sub)
-	if m == nil {
-		return sub // some other type error; show it verbatim
-	}
-	line, field, typ := m[1], m[2], m[3]
-	if section, ok := yamlTypeToSection[typ]; ok {
-		return fmt.Sprintf("line %s: unknown key %q under %s", line, field, section)
-	}
-	return fmt.Sprintf("line %s: unknown key %q", line, field)
-}
-
-// UnmarshalConfigJSON decodes a JSON config body, rejecting unknown fields. It
-// does not apply defaults; callers that need them call ApplyDefaults afterward,
-// matching the previous json.Unmarshal behavior.
+// UnmarshalConfigJSON decodes a JSON config body. Unknown fields are recorded on
+// cfg.UnknownKeys (surfaced by Validate), not treated as fatal. This mirrors the
+// YAML path so the dashboard edit surface aggregates unknown keys with the rest.
+// It does not apply defaults; callers that need them call ApplyDefaults after.
 func UnmarshalConfigJSON(data []byte) (*domain.Config, error) {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
+	// First a lenient pass to populate the struct regardless of unknown fields.
 	var cfg domain.Config
-	if err := dec.Decode(&cfg); err != nil {
-		return nil, translateJSONUnknownKeyErr(err)
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, err
+	}
+	// Then a strict pass purely to detect unknown fields. encoding/json reports
+	// the first unknown field per decode; loop, stripping each as we find it, to
+	// report them all.
+	for _, key := range jsonUnknownFields(data) {
+		cfg.UnknownKeys = append(cfg.UnknownKeys, &domain.ValidationError{Message: fmt.Sprintf("unknown key %q", key)})
 	}
 	return &cfg, nil
 }
 
-var jsonUnknownFieldRe = regexp.MustCompile(`^json: unknown field "(.+)"$`)
+var jsonUnknownFieldRe = regexp.MustCompile(`json: unknown field "(.+)"`)
 
-func translateJSONUnknownKeyErr(err error) error {
-	if m := jsonUnknownFieldRe.FindStringSubmatch(err.Error()); m != nil {
-		return fmt.Errorf("unknown key %q", m[1])
+// jsonUnknownFields returns every unknown field name in a JSON config body.
+// encoding/json surfaces one unknown field per Decode, so we re-decode while
+// trimming the seen fields out of the candidate set until none remain.
+func jsonUnknownFields(data []byte) []string {
+	var found []string
+	seen := map[string]bool{}
+	for {
+		dec := json.NewDecoder(bytes.NewReader(data))
+		dec.DisallowUnknownFields()
+		var sink domain.Config
+		err := dec.Decode(&sink)
+		if err == nil {
+			return found
+		}
+		m := jsonUnknownFieldRe.FindStringSubmatch(err.Error())
+		if m == nil || seen[m[1]] {
+			// Not an unknown-field error, or we've already recorded it and can't
+			// make progress, so stop to avoid looping.
+			return found
+		}
+		seen[m[1]] = true
+		found = append(found, m[1])
+		data = stripJSONField(data, m[1])
 	}
-	return err
+}
+
+// stripJSONField removes the top-level "name": <value> member so the next strict
+// decode surfaces the following unknown field instead of the same one.
+func stripJSONField(data []byte, name string) []byte {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return data
+	}
+	delete(raw, name)
+	out, err := json.Marshal(raw)
+	if err != nil {
+		return data
+	}
+	return out
 }

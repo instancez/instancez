@@ -31,7 +31,7 @@ func ParseBytes(data []byte, origin string) (*domain.Config, error) {
 	}
 
 	var cfg domain.Config
-	if err := strictUnmarshalYAML([]byte(interpolated), &cfg); err != nil {
+	if err := decodeYAMLStrict([]byte(interpolated), &cfg); err != nil {
 		return nil, &domain.ConfigError{Path: origin, Message: "invalid YAML", Err: err}
 	}
 
@@ -93,7 +93,7 @@ func ForceLoadDotenv(path string) error {
 func ParseBytesLenient(data []byte, origin string) (*domain.Config, error) {
 	interpolated := interpolateEnvVarsLenient(string(data))
 	var cfg domain.Config
-	if err := strictUnmarshalYAML([]byte(interpolated), &cfg); err != nil {
+	if err := decodeYAMLStrict([]byte(interpolated), &cfg); err != nil {
 		return nil, &domain.ConfigError{Path: origin, Message: "invalid YAML", Err: err}
 	}
 	applyDefaults(&cfg)
@@ -105,7 +105,7 @@ func ParseBytesLenient(data []byte, origin string) (*domain.Config, error) {
 // secret values never transit the dashboard API layer.
 func ParseBytesRaw(data []byte, origin string) (*domain.Config, error) {
 	var cfg domain.Config
-	if err := strictUnmarshalYAML(data, &cfg); err != nil {
+	if err := decodeYAMLStrict(data, &cfg); err != nil {
 		return nil, &domain.ConfigError{Path: origin, Message: "invalid YAML", Err: err}
 	}
 	applyDefaults(&cfg)

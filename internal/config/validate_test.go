@@ -802,15 +802,22 @@ func TestValidateCodeFunctions_BadTimeout(t *testing.T) {
 
 func TestRejectOldRPCShapeUnderFunctions(t *testing.T) {
 	// The old Postgres-RPC shape (language/body/returns) is not valid under the
-	// code-functions block. Strict decoding now rejects these unknown keys at
-	// parse time, before validation.
+	// code-functions block. Strict decoding records these as unknown keys, which
+	// Validate surfaces.
 	raw := []byte("version: 1\nfunctions:\n  legacy:\n    language: sql\n    body: \"SELECT 1\"\n    returns:\n      type: void\n")
-	_, err := ParseBytes(raw, "test")
-	if err == nil {
-		t.Fatal("expected the old RPC shape under functions: to be rejected")
+	cfg, err := ParseBytes(raw, "test")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
 	}
-	if !strings.Contains(err.Error(), "language") {
-		t.Errorf("error should name the legacy RPC key, got: %v", err)
+	errs := Validate(cfg)
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Message, "language") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected an unknown-key error naming the legacy RPC key, got: %+v", errs)
 	}
 }
 

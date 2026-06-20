@@ -179,6 +179,10 @@ var reservedTableNames = map[string]bool{}
 func Validate(cfg *domain.Config) domain.ValidationErrors {
 	var errs domain.ValidationErrors
 
+	// Unknown keys detected at decode time are reported first, alongside the
+	// structural errors below, so the caller sees everything in one pass.
+	errs = append(errs, cfg.UnknownKeys...)
+
 	if cfg.Version != 1 {
 		errs = append(errs, &domain.ValidationError{
 			Path:       "version",
