@@ -162,6 +162,7 @@ func (h *AdminHandler) handleJWTKey(c *gin.Context) {
 	}
 	jwk, err := key.PublicJWK()
 	if err != nil {
+		h.logger.Error("serialize jwt public key", "error", err)
 		adminErr(c, 500, "internal", "failed to serialize signing key")
 		return
 	}

@@ -36,7 +36,8 @@ func TestHandleJWTKey_ReturnsPublicOnly(t *testing.T) {
 		t.Fatalf("unexpected body: %v", got)
 	}
 	// No private material anywhere in the response.
-	if strings.Contains(w.Body.String(), "PRIVATE KEY") || strings.Contains(w.Body.String(), `"d"`) {
+	body := w.Body.String()
+	if strings.Contains(body, "PRIVATE KEY") || strings.Contains(body, `"d":`) {
 		t.Fatal("response leaked private key material")
 	}
 }
