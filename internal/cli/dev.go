@@ -43,8 +43,12 @@ func runDev(opts devOptions) error {
 		return err
 	}
 
-	// Embedded Postgres: start before LoadDotenv so INSTANCEZ_DATABASE_URL is
-	// already set when loadDotenv runs (loadDotenv skips keys already in env).
+	// Embedded Postgres owns a throwaway local database; its superuser DSN is
+	// threaded straight into dbConnections below. We deliberately do not read or
+	// write any DSN env var for it. Scoped DSNs (or a stale superuser DSN) left
+	// in the shell or .development.env from an earlier external-Postgres setup
+	// must not redirect the instance at the wrong database.
+	var embeddedSuperuserDSN string
 	if opts.dbSrc == DevDBSourceEmbedded {
 		fmt.Printf("  Starting embedded Postgres 16...\n")
 		stop, superuserDSN, err := startEmbeddedPostgres(opts)
@@ -53,9 +57,7 @@ func runDev(opts devOptions) error {
 			return errReported
 		}
 		defer stop()
-		if err := os.Setenv("INSTANCEZ_DATABASE_URL", superuserDSN); err != nil {
-			return fmt.Errorf("set INSTANCEZ_DATABASE_URL: %w", err)
-		}
+		embeddedSuperuserDSN = superuserDSN
 		fmt.Printf("  ✓ Embedded Postgres ready\n")
 	}
 
@@ -69,10 +71,13 @@ func runDev(opts devOptions) error {
 		fmt.Println("generated INSTANCEZ_ADMIN_KEY — see .development.env")
 	}
 
-	if r, failed := preflight.RunUntilFail([]preflight.Check{
-		preflight.ConfigValidCheck(opts.configPath),
-		preflight.SuperuserDSNPresentCheck(os.Getenv),
-	}); failed {
+	// The superuser-DSN presence check only applies to the env-driven DSN path;
+	// embedded Postgres supplies its own DSN directly.
+	checks := []preflight.Check{preflight.ConfigValidCheck(opts.configPath)}
+	if embeddedSuperuserDSN == "" {
+		checks = append(checks, preflight.SuperuserDSNPresentCheck(os.Getenv))
+	}
+	if r, failed := preflight.RunUntilFail(checks); failed {
 		fmt.Fprintf(os.Stderr, "  ✗ %s — %s\n    hint: %s\n", r.Name, r.Detail, r.FixHint)
 		return errReported
 	}
@@ -114,7 +119,7 @@ func runDev(opts devOptions) error {
 	}
 
 	ctx := context.Background()
-	ownerDB, authDB, roles, err := dbConnections(ctx, cfg.Database.Pool)
+	ownerDB, authDB, roles, err := dbConnections(ctx, cfg.Database.Pool, embeddedSuperuserDSN)
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}

@@ -306,6 +306,27 @@ func scanWorkerStderr(r io.Reader, logger *slog.Logger, wg *sync.WaitGroup) {
 	}
 }
 
+// MinNodeMajorVersion is the lowest Node.js major version instancez supports
+// for code functions. It is the floor declared by our shipped runtime
+// dependency @supabase/supabase-js (engines.node ">=20.0.0"); worker.js itself
+// only needs ~16. The version is documented, not enforced — lower versions may
+// work but are unsupported, so we only assert that *some* node binary is on
+// PATH, not which one.
+const MinNodeMajorVersion = 20
+
+// RequireNode returns an actionable error when the `node` binary is not on
+// PATH. Code functions are run by spawning node (and their dependencies are
+// vendored with npm, which ships with node), so this is a hard requirement
+// whenever any function is declared. It is called from New and is also exported
+// so the dev/deploy build steps can fail with the same message BEFORE shelling
+// out to npm, rather than surfacing a raw `exec: npm: ... not found`.
+func RequireNode() error {
+	if _, err := exec.LookPath("node"); err != nil {
+		return fmt.Errorf("funcs: node not found on PATH: instancez code functions require Node.js >= %d — install Node.js (https://nodejs.org) or remove the functions: block from instancez.yaml", MinNodeMajorVersion)
+	}
+	return nil
+}
+
 func New(opts Options) (*Runtime, error) {
 	if opts.EnvMap == nil {
 		opts.EnvMap = map[string]string{}
@@ -335,6 +356,16 @@ func New(opts Options) (*Runtime, error) {
 				}
 			}
 		}
+	}
+
+	// Require node on PATH before allocating any resources (shim write, spawn).
+	// Functions cannot run without Node.js, so a missing binary must fail here
+	// at startup with an actionable message rather than as a raw exec error on
+	// the first worker spawn. This runs AFTER the env-ref validation above so
+	// that pure-validation failures (which need no node) still win — keeping
+	// TestNewFailsEarlyOnMissingEnvRef green in node-less unit environments.
+	if err := RequireNode(); err != nil {
+		return nil, err
 	}
 
 	// Write the shim into <opts.Dir>/functions/ — the directory that contains

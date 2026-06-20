@@ -82,3 +82,24 @@ func TestMarshalYAML_MalformedJSONReturnsError(t *testing.T) {
 		t.Fatal("expected an error for malformed JSON")
 	}
 }
+
+// An rpc block that omits the defaultable fields (security, language,
+// volatility) must validate cleanly — MarshalYAML decodes JSON straight into a
+// domain.Config, so it must apply the same defaults every ParseBytes* loader
+// applies before validating. Regression: deleting a code function in the console
+// re-marshals the whole stored config, which failed with
+// `rpc.<name>.security: invalid security ""` when an rpc lacked an explicit
+// security value.
+func TestMarshalYAML_RPCWithoutSecurityDefaults(t *testing.T) {
+	jsonSrc := []byte(`{"version":1,"project":{"name":"demo"},"rpc":{"get_task_stats":{"returns":{"type":"integer"},"body":"SELECT 1;"}}}`)
+	out, probs, err := MarshalYAML(jsonSrc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(probs) != 0 {
+		t.Fatalf("expected no validation problems for rpc without security, got %+v", probs)
+	}
+	if !strings.Contains(string(out), "security: invoker") {
+		t.Fatalf("expected defaulted `security: invoker` in output, got:\n%s", out)
+	}
+}

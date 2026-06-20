@@ -62,6 +62,31 @@ func TestNewFailsEarlyOnMissingEnvRef(t *testing.T) {
 	}
 }
 
+// TestNewRequiresNodeOnPath verifies that New fails with an actionable error
+// when the `node` binary is not on PATH. Code functions cannot run without
+// Node.js, so this must fail at startup (New) rather than at first invocation.
+// PATH is emptied so exec.LookPath("node") fails deterministically regardless
+// of whether the host has node installed. The assertion checks for the
+// human-facing "Node.js" / minimum-version text so a future refactor cannot
+// silently regress to the raw `exec: "node": ... not found` spawn error.
+func TestNewRequiresNodeOnPath(t *testing.T) {
+	t.Setenv("PATH", "")
+	opts := Options{
+		Dir: t.TempDir(),
+		Functions: map[string]domain.CodeFunction{
+			"hello": {Runtime: "node", File: "hello.js"},
+		},
+		EnvMap: map[string]string{},
+	}
+	_, err := New(opts)
+	if err == nil {
+		t.Fatal("expected error when node is missing from PATH, got nil")
+	}
+	if !containsAll(err.Error(), "Node.js", "20") {
+		t.Fatalf("error %q should name Node.js and the minimum version", err.Error())
+	}
+}
+
 // TestNewAcceptsLiteralEnvValues verifies that a literal env value (no ${…})
 // does not trigger the fail-early check even when EnvMap is empty.
 func TestNewAcceptsLiteralEnvValues(t *testing.T) {

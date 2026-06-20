@@ -1804,6 +1804,60 @@ await step('storage: uploadToSignedUrl rejects bad token', async () => {
   assertEq(resp.status, 400, 'bad token rejected')
 })
 
+// --- Signed upload authorization (owner-scoped RLS on the `owned` bucket) ---
+
+await step('storage: createSignedUploadUrl enforces the bucket insert policy at mint time', async () => {
+  // The `owned` policy confines writes to the "mine/" prefix. An authenticated
+  // user requesting a token for a path outside it fails the probe INSERT, so no
+  // token is minted. This is the gap the mint-time check closes: without it,
+  // any authenticated caller could obtain a token for any path and redeem it as
+  // service_role.
+  const resp = await fetch(`${URL}/storage/v1/object/upload/sign/owned/blocked.txt`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      apikey: ANON_KEY,
+      'Content-Type': 'application/json',
+    },
+    body: '{}',
+  })
+  assertEq(resp.status, 403, 'mint denied for a path the insert policy forbids')
+  const data = await resp.json()
+  assert(!data.token, 'no token handed to an unauthorized caller')
+})
+
+await step('storage: signed upload threads owner so the uploader can read it back', async () => {
+  // For an allowed path the insert policy passes, and the owner bound into the
+  // token is persisted as uploaded_by. The owner-scoped select policy then
+  // matches on read-back, proof the redemption recorded the owner rather than
+  // a NULL.
+  const signResp = await fetch(`${URL}/storage/v1/object/upload/sign/owned/mine/file.txt`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      apikey: ANON_KEY,
+      'Content-Type': 'application/json',
+    },
+    body: '{}',
+  })
+  assert(signResp.ok, `authenticated mint failed: ${signResp.status}`)
+  const signData = await signResp.json()
+  assert(signData.token, 'token present')
+
+  const upResp = await fetch(`${URL}/storage/v1/object/upload/sign/owned/mine/file.txt?token=${signData.token}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'text/plain' },
+    body: 'owned content',
+  })
+  assert(upResp.ok, `redeem failed: ${upResp.status}`)
+
+  const dl = await fetch(`${URL}/storage/v1/object/authenticated/owned/mine/file.txt`, {
+    headers: { Authorization: `Bearer ${accessToken}`, apikey: ANON_KEY },
+  })
+  assert(dl.ok, `owner read-back failed (uploaded_by not threaded?): ${dl.status}`)
+  assertEq(await dl.text(), 'owned content', 'owner reads back their object')
+})
+
 // --- Remove ---
 
 await step('storage: remove objects', async () => {

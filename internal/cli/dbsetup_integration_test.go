@@ -19,7 +19,7 @@ func TestDBConnectionsProvisionRoles(t *testing.T) {
 
 	t.Setenv("INSTANCEZ_DATABASE_URL", dsn)
 
-	owner, auth, roles, err := dbConnections(ctx, domain.PoolConfig{Max: 2})
+	owner, auth, roles, err := dbConnections(ctx, domain.PoolConfig{Max: 2}, "")
 	if err != nil {
 		t.Fatalf("dbConnections: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestDBConnectionsIdempotent(t *testing.T) {
 
 	// First startup — provisions roles
 	t.Setenv("INSTANCEZ_DATABASE_URL", dsn)
-	owner1, auth1, _, err := dbConnections(ctx, domain.PoolConfig{Max: 2})
+	owner1, auth1, _, err := dbConnections(ctx, domain.PoolConfig{Max: 2}, "")
 	if err != nil {
 		t.Fatalf("first dbConnections: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestDBConnectionsIdempotent(t *testing.T) {
 	auth1.Close()
 
 	// Second startup — roles already exist, bootstrapDB must be a no-op
-	owner2, auth2, _, err := dbConnections(ctx, domain.PoolConfig{Max: 2})
+	owner2, auth2, _, err := dbConnections(ctx, domain.PoolConfig{Max: 2}, "")
 	if err != nil {
 		t.Fatalf("second dbConnections (idempotency check): %v", err)
 	}
@@ -84,7 +84,7 @@ func TestDBConnectionsPasswordRotation(t *testing.T) {
 
 	// First startup — provisions roles with original password
 	t.Setenv("INSTANCEZ_DATABASE_URL", dsn)
-	owner1, auth1, _, err := dbConnections(ctx, domain.PoolConfig{Max: 2})
+	owner1, auth1, _, err := dbConnections(ctx, domain.PoolConfig{Max: 2}, "")
 	if err != nil {
 		t.Fatalf("first dbConnections: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestDBConnectionsPasswordRotation(t *testing.T) {
 	t.Setenv("INSTANCEZ_DATABASE_URL", rotatedDSN)
 
 	// Second startup — bootstrapDB should update role passwords to match new superuser password
-	owner2, auth2, roles, err := dbConnections(ctx, domain.PoolConfig{Max: 2})
+	owner2, auth2, roles, err := dbConnections(ctx, domain.PoolConfig{Max: 2}, "")
 	if err != nil {
 		t.Fatalf("second dbConnections after password rotation: %v", err)
 	}

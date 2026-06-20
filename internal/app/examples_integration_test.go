@@ -15,10 +15,11 @@ import (
 	"github.com/instancez/instancez/internal/testutil/dbboot"
 )
 
-// startExamplesPostgres spins up a postgres:15-alpine container (image cached locally).
+// startExamplesPostgres spins up a Postgres testcontainer at the version the
+// suite is pinned to (dbboot.PostgresImage, driven by the CI matrix).
 func startExamplesPostgres(t *testing.T) *pgadapter.DB {
 	t.Helper()
-	owner, _ := dbboot.StartContainer(t, "postgres:15-alpine")
+	owner, _ := dbboot.StartContainer(t)
 	return owner.Database.(*pgadapter.DB)
 }
 

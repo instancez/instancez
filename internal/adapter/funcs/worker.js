@@ -128,8 +128,14 @@ function firstVals(q) {
 // child env. env/log are placeholders filled by later tasks.
 function buildCtx(uctx) {
   const dp = uctx.dataPlane || {};
-  const mk = (token) => {
-    if (!createClient) throw new Error("@supabase/supabase-js not vendored");
+  const mk = (token, accessor) => {
+    if (!createClient) {
+      throw new Error(
+        `ctx.${accessor} requires @supabase/supabase-js, which was not found. ` +
+        `Add "@supabase/supabase-js" to your function's dependencies ` +
+        `(it is only needed by functions that use ctx.supabase or ctx.serviceClient).`
+      );
+    }
     return createClient(dp.url, dp.anonKey, {
       global: {
         headers: {
@@ -143,10 +149,10 @@ function buildCtx(uctx) {
   // functions that ignore ctx (and envs without supabase-js) never trip mk().
   return {
     get supabase() {
-      return mk(dp.callerToken);
+      return mk(dp.callerToken, "supabase");
     },
     get serviceClient() {
-      return mk(dp.serviceToken);
+      return mk(dp.serviceToken, "serviceClient");
     },
     claims: uctx.claims ?? null,
     env: uctx.env || {},

@@ -155,6 +155,57 @@ func TestBuildBundleNoFunctionsDir(t *testing.T) {
 	assert.Error(t, err, "missing functions/ dir is an error")
 }
 
+// TestBuildBundleRequiresNodeWhenPackageJSON verifies that BuildBundle fails
+// with the actionable "Node.js" message — not the raw `npm ci ... not found` —
+// when a package.json is present but node is missing from PATH. PATH is emptied
+// so exec.LookPath("node") fails deterministically.
+func TestBuildBundleRequiresNodeWhenPackageJSON(t *testing.T) {
+	t.Setenv("PATH", "")
+	dir := t.TempDir()
+	fnDir := filepath.Join(dir, "functions")
+	require.NoError(t, os.MkdirAll(fnDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(fnDir, "package.json"),
+		[]byte(`{"name":"x","private":true}`), 0o644))
+
+	_, err := BuildBundle(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Node.js")
+	assert.Contains(t, err.Error(), "20")
+	assert.NotContains(t, err.Error(), "npm")
+}
+
+// fakeNodeOnPath puts a stub `node` executable on PATH (and nothing else), so
+// funcs.RequireNode() succeeds while keeping `npm` absent. Used to drive code
+// past the node gate to the checks that follow it.
+func fakeNodeOnPath(t *testing.T) {
+	t.Helper()
+	bin := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "node"),
+		[]byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("PATH", bin)
+}
+
+// TestBuildBundleRequiresLockfileWhenPackageJSON verifies that BuildBundle fails
+// with an actionable error naming package-lock.json when a package.json is
+// present but no lockfile is committed. `npm ci` (which deploy/bundle always
+// use, never falling back to `npm install`) requires a lockfile and would
+// otherwise fail cryptically. A stub `node` is on PATH so the lockfile check —
+// not the node gate — is what fires.
+func TestBuildBundleRequiresLockfileWhenPackageJSON(t *testing.T) {
+	fakeNodeOnPath(t)
+	dir := t.TempDir()
+	fnDir := filepath.Join(dir, "functions")
+	require.NoError(t, os.MkdirAll(fnDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(fnDir, "package.json"),
+		[]byte(`{"name":"x","private":true}`), 0o644))
+	// package-lock.json intentionally absent
+
+	_, err := BuildBundle(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "package-lock.json")
+	assert.Contains(t, err.Error(), "npm install")
+}
+
 // fakeUploader records what it was asked to upload and returns a fixed version.
 type fakeUploader struct {
 	calledDest string
@@ -268,11 +319,11 @@ func TestResolveBundleDest(t *testing.T) {
 	const ver = "abc123"
 
 	tests := []struct {
-		name        string
-		dest        string
+		name         string
+		dest         string
 		wantVerbatim bool // true = dest returned unchanged
-		wantPrefix  string
-		wantSuffix  string
+		wantPrefix   string
+		wantSuffix   string
 	}{
 		{
 			name:         "full key is returned verbatim",

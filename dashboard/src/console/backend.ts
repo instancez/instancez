@@ -7,8 +7,13 @@ export interface Capabilities {
   canWriteConfig: boolean;
   /** Secrets can be written back (instance: dotenv file; platform: secret store + env sync). */
   canWriteSecrets: boolean;
-  /** Function source files are editable (instance: local FS; platform: version artifact). */
+  /** A function's source file *contents* can be edited in place (instance: local
+   *  FS; platform: draft artifact). Distinct from canEditFunctionFile. */
   canEditFunctionCode: boolean;
+  /** A function's source file *path* can be repointed (instance: local FS, the
+   *  user owns the layout; platform: the file is a managed artifact at a fixed
+   *  path, so the field is read-only). Distinct from canEditFunctionCode. */
+  canEditFunctionFile: boolean;
   /** npm dependencies can be changed (instance: npm on host; platform: build pipeline). */
   canManageDeps: boolean;
   /** Live stats (row counts, storage usage) are available. */
@@ -20,6 +25,7 @@ export function fullCapabilities(): Capabilities {
     canWriteConfig: true,
     canWriteSecrets: true,
     canEditFunctionCode: true,
+    canEditFunctionFile: true,
     canManageDeps: true,
     hasStats: true,
   };

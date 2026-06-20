@@ -6,6 +6,8 @@ import { renderWithChakra } from "../test/helpers";
 import { FunctionDetail } from "./FunctionDetail";
 import { DialogProvider } from "../components/Dialog";
 import { ConfigContext } from "../hooks/useConfig";
+import { BackendProvider } from "../console/BackendContext";
+import { adminBackend } from "../console/adminBackend";
 import type { Config, ValidationError } from "../lib/types";
 
 // --- mock API -----------------------------------------------------------
@@ -54,7 +56,11 @@ const SAMPLE_CODE = `export default async function handler(req, ctx) {
   return new Response("ok");
 }`;
 
-function renderFunctionDetail(config: Config, fnName: string) {
+function renderFunctionDetail(
+  config: Config,
+  fnName: string,
+  backend = adminBackend
+) {
   const ctx = {
     config,
     loading: false,
@@ -68,15 +74,17 @@ function renderFunctionDetail(config: Config, fnName: string) {
     updateConfig: vi.fn(),
   };
   renderWithChakra(
-    <ConfigContext.Provider value={ctx}>
-      <MemoryRouter initialEntries={[`/functions/${fnName}`]}>
-        <DialogProvider>
-          <Routes>
-            <Route path="/functions/:name" element={<FunctionDetail />} />
-          </Routes>
-        </DialogProvider>
-      </MemoryRouter>
-    </ConfigContext.Provider>
+    <BackendProvider backend={backend}>
+      <ConfigContext.Provider value={ctx}>
+        <MemoryRouter initialEntries={[`/functions/${fnName}`]}>
+          <DialogProvider>
+            <Routes>
+              <Route path="/functions/:name" element={<FunctionDetail />} />
+            </Routes>
+          </DialogProvider>
+        </MemoryRouter>
+      </ConfigContext.Provider>
+    </BackendProvider>
   );
   return ctx;
 }
@@ -159,6 +167,18 @@ describe("FunctionDetail – config fields", () => {
   it("renders file path value", () => {
     renderFunctionDetail(baseConfig, "process_image");
     expect(screen.getByDisplayValue("functions/process-image.js")).toBeInTheDocument();
+  });
+
+  it("makes the file path read-only when canEditFunctionFile is off", () => {
+    const backend = {
+      ...adminBackend,
+      capabilities: { ...adminBackend.capabilities, canEditFunctionFile: false },
+    };
+    renderFunctionDetail(baseConfig, "process_image", backend);
+    // The value is still shown (the user can see which file backs the function)…
+    const fileInput = screen.getByDisplayValue("functions/process-image.js");
+    // …but the field is not editable.
+    expect(fileInput).toHaveAttribute("readonly");
   });
 
   it("renders timeout value", () => {

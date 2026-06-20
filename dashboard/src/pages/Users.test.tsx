@@ -33,6 +33,7 @@ function makeBackend(overrides: Partial<ConsoleBackend> = {}): ConsoleBackend {
       canWriteConfig: false,
       canWriteSecrets: false,
       canEditFunctionCode: false,
+      canEditFunctionFile: false,
       canManageDeps: false,
       hasStats: false,
     },

@@ -83,14 +83,84 @@ func TestOwnerPoolConfigRespectsSmallerUserMax(t *testing.T) {
 }
 
 func TestDBConnectionsRequiresSuperuserURL(t *testing.T) {
+	// Clear every DSN var so the resolver has no input at all.
 	t.Setenv("INSTANCEZ_DATABASE_URL", "")
+	t.Setenv("INSTANCEZ_OWNER_DATABASE_URL", "")
+	t.Setenv("INSTANCEZ_AUTH_DATABASE_URL", "")
 
-	_, _, _, err := dbConnections(context.Background(), domain.PoolConfig{Max: 1})
+	_, _, _, err := dbConnections(context.Background(), domain.PoolConfig{Max: 1}, "")
 	if err == nil {
-		t.Fatal("expected error when INSTANCEZ_DATABASE_URL is empty")
+		t.Fatal("expected error when no DSN is set")
 	}
 	if !strings.Contains(err.Error(), "INSTANCEZ_DATABASE_URL") {
 		t.Errorf("error should mention env var name, got: %v", err)
+	}
+}
+
+// TestResolveDBSourceOverrideIgnoresEnv is the embedded-Postgres regression
+// guard: when a superuser DSN is supplied directly (the embedded path), leftover
+// scoped DSN env vars from a prior external-Postgres setup must not redirect the
+// instance at a different — usually absent — database.
+func TestResolveDBSourceOverrideIgnoresEnv(t *testing.T) {
+	env := map[string]string{
+		"INSTANCEZ_OWNER_DATABASE_URL": "postgres://instancez_owner@localhost:5432/postgres",
+		"INSTANCEZ_AUTH_DATABASE_URL":  "postgres://authenticator@localhost:5432/postgres",
+		"INSTANCEZ_DATABASE_URL":       "postgres://postgres@localhost:5432/postgres",
+	}
+	getenv := func(k string) string { return env[k] }
+
+	const embedded = "postgres://postgres:postgres@localhost:54999/postgres?sslmode=disable"
+	src, err := resolveDBSource(getenv, embedded)
+	if err != nil {
+		t.Fatalf("resolveDBSource: %v", err)
+	}
+	if src.superuserURL != embedded {
+		t.Errorf("superuserURL = %q, want the supplied embedded DSN %q", src.superuserURL, embedded)
+	}
+	if src.ownerURL != "" || src.authURL != "" {
+		t.Errorf("scoped DSNs must be ignored under override, got owner=%q auth=%q", src.ownerURL, src.authURL)
+	}
+}
+
+func TestResolveDBSourcePrefersScopedPair(t *testing.T) {
+	env := map[string]string{
+		"INSTANCEZ_OWNER_DATABASE_URL": "owner-dsn",
+		"INSTANCEZ_AUTH_DATABASE_URL":  "auth-dsn",
+		"INSTANCEZ_DATABASE_URL":       "superuser-dsn",
+	}
+	src, err := resolveDBSource(func(k string) string { return env[k] }, "")
+	if err != nil {
+		t.Fatalf("resolveDBSource: %v", err)
+	}
+	if src.ownerURL != "owner-dsn" || src.authURL != "auth-dsn" {
+		t.Errorf("expected scoped pair, got owner=%q auth=%q", src.ownerURL, src.authURL)
+	}
+	if src.superuserURL != "" {
+		t.Errorf("superuserURL should be empty when scoped pair wins, got %q", src.superuserURL)
+	}
+}
+
+func TestResolveDBSourceFallsBackToSuperuser(t *testing.T) {
+	// Only one half of the scoped pair is set, so it falls through to superuser.
+	env := map[string]string{
+		"INSTANCEZ_OWNER_DATABASE_URL": "owner-dsn",
+		"INSTANCEZ_DATABASE_URL":       "superuser-dsn",
+	}
+	src, err := resolveDBSource(func(k string) string { return env[k] }, "")
+	if err != nil {
+		t.Fatalf("resolveDBSource: %v", err)
+	}
+	if src.superuserURL != "superuser-dsn" {
+		t.Errorf("superuserURL = %q, want superuser-dsn", src.superuserURL)
+	}
+	if src.ownerURL != "" || src.authURL != "" {
+		t.Errorf("incomplete scoped pair must not be used, got owner=%q auth=%q", src.ownerURL, src.authURL)
+	}
+}
+
+func TestResolveDBSourceErrorsWhenEmpty(t *testing.T) {
+	if _, err := resolveDBSource(func(string) string { return "" }, ""); err == nil {
+		t.Fatal("expected error when no DSN is available")
 	}
 }
 

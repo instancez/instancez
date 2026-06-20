@@ -12,6 +12,7 @@ export function DriftBanner({ status }: Props) {
       borderTopWidth="1px"
       borderColor="orange.300"
       bg="orange.50"
+      _dark={{ bg: "orange.950", borderColor: "orange.800" }}
       px="4"
       py="2.5"
       fontSize="sm"

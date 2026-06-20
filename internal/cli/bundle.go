@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/instancez/instancez/internal/adapter/funcs"
 	"github.com/instancez/instancez/internal/adapter/s3"
 	"github.com/instancez/instancez/internal/config"
 	"github.com/instancez/instancez/internal/domain"
@@ -48,8 +49,28 @@ func BuildBundle(projectDir string) (bundlePath string, err error) {
 
 	// Vendor dependencies when a package.json is present. No package.json means
 	// the functions have no deps and npm is skipped entirely (this is also the
-	// offline path the unit tests take).
-	if _, err := os.Stat(filepath.Join(functionsDir, "package.json")); err == nil {
+	// offline path the unit tests take). package.json is a predicate, not a
+	// required file: its presence gates both prechecks below and the npm run.
+	_, pkgErr := os.Stat(filepath.Join(functionsDir, "package.json"))
+	hasDeps := pkgErr == nil
+
+	// Preconditions for `npm ci`: node on PATH (so a node-less machine fails
+	// with the "Node.js >= 20" message, not a raw `exec: npm: ... not found`),
+	// and a committed package-lock.json. deploy/bundle vendor with `npm ci`
+	// (reproducible — never falling back to `npm install` the way `inz dev`
+	// does, because a shipped bundle must not silently resolve new versions),
+	// and `npm ci` fails cryptically without a lockfile.
+	if err := runFuncPrechecks(
+		funcPrecheck{when: hasDeps, probe: funcs.RequireNode},
+		funcPrecheck{when: hasDeps, probe: fileMustExist(
+			filepath.Join(functionsDir, "package-lock.json"),
+			"deploy/bundle vendor dependencies with `npm ci`, which requires a committed lockfile. Run `npm install` in functions/ and commit package-lock.json",
+		)},
+	); err != nil {
+		return "", err
+	}
+
+	if hasDeps {
 		cmd := exec.Command("npm", "ci")
 		cmd.Dir = functionsDir
 		cmd.Stdout = os.Stdout

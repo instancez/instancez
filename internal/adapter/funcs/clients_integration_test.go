@@ -53,7 +53,7 @@ func TestInjectedClientsRLSAndEscalation(t *testing.T) {
 
 	// ---- 1. Postgres ----
 	container, err := pgcontainer.Run(ctx,
-		"postgres:16-alpine",
+		dbboot.PostgresImage(),
 		pgcontainer.WithDatabase("instancez_test"),
 		pgcontainer.WithUsername("instancez"),
 		pgcontainer.WithPassword("instancez"),

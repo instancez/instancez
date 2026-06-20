@@ -20,7 +20,7 @@ import (
 // sit inside <root>/functions/ for Node's bare-specifier ESM resolution to
 // find @supabase/supabase-js. A shim placed at <root> (one level up) cannot
 // descend into functions/node_modules and would fail with ERR_MODULE_NOT_FOUND,
-// surfaced as a per-invocation 500 containing "@supabase/supabase-js not vendored".
+// surfaced as a per-invocation 500 saying @supabase/supabase-js "was not found".
 //
 // This test FAILS without the fix (shim at opts.Dir) and PASSES with the fix
 // (shim at opts.Dir/functions/).
@@ -61,7 +61,7 @@ func TestSupabaseJSImportResolvesUnderRealLayout(t *testing.T) {
 	// ---- 3. Write the function that probes ctx.supabase ----
 	// The function accesses ctx.supabase, which triggers the lazy getter in
 	// worker.js. If @supabase/supabase-js wasn't resolved at load time,
-	// mk() throws "not vendored" and the invocation returns 500. If the
+	// mk() throws "was not found" and the invocation returns 500. If the
 	// import resolved successfully, createClient is defined, the client is
 	// constructed, and typeof ctx.supabase.from === "function" → 200.
 	fnSrc := `export default async (req, ctx) => {
@@ -99,12 +99,12 @@ func TestSupabaseJSImportResolvesUnderRealLayout(t *testing.T) {
 
 	body := string(resp.Body)
 
-	// The key assertion: the invocation must NOT be the "not vendored" 500.
+	// The key assertion: the invocation must NOT be the "was not found" 500.
 	// If the shim is in the wrong directory (above functions/), the import
-	// fails and every invocation returns 500 with "@supabase/supabase-js not vendored".
+	// fails and every invocation returns 500 saying @supabase/supabase-js "was not found".
 	if resp.Status != 200 {
 		t.Fatalf("import did not resolve: status=%d body=%s\n"+
-			"(if body contains '@supabase/supabase-js not vendored', the shim is in the wrong directory)",
+			"(if body says @supabase/supabase-js 'was not found', the shim is in the wrong directory)",
 			resp.Status, body)
 	}
 	if !strings.Contains(body, `"hasFn":true`) {

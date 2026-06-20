@@ -52,7 +52,7 @@ func TestSupabaseJSCompat(t *testing.T) {
 
 	// ---- 1. Spin up Postgres ----
 	container, err := pgcontainer.Run(ctx,
-		"postgres:16-alpine",
+		dbboot.PostgresImage(),
 		pgcontainer.WithDatabase("instancez_test"),
 		pgcontainer.WithUsername("instancez"),
 		pgcontainer.WithPassword("instancez"),
@@ -163,6 +163,20 @@ func TestSupabaseJSCompat(t *testing.T) {
 			"documents": {
 				MaxSize: "10MB",
 				Public:  false,
+			},
+			// owned exercises owner-scoped storage RLS end-to-end. The policy
+			// pins ownership (uploaded_by = auth.uid()) and confines writes to a
+			// "mine/" prefix, so an authenticated user is allowed under that
+			// prefix and denied outside it. run.mjs asserts both: the signed
+			// upload mint is refused for a disallowed path (403, no token), and
+			// for an allowed path the owner threaded through the token lets the
+			// uploader read the object back.
+			"owned": {
+				MaxSize: "5MB",
+				Types:   []string{"text/plain", "application/octet-stream"},
+				RLS: []domain.RLSPolicy{
+					{Operations: []string{"select", "insert", "update", "delete"}, Check: "uploaded_by = auth.uid() AND name LIKE 'mine/%'"},
+				},
 			},
 		},
 		// rpc functions drive the supabase-js .rpc() compat checks in

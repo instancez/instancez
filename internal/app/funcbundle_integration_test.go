@@ -48,7 +48,7 @@ func TestServeConsumesBundleEndToEnd(t *testing.T) {
 
 	// ---- 1. Postgres + pools (for JWT keys / auth) ----
 	container, err := pgcontainer.Run(ctx,
-		"postgres:16-alpine",
+		dbboot.PostgresImage(),
 		pgcontainer.WithDatabase("instancez_test"),
 		pgcontainer.WithUsername("instancez"),
 		pgcontainer.WithPassword("instancez"),

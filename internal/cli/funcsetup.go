@@ -79,6 +79,18 @@ func buildDevFuncRuntime(
 	configDir := filepath.Dir(configPath)
 	functionsDir := filepath.Join(configDir, "functions")
 
+	// Preconditions, run BEFORE the npm step below: node must be on PATH (npm
+	// ships with node, so without this a node-less machine fails with a raw
+	// `exec: npm: ... not found` instead of the "Node.js >= 20" message), and
+	// every declared function's source file must exist. funcs.New re-checks
+	// node, but the dev path shells out to npm first, so the gate lives here too.
+	if err := runFuncPrechecks(
+		funcPrecheck{when: true, probe: funcs.RequireNode},
+		funcPrecheck{when: true, probe: funcSources(cfg, configDir)},
+	); err != nil {
+		return nil, err
+	}
+
 	// dev is allowed to build: install deps when a package.json exists.
 	// Use `npm ci` when a lock file is present (reproducible install), or
 	// `npm install` to create the lock file on first run.
@@ -122,6 +134,13 @@ func buildDevFuncRuntimeFast(
 		return nil, nil
 	}
 	configDir := filepath.Dir(configPath)
+	// Re-check on every hot reload: a code edit may have renamed or deleted a
+	// declared source file. node is covered by funcs.New below.
+	if err := runFuncPrechecks(
+		funcPrecheck{when: true, probe: funcSources(cfg, configDir)},
+	); err != nil {
+		return nil, err
+	}
 	opts, err := sharedFuncOptions(ctx, cfg, configDir, "development", km, logger)
 	if err != nil {
 		return nil, err
@@ -144,6 +163,11 @@ func buildBundleFuncRuntime(
 ) (*funcs.Runtime, error) {
 	if len(cfg.Functions) == 0 {
 		return nil, nil
+	}
+	if err := runFuncPrechecks(
+		funcPrecheck{when: true, probe: funcSources(cfg, bundleDir)},
+	); err != nil {
+		return nil, err
 	}
 	opts, err := sharedFuncOptions(ctx, cfg, ".", "production", km, logger)
 	if err != nil {
@@ -184,6 +208,12 @@ func buildServeFuncRuntime(
 	dir, _, err := app.FetchAndExtract(ctx, cfg.FunctionsBundle, extractParent)
 	if err != nil {
 		return nil, "", fmt.Errorf("functions: fetch bundle: %w", err)
+	}
+
+	if err := runFuncPrechecks(
+		funcPrecheck{when: true, probe: funcSources(cfg, dir)},
+	); err != nil {
+		return nil, "", err
 	}
 
 	opts, err := sharedFuncOptions(ctx, cfg, envDir, "production", km, logger)

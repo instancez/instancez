@@ -5,6 +5,16 @@ description: JavaScript ESM HTTP handlers served at /functions/v1/<name>. Full a
 
 Code functions are JavaScript ESM handlers served at `/functions/v1/<name>`, callable from supabase-js via `supabase.functions.invoke()`.
 
+## Requirements
+
+Functions run in Node.js worker processes, so **Node.js must be installed and on `PATH`** wherever instancez serves or builds functions. With a `functions:` block declared, `inz dev` and `inz serve` require `node` at startup; `inz deploy`/`inz bundle` require it when your functions have npm dependencies (a `functions/package.json`, which it vendors with `npm ci`). Each refuses to proceed with an actionable error if node is missing. Projects without a `functions:` block do not need Node.js.
+
+The supported minimum is **Node.js 20** — the floor declared by `@supabase/supabase-js`, which functions use for `ctx.supabase` / `ctx.serviceClient`. Older versions may work but are not supported; the minimum is documented, not enforced.
+
+When your functions have npm dependencies, **`inz deploy`/`inz bundle` require a committed `package-lock.json`.** They vendor dependencies with `npm ci` (reproducible — never `npm install`), which fails without a lockfile. Run `npm install` in `functions/` once to generate it and commit the result. (`inz dev` is more lenient: it falls back to `npm install` to create the lockfile on first run.)
+
+instancez also verifies at startup that **every declared function's source file exists** on disk (the `file:` path under each entry). A missing file fails fast with a clear error instead of surfacing later when the function is first called.
+
 ## A minimal handler
 
 ```js
@@ -96,6 +106,8 @@ Secrets are resolved from three sources in ascending precedence order:
 
 Only keys with the `INSTANCEZ_ENV_` prefix are passed to functions. Other environment variables in those files are ignored.
 
+Function workers run with a scrubbed environment, so host secrets like AWS credentials and database URLs are not visible inside a handler. The values you declare under `env:` are the only secrets a worker sees. instancez injects them per request over an internal channel and never writes them to the worker's process environment.
+
 ## npm dependencies
 
 Functions run from the `functions/` subdirectory of your project. Place a `package.json` there to declare dependencies:
@@ -112,6 +124,8 @@ Functions run from the `functions/` subdirectory of your project. Place a `packa
 ```
 
 `@supabase/supabase-js` is required if any function uses `ctx.supabase` or `ctx.serviceClient`. The worker loads it lazily — functions that never access those properties work without it.
+
+Dependencies must import as ESM, and they must not rely on native add-ons unless those are prebuilt for the platform you deploy to.
 
 ## Calling a function
 
@@ -135,7 +149,7 @@ const { data, error } = await supabase.functions.invoke("todos", {
 | Command | npm | Hot reload |
 |---------|-----|------------|
 | `inz dev` | Runs `npm ci` on startup. Falls back to `npm install` when no lockfile exists yet (first run). Restart required only when adding or removing npm dependencies. | JS code changes and `functions:` YAML changes are picked up automatically without a restart. |
-| `inz deploy` | Runs `npm ci` and bundles `functions/` into a tar archive recorded in `instancez.yaml`. | N/A |
+| `inz deploy` | Runs `npm ci` (requires a committed `package-lock.json`) and bundles `functions/` into a tar archive recorded in `instancez.yaml`. | N/A |
 | `inz serve` | Never runs npm. Consumes the pre-built bundle produced by `inz deploy`. | N/A |
 
 ## Runtime limits

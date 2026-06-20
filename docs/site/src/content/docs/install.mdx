@@ -7,8 +7,12 @@ import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 
 The `inz` CLI is a single binary — no runtime dependencies, no package manager required.
 
+<Aside type="note" title="Requires Postgres 14+">
+instancez connects to a PostgreSQL server you provide. Version 14 or later is required. Older versions are untested and some migrations will fail on them. Any standard Postgres works, whether it's a local install or a managed service like Neon or RDS.
+</Aside>
+
 <Aside type="tip" title="Code functions require Node.js">
-If you plan to use [code functions](/instancez/build/functions/) (`functions:` block in `instancez.yaml`), you'll need **Node.js 18+** and **npm** installed. Everything else — auth, database, storage, RLS — works without them.
+If you plan to use [code functions](/instancez/build/functions/) (`functions:` block in `instancez.yaml`), you'll need **Node.js 20+** and **npm** installed. instancez checks for `node` at startup and refuses to boot if it's missing while functions are declared. Everything else — auth, database, storage, RLS — works without them.
 
 Install Node.js (which includes npm) from [nodejs.org](https://nodejs.org) or via your system package manager.
 </Aside>

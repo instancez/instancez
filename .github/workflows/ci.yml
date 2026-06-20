@@ -24,11 +24,28 @@ jobs:
       - run: go test -race ./...
 
   go-integration:
-    name: Go integration tests
+    # Compatibility matrix: every Postgres major we support gets a full run on
+    # the shipped Node, and every supported Node major gets a run on the default
+    # Postgres. The cartesian product would be wasteful, so the extra Node
+    # versions ride the include list against pg=16 only. matrix.pg drives both
+    # the service container and the testcontainer image (INSTANCEZ_TEST_PG_IMAGE);
+    # matrix.node drives the runtime that executes code-function workers and the
+    # supabase-js harness. fail-fast is off so one bad combo doesn't mask others.
+    name: Go integration tests (pg${{ matrix.pg }}, node${{ matrix.node }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: ['14', '15', '16', '17']
+        node: ['22']
+        include:
+          - pg: '16'
+            node: '20'
+          - pg: '16'
+            node: '24'
     services:
       postgres:
-        image: postgres:16
+        image: postgres:${{ matrix.pg }}
         env:
           POSTGRES_USER: instancez
           POSTGRES_PASSWORD: instancez
@@ -42,12 +59,18 @@ jobs:
           --health-retries 10
     env:
       INSTANCEZ_TEST_DATABASE_URL: postgres://instancez:instancez@localhost:5432/instancez?sslmode=disable
+      INSTANCEZ_TEST_PG_IMAGE: postgres:${{ matrix.pg }}-alpine
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
           cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: test/integration/supabase-js/package-lock.json
       - run: go test -tags=integration -race ./...
 
   dashboard:
@@ -66,6 +89,58 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+
+  e2e:
+    # Full-stack smoke: build the dashboard dist, embed it in the inz binary,
+    # boot `serve` against the postgres service (superuser DSN → serve
+    # self-provisions roles), then drive the shipped SPA with Playwright. This
+    # is the only job that exercises binary + HTTP + Postgres + embedded SPA as
+    # one unit. Kept separate from the vitest `dashboard` job, which is pure
+    # jsdom with no backend.
+    name: Dashboard e2e (smoke)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: instancez
+          POSTGRES_PASSWORD: instancez
+          POSTGRES_DB: instancez
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U instancez"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      INSTANCEZ_TEST_DATABASE_URL: postgres://instancez:instancez@localhost:5432/instancez?sslmode=disable
+      INSTANCEZ_ADMIN_KEY: e2e-admin-key
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - name: Install dashboard deps
+        run: npm ci
+        working-directory: dashboard
+      - name: Build dashboard dist
+        run: npm run build
+        working-directory: dashboard
+      - name: Build inz (embeds the dist)
+        run: go build -o inz ./cmd/inz
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: dashboard
+      - name: Run e2e smoke
+        run: npm run test:e2e
+        working-directory: dashboard
 
   lint:
     name: Lint

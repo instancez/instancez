@@ -114,7 +114,7 @@ func runServe(opts serveOptions) error {
 	logger.Warn("instancez is designed for single-replica deployments; multi-replica support is planned")
 
 	// Connect to database (owner + authenticator pools).
-	ownerDB, authDB, roles, err := dbConnections(ctx, cfg.Database.Pool)
+	ownerDB, authDB, roles, err := dbConnections(ctx, cfg.Database.Pool, "")
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}

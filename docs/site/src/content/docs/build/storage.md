@@ -59,6 +59,8 @@ await supabase.storage.from('avatars').remove(['photo.png'])
 
 Uploading to an existing path without `upsert: true` returns a 409 error.
 
+Signed URLs are authorized when they are created, not when they are redeemed. `createSignedUrl` checks the bucket's `select` policy before returning a download URL, and `createSignedUploadUrl` checks the `insert` policy before returning an upload token. If you cannot read or write an object directly, you cannot get a signed URL for it either. Redeeming the token needs no further auth (the token is the grant), so the check happens when the URL is minted.
+
 
 ## Storage providers
 

@@ -54,37 +54,71 @@ func ownerPoolConfig(poolCfg domain.PoolConfig) domain.PoolConfig {
 	return poolCfg
 }
 
-// dbConnections opens the owner and authenticator pools from environment. It
-// accepts either of two inputs:
+// dbSource is the resolved database input for opening pools: either a pair of
+// pre-provisioned scoped DSNs, or a single superuser DSN to bootstrap from.
+type dbSource struct {
+	ownerURL     string
+	authURL      string
+	superuserURL string
+}
+
+// resolveDBSource decides which DSNs dbConnections opens pools from.
+//
+// A non-empty superuserOverride means the caller already holds a superuser DSN
+// it wants used verbatim. This is the embedded-Postgres path, where the instance
+// owns a throwaway local database. Every DSN env var is then ignored: scoped
+// DSNs or a stale superuser DSN left in the shell or .development.env from an
+// earlier external-Postgres setup must not point the instance at the wrong
+// database.
+//
+// With no override it reads the environment, accepting either of two inputs:
 //
 //   - the two scoped DSNs INSTANCEZ_OWNER_DATABASE_URL +
 //     INSTANCEZ_AUTH_DATABASE_URL, for when an external operator (e.g. the
 //     instancez platform) has already provisioned the role layout as superuser.
-//     The instance connects with them directly and never needs superuser — the
-//     correct model on a shared, multi-tenant cluster.
+//     The instance connects with them directly and never needs superuser, which
+//     is the right model on a shared, multi-tenant cluster.
 //   - a single superuser DSN INSTANCEZ_DATABASE_URL, which bootstrapDB uses to
-//     provision the role layout and derive the scoped owner + authenticator
-//     DSNs (the self-hosted / `inz dev` path).
-//
-// It then opens both pools concurrently.
-func dbConnections(ctx context.Context, poolCfg domain.PoolConfig) (domain.OwnerDB, domain.RequestDB, domain.Roles, error) {
+//     provision the role layout and derive the scoped owner + authenticator DSNs
+//     (the self-hosted DSN path).
+func resolveDBSource(getenv func(string) string, superuserOverride string) (dbSource, error) {
+	if superuserOverride != "" {
+		return dbSource{superuserURL: superuserOverride}, nil
+	}
+
+	// Prefer a complete pair of pre-provisioned scoped DSNs; fall back to the
+	// superuser DSN when either half is missing.
+	ownerURL := getenv("INSTANCEZ_OWNER_DATABASE_URL")
+	authURL := getenv("INSTANCEZ_AUTH_DATABASE_URL")
+	if ownerURL != "" && authURL != "" {
+		return dbSource{ownerURL: ownerURL, authURL: authURL}, nil
+	}
+
+	superuserURL := getenv("INSTANCEZ_DATABASE_URL")
+	if superuserURL == "" {
+		return dbSource{}, fmt.Errorf("set INSTANCEZ_DATABASE_URL (superuser DSN) or both INSTANCEZ_OWNER_DATABASE_URL and INSTANCEZ_AUTH_DATABASE_URL")
+	}
+	return dbSource{superuserURL: superuserURL}, nil
+}
+
+// dbConnections opens the owner and authenticator pools. superuserOverride, when
+// non-empty, is a superuser DSN used verbatim and takes precedence over every
+// DSN env var (the embedded-Postgres path); otherwise the DSNs are resolved from
+// the environment. See resolveDBSource. It then opens both pools concurrently.
+func dbConnections(ctx context.Context, poolCfg domain.PoolConfig, superuserOverride string) (domain.OwnerDB, domain.RequestDB, domain.Roles, error) {
 	roles := rolesFromEnv()
 	if err := roles.Validate(); err != nil {
 		return domain.OwnerDB{}, domain.RequestDB{}, domain.Roles{}, err
 	}
 
-	// Prefer pre-provisioned scoped DSNs; only bootstrap from a superuser DSN
-	// when both scoped DSNs are not already supplied.
-	ownerURL := os.Getenv("INSTANCEZ_OWNER_DATABASE_URL")
-	authURL := os.Getenv("INSTANCEZ_AUTH_DATABASE_URL")
+	src, err := resolveDBSource(os.Getenv, superuserOverride)
+	if err != nil {
+		return domain.OwnerDB{}, domain.RequestDB{}, domain.Roles{}, err
+	}
+
+	ownerURL, authURL := src.ownerURL, src.authURL
 	if ownerURL == "" || authURL == "" {
-		superuserURL := os.Getenv("INSTANCEZ_DATABASE_URL")
-		if superuserURL == "" {
-			return domain.OwnerDB{}, domain.RequestDB{}, domain.Roles{},
-				fmt.Errorf("set INSTANCEZ_DATABASE_URL (superuser DSN) or both INSTANCEZ_OWNER_DATABASE_URL and INSTANCEZ_AUTH_DATABASE_URL")
-		}
-		var err error
-		ownerURL, authURL, err = bootstrapDB(ctx, superuserURL, roles)
+		ownerURL, authURL, err = bootstrapDB(ctx, src.superuserURL, roles)
 		if err != nil {
 			return domain.OwnerDB{}, domain.RequestDB{}, domain.Roles{},
 				fmt.Errorf("provision roles: %w", err)

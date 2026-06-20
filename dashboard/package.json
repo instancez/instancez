@@ -20,7 +20,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@codemirror/lang-javascript": "^6.2.5",
@@ -35,6 +36,7 @@
   "devDependencies": {
     "@chakra-ui/react": "^3.16.0",
     "@emotion/react": "^11.14.0",
+    "@playwright/test": "^1.61.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",

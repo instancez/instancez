@@ -17,10 +17,11 @@ import (
 // authenticator login roles, and returns ready-to-use pools. Cleanup is
 // registered with t — caller does nothing.
 //
-// Image defaults to postgres:16-alpine; pass an override to pin a version.
+// Image defaults to PostgresImage() (INSTANCEZ_TEST_PG_IMAGE or the pinned
+// default); pass an override to force a specific version.
 func StartContainer(t *testing.T, image ...string) (domain.OwnerDB, domain.RequestDB) {
 	t.Helper()
-	img := "postgres:16-alpine"
+	img := PostgresImage()
 	if len(image) > 0 {
 		img = image[0]
 	}
@@ -63,7 +64,7 @@ func StartContainer(t *testing.T, image ...string) (domain.OwnerDB, domain.Reque
 // code that must bootstrap the role layout itself (e.g. ensureRoles).
 func StartRawContainer(t *testing.T, image ...string) string {
 	t.Helper()
-	img := "postgres:16-alpine"
+	img := PostgresImage()
 	if len(image) > 0 {
 		img = image[0]
 	}
@@ -99,7 +100,7 @@ func StartRawContainer(t *testing.T, image ...string) string {
 // is issued inside a transaction.
 func StartContainerWithRawAuth(t *testing.T, image ...string) (domain.OwnerDB, domain.RequestDB, *postgres.DB) {
 	t.Helper()
-	img := "postgres:16-alpine"
+	img := PostgresImage()
 	if len(image) > 0 {
 		img = image[0]
 	}

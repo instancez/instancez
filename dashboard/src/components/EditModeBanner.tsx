@@ -12,7 +12,7 @@ export function EditModeBanner({ status }: Props) {
       borderTopWidth="1px"
       borderColor="blue.200"
       bg="blue.50"
-      _dark={{ bg: "blue.950", borderColor: "blue.800" }}
+      _dark={{ bg: "blue.950", borderColor: "blue.800", color: "blue.100" }}
       px="4"
       py="2.5"
       fontSize="sm"

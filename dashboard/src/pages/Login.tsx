@@ -53,7 +53,7 @@ export function Login({ onSuccess }: LoginProps) {
             </Box>
           </VStack>
 
-          <VStack as="form" onSubmit={handleSubmit} gap="5">
+          <VStack as="form" onSubmit={handleSubmit} gap="5" align="stretch">
             <Field label="Admin Key" htmlFor="admin-key">
               <Box position="relative">
                 <Box
