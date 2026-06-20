@@ -1,4 +1,4 @@
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useState, useEffect, useCallback } from "react";
 import { Tabs, Box, HStack, Text, VStack } from "@chakra-ui/react";
 import { Plus, Trash2, GripVertical } from "lucide-react";
@@ -32,6 +32,7 @@ export function TableDetail() {
   const backend = useBackend();
   const { name } = useParams<{ name: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { config, save, saving, saveErrors } = useConfig();
   const dialog = useDialog();
   const canWriteConfig = backend.capabilities.canWriteConfig;
@@ -39,17 +40,25 @@ export function TableDetail() {
   const [seeds, setSeeds] = useState<Record<string, unknown>[]>([]);
   const [diff, setDiff] = useState<DiffResponse | null>(null);
 
+  const isNew = !name;
+  const newState = location.state as { tableName?: string; seed?: Table } | null;
+
   // true when the data entry for this table uses CSV-file references (read-only in the UI)
   const tableData = config?.data?.[name ?? ""];
   const isCSVData = tableData !== undefined && !Array.isArray(tableData);
 
   useEffect(() => {
+    if (isNew && newState?.seed) {
+      setTable(structuredClone(newState.seed));
+      setSeeds([]);
+      return;
+    }
     if (config && name && config.tables[name]) {
       setTable(structuredClone(config.tables[name]!));
       const entry = config.data?.[name];
       setSeeds(structuredClone(Array.isArray(entry) ? entry : []));
     }
-  }, [config, name]);
+  }, [config, name, isNew, newState]);
 
   const updateTable = useCallback(
     (updater: (prev: Table) => Table) => {
@@ -59,21 +68,20 @@ export function TableDetail() {
   );
 
   async function handleSave() {
-    if (!config || !table || !name) return;
+    const effectiveName = isNew ? newState?.tableName : name;
+    if (!config || !table || !effectiveName) return;
     const updatedData = { ...config.data };
     if (!isCSVData) {
-      if (seeds.length > 0) {
-        updatedData[name] = seeds;
-      } else {
-        delete updatedData[name];
-      }
+      if (seeds.length > 0) updatedData[effectiveName] = seeds;
+      else delete updatedData[effectiveName];
     }
     const updated = {
       ...config,
-      tables: { ...config.tables, [name]: table },
+      tables: { ...config.tables, [effectiveName]: table },
       data: updatedData,
     };
-    await save(updated);
+    const ok = await save(updated);
+    if (ok && isNew) navigate(`../${effectiveName}`, { relative: "path", replace: true });
   }
 
   async function loadDiff() {
@@ -94,7 +102,7 @@ export function TableDetail() {
     if (ok) navigate("..", { relative: "path" });
   }
 
-  if (!config || !table || !name) {
+  if (!config || !table) {
     return (
       <Box p="8">
         <Text fontSize="sm" color="fg.muted">Table not found.</Text>
@@ -103,9 +111,11 @@ export function TableDetail() {
   }
 
   // Dirty is derived, not a sticky flag: undoing an edit hides the save bar.
-  const savedSeedsEntry = config.data?.[name];
+  // In new mode the table is always dirty (nothing saved yet).
+  const savedSeedsEntry = config.data?.[name ?? ""];
   const dirty =
-    !jsonEqual(table, config.tables[name] ?? null) ||
+    isNew ||
+    !jsonEqual(table, config.tables[name ?? ""] ?? null) ||
     (!isCSVData && !jsonEqual(seeds, Array.isArray(savedSeedsEntry) ? savedSeedsEntry : []));
 
   const fieldEntries = table.fields || [];
@@ -122,7 +132,7 @@ export function TableDetail() {
 
   return (
     <Box pb="20">
-      <DetailToolbar backLabel="Tables" onDelete={canWriteConfig ? deleteTable : undefined} />
+      <DetailToolbar backLabel="Tables" onDelete={canWriteConfig && !isNew ? deleteTable : undefined} />
       <Box pb="8">
         <Tabs.Root defaultValue="fields" lazyMount unmountOnExit>
           <Tabs.List borderBottomWidth="1px" mb="6" gap="1">

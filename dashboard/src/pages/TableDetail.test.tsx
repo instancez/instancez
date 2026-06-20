@@ -7,7 +7,7 @@ import { ConfigContext } from "../hooks/useConfig";
 import { BackendProvider } from "../console/BackendContext";
 import { adminBackend } from "../console/adminBackend";
 import { renderWithChakra } from "../test/helpers";
-import type { Config, ValidationError } from "../lib/types";
+import type { Config, ValidationError, Table } from "../lib/types";
 import type { ConsoleBackend } from "../console/backend";
 
 const baseConfig: Config = {
@@ -69,6 +69,54 @@ function renderTableDetail(config: Config, tableName: string, backend: ConsoleBa
   );
 }
 
+function renderTableDetailNew({
+  tableName,
+  seed,
+  save,
+  backend = adminBackend,
+}: {
+  tableName: string;
+  seed: Table;
+  save: ReturnType<typeof vi.fn>;
+  backend?: ConsoleBackend;
+}) {
+  const ctx = {
+    config: baseConfig,
+    loading: false,
+    error: null,
+    checksum: "abc",
+    saving: false,
+    saveErrors: [] as ValidationError[],
+    dotenvWritable: false,
+    refresh: vi.fn(),
+    save,
+    updateConfig: vi.fn(),
+  };
+  return renderWithChakra(
+    <BackendProvider backend={backend}>
+      <ConfigContext.Provider value={ctx}>
+        <MemoryRouter initialEntries={[{ pathname: "/tables/new", state: { tableName, seed } }]}>
+          <DialogProvider>
+            <Routes>
+              <Route path="/tables/new" element={<TableDetail />} />
+              <Route path="/tables/:name" element={<TableDetail />} />
+            </Routes>
+          </DialogProvider>
+        </MemoryRouter>
+      </ConfigContext.Provider>
+    </BackendProvider>
+  );
+}
+
+const SEED: Table = {
+  fields: [
+    { name: "id", type: "bigserial", primary_key: true },
+    { name: "created_at", type: "timestamptz", default: "now()" },
+  ],
+  indexes: [],
+  rls: [],
+};
+
 describe("TableDetail", () => {
   it("renders column names for a table with fields", () => {
     renderTableDetail(baseConfig, "todos");
@@ -99,5 +147,21 @@ describe("TableDetail", () => {
       fireEvent.click(screen.getByRole("tab", { name: /indexes/i }));
     });
     expect(screen.getByRole("button", { name: /add index/i })).toBeInTheDocument();
+  });
+
+  it("persists a new table only on save", async () => {
+    const save = vi.fn().mockResolvedValue(true);
+    renderTableDetailNew({ tableName: "orders", seed: SEED, save });
+    // The seed fields should be visible in the editor
+    expect(screen.getAllByText("id").length).toBeGreaterThan(0);
+    // Config is untouched before save - "orders" table should not be in config
+    expect(baseConfig.tables["orders"]).toBeUndefined();
+    // Click Save
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+    const arg = save.mock.calls[0][0] as Config;
+    expect(arg.tables["orders"]).toBeDefined();
   });
 });

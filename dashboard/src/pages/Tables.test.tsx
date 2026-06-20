@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { renderWithChakra } from "../test/helpers";
 import { Tables } from "./Tables";
@@ -9,6 +9,30 @@ import { BackendProvider } from "../console/BackendContext";
 import { adminBackend } from "../console/adminBackend";
 import type { Config, ValidationError } from "../lib/types";
 import type { ConsoleBackend } from "../console/backend";
+
+// Hoisted spy so the vi.mock factory can close over it
+const mockNavigate = vi.hoisted(() => vi.fn());
+
+vi.mock("react-router-dom", async () => {
+  const actual = await vi.importActual<typeof import("react-router-dom")>("react-router-dom");
+  return {
+    ...actual,
+    useNavigate: () => mockNavigate,
+  };
+});
+
+// Stub useDialog so prompt resolves without DOM interaction
+vi.mock("../components/Dialog", async () => {
+  const actual = await vi.importActual<typeof import("../components/Dialog")>("../components/Dialog");
+  return {
+    ...actual,
+    useDialog: () => ({
+      prompt: vi.fn().mockResolvedValue("orders"),
+      confirm: vi.fn().mockResolvedValue(true),
+      alert: vi.fn().mockResolvedValue(undefined),
+    }),
+  };
+});
 
 const baseConfig: Config = {
   version: 1,
@@ -150,5 +174,44 @@ describe("Tables", () => {
     };
     renderTables(config);
     expect(screen.getByRole("button", { name: /add table/i })).toBeInTheDocument();
+  });
+
+  it("does not save when adding a table; navigates to new mode", async () => {
+    const save = vi.fn();
+    const ctx = {
+      config: baseConfig,
+      loading: false,
+      error: null,
+      checksum: "abc",
+      saving: false,
+      saveErrors: [] as ValidationError[],
+      dotenvWritable: false,
+      refresh: vi.fn(),
+      save,
+      updateConfig: vi.fn(),
+    };
+    mockNavigate.mockClear();
+    renderWithChakra(
+      <BackendProvider backend={adminBackend}>
+        <ConfigContext.Provider value={ctx}>
+          <MemoryRouter>
+            <DialogProvider>
+              <Tables />
+            </DialogProvider>
+          </MemoryRouter>
+        </ConfigContext.Provider>
+      </BackendProvider>
+    );
+    await act(async () => {
+      // baseConfig has no tables so both the toolbar button and EmptyState action render
+      fireEvent.click(screen.getAllByRole("button", { name: /add table/i })[0]!);
+    });
+    expect(save).not.toHaveBeenCalled();
+    expect(mockNavigate).toHaveBeenCalledWith(
+      "new",
+      expect.objectContaining({
+        state: expect.objectContaining({ tableName: "orders" }),
+      }),
+    );
   });
 });

@@ -25,24 +25,19 @@ export function Tables() {
     const name = await dialog.prompt("Table name:");
     if (!name?.trim()) return;
     const tableName = name.trim().toLowerCase().replace(/\s+/g, "_");
-
-    const updated = {
-      ...config!,
-      tables: {
-        ...config!.tables,
-        [tableName]: {
-          fields: [
-            { name: "id", type: "bigserial", primary_key: true },
-            { name: "created_at", type: "timestamptz", default: "now()" },
-          ],
-          indexes: [],
-          rls: [],
-        },
-      },
+    if (config!.tables?.[tableName]) {
+      await dialog.confirm(`Table "${tableName}" already exists.`, { confirmText: "OK" });
+      return;
+    }
+    const seed = {
+      fields: [
+        { name: "id", type: "bigserial", primary_key: true },
+        { name: "created_at", type: "timestamptz", default: "now()" },
+      ],
+      indexes: [],
+      rls: [],
     };
-
-    const ok = await save(updated);
-    if (ok) navigate(tableName, { relative: "path" });
+    navigate("new", { relative: "path", state: { tableName, seed } });
   }
 
   const addButton = canWriteConfig ? (

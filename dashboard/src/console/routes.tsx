@@ -33,6 +33,7 @@ export const tablesRoutes = (): RouteObject[] => [
   // List-page descriptions were dynamic counts; that count now lives in the
   // page's in-content toolbar, so the handle carries only a title.
   { index: true, element: <Tables />, handle: { title: "Tables" } satisfies ConsoleRouteHandle },
+  { path: "new", element: <TableDetail />, handle: { title: "New table", description: "Define a new table" } satisfies ConsoleRouteHandle },
   { path: ":name", element: <TableDetail />, handle: { title: (p) => p.name ?? "Table", description: "Table schema, indexes, RLS policies and seed data" } satisfies ConsoleRouteHandle },
 ];
 
