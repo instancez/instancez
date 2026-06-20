@@ -363,19 +363,6 @@ storage:
             - image/*
         public: false
         rls: []
-"on":
-    welcome_hook:
-        events:
-            - users.insert
-        schedule: ""
-        webhook:
-            url: https://httpbin.org/post
-            headers:
-                X-Source: instancez
-            retry:
-                max: 3
-                backoff: exponential
-        email: null
 rpc:
     team_stats:
         description: Get team statistics

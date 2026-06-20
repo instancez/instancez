@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/instancez/instancez/internal/domain"
-	"gopkg.in/yaml.v3"
 )
 
 // envVarPattern matches ${VAR} and ${VAR:-default} in strings.
@@ -32,7 +31,7 @@ func ParseBytes(data []byte, origin string) (*domain.Config, error) {
 	}
 
 	var cfg domain.Config
-	if err := yaml.Unmarshal([]byte(interpolated), &cfg); err != nil {
+	if err := strictUnmarshalYAML([]byte(interpolated), &cfg); err != nil {
 		return nil, &domain.ConfigError{Path: origin, Message: "invalid YAML", Err: err}
 	}
 
@@ -94,7 +93,7 @@ func ForceLoadDotenv(path string) error {
 func ParseBytesLenient(data []byte, origin string) (*domain.Config, error) {
 	interpolated := interpolateEnvVarsLenient(string(data))
 	var cfg domain.Config
-	if err := yaml.Unmarshal([]byte(interpolated), &cfg); err != nil {
+	if err := strictUnmarshalYAML([]byte(interpolated), &cfg); err != nil {
 		return nil, &domain.ConfigError{Path: origin, Message: "invalid YAML", Err: err}
 	}
 	applyDefaults(&cfg)
@@ -106,7 +105,7 @@ func ParseBytesLenient(data []byte, origin string) (*domain.Config, error) {
 // secret values never transit the dashboard API layer.
 func ParseBytesRaw(data []byte, origin string) (*domain.Config, error) {
 	var cfg domain.Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := strictUnmarshalYAML(data, &cfg); err != nil {
 		return nil, &domain.ConfigError{Path: origin, Message: "invalid YAML", Err: err}
 	}
 	applyDefaults(&cfg)
@@ -209,6 +208,13 @@ func stripQuotes(s string) string {
 	}
 	return s
 }
+
+// ApplyDefaults fills sensible defaults on a Config that was decoded directly
+// (e.g. JSON-unmarshalled by pkg/configvalidate) rather than through one of the
+// ParseBytes* loaders. Callers that validate such a Config must run this first
+// so Validate sees the same defaulted shape every ParseBytes* path produces —
+// otherwise defaultable fields like rpc.security read as "" and are rejected.
+func ApplyDefaults(cfg *domain.Config) { applyDefaults(cfg) }
 
 // applyDefaults sets sensible defaults on a parsed Config.
 func applyDefaults(cfg *domain.Config) {

@@ -48,3 +48,17 @@ func TestStrictUnmarshalYAML_ReportsMultipleUnknownKeys(t *testing.T) {
 		t.Errorf("both unknown keys should be reported, got: %s", err.Error())
 	}
 }
+
+func TestParseBytes_RejectsUnknownKey(t *testing.T) {
+	_, err := ParseBytes([]byte("version: 1\nbogus: true\n"), "test.yaml")
+	if err == nil || !strings.Contains(err.Error(), `"bogus"`) {
+		t.Fatalf("ParseBytes should reject unknown key, got: %v", err)
+	}
+}
+
+func TestParseBytesRaw_RejectsUnknownKey(t *testing.T) {
+	_, err := ParseBytesRaw([]byte("version: 1\nbogus: true\n"), "test.yaml")
+	if err == nil || !strings.Contains(err.Error(), `"bogus"`) {
+		t.Fatalf("ParseBytesRaw should reject unknown key, got: %v", err)
+	}
+}

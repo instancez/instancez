@@ -35,8 +35,17 @@ type Config struct {
 
 // Project holds display-only metadata.
 type Project struct {
-	Name        string `yaml:"name" json:"name"`
-	Description string `yaml:"description" json:"description"`
+	Name        string        `yaml:"name" json:"name"`
+	Description string        `yaml:"description" json:"description"`
+	Cloud       *ProjectCloud `yaml:"cloud" json:"cloud"`
+}
+
+// ProjectCloud links a project to instancez Cloud. The fields are read by the
+// `cloud` package (deploy, status) via a standalone YAML walk; they are declared
+// here so the strict config decoder recognizes the project.cloud block.
+type ProjectCloud struct {
+	ProjectID string `yaml:"project_id" json:"project_id"`
+	APIURL    string `yaml:"api_url" json:"api_url"`
 }
 
 // Server groups runtime/HTTP concerns.
