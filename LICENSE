@@ -1,0 +1,18 @@
+PLACEHOLDER — LICENSE NOT YET FINALIZED. DO NOT MAKE THIS REPOSITORY PUBLIC
+UNTIL THIS FILE CONTAINS A REAL LICENSE.
+
+The license is an open decision. Apache-2.0 is the leaning default and the
+recommended choice for an adoption-first launch (permissive, includes a patent
+grant, enterprise-friendly). AGPL-3.0 is the alternative if protecting a hosted
+commercial offering takes priority over adoption.
+
+To finalize:
+  - Apache-2.0:  drop in the standard Apache License 2.0 text and add a NOTICE
+                 file. Adopt a DCO (Signed-off-by) for contributions so future
+                 major versions can be relicensed if needed.
+  - AGPL-3.0:    drop in the standard GNU AGPLv3 text. Plan for a CLA if you
+                 intend to relicense for the commercial product.
+
+Then update the License badge and License section in README.md.
+
+See docs/superpowers/specs/2026-06-21-open-source-launch-readiness-design.md, section 5.
