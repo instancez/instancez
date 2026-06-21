@@ -40,7 +40,7 @@ describe("console route handles (shell-owned titles)", () => {
   });
 
   it("detail pages derive the title from the route param (entity name)", () => {
-    expect(titleString(handleOf(tablesRoutes(), 1), { name: "todos" })).toBe("todos");
+    expect(titleString(handleOf(tablesRoutes(), 2), { name: "todos" })).toBe("todos");
     expect(titleString(handleOf(storageRoutes(), 1), { name: "avatars" })).toBe("avatars");
     expect(titleString(handleOf(rpcRoutes(), 1), { name: "get_todos" })).toBe("get_todos");
     expect(titleString(handleOf(functionsRoutes(), 1), { name: "process_image" })).toBe(

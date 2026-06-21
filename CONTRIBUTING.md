@@ -12,7 +12,7 @@ You need:
 
 - Go 1.25 or newer
 - Postgres 14 or newer (a local instance or Docker)
-- Node.js 20 or newer (only if you work on the dashboard or on code functions)
+- Node.js 22 or newer (only if you work on the dashboard or on code functions)
 - Docker (only for integration tests)
 
 Build and run:

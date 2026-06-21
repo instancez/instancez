@@ -81,7 +81,7 @@ func buildDevFuncRuntime(
 
 	// Preconditions, run BEFORE the npm step below: node must be on PATH (npm
 	// ships with node, so without this a node-less machine fails with a raw
-	// `exec: npm: ... not found` instead of the "Node.js >= 20" message), and
+	// `exec: npm: ... not found` instead of the "Node.js >= 22" message), and
 	// every declared function's source file must exist. funcs.New re-checks
 	// node, but the dev path shells out to npm first, so the gate lives here too.
 	if err := runFuncPrechecks(

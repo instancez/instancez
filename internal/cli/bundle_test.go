@@ -170,7 +170,7 @@ func TestBuildBundleRequiresNodeWhenPackageJSON(t *testing.T) {
 	_, err := BuildBundle(dir)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Node.js")
-	assert.Contains(t, err.Error(), "20")
+	assert.Contains(t, err.Error(), "22")
 	assert.NotContains(t, err.Error(), "npm")
 }
 

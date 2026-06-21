@@ -449,15 +449,6 @@ INSTANCEZ_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres
 `
 }
 
-func scaffoldDevelopmentEnv(ownerDSN, authDSN, adminKey string) string {
-	return fmt.Sprintf(`# Owner + authenticator DSNs provisioned by 'inz dev' from INSTANCEZ_DATABASE_URL.
-INSTANCEZ_OWNER_DATABASE_URL=%s
-INSTANCEZ_AUTH_DATABASE_URL=%s
-# Random admin key for the dashboard and /api/_admin endpoints. Change freely.
-INSTANCEZ_ADMIN_KEY=%s
-`, ownerDSN, authDSN, adminKey)
-}
-
 // writeAction tells the file-write dispatcher what happened, so the printed
 // log shows "+" for new files, "~" for updates, and nothing for skips.
 type writeAction int

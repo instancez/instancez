@@ -399,14 +399,3 @@ func runDriftHeartbeat(ctx context.Context, tracker *DriftTracker, logger *slog.
 		}
 	}
 }
-
-func joinStrings(strs []string, sep string) string {
-	result := ""
-	for i, s := range strs {
-		if i > 0 {
-			result += sep
-		}
-		result += s
-	}
-	return result
-}

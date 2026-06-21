@@ -36,7 +36,7 @@ func TestBuildDevFuncRuntimeRequiresNode(t *testing.T) {
 	_, err := buildDevFuncRuntime(context.Background(), cfg, configPath, km, slog.Default())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Node.js")
-	assert.Contains(t, err.Error(), "20")
+	assert.Contains(t, err.Error(), "22")
 	assert.NotContains(t, err.Error(), "npm")
 }
 

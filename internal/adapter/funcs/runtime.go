@@ -307,12 +307,13 @@ func scanWorkerStderr(r io.Reader, logger *slog.Logger, wg *sync.WaitGroup) {
 }
 
 // MinNodeMajorVersion is the lowest Node.js major version instancez supports
-// for code functions. It is the floor declared by our shipped runtime
-// dependency @supabase/supabase-js (engines.node ">=20.0.0"); worker.js itself
-// only needs ~16. The version is documented, not enforced — lower versions may
-// work but are unsupported, so we only assert that *some* node binary is on
-// PATH, not which one.
-const MinNodeMajorVersion = 20
+// for code functions. @supabase/supabase-js declares engines.node ">=20.0.0",
+// but its realtime client is built eagerly inside createClient and needs a
+// native WebSocket, which Node only ships from v22 on. Every code function gets
+// an injected ctx.supabase client, so v22 is the practical floor. worker.js on
+// its own needs only ~16. The version is documented, not enforced: we assert
+// that some node binary is on PATH, not which one.
+const MinNodeMajorVersion = 22
 
 // RequireNode returns an actionable error when the `node` binary is not on
 // PATH. Code functions are run by spawning node (and their dependencies are

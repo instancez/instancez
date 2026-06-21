@@ -9,7 +9,7 @@ Code functions are JavaScript ESM handlers served at `/functions/v1/<name>`, cal
 
 Functions run in Node.js worker processes, so **Node.js must be installed and on `PATH`** wherever instancez serves or builds functions. With a `functions:` block declared, `inz dev` and `inz serve` require `node` at startup; `inz deploy`/`inz bundle` require it when your functions have npm dependencies (a `functions/package.json`, which it vendors with `npm ci`). Each refuses to proceed with an actionable error if node is missing. Projects without a `functions:` block do not need Node.js.
 
-The supported minimum is **Node.js 20** — the floor declared by `@supabase/supabase-js`, which functions use for `ctx.supabase` / `ctx.serviceClient`. Older versions may work but are not supported; the minimum is documented, not enforced.
+The supported minimum is **Node.js 22**. Functions get an injected `@supabase/supabase-js` client (`ctx.supabase` / `ctx.serviceClient`), and that client opens a realtime connection that needs a native `WebSocket`, which Node ships from v22 on. The minimum is documented, not enforced, so an older version may appear to work until a function touches `ctx.supabase`.
 
 When your functions have npm dependencies, **`inz deploy`/`inz bundle` require a committed `package-lock.json`.** They vendor dependencies with `npm ci` (reproducible — never `npm install`), which fails without a lockfile. Run `npm install` in `functions/` once to generate it and commit the result. (`inz dev` is more lenient: it falls back to `npm install` to create the lockfile on first run.)
 

@@ -82,7 +82,7 @@ func TestNewRequiresNodeOnPath(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when node is missing from PATH, got nil")
 	}
-	if !containsAll(err.Error(), "Node.js", "20") {
+	if !containsAll(err.Error(), "Node.js", "22") {
 		t.Fatalf("error %q should name Node.js and the minimum version", err.Error())
 	}
 }

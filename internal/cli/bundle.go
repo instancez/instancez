@@ -55,7 +55,7 @@ func BuildBundle(projectDir string) (bundlePath string, err error) {
 	hasDeps := pkgErr == nil
 
 	// Preconditions for `npm ci`: node on PATH (so a node-less machine fails
-	// with the "Node.js >= 20" message, not a raw `exec: npm: ... not found`),
+	// with the "Node.js >= 22" message, not a raw `exec: npm: ... not found`),
 	// and a committed package-lock.json. deploy/bundle vendor with `npm ci`
 	// (reproducible — never falling back to `npm install` the way `inz dev`
 	// does, because a shipped bundle must not silently resolve new versions),
