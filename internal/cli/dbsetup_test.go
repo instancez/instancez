@@ -16,6 +16,7 @@ func TestRolesFromEnv_Defaults(t *testing.T) {
 		"INSTANCEZ_DB_ANON_ROLE",
 		"INSTANCEZ_DB_AUTHENTICATED_ROLE",
 		"INSTANCEZ_DB_SERVICE_ROLE",
+		"INSTANCEZ_DB_SEED_ROLE",
 	} {
 		t.Setenv(k, "")
 	}
@@ -30,6 +31,7 @@ func TestRolesFromEnv_Overrides(t *testing.T) {
 	t.Setenv("INSTANCEZ_DB_ANON_ROLE", "guest")
 	t.Setenv("INSTANCEZ_DB_AUTHENTICATED_ROLE", "member")
 	t.Setenv("INSTANCEZ_DB_SERVICE_ROLE", "admin_role")
+	t.Setenv("INSTANCEZ_DB_SEED_ROLE", "")
 
 	got := rolesFromEnv()
 	want := domain.Roles{
@@ -37,12 +39,29 @@ func TestRolesFromEnv_Overrides(t *testing.T) {
 		Anon:          "guest",
 		Authenticated: "member",
 		Service:       "admin_role",
+		Seed:          "",
 	}
 	if got != want {
 		t.Fatalf("rolesFromEnv = %+v, want %+v", got, want)
 	}
 	if err := got.Validate(); err != nil {
 		t.Fatalf("custom roles failed validation: %v", err)
+	}
+}
+
+func TestRolesFromEnv_SeedRole(t *testing.T) {
+	// Unset seed role yields empty string (no seed grants).
+	t.Setenv("INSTANCEZ_DB_SEED_ROLE", "")
+	got := rolesFromEnv()
+	if got.Seed != "" {
+		t.Errorf("Seed should be empty when INSTANCEZ_DB_SEED_ROLE is unset, got %q", got.Seed)
+	}
+
+	// Set seed role is forwarded.
+	t.Setenv("INSTANCEZ_DB_SEED_ROLE", "app_x_seed")
+	got = rolesFromEnv()
+	if got.Seed != "app_x_seed" {
+		t.Errorf("Seed = %q, want %q", got.Seed, "app_x_seed")
 	}
 }
 

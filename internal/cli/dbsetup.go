@@ -171,5 +171,6 @@ func rolesFromEnv() domain.Roles {
 	if v := os.Getenv("INSTANCEZ_DB_SERVICE_ROLE"); v != "" {
 		r.Service = v
 	}
+	r.Seed = os.Getenv("INSTANCEZ_DB_SEED_ROLE")
 	return r
 }

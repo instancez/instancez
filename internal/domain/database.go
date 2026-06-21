@@ -24,6 +24,7 @@ type Roles struct {
 	Anon          string // RLS-enforced role for unauthenticated requests
 	Authenticated string // RLS-enforced role for logged-in users
 	Service       string // BYPASSRLS role for trusted backend / admin-key requests
+	Seed          string // BYPASSRLS role for run_sql seeding; DML on user schemas only. Empty = unset.
 }
 
 // DefaultRoles returns the Supabase-compatible defaults.
