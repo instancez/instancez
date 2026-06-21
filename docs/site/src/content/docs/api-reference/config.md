@@ -161,7 +161,7 @@ tables:
 | `fields[].max` | `number` | — | Maximum numeric value (inclusive). |
 | `fields[].check` | `string` | — | Raw SQL `CHECK` expression. |
 | `fields[].foreign_key.references` | `string` | — | `table.column` or `schema.table.column`. |
-| `fields[].foreign_key.on_delete` | `string` | — | `cascade`, `restrict`, or `set_null`. |
+| `fields[].foreign_key.on_delete` | `string` | `restrict` | `cascade`, `restrict`, or `set_null`. Defaults to `restrict` when omitted. |
 | `fields[].ref` | `string` | — | Storage reference in the form `storage.<bucket>`. |
 | `fields[].on_delete` | `string` | — | (`ref` only) `cascade` or `keep` — whether to delete the object on row deletion. |
 

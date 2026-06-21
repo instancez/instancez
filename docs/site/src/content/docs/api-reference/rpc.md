@@ -30,7 +30,7 @@ rpc:
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `language` | no | `sql` or `plpgsql` (default: `sql`) |
+| `language` | no | `sql` or `plpgsql` (default: `plpgsql`) |
 | `volatility` | no | `volatile` (default), `stable`, or `immutable` |
 | `security` | no | `invoker` (default) or `definer` |
 | `auth_required` | no | Reject unauthenticated callers when `true` |
