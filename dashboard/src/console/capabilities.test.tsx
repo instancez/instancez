@@ -16,7 +16,7 @@ vi.mock("../api/client", async (importOriginal) => {
 const config = {
   version: 1,
   project: { name: "P", description: "" },
-  extensions: [], tables: {}, auth: null, storage: {}, rpc: {}, functions: {}, data: {},
+  extensions: [], tables: {}, auth: null, storage: {}, rpc: {}, functions: {},
   providers: {
     email: { type: "resend", api_key: "${INSTANCEZ_RESEND_API_KEY}", default_from_email: "" },
     storage: null,
@@ -25,8 +25,8 @@ const config = {
     port: 8080, max_body_size: "10MB", max_limit: 1000, docs_ui: true,
     cors: { origins: [], methods: [], headers: [], credentials: false, max_age: 0 },
     timeouts: { request: "30s", db_query: "10s", upload: "60s", shutdown: "10s" },
-    db: { pool: { max: 25, min: 5, idle_timeout: "5m" } },
   },
+  database: { pool: { max: 25, min: 5, idle_timeout: "5m" } },
 } as unknown as Config;
 
 function renderWithCaps(canWriteSecrets: boolean) {

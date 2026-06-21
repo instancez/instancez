@@ -5,13 +5,14 @@ export interface Config {
   project: Project;
   extensions: string[];
   server: ServerConfig;
+  database: DatabaseConfig;
   providers: Providers;
   auth: Auth | null;
   tables: Record<string, Table>;
   storage: Record<string, Bucket>;
   rpc: Record<string, RpcFunction>;
   functions: Record<string, CodeFunction>;
-  data: Record<string, Record<string, unknown>[] | Record<string, string>>;
+  functions_bundle?: string;
   _checksum?: string;
 }
 
@@ -25,9 +26,12 @@ export interface ServerConfig {
   cors: CORS;
   timeouts: Timeouts;
   max_body_size: string;
-  db: { pool: PoolConfig };
   docs_ui?: boolean;
   max_limit: number;
+}
+
+export interface DatabaseConfig {
+  pool: PoolConfig;
 }
 
 export interface CORS {

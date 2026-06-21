@@ -19,6 +19,29 @@ Then open:
 - Instancez API: http://localhost:8080
 - Docs UI: http://localhost:8080/api/docs
 
+A `seed` container populates the catalog and a demo login once the backend is
+healthy, so the app has gear to show on first load. Sign in with:
+
+- **Email:** `demo@example.com`
+- **Password:** `demo-password`
+
+## Seeding
+
+instancez no longer seeds from YAML; data bootstrap is done over the running
+API. The `seed` service in `docker-compose.yaml` shows both supported paths:
+
+- **`seed.sh`** creates the demo user through the admin API
+  (`POST /auth/v1/admin/users`), which handles password hashing and the
+  `auth.users` internals.
+- **`seed.sql`** loads categories, products, and reviews over a direct psql
+  connection. Foreign keys resolve with subqueries (`category_id` from a
+  category slug, `user_id` from the demo user's email), so there are no ids to
+  thread through a script.
+
+The sidecar waits for instancez's `/ready` (which only answers after migrations
+run), then exits. Both steps are idempotent, so `docker compose up` is safe to
+re-run against the persisted `pgdata` volume.
+
 ## What it demonstrates
 
 Schema (see `instancez.yaml`):

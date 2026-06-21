@@ -27,16 +27,43 @@ services:
     ports:
       - "8080:8080"
     environment:
-      INSTANCEZ_OWNER_DATABASE_URL: postgres://instancez_owner:instancez@postgres:5432/instancez?sslmode=disable
-      INSTANCEZ_AUTH_DATABASE_URL: postgres://authenticator:instancez@postgres:5432/instancez?sslmode=disable
+      INSTANCEZ_DATABASE_URL: postgres://instancez:instancez@postgres:5432/instancez?sslmode=disable
       INSTANCEZ_ADMIN_KEY: instancez-dev-key
       JWT_SECRET: dev-jwt-secret-change-me
     volumes:
       - ./instancez.yaml:/app/instancez.yaml
       - ./functions:/app/functions   # code functions; `inz dev` runs npm ci here
+    healthcheck:
+      # /ready 200s only after migrations run and the DB is reachable, so it
+      # doubles as the signal the seed sidecar waits on.
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/ready"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
     depends_on:
       postgres:
         condition: service_healthy
+
+  # One-shot data bootstrap. YAML seeding was removed, so the demo seeds the
+  # same way an app would: the admin API for the auth user, plain SQL for the
+  # catalog. Runs to completion and exits; safe to re-run (see seed.sh).
+  seed:
+    image: postgres:17-alpine
+    command: ["sh", "/seed.sh"]
+    environment:
+      INSTANCEZ_URL: http://instancez:8080
+      INSTANCEZ_ADMIN_KEY: instancez-dev-key
+      # Superuser DSN. seed.sql writes the catalog directly, bypassing RLS the
+      # way a privileged migration job would.
+      INSTANCEZ_DATABASE_URL: postgres://instancez:instancez@postgres:5432/instancez?sslmode=disable
+    volumes:
+      - ./seed.sh:/seed.sh:ro
+      - ./seed.sql:/seed.sql:ro
+    depends_on:
+      instancez:
+        condition: service_healthy
+    restart: "no"
 
   web:
     build: .
@@ -54,7 +81,8 @@ services:
       - ./index.html:/app/index.html
       - ./vite.config.js:/app/vite.config.js
     depends_on:
-      - instancez
+      instancez:
+        condition: service_healthy
 
 volumes:
   pgdata:

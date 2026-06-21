@@ -37,26 +37,18 @@ export function TableDetail() {
   const dialog = useDialog();
   const canWriteConfig = backend.capabilities.canWriteConfig;
   const [table, setTable] = useState<Table | null>(null);
-  const [seeds, setSeeds] = useState<Record<string, unknown>[]>([]);
   const [diff, setDiff] = useState<DiffResponse | null>(null);
 
   const isNew = !name;
   const newState = location.state as { tableName?: string; seed?: Table } | null;
 
-  // true when the data entry for this table uses CSV-file references (read-only in the UI)
-  const tableData = config?.data?.[name ?? ""];
-  const isCSVData = tableData !== undefined && !Array.isArray(tableData);
-
   useEffect(() => {
     if (isNew && newState?.seed) {
       setTable(structuredClone(newState.seed));
-      setSeeds([]);
       return;
     }
     if (config && name && config.tables[name]) {
       setTable(structuredClone(config.tables[name]!));
-      const entry = config.data?.[name];
-      setSeeds(structuredClone(Array.isArray(entry) ? entry : []));
     }
   }, [config, name, isNew, newState]);
 
@@ -70,15 +62,9 @@ export function TableDetail() {
   async function handleSave() {
     const effectiveName = isNew ? newState?.tableName : name;
     if (!config || !table || !effectiveName) return;
-    const updatedData = { ...config.data };
-    if (!isCSVData) {
-      if (seeds.length > 0) updatedData[effectiveName] = seeds;
-      else delete updatedData[effectiveName];
-    }
     const updated = {
       ...config,
       tables: { ...config.tables, [effectiveName]: table },
-      data: updatedData,
     };
     const ok = await save(updated);
     if (ok && isNew) navigate(`../${effectiveName}`, { relative: "path", replace: true });
@@ -112,11 +98,9 @@ export function TableDetail() {
 
   // Dirty is derived, not a sticky flag: undoing an edit hides the save bar.
   // In new mode the table is always dirty (nothing saved yet).
-  const savedSeedsEntry = config.data?.[name ?? ""];
   const dirty =
     isNew ||
-    !jsonEqual(table, config.tables[name ?? ""] ?? null) ||
-    (!isCSVData && !jsonEqual(seeds, Array.isArray(savedSeedsEntry) ? savedSeedsEntry : []));
+    !jsonEqual(table, config.tables[name ?? ""] ?? null);
 
   const fieldEntries = table.fields || [];
   const allTableColumns = fieldEntries.map((x) => x.name);
@@ -136,7 +120,7 @@ export function TableDetail() {
       <Box pb="8">
         <Tabs.Root defaultValue="fields" lazyMount unmountOnExit>
           <Tabs.List borderBottomWidth="1px" mb="6" gap="1">
-            {["Fields", "Indexes", "RLS", "Seeds"].map((tab) => (
+            {["Fields", "Indexes", "RLS"].map((tab) => (
               <Tabs.Trigger
                 key={tab}
                 value={tab.toLowerCase()}
@@ -355,22 +339,6 @@ export function TableDetail() {
             </VStack>
           </Tabs.Content>
 
-          {/* Seeds Tab */}
-          <Tabs.Content value="seeds">
-            {isCSVData ? (
-              <Text fontSize="sm" color="fg.muted">
-                Seed data for this table uses CSV files and cannot be edited here.
-              </Text>
-            ) : (
-              <SeedsTab
-                tableFields={fieldEntries}
-                seeds={seeds}
-                onChange={(rows) => setSeeds(rows)}
-                canWrite={canWriteConfig}
-              />
-            )}
-          </Tabs.Content>
-
         </Tabs.Root>
 
         {/* Preview Pane */}
@@ -409,152 +377,6 @@ function MigrationPreview({
   if (!diff) return null;
   return (
     <DiffViewer statements={diff.statements} isDestructive={diff.is_destructive} />
-  );
-}
-
-// Seeds Tab Component
-function SeedsTab({
-  tableFields,
-  seeds,
-  onChange,
-  canWrite,
-}: {
-  tableFields: Field[];
-  seeds: Record<string, unknown>[];
-  onChange: (rows: Record<string, unknown>[]) => void;
-  canWrite: boolean;
-}) {
-  const dialog = useDialog();
-
-  return (
-    <Box>
-      {tableFields.length === 0 ? (
-        <Text fontSize="sm" color="fg.muted">Add fields to the table first.</Text>
-      ) : (
-        <>
-          <Box overflowX="auto">
-            <Box as="table" w="full" fontSize="sm">
-              <Box as="thead">
-                <Box as="tr" borderBottomWidth="1px">
-                  <Box as="th" w="10" px="2" py="2" fontSize="xs" fontWeight="medium" color="fg.muted">#</Box>
-                  {tableFields.map((field) => (
-                    <Box
-                      as="th"
-                      key={field.name}
-                      textAlign="left"
-                      px="3"
-                      py="2"
-                      fontSize="xs"
-                      fontWeight="medium"
-                      color="fg.muted"
-                    >
-                      <Box as="span" fontFamily="mono">{field.name}</Box>
-                      <Box as="span" ml="1" color="fg.muted" opacity="0.5">{field.type || (field.foreign_key ? "bigint" : "text")}</Box>
-                    </Box>
-                  ))}
-                  <Box as="th" w="10" />
-                </Box>
-              </Box>
-              <Box as="tbody">
-                {seeds.map((row, rowIdx) => (
-                  <Box
-                    as="tr"
-                    key={rowIdx}
-                    borderBottomWidth="1px"
-                    _hover={{ bg: "bg.subtle" }}
-                  >
-                    <Box as="td" px="2" py="1.5" fontSize="xs" color="fg.muted" fontVariantNumeric="tabular-nums">
-                      {rowIdx + 1}
-                    </Box>
-                    {tableFields.map((field) => (
-                      <Box as="td" key={field.name} px="3" py="1.5">
-                        {field.type === "boolean" ? (
-                          <Toggle
-                            aria-label={field.name}
-                            checked={!!row[field.name]}
-                            onChange={(v) => {
-                              const updated = [...seeds];
-                              updated[rowIdx] = { ...updated[rowIdx]!, [field.name]: v };
-                              onChange(updated);
-                            }}
-                          />
-                        ) : field.enum && field.enum.length > 0 ? (
-                          <Select
-                            mono
-                            inputSize="sm"
-                            value={String(row[field.name] ?? "")}
-                            onChange={(e) => {
-                              const updated = [...seeds];
-                              updated[rowIdx] = { ...updated[rowIdx]!, [field.name]: e.target.value };
-                              onChange(updated);
-                            }}
-                          >
-                            <option value="">—</option>
-                            {field.enum.map((v) => (
-                              <option key={v} value={v}>{v}</option>
-                            ))}
-                          </Select>
-                        ) : (
-                          <Input
-                            mono
-                            inputSize="sm"
-                            type={
-                              field.type === "integer" || field.type === "bigint"
-                                ? "number"
-                                : "text"
-                            }
-                            value={String(row[field.name] ?? "")}
-                            onChange={(e) => {
-                              const updated = [...seeds];
-                              updated[rowIdx] = { ...updated[rowIdx]!, [field.name]: e.target.value };
-                              onChange(updated);
-                            }}
-                            placeholder="—"
-                          />
-                        )}
-                      </Box>
-                    ))}
-                    {canWrite && (
-                      <Box as="td" px="1" py="1.5">
-                        <Button
-                          variant="danger-ghost"
-                          size="icon"
-                          aria-label={`Delete row ${rowIdx + 1}`}
-                          onClick={async () => {
-                            if (!(await dialog.confirm(`Delete row ${rowIdx + 1}?`))) return;
-                            onChange(seeds.filter((_, i) => i !== rowIdx));
-                          }}
-                        >
-                          <Trash2 size={12} />
-                        </Button>
-                      </Box>
-                    )}
-                  </Box>
-                ))}
-              </Box>
-            </Box>
-          </Box>
-
-          {canWrite && (
-            <Button
-              variant="dashed"
-              size="sm"
-              mt="3"
-              onClick={() => {
-                const newRow: Record<string, unknown> = {};
-                tableFields.forEach((field) => {
-                  newRow[field.name] = "";
-                });
-                onChange([...seeds, newRow]);
-              }}
-            >
-              <Plus size={14} />
-              Add Row
-            </Button>
-          )}
-        </>
-      )}
-    </Box>
   );
 }
 

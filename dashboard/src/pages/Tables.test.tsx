@@ -43,7 +43,6 @@ const baseConfig: Config = {
   storage: {},
   rpc: {},
   functions: {},
-  data: {},
   providers: { email: null, storage: null },
   server: {
     port: 8080,
@@ -52,8 +51,8 @@ const baseConfig: Config = {
     docs_ui: true,
     cors: { origins: [], methods: [], headers: [], credentials: false, max_age: 0 },
     timeouts: { request: "30s", db_query: "10s", upload: "60s", shutdown: "10s" },
-    db: { pool: { max: 25, min: 5, idle_timeout: "5m" } },
   },
+  database: { pool: { max: 25, min: 5, idle_timeout: "5m" } },
 };
 
 function renderTables(config: Config, backend: ConsoleBackend = adminBackend) {
