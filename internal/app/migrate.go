@@ -273,6 +273,12 @@ func (m *Migrator) Apply(ctx context.Context, cfg *domain.Config) error {
 	return nil
 }
 
+// isReservedSchema reports whether a schema is engine-owned (auth, storage).
+// The seed role used by run_sql is never granted on these.
+func isReservedSchema(s string) bool {
+	return s == "auth" || s == "storage"
+}
+
 // generateSchemaGrants emits per-schema USAGE + default privileges for the
 // three API roles. Mirrors what Supabase configures for `public` at project
 // init, applied uniformly to every schema we manage. CREATE SCHEMA is
@@ -287,6 +293,13 @@ func generateSchemaGrants(schemas []string, roles domain.Roles) []string {
 			fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA %s GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %s;", s, rlist),
 			fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA %s GRANT USAGE, SELECT ON SEQUENCES TO %s;", s, rlist),
 		)
+		if roles.Seed != "" && !isReservedSchema(s) {
+			ddl = append(ddl,
+				fmt.Sprintf("GRANT USAGE ON SCHEMA %s TO %s;", s, roles.Seed),
+				fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA %s GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %s;", s, roles.Seed),
+				fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA %s GRANT USAGE, SELECT ON SEQUENCES TO %s;", s, roles.Seed),
+			)
+		}
 	}
 	return ddl
 }
@@ -303,6 +316,19 @@ func generateExistingObjectGrants(schemas []string, roles domain.Roles) []string
 			fmt.Sprintf("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %s TO %s;", s, rlist),
 			fmt.Sprintf("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA %s TO %s;", s, rlist),
 		)
+		if roles.Seed != "" && !isReservedSchema(s) {
+			ddl = append(ddl,
+				fmt.Sprintf("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %s TO %s;", s, roles.Seed),
+				fmt.Sprintf("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA %s TO %s;", s, roles.Seed),
+			)
+		}
+	}
+	// _instancez_migrations lives in public and is caught by the public GRANT
+	// above; revoke it so the seed role cannot touch migration history. This
+	// runs near the end of the plan, after EnsureMigrationsTable has created
+	// the table, so the REVOKE target always exists.
+	if roles.Seed != "" {
+		ddl = append(ddl, fmt.Sprintf("REVOKE ALL ON _instancez_migrations FROM %s;", roles.Seed))
 	}
 	return ddl
 }
