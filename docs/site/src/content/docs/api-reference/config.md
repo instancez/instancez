@@ -44,8 +44,8 @@ List of Postgres extensions to enable. Each entry is passed to `CREATE EXTENSION
 |-----|------|---------|-------------|
 | `server.port` | `integer` | `8080` | HTTP listen port. |
 | `server.max_body_size` | `string` | `1MB` | Maximum request body size for non-upload endpoints. |
-| `server.max_limit` | `integer` | `100` | Maximum `limit` accepted on REST list queries. |
-| `server.docs_ui` | `boolean` | `false` | Enable the built-in API docs UI at `/docs`. |
+| `server.max_limit` | `integer` | `100` | **Not currently enforced.** Configuration value is defined but not validated on REST queries. Default query limit is 20. |
+| `server.docs_ui` | `boolean` | `devMode` | Enable the built-in API docs UI at `/docs`. Defaults to `true` in `inz dev`, `false` in `inz serve`. When explicitly set, overrides the mode default. |
 
 ### server.cors
 
@@ -154,7 +154,7 @@ tables:
 | `fields[].primary_key` | `boolean` | `false` | Mark as primary key. |
 | `fields[].required` | `boolean` | `false` | Add `NOT NULL` constraint. |
 | `fields[].unique` | `boolean` | `false` | Add `UNIQUE` constraint. |
-| `fields[].default` | `any` | — | Column default. SQL expressions (e.g. `now()`, `gen_random_uuid()`) are passed through as-is. |
+| `fields[].default` | `any` | — | Column default. Supported: literal values, `now()`, `current_date`, `current_time`. The shorthand `uuid_v7()` and `uuid_v4()` are normalized to `gen_random_uuid()`. |
 | `fields[].enum` | `string[]` | — | Restrict values to this list (creates a `CHECK` constraint). |
 | `fields[].pattern` | `string` | — | Regex pattern for a `CHECK` constraint. |
 | `fields[].min` | `number` | — | Minimum numeric value (inclusive). |

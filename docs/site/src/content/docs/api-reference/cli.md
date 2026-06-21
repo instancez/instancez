@@ -32,7 +32,7 @@ inz init my-app --dir ./my-app
 
 Start a local development server with hot-reload.
 
-Reads config, connects to Postgres, runs migrations, and watches for file changes. Set `INSTANCEZ_DATABASE_URL` (a superuser DSN) to let dev provision roles on first run, or set `INSTANCEZ_OWNER_DATABASE_URL` and `INSTANCEZ_AUTH_DATABASE_URL` directly.
+Reads config, connects to Postgres, runs migrations, and watches for file changes. Requires `INSTANCEZ_DATABASE_URL` (a superuser DSN) to provision roles on every startup, or set `INSTANCEZ_OWNER_DATABASE_URL` and `INSTANCEZ_AUTH_DATABASE_URL` directly.
 
 ```
 inz dev [flags]
@@ -67,7 +67,7 @@ inz serve [flags]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--allow-destructive` | `false` | Permit `DROP TABLE`/`COLUMN` in migrations. |
+| `--allow-destructive` | `false` | **Not currently enforced.** Flag is accepted but DROP operations are always executed. |
 | `--bundle` | — | Bundle pointer: file path or `s3://bucket/key[#version]`. When set, reads config and functions from the bundle archive instead of `--config`. Env: `INSTANCEZ_BUNDLE`. |
 | `--config` | `instancez.yaml` | Config source: file path or `s3://bucket/key`. Ignored when `--bundle` is set. Env: `INSTANCEZ_CONFIG`. |
 | `--dashboard` | `disabled` | Dashboard mode. Env: `INSTANCEZ_DASHBOARD`. |
