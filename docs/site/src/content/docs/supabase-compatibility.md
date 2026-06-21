@@ -11,7 +11,7 @@ instancez implements the Supabase wire protocol. Any official Supabase SDK works
 |---|---|---|
 | **Database — `supabase.from()`** | ✅ Full | `select`, `insert`, `update`, `upsert`, `delete`. All PostgREST filter operators (`eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `like`, `ilike`, `is`, `in`, `contains`, `containedBy`, `overlaps`, …). Embeds (`!inner`, `!left`, FK hints). `order`, `limit`, `offset`, Range-header pagination. `Prefer: return`, `count`, `resolution`, `missing`, `max-affected`, `tx`. CSV responses (`Accept: text/csv`). HEAD requests. |
 | **Auth — `supabase.auth.*`** | ✅ Full | Email + password, magic link / OTP, anonymous sign-in, session refresh, `updateUser`, `resetPasswordForEmail`, identity linking/unlinking, PKCE. |
-| **OAuth — `signInWithOAuth`** | ⚠️ Google and GitHub only | The `provider` field accepts `google` and `github`. Other providers return a 422. |
+| **OAuth — `signInWithOAuth`** | ⚠️ Google and GitHub only | The `provider` field accepts `google` and `github`. Other providers return a 400. |
 | **Auth Admin — `supabase.auth.admin.*`** | ✅ Full | `createUser`, `listUsers` (paginated), `getUserById`, `updateUserById`, `deleteUser`, `inviteUserByEmail`, `generateLink`, `signOut` (user), `deleteFactor`. |
 | **MFA — `supabase.auth.mfa.*`** | ⚠️ TOTP only | `enroll`, `challenge`, `verify`, `unenroll`, `listFactors` all work for TOTP. Phone/SMS factors are not supported. |
 | **Storage — `supabase.storage.*`** | ✅ Full | Upload, download, move, copy, remove, list. Public URLs. Signed URLs (download and upload). Bucket management (create, update, delete, empty). Image transforms: resize (`cover`, `contain`, `fill`), quality, format (`jpeg`, `png`); WebP and AVIF output are not supported. |

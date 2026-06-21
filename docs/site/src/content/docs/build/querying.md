@@ -231,7 +231,7 @@ Count modes:
 |------|----------|
 | `exact` | `COUNT(*)` — precise but adds a query |
 | `planned` | Uses the Postgres query planner estimate |
-| `estimated` | Planner estimate when no filters, exact count otherwise |
+| `estimated` | Planner estimate when no filters exist, planner estimate when filters exist. Never executes `COUNT(*)`. |
 
 ## Embeds (joins)
 

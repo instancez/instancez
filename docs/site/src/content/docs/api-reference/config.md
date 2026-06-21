@@ -74,7 +74,7 @@ Duration strings use Go format: `30s`, `5m`, `1h`.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `providers.email.type` | `string` | — | Email provider type. Currently `"resend"`. |
+| `providers.email.type` | `string` | — | Email provider type. Currently `"resend"` or `"ses"`. |
 | `providers.email.api_key` | `string` | — | Provider API key. Supports `${VAR}`. |
 | `providers.email.default_from_email` | `string` | — | Default sender address. |
 
@@ -98,7 +98,7 @@ Omit the `auth:` block entirely to disable authentication endpoints.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `auth.jwt_expiry` | `duration` | `15m` | Access token lifetime. |
+| `auth.jwt_expiry` | `duration` | `15m` (when `auth:` is present) | Access token lifetime. Default applies only when `auth:` block is declared but `jwt_expiry` is not. |
 | `auth.refresh_tokens` | `boolean` | `false` | Enable refresh token issuance. |
 | `auth.refresh_token_expiry` | `duration` | `7d` | Refresh token lifetime (only used when `refresh_tokens: true`). |
 | `auth.allow_signup` | `boolean` | `true` | Allow public `POST /auth/v1/signup`. Set to `false` for invite-only. |

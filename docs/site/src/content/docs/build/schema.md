@@ -105,7 +105,7 @@ Declare a foreign key with `foreign_key.references` pointing to `table.column` o
     on_delete: cascade
 ```
 
-When `foreign_key` is the only option on a field, the column type is inferred from the referenced column — you don't have to repeat it.
+When `foreign_key` is the only option on a field, the column type uses a heuristic: `UUID` for `auth.users.id`, `BIGINT` for all other references. The type is not inferred from the actual referenced column.
 
 **`on_delete` options:**
 
@@ -115,7 +115,7 @@ When `foreign_key` is the only option on a field, the column type is inferred fr
 | `restrict` | Prevent deletion of the parent if children exist. |
 | `set_null` | Set the FK column to `NULL` when the parent is deleted. |
 
-Omit `on_delete` to get the Postgres default (`NO ACTION`).
+Omit `on_delete` to default to `restrict`.
 
 ## Indexes
 

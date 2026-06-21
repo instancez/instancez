@@ -53,7 +53,7 @@ When `email.verify_email` is `false` (the default), `signUp` returns a session i
 
 **Magic link / Email OTP** — `supabase.auth.signInWithOtp()` / `supabase.auth.verifyOtp()`
 
-Requires an email provider under `providers.email`. Without one, `signInWithOtp` returns a 500.
+Requires an email provider under `providers.email`. Without one, `signInWithOtp` returns a 200 with an empty response body.
 
 **OAuth (Google, GitHub)** — `supabase.auth.signInWithOAuth({ provider: 'google' })`
 
