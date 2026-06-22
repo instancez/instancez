@@ -7,11 +7,11 @@ Code functions are JavaScript ESM handlers served at `/functions/v1/<name>`, cal
 
 ## Requirements
 
-Functions run in Node.js worker processes, so **Node.js must be installed and on `PATH`** wherever instancez serves or builds functions. With a `functions:` block declared, `inz dev` and `inz serve` require `node` at startup; `inz deploy`/`inz bundle` require it when your functions have npm dependencies (a `functions/package.json`, which it vendors with `npm ci`). Each refuses to proceed with an actionable error if node is missing. Projects without a `functions:` block do not need Node.js.
+Functions run in Node.js worker processes, so **Node.js must be installed and on `PATH`** wherever instancez serves or builds functions. With a `functions:` block declared, `inz dev` and `inz serve` require `node` at startup; `inz cloud deploy`/`inz bundle` require it when your functions have npm dependencies (a `functions/package.json`, which it vendors with `npm ci`). Each refuses to proceed with an actionable error if node is missing. Projects without a `functions:` block do not need Node.js.
 
 The supported minimum is **Node.js 22**. Functions get an injected `@supabase/supabase-js` client (`ctx.supabase` / `ctx.serviceClient`), and that client opens a realtime connection that needs a native `WebSocket`, which Node ships from v22 on. The minimum is documented, not enforced, so an older version may appear to work until a function touches `ctx.supabase`.
 
-When your functions have npm dependencies, **`inz deploy`/`inz bundle` require a committed `package-lock.json`.** They vendor dependencies with `npm ci` (reproducible — never `npm install`), which fails without a lockfile. Run `npm install` in `functions/` once to generate it and commit the result. (`inz dev` is more lenient: it falls back to `npm install` to create the lockfile on first run.)
+When your functions have npm dependencies, **`inz cloud deploy`/`inz bundle` require a committed `package-lock.json`.** They vendor dependencies with `npm ci` (reproducible, never `npm install`), which fails without a lockfile. Run `npm install` in `functions/` once to generate it and commit the result. (`inz dev` is more lenient: it falls back to `npm install` to create the lockfile on first run.)
 
 instancez also verifies at startup that **every declared function's source file exists** on disk (the `file:` path under each entry). A missing file fails fast with a clear error instead of surfacing later when the function is first called.
 
@@ -132,7 +132,7 @@ Dependencies must import as ESM, and they must not rely on native add-ons unless
 **curl:**
 
 ```sh
-curl https://your-project.instancez.io/functions/v1/todos \
+curl https://your-project.instancez.ai/functions/v1/todos \
   -H "Authorization: Bearer <user-jwt>"
 ```
 
@@ -149,8 +149,8 @@ const { data, error } = await supabase.functions.invoke("todos", {
 | Command | npm | Hot reload |
 |---------|-----|------------|
 | `inz dev` | Runs `npm ci` on startup. Falls back to `npm install` when no lockfile exists yet (first run). Restart required only when adding or removing npm dependencies. | JS code changes and `functions:` YAML changes are picked up automatically without a restart. |
-| `inz deploy` | Runs `npm ci` (requires a committed `package-lock.json`) and bundles `functions/` into a tar archive recorded in `instancez.yaml`. | N/A |
-| `inz serve` | Never runs npm. Consumes the pre-built bundle produced by `inz deploy`. | N/A |
+| `inz cloud deploy` | Runs `npm ci` (requires a committed `package-lock.json`) and bundles `functions/` into a tar archive recorded in `instancez.yaml`. | N/A |
+| `inz serve` | Never runs npm. Consumes the pre-built bundle produced by `inz cloud deploy`. | N/A |
 
 ## Runtime limits
 

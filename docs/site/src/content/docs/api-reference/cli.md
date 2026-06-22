@@ -21,8 +21,8 @@ inz init [name] [flags]
 |------|---------|-------------|
 | `--dir` | `.` | Output directory. |
 | `--force` | `false` | Overwrite existing scaffolding files. |
-| `--generate-like` | — | Generate `instancez.yaml` from a free-form prompt (requires `inz login`). |
-| `--with-cloud` | — | Create a project in instancez Cloud (requires `inz login`). |
+| `--generate-like` | — | Generate `instancez.yaml` from a free-form prompt (requires `inz cloud login`). |
+| `--with-cloud` | — | Create a project in instancez Cloud (requires `inz cloud login`). |
 
 ```bash
 inz init my-app --dir ./my-app
@@ -133,14 +133,14 @@ inz bundle --output bundle.tar.gz                # write to local file
 inz bundle --output s3://my-bucket/bundle.tar.gz # upload to S3, print pointer
 ```
 
-## inz deploy
+## inz cloud deploy
 
 Deploy the current `instancez.yaml` to an instancez Cloud project.
 
 Shows a migration preview and prompts for confirmation before promoting the draft to production.
 
 ```
-inz deploy [flags]
+inz cloud deploy [flags]
 ```
 
 | Flag | Default | Description |
@@ -150,7 +150,7 @@ inz deploy [flags]
 | `--yes`, `-y` | `false` | Skip the confirmation prompt. |
 
 ```bash
-inz deploy --yes --functions-bundle-dest s3://my-bucket/bundles/
+inz cloud deploy --yes --functions-bundle-dest s3://my-bucket/bundles/
 ```
 
 ## inz doctor
@@ -171,14 +171,14 @@ inz doctor [flags]
 inz doctor
 ```
 
-## inz status
+## inz cloud status
 
 Show the linked cloud project's current state: name, ID, URL, production deploy status, and whether the local draft has unpublished changes.
 
 Requires `inz init --with-cloud`.
 
 ```
-inz status [flags]
+inz cloud status [flags]
 ```
 
 | Flag | Default | Description |
@@ -186,17 +186,17 @@ inz status [flags]
 | `--config` | `instancez.yaml` | Path to `instancez.yaml`. |
 
 ```bash
-inz status
+inz cloud status
 ```
 
-## inz login
+## inz cloud login
 
 Authenticate against instancez Cloud via device-code flow.
 
 Opens a browser to confirm a one-time code, then stores a Personal Access Token at `~/.instancez/credentials`.
 
 ```
-inz login [flags]
+inz cloud login [flags]
 ```
 
 | Flag | Default | Description |
@@ -204,23 +204,23 @@ inz login [flags]
 | `--force` | `false` | Re-authenticate even if already logged in. |
 
 ```bash
-inz login
+inz cloud login
 ```
 
-## inz logout
+## inz cloud logout
 
 Remove the PAT stored at `~/.instancez/credentials`. The token remains valid server-side until revoked from the dashboard.
 
 ```
-inz logout
+inz cloud logout
 ```
 
-## inz whoami
+## inz cloud whoami
 
 Print the currently logged-in instancez Cloud user.
 
 ```
-inz whoami [flags]
+inz cloud whoami [flags]
 ```
 
 | Flag | Default | Description |
@@ -228,7 +228,7 @@ inz whoami [flags]
 | `--config` | `instancez.yaml` | Used to honor `project.cloud.api_url`; ignored if missing. |
 
 ```bash
-inz whoami
+inz cloud whoami
 ```
 
 ## inz version

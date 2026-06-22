@@ -278,7 +278,7 @@ functions:
 
 ## functions_bundle
 
-Internal field written by `inz deploy`. Points to the pre-built functions bundle URI (e.g. `s3://bucket/key#<sha256>`). Do not set this manually.
+Internal field written by `inz cloud deploy`. Points to the pre-built functions bundle URI (e.g. `s3://bucket/key#<sha256>`). Do not set this manually.
 
 ---
 

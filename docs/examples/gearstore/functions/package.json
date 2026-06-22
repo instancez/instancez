@@ -2,7 +2,7 @@
   "name": "instancez-example-functions",
   "private": true,
   "type": "module",
-  "description": "Shared dependencies for the example code functions. inz dev runs `npm ci` here on boot; inz deploy vendors node_modules into the bundle.",
+  "description": "Shared dependencies for the example code functions. inz dev runs `npm ci` here on boot; inz cloud deploy vendors node_modules into the bundle.",
   "dependencies": {
     "@supabase/supabase-js": "^2.107.0",
     "nanoid": "^5.0.7",
