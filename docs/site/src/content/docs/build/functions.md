@@ -7,7 +7,7 @@ Code functions are JavaScript ESM handlers served at `/functions/v1/<name>`, cal
 
 ## Requirements
 
-Functions run in Node.js worker processes, so **Node.js must be installed and on `PATH`** wherever instancez serves or builds functions. With a `functions:` block declared, `inz dev` and `inz serve` require `node` at startup; `inz cloud deploy`/`inz bundle` require it when your functions have npm dependencies (a `functions/package.json`, which it vendors with `npm ci`). Each refuses to proceed with an actionable error if node is missing. Projects without a `functions:` block do not need Node.js.
+Functions run in Node.js worker processes, so **Node.js must be installed and on `PATH`** wherever instancez serves or builds functions. With a `functions:` block declared, `inz dev` and `inz serve` require `node` at startup; `inz bundle` requires it when your functions have npm dependencies, because it runs `npm ci` locally to vendor them before producing the archive. `inz cloud deploy` only uploads your sources and does not run `npm ci` locally (the cloud installs dependencies during the build). Each command refuses to proceed with an actionable error if node is missing. Projects without a `functions:` block do not need Node.js.
 
 The supported minimum is **Node.js 22**. Functions get an injected `@supabase/supabase-js` client (`ctx.supabase` / `ctx.serviceClient`), and that client opens a realtime connection that needs a native `WebSocket`, which Node ships from v22 on. The minimum is documented, not enforced, so an older version may appear to work until a function touches `ctx.supabase`.
 
