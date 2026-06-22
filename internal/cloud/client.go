@@ -138,6 +138,15 @@ func (c *Client) UploadYAML(projectID, yamlContent string) error {
 	return c.do("PUT", "/instancez/projects/"+projectID+"/yaml", map[string]string{"yaml": yamlContent}, nil)
 }
 
+// UploadFunctions replaces the project's draft function sources with the given
+// path-keyed map (keys are project-relative, e.g. "functions/hello.js"). The
+// cloud builds the functions bundle from these on deploy. Called by
+// `inz cloud deploy` before promotion.
+func (c *Client) UploadFunctions(projectID string, files map[string]string) error {
+	return c.do("PUT", "/instancez/projects/"+projectID+"/functions",
+		map[string]any{"files": files}, nil)
+}
+
 // GetAppResponse mirrors GET /instancez/projects/:id. It carries the project
 // fields plus the PRODUCTION version's deploy state (Deployment) and whether the
 // draft has unpublished changes vs production (DraftDirty). Note: Status is the

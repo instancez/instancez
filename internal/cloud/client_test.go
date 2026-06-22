@@ -2,8 +2,10 @@ package cloud
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -176,6 +178,29 @@ func TestClientUploadYAML(t *testing.T) {
 	c := NewClient(srv.URL, "instancez_pat_test")
 	err := c.UploadYAML("app-uuid", "version: 1\n")
 	assert.NoError(t, err)
+}
+
+func TestUploadFunctions(t *testing.T) {
+	var gotPath, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "pat")
+	if err := c.UploadFunctions("proj1", map[string]string{"functions/hello.js": "x"}); err != nil {
+		t.Fatalf("UploadFunctions: %v", err)
+	}
+	if gotPath != "/instancez/projects/proj1/functions" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if !strings.Contains(gotBody, `"files"`) || !strings.Contains(gotBody, "functions/hello.js") {
+		t.Errorf("body = %q", gotBody)
+	}
 }
 
 func TestClientWhoami(t *testing.T) {
