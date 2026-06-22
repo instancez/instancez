@@ -146,11 +146,10 @@ inz cloud deploy [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--config` | `instancez.yaml` | Path to `instancez.yaml`. |
-| `--functions-bundle-dest` | — | `s3://bucket/key` destination for the built functions bundle. |
 | `--yes`, `-y` | `false` | Skip the confirmation prompt. |
 
 ```bash
-inz cloud deploy --yes --functions-bundle-dest s3://my-bucket/bundles/
+inz cloud deploy --yes
 ```
 
 ## inz doctor

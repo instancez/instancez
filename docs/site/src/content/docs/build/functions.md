@@ -11,7 +11,7 @@ Functions run in Node.js worker processes, so **Node.js must be installed and on
 
 The supported minimum is **Node.js 22**. Functions get an injected `@supabase/supabase-js` client (`ctx.supabase` / `ctx.serviceClient`), and that client opens a realtime connection that needs a native `WebSocket`, which Node ships from v22 on. The minimum is documented, not enforced, so an older version may appear to work until a function touches `ctx.supabase`.
 
-When your functions have npm dependencies, **`inz cloud deploy`/`inz bundle` require a committed `package-lock.json`.** They vendor dependencies with `npm ci` (reproducible, never `npm install`), which fails without a lockfile. Run `npm install` in `functions/` once to generate it and commit the result. (`inz dev` is more lenient: it falls back to `npm install` to create the lockfile on first run.)
+When your functions have npm dependencies, **`inz bundle` requires a committed `package-lock.json`.** It vendors dependencies with `npm ci` (reproducible, never `npm install`), which fails without a lockfile. Run `npm install` in `functions/` once to generate it and commit the result. (`inz dev` is more lenient: it falls back to `npm install` to create the lockfile on first run.) For `inz cloud deploy`, no local npm step is needed: the cloud installs dependencies from your `package.json` and `package-lock.json` during the build, so a committed lockfile is still required but you do not run npm yourself.
 
 instancez also verifies at startup that **every declared function's source file exists** on disk (the `file:` path under each entry). A missing file fails fast with a clear error instead of surfacing later when the function is first called.
 
@@ -149,8 +149,9 @@ const { data, error } = await supabase.functions.invoke("todos", {
 | Command | npm | Hot reload |
 |---------|-----|------------|
 | `inz dev` | Runs `npm ci` on startup. Falls back to `npm install` when no lockfile exists yet (first run). Restart required only when adding or removing npm dependencies. | JS code changes and `functions:` YAML changes are picked up automatically without a restart. |
-| `inz cloud deploy` | Runs `npm ci` (requires a committed `package-lock.json`) and bundles `functions/` into a tar archive recorded in `instancez.yaml`. | N/A |
-| `inz serve` | Never runs npm. Consumes the pre-built bundle produced by `inz cloud deploy`. | N/A |
+| `inz cloud deploy` | Uploads function sources; the cloud installs dependencies and builds the bundle. A committed `package-lock.json` is required. | N/A |
+| `inz bundle` | Runs `npm ci` (requires a committed `package-lock.json`) and produces a tar archive. Use `--output s3://…` for self-hosted deploys. | N/A |
+| `inz serve` | Never runs npm. Consumes the pre-built bundle produced by `inz bundle --output s3://…`. | N/A |
 
 ## Runtime limits
 

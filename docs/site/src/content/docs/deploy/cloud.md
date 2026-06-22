@@ -51,13 +51,9 @@ Declining at the prompt leaves the draft uploaded but unpublished, so you can re
 
 ### Code functions
 
-If your project declares code functions, `inz cloud deploy` also builds the functions bundle, running `npm ci` to vendor `node_modules`. Pass a destination to upload the built bundle to S3:
+If your project declares code functions, `inz cloud deploy` uploads your function sources and the cloud builds the bundle. You do not need an S3 bucket or a local npm step for deployment.
 
-```bash
-inz cloud deploy --functions-bundle-dest s3://my-bucket/functions/
-```
-
-The command prints the resulting bundle pointer. Without `--functions-bundle-dest` it still builds the bundle as a check that vendoring succeeds, then warns that nothing was shipped.
+`--functions-bundle-dest` no longer exists on `inz cloud deploy`. For self-hosted projects using `inz serve --bundle`, use `inz bundle --output s3://my-bucket/functions/` to build and upload the bundle yourself.
 
 ## Check status
 
