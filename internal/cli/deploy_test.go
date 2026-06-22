@@ -13,6 +13,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestRunDeployFunctionsWithoutFunctionsDir(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "instancez.yaml")
+	// Declares a function but has no functions/ dir on disk.
+	yaml := "version: 1\nproject:\n  name: demo\n  cloud:\n    project_id: p1\n" +
+		"functions:\n  hello:\n    runtime: node\n    file: functions/hello.js\n"
+	if err := os.WriteFile(cfgPath, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// collectFunctionSources is the unit under test for the precheck; call it
+	// directly to assert the missing-dir error path the deploy flow relies on.
+	if _, err := collectFunctionSources(dir); err == nil {
+		t.Fatal("expected error when functions/ is absent")
+	}
+}
+
 func TestNewDeployCmd(t *testing.T) {
 	cmd := newDeployCmd()
 	assert.Equal(t, "deploy", cmd.Use)
@@ -71,7 +87,7 @@ func TestRunDeployHappyPathYes(t *testing.T) {
 	}))
 
 	cfg := writeDeployConfig(t, home)
-	require.NoError(t, runDeploy(cfg, true, ""))
+	require.NoError(t, runDeploy(cfg, true))
 
 	require.Equal(t, []string{
 		"PUT /instancez/projects/abc/yaml",
@@ -94,7 +110,7 @@ func TestRunDeployMissingProjectID(t *testing.T) {
 	p := filepath.Join(home, "instancez.yaml")
 	require.NoError(t, os.WriteFile(p, []byte("version: 1\n"), 0o644))
 
-	err := runDeploy(p, true, "")
+	err := runDeploy(p, true)
 	assert.ErrorIs(t, err, errReported, "missing project_id should fail preflight with errReported")
 }
 
@@ -109,7 +125,7 @@ func TestRunDeployInvalidYAML(t *testing.T) {
 	p := filepath.Join(home, "instancez.yaml")
 	require.NoError(t, os.WriteFile(p, []byte("version: 99\n"), 0o644)) // unsupported version
 
-	err := runDeploy(p, true, "")
+	err := runDeploy(p, true)
 	assert.ErrorIs(t, err, errReported, "invalid yaml should fail preflight before any upload")
 }
 
@@ -146,7 +162,7 @@ func TestRunDeployConfirmDeclineAborts(t *testing.T) {
 	}))
 
 	cfg := writeDeployConfig(t, home)
-	err := runDeploy(cfg, false, "")
+	err := runDeploy(cfg, false)
 	require.NoError(t, err, "declining is a user choice, not a failure")
 	assert.True(t, confirmCalled, "confirm prompt must be shown when yes=false")
 	assert.Equal(t, []string{
@@ -181,7 +197,7 @@ func TestRunDeployConfirmAcceptPromotes(t *testing.T) {
 	t.Cleanup(swapPromptConfirm(func(string) bool { return true }))
 
 	cfg := writeDeployConfig(t, home)
-	require.NoError(t, runDeploy(cfg, false, ""))
+	require.NoError(t, runDeploy(cfg, false))
 	assert.True(t, deployHit, "accepting the prompt must trigger the promote/deploy call")
 }
 

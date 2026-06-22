@@ -202,7 +202,7 @@ func buildServeFuncRuntime(
 		return nil, "", nil
 	}
 	if cfg.FunctionsBundle == "" {
-		return nil, "", fmt.Errorf("functions: %d function(s) declared but no functions bundle recorded — run `inz cloud deploy` to build and record one (serve cannot build)", len(cfg.Functions))
+		return nil, "", fmt.Errorf("functions: %d function(s) declared but no functions bundle recorded; run `inz bundle` to build one and set functions_bundle (serve cannot build)", len(cfg.Functions))
 	}
 
 	dir, _, err := app.FetchAndExtract(ctx, cfg.FunctionsBundle, extractParent)
