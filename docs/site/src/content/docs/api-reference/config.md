@@ -278,7 +278,7 @@ functions:
 
 ## functions_bundle
 
-Internal field written by `inz cloud deploy`. Points to the pre-built functions bundle URI (e.g. `s3://bucket/key#<sha256>`). Do not set this manually.
+Bundle pointer for self-hosted deployments. `inz bundle` produces the value (e.g. `s3://bucket/key#sha256`) and writes it here; the managed cloud stamps it server-side from uploaded sources. `inz cloud deploy` does not write this field.
 
 ---
 

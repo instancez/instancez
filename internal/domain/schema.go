@@ -23,11 +23,13 @@ type Config struct {
 	RPC        map[string]Function     `yaml:"rpc" json:"rpc"`
 	Functions  map[string]CodeFunction `yaml:"functions" json:"functions"`
 	// FunctionsBundle is a pointer to the pre-built functions bundle that
-	// `serve` consumes at runtime (it never builds). `inz cloud deploy` builds the
-	// bundle (vendoring node_modules), uploads it, and records the pointer here.
-	// The value is an object URI carrying a version token, e.g.
-	// "s3://bucket/key#<sha256>". Empty when the project has no code functions
-	// or the deploy was run without a bundle destination. Consumed by Task 12;
+	// `serve` consumes at runtime (it never builds). For self-hosted deployments,
+	// `inz bundle` builds the bundle (vendoring node_modules), uploads it, and
+	// records the pointer here. For the managed cloud path, the cloud builds and
+	// stamps the pointer server-side from uploaded sources; `inz cloud deploy`
+	// does not write this field. The value is an object URI carrying a version
+	// token, e.g. "s3://bucket/key#sha256". Empty when the project has no code
+	// functions or no bundle destination was configured. Consumed by Task 12;
 	// not read by the runtime yet.
 	FunctionsBundle string `yaml:"functions_bundle" json:"functions_bundle"`
 

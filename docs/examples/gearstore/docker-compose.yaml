@@ -22,7 +22,7 @@ services:
       dockerfile: Dockerfile
     # `dev` migrates and builds the code functions on the fly (runs
     # `npm ci` in /app/functions). `serve` is the production mode, but it never
-    # builds functions; it consumes a pre-built bundle from `inz cloud deploy`.
+    # builds functions; it consumes a pre-built bundle produced by `inz bundle --output s3://...`.
     command: ["inz", "dev"]
     ports:
       - "8080:8080"
