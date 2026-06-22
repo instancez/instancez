@@ -53,7 +53,7 @@ func TestEnsureLoggedInNonTTY(t *testing.T) {
 		},
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "inz login")
+	assert.Contains(t, err.Error(), "inz cloud login")
 	assert.False(t, flowCalled, "runFlow must not be called in a non-TTY session")
 }
 
@@ -72,7 +72,7 @@ func TestEnsureLoggedInNonTTYAssumeYes(t *testing.T) {
 		},
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "inz login")
+	assert.Contains(t, err.Error(), "inz cloud login")
 	assert.False(t, flowCalled, "assumeYes must not bypass the non-TTY guard")
 }
 

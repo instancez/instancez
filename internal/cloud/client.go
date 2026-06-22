@@ -132,7 +132,7 @@ func (c *Client) GenerateYAML(prompt string) (*GenerateYAMLResponse, error) {
 }
 
 // UploadYAML pushes the local instancez.yaml to the project's server-side
-// draft Defs. Called by `inz deploy` and `inz validate --project` before
+// draft Defs. Called by `inz cloud deploy` and `inz validate --project` before
 // their respective actions so the server sees the latest local source.
 func (c *Client) UploadYAML(projectID, yamlContent string) error {
 	return c.do("PUT", "/instancez/projects/"+projectID+"/yaml", map[string]string{"yaml": yamlContent}, nil)
@@ -177,7 +177,7 @@ type WhoamiResponse struct {
 	UserID string `json:"user_id"`
 }
 
-// Whoami returns the identity of the PAT holder. Useful for `inz whoami`
+// Whoami returns the identity of the PAT holder. Useful for `inz cloud whoami`
 // and as a post-login sanity check.
 func (c *Client) Whoami() (*WhoamiResponse, error) {
 	var out WhoamiResponse

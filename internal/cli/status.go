@@ -49,7 +49,7 @@ func runStatus(configPath string) error {
 	}
 
 	// Inline login: returns existing creds, prompts on a TTY, or hard-errors
-	// in a non-interactive session pointing at `inz login`.
+	// in a non-interactive session pointing at `inz cloud login`.
 	creds, err := ensureLoggedIn(ensureLoginOpts{})
 	if err != nil {
 		return err

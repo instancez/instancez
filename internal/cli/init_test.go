@@ -24,7 +24,7 @@ func TestInitGenerateLikeRequiresLogin(t *testing.T) {
 
 	opts := initOptions{dir: dir, generateLike: "twitter"}
 	err := runInit(opts)
-	assert.ErrorContains(t, err, "inz login")
+	assert.ErrorContains(t, err, "inz cloud login")
 }
 
 func TestInitWithCloudRequiresLogin(t *testing.T) {
@@ -33,7 +33,7 @@ func TestInitWithCloudRequiresLogin(t *testing.T) {
 
 	opts := initOptions{dir: dir, withCloud: true, name: "myapp"}
 	err := runInit(opts)
-	assert.ErrorContains(t, err, "inz login")
+	assert.ErrorContains(t, err, "inz cloud login")
 }
 
 // TestRunInitScaffoldStartsCleanly guards the generated project: it must both

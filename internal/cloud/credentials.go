@@ -10,8 +10,8 @@ import (
 )
 
 // ErrNoCredentials means no credentials file exists yet. Callers typically
-// translate this into "run `inz login` first".
-var ErrNoCredentials = errors.New("no credentials; run `inz login` first")
+// translate this into "run `inz cloud login` first".
+var ErrNoCredentials = errors.New("no credentials; run `inz cloud login` first")
 
 // Credentials are the minimal state needed to authenticate against the
 // Instancez Cloud API. PAT is a Personal Access Token returned by the

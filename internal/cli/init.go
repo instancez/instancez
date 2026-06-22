@@ -43,8 +43,8 @@ init only writes scaffolding files; it never touches a database. A
 	}
 
 	cmd.Flags().StringVar(&opts.dir, "dir", ".", "output directory")
-	cmd.Flags().BoolVar(&opts.withCloud, "with-cloud", false, "create a project in instancez Cloud (requires `inz login`)")
-	cmd.Flags().StringVar(&opts.generateLike, "generate-like", "", "generate instancez.yaml from a free-form prompt (requires `inz login`)")
+	cmd.Flags().BoolVar(&opts.withCloud, "with-cloud", false, "create a project in instancez Cloud (requires `inz cloud login`)")
+	cmd.Flags().StringVar(&opts.generateLike, "generate-like", "", "generate instancez.yaml from a free-form prompt (requires `inz cloud login`)")
 	cmd.Flags().BoolVar(&opts.force, "force", false, "overwrite existing scaffolding files")
 	return cmd
 }
@@ -82,7 +82,7 @@ func runInit(opts initOptions) error {
 	// Cloud-dependent flags require credentials. On an interactive terminal
 	// ensureLoggedIn prompts and runs the device-code flow inline (saving creds
 	// to disk so the cloud calls below pick them up); in a non-interactive
-	// session it returns a hard error pointing at `inz login`.
+	// session it returns a hard error pointing at `inz cloud login`.
 	if opts.withCloud || opts.generateLike != "" {
 		if _, err := ensureLoggedIn(ensureLoginOpts{}); err != nil {
 			return err
@@ -238,7 +238,7 @@ func runInit(opts initOptions) error {
 	}
 	switch {
 	case opts.withCloud:
-		fmt.Println("  inz deploy            # push your YAML to the cloud project")
+		fmt.Println("  inz cloud deploy      # push your YAML to the cloud project")
 	default:
 		fmt.Println("  cp .development.env.example .development.env   # set INSTANCEZ_DATABASE_URL")
 		fmt.Println("  inz dev")
