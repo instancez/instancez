@@ -3,7 +3,6 @@ package cli
 import (
 	"archive/tar"
 	"compress/gzip"
-	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -12,7 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/instancez/instancez/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -204,53 +202,6 @@ func TestBuildBundleRequiresLockfileWhenPackageJSON(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "package-lock.json")
 	assert.Contains(t, err.Error(), "npm install")
-}
-
-// fakeUploader records what it was asked to upload and returns a fixed version.
-type fakeUploader struct {
-	calledDest string
-	calledData []byte
-	version    string
-}
-
-func (f *fakeUploader) Upload(_ context.Context, destURI string, data []byte) (string, error) {
-	f.calledDest = destURI
-	f.calledData = data
-	return f.version, nil
-}
-
-func TestBuildAndRecordBundleFullKey(t *testing.T) {
-	dir := writeBundleFixture(t)
-	up := &fakeUploader{version: "etag-abc"}
-	cfg := &domain.Config{}
-
-	pointer, err := buildAndRecordBundle(context.Background(), dir,
-		"s3://my-bucket/bundles/app.tar.gz", up, cfg)
-	require.NoError(t, err)
-
-	assert.Equal(t, "s3://my-bucket/bundles/app.tar.gz", up.calledDest,
-		"full-key dest is used verbatim")
-	assert.NotEmpty(t, up.calledData, "the built bundle bytes are uploaded")
-	assert.Equal(t, "s3://my-bucket/bundles/app.tar.gz#etag-abc", pointer)
-	assert.Equal(t, pointer, cfg.FunctionsBundle,
-		"cfg.FunctionsBundle records the pointer with the returned version")
-}
-
-func TestBuildAndRecordBundlePrefixDest(t *testing.T) {
-	dir := writeBundleFixture(t)
-	up := &fakeUploader{version: "v1"}
-	cfg := &domain.Config{}
-
-	pointer, err := buildAndRecordBundle(context.Background(), dir,
-		"s3://my-bucket/bundles/", up, cfg)
-	require.NoError(t, err)
-
-	assert.True(t, len(up.calledDest) > len("s3://my-bucket/bundles/"),
-		"a trailing-slash dest is a prefix: a filename gets appended")
-	assert.Contains(t, up.calledDest, "s3://my-bucket/bundles/inz-functions-bundle-")
-	assert.Contains(t, up.calledDest, ".tar.gz")
-	assert.Equal(t, up.calledDest+"#v1", pointer)
-	assert.Equal(t, pointer, cfg.FunctionsBundle)
 }
 
 func TestParseS3URI(t *testing.T) {

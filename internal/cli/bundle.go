@@ -18,7 +18,6 @@ import (
 	"github.com/instancez/instancez/internal/adapter/funcs"
 	"github.com/instancez/instancez/internal/adapter/s3"
 	"github.com/instancez/instancez/internal/config"
-	"github.com/instancez/instancez/internal/domain"
 )
 
 // bundleManifest is written to the tar root as manifest.json. `serve` (Task 12)
@@ -298,11 +297,11 @@ func parseS3URI(uri string) (bucket, key string, err error) {
 	return bucket, key, nil
 }
 
-// resolveBundleDest turns the --functions-bundle-dest flag value into the full
-// object key. A trailing slash (or a bare s3://bucket) is treated as a prefix
-// and gets a generated filename appended; otherwise the value is the full key
-// verbatim. version is woven into the filename so prefix uploads are
-// content-addressed.
+// resolveBundleDest turns the --output flag value (or any bundle destination
+// URI) into the full object key. A trailing slash (or a bare s3://bucket with
+// no key segment) is treated as a prefix and gets a generated filename
+// appended; otherwise the value is the full key verbatim. version is woven
+// into the filename so prefix uploads are content-addressed.
 func resolveBundleDest(dest, version string) string {
 	if strings.HasSuffix(dest, "/") {
 		return dest + "inz-functions-bundle-" + version + ".tar.gz"
@@ -314,35 +313,3 @@ func resolveBundleDest(dest, version string) string {
 	return dest
 }
 
-// buildAndRecordBundle builds the project's functions bundle, uploads it via the
-// given uploader to dest, and records the resulting pointer (URI#version) on
-// cfg.FunctionsBundle. Factored out of runDeploy so it is unit-testable with a
-// fake uploader (no real S3 / cloud needed). Returns the recorded pointer.
-//
-// The cloud-managed bundle handoff (how the managed cloud ingests this bundle)
-// is intentionally OUT OF SCOPE — for the cloud path the pointer is printed,
-// not persisted through a cloud API.
-func buildAndRecordBundle(ctx context.Context, projectDir, dest string, up bundleUploader, cfg *domain.Config) (string, error) {
-	bundlePath, err := BuildBundle(projectDir)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = os.Remove(bundlePath) }()
-
-	data, err := os.ReadFile(bundlePath)
-	if err != nil {
-		return "", fmt.Errorf("read built bundle: %w", err)
-	}
-
-	version := bundleVersion(data)
-	key := resolveBundleDest(dest, version)
-
-	uploadedVersion, err := up.Upload(ctx, key, data)
-	if err != nil {
-		return "", err
-	}
-
-	pointer := key + "#" + uploadedVersion
-	cfg.FunctionsBundle = pointer
-	return pointer, nil
-}
