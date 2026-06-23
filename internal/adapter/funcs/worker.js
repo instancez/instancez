@@ -118,6 +118,18 @@ function firstVals(q) {
   return out;
 }
 
+// allVals converts a map[string][]string to { key: [values...] }, keeping every
+// value for repeated keys. lower lowercases keys (used for headers). Returns {}
+// when m is null/undefined.
+function allVals(m, lower) {
+  if (!m) return {};
+  const out = {};
+  for (const [k, v] of Object.entries(m)) {
+    out[lower ? k.toLowerCase() : k] = Array.isArray(v) ? v.slice() : [v];
+  }
+  return out;
+}
+
 // buildCtx assembles the second argument passed to a function handler. It
 // builds two @supabase/supabase-js clients pointed at instancez's own REST API
 // over loopback:
@@ -217,7 +229,22 @@ const server = http.createServer(async (req, res) => {
     const body = ct.includes("application/json")
       ? (rawBody.length ? JSON.parse(rawBody.toString()) : undefined)
       : (rawBody.length ? rawBody.toString() : undefined);
-    reqObj = { method: uctx.method, path: uctx.path, query: firstVals(uctx.query), headers, body };
+    // query/headers are first-value-per-key for convenience; queryAll/headersAll
+    // keep every value for repeated keys. rawQuery is the unparsed query string.
+    // rawBody is the unparsed body as a Buffer: the exact bytes the client sent.
+    // Webhook signature checks (Stripe, etc.) hash these bytes, so a re-serialized
+    // body won't verify; hand the raw Buffer through alongside the parsed body.
+    reqObj = {
+      method: uctx.method,
+      path: uctx.path,
+      query: firstVals(uctx.query),
+      queryAll: allVals(uctx.query, false),
+      rawQuery: uctx.rawQuery || "",
+      headers,
+      headersAll: allVals(uctx.headers, true),
+      body,
+      rawBody,
+    };
     fnCtx = addCtxSignal(buildCtx(uctx), ac.signal);
   } catch (e) {
     if (canWrite() && !res.headersSent) {
@@ -236,7 +263,15 @@ const server = http.createServer(async (req, res) => {
     // if so, drop the late response (the worker stays alive and healthy).
     if (!canWrite()) return;
     const headers = result.headers || { "content-type": "application/json" };
-    const payload = typeof result.body === "string" ? result.body : JSON.stringify(result.body ?? null);
+    // A Buffer body is written as-is (raw bytes), so handlers can return files,
+    // images, or any binary payload. Set your own content-type in result.headers
+    // for these; the default above only makes sense for JSON. Strings pass through
+    // unchanged; everything else is JSON-serialized.
+    const payload = Buffer.isBuffer(result.body)
+      ? result.body
+      : typeof result.body === "string"
+        ? result.body
+        : JSON.stringify(result.body ?? null);
     res.writeHead(result.status || 200, headers);
     res.end(payload);
   } catch (e) {

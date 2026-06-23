@@ -8,7 +8,11 @@ type FunctionRequest struct {
 	Method  string
 	Path    string
 	Query   map[string][]string
-	Headers map[string][]string
+	// RawQuery is the unparsed query string (everything after "?"), without the
+	// leading "?". Exposed to handlers as req.rawQuery for schemes that sign the
+	// query string verbatim. Query holds the same data already parsed.
+	RawQuery string
+	Headers  map[string][]string
 	Body    []byte
 	Claims  map[string]any // nil when anonymous
 	// CallerToken is the caller's bearer JWT (the raw token from the

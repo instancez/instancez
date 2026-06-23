@@ -626,6 +626,7 @@ func (r *Runtime) Invoke(ctx context.Context, in domain.FunctionRequest) (*domai
 		"method":    in.Method,
 		"path":      in.Path,
 		"query":     in.Query,
+		"rawQuery":  in.RawQuery,
 		"headers":   headers,
 		"claims":    in.Claims,
 		"env":       resolved,

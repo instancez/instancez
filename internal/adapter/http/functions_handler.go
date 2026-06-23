@@ -77,6 +77,7 @@ func (h *FunctionsHandler) invoke(c *gin.Context) {
 		Method:      c.Request.Method,
 		Path:        c.Request.URL.Path,
 		Query:       c.Request.URL.Query(),
+		RawQuery:    c.Request.URL.RawQuery,
 		Headers:     c.Request.Header,
 		Body:        body,
 		Claims:      claimsFromGinContext(c),
