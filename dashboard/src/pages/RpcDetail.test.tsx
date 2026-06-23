@@ -115,6 +115,35 @@ describe("RpcDetail", () => {
     expect(screen.getByText("$ub$;")).toBeInTheDocument();
   });
 
+  it("keeps the framed signature non-editable while the body stays editable", () => {
+    const { container } = renderRpcDetail(baseConfig, "get_todos");
+    // The signature header and the $ub$; footer are locked widgets, not lines.
+    const scaffolds = [...container.querySelectorAll(".cm-scaffold")];
+    expect(scaffolds).toHaveLength(2);
+    scaffolds.forEach((el) =>
+      expect(el.getAttribute("contenteditable")).toBe("false")
+    );
+    const lines = [...container.querySelectorAll(".cm-line")]
+      .map((l) => l.textContent)
+      .join("\n");
+    expect(lines).toBe("SELECT * FROM todos WHERE user_id = $1");
+  });
+
+  it("recomputes the framed signature when a definition field changes, keeping the body", () => {
+    const { container } = renderRpcDetail(baseConfig, "get_todos");
+    expect(container.textContent).toContain("RETURNS setof todos");
+    fireEvent.change(screen.getByDisplayValue("setof todos"), {
+      target: { value: "void" },
+    });
+    expect(container.textContent).toContain("RETURNS void");
+    expect(container.textContent).not.toContain("RETURNS setof todos");
+    // The body is untouched by the header recompute.
+    const lines = [...container.querySelectorAll(".cm-line")]
+      .map((l) => l.textContent)
+      .join("\n");
+    expect(lines).toBe("SELECT * FROM todos WHERE user_id = $1");
+  });
+
   it("keeps the save bar when the save is cancelled in the confirm dialog", async () => {
     // save resolving false is what a cancelled ConfirmSaveDialog produces
     const save = vi.fn().mockResolvedValue(false);

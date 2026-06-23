@@ -22,21 +22,21 @@ Install Node.js (which includes npm) from [nodejs.org](https://nodejs.org) or vi
 <Tabs>
   <TabItem label="macOS">
   ```bash
-  curl -fsSL https://get.instancez.io | sh
+  curl -fsSL https://get.instancez.ai | sh
   ```
   Installs `inz` to `~/.local/bin`. If that directory isn't in your `PATH`, the script will tell you.
   </TabItem>
 
   <TabItem label="Linux">
   ```bash
-  curl -fsSL https://get.instancez.io | sh
+  curl -fsSL https://get.instancez.ai | sh
   ```
   Installs `inz` to `~/.local/bin`. Works on x86-64 and ARM64.
   </TabItem>
 
   <TabItem label="Windows">
   ```powershell
-  irm https://get.instancez.io/windows | iex
+  irm https://get.instancez.ai/windows | iex
   ```
   Installs `inz.exe` to `%LOCALAPPDATA%\instancez\bin`. Run in PowerShell 5.1+.
 
@@ -47,27 +47,29 @@ Install Node.js (which includes npm) from [nodejs.org](https://nodejs.org) or vi
 Verify the install:
 
 ```bash
-inz --version
+inz version
 ```
 
 ## Manual download
 
-Download a pre-built binary from [GitHub Releases](https://github.com/instancez/instancez/releases/latest):
+Each link points at the binary for the [latest release](https://github.com/instancez/instancez/releases/latest):
 
-| Platform | File |
+| Platform | Download |
 |---|---|
-| macOS (Apple Silicon) | `inz_VERSION_darwin_arm64` |
-| macOS (Intel) | `inz_VERSION_darwin_amd64` |
-| Linux x86-64 | `inz_VERSION_linux_amd64` |
-| Linux ARM64 | `inz_VERSION_linux_arm64` |
-| Windows x86-64 | `inz_VERSION_windows_amd64.exe` |
-| Windows ARM64 | `inz_VERSION_windows_arm64.exe` |
+| macOS (Apple Silicon) | [`inz_darwin_arm64`](https://github.com/instancez/instancez/releases/latest/download/inz_darwin_arm64) |
+| macOS (Intel) | [`inz_darwin_amd64`](https://github.com/instancez/instancez/releases/latest/download/inz_darwin_amd64) |
+| Linux x86-64 | [`inz_linux_amd64`](https://github.com/instancez/instancez/releases/latest/download/inz_linux_amd64) |
+| Linux ARM64 | [`inz_linux_arm64`](https://github.com/instancez/instancez/releases/latest/download/inz_linux_arm64) |
+| Windows x86-64 | [`inz_windows_amd64.exe`](https://github.com/instancez/instancez/releases/latest/download/inz_windows_amd64.exe) |
+| Windows ARM64 | [`inz_windows_arm64.exe`](https://github.com/instancez/instancez/releases/latest/download/inz_windows_arm64.exe) |
 
-Make the binary executable (macOS/Linux), rename it, and move it to a directory on your `PATH`:
+For a specific version instead, browse [all releases](https://github.com/instancez/instancez/releases).
+
+On macOS or Linux, make the binary executable, rename it, and move it onto your `PATH`:
 
 ```bash
-chmod +x inz_VERSION_darwin_arm64
-mv inz_VERSION_darwin_arm64 /usr/local/bin/inz
+chmod +x inz_darwin_arm64
+mv inz_darwin_arm64 ~/.local/bin/inz
 ```
 
 ## Updating

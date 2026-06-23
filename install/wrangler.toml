@@ -1,0 +1,10 @@
+name = "instancez-get"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+# Bind the Worker to get.instancez.ai. custom_domain lets Cloudflare manage the
+# DNS record for you, so there's no separate CNAME to create. This requires the
+# instancez.ai zone to live on the same Cloudflare account.
+[[routes]]
+pattern = "get.instancez.ai"
+custom_domain = true

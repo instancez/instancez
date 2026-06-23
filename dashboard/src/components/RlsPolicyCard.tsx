@@ -94,23 +94,20 @@ export function RlsPolicyCard({
         </HStack>
         <Field label="Check Expression">
           {/* The check is a boolean expression that slots into the generated
-              policy DDL — framed here so pasting a full statement is visibly
-              wrong (and rejected by validation). */}
+              policy DDL. The surrounding USING (…) clause is framed inside the
+              editor as fixed text, so pasting a full statement is visibly wrong
+              (and rejected by validation). */}
           <Box borderRadius="lg" borderWidth="1px" overflow="hidden">
-            <Box px="3" py="1.5" borderBottomWidth="1px">
-              <Box as="code" display="block" fontSize="11px" fontFamily="mono" color="fg.muted">
-                CREATE POLICY … FOR {(policy.operations || []).join(", ") || "…"} USING (
-              </Box>
-            </Box>
             <CodeEditor
               value={policy.check || ""}
               onChange={(val) => onChange({ ...policy, check: val })}
               placeholder="user_id = auth.uid()"
               minHeight="60px"
+              frame={{
+                header: `CREATE POLICY … FOR ${(policy.operations || []).join(", ") || "…"} USING (`,
+                footer: ")",
+              }}
             />
-            <Box px="3" py="1.5" borderTopWidth="1px">
-              <Box as="code" fontSize="11px" fontFamily="mono" color="fg.muted">)</Box>
-            </Box>
           </Box>
           {quickFills && quickFills.length > 0 && (
             <HStack gap="2" mt="2">

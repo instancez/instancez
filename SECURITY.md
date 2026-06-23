@@ -9,7 +9,7 @@ Please do not open a public issue for a security problem.
 Report it privately through GitHub's [private vulnerability reporting](https://github.com/instancez/instancez/security/advisories/new) on this repository. <!-- TODO(security): enable "Private vulnerability reporting" in repo Settings > Security before launch. -->
 
 <!-- TODO(security): if you prefer email instead of or in addition to GitHub advisories,
-     add a dedicated address here, e.g. security@instancez.io, and remove this comment. -->
+     add a dedicated address here, e.g. security@instancez.ai, and remove this comment. -->
 
 Include as much as you can:
 

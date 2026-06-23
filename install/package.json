@@ -1,0 +1,13 @@
+{
+  "name": "instancez-get",
+  "private": true,
+  "description": "Cloudflare Worker serving the instancez install scripts at get.instancez.ai",
+  "scripts": {
+    "gen": "node gen.mjs",
+    "dev": "node gen.mjs && wrangler dev",
+    "deploy": "./deploy.sh"
+  },
+  "devDependencies": {
+    "wrangler": "^3.90.0"
+  }
+}

@@ -13,23 +13,23 @@ import OSTabSelect from '../../components/OSTabSelect.astro';
 <Tabs>
   <TabItem label="macOS">
   ```bash
-  curl -fsSL https://get.instancez.io | sh
+  curl -fsSL https://get.instancez.ai | sh
   ```
-  Installs `inz` to `~/.local/bin`. Check it works: `inz --version`.
+  Installs `inz` to `~/.local/bin`. Check it works: `inz version`.
   </TabItem>
 
   <TabItem label="Linux">
   ```bash
-  curl -fsSL https://get.instancez.io | sh
+  curl -fsSL https://get.instancez.ai | sh
   ```
-  Works on x86-64 and ARM64. Installs `inz` to `~/.local/bin`. Check it works: `inz --version`.
+  Works on x86-64 and ARM64. Installs `inz` to `~/.local/bin`. Check it works: `inz version`.
   </TabItem>
 
   <TabItem label="Windows">
   ```powershell
-  irm https://get.instancez.io/windows | iex
+  irm https://get.instancez.ai/windows | iex
   ```
-  Installs `inz.exe` to `%LOCALAPPDATA%\instancez\bin`. Run in PowerShell 5.1+. Check it works: `inz --version`.
+  Installs `inz.exe` to `%LOCALAPPDATA%\instancez\bin`. Run in PowerShell 5.1+. Check it works: `inz version`.
   </TabItem>
 </Tabs>
 
@@ -46,16 +46,22 @@ This creates `instancez.yaml` with a `todos` table, an `avatars` storage bucket,
 
 ## Start the dev server
 
-Set your Postgres connection string (any Postgres 14+ superuser DSN works):
+The quickest way to start is the Postgres that ships inside `inz`. You do not need to install or run a database yourself:
+
+```bash
+inz dev --embedded-pg
+```
+
+The first run downloads a Postgres 16 binary (about 30 MB) and keeps its data in `./pgdata/`. Later runs reuse that directory. To start over from an empty database, add `--reset-pg`.
+
+**Or point at your own Postgres.** If you already have a Postgres 14+ instance, drop the flag and set a superuser connection string:
 
 ```bash
 export INSTANCEZ_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres
 inz dev
 ```
 
-On first run, instancez provisions the required Postgres roles and writes the derived DSNs to `.development.env`. Subsequent runs read from `.development.env` directly.
-
-Your API is live at `http://localhost:8080`. Save `instancez.yaml` and the schema updates automatically.
+Either way, on first boot instancez provisions the Postgres roles it needs and writes a generated admin key to `.development.env`. Your API is live at `http://localhost:8080`, and saving `instancez.yaml` re-applies the schema automatically.
 
 ## Get your anon key
 

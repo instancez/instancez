@@ -38,7 +38,7 @@ The whole backend is one file. Your schema, RLS policies, storage rules, and the
 
 Existing Supabase code keeps working. The REST, auth, RPC, and storage endpoints match the Supabase wire format, and a compatibility test drives `@supabase/supabase-js` against a live instancez on every commit, so the contract cannot quietly drift.
 
-Setup is one binary and one connection string. Run `inz dev` and it provisions the Postgres roles it needs on first boot. There is no multi-container stack to stand up before you can make a request.
+Setup is one binary. Run `inz dev --embedded-pg` and it starts a local Postgres for you, then provisions the roles it needs on first boot. Point it at your own Postgres with a connection string when you want one. Either way, there is no multi-container stack to stand up before you can make a request.
 
 The same binary runs locally, in Docker, on a VM, or on AWS Lambda. You can bundle the config and functions into a single archive and boot from S3.
 
@@ -48,18 +48,25 @@ Install the CLI:
 
 ```bash
 # macOS / Linux
-curl -fsSL https://get.instancez.io | sh
+curl -fsSL https://get.instancez.ai | sh
 
 # Windows (PowerShell)
-irm https://get.instancez.io/windows | iex
+irm https://get.instancez.ai/windows | iex
 ```
 
-Create a project and start the dev server:
+Create a project and start the dev server. The fastest path uses the Postgres that ships inside the binary, so there is no database to install:
 
 ```bash
 inz init my-app
 cd my-app
+inz dev --embedded-pg
+```
 
+The first run downloads a Postgres 16 binary (about 30 MB) and keeps its data in `./pgdata/`. Later runs reuse it.
+
+**Or point at your own Postgres.** If you already run a Postgres 14+ instance, drop the flag and set a superuser connection string instead:
+
+```bash
 export INSTANCEZ_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres
 inz dev
 ```

@@ -1,214 +1,360 @@
 ---
-// Custom landing page — uses no Starlight layout; standalone HTML
+// Custom landing page — standalone HTML, no Starlight layout.
+// Single centered column on a dark dotted grid, with a white highlighter
+// swatch borrowed from the highlighter motif.
+import { execSync } from 'child_process'
 import logoUrl from '../assets/logo.svg'
+import '@fontsource/geist-sans/400.css'
+import '@fontsource/geist-sans/500.css'
+import '@fontsource/geist-sans/600.css'
+import '@fontsource/geist-sans/700.css'
+import '@fontsource/geist-sans/800.css'
+import '@fontsource/geist-mono/400.css'
+import '@fontsource/geist-mono/500.css'
+
 const base = import.meta.env.BASE_URL.replace(/\/$/, '')
+
+// Latest release tag — same source the docs SiteTitle uses.
+let version: string | null = import.meta.env.DOCS_VERSION ?? null
+if (!version) {
+  try {
+    version = execSync('git describe --tags --abbrev=0 2>/dev/null', { encoding: 'utf8' }).trim() || null
+  } catch {}
+}
 ---
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>instancez — Self-hosted Supabase-compatible backend</title>
-<meta name="description" content="A self-hosted Supabase-compatible backend. Define your schema in YAML, get a full Postgres API with auth, RLS, functions, and storage.">
+<title>instancez — A lightweight, self-hosted backend</title>
+<meta name="description" content="A lightweight, self-hosted backend. Define your schema in one YAML file and get a full Postgres-backed API with auth, RLS, functions, and storage. Compatible with supabase-js.">
 <link rel="icon" href={`${base}/favicon.svg`} type="image/svg+xml">
 <style>
+  :root {
+    --bg: #080808;
+    --bg-lift: #101010;
+    --bg-rail: #0b0b0b;
+    --panel: #0e0e0e;
+    --hair: #1c1c1c;
+    --hair-soft: #161616;
+    --text: #e8e8e8;
+    --text-dim: #9a9a9a;
+    --text-faint: #6a6a6a;
+    --white: #ffffff;
+    --accent: #ffffff;
+    --accent-soft: #777777;
+    --mono: 'Geist Mono', 'SF Mono', 'Fira Code', monospace;
+    --sans: 'Geist Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #080808; color: #e8e8e8; min-height: 100vh; }
+  html { scroll-behavior: smooth; scroll-padding-top: 90px; }
+  body {
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  a { color: inherit; }
 
-  nav { display: flex; align-items: center; justify-content: space-between; padding: 14px 32px; position: fixed; top: 10px; left: 50%; transform: translateX(-50%); width: min(calc(100% - 20px), 1100px); background: #1a1a1a; border: 1px solid rgba(255,255,255,0.12); border-radius: 14px; box-shadow: 0 12px 48px rgba(0,0,0,0.9); z-index: 10; }
-  .nav-logo { display: flex; align-items: center; gap: 10px; font-size: 1.15rem; font-weight: 700; letter-spacing: -0.02em; color: #fff; text-decoration: none; }
-  .nav-logo img { width: 30px; height: 30px; }
-  .nav-links { display: flex; gap: 28px; font-size: 0.875rem; color: #999; }
-  .nav-links a { color: inherit; text-decoration: none; }
-  .nav-links a:hover { color: #e8e8e8; }
-  .nav-cta { background: #fff; color: #080808; font-size: 0.875rem; font-weight: 700; padding: 8px 18px; border-radius: 6px; text-decoration: none; }
+  /* ---- top bar ---- */
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 60px;
+    padding: 0 22px;
+    background: rgba(8, 8, 8, 0.82);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--hair);
+  }
+  .brand { display: flex; align-items: center; gap: 9px; text-decoration: none; }
+  .brand img { width: 26px; height: 26px; }
+  .brand b { font-size: 1.05rem; font-weight: 700; letter-spacing: -0.03em; color: var(--white); }
+  .brand .tag {
+    font-family: var(--mono);
+    font-size: 0.62rem;
+    color: var(--text-faint);
+    border: 1px solid var(--hair);
+    border-radius: 99px;
+    padding: 2px 8px;
+    letter-spacing: 0.02em;
+  }
+  .topnav { display: flex; gap: 26px; font-size: 0.84rem; color: var(--text-dim); }
+  .topnav a { text-decoration: none; transition: color 0.15s; }
+  .topnav a:hover { color: var(--text); }
+  .topactions { display: flex; gap: 9px; align-items: center; }
 
-  .hero { text-align: center; padding: 120px 24px 84px; max-width: 760px; margin: 0 auto; }
-  .hero-badge { display: inline-block; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #aaa; border: 1px solid #2e2e2e; padding: 5px 14px; border-radius: 99px; margin-bottom: 28px; }
-  .hero h1 { font-size: 3.5rem; font-weight: 800; letter-spacing: -0.05em; line-height: 1.05; color: #fff; margin-bottom: 22px; }
-  .hero p { font-size: 1.1rem; color: #bbb; line-height: 1.75; margin-bottom: 44px; max-width: 520px; margin-left: auto; margin-right: auto; }
-  .hero-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-bottom: 52px; }
-  .btn-primary { background: #fff; color: #080808; font-weight: 700; padding: 13px 28px; border-radius: 8px; text-decoration: none; font-size: 0.95rem; }
-  .btn-secondary { color: #aaa; font-weight: 600; padding: 13px 20px; border-radius: 8px; text-decoration: none; font-size: 0.95rem; border: 1px solid #2e2e2e; }
+  /* keyboard-chip buttons */
+  .kbtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    font-family: var(--sans);
+    font-size: 0.82rem;
+    font-weight: 600;
+    text-decoration: none;
+    padding: 7px 9px 7px 14px;
+    border-radius: 8px;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+  }
+  .kbtn .key {
+    display: inline-grid;
+    place-items: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    line-height: 1;
+    border-radius: 4px;
+  }
+  .kbtn.solid { background: var(--accent); color: #080808; }
+  .kbtn.solid .key { background: rgba(0, 0, 0, 0.18); color: #080808; }
+  .kbtn.solid:hover { background: #e6e6e6; }
+  .kbtn.ghost { color: var(--text); border: 1px solid var(--hair); }
+  .kbtn.ghost .key { background: #1a1a1a; color: var(--text-dim); border: 1px solid var(--hair); }
+  .kbtn.ghost:hover { border-color: #333; background: var(--bg-lift); }
 
-  .install-wrap { display: flex; flex-direction: column; align-items: center; gap: 12px; }
-  .install-label { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: #777; }
-  .install-tabs { display: flex; gap: 2px; background: #151515; border: 1px solid #242424; border-radius: 8px; padding: 3px; }
-  .install-tab { font-size: 0.72rem; font-weight: 600; color: #666; background: transparent; border: none; padding: 5px 14px; border-radius: 6px; cursor: pointer; transition: color 0.15s, background 0.15s; }
-  .install-tab.active { background: #242424; color: #e8e8e8; }
-  .install-block { display: inline-flex; align-items: center; gap: 14px; background: #101010; border: 1px solid #2a2a2a; border-radius: 10px; padding: 14px 22px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.9rem; }
-  .install-block .prompt { color: #555; user-select: none; }
-  .install-block .cmd { color: #fff; }
-  .install-cmd { display: none; width: 100%; justify-content: center; }
-  .install-cmd.active { display: flex; }
-  .install-note { font-size: 0.75rem; color: #555; }
+  /* ---- single centered column ---- */
+  .shell {
+    max-width: 880px;
+    margin: 0 auto;
+  }
 
-  .divider { border: none; border-top: 1px solid #181818; margin: 0; }
+  /* canvas */
+  .canvas {
+    position: relative;
+    background-image:
+      radial-gradient(circle, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+    background-size: 22px 22px;
+    background-position: center top;
+  }
+  .canvas::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(255, 255, 255, 0.03), transparent 70%);
+    pointer-events: none;
+  }
+  .canvas > * { position: relative; }
 
-  .features { padding: 72px 48px; max-width: 1080px; margin: 0 auto; }
-  .features-header { text-align: center; margin-bottom: 52px; }
-  .features-header h2 { font-size: 2rem; font-weight: 700; letter-spacing: -0.04em; color: #fff; margin-bottom: 12px; }
-  .features-header p { color: #bbb; font-size: 0.95rem; }
-  .features-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: #1e1e1e; border: 1px solid #1e1e1e; border-radius: 12px; overflow: hidden; }
-  .feature-card { background: #080808; padding: 28px; }
-  .feature-icon { font-size: 1.25rem; margin-bottom: 14px; }
-  .feature-card h3 { font-size: 0.95rem; font-weight: 700; color: #f0f0f0; margin-bottom: 8px; }
-  .feature-card p { font-size: 0.83rem; color: #999; line-height: 1.65; }
-  .feature-card code { background: #141414; padding: 1px 5px; border-radius: 3px; font-size: 0.8em; color: #ddd; font-family: 'SF Mono', 'Fira Code', monospace; border: 1px solid #252525; }
+  /* hero */
+  .hero { padding: 64px 56px 56px; border-bottom: 1px solid var(--hair); }
 
-  /* CODE BLOCKS — syntax highlighted */
-  .demo { padding: 72px 48px; max-width: 980px; margin: 0 auto; }
-  .demo h2 { font-size: 1.875rem; font-weight: 700; letter-spacing: -0.04em; color: #fff; margin-bottom: 8px; text-align: center; }
-  .demo .sub { color: #aaa; text-align: center; margin-bottom: 40px; font-size: 0.95rem; }
-  .demo-split { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: #222; border: 1px solid #222; border-radius: 14px; overflow: hidden; }
-  .code-block { background: #111; }
-  .code-block-header { padding: 11px 18px; border-bottom: 1px solid #1e1e1e; font-size: 0.7rem; font-weight: 700; color: #888; letter-spacing: 0.08em; text-transform: uppercase; display: flex; align-items: center; gap: 10px; background: #0e0e0e; }
-  .dot { width: 9px; height: 9px; border-radius: 50%; }
-  .code-block pre { padding: 24px 22px; font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 0.8rem; line-height: 1.9; white-space: pre; }
+  h1.headline {
+    font-size: clamp(2.6rem, 5vw, 3.7rem);
+    font-weight: 800;
+    line-height: 1.04;
+    letter-spacing: -0.045em;
+    color: var(--white);
+    margin-bottom: 26px;
+  }
+  .mark {
+    background: var(--accent);
+    color: #080808;
+    padding: 0.02em 0.18em;
+    margin: 0 -0.04em;
+    border-radius: 2px;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+    transform: rotate(-0.6deg);
+    display: inline-block;
+  }
+  .hero .lede {
+    font-size: 1.12rem;
+    line-height: 1.7;
+    color: var(--text-dim);
+    max-width: 540px;
+    margin-bottom: 34px;
+  }
+  .hero-actions { display: flex; gap: 11px; flex-wrap: wrap; margin-bottom: 44px; }
 
-  /* Syntax token colors — proper editor palette */
-  .k  { color: #c792ea; }              /* keyword: const, await, true, false */
-  .fn { color: #82aaff; }              /* function / method call */
-  .s  { color: #c3e88d; }              /* string */
-  .n  { color: #f78c6c; }              /* number / boolean */
-  .cm { color: #546e7a; font-style: italic; } /* comment */
-  .p  { color: #89ddff; }              /* punctuation / operator */
-  .yk { color: #89ddff; }              /* YAML key */
-  .yv { color: #c3e88d; }              /* YAML string value */
-  .yb { color: #f78c6c; }              /* YAML boolean */
-  .plain { color: #cdd3de; }           /* default / identifiers */
+  /* install block */
+  .install-label {
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-bottom: 10px;
+  }
+  .install-tabs { display: inline-flex; gap: 2px; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 3px; margin-bottom: 10px; }
+  .install-tab { font-family: var(--mono); font-size: 0.72rem; font-weight: 500; color: var(--text-faint); background: transparent; border: none; padding: 5px 14px; border-radius: 6px; cursor: pointer; transition: color 0.15s, background 0.15s; }
+  .install-tab.active { background: #1c1c1c; color: var(--text); }
+  .install-cmd { display: none; }
+  .install-cmd.active { display: block; }
+  .install-block {
+    display: flex;
+    align-items: center;
+    gap: 13px;
+    background: var(--panel);
+    border: 1px solid var(--hair);
+    border-left: 2px solid #2e2e2e;
+    border-radius: 8px;
+    padding: 14px 18px;
+    font-family: var(--mono);
+    font-size: 0.86rem;
+    max-width: 520px;
+  }
+  .install-block .prompt { color: var(--accent-soft); user-select: none; }
+  .install-block .cmd { color: var(--text); overflow-x: auto; }
+  .install-block .copy-btn {
+    margin-left: auto;
+    flex-shrink: 0;
+    display: inline-grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    background: transparent;
+    border: 1px solid var(--hair);
+    border-radius: 6px;
+    color: var(--text-faint);
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+  }
+  .install-block .copy-btn:hover { color: var(--text); border-color: #333; background: var(--bg-lift); }
+  .install-block .copy-btn svg { width: 14px; height: 14px; }
+  .install-block .copy-btn .ic-check { display: none; }
+  .install-block .copy-btn.copied { color: #28c840; border-color: #28c840; }
+  .install-block .copy-btn.copied .ic-copy { display: none; }
+  .install-block .copy-btn.copied .ic-check { display: block; }
 
-  .cta-strip { margin: 0 auto 80px; max-width: 860px; padding: 0 48px; }
-  .cta-inner { border: 1px solid #232323; border-radius: 14px; padding: 56px 40px; text-align: center; background: #0c0c0c; }
-  .cta-inner h2 { font-size: 2.25rem; font-weight: 800; letter-spacing: -0.04em; color: #fff; margin-bottom: 12px; }
-  .cta-inner p { color: #aaa; margin-bottom: 32px; font-size: 0.95rem; }
+  /* generic section padding inside canvas */
+  .section { padding: 56px 56px; border-bottom: 1px solid var(--hair); }
+  .section-eyebrow { font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent-soft); margin-bottom: 12px; }
+  .section h2 { font-size: 1.7rem; font-weight: 700; letter-spacing: -0.035em; color: var(--white); margin-bottom: 10px; }
+  .section > p.sub { color: var(--text-dim); font-size: 0.95rem; line-height: 1.6; max-width: 560px; margin-bottom: 34px; }
 
-  footer { border-top: 1px solid #181818; padding: 24px 48px; text-align: center; font-size: 0.78rem; color: #666; }
+  /* features */
+  .features-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; background: var(--hair); border: 1px solid var(--hair); border-radius: 12px; overflow: hidden; }
+  .feature { background: var(--bg); padding: 24px; transition: background 0.15s; }
+  .feature:hover { background: var(--bg-lift); }
+  .feature .ic { font-family: var(--mono); font-size: 0.72rem; color: var(--text-dim); margin-bottom: 12px; letter-spacing: 0.04em; }
+  .feature h3 { font-size: 0.96rem; font-weight: 700; color: #f2f2f2; margin-bottom: 7px; letter-spacing: -0.01em; }
+  .feature p { font-size: 0.84rem; color: var(--text-dim); line-height: 1.6; }
+  .feature code { font-family: var(--mono); background: #151515; padding: 1px 5px; border-radius: 3px; font-size: 0.82em; color: #ddd; border: 1px solid #242424; }
+
+  /* code demo */
+  .demo-split { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--hair); border: 1px solid var(--hair); border-radius: 12px; overflow: hidden; }
+  .code-card { background: var(--panel); min-width: 0; }
+  .code-head { display: flex; align-items: center; gap: 9px; padding: 11px 16px; border-bottom: 1px solid var(--hair-soft); background: #0b0b0b; font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.04em; color: var(--text-faint); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .code-card pre { padding: 20px 18px; font-family: var(--mono); font-size: 0.76rem; line-height: 1.85; white-space: pre; overflow-x: auto; }
+
+  /* syntax tokens — editor palette */
+  .k  { color: #c792ea; }
+  .fn { color: #82aaff; }
+  .s  { color: #c3e88d; }
+  .n  { color: #f78c6c; }
+  .cm { color: #546e7a; font-style: italic; }
+  .p  { color: #89ddff; }
+  .yk { color: #89ddff; }
+  .yv { color: #c3e88d; }
+  .yb { color: #f78c6c; }
+  .plain { color: #cdd3de; }
+
+  /* closing CTA */
+  .cta {
+    padding: 64px 56px;
+    text-align: center;
+    background:
+      radial-gradient(ellipse 70% 80% at 50% 0%, rgba(255, 255, 255, 0.04), transparent 70%);
+  }
+  .cta h2 { font-size: 2rem; font-weight: 800; letter-spacing: -0.04em; color: var(--white); margin-bottom: 12px; }
+  .cta .mark { font-size: inherit; }
+  .cta p { color: var(--text-dim); margin-bottom: 28px; font-size: 0.98rem; }
+  .cta .hero-actions { justify-content: center; margin-bottom: 0; }
+
+  footer {
+    padding: 26px 56px;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--text-faint);
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  footer a { color: var(--text-dim); text-decoration: none; }
+  footer a:hover { color: var(--text); }
+
+  /* responsive collapse */
+  @media (max-width: 880px) {
+    .shell { max-width: 720px; }
+    .topnav { display: none; }
+    .hero, .section, .cta { padding-left: 26px; padding-right: 26px; }
+    .features-grid, .demo-split { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
 <body>
 
-<nav>
-  <a href={`${base}/`} class="nav-logo">
+<header class="topbar">
+  <a href={`${base}/`} class="brand">
     <img src={logoUrl.src ?? logoUrl} alt="instancez" />
-    instancez
+    <b>instancez</b>
+    {version && <span class="tag">{version}</span>}
   </a>
-  <div class="nav-links">
+  <nav class="topnav">
     <a href={`${base}/quick-start/`}>Quick Start</a>
     <a href={`${base}/build/schema/`}>Build</a>
     <a href={`${base}/deploy/docker/`}>Deploy</a>
-    <a href={`${base}/api-reference/rest/`}>API Reference</a>
+    <a href={`${base}/api-reference/cli/`}>Reference</a>
+  </nav>
+  <div class="topactions">
+    <a href="https://github.com/instancez/instancez" class="kbtn ghost">GitHub <span class="key">G</span></a>
+    <a href={`${base}/quick-start/`} class="kbtn solid">Quick Start <span class="key">S</span></a>
   </div>
-  <a href={`${base}/quick-start/`} class="nav-cta">Get Started →</a>
-</nav>
+</header>
 
-<section class="hero">
-  <div class="hero-badge">Supabase-compatible · Open Source · MIT</div>
-  <h1>Your backend.<br>Your infrastructure.</h1>
-  <p>A self-hosted Supabase-compatible backend. Define your schema in YAML and get a full Postgres-backed API with auth, RLS, functions, and storage — up and running in minutes.</p>
-  <div class="hero-actions">
-    <a href={`${base}/quick-start/`} class="btn-primary">Quick Start →</a>
-    <a href="https://github.com/instancez/instancez" class="btn-secondary">View on GitHub ↗</a>
-  </div>
-  <div class="install-wrap">
-    <div class="install-label">Install</div>
-    <div class="install-tabs">
-      <button class="install-tab active" data-os="mac">macOS</button>
-      <button class="install-tab" data-os="linux">Linux</button>
-      <button class="install-tab" data-os="windows">Windows</button>
-    </div>
-    <div class="install-cmd active" id="cmd-mac">
-      <div class="install-block">
-        <span class="prompt">$</span>
-        <span class="cmd">curl -fsSL https://get.instancez.io | sh</span>
+<div class="shell">
+
+  <main class="canvas">
+    <section class="hero" id="overview">
+      <h1 class="headline">A <span class="mark">lightweight</span> backend,<br>in one YAML file.</h1>
+      <p class="lede">Define your schema in one YAML file and get a full Postgres-backed API with auth, RLS, functions, and storage. Self-host it as a single binary, point your existing <code style="font-family:var(--mono);color:#ddd">supabase-js</code> code at it, and you are running in minutes.</p>
+      <div class="hero-actions">
+        <a href={`${base}/quick-start/`} class="kbtn solid">Quick Start <span class="key">S</span></a>
+        <a href="https://github.com/instancez/instancez" class="kbtn ghost">View on GitHub <span class="key">G</span></a>
       </div>
-    </div>
-    <div class="install-cmd" id="cmd-linux">
-      <div class="install-block">
-        <span class="prompt">$</span>
-        <span class="cmd">curl -fsSL https://get.instancez.io | sh</span>
+
+      <div class="install-label">Install</div>
+      <div class="install-tabs">
+        <button class="install-tab active" data-os="mac">macOS</button>
+        <button class="install-tab" data-os="linux">Linux</button>
+        <button class="install-tab" data-os="windows">Windows</button>
       </div>
-    </div>
-    <div class="install-cmd" id="cmd-windows">
-      <div class="install-block">
-        <span class="prompt">PS&gt;</span>
-        <span class="cmd">irm https://get.instancez.io/windows | iex</span>
+      <div class="install-cmd active" id="cmd-mac">
+        <div class="install-block"><span class="prompt">$</span><span class="cmd">curl -fsSL https://get.instancez.ai | sh</span><button class="copy-btn" type="button" aria-label="Copy command"><svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg><svg class="ic-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg></button></div>
       </div>
-    </div>
-    <a href={`${base}/install/`} class="install-note">All install options →</a>
-  </div>
-
-  <script>
-    const tabs = document.querySelectorAll('.install-tab');
-    const cmds = document.querySelectorAll('.install-cmd');
-    function activate(os: string) {
-      tabs.forEach(t => t.classList.toggle('active', (t as HTMLElement).dataset.os === os));
-      cmds.forEach(c => c.classList.toggle('active', c.id === `cmd-${os}`));
-    }
-    tabs.forEach(tab => tab.addEventListener('click', () => activate((tab as HTMLElement).dataset.os!)));
-    // Auto-detect OS
-    const ua = navigator.userAgent;
-    if (/Windows/i.test(ua)) activate('windows');
-    else if (/Linux/i.test(ua)) activate('linux');
-    else activate('mac');
-  </script>
-</section>
-
-<hr class="divider">
-
-<section class="features">
-  <div class="features-header">
-    <h2>What you need. Nothing extra.</h2>
-    <p>Wire-compatible with <code style="background:#111;padding:2px 7px;border-radius:4px;font-size:0.85em;color:#ddd;border:1px solid #252525;font-family:'SF Mono','Fira Code',monospace">@supabase/supabase-js</code> — drop it in, no client changes required.</p>
-  </div>
-  <div class="features-grid">
-    <div class="feature-card">
-      <div class="feature-icon">🗂</div>
-      <h3>YAML-driven schema</h3>
-      <p>Define tables, fields, types, and RLS policies in <code>instancez.yaml</code>. In dev mode, saves trigger migrations automatically.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon">🔐</div>
-      <h3>Auth that works</h3>
-      <p>Password, magic link, OTP, OAuth (Google, GitHub), anonymous sign-in, and TOTP MFA. All tied directly into Postgres RLS.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon">⚡</div>
-      <h3>PostgREST-compatible API</h3>
-      <p>Full filtering, embeds, aggregates, pagination, and RPC. The same query surface your supabase-js code already knows.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon">🧩</div>
-      <h3>Code functions</h3>
-      <p>JavaScript ESM handlers at <code>/functions/v1/&lt;name&gt;</code>. Each handler gets <code>ctx.supabase</code>, secrets, and structured logging.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon">🗄</div>
-      <h3>Storage</h3>
-      <p>File upload and download with local or S3 backends. Bucket policies run through RLS — same model as everything else.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon">🚀</div>
-      <h3>Deploy anywhere</h3>
-      <p>Single binary. Docker, AWS Lambda, bare metal — one command to run, one YAML file to configure.</p>
-    </div>
-  </div>
-</section>
-
-<hr class="divider">
-
-<section class="demo">
-  <h2>Write YAML. Ship an API.</h2>
-  <p class="sub">One file for schema and RLS. instancez handles the rest.</p>
-  <div class="demo-split">
-    <div class="code-block">
-      <div class="code-block-header">
-        <div class="dot" style="background:#ff5f57"></div>
-        <div class="dot" style="background:#febc2e"></div>
-        <div class="dot" style="background:#28c840"></div>
-        instancez.yaml
+      <div class="install-cmd" id="cmd-linux">
+        <div class="install-block"><span class="prompt">$</span><span class="cmd">curl -fsSL https://get.instancez.ai | sh</span><button class="copy-btn" type="button" aria-label="Copy command"><svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg><svg class="ic-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg></button></div>
       </div>
-      <pre><span class="yk">tables</span><span class="p">:</span>
+      <div class="install-cmd" id="cmd-windows">
+        <div class="install-block"><span class="prompt">PS&gt;</span><span class="cmd">irm https://get.instancez.ai/windows | iex</span><button class="copy-btn" type="button" aria-label="Copy command"><svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg><svg class="ic-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg></button></div>
+      </div>
+    </section>
+
+    <section class="section" id="example">
+      <div class="section-eyebrow">How it looks</div>
+      <h2>Write YAML. Ship a backend system.</h2>
+      <p class="sub">One file holds your schema and its RLS policies. instancez handles the migration and serves the API.</p>
+      <div class="demo-split">
+        <div class="code-card">
+          <div class="code-head">
+            <span class="dot" style="background:#ff5f57"></span>
+            <span class="dot" style="background:#febc2e"></span>
+            <span class="dot" style="background:#28c840"></span>
+            instancez.yaml
+          </div>
+          <pre><span class="yk">tables</span><span class="p">:</span>
   <span class="yk">posts</span><span class="p">:</span>
     <span class="yk">fields</span><span class="p">:</span>
       <span class="p">-</span> <span class="yk">name</span><span class="p">:</span> <span class="yv">id</span>
@@ -226,15 +372,15 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '')
         <span class="yk">check</span><span class="p">:</span> <span class="s">"true"</span>
       <span class="p">-</span> <span class="yk">operations</span><span class="p">:</span> [<span class="yv">insert</span><span class="p">,</span> <span class="yv">update</span><span class="p">,</span> <span class="yv">delete</span>]
         <span class="yk">check</span><span class="p">:</span> <span class="s">"auth.uid() = user_id"</span></pre>
-    </div>
-    <div class="code-block">
-      <div class="code-block-header">
-        <div class="dot" style="background:#ff5f57"></div>
-        <div class="dot" style="background:#febc2e"></div>
-        <div class="dot" style="background:#28c840"></div>
-        Your Frontend
-      </div>
-      <pre><span class="cm">// @supabase/supabase-js, unchanged</span>
+        </div>
+        <div class="code-card">
+          <div class="code-head">
+            <span class="dot" style="background:#ff5f57"></span>
+            <span class="dot" style="background:#febc2e"></span>
+            <span class="dot" style="background:#28c840"></span>
+            app.ts
+          </div>
+          <pre><span class="cm">// @supabase/supabase-js, unchanged</span>
 <span class="k">const</span> <span class="plain">supabase</span> <span class="p">=</span> <span class="fn">createClient</span><span class="p">(</span>
   <span class="s">'http://localhost:8080'</span><span class="p">,</span>
   <span class="s">'your-anon-key'</span>
@@ -246,25 +392,107 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '')
   <span class="p">.</span><span class="fn">select</span><span class="p">(</span><span class="s">'id, title'</span><span class="p">)</span>
   <span class="p">.</span><span class="fn">order</span><span class="p">(</span><span class="s">'id'</span><span class="p">,</span> <span class="p">{</span> <span class="plain">ascending</span><span class="p">:</span> <span class="k">false</span> <span class="p">})</span>
 
-<span class="cm">// insert — RLS enforces user_id automatically</span>
+<span class="cm">// insert: RLS checks user_id for you</span>
 <span class="k">const</span> <span class="p">{</span> <span class="plain">data</span> <span class="p">}</span> <span class="p">=</span> <span class="k">await</span> <span class="plain">supabase</span>
   <span class="p">.</span><span class="fn">from</span><span class="p">(</span><span class="s">'posts'</span><span class="p">)</span>
   <span class="p">.</span><span class="fn">insert</span><span class="p">({</span> <span class="plain">title</span><span class="p">:</span> <span class="s">'Hello world'</span> <span class="p">})</span>
   <span class="p">.</span><span class="fn">select</span><span class="p">()</span>
   <span class="p">.</span><span class="fn">single</span><span class="p">()</span></pre>
-    </div>
-  </div>
-</section>
+        </div>
+      </div>
+    </section>
 
-<div class="cta-strip">
-  <div class="cta-inner">
-    <h2>Ready to build?</h2>
-    <p>One command to install. One YAML file to start. Running in minutes.</p>
-    <a href={`${base}/quick-start/`} class="btn-primary">Get started →</a>
-  </div>
+    <section class="section" id="features">
+      <div class="section-eyebrow">What you get</div>
+      <h2>Everything you need. Nothing extra.</h2>
+      <p class="sub">Wire-compatible with <code style="font-family:var(--mono);background:#151515;padding:2px 6px;border-radius:4px;color:#ddd;border:1px solid #242424">@supabase/supabase-js</code>. Drop it in. Your client code stays the same.</p>
+      <div class="features-grid">
+        <div class="feature">
+          <div class="ic">SCHEMA</div>
+          <h3>YAML-driven schema</h3>
+          <p>Declare tables, fields, types, and RLS policies in <code>instancez.yaml</code>. In dev mode, saving the file applies migrations for you.</p>
+        </div>
+        <div class="feature">
+          <div class="ic">AUTH</div>
+          <h3>Auth that works</h3>
+          <p>Password, magic link, OTP, OAuth (Google, GitHub), anonymous sign-in, and TOTP MFA, all wired straight into Postgres RLS.</p>
+        </div>
+        <div class="feature">
+          <div class="ic">API</div>
+          <h3>PostgREST-compatible</h3>
+          <p>Filtering, embeds, aggregates, pagination, and RPC. The same query surface your supabase-js code already speaks.</p>
+        </div>
+        <div class="feature">
+          <div class="ic">FUNCTIONS</div>
+          <h3>Code functions</h3>
+          <p>JavaScript ESM handlers at <code>/functions/v1/&lt;name&gt;</code>. Each one gets <code>ctx.supabase</code>, secrets, and structured logging.</p>
+        </div>
+        <div class="feature">
+          <div class="ic">STORAGE</div>
+          <h3>Storage</h3>
+          <p>Upload and download with local or S3 backends. Bucket policies run through RLS, the same model as your tables.</p>
+        </div>
+        <div class="feature">
+          <div class="ic">DEPLOY</div>
+          <h3>Deploy anywhere</h3>
+          <p>One binary. Docker, AWS Lambda, or bare metal: one command to run, one YAML file to configure.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="cta" id="start">
+      <h2>Ready to <span class="mark">build</span>?</h2>
+      <p>One command to install. One YAML file to start.</p>
+      <div class="hero-actions">
+        <a href={`${base}/quick-start/`} class="kbtn solid">Get started <span class="key">S</span></a>
+        <a href={`${base}/install/`} class="kbtn ghost">All install options</a>
+      </div>
+    </section>
+
+    <footer>
+      <span>instancez · open source · MIT license</span>
+      <a href="https://github.com/instancez/instancez">github.com/instancez/instancez</a>
+    </footer>
+  </main>
+
 </div>
 
-<footer>instancez · open source · MIT license</footer>
+<script>
+  // Install OS tabs + auto-detect.
+  const tabs = document.querySelectorAll<HTMLElement>('.install-tab')
+  const cmds = document.querySelectorAll<HTMLElement>('.install-cmd')
+  function activate(os: string) {
+    tabs.forEach(t => t.classList.toggle('active', t.dataset.os === os))
+    cmds.forEach(c => c.classList.toggle('active', c.id === `cmd-${os}`))
+  }
+  tabs.forEach(tab => tab.addEventListener('click', () => activate(tab.dataset.os!)))
+  const ua = navigator.userAgent
+  if (/Windows/i.test(ua)) activate('windows')
+  else if (/Linux/i.test(ua)) activate('linux')
+  else activate('mac')
+
+  // Copy the install command for the active OS tab.
+  document.querySelectorAll<HTMLButtonElement>('.copy-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const cmd = btn.parentElement?.querySelector('.cmd')?.textContent?.trim() ?? ''
+      if (!cmd) return
+      try {
+        await navigator.clipboard.writeText(cmd)
+        btn.classList.add('copied')
+        setTimeout(() => btn.classList.remove('copied'), 1500)
+      } catch {}
+    })
+  })
+
+  // Keyboard shortcuts: S → quick start, G → GitHub.
+  document.addEventListener('keydown', e => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return
+    const t = e.target as HTMLElement
+    if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return
+    if (e.key.toLowerCase() === 's') window.location.href = document.querySelector<HTMLAnchorElement>('.kbtn.solid')!.href
+    if (e.key.toLowerCase() === 'g') window.location.href = 'https://github.com/instancez/instancez'
+  })
+</script>
 
 </body>
 </html>

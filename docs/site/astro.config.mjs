@@ -2,6 +2,19 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import starlightThemeBlack from 'starlight-theme-black';
+import { execSync } from 'node:child_process';
+
+// Latest release tag, rendered as a small badge after the site title in the
+// docs header. DOCS_VERSION covers tag builds; otherwise we read the newest git
+// tag (CI fetches tags via fetch-depth: 0). An empty value renders no badge.
+// The header markup comes from starlight-theme-black, which bypasses Starlight's
+// SiteTitle slot, so we attach the badge with CSS rather than a component.
+let docsVersion = process.env.DOCS_VERSION ?? '';
+if (!docsVersion) {
+  try {
+    docsVersion = execSync('git describe --tags --abbrev=0 2>/dev/null', { encoding: 'utf8' }).trim();
+  } catch {}
+}
 
 export default defineConfig({
   site: 'https://instancez.github.io',
@@ -9,11 +22,19 @@ export default defineConfig({
   integrations: [
     starlight({
       plugins: [starlightThemeBlack({
-        footerText: 'instancez — self-hosted Supabase-compatible backend. [GitHub](https://github.com/instancez/instancez)',
+        footerText: 'instancez — a lightweight, self-hosted backend. [GitHub](https://github.com/instancez/instancez)',
       })],
       title: 'instancez',
-      description: 'Self-hosted Supabase-compatible backend',
+      description: 'A lightweight, self-hosted backend',
       favicon: '/favicon.svg',
+      head: docsVersion
+        ? [
+            {
+              tag: 'style',
+              content: `.site-title .title-text::after{content:"${docsVersion}";margin-left:.55rem;font-family:'Geist Mono',monospace;font-size:.62rem;font-weight:500;letter-spacing:.02em;color:#6a6a6a;border:1px solid #1c1c1c;border-radius:99px;padding:2px 8px;vertical-align:middle}`,
+            },
+          ]
+        : [],
       logo: {
         src: './src/assets/logo.svg',
         alt: 'instancez',
@@ -40,7 +61,9 @@ export default defineConfig({
         {
           label: 'Deploy',
           items: [
+            { label: 'instancez Cloud', slug: 'deploy/cloud' },
             { label: 'Docker', slug: 'deploy/docker' },
+            { label: 'Kubernetes', slug: 'deploy/kubernetes' },
             { label: 'AWS Lambda', slug: 'deploy/lambda' },
             { label: 'Self-hosted', slug: 'deploy/self-hosted' },
             { label: 'Environment Variables', slug: 'deploy/env-vars' },
@@ -68,9 +91,19 @@ export default defineConfig({
         },
       ],
       components: {
-        SiteTitle: './src/components/SiteTitle.astro',
+        // Dark-only: pin the theme to dark before paint. The visible toggle
+        // belongs to the starlight-theme-black plugin and is hidden in CSS.
+        ThemeProvider: './src/components/ThemeProvider.astro',
       },
-      customCss: ['./src/styles/custom.css'],
+      customCss: [
+        '@fontsource/geist-sans/400.css',
+        '@fontsource/geist-sans/500.css',
+        '@fontsource/geist-sans/600.css',
+        '@fontsource/geist-sans/700.css',
+        '@fontsource/geist-mono/400.css',
+        '@fontsource/geist-mono/500.css',
+        './src/styles/custom.css',
+      ],
       expressiveCode: {
         themes: ['material-theme-darker'],
       },

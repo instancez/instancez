@@ -148,40 +148,30 @@ export function RpcDetail() {
           </Field>
 
           <Field label="Function Body">
-            {/* The body slots into this fixed wrapper — a byte-faithful mirror
-                of what the migrator emits (generateRPCFunction): one clause per
-                line, $ub$ dollar-quoting. Every clause is derived from the live
-                Definition fields, so each dropdown change is reflected here.
-                Pasting full DDL into the editor is visibly wrong and rejected
-                by validation. */}
+            {/* The body slots into a fixed wrapper framed inside the editor: a
+                byte-faithful mirror of what the migrator emits
+                (generateRPCFunction), one clause per line with $ub$
+                dollar-quoting. Every clause is derived from the live Definition
+                fields, so each dropdown change is reflected in the header.
+                Pasting full DDL into the editor is visibly wrong and rejected by
+                validation. */}
             <Box borderRadius="lg" borderWidth="1px" borderColor="border" overflow="hidden">
-              <Box px="3" py="2" borderBottomWidth="1px" borderColor="border">
-                <Text
-                  as="code"
-                  display="block"
-                  fontSize="11px"
-                  fontFamily="mono"
-                  color="fg.muted"
-                  whiteSpace="pre-wrap"
-                >
-                  {`CREATE OR REPLACE FUNCTION public."${name}"(${(fn.args || [])
-                    .map((a) => `"${a.name}" ${a.type}`)
-                    .join(", ")})\nRETURNS ${fn.returns?.type || "void"}\nLANGUAGE ${(
-                    fn.language || "plpgsql"
-                  ).toLowerCase()}\n${(fn.volatility || "volatile").toUpperCase()}\nSECURITY ${(
-                    fn.security || "invoker"
-                  ).toUpperCase()}\nAS $ub$`}
-                </Text>
-              </Box>
               <CodeEditor
                 value={fn.body || ""}
                 onChange={(val) => updateFn((f) => ({ ...f, body: val }))}
                 language="sql"
                 minHeight="160px"
+                frame={{
+                  header: `CREATE OR REPLACE FUNCTION public."${name}"(${(fn.args || [])
+                    .map((a) => `"${a.name}" ${a.type}`)
+                    .join(", ")})\nRETURNS ${fn.returns?.type || "void"}\nLANGUAGE ${(
+                    fn.language || "plpgsql"
+                  ).toLowerCase()}\n${(fn.volatility || "volatile").toUpperCase()}\nSECURITY ${(
+                    fn.security || "invoker"
+                  ).toUpperCase()}\nAS $ub$`,
+                  footer: "$ub$;",
+                }}
               />
-              <Box px="3" py="1.5" borderTopWidth="1px" borderColor="border">
-                <Text as="code" fontSize="11px" fontFamily="mono" color="fg.muted">$ub$;</Text>
-              </Box>
             </Box>
           </Field>
         </Section>

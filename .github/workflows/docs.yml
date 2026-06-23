@@ -20,7 +20,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 pulls tags too, so the version badge can resolve the
+      # latest release via `git describe` (SiteTitle.astro, index.astro).
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:

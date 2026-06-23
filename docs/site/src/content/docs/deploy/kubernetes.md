@@ -72,7 +72,7 @@ config: |
           primaryKey: true
 ```
 
-See [instancez.yaml reference](/instancez/reference/config/) for the full schema.
+See [instancez.yaml reference](/instancez/api-reference/config/) for the full schema.
 
 ## External Postgres
 

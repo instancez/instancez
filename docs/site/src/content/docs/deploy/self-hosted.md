@@ -6,13 +6,13 @@ description: Run instancez on a bare metal server or VPS with inz serve.
 ## Download the binary
 
 ```bash
-curl -fsSL https://get.instancez.io | sh
+curl -fsSL https://get.instancez.ai | sh
 ```
 
 This installs `inz` to `~/.local/bin`. Verify the install:
 
 ```bash
-inz --version
+inz version
 ```
 
 Alternatively, download a release binary directly from [GitHub Releases](https://github.com/instancez/instancez/releases) and place it on your `PATH`.

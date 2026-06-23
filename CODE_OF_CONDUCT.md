@@ -23,7 +23,7 @@ Be decent to each other. This project is here for people who want to build thing
 
 If you see or experience behavior that breaks these rules, report it to the maintainers.
 
-<!-- TODO(coc): add a real contact before launch, e.g. conduct@instancez.io, and remove this comment. -->
+<!-- TODO(coc): add a real contact before launch, e.g. conduct@instancez.ai, and remove this comment. -->
 
 Reports are handled privately. We will look into what happened, talk to the people involved, and decide on a response. That can range from a warning to a permanent ban, depending on how serious it is. We will keep the reporter's identity confidential.
 
