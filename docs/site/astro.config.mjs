@@ -72,9 +72,8 @@ export default defineConfig({
         {
           label: 'Examples',
           items: [
-            { label: 'Todo App', slug: 'examples/todo-app' },
+            { label: 'Ecommerce Store', slug: 'examples/ecommerce-store' },
             { label: 'File Gallery', slug: 'examples/file-gallery' },
-            { label: 'Webhook Handler', slug: 'examples/webhook-function' },
           ],
         },
         {

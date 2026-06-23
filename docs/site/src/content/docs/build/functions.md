@@ -32,9 +32,13 @@ A handler receives two arguments — `req` (the incoming request) and `ctx` (run
 |----------|------|-------------|
 | `method` | `string` | HTTP method (`"GET"`, `"POST"`, etc.) |
 | `path` | `string` | Request path including the function prefix (e.g. `/functions/v1/todos`) |
-| `query` | `object` | URL query parameters as a flat string-keyed object (first value per key) |
-| `headers` | `object` | Lowercased request headers (first value per key) |
+| `query` | `object` | URL query parameters, first value per key (`{ tag: "a" }`). |
+| `queryAll` | `object` | URL query parameters with every value per key as an array (`{ tag: ["a", "b"] }`). Use this when a parameter can repeat; `query` keeps only the first value. |
+| `rawQuery` | `string` | The unparsed query string (everything after `?`, without the `?`). For schemes that sign the query string verbatim. `""` when there is no query. |
+| `headers` | `object` | Lowercased request headers, first value per key. |
+| `headersAll` | `object` | Lowercased request headers with every value per key as an array. `headers` keeps only the first. |
 | `body` | `any` | Parsed request body. JSON when `content-type: application/json`, raw string otherwise. `undefined` when body is empty. |
+| `rawBody` | `Buffer` | The unparsed request body: the exact bytes the client sent, before any JSON parsing. Reach for this instead of `body` when the bytes themselves matter, such as verifying a webhook signature (`body` has already been re-shaped and won't hash to the same value). An empty `Buffer` when the request has no body. |
 
 ## Context object (ctx)
 
@@ -48,6 +52,34 @@ A handler receives two arguments — `req` (the incoming request) and `ctx` (run
 | `ctx.signal` | `AbortSignal` | Aborted when the caller disconnects or the per-request timeout fires. Honoring it is optional — the server enforces the timeout regardless. |
 
 `console.log`, `console.warn`, `console.error`, and related methods are patched to emit structured log lines. Prefer `ctx.log` for structured field support.
+
+## Response object
+
+A handler returns an object with `status`, `body`, and optionally `headers`.
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `status` | `number` | HTTP status code. Defaults to `200`. |
+| `headers` | `object` | Response headers. Defaults to `{ "content-type": "application/json" }`. |
+| `body` | `string \| object \| Buffer` | The response body. See below. |
+
+How `body` is written depends on its type:
+
+- A **string** is sent as-is.
+- A **`Buffer`** is sent as raw bytes, so a function can return a file, an image, or any binary payload. Set `content-type` yourself in `headers` for these; the JSON default won't fit.
+- **Anything else** is JSON-serialized.
+
+```js
+// functions/badge.js: return a PNG generated in the handler
+export default async function handler(req, ctx) {
+  const png = await renderBadge(req.query.label);  // returns a Buffer
+  return {
+    status: 200,
+    headers: { 'content-type': 'image/png' },
+    body: png,
+  };
+}
+```
 
 ## Declaring in YAML
 

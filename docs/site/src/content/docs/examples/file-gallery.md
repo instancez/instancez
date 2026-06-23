@@ -3,16 +3,28 @@ title: File Gallery
 description: Private image uploads, direct-to-S3 presigned URLs, and RLS on storage objects.
 ---
 
-A private photo gallery where each user can upload images, list their own files, and get short-lived download links. Uploads go directly to S3 — the server never handles the bytes.
+A private photo gallery where each user can upload images, list their own files, and get short-lived download links. Uploads go directly to S3, so the server never handles the bytes. A `photos` table tracks captions and ownership alongside the stored objects.
 
 ## instancez.yaml
 
+The whole project lives in one file: the S3 provider, the bucket, and the metadata table.
+
 ```yaml
 # instancez.yaml
+version: 1
+
 auth:
   jwt_expiry: 1h
   refresh_tokens: true
   allow_signup: true
+
+providers:
+  storage:
+    type: s3
+    bucket: "${S3_BUCKET}"
+    region: "${S3_REGION}"
+    access_key_id: "${S3_ACCESS_KEY_ID}"
+    secret_access_key: "${S3_SECRET_ACCESS_KEY}"
 
 storage:
   photos:
@@ -24,16 +36,30 @@ storage:
       - operations: [select, insert, update, delete]
         check: "auth.uid() IS NOT NULL"
 
-providers:
-  storage:
-    type: s3
-    bucket: "${S3_BUCKET}"
-    region: "${S3_REGION}"
-    access_key_id: "${S3_ACCESS_KEY_ID}"
-    secret_access_key: "${S3_SECRET_ACCESS_KEY}"
+tables:
+  photos:
+    fields:
+      - name: id
+        type: uuid
+        default: uuid_v7()
+        primary_key: true
+      - name: user_id
+        type: uuid
+        required: true
+      - name: object_key
+        type: text
+        required: true
+      - name: caption
+        type: text
+      - name: created_at
+        type: timestamptz
+        default: now()
+    rls:
+      - operations: [select, insert, update, delete]
+        check: "auth.uid() = user_id"
 ```
 
-`public: false` means objects require a signed URL to download. The RLS policy requires a valid JWT for every operation.
+`public: false` means objects require a signed URL to download. The bucket policy requires a valid JWT for every operation, and the `photos` table policy scopes each row to its owner.
 
 ## Upload directly to S3
 
@@ -90,23 +116,9 @@ const { data } = await supabase
 await supabase.storage.from('photos').remove([fileName])
 ```
 
-## Tracking metadata (optional)
+## Tracking metadata
 
-If you need to store captions, tags, or ownership beyond what the bucket provides, add a `photos` table and write to it after a successful upload:
-
-```yaml
-tables:
-  photos:
-    columns:
-      id:         { type: uuid, default: gen_random_uuid(), primary_key: true }
-      user_id:    { type: uuid, nullable: false }
-      object_key: { type: text, nullable: false }
-      caption:    { type: text }
-      created_at: { type: timestamptz, default: now() }
-    rls:
-      - operations: [select, insert, update, delete]
-        check: "auth.uid() = user_id"
-```
+The `photos` table in the config above stores captions and ownership beyond what the bucket itself tracks. Write a row after a successful upload, using the `id` returned by the sign step as the object key:
 
 ```js
 await supabase
