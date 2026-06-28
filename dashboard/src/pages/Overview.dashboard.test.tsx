@@ -4,13 +4,13 @@ import { renderWithChakra } from "../test/helpers";
 import { Overview } from "./Overview";
 import { ConsoleProvider } from "../console/ConsoleProvider";
 
-function renderOverview(config: any, stats: any = null) {
+function renderOverview(config: any, stats: any = null, keys: { anon_key: string } = { anon_key: "anon-xyz" }) {
   const backend = {
     capabilities: { hasStats: !!stats },
     getConfig: async () => config,
     getConfigStatus: async () => null,
     getStats: async () => stats ?? { tables: {}, storage: {} },
-    getKeys: async () => ({ anon_key: "anon-xyz" }),
+    getKeys: async () => keys,
     listUsers: async () => ({ users: [], total: 0 }),
   } as any;
   return renderWithChakra(
@@ -77,4 +77,11 @@ test("Advisory card shows clear state when all tables have RLS", async () => {
   };
   renderOverview(config);
   expect(await screen.findByText(/no advisories/i)).toBeInTheDocument();
+});
+
+test("anon key shows publish hint in preview (empty key)", async () => {
+  const config = { project:{name:"B",description:""}, tables:{}, storage:{}, rpc:{}, functions:{}, auth:null };
+  renderOverview(config, null, { anon_key: "" });
+  expect(await screen.findByText("https://x.instancez.app/api")).toBeInTheDocument();
+  expect(screen.getByText(/publish to get/i)).toBeInTheDocument();
 });

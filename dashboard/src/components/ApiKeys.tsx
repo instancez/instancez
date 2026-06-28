@@ -121,25 +121,39 @@ export function ApiKeys() {
   const apiUrl = useApiBaseUrl();
 
   return (
-    <Section title="API Keys" icon={KeyRound}>
-      <VStack bg={bg} borderRadius="xl" borderWidth="1px" gap="0" align="stretch" divideY="1px">
-        <KeyRow label="API URL" value={apiUrl} />
-        {anonKey !== null && (
-          <KeyRow
-            label="anon"
-            badge={<StatusBadge variant="info">public</StatusBadge>}
-            value={anonKey}
-          />
-        )}
-        {adminKey && (
-          <KeyRow
-            label="admin"
-            badge={<StatusBadge variant="error">secret</StatusBadge>}
-            value={adminKey}
-            secret
-          />
-        )}
-      </VStack>
-    </Section>
+    <>
+      <Section title="API Keys" icon={KeyRound}>
+        <VStack bg={bg} borderRadius="xl" borderWidth="1px" gap="0" align="stretch" divideY="1px">
+          <KeyRow label="API URL" value={apiUrl} />
+          {anonKey !== null && anonKey !== "" && (
+            <KeyRow
+              label="anon"
+              badge={<StatusBadge variant="info">public</StatusBadge>}
+              value={anonKey}
+            />
+          )}
+          {anonKey === "" && (
+            <HStack px="4" py="2.5" gap="3">
+              <HStack as="span" flexShrink="0" w="24" gap="2" fontSize="xs" fontWeight="medium" color="fg">
+                anon
+                <StatusBadge variant="info">public</StatusBadge>
+              </HStack>
+              <Box fontSize="xs" color="fg.muted" fontStyle="italic">
+                Publish to get your anon key
+              </Box>
+            </HStack>
+          )}
+          {adminKey && (
+            <KeyRow
+              label="admin"
+              badge={<StatusBadge variant="error">secret</StatusBadge>}
+              value={adminKey}
+              secret
+            />
+          )}
+        </VStack>
+      </Section>
+      {/* TODO(api-activity): request volume + p95 once a metrics source exists (bandwidth_handlers.go is bytes-only) */}
+    </>
   );
 }
