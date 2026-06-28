@@ -27,7 +27,8 @@
   --syn-function: #0f766e;
   --syn-cursor: #09090b;
   --syn-active-line: rgb(9 9 11 / 0.03);
-  --syn-selection: rgb(37 99 235 / 0.15);
+  --syn-readonly-line: rgb(9 9 11 / 0.05);
+  --syn-selection: rgb(37 99 235 / 0.30);
 }
 
 .dark {
@@ -51,7 +52,8 @@
   --syn-function: #5eead4;
   --syn-cursor: #fafafa;
   --syn-active-line: rgb(250 250 250 / 0.04);
-  --syn-selection: rgb(96 165 250 / 0.25);
+  --syn-readonly-line: rgb(250 250 250 / 0.06);
+  --syn-selection: rgb(96 165 250 / 0.40);
 }
 
 /* Card entrance animation — used by Login */

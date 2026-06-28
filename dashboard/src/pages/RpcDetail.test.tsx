@@ -104,29 +104,36 @@ describe("RpcDetail", () => {
   });
 
   it("frames the body editor with the generated function signature", () => {
-    renderRpcDetail(baseConfig, "get_todos");
-    // Whitespace (incl. the per-clause newlines) is normalized by Testing
-    // Library, so one regex spans the multi-line signature the migrator emits.
-    expect(
-      screen.getByText(
-        /CREATE OR REPLACE FUNCTION public\."get_todos"\("user_id" uuid\)\s+RETURNS setof todos\s+LANGUAGE sql\s+STABLE\s+SECURITY INVOKER\s+AS \$ub\$/
-      )
-    ).toBeInTheDocument();
-    expect(screen.getByText("$ub$;")).toBeInTheDocument();
+    const { container } = renderRpcDetail(baseConfig, "get_todos");
+    // The signature is rendered as real, syntax-highlighted lines, so its text
+    // is split across spans per line. Assert line by line rather than with one
+    // cross-line regex.
+    const lines = [...container.querySelectorAll(".cm-line")].map(
+      (l) => l.textContent
+    );
+    expect(lines).toContain(
+      'CREATE OR REPLACE FUNCTION public."get_todos"("user_id" uuid)'
+    );
+    expect(lines).toContain("RETURNS setof todos");
+    expect(lines).toContain("AS $ub$");
+    expect(lines).toContain("$ub$;");
   });
 
   it("keeps the framed signature non-editable while the body stays editable", () => {
     const { container } = renderRpcDetail(baseConfig, "get_todos");
-    // The signature header and the $ub$; footer are locked widgets, not lines.
-    const scaffolds = [...container.querySelectorAll(".cm-scaffold")];
-    expect(scaffolds).toHaveLength(2);
-    scaffolds.forEach((el) =>
-      expect(el.getAttribute("contenteditable")).toBe("false")
-    );
-    const lines = [...container.querySelectorAll(".cm-line")]
-      .map((l) => l.textContent)
-      .join("\n");
-    expect(lines).toBe("SELECT * FROM todos WHERE user_id = $1");
+    // The signature header and the $ub$; footer are real lines too, but locked:
+    // tinted read-only and fenced off from the caret (the lock is exercised
+    // directly in CodeEditor.scaffold.test.ts). Only the body is editable.
+    const lineEls = [...container.querySelectorAll(".cm-line")];
+    const editable = lineEls
+      .filter((l) => !l.classList.contains("cm-readonly-line"))
+      .map((l) => l.textContent);
+    expect(editable).toEqual(["SELECT * FROM todos WHERE user_id = $1"]);
+    const readonly = lineEls
+      .filter((l) => l.classList.contains("cm-readonly-line"))
+      .map((l) => l.textContent);
+    expect(readonly).toContain("AS $ub$");
+    expect(readonly).toContain("$ub$;");
   });
 
   it("recomputes the framed signature when a definition field changes, keeping the body", () => {
@@ -138,10 +145,10 @@ describe("RpcDetail", () => {
     expect(container.textContent).toContain("RETURNS void");
     expect(container.textContent).not.toContain("RETURNS setof todos");
     // The body is untouched by the header recompute.
-    const lines = [...container.querySelectorAll(".cm-line")]
-      .map((l) => l.textContent)
-      .join("\n");
-    expect(lines).toBe("SELECT * FROM todos WHERE user_id = $1");
+    const editable = [...container.querySelectorAll(".cm-line")]
+      .filter((l) => !l.classList.contains("cm-readonly-line"))
+      .map((l) => l.textContent);
+    expect(editable).toEqual(["SELECT * FROM todos WHERE user_id = $1"]);
   });
 
   it("keeps the save bar when the save is cancelled in the confirm dialog", async () => {

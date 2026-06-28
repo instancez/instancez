@@ -5,12 +5,14 @@ import { renderWithChakra } from "../test/helpers";
 import { CodeEditor } from "./CodeEditor";
 
 /**
- * The `frame` prop renders a fixed scaffold (header/footer) inside the editor.
- * The scaffold reads as part of the code block but is not part of the
- * editable document, so it can't be typed into or accidentally edited.
+ * The `frame` prop renders a fixed scaffold (header/footer) as real, locked
+ * lines inside the editor: they get syntax highlighting and line numbers like
+ * the rest of the code, but they can't be edited and never reach value/onChange.
+ * The locking and caret-fencing themselves are covered headless in
+ * CodeEditor.scaffold.test.ts; these tests check what gets rendered.
  */
 describe("CodeEditor frame", () => {
-  it("renders the header and footer scaffold inside the editor", () => {
+  it("renders the header and footer as lines around the body", () => {
     const { container } = renderWithChakra(
       <CodeEditor
         value="user_id = auth.uid()"
@@ -18,31 +20,27 @@ describe("CodeEditor frame", () => {
         frame={{ header: "CREATE POLICY x USING (", footer: ")" }}
       />
     );
-    expect(container.textContent).toContain("CREATE POLICY x USING (");
-    expect(container.textContent).toContain(")");
-  });
-
-  it("keeps the scaffold out of the editable document", () => {
-    const { container } = renderWithChakra(
-      <CodeEditor
-        value="user_id = auth.uid()"
-        onChange={vi.fn()}
-        frame={{ header: "CREATE POLICY x USING (", footer: ")" }}
-      />
-    );
-    // The document is the editable lines, which the caret edits and which feed
-    // value/onChange. The scaffold is a non-editable widget, so the lines hold
-    // only the body and never the surrounding statement.
     const lines = [...container.querySelectorAll(".cm-line")]
       .map((l) => l.textContent)
       .join("\n");
-    expect(lines).toBe("user_id = auth.uid()");
-    container.querySelectorAll(".cm-scaffold").forEach((el) => {
-      expect(el.getAttribute("contenteditable")).toBe("false");
-    });
+    expect(lines).toBe("CREATE POLICY x USING (\nuser_id = auth.uid()\n)");
   });
 
-  it("updates the scaffold when the frame prop changes without losing the body", async () => {
+  it("tints the scaffold lines as read-only but leaves the body line plain", () => {
+    const { container } = renderWithChakra(
+      <CodeEditor
+        value="user_id = auth.uid()"
+        onChange={vi.fn()}
+        frame={{ header: "CREATE POLICY x USING (", footer: ")" }}
+      />
+    );
+    const readonly = [...container.querySelectorAll(".cm-line")].map((l) =>
+      l.classList.contains("cm-readonly-line")
+    );
+    expect(readonly).toEqual([true, false, true]);
+  });
+
+  it("updates the scaffold when the frame prop changes without losing the body", () => {
     // Mirrors the RPC editor, where the header recomputes from form fields
     // while the body stays put.
     function Harness() {
@@ -64,10 +62,9 @@ describe("CodeEditor frame", () => {
     const { container, getByText } = renderWithChakra(<Harness />);
     expect(container.textContent).toContain("FUNCTION foo() AS $ub$");
     act(() => getByText("add arg").click());
-    expect(container.textContent).toContain("FUNCTION foo(arg int) AS $ub$");
     const lines = [...container.querySelectorAll(".cm-line")]
       .map((l) => l.textContent)
       .join("\n");
-    expect(lines).toBe("return 1;");
+    expect(lines).toBe("FUNCTION foo(arg int) AS $ub$\nreturn 1;\n$ub$;");
   });
 });
