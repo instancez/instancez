@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Table2, Shield, HardDrive, RefreshCw } from "lucide-react";
+import { Table2, Shield, HardDrive, RefreshCw, Database } from "lucide-react";
 import { Box, Grid, HStack, Text, VStack } from "@chakra-ui/react";
 import { useConfig } from "../hooks/useConfig";
 import { useBackend } from "../console/BackendContext";
@@ -8,7 +8,9 @@ import { downloadYamlFromConfig } from "../lib/downloadYaml";
 import { ApiKeys } from "../components/ApiKeys";
 import { ConnectExamples } from "../components/ConnectExamples";
 import { Card, CardTitle, CardValue } from "../components/Card";
+import { StatusBadge } from "../components/StatusBadge";
 import { Button } from "../components/ui";
+import { databaseSummary } from "../lib/advisories";
 import { formatBytes } from "../lib/utils";
 import type { StatsResponse } from "../lib/types";
 
@@ -58,6 +60,8 @@ export function Overview() {
     ? Object.values(stats.storage).reduce((sum, s) => sum + s.total_bytes, 0)
     : 0;
 
+  const tableSummary = databaseSummary(config, stats);
+
   return (
     <Box pt="8" pb="8">
       <HStack align="start" justify="space-between" gap="4" pb="6">
@@ -95,12 +99,44 @@ export function Overview() {
           <Card hoverable onClick={() => navigate("tables", { relative: "path" })}>
             <HStack justify="space-between">
               <CardTitle>Tables</CardTitle>
-              <Box as={Table2} boxSize="4.5" color="fg.muted" />
+              <Box as={Database} boxSize="4.5" color="fg.muted" />
             </HStack>
             <CardValue>
               {tableCount}
               <Unit>{tableCount === 1 ? "table" : "tables"}</Unit>
             </CardValue>
+            {tableSummary.length > 0 && (
+              <VStack mt="3" gap="0" align="stretch">
+                {tableSummary.map(({ name, rlsCount, rowCount }) => (
+                  <HStack
+                    key={name}
+                    justify="space-between"
+                    py="1.5"
+                    px="2"
+                    borderRadius="md"
+                    _hover={{ bg: "bg.subtle" }}
+                    cursor="pointer"
+                    onClick={(e: React.MouseEvent) => {
+                      e.stopPropagation();
+                      navigate(`tables/${name}`, { relative: "path" });
+                    }}
+                  >
+                    <HStack gap="2">
+                      <Box as={Table2} boxSize="3.5" color="fg.muted" flexShrink="0" />
+                      <Text fontSize="sm" color="fg">{name}</Text>
+                    </HStack>
+                    <HStack gap="2">
+                      {rowCount != null && (
+                        <Text fontSize="xs" color="fg.muted">{rowCount} rows</Text>
+                      )}
+                      <StatusBadge variant={rlsCount > 0 ? "info" : "warning"}>
+                        {rlsCount > 0 ? "RLS" : "exposed"}
+                      </StatusBadge>
+                    </HStack>
+                  </HStack>
+                ))}
+              </VStack>
+            )}
           </Card>
 
           <Card hoverable onClick={() => navigate("auth", { relative: "path" })}>
