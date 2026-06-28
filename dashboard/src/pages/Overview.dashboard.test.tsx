@@ -34,8 +34,8 @@ test("Database card lists tables and flags exposed ones", async () => {
   renderOverview(config);
   expect(await screen.findByText("deals")).toBeInTheDocument();
   expect(screen.getByText("activities")).toBeInTheDocument();
-  // Both the Database card row and the Advisories card now show "exposed"; assert at least one exists.
-  expect(screen.getAllByText(/exposed/i).length).toBeGreaterThanOrEqual(1);
+  // Both the Database card row and the Advisories card now show "exposed"; assert exactly two exist.
+  expect(screen.getAllByText(/exposed/i)).toHaveLength(2);
 });
 
 test("Functions card counts code + database functions", async () => {
