@@ -36,3 +36,23 @@ test("Database card lists tables and flags exposed ones", async () => {
   expect(screen.getByText("activities")).toBeInTheDocument();
   expect(screen.getByText(/exposed/i)).toBeInTheDocument();
 });
+
+test("Functions card counts code + database functions", async () => {
+  const config = {
+    project: { name: "Beacon", description: "" },
+    tables: {}, storage: {}, auth: null,
+    rpc: { calc_total: {} },
+    functions: { notify_won_deal: {}, resize_avatar: {} },
+  };
+  renderOverview(config);
+  expect(await screen.findByText(/Functions/)).toBeInTheDocument();
+  expect(screen.getByText(/2/)).toBeInTheDocument();       // code functions
+  expect(screen.getByText(/1 database/i)).toBeInTheDocument();
+});
+
+test("Storage usage hidden without stats capability", async () => {
+  const config = { project:{name:"B",description:""}, tables:{}, storage:{ avatars:{} }, rpc:{}, functions:{}, auth:null };
+  renderOverview(config, null); // hasStats false
+  expect(await screen.findByText(/bucket/i)).toBeInTheDocument();
+  expect(screen.queryByText(/used/i)).not.toBeInTheDocument();
+});

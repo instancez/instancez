@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Table2, Shield, HardDrive, RefreshCw, Database } from "lucide-react";
+import { Table2, Shield, HardDrive, RefreshCw, Database, Code2 } from "lucide-react";
 import { Box, Grid, HStack, Text, VStack } from "@chakra-ui/react";
 import { useConfig } from "../hooks/useConfig";
 import { useBackend } from "../console/BackendContext";
@@ -53,6 +53,8 @@ export function Overview() {
 
   const tableCount = Object.keys(config.tables || {}).length;
   const bucketCount = Object.keys(config.storage || {}).length;
+  const funcCount = Object.keys(config.functions || {}).length;
+  const rpcCount = Object.keys(config.rpc || {}).length;
   const authEnabled = !!config.auth;
   const exampleTable = Object.keys(config.tables || {}).sort()[0] ?? "todos";
 
@@ -167,8 +169,24 @@ export function Overview() {
               {bucketCount}
               <Unit>{bucketCount === 1 ? "bucket" : "buckets"}</Unit>
             </CardValue>
+            {backend.capabilities.hasStats && (
+              <Text mt="1" fontSize="xs" color="fg.muted">
+                {formatBytes(totalStorage)} used
+              </Text>
+            )}
+          </Card>
+
+          <Card hoverable onClick={() => navigate("functions", { relative: "path" })}>
+            <HStack justify="space-between">
+              <CardTitle>Functions</CardTitle>
+              <Box as={Code2} boxSize="4.5" color="fg.muted" />
+            </HStack>
+            <CardValue>
+              {funcCount}
+              <Unit>{funcCount === 1 ? "function" : "functions"}</Unit>
+            </CardValue>
             <Text mt="1" fontSize="xs" color="fg.muted">
-              {formatBytes(totalStorage)} used
+              {rpcCount} database {rpcCount === 1 ? "function" : "functions"}
             </Text>
           </Card>
         </Grid>
