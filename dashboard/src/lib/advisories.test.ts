@@ -1,3 +1,4 @@
+import { test, expect } from "vitest";
 import { exposedTables, securityAdvisories, databaseSummary } from "./advisories";
 
 const cfg = {
@@ -14,8 +15,8 @@ test("exposedTables lists tables with no RLS", () => {
 test("securityAdvisories describes each exposed table", () => {
   const a = securityAdvisories(cfg);
   expect(a).toHaveLength(1);
-  expect(a[0]).toMatchObject({ level: "warn", table: "activities" });
-  expect(a[0].message).toContain("no RLS policy");
+  expect(a[0]!).toMatchObject({ level: "warn", table: "activities" });
+  expect(a[0]!.message).toContain("no RLS policy");
 });
 
 test("databaseSummary merges rls counts with stats row counts", () => {
