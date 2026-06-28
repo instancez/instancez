@@ -3,6 +3,7 @@ import { Cable } from "lucide-react";
 import { Box, HStack, chakra } from "@chakra-ui/react";
 import { Section, useSurfaceBg } from "./ui";
 import { CopyButton } from "./ApiKeys";
+import { useApiBaseUrl } from "../console/BackendContext";
 
 interface ClientLib {
   id: string;
@@ -54,7 +55,7 @@ data, count, err := client.From("${table}").Select("*", "exact", false).Execute(
 export function ConnectExamples({ exampleTable }: { exampleTable: string }) {
   const bg = useSurfaceBg();
   const [activeId, setActiveId] = useState(CLIENT_LIBS[0]!.id);
-  const url = window.location.origin;
+  const url = useApiBaseUrl();
 
   const active = CLIENT_LIBS.find((lib) => lib.id === activeId)!;
   const code = active.snippet(url, exampleTable);

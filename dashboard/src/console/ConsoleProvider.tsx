@@ -1,5 +1,5 @@
 import { type ReactNode, Suspense } from "react";
-import { BackendProvider } from "./BackendContext";
+import { BackendProvider, ApiBaseUrlProvider } from "./BackendContext";
 import type { ConsoleBackend } from "./backend";
 import type { Config } from "../lib/types";
 import { ConfigContext, useConfigState } from "../hooks/useConfig";
@@ -35,15 +35,19 @@ function ConfigShell({ initialConfig, children }: { initialConfig?: Config | nul
 export function ConsoleProvider({
   backend,
   initialConfig,
+  apiBaseUrl = window.location.origin,
   children,
 }: {
   backend: ConsoleBackend;
   initialConfig?: Config | null;
+  apiBaseUrl?: string;
   children: ReactNode;
 }) {
   return (
-    <BackendProvider backend={backend}>
-      <ConfigShell initialConfig={initialConfig}>{children}</ConfigShell>
-    </BackendProvider>
+    <ApiBaseUrlProvider value={apiBaseUrl}>
+      <BackendProvider backend={backend}>
+        <ConfigShell initialConfig={initialConfig}>{children}</ConfigShell>
+      </BackendProvider>
+    </ApiBaseUrlProvider>
   );
 }

@@ -1,7 +1,7 @@
 export type { ConsoleBackend, Capabilities } from "./backend";
 export { fullCapabilities } from "./backend";
 export { adminBackend } from "./adminBackend";
-export { BackendProvider, useBackend } from "./BackendContext";
+export { BackendProvider, useBackend, useApiBaseUrl } from "./BackendContext";
 export { ConsoleProvider } from "./ConsoleProvider";
 export type { ConsoleRouteHandle } from "./routes";
 export {

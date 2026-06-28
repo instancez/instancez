@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Check, Copy, Eye, EyeOff, KeyRound } from "lucide-react";
 import { Box, HStack, VStack } from "@chakra-ui/react";
-import { useBackend } from "../console/BackendContext";
+import { useBackend, useApiBaseUrl } from "../console/BackendContext";
 import { Section, useSurfaceBg } from "./ui";
 import { StatusBadge } from "./StatusBadge";
 
@@ -118,11 +118,12 @@ export function ApiKeys() {
   const bg = useSurfaceBg();
   const anonKey = useAnonKey();
   const adminKey = sessionStorage.getItem("instancez_admin_key") || "";
+  const apiUrl = useApiBaseUrl();
 
   return (
     <Section title="API Keys" icon={KeyRound}>
       <VStack bg={bg} borderRadius="xl" borderWidth="1px" gap="0" align="stretch" divideY="1px">
-        <KeyRow label="API URL" value={window.location.origin} />
+        <KeyRow label="API URL" value={apiUrl} />
         {anonKey !== null && (
           <KeyRow
             label="anon"

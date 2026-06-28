@@ -4,6 +4,12 @@ import { adminBackend } from "./adminBackend";
 
 const BackendContext = createContext<ConsoleBackend>(adminBackend);
 
+const ApiBaseUrlContext = createContext<string>(window.location.origin);
+export const ApiBaseUrlProvider = ApiBaseUrlContext.Provider;
+export function useApiBaseUrl(): string {
+  return useContext(ApiBaseUrlContext);
+}
+
 /** Consumers (the platform app) inject their backend here; the instance
  * dashboard relies on the adminBackend default and needs no provider. */
 export function BackendProvider({ backend, children }: { backend: ConsoleBackend; children: ReactNode }) {
