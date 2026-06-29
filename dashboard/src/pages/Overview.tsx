@@ -100,7 +100,7 @@ export function Overview() {
           gap="4"
           className="animate-rise"
         >
-          <Card hoverable onClick={() => navigate("tables", { relative: "path" })}>
+          <Card hoverable onClick={() => navigate("/tables")}>
             <HStack justify="space-between">
               <CardTitle>Tables</CardTitle>
               <Box as={Database} boxSize="4.5" color="fg.muted" />
@@ -122,7 +122,7 @@ export function Overview() {
                     cursor="pointer"
                     onClick={(e: React.MouseEvent) => {
                       e.stopPropagation();
-                      navigate(`tables/${name}`, { relative: "path" });
+                      navigate(`/tables/${name}`);
                     }}
                   >
                     <HStack gap="2">
@@ -143,7 +143,7 @@ export function Overview() {
             )}
           </Card>
 
-          <Card hoverable onClick={() => navigate("auth", { relative: "path" })}>
+          <Card hoverable onClick={() => navigate("/auth")}>
             <HStack justify="space-between">
               <CardTitle>Auth</CardTitle>
               <Box as={Shield} boxSize="4.5" color="fg.muted" />
@@ -162,7 +162,7 @@ export function Overview() {
             </Text>
           </Card>
 
-          <Card hoverable onClick={() => navigate("storage", { relative: "path" })}>
+          <Card hoverable onClick={() => navigate("/storage")}>
             <HStack justify="space-between">
               <CardTitle>Storage</CardTitle>
               <Box as={HardDrive} boxSize="4.5" color="fg.muted" />
@@ -178,7 +178,7 @@ export function Overview() {
             )}
           </Card>
 
-          <Card hoverable onClick={() => navigate("functions", { relative: "path" })}>
+          <Card hoverable onClick={() => navigate("/functions")}>
             <HStack justify="space-between">
               <CardTitle>Functions</CardTitle>
               <Box as={Code2} boxSize="4.5" color="fg.muted" />
@@ -219,7 +219,7 @@ export function Overview() {
                     borderRadius="md"
                     _hover={{ bg: "bg.subtle" }}
                     cursor="pointer"
-                    onClick={() => navigate(`tables/${table}`, { relative: "path" })}
+                    onClick={() => navigate(`/tables/${table}`)}
                   >
                     <StatusBadge variant="warning">exposed</StatusBadge>
                     <Text fontSize="xs" color="orange.700" lineClamp="2">

@@ -1,6 +1,6 @@
 import { test, expect } from "vitest";
-import { screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { screen, fireEvent } from "@testing-library/react";
+import { MemoryRouter, createMemoryRouter, RouterProvider } from "react-router-dom";
 import { renderWithChakra } from "../test/helpers";
 import { Overview } from "./Overview";
 import { ConsoleProvider } from "../console/ConsoleProvider";
@@ -85,4 +85,51 @@ test("anon key shows publish hint in preview (empty key)", async () => {
   renderOverview(config, null, { anon_key: "" });
   expect(await screen.findByText("https://x.instancez.app/api")).toBeInTheDocument();
   expect(screen.getByText(/publish to get/i)).toBeInTheDocument();
+});
+
+test("platform mount depth: Database card click navigates absolutely to /tables not /overview/tables", async () => {
+  // Reproduces the platform host where Overview is mounted under /overview.
+  // The old relative-path code resolved "tables" → /overview/tables (no route match).
+  // The fixed absolute-path code resolves "/tables" → /tables (correct sibling).
+  const config = {
+    project: { name: "PlatformApp", description: "" },
+    tables: {
+      users_data: { fields: [], indexes: [], rls: [] },
+    },
+    storage: {}, rpc: {}, functions: {}, auth: null,
+  } as any;
+  const backend = {
+    capabilities: { hasStats: false },
+    getConfig: async () => config,
+    getConfigStatus: async () => null,
+    getStats: async () => ({ tables: {}, storage: {} }),
+    getKeys: async () => ({ anon_key: "anon-xyz" }),
+    listUsers: async () => ({ users: [], total: 0 }),
+  } as any;
+
+  const router = createMemoryRouter(
+    [
+      {
+        path: "overview",
+        element: (
+          <ConsoleProvider backend={backend} initialConfig={config} apiBaseUrl="https://x.instancez.app/api">
+            <Overview />
+          </ConsoleProvider>
+        ),
+      },
+      { path: "tables", element: <div>TABLES PAGE</div> },
+      { path: "tables/:name", element: <div>TABLES PAGE</div> },
+    ],
+    { initialEntries: ["/overview"] }
+  );
+
+  renderWithChakra(<RouterProvider router={router} />);
+
+  // Wait for the Tables card title to appear, then click it.
+  // CardTitle "Tables" is inside the Card whose onClick navigates to /tables.
+  const tablesCardTitle = await screen.findByText("Tables");
+  fireEvent.click(tablesCardTitle);
+
+  // Absolute path fix: /tables. Old relative path would give /overview/tables → no match.
+  expect(router.state.location.pathname).toBe("/tables");
 });
