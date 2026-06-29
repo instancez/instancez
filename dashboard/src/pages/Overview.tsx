@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Table2, Shield, HardDrive, RefreshCw, Database, Code2, ShieldAlert } from "lucide-react";
+import { Table2, Shield, HardDrive, RefreshCw, Database, Code2 } from "lucide-react";
 import { Box, Grid, HStack, Text, VStack } from "@chakra-ui/react";
 import { useConfig } from "../hooks/useConfig";
 import { useBackend } from "../console/BackendContext";
@@ -10,7 +10,7 @@ import { ConnectExamples } from "../components/ConnectExamples";
 import { Card, CardTitle, CardValue } from "../components/Card";
 import { StatusBadge } from "../components/StatusBadge";
 import { Button } from "../components/ui";
-import { databaseSummary, securityAdvisories } from "../lib/advisories";
+import { databaseSummary } from "../lib/advisories";
 import { formatBytes } from "../lib/utils";
 import type { StatsResponse } from "../lib/types";
 
@@ -63,8 +63,6 @@ export function Overview() {
     : 0;
 
   const tableSummary = databaseSummary(config, stats);
-  const advisories = securityAdvisories(config);
-  const advisoryCount = advisories.length;
 
   return (
     <Box pt="8" pb="8">
@@ -190,45 +188,6 @@ export function Overview() {
             <Text mt="1" fontSize="xs" color="fg.muted">
               {rpcCount} database {rpcCount === 1 ? "function" : "functions"}
             </Text>
-          </Card>
-
-          <Card>
-            <HStack justify="space-between">
-              <CardTitle>
-                {advisoryCount > 0
-                  ? `${advisoryCount} ${advisoryCount === 1 ? "advisory" : "advisories"}`
-                  : "Security"}
-              </CardTitle>
-              <Box
-                as={ShieldAlert}
-                boxSize="4.5"
-                color={advisoryCount > 0 ? "orange.500" : "fg.muted"}
-              />
-            </HStack>
-            {advisoryCount === 0 ? (
-              <Text mt="2" fontSize="sm" color="fg.muted">
-                No advisories
-              </Text>
-            ) : (
-              <VStack mt="3" gap="0" align="stretch">
-                {advisories.map(({ table, message }) => (
-                  <HStack
-                    key={table}
-                    py="1.5"
-                    px="2"
-                    borderRadius="md"
-                    _hover={{ bg: "bg.subtle" }}
-                    cursor="pointer"
-                    onClick={() => navigate(`/tables/${table}`)}
-                  >
-                    <StatusBadge variant="warning">exposed</StatusBadge>
-                    <Text fontSize="xs" color="orange.700" lineClamp="2">
-                      {message}
-                    </Text>
-                  </HStack>
-                ))}
-              </VStack>
-            )}
           </Card>
         </Grid>
 

@@ -35,8 +35,8 @@ test("Database card lists tables and flags exposed ones", async () => {
   renderOverview(config);
   expect(await screen.findByText("deals")).toBeInTheDocument();
   expect(screen.getByText("activities")).toBeInTheDocument();
-  // Both the Database card row and the Advisories card now show "exposed"; assert exactly two exist.
-  expect(screen.getAllByText(/exposed/i)).toHaveLength(2);
+  // The Database card row flags the RLS-less table as "exposed" (one badge).
+  expect(screen.getAllByText(/exposed/i)).toHaveLength(1);
 });
 
 test("Functions card counts code + database functions", async () => {
@@ -57,27 +57,6 @@ test("Storage usage hidden without stats capability", async () => {
   renderOverview(config, null); // hasStats false
   expect(await screen.findByText(/bucket/i)).toBeInTheDocument();
   expect(screen.queryByText(/used/i)).not.toBeInTheDocument();
-});
-
-test("Advisory card surfaces RLS-less tables", async () => {
-  const config = {
-    project: { name: "Beacon", description: "" },
-    tables: { activities: { fields: [], indexes: [], rls: [] } },
-    storage: {}, rpc: {}, functions: {}, auth: null,
-  };
-  renderOverview(config);
-  expect(await screen.findByText(/1 advisory/i)).toBeInTheDocument();
-  expect(screen.getByText(/no RLS policy/i)).toBeInTheDocument();
-});
-
-test("Advisory card shows clear state when all tables have RLS", async () => {
-  const config = {
-    project: { name: "Beacon", description: "" },
-    tables: { deals: { fields: [], indexes: [], rls: [{ operations:["select"], check:"true" }] } },
-    storage: {}, rpc: {}, functions: {}, auth: null,
-  };
-  renderOverview(config);
-  expect(await screen.findByText(/no advisories/i)).toBeInTheDocument();
 });
 
 test("anon key shows publish hint in preview (empty key)", async () => {
