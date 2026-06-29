@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
-import { Shield, KeySquare, MailCheck, Mails, Plug2 } from "lucide-react";
-import { Box, Grid, HStack, Text, VStack } from "@chakra-ui/react";
+import { Shield, KeySquare, MailCheck, Mails, Plug2, UserPlus, Link2, Plus, X } from "lucide-react";
+import { Box, Grid, HStack, IconButton, Text, VStack } from "@chakra-ui/react";
 import { useConfig } from "../hooks/useConfig";
 import { SaveBar } from "../components/SaveBar";
 import { CodeEditor } from "../components/CodeEditor";
@@ -10,6 +10,7 @@ import { Field, Input, Panel, Section } from "../components/ui";
 import { VarRow } from "../components/VarRow";
 import { useBackend } from "../console/BackendContext";
 import { envRefName } from "../lib/envRef";
+import { isValidRedirectOrigin } from "../lib/redirectOrigin";
 import { jsonEqual } from "../lib/jsonEqual";
 import type { Auth } from "../lib/types";
 
@@ -117,6 +118,9 @@ const DEFAULT_AUTH: Auth = {
   jwt_expiry: "15m",
   refresh_tokens: true,
   refresh_token_expiry: "7d",
+  allow_signup: null,
+  allow_anonymous: null,
+  redirect_urls: [],
   email: { verify_email: false, templates: {} },
   google: null,
   github: null,
@@ -165,7 +169,13 @@ export function AuthPage() {
 
   async function handleSave() {
     if (!config) return;
-    const updated = { ...config, auth: enabled ? auth : null };
+    // Drop blank redirect rows (an added-but-unfilled entry) so they don't land
+    // in the YAML as empty list items.
+    const cleanedAuth =
+      enabled && auth
+        ? { ...auth, redirect_urls: (auth.redirect_urls ?? []).map((u) => u.trim()).filter(Boolean) }
+        : null;
+    const updated = { ...config, auth: cleanedAuth };
     const staged = Object.entries(pendingDotenv).filter(([, v]) => v !== "");
     const ok = await save(updated, {
       dotenvChanges: staged.map(([name, value]) => ({
@@ -220,6 +230,25 @@ export function AuthPage() {
     updateAuth((a) => ({
       ...a,
       [provider]: a[provider] ? { ...a[provider]!, [key]: value } : a[provider],
+    }));
+  }
+
+  function setRedirectUrl(index: number, value: string) {
+    updateAuth((a) => {
+      const urls = [...(a.redirect_urls ?? [])];
+      urls[index] = value;
+      return { ...a, redirect_urls: urls };
+    });
+  }
+
+  function addRedirectUrl() {
+    updateAuth((a) => ({ ...a, redirect_urls: [...(a.redirect_urls ?? []), ""] }));
+  }
+
+  function removeRedirectUrl(index: number) {
+    updateAuth((a) => ({
+      ...a,
+      redirect_urls: (a.redirect_urls ?? []).filter((_, i) => i !== index),
     }));
   }
 
@@ -281,6 +310,91 @@ export function AuthPage() {
                 onChange={(v) => updateAuth((a) => ({ ...a, refresh_tokens: v }))}
                 label="Enable refresh tokens"
               />
+            </Section>
+
+            <Section title="Registration" icon={UserPlus}>
+              <VStack gap="4" align="stretch">
+                <HStack justify="space-between" gap="3">
+                  <VStack gap="0.5" align="start">
+                    <Text fontSize="sm" color="fg">Allow public sign-up</Text>
+                    <Text fontSize="xs" color="fg.muted">
+                      Let anyone create an account via email/password. Turn off to invite-only.
+                    </Text>
+                  </VStack>
+                  <Toggle
+                    aria-label="Allow public sign-up"
+                    checked={auth.allow_signup ?? true}
+                    onChange={(v) => updateAuth((a) => ({ ...a, allow_signup: v }))}
+                  />
+                </HStack>
+                <HStack justify="space-between" gap="3">
+                  <VStack gap="0.5" align="start">
+                    <Text fontSize="sm" color="fg">Allow anonymous sign-in</Text>
+                    <Text fontSize="xs" color="fg.muted">
+                      {(auth.allow_signup ?? true)
+                        ? "Issue a session to users with no email/password yet."
+                        : "Blocked while public sign-up is off."}
+                    </Text>
+                  </VStack>
+                  <Toggle
+                    aria-label="Allow anonymous sign-in"
+                    checked={auth.allow_anonymous ?? true}
+                    disabled={!(auth.allow_signup ?? true)}
+                    onChange={(v) => updateAuth((a) => ({ ...a, allow_anonymous: v }))}
+                  />
+                </HStack>
+              </VStack>
+            </Section>
+
+            <Section title="Redirect URLs" icon={Link2}>
+              <VStack gap="3" align="stretch">
+                <Text fontSize="xs" color="fg.muted">
+                  Origins your app may be redirected to after OAuth and email flows. The
+                  server's own origin and relative paths are always allowed, so add external
+                  origins only (e.g. a separate front-end host). Checked here in the browser
+                  only.
+                </Text>
+                {(auth.redirect_urls ?? []).map((url, i) => {
+                  const invalid = url.trim() !== "" && !isValidRedirectOrigin(url.trim());
+                  return (
+                    <VStack key={i} gap="1" align="stretch">
+                      <HStack gap="2">
+                        <Input
+                          aria-label={`Redirect URL ${i + 1}`}
+                          value={url}
+                          onChange={(e) => setRedirectUrl(i, e.target.value)}
+                          placeholder="https://app.example.com"
+                        />
+                        <IconButton
+                          aria-label={`Remove redirect URL ${i + 1}`}
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => removeRedirectUrl(i)}
+                        >
+                          <X size={16} />
+                        </IconButton>
+                      </HStack>
+                      {invalid && (
+                        <Text fontSize="xs" color="fg.error">
+                          Enter an absolute http(s) origin, e.g. https://app.example.com
+                        </Text>
+                      )}
+                    </VStack>
+                  );
+                })}
+                <HStack
+                  as="button"
+                  gap="2"
+                  fontSize="sm"
+                  color="fg.muted"
+                  onClick={addRedirectUrl}
+                  _hover={{ color: "fg" }}
+                  alignSelf="start"
+                >
+                  <Plus size={16} />
+                  <Text>Add redirect URL</Text>
+                </HStack>
+              </VStack>
             </Section>
 
             <Section

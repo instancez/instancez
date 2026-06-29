@@ -88,10 +88,10 @@ func TestBuildUser_GoTrueFieldContract(t *testing.T) {
 		"created_at":         time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC),
 		"updated_at":         time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
 	}
-	u := h.buildUser("11111111-2222-3333-4444-555555555555", row)
+	u := h.buildUser("11111111-2222-3333-4444-555555555555", row, nil)
 
 	required := []string{
-		"id", "aud", "role", "email", "email_confirmed_at", "phone",
+		"id", "aud", "role", "email", "email_confirmed_at",
 		"confirmed_at", "last_sign_in_at", "banned_until", "app_metadata", "user_metadata",
 		"identities", "created_at", "updated_at",
 	}
@@ -122,8 +122,8 @@ func TestBuildUser_GoTrueFieldContract(t *testing.T) {
 		t.Error("confirmed_at should be set when email_verified=true")
 	}
 	// identities must be a slice (not nil) — supabase-js iterates it
-	if _, ok := u["identities"].([]any); !ok {
-		t.Errorf("identities = %T, want []any", u["identities"])
+	if _, ok := u["identities"].([]map[string]any); !ok {
+		t.Errorf("identities = %T, want []map[string]any", u["identities"])
 	}
 }
 
@@ -140,7 +140,7 @@ func TestBuildUser_UnverifiedHasEmptyConfirmedAt(t *testing.T) {
 		"created_at":         time.Now(),
 		"updated_at":         time.Now(),
 	}
-	u := h.buildUser("uuid", row)
+	u := h.buildUser("uuid", row, nil)
 	if u["confirmed_at"] != "" {
 		t.Errorf("confirmed_at should be empty for unverified users, got %v", u["confirmed_at"])
 	}
@@ -165,7 +165,7 @@ func TestBuildUser_BannedUntilRendered(t *testing.T) {
 		"created_at":         time.Now(),
 		"updated_at":         time.Now(),
 	}
-	u := h.buildUser("uuid", row)
+	u := h.buildUser("uuid", row, nil)
 	v, _ := u["banned_until"].(string)
 	if v == "" {
 		t.Error("banned_until should be non-empty for a banned user")

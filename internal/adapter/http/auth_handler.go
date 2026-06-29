@@ -478,7 +478,7 @@ func (h *AuthHandler) handleGetUser(c *gin.Context) {
 		problemJSON(c, 404, "not_found", "User not found")
 		return
 	}
-	c.JSON(200, h.buildUser(session.UserID, row))
+	c.JSON(200, h.buildUser(session.UserID, row, h.userIdentities(ctx, session.UserID)))
 }
 
 func (h *AuthHandler) handleUpdateUser(c *gin.Context) {
@@ -530,7 +530,7 @@ func (h *AuthHandler) handleUpdateUser(c *gin.Context) {
 		problemJSON(c, 500, "internal", "Failed to update user")
 		return
 	}
-	c.JSON(200, h.buildUser(session.UserID, row))
+	c.JSON(200, h.buildUser(session.UserID, row, h.userIdentities(ctx, session.UserID)))
 }
 
 // ---------- /logout ----------
@@ -897,7 +897,7 @@ func (h *AuthHandler) handleGenerateLink(c *gin.Context) {
 		"hashed_token":      token,
 		"verification_type": req.Type,
 		"redirect_to":       req.RedirectTo,
-		"user":              h.buildUser(userID, row),
+		"user":              h.buildUser(userID, row, nil),
 	}
 	c.JSON(200, resp)
 }
@@ -964,7 +964,7 @@ func (h *AuthHandler) handleAdminCreateUser(c *gin.Context) {
 		return
 	}
 
-	c.JSON(200, h.buildUser(asString(row["id"]), row))
+	c.JSON(200, h.buildUser(asString(row["id"]), row, nil))
 }
 
 func (h *AuthHandler) handleAdminListUsers(c *gin.Context) {
@@ -987,7 +987,7 @@ func (h *AuthHandler) handleAdminListUsers(c *gin.Context) {
 
 	users := make([]gin.H, 0, len(rows))
 	for _, row := range rows {
-		users = append(users, h.buildUser(asString(row["id"]), row))
+		users = append(users, h.buildUser(asString(row["id"]), row, nil))
 	}
 
 	lastPage := int(math.Ceil(float64(total) / float64(perPage)))
@@ -1018,7 +1018,7 @@ func (h *AuthHandler) handleAdminGetUser(c *gin.Context) {
 		return
 	}
 
-	c.JSON(200, h.buildUser(asString(row["id"]), row))
+	c.JSON(200, h.buildUser(asString(row["id"]), row, nil))
 }
 
 func (h *AuthHandler) handleAdminUpdateUser(c *gin.Context) {
@@ -1076,7 +1076,7 @@ func (h *AuthHandler) handleAdminUpdateUser(c *gin.Context) {
 		return
 	}
 
-	c.JSON(200, h.buildUser(asString(row["id"]), row))
+	c.JSON(200, h.buildUser(asString(row["id"]), row, nil))
 }
 
 func (h *AuthHandler) handleAdminDeleteUser(c *gin.Context) {
@@ -1133,7 +1133,7 @@ func (h *AuthHandler) handleAdminInvite(c *gin.Context) {
 		go h.sendVerificationEmail(userID, req.Email)
 	}
 
-	c.JSON(200, h.buildUser(userID, row))
+	c.JSON(200, h.buildUser(userID, row, nil))
 }
 
 // ---------- /settings ----------
@@ -1404,7 +1404,7 @@ func (h *AuthHandler) buildSession(ctx context.Context, userID string, userRow m
 		"token_type":   "bearer",
 		"expires_in":   int(expiry.Seconds()),
 		"expires_at":   exp.Unix(),
-		"user":         h.buildUser(userID, userRow),
+		"user":         h.buildUser(userID, userRow, h.userIdentities(ctx, userID)),
 	}
 
 	if h.cfg.Auth.RefreshTokens {
@@ -1425,11 +1425,12 @@ func (h *AuthHandler) buildSession(ctx context.Context, userID string, userRow m
 	return result, nil
 }
 
-// buildUser produces the GoTrue user object. Field names and nesting are
-// load-bearing: supabase-js stores this in localStorage and reads specific
-// paths from it. Missing fields won't error — they'll surface as undefined
-// downstream.
-func (h *AuthHandler) buildUser(userID string, row map[string]any) gin.H {
+// buildUser produces the user object embedded in auth responses and stored by
+// the client. Field names and nesting are read by supabase-js, so renaming a
+// key surfaces as undefined downstream. identities holds the user's linked
+// identities; pass nil (e.g. for admin or bulk responses) to render an empty
+// array.
+func (h *AuthHandler) buildUser(userID string, row map[string]any, identities []map[string]any) gin.H {
 	email, _ := row["email"].(string)
 	emailVerified, _ := row["email_verified"].(bool)
 	createdAt := asTimeString(row["created_at"])
@@ -1451,22 +1452,37 @@ func (h *AuthHandler) buildUser(userID string, row map[string]any) gin.H {
 		confirmedAt = emailConfirmedAt
 	}
 
+	if identities == nil {
+		identities = []map[string]any{}
+	}
+
 	return gin.H{
 		"id":                 userID,
 		"aud":                "authenticated",
 		"role":               "authenticated",
 		"email":              email,
 		"email_confirmed_at": emailConfirmedAt,
-		"phone":              "",
 		"confirmed_at":       confirmedAt,
 		"last_sign_in_at":    lastSignInAt,
 		"banned_until":       asTimeString(row["banned_until"]),
 		"app_metadata":       appMeta,
 		"user_metadata":      userMeta,
-		"identities":         []any{},
+		"identities":         identities,
 		"created_at":         createdAt,
 		"updated_at":         updatedAt,
 	}
+}
+
+// userIdentities returns the user's linked identities for embedding in the
+// user object. It returns nil on lookup failure, which buildUser renders as an
+// empty array rather than failing the whole response.
+func (h *AuthHandler) userIdentities(ctx context.Context, userID string) []map[string]any {
+	ids, err := h.authSvc.ListIdentities(ctx, userID)
+	if err != nil {
+		h.logger.Error("list identities for user object failed", "error", err, "user_id", userID)
+		return nil
+	}
+	return ids
 }
 
 // ---------- helpers ----------

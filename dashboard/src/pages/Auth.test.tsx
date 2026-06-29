@@ -28,6 +28,9 @@ const makeConfig = (authEnabled: boolean): Config => ({
         jwt_expiry: "15m",
         refresh_tokens: true,
         refresh_token_expiry: "7d",
+        allow_signup: null,
+        allow_anonymous: null,
+        redirect_urls: [],
         email: { verify_email: false, templates: {} },
         google: null,
         github: null,
@@ -298,5 +301,103 @@ describe("AuthPage", () => {
     };
     renderAuth(config, false);
     expect(screen.queryByLabelText("INSTANCEZ_GOOGLE_CLIENT_ID")).not.toBeInTheDocument();
+  });
+
+  // ---------- Registration (allow_signup / allow_anonymous) ----------
+
+  it("shows registration toggles, both on when the flags are unset", () => {
+    renderAuth(makeConfig(true));
+    expect(screen.getByText("Registration")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Allow public sign-up" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "Allow anonymous sign-in" })).toBeChecked();
+  });
+
+  it("reflects allow_signup=false as the sign-up toggle being off", () => {
+    const config = makeConfig(true);
+    config.auth!.allow_signup = false;
+    renderAuth(config);
+    expect(screen.getByRole("switch", { name: "Allow public sign-up" })).not.toBeChecked();
+  });
+
+  it("disables the anonymous toggle when sign-up is off", () => {
+    const config = makeConfig(true);
+    config.auth!.allow_signup = false;
+    renderAuth(config);
+    expect(screen.getByRole("switch", { name: "Allow anonymous sign-in" })).toBeDisabled();
+  });
+
+  it("writes an explicit boolean when sign-up is toggled off", async () => {
+    const { save } = renderAuth(makeConfig(true));
+    await userEvent.click(screen.getByRole("switch", { name: "Allow public sign-up" }));
+    await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    expect(save).toHaveBeenCalled();
+    expect(save.mock.calls[0]![0].auth.allow_signup).toBe(false);
+  });
+
+  // ---------- Redirect URLs ----------
+
+  it("lists configured redirect URLs", () => {
+    const config = makeConfig(true);
+    config.auth!.redirect_urls = ["https://app.example.com"];
+    renderAuth(config);
+    expect(screen.getByDisplayValue("https://app.example.com")).toBeInTheDocument();
+  });
+
+  it("flags an invalid redirect origin", () => {
+    const config = makeConfig(true);
+    config.auth!.redirect_urls = ["app.example.com"];
+    renderAuth(config);
+    expect(screen.getByText(/absolute http\(s\) origin/i)).toBeInTheDocument();
+  });
+
+  it("adds an empty redirect URL row when clicking add", async () => {
+    renderAuth(makeConfig(true));
+    expect(screen.queryByLabelText("Redirect URL 1")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /add redirect url/i }));
+    expect(screen.getByLabelText("Redirect URL 1")).toBeInTheDocument();
+  });
+
+  it("saves a typed redirect URL into the payload", async () => {
+    const { save } = renderAuth(makeConfig(true));
+    await userEvent.click(screen.getByRole("button", { name: /add redirect url/i }));
+    await userEvent.type(screen.getByLabelText("Redirect URL 1"), "https://app.example.com");
+    await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    expect(save.mock.calls[0]![0].auth.redirect_urls).toEqual(["https://app.example.com"]);
+  });
+
+  it("removes a redirect URL from the payload", async () => {
+    const config = makeConfig(true);
+    config.auth!.redirect_urls = ["https://a.example.com", "https://b.example.com"];
+    const { save } = renderAuth(config);
+    await userEvent.click(screen.getByRole("button", { name: "Remove redirect URL 1" }));
+    await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    expect(save.mock.calls[0]![0].auth.redirect_urls).toEqual(["https://b.example.com"]);
+  });
+
+  it("drops blank redirect URL rows on save", async () => {
+    const config = makeConfig(true);
+    config.auth!.redirect_urls = ["https://app.example.com"];
+    const { save } = renderAuth(config);
+    // Add a second, empty row, then save without filling it.
+    await userEvent.click(screen.getByRole("button", { name: /add redirect url/i }));
+    await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    expect(save.mock.calls[0]![0].auth.redirect_urls).toEqual(["https://app.example.com"]);
+  });
+
+  // ---------- Round-trip preservation ----------
+
+  it("preserves allow_signup/allow_anonymous/redirect_urls across an unrelated edit", async () => {
+    const config = makeConfig(true);
+    config.auth!.allow_signup = false;
+    config.auth!.allow_anonymous = false;
+    config.auth!.redirect_urls = ["https://app.example.com"];
+    const { save } = renderAuth(config);
+    fireEvent.change(screen.getByDisplayValue("15m"), { target: { value: "30m" } });
+    await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    const saved = save.mock.calls[0]![0].auth;
+    expect(saved.allow_signup).toBe(false);
+    expect(saved.allow_anonymous).toBe(false);
+    expect(saved.redirect_urls).toEqual(["https://app.example.com"]);
+    expect(saved.jwt_expiry).toBe("30m");
   });
 });
