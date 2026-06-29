@@ -114,9 +114,9 @@ describe("AuthPage", () => {
     expect(screen.queryByText("Auth is disabled")).not.toBeInTheDocument();
   });
 
-  it("shows email verification section", () => {
+  it("shows email verification in the combined sign-up section", () => {
     renderAuth(makeConfig(true));
-    expect(screen.getByText("Email Verification")).toBeInTheDocument();
+    expect(screen.getByText("Sign-up & verification")).toBeInTheDocument();
     expect(screen.getByText("Require email verification")).toBeInTheDocument();
   });
 
@@ -307,7 +307,7 @@ describe("AuthPage", () => {
 
   it("shows registration toggles, both on when the flags are unset", () => {
     renderAuth(makeConfig(true));
-    expect(screen.getByText("Registration")).toBeInTheDocument();
+    expect(screen.getByText("Sign-up & verification")).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Allow public sign-up" })).toBeChecked();
     expect(screen.getByRole("switch", { name: "Allow anonymous sign-in" })).toBeChecked();
   });

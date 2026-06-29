@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Shield, KeySquare, MailCheck, Mails, Plug2, UserPlus, Link2, Plus, X } from "lucide-react";
+import { Shield, KeySquare, Mails, Plug2, UserPlus, Link2, Plus, X } from "lucide-react";
 import { Box, Grid, HStack, IconButton, Text, VStack } from "@chakra-ui/react";
 import { useConfig } from "../hooks/useConfig";
 import { SaveBar } from "../components/SaveBar";
@@ -312,7 +312,7 @@ export function AuthPage() {
               />
             </Section>
 
-            <Section title="Registration" icon={UserPlus}>
+            <Section title="Sign-up & verification" icon={UserPlus}>
               <VStack gap="4" align="stretch">
                 <HStack justify="space-between" gap="3">
                   <VStack gap="0.5" align="start">
@@ -341,6 +341,27 @@ export function AuthPage() {
                     checked={auth.allow_anonymous ?? true}
                     disabled={!(auth.allow_signup ?? true)}
                     onChange={(v) => updateAuth((a) => ({ ...a, allow_anonymous: v }))}
+                  />
+                </HStack>
+                <HStack justify="space-between" gap="3">
+                  <VStack gap="0.5" align="start">
+                    <Text fontSize="sm" color="fg">Require email verification</Text>
+                    <Text fontSize="xs" color="fg.muted">
+                      Users must confirm their email address before their account becomes active.
+                    </Text>
+                  </VStack>
+                  <Toggle
+                    aria-label="Require email verification"
+                    checked={auth.email?.verify_email || false}
+                    onChange={(v) =>
+                      updateAuth((a) => ({
+                        ...a,
+                        email: {
+                          ...(a.email || { verify_email: false, templates: {} }),
+                          verify_email: v,
+                        },
+                      }))
+                    }
                   />
                 </HStack>
               </VStack>
@@ -397,25 +418,6 @@ export function AuthPage() {
               </VStack>
             </Section>
 
-            <Section
-              title="Email Verification"
-              icon={MailCheck}
-            >
-              <Toggle
-                checked={auth.email?.verify_email || false}
-                onChange={(v) =>
-                  updateAuth((a) => ({
-                    ...a,
-                    email: {
-                      ...(a.email || { verify_email: false, templates: {} }),
-                      verify_email: v,
-                    },
-                  }))
-                }
-                label="Require email verification"
-              />
-
-            </Section>
 
             <Section title="Email Templates" icon={Mails}>
               <VStack gap="4" align="stretch">
