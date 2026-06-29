@@ -1,4 +1,13 @@
 import "@testing-library/jest-dom/vitest";
+import { configure } from "@testing-library/react";
+
+// Testing Library's waitFor/findBy default to a 1s asyncUtilTimeout. This repo
+// runs many CodeMirror/userEvent suites in parallel, which saturates the CPU
+// (the same reason testTimeout is raised to 20s below in vitest.config) — under
+// that load a correct-but-slow async assertion can blow past 1s and flake
+// (observed ~1.2-1.3s on the Overview config load and the status re-poll). Give
+// the async utils matching headroom so slowness-under-load is never a failure.
+configure({ asyncUtilTimeout: 5000 });
 
 // next-themes calls matchMedia; jsdom doesn't provide it
 if (typeof window.matchMedia === "undefined") {
