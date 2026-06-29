@@ -55,11 +55,11 @@ function NavItemLink({ to, icon: Icon, label }: NavItem) {
         <Box
           display="flex"
           alignItems="center"
-          gap="2.5"
-          px="3"
-          py="2"
-          borderRadius="lg"
-          fontSize="sm"
+          gap="2"
+          px="2.5"
+          py="1.5"
+          borderRadius="md"
+          fontSize="13px"
           fontWeight="medium"
           transition="colors"
           cursor="pointer"
@@ -67,7 +67,7 @@ function NavItemLink({ to, icon: Icon, label }: NavItem) {
           color={isActive ? "bg" : "fg.muted"}
           _hover={isActive ? {} : { bg: "bg.subtle", color: "fg" }}
         >
-          <Box as={Icon} boxSize="4" flexShrink="0" strokeWidth={isActive ? 2 : 1.6} />
+          <Box as={Icon} boxSize="3.5" flexShrink="0" strokeWidth={isActive ? 2 : 1.6} />
           {label}
         </Box>
       )}
@@ -78,12 +78,12 @@ function NavItemLink({ to, icon: Icon, label }: NavItem) {
 function SectionLabel({ children }: { children: string }) {
   return (
     <Text
-      px="3"
-      pt="4"
-      pb="1"
-      fontSize="11px"
+      px="2.5"
+      pt="3"
+      pb="0.5"
+      fontSize="10px"
       fontWeight="semibold"
-      letterSpacing="wide"
+      letterSpacing="wider"
       textTransform="uppercase"
       color="fg.subtle"
     >
@@ -100,21 +100,21 @@ export function Sidebar() {
       flexShrink="0"
       display="flex"
       flexDirection="column"
-      px="3"
-      py="4"
+      px="2.5"
+      py="3"
       bg="bg.panel"
       borderWidth="1px"
       borderRadius="xl"
       boxShadow="xs"
     >
       <Box as="nav" flex="1" overflowY="auto">
-        <VStack gap="1" align="stretch">
+        <VStack gap="0.5" align="stretch">
           <NavItemLink {...OVERVIEW} />
         </VStack>
         {SECTIONS.map(({ title, items }) => (
           <Box key={title}>
             <SectionLabel>{title}</SectionLabel>
-            <VStack gap="1" align="stretch">
+            <VStack gap="0.5" align="stretch">
               {items.map((item) => (
                 <NavItemLink key={item.to} {...item} />
               ))}
@@ -122,7 +122,7 @@ export function Sidebar() {
           </Box>
         ))}
       </Box>
-      <Text px="3" pt="4" fontSize="11px" color="fg.subtle" fontFamily="mono">
+      <Text px="2.5" pt="3" fontSize="10px" color="fg.subtle" fontFamily="mono">
         v0.1.0
       </Text>
     </Box>
