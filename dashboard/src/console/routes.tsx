@@ -33,38 +33,38 @@ export const tablesRoutes = (): RouteObject[] => [
   // List-page descriptions were dynamic counts; that count now lives in the
   // page's in-content toolbar, so the handle carries only a title.
   { index: true, element: <Tables />, handle: { title: "Tables" } satisfies ConsoleRouteHandle },
-  { path: "new", element: <TableDetail />, handle: { title: "New table", description: "Define a new table" } satisfies ConsoleRouteHandle },
-  { path: ":name", element: <TableDetail />, handle: { title: (p) => p.name ?? "Table", description: "Table schema, indexes, RLS policies and seed data" } satisfies ConsoleRouteHandle },
+  { path: "new", element: <TableDetail />, handle: { title: "New table" } satisfies ConsoleRouteHandle },
+  { path: ":name", element: <TableDetail />, handle: { title: (p) => p.name ?? "Table" } satisfies ConsoleRouteHandle },
 ];
 
 export const authRoutes = (): RouteObject[] => [
-  { index: true, element: <AuthPage />, handle: { title: "Authentication", description: "Configure auth providers and JWT settings" } satisfies ConsoleRouteHandle },
+  { index: true, element: <AuthPage />, handle: { title: "Authentication" } satisfies ConsoleRouteHandle },
 ];
 
 export const storageRoutes = (): RouteObject[] => [
   { index: true, element: <Storage />, handle: { title: "Storage" } satisfies ConsoleRouteHandle },
-  { path: ":name", element: <StorageDetail />, handle: { title: (p) => p.name ?? "Bucket", description: "Storage bucket configuration" } satisfies ConsoleRouteHandle },
+  { path: ":name", element: <StorageDetail />, handle: { title: (p) => p.name ?? "Bucket" } satisfies ConsoleRouteHandle },
 ];
 
 export const rpcRoutes = (): RouteObject[] => [
   { index: true, element: <Rpc />, handle: { title: "Database Functions" } satisfies ConsoleRouteHandle },
-  { path: ":name", element: <RpcDetail />, handle: { title: (p) => p.name ?? "Function", description: "RPC function" } satisfies ConsoleRouteHandle },
+  { path: ":name", element: <RpcDetail />, handle: { title: (p) => p.name ?? "Function" } satisfies ConsoleRouteHandle },
 ];
 
 export const functionsRoutes = (): RouteObject[] => [
   { index: true, element: <Functions />, handle: { title: "Code Functions" } satisfies ConsoleRouteHandle },
-  { path: ":name", element: <FunctionDetail />, handle: { title: (p) => p.name ?? "Function", description: "Code function served at /functions/v1/" } satisfies ConsoleRouteHandle },
+  { path: ":name", element: <FunctionDetail />, handle: { title: (p) => p.name ?? "Function" } satisfies ConsoleRouteHandle },
 ];
 
 export const providersRoutes = (): RouteObject[] => [
-  { index: true, element: <ProvidersPage />, handle: { title: "Providers", description: "Configure email and storage providers for your project" } satisfies ConsoleRouteHandle },
+  { index: true, element: <ProvidersPage />, handle: { title: "Providers" } satisfies ConsoleRouteHandle },
 ];
 
 export const usersRoutes = (): RouteObject[] => [
   {
     index: true,
     element: <UsersPage />,
-    handle: { title: "Users", description: "Manage authenticated users" } satisfies ConsoleRouteHandle,
+    handle: { title: "Users" } satisfies ConsoleRouteHandle,
   },
 ];
 
