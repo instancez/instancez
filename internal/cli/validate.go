@@ -22,6 +22,7 @@ func newValidateCmd() *cobra.Command {
 		jsonOutput bool
 		useDSN     string
 		project    string
+		branch     string
 	)
 
 	cmd := &cobra.Command{
@@ -33,12 +34,13 @@ With --use-dsn, validate also connects to the given Postgres and prints
 the migration that would bring the database in sync with the yaml. The
 migration is planned but never applied — this is a dry-run.
 
-With --project, validate uploads the local yaml to the cloud project and
-prints the diff vs. the deployed version. Bare --project reads the project id
-from project.cloud.project_id in instancez.yaml; --project <id> or
---project=<id> targets that project instead, the same as 'inz cloud deploy
---project'. validate never creates a project; use 'inz cloud deploy --new' to
-link one first.`,
+With --project, validate previews the local yaml against the named branch
+(--branch draft|production, default draft) of the cloud project and prints
+the diff. Bare --project reads the project id from project.cloud.project_id
+in instancez.yaml; --project <id> or --project=<id> targets that project
+instead, the same as 'inz cloud deploy --project'. validate never creates a
+project and never writes anything server-side, for either branch; use
+'inz cloud deploy --new' to link one first.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if _, err := applyEnvDefaults(cmd.Flags(), nil, os.Getenv); err != nil {
@@ -50,25 +52,20 @@ link one first.`,
 				}
 				return runValidate(cmd.Context(), configPath, jsonOutput, useDSN)
 			}
-			// NoOptDefVal means "--project <id>" (space form) leaves <id> as a
-			// stray positional argument instead of consuming it as the flag's
-			// value: pflag always applies NoOptDefVal when --project has no
-			// "=value" attached, and never looks at the next token. Treating a
-			// single leftover argument as the override recovers the same space
-			// form "inz cloud deploy --project <id>" already supports.
 			override := project
 			if len(args) == 1 {
 				override = args[0]
 			}
-			return planAgainstProject(cmd.Context(), configPath, jsonOutput, override)
+			return planAgainstProject(cmd.Context(), configPath, jsonOutput, override, branch)
 		},
 	}
 
 	cmd.Flags().StringVar(&configPath, "config", "instancez.yaml", "config source (env: INSTANCEZ_CONFIG)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output errors as JSON (for CI)")
 	cmd.Flags().StringVar(&useDSN, "use-dsn", "", "after syntax check, plan a migration against this owner-class DSN")
-	cmd.Flags().StringVar(&project, "project", "", "preview migration against a cloud project (bare --project uses instancez.yaml's project_id; --project <id> overrides it)")
+	cmd.Flags().StringVar(&project, "project", "", "preview against a cloud project (bare --project uses instancez.yaml's project_id; --project <id> overrides it)")
 	cmd.Flags().Lookup("project").NoOptDefVal = useFileProjectID
+	cmd.Flags().StringVar(&branch, "branch", "draft", "branch to preview against: draft or production")
 	return cmd
 }
 
@@ -256,17 +253,23 @@ func printJSONError(err error) error {
 	return errReported
 }
 
-// planAgainstProject uploads the local yaml to the cloud project's draft Defs
-// (so the server-side diff reflects what's actually on disk) and then fetches
-// the migration preview. Pure side-effect-aware — no local DB connection.
+// planAgainstProject previews the local yaml against the named branch of the
+// cloud project. This is a pure read: nothing is written server-side, for
+// either branch. Backs `inz validate --project`.
 //
 // projectOverride is either useFileProjectID (bare --project, read the id
 // from configPath) or an explicit id from --project=<id>. Either way, an
 // unresolved project id is always an error here: validate never creates a
 // project, unlike `inz cloud deploy --new`.
-func planAgainstProject(ctx context.Context, configPath string, jsonOutput bool, projectOverride string) error {
+func planAgainstProject(ctx context.Context, configPath string, jsonOutput bool, projectOverride, branch string) error {
 	if err := requireLocalConfig(configPath); err != nil {
 		return err
+	}
+	if branch == "" {
+		branch = "draft"
+	}
+	if branch != "draft" && branch != "production" {
+		return fmt.Errorf("--branch must be draft or production, got %q", branch)
 	}
 	creds, err := cloud.Load()
 	if err != nil {
@@ -295,27 +298,19 @@ func planAgainstProject(ctx context.Context, configPath string, jsonOutput bool,
 	}
 	c := cloud.NewClient(apiURL, creds.PAT)
 
-	// Push the local YAML to the project's draft so the diff reflects
-	// what's actually on disk, not whatever stale draft was uploaded last.
-	dropped, err := c.UploadYAML(projectID, string(src))
+	dropped, diff, err := c.PreviewBranchConfig(projectID, branch, string(src))
 	if err != nil {
-		return reportCloudErr("upload yaml", err)
-	}
-	printDropped(dropped)
-
-	resp, err := c.MigrationPreview(projectID)
-	if err != nil {
-		return fmt.Errorf("migration preview: %w", err)
+		return reportCloudErr("preview config", err)
 	}
 
 	if jsonOutput {
-		return json.NewEncoder(os.Stdout).Encode(resp)
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{
+			"dropped": dropped,
+			"diff":    diff,
+		})
 	}
-	if resp.Diff == "" {
-		fmt.Println("  ✓ No pending changes.")
-		return nil
-	}
-	fmt.Println(resp.Diff)
+	printDropped(dropped)
+	fmt.Println(renderConfigDiff(diff))
 	_ = ctx // reserved for future timeout/cancellation
 	return nil
 }
