@@ -104,56 +104,32 @@ func TestClientCreateProject(t *testing.T) {
 	assert.Equal(t, "app-uuid", resp.ProjectID)
 }
 
-func TestClientDeploy(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/instancez/projects/app-uuid/deploy", r.URL.Path)
-
-		_ = json.NewEncoder(w).Encode(map[string]any{"version_id": "v-1"})
-	}))
-	defer srv.Close()
-
-	c := NewClient(srv.URL, "instancez_pat_test")
-	resp, err := c.Deploy("app-uuid")
-	assert.NoError(t, err)
-	assert.Equal(t, "v-1", resp.VersionID)
-}
-
-func TestClientMigrationPreview(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/instancez/projects/app-uuid/migration-preview", r.URL.Path)
-
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"diff": "+ added table todos",
-		})
-	}))
-	defer srv.Close()
-
-	c := NewClient(srv.URL, "instancez_pat_test")
-	resp, err := c.MigrationPreview("app-uuid")
-	assert.NoError(t, err)
-	assert.Contains(t, resp.Diff, "todos")
-}
-
 func TestClientUploadYAML(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "PUT", r.Method)
 		assert.Equal(t, "/instancez/projects/app-uuid/yaml", r.URL.Path)
 
 		var body struct {
-			YAML string `json:"yaml"`
+			YAML   string `json:"yaml"`
+			Branch string `json:"branch"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		assert.Contains(t, body.YAML, "version: 1")
+		assert.Equal(t, "production", body.Branch)
 
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "version_id": "v-2"})
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":      true,
+			"dropped": []map[string]string{},
+			"diff":    map[string]any{"tables": []any{}, "config_sections": []any{}, "has_changes": false},
+		})
 	}))
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "instancez_pat_test")
-	_, err := c.UploadYAML("app-uuid", "version: 1\n")
+	dropped, diff, err := c.UploadYAML("app-uuid", "production", "version: 1\n")
 	assert.NoError(t, err)
+	assert.Empty(t, dropped)
+	assert.False(t, diff.HasChanges)
 }
 
 func TestClientUploadYAMLValidationFailed(t *testing.T) {
@@ -169,7 +145,7 @@ func TestClientUploadYAMLValidationFailed(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "instancez_pat_test")
-	_, err := c.UploadYAML("app-uuid", "version: 1\n")
+	_, _, err := c.UploadYAML("app-uuid", "draft", "version: 1\n")
 
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {
@@ -184,7 +160,7 @@ func TestClientUploadYAMLValidationFailed(t *testing.T) {
 	}
 }
 
-func TestClientUploadYAMLReturnsDropped(t *testing.T) {
+func TestClientUploadYAMLReturnsDroppedAndDiff(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -192,15 +168,24 @@ func TestClientUploadYAMLReturnsDropped(t *testing.T) {
 			"dropped": []map[string]string{
 				{"path": "providers.storage", "message": "storage and email are provided automatically by the platform and cannot be configured"},
 			},
+			"diff": map[string]any{
+				"tables":          []map[string]any{{"name": "todos", "change": "added"}},
+				"config_sections": []any{},
+				"has_changes":     true,
+			},
 		})
 	}))
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "instancez_pat_test")
-	dropped, err := c.UploadYAML("app-uuid", "version: 1\nproviders:\n  storage:\n    type: local\n")
+	dropped, diff, err := c.UploadYAML("app-uuid", "draft", "version: 1\nproviders:\n  storage:\n    type: local\n")
 	require.NoError(t, err)
 	require.Len(t, dropped, 1)
 	assert.Equal(t, "providers.storage", dropped[0].Path)
+	require.True(t, diff.HasChanges)
+	require.Len(t, diff.Tables, 1)
+	assert.Equal(t, "todos", diff.Tables[0].Name)
+	assert.Equal(t, ChangeAdded, diff.Tables[0].Change)
 }
 
 func TestUploadFunctions(t *testing.T) {
@@ -215,7 +200,7 @@ func TestUploadFunctions(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "pat")
-	if err := c.UploadFunctions("proj1", map[string]string{"functions/hello.js": "x"}); err != nil {
+	if err := c.UploadFunctions("proj1", "production", map[string]string{"functions/hello.js": "x"}); err != nil {
 		t.Fatalf("UploadFunctions: %v", err)
 	}
 	if gotPath != "/instancez/projects/proj1/functions" {
@@ -224,6 +209,40 @@ func TestUploadFunctions(t *testing.T) {
 	if !strings.Contains(gotBody, `"files"`) || !strings.Contains(gotBody, "functions/hello.js") {
 		t.Errorf("body = %q", gotBody)
 	}
+	if !strings.Contains(gotBody, `"branch":"production"`) {
+		t.Errorf("body missing branch: %q", gotBody)
+	}
+}
+
+func TestClientPreviewBranchConfig(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/instancez/projects/app-uuid/config/preview", r.URL.Path)
+
+		var body struct {
+			YAML   string `json:"yaml"`
+			Branch string `json:"branch"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		assert.Equal(t, "production", body.Branch)
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"dropped": []any{},
+			"diff": map[string]any{
+				"tables":          []map[string]any{{"name": "todos", "change": "removed"}},
+				"config_sections": []any{},
+				"has_changes":     true,
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "instancez_pat_test")
+	dropped, diff, err := c.PreviewBranchConfig("app-uuid", "production", "version: 1\n")
+	require.NoError(t, err)
+	assert.Empty(t, dropped)
+	require.True(t, diff.HasChanges)
+	assert.Equal(t, ChangeRemoved, diff.Tables[0].Change)
 }
 
 func TestClientWhoami(t *testing.T) {

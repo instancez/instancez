@@ -79,68 +79,96 @@ func (c *Client) CreateProject(name string) (*CreateProjectResponse, error) {
 	return &out, nil
 }
 
-// DeployResponse mirrors POST /instancez/projects/:id/deploy. The version_id
-// can be polled via GET /data/apps/:id to track status.
-type DeployResponse struct {
-	VersionID string `json:"version_id"`
-	Message   string `json:"message,omitempty"`
+// ChangeKind is the kind of structural change for a diff entry. Mirrors
+// server.ChangeKind's JSON encoding exactly.
+type ChangeKind string
+
+const (
+	ChangeAdded    ChangeKind = "added"
+	ChangeRemoved  ChangeKind = "removed"
+	ChangeModified ChangeKind = "modified"
+)
+
+// ColumnChange is an added/removed/modified column within a modified table.
+type ColumnChange struct {
+	Name   string     `json:"name"`
+	Change ChangeKind `json:"change"`
 }
 
-// Deploy triggers a production deploy for the given project.
-func (c *Client) Deploy(projectID string) (*DeployResponse, error) {
-	var out DeployResponse
-	if err := c.do("POST", "/instancez/projects/"+projectID+"/deploy", nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+// TableChange is an added/removed/modified table. Columns is populated only
+// for modified tables.
+type TableChange struct {
+	Name    string         `json:"name"`
+	Change  ChangeKind     `json:"change"`
+	Columns []ColumnChange `json:"columns,omitempty"`
 }
 
-// MigrationPreviewResponse mirrors GET /instancez/projects/:id/migration-preview.
-// The exact shape of `diff` depends on v2 — keep it loose so we can adapt
-// once the server-side response stabilizes.
-type MigrationPreviewResponse struct {
-	Diff string `json:"diff"`
+// SectionChange is a change to a non-table config section.
+type SectionChange struct {
+	Path   string     `json:"path"`
+	Change ChangeKind `json:"change"`
 }
 
-// MigrationPreview returns the diff between the current instancez.yaml and
-// what's deployed to the cloud project.
-func (c *Client) MigrationPreview(projectID string) (*MigrationPreviewResponse, error) {
-	var out MigrationPreviewResponse
-	if err := c.do("GET", "/instancez/projects/"+projectID+"/migration-preview", nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+// ConfigDiff is the page-free structural summary the cloud API returns for
+// both the config preview endpoint and a branch write: tables and top-level
+// config sections only. Never carries page-builder content, since inz-driven
+// backend-only projects never have pages.
+type ConfigDiff struct {
+	Tables     []TableChange   `json:"tables"`
+	Sections   []SectionChange `json:"config_sections"`
+	HasChanges bool            `json:"has_changes"`
 }
 
 // uploadYAMLResponse is the shape of a successful PUT
 // /instancez/projects/:id/yaml response. Dropped carries any providers
-// content the server stripped before persisting, since storage/email are
-// platform-managed in the cloud runtime. Empty when nothing was stripped.
+// content the server stripped before persisting. Diff is the page-free
+// structural summary of what this write actually changed.
 type uploadYAMLResponse struct {
-	Dropped []Problem `json:"dropped"`
+	Dropped []Problem  `json:"dropped"`
+	Diff    ConfigDiff `json:"diff"`
 }
 
-// UploadYAML pushes the local instancez.yaml to the project's server-side
-// draft Defs. Called by `inz cloud deploy` and `inz validate --project` before
-// their respective actions so the server sees the latest local source.
-// Returns any providers content the server dropped. This is non-blocking: a
-// providers: block is local-dev-only and inert in the cloud runtime. The
-// caller should print it as a warning.
-func (c *Client) UploadYAML(projectID, yamlContent string) ([]Problem, error) {
+// UploadYAML writes yamlContent to the named branch ("draft" or
+// "production") of projectID's Defs, running production write guards when
+// branch is "production", and triggers a rebuild. Called by `inz cloud
+// deploy`. Returns any providers content the server dropped (non-blocking:
+// providers: is local-dev-only and inert in the cloud runtime) and the
+// page-free diff of what was actually written.
+func (c *Client) UploadYAML(projectID, branch, yamlContent string) ([]Problem, ConfigDiff, error) {
 	var out uploadYAMLResponse
-	if err := c.do("PUT", "/instancez/projects/"+projectID+"/yaml", map[string]string{"yaml": yamlContent}, &out); err != nil {
-		return nil, err
+	if err := c.do("PUT", "/instancez/projects/"+projectID+"/yaml",
+		map[string]string{"yaml": yamlContent, "branch": branch}, &out); err != nil {
+		return nil, ConfigDiff{}, err
 	}
-	return out.Dropped, nil
+	return out.Dropped, out.Diff, nil
 }
 
-// UploadFunctions replaces the project's draft function sources with the given
-// path-keyed map (keys are project-relative, e.g. "functions/hello.js"). The
-// cloud builds the functions bundle from these on deploy. Called by
-// `inz cloud deploy` before promotion.
-func (c *Client) UploadFunctions(projectID string, files map[string]string) error {
+// previewResponse is the shape of a successful POST
+// /instancez/projects/:id/config/preview response.
+type previewResponse struct {
+	Dropped []Problem  `json:"dropped"`
+	Diff    ConfigDiff `json:"diff"`
+}
+
+// PreviewBranchConfig returns the page-free diff between yamlContent and the
+// named branch's current config, without writing anything server-side.
+// Called by `inz validate --project`.
+func (c *Client) PreviewBranchConfig(projectID, branch, yamlContent string) ([]Problem, ConfigDiff, error) {
+	var out previewResponse
+	if err := c.do("POST", "/instancez/projects/"+projectID+"/config/preview",
+		map[string]string{"yaml": yamlContent, "branch": branch}, &out); err != nil {
+		return nil, ConfigDiff{}, err
+	}
+	return out.Dropped, out.Diff, nil
+}
+
+// UploadFunctions replaces the named branch's function sources with the
+// given path-keyed map (keys are project-relative, e.g.
+// "functions/hello.js"). The cloud builds the functions bundle from these at
+// the next rebuild of that branch. Called by `inz cloud deploy`.
+func (c *Client) UploadFunctions(projectID, branch string, files map[string]string) error {
 	return c.do("PUT", "/instancez/projects/"+projectID+"/functions",
-		map[string]any{"files": files}, nil)
+		map[string]any{"files": files, "branch": branch}, nil)
 }
 
 // GetAppResponse mirrors GET /instancez/projects/:id. It carries the project
@@ -251,8 +279,8 @@ type Problem struct {
 // APIError is returned for non-2xx responses. Code is the body's "error" field
 // if present (matches the v2 envelope), otherwise the HTTP status text.
 // Problems is populated when the body also carries a "problems" array (config
-// validation failures from UploadYAML/Deploy) so callers can render the
-// per-field detail instead of just the summary Code.
+// validation failures from UploadYAML) so callers can render the per-field
+// detail instead of just the summary Code.
 type APIError struct {
 	Status   int
 	Code     string
