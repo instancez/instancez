@@ -21,7 +21,7 @@ func newValidateCmd() *cobra.Command {
 		configPath string
 		jsonOutput bool
 		useDSN     string
-		useProject bool
+		project    string
 	)
 
 	cmd := &cobra.Command{
@@ -33,14 +33,17 @@ With --use-dsn, validate also connects to the given Postgres and prints
 the migration that would bring the database in sync with the yaml. The
 migration is planned but never applied — this is a dry-run.
 
-With --project, validate uploads the local yaml to the cloud project (from
-project.cloud.project_id) and prints the diff vs. the deployed version.`,
+With --project, validate uploads the local yaml to the cloud project and
+prints the diff vs. the deployed version. Bare --project reads the project id
+from project.cloud.project_id in instancez.yaml; --project=<id> targets that
+project instead. validate never creates a project; use
+'inz cloud deploy --new' to link one first.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if _, err := applyEnvDefaults(cmd.Flags(), nil, os.Getenv); err != nil {
 				return err
 			}
-			if useProject {
-				return planAgainstProject(cmd.Context(), configPath, jsonOutput)
+			if cmd.Flags().Changed("project") {
+				return planAgainstProject(cmd.Context(), configPath, jsonOutput, project)
 			}
 			return runValidate(cmd.Context(), configPath, jsonOutput, useDSN)
 		},
@@ -49,9 +52,16 @@ project.cloud.project_id) and prints the diff vs. the deployed version.`,
 	cmd.Flags().StringVar(&configPath, "config", "instancez.yaml", "config source (env: INSTANCEZ_CONFIG)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output errors as JSON (for CI)")
 	cmd.Flags().StringVar(&useDSN, "use-dsn", "", "after syntax check, plan a migration against this owner-class DSN")
-	cmd.Flags().BoolVar(&useProject, "project", false, "preview migration against the cloud project from instancez.yaml")
+	cmd.Flags().StringVar(&project, "project", "", "preview migration against a cloud project (bare --project uses instancez.yaml's project_id; --project=<id> overrides it)")
+	cmd.Flags().Lookup("project").NoOptDefVal = useFileProjectID
 	return cmd
 }
+
+// useFileProjectID is the sentinel NoOptDefVal for --project, so bare
+// --project (no =value and no following token) is distinguishable from an
+// explicit override in planAgainstProject. Not a value any real project id
+// can equal, since ids are Mongo ObjectID hex strings.
+const useFileProjectID = "\x00use-file-project-id\x00"
 
 func runValidate(ctx context.Context, configPath string, jsonOutput bool, useDSN string) error {
 	if err := requireLocalConfig(configPath); err != nil {
@@ -234,7 +244,12 @@ func printJSONError(err error) error {
 // planAgainstProject uploads the local yaml to the cloud project's draft Defs
 // (so the server-side diff reflects what's actually on disk) and then fetches
 // the migration preview. Pure side-effect-aware — no local DB connection.
-func planAgainstProject(ctx context.Context, configPath string, jsonOutput bool) error {
+//
+// projectOverride is either useFileProjectID (bare --project, read the id
+// from configPath) or an explicit id from --project <id>. Either way, an
+// unresolved project id is always an error here: validate never creates a
+// project, unlike `inz cloud deploy --new`.
+func planAgainstProject(ctx context.Context, configPath string, jsonOutput bool, projectOverride string) error {
 	if err := requireLocalConfig(configPath); err != nil {
 		return err
 	}
@@ -247,12 +262,16 @@ func planAgainstProject(ctx context.Context, configPath string, jsonOutput bool)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", configPath, err)
 	}
-	projectID, err := cloud.ReadProjectID(src)
-	if err != nil {
-		return fmt.Errorf("parse %s: %w", configPath, err)
+
+	projectID := projectOverride
+	if projectID == useFileProjectID {
+		projectID, err = cloud.ReadProjectID(src)
+		if err != nil {
+			return fmt.Errorf("parse %s: %w", configPath, err)
+		}
 	}
 	if projectID == "" {
-		return errors.New("no project.cloud.project_id in instancez.yaml; run `inz init --with-cloud` first")
+		return errors.New("no project linked; pass --project=<id>, or link one first with `inz cloud deploy --new`")
 	}
 
 	apiURL, err := cloud.APIURLFromConfig(configPath)
@@ -263,8 +282,12 @@ func planAgainstProject(ctx context.Context, configPath string, jsonOutput bool)
 
 	// Push the local YAML to the project's draft so the diff reflects
 	// what's actually on disk, not whatever stale draft was uploaded last.
-	if err := c.UploadYAML(projectID, string(src)); err != nil {
-		return fmt.Errorf("upload yaml: %w", err)
+	dropped, err := c.UploadYAML(projectID, string(src))
+	if err != nil {
+		return reportCloudErr("upload yaml", err)
+	}
+	for _, p := range dropped {
+		fmt.Printf("  ! %s: %s\n", p.Path, p.Message)
 	}
 
 	resp, err := c.MigrationPreview(projectID)
