@@ -23,8 +23,8 @@ func TestInitHasNoWithCloudFlag(t *testing.T) {
 }
 
 // TestRunInitNeverCallsNetwork proves init makes no network call under any
-// options by pointing INSTANCEZ_CLOUD_API at a dead address — if init ever
-// reached out, this would hang/error instead of completing instantly.
+// options by pointing INSTANCEZ_CLOUD_API at a dead address. If init ever
+// reached out, this would hang or error instead of completing instantly.
 func TestRunInitNeverCallsNetwork(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", t.TempDir()) // no credentials on disk
