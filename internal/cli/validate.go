@@ -38,6 +38,7 @@ prints the diff vs. the deployed version. Bare --project reads the project id
 from project.cloud.project_id in instancez.yaml; --project=<id> targets that
 project instead. validate never creates a project; use
 'inz cloud deploy --new' to link one first.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if _, err := applyEnvDefaults(cmd.Flags(), nil, os.Getenv); err != nil {
 				return err
@@ -246,7 +247,7 @@ func printJSONError(err error) error {
 // the migration preview. Pure side-effect-aware — no local DB connection.
 //
 // projectOverride is either useFileProjectID (bare --project, read the id
-// from configPath) or an explicit id from --project <id>. Either way, an
+// from configPath) or an explicit id from --project=<id>. Either way, an
 // unresolved project id is always an error here: validate never creates a
 // project, unlike `inz cloud deploy --new`.
 func planAgainstProject(ctx context.Context, configPath string, jsonOutput bool, projectOverride string) error {

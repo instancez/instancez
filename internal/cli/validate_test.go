@@ -35,6 +35,21 @@ func TestValidateProjectFlagAcceptsBareOrValue(t *testing.T) {
 	assert.Equal(t, "explicit-id", f.Value.String())
 }
 
+// TestValidateProjectSpaceFormRejectedAsArg guards the footgun the sentinel
+// mechanism introduces: "--project explicit-id" (space form) leaves
+// "explicit-id" as a stray positional argument instead of setting an
+// override. Args: cobra.NoArgs turns that into a loud error rather than a
+// silent fall-through to the file's linked project.
+func TestValidateProjectSpaceFormRejectedAsArg(t *testing.T) {
+	cmd := newValidateCmd()
+	cmd.SetArgs([]string{"--project", "explicit-id"})
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	err := cmd.Execute()
+	require.Error(t, err, "space-form --project value must be rejected, not silently dropped")
+	assert.Contains(t, err.Error(), "unknown command", "cobra.NoArgs surfaces the stray token as an unknown command/arg error")
+}
+
 func TestPlanAgainstProjectRequiresCredentials(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
