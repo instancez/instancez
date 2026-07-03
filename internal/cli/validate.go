@@ -287,9 +287,7 @@ func planAgainstProject(ctx context.Context, configPath string, jsonOutput bool,
 	if err != nil {
 		return reportCloudErr("upload yaml", err)
 	}
-	for _, p := range dropped {
-		fmt.Printf("  ! %s: %s\n", p.Path, p.Message)
-	}
+	printDropped(dropped)
 
 	resp, err := c.MigrationPreview(projectID)
 	if err != nil {

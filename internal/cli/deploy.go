@@ -164,9 +164,7 @@ func runDeploy(configPath string, opts deployOpts) error {
 	if err != nil {
 		return reportCloudErr("upload yaml", err)
 	}
-	for _, p := range dropped {
-		fmt.Printf("  ! %s: %s\n", p.Path, p.Message)
-	}
+	printDropped(dropped)
 
 	// 1b. Upload function sources (if any). The cloud builds the bundle from
 	// these on deploy; nothing is built or vendored locally.

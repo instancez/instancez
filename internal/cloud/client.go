@@ -240,7 +240,7 @@ func PollDeviceToken(c *Client, deviceCode string, timeout, interval time.Durati
 }
 
 // Problem is one structural or cloud-policy config validation failure.
-// Mirrors configvalidate.Problem — the cloud API returns the same shape
+// Mirrors configvalidate.Problem: the cloud API returns the same shape
 // under the "problems" field of a config-validation-failed response.
 type Problem struct {
 	Path       string `json:"path"`

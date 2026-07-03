@@ -32,3 +32,13 @@ func reportCloudErr(action string, err error) error {
 	fmt.Fprintf(os.Stderr, "\n  Found %d problem(s)\n", len(apiErr.Problems))
 	return errReported
 }
+
+// printDropped prints one warning line per entry a successful UploadYAML
+// reported as dropped (providers content stripped before persisting, since
+// it's inert in the cloud runtime). Used by both `inz cloud deploy` and
+// `inz validate --project` after a successful upload.
+func printDropped(dropped []cloud.Problem) {
+	for _, p := range dropped {
+		fmt.Printf("  ! %s: %s\n", p.Path, p.Message)
+	}
+}
