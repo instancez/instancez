@@ -92,7 +92,7 @@ func runDeploy(configPath string, opts deployOpts) error {
 	// Preflight: verify config is structurally valid before touching the
 	// network or (if --new) creating a cloud project. This is what keeps
 	// --new from ever creating an empty/orphaned project for an invalid
-	// config — creation only happens after this passes.
+	// config: creation only happens after this passes.
 	if r, failed := preflight.RunUntilFail([]preflight.Check{
 		preflight.ConfigValidCheck(configPath),
 	}); failed {

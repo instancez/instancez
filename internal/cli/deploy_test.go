@@ -302,7 +302,7 @@ func TestRunDeployNewFailsValidationBeforeCreatingProject(t *testing.T) {
 }
 
 // TestRunDeployNewErrorsWhenAlreadyLinked: --new against a yaml that already
-// has a project_id is an error — it must not silently deploy to the existing
+// has a project_id is an error. It must not silently deploy to the existing
 // project when the user explicitly asked for a new one.
 func TestRunDeployNewErrorsWhenAlreadyLinked(t *testing.T) {
 	home := t.TempDir()
@@ -361,8 +361,8 @@ func TestRunDeployNewAndProjectMutuallyExclusive(t *testing.T) {
 	assert.ErrorContains(t, err, "mutually exclusive")
 }
 
-// TestRunDeployNoProjectNoFlagsErrors: no project_id, no --new, no --project
-// — must fail with an actionable message, no network calls.
+// TestRunDeployNoProjectNoFlagsErrors: no project_id, no --new, no --project.
+// Must fail with an actionable message, no network calls.
 func TestRunDeployNoProjectNoFlagsErrors(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
