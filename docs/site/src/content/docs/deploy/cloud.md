@@ -74,7 +74,7 @@ inz cloud logout    # forget the local Personal Access Token
 
 ## Pointing at a different API
 
-The CLI talks to `https://my.instancez.dev/api` by default. To target a different instancez Cloud API, set `INSTANCEZ_CLOUD_API`:
+The CLI talks to `https://my.instancez.ai/api` by default. To target a different instancez Cloud API, set `INSTANCEZ_CLOUD_API`:
 
 ```bash
 export INSTANCEZ_CLOUD_API=https://cloud.example.com/api
