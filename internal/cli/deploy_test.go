@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -87,7 +88,7 @@ func TestRunDeployHappyPathYes(t *testing.T) {
 	}))
 
 	cfg := writeDeployConfig(t, home)
-	require.NoError(t, runDeploy(cfg, true))
+	require.NoError(t, runDeploy(cfg, deployOpts{yes: true}))
 
 	require.Equal(t, []string{
 		"PUT /instancez/projects/abc/yaml",
@@ -96,22 +97,52 @@ func TestRunDeployHappyPathYes(t *testing.T) {
 	}, calls, "upload → preview → deploy, in that order")
 }
 
-// TestRunDeployMissingProjectID: a config without project.cloud.project_id fails
-// preflight with the errReported sentinel and makes zero network calls.
-func TestRunDeployMissingProjectID(t *testing.T) {
+// TestRunDeployUploadValidationFailed: the cloud rejects the uploaded yaml
+// with a 400 + problems payload. runDeploy must report it via errReported
+// (details already printed) rather than a bare wrapped error, and must not
+// proceed to the migration preview or deploy calls.
+func TestRunDeployUploadValidationFailed(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "tok-123"}))
 
-	// Point the API at a dead address: any network call would error, proving
-	// the preflight short-circuit happens before we touch the network.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == "PUT" && r.URL.Path == "/instancez/projects/abc/yaml":
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": "config validation failed",
+				"problems": []map[string]string{
+					{"path": "tables.posts.columns.author_id", "message": `unknown type "uuid2"`},
+				},
+			})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
+
+	cfg := writeDeployConfig(t, home)
+	err := runDeploy(cfg, deployOpts{yes: true})
+	assert.ErrorIs(t, err, errReported, "validation-failed upload should report via errReported, not a bare wrapped error")
+}
+
+// TestRunDeployMissingProjectID: a config without project.cloud.project_id
+// and no --new/--project fails with an actionable message and makes zero
+// network calls.
+func TestRunDeployMissingProjectID(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "tok-123"}))
 	t.Setenv("INSTANCEZ_CLOUD_API", "http://127.0.0.1:1")
 
 	p := filepath.Join(home, "instancez.yaml")
 	require.NoError(t, os.WriteFile(p, []byte("version: 1\n"), 0o644))
 
-	err := runDeploy(p, true)
-	assert.ErrorIs(t, err, errReported, "missing project_id should fail preflight with errReported")
+	err := runDeploy(p, deployOpts{yes: true})
+	assert.ErrorContains(t, err, "--new")
 }
 
 // TestRunDeployInvalidYAML: a structurally invalid config fails preflight before
@@ -125,7 +156,7 @@ func TestRunDeployInvalidYAML(t *testing.T) {
 	p := filepath.Join(home, "instancez.yaml")
 	require.NoError(t, os.WriteFile(p, []byte("version: 99\n"), 0o644)) // unsupported version
 
-	err := runDeploy(p, true)
+	err := runDeploy(p, deployOpts{yes: true})
 	assert.ErrorIs(t, err, errReported, "invalid yaml should fail preflight before any upload")
 }
 
@@ -162,7 +193,7 @@ func TestRunDeployConfirmDeclineAborts(t *testing.T) {
 	}))
 
 	cfg := writeDeployConfig(t, home)
-	err := runDeploy(cfg, false)
+	err := runDeploy(cfg, deployOpts{})
 	require.NoError(t, err, "declining is a user choice, not a failure")
 	assert.True(t, confirmCalled, "confirm prompt must be shown when yes=false")
 	assert.Equal(t, []string{
@@ -197,8 +228,192 @@ func TestRunDeployConfirmAcceptPromotes(t *testing.T) {
 	t.Cleanup(swapPromptConfirm(func(string) bool { return true }))
 
 	cfg := writeDeployConfig(t, home)
-	require.NoError(t, runDeploy(cfg, false))
+	require.NoError(t, runDeploy(cfg, deployOpts{}))
 	assert.True(t, deployHit, "accepting the prompt must trigger the promote/deploy call")
+}
+
+func TestNewDeployCmdHasNewAndProjectFlags(t *testing.T) {
+	cmd := newDeployCmd()
+	require.NotNil(t, cmd.Flags().Lookup("new"), "deploy must expose a --new flag")
+	require.NotNil(t, cmd.Flags().Lookup("project"), "deploy must expose a --project flag")
+}
+
+// TestRunDeployNewCreatesProjectAfterValidation: --new with no project_id in
+// the yaml creates a cloud project (only after local validation passes),
+// writes the returned id back into instancez.yaml, then proceeds with the
+// normal upload/preview/promote flow.
+func TestRunDeployNewCreatesProjectAfterValidation(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "tok-123"}))
+
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/instancez/projects":
+			_ = json.NewEncoder(w).Encode(map[string]any{"project_id": "newly-created", "slug": "s", "name": "demo"})
+		case r.Method == "PUT" && r.URL.Path == "/instancez/projects/newly-created/yaml":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == "GET" && r.URL.Path == "/instancez/projects/newly-created/migration-preview":
+			_ = json.NewEncoder(w).Encode(map[string]any{"diff": ""})
+		case r.Method == "POST" && r.URL.Path == "/instancez/projects/newly-created/deploy":
+			_ = json.NewEncoder(w).Encode(map[string]any{"version_id": "v1"})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
+
+	cfgPath := filepath.Join(home, "instancez.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("version: 1\nproject:\n  name: demo\n"), 0o644))
+
+	require.NoError(t, runDeploy(cfgPath, deployOpts{yes: true, new: true}))
+	assert.Equal(t, []string{
+		"POST /instancez/projects",
+		"PUT /instancez/projects/newly-created/yaml",
+		"GET /instancez/projects/newly-created/migration-preview",
+		"POST /instancez/projects/newly-created/deploy",
+	}, calls)
+
+	after, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	id, err := cloud.ReadProjectID(after)
+	require.NoError(t, err)
+	assert.Equal(t, "newly-created", id, "the created project id must be written back into instancez.yaml")
+}
+
+// TestRunDeployNewFailsValidationBeforeCreatingProject: --new must not create
+// a cloud project when local validation fails, so we never end up with an
+// empty/orphaned project for an invalid config.
+func TestRunDeployNewFailsValidationBeforeCreatingProject(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "tok-123"}))
+	t.Setenv("INSTANCEZ_CLOUD_API", "http://127.0.0.1:1") // any call here is a bug
+
+	cfgPath := filepath.Join(home, "instancez.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("version: 99\n"), 0o644)) // unsupported version
+
+	err := runDeploy(cfgPath, deployOpts{yes: true, new: true})
+	assert.ErrorIs(t, err, errReported, "invalid config must fail preflight before --new ever calls CreateProject")
+}
+
+// TestRunDeployNewErrorsWhenAlreadyLinked: --new against a yaml that already
+// has a project_id is an error — it must not silently deploy to the existing
+// project when the user explicitly asked for a new one.
+func TestRunDeployNewErrorsWhenAlreadyLinked(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "tok-123"}))
+	t.Setenv("INSTANCEZ_CLOUD_API", "http://127.0.0.1:1")
+
+	cfg := writeDeployConfig(t, home) // already carries project.cloud.project_id: abc
+	err := runDeploy(cfg, deployOpts{yes: true, new: true})
+	assert.ErrorContains(t, err, "already have a project")
+}
+
+// TestRunDeployProjectFlagOverridesFile: --project <id> targets that project
+// instead of the yaml's project_id, without rewriting the file.
+func TestRunDeployProjectFlagOverridesFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "tok-123"}))
+
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == "PUT" && r.URL.Path == "/instancez/projects/override-id/yaml":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == "GET" && r.URL.Path == "/instancez/projects/override-id/migration-preview":
+			_ = json.NewEncoder(w).Encode(map[string]any{"diff": ""})
+		case r.Method == "POST" && r.URL.Path == "/instancez/projects/override-id/deploy":
+			_ = json.NewEncoder(w).Encode(map[string]any{"version_id": "v1"})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
+
+	cfg := writeDeployConfig(t, home) // yaml's project_id is "abc"
+	require.NoError(t, runDeploy(cfg, deployOpts{yes: true, project: "override-id"}))
+	assert.Equal(t, []string{
+		"PUT /instancez/projects/override-id/yaml",
+		"GET /instancez/projects/override-id/migration-preview",
+		"POST /instancez/projects/override-id/deploy",
+	}, calls)
+
+	after, err := os.ReadFile(cfg)
+	require.NoError(t, err)
+	assert.Equal(t, validDeployYAML, string(after), "--project must not mutate the local yaml")
+}
+
+func TestRunDeployNewAndProjectMutuallyExclusive(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfg := writeDeployConfig(t, home)
+	err := runDeploy(cfg, deployOpts{yes: true, new: true, project: "abc"})
+	assert.ErrorContains(t, err, "mutually exclusive")
+}
+
+// TestRunDeployNoProjectNoFlagsErrors: no project_id, no --new, no --project
+// — must fail with an actionable message, no network calls.
+func TestRunDeployNoProjectNoFlagsErrors(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "tok-123"}))
+	t.Setenv("INSTANCEZ_CLOUD_API", "http://127.0.0.1:1")
+
+	cfgPath := filepath.Join(home, "instancez.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("version: 1\nproject:\n  name: demo\n"), 0o644))
+
+	err := runDeploy(cfgPath, deployOpts{yes: true})
+	assert.ErrorContains(t, err, "--new")
+	assert.ErrorContains(t, err, "--project")
+}
+
+// TestRunDeployPrintsDroppedWarning: a successful upload that also dropped
+// providers content prints a warning line naming the path.
+func TestRunDeployPrintsDroppedWarning(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "tok-123"}))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == "PUT" && r.URL.Path == "/instancez/projects/abc/yaml":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": true,
+				"dropped": []map[string]string{
+					{"path": "providers.storage", "message": "storage and email are provided automatically by the platform and cannot be configured"},
+				},
+			})
+		case r.Method == "GET" && r.URL.Path == "/instancez/projects/abc/migration-preview":
+			_ = json.NewEncoder(w).Encode(map[string]any{"diff": ""})
+		case r.Method == "POST" && r.URL.Path == "/instancez/projects/abc/deploy":
+			_ = json.NewEncoder(w).Encode(map[string]any{"version_id": "v1"})
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
+
+	cfg := writeDeployConfig(t, home)
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	err := runDeploy(cfg, deployOpts{yes: true})
+	w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+
+	require.NoError(t, err)
+	assert.Contains(t, string(out), "providers.storage")
 }
 
 // swapPromptConfirm replaces the package-level promptConfirm hook and returns a

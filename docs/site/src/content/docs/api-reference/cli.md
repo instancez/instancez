@@ -135,7 +135,7 @@ inz bundle --output s3://my-bucket/bundle.tar.gz # upload to S3, print pointer
 
 Deploy the current `instancez.yaml` to an instancez Cloud project.
 
-Shows a migration preview and prompts for confirmation before promoting the draft to production.
+Shows a migration preview and prompts for confirmation before promoting the draft to production. If no project is linked, pass `--new` to create one (after local validation passes) or `--project <id>` to target an existing one without editing the yaml.
 
 ```
 inz cloud deploy [flags]
@@ -144,9 +144,13 @@ inz cloud deploy [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--config` | `instancez.yaml` | Path to `instancez.yaml`. |
+| `--new` | `false` | Create a new instancez Cloud project when none is linked yet (only after local validation passes). |
+| `--project` | — | Target this cloud project id for this run, instead of `instancez.yaml`'s `project.cloud.project_id`. Does not modify the file. |
 | `--yes`, `-y` | `false` | Skip the confirmation prompt. |
 
 ```bash
+inz cloud deploy --new --yes       # first deploy: create + link + push
+inz cloud deploy --project abc123  # target a specific project without editing the yaml
 inz cloud deploy --yes
 ```
 
