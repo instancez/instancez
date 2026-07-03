@@ -114,8 +114,8 @@ func (c *Client) MigrationPreview(projectID string) (*MigrationPreviewResponse, 
 
 // uploadYAMLResponse is the shape of a successful PUT
 // /instancez/projects/:id/yaml response. Dropped carries any providers
-// content the server stripped before persisting (storage/email are
-// platform-managed in the cloud runtime) — empty when nothing was stripped.
+// content the server stripped before persisting, since storage/email are
+// platform-managed in the cloud runtime. Empty when nothing was stripped.
 type uploadYAMLResponse struct {
 	Dropped []Problem `json:"dropped"`
 }
@@ -123,9 +123,9 @@ type uploadYAMLResponse struct {
 // UploadYAML pushes the local instancez.yaml to the project's server-side
 // draft Defs. Called by `inz cloud deploy` and `inz validate --project` before
 // their respective actions so the server sees the latest local source.
-// Returns any providers content the server dropped (non-blocking — a
-// providers: block is local-dev-only and inert in the cloud runtime), for the
-// caller to print as a warning.
+// Returns any providers content the server dropped. This is non-blocking: a
+// providers: block is local-dev-only and inert in the cloud runtime. The
+// caller should print it as a warning.
 func (c *Client) UploadYAML(projectID, yamlContent string) ([]Problem, error) {
 	var out uploadYAMLResponse
 	if err := c.do("PUT", "/instancez/projects/"+projectID+"/yaml", map[string]string{"yaml": yamlContent}, &out); err != nil {
