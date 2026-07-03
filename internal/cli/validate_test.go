@@ -35,19 +35,62 @@ func TestValidateProjectFlagAcceptsBareOrValue(t *testing.T) {
 	assert.Equal(t, "explicit-id", f.Value.String())
 }
 
-// TestValidateProjectSpaceFormRejectedAsArg guards the footgun the sentinel
-// mechanism introduces: "--project explicit-id" (space form) leaves
-// "explicit-id" as a stray positional argument instead of setting an
-// override. Args: cobra.NoArgs turns that into a loud error rather than a
-// silent fall-through to the file's linked project.
-func TestValidateProjectSpaceFormRejectedAsArg(t *testing.T) {
+// TestValidateProjectSpaceFormSetsOverride drives the full command (not just
+// flag parsing) to prove "--project <id>" (space form, the same syntax
+// `inz cloud deploy --project` already accepts) sets the override end to end.
+// NoOptDefVal means pflag itself leaves "<id>" as a stray positional
+// argument rather than consuming it as --project's value; RunE recovers it
+// from args[0] when exactly one is left over and --project was passed.
+func TestValidateProjectSpaceFormSetsOverride(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "tok-123"}))
+	cfgPath := filepath.Join(dir, "instancez.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("version: 1\n"), 0o644)) // no project_id in file
+
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == "PUT" && r.URL.Path == "/instancez/projects/explicit-id/yaml":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == "GET" && r.URL.Path == "/instancez/projects/explicit-id/migration-preview":
+			_ = json.NewEncoder(w).Encode(map[string]any{"diff": ""})
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
+
 	cmd := newValidateCmd()
-	cmd.SetArgs([]string{"--project", "explicit-id"})
+	cmd.SetArgs([]string{"--config", cfgPath, "--project", "explicit-id"})
+	require.NoError(t, cmd.Execute())
+	assert.Equal(t, []string{
+		"PUT /instancez/projects/explicit-id/yaml",
+		"GET /instancez/projects/explicit-id/migration-preview",
+	}, calls, "space-form --project <id> must target explicit-id, the same as inz cloud deploy --project")
+}
+
+// TestValidateRejectsExtraPositionalArgs guards against silently ignoring a
+// genuine typo or stray argument when --project isn't in play at all.
+func TestValidateRejectsExtraPositionalArgs(t *testing.T) {
+	cmd := newValidateCmd()
+	cmd.SetArgs([]string{"something-unexpected"})
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
 	err := cmd.Execute()
-	require.Error(t, err, "space-form --project value must be rejected, not silently dropped")
-	assert.Contains(t, err.Error(), "unknown command", "cobra.NoArgs surfaces the stray token as an unknown command/arg error")
+	assert.ErrorContains(t, err, "does not take positional arguments")
+}
+
+// TestValidateProjectTooManyArgs guards the case where --project is combined
+// with more than one leftover positional argument.
+func TestValidateProjectTooManyArgs(t *testing.T) {
+	cmd := newValidateCmd()
+	cmd.SetArgs([]string{"--project", "id-one", "id-two"})
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	err := cmd.Execute()
+	require.Error(t, err, "more than one leftover positional with --project must be rejected")
 }
 
 func TestPlanAgainstProjectRequiresCredentials(t *testing.T) {

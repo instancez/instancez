@@ -100,14 +100,14 @@ inz validate [flags]
 |------|---------|-------------|
 | `--config` | `instancez.yaml` | Config source. Env: `INSTANCEZ_CONFIG`. |
 | `--json` | `false` | Output errors as JSON (for CI). |
-| `--project` | — | Preview migration against a cloud project. Bare `--project` uses `instancez.yaml`'s linked project; `--project=<id>` targets a different one. Never creates a project; link one first with `inz cloud deploy --new`. |
+| `--project` | — | Preview migration against a cloud project. Bare `--project` uses `instancez.yaml`'s linked project; `--project <id>` or `--project=<id>` targets a different one. Never creates a project; link one first with `inz cloud deploy --new`. |
 | `--use-dsn` | — | After syntax check, plan a migration against this owner-class DSN (plan only — never applied). |
 
 ```bash
 inz validate
 inz validate --use-dsn postgres://owner:pass@localhost/mydb
 inz validate --project                # preview against instancez.yaml's linked project
-inz validate --project=abc123         # preview against a specific project id
+inz validate --project abc123         # preview against a specific project id
 ```
 
 ## inz bundle

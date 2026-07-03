@@ -35,25 +35,39 @@ migration is planned but never applied — this is a dry-run.
 
 With --project, validate uploads the local yaml to the cloud project and
 prints the diff vs. the deployed version. Bare --project reads the project id
-from project.cloud.project_id in instancez.yaml; --project=<id> targets that
-project instead. validate never creates a project; use
-'inz cloud deploy --new' to link one first.`,
-		Args: cobra.NoArgs,
+from project.cloud.project_id in instancez.yaml; --project <id> or
+--project=<id> targets that project instead, the same as 'inz cloud deploy
+--project'. validate never creates a project; use 'inz cloud deploy --new' to
+link one first.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if _, err := applyEnvDefaults(cmd.Flags(), nil, os.Getenv); err != nil {
 				return err
 			}
-			if cmd.Flags().Changed("project") {
-				return planAgainstProject(cmd.Context(), configPath, jsonOutput, project)
+			if !cmd.Flags().Changed("project") {
+				if len(args) > 0 {
+					return fmt.Errorf("validate does not take positional arguments")
+				}
+				return runValidate(cmd.Context(), configPath, jsonOutput, useDSN)
 			}
-			return runValidate(cmd.Context(), configPath, jsonOutput, useDSN)
+			// NoOptDefVal means "--project <id>" (space form) leaves <id> as a
+			// stray positional argument instead of consuming it as the flag's
+			// value: pflag always applies NoOptDefVal when --project has no
+			// "=value" attached, and never looks at the next token. Treating a
+			// single leftover argument as the override recovers the same space
+			// form "inz cloud deploy --project <id>" already supports.
+			override := project
+			if len(args) == 1 {
+				override = args[0]
+			}
+			return planAgainstProject(cmd.Context(), configPath, jsonOutput, override)
 		},
 	}
 
 	cmd.Flags().StringVar(&configPath, "config", "instancez.yaml", "config source (env: INSTANCEZ_CONFIG)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output errors as JSON (for CI)")
 	cmd.Flags().StringVar(&useDSN, "use-dsn", "", "after syntax check, plan a migration against this owner-class DSN")
-	cmd.Flags().StringVar(&project, "project", "", "preview migration against a cloud project (bare --project uses instancez.yaml's project_id; --project=<id> overrides it)")
+	cmd.Flags().StringVar(&project, "project", "", "preview migration against a cloud project (bare --project uses instancez.yaml's project_id; --project <id> overrides it)")
 	cmd.Flags().Lookup("project").NoOptDefVal = useFileProjectID
 	return cmd
 }
