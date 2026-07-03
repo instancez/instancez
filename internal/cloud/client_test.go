@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestClientDeviceTokenSuccess(t *testing.T) {
@@ -151,7 +152,7 @@ func TestClientUploadYAML(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "instancez_pat_test")
-	err := c.UploadYAML("app-uuid", "version: 1\n")
+	_, err := c.UploadYAML("app-uuid", "version: 1\n")
 	assert.NoError(t, err)
 }
 
@@ -168,7 +169,7 @@ func TestClientUploadYAMLValidationFailed(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "instancez_pat_test")
-	err := c.UploadYAML("app-uuid", "version: 1\n")
+	_, err := c.UploadYAML("app-uuid", "version: 1\n")
 
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {
@@ -181,6 +182,25 @@ func TestClientUploadYAMLValidationFailed(t *testing.T) {
 		assert.Equal(t, `unknown type "uuid2"`, p.Message)
 		assert.Equal(t, `did you mean "uuid"?`, p.Suggestion)
 	}
+}
+
+func TestClientUploadYAMLReturnsDropped(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"dropped": []map[string]string{
+				{"path": "providers.storage", "message": "storage and email are provided automatically by the platform and cannot be configured"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "instancez_pat_test")
+	dropped, err := c.UploadYAML("app-uuid", "version: 1\nproviders:\n  storage:\n    type: local\n")
+	require.NoError(t, err)
+	require.Len(t, dropped, 1)
+	assert.Equal(t, "providers.storage", dropped[0].Path)
 }
 
 func TestUploadFunctions(t *testing.T) {
