@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCredentialsRoundtrip(t *testing.T) {
@@ -33,4 +34,38 @@ func TestCredentialsRoundtrip(t *testing.T) {
 	assert.NoError(t, Delete())
 	_, err = Load()
 	assert.ErrorIs(t, err, ErrNoCredentials)
+}
+
+func TestLoadPrefersEnvPATOverFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	require.NoError(t, Save(Credentials{PAT: "file-pat", Email: "file@example.com"}))
+
+	t.Setenv("INSTANCEZ_CLOUD_PAT", "env-pat")
+	creds, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, "env-pat", creds.PAT)
+	assert.Empty(t, creds.Email, "env-var auth has no informational email")
+}
+
+func TestLoadEnvPATWithNoCredentialsFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("INSTANCEZ_CLOUD_PAT", "env-pat-only")
+
+	creds, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, "env-pat-only", creds.PAT)
+}
+
+func TestLoadFallsBackToFileWhenEnvUnset(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("INSTANCEZ_CLOUD_PAT", "")
+	require.NoError(t, Save(Credentials{PAT: "file-pat", Email: "file@example.com"}))
+
+	creds, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, "file-pat", creds.PAT)
+	assert.Equal(t, "file@example.com", creds.Email)
 }

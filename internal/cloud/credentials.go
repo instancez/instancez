@@ -32,10 +32,14 @@ func credentialsPath() (string, error) {
 	return filepath.Join(home, ".instancez", "credentials"), nil
 }
 
-// Load reads credentials from disk. Returns ErrNoCredentials if the file
-// does not exist; any other error (corrupt JSON, permission denied) is
-// surfaced verbatim.
+// Load reads credentials, preferring INSTANCEZ_CLOUD_PAT over the on-disk
+// file when set — this is what lets CI authenticate without ever running
+// the interactive device-code flow behind `inz cloud login`. Falls back to
+// the credentials file; returns ErrNoCredentials if neither is present.
 func Load() (Credentials, error) {
+	if pat := os.Getenv("INSTANCEZ_CLOUD_PAT"); pat != "" {
+		return Credentials{PAT: pat}, nil
+	}
 	p, err := credentialsPath()
 	if err != nil {
 		return Credentials{}, err
