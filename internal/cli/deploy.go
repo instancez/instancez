@@ -21,6 +21,7 @@ type deployOpts struct {
 	yes     bool
 	new     bool
 	project string
+	branch  string
 }
 
 func newDeployCmd() *cobra.Command {
@@ -30,42 +31,42 @@ func newDeployCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "deploy",
 		Short: "Push the current instancez.yaml to an instancez Cloud project",
-		Long: `Deploy the current project's instancez.yaml to the cloud.
+		Long: `Deploy the current project's instancez.yaml directly to the named branch.
 
 By default the project_id is read from project.cloud.project_id inside
 instancez.yaml. If none is set, pass --new to create a cloud project inline
 (only after local validation passes) or --project <id> to target an existing
 project without editing the yaml.
 
-Deploy uploads the local yaml to the project's draft, shows a migration
-preview (production -> draft), and after confirmation promotes the draft to
-production.
+--branch selects which environment is written: draft (default) or
+production. Writing to draft never asks for confirmation. Writing to
+production shows a diff and asks "Deploy to production? [y/N]" unless --yes
+is passed.
 
-When the project declares code functions, deploy uploads their sources and the
-cloud builds the bundle. No local npm or S3 bucket is required.`,
+When the project declares code functions, deploy uploads their sources to
+the same branch and the cloud builds the bundle. No local npm or S3 bucket
+is required.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runDeploy(configPath, opts)
 		},
 	}
 	cmd.Flags().StringVar(&configPath, "config", "instancez.yaml", "path to instancez.yaml")
-	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false, "skip confirmation prompt")
+	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false, "skip the production confirmation prompt")
 	cmd.Flags().BoolVar(&opts.new, "new", false, "create a new instancez Cloud project when none is linked yet (only after local validation passes)")
 	cmd.Flags().StringVar(&opts.project, "project", "", "target this cloud project id for this run, instead of instancez.yaml's project.cloud.project_id (does not modify the file)")
+	cmd.Flags().StringVar(&opts.branch, "branch", "draft", "branch to write: draft or production")
 	return cmd
 }
 
-// promptConfirm is the confirmation hook used before promoting a draft to
-// production. It is a package-level var so tests can swap it out (the deploy
-// command signature is fixed at runDeploy(configPath, opts), leaving no room to
-// inject it as a parameter). Defaults to confirmStdinDefaultNo so a bare Enter
-// at the [y/N] prompt is treated as "no" — promoting to production should be
-// an explicit choice.
+// promptConfirm is the confirmation hook used before writing to production.
+// Package-level var so tests can swap it out. Defaults to confirmStdinDefaultNo,
+// so a bare Enter at the [y/N] prompt is treated as "no". Deploying to
+// production should be an explicit choice.
 var promptConfirm = confirmStdinDefaultNo
 
 // confirmStdinDefaultNo prints prompt and reads a [y/N] answer from stdin. Only
 // an answer starting with 'y'/'Y' is a yes; empty input (just Enter) or
-// anything else is no. This is the cautious counterpart to confirmStdin, used
-// for irreversible-ish actions like promoting a draft to production.
+// anything else is no.
 func confirmStdinDefaultNo(prompt string) bool {
 	fmt.Print(prompt)
 	reader := bufio.NewReader(os.Stdin)
@@ -81,18 +82,18 @@ func runDeploy(configPath string, opts deployOpts) error {
 	if opts.new && opts.project != "" {
 		return errors.New("--new and --project are mutually exclusive")
 	}
+	branch := opts.branch
+	if branch == "" {
+		branch = "draft"
+	}
+	if branch != "draft" && branch != "production" {
+		return fmt.Errorf("--branch must be draft or production, got %q", branch)
+	}
 
-	// deploy reads the local config to find the project_id and upload it to
-	// cloud; it does not support remote config sources. Reject them up front,
-	// before the preflight check that reads the file via os.ReadFile.
 	if err := requireLocalConfig(configPath); err != nil {
 		return err
 	}
 
-	// Preflight: verify config is structurally valid before touching the
-	// network or (if --new) creating a cloud project. This is what keeps
-	// --new from ever creating an empty/orphaned project for an invalid
-	// config: creation only happens after this passes.
 	if r, failed := preflight.RunUntilFail([]preflight.Check{
 		preflight.ConfigValidCheck(configPath),
 	}); failed {
@@ -125,8 +126,6 @@ func runDeploy(configPath string, opts deployOpts) error {
 		return errors.New("no project linked; pass --new to create one, or --project <id> to target an existing one")
 	}
 
-	// Inline login: returns existing creds, prompts on a TTY, or hard-errors
-	// in a non-interactive session pointing at `inz cloud login`.
 	creds, err := ensureLoggedIn(ensureLoginOpts{})
 	if err != nil {
 		return err
@@ -156,61 +155,55 @@ func runDeploy(configPath string, opts deployOpts) error {
 		fmt.Printf("  ✓ Project created (id: %s)\n", projectID)
 	}
 
-	// 1. Push the local YAML to the project's draft Defs so the server sees
-	// exactly what's on disk — this must happen BEFORE the preview so the
-	// migration plan reflects the just-uploaded draft.
-	fmt.Println("  Uploading instancez.yaml...")
-	dropped, err := c.UploadYAML(projectID, string(src))
-	if err != nil {
-		return reportCloudErr("upload yaml", err)
-	}
-	printDropped(dropped)
+	// For production, confirm before anything is written, including function
+	// sources. This keeps "nothing persisted before confirmation" true for the
+	// whole invocation, not just the yaml write. The preview call is read-only,
+	// so it can safely run ahead of the gate.
+	if branch == "production" {
+		fmt.Println("  Checking what would change in production...")
+		dropped, diff, err := c.PreviewBranchConfig(projectID, branch, string(src))
+		if err != nil {
+			return reportCloudErr("preview production config", err)
+		}
+		printDropped(dropped)
+		fmt.Println()
+		fmt.Println(renderConfigDiff(diff))
+		fmt.Println()
 
-	// 1b. Upload function sources (if any). The cloud builds the bundle from
-	// these on deploy; nothing is built or vendored locally.
+		if !opts.yes {
+			if !promptConfirm("Deploy to production? [y/N] ") {
+				fmt.Println("  Aborted — nothing was changed.")
+				return nil
+			}
+		}
+	}
+
+	// Function sources go to the target branch first, so the yaml write's
+	// functions-uploaded guard (production only) never trips: the sources
+	// are already there from this same invocation, after the gate above.
 	if len(cfg.Functions) > 0 {
 		fmt.Println("  Uploading function sources...")
 		sources, err := collectFunctionSources(filepath.Dir(configPath))
 		if err != nil {
 			return fmt.Errorf("collect function sources: %w", err)
 		}
-		if err := c.UploadFunctions(projectID, sources); err != nil {
+		if err := c.UploadFunctions(projectID, branch, sources); err != nil {
 			return fmt.Errorf("upload function sources: %w", err)
 		}
 	}
 
-	// 2. Server-computed migration plan (production → draft). Render it so the
-	// user can see what promoting will do.
-	preview, err := c.MigrationPreview(projectID)
+	fmt.Printf("  Uploading instancez.yaml to %s...\n", branch)
+	dropped, diff, err := c.UploadYAML(projectID, branch, string(src))
 	if err != nil {
-		return fmt.Errorf("migration preview: %w", err)
+		return reportCloudErr("upload yaml", err)
 	}
-	fmt.Println()
-	if preview.Diff == "" {
-		fmt.Println("  No pending changes — production already matches the draft.")
-	} else {
-		fmt.Println("  Migration preview (production → draft):")
-		fmt.Println(preview.Diff)
-	}
-	fmt.Println()
-
-	// 3. Confirm before promoting (unless --yes). Declining aborts without a
-	// deploy — that's a user choice, not a failure.
-	if !opts.yes {
-		if !promptConfirm("Promote draft → production? [y/N] ") {
-			fmt.Println("  Aborted — draft uploaded but not promoted to production.")
-			return nil
-		}
+	printDropped(dropped)
+	if branch == "draft" {
+		fmt.Println()
+		fmt.Println(renderConfigDiff(diff))
 	}
 
-	// 4. Promote the draft to production.
-	fmt.Println("  Promoting...")
-	resp, err := c.Deploy(projectID)
-	if err != nil {
-		return reportCloudErr("deploy", err)
-	}
-
-	fmt.Printf("  ✓ Promoted — deploying (version_id: %s)\n", resp.VersionID)
+	fmt.Printf("  ✓ Written to %s.\n", branch)
 	fmt.Println("  Track progress in the instancez Cloud dashboard.")
 	return nil
 }
