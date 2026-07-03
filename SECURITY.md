@@ -6,10 +6,7 @@ instancez handles authentication, JWTs, row-level security, and file storage, so
 
 Please do not open a public issue for a security problem.
 
-Report it privately through GitHub's [private vulnerability reporting](https://github.com/instancez/instancez/security/advisories/new) on this repository. <!-- TODO(security): enable "Private vulnerability reporting" in repo Settings > Security before launch. -->
-
-<!-- TODO(security): if you prefer email instead of or in addition to GitHub advisories,
-     add a dedicated address here, e.g. security@instancez.ai, and remove this comment. -->
+Report it privately through GitHub's [private vulnerability reporting](https://github.com/instancez/instancez/security/advisories/new) on this repository.
 
 Include as much as you can:
 
@@ -27,8 +24,6 @@ Include as much as you can:
 ## Supported versions
 
 instancez is pre-1.0 in practice and moves quickly. Security fixes land on the latest release. Please test against a recent version before reporting.
-
-<!-- TODO(security): once a formal release cadence exists, replace the line above with a supported-versions table. -->
 
 ## Scope
 

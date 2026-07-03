@@ -5,7 +5,7 @@ description: Deploy instancez on Kubernetes using the official Helm chart.
 
 ## Overview
 
-instancez ships a Helm chart at `helm/instancez/` in the repository. It deploys the instancez backend and, optionally, a bundled PostgreSQL instance. Sensitive values (`adminKey`, `jwtSecret`, and the Postgres password) are auto-generated on first install and preserved across upgrades.
+instancez ships a Helm chart at `helm/instancez/` in the repository. It deploys the instancez backend and, optionally, a bundled PostgreSQL instance. Sensitive values (`adminKey` and the Postgres password) are auto-generated on first install and preserved across upgrades.
 
 ## Prerequisites
 
@@ -21,13 +21,12 @@ The default chart values enable a bundled Postgres instance. To install with all
 helm install instancez ./helm/instancez
 ```
 
-`adminKey`, `jwtSecret`, and the Postgres password are auto-generated as 32-character random strings and stored in a Kubernetes Secret named `instancez`. They are stable — the values are generated once and reused on every subsequent `helm upgrade`.
+`adminKey` and the Postgres password are auto-generated as 32-character random strings and stored in a Kubernetes Secret named `instancez`. They are stable — the values are generated once and reused on every subsequent `helm upgrade`.
 
 Retrieve the generated credentials:
 
 ```bash
 kubectl get secret instancez -o jsonpath='{.data.adminKey}' | base64 -d
-kubectl get secret instancez -o jsonpath='{.data.jwtSecret}' | base64 -d
 ```
 
 ## Providing your own values
@@ -36,8 +35,7 @@ Pass values on the command line with `--set`:
 
 ```bash
 helm install instancez ./helm/instancez \
-  --set adminKey=my-admin-key \
-  --set jwtSecret=my-jwt-secret
+  --set adminKey=my-admin-key
 ```
 
 Or save them in a values file and pass it with `-f`:
@@ -45,7 +43,6 @@ Or save them in a values file and pass it with `-f`:
 ```yaml
 # my-values.yaml
 adminKey: my-admin-key
-jwtSecret: my-jwt-secret
 ```
 
 ```bash
@@ -116,7 +113,7 @@ ingress:
 helm upgrade instancez ./helm/instancez
 ```
 
-Auto-generated secrets (`adminKey`, `jwtSecret`, and the bundled Postgres password) are read from the existing Kubernetes Secret and not regenerated on upgrade, so credentials are preserved.
+Auto-generated secrets (`adminKey` and the bundled Postgres password) are read from the existing Kubernetes Secret and not regenerated on upgrade, so credentials are preserved.
 
 To upgrade with a new values file:
 
@@ -128,7 +125,7 @@ helm upgrade instancez ./helm/instancez -f my-values.yaml
 
 To rotate credentials:
 
-1. Update the `instancez` Kubernetes Secret directly — edit `adminKey`, `jwtSecret`, or `databaseUrl` (and the bundled Postgres password if applicable).
+1. Update the `instancez` Kubernetes Secret directly — edit `adminKey` or `databaseUrl` (and the bundled Postgres password if applicable).
 2. Restart the pod so instancez picks up the new values:
 
 ```bash

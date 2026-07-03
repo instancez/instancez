@@ -14,7 +14,6 @@ To access instancez locally, run:
 Then visit http://localhost:8080
 {{- end }}
 
-IMPORTANT: If adminKey or jwtSecret were auto-generated, retrieve them with:
+IMPORTANT: If adminKey was auto-generated, retrieve it with:
   kubectl get secret {{ include "instancez.fullname" . }} -o jsonpath='{.data.adminKey}' | base64 -d
-  kubectl get secret {{ include "instancez.fullname" . }} -o jsonpath='{.data.jwtSecret}' | base64 -d
-Store these values securely — they will not be shown again.
+Store this value securely — it will not be shown again.

@@ -38,11 +38,6 @@ spec:
                 secretKeyRef:
                   name: {{ include "instancez.fullname" . }}
                   key: adminKey
-            - name: JWT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "instancez.fullname" . }}
-                  key: jwtSecret
             - name: INSTANCEZ_PORT
               value: "8080"
           ports:

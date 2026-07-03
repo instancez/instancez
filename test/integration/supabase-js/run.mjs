@@ -403,6 +403,101 @@ await step('rest: Prefer handling=strict accepts all known directives', async ()
   assert(resp.ok, `strict with known directives must succeed: ${resp.status}`)
 })
 
+await step('rest: Prefer missing=default substitutes column defaults and echoes back', async () => {
+  const resp = await fetch(`${URL}/rest/v1/todos`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      apikey: ANON_KEY,
+      'Content-Type': 'application/json',
+      Prefer: 'return=representation,missing=default',
+    },
+    // done/priority omitted on purpose — the server-side column defaults
+    // (false / 0) must be substituted.
+    body: JSON.stringify({ title: 'missing-default probe', user_id: userId }),
+  })
+  assertEq(resp.status, 201, 'missing=default insert status')
+  const applied = resp.headers.get('Preference-Applied') || ''
+  assert(applied.includes('missing=default'), `Preference-Applied should echo missing=default, got ${applied}`)
+  const [row] = await resp.json()
+  assertEq(row.done, false, 'done should fall back to its column default')
+  assertEq(row.priority, 0, 'priority should fall back to its column default')
+})
+
+await step('rest: Prefer max-affected rejects an update touching too many rows', async () => {
+  const marker = `max-affected-${Date.now()}`
+  const insertResp = await fetch(`${URL}/rest/v1/todos`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      apikey: ANON_KEY,
+      'Content-Type': 'application/json',
+      Prefer: 'return=representation',
+    },
+    body: JSON.stringify([
+      { title: marker, user_id: userId },
+      { title: marker, user_id: userId },
+    ]),
+  })
+  assertEq(insertResp.status, 201, 'max-affected fixture insert status')
+
+  const patchResp = await fetch(`${URL}/rest/v1/todos?title=eq.${marker}`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      apikey: ANON_KEY,
+      'Content-Type': 'application/json',
+      Prefer: 'return=representation,max-affected=1',
+    },
+    body: JSON.stringify({ priority: 9 }),
+  })
+  assertEq(patchResp.status, 400, 'max-affected=1 must reject a 2-row update')
+  const body = await patchResp.json()
+  assertEq(body.code, 'PGRST124', 'max-affected error code')
+
+  // The rejected update must have rolled back — priority stays at its default.
+  const checkResp = await fetch(`${URL}/rest/v1/todos?title=eq.${marker}&order=priority.desc&limit=1`, {
+    headers: { Authorization: `Bearer ${accessToken}`, apikey: ANON_KEY },
+  })
+  const [row] = await checkResp.json()
+  assertEq(row.priority, 0, 'update must not have applied after max-affected rejection')
+
+  const patchOk = await fetch(`${URL}/rest/v1/todos?title=eq.${marker}`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      apikey: ANON_KEY,
+      'Content-Type': 'application/json',
+      Prefer: 'return=representation,max-affected=2',
+    },
+    body: JSON.stringify({ priority: 9 }),
+  })
+  assertEq(patchOk.status, 200, 'max-affected=2 must allow a 2-row update')
+})
+
+await step('rest: Prefer tx=rollback discards the mutation', async () => {
+  const marker = `tx-rollback-${Date.now()}`
+  const resp = await fetch(`${URL}/rest/v1/todos`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      apikey: ANON_KEY,
+      'Content-Type': 'application/json',
+      Prefer: 'return=representation,tx=rollback',
+    },
+    body: JSON.stringify({ title: marker, user_id: userId }),
+  })
+  assertEq(resp.status, 201, 'tx=rollback insert reports success')
+  const [row] = await resp.json()
+  assertEq(row.title, marker, 'tx=rollback still returns the representation')
+
+  const checkResp = await fetch(`${URL}/rest/v1/todos?title=eq.${marker}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, apikey: ANON_KEY },
+  })
+  const rows = await checkResp.json()
+  assertEq(rows.length, 0, 'tx=rollback must not persist the row')
+})
+
 // --- Nested embed tests ---
 // These tests rely on the todos row inserted earlier still being present.
 
@@ -2013,6 +2108,51 @@ await step('storage: download with image transform', async () => {
   assert(dlResp.ok, `transformed download failed: ${dlResp.status}`)
   const ct = dlResp.headers.get('content-type')
   assert(ct && ct.includes('image/png'), `expected image/png, got ${ct}`)
+})
+
+// IHDR immediately follows the 8-byte PNG signature: 4-byte length, 4-byte
+// "IHDR", then big-endian width/height at bytes 16-23.
+function pngDimensions(buf) {
+  return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) }
+}
+
+await step('storage: image transform resize=fill stretches to exact dimensions', async () => {
+  const dlResp = await fetch(
+    `${URL}/storage/v1/object/public/avatars/transform-test.png?width=3&height=5&resize=fill&format=png`,
+    { headers: { apikey: ANON_KEY } }
+  )
+  assert(dlResp.ok, `fill transform failed: ${dlResp.status}`)
+  const buf = Buffer.from(await dlResp.arrayBuffer())
+  const { width, height } = pngDimensions(buf)
+  assertEq(width, 3, 'resize=fill width')
+  assertEq(height, 5, 'resize=fill height')
+})
+
+await step('storage: image transform resize=contain preserves aspect within box', async () => {
+  const dlResp = await fetch(
+    `${URL}/storage/v1/object/public/avatars/transform-test.png?width=4&height=2&resize=contain&format=png`,
+    { headers: { apikey: ANON_KEY } }
+  )
+  assert(dlResp.ok, `contain transform failed: ${dlResp.status}`)
+  const buf = Buffer.from(await dlResp.arrayBuffer())
+  const { width, height } = pngDimensions(buf)
+  assert(width <= 4 && height <= 2, `contain must fit within box, got ${width}x${height}`)
+  assert(width > 0 && height > 0, 'contain output must be non-empty')
+})
+
+await step('storage: image transform quality affects jpeg output size', async () => {
+  const fetchJpeg = async (quality) => {
+    const resp = await fetch(
+      `${URL}/storage/v1/object/public/avatars/transform-test.png?width=64&height=64&resize=fill&format=jpeg&quality=${quality}`,
+      { headers: { apikey: ANON_KEY } }
+    )
+    assert(resp.ok, `jpeg transform (quality=${quality}) failed: ${resp.status}`)
+    assert((resp.headers.get('content-type') || '').includes('image/jpeg'), 'expected image/jpeg')
+    return Buffer.from(await resp.arrayBuffer())
+  }
+  const low = await fetchJpeg(5)
+  const high = await fetchJpeg(95)
+  assert(low.length < high.length, `low quality (${low.length}b) should be smaller than high quality (${high.length}b)`)
 })
 
 // --- Serverless-friendly endpoints (raw fetch, not supabase-js) ---

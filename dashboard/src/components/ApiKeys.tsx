@@ -153,7 +153,6 @@ export function ApiKeys() {
           )}
         </VStack>
       </Section>
-      {/* TODO(api-activity): request volume + p95 once a metrics source exists (bandwidth_handlers.go is bytes-only) */}
     </>
   );
 }

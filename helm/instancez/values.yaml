@@ -7,7 +7,6 @@ replicaCount: 1
 
 # Sensitive values — auto-generated 32-char random strings if empty (see Secret section)
 adminKey: ""
-jwtSecret: ""
 
 # Raw instancez.yaml block — written to a ConfigMap and mounted at /app/instancez.yaml
 config: |

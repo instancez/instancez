@@ -28,7 +28,6 @@ services:
     environment:
       INSTANCEZ_DATABASE_URL: postgres://instancez:instancez@postgres:5432/instancez?sslmode=disable
       INSTANCEZ_ADMIN_KEY: instancez-dev-key
-      JWT_SECRET: dev-jwt-secret-change-me
     volumes:
       - ./instancez.yaml:/app/instancez.yaml
     depends_on:

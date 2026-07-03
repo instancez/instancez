@@ -103,7 +103,8 @@ Environment variables passed to code functions use the `INSTANCEZ_ENV_` prefix. 
 ```yaml
 functions:
   my-function:
-    handler: functions/my-function/index.ts
+    runtime: node
+    file: functions/my-function.js
     env:
       STRIPE_SECRET_KEY: ${INSTANCEZ_ENV_STRIPE_SECRET_KEY}
       DATABASE_URL: ${INSTANCEZ_ENV_DATABASE_URL}
