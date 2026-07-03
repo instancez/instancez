@@ -21,7 +21,6 @@ inz init [name] [flags]
 |------|---------|-------------|
 | `--dir` | `.` | Output directory. |
 | `--force` | `false` | Overwrite existing scaffolding files. |
-| `--with-cloud` | — | Create a project in instancez Cloud (requires `inz cloud login`). |
 
 ```bash
 inz init my-app --dir ./my-app

@@ -17,13 +17,22 @@ func TestInitHasNoGenerateLikeFlag(t *testing.T) {
 	assert.Nil(t, cmd.Flags().Lookup("generate-like"), "--generate-like was removed (dead: no server route ever existed)")
 }
 
-func TestInitWithCloudRequiresLogin(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+func TestInitHasNoWithCloudFlag(t *testing.T) {
+	cmd := newInitCmd()
+	assert.Nil(t, cmd.Flags().Lookup("with-cloud"), "--with-cloud was removed; init never talks to the network")
+}
 
-	opts := initOptions{dir: dir, withCloud: true, name: "myapp"}
-	err := runInit(opts)
-	assert.ErrorContains(t, err, "inz cloud login")
+// TestRunInitNeverCallsNetwork proves init makes no network call under any
+// options by pointing INSTANCEZ_CLOUD_API at a dead address — if init ever
+// reached out, this would hang/error instead of completing instantly.
+func TestRunInitNeverCallsNetwork(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir()) // no credentials on disk
+	t.Setenv("INSTANCEZ_CLOUD_API", "http://127.0.0.1:1")
+
+	if err := runInit(initOptions{name: "demo", dir: dir}); err != nil {
+		t.Fatalf("runInit must succeed without any network/credential dependency: %v", err)
+	}
 }
 
 // TestRunInitScaffoldStartsCleanly guards the generated project: it must both
@@ -195,46 +204,6 @@ func TestRunInitForceOverwrites(t *testing.T) {
 	if string(afterBytes) == customContent {
 		t.Error("instancez.yaml was NOT overwritten despite --force")
 	}
-}
-
-// TestRunInitWithCloudSkipsCreateWhenAlreadyLinked guards against duplicate
-// cloud-project creation: re-running `inz init --with-cloud` over a yaml that
-// already carries project.cloud.project_id must NOT call CreateProject.
-//
-// The proof is twofold and network-free:
-//   - We point INSTANCEZ_CLOUD_API at a dead address. If the guard regressed
-//     and CreateProject were reached, it would hit that address and runInit
-//     would return an error. So err==nil IS the evidence the guard fired.
-//   - The existing project_id read is purely local, so valid creds-on-disk let
-//     ensureLoggedIn return early without TTY or network.
-//
-// We also assert the yaml bytes are unchanged — the no-id path would inject a
-// freshly-created id and rewrite the file.
-func TestRunInitWithCloudSkipsCreateWhenAlreadyLinked(t *testing.T) {
-	dir := t.TempDir()
-
-	// Fresh HOME with valid creds so ensureLoggedIn returns at login.go:124
-	// (no TTY prompt, no device-code flow).
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "test-pat"}))
-
-	// Any CreateProject call would hit this unreachable address and error.
-	t.Setenv("INSTANCEZ_CLOUD_API", "http://127.0.0.1:1")
-
-	// Seed a yaml that already declares project.cloud.project_id. Use the real
-	// helper so the field lands exactly where ReadProjectID looks for it.
-	linked, err := cloud.WriteProjectID([]byte(scaffoldYAML("demo")), "proj_existing")
-	require.NoError(t, err)
-	yamlPath := filepath.Join(dir, "instancez.yaml")
-	require.NoError(t, os.WriteFile(yamlPath, linked, 0o644))
-
-	err = runInit(initOptions{name: "demo", dir: dir, withCloud: true})
-	require.NoError(t, err, "guard should skip CreateProject; any creation hits the dead API and errors")
-
-	after, err := os.ReadFile(yamlPath)
-	require.NoError(t, err)
-	assert.Equal(t, string(linked), string(after), "yaml must be untouched when already linked")
 }
 
 // TestReadProjectIDGuardDecision unit-tests the guard predicate in isolation:

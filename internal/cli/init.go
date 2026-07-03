@@ -6,16 +6,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/instancez/instancez/internal/cloud"
 	"github.com/spf13/cobra"
 )
 
 // initOptions captures the resolved positional + flags for `inz init`.
 type initOptions struct {
-	name      string
-	dir       string
-	withCloud bool
-	force     bool
+	name  string
+	dir   string
+	force bool
 }
 
 func newInitCmd() *cobra.Command {
@@ -42,25 +40,11 @@ init only writes scaffolding files; it never touches a database. A
 	}
 
 	cmd.Flags().StringVar(&opts.dir, "dir", ".", "output directory")
-	cmd.Flags().BoolVar(&opts.withCloud, "with-cloud", false, "create a project in instancez Cloud (requires `inz cloud login`)")
 	cmd.Flags().BoolVar(&opts.force, "force", false, "overwrite existing scaffolding files")
 	return cmd
 }
 
-// validateInitFlags enforces mutual exclusions between init's flags.
-// --with-cloud is orthogonal to the local dev flags — it specifies the cloud
-// target.
-func validateInitFlags(opts initOptions) error {
-	return nil
-}
-
 func runInit(opts initOptions) error {
-	if err := validateInitFlags(opts); err != nil {
-		return err
-	}
-
-	// Resolve the output directory and check for an existing yaml early so we
-	// can make decisions (keep-existing) before any network/login calls.
 	dir, err := filepath.Abs(opts.dir)
 	if err != nil {
 		return fmt.Errorf("resolve dir: %w", err)
@@ -68,16 +52,6 @@ func runInit(opts initOptions) error {
 	yamlPath := filepath.Join(dir, "instancez.yaml")
 	_, statErr := os.Stat(yamlPath)
 	yamlExists := statErr == nil
-
-	// Cloud-dependent flags require credentials. On an interactive terminal
-	// ensureLoggedIn prompts and runs the device-code flow inline (saving creds
-	// to disk so the cloud calls below pick them up); in a non-interactive
-	// session it returns a hard error pointing at `inz cloud login`.
-	if opts.withCloud {
-		if _, err := ensureLoggedIn(ensureLoginOpts{}); err != nil {
-			return err
-		}
-	}
 
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create directory: %w", err)
@@ -89,8 +63,8 @@ func runInit(opts initOptions) error {
 	}
 
 	// instancez.yaml: keep existing content when the file is already present
-	// and --force is not set. The rest of init (role provisioning, cloud
-	// linking, next-steps) still runs so a re-run is fully idempotent.
+	// and --force is not set. The rest of init (functions, env examples,
+	// next-steps) still runs so a re-run is fully idempotent.
 	if yamlExists && !opts.force {
 		fmt.Println("  = instancez.yaml (unchanged)")
 	} else {
@@ -164,57 +138,13 @@ func runInit(opts initOptions) error {
 		return err
 	}
 
-	// Create cloud project and bake project_id into instancez.yaml.
-	//
-	// Guard against duplicate creation: init is idempotent (it keeps an
-	// existing yaml), so a re-run of --with-cloud reaches this block over a
-	// yaml that may already carry project.cloud.project_id. Read it first —
-	// the read is local — and skip creation if we're already linked, so a
-	// re-run doesn't spawn a second cloud project.
-	if opts.withCloud {
-		existing, err := os.ReadFile(yamlPath)
-		if err != nil {
-			return fmt.Errorf("re-reading instancez.yaml: %w", err)
-		}
-		linkedID, err := cloud.ReadProjectID(existing)
-		if err != nil {
-			return fmt.Errorf("reading project_id: %w", err)
-		}
-		if linkedID != "" {
-			fmt.Printf("  = already linked to project %s\n", linkedID)
-		} else {
-			fmt.Println("  Creating instancez Cloud project...")
-			creds, _ := cloud.Load()
-			c := cloud.NewClient(cloud.APIURL(), creds.PAT)
-			resp, err := c.CreateProject(name)
-			if err != nil {
-				return fmt.Errorf("creating cloud project: %w", err)
-			}
-			fmt.Printf("  ✓ Project created (id: %s)\n", resp.ProjectID)
-
-			updated, err := cloud.WriteProjectID(existing, resp.ProjectID)
-			if err != nil {
-				return fmt.Errorf("injecting project_id: %w", err)
-			}
-			if err := os.WriteFile(yamlPath, updated, 0o644); err != nil {
-				return fmt.Errorf("writing instancez.yaml: %w", err)
-			}
-			fmt.Println("  ~ instancez.yaml (added project.cloud.project_id)")
-		}
-	}
-
 	fmt.Println()
 	fmt.Println("Done! Next steps:")
 	if dir != mustCwd() {
 		fmt.Printf("  cd %s\n", opts.dir)
 	}
-	switch {
-	case opts.withCloud:
-		fmt.Println("  inz cloud deploy      # push your YAML to the cloud project")
-	default:
-		fmt.Println("  cp .development.env.example .development.env   # set INSTANCEZ_DATABASE_URL")
-		fmt.Println("  inz dev")
-	}
+	fmt.Println("  cp .development.env.example .development.env   # set INSTANCEZ_DATABASE_URL")
+	fmt.Println("  inz dev")
 	return nil
 }
 
