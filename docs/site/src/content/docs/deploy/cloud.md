@@ -3,7 +3,7 @@ title: instancez Cloud
 description: Deploy a project to instancez Cloud with inz cloud login and inz cloud deploy.
 ---
 
-instancez Cloud runs your project as a managed service. You keep editing `instancez.yaml` locally, then push it to a hosted project with `inz cloud deploy`. The CLI handles auth, uploads the config, shows you what the migration will change, and promotes it to production once you confirm.
+instancez Cloud runs your project as a managed service. You keep editing `instancez.yaml` locally, then push it to a hosted project with `inz cloud deploy`. The CLI handles auth, uploads the config, and deploys straight to the branch you choose.
 
 ## Sign in
 
@@ -37,23 +37,100 @@ Re-running `inz init --with-cloud` over a config that already has a `project_id`
 ## Deploy
 
 ```bash
-inz cloud deploy
+inz cloud deploy --branch draft
+inz cloud deploy --branch production
 ```
 
-Deploy reads the `project_id` from `instancez.yaml` and then:
+`--branch` (default `draft`) selects which environment is written. Deploy
+writes directly to that branch — there is no separate promote step:
 
-1. Uploads your local YAML as the project's draft.
-2. Shows a migration preview of what promoting the draft would change in production.
-3. Prompts `Promote draft → production? [y/N]`. A bare Enter is treated as "no", so promoting is always an explicit choice.
-4. Promotes the draft to production and prints the new version id.
+1. Uploads function sources (if the project declares any) to the target branch.
+2. For `--branch production` only: shows a page-free diff of what would
+   change, then prompts `Deploy to production? [y/N]`. A bare Enter is
+   treated as "no". Pass `--yes` (`-y`) to skip the prompt in scripts.
+3. Uploads your local YAML to the target branch and triggers a rebuild.
 
-Declining at the prompt leaves the draft uploaded but unpublished, so you can review it in the dashboard before promoting. Pass `--yes` (`-y`) to skip the prompt in scripts.
+`--branch draft` never prompts — writing to draft has never required
+confirmation, and that stays true here.
 
 ### Code functions
 
-If your project declares code functions, `inz cloud deploy` uploads your function sources and the cloud builds the bundle. You do not need an S3 bucket or a local npm step for deployment.
+If your project declares code functions, `inz cloud deploy` uploads your
+function sources to the same branch as the yaml, and the cloud builds the
+bundle. You do not need an S3 bucket or a local npm step for deployment.
 
 `--functions-bundle-dest` no longer exists on `inz cloud deploy`. For self-hosted projects using `inz serve --bundle`, use `inz bundle --output s3://my-bucket/functions/` to build and upload the bundle yourself.
+
+## Continuous deployment (GitHub Actions)
+
+`inz cloud deploy` needs a Personal Access Token, but the device-code flow behind `inz cloud login` needs a browser, and CI can't open one. Instead, sign in once from your machine, copy the token, and hand CI the value directly:
+
+```bash
+inz cloud login
+cat ~/.instancez/credentials   # copy the "pat" value
+```
+
+Store that value as a repository secret named `INSTANCEZ_CLOUD_PAT` (**Settings → Secrets and variables → Actions**). The CLI reads `INSTANCEZ_CLOUD_PAT` directly — no credentials file needs to be written in CI. Treat it like a password: it authenticates as whichever account ran `inz cloud login`, so revoke it from the instancez Cloud dashboard if it leaks.
+
+This workflow deploys to draft on every pull request (for review) and to production on every push to `main`:
+
+```yaml
+# .github/workflows/deploy.yml
+name: Deploy to instancez Cloud
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install inz
+        run: |
+          curl -fsSL https://get.instancez.ai | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # Pull requests: deploy to draft for review.
+      - name: Deploy draft
+        if: github.event_name == 'pull_request'
+        run: inz cloud deploy --branch draft
+        env:
+          INSTANCEZ_CLOUD_PAT: ${{ secrets.INSTANCEZ_CLOUD_PAT }}
+
+      # main: deploy straight to production. --yes skips the confirmation
+      # prompt, since the runner has no terminal to answer it anyway.
+      - name: Deploy to production
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: inz cloud deploy --branch production --yes
+        env:
+          INSTANCEZ_CLOUD_PAT: ${{ secrets.INSTANCEZ_CLOUD_PAT }}
+```
+
+Both jobs share the same `project.cloud.project_id` in `instancez.yaml`, so "draft" here means the project's draft/production split described above, not a second project.
+
+If you'd rather deploy dev and production as two genuinely separate cloud projects (separate databases, separate URLs), skip the `project_id` in `instancez.yaml` and pass `--project` per job instead, pointing at different project ids held in their own secrets:
+
+```yaml
+      - name: Deploy to dev project
+        if: github.event_name == 'pull_request'
+        run: inz cloud deploy --project "$DEV_PROJECT_ID" --branch draft
+        env:
+          INSTANCEZ_CLOUD_PAT: ${{ secrets.INSTANCEZ_CLOUD_PAT }}
+          DEV_PROJECT_ID: ${{ secrets.INSTANCEZ_DEV_PROJECT_ID }}
+
+      - name: Deploy to production project
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: inz cloud deploy --project "$PROD_PROJECT_ID" --branch production --yes
+        env:
+          INSTANCEZ_CLOUD_PAT: ${{ secrets.INSTANCEZ_CLOUD_PAT }}
+          PROD_PROJECT_ID: ${{ secrets.INSTANCEZ_PROD_PROJECT_ID }}
+```
+
+`--project` targets a project for that run only; it never edits `instancez.yaml`, so both jobs can check out the exact same file.
 
 ## Check status
 

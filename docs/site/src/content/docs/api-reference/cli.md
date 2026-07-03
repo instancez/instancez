@@ -98,6 +98,7 @@ inz validate [flags]
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--branch` | `draft` | With `--project`, branch to preview against: `draft` or `production` (default `draft`) |
 | `--config` | `instancez.yaml` | Config source. Env: `INSTANCEZ_CONFIG`. |
 | `--json` | `false` | Output errors as JSON (for CI). |
 | `--project` | — | Preview migration against a cloud project. Bare `--project` uses `instancez.yaml`'s linked project; `--project <id>` or `--project=<id>` targets a different one. Never creates a project; link one first with `inz cloud deploy --new`. |
@@ -135,9 +136,9 @@ inz bundle --output s3://my-bucket/bundle.tar.gz # upload to S3, print pointer
 
 ## inz cloud deploy
 
-Deploy the current `instancez.yaml` to an instancez Cloud project.
+Write the current `instancez.yaml` to the branch named by `--branch` on an instancez Cloud project.
 
-Shows a migration preview and prompts for confirmation before promoting the draft to production. If no project is linked, pass `--new` to create one (after local validation passes) or `--project <id>` to target an existing one without editing the yaml.
+For `--branch production`, shows a diff of what would change and prompts for confirmation before writing. If no project is linked, pass `--new` to create one (after local validation passes) or `--project <id>` to target an existing one without editing the yaml.
 
 ```
 inz cloud deploy [flags]
@@ -145,6 +146,7 @@ inz cloud deploy [flags]
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--branch` | `draft` | Branch to write: `draft` or `production` (default `draft`) |
 | `--config` | `instancez.yaml` | Path to `instancez.yaml`. |
 | `--new` | `false` | Create a new instancez Cloud project when none is linked yet (only after local validation passes). |
 | `--project` | — | Target this cloud project id for this run, instead of `instancez.yaml`'s `project.cloud.project_id`. Does not modify the file. |
