@@ -21,7 +21,6 @@ inz init [name] [flags]
 |------|---------|-------------|
 | `--dir` | `.` | Output directory. |
 | `--force` | `false` | Overwrite existing scaffolding files. |
-| `--generate-like` | — | Generate `instancez.yaml` from a free-form prompt (requires `inz cloud login`). |
 | `--with-cloud` | — | Create a project in instancez Cloud (requires `inz cloud login`). |
 
 ```bash

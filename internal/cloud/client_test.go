@@ -2,6 +2,7 @@ package cloud
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -134,32 +135,6 @@ func TestClientMigrationPreview(t *testing.T) {
 	assert.Contains(t, resp.Diff, "todos")
 }
 
-func TestClientGenerateYAML(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/ai/generate-yaml", r.URL.Path)
-
-		var body struct {
-			Prompt string `json:"prompt"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		assert.Equal(t, "twitter clone", body.Prompt)
-
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"yaml":   "version: 1\nproject:\n  name: t\n",
-			"tokens": map[string]int{"input": 100, "output": 200},
-		})
-	}))
-	defer srv.Close()
-
-	c := NewClient(srv.URL, "instancez_pat_test")
-	resp, err := c.GenerateYAML("twitter clone")
-	assert.NoError(t, err)
-	assert.Contains(t, resp.YAML, "version: 1")
-	assert.Equal(t, 100, resp.Tokens.Input)
-	assert.Equal(t, 200, resp.Tokens.Output)
-}
-
 func TestClientUploadYAML(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "PUT", r.Method)
@@ -178,6 +153,34 @@ func TestClientUploadYAML(t *testing.T) {
 	c := NewClient(srv.URL, "instancez_pat_test")
 	err := c.UploadYAML("app-uuid", "version: 1\n")
 	assert.NoError(t, err)
+}
+
+func TestClientUploadYAMLValidationFailed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": "config validation failed",
+			"problems": []map[string]string{
+				{"path": "tables.posts.columns.author_id", "message": "unknown type \"uuid2\"", "suggestion": "did you mean \"uuid\"?"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "instancez_pat_test")
+	err := c.UploadYAML("app-uuid", "version: 1\n")
+
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *APIError, got %T: %v", err, err)
+	}
+	assert.Equal(t, "config validation failed", apiErr.Code)
+	if assert.Len(t, apiErr.Problems, 1) {
+		p := apiErr.Problems[0]
+		assert.Equal(t, "tables.posts.columns.author_id", p.Path)
+		assert.Equal(t, `unknown type "uuid2"`, p.Message)
+		assert.Equal(t, `did you mean "uuid"?`, p.Suggestion)
+	}
 }
 
 func TestUploadFunctions(t *testing.T) {

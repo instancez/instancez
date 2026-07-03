@@ -12,19 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestInitFlagsCloudAndGenerateLike(t *testing.T) {
+func TestInitHasNoGenerateLikeFlag(t *testing.T) {
 	cmd := newInitCmd()
-	assert.NotNil(t, cmd.Flags().Lookup("with-cloud"))
-	assert.NotNil(t, cmd.Flags().Lookup("generate-like"))
-}
-
-func TestInitGenerateLikeRequiresLogin(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HOME", dir) // no credentials in this HOME
-
-	opts := initOptions{dir: dir, generateLike: "twitter"}
-	err := runInit(opts)
-	assert.ErrorContains(t, err, "inz cloud login")
+	assert.Nil(t, cmd.Flags().Lookup("generate-like"), "--generate-like was removed (dead: no server route ever existed)")
 }
 
 func TestInitWithCloudRequiresLogin(t *testing.T) {
@@ -204,48 +194,6 @@ func TestRunInitForceOverwrites(t *testing.T) {
 	}
 	if string(afterBytes) == customContent {
 		t.Error("instancez.yaml was NOT overwritten despite --force")
-	}
-}
-
-// TestRunInitGenerateLikeRefusesWhenYAMLExists verifies that --generate-like
-// over an existing yaml fails fast with an error — before any login/network
-// call — when --force is not set. This prevents wasting cloud tokens to
-// generate output that would immediately be discarded.
-func TestRunInitGenerateLikeRefusesWhenYAMLExists(t *testing.T) {
-	dir := t.TempDir()
-
-	// Write an existing yaml directly (no credentials needed for this step).
-	yamlPath := filepath.Join(dir, "instancez.yaml")
-	existingContent := scaffoldYAML("demo")
-	if err := os.WriteFile(yamlPath, []byte(existingContent), 0o644); err != nil {
-		t.Fatalf("write yaml: %v", err)
-	}
-
-	// Use a fresh HOME with no credentials — if the guard fires before the
-	// login check, the error must NOT mention "inz login".
-	t.Setenv("HOME", t.TempDir())
-
-	opts := initOptions{dir: dir, generateLike: "twitter"}
-	err := runInit(opts)
-	if err == nil {
-		t.Fatal("expected error when --generate-like over existing yaml without --force, got nil")
-	}
-	if !strings.Contains(err.Error(), "already exists") {
-		t.Errorf("error %q should mention 'already exists'", err.Error())
-	}
-	// The guard must fire before the login check — verify the error is NOT
-	// the login error.
-	if strings.Contains(err.Error(), "inz login") {
-		t.Errorf("guard should fire before login check, but got login error: %v", err)
-	}
-
-	// yaml must be untouched.
-	afterBytes, err2 := os.ReadFile(yamlPath)
-	if err2 != nil {
-		t.Fatalf("read yaml after failed generate-like: %v", err2)
-	}
-	if string(afterBytes) != existingContent {
-		t.Error("instancez.yaml was modified despite the guard error")
 	}
 }
 

@@ -112,25 +112,6 @@ func (c *Client) MigrationPreview(projectID string) (*MigrationPreviewResponse, 
 	return &out, nil
 }
 
-// GenerateYAMLResponse mirrors POST /ai/generate-yaml.
-type GenerateYAMLResponse struct {
-	YAML   string `json:"yaml"`
-	Tokens struct {
-		Input  int `json:"input"`
-		Output int `json:"output"`
-	} `json:"tokens"`
-}
-
-// GenerateYAML asks the AI service to produce a starter instancez.yaml from
-// a free-form prompt (≤ 256 chars).
-func (c *Client) GenerateYAML(prompt string) (*GenerateYAMLResponse, error) {
-	var out GenerateYAMLResponse
-	if err := c.do("POST", "/ai/generate-yaml", map[string]string{"prompt": prompt}, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
 // UploadYAML pushes the local instancez.yaml to the project's server-side
 // draft Defs. Called by `inz cloud deploy` and `inz validate --project` before
 // their respective actions so the server sees the latest local source.
@@ -243,12 +224,25 @@ func PollDeviceToken(c *Client, deviceCode string, timeout, interval time.Durati
 	return pollDeviceToken(c, deviceCode, timeout, interval, time.Sleep)
 }
 
+// Problem is one structural or cloud-policy config validation failure.
+// Mirrors configvalidate.Problem — the cloud API returns the same shape
+// under the "problems" field of a config-validation-failed response.
+type Problem struct {
+	Path       string `json:"path"`
+	Message    string `json:"message"`
+	Suggestion string `json:"suggestion,omitempty"`
+}
+
 // APIError is returned for non-2xx responses. Code is the body's "error" field
 // if present (matches the v2 envelope), otherwise the HTTP status text.
+// Problems is populated when the body also carries a "problems" array (config
+// validation failures from UploadYAML/Deploy) so callers can render the
+// per-field detail instead of just the summary Code.
 type APIError struct {
-	Status int
-	Code   string
-	Body   string
+	Status   int
+	Code     string
+	Body     string
+	Problems []Problem
 }
 
 func (e *APIError) Error() string {
@@ -291,10 +285,12 @@ func (c *Client) do(method, path string, payload, out any) error {
 	if resp.StatusCode >= 400 {
 		apiErr := &APIError{Status: resp.StatusCode, Body: string(respBody)}
 		var env struct {
-			Error string `json:"error"`
+			Error    string    `json:"error"`
+			Problems []Problem `json:"problems"`
 		}
 		if json.Unmarshal(respBody, &env) == nil {
 			apiErr.Code = env.Error
+			apiErr.Problems = env.Problems
 		}
 		return apiErr
 	}

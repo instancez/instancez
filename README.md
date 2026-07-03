@@ -34,7 +34,7 @@ It speaks the same HTTP API as Supabase, so existing `@supabase/supabase-js` cod
 
 ## Why instancez
 
-The whole backend is one file. Your schema, RLS policies, storage rules, and the function manifest all live in `instancez.yaml`, so a person or a model can read and edit the entire thing in one place. `inz init --generate-like "a recipe sharing app"` will write that file for you from a prompt.
+The whole backend is one file. Your schema, RLS policies, storage rules, and the function manifest all live in `instancez.yaml`, so a person or a model can read and edit the entire thing in one place.
 
 Existing Supabase code keeps working. The REST, auth, RPC, and storage endpoints match the Supabase wire format, and a compatibility test drives `@supabase/supabase-js` against a live instancez on every commit, so the contract cannot quietly drift.
 
@@ -103,7 +103,6 @@ instancez is wire-compatible with Supabase clients, but it is a smaller, self-ho
 | Row-level security as the authorization layer | Yes | Yes |
 | Realtime / websockets | No (see below) | Yes |
 | Schema definition | One declarative YAML file | SQL migrations + dashboard |
-| LLM generation of the backend | Yes (`--generate-like`) | No |
 | Self-host footprint | One binary + Postgres | Multi-container stack |
 | OAuth providers built in | Google, GitHub | Many |
 

@@ -12,11 +12,10 @@ import (
 
 // initOptions captures the resolved positional + flags for `inz init`.
 type initOptions struct {
-	name         string
-	dir          string
-	withCloud    bool
-	generateLike string
-	force        bool
+	name      string
+	dir       string
+	withCloud bool
+	force     bool
 }
 
 func newInitCmd() *cobra.Command {
@@ -44,14 +43,13 @@ init only writes scaffolding files; it never touches a database. A
 
 	cmd.Flags().StringVar(&opts.dir, "dir", ".", "output directory")
 	cmd.Flags().BoolVar(&opts.withCloud, "with-cloud", false, "create a project in instancez Cloud (requires `inz cloud login`)")
-	cmd.Flags().StringVar(&opts.generateLike, "generate-like", "", "generate instancez.yaml from a free-form prompt (requires `inz cloud login`)")
 	cmd.Flags().BoolVar(&opts.force, "force", false, "overwrite existing scaffolding files")
 	return cmd
 }
 
 // validateInitFlags enforces mutual exclusions between init's flags.
 // --with-cloud is orthogonal to the local dev flags — it specifies the cloud
-// target. --generate-like is also orthogonal (it shapes the scaffold YAML).
+// target.
 func validateInitFlags(opts initOptions) error {
 	return nil
 }
@@ -62,8 +60,7 @@ func runInit(opts initOptions) error {
 	}
 
 	// Resolve the output directory and check for an existing yaml early so we
-	// can make decisions (generate-like guard, keep-existing) before any
-	// network/login calls.
+	// can make decisions (keep-existing) before any network/login calls.
 	dir, err := filepath.Abs(opts.dir)
 	if err != nil {
 		return fmt.Errorf("resolve dir: %w", err)
@@ -72,18 +69,11 @@ func runInit(opts initOptions) error {
 	_, statErr := os.Stat(yamlPath)
 	yamlExists := statErr == nil
 
-	// --generate-like over an existing yaml would consume cloud tokens to
-	// produce output that is immediately discarded. Fail fast before any
-	// network or login call.
-	if opts.generateLike != "" && yamlExists && !opts.force {
-		return fmt.Errorf("instancez.yaml already exists; pass --force to regenerate it from --generate-like")
-	}
-
 	// Cloud-dependent flags require credentials. On an interactive terminal
 	// ensureLoggedIn prompts and runs the device-code flow inline (saving creds
 	// to disk so the cloud calls below pick them up); in a non-interactive
 	// session it returns a hard error pointing at `inz cloud login`.
-	if opts.withCloud || opts.generateLike != "" {
+	if opts.withCloud {
 		if _, err := ensureLoggedIn(ensureLoginOpts{}); err != nil {
 			return err
 		}
@@ -98,21 +88,6 @@ func runInit(opts initOptions) error {
 		name = filepath.Base(dir)
 	}
 
-	// If --generate-like is set, fetch the YAML from the cloud AI service
-	// instead of using the static scaffold.
-	var generatedYAML string
-	if opts.generateLike != "" {
-		fmt.Println("  Generating instancez.yaml from prompt...")
-		creds, _ := cloud.Load()
-		c := cloud.NewClient(cloud.APIURL(), creds.PAT)
-		resp, err := c.GenerateYAML(opts.generateLike)
-		if err != nil {
-			return fmt.Errorf("generate-yaml: %w", err)
-		}
-		generatedYAML = resp.YAML
-		fmt.Printf("  ✓ Generated (%d input + %d output tokens)\n", resp.Tokens.Input, resp.Tokens.Output)
-	}
-
 	// instancez.yaml: keep existing content when the file is already present
 	// and --force is not set. The rest of init (role provisioning, cloud
 	// linking, next-steps) still runs so a re-run is fully idempotent.
@@ -120,9 +95,6 @@ func runInit(opts initOptions) error {
 		fmt.Println("  = instancez.yaml (unchanged)")
 	} else {
 		if err := applyWrite(dir, "instancez.yaml", func(_ string) (string, writeAction) {
-			if generatedYAML != "" {
-				return generatedYAML, actionCreate
-			}
 			return scaffoldYAML(name), actionCreate
 		}); err != nil {
 			return err
