@@ -150,12 +150,12 @@ inz cloud deploy [flags]
 | `--config` | `instancez.yaml` | Path to `instancez.yaml`. |
 | `--new` | `false` | Create a new instancez Cloud project when none is linked yet (only after local validation passes). |
 | `--project` | — | Target this cloud project id for this run, instead of `instancez.yaml`'s `project.cloud.project_id`. Does not modify the file. |
-| `--yes`, `-y` | `false` | Skip the confirmation prompt. |
+| `--yes`, `-y` | `false` | Skip the production confirmation prompt. No-op for `--branch draft`, which never prompts. |
 
 ```bash
-inz cloud deploy --new --yes       # first deploy: create + link + push
+inz cloud deploy --new             # first deploy: create + link + push to draft
 inz cloud deploy --project abc123  # target a specific project without editing the yaml
-inz cloud deploy --yes
+inz cloud deploy --branch production --yes
 ```
 
 ## inz doctor

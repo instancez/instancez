@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/instancez/instancez/internal/cloud"
@@ -232,6 +233,54 @@ func TestRunDeployProductionYesSkipsPrompt(t *testing.T) {
 
 	cfg := writeDeployConfig(t, home)
 	require.NoError(t, runDeploy(cfg, deployOpts{branch: "production", yes: true}))
+}
+
+// TestRunDeployProductionPrintsDroppedOnce: the preview call already shows
+// dropped-providers content before the confirmation prompt, so the later
+// upload call must not print it a second time.
+func TestRunDeployProductionPrintsDroppedOnce(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "tok-123"}))
+
+	droppedMsg := "storage and email are provided automatically by the platform and cannot be configured"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/instancez/projects/abc/config/preview":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"dropped": []map[string]string{
+					{"path": "providers.storage", "message": droppedMsg},
+				},
+				"diff": map[string]any{"tables": []any{}, "config_sections": []any{}, "has_changes": true},
+			})
+		case r.Method == "PUT" && r.URL.Path == "/instancez/projects/abc/yaml":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": true,
+				"dropped": []map[string]string{
+					{"path": "providers.storage", "message": droppedMsg},
+				},
+				"diff": map[string]any{"tables": []any{}, "config_sections": []any{}, "has_changes": false},
+			})
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
+
+	t.Cleanup(swapPromptConfirm(func(string) bool { return true }))
+
+	cfg := writeDeployConfig(t, home)
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	err := runDeploy(cfg, deployOpts{branch: "production"})
+	w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(string(out), "providers.storage"),
+		"dropped-providers warning must print once, not once per call")
 }
 
 func TestRunDeployUploadValidationFailed(t *testing.T) {

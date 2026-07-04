@@ -197,7 +197,11 @@ func runDeploy(configPath string, opts deployOpts) error {
 	if err != nil {
 		return reportCloudErr("upload yaml", err)
 	}
-	printDropped(dropped)
+	// production already printed this from the preview call above, on the
+	// same candidate yaml; printing it again here would just repeat it.
+	if branch != "production" {
+		printDropped(dropped)
+	}
 	if branch == "draft" {
 		fmt.Println()
 		fmt.Println(renderConfigDiff(diff))
