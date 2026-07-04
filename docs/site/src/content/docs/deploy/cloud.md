@@ -42,16 +42,16 @@ inz cloud deploy --branch production
 ```
 
 `--branch` (default `draft`) selects which environment is written. Deploy
-writes directly to that branch — there is no separate promote step:
+writes directly to that branch. There is no separate promote step.
 
-1. Uploads function sources (if the project declares any) to the target branch.
-2. For `--branch production` only: shows a page-free diff of what would
-   change, then prompts `Deploy to production? [y/N]`. A bare Enter is
-   treated as "no". Pass `--yes` (`-y`) to skip the prompt in scripts.
-3. Uploads your local YAML to the target branch and triggers a rebuild.
+For `--branch draft`: uploads function sources (if the project declares any),
+then uploads your local YAML and triggers a rebuild. Never prompts.
 
-`--branch draft` never prompts — writing to draft has never required
-confirmation, and that stays true here.
+For `--branch production`: first shows a page-free diff of what would
+change, then prompts `Deploy to production? [y/N]`. Nothing is written yet at
+this point, not even function sources. A bare Enter is treated as "no". Pass
+`--yes` (`-y`) to skip the prompt in scripts. Only after confirming (or with
+`--yes`) does it upload function sources and the YAML.
 
 ### Code functions
 
