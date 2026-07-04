@@ -34,6 +34,11 @@ const (
 	ctxKeyUA
 )
 
+// emailSendTimeout bounds the token persistence + provider API call made
+// synchronously in the request path for auth emails, so a slow or hung
+// provider doesn't stall the HTTP response indefinitely.
+const emailSendTimeout = 5 * time.Second
+
 func ctxWithRequestMeta(ctx context.Context, c *gin.Context) context.Context {
 	ctx = context.WithValue(ctx, ctxKeyIP, c.ClientIP())
 	ctx = context.WithValue(ctx, ctxKeyUA, c.GetHeader("User-Agent"))
@@ -242,7 +247,7 @@ func (h *AuthHandler) handleSignup(c *gin.Context) {
 
 	// Send verification email if configured
 	if h.cfg.Auth.Email != nil && h.cfg.Auth.Email.VerifyEmail && h.email != nil {
-		go h.sendVerificationEmail(userID, req.Email)
+		h.sendVerificationEmail(userID, req.Email)
 	}
 
 	ctx = ctxWithRequestMeta(ctx, c)
@@ -589,7 +594,7 @@ func (h *AuthHandler) handleRecover(c *gin.Context) {
 		expiresAt := time.Now().Add(1 * time.Hour)
 		_ = h.authSvc.CreateOneTimeToken(ctx, userID, token, "recovery", expiresAt.Unix())
 		if h.email != nil {
-			go h.sendPasswordResetEmail(req.Email, token, redirectTo)
+			h.sendPasswordResetEmail(req.Email, token, redirectTo)
 		}
 	}
 	// Always return 200 (email enumeration protection). supabase-js parses
@@ -805,7 +810,7 @@ func (h *AuthHandler) handleOTP(c *gin.Context) {
 		return
 	}
 	if h.email != nil {
-		go h.sendMagicLinkEmail(req.Email, token, code)
+		h.sendMagicLinkEmail(req.Email, token, code)
 	}
 	c.JSON(200, gin.H{})
 }
@@ -1130,7 +1135,7 @@ func (h *AuthHandler) handleAdminInvite(c *gin.Context) {
 	userID := asString(row["id"])
 
 	if h.cfg.Auth.Email != nil && h.email != nil {
-		go h.sendVerificationEmail(userID, req.Email)
+		h.sendVerificationEmail(userID, req.Email)
 	}
 
 	c.JSON(200, h.buildUser(userID, row, nil))
@@ -1572,7 +1577,8 @@ func (h *AuthHandler) sendVerificationEmail(userID, email string) {
 	token := generateRandomToken()
 	expiresAt := time.Now().Add(24 * time.Hour)
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), emailSendTimeout)
+	defer cancel()
 	_ = h.authSvc.CreateOneTimeToken(ctx, userID, token, "signup", expiresAt.Unix())
 
 	var fromEmail string
@@ -1611,7 +1617,8 @@ func (h *AuthHandler) sendMagicLinkEmail(email, token, code string) {
 		"link":     link,
 	})
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), emailSendTimeout)
+	defer cancel()
 	if err := h.email.Send(ctx, domain.EmailMessage{
 		To:      []string{email},
 		From:    fromEmail,
@@ -1643,7 +1650,8 @@ func (h *AuthHandler) sendPasswordResetEmail(email, token, redirectTo string) {
 		"link":     verifyLink,
 	})
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), emailSendTimeout)
+	defer cancel()
 	if err := h.email.Send(ctx, domain.EmailMessage{
 		To:      []string{email},
 		From:    fromEmail,
@@ -1812,7 +1820,7 @@ func (h *AuthHandler) handleResend(c *gin.Context) {
 		return
 	}
 	if h.email != nil {
-		go h.sendMagicLinkEmail(req.Email, token, code)
+		h.sendMagicLinkEmail(req.Email, token, code)
 	}
 	c.JSON(200, gin.H{})
 }
@@ -1846,7 +1854,7 @@ func (h *AuthHandler) handleReauthenticate(c *gin.Context) {
 		return
 	}
 	if h.email != nil {
-		go h.sendMagicLinkEmail(email, token, code)
+		h.sendMagicLinkEmail(email, token, code)
 	}
 	c.JSON(200, gin.H{})
 }
