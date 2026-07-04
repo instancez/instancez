@@ -131,6 +131,7 @@ export function AuthPage() {
   const { config, save, saving, saveErrors, dotenvWritable } = useConfig();
   const canWriteConfig = backend.capabilities.canWriteConfig;
   const canWriteSecrets = backend.capabilities.canWriteSecrets && dotenvWritable;
+  const showEnvName = backend.capabilities.showsEnvVarNames;
   const [auth, setAuth] = useState<Auth | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [envVarStatus, setEnvVarStatus] = useState<Record<string, { set: boolean }>>({});
@@ -512,6 +513,7 @@ export function AuthPage() {
                                   ?.set ?? false
                               }
                               canWrite={canWriteSecrets}
+                              showEnvName={showEnvName}
                               inputValue={
                                 pendingDotenv[
                                   envRefName(providerConfig.client_secret) ?? secretVar
@@ -536,6 +538,7 @@ export function AuthPage() {
                                     name={refName}
                                     isSet={envVarStatus[refName]?.set ?? false}
                                     canWrite={canWriteSecrets}
+                                    showEnvName={showEnvName}
                                     inputValue={pendingDotenv[refName] ?? ""}
                                     onInputChange={(v) => setPendingVar(refName, v)}
                                   />

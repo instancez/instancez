@@ -132,6 +132,7 @@ interface ProviderConfigPanelProps {
   envVarStatus: Record<string, { set: boolean }>;
   pendingDotenv: Record<string, string>;
   canWriteSecrets: boolean;
+  showEnvName: boolean;
   onPendingVar: (name: string, value: string) => void;
   onSettingChange: (key: string, value: string) => void;
 }
@@ -145,6 +146,7 @@ function ProviderConfigPanel({
   envVarStatus,
   pendingDotenv,
   canWriteSecrets,
+  showEnvName,
   onPendingVar,
   onSettingChange,
 }: ProviderConfigPanelProps) {
@@ -164,6 +166,7 @@ function ProviderConfigPanel({
                 name={field.envVar}
                 isSet={envVarStatus[field.envVar]?.set ?? false}
                 canWrite={canWriteSecrets}
+                showEnvName={showEnvName}
                 inputValue={pendingDotenv[field.envVar] ?? ""}
                 onInputChange={(v) => onPendingVar(field.envVar, v)}
               />
@@ -195,6 +198,7 @@ function ProviderConfigPanel({
                   name={name}
                   isSet={envVarStatus[name]?.set ?? false}
                   canWrite={canWriteSecrets}
+                  showEnvName={showEnvName}
                   inputValue={pendingDotenv[name] ?? ""}
                   onInputChange={(v) => onPendingVar(name, v)}
                 />
@@ -211,6 +215,7 @@ export function ProvidersPage() {
   const backend = useBackend();
   const { config, save, saving, saveErrors, dotenvWritable } = useConfig();
   const canWriteSecrets = backend.capabilities.canWriteSecrets && dotenvWritable;
+  const showEnvName = backend.capabilities.showsEnvVarNames;
   const [local, setLocal] = useState<Config | null>(null);
   const [envVarStatus, setEnvVarStatus] = useState<Record<string, { set: boolean }>>({});
   const [pendingDotenv, setPendingDotenv] = useState<Record<string, string>>({});
@@ -372,6 +377,7 @@ export function ProvidersPage() {
               envVarStatus={envVarStatus}
               pendingDotenv={pendingDotenv}
               canWriteSecrets={canWriteSecrets}
+              showEnvName={showEnvName}
               onPendingVar={setPendingVar}
               onSettingChange={updateEmailSetting}
             />
@@ -422,6 +428,7 @@ export function ProvidersPage() {
                 envVarStatus={envVarStatus}
                 pendingDotenv={pendingDotenv}
                 canWriteSecrets={canWriteSecrets}
+                showEnvName={showEnvName}
                 onPendingVar={setPendingVar}
                 onSettingChange={updateStorageSetting}
               />

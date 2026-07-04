@@ -18,6 +18,10 @@ export interface Capabilities {
   canManageDeps: boolean;
   /** Live stats (row counts, storage usage) are available. */
   hasStats: boolean;
+  /** The env var name shown next to a secret is one the user can actually set
+   *  (instance: true — self-hosters manage their own .env; platform: false —
+   *  secrets live in the platform's store and the name is an internal detail). */
+  showsEnvVarNames: boolean;
 }
 
 export function fullCapabilities(): Capabilities {
@@ -28,6 +32,7 @@ export function fullCapabilities(): Capabilities {
     canEditFunctionFile: true,
     canManageDeps: true,
     hasStats: true,
+    showsEnvVarNames: true,
   };
 }
 

@@ -13,6 +13,7 @@ function renderRow(props: Partial<Parameters<typeof VarRow>[0]> = {}) {
       canWrite={true}
       inputValue=""
       onInputChange={onInputChange}
+      showEnvName={true}
       {...props}
     />
   );
@@ -47,5 +48,15 @@ describe("VarRow", () => {
     renderRow({ isSet: true, canWrite: false });
     expect(screen.queryByLabelText("INSTANCEZ_RESEND_API_KEY")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /override/i })).not.toBeInTheDocument();
+  });
+
+  it("shows the env var name caption when showEnvName is true", () => {
+    renderRow({ showEnvName: true });
+    expect(screen.getByText("INSTANCEZ_RESEND_API_KEY")).toBeInTheDocument();
+  });
+
+  it("hides the env var name caption when showEnvName is false", () => {
+    renderRow({ showEnvName: false });
+    expect(screen.queryByText("INSTANCEZ_RESEND_API_KEY")).not.toBeInTheDocument();
   });
 });

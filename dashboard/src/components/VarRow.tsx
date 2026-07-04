@@ -11,6 +11,10 @@ export interface VarRowProps {
   canWrite: boolean;
   inputValue: string;
   onInputChange: (value: string) => void;
+  /** Whether the env var name caption is meaningful to this consumer (instance:
+   *  true — self-hosters set it in their own .env; platform: false — the name
+   *  is an internal storage detail the platform user cannot act on). */
+  showEnvName: boolean;
 }
 
 /**
@@ -19,7 +23,15 @@ export interface VarRowProps {
  * set, the input hides behind an explicit "Override" affordance so it's clear
  * a staged value replaces the current one.
  */
-export function VarRow({ label, name, isSet, canWrite, inputValue, onInputChange }: VarRowProps) {
+export function VarRow({
+  label,
+  name,
+  isSet,
+  canWrite,
+  inputValue,
+  onInputChange,
+  showEnvName,
+}: VarRowProps) {
   const [overriding, setOverriding] = useState(false);
   const showInput = canWrite && (!isSet || overriding || inputValue !== "");
 
@@ -69,9 +81,11 @@ export function VarRow({ label, name, isSet, canWrite, inputValue, onInputChange
           )}
         </HStack>
       )}
-      <Text fontSize="11px" color="fg.muted">
-        env <Box as="code" fontFamily="mono">{name}</Box>
-      </Text>
+      {showEnvName && (
+        <Text fontSize="11px" color="fg.muted">
+          env <Box as="code" fontFamily="mono">{name}</Box>
+        </Text>
+      )}
     </Box>
   );
 }
