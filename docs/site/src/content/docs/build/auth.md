@@ -18,7 +18,9 @@ auth:
   # Set to false to block anonymous sign-in
   allow_anonymous: true
 
-  # Allowlist of origins that post-auth flows may redirect to
+  # Allowlist of frontend origins that post-auth flows (OAuth, magic link,
+  # password recovery) may redirect the user's browser back to. See "OAuth
+  # (Google, GitHub)" below for how this differs from oauth.<name>.redirect_url.
   redirect_urls:
     - https://myapp.example.com
 
@@ -33,12 +35,12 @@ auth:
     google:
       client_id: YOUR_GOOGLE_CLIENT_ID
       client_secret: YOUR_GOOGLE_CLIENT_SECRET
-      redirect_url: https://myapp.example.com/auth/callback/google
+      redirect_url: https://api.myapp.example.com/auth/v1/callback/google
 
     github:
       client_id: YOUR_GITHUB_CLIENT_ID
       client_secret: YOUR_GITHUB_CLIENT_SECRET
-      redirect_url: https://myapp.example.com/auth/callback/github
+      redirect_url: https://api.myapp.example.com/auth/v1/callback/github
 ```
 
 All keys are optional. Omit `auth:` entirely and JWT auth still works with the defaults (1h expiry, no refresh tokens, sign-up open).
@@ -59,7 +61,31 @@ Requires an email provider under `providers.email`. Without one, `signInWithOtp`
 
 **OAuth (Google, GitHub)** — `supabase.auth.signInWithOAuth({ provider: 'google' })`
 
-Add the provider block to `auth:` in `instancez.yaml` (see above). Add the callback origin to `auth.redirect_urls`. Session is returned via PKCE after the OAuth callback.
+There are two different URLs involved, and they are not interchangeable:
+
+- **`auth.oauth.<name>.redirect_url`** (config, fixed) — the URL the *provider* redirects back to once the user approves consent. This must be instancez's own callback route, always shaped `<base URL>/auth/v1/callback/<name>` (e.g. `/auth/v1/callback/google`), and must exactly match what's registered in that provider's console (Google Cloud Console, GitHub OAuth Apps, …) — providers reject any other value. It always points at your **API server**, not your frontend.
+- **`redirectTo`** (client-supplied, dynamic) — where the *app* should land once instancez finishes the exchange, passed as `options.redirectTo` to `signInWithOAuth()`. It must match an origin listed in `auth.redirect_urls`, and it points at your **frontend**.
+
+```js
+const { error } = await supabase.auth.signInWithOAuth({
+  provider: 'google',
+  options: { redirectTo: window.location.origin },
+})
+```
+
+instancez has no `SITE_URL`-style default for `redirectTo` (unlike hosted Supabase, whose GoTrue falls back to the project's Site URL when the client omits it). If you don't pass `redirectTo`, or it doesn't match `auth.redirect_urls`, the callback returns the session as a raw JSON body instead of redirecting the browser back into the app — so pass it explicitly.
+
+The full round trip:
+
+```
+browser  → GET /auth/v1/authorize?provider=google&redirect_to=<frontend URL>
+instancez → 307 to Google, using auth.oauth.google.redirect_url as redirect_uri
+Google   → user consents → redirects to auth.oauth.google.redirect_url (fixed)
+instancez → exchanges the code, then redirects to the original redirect_to
+            with the session in the URL fragment (#access_token=…)
+```
+
+By default this is the implicit flow (tokens in the URL fragment, which supabase-js parses automatically via `detectSessionInUrl`). PKCE is also supported: create the client with `createClient(url, key, { auth: { flowType: 'pkce' } })` and supabase-js adds `code_challenge`/`code_challenge_method` to `/authorize` for you, getting back an auth code on the redirect instead of tokens directly.
 
 **Anonymous** — `supabase.auth.signInAnonymously()`
 

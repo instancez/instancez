@@ -42,6 +42,22 @@ auth:
     refresh_token_expiry: 7d
     # allow_signup: false       # admin-only: POST /auth/v1/signup → 403 signup_disabled
     # allow_anonymous: false    # block empty-body anonymous sign-in
+    # redirect_urls allowlists the frontend origin so the OAuth callback can
+    # redirect the browser back to the SPA with the session in the URL
+    # fragment (otherwise it falls back to returning raw JSON).
+    redirect_urls:
+      - http://localhost:5174
+    oauth:
+      github:
+        client_id: Ov23liTruwFh0n4Fw5LJ
+        client_secret: ${GITHUB_CLIENT_SECRET}
+        # Must match the callback URL registered on the GitHub OAuth App.
+        redirect_url: http://localhost:5174/auth/v1/callback/github
+      google:
+        client_id: 261590024476-gbnv0vtuavh5io0e4f1dauhf5j2rc0cm.apps.googleusercontent.com
+        client_secret: ${GOOGLE_CLIENT_SECRET}
+        # Must match the callback URL registered in Google Cloud Console.
+        redirect_url: http://localhost:5174/auth/v1/callback/google
 tables:
     profiles:
         fields:

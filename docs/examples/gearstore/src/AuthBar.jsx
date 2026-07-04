@@ -7,6 +7,7 @@ import { supabase, DEV_ADMIN_KEY, INSTANCEZ_URL } from './supabase.js'
 //   - supabase.auth.signInWithOtp + verifyOtp({ token_hash }) (magic link)
 //   - supabase.auth.signInWithOtp + verifyOtp({ token, type:'email' }) (6-digit OTP)
 //   - supabase.auth.signInAnonymously                         (guest)
+//   - supabase.auth.signInWithOAuth({ provider })              (google, github)
 //   - supabase.auth.signOut / getSession / onAuthStateChange  (lifecycle)
 //
 // Instancez has no email provider configured in this demo, so the
@@ -20,6 +21,8 @@ const TABS = [
   { id: 'magiclink', label: 'Magic link' },
   { id: 'emailotp', label: 'Email OTP' },
   { id: 'guest', label: 'Guest' },
+  { id: 'google', label: 'Google', oauthProvider: 'google' },
+  { id: 'github', label: 'GitHub', oauthProvider: 'github' },
 ]
 
 export function AuthBar({ variant = 'bar' }) {
@@ -177,6 +180,24 @@ export function AuthBar({ variant = 'bar' }) {
     } catch (err) {
       setError(err.message || String(err))
     } finally {
+      setBusy(false)
+    }
+  }
+
+  // Redirects the whole page to the provider; the session comes back in the
+  // URL fragment on return, which supabase-js picks up automatically
+  // (detectSessionInUrl is on by default), so there's nothing to await here.
+  async function handleOAuth(provider) {
+    setBusy(true)
+    setError(null)
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider,
+        options: { redirectTo: window.location.origin },
+      })
+      if (error) throw error
+    } catch (err) {
+      setError(err.message || String(err))
       setBusy(false)
     }
   }
@@ -378,6 +399,28 @@ export function AuthBar({ variant = 'bar' }) {
           </p>
           <button type="button" disabled={busy} onClick={handleGuest}>
             {busy ? 'Working…' : 'Continue as guest'}
+          </button>
+        </div>
+      )}
+
+      {TABS.find((t) => t.id === tab)?.oauthProvider && (
+        <div className="login-form">
+          <p className="hint small">
+            Calls{' '}
+            <code>
+              supabase.auth.signInWithOAuth({'{'}provider: '
+              {TABS.find((t) => t.id === tab).oauthProvider}'{'}'})
+            </code>
+            , which redirects to the provider and back through instancez's
+            OAuth callback. Returns as a normal session once you land back
+            here.
+          </p>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => handleOAuth(TABS.find((t) => t.id === tab).oauthProvider)}
+          >
+            {busy ? 'Redirecting…' : `Continue with ${TABS.find((t) => t.id === tab).label}`}
           </button>
         </div>
       )}
