@@ -886,7 +886,7 @@ func (h *AuthHandler) handleGenerateLink(c *gin.Context) {
 		return
 	}
 
-	actionLink := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=%s", h.baseURL(), token, req.Type)
+	actionLink := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=%s", h.publicAuthBaseURL(), token, req.Type)
 	if req.RedirectTo != "" {
 		actionLink += "&redirect_to=" + url.QueryEscape(req.RedirectTo)
 	}
@@ -1166,8 +1166,17 @@ func (h *AuthHandler) handleAuthorize(c *gin.Context) {
 
 	// Reject a disallowed redirect_to up front so an attacker URL never gets
 	// stored in flow_state / a cookie and later receives the auth code.
+	//
+	// redirect_to is unrelated to auth.oauth.<provider>.redirect_url: that
+	// field is the fixed URL the provider (Google/GitHub/...) redirects back
+	// to and must match its console config; redirect_to is where the app
+	// wants the user to land afterwards, checked against auth.redirect_urls.
+	// There is no SITE_URL-style default — if the client omits redirect_to,
+	// the final callback returns the session as raw JSON instead of
+	// redirecting, so most callers should pass it explicitly.
 	if !h.redirectAllowed(redirectTo) {
-		problemJSON(c, 400, "bad_request", "redirect_to is not an allowed URL")
+		problemJSON(c, 400, "bad_request",
+			"redirect_to is not an allowed URL — add its origin to auth.redirect_urls")
 		return
 	}
 
@@ -1319,6 +1328,10 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 			c.Redirect(http.StatusFound, redirectTo+"#"+frag.Encode())
 			return
 		}
+		// No redirect_to (or a disallowed one): instancez has no SITE_URL-style
+		// default to fall back to, so the session is returned as raw JSON
+		// instead of a redirect. Callers that want the browser to land back
+		// in the app must pass options.redirectTo to signInWithOAuth.
 		c.JSON(200, session)
 	}
 }
@@ -1570,7 +1583,7 @@ func (h *AuthHandler) sendVerificationEmail(userID, email string) {
 		"token":    token,
 		"email":    email,
 		"base_url": h.baseURL(),
-		"link":     fmt.Sprintf("%s/auth/v1/verify?token=%s", h.baseURL(), token),
+		"link":     fmt.Sprintf("%s/auth/v1/verify?token=%s", h.publicAuthBaseURL(), token),
 	})
 
 	if err := h.email.Send(ctx, domain.EmailMessage{
@@ -1589,7 +1602,7 @@ func (h *AuthHandler) sendMagicLinkEmail(email, token, code string) {
 	if h.cfg.Providers.Email != nil {
 		fromEmail = h.cfg.Providers.Email.DefaultFromEmail
 	}
-	link := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=magiclink", h.baseURL(), token)
+	link := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=magiclink", h.publicAuthBaseURL(), token)
 	subject, body := h.resolveEmailTemplate("magiclink", map[string]string{
 		"token":    token,
 		"code":     code,
@@ -1619,7 +1632,7 @@ func (h *AuthHandler) sendPasswordResetEmail(email, token, redirectTo string) {
 	// handler can validate the token, generate a session, and redirect the
 	// user to the app with access_token in the URL fragment — matching the
 	// GoTrue flow that supabase-js expects.
-	verifyLink := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=recovery", h.baseURL(), token)
+	verifyLink := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=recovery", h.publicAuthBaseURL(), token)
 	if redirectTo != "" {
 		verifyLink += "&redirect_to=" + url.QueryEscape(redirectTo)
 	}
@@ -1647,6 +1660,19 @@ func (h *AuthHandler) baseURL() string {
 		return strings.TrimRight(base, "/")
 	}
 	return fmt.Sprintf("http://localhost:%d", h.cfg.Server.Port)
+}
+
+// publicAuthBaseURL returns the externally reachable base for links that a
+// user's browser must follow to hit this handler (email verification, magic
+// link, password recovery). baseURL() is the app's own frontend origin; the
+// Traefik IngressRoute in front of the Lambda only forwards paths under
+// /api (stripping that prefix before the request reaches this process), so
+// a bare "<baseURL>/auth/v1/..." link 404s at the frontend instead of
+// reaching the auth handler. Do not use this for post-auth redirect_to
+// targets — those must stay unprefixed since they land on the frontend
+// itself, not this API.
+func (h *AuthHandler) publicAuthBaseURL() string {
+	return h.baseURL() + "/api"
 }
 
 // redirectAllowed reports whether target is a safe redirect/return destination

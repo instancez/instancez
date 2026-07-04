@@ -325,6 +325,16 @@ func validateAuth(auth *domain.Auth) domain.ValidationErrors {
 		if p.ClientSecret == "" {
 			errs = append(errs, &domain.ValidationError{Path: "auth.oauth." + name + ".client_secret", Message: "required"})
 		}
+		if p.RedirectURL == "" {
+			errs = append(errs, &domain.ValidationError{
+				Path:    "auth.oauth." + name + ".redirect_url",
+				Message: "required — this is the URL the provider redirects back to, not where your app lands the user (that's the client's redirectTo, checked against auth.redirect_urls)",
+				Suggestion: fmt.Sprintf(
+					"Set to <your base URL>/auth/v1/callback/%s and register that exact URL with the %s OAuth app/console",
+					name, name,
+				),
+			})
+		}
 	}
 
 	return errs

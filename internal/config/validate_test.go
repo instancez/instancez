@@ -327,6 +327,43 @@ func TestValidate_VerifyEmailWithProviderOK(t *testing.T) {
 	}
 }
 
+// TestValidate_OAuthRequiresRedirectURL pins that an oauth provider block
+// missing redirect_url is rejected at validation time rather than silently
+// producing a broken (empty redirect_uri) authorize URL at runtime.
+func TestValidate_OAuthRequiresRedirectURL(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Auth = &domain.Auth{
+		OAuth: map[string]*domain.OAuthProvider{
+			"google": {ClientID: "id", ClientSecret: "secret"},
+		},
+	}
+
+	errs := Validate(cfg)
+	assertHasErrorAt(t, errs, "auth.oauth.google.redirect_url")
+}
+
+// TestValidate_OAuthCompleteOK confirms a fully specified oauth provider
+// block (client_id, client_secret, redirect_url) passes validation.
+func TestValidate_OAuthCompleteOK(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Auth = &domain.Auth{
+		OAuth: map[string]*domain.OAuthProvider{
+			"google": {
+				ClientID:     "id",
+				ClientSecret: "secret",
+				RedirectURL:  "https://api.example.com/auth/v1/callback/google",
+			},
+		},
+	}
+
+	errs := Validate(cfg)
+	for _, e := range errs {
+		if strings.HasPrefix(e.Path, "auth.oauth.") {
+			t.Fatalf("did not expect an auth.oauth error, got: %s", e.Message)
+		}
+	}
+}
+
 func TestValidate_FullExampleConfig(t *testing.T) {
 	// Test with a config resembling the worked example
 	cfg := &domain.Config{
