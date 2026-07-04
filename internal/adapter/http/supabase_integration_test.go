@@ -5,13 +5,17 @@ package http_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"math/rand"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,12 +29,42 @@ import (
 	pgcontainer "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
+	adapterauth "github.com/instancez/instancez/internal/adapter/auth"
 	instancezhttp "github.com/instancez/instancez/internal/adapter/http"
 	"github.com/instancez/instancez/internal/app"
 	"github.com/instancez/instancez/internal/cli"
 	"github.com/instancez/instancez/internal/domain"
 	"github.com/instancez/instancez/internal/testutil/dbboot"
 )
+
+// fakeOAuthProvider stands in for an external identity provider (Google,
+// GitHub, ...) so the wire-compat harness can drive real /authorize +
+// /callback + /token requests without depending on a real IdP being
+// reachable from CI. AuthorizeURL skips the provider hop entirely and
+// redirects straight back to our own callback with a code derived from
+// state, which ExchangeCode/FetchUser then decode deterministically — no
+// external network call, no shared state between concurrent flows.
+type fakeOAuthProvider struct{}
+
+func (fakeOAuthProvider) Name() string { return "fake" }
+
+func (fakeOAuthProvider) AuthorizeURL(cfg *domain.OAuthProvider, state string) string {
+	return fmt.Sprintf("%s?code=fake-code-%s&state=%s", cfg.RedirectURL, state, url.QueryEscape(state))
+}
+
+func (fakeOAuthProvider) ExchangeCode(cfg *domain.OAuthProvider, code string) (string, error) {
+	return code, nil
+}
+
+func (fakeOAuthProvider) FetchUser(accessToken string) (*adapterauth.OAuthUserInfo, error) {
+	sum := sha256.Sum256([]byte(accessToken))
+	suffix := hex.EncodeToString(sum[:6])
+	return &adapterauth.OAuthUserInfo{
+		ProviderID: "fake-" + suffix,
+		Email:      fmt.Sprintf("oauth-fake-%s@example.com", suffix),
+		Name:       "Fake OAuth User",
+	}, nil
+}
 
 // TestSupabaseJSCompat boots a real Postgres in a container, runs migrations,
 // starts the instancez HTTP handler via httptest, then shells out to a Node
@@ -85,6 +119,19 @@ func TestSupabaseJSCompat(t *testing.T) {
 	})
 	db := ownerDB.Database // used for migrator + JWT key manager (privileged path)
 
+	// The fake OAuth provider's RedirectURL must be baked into cfg before
+	// NewServer/Mount runs (Mount only wires up /callback/<provider> for
+	// providers present in cfg.Auth.OAuth at construction time), but we don't
+	// get an httptest.Server URL until after that. Reserve the listener FIRST
+	// so the port is known up front, then hand the same listener to the
+	// httptest server below instead of letting it bind its own.
+	oauthListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve http listener: %v", err)
+	}
+	baseURL := "http://" + oauthListener.Addr().String()
+	adapterauth.RegisterOAuth(fakeOAuthProvider{})
+
 	verifyEmail := false
 	cfg := &domain.Config{
 		Version: 1,
@@ -98,6 +145,15 @@ func TestSupabaseJSCompat(t *testing.T) {
 			// falls back to the base URL. See the redirect-allowlist hardening.
 			RedirectURLs: []string{"http://app.local"},
 			Email:        &domain.AuthEmail{VerifyEmail: verifyEmail},
+			// Backs the OAuth/PKCE/identity-link run.mjs coverage — the
+			// wire-level counterpart to fakeOAuthProvider above.
+			OAuth: map[string]*domain.OAuthProvider{
+				"fake": {
+					ClientID:     "test-client",
+					ClientSecret: "test-secret",
+					RedirectURL:  baseURL + "/auth/v1/callback/fake",
+				},
+			},
 		},
 		Tables: map[string]domain.Table{
 			"todos": {
@@ -301,7 +357,12 @@ func TestSupabaseJSCompat(t *testing.T) {
 		Email:   capturedEmail,
 		Storage: localStorage,
 	})
-	ts := httptest.NewServer(srv.Handler())
+	// Bind to the listener reserved above so ts.URL matches the RedirectURL
+	// already baked into the fake OAuth provider's config.
+	ts := httptest.NewUnstartedServer(srv.Handler())
+	_ = ts.Listener.Close()
+	ts.Listener = oauthListener
+	ts.Start()
 	t.Cleanup(ts.Close)
 
 	// ---- 5. Run Node harness ----

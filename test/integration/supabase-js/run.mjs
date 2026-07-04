@@ -187,6 +187,62 @@ await step('auth: list identities returns array', async () => {
   assert(Array.isArray(data.identities), 'identities is array')
 })
 
+// --- OAuth / PKCE (against the "fake" provider registered by the Go test
+// harness — see fakeOAuthProvider in supabase_integration_test.go). Its
+// AuthorizeURL skips the real IdP hop and redirects straight back to our own
+// callback, so these run against the real HTTP surface with no external
+// dependency on Google/GitHub being reachable from CI. ---
+
+await step('auth: signInWithOAuth (PKCE) completes via /authorize + /callback + exchangeCodeForSession', async () => {
+  // A separate client because flowType defaults to 'implicit'; PKCE must be
+  // opted into, same as a real app would.
+  const pkceClient = createClient(URL, ANON_KEY, {
+    auth: { flowType: 'pkce', persistSession: false, autoRefreshToken: false },
+  })
+
+  const { data, error } = await pkceClient.auth.signInWithOAuth({ provider: 'fake' })
+  if (error) throw error
+  assert(data.url, 'signInWithOAuth should return an authorize url')
+  assert(data.url.includes('code_challenge='), 'authorize url should carry a PKCE code_challenge')
+
+  // No redirect_to was supplied, so the server responds with the auth code
+  // as JSON instead of a browser redirect — this single fetch drives the
+  // whole /authorize -> (fake provider) -> /callback chain.
+  const callbackResp = await fetch(data.url)
+  assert(callbackResp.ok, `authorize+callback chain failed: ${callbackResp.status}`)
+  const { code } = await callbackResp.json()
+  assert(code, 'callback should return a PKCE auth code')
+
+  // exchangeCodeForSession reads the code_verifier signInWithOAuth stashed in
+  // this client's storage — real supabase-js code, not a raw fetch.
+  const { data: sessionData, error: exchangeError } = await pkceClient.auth.exchangeCodeForSession(code)
+  if (exchangeError) throw exchangeError
+  assert(sessionData.session, 'exchangeCodeForSession should return a session')
+  assert(sessionData.session.access_token, 'session should have an access token')
+  assertEq(sessionData.user.app_metadata.provider, 'fake', 'oauth user provider metadata')
+})
+
+await step('auth: identity linking adds a new identity for the signed-in user', async () => {
+  const authorizeResp = await fetch(`${URL}/auth/v1/user/identities/authorize?provider=fake`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, apikey: ANON_KEY },
+  })
+  assertEq(authorizeResp.status, 200, 'link-identity authorize status')
+  const { url: linkURL } = await authorizeResp.json()
+  assert(linkURL, 'expected an authorize url for linking')
+
+  const followResp = await fetch(linkURL)
+  assert(followResp.ok, `link-identity callback failed: ${followResp.status}`)
+  const followBody = await followResp.json()
+  assertEq(followBody.message, 'Identity linked', 'link confirmation message')
+
+  const idResp = await fetch(`${URL}/auth/v1/user/identities`, {
+    headers: { Authorization: `Bearer ${accessToken}`, apikey: ANON_KEY },
+  })
+  const { identities } = await idResp.json()
+  assert(identities.some((i) => i.provider === 'fake'), 'linked fake identity should appear in the list')
+})
+
 // --- Admin signOut ---
 await step('admin: signOut revokes user sessions', async () => {
   if (!ADMIN_KEY) return
