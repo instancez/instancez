@@ -20,8 +20,9 @@ func newStatusCmd() *cobra.Command {
 production deploy status; and whether the local draft has unpublished changes
 relative to production.
 
-The project_id is read from project.cloud.project_id inside instancez.yaml. Run
-inz init --with-cloud first if no project is linked yet.
+The project_id is read from project.cloud.project_id inside instancez.yaml. If
+no project is linked yet, run inz cloud deploy --new to create one, or set
+project.cloud.project_id by hand.
 
 This is distinct from inz doctor, which checks local environment health.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -45,7 +46,7 @@ func runStatus(configPath string) error {
 		return fmt.Errorf("parse %s: %w", configPath, err)
 	}
 	if projectID == "" {
-		return errors.New("no project.cloud.project_id in instancez.yaml; run `inz init --with-cloud` to link this project to instancez Cloud")
+		return errors.New("no project.cloud.project_id in instancez.yaml; run `inz cloud deploy --new` to create and link one")
 	}
 
 	// Inline login: returns existing creds, prompts on a TTY, or hard-errors

@@ -17,22 +17,22 @@ If you run `inz cloud deploy` or `inz cloud status` while signed out on an inter
 
 ## Link a project
 
-A cloud project is identified by `project.cloud.project_id` in your `instancez.yaml`. Create the project and write that field in one step:
+A cloud project is identified by `project.cloud.project_id` in your `instancez.yaml`. Create the project and write that field in one step, as part of your first deploy:
 
 ```bash
-inz init --with-cloud
+inz cloud deploy --new
 ```
 
-On an existing project this adds the `project.cloud` block without touching the rest of your config:
+`--new` only creates a project after local validation passes, so you never end up with an empty project for an invalid config. It writes the returned id into your config:
 
 ```yaml
 project:
   name: my-app
   cloud:
-    project_id: <generated-by-init>
+    project_id: <generated-by-deploy>
 ```
 
-Re-running `inz init --with-cloud` over a config that already has a `project_id` reuses the existing project rather than creating a second one.
+Running `inz cloud deploy --new` again once `project.cloud.project_id` is already set is an error. Drop `--new` to deploy to the linked project, or use `--project <id>` to target a different one for that run without editing the file.
 
 ## Deploy
 

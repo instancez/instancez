@@ -42,9 +42,10 @@ inz dev [flags]
 | `--dashboard` | `readwrite` | Dashboard mode: `disabled`, `readonly`, or `readwrite`. |
 | `--dashboard-write-dotenv` | `true` | Allow the dashboard to write secrets to `.development.env`. |
 | `--dotenv-path` | `.development.env` | Path to the .env file for dashboard secret writing. |
+| `--embedded-pg` | `false` | Start an embedded Postgres 16 (data at `./pgdata/`); no external DB needed. |
 | `--no-watch` | `false` | Disable hot-reload. |
 | `--port` | (from config or `8080`) | Override server port. |
-| `--use-cloud` | — | Run against the cloud project's draft database (requires `inz init --with-cloud`). |
+| `--reset-pg` | `false` | Wipe `./pgdata/` before starting (requires `--embedded-pg`). |
 | `--verbose` | `false` | Enable debug logging. |
 | `--watch` | `true` | Watch the config source for changes. |
 | `--watch-interval` | `1m` | S3-watch poll interval (minimum 10s). |
@@ -180,7 +181,7 @@ inz doctor
 
 Show the linked cloud project's current state: name, ID, URL, production deploy status, and whether the local draft has unpublished changes.
 
-Requires `inz init --with-cloud`.
+Requires a linked project (`inz cloud deploy --new` links one).
 
 ```
 inz cloud status [flags]
