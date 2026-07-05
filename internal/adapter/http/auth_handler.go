@@ -39,6 +39,13 @@ const (
 // provider doesn't stall the HTTP response indefinitely.
 const emailSendTimeout = 5 * time.Second
 
+// Default post-auth redirect paths, used by resolveEmailRedirect when the
+// client sends no redirect_to (or sends one that isn't allowlisted).
+const (
+	defaultRecoveryPath    = "/reset-password"
+	defaultVerifyEmailPath = "/verify-email"
+)
+
 func ctxWithRequestMeta(ctx context.Context, c *gin.Context) context.Context {
 	ctx = context.WithValue(ctx, ctxKeyIP, c.ClientIP())
 	ctx = context.WithValue(ctx, ctxKeyUA, c.GetHeader("User-Agent"))
@@ -247,7 +254,7 @@ func (h *AuthHandler) handleSignup(c *gin.Context) {
 
 	// Send verification email if configured
 	if h.cfg.Auth.Email != nil && h.cfg.Auth.Email.VerifyEmail && h.email != nil {
-		h.sendVerificationEmail(userID, req.Email, "")
+		h.sendVerificationEmail(userID, req.Email, h.resolveEmailRedirect(c, "signup"))
 	}
 
 	ctx = ctxWithRequestMeta(ctx, c)
@@ -571,21 +578,17 @@ func (h *AuthHandler) handleLogout(c *gin.Context) {
 
 func (h *AuthHandler) handleRecover(c *gin.Context) {
 	var req struct {
-		Email      string `json:"email" binding:"required,email"`
-		RedirectTo string `json:"redirect_to"`
+		Email string `json:"email" binding:"required,email"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		problemJSON(c, 400, "bad_request", "Invalid email")
 		return
 	}
 
-	// Drop a disallowed redirect_to rather than emailing an attacker URL.
-	// The flow still succeeds (and still returns 200) using the base URL.
-	redirectTo := req.RedirectTo
-	if !h.redirectAllowed(redirectTo) {
-		h.logger.Warn("rejected disallowed recovery redirect_to", "redirect_to", redirectTo)
-		redirectTo = ""
-	}
+	// redirect_to is a query parameter (matching gotrue-js), not a body field.
+	// resolveEmailRedirect validates it and falls back to the /reset-password
+	// default when absent or disallowed.
+	redirectTo := h.resolveEmailRedirect(c, "recovery")
 
 	ctx := c.Request.Context()
 	userID, err := h.authSvc.GetUserIDByEmail(ctx, req.Email)
@@ -1709,6 +1712,26 @@ func (h *AuthHandler) resolveRedirect(target string) string {
 		h.logger.Warn("rejected disallowed redirect_to", "redirect_to", target)
 	}
 	return h.baseURL()
+}
+
+// resolveEmailRedirect returns the redirect target baked into an auth email
+// link: an explicit, allowed redirect_to from the query when the client sent
+// one; otherwise the default path for the flow's purpose joined onto
+// baseURL(); otherwise baseURL(). Resolved once at send time. The purpose->path
+// map lives only here so defaulting stays in one place.
+func (h *AuthHandler) resolveEmailRedirect(c *gin.Context, purpose string) string {
+	if rt := c.Query("redirect_to"); rt != "" && h.redirectAllowed(rt) {
+		return rt
+	}
+	base := h.baseURL()
+	switch purpose {
+	case "recovery":
+		return base + defaultRecoveryPath
+	case "signup":
+		return base + defaultVerifyEmailPath
+	default:
+		return base
+	}
 }
 
 func renderAuthTemplate(tmpl string, vars map[string]string) string {

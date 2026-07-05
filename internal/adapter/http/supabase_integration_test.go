@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -131,6 +132,14 @@ func TestSupabaseJSCompat(t *testing.T) {
 	}
 	baseURL := "http://" + oauthListener.Addr().String()
 	adapterauth.RegisterOAuth(fakeOAuthProvider{})
+
+	// The auth handler bakes h.baseURL() into email links (verify, recovery,
+	// magic link). In production that comes from Server.Port or
+	// INSTANCEZ_BASE_URL; this harness reserves its own listener up front
+	// (above) instead of letting the server pick a port, so without this the
+	// handler would fall back to "http://localhost:0" and the emailed links
+	// would 404 when followed.
+	t.Setenv("INSTANCEZ_BASE_URL", baseURL)
 
 	verifyEmail := false
 	cfg := &domain.Config{
@@ -584,9 +593,10 @@ func runPasswordResetFlow(t *testing.T, baseURL string, emails *captureEmailSend
 		t.Fatalf("password reset: signup status = %d, want 200", resp.StatusCode)
 	}
 
-	// Step 2: request password reset.
-	recoverBody := bytes.NewBufferString(fmt.Sprintf(`{"email":%q,"redirect_to":"http://app.local/reset"}`, email))
-	resp, err = http.Post(baseURL+"/auth/v1/recover", "application/json", recoverBody)
+	// Step 2: request password reset. redirect_to travels on the query
+	// string, matching what @supabase/gotrue-js actually sends.
+	recoverBody := bytes.NewBufferString(fmt.Sprintf(`{"email":%q}`, email))
+	resp, err = http.Post(baseURL+"/auth/v1/recover?redirect_to=http://app.local/reset", "application/json", recoverBody)
 	if err != nil {
 		t.Fatalf("password reset: /recover failed: %v", err)
 	}
@@ -609,18 +619,31 @@ func runPasswordResetFlow(t *testing.T, baseURL string, emails *captureEmailSend
 	if msg.Subject == "" {
 		t.Fatalf("password reset: no email captured for %s", email)
 	}
-	match := tokenRE.FindStringSubmatch(msg.Text)
-	if len(match) < 2 {
+	if match := tokenRE.FindStringSubmatch(msg.Text); len(match) < 2 {
 		t.Fatalf("password reset: no token found in email body:\n%s", msg.Text)
 	}
-	token := match[1]
 
 	// Step 4: click the recovery link (GET /auth/v1/verify).
-	verifyURL := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=recovery&redirect_to=http://app.local/reset", baseURL, token)
+	// Follow the link exactly as it appears in the email — this is what would
+	// have caught the redirect_to-from-body bug.
+	linkRE := regexp.MustCompile(`https?://\S+/auth/v1/verify\?\S+`)
+	verifyURL := linkRE.FindString(msg.Text)
+	if verifyURL == "" {
+		t.Fatalf("password reset: no verify link in email body:\n%s", msg.Text)
+	}
+	if !regexp.MustCompile(`redirect_to=`).MatchString(verifyURL) {
+		t.Fatalf("password reset: emailed link missing redirect_to: %s", verifyURL)
+	}
+	// The emailed link carries the /api prefix a real deployment sits behind
+	// (see publicAuthBaseURL); Traefik strips that prefix before forwarding
+	// to this process, and this harness has no Traefik in front of it, so
+	// strip it here to reproduce what the process actually receives. The
+	// assertions above already proved the *emailed* link is correct.
+	followURL := strings.Replace(verifyURL, "/api/auth/v1/verify", "/auth/v1/verify", 1)
 	client := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		return http.ErrUseLastResponse // don't follow redirects
 	}}
-	verifyResp, err := client.Get(verifyURL)
+	verifyResp, err := client.Get(followURL)
 	if err != nil {
 		t.Fatalf("password reset: GET /verify failed: %v", err)
 	}

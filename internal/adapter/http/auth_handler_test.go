@@ -192,6 +192,40 @@ func TestBuildVerifyLink(t *testing.T) {
 	}
 }
 
+func TestResolveEmailRedirect(t *testing.T) {
+	t.Setenv("INSTANCEZ_BASE_URL", "https://app.example.com")
+	h := &AuthHandler{cfg: &domain.Config{Auth: &domain.Auth{
+		RedirectURLs: []string{"https://app.example.com"},
+	}}}
+
+	newCtx := func(rawQuery string) *gin.Context {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest("POST", "/auth/v1/recover?"+rawQuery, nil)
+		return c
+	}
+
+	cases := []struct {
+		name    string
+		query   string
+		purpose string
+		want    string
+	}{
+		{"recovery default", "", "recovery", "https://app.example.com/reset-password"},
+		{"signup default", "", "signup", "https://app.example.com/verify-email"},
+		{"explicit allowed wins", "redirect_to=https://app.example.com/custom", "recovery", "https://app.example.com/custom"},
+		{"disallowed falls back to default", "redirect_to=https://evil.test/x", "recovery", "https://app.example.com/reset-password"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := h.resolveEmailRedirect(newCtx(tc.query), tc.purpose)
+			if got != tc.want {
+				t.Fatalf("resolveEmailRedirect = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // ---------- jwtAuth middleware: GoTrue claim shape ----------
 
 // stubKeys builds a trivial JWTKeyManager backed by an in-memory RS256 key.
