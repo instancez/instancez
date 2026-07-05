@@ -20,16 +20,6 @@ Env vars are interpolated using `${VAR}` or `${VAR:-default}`. They are resolved
 | `project.name` | `string` | — | Display name shown in the dashboard. |
 | `project.description` | `string` | — | Optional project description. |
 
-## extensions
-
-```yaml
-extensions:
-  - pgcrypto
-  - pg_trgm
-```
-
-List of Postgres extensions to enable. Each entry is passed to `CREATE EXTENSION IF NOT EXISTS`. Order is preserved.
-
 ## database
 
 | Key | Type | Default | Description |
@@ -290,9 +280,6 @@ version: 1
 project:
   name: My App
   description: Example instancez project
-
-extensions:
-  - pgcrypto
 
 server:
   port: 8080

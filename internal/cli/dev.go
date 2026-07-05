@@ -58,7 +58,6 @@ func runDev(opts devOptions) error {
 		}
 		defer stop()
 		embeddedSuperuserDSN = superuserDSN
-		fmt.Printf("  ✓ Embedded Postgres ready\n")
 	}
 
 	// Preflight: load dev dotenv first so DSN env vars are visible, then run
@@ -108,22 +107,14 @@ func runDev(opts devOptions) error {
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 
-	fmt.Printf("  instancez v%s\n\n", version)
-	fmt.Printf("  ✓ Schema valid\n")
-
-	if opts.dashboard != DashboardReadwrite {
-		fmt.Printf("  Dashboard: %s\n", opts.dashboard)
-	}
-	if !opts.watch {
-		fmt.Printf("  Watch:     disabled\n")
-	}
+	// Gather startup facts for the sectioned banner printed just before serving.
+	banner := devBanner{embedded: embeddedSuperuserDSN != "", functions: -1, cfg: cfg, opts: opts}
 
 	ctx := context.Background()
 	ownerDB, authDB, roles, err := dbConnections(ctx, cfg.Database.Pool, embeddedSuperuserDSN)
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
-	fmt.Printf("  ✓ Connected to PostgreSQL (owner + authenticator)\n")
 
 	// Initialize providers
 	email, storage, err := initProviders(ctx, cfg)
@@ -131,10 +122,10 @@ func runDev(opts devOptions) error {
 		return err
 	}
 	if email != nil {
-		fmt.Printf("  ✓ Email provider: %s\n", cfg.Providers.Email.Type)
+		banner.email = cfg.Providers.Email.Type
 	}
 	if storage != nil {
-		fmt.Printf("  ✓ Storage provider: %s\n", cfg.Providers.Storage.Type)
+		banner.storage = cfg.Providers.Storage.Type
 	}
 
 	km := app.NewJWTKeyManager(ownerDB)
@@ -150,7 +141,7 @@ func runDev(opts devOptions) error {
 	defer func() { _ = swap.Close() }()
 	var funcRuntime domain.FunctionRuntime = swap
 	if funcRT != nil {
-		fmt.Printf("  ✓ Functions: %d (runtime ready)\n", len(cfg.Functions))
+		banner.functions = len(cfg.Functions)
 	}
 
 	// reloadFuncs rebuilds workers from updated code/config without npm ci.
@@ -219,15 +210,9 @@ func runDev(opts devOptions) error {
 		app.WithFunctionReload(reloadFuncs),
 	)
 
-	fmt.Printf("\n  API:       http://localhost:%d\n", cfg.Server.Port)
-	if opts.dashboard != DashboardDisabled {
-		fmt.Printf("  Dashboard: http://localhost:%d/dashboard\n", cfg.Server.Port)
-	}
-	fmt.Printf("  Docs:      http://localhost:%d/api/docs\n", cfg.Server.Port)
-	fmt.Printf("  OpenAPI:   http://localhost:%d/api/openapi.json\n", cfg.Server.Port)
+	banner.print()
 
 	if opts.watch {
-		fmt.Printf("\n  Watching for changes... (Ctrl+C to stop)\n")
 		// Watch the functions/ directory for JS/TS code edits that don't
 		// touch instancez.yaml — those won't trigger the config watcher.
 		functionsDir := filepath.Join(filepath.Dir(opts.configPath), "functions")
@@ -238,6 +223,65 @@ func runDev(opts devOptions) error {
 
 	// Start engine (blocks until shutdown signal)
 	return engine.Start(ctx)
+}
+
+// devBanner holds the facts gathered during startup so the human-facing
+// summary can be printed as one grouped, sectioned block rather than a running
+// commentary interleaved with the structured logger.
+type devBanner struct {
+	embedded  bool   // embedded Postgres was started
+	email     string // email provider type, "" if none
+	storage   string // storage provider type, "" if none
+	functions int    // code functions loaded, -1 if the runtime is absent
+	cfg       *domain.Config
+	opts      devOptions
+}
+
+// print writes the sectioned dev startup summary to stdout.
+func (b devBanner) print() {
+	port := b.cfg.Server.Port
+	fmt.Printf("\n  instancez v%s\n", version)
+
+	fmt.Printf("\n  Database\n")
+	if b.embedded {
+		fmt.Printf("    ✓ Embedded Postgres 16 ready\n")
+	}
+	fmt.Printf("    ✓ Connected (owner + authenticator)\n")
+
+	fmt.Printf("\n  Schema\n")
+	fmt.Printf("    ✓ Valid\n")
+
+	if b.storage != "" || b.email != "" {
+		fmt.Printf("\n  Providers\n")
+		if b.storage != "" {
+			fmt.Printf("    ✓ Storage: %s\n", b.storage)
+		}
+		if b.email != "" {
+			fmt.Printf("    ✓ Email: %s\n", b.email)
+		}
+	}
+
+	if b.functions >= 0 {
+		fmt.Printf("\n  Functions\n")
+		fmt.Printf("    ✓ %d function(s) · runtime ready\n", b.functions)
+	}
+
+	fmt.Printf("\n  Server\n")
+	fmt.Printf("    API        http://localhost:%d\n", port)
+	if b.opts.dashboard != DashboardDisabled {
+		fmt.Printf("    Dashboard  http://localhost:%d/dashboard\n", port)
+	}
+	fmt.Printf("    Docs       http://localhost:%d/api/docs\n", port)
+	fmt.Printf("    OpenAPI    http://localhost:%d/api/openapi.json\n", port)
+	if b.opts.dashboard != DashboardReadwrite {
+		fmt.Printf("    Dashboard mode: %s\n", b.opts.dashboard)
+	}
+
+	if b.opts.watch {
+		fmt.Printf("\n  Watching for changes… (Ctrl+C to stop)\n")
+	} else {
+		fmt.Printf("\n  Watch disabled\n")
+	}
 }
 
 // watchFunctionsDir watches a functions directory and calls reload whenever

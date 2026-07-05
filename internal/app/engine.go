@@ -249,11 +249,22 @@ func (e *Engine) runWatcher(ctx context.Context, interval time.Duration) {
 	}
 }
 
+// lifecycle logs routine startup/shutdown narration. In dev the human banner
+// owns this story, so keep the structured logger quiet (Debug); in prod these
+// lines are the only startup record, so they stay at Info.
+func (e *Engine) lifecycle(msg string, args ...any) {
+	if e.mode == ModeDev {
+		e.logger.Debug(msg, args...)
+		return
+	}
+	e.logger.Info(msg, args...)
+}
+
 // Start runs the full startup sequence and blocks until shutdown.
 func (e *Engine) Start(ctx context.Context) error {
 	start := time.Now()
 
-	e.logger.Info("starting instancez", "mode", e.modeStr())
+	e.lifecycle("starting instancez", "mode", e.modeStr())
 
 	// 1. Migrate (with last-known-good fallback)
 	t := time.Now()
@@ -263,7 +274,7 @@ func (e *Engine) Start(ctx context.Context) error {
 			return fmt.Errorf("migration failed: %w", err)
 		}
 		e.drift = tracker
-		e.logger.Info("migrations applied", "duration", time.Since(t).Round(time.Millisecond))
+		e.lifecycle("migrations applied", "duration", time.Since(t).Round(time.Millisecond))
 	} else {
 		// migrate=false on serve: only check, never mutate the schema.
 		if err := e.ownerDB.EnsureMigrationsTable(ctx); err != nil {
@@ -279,7 +290,7 @@ func (e *Engine) Start(ctx context.Context) error {
 				return fmt.Errorf("initial migration failed: %w", err)
 			}
 			e.drift = tracker
-			e.logger.Info("initial migration applied", "duration", time.Since(t).Round(time.Millisecond))
+			e.lifecycle("initial migration applied", "duration", time.Since(t).Round(time.Millisecond))
 		} else {
 			configJSON, _ := json.Marshal(e.cfg)
 			checksum := fmt.Sprintf("%x", sha256.Sum256(configJSON))
@@ -302,10 +313,12 @@ func (e *Engine) Start(ctx context.Context) error {
 	}
 
 	// 2. Start HTTP server
+	srvErrCh := make(chan error, 1)
 	if e.httpServer != nil {
 		go func() {
 			if err := e.httpServer.Start(); err != nil {
 				e.logger.Error("HTTP server error", "error", err)
+				srvErrCh <- err
 			}
 		}()
 	}
@@ -315,32 +328,35 @@ func (e *Engine) Start(ctx context.Context) error {
 		go e.runWatcher(ctx, e.watchInterval)
 	}
 
-	e.logger.Info("startup complete",
+	e.lifecycle("startup complete",
 		"port", e.cfg.Server.Port,
 		"tables", len(e.cfg.Tables),
 		"duration", time.Since(start).Round(time.Millisecond))
 
 	// Block until signal
-	return e.waitForShutdown(ctx)
+	return e.waitForShutdown(ctx, srvErrCh)
 }
 
 
-func (e *Engine) waitForShutdown(ctx context.Context) error {
+func (e *Engine) waitForShutdown(ctx context.Context, srvErrCh <-chan error) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	select {
 	case sig := <-sigCh:
-		e.logger.Info("received signal, shutting down", "signal", sig)
+		e.lifecycle("received signal, shutting down", "signal", sig)
 	case <-ctx.Done():
-		e.logger.Info("context cancelled, shutting down")
+		e.lifecycle("context cancelled, shutting down")
+	case err := <-srvErrCh:
+		e.shutdown()
+		return err
 	}
 
 	return e.shutdown()
 }
 
 func (e *Engine) shutdown() error {
-	e.logger.Info("shutting down")
+	e.lifecycle("shutting down")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -357,7 +373,7 @@ func (e *Engine) shutdown() error {
 		e.logger.Error("error closing database", "error", err)
 	}
 
-	e.logger.Info("shutdown complete")
+	e.lifecycle("shutdown complete")
 	return nil
 }
 

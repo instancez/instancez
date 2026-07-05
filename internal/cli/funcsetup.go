@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -99,12 +100,19 @@ func buildDevFuncRuntime(
 		if _, err := os.Stat(filepath.Join(functionsDir, "package-lock.json")); os.IsNotExist(err) {
 			npmCmd = "install"
 		}
+		// A fresh `npm ci` can run silently for a while now that its output is
+		// buffered, so print a progress line to show we're not hung.
+		fmt.Printf("  Installing function dependencies (npm %s)...\n", npmCmd)
+		// Buffer npm's chatter (package counts, funding notices, audit
+		// warnings) so it stays out of the dev banner; surface the whole log
+		// only if the install actually fails.
 		cmd := exec.CommandContext(ctx, "npm", npmCmd)
 		cmd.Dir = functionsDir
-		cmd.Stdout = os.Stderr
-		cmd.Stderr = os.Stderr
+		var npmOut bytes.Buffer
+		cmd.Stdout = &npmOut
+		cmd.Stderr = &npmOut
 		if err := cmd.Run(); err != nil {
-			return nil, fmt.Errorf("functions: npm %s in %s: %w", npmCmd, functionsDir, err)
+			return nil, fmt.Errorf("functions: npm %s in %s: %w\n%s", npmCmd, functionsDir, err, npmOut.String())
 		}
 	}
 

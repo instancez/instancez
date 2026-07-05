@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"fmt"
 	"net"
 	"os"
@@ -25,15 +26,21 @@ func startEmbeddedPostgres(opts devOptions) (stop func(), dsn string, err error)
 		}
 	}
 
+	// The library defaults its logger to os.Stdout, which floods the dev banner
+	// with initdb/pg_ctl chatter and PG's own server log. Capture it instead and
+	// surface it only when Start fails.
+	// ponytail: buffer grows with PG's session logging; fine for a dev session.
+	var pgLog bytes.Buffer
 	pg := embeddedpostgres.NewDatabase(
 		embeddedpostgres.DefaultConfig().
 			Version(embeddedpostgres.V16).
 			DataPath(opts.pgDataDir).
-			Port(port),
+			Port(port).
+			Logger(&pgLog),
 	)
 
 	if err := pg.Start(); err != nil {
-		return nil, "", fmt.Errorf("start embedded Postgres: %w", err)
+		return nil, "", fmt.Errorf("start embedded Postgres: %w\n%s", err, pgLog.String())
 	}
 
 	superuserDSN := fmt.Sprintf("postgres://postgres:postgres@localhost:%d/postgres?sslmode=disable", port)

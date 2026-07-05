@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -68,20 +69,39 @@ func generateRequestID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// requestLogger logs each request (pretty in dev, JSON in prod).
-func requestLogger(logger *slog.Logger) gin.HandlerFunc {
+// requestLogger logs each request: fixed-width aligned columns in dev, the full
+// structured record in prod (for the JSON stream).
+func requestLogger(logger *slog.Logger, devMode bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		c.Next()
+		dur := time.Since(start).Round(time.Microsecond)
+		if devMode {
+			// One fmt.Fprintf = one Write of a sub-4KB line, so concurrent
+			// requests can't interleave mid-line. Columns: status, duration
+			// (right-aligned), method, then the path trails free.
+			fmt.Fprintf(os.Stdout, "  %3d  %s  %-7s %s\n",
+				c.Writer.Status(), padLeft(dur.String(), 8), c.Request.Method, c.Request.URL.Path)
+			return
+		}
 		logger.Info("request",
 			"method", c.Request.Method,
 			"path", c.Request.URL.Path,
 			"status", c.Writer.Status(),
-			"duration", time.Since(start).Round(time.Microsecond),
+			"duration", dur,
 			"user_id", c.GetString(contextKeyUserID),
 			"request_id", c.GetString(contextKeyRequestID),
 		)
 	}
+}
+
+// padLeft right-aligns s to w display columns by rune count, so multibyte units
+// like "µs" still line up with plain-ASCII durations like "15ms".
+func padLeft(s string, w int) string {
+	if n := utf8.RuneCountInString(s); n < w {
+		return strings.Repeat(" ", w-n) + s
+	}
+	return s
 }
 
 // corsMiddleware handles CORS headers.

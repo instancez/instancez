@@ -19,9 +19,6 @@ project:
   name: Storefront
   description: A small online store with Stripe Checkout.
 
-extensions:
-  - pgcrypto
-
 auth:
   jwt_expiry: 1h
   refresh_tokens: true

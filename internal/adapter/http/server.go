@@ -22,6 +22,7 @@ type Server struct {
 	cfg        *domain.Config
 	logger     *slog.Logger
 	db         domain.Database
+	devMode    bool
 }
 
 // ServerDeps holds all dependencies for the HTTP server.
@@ -55,22 +56,23 @@ type ServerDeps struct {
 
 // NewServer creates a new HTTP server with all routes mounted.
 func NewServer(deps ServerDeps) *Server {
-	if deps.DevMode {
-		gin.SetMode(gin.DebugMode)
-	} else {
-		gin.SetMode(gin.ReleaseMode)
-	}
+	// ReleaseMode even in dev: DebugMode's only real payload is the ~140-line
+	// route table it dumps to stderr at startup, which drowns the dev banner.
+	// We run our own requestLogger, so gin's debug logging buys us nothing.
+	// ponytail: if the route table is ever wanted back, flip this on --verbose.
+	gin.SetMode(gin.ReleaseMode)
 
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(requestIDMiddleware())
-	r.Use(requestLogger(deps.Logger))
+	r.Use(requestLogger(deps.Logger, deps.DevMode))
 
 	s := &Server{
-		engine: r,
-		cfg:    deps.Config,
-		logger: deps.Logger,
-		db:     deps.DB.Database,
+		engine:  r,
+		cfg:     deps.Config,
+		logger:  deps.Logger,
+		db:      deps.DB.Database,
+		devMode: deps.DevMode,
 	}
 
 	// Metrics middleware
@@ -173,7 +175,13 @@ func buildHTTPServer(port int, handler http.Handler) *http.Server {
 func (s *Server) Start() error {
 	s.httpServer = buildHTTPServer(s.cfg.Server.Port, s.engine)
 
-	s.logger.Info("HTTP server listening", "addr", s.httpServer.Addr)
+	// In dev the human banner already prints the API URL, so keep this to the
+	// debug stream; in prod it's part of the single JSON startup record.
+	if s.devMode {
+		s.logger.Debug("HTTP server listening", "addr", s.httpServer.Addr)
+	} else {
+		s.logger.Info("HTTP server listening", "addr", s.httpServer.Addr)
+	}
 	if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("http server: %w", err)
 	}
