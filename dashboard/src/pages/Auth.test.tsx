@@ -148,8 +148,8 @@ describe("AuthPage", () => {
     renderAuth(makeConfig(true));
     expect(api.getEnvVars).toHaveBeenCalledWith(
       expect.arrayContaining([
-        "INSTANCEZ_GOOGLE_CLIENT_SECRET",
-        "INSTANCEZ_GITHUB_CLIENT_SECRET",
+        "GOOGLE_CLIENT_SECRET",
+        "GITHUB_CLIENT_SECRET",
       ])
     );
   });
@@ -158,7 +158,7 @@ describe("AuthPage", () => {
     const config = makeConfig(true);
     config.auth!.oauth.google = {
       client_id: "${MY_CUSTOM_CLIENT_ID}",
-      client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
+      client_secret: "${GOOGLE_CLIENT_SECRET}",
       redirect_url: "https://app.example.com/callback",
     };
     renderAuth(config);
@@ -171,7 +171,7 @@ describe("AuthPage", () => {
     const config = makeConfig(true);
     config.auth!.oauth.google = {
       client_id: "abc123",
-      client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
+      client_secret: "${GOOGLE_CLIENT_SECRET}",
       redirect_url: "https://app.example.com/callback",
     };
     renderAuth(config);
@@ -215,7 +215,7 @@ describe("AuthPage", () => {
     const config = makeConfig(true);
     config.auth!.oauth.google = {
       client_id: "abc123",
-      client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
+      client_secret: "${GOOGLE_CLIENT_SECRET}",
       redirect_url: "https://app.example.com/callback",
     };
     renderAuth(config);
@@ -229,7 +229,7 @@ describe("AuthPage", () => {
   it("enabling a provider stages the secret as ${VAR} and settings as literals", async () => {
     renderAuth(makeConfig(true));
     await userEvent.click(screen.getByRole("switch", { name: /enable google/i }));
-    expect(screen.getByText("INSTANCEZ_GOOGLE_CLIENT_SECRET")).toBeInTheDocument();
+    expect(screen.getByText("GOOGLE_CLIENT_SECRET")).toBeInTheDocument();
     expect(screen.getByLabelText("Client ID")).toHaveValue("");
     expect(screen.getByLabelText("Redirect URL")).toHaveValue("");
   });
@@ -243,7 +243,7 @@ describe("AuthPage", () => {
     await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
     const saved = save.mock.calls[0]![0].auth;
     expect(saved.oauth.google).toMatchObject({
-      client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
+      client_secret: "${GOOGLE_CLIENT_SECRET}",
     });
     expect(saved.google).toBeUndefined();
     expect(saved.github).toBeUndefined();
@@ -255,7 +255,7 @@ describe("AuthPage", () => {
     const config = makeConfig(true);
     config.auth!.oauth.google = {
       client_id: "abc123",
-      client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
+      client_secret: "${GOOGLE_CLIENT_SECRET}",
       redirect_url: "https://app.example.com/callback",
     };
     const { save } = renderAuth(config);
@@ -268,12 +268,12 @@ describe("AuthPage", () => {
     const config = makeConfig(true);
     config.auth!.oauth.google = {
       client_id: "${INSTANCEZ_GOOGLE_CLIENT_ID}",
-      client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
+      client_secret: "${GOOGLE_CLIENT_SECRET}",
       redirect_url: "${INSTANCEZ_GOOGLE_REDIRECT_URL}",
     };
     renderAuth(config);
     expect(screen.getByText("INSTANCEZ_GOOGLE_CLIENT_ID")).toBeInTheDocument();
-    expect(screen.getByText("INSTANCEZ_GOOGLE_CLIENT_SECRET")).toBeInTheDocument();
+    expect(screen.getByText("GOOGLE_CLIENT_SECRET")).toBeInTheDocument();
     expect(screen.getByText("INSTANCEZ_GOOGLE_REDIRECT_URL")).toBeInTheDocument();
   });
 
@@ -284,7 +284,7 @@ describe("AuthPage", () => {
     const config = makeConfig(true);
     config.auth!.oauth.google = {
       client_id: "${INSTANCEZ_GOOGLE_CLIENT_ID}",
-      client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
+      client_secret: "${GOOGLE_CLIENT_SECRET}",
       redirect_url: "${INSTANCEZ_GOOGLE_REDIRECT_URL}",
     };
     renderAuth(config);
@@ -295,13 +295,13 @@ describe("AuthPage", () => {
     const config = makeConfig(true);
     config.auth!.oauth.google = {
       client_id: "${INSTANCEZ_GOOGLE_CLIENT_ID}",
-      client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
+      client_secret: "${GOOGLE_CLIENT_SECRET}",
       redirect_url: "${INSTANCEZ_GOOGLE_REDIRECT_URL}",
     };
     renderAuth(config, true);
     for (const varName of [
       "INSTANCEZ_GOOGLE_CLIENT_ID",
-      "INSTANCEZ_GOOGLE_CLIENT_SECRET",
+      "GOOGLE_CLIENT_SECRET",
       "INSTANCEZ_GOOGLE_REDIRECT_URL",
     ]) {
       expect(screen.getByLabelText(varName)).toBeInTheDocument();
@@ -312,7 +312,7 @@ describe("AuthPage", () => {
     const config = makeConfig(true);
     config.auth!.oauth.google = {
       client_id: "${INSTANCEZ_GOOGLE_CLIENT_ID}",
-      client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
+      client_secret: "${GOOGLE_CLIENT_SECRET}",
       redirect_url: "${INSTANCEZ_GOOGLE_REDIRECT_URL}",
     };
     renderAuth(config);
@@ -325,7 +325,7 @@ describe("AuthPage", () => {
     const config = makeConfig(true);
     config.auth!.oauth.google = {
       client_id: "${INSTANCEZ_GOOGLE_CLIENT_ID}",
-      client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
+      client_secret: "${GOOGLE_CLIENT_SECRET}",
       redirect_url: "${INSTANCEZ_GOOGLE_REDIRECT_URL}",
     };
     renderAuth(config, false);

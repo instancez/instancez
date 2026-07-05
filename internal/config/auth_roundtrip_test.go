@@ -15,7 +15,7 @@ import (
 // project to defaults, so guard the full loop here.
 func TestAuthSettingsSurviveConfigRoundTrip(t *testing.T) {
 	// The OAuth client secret is a ${VAR} ref; ParseBytes resolves it at the end.
-	t.Setenv("INSTANCEZ_GOOGLE_CLIENT_SECRET", "s3cret")
+	t.Setenv("GOOGLE_CLIENT_SECRET", "s3cret")
 	src := []byte(`version: 1
 project:
   name: Demo
@@ -29,7 +29,7 @@ auth:
   oauth:
     google:
       client_id: google-client
-      client_secret: ${INSTANCEZ_GOOGLE_CLIENT_SECRET}
+      client_secret: ${GOOGLE_CLIENT_SECRET}
       redirect_url: https://app.example.com/auth/callback/google
 `)
 
