@@ -31,7 +31,7 @@ const baseConfig: Config = {
       rls: [],
     },
   },
-  auth: { jwt_expiry: "15m", refresh_tokens: true, refresh_token_expiry: "7d", allow_signup: null, allow_anonymous: null, redirect_urls: [], email: { verify_email: false, templates: {} }, google: null, github: null },
+  auth: { jwt_expiry: "15m", refresh_tokens: true, refresh_token_expiry: "7d", allow_signup: null, allow_anonymous: null, redirect_urls: [], email: { verify_email: false, templates: {} }, oauth: {} },
   storage: {
     avatars: { max_size: "5MB", types: ["image/*"], public: true, rls: [] },
   },

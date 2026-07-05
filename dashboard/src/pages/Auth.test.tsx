@@ -32,8 +32,7 @@ const makeConfig = (authEnabled: boolean): Config => ({
         allow_anonymous: null,
         redirect_urls: [],
         email: { verify_email: false, templates: {} },
-        google: null,
-        github: null,
+        oauth: {},
       }
     : null,
   storage: {},
@@ -157,7 +156,7 @@ describe("AuthPage", () => {
 
   it("requests status for ${VAR} refs found in saved OAuth settings", () => {
     const config = makeConfig(true);
-    config.auth!.google = {
+    config.auth!.oauth.google = {
       client_id: "${MY_CUSTOM_CLIENT_ID}",
       client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
       redirect_url: "https://app.example.com/callback",
@@ -170,7 +169,7 @@ describe("AuthPage", () => {
 
   it("renders literal OAuth settings as plain editable inputs, creds first", () => {
     const config = makeConfig(true);
-    config.auth!.google = {
+    config.auth!.oauth.google = {
       client_id: "abc123",
       client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
       redirect_url: "https://app.example.com/callback",
@@ -214,7 +213,7 @@ describe("AuthPage", () => {
 
   it("hides the save bar again when an edit is undone", () => {
     const config = makeConfig(true);
-    config.auth!.google = {
+    config.auth!.oauth.google = {
       client_id: "abc123",
       client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
       redirect_url: "https://app.example.com/callback",
@@ -235,9 +234,39 @@ describe("AuthPage", () => {
     expect(screen.getByLabelText("Redirect URL")).toHaveValue("");
   });
 
+  // Guards the engine contract: OAuth lives under auth.oauth.<provider>, not as
+  // a top-level auth.google. Writing the flat key gets rejected as an unknown
+  // key by the engine's strict config decode.
+  it("saves an enabled provider under auth.oauth, not as a top-level key", async () => {
+    const { save } = renderAuth(makeConfig(true));
+    await userEvent.click(screen.getByRole("switch", { name: /enable google/i }));
+    await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    const saved = save.mock.calls[0]![0].auth;
+    expect(saved.oauth.google).toMatchObject({
+      client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
+    });
+    expect(saved.google).toBeUndefined();
+    expect(saved.github).toBeUndefined();
+  });
+
+  // Disabling drops the key entirely rather than leaving `google: null`, so the
+  // emitted YAML carries no dead provider entry.
+  it("removes the provider key from auth.oauth when disabled", async () => {
+    const config = makeConfig(true);
+    config.auth!.oauth.google = {
+      client_id: "abc123",
+      client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
+      redirect_url: "https://app.example.com/callback",
+    };
+    const { save } = renderAuth(config);
+    await userEvent.click(screen.getByRole("switch", { name: /enable google/i }));
+    await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    expect(save.mock.calls[0]![0].auth.oauth).not.toHaveProperty("google");
+  });
+
   it("shows Google OAuth var names when Google is enabled", async () => {
     const config = makeConfig(true);
-    config.auth!.google = {
+    config.auth!.oauth.google = {
       client_id: "${INSTANCEZ_GOOGLE_CLIENT_ID}",
       client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
       redirect_url: "${INSTANCEZ_GOOGLE_REDIRECT_URL}",
@@ -253,7 +282,7 @@ describe("AuthPage", () => {
       vars: { INSTANCEZ_GOOGLE_CLIENT_ID: { set: true } },
     });
     const config = makeConfig(true);
-    config.auth!.google = {
+    config.auth!.oauth.google = {
       client_id: "${INSTANCEZ_GOOGLE_CLIENT_ID}",
       client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
       redirect_url: "${INSTANCEZ_GOOGLE_REDIRECT_URL}",
@@ -264,7 +293,7 @@ describe("AuthPage", () => {
 
   it("shows dotenv input when dotenvWritable=true and provider is enabled", () => {
     const config = makeConfig(true);
-    config.auth!.google = {
+    config.auth!.oauth.google = {
       client_id: "${INSTANCEZ_GOOGLE_CLIENT_ID}",
       client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
       redirect_url: "${INSTANCEZ_GOOGLE_REDIRECT_URL}",
@@ -281,7 +310,7 @@ describe("AuthPage", () => {
 
   it("shows friendly field labels for OAuth config rows", () => {
     const config = makeConfig(true);
-    config.auth!.google = {
+    config.auth!.oauth.google = {
       client_id: "${INSTANCEZ_GOOGLE_CLIENT_ID}",
       client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
       redirect_url: "${INSTANCEZ_GOOGLE_REDIRECT_URL}",
@@ -294,7 +323,7 @@ describe("AuthPage", () => {
 
   it("hides dotenv inputs when dotenvWritable=false", () => {
     const config = makeConfig(true);
-    config.auth!.google = {
+    config.auth!.oauth.google = {
       client_id: "${INSTANCEZ_GOOGLE_CLIENT_ID}",
       client_secret: "${INSTANCEZ_GOOGLE_CLIENT_SECRET}",
       redirect_url: "${INSTANCEZ_GOOGLE_REDIRECT_URL}",

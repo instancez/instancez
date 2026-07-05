@@ -151,8 +151,8 @@ export function Overview() {
               {authEnabled
                 ? [
                     config.auth?.email ? "Email" : null,
-                    config.auth?.google ? "Google" : null,
-                    config.auth?.github ? "GitHub" : null,
+                    config.auth?.oauth?.google ? "Google" : null,
+                    config.auth?.oauth?.github ? "GitHub" : null,
                   ]
                     .filter(Boolean)
                     .join(", ") || "No providers"

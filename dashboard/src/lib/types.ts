@@ -86,8 +86,9 @@ export interface Auth {
   allow_anonymous: boolean | null;
   redirect_urls: string[];
   email: AuthEmail | null;
-  google: OAuthProvider | null;
-  github: OAuthProvider | null;
+  // Keyed by provider name (google, github, …), mirroring the engine's
+  // map[string]*OAuthProvider. A key that's absent (or null) means disabled.
+  oauth: Record<string, OAuthProvider | null>;
 }
 
 export interface AuthEmail {

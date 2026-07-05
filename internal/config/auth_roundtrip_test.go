@@ -14,6 +14,8 @@ import (
 // path would silently revert a closed-registration or redirect-allowlist
 // project to defaults, so guard the full loop here.
 func TestAuthSettingsSurviveConfigRoundTrip(t *testing.T) {
+	// The OAuth client secret is a ${VAR} ref; ParseBytes resolves it at the end.
+	t.Setenv("INSTANCEZ_GOOGLE_CLIENT_SECRET", "s3cret")
 	src := []byte(`version: 1
 project:
   name: Demo
@@ -24,6 +26,11 @@ auth:
   redirect_urls:
     - https://app.example.com
     - https://admin.example.com
+  oauth:
+    google:
+      client_id: google-client
+      client_secret: ${INSTANCEZ_GOOGLE_CLIENT_SECRET}
+      redirect_url: https://app.example.com/auth/callback/google
 `)
 
 	// 1. Parse the source as the server does on boot / GET.
@@ -64,6 +71,15 @@ auth:
 	want := []string{"https://app.example.com", "https://admin.example.com"}
 	if got := final.Auth.RedirectURLs; !equalStrings(got, want) {
 		t.Errorf("redirect_urls lost in round-trip: got %v, want %v\n%s", got, want, outYAML)
+	}
+	// OAuth is keyed under auth.oauth.<provider>; the dashboard once wrote it as
+	// a top-level auth.google, which strict decode now rejects. Pin the shape.
+	g := final.Auth.OAuth["google"]
+	if g == nil {
+		t.Fatalf("google oauth provider lost in round-trip\n%s", outYAML)
+	}
+	if g.ClientID != "google-client" || g.RedirectURL != "https://app.example.com/auth/callback/google" {
+		t.Errorf("google oauth settings lost in round-trip: %+v\n%s", g, outYAML)
 	}
 }
 

@@ -56,7 +56,7 @@ const OAUTH_CRED_VARS = Object.values(OAUTH_SECRET_VARS);
 function collectOAuthRefs(auth: Auth | null): string[] {
   if (!auth) return [];
   const names: string[] = [];
-  for (const provider of [auth.google, auth.github]) {
+  for (const provider of Object.values(auth.oauth ?? {})) {
     if (!provider) continue;
     for (const value of Object.values(provider)) {
       const name = envRefName(value);
@@ -122,8 +122,7 @@ const DEFAULT_AUTH: Auth = {
   allow_anonymous: null,
   redirect_urls: [],
   email: { verify_email: false, templates: {} },
-  google: null,
-  github: null,
+  oauth: {},
 };
 
 export function AuthPage() {
@@ -210,14 +209,21 @@ export function AuthPage() {
         delete next[secretVar];
         return next;
       });
-      updateAuth((a) => ({ ...a, [provider]: null }));
+      updateAuth((a) => {
+        const oauth = { ...a.oauth };
+        delete oauth[provider];
+        return { ...a, oauth };
+      });
     } else {
       updateAuth((a) => ({
         ...a,
-        [provider]: {
-          client_id: "",
-          client_secret: `\${${OAUTH_SECRET_VARS[provider]}}`,
-          redirect_url: "",
+        oauth: {
+          ...a.oauth,
+          [provider]: {
+            client_id: "",
+            client_secret: `\${${OAUTH_SECRET_VARS[provider]}}`,
+            redirect_url: "",
+          },
         },
       }));
     }
@@ -228,10 +234,11 @@ export function AuthPage() {
     key: "client_id" | "redirect_url",
     value: string
   ) {
-    updateAuth((a) => ({
-      ...a,
-      [provider]: a[provider] ? { ...a[provider]!, [key]: value } : a[provider],
-    }));
+    updateAuth((a) => {
+      const current = a.oauth?.[provider];
+      if (!current) return a;
+      return { ...a, oauth: { ...a.oauth, [provider]: { ...current, [key]: value } } };
+    });
   }
 
   function setRedirectUrl(index: number, value: string) {
@@ -482,7 +489,7 @@ export function AuthPage() {
               icon={Plug2}
             >
               {(["google", "github"] as const).map((provider) => {
-                const providerConfig = auth[provider];
+                const providerConfig = auth.oauth?.[provider];
                 const isEnabled = !!providerConfig;
                 const secretVar = OAUTH_SECRET_VARS[provider];
 
