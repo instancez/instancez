@@ -247,7 +247,7 @@ func (h *AuthHandler) handleSignup(c *gin.Context) {
 
 	// Send verification email if configured
 	if h.cfg.Auth.Email != nil && h.cfg.Auth.Email.VerifyEmail && h.email != nil {
-		h.sendVerificationEmail(userID, req.Email)
+		h.sendVerificationEmail(userID, req.Email, "")
 	}
 
 	ctx = ctxWithRequestMeta(ctx, c)
@@ -891,10 +891,7 @@ func (h *AuthHandler) handleGenerateLink(c *gin.Context) {
 		return
 	}
 
-	actionLink := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=%s", h.publicAuthBaseURL(), token, req.Type)
-	if req.RedirectTo != "" {
-		actionLink += "&redirect_to=" + url.QueryEscape(req.RedirectTo)
-	}
+	actionLink := h.buildVerifyLink(token, req.Type, req.RedirectTo)
 
 	resp := gin.H{
 		"action_link":       actionLink,
@@ -1135,7 +1132,7 @@ func (h *AuthHandler) handleAdminInvite(c *gin.Context) {
 	userID := asString(row["id"])
 
 	if h.cfg.Auth.Email != nil && h.email != nil {
-		h.sendVerificationEmail(userID, req.Email)
+		h.sendVerificationEmail(userID, req.Email, "")
 	}
 
 	c.JSON(200, h.buildUser(userID, row, nil))
@@ -1573,7 +1570,7 @@ func (h *AuthHandler) issuer() string {
 
 // ---------- email templates ----------
 
-func (h *AuthHandler) sendVerificationEmail(userID, email string) {
+func (h *AuthHandler) sendVerificationEmail(userID, email, redirectTo string) {
 	token := generateRandomToken()
 	expiresAt := time.Now().Add(24 * time.Hour)
 
@@ -1589,7 +1586,7 @@ func (h *AuthHandler) sendVerificationEmail(userID, email string) {
 		"token":    token,
 		"email":    email,
 		"base_url": h.baseURL(),
-		"link":     fmt.Sprintf("%s/auth/v1/verify?token=%s", h.publicAuthBaseURL(), token),
+		"link":     h.buildVerifyLink(token, "signup", redirectTo),
 	})
 
 	if err := h.email.Send(ctx, domain.EmailMessage{
@@ -1608,7 +1605,7 @@ func (h *AuthHandler) sendMagicLinkEmail(email, token, code string) {
 	if h.cfg.Providers.Email != nil {
 		fromEmail = h.cfg.Providers.Email.DefaultFromEmail
 	}
-	link := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=magiclink", h.publicAuthBaseURL(), token)
+	link := h.buildVerifyLink(token, "magiclink", "")
 	subject, body := h.resolveEmailTemplate("magiclink", map[string]string{
 		"token":    token,
 		"code":     code,
@@ -1639,10 +1636,7 @@ func (h *AuthHandler) sendPasswordResetEmail(email, token, redirectTo string) {
 	// handler can validate the token, generate a session, and redirect the
 	// user to the app with access_token in the URL fragment — matching the
 	// GoTrue flow that supabase-js expects.
-	verifyLink := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=recovery", h.publicAuthBaseURL(), token)
-	if redirectTo != "" {
-		verifyLink += "&redirect_to=" + url.QueryEscape(redirectTo)
-	}
+	verifyLink := h.buildVerifyLink(token, "recovery", redirectTo)
 	subject, body := h.resolveEmailTemplate("reset", map[string]string{
 		"token":    token,
 		"email":    email,
@@ -1681,6 +1675,20 @@ func (h *AuthHandler) baseURL() string {
 // itself, not this API.
 func (h *AuthHandler) publicAuthBaseURL() string {
 	return h.baseURL() + "/api"
+}
+
+// buildVerifyLink returns the GET /auth/v1/verify click-through URL that auth
+// email links point at. verifyType and redirect_to are appended when set. This
+// is the single construction point for every auth email and the admin link.
+func (h *AuthHandler) buildVerifyLink(token, verifyType, redirectTo string) string {
+	link := fmt.Sprintf("%s/auth/v1/verify?token=%s", h.publicAuthBaseURL(), token)
+	if verifyType != "" {
+		link += "&type=" + verifyType
+	}
+	if redirectTo != "" {
+		link += "&redirect_to=" + url.QueryEscape(redirectTo)
+	}
+	return link
 }
 
 // redirectAllowed reports whether target is a safe redirect/return destination

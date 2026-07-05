@@ -172,6 +172,26 @@ func TestBuildUser_BannedUntilRendered(t *testing.T) {
 	}
 }
 
+// ---------- buildVerifyLink ----------
+
+func TestBuildVerifyLink(t *testing.T) {
+	t.Setenv("INSTANCEZ_BASE_URL", "https://app.example.com")
+	h := &AuthHandler{cfg: &domain.Config{Auth: &domain.Auth{}}}
+	// publicAuthBaseURL() = baseURL() + "/api".
+	got := h.buildVerifyLink("tok123", "recovery", "http://app.local/reset")
+	want := "https://app.example.com/api/auth/v1/verify?token=tok123&type=recovery&redirect_to=http%3A%2F%2Fapp.local%2Freset"
+	if got != want {
+		t.Fatalf("buildVerifyLink = %q, want %q", got, want)
+	}
+
+	// No redirect_to: omit the param entirely.
+	got = h.buildVerifyLink("tok123", "magiclink", "")
+	want = "https://app.example.com/api/auth/v1/verify?token=tok123&type=magiclink"
+	if got != want {
+		t.Fatalf("buildVerifyLink (no redirect) = %q, want %q", got, want)
+	}
+}
+
 // ---------- jwtAuth middleware: GoTrue claim shape ----------
 
 // stubKeys builds a trivial JWTKeyManager backed by an in-memory RS256 key.
