@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/instancez/instancez/internal/cli/preflight"
@@ -193,6 +194,25 @@ func runDeploy(configPath string, opts deployOpts) error {
 		}
 		if err := c.UploadFunctions(projectID, branch, sources); err != nil {
 			return fmt.Errorf("upload function sources: %w", err)
+		}
+	}
+
+	// Provision INSTANCEZ_ENV_* secrets so the deployed app resolves its ${...}
+	// refs without a manual dashboard step. Only names present locally are
+	// pushed; secrets set only in the dashboard are left untouched.
+	secrets, err := config.LoadInstancezEnv(filepath.Dir(configPath), "production")
+	if err != nil {
+		return fmt.Errorf("load INSTANCEZ_ENV_ secrets: %w", err)
+	}
+	if len(secrets) > 0 {
+		names := make([]string, 0, len(secrets))
+		for n := range secrets {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		fmt.Printf("  Pushing %d secret(s): %s\n", len(secrets), strings.Join(names, ", "))
+		if err := c.UploadSecrets(projectID, branch, secrets); err != nil {
+			return reportCloudErr("upload secrets", err)
 		}
 	}
 
