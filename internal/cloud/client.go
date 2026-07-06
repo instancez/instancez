@@ -171,6 +171,14 @@ func (c *Client) UploadFunctions(projectID, branch string, files map[string]stri
 		map[string]any{"files": files, "branch": branch}, nil)
 }
 
+// UploadSecrets pushes name->value INSTANCEZ_ENV_ secrets to the named branch's
+// app_secrets. The cloud encrypts and upserts them; keys absent from this call
+// are left untouched. Called by `inz deploy`.
+func (c *Client) UploadSecrets(projectID, branch string, secrets map[string]string) error {
+	return c.do("PUT", "/instancez/projects/"+projectID+"/secrets",
+		map[string]any{"secrets": secrets, "branch": branch}, nil)
+}
+
 // GetAppResponse mirrors GET /instancez/projects/:id. It carries the project
 // fields plus the PRODUCTION version's deploy state (Deployment) and whether the
 // draft has unpublished changes vs production (DraftDirty). Note: Status is the

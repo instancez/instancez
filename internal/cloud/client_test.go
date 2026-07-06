@@ -188,6 +188,32 @@ func TestClientUploadYAMLReturnsDroppedAndDiff(t *testing.T) {
 	assert.Equal(t, ChangeAdded, diff.Tables[0].Change)
 }
 
+func TestUploadSecrets(t *testing.T) {
+	var gotPath, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "pat")
+	if err := c.UploadSecrets("proj1", "production", map[string]string{"INSTANCEZ_ENV_FOO": "bar"}); err != nil {
+		t.Fatalf("UploadSecrets: %v", err)
+	}
+	if gotPath != "/instancez/projects/proj1/secrets" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if !strings.Contains(gotBody, `"secrets"`) || !strings.Contains(gotBody, "INSTANCEZ_ENV_FOO") {
+		t.Errorf("body = %q", gotBody)
+	}
+	if !strings.Contains(gotBody, `"branch":"production"`) {
+		t.Errorf("body missing branch: %q", gotBody)
+	}
+}
+
 func TestUploadFunctions(t *testing.T) {
 	var gotPath, gotBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
