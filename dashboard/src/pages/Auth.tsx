@@ -37,12 +37,12 @@ function GitHubIcon({ size = 16 }: { size?: number }) {
 // ref in YAML, value in .env, rendered first); client ID and redirect URL are
 // ordinary settings stored as literal YAML values (a hand-edited ${VAR} ref
 // is respected and rendered as env-managed).
-// Non-reserved names: the platform reserves the INSTANCEZ_ prefix for its own
-// injected vars, so an app's OAuth secret must live under a plain name. The
+// INSTANCEZ_ENV_ is the namespace for user-referenceable secrets in
+// instancez.yaml (platform infra vars keep a bare INSTANCEZ_ prefix). The
 // user's value is stored per-app (app_secrets) and injected at deploy.
 const OAUTH_SECRET_VARS: Record<"google" | "github", string> = {
-  google: "GOOGLE_CLIENT_SECRET",
-  github: "GITHUB_CLIENT_SECRET",
+  google: "INSTANCEZ_ENV_GOOGLE_CLIENT_SECRET",
+  github: "INSTANCEZ_ENV_GITHUB_CLIENT_SECRET",
 };
 
 const OAUTH_SETTINGS = [
