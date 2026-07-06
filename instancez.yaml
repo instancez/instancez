@@ -51,11 +51,11 @@ auth:
     # oauth:
     #     google:
     #         client_id: YOUR_GOOGLE_CLIENT_ID
-    #         client_secret: YOUR_GOOGLE_CLIENT_SECRET
+    #         client_secret: ${INSTANCEZ_ENV_GOOGLE_CLIENT_SECRET}
     #         redirect_url: https://myapp.example.com/auth/callback/google
     #     github:
     #         client_id: YOUR_GITHUB_CLIENT_ID
-    #         client_secret: YOUR_GITHUB_CLIENT_SECRET
+    #         client_secret: ${INSTANCEZ_ENV_GITHUB_CLIENT_SECRET}
     #         redirect_url: https://myapp.example.com/auth/callback/github
 tables:
     # Profile data lives in a regular user-defined table FK'd to auth.users.id.

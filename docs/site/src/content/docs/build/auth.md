@@ -34,12 +34,12 @@ auth:
   oauth:
     google:
       client_id: YOUR_GOOGLE_CLIENT_ID
-      client_secret: YOUR_GOOGLE_CLIENT_SECRET
+      client_secret: ${INSTANCEZ_ENV_GOOGLE_CLIENT_SECRET}
       redirect_url: https://api.myapp.example.com/auth/v1/callback/google
 
     github:
       client_id: YOUR_GITHUB_CLIENT_ID
-      client_secret: YOUR_GITHUB_CLIENT_SECRET
+      client_secret: ${INSTANCEZ_ENV_GITHUB_CLIENT_SECRET}
       redirect_url: https://api.myapp.example.com/auth/v1/callback/github
 ```
 

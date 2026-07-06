@@ -29,8 +29,8 @@ services:
     environment:
       INSTANCEZ_DATABASE_URL: postgres://instancez:instancez@postgres:5432/instancez?sslmode=disable
       INSTANCEZ_ADMIN_KEY: instancez-dev-key
-      GOOGLE_CLIENT_SECRET: YOUR_GOOGLE_CLIENT_SECRET
-      GITHUB_CLIENT_SECRET: YOUR_GITHUB_CLIENT_SECRET
+      INSTANCEZ_ENV_GOOGLE_CLIENT_SECRET: YOUR_GOOGLE_CLIENT_SECRET
+      INSTANCEZ_ENV_GITHUB_CLIENT_SECRET: YOUR_GITHUB_CLIENT_SECRET
     volumes:
       - ./instancez.yaml:/app/instancez.yaml
       - ./functions:/app/functions   # code functions; `inz dev` runs npm ci here
