@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,24 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// A config that is otherwise valid but references a bare (non-INSTANCEZ_ENV_)
+// var must be rejected by the namespace gate before any cloud call. The gate
+// returns errReported; without it, runDeploy would proceed to the cloud and
+// fail with a different error, so errors.Is(err, errReported) distinguishes the
+// two.
+func TestRunDeployRejectsBareEnvRef(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "instancez.yaml")
+	yaml := "version: 1\nproject:\n  name: demo\n  cloud:\n    project_id: p1\n" +
+		"auth:\n  oauth:\n    google:\n      client_id: x\n      client_secret: ${GOOGLE_CLIENT_SECRET}\n      redirect_url: https://a/cb\n"
+	if err := os.WriteFile(cfgPath, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runDeploy(cfgPath, deployOpts{}); !errors.Is(err, errReported) {
+		t.Fatalf("expected errReported from the namespace gate, got: %v", err)
+	}
+}
 
 func TestRunDeployFunctionsWithoutFunctionsDir(t *testing.T) {
 	dir := t.TempDir()

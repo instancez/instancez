@@ -110,6 +110,10 @@ func runDeploy(configPath string, opts deployOpts) error {
 		return fmt.Errorf("parse config: %w", err)
 	}
 
+	if errs := config.ValidateEnvNamespace(src); errs != nil {
+		return printPrettyErrors(errs)
+	}
+
 	fileProjectID, err := cloud.ReadProjectID(src)
 	if err != nil {
 		return fmt.Errorf("parse %s: %w", configPath, err)

@@ -86,7 +86,9 @@ func runDev(opts devOptions) error {
 		return err
 	}
 
+	raw, _ := os.ReadFile(opts.configPath)
 	errs := config.Validate(cfg)
+	errs = append(errs, config.ValidateEnvNamespace(raw)...)
 	if errs != nil {
 		return printPrettyErrors(errs)
 	}

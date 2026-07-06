@@ -88,6 +88,16 @@ func runServe(opts serveOptions) error {
 		return err
 	}
 
+	// Enforce the INSTANCEZ_ENV_ namespace only for local (user-authored)
+	// configs; s3:// sources are generator-produced and reference platform vars.
+	if _, ok := source.(*config.FileSource); ok {
+		if raw, err := os.ReadFile(opts.configPath); err == nil {
+			if errs := config.ValidateEnvNamespace(raw); errs != nil {
+				return printPrettyErrors(errs)
+			}
+		}
+	}
+
 	errs := config.Validate(cfg)
 	if errs != nil {
 		return printPrettyErrors(errs)

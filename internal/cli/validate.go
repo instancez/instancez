@@ -88,7 +88,9 @@ func runValidate(ctx context.Context, configPath string, jsonOutput bool, useDSN
 		return err
 	}
 
+	raw, _ := os.ReadFile(configPath)
 	errs := config.Validate(cfg)
+	errs = append(errs, config.ValidateEnvNamespace(raw)...)
 	if errs != nil {
 		if jsonOutput {
 			return printJSONErrors(errs)
