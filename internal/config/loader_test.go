@@ -8,6 +8,23 @@ import (
 	"github.com/instancez/instancez/internal/domain"
 )
 
+// LoadDotenv must never clobber a variable already set in the real
+// environment; injected/orchestrator env always wins over a local .env.
+func TestLoadDotenvDoesNotOverrideRealEnv(t *testing.T) {
+	t.Setenv("INSTANCEZ_ENV_X", "from-real-env")
+	dir := t.TempDir()
+	p := filepath.Join(dir, ".env")
+	if err := os.WriteFile(p, []byte("INSTANCEZ_ENV_X=from-file\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := LoadDotenv(p); err != nil {
+		t.Fatal(err)
+	}
+	if got := os.Getenv("INSTANCEZ_ENV_X"); got != "from-real-env" {
+		t.Errorf("real env must win, got %q", got)
+	}
+}
+
 // mustWriteFile writes data to path and fatals the test on error.
 func mustWriteFile(t *testing.T, path string, data []byte) {
 	t.Helper()

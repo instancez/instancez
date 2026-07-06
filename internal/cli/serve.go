@@ -72,14 +72,11 @@ func runServe(opts serveOptions) error {
 			return err
 		}
 
-		// serve loads .production.env when running against a local file source;
-		// shell env vars always take precedence. Skipped for s3:// sources
-		// since prod env vars come from the orchestrator (ConfigMap, secrets,
-		// etc.) in that deployment shape.
-		if _, ok := source.(*config.FileSource); ok {
-			if err := config.LoadDotenv(".production.env"); err != nil {
-				return err
-			}
+		// Honor a local .env even for s3:// config sources. LoadDotenv never
+		// overrides an already-set key, so injected/orchestrator env always
+		// wins; in the managed Lambda no .env ships, so this is a no-op.
+		if err := config.LoadDotenv(".production.env"); err != nil {
+			return err
 		}
 	}
 
