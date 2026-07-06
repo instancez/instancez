@@ -46,3 +46,5 @@ I have read and agree to the instancez CLA (CLA.md).
 ```
 
 A maintainer will confirm this is on file before merging. You only need to do this once — subsequent contributions from the same GitHub account are covered by the same signature.
+
+<!-- cla-bot liveness check, will be reverted -->
