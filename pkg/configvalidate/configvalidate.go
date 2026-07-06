@@ -69,3 +69,14 @@ func MarshalYAML(jsonBytes []byte) ([]byte, []Problem, error) {
 	}
 	return out, nil, nil
 }
+
+// ValidateEnvNamespace rejects any ${VAR} reference in the raw config that is
+// not in the INSTANCEZ_ENV_ namespace. Exposed so the platform enforces the
+// exact rule the engine does, without importing internal types.
+func ValidateEnvNamespace(raw []byte) []Problem {
+	var probs []Problem
+	for _, ve := range config.ValidateEnvNamespace(raw) {
+		probs = append(probs, Problem{Path: ve.Path, Message: ve.Message, Suggestion: ve.Suggestion})
+	}
+	return probs
+}
