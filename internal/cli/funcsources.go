@@ -4,54 +4,59 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
+
+	"github.com/instancez/instancez/internal/domain"
 )
 
-// collectFunctionSources walks the project's functions/ subtree and returns a
-// map of project-relative slash paths to file contents, suitable for the cloud
-// function-source upload. It uploads SOURCES only: the cloud runs the dependency
-// install server-side, so node_modules is excluded. The runtime worker shim and
-// symlinks are skipped too. package.json and any lockfile are included so the
-// server install is reproducible.
-func collectFunctionSources(projectDir string) (map[string]string, error) {
+// collectFunctionSources returns the files to upload for the cloud function
+// build, keyed by project-relative slash path. It is an allowlist, not a walk:
+// only the entry files declared in instancez.yaml (functions.<name>.file) plus
+// functions/package*.json ship. The cloud vendors node_modules server-side from
+// those package files, so nothing else under functions/ is uploaded.
+//
+// ponytail: single-file functions only — a declared entry that imports a local
+// sibling module won't have that sibling uploaded. Pre-bundle (esbuild) locally
+// if multi-file functions are needed.
+func collectFunctionSources(projectDir string, cfg *domain.Config) (map[string]string, error) {
 	functionsDir := filepath.Join(projectDir, "functions")
-	info, err := os.Stat(functionsDir)
-	if err != nil || !info.IsDir() {
+	if info, err := os.Stat(functionsDir); err != nil || !info.IsDir() {
 		return nil, fmt.Errorf("no functions/ directory under %s", projectDir)
 	}
 
 	out := map[string]string{}
-	err = filepath.Walk(functionsDir, func(path string, fi os.FileInfo, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		// Skip the entire node_modules subtree.
-		if fi.IsDir() && fi.Name() == "node_modules" {
-			return filepath.SkipDir
-		}
-		if fi.IsDir() {
-			return nil
-		}
-		// Skip symlinks (e.g. node_modules/.bin/*) and the runtime worker shim.
-		if fi.Mode()&os.ModeSymlink != 0 {
-			return nil
-		}
-		if strings.HasPrefix(fi.Name(), ".inz-worker-") && strings.HasSuffix(fi.Name(), ".mjs") {
-			return nil
-		}
-		rel, err := filepath.Rel(projectDir, path)
+	add := func(abs string) error {
+		rel, err := filepath.Rel(projectDir, abs)
 		if err != nil {
 			return err
 		}
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(abs)
 		if err != nil {
-			return fmt.Errorf("read %s: %w", path, err)
+			return fmt.Errorf("read %s: %w", rel, err)
 		}
 		out[filepath.ToSlash(rel)] = string(data)
 		return nil
-	})
+	}
+
+	// package.json + package-lock.json at the functions/ root, so the server's
+	// npm install is reproducible.
+	matches, err := filepath.Glob(filepath.Join(functionsDir, "package*.json"))
 	if err != nil {
-		return nil, fmt.Errorf("collect functions/: %w", err)
+		return nil, err
+	}
+	for _, m := range matches {
+		if err := add(m); err != nil {
+			return nil, err
+		}
+	}
+
+	// The declared entry files, exactly as named in instancez.yaml.
+	for name, fn := range cfg.Functions {
+		if fn.File == "" {
+			continue
+		}
+		if err := add(filepath.Join(projectDir, fn.File)); err != nil {
+			return nil, fmt.Errorf("function %q: %w", name, err)
+		}
 	}
 	return out, nil
 }

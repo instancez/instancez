@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/instancez/instancez/internal/domain"
 )
 
 func TestCollectFunctionSources(t *testing.T) {
@@ -21,54 +23,60 @@ func TestCollectFunctionSources(t *testing.T) {
 	mustWrite("functions/package.json", "{}")
 	mustWrite("functions/package-lock.json", "{}")
 	mustWrite("functions/lib/util.js", "export const x = 1")
+	mustWrite("functions/.env", "SECRET=shh")
 	mustWrite("functions/node_modules/dep/index.js", "module.exports = {}")
 
-	got, err := collectFunctionSources(dir)
+	cfg := &domain.Config{Functions: map[string]domain.CodeFunction{
+		"hello": {File: "functions/hello.js"},
+	}}
+
+	got, err := collectFunctionSources(dir, cfg)
 	if err != nil {
 		t.Fatalf("collectFunctionSources: %v", err)
 	}
-	want := []string{"functions/hello.js", "functions/package.json", "functions/package-lock.json", "functions/lib/util.js"}
+
+	// Declared entry file + package*.json only.
+	want := []string{"functions/hello.js", "functions/package.json", "functions/package-lock.json"}
 	for _, k := range want {
 		if _, ok := got[k]; !ok {
 			t.Errorf("missing %q", k)
 		}
 	}
-	if _, ok := got["functions/node_modules/dep/index.js"]; ok {
-		t.Error("node_modules should be excluded")
+	// Everything not declared and not a package file stays local — including
+	// a stray .env, local helper modules, and node_modules.
+	for _, k := range []string{
+		"functions/lib/util.js",
+		"functions/.env",
+		"functions/node_modules/dep/index.js",
+	} {
+		if _, ok := got[k]; ok {
+			t.Errorf("%q should not be uploaded (not a declared entry or package file)", k)
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("uploaded %d files, want exactly %d: %v", len(got), len(want), keys(got))
 	}
 }
 
-// TestCollectFunctionSourcesSkipsSymlinks verifies that symlinks inside
-// functions/ are not included in the returned source map.
-func TestCollectFunctionSourcesSkipsSymlinks(t *testing.T) {
+// A declared file that does not exist surfaces a clear error rather than
+// silently uploading a partial set.
+func TestCollectFunctionSourcesMissingFile(t *testing.T) {
 	dir := t.TempDir()
-	fnDir := filepath.Join(dir, "functions")
-	if err := os.MkdirAll(fnDir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "functions"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Write a real file to be the symlink target.
-	target := filepath.Join(fnDir, "real.js")
-	if err := os.WriteFile(target, []byte("export default () => {}"), 0o644); err != nil {
-		t.Fatal(err)
+	cfg := &domain.Config{Functions: map[string]domain.CodeFunction{
+		"ghost": {File: "functions/ghost.js"},
+	}}
+	if _, err := collectFunctionSources(dir, cfg); err == nil {
+		t.Fatal("expected an error for a declared file that does not exist")
 	}
-	// Create a symlink pointing at the real file.
-	link := filepath.Join(fnDir, "link.js")
-	if err := os.Symlink(target, link); err != nil {
-		t.Skip("symlinks not supported on this platform:", err)
-	}
-	// Write instancez.yaml so collectFunctionSources can stat the project root.
-	if err := os.WriteFile(filepath.Join(dir, "instancez.yaml"), []byte("version: 1\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+}
 
-	got, err := collectFunctionSources(dir)
-	if err != nil {
-		t.Fatalf("collectFunctionSources: %v", err)
+func keys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
 	}
-	if _, ok := got["functions/link.js"]; ok {
-		t.Error("symlink should not be included in collected sources")
-	}
-	if _, ok := got["functions/real.js"]; !ok {
-		t.Error("real file should be included in collected sources")
-	}
+	return out
 }

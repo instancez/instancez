@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/instancez/instancez/internal/cloud"
+	"github.com/instancez/instancez/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,7 +24,10 @@ func TestRunDeployFunctionsWithoutFunctionsDir(t *testing.T) {
 	if err := os.WriteFile(cfgPath, []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := collectFunctionSources(dir); err == nil {
+	cfg := &domain.Config{Functions: map[string]domain.CodeFunction{
+		"hello": {File: "functions/hello.js"},
+	}}
+	if _, err := collectFunctionSources(dir, cfg); err == nil {
 		t.Fatal("expected error when functions/ is absent")
 	}
 }

@@ -183,7 +183,7 @@ func runDeploy(configPath string, opts deployOpts) error {
 	// are already there from this same invocation, after the gate above.
 	if len(cfg.Functions) > 0 {
 		fmt.Println("  Uploading function sources...")
-		sources, err := collectFunctionSources(filepath.Dir(configPath))
+		sources, err := collectFunctionSources(filepath.Dir(configPath), cfg)
 		if err != nil {
 			return fmt.Errorf("collect function sources: %w", err)
 		}
