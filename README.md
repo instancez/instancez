@@ -10,8 +10,7 @@ Drop-in for `@supabase/supabase-js`, self-hosted in seconds, and built to be gen
 
 [![CI](https://github.com/instancez/instancez/actions/workflows/ci.yml/badge.svg)](https://github.com/instancez/instancez/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/instancez/instancez)](https://github.com/instancez/instancez/releases)
-[![License](https://img.shields.io/badge/license-PENDING-lightgrey)](LICENSE)
-<!-- TODO(license): replace the License badge above once the LICENSE is finalized (Apache-2.0 leaning). -->
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 [Quick start](#quick-start) · [Docs](https://instancez.github.io/instancez) · [Why instancez](#why-instancez) · [Compared to Supabase](#compared-to-supabase)
 
@@ -130,5 +129,4 @@ Found a vulnerability? Please follow the private disclosure process in [SECURITY
 
 ## License
 
-<!-- TODO(license): finalize. Apache-2.0 is the leaning default; see LICENSE. -->
-See [LICENSE](LICENSE).
+Apache License 2.0, see [LICENSE](LICENSE). Contributions are covered by the [Contributor License Agreement](CLA.md).

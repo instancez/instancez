@@ -72,19 +72,19 @@ Two things in here look unusual and are deliberate:
 
 Documentation lives in `docs/site/`. When you change behavior, config, a CLI flag, or an endpoint, update the docs and examples in the same pull request.
 
-## Commit sign-off
+## Contributor License Agreement
 
-We use the Developer Certificate of Origin. Sign off your commits:
+Before we can merge your first pull request, you need to agree to the [Contributor License Agreement](CLA.md). Include this line in your PR description or as a PR comment:
 
-```sh
-git commit -s -m "your message"
+```
+I have read and agree to the instancez CLA (CLA.md).
 ```
 
-This adds a `Signed-off-by` line certifying that you wrote the change or have the right to submit it.
+You only need to do this once; it covers every future contribution from the same GitHub account. A maintainer will add your GitHub username to the approved contributors list; comment `@cla-bot check` on the PR afterward to re-run the check.
 
 ## Pull request checklist
 
 - The test loop above passes locally.
 - Docs and examples are updated if behavior changed.
 - The supabase-js compatibility test still passes for changes near the HTTP surface.
-- Commits are signed off.
+- The CLA is signed (first-time contributors only).

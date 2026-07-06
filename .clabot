@@ -1,0 +1,6 @@
+{
+  "contributors": ["saedx1"],
+  "message": "Thanks for the pull request! Before this can be merged, please read and agree to the [Contributor License Agreement](https://github.com/instancez/instancez/blob/main/CLA.md), then post a comment here with:\n\n> I have read and agree to the instancez CLA (CLA.md).\n\nA maintainer will then add you to the approved contributors list. The following committers still need to sign: {{usersWithoutCLA}}",
+  "label": "cla-signed",
+  "recheckComment": "Rechecking CLA status now that the contributors list has been updated."
+}
