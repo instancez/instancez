@@ -1,0 +1,58 @@
+version: 1
+project:
+    name: instancez-e2e
+    description: Playwright smoke-test fixture
+server:
+    port: 8080
+database:
+    pool:
+        max: 5
+        min: 1
+providers:
+    storage:
+        type: local
+auth:
+    jwt_expiry: 15m
+    refresh_tokens: true
+tables:
+    notes:
+        fields:
+            - name: id
+              type: bigserial
+              primary_key: true
+            - name: body
+              type: text
+              required: true
+            - name: user_id
+              foreign_key:
+                  references: auth.users.id
+                  on_delete: cascade
+            - name: created_at
+              type: timestamptz
+              required: true
+              default: now()
+        rls:
+            - operations:
+                - select
+              using: auth.uid() = user_id
+            - operations:
+                - insert
+              with_check: auth.uid() = user_id
+rpc:
+    ping:
+        description: Health-check RPC returning a constant
+        language: sql
+        volatility: immutable
+        security: invoker
+        args: []
+        returns:
+            type: text
+        body: |
+            SELECT 'pong'::text
+storage:
+    avatars:
+        max_size: 5MB
+        types:
+            - image/*
+        public: false
+        rls: []

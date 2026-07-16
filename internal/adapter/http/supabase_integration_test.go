@@ -1,0 +1,773 @@
+//go:build integration
+
+package http_test
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"math/rand"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	tc "github.com/testcontainers/testcontainers-go"
+	pgcontainer "github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/testcontainers/testcontainers-go/wait"
+
+	adapterauth "github.com/instancez/instancez/internal/adapter/auth"
+	instancezhttp "github.com/instancez/instancez/internal/adapter/http"
+	"github.com/instancez/instancez/internal/app"
+	"github.com/instancez/instancez/internal/cli"
+	"github.com/instancez/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/testutil/dbboot"
+)
+
+// fakeOAuthProvider stands in for an external identity provider (Google,
+// GitHub, ...) so the wire-compat harness can drive real /authorize +
+// /callback + /token requests without depending on a real IdP being
+// reachable from CI. AuthorizeURL skips the provider hop entirely and
+// redirects straight back to our own callback with a code derived from
+// state, which ExchangeCode/FetchUser then decode deterministically — no
+// external network call, no shared state between concurrent flows.
+type fakeOAuthProvider struct{}
+
+func (fakeOAuthProvider) Name() string { return "fake" }
+
+func (fakeOAuthProvider) AuthorizeURL(cfg *domain.OAuthProvider, state string) string {
+	return fmt.Sprintf("%s?code=fake-code-%s&state=%s", cfg.RedirectURL, state, url.QueryEscape(state))
+}
+
+func (fakeOAuthProvider) ExchangeCode(cfg *domain.OAuthProvider, code string) (string, error) {
+	return code, nil
+}
+
+func (fakeOAuthProvider) FetchUser(accessToken string) (*adapterauth.OAuthUserInfo, error) {
+	sum := sha256.Sum256([]byte(accessToken))
+	suffix := hex.EncodeToString(sum[:6])
+	return &adapterauth.OAuthUserInfo{
+		ProviderID: "fake-" + suffix,
+		Email:      fmt.Sprintf("oauth-fake-%s@example.com", suffix),
+		Name:       "Fake OAuth User",
+	}, nil
+}
+
+// TestSupabaseJSCompat boots a real Postgres in a container, runs migrations,
+// starts the instancez HTTP handler via httptest, then shells out to a Node
+// harness that drives @supabase/supabase-js against the URL. The harness exits
+// non-zero on any assertion failure and streams its output to the test log.
+//
+// Prerequisites: docker daemon running, node + npm on PATH. Skipped otherwise.
+// Enabled with: go test -tags=integration ./internal/adapter/http/...
+func TestSupabaseJSCompat(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed; skipping supabase-js integration test")
+	}
+	if _, err := exec.LookPath("npm"); err != nil {
+		t.Skip("npm not installed; skipping supabase-js integration test")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	// ---- 1. Spin up Postgres ----
+	container, err := pgcontainer.Run(ctx,
+		dbboot.PostgresImage(),
+		pgcontainer.WithDatabase("instancez_test"),
+		pgcontainer.WithUsername("instancez"),
+		pgcontainer.WithPassword("instancez"),
+		tc.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).
+				WithStartupTimeout(90*time.Second),
+		),
+	)
+	if err != nil {
+		t.Fatalf("start postgres container: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = container.Terminate(context.Background())
+	})
+
+	dbURL, err := container.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		t.Fatalf("connection string: %v", err)
+	}
+
+	// ---- 2. Bootstrap roles (owner + authenticator) and connect ----
+	ownerDB, authDB, err := dbboot.Bootstrap(ctx, dbURL, domain.PoolConfig{Max: 4, Min: 1})
+	if err != nil {
+		t.Fatalf("bootstrap roles: %v", err)
+	}
+	t.Cleanup(func() {
+		ownerDB.Close()
+		authDB.Close()
+	})
+	db := ownerDB.Database // used for migrator + JWT key manager (privileged path)
+
+	// The fake OAuth provider's RedirectURL must be baked into cfg before
+	// NewServer/Mount runs (Mount only wires up /callback/<provider> for
+	// providers present in cfg.Auth.OAuth at construction time), but we don't
+	// get an httptest.Server URL until after that. Reserve the listener FIRST
+	// so the port is known up front, then hand the same listener to the
+	// httptest server below instead of letting it bind its own.
+	oauthListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve http listener: %v", err)
+	}
+	baseURL := "http://" + oauthListener.Addr().String()
+	adapterauth.RegisterOAuth(fakeOAuthProvider{})
+
+	// The auth handler bakes h.baseURL() into email links (verify, recovery,
+	// magic link). In production that comes from Server.Port or
+	// INSTANCEZ_BASE_URL; this harness reserves its own listener up front
+	// (above) instead of letting the server pick a port, so without this the
+	// handler would fall back to "http://localhost:0" and the emailed links
+	// would 404 when followed.
+	t.Setenv("INSTANCEZ_BASE_URL", baseURL)
+
+	verifyEmail := false
+	cfg := &domain.Config{
+		Version: 1,
+		Project: domain.Project{Name: "integration"},
+		Server:  domain.Server{Port: 0},
+		Auth: &domain.Auth{
+			JWTExpiry:     "1h",
+			RefreshTokens: true,
+			// The recovery/verify flow redirects to the app; the allowlist must
+			// include it or the redirect (which carries the session tokens)
+			// falls back to the base URL. See the redirect-allowlist hardening.
+			RedirectURLs: []string{"http://app.local"},
+			Email:        &domain.AuthEmail{VerifyEmail: verifyEmail},
+			// Backs the OAuth/PKCE/identity-link run.mjs coverage — the
+			// wire-level counterpart to fakeOAuthProvider above.
+			OAuth: map[string]*domain.OAuthProvider{
+				"fake": {
+					ClientID:     "test-client",
+					ClientSecret: "test-secret",
+					RedirectURL:  baseURL + "/auth/v1/callback/fake",
+				},
+			},
+		},
+		Tables: map[string]domain.Table{
+			"todos": {
+				Fields: []domain.Field{
+					{Name: "id", Type: "bigserial", PrimaryKey: true},
+					{Name: "title", Type: "text", Required: true},
+					{Name: "done", Type: "boolean", Default: false},
+					{Name: "priority", Type: "int", Default: 0, Check: "priority >= 0"},
+					// tags gives the harness an array column so it can exercise
+					// the array operators (.contains/.containedBy/.overlaps).
+					{Name: "tags", Type: "text[]"},
+					// metadata exercises the JSONB path operators (->, ->>) in
+					// select/filter query params.
+					{Name: "metadata", Type: "jsonb"},
+					// slug is nullable+unique so most rows can omit it (multiple
+					// NULLs don't conflict) while a dedicated test drives a real
+					// 23505 unique-violation and an on_conflict=slug upsert.
+					{Name: "slug", Type: "text", Unique: true},
+					{Name: "user_id", ForeignKey: &domain.ForeignKey{References: "auth.users.id", OnDelete: "cascade"}},
+				},
+			},
+			"comments": {
+				Fields: []domain.Field{
+					{Name: "id", Type: "bigserial", PrimaryKey: true},
+					{Name: "body", Type: "text", Required: true},
+					{Name: "todo_id", ForeignKey: &domain.ForeignKey{References: "todos.id", OnDelete: "cascade"}},
+					{Name: "user_id", ForeignKey: &domain.ForeignKey{References: "auth.users.id", OnDelete: "cascade"}},
+				},
+			},
+			// profiles exercises cross-schema FK + RLS using auth.uid().
+			// FK targets auth.users.id (auto-emitted whenever cfg.Auth != nil),
+			// the RLS policies reference auth.uid() to gate writes to the row's
+			// owning user. This is the supabase-recommended pattern for
+			// per-user app metadata that lives outside auth.users.
+			"profiles": {
+				Fields: []domain.Field{
+					{
+						Name:       "id",
+						PrimaryKey: true,
+						ForeignKey: &domain.ForeignKey{References: "auth.users.id", OnDelete: "cascade"},
+					},
+					{Name: "display_name", Type: "text"},
+				},
+				RLS: []domain.RLSPolicy{
+					{Operations: []string{"select"}, Using: "true"},
+					{Operations: []string{"insert", "update"}, Using: "auth.uid() = id", WithCheck: "auth.uid() = id"},
+				},
+			},
+			// rls_secrets exercises the two-login model end-to-end:
+			//   - anon clients must be denied by RLS,
+			//   - service_role (admin key) must bypass RLS,
+			//   - authenticated users can read/write only their own rows.
+			"rls_secrets": {
+				Fields: []domain.Field{
+					{Name: "id", Type: "bigserial", PrimaryKey: true},
+					{Name: "owner_id", Type: "uuid", Required: true},
+					{Name: "secret", Type: "text", Required: true},
+				},
+				RLS: []domain.RLSPolicy{
+					{Operations: []string{"select", "insert", "update", "delete"}, Using: "owner_id = auth.uid()", WithCheck: "owner_id = auth.uid()"},
+				},
+			},
+			// notes lives outside public so run.mjs can exercise Accept-Profile /
+			// Content-Profile (supabase-js db:{schema:...}) against a real
+			// non-public schema, mirroring profileHeaderGuard's contract.
+			"notes": {
+				Schema: "app",
+				Fields: []domain.Field{
+					{Name: "id", Type: "bigserial", PrimaryKey: true},
+					{Name: "body", Type: "text", Required: true},
+				},
+			},
+		},
+		Storage: map[string]domain.Bucket{
+			"avatars": {
+				MaxSize: "5MB",
+				Types:   []string{"image/*", "application/octet-stream", "text/plain"},
+				Public:  true,
+			},
+			"documents": {
+				MaxSize: "10MB",
+				Public:  false,
+			},
+			// owned exercises owner-scoped storage RLS end-to-end. The policy
+			// pins ownership (uploaded_by = auth.uid()) and confines writes to a
+			// "mine/" prefix, so an authenticated user is allowed under that
+			// prefix and denied outside it. run.mjs asserts both: the signed
+			// upload mint is refused for a disallowed path (403, no token), and
+			// for an allowed path the owner threaded through the token lets the
+			// uploader read the object back.
+			"owned": {
+				MaxSize: "5MB",
+				Types:   []string{"text/plain", "application/octet-stream"},
+				RLS: []domain.RLSPolicy{
+					{Operations: []string{"select", "insert", "update", "delete"}, Using: "uploaded_by = auth.uid() AND name LIKE 'mine/%'", WithCheck: "uploaded_by = auth.uid() AND name LIKE 'mine/%'"},
+				},
+			},
+		},
+		// rpc functions drive the supabase-js .rpc() compat checks in
+		// run.mjs. Creation goes through the real Migrator so this path
+		// also exercises generateRPCFunction → CREATE OR REPLACE FUNCTION.
+		RPC: map[string]domain.Function{
+			"add_two": {
+				Language:   "sql",
+				Volatility: "immutable",
+				Security:   "invoker",
+				Returns:    domain.FuncReturn{Type: "int"},
+				Body:       "SELECT a + b",
+				Args: []domain.FuncArg{
+					{Name: "a", Type: "int", Required: true},
+					{Name: "b", Type: "int", Required: true},
+				},
+			},
+			"echo_text": {
+				Language:   "sql",
+				Volatility: "stable",
+				Security:   "invoker",
+				Returns:    domain.FuncReturn{Type: "text"},
+				Body:       "SELECT msg",
+				Args: []domain.FuncArg{
+					{Name: "msg", Type: "text", Required: true},
+				},
+			},
+			// Single jsonb-arg function so the harness can exercise
+			// supabase-js's .rpc('name', body, { params: 'single' })
+			// codepath end-to-end. The function just returns the input
+			// jsonb, which is the easiest roundtrip to assert on.
+			"echo_json": {
+				Language:   "sql",
+				Volatility: "stable",
+				Security:   "invoker",
+				Returns:    domain.FuncReturn{Type: "jsonb"},
+				Body:       "SELECT payload",
+				Args: []domain.FuncArg{
+					{Name: "payload", Type: "jsonb", Required: true},
+				},
+			},
+			"noop_void": {
+				Language:   "sql",
+				Volatility: "volatile",
+				Security:   "invoker",
+				Returns:    domain.FuncReturn{Type: "void"},
+				Body:       "SELECT",
+				Args:       []domain.FuncArg{},
+			},
+			"list_todos": {
+				Language:       "sql",
+				Volatility:     "stable",
+				Security:       "invoker",
+				Returns:        domain.FuncReturn{Type: "setof todos"},
+				ReturnCategory: "setof",
+				Body:           "SELECT * FROM todos",
+				Args:           []domain.FuncArg{},
+			},
+			"double_it": {
+				Language:   "sql",
+				Volatility: "stable",
+				Security:   "invoker",
+				Returns:    domain.FuncReturn{Type: "int"},
+				Body:       "SELECT n * 2",
+				Args: []domain.FuncArg{
+					{Name: "n", Type: "int", Required: true},
+				},
+			},
+			"sql_void": {
+				Language:   "sql",
+				Volatility: "volatile",
+				Security:   "invoker",
+				Returns:    domain.FuncReturn{Type: "void"},
+				Body:       "SELECT",
+				Args:       []domain.FuncArg{},
+			},
+			// raise_boom exercises a Postgres function that fails at runtime
+			// (as opposed to add_two/etc which succeed, or a missing-function
+			// name which never reaches Postgres at all) — the RPC handler must
+			// forward RAISE EXCEPTION's message/detail/hint through the same
+			// PostgREST-style error envelope handleDBError already produces for
+			// constraint violations.
+			"raise_boom": {
+				Language:   "plpgsql",
+				Volatility: "volatile",
+				Security:   "invoker",
+				Returns:    domain.FuncReturn{Type: "void"},
+				Body:       "BEGIN RAISE EXCEPTION 'boom' USING DETAIL = 'something broke', HINT = 'try again'; END;",
+				Args:       []domain.FuncArg{},
+			},
+		},
+	}
+	// Ensure ReturnCategory is populated; normally set by the YAML
+	// loader's applyDefaults, but this test constructs Config directly.
+	for k, fn := range cfg.RPC {
+		if fn.ReturnCategory == "" {
+			if fn.Returns.Type == "void" {
+				fn.ReturnCategory = "void"
+			} else {
+				fn.ReturnCategory = "scalar"
+			}
+		}
+		cfg.RPC[k] = fn
+	}
+
+	if err := app.NewMigrator(db).Apply(ctx, cfg); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	// ---- 3. JWT keys (for user tokens) + opaque API keys ----
+	keys := app.NewJWTKeyManager(db)
+	if _, err := keys.Active(ctx); err != nil {
+		t.Fatalf("active jwt key: %v", err)
+	}
+	nonce := fmt.Sprintf("%d", time.Now().UnixNano())
+	publishableKey := "inz_publishable_" + nonce
+	secretKey := "inz_secret_" + nonce
+	// The server middleware reads these from the process env, so set them for the
+	// in-process server goroutine; they are also passed to the harness subprocess.
+	t.Setenv("INSTANCEZ_PUBLISHABLE_KEY", publishableKey)
+	t.Setenv("INSTANCEZ_SECRET_KEY", secretKey)
+
+	// ---- 4. Start HTTP server ----
+	storageDir := filepath.Join(t.TempDir(), "storage")
+	localStorage, err := cli.NewLocalStore(storageDir, "")
+	if err != nil {
+		t.Fatalf("local storage: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	capturedEmail := &captureEmailSender{}
+	srv := instancezhttp.NewServer(instancezhttp.ServerDeps{
+		Config:  cfg,
+		DB:      authDB,
+		Logger:  logger,
+		DevMode: true,
+		JWTKeys: keys,
+		Email:   capturedEmail,
+		Storage: localStorage,
+	})
+	// Bind to the listener reserved above so ts.URL matches the RedirectURL
+	// already baked into the fake OAuth provider's config.
+	ts := httptest.NewUnstartedServer(srv.Handler())
+	_ = ts.Listener.Close()
+	ts.Listener = oauthListener
+	ts.Start()
+	t.Cleanup(ts.Close)
+
+	// ---- 5. Run Node harness ----
+	harnessDir, err := filepath.Abs("../../../test/integration/supabase-js")
+	if err != nil {
+		t.Fatalf("harness path: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(harnessDir, "node_modules")); os.IsNotExist(err) {
+		t.Logf("installing supabase-js harness deps in %s", harnessDir)
+		install := exec.CommandContext(ctx, "npm", "install", "--no-audit", "--no-fund", "--loglevel=error")
+		install.Dir = harnessDir
+		install.Stdout = os.Stderr
+		install.Stderr = os.Stderr
+		if err := install.Run(); err != nil {
+			t.Fatalf("npm install: %v", err)
+		}
+	}
+
+	cmd := exec.CommandContext(ctx, "node", "run.mjs")
+	cmd.Dir = harnessDir
+	cmd.Env = append(os.Environ(),
+		"INSTANCEZ_URL="+ts.URL,
+		"INSTANCEZ_PUBLISHABLE_KEY="+publishableKey,
+		"INSTANCEZ_SECRET_KEY="+secretKey,
+	)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("supabase-js harness failed: %v", err)
+	}
+
+	// ---- 6. Email OTP flow (Go-driven) ----
+	// supabase-js calls /otp → email delivers a 6-digit code → client
+	// submits {type:'email', email, token} to /verify and receives a
+	// session. We exercise the whole loop here because the Node harness
+	// has no mailbox; the capturing EmailSender wired above lets us
+	// extract the code directly from the sent message body.
+	runEmailOTPFlow(t, ts.URL, publishableKey, capturedEmail)
+
+	// ---- 7. Password reset flow (Go-driven) ----
+	// Like the email OTP flow, we need the capturing EmailSender to
+	// extract the recovery token from the email.
+	runPasswordResetFlow(t, ts.URL, publishableKey, capturedEmail)
+
+	// ---- 8. allow_signup=false gating ----
+	// Run last: this mutates cfg.Auth.AllowSignup, which the dispatcher
+	// reads on every request.
+	runSignupDisabledFlow(t, cfg, ts.URL, publishableKey, secretKey)
+}
+
+func runSignupDisabledFlow(t *testing.T, cfg *domain.Config, baseURL, publishableKey, secretKey string) {
+	t.Helper()
+	// Restore via Cleanup so any t.Fatalf below still resets the live cfg
+	// — the dispatcher reads this pointer on every request.
+	disabled := false
+	cfg.Auth.AllowSignup = &disabled
+	t.Cleanup(func() { cfg.Auth.AllowSignup = nil })
+
+	signupBody := bytes.NewBufferString(`{"email":"blocked@example.com","password":"hunter2hunter2"}`)
+	signupReq, _ := http.NewRequest("POST", baseURL+"/auth/v1/signup", signupBody)
+	signupReq.Header.Set("Content-Type", "application/json")
+	signupReq.Header.Set("apikey", publishableKey)
+	resp, err := http.DefaultClient.Do(signupReq)
+	if err != nil {
+		t.Fatalf("disabled signup: POST /signup failed: %v", err)
+	}
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != 403 {
+		t.Fatalf("disabled signup: status = %d, want 403; body = %s", resp.StatusCode, bodyBytes)
+	}
+	var env map[string]any
+	_ = json.Unmarshal(bodyBytes, &env)
+	if env["code"] != "signup_disabled" {
+		t.Errorf("disabled signup: code = %v, want signup_disabled; body = %s", env["code"], bodyBytes)
+	}
+
+	// Anonymous signup (empty body) is also blocked when allow_signup=false.
+	anonReq, _ := http.NewRequest("POST", baseURL+"/auth/v1/signup", bytes.NewBufferString(`{}`))
+	anonReq.Header.Set("Content-Type", "application/json")
+	anonReq.Header.Set("apikey", publishableKey)
+	anonResp, err := http.DefaultClient.Do(anonReq)
+	if err != nil {
+		t.Fatalf("disabled signup: anonymous POST /signup failed: %v", err)
+	}
+	anonBytes, _ := io.ReadAll(anonResp.Body)
+	_ = anonResp.Body.Close()
+	if anonResp.StatusCode != 403 {
+		t.Fatalf("disabled signup: anonymous status = %d, want 403; body = %s", anonResp.StatusCode, anonBytes)
+	}
+
+	// Admin-keyed create user must still succeed.
+	adminEmail := fmt.Sprintf("admin_create_%d@example.com", time.Now().UnixNano())
+	adminBody := bytes.NewBufferString(fmt.Sprintf(`{"email":%q,"password":"hunter2hunter2","email_confirm":true}`, adminEmail))
+	req, _ := http.NewRequest("POST", baseURL+"/auth/v1/admin/users", adminBody)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+secretKey)
+	req.Header.Set("apikey", secretKey)
+	adminResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("disabled signup: POST /admin/users failed: %v", err)
+	}
+	adminRespBody, _ := io.ReadAll(adminResp.Body)
+	_ = adminResp.Body.Close()
+	if adminResp.StatusCode != 200 {
+		t.Fatalf("disabled signup: admin/users status = %d, want 200; body = %s", adminResp.StatusCode, adminRespBody)
+	}
+}
+
+// captureEmailSender records every email the auth handler asks to send
+// so tests can assert on content (e.g. extract a 6-digit OTP code).
+type captureEmailSender struct {
+	mu   sync.Mutex
+	sent []domain.EmailMessage
+}
+
+func (c *captureEmailSender) Send(_ context.Context, msg domain.EmailMessage) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sent = append(c.sent, msg)
+	return nil
+}
+
+func (c *captureEmailSender) latestTo(addr string) (domain.EmailMessage, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i := len(c.sent) - 1; i >= 0; i-- {
+		for _, to := range c.sent[i].To {
+			if to == addr {
+				return c.sent[i], true
+			}
+		}
+	}
+	return domain.EmailMessage{}, false
+}
+
+var otpCodeRE = regexp.MustCompile(`\b\d{6}\b`)
+
+func runEmailOTPFlow(t *testing.T, baseURL, publishableKey string, emails *captureEmailSender) {
+	t.Helper()
+	email := fmt.Sprintf("otp_%d_%d@example.com", time.Now().UnixNano(), rand.Int63())
+	body := bytes.NewBufferString(fmt.Sprintf(`{"email":%q}`, email))
+	otpReq, _ := http.NewRequest("POST", baseURL+"/auth/v1/otp", body)
+	otpReq.Header.Set("Content-Type", "application/json")
+	otpReq.Header.Set("apikey", publishableKey)
+	resp, err := http.DefaultClient.Do(otpReq)
+	if err != nil {
+		t.Fatalf("email OTP: /otp request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("email OTP: /otp status = %d, want 200", resp.StatusCode)
+	}
+
+	// The dispatch happens in a goroutine (handleOTP uses `go h.sendMagicLinkEmail`),
+	// so poll briefly for the captured email.
+	var msg domain.EmailMessage
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		m, ok := emails.latestTo(email)
+		if ok {
+			msg = m
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if msg.Subject == "" {
+		t.Fatalf("email OTP: no email captured for %s", email)
+	}
+	match := otpCodeRE.FindString(msg.Text)
+	if match == "" {
+		t.Fatalf("email OTP: no 6-digit code in body:\n%s", msg.Text)
+	}
+
+	// Now submit the code via /verify as {type:'email', email, token:<code>}.
+	verifyBody := bytes.NewBufferString(fmt.Sprintf(`{"type":"email","email":%q,"token":%q}`, email, match))
+	verifyReq, _ := http.NewRequest("POST", baseURL+"/auth/v1/verify", verifyBody)
+	verifyReq.Header.Set("Content-Type", "application/json")
+	verifyReq.Header.Set("apikey", publishableKey)
+	verifyResp, err := http.DefaultClient.Do(verifyReq)
+	if err != nil {
+		t.Fatalf("email OTP: /verify request failed: %v", err)
+	}
+	defer verifyResp.Body.Close()
+	if verifyResp.StatusCode != 200 {
+		buf, _ := io.ReadAll(verifyResp.Body)
+		t.Fatalf("email OTP: /verify status = %d, body = %s", verifyResp.StatusCode, buf)
+	}
+	var session map[string]any
+	if err := json.NewDecoder(verifyResp.Body).Decode(&session); err != nil {
+		t.Fatalf("email OTP: decode session: %v", err)
+	}
+	if _, ok := session["access_token"].(string); !ok {
+		t.Fatalf("email OTP: missing access_token in session: %v", session)
+	}
+	user, _ := session["user"].(map[string]any)
+	if user == nil || user["email"] != email {
+		t.Fatalf("email OTP: user.email mismatch: %v", session)
+	}
+
+	// Reuse must fail (single-use).
+	reuseBody := bytes.NewBufferString(fmt.Sprintf(`{"type":"email","email":%q,"token":%q}`, email, match))
+	reuseReq, _ := http.NewRequest("POST", baseURL+"/auth/v1/verify", reuseBody)
+	reuseReq.Header.Set("Content-Type", "application/json")
+	reuseReq.Header.Set("apikey", publishableKey)
+	reuseResp, err := http.DefaultClient.Do(reuseReq)
+	if err != nil {
+		t.Fatalf("email OTP: /verify reuse request failed: %v", err)
+	}
+	_ = reuseResp.Body.Close()
+	if reuseResp.StatusCode == 200 {
+		t.Fatalf("email OTP: reused code should not succeed")
+	}
+}
+
+var tokenRE = regexp.MustCompile(`token=([a-f0-9]{64})`)
+
+func runPasswordResetFlow(t *testing.T, baseURL, publishableKey string, emails *captureEmailSender) {
+	t.Helper()
+	// Step 1: sign up a user so there's an account to recover.
+	email := fmt.Sprintf("reset_%d_%d@example.com", time.Now().UnixNano(), rand.Int63())
+	signupBody := bytes.NewBufferString(fmt.Sprintf(`{"email":%q,"password":"oldpassword123"}`, email))
+	signupReq, _ := http.NewRequest("POST", baseURL+"/auth/v1/signup", signupBody)
+	signupReq.Header.Set("Content-Type", "application/json")
+	signupReq.Header.Set("apikey", publishableKey)
+	resp, err := http.DefaultClient.Do(signupReq)
+	if err != nil {
+		t.Fatalf("password reset: signup failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("password reset: signup status = %d, want 200", resp.StatusCode)
+	}
+
+	// Step 2: request password reset. redirect_to travels on the query
+	// string, matching what @supabase/gotrue-js actually sends.
+	recoverBody := bytes.NewBufferString(fmt.Sprintf(`{"email":%q}`, email))
+	recoverReq, _ := http.NewRequest("POST", baseURL+"/auth/v1/recover?redirect_to=http://app.local/reset", recoverBody)
+	recoverReq.Header.Set("Content-Type", "application/json")
+	recoverReq.Header.Set("apikey", publishableKey)
+	resp, err = http.DefaultClient.Do(recoverReq)
+	if err != nil {
+		t.Fatalf("password reset: /recover failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("password reset: /recover status = %d, want 200", resp.StatusCode)
+	}
+
+	// Step 3: extract the recovery token from the captured email.
+	var msg domain.EmailMessage
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		m, ok := emails.latestTo(email)
+		if ok && m.Subject != "" {
+			msg = m
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if msg.Subject == "" {
+		t.Fatalf("password reset: no email captured for %s", email)
+	}
+	if match := tokenRE.FindStringSubmatch(msg.Text); len(match) < 2 {
+		t.Fatalf("password reset: no token found in email body:\n%s", msg.Text)
+	}
+
+	// Step 4: click the recovery link (GET /auth/v1/verify).
+	// Follow the link exactly as it appears in the email — this is what would
+	// have caught the redirect_to-from-body bug.
+	linkRE := regexp.MustCompile(`https?://\S+/auth/v1/verify\?\S+`)
+	verifyURL := linkRE.FindString(msg.Text)
+	if verifyURL == "" {
+		t.Fatalf("password reset: no verify link in email body:\n%s", msg.Text)
+	}
+	if !regexp.MustCompile(`redirect_to=`).MatchString(verifyURL) {
+		t.Fatalf("password reset: emailed link missing redirect_to: %s", verifyURL)
+	}
+	// The emailed link carries the /api prefix a real deployment sits behind
+	// (see publicAuthBaseURL); Traefik strips that prefix before forwarding
+	// to this process, and this harness has no Traefik in front of it, so
+	// strip it here to reproduce what the process actually receives. The
+	// assertions above already proved the *emailed* link is correct.
+	followURL := strings.Replace(verifyURL, "/api/auth/v1/verify", "/auth/v1/verify", 1)
+	client := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse // don't follow redirects
+	}}
+	verifyResp, err := client.Get(followURL)
+	if err != nil {
+		t.Fatalf("password reset: GET /verify failed: %v", err)
+	}
+	_ = verifyResp.Body.Close()
+	if verifyResp.StatusCode != 303 {
+		t.Fatalf("password reset: GET /verify status = %d, want 303 redirect", verifyResp.StatusCode)
+	}
+	loc := verifyResp.Header.Get("Location")
+	if loc == "" {
+		t.Fatal("password reset: redirect missing Location header")
+	}
+	if !regexp.MustCompile(`^http://app\.local/reset#`).MatchString(loc) {
+		t.Fatalf("password reset: unexpected redirect: %s", loc)
+	}
+	if !regexp.MustCompile(`access_token=`).MatchString(loc) {
+		t.Fatalf("password reset: redirect missing access_token: %s", loc)
+	}
+	if !regexp.MustCompile(`type=recovery`).MatchString(loc) {
+		t.Fatalf("password reset: redirect missing type=recovery: %s", loc)
+	}
+
+	// Step 5: extract the access token from the fragment and use it to
+	// update the password via PUT /auth/v1/user.
+	fragment := loc[len("http://app.local/reset#"):]
+	var accessToken string
+	for _, part := range regexp.MustCompile(`&`).Split(fragment, -1) {
+		kv := regexp.MustCompile(`=`).Split(part, 2)
+		if len(kv) == 2 && kv[0] == "access_token" {
+			accessToken = kv[1]
+		}
+	}
+	if accessToken == "" {
+		t.Fatalf("password reset: could not extract access_token from fragment: %s", fragment)
+	}
+
+	updateBody := bytes.NewBufferString(`{"password":"newpassword456"}`)
+	req, _ := http.NewRequest("PUT", baseURL+"/auth/v1/user", updateBody)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("apikey", publishableKey)
+	updateResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("password reset: PUT /user failed: %v", err)
+	}
+	_ = updateResp.Body.Close()
+	if updateResp.StatusCode != 200 {
+		t.Fatalf("password reset: PUT /user status = %d, want 200", updateResp.StatusCode)
+	}
+
+	// Step 6: verify the new password works.
+	loginBody := bytes.NewBufferString(fmt.Sprintf(`{"email":%q,"password":"newpassword456"}`, email))
+	loginReq, _ := http.NewRequest("POST", baseURL+"/auth/v1/token?grant_type=password", loginBody)
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginReq.Header.Set("apikey", publishableKey)
+	loginResp, err := http.DefaultClient.Do(loginReq)
+	if err != nil {
+		t.Fatalf("password reset: login with new password failed: %v", err)
+	}
+	defer loginResp.Body.Close()
+	if loginResp.StatusCode != 200 {
+		buf, _ := io.ReadAll(loginResp.Body)
+		t.Fatalf("password reset: login status = %d, body = %s", loginResp.StatusCode, buf)
+	}
+
+	// Step 7: verify the old password no longer works.
+	oldBody := bytes.NewBufferString(fmt.Sprintf(`{"email":%q,"password":"oldpassword123"}`, email))
+	oldReq, _ := http.NewRequest("POST", baseURL+"/auth/v1/token?grant_type=password", oldBody)
+	oldReq.Header.Set("Content-Type", "application/json")
+	oldReq.Header.Set("apikey", publishableKey)
+	oldResp, err := http.DefaultClient.Do(oldReq)
+	if err != nil {
+		t.Fatalf("password reset: login with old password failed: %v", err)
+	}
+	_ = oldResp.Body.Close()
+	if oldResp.StatusCode == 200 {
+		t.Fatal("password reset: old password should not work after reset")
+	}
+}
+

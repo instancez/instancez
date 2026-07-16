@@ -1,0 +1,53 @@
+name: Deploy docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/site/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  # Build here (so `git describe` can resolve the version badge from this
+  # repo's tags), then push the built dist to the org pages repo
+  # instancez/instancez.github.io, which GitHub serves at the domain root.
+  # peaceiris writes .nojekyll, so the _astro/ asset dir survives.
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 pulls tags too, so the version badge can resolve the
+      # latest release via `git describe` (SiteTitle.astro, index.astro).
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: docs/site/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: docs/site
+
+      - name: Build
+        run: npm run build
+        working-directory: docs/site
+        env:
+          DOCS_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+
+      - name: Publish to org pages repo
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          deploy_key: ${{ secrets.DOCS_DEPLOY_KEY }}
+          external_repository: instancez/instancez.github.io
+          publish_branch: main
+          publish_dir: docs/site/dist

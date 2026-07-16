@@ -1,0 +1,23 @@
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: What are you trying to do?
+      description: The question itself. Include a snippet of your `instancez.yaml` if it's relevant.
+      placeholder: I'm trying to ... and I'm not sure how to ...
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What you've tried
+      description: Docs you've read, things you've attempted, error messages you've hit.
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: instancez version
+      description: Output of `inz --version`. Skip if not relevant.
+    validations:
+      required: false

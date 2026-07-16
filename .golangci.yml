@@ -1,0 +1,13 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - staticcheck
+    - unused
+    - govet
+    - ineffassign
+  disable:
+    - wrapcheck
+    - exhaustive
+    - exhaustruct

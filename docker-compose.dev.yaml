@@ -1,0 +1,51 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: instancez
+      POSTGRES_PASSWORD: instancez
+      POSTGRES_DB: instancez
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "instancez"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      # Skip the embedded SPA in dev — the `dashboard` service below runs
+      # vite with HMR on :5173, which is what dev should hit. Keeping the
+      # embed off here also keeps the backend image rebuild fast.
+      args:
+        WITH_DASHBOARD: "false"
+    ports:
+      - "8080:8080"
+    environment:
+      INSTANCEZ_DATABASE_URL: postgres://instancez:instancez@postgres:5432/instancez?sslmode=disable
+      INSTANCEZ_PUBLISHABLE_KEY: inz_publishable_dev
+      INSTANCEZ_SECRET_KEY: inz_secret_dev
+    volumes:
+      - ./instancez.yaml:/app/instancez.yaml
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  dashboard:
+    build: ./dashboard
+    ports:
+      - "5173:5173"
+    environment:
+      API_URL: http://backend:8080
+    volumes:
+      - ./dashboard/src:/app/src
+      - ./dashboard/index.html:/app/index.html
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:

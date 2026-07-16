@@ -1,0 +1,594 @@
+---
+// Custom landing page — standalone HTML, no Starlight layout.
+// Single centered column on a dark dotted grid, with a white highlighter
+// swatch borrowed from the highlighter motif.
+import { execSync } from 'child_process'
+import logoUrl from '../assets/logo.svg'
+import '@fontsource/geist-sans/400.css'
+import '@fontsource/geist-sans/500.css'
+import '@fontsource/geist-sans/600.css'
+import '@fontsource/geist-sans/700.css'
+import '@fontsource/geist-sans/800.css'
+import '@fontsource/geist-mono/400.css'
+import '@fontsource/geist-mono/500.css'
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '')
+
+// Copy / Ask AI dropdown, same as the docs pages but pointed at the full docs
+// dump (there is no per-page markdown for the landing page).
+const allDocsMarkdown = `${base}/llms-full.txt`
+const aiPrompt = encodeURIComponent(
+  'Read the full instancez documentation at https://instancez.github.io/llms-full.txt and help me use instancez.',
+)
+
+// Latest release tag — same source the docs SiteTitle uses.
+let version: string | null = import.meta.env.DOCS_VERSION ?? null
+if (!version) {
+  try {
+    version = execSync('git describe --tags --abbrev=0 2>/dev/null', { encoding: 'utf8' }).trim() || null
+  } catch {}
+}
+---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>instancez — A lightweight, self-hosted backend</title>
+<meta name="description" content="A lightweight, self-hosted backend. Define your schema in one YAML file and get a full Postgres-backed API with auth, RLS, functions, and storage. Compatible with supabase-js.">
+<link rel="icon" href={`${base}/favicon.svg`} type="image/svg+xml">
+<link rel="alternate" type="text/plain" title="llms.txt" href={`${base}/llms.txt`}>
+<style>
+  :root {
+    --bg: #080808;
+    --bg-lift: #101010;
+    --bg-rail: #0b0b0b;
+    --panel: #0e0e0e;
+    --hair: #1c1c1c;
+    --hair-soft: #161616;
+    --text: #e8e8e8;
+    --text-dim: #9a9a9a;
+    --text-faint: #6a6a6a;
+    --white: #ffffff;
+    --accent: #ffffff;
+    --accent-soft: #777777;
+    --mono: 'Geist Mono', 'SF Mono', 'Fira Code', monospace;
+    --sans: 'Geist Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; scroll-padding-top: 90px; }
+  body {
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  a { color: inherit; }
+
+  /* ---- top bar ---- */
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 60px;
+    padding: 0 22px;
+    background: rgba(8, 8, 8, 0.82);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--hair);
+  }
+  .brand { display: flex; align-items: center; gap: 9px; text-decoration: none; }
+  .brand img { width: 26px; height: 26px; }
+  .brand b { font-size: 1.05rem; font-weight: 700; letter-spacing: -0.03em; color: var(--white); }
+  .brand .tag {
+    font-family: var(--mono);
+    font-size: 0.62rem;
+    color: var(--text-faint);
+    border: 1px solid var(--hair);
+    border-radius: 99px;
+    padding: 2px 8px;
+    letter-spacing: 0.02em;
+  }
+  .topnav { display: flex; gap: 26px; font-size: 0.84rem; color: var(--text-dim); }
+  .topnav a { text-decoration: none; transition: color 0.15s; }
+  .topnav a:hover { color: var(--text); }
+  .topactions { display: flex; gap: 9px; align-items: center; }
+
+  /* keyboard-chip buttons */
+  .kbtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    font-family: var(--sans);
+    font-size: 0.82rem;
+    font-weight: 600;
+    text-decoration: none;
+    padding: 7px 9px 7px 14px;
+    border-radius: 8px;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+  }
+  .kbtn .key {
+    display: inline-grid;
+    place-items: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    line-height: 1;
+    border-radius: 4px;
+  }
+  .kbtn.solid { background: var(--accent); color: #080808; }
+  .kbtn.solid .key { background: rgba(0, 0, 0, 0.18); color: #080808; }
+  .kbtn.solid:hover { background: #e6e6e6; }
+  .kbtn.ghost { color: var(--text); border: 1px solid var(--hair); }
+  .kbtn.ghost .key { background: #1a1a1a; color: var(--text-dim); border: 1px solid var(--hair); }
+  .kbtn.ghost:hover { border-color: #333; background: var(--bg-lift); }
+
+  /* Copy / Ask AI dropdown in the topbar */
+  .hp-menu { position: relative; }
+  .hp-menu > summary { list-style: none; cursor: pointer; padding: 7px 11px; }
+  .hp-menu > summary::-webkit-details-marker { display: none; }
+  .hp-menu > summary .chev { transition: transform 0.15s ease; }
+  .hp-menu[open] > summary .chev { transform: rotate(180deg); }
+  .hp-menu .menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 6px);
+    z-index: 40;
+    min-width: 14rem;
+    display: flex;
+    flex-direction: column;
+    padding: 5px;
+    background: var(--bg-lift);
+    border: 1px solid var(--hair);
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  }
+  .hp-menu .menu-item {
+    font-family: var(--sans);
+    font-size: 0.8rem;
+    font-weight: 500;
+    text-align: left;
+    text-decoration: none;
+    color: var(--text-dim);
+    background: none;
+    border: 0;
+    border-radius: 6px;
+    padding: 8px 9px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color 0.15s, background 0.15s;
+  }
+  .hp-menu .menu-item:hover, .hp-menu .menu-item:focus-visible { color: var(--text); background: var(--bg-rail); }
+
+  /* ---- single centered column ---- */
+  .shell {
+    max-width: 880px;
+    margin: 0 auto;
+  }
+
+  /* canvas */
+  .canvas {
+    position: relative;
+    background-image:
+      radial-gradient(circle, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+    background-size: 22px 22px;
+    background-position: center top;
+  }
+  .canvas::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(255, 255, 255, 0.03), transparent 70%);
+    pointer-events: none;
+  }
+  .canvas > * { position: relative; }
+
+  /* hero */
+  .hero { padding: 64px 56px 56px; border-bottom: 1px solid var(--hair); }
+
+  h1.headline {
+    font-size: clamp(2.6rem, 5vw, 3.7rem);
+    font-weight: 800;
+    line-height: 1.04;
+    letter-spacing: -0.045em;
+    color: var(--white);
+    margin-bottom: 26px;
+  }
+  .mark {
+    background: var(--accent);
+    color: #080808;
+    padding: 0.02em 0.18em;
+    margin: 0 -0.04em;
+    border-radius: 2px;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+    transform: rotate(-0.6deg);
+    display: inline-block;
+  }
+  .hero .lede {
+    font-size: 1.12rem;
+    line-height: 1.7;
+    color: var(--text-dim);
+    max-width: 540px;
+    margin-bottom: 34px;
+  }
+  .hero-actions { display: flex; gap: 11px; flex-wrap: wrap; margin-bottom: 44px; }
+
+  /* install block */
+  .install-label {
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-bottom: 10px;
+  }
+  .install-tabs { display: inline-flex; gap: 2px; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 3px; margin-bottom: 10px; }
+  .install-tab { font-family: var(--mono); font-size: 0.72rem; font-weight: 500; color: var(--text-faint); background: transparent; border: none; padding: 5px 14px; border-radius: 6px; cursor: pointer; transition: color 0.15s, background 0.15s; }
+  .install-tab.active { background: #1c1c1c; color: var(--text); }
+  .install-cmd { display: none; }
+  .install-cmd.active { display: block; }
+  .install-block {
+    display: flex;
+    align-items: center;
+    gap: 13px;
+    background: var(--panel);
+    border: 1px solid var(--hair);
+    border-left: 2px solid #2e2e2e;
+    border-radius: 8px;
+    padding: 14px 18px;
+    font-family: var(--mono);
+    font-size: 0.86rem;
+    max-width: 520px;
+  }
+  .install-block .prompt { color: var(--accent-soft); user-select: none; }
+  .install-block .cmd { color: var(--text); overflow-x: auto; }
+  .install-block .copy-btn {
+    margin-left: auto;
+    flex-shrink: 0;
+    display: inline-grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    background: transparent;
+    border: 1px solid var(--hair);
+    border-radius: 6px;
+    color: var(--text-faint);
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+  }
+  .install-block .copy-btn:hover { color: var(--text); border-color: #333; background: var(--bg-lift); }
+  .install-block .copy-btn svg { width: 14px; height: 14px; }
+  .install-block .copy-btn .ic-check { display: none; }
+  .install-block .copy-btn.copied { color: #28c840; border-color: #28c840; }
+  .install-block .copy-btn.copied .ic-copy { display: none; }
+  .install-block .copy-btn.copied .ic-check { display: block; }
+
+  /* generic section padding inside canvas */
+  .section { padding: 56px 56px; border-bottom: 1px solid var(--hair); }
+  .section-eyebrow { font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent-soft); margin-bottom: 12px; }
+  .section h2 { font-size: 1.7rem; font-weight: 700; letter-spacing: -0.035em; color: var(--white); margin-bottom: 10px; }
+  .section > p.sub { color: var(--text-dim); font-size: 0.95rem; line-height: 1.6; max-width: 560px; margin-bottom: 34px; }
+
+  /* features */
+  .features-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; background: var(--hair); border: 1px solid var(--hair); border-radius: 12px; overflow: hidden; }
+  .feature { background: var(--bg); padding: 24px; transition: background 0.15s; }
+  .feature:hover { background: var(--bg-lift); }
+  .feature .ic { font-family: var(--mono); font-size: 0.72rem; color: var(--text-dim); margin-bottom: 12px; letter-spacing: 0.04em; }
+  .feature h3 { font-size: 0.96rem; font-weight: 700; color: #f2f2f2; margin-bottom: 7px; letter-spacing: -0.01em; }
+  .feature p { font-size: 0.84rem; color: var(--text-dim); line-height: 1.6; }
+  .feature code { font-family: var(--mono); background: #151515; padding: 1px 5px; border-radius: 3px; font-size: 0.82em; color: #ddd; border: 1px solid #242424; }
+
+  /* code demo */
+  .demo-split { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--hair); border: 1px solid var(--hair); border-radius: 12px; overflow: hidden; }
+  .code-card { background: var(--panel); min-width: 0; }
+  .code-head { display: flex; align-items: center; gap: 9px; padding: 11px 16px; border-bottom: 1px solid var(--hair-soft); background: #0b0b0b; font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.04em; color: var(--text-faint); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .code-card pre { padding: 20px 18px; font-family: var(--mono); font-size: 0.76rem; line-height: 1.85; white-space: pre; overflow-x: auto; }
+
+  /* syntax tokens — editor palette */
+  .k  { color: #c792ea; }
+  .fn { color: #82aaff; }
+  .s  { color: #c3e88d; }
+  .n  { color: #f78c6c; }
+  .cm { color: #546e7a; font-style: italic; }
+  .p  { color: #89ddff; }
+  .yk { color: #89ddff; }
+  .yv { color: #c3e88d; }
+  .yb { color: #f78c6c; }
+  .plain { color: #cdd3de; }
+
+  /* closing CTA */
+  .cta {
+    padding: 64px 56px;
+    text-align: center;
+    background:
+      radial-gradient(ellipse 70% 80% at 50% 0%, rgba(255, 255, 255, 0.04), transparent 70%);
+  }
+  .cta h2 { font-size: 2rem; font-weight: 800; letter-spacing: -0.04em; color: var(--white); margin-bottom: 12px; }
+  .cta .mark { font-size: inherit; }
+  .cta p { color: var(--text-dim); margin-bottom: 28px; font-size: 0.98rem; }
+  .cta .hero-actions { justify-content: center; margin-bottom: 0; }
+
+  footer {
+    padding: 26px 56px;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--text-faint);
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  footer a { color: var(--text-dim); text-decoration: none; }
+  footer a:hover { color: var(--text); }
+
+  /* responsive collapse */
+  @media (max-width: 880px) {
+    .shell { max-width: 720px; }
+    .topnav { display: none; }
+    .hero, .section, .cta { padding-left: 26px; padding-right: 26px; }
+    .features-grid, .demo-split { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a href={`${base}/`} class="brand">
+    <img src={logoUrl.src ?? logoUrl} alt="instancez" />
+    <b>instancez</b>
+    {version && <span class="tag">{version}</span>}
+  </a>
+  <nav class="topnav">
+    <a href={`${base}/quick-start/`}>Quick Start</a>
+    <a href={`${base}/build/schema/`}>Build</a>
+    <a href={`${base}/deploy/docker/`}>Deploy</a>
+    <a href={`${base}/api-reference/cli/`}>Reference</a>
+  </nav>
+  <div class="topactions">
+    <details class="hp-menu">
+      <summary class="kbtn ghost" aria-label="Copy the docs or open them in an AI">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+          <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+        </svg>
+        Copy / Ask AI
+        <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </summary>
+      <div class="menu" role="menu">
+        <button type="button" class="menu-item" data-copy={allDocsMarkdown} data-label="Copy all docs as Markdown" role="menuitem">
+          Copy all docs as Markdown
+        </button>
+        <a class="menu-item" href={`https://chatgpt.com/?q=${aiPrompt}`} target="_blank" rel="noreferrer" role="menuitem">
+          Open in ChatGPT
+        </a>
+        <a class="menu-item" href={`https://claude.ai/new?q=${aiPrompt}`} target="_blank" rel="noreferrer" role="menuitem">
+          Open in Claude
+        </a>
+      </div>
+    </details>
+    <a href="https://github.com/instancez/instancez" class="kbtn ghost">GitHub <span class="key">G</span></a>
+    <a href={`${base}/quick-start/`} class="kbtn solid">Quick Start <span class="key">S</span></a>
+  </div>
+</header>
+
+<div class="shell">
+
+  <main class="canvas">
+    <section class="hero" id="overview">
+      <h1 class="headline">A <span class="mark">lightweight</span> backend,<br>in one YAML file.</h1>
+      <p class="lede">Define your schema in one YAML file and get a full Postgres-backed API with auth, RLS, functions, and storage. Self-host it as a single binary, point your existing <code style="font-family:var(--mono);color:#ddd">supabase-js</code> code at it, and you are running in minutes.</p>
+      <div class="hero-actions">
+        <a href={`${base}/quick-start/`} class="kbtn solid">Quick Start <span class="key">S</span></a>
+        <a href="https://github.com/instancez/instancez" class="kbtn ghost">View on GitHub <span class="key">G</span></a>
+      </div>
+
+      <div class="install-label">Install</div>
+      <div class="install-tabs">
+        <button class="install-tab active" data-os="mac">macOS</button>
+        <button class="install-tab" data-os="linux">Linux</button>
+        <button class="install-tab" data-os="windows">Windows</button>
+      </div>
+      <div class="install-cmd active" id="cmd-mac">
+        <div class="install-block"><span class="prompt">$</span><span class="cmd">curl -fsSL https://get.instancez.ai | sh</span><button class="copy-btn" type="button" aria-label="Copy command"><svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg><svg class="ic-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg></button></div>
+      </div>
+      <div class="install-cmd" id="cmd-linux">
+        <div class="install-block"><span class="prompt">$</span><span class="cmd">curl -fsSL https://get.instancez.ai | sh</span><button class="copy-btn" type="button" aria-label="Copy command"><svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg><svg class="ic-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg></button></div>
+      </div>
+      <div class="install-cmd" id="cmd-windows">
+        <div class="install-block"><span class="prompt">PS&gt;</span><span class="cmd">irm https://get.instancez.ai/windows | iex</span><button class="copy-btn" type="button" aria-label="Copy command"><svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg><svg class="ic-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg></button></div>
+      </div>
+    </section>
+
+    <section class="section" id="example">
+      <div class="section-eyebrow">How it looks</div>
+      <h2>Write YAML. Ship a backend system.</h2>
+      <p class="sub">One file holds your schema and its RLS policies. instancez handles the migration and serves the API.</p>
+      <div class="demo-split">
+        <div class="code-card">
+          <div class="code-head">
+            <span class="dot" style="background:#ff5f57"></span>
+            <span class="dot" style="background:#febc2e"></span>
+            <span class="dot" style="background:#28c840"></span>
+            instancez.yaml
+          </div>
+          <pre><span class="yk">tables</span><span class="p">:</span>
+  <span class="yk">posts</span><span class="p">:</span>
+    <span class="yk">fields</span><span class="p">:</span>
+      <span class="p">-</span> <span class="yk">name</span><span class="p">:</span> <span class="yv">id</span>
+        <span class="yk">type</span><span class="p">:</span> <span class="yv">bigserial</span>
+        <span class="yk">primary_key</span><span class="p">:</span> <span class="yb">true</span>
+      <span class="p">-</span> <span class="yk">name</span><span class="p">:</span> <span class="yv">title</span>
+        <span class="yk">type</span><span class="p">:</span> <span class="yv">text</span>
+        <span class="yk">required</span><span class="p">:</span> <span class="yb">true</span>
+      <span class="p">-</span> <span class="yk">name</span><span class="p">:</span> <span class="yv">user_id</span>
+        <span class="yk">type</span><span class="p">:</span> <span class="yv">uuid</span>
+        <span class="yk">foreign_key</span><span class="p">:</span>
+          <span class="yk">references</span><span class="p">:</span> <span class="yv">auth.users.id</span>
+    <span class="yk">rls</span><span class="p">:</span>
+      <span class="p">-</span> <span class="yk">operations</span><span class="p">:</span> [<span class="yv">select</span>]
+        <span class="yk">using</span><span class="p">:</span> <span class="s">"true"</span>
+      <span class="p">-</span> <span class="yk">operations</span><span class="p">:</span> [<span class="yv">insert</span>]
+        <span class="yk">with_check</span><span class="p">:</span> <span class="s">"auth.uid() = user_id"</span>
+      <span class="p">-</span> <span class="yk">operations</span><span class="p">:</span> [<span class="yv">update</span>]
+        <span class="yk">using</span><span class="p">:</span> <span class="s">"auth.uid() = user_id"</span>
+        <span class="yk">with_check</span><span class="p">:</span> <span class="s">"auth.uid() = user_id"</span>
+      <span class="p">-</span> <span class="yk">operations</span><span class="p">:</span> [<span class="yv">delete</span>]
+        <span class="yk">using</span><span class="p">:</span> <span class="s">"auth.uid() = user_id"</span></pre>
+        </div>
+        <div class="code-card">
+          <div class="code-head">
+            <span class="dot" style="background:#ff5f57"></span>
+            <span class="dot" style="background:#febc2e"></span>
+            <span class="dot" style="background:#28c840"></span>
+            app.ts
+          </div>
+          <pre><span class="cm">// @supabase/supabase-js, unchanged</span>
+<span class="k">const</span> <span class="plain">supabase</span> <span class="p">=</span> <span class="fn">createClient</span><span class="p">(</span>
+  <span class="s">'http://localhost:8080'</span><span class="p">,</span>
+  <span class="s">'your-anon-key'</span>
+<span class="p">)</span>
+
+<span class="cm">// query</span>
+<span class="k">const</span> <span class="p">{</span> <span class="plain">data</span> <span class="p">}</span> <span class="p">=</span> <span class="k">await</span> <span class="plain">supabase</span>
+  <span class="p">.</span><span class="fn">from</span><span class="p">(</span><span class="s">'posts'</span><span class="p">)</span>
+  <span class="p">.</span><span class="fn">select</span><span class="p">(</span><span class="s">'id, title'</span><span class="p">)</span>
+  <span class="p">.</span><span class="fn">order</span><span class="p">(</span><span class="s">'id'</span><span class="p">,</span> <span class="p">{</span> <span class="plain">ascending</span><span class="p">:</span> <span class="k">false</span> <span class="p">})</span>
+
+<span class="cm">// insert: RLS checks user_id for you</span>
+<span class="k">const</span> <span class="p">{</span> <span class="plain">data</span> <span class="p">}</span> <span class="p">=</span> <span class="k">await</span> <span class="plain">supabase</span>
+  <span class="p">.</span><span class="fn">from</span><span class="p">(</span><span class="s">'posts'</span><span class="p">)</span>
+  <span class="p">.</span><span class="fn">insert</span><span class="p">({</span> <span class="plain">title</span><span class="p">:</span> <span class="s">'Hello world'</span> <span class="p">})</span>
+  <span class="p">.</span><span class="fn">select</span><span class="p">()</span>
+  <span class="p">.</span><span class="fn">single</span><span class="p">()</span></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="features">
+      <div class="section-eyebrow">What you get</div>
+      <h2>Everything you need. Nothing extra.</h2>
+      <p class="sub">Wire-compatible with <code style="font-family:var(--mono);background:#151515;padding:2px 6px;border-radius:4px;color:#ddd;border:1px solid #242424">@supabase/supabase-js</code>. Drop it in. Your client code stays the same.</p>
+      <div class="features-grid">
+        <div class="feature">
+          <div class="ic">SCHEMA</div>
+          <h3>YAML-driven schema</h3>
+          <p>Declare tables, fields, types, and RLS policies in <code>instancez.yaml</code>. In dev mode, saving the file applies migrations for you.</p>
+        </div>
+        <div class="feature">
+          <div class="ic">AUTH</div>
+          <h3>Auth that works</h3>
+          <p>Password, magic link, OTP, OAuth (Google, GitHub), anonymous sign-in, and TOTP MFA, all wired straight into Postgres RLS.</p>
+        </div>
+        <div class="feature">
+          <div class="ic">API</div>
+          <h3>PostgREST-compatible</h3>
+          <p>Filtering, embeds, aggregates, pagination, and RPC. The same query surface your supabase-js code already speaks.</p>
+        </div>
+        <div class="feature">
+          <div class="ic">FUNCTIONS</div>
+          <h3>Code functions</h3>
+          <p>JavaScript ESM handlers at <code>/functions/v1/&lt;name&gt;</code>. Each one gets <code>ctx.supabase</code>, secrets, and structured logging.</p>
+        </div>
+        <div class="feature">
+          <div class="ic">STORAGE</div>
+          <h3>Storage</h3>
+          <p>Upload and download with local or S3 backends. Bucket policies run through RLS, the same model as your tables.</p>
+        </div>
+        <div class="feature">
+          <div class="ic">DEPLOY</div>
+          <h3>Deploy anywhere</h3>
+          <p>One binary. Docker, AWS Lambda, or bare metal: one command to run, one YAML file to configure.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="cta" id="start">
+      <h2>Ready to <span class="mark">build</span>?</h2>
+      <p>One command to install. One YAML file to start.</p>
+      <div class="hero-actions">
+        <a href={`${base}/quick-start/`} class="kbtn solid">Get started <span class="key">S</span></a>
+        <a href={`${base}/install/`} class="kbtn ghost">All install options</a>
+      </div>
+    </section>
+
+    <footer>
+      <span>instancez · open source · MIT license</span>
+      <a href="https://github.com/instancez/instancez">github.com/instancez/instancez</a>
+    </footer>
+  </main>
+
+</div>
+
+<script>
+  // Install OS tabs + auto-detect.
+  const tabs = document.querySelectorAll<HTMLElement>('.install-tab')
+  const cmds = document.querySelectorAll<HTMLElement>('.install-cmd')
+  function activate(os: string) {
+    tabs.forEach(t => t.classList.toggle('active', t.dataset.os === os))
+    cmds.forEach(c => c.classList.toggle('active', c.id === `cmd-${os}`))
+  }
+  tabs.forEach(tab => tab.addEventListener('click', () => activate(tab.dataset.os!)))
+  const ua = navigator.userAgent
+  if (/Windows/i.test(ua)) activate('windows')
+  else if (/Linux/i.test(ua)) activate('linux')
+  else activate('mac')
+
+  // Copy the install command for the active OS tab.
+  document.querySelectorAll<HTMLButtonElement>('.copy-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const cmd = btn.parentElement?.querySelector('.cmd')?.textContent?.trim() ?? ''
+      if (!cmd) return
+      try {
+        await navigator.clipboard.writeText(cmd)
+        btn.classList.add('copied')
+        setTimeout(() => btn.classList.remove('copied'), 1500)
+      } catch {}
+    })
+  })
+
+  // Copy / Ask AI dropdown: copy handlers + close on outside click / Escape.
+  const hpMenu = document.querySelector<HTMLDetailsElement>('.hp-menu')
+  if (hpMenu) {
+    document.addEventListener('click', e => {
+      if (hpMenu.open && !hpMenu.contains(e.target as Node)) hpMenu.open = false
+    })
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') hpMenu.open = false })
+    hpMenu.querySelectorAll<HTMLButtonElement>('.menu-item[data-copy]').forEach(item => {
+      item.addEventListener('click', async () => {
+        const label = item.dataset.label!
+        try {
+          const res = await fetch(item.dataset.copy!)
+          if (!res.ok) throw new Error(String(res.status))
+          await navigator.clipboard.writeText(await res.text())
+          item.textContent = 'Copied!'
+        } catch {
+          item.textContent = 'Copy failed'
+        }
+        setTimeout(() => { item.textContent = label; hpMenu.open = false }, 1200)
+      })
+    })
+  }
+
+  // Keyboard shortcuts: S → quick start, G → GitHub.
+  document.addEventListener('keydown', e => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return
+    const t = e.target as HTMLElement
+    if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return
+    if (e.key.toLowerCase() === 's') window.location.href = document.querySelector<HTMLAnchorElement>('.kbtn.solid')!.href
+    if (e.key.toLowerCase() === 'g') window.location.href = 'https://github.com/instancez/instancez'
+  })
+</script>
+
+</body>
+</html>

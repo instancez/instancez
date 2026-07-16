@@ -1,0 +1,133 @@
+---
+title: instancez Cloud
+description: Deploy a project to instancez Cloud with inz cloud login and inz cloud deploy.
+---
+
+instancez Cloud runs your project as a managed service. You keep editing `instancez.yaml` locally, then push it to a hosted project with `inz cloud deploy`. The CLI handles auth, uploads the config, and deploys straight to the project — there's no separate draft/production split to manage.
+
+## Sign in
+
+```bash
+inz cloud login
+```
+
+This runs a device-code flow: the CLI prints a one-time code, opens your browser to confirm it, and stores a Personal Access Token at `~/.instancez/credentials`. Later commands reuse that token, so you sign in once per machine. Pass `--force` to re-authenticate.
+
+If you run `inz cloud deploy` or `inz cloud status` while signed out on an interactive terminal, the CLI offers to sign you in first. In a non-interactive session (CI, scripts) it stops and tells you to run `inz cloud login`, since it can't open a browser.
+
+## Link a project
+
+A cloud project is identified by `project.cloud.project_id` in your `instancez.yaml`. Create the project and write that field in one step, as part of your first deploy:
+
+```bash
+inz cloud deploy --new
+```
+
+`--new` only creates a project after local validation passes, so you never end up with an empty project for an invalid config. It writes the returned id into your config:
+
+```yaml
+project:
+  name: my-app
+  cloud:
+    project_id: <generated-by-deploy>
+```
+
+Running `inz cloud deploy --new` again once `project.cloud.project_id` is already set is an error. Drop `--new` to deploy to the linked project, or use `--project <id>` to target a different one for that run without editing the file.
+
+## Deploy
+
+```bash
+inz cloud deploy
+```
+
+Deploy first shows a page-free diff of what would change, then prompts
+`Deploy? [y/N]`. Nothing is written yet at this point, not even function
+sources. A bare Enter is treated as "no". Pass `--yes` (`-y`) to skip the
+prompt in scripts. Only after confirming (or with `--yes`) does it upload
+function sources and the YAML and trigger a rebuild.
+
+### Code functions
+
+If your project declares code functions, `inz cloud deploy` uploads your
+function sources along with the yaml, and the cloud builds the bundle. You do
+not need an S3 bucket or a local npm step for deployment.
+
+`--functions-bundle-dest` no longer exists on `inz cloud deploy`. For self-hosted projects using `inz serve --bundle`, use `inz bundle --output s3://my-bucket/functions/` to build and upload the bundle yourself.
+
+## Continuous deployment (GitHub Actions)
+
+`inz cloud deploy` needs a Personal Access Token, but the device-code flow behind `inz cloud login` needs a browser, and CI can't open one. Instead, sign in once from your machine, copy the token, and hand CI the value directly:
+
+```bash
+inz cloud login
+cat ~/.instancez/credentials   # copy the "pat" value
+```
+
+Store that value as a repository secret named `INSTANCEZ_CLOUD_PAT` (**Settings → Secrets and variables → Actions**). The CLI reads `INSTANCEZ_CLOUD_PAT` directly — no credentials file needs to be written in CI. Treat it like a password: it authenticates as whichever account ran `inz cloud login`, so revoke it from the instancez Cloud dashboard if it leaks.
+
+Since each project has a single deployed version (no draft to review changes in first), a review environment means a genuinely separate cloud project. Skip `project_id` in `instancez.yaml` and pass `--project` per job instead, pointing at different project ids held in their own secrets:
+
+```yaml
+# .github/workflows/deploy.yml
+name: Deploy to instancez Cloud
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install inz
+        run: |
+          curl -fsSL https://get.instancez.ai | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # Pull requests: deploy to a dev project for review.
+      - name: Deploy to dev project
+        if: github.event_name == 'pull_request'
+        run: inz cloud deploy --project "$DEV_PROJECT_ID" --yes
+        env:
+          INSTANCEZ_CLOUD_PAT: ${{ secrets.INSTANCEZ_CLOUD_PAT }}
+          DEV_PROJECT_ID: ${{ secrets.INSTANCEZ_DEV_PROJECT_ID }}
+
+      # main: deploy to the production project. --yes skips the confirmation
+      # prompt, since the runner has no terminal to answer it anyway.
+      - name: Deploy to production project
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: inz cloud deploy --project "$PROD_PROJECT_ID" --yes
+        env:
+          INSTANCEZ_CLOUD_PAT: ${{ secrets.INSTANCEZ_CLOUD_PAT }}
+          PROD_PROJECT_ID: ${{ secrets.INSTANCEZ_PROD_PROJECT_ID }}
+```
+
+`--project` targets a project for that run only; it never edits `instancez.yaml`, so both jobs can check out the exact same file.
+
+## Check status
+
+```bash
+inz cloud status
+```
+
+This prints the project name, id, URL, and deploy status. It's separate from `inz doctor`, which checks your local environment rather than the cloud project.
+
+## Other commands
+
+```bash
+inz cloud whoami    # print the signed-in account's email
+inz cloud logout    # forget the local Personal Access Token
+```
+
+`inz cloud logout` removes the token from `~/.instancez/credentials`. The token stays valid on the server until you revoke it from the dashboard.
+
+## Pointing at a different API
+
+The CLI talks to `https://my.instancez.ai/api` by default. To target a different instancez Cloud API, set `INSTANCEZ_CLOUD_API`:
+
+```bash
+export INSTANCEZ_CLOUD_API=https://cloud.example.com/api
+```

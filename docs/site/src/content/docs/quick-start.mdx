@@ -1,0 +1,108 @@
+---
+title: Quick Start
+description: Install instancez and have a Supabase-compatible API running in under 5 minutes.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import OSTabSelect from '../../components/OSTabSelect.astro';
+
+<OSTabSelect />
+
+## Install
+
+<Tabs>
+  <TabItem label="macOS">
+  ```bash
+  curl -fsSL https://get.instancez.ai | sh
+  ```
+  Installs `inz` to `~/.local/bin`. Check it works: `inz version`.
+  </TabItem>
+
+  <TabItem label="Linux">
+  ```bash
+  curl -fsSL https://get.instancez.ai | sh
+  ```
+  Works on x86-64 and ARM64. Installs `inz` to `~/.local/bin`. Check it works: `inz version`.
+  </TabItem>
+
+  <TabItem label="Windows">
+  ```powershell
+  irm https://get.instancez.ai/windows | iex
+  ```
+  Installs `inz.exe` to `%LOCALAPPDATA%\instancez\bin`. Run in PowerShell 5.1+. Check it works: `inz version`.
+  </TabItem>
+</Tabs>
+
+Need a manual download or more options? See the [Installation guide](/instancez/install/).
+
+## Create a project
+
+```bash
+mkdir my-app && cd my-app
+inz init
+```
+
+This creates `instancez.yaml` (project name inferred from the directory) with a `todos` table, an `avatars` storage bucket, and a `todos` code function. Nothing touches the database yet.
+
+Code functions run in Node.js workers, so the example function is only scaffolded when Node.js 22+ is on your PATH. Without it, `inz init` prints a warning and skips the function; everything else works the same.
+
+## Start the dev server
+
+The quickest way to start is the Postgres that ships inside `inz`. You do not need to install or run a database yourself:
+
+```bash
+inz dev --embedded-pg
+```
+
+The first run downloads a Postgres 16 binary (about 30 MB) and keeps its data in `./pgdata/`. Later runs reuse that directory. To start over from an empty database, add `--reset-pg`.
+
+**Or point at your own Postgres.** If you already have a Postgres 14+ instance, drop the flag and set a superuser connection string:
+
+```bash
+export INSTANCEZ_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres
+inz dev
+```
+
+Either way, on first boot instancez provisions the Postgres roles it needs and writes a generated publishable key and secret key to `.development.env`. Both are printed in the `inz dev` startup output. Your API is live at `http://localhost:8080`, and saving `instancez.yaml` re-applies the schema automatically.
+
+## Get your publishable key
+
+Open the dashboard at `http://localhost:8080/dashboard`. The API Keys section shows your publishable key — copy it from there. (It's also in the `inz dev` startup output and `.development.env`.)
+
+## Query your data
+
+instancez speaks the same HTTP API as Supabase, so any Supabase client library works. Examples here use `@supabase/supabase-js`:
+
+Your project starts with a `todos` table. Paste the publishable key you copied above:
+
+```js
+import { createClient } from '@supabase/supabase-js'
+
+const supabase = createClient('http://localhost:8080', '<your-publishable-key>')
+
+const { data, error } = await supabase
+  .from('todos')
+  .select('*')
+```
+
+> The scaffolded `todos` table has a `user_id = auth.uid()` RLS policy, so rows are filtered by the
+> authenticated user. To read without signing in, add a separate `- operations: [select]` policy with
+> `using: "true"` in `instancez.yaml`. Don't loosen the existing policy: it also covers insert, update,
+> and delete, so `using: "true"` there would open writes to anyone.
+
+## Building with a coding agent
+
+The repo ships an agent skill that teaches coding agents the YAML syntax, RLS patterns, and the `inz` CLI:
+
+```bash
+npx skills add instancez/instancez
+```
+
+See [Coding Agents](/instancez/coding-agents/) for Claude Code plugin install, per-agent flags, and the manual route.
+
+## What's next
+
+- [Tables / Schema](/instancez/build/schema/) — add tables, columns, and enums
+- [Auth](/instancez/build/auth/) — sign up, sign in, OAuth, MFA
+- [Querying](/instancez/build/querying/) — filters, embeds, pagination, aggregates
+- [Deploy](/instancez/deploy/docker/) — run in production

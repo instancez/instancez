@@ -1,0 +1,241 @@
+version: 1
+project:
+    name: Gearstore Example
+    description: Desk-gear catalog demonstrating Instancez + supabase-js (auth, filtering, FTS, JSONB, arrays, embeds, RLS, file storage)
+    cloud:
+        project_id: 6a56042dd2e2902f99d6bfc1
+server:
+    port: 8080
+    cors:
+        origins:
+            - '*'
+    max_limit: 1000
+providers:
+    email: null
+    storage:
+        type: local
+auth:
+    # Email + password auth. VerifyEmail is off so signup returns a session
+    # immediately; no email provider is required in that mode.
+    jwt_expiry: 1h
+    refresh_tokens: true
+    refresh_token_expiry: 7d
+    # allow_signup: false       # admin-only: POST /auth/v1/signup → 403 signup_disabled
+    # allow_anonymous: false    # block empty-body anonymous sign-in
+    # redirect_urls allowlists the frontend origin so the OAuth callback can
+    # redirect the browser back to the SPA with the session in the URL
+    # fragment (otherwise it falls back to returning raw JSON).
+    redirect_urls:
+        - http://localhost:5174
+    oauth:
+        github:
+            client_id: Ov23liTruwFh0n4Fw5LJ
+            client_secret: ${INSTANCEZ_ENV_GITHUB_CLIENT_SECRET}
+            # Must match the callback URL registered on the GitHub OAuth App.
+            redirect_url: http://localhost:5174/auth/v1/callback/github
+        google:
+            client_id: 261590024476-gbnv0vtuavh5io0e4f1dauhf5j2rc0cm.apps.googleusercontent.com
+            client_secret: ${INSTANCEZ_ENV_GOOGLE_CLIENT_SECRET}
+            # Must match the callback URL registered in Google Cloud Console.
+            redirect_url: http://localhost:5174/auth/v1/callback/google
+tables:
+    profiles:
+        fields:
+            - name: id
+              foreign_key:
+                references: auth.users.id
+                on_delete: cascade
+              primary_key: true
+            - name: display_name
+              type: text
+              required: false
+        rls:
+            - operations: [select]
+              using: "true"
+            - operations: [insert]
+              with_check: "auth.uid() = id"
+            - operations: [update]
+              using: "auth.uid() = id"
+              with_check: "auth.uid() = id"
+    categories:
+        fields:
+            - name: id
+              type: bigserial
+              primary_key: true
+            - name: slug
+              type: varchar(63)
+              required: true
+              unique: true
+            - name: name
+              type: text
+              required: true
+        indexes: []
+        rls:
+            - operations:
+                - select
+                - insert
+                - update
+                - delete
+              using: "true"
+              with_check: "true"
+    products:
+        fields:
+            - name: id
+              type: bigserial
+              primary_key: true
+            - name: name
+              type: text
+              required: true
+            - name: description
+              type: text
+              required: false
+            - name: price_cents
+              type: integer
+              required: true
+              min: 0
+            - name: stock
+              type: integer
+              required: true
+              default: 0
+              min: 0
+            - name: status
+              type: text
+              required: true
+              default: draft
+              enum:
+                - draft
+                - active
+                - archived
+            - name: featured
+              type: boolean
+              required: true
+              default: false
+            - name: on_sale
+              type: boolean
+              required: true
+              default: false
+            - name: tags
+              type: text[]
+              required: false
+            - name: metadata
+              type: jsonb
+              required: false
+            - name: category_id
+              type: ""
+              required: false
+              foreign_key:
+                references: categories.id
+                on_delete: set_null
+            - name: created_at
+              type: timestamptz
+              required: true
+              default: now()
+        indexes:
+            - columns:
+                - status
+                - created_at
+            - columns:
+                - category_id
+            - columns:
+                - price_cents
+        rls:
+            - operations:
+                - select
+                - insert
+                - update
+                - delete
+              using: "true"
+              with_check: "true"
+    reviews:
+        fields:
+            - name: id
+              type: bigserial
+              primary_key: true
+            - name: product_id
+              type: ""
+              required: true
+              foreign_key:
+                references: products.id
+                on_delete: cascade
+            - name: user_id
+              type: ""
+              required: false
+              foreign_key:
+                references: auth.users.id
+                on_delete: set_null
+            - name: author
+              type: text
+              required: true
+            - name: rating
+              type: integer
+              required: true
+              min: 1
+              max: 5
+            - name: body
+              type: text
+              required: false
+            - name: created_at
+              type: timestamptz
+              required: true
+              default: now()
+        indexes:
+            - columns:
+                - product_id
+                - created_at
+            - columns:
+                - rating
+            - columns:
+                - user_id
+        # Anyone can read reviews (public product catalog). Only authenticated
+        # users can insert, and only against their own user_id. Updates and
+        # deletes are restricted to the row owner via auth.uid().
+        rls:
+            - operations:
+                - select
+              using: "true"
+            - operations:
+                - insert
+              with_check: "user_id = auth.uid()"
+            - operations:
+                - update
+              using: "user_id = auth.uid()"
+            - operations:
+                - delete
+              using: "user_id = auth.uid()"
+storage:
+    product_images:
+        max_size: 5MB
+        public: true
+# Code functions: JavaScript HTTP handlers served at /functions/v1/<name>.
+# Source lives in ./functions (shared deps in functions/package.json). `inz dev`
+# runs `npm ci` there on boot; restart dev to pick up code edits.
+functions:
+    # Minimal handler — try this first: curl localhost:8080/functions/v1/hello -d '{"name":"you"}'
+    hello:
+        runtime: node
+        file: functions/hello.js
+        auth_required: false
+        timeout: 10s
+    # Reflects the request/ctx surface (method, path, query, headers, body, claims).
+    echo:
+        runtime: node
+        file: functions/echo.js
+        auth_required: false
+        env:
+            API_KEY: "${INSTANCEZ_ENV_DEMO_API_KEY:-demo}"
+    # The signed-in user's reviews. auth_required → 401 for anonymous callers.
+    # Uses ctx.supabase (RLS as the caller) + the `zod` npm dep.
+    my-reviews:
+        runtime: node
+        file: functions/my-reviews.js
+        auth_required: true
+        timeout: 15s
+    # Import a review from an external system: HMAC-verified, written via
+    # service_role (BYPASSRLS). Uses `nanoid` + node:crypto. Set
+    # INSTANCEZ_ENV_WEBHOOK_SECRET in your env/.env for a real secret.
+    webhook:
+        runtime: node
+        file: functions/webhook.js
+        auth_required: false
+        env:
+            WEBHOOK_SECRET: "${INSTANCEZ_ENV_WEBHOOK_SECRET:-dev-secret}"

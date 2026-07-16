@@ -1,0 +1,13 @@
+{
+  "name": "instancez",
+  "owner": {
+    "name": "instancez"
+  },
+  "plugins": [
+    {
+      "name": "instancez",
+      "source": "./",
+      "description": "Teaches coding agents how to build instancez backends: instancez.yaml syntax, RLS, auth, storage, rpc, code functions, and the inz CLI."
+    }
+  ]
+}

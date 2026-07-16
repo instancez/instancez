@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "instancez.fullname" . }}
+  labels:
+    {{- include "instancez.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "instancez.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "instancez.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- if .Values.postgres.enabled }}
+      initContainers:
+        - name: wait-for-postgres
+          image: {{ .Values.postgres.image }}
+          command:
+            - sh
+            - -c
+            - until pg_isready -h {{ include "instancez.postgresServiceName" . }} -U {{ .Values.postgres.username | quote }}; do sleep 2; done
+      {{- end }}
+      containers:
+        - name: instancez
+          image: "{{ .Values.image.repository }}:{{ include "instancez.imageTag" . }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: INSTANCEZ_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "instancez.fullname" . }}
+                  key: databaseUrl
+            - name: INSTANCEZ_PUBLISHABLE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "instancez.fullname" . }}
+                  key: publishableKey
+            - name: INSTANCEZ_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "instancez.fullname" . }}
+                  key: secretKey
+            - name: INSTANCEZ_PORT
+              value: "8080"
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /live
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /app/instancez.yaml
+              subPath: instancez.yaml
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "instancez.fullname" . }}-config
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

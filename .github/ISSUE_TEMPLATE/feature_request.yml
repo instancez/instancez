@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest something instancez should do.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that instancez does not let you do today?
+      placeholder: I want to ... but there is no way to ...
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you have in mind
+      description: How might this work? A rough sketch is fine.
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you have tried
+      description: Workarounds you are using now, or other tools that handle this.
+    validations:
+      required: false
+  - type: checkboxes
+    id: supabase
+    attributes:
+      label: Supabase parity
+      description: instancez tracks the Supabase API surface closely.
+      options:
+        - label: This maps to an existing feature in Supabase or `@supabase/supabase-js`.

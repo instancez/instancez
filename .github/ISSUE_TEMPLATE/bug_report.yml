@@ -1,0 +1,63 @@
+name: Bug report
+description: Something is broken or behaving differently than the docs say.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. The more we can reproduce it, the faster we can fix it.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you do, and what went wrong?
+      placeholder: I ran `inz dev` and the schema did not apply...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: What should have happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: A minimal set of steps, and a snippet of your `instancez.yaml` if it is relevant.
+      placeholder: |
+        1. `inz init my-app`
+        2. Edit `instancez.yaml` to add ...
+        3. Run `inz dev`
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: instancez version
+      description: Output of `inz --version`.
+    validations:
+      required: true
+  - type: input
+    id: postgres
+    attributes:
+      label: Postgres version
+      placeholder: "16"
+    validations:
+      required: false
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: macOS 14 / Ubuntu 24.04 / Windows 11
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Any relevant server output. This will be formatted as code, so no backticks needed.
+      render: shell
+    validations:
+      required: false

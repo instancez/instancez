@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and discussion
+    url: https://github.com/instancez/instancez/discussions
+    about: For how-to questions and general discussion. Open an issue only for bugs and feature requests.
+  - name: Security vulnerability
+    url: https://github.com/instancez/instancez/security/advisories/new
+    about: Report a security issue privately. Please do not file a public issue for it.
+  - name: Documentation
+    url: https://instancez.github.io
+    about: Check the docs first. Many questions are answered there.

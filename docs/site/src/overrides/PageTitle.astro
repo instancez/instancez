@@ -1,0 +1,182 @@
+---
+// starlight-theme-black's page title on the left, plus a page-actions dropdown
+// pinned to the top-right of the content column (just left of the ToC rail).
+// Set at the project level so it wins over starlight-page-actions, which also
+// overrides PageTitle; the plugin stays installed only for the per-page `.md`
+// routes the copy items read from.
+import ThemeBlackPageTitle from 'starlight-theme-black/overrides/PageTitle.astro';
+
+const site = 'https://instancez.github.io';
+const pagePath = Astro.url.pathname.replace(/\/$/, '');
+const pageMarkdown = `${pagePath}.md`;
+const allDocsMarkdown = '/llms-full.txt';
+
+// Point the AI at the full docs dump rather than the single page, so it can
+// answer about anything in instancez, with the current page as context.
+const prompt = encodeURIComponent(
+  `Read the full instancez documentation at ${site}/llms-full.txt and help me use instancez. I'm currently reading ${site}${pagePath}/.`,
+);
+---
+
+<div class="title-row">
+  <div class="title-col">
+    <ThemeBlackPageTitle />
+  </div>
+
+  <details class="page-menu">
+    <summary aria-label="Copy this page or ask an AI about it">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+        <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+      </svg>
+      <span>Copy / Ask AI</span>
+      <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="m6 9 6 6 6-6" />
+      </svg>
+    </summary>
+
+    <div class="menu" role="menu">
+      <button type="button" class="menu-item" data-copy={pageMarkdown} data-label="Copy this page as Markdown" role="menuitem">
+        Copy this page as Markdown
+      </button>
+      <button type="button" class="menu-item" data-copy={allDocsMarkdown} data-label="Copy all docs as Markdown" role="menuitem">
+        Copy all docs as Markdown
+      </button>
+      <a class="menu-item" href={`https://chatgpt.com/?q=${prompt}`} target="_blank" rel="noreferrer" role="menuitem">
+        Open in ChatGPT
+      </a>
+      <a class="menu-item" href={`https://claude.ai/new?q=${prompt}`} target="_blank" rel="noreferrer" role="menuitem">
+        Open in Claude
+      </a>
+    </div>
+  </details>
+</div>
+
+<style>
+  .title-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .title-col {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .page-menu {
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .page-menu > summary {
+    list-style: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--foreground);
+    background: var(--background);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) - 2px);
+    padding: 0.375rem 0.625rem;
+    cursor: pointer;
+    white-space: nowrap;
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease;
+  }
+
+  .page-menu > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .page-menu > summary:hover {
+    background: var(--secondary);
+  }
+
+  .page-menu .chev {
+    transition: transform 0.15s ease;
+  }
+
+  .page-menu[open] .chev {
+    transform: rotate(180deg);
+  }
+
+  .menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 0.375rem);
+    z-index: 20;
+    min-width: 13.5rem;
+    display: flex;
+    flex-direction: column;
+    padding: 0.25rem;
+    background: var(--background);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+  }
+
+  .menu-item {
+    font: inherit;
+    font-size: 0.8125rem;
+    text-align: left;
+    text-decoration: none;
+    color: var(--muted-foreground);
+    background: none;
+    border: 0;
+    border-radius: calc(var(--radius) - 4px);
+    padding: 0.4375rem 0.5rem;
+    cursor: pointer;
+    white-space: nowrap;
+    transition:
+      color 0.15s ease,
+      background-color 0.15s ease;
+  }
+
+  .menu-item:hover,
+  .menu-item:focus-visible {
+    color: var(--foreground);
+    background: var(--secondary);
+  }
+
+  @media (max-width: 30rem) {
+    .menu-item {
+      white-space: normal;
+    }
+  }
+</style>
+
+<script>
+  for (const menu of document.querySelectorAll<HTMLDetailsElement>('.page-menu')) {
+    // Close on outside click and on Escape, like a real menu.
+    document.addEventListener('click', (e) => {
+      if (menu.open && !menu.contains(e.target as Node)) menu.open = false;
+    });
+    menu.addEventListener('keydown', (e) => {
+      if ((e as KeyboardEvent).key === 'Escape') menu.open = false;
+    });
+
+    for (const btn of menu.querySelectorAll<HTMLButtonElement>('.menu-item[data-copy]')) {
+      btn.addEventListener('click', async () => {
+        const url = btn.dataset.copy!;
+        const label = btn.dataset.label!;
+        try {
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(String(res.status));
+          await navigator.clipboard.writeText(await res.text());
+          btn.textContent = 'Copied!';
+        } catch {
+          btn.textContent = 'Copy failed';
+        }
+        setTimeout(() => {
+          btn.textContent = label;
+          menu.open = false;
+        }, 1200);
+      });
+    }
+  }
+</script>

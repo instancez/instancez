@@ -1,0 +1,92 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: instancez
+      POSTGRES_PASSWORD: instancez
+      POSTGRES_DB: instancez
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "instancez"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+
+  instancez:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+    # `dev` migrates and builds the code functions on the fly (runs
+    # `npm ci` in /app/functions). `serve` is the production mode, but it never
+    # builds functions; it consumes a pre-built bundle produced by `inz bundle --output s3://...`.
+    command: ["inz", "dev"]
+    ports:
+      - "8080:8080"
+    environment:
+      INSTANCEZ_DATABASE_URL: postgres://instancez:instancez@postgres:5432/instancez?sslmode=disable
+      INSTANCEZ_PUBLISHABLE_KEY: inz_publishable_gearstoredev
+      INSTANCEZ_SECRET_KEY: inz_secret_gearstoredev
+      INSTANCEZ_ENV_GOOGLE_CLIENT_SECRET: YOUR_GOOGLE_CLIENT_SECRET
+      INSTANCEZ_ENV_GITHUB_CLIENT_SECRET: YOUR_GITHUB_CLIENT_SECRET
+    volumes:
+      - ./instancez.yaml:/app/instancez.yaml
+      - ./functions:/app/functions   # code functions; `inz dev` runs npm ci here
+    healthcheck:
+      # /ready 200s only after migrations run and the DB is reachable, so it
+      # doubles as the signal the seed sidecar waits on.
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/ready"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # One-shot data bootstrap. YAML seeding was removed, so the demo seeds the
+  # same way an app would: the admin API for the auth user, plain SQL for the
+  # catalog. Runs to completion and exits; safe to re-run (see seed.sh).
+  seed:
+    image: postgres:17-alpine
+    command: ["sh", "/seed.sh"]
+    environment:
+      INSTANCEZ_URL: http://instancez:8080
+      INSTANCEZ_SECRET_KEY: inz_secret_gearstoredev
+      # Superuser DSN. seed.sql writes the catalog directly, bypassing RLS the
+      # way a privileged migration job would.
+      INSTANCEZ_DATABASE_URL: postgres://instancez:instancez@postgres:5432/instancez?sslmode=disable
+    volumes:
+      - ./seed.sh:/seed.sh:ro
+      - ./seed.sql:/seed.sql:ro
+    depends_on:
+      instancez:
+        condition: service_healthy
+    restart: "no"
+
+  web:
+    build: .
+    ports:
+      - "5174:5174"
+    environment:
+      VITE_PROXY_TARGET: http://instancez:8080
+      # The publishable key the browser client uses for all requests.
+      VITE_INSTANCEZ_PUBLISHABLE_KEY: inz_publishable_gearstoredev
+      # Exposed only because this is a localhost dev demo: the magic-link
+      # and email-OTP tabs call /auth/v1/admin/generate_link to surface the
+      # token that would normally arrive by email. Never ship the secret key
+      # to a real browser.
+      VITE_INSTANCEZ_SECRET_KEY: inz_secret_gearstoredev
+    volumes:
+      - ./src:/app/src
+      - ./index.html:/app/index.html
+      - ./vite.config.js:/app/vite.config.js
+    depends_on:
+      instancez:
+        condition: service_healthy
+
+volumes:
+  pgdata:

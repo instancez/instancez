@@ -1,0 +1,98 @@
+---
+title: Installation
+description: Install the inz CLI on macOS, Linux, or Windows.
+---
+
+import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+The `inz` CLI is a single binary — no runtime dependencies, no package manager required.
+
+<Aside type="note" title="Requires Postgres 14+">
+instancez connects to a PostgreSQL server you provide. Version 14 or later is required. Older versions are untested and some migrations will fail on them. Any standard Postgres works, whether it's a local install or a managed service like Neon or RDS.
+</Aside>
+
+<Aside type="tip" title="Code functions require Node.js">
+If you plan to use [code functions](/instancez/build/functions/) (`functions:` block in `instancez.yaml`), you'll need **Node.js 22+** and **npm** installed. instancez checks for `node` at startup and refuses to boot if it's missing while functions are declared. Everything else (auth, database, storage, RLS) works without them.
+
+Install Node.js (which includes npm) from [nodejs.org](https://nodejs.org) or via your system package manager.
+</Aside>
+
+## One-line install
+
+<Tabs>
+  <TabItem label="macOS">
+  ```bash
+  curl -fsSL https://get.instancez.ai | sh
+  ```
+  Installs `inz` to `~/.local/bin`. If that directory isn't in your `PATH`, the script will tell you.
+  </TabItem>
+
+  <TabItem label="Linux">
+  ```bash
+  curl -fsSL https://get.instancez.ai | sh
+  ```
+  Installs `inz` to `~/.local/bin`. Works on x86-64 and ARM64.
+  </TabItem>
+
+  <TabItem label="Windows">
+  ```powershell
+  irm https://get.instancez.ai/windows | iex
+  ```
+  Installs `inz.exe` to `%LOCALAPPDATA%\instancez\bin`. Run in PowerShell 5.1+.
+
+  Alternatively, [download the `.exe` directly](#manual-download) and place it anywhere on your `PATH`.
+  </TabItem>
+</Tabs>
+
+Verify the install:
+
+```bash
+inz version
+```
+
+## Manual download
+
+Each link points at the binary for the [latest release](https://github.com/instancez/instancez/releases/latest):
+
+| Platform | Download |
+|---|---|
+| macOS (Apple Silicon) | [`inz_darwin_arm64`](https://github.com/instancez/instancez/releases/latest/download/inz_darwin_arm64) |
+| macOS (Intel) | [`inz_darwin_amd64`](https://github.com/instancez/instancez/releases/latest/download/inz_darwin_amd64) |
+| Linux x86-64 | [`inz_linux_amd64`](https://github.com/instancez/instancez/releases/latest/download/inz_linux_amd64) |
+| Linux ARM64 | [`inz_linux_arm64`](https://github.com/instancez/instancez/releases/latest/download/inz_linux_arm64) |
+| Windows x86-64 | [`inz_windows_amd64.exe`](https://github.com/instancez/instancez/releases/latest/download/inz_windows_amd64.exe) |
+| Windows ARM64 | [`inz_windows_arm64.exe`](https://github.com/instancez/instancez/releases/latest/download/inz_windows_arm64.exe) |
+
+For a specific version instead, browse [all releases](https://github.com/instancez/instancez/releases).
+
+On macOS or Linux, make the binary executable, rename it, and move it onto your `PATH`:
+
+```bash
+chmod +x inz_darwin_arm64
+mv inz_darwin_arm64 ~/.local/bin/inz
+```
+
+## Updating
+
+Re-run the install command to update to the latest release. The script overwrites the existing binary.
+
+## Uninstalling
+
+Delete the binary:
+
+<Tabs>
+  <TabItem label="macOS / Linux">
+  ```bash
+  rm ~/.local/bin/inz
+  ```
+  </TabItem>
+  <TabItem label="Windows">
+  ```powershell
+  Remove-Item "$env:LOCALAPPDATA\instancez\bin\inz.exe"
+  ```
+  </TabItem>
+</Tabs>
+
+## What's next
+
+- [Quick Start](/instancez/quick-start/) — create a project and have an API running in minutes

@@ -1,0 +1,440 @@
+// Package postgres implements domain.Database using pgx.
+package postgres
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/instancez/instancez/internal/domain"
+)
+
+// DB implements domain.Database backed by a pgx connection pool. The roles
+// field is non-nil only when wrapped as a RequestDB.
+type DB struct {
+	pool  *pgxpool.Pool
+	roles *domain.Roles
+}
+
+// NewOwner constructs the privileged pool used for migrations,
+// replication slot creation, and extension installs.
+func NewOwner(ctx context.Context, databaseURL string, poolCfg domain.PoolConfig) (domain.OwnerDB, error) {
+	db, err := New(ctx, databaseURL, poolCfg)
+	if err != nil {
+		return domain.OwnerDB{}, err
+	}
+	return domain.OwnerDB{Database: db}, nil
+}
+
+// NewRequest constructs the per-request pool. Each transaction issues
+// SET LOCAL ROLE based on the inbound session before running queries.
+func NewRequest(ctx context.Context, databaseURL string, poolCfg domain.PoolConfig, roles domain.Roles) (domain.RequestDB, error) {
+	if err := roles.Validate(); err != nil {
+		return domain.RequestDB{}, fmt.Errorf("invalid roles config: %w", err)
+	}
+	db, err := New(ctx, databaseURL, poolCfg)
+	if err != nil {
+		return domain.RequestDB{}, err
+	}
+	db.roles = &roles
+	return domain.RequestDB{Database: db}, nil
+}
+
+// New creates a new DB from a Postgres connection URL and pool config.
+// Most callers should use NewOwner or NewRequest instead.
+func New(ctx context.Context, databaseURL string, poolCfg domain.PoolConfig) (*DB, error) {
+	cfg, err := parsePoolConfig(databaseURL, poolCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, &domain.DatabaseError{Op: "connect", Err: err}
+	}
+
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, &domain.DatabaseError{Op: "ping", Err: err}
+	}
+
+	return &DB{pool: pool}, nil
+}
+
+// parsePoolConfig builds the pgxpool config from a connection URL and the
+// YAML pool settings.
+func parsePoolConfig(databaseURL string, poolCfg domain.PoolConfig) (*pgxpool.Config, error) {
+	cfg, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, &domain.DatabaseError{Op: "parse_url", Err: err}
+	}
+
+	// Disable pgx's prepared-statement cache. The default
+	// QueryExecModeCacheStatement issues `PREPARE stmtcache_<hash>` whose
+	// names collide on shared backend connections behind a transaction-pooled
+	// PgBouncer/RDS Proxy/Supabase pooler, producing SQLSTATE 42P05.
+	// DescribeExec uses an unnamed Parse + Describe per query (no statement
+	// names to collide), and the Describe round-trip preserves parameter OID
+	// inference so types like map[string]any encode correctly into jsonb.
+	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeDescribeExec
+
+	if poolCfg.Max > 0 {
+		cfg.MaxConns = int32(poolCfg.Max)
+	}
+	if poolCfg.Min > 0 {
+		cfg.MinConns = int32(poolCfg.Min)
+	}
+	if poolCfg.IdleTimeout != "" {
+		idle, err := time.ParseDuration(poolCfg.IdleTimeout)
+		if err != nil {
+			return nil, &domain.DatabaseError{Op: "parse_idle_timeout", Err: err}
+		}
+		// Closing idle connections promptly matters behind NLB/PrivateLink
+		// paths, which silently expire idle TCP flows (350s default).
+		cfg.MaxConnIdleTime = idle
+	}
+	return cfg, nil
+}
+
+func (db *DB) Close() error {
+	db.pool.Close()
+	return nil
+}
+
+func (db *DB) Ping(ctx context.Context) error {
+	return db.pool.Ping(ctx)
+}
+
+func (db *DB) Pool() *pgxpool.Pool {
+	return db.pool
+}
+
+// EnsureMigrationsTable creates the _instancez_migrations table if it doesn't exist.
+func (db *DB) EnsureMigrationsTable(ctx context.Context) error {
+	_, err := db.pool.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS _instancez_migrations (
+			id BIGSERIAL PRIMARY KEY,
+			checksum TEXT NOT NULL,
+			sql TEXT NOT NULL,
+			config_json TEXT NOT NULL DEFAULT '{}',
+			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)
+	`)
+	if err != nil {
+		return &domain.DatabaseError{Op: "ensure_migrations_table", Err: err}
+	}
+	// Additive column for existing deployments that predate config storage.
+	_, err = db.pool.Exec(ctx,
+		`ALTER TABLE _instancez_migrations ADD COLUMN IF NOT EXISTS config_json TEXT NOT NULL DEFAULT '{}'`)
+	if err != nil {
+		return &domain.DatabaseError{Op: "ensure_migrations_table", Err: err}
+	}
+	return nil
+}
+
+// GetLastMigration returns the most recently applied migration, or nil if none.
+func (db *DB) GetLastMigration(ctx context.Context) (*domain.Migration, error) {
+	row := db.pool.QueryRow(ctx,
+		`SELECT id, checksum, sql, config_json, applied_at FROM _instancez_migrations ORDER BY id DESC LIMIT 1`)
+
+	var m domain.Migration
+	err := row.Scan(&m.ID, &m.Checksum, &m.SQL, &m.ConfigJSON, &m.AppliedAt)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, &domain.DatabaseError{Op: "get_last_migration", Err: err}
+	}
+	return &m, nil
+}
+
+// RecordMigration stores a new migration record.
+func (db *DB) RecordMigration(ctx context.Context, checksum, sql, configJSON string) error {
+	_, err := db.pool.Exec(ctx,
+		`INSERT INTO _instancez_migrations (checksum, sql, config_json) VALUES ($1, $2, $3)`,
+		checksum, sql, configJSON)
+	if err != nil {
+		return &domain.DatabaseError{Op: "record_migration", Err: err}
+	}
+	return nil
+}
+
+
+// ExecDDL executes raw DDL (migration SQL).
+func (db *DB) ExecDDL(ctx context.Context, sql string) error {
+	_, err := db.pool.Exec(ctx, sql)
+	if err != nil {
+		return &domain.DatabaseError{Op: "exec_ddl", Err: err}
+	}
+	return nil
+}
+
+// Query executes a query and returns all rows as maps. On the request
+// pool (roles != nil) the query runs inside a short-lived tx that issues
+// SET LOCAL ROLE — authenticator is NOINHERIT in production, so a bare
+// pool query would otherwise have no table privileges.
+func (db *DB) Query(ctx context.Context, query string, args ...any) ([]map[string]any, error) {
+	if db.roles != nil {
+		tx, err := db.Begin(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		rows, err := tx.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, &domain.DatabaseError{Op: "commit", Err: err}
+		}
+		return rows, nil
+	}
+	rows, err := db.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, &domain.DatabaseError{Op: "query", Err: err}
+	}
+	defer rows.Close()
+	return collectRows(rows)
+}
+
+// QueryRow executes a query and returns a single row as a map, or nil.
+// Auto-wraps in a role-switching tx on the request pool — see Query.
+func (db *DB) QueryRow(ctx context.Context, query string, args ...any) (map[string]any, error) {
+	if db.roles != nil {
+		tx, err := db.Begin(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		row, err := tx.QueryRow(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, &domain.DatabaseError{Op: "commit", Err: err}
+		}
+		return row, nil
+	}
+	rows, err := db.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, &domain.DatabaseError{Op: "query_row", Err: err}
+	}
+	defer rows.Close()
+
+	results, err := collectRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(results) == 0 {
+		return nil, nil
+	}
+	return results[0], nil
+}
+
+// Exec executes a statement and returns affected row count.
+// Auto-wraps in a role-switching tx on the request pool — see Query.
+func (db *DB) Exec(ctx context.Context, query string, args ...any) (int64, error) {
+	if db.roles != nil {
+		tx, err := db.Begin(ctx)
+		if err != nil {
+			return 0, err
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		n, err := tx.Exec(ctx, query, args...)
+		if err != nil {
+			return 0, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return 0, &domain.DatabaseError{Op: "commit", Err: err}
+		}
+		return n, nil
+	}
+	tag, err := db.pool.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, &domain.DatabaseError{Op: "exec", Err: err}
+	}
+	return tag.RowsAffected(), nil
+}
+
+// WithRLS sets session variables for RLS enforcement within a transaction.
+func (db *DB) WithRLS(ctx context.Context, session domain.Session) (context.Context, error) {
+	// RLS context is applied per-transaction via SET LOCAL in the tx wrapper.
+	// This stores the session in context for the Tx to pick up.
+	return contextWithSession(ctx, session), nil
+}
+
+// Begin starts a new transaction. Session GUCs, request-id, and (on the
+// request pool) SET LOCAL ROLE are all batched into a single Exec to keep
+// the per-request hot path to one round-trip.
+func (db *DB) Begin(ctx context.Context) (domain.Tx, error) {
+	tx, err := db.pool.Begin(ctx)
+	if err != nil {
+		return nil, &domain.DatabaseError{Op: "begin", Err: err}
+	}
+
+	if stmt := buildSessionSetup(ctx, db.roles); stmt != "" {
+		if _, err := tx.Exec(ctx, stmt); err != nil {
+			_ = tx.Rollback(ctx)
+			return nil, &domain.DatabaseError{Op: "set_session_vars", Err: err}
+		}
+	}
+	return &Tx{tx: tx}, nil
+}
+
+// buildSessionSetup composes the SET LOCAL statements for a transaction.
+// Role names come from Roles which is validated at construction; literal
+// values are escaped via quote(). Returns "" when nothing needs setting.
+//
+// On the request pool (roles != nil) with no session on context, we default
+// to anon so an overlooked handler fails closed instead of silently getting
+// BYPASSRLS. System endpoints (auth/admin/mfa/storage) that legitimately need
+// service_role attach it explicitly via the serviceRoleSession middleware.
+// Production authenticators are NOINHERIT, so without an explicit SET LOCAL
+// ROLE the login carries no table privileges.
+func buildSessionSetup(ctx context.Context, roles *domain.Roles) string {
+	var b strings.Builder
+	session, hasSession := sessionFromContext(ctx)
+	if !hasSession && roles != nil {
+		session = domain.Session{Role: "anon"}
+		hasSession = true
+	}
+	if hasSession {
+		role := session.Role
+		if role == "" {
+			if session.IsAuthenticated {
+				role = "authenticated"
+			} else {
+				role = "anon"
+			}
+		}
+		isAuthed := "false"
+		if session.IsAuthenticated {
+			isAuthed = "true"
+		}
+		// For service_role we deliberately leave app.user_id empty so that
+		// auth.uid() (NULLIF(current_setting('app.user_id',true),'')::uuid)
+		// resolves to NULL, matching Supabase — a service_role token has no
+		// subject. inz-minted service tokens carry a synthetic all-zeros
+		// `sub` only to satisfy the middleware's non-empty-sub requirement;
+		// that synthetic value must NOT leak into auth.uid(). service_role has
+		// BYPASSRLS, so RLS does not depend on auth.uid() here anyway.
+		userID := session.UserID
+		if role == "service_role" {
+			userID = ""
+		}
+		fmt.Fprintf(&b, "SET LOCAL app.user_id = %s;", quote(userID))
+		fmt.Fprintf(&b, "SET LOCAL app.role = %s;", quote(role))
+		fmt.Fprintf(&b, "SET LOCAL app.email = %s;", quote(session.Email))
+		fmt.Fprintf(&b, "SET LOCAL app.jwt = %s;", quote(session.JWT))
+		fmt.Fprintf(&b, "SET LOCAL app.is_authenticated = %s;", quote(isAuthed))
+
+		if roles != nil {
+			fmt.Fprintf(&b, "SET LOCAL ROLE %s;", roles.AssumableFromSession(session))
+		}
+	}
+	if reqID := domain.RequestIDFromContext(ctx); reqID != "" {
+		fmt.Fprintf(&b, "SET LOCAL request.request_id = %s;", quote(reqID))
+	}
+	return b.String()
+}
+
+func quote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
+// normalizeValue converts pgx's default Go decoding of a column into a
+// JSON/wire-friendly form, keyed on the column's Postgres OID. pgx decodes
+// `uuid` to a raw [16]byte, which json.Marshal would emit as a number array;
+// we emit the canonical "xxxxxxxx-xxxx-..." string instead. The switch is the
+// extension point for other codec-default types (e.g. numeric) when they
+// surface.
+func normalizeValue(oid uint32, v any) any {
+	switch oid {
+	case pgtype.UUIDOID:
+		if b, ok := v.([16]byte); ok {
+			return uuid.UUID(b).String()
+		}
+	}
+	return v
+}
+
+// collectRows converts pgx rows into a slice of maps.
+func collectRows(rows pgx.Rows) ([]map[string]any, error) {
+	descs := rows.FieldDescriptions()
+	var results []map[string]any
+
+	for rows.Next() {
+		values, err := rows.Values()
+		if err != nil {
+			return nil, &domain.DatabaseError{Op: "scan_row", Err: err}
+		}
+		row := make(map[string]any, len(descs))
+		for i, desc := range descs {
+			row[desc.Name] = normalizeValue(desc.DataTypeOID, values[i])
+		}
+		results = append(results, row)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, &domain.DatabaseError{Op: "rows_iteration", Err: err}
+	}
+	return results, nil
+}
+
+// Tx wraps a pgx transaction implementing domain.Tx.
+type Tx struct {
+	tx pgx.Tx
+}
+
+func (t *Tx) Query(ctx context.Context, query string, args ...any) ([]map[string]any, error) {
+	rows, err := t.tx.Query(ctx, query, args...)
+	if err != nil {
+		return nil, &domain.DatabaseError{Op: "tx_query", Err: err}
+	}
+	defer rows.Close()
+	return collectRows(rows)
+}
+
+func (t *Tx) QueryRow(ctx context.Context, query string, args ...any) (map[string]any, error) {
+	rows, err := t.tx.Query(ctx, query, args...)
+	if err != nil {
+		return nil, &domain.DatabaseError{Op: "tx_query_row", Err: err}
+	}
+	defer rows.Close()
+
+	results, err := collectRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(results) == 0 {
+		return nil, nil
+	}
+	return results[0], nil
+}
+
+func (t *Tx) Exec(ctx context.Context, query string, args ...any) (int64, error) {
+	tag, err := t.tx.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, &domain.DatabaseError{Op: "tx_exec", Err: err}
+	}
+	return tag.RowsAffected(), nil
+}
+
+func (t *Tx) Commit(ctx context.Context) error {
+	if err := t.tx.Commit(ctx); err != nil {
+		return &domain.DatabaseError{Op: "commit", Err: err}
+	}
+	return nil
+}
+
+func (t *Tx) Rollback(ctx context.Context) error {
+	if err := t.tx.Rollback(ctx); err != nil {
+		return fmt.Errorf("rollback: %w", err)
+	}
+	return nil
+}

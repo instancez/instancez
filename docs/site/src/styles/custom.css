@@ -1,0 +1,308 @@
+/* instancez brand: #080808 black, white text, no accent color */
+
+:root,
+:root[data-theme='dark'],
+:root[data-theme='light'] {
+  /* Backgrounds — three distinct depth layers */
+  --sl-color-bg: #030303;          /* page body — darkest */
+  --sl-color-bg-nav: #1a1a1a;      /* floating navbar — noticeably lifted */
+  --sl-color-bg-sidebar: #141414;  /* floating sidebar — mid layer */
+  --sl-color-bg-inline-code: #222222;
+  --sl-color-bg-badge: #252525;
+  --sl-color-black: #030303;
+
+  /* Text */
+  --sl-color-text: #e8e8e8;
+  --sl-color-text-accent: #ffffff;
+  --sl-color-text-invert: #080808;
+  --sl-color-heading: #ffffff;
+  --sl-color-white: #ffffff;
+
+  /* Grays — contrast ladder from bright (#e8e8e8) to near-black (#1a1a1a) */
+  --sl-color-gray-1: #e8e8e8;
+  --sl-color-gray-2: #bbb;
+  --sl-color-gray-3: #999;
+  --sl-color-gray-4: #666;
+  --sl-color-gray-5: #333;
+  --sl-color-gray-6: #1a1a1a;
+  --sl-color-gray-7: #111;
+
+  /* Accent — white (links, active sidebar items, highlights) */
+  --sl-color-accent-low: #1e1e1e;
+  --sl-color-accent: #e0e0e0;
+  --sl-color-accent-high: #ffffff;
+
+  /* White accent for active markers, gray for subtle structural edges */
+  --inz-accent: #ffffff;
+  --inz-edge: #333333;
+
+  /* Typography — Geist, matching the landing page */
+  --sl-font: 'Geist Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --sl-font-mono: 'Geist Mono', 'SF Mono', 'Fira Code', monospace;
+
+  /* Borders */
+  --sl-color-hairline: #1e1e1e;
+  --sl-color-hairline-light: #222;
+  --sl-color-hairline-shade: #141414;
+
+}
+
+/* No theme toggle — the site is dark-only. The starlight-theme-black plugin
+   renders its own switcher element, so hide that one specifically. */
+starlight-theme-black-select { display: none; }
+
+/* Wider content area — pushes TOC further right */
+:root {
+  --sl-content-width: 55rem;
+}
+
+/* Floating navbar and sidebar — desktop only */
+@media (min-width: 50rem) {
+  header.header {
+    top: 10px;
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    width: min(calc(100% - 20px), 1100px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 14px;
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.9);
+  }
+
+  /* Push content down to clear the floating header's top offset + gap */
+  .main-frame {
+    padding-top: calc(var(--sl-nav-height) + 20px);
+  }
+
+  .sidebar-pane {
+    top: calc(var(--sl-nav-height) + 20px);
+    left: 10px;
+    bottom: 10px;
+    width: calc(var(--sl-sidebar-width) - 10px);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 14px;
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.85);
+  }
+
+  /* Right sidebar (TOC): offset for floating header */
+  .right-sidebar {
+    padding-top: calc(var(--sl-nav-height) + 20px);
+  }
+}
+
+/* Logo + title — fixed size and tight gap */
+.site-title {
+  gap: 0.5rem;
+}
+.site-title img {
+  height: 30px !important;
+  width: auto;
+}
+
+
+/* Tables — scroll horizontally, all columns wrap */
+.sl-markdown-content table {
+  display: block;
+  overflow-x: auto;
+}
+
+/* Left sidebar — styled to match the landing page's left "rail":
+   mono uppercase section labels, quiet links that brighten and nudge on hover. */
+.sidebar .container-sidebar h4.entry-title {
+  font-family: var(--sl-font-mono);
+  font-weight: 500;
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--sl-color-gray-4);
+  margin-bottom: 0.5rem;
+}
+.sidebar .container-sidebar .entry-link {
+  font-weight: 400;
+  font-size: 0.86rem;
+  color: var(--sl-color-gray-3);
+  padding-block: 6px;
+  border-radius: 0;
+  transition: color 0.15s, padding-inline-start 0.15s, border-color 0.15s;
+}
+.sidebar .container-sidebar .entry-link:hover {
+  color: var(--sl-color-text);
+  padding-inline-start: 4px;
+}
+
+/* Sharper headings */
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3 {
+  letter-spacing: -0.03em;
+}
+
+/* ---- Langfuse-borrowed accents (dark) ---- */
+
+/* Dotted-grid texture behind the page, same motif as the landing canvas */
+body {
+  background-image:
+    radial-gradient(circle, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 22px 22px;
+  background-position: center top;
+  background-attachment: fixed;
+}
+/* A faint light wash at the top for depth, echoing the landing hero */
+.main-frame::before {
+  content: "";
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 320px;
+  background: radial-gradient(ellipse 70% 100% at 50% 0%, rgba(255, 255, 255, 0.018), transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Active sidebar entry — white text with a white left bar, the same marker
+   the table of contents uses, instead of a flat highlight. */
+.sidebar .container-sidebar .entry-link[aria-current='page'],
+.sidebar .container-sidebar .entry-link[aria-current='page']:hover {
+  color: var(--inz-accent);
+  background-color: transparent;
+  border-inline-start: 2px solid var(--inz-accent);
+  padding-inline-start: 10px;
+}
+
+/* In-content links brighten only on hover, so prose stays readable */
+.sl-markdown-content a {
+  color: var(--sl-color-text);
+  text-decoration-color: var(--inz-edge);
+  text-underline-offset: 3px;
+}
+.sl-markdown-content a:hover {
+  color: var(--inz-accent);
+}
+
+/* Right-hand table of contents — restyled to match the landing page's
+   "On this page" rail: mono uppercase header, a hairline rule down the left
+   edge that brightens to white on the current heading. */
+.toc #starlight__on-this-page {
+  font-family: var(--sl-font-mono);
+  font-size: 0.66rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--sl-color-gray-4);
+  margin-bottom: 1rem;
+}
+.toc starlight-toc nav ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.toc starlight-toc nav li {
+  margin: 0;
+}
+.toc starlight-toc nav a {
+  display: block;
+  font-size: 0.84rem;
+  line-height: 1.4;
+  color: var(--sl-color-gray-4);
+  text-decoration: none;
+  padding: 6px 0 6px calc(12px + var(--depth, 0) * 12px);
+  border-inline-start: 2px solid var(--sl-color-hairline);
+  transition: color 0.15s, border-color 0.15s;
+}
+.toc starlight-toc nav a:hover {
+  color: var(--sl-color-gray-2);
+}
+.toc starlight-toc nav a[aria-current='true'] {
+  color: var(--inz-accent);
+  border-inline-start-color: var(--inz-accent);
+}
+
+/* Inline code gets a thin edge so it reads as "wire" terminology */
+.sl-markdown-content :not(pre) > code {
+  border-left: 2px solid var(--inz-edge);
+}
+
+/* Geist Mono turns sequences like `--`, `->`, and `=>` into ligatures, which
+   leaves a visible gap before the `--` in commands such as `inz dev --embedded-pg`.
+   Code should read character for character, so turn ligatures off wherever the
+   mono font is used. */
+code,
+kbd,
+samp,
+pre,
+.expressive-code,
+.expressive-code code {
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
+}
+
+/* Blockquotes / asides lean on the accent border too */
+.sl-markdown-content blockquote {
+  border-inline-start-color: var(--inz-edge);
+}
+
+/* Text selection in the white accent */
+::selection {
+  background: var(--inz-accent);
+  color: #080808;
+}
+
+/* Page title — larger and tighter, like the landing headline */
+.sl-markdown-content > h1:first-child,
+.content-panel h1 {
+  font-weight: 800;
+  letter-spacing: -0.045em;
+}
+
+/* Section headings get a hairline rule, the way the landing canvas divides sections */
+.sl-markdown-content h2 {
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--sl-color-hairline);
+  margin-top: 2.2em;
+}
+
+/* A small tick before each h2, the landing eyebrow motif shrunk down */
+.sl-markdown-content h2::before {
+  content: "";
+  display: inline-block;
+  width: 0.5em;
+  height: 0.5em;
+  margin-right: 0.5em;
+  vertical-align: 0.08em;
+  background: var(--sl-color-gray-4);
+  border-radius: 2px;
+}
+
+/* Code blocks (expressive-code frames) — subtle left edge + mono caption,
+   matching the install block on the landing page */
+.expressive-code .frame {
+  border-left: 2px solid var(--inz-edge);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.expressive-code .frame .header,
+.expressive-code figcaption .title {
+  font-family: var(--sl-font-mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.02em;
+}
+
+/* Callouts / asides — drop the heavy theme background for a thin white rail
+   on note and tip, the same accent the rest of the page uses */
+.starlight-aside {
+  border-radius: 8px;
+}
+.starlight-aside--note,
+.starlight-aside--tip {
+  border-inline-start-color: var(--inz-accent);
+}
+.starlight-aside--note .starlight-aside__title,
+.starlight-aside--tip .starlight-aside__title {
+  color: var(--inz-accent);
+}
+
+/* Keep markdown content above the fixed glow layer */
+.sl-markdown-content,
+.content-panel {
+  position: relative;
+  z-index: 1;
+}

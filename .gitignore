@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+!/dashboard/dist/
+/dashboard/dist/*
+!/dashboard/dist/.gitkeep
+*.exe
+/inz
+
+# TypeScript
+tsconfig.tsbuildinfo
+
+# Environment
+# Catch every env file shape: .env, .env.local, .development.env, .production.env, etc.
+.env
+.env.*
+*.env
+!.env.example
+!*.env.example
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+/vendor/
+
+# Test
+coverage.out
+*.test
+
+# Docker
+pgdata/
+
+# LLM prompts
+prompts/
+
+# Claude Code local memory store
+memory/
+.superpowers/
+docs/superpowers/

@@ -1,0 +1,312 @@
+package cli
+
+import (
+	"archive/tar"
+	"compress/gzip"
+	"encoding/json"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// writeBundleFixture builds a projectDir with a functions/ subtree and an
+// instancez.yaml declaring those functions. It deliberately omits
+// functions/package.json so BuildBundle skips `npm ci` — the test stays
+// offline and deterministic.
+func writeBundleFixture(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	fnDir := filepath.Join(dir, "functions")
+	require.NoError(t, os.MkdirAll(filepath.Join(fnDir, "node_modules", "leftpad"), 0o755))
+
+	require.NoError(t, os.WriteFile(filepath.Join(fnDir, "a.js"),
+		[]byte("export default () => new Response('a')\n"), 0o644))
+	// A vendored dep file to prove node_modules/ is packed.
+	require.NoError(t, os.WriteFile(filepath.Join(fnDir, "node_modules", "leftpad", "index.js"),
+		[]byte("module.exports = () => {}\n"), 0o644))
+	// A runtime shim that must be skipped.
+	require.NoError(t, os.WriteFile(filepath.Join(fnDir, ".inz-worker-xyz.mjs"),
+		[]byte("// runtime artifact\n"), 0o644))
+
+	yaml := "version: 1\nfunctions:\n  a:\n    runtime: node\n    file: functions/a.js\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "instancez.yaml"), []byte(yaml), 0o644))
+	return dir
+}
+
+// tarEntries opens a .tar.gz and returns the list of entry names.
+func tarEntries(t *testing.T, path string) []string {
+	t.Helper()
+	f, err := os.Open(path)
+	require.NoError(t, err)
+	defer func() { _ = f.Close() }()
+	gz, err := gzip.NewReader(f)
+	require.NoError(t, err)
+	defer func() { _ = gz.Close() }()
+	tr := tar.NewReader(gz)
+	var names []string
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		names = append(names, hdr.Name)
+	}
+	return names
+}
+
+// findTarHeader returns the tar.Header for the named entry in a .tar.gz, or
+// fails the test if the entry is not found. Use this to inspect Typeflag and
+// Linkname for symlink entries.
+func findTarHeader(t *testing.T, path, name string) *tar.Header {
+	t.Helper()
+	f, err := os.Open(path)
+	require.NoError(t, err)
+	defer func() { _ = f.Close() }()
+	gz, err := gzip.NewReader(f)
+	require.NoError(t, err)
+	defer func() { _ = gz.Close() }()
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		if hdr.Name == name {
+			return hdr
+		}
+	}
+	t.Fatalf("entry %q not found in %s", name, path)
+	return nil
+}
+
+// readTarFile returns the bytes of a single named entry in the .tar.gz.
+func readTarFile(t *testing.T, path, name string) []byte {
+	t.Helper()
+	f, err := os.Open(path)
+	require.NoError(t, err)
+	defer func() { _ = f.Close() }()
+	gz, err := gzip.NewReader(f)
+	require.NoError(t, err)
+	defer func() { _ = gz.Close() }()
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		if hdr.Name == name {
+			b, err := io.ReadAll(tr)
+			require.NoError(t, err)
+			return b
+		}
+	}
+	t.Fatalf("entry %q not found in %s", name, path)
+	return nil
+}
+
+func TestBuildBundleOfflineNoPackageJSON(t *testing.T) {
+	dir := writeBundleFixture(t)
+
+	bundlePath, err := BuildBundle(dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.Remove(bundlePath) })
+
+	names := tarEntries(t, bundlePath)
+	assert.Contains(t, names, "manifest.json")
+	assert.Contains(t, names, "instancez.yaml", "config must be included in the bundle")
+	assert.Contains(t, names, "functions/a.js")
+	assert.Contains(t, names, "functions/node_modules/leftpad/index.js",
+		"vendored node_modules must be packed")
+	for _, n := range names {
+		assert.NotContains(t, n, ".inz-worker-", "runtime shim must be skipped")
+	}
+
+	// Manifest reflects the declared function.
+	var m bundleManifest
+	require.NoError(t, json.Unmarshal(readTarFile(t, bundlePath, "manifest.json"), &m))
+	assert.NotEmpty(t, m.BuiltAt)
+	require.Contains(t, m.Functions, "a")
+	assert.Equal(t, "functions/a.js", m.Functions["a"].File)
+	assert.Equal(t, "node", m.Functions["a"].Runtime)
+
+	// The bundled instancez.yaml must match the source file.
+	origYAML, err := os.ReadFile(filepath.Join(dir, "instancez.yaml"))
+	require.NoError(t, err)
+	bundledYAML := readTarFile(t, bundlePath, "instancez.yaml")
+	assert.Equal(t, string(origYAML), string(bundledYAML), "bundled instancez.yaml must match source")
+}
+
+func TestBuildBundleNoFunctionsDir(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "instancez.yaml"),
+		[]byte("version: 1\n"), 0o644))
+	_, err := BuildBundle(dir)
+	assert.Error(t, err, "missing functions/ dir is an error")
+}
+
+// TestBuildBundleRequiresNodeWhenPackageJSON verifies that BuildBundle fails
+// with the actionable "Node.js" message — not the raw `npm ci ... not found` —
+// when a package.json is present but node is missing from PATH. PATH is emptied
+// so exec.LookPath("node") fails deterministically.
+func TestBuildBundleRequiresNodeWhenPackageJSON(t *testing.T) {
+	t.Setenv("PATH", "")
+	dir := t.TempDir()
+	fnDir := filepath.Join(dir, "functions")
+	require.NoError(t, os.MkdirAll(fnDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(fnDir, "package.json"),
+		[]byte(`{"name":"x","private":true}`), 0o644))
+
+	_, err := BuildBundle(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Node.js")
+	assert.Contains(t, err.Error(), "22")
+	assert.NotContains(t, err.Error(), "npm")
+}
+
+// fakeNodeOnPath puts a stub `node` executable on PATH (and nothing else), so
+// funcs.RequireNode() succeeds while keeping `npm` absent. Used to drive code
+// past the node gate to the checks that follow it.
+func fakeNodeOnPath(t *testing.T) {
+	t.Helper()
+	bin := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "node"),
+		[]byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("PATH", bin)
+}
+
+// TestBuildBundleRequiresLockfileWhenPackageJSON verifies that BuildBundle fails
+// with an actionable error naming package-lock.json when a package.json is
+// present but no lockfile is committed. `npm ci` (which deploy/bundle always
+// use, never falling back to `npm install`) requires a lockfile and would
+// otherwise fail cryptically. A stub `node` is on PATH so the lockfile check —
+// not the node gate — is what fires.
+func TestBuildBundleRequiresLockfileWhenPackageJSON(t *testing.T) {
+	fakeNodeOnPath(t)
+	dir := t.TempDir()
+	fnDir := filepath.Join(dir, "functions")
+	require.NoError(t, os.MkdirAll(fnDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(fnDir, "package.json"),
+		[]byte(`{"name":"x","private":true}`), 0o644))
+	// package-lock.json intentionally absent
+
+	_, err := BuildBundle(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "package-lock.json")
+	assert.Contains(t, err.Error(), "npm install")
+}
+
+func TestParseS3URI(t *testing.T) {
+	b, k, err := parseS3URI("s3://bucket/path/to/key.tar.gz")
+	require.NoError(t, err)
+	assert.Equal(t, "bucket", b)
+	assert.Equal(t, "path/to/key.tar.gz", k)
+
+	_, _, err = parseS3URI("https://example.com/x")
+	assert.Error(t, err, "non-s3 scheme rejected")
+
+	_, _, err = parseS3URI("s3://bucket")
+	assert.Error(t, err, "missing key rejected")
+}
+
+// TestBuildBundlePreservesSymlinks verifies that symlinks inside functions/
+// (e.g. node_modules/.bin/*) are packed as TypeSymlink tar entries instead of
+// causing "archive/tar: write too long" by having their followed content
+// written into a size-0 slot.
+func TestBuildBundlePreservesSymlinks(t *testing.T) {
+	dir := writeBundleFixture(t)
+	fnDir := filepath.Join(dir, "functions")
+
+	// Add a symlink pointing at the existing a.js.
+	require.NoError(t, os.Symlink("a.js", filepath.Join(fnDir, "link.js")))
+
+	bundlePath, err := BuildBundle(dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.Remove(bundlePath) })
+
+	// The symlink entry must appear in the archive.
+	names := tarEntries(t, bundlePath)
+	assert.Contains(t, names, "functions/link.js", "symlink entry must be in the archive")
+
+	// The entry must be a TypeSymlink with the correct target.
+	hdr := findTarHeader(t, bundlePath, "functions/link.js")
+	assert.Equal(t, byte(tar.TypeSymlink), hdr.Typeflag, "entry must be TypeSymlink")
+	assert.Equal(t, "a.js", hdr.Linkname, "symlink target must be preserved")
+}
+
+// TestBuildBundleNpmCIFailureAborts verifies that a broken package.json causes
+// BuildBundle to abort with an error mentioning "npm ci".
+func TestBuildBundleNpmCIFailureAborts(t *testing.T) {
+	if _, err := exec.LookPath("npm"); err != nil {
+		t.Skip("npm not on PATH")
+	}
+	dir := t.TempDir()
+	fnDir := filepath.Join(dir, "functions")
+	require.NoError(t, os.MkdirAll(fnDir, 0o755))
+
+	// Invalid JSON causes npm to exit non-zero immediately without network access.
+	require.NoError(t, os.WriteFile(filepath.Join(fnDir, "package.json"),
+		[]byte("{INVALID JSON"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "instancez.yaml"),
+		[]byte("version: 1\n"), 0o644))
+
+	_, err := BuildBundle(dir)
+	if err == nil || !strings.Contains(err.Error(), "npm ci") {
+		t.Fatalf("expected npm ci failure to abort, got %v", err)
+	}
+}
+
+// TestResolveBundleDest covers all three destination forms: full key (verbatim),
+// trailing-slash prefix (appends generated filename), and bare bucket (no key).
+func TestResolveBundleDest(t *testing.T) {
+	const ver = "abc123"
+
+	tests := []struct {
+		name         string
+		dest         string
+		wantVerbatim bool // true = dest returned unchanged
+		wantPrefix   string
+		wantSuffix   string
+	}{
+		{
+			name:         "full key is returned verbatim",
+			dest:         "s3://b/k/x.tar.gz",
+			wantVerbatim: true,
+		},
+		{
+			name:       "trailing-slash prefix appends generated filename",
+			dest:       "s3://b/p/",
+			wantPrefix: "s3://b/p/inz-functions-bundle-",
+			wantSuffix: ".tar.gz",
+		},
+		{
+			name:       "bare bucket appends generated filename",
+			dest:       "s3://b",
+			wantPrefix: "s3://b/inz-functions-bundle-",
+			wantSuffix: ".tar.gz",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := resolveBundleDest(tc.dest, ver)
+			if tc.wantVerbatim {
+				assert.Equal(t, tc.dest, got)
+				return
+			}
+			assert.True(t, strings.HasPrefix(got, tc.wantPrefix),
+				"got %q, want prefix %q", got, tc.wantPrefix)
+			assert.True(t, strings.HasSuffix(got, tc.wantSuffix),
+				"got %q, want suffix %q", got, tc.wantSuffix)
+			assert.Contains(t, got, ver, "version must be in generated filename")
+		})
+	}
+}

@@ -1,0 +1,14 @@
+---
+---
+<script>
+  function selectOSTab() {
+    const ua = navigator.userAgent;
+    const os = /Windows/i.test(ua) ? 'Windows' : /Mac|iPhone|iPad/i.test(ua) ? 'macOS' : 'Linux';
+    document.querySelectorAll('starlight-tabs').forEach(el => {
+      const btn = Array.from(el.querySelectorAll('[role="tab"]')).find(b => b.textContent.trim() === os);
+      if (btn) btn.click();
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', selectOSTab);
+  else selectOSTab();
+</script>

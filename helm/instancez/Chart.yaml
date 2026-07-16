@@ -1,0 +1,6 @@
+apiVersion: v2
+name: instancez
+description: Kubernetes Helm chart for instancez — Supabase-compatible backend
+type: application
+version: 0.1.0
+appVersion: "latest"

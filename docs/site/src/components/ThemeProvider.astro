@@ -1,0 +1,10 @@
+---
+/* The site is dark-only. This override drops Starlight's system-preference
+   detection so a light-mode OS can't pull the page into a half-broken light
+   theme. data-theme is pinned to dark before the first paint. */
+---
+
+{/* Inlined so the theme is set before paint, which avoids a flash. */}
+<script is:inline>
+	document.documentElement.dataset.theme = 'dark';
+</script>

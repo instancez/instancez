@@ -1,0 +1,51 @@
+image:
+  repository: ghcr.io/instancez/instancez
+  tag: ""            # defaults to Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+# API keys — auto-generated with the inz_publishable_/inz_secret_ prefixes if
+# empty (see Secret section). The publishable key is client-safe (anon role);
+# the secret key is server-side (service_role) and gates the admin API.
+publishableKey: ""
+secretKey: ""
+
+# Raw instancez.yaml block — written to a ConfigMap and mounted at /app/instancez.yaml
+config: |
+  version: 1
+  project:
+    name: instancez
+  server:
+    port: 8080
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: ""
+  tls: []
+
+postgres:
+  enabled: true
+  image: postgres:17-alpine
+  database: instancez
+  username: postgres
+  password: ""      # auto-generated 32-char random string if empty
+  storage:
+    size: 10Gi
+    storageClass: ""
+  resources: {}
+
+# Used when postgres.enabled=false
+externalPostgres:
+  url: ""           # full superuser DSN: postgres://user:pass@host:5432/db
+
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

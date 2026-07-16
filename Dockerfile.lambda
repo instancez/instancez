@@ -1,0 +1,50 @@
+# syntax=docker/dockerfile:1.7
+
+# Per-arch Lambda image (Lambda rejects multi-arch manifest lists). The
+# per-arch ECR tags Lambda actually runs are built by instancez-platform's
+# docker-services.yml; the ghcr `-lambda` tag built from publish.yml is a
+# multi-arch manifest list (never pulled by Lambda directly). The
+# WITH_DASHBOARD flag mirrors the main Dockerfile: true (default) embeds
+# the SPA, false produces a slim binary that 404s on /dashboard.
+ARG WITH_DASHBOARD=true
+
+FROM --platform=$BUILDPLATFORM node:22-alpine AS dashboard-true
+WORKDIR /src/dashboard
+COPY dashboard/package.json dashboard/package-lock.json ./
+RUN npm ci
+COPY dashboard/ ./
+RUN npm run build && mkdir -p /out && mv dist /out/dist
+
+FROM --platform=$BUILDPLATFORM alpine:3.21 AS dashboard-false
+RUN mkdir -p /out/dist && touch /out/dist/.gitkeep
+
+FROM dashboard-${WITH_DASHBOARD} AS dashboard
+
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
+
+ARG TARGETOS TARGETARCH
+ARG VERSION=dev
+ARG COMMIT=unknown
+
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+COPY --from=dashboard /out/dist ./dashboard/dist
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -ldflags "-X 'github.com/instancez/instancez/internal/cli.version=${VERSION}' -X 'github.com/instancez/instancez/internal/cli.commit=${COMMIT}'" \
+    -o /inz ./cmd/inz
+
+FROM alpine:3.21
+# nodejs runs code-function workers. Lambda only runs `serve` (consumes a
+# pre-built bundle), so npm is not needed here.
+RUN apk add --no-cache ca-certificates nodejs && \
+    addgroup -g 1000 instancez && \
+    adduser -D -u 1000 -G instancez instancez
+COPY --from=builder /inz /usr/local/bin/inz
+COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.9.1 /lambda-adapter /opt/extensions/lambda-adapter
+WORKDIR /app
+RUN chown instancez:instancez /app
+USER instancez
+EXPOSE 8080
+CMD ["inz", "serve", "--migrate"]

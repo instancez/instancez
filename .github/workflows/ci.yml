@@ -1,0 +1,294 @@
+name: CI / Publish
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  go-unit:
+    name: Go unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+      - run: go build ./...
+      - run: go test -race ./...
+
+  go-integration:
+    # Compatibility matrix: every Postgres major we support gets a full run on
+    # the shipped Node, and every supported Node major gets a run on the default
+    # Postgres. The cartesian product would be wasteful, so the extra Node
+    # versions ride the include list against pg=16 only. matrix.pg drives both
+    # the service container and the testcontainer image (INSTANCEZ_TEST_PG_IMAGE);
+    # matrix.node drives the runtime that executes code-function workers and the
+    # supabase-js harness. fail-fast is off so one bad combo doesn't mask others.
+    name: Go integration tests (pg${{ matrix.pg }}, node${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: ['14', '15', '16', '17']
+        node: ['22']
+        include:
+          - pg: '16'
+            node: '24'
+    services:
+      postgres:
+        image: postgres:${{ matrix.pg }}
+        env:
+          POSTGRES_USER: instancez
+          POSTGRES_PASSWORD: instancez
+          POSTGRES_DB: instancez
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U instancez"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      INSTANCEZ_TEST_DATABASE_URL: postgres://instancez:instancez@localhost:5432/instancez?sslmode=disable
+      INSTANCEZ_TEST_PG_IMAGE: postgres:${{ matrix.pg }}-alpine
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: test/integration/supabase-js/package-lock.json
+      - run: go test -tags=integration -race ./...
+
+  dashboard:
+    name: Dashboard tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  e2e:
+    # Full-stack smoke: build the dashboard dist, embed it in the inz binary,
+    # boot `serve` against the postgres service (superuser DSN → serve
+    # self-provisions roles), then drive the shipped SPA with Playwright. This
+    # is the only job that exercises binary + HTTP + Postgres + embedded SPA as
+    # one unit. Kept separate from the vitest `dashboard` job, which is pure
+    # jsdom with no backend.
+    name: Dashboard e2e (smoke)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: instancez
+          POSTGRES_PASSWORD: instancez
+          POSTGRES_DB: instancez
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U instancez"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      INSTANCEZ_TEST_DATABASE_URL: postgres://instancez:instancez@localhost:5432/instancez?sslmode=disable
+      INSTANCEZ_PUBLISHABLE_KEY: inz_publishable_e2e
+      INSTANCEZ_SECRET_KEY: inz_secret_e2e
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - name: Install dashboard deps
+        run: npm ci
+        working-directory: dashboard
+      - name: Build dashboard dist
+        run: npm run build
+        working-directory: dashboard
+      - name: Build inz (embeds the dist)
+        run: go build -o inz ./cmd/inz
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: dashboard
+      - name: Run e2e smoke
+        run: npm run test:e2e
+        working-directory: dashboard
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+
+  images:
+    name: Publish Images
+    needs: [go-unit, go-integration, dashboard, lint, e2e]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+          else
+            echo "version=dev-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata (OCI labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=${{ steps.version.outputs.version }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Unsuffixed tag == standalone (the default flavor).
+      - name: Build and push standalone image (multi-arch)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          cache-from: type=gha,scope=standalone
+          cache-to: type=gha,mode=max,scope=standalone
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            COMMIT=${{ github.sha }}
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.version.outputs.version }}
+            ${{ env.IMAGE }}:${{ steps.version.outputs.version }}-standalone
+
+      # Multi-arch is fine on ghcr: Lambda never pulls this tag. The per-arch
+      # ECR images Lambda runs are built by instancez-platform.
+      - name: Build and push Lambda image (multi-arch)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.lambda
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          cache-from: type=gha,scope=lambda
+          cache-to: type=gha,mode=max,scope=lambda
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            COMMIT=${{ github.sha }}
+          tags: ${{ env.IMAGE }}:${{ steps.version.outputs.version }}-lambda
+
+  binaries:
+    name: Release Binaries
+    needs: [go-unit, go-integration, dashboard, lint, e2e]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      # The binary embeds dashboard/dist (//go:embed); one build serves all
+      # target platforms since the dist is arch-independent.
+      - name: Build dashboard
+        run: |
+          cd dashboard
+          npm ci
+          npm run build
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Build binaries
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          LDFLAGS="-s -w -X github.com/instancez/instancez/internal/cli.version=${VERSION} -X github.com/instancez/instancez/internal/cli.commit=${GITHUB_SHA}"
+          mkdir -p dist
+          for os in linux darwin windows; do
+            for arch in amd64 arm64; do
+              ext=""
+              [ "$os" = "windows" ] && ext=".exe"
+              out="dist/inz_${VERSION}_${os}_${arch}${ext}"
+              CGO_ENABLED=0 GOOS=$os GOARCH=$arch \
+                go build -ldflags "$LDFLAGS" -o "$out" ./cmd/inz
+              # Stable, version-less copy so the installer can pull a fixed URL:
+              # github.com/instancez/instancez/releases/latest/download/inz_<os>_<arch>
+              cp "$out" "dist/inz_${os}_${arch}${ext}"
+            done
+          done
+          (cd dist && sha256sum -- * > checksums.txt)
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Idempotent on re-runs: if the release already exists, refresh assets.
+          gh release create "$GITHUB_REF_NAME" --generate-notes dist/* \
+            || gh release upload "$GITHUB_REF_NAME" dist/* --clobber
