@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/site/src/assets/logo.svg" alt="instancez" width="120" />
+<img src="docs/site/src/assets/logo-readme.svg" alt="instancez" width="120" />
 
 # instancez
 
