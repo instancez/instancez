@@ -108,6 +108,21 @@ func TestConf_Errors(t *testing.T) {
 		assert.Contains(t, strings.ToLower(body["message"].(string)), "notafield")
 	})
 
+	// A nested object for a scalar column fails inside pgx before Postgres and
+	// used to fall through to a 500; it's bad client input, so it must be 4xx.
+	t.Run("nested object value for scalar column is 4xx not 500", func(t *testing.T) {
+		req, err := http.NewRequest("PATCH",
+			testTS.URL+"/rest/v1/users?username=eq.supabot",
+			strings.NewReader(`{"age":{"not":5}}`))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		status, body := errorBody(t, req)
+		assert.GreaterOrEqual(t, status, 400)
+		assert.Less(t, status, 500)
+		assert.NotEmpty(t, body["code"])
+		assert.NotEmpty(t, body["message"])
+	})
+
 	// FTS operators against a non-text column must be rejected at parse
 	// time with PGRST100 — not passed through to Postgres (where they would
 	// yield a raw SQLSTATE like 42883). users.age is int, so fts.1 fails.

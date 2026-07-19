@@ -955,6 +955,11 @@ func handleDBError(c *gin.Context, err error) {
 		pgJSON(c, 422, "22001", errStr, "", "")
 	case strings.Contains(errStr, "invalid input syntax"):
 		pgJSON(c, 422, "22P02", errStr, "", "Check that the value matches the expected column type")
+	case strings.Contains(errStr, "cannot find encode plan"):
+		// pgx rejects the value before it hits Postgres (no SQLSTATE), e.g. a
+		// nested object like {"not":false} for a scalar column. Bad input, 422.
+		pgJSON(c, 422, "22P02", "Invalid value for column type", errStr,
+			"Column values must be scalars matching the column type; filter operators like {\"not\":...} go in the query string, not the body")
 	default:
 		pgJSON(c, 500, "XX000", "Database error", errStr, "")
 	}
