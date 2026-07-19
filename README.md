@@ -48,6 +48,8 @@ irm https://get.instancez.ai/windows | iex
 Or build from source. This needs Go 1.25+ and Node 22+. The dashboard is embedded into the binary, so build it before the Go install:
 
 ```bash
+git clone https://github.com/instancez/instancez.git
+cd instancez
 (cd dashboard && npm ci && npm run build) && go install ./cmd/inz
 ```
 
