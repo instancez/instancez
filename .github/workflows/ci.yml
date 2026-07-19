@@ -16,13 +16,19 @@ env:
   # coverage attaches to the commit the PR actually shows. Falls back to the
   # pushed SHA for push/tag events.
   CODACY_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+  # Account API-token flow: the reporter resolves the project from provider +
+  # org + name (the project-token flow 404'd for this org-owned repo). The token
+  # itself is the CODACY_API_TOKEN secret, set per-job so fork PRs skip cleanly.
+  CODACY_ORGANIZATION_PROVIDER: gh
+  CODACY_USERNAME: instancez
+  CODACY_PROJECT_NAME: instancez
 
 jobs:
   go-unit:
     name: Go unit tests
     runs-on: ubuntu-latest
     env:
-      CODACY_PROJECT_TOKEN: ${{ secrets.CODACY_PROJECT_TOKEN }}
+      CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -32,7 +38,7 @@ jobs:
       - run: go build ./...
       - run: go test -race -covermode=atomic -coverpkg=./... -coverprofile=coverage-unit.out ./...
       - name: Upload coverage to Codacy (partial)
-        if: env.CODACY_PROJECT_TOKEN != ''
+        if: env.CODACY_API_TOKEN != ''
         run: |
           bash <(curl -Ls https://coverage.codacy.com/get.sh) report \
             --commit-uuid "$CODACY_COMMIT" \
@@ -73,7 +79,7 @@ jobs:
     env:
       INSTANCEZ_TEST_DATABASE_URL: postgres://instancez:instancez@localhost:5432/instancez?sslmode=disable
       INSTANCEZ_TEST_PG_IMAGE: postgres:${{ matrix.pg }}-alpine
-      CODACY_PROJECT_TOKEN: ${{ secrets.CODACY_PROJECT_TOKEN }}
+      CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -96,7 +102,7 @@ jobs:
             go test -tags=integration -race ./...
           fi
       - name: Upload coverage to Codacy (partial)
-        if: env.CODACY_PROJECT_TOKEN != '' && matrix.pg == '16' && matrix.node == '22'
+        if: env.CODACY_API_TOKEN != '' && matrix.pg == '16' && matrix.node == '22'
         run: |
           bash <(curl -Ls https://coverage.codacy.com/get.sh) report \
             --commit-uuid "$CODACY_COMMIT" \
@@ -109,7 +115,7 @@ jobs:
       run:
         working-directory: dashboard
     env:
-      CODACY_PROJECT_TOKEN: ${{ secrets.CODACY_PROJECT_TOKEN }}
+      CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -121,7 +127,7 @@ jobs:
       - run: npm run test:coverage
       - run: npm run build
       - name: Upload coverage to Codacy (partial)
-        if: env.CODACY_PROJECT_TOKEN != ''
+        if: env.CODACY_API_TOKEN != ''
         working-directory: .
         run: |
           # vitest emits repo-relative-to-dashboard paths (SF:src/...); Codacy
@@ -220,10 +226,10 @@ jobs:
     needs: [go-unit, go-integration, dashboard]
     runs-on: ubuntu-latest
     env:
-      CODACY_PROJECT_TOKEN: ${{ secrets.CODACY_PROJECT_TOKEN }}
+      CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
     steps:
       - name: Finalize coverage
-        if: env.CODACY_PROJECT_TOKEN != ''
+        if: env.CODACY_API_TOKEN != ''
         run: bash <(curl -Ls https://coverage.codacy.com/get.sh) final --commit-uuid "$CODACY_COMMIT"
 
   images:
