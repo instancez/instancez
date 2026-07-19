@@ -45,6 +45,12 @@ curl -fsSL https://get.instancez.ai | sh
 irm https://get.instancez.ai/windows | iex
 ```
 
+Or build from source. This needs Go 1.25+ and Node 22+. The dashboard is embedded into the binary, so build it before the Go install:
+
+```bash
+(cd dashboard && npm ci && npm run build) && go install ./cmd/inz
+```
+
 ```bash
 mkdir my-app && cd my-app
 inz init
