@@ -12,11 +12,17 @@ permissions:
 
 env:
   IMAGE: ghcr.io/${{ github.repository }}
+  # On pull_request, GITHUB_SHA is the merge commit; Codacy wants the PR head so
+  # coverage attaches to the commit the PR actually shows. Falls back to the
+  # pushed SHA for push/tag events.
+  CODACY_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
   go-unit:
     name: Go unit tests
     runs-on: ubuntu-latest
+    env:
+      CODACY_PROJECT_TOKEN: ${{ secrets.CODACY_PROJECT_TOKEN }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -24,7 +30,13 @@ jobs:
           go-version: '1.25'
           cache: true
       - run: go build ./...
-      - run: go test -race ./...
+      - run: go test -race -covermode=atomic -coverpkg=./... -coverprofile=coverage-unit.out ./...
+      - name: Upload coverage to Codacy (partial)
+        if: env.CODACY_PROJECT_TOKEN != ''
+        run: |
+          bash <(curl -Ls https://coverage.codacy.com/get.sh) report \
+            --commit-uuid "$CODACY_COMMIT" \
+            --force-coverage-parser go -r coverage-unit.out --partial
 
   go-integration:
     # Compatibility matrix: every Postgres major we support gets a full run on
@@ -61,6 +73,7 @@ jobs:
     env:
       INSTANCEZ_TEST_DATABASE_URL: postgres://instancez:instancez@localhost:5432/instancez?sslmode=disable
       INSTANCEZ_TEST_PG_IMAGE: postgres:${{ matrix.pg }}-alpine
+      CODACY_PROJECT_TOKEN: ${{ secrets.CODACY_PROJECT_TOKEN }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -72,7 +85,22 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
           cache-dependency-path: test/integration/supabase-js/package-lock.json
-      - run: go test -tags=integration -race ./...
+      # Coverage is uploaded from a single canonical leg only; the other matrix
+      # combos exist to catch version skew, not to re-measure the same lines.
+      - name: Run integration tests (with coverage on canonical leg)
+        run: |
+          if [ "${{ matrix.pg }}" = "16" ] && [ "${{ matrix.node }}" = "22" ]; then
+            go test -tags=integration -race -covermode=atomic -coverpkg=./... \
+              -coverprofile=coverage-integration.out ./...
+          else
+            go test -tags=integration -race ./...
+          fi
+      - name: Upload coverage to Codacy (partial)
+        if: env.CODACY_PROJECT_TOKEN != '' && matrix.pg == '16' && matrix.node == '22'
+        run: |
+          bash <(curl -Ls https://coverage.codacy.com/get.sh) report \
+            --commit-uuid "$CODACY_COMMIT" \
+            --force-coverage-parser go -r coverage-integration.out --partial
 
   dashboard:
     name: Dashboard tests
@@ -80,6 +108,8 @@ jobs:
     defaults:
       run:
         working-directory: dashboard
+    env:
+      CODACY_PROJECT_TOKEN: ${{ secrets.CODACY_PROJECT_TOKEN }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -88,8 +118,19 @@ jobs:
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
       - run: npm ci
-      - run: npm test
+      - run: npm run test:coverage
       - run: npm run build
+      - name: Upload coverage to Codacy (partial)
+        if: env.CODACY_PROJECT_TOKEN != ''
+        working-directory: .
+        run: |
+          # vitest emits repo-relative-to-dashboard paths (SF:src/...); Codacy
+          # matches against repo root, so prefix them or the whole dashboard
+          # reads as unmatched (silently zero coverage).
+          sed -i 's|^SF:|SF:dashboard/|' dashboard/coverage/lcov.info
+          bash <(curl -Ls https://coverage.codacy.com/get.sh) report \
+            --commit-uuid "$CODACY_COMMIT" \
+            -r dashboard/coverage/lcov.info --partial
 
   e2e:
     # Full-stack smoke: build the dashboard dist, embed it in the inz binary,
@@ -156,6 +197,34 @@ jobs:
       - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
+
+  ci-gate:
+    # Single stable required-check for branch protection. The test/lint jobs
+    # fan out (the integration matrix alone is five legs with templated names);
+    # requiring this one aggregator instead means the ruleset survives matrix
+    # changes. `if: always()` so it runs even when a dependency fails, then it
+    # fails itself unless every dependency succeeded.
+    name: CI gate
+    if: always()
+    needs: [go-unit, go-integration, dashboard, e2e, lint]
+    runs-on: ubuntu-latest
+    steps:
+      - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
+
+  codacy-final:
+    # Codacy merges per-commit coverage from partial reports; this flips the
+    # commit to "complete" once every partial has landed. Guarded on the token
+    # so fork PRs (which don't receive secrets) skip cleanly instead of failing.
+    name: Finalize Codacy coverage
+    needs: [go-unit, go-integration, dashboard]
+    runs-on: ubuntu-latest
+    env:
+      CODACY_PROJECT_TOKEN: ${{ secrets.CODACY_PROJECT_TOKEN }}
+    steps:
+      - name: Finalize coverage
+        if: env.CODACY_PROJECT_TOKEN != ''
+        run: bash <(curl -Ls https://coverage.codacy.com/get.sh) final --commit-uuid "$CODACY_COMMIT"
 
   images:
     name: Publish Images

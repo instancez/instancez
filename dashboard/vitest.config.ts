@@ -18,5 +18,12 @@ export default defineConfig({
     // booted binary. Keep the two from colliding by scoping vitest to src/.
     include: ["src/**/*.test.{ts,tsx}"],
     exclude: ["e2e/**", "node_modules/**"],
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "lcov"],
+      include: ["src/**"],
+      // Nothing to assert coverage on: setup, entrypoints, and the tests.
+      exclude: ["src/test/**", "src/**/*.test.{ts,tsx}", "src/main.tsx"],
+    },
   },
 });

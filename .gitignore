@@ -36,7 +36,9 @@ Thumbs.db
 
 # Test
 coverage.out
+coverage-*.out
 *.test
+dashboard/coverage/
 
 # Docker
 pgdata/
