@@ -17,8 +17,7 @@ env:
   # pushed SHA for push/tag events.
   CODACY_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
   # Account API-token flow: the reporter resolves the project from provider +
-  # org + name (the project-token flow 404'd for this org-owned repo). The token
-  # itself is the CODACY_API_TOKEN secret, set per-job so fork PRs skip cleanly.
+  # org + name. The token is set per-job so fork PRs (no secrets) skip cleanly.
   CODACY_ORGANIZATION_PROVIDER: gh
   CODACY_USERNAME: instancez
   CODACY_PROJECT_NAME: instancez
