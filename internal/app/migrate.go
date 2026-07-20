@@ -255,9 +255,9 @@ func planUpdateStatements(oldCfg, newCfg *domain.Config, roles domain.Roles) []s
 // It stores the applied config as JSON so the next run can diff against it to
 // detect removed objects and avoid re-running unchanged migrations.
 //
-// All DDL statements run inside a single transaction so a mid-migration
-// failure rolls back cleanly: either every statement applies or none do.
-// The history row is recorded post-commit; see the comment below for why.
+// All DDL statements and the history row run inside a single transaction, so
+// a mid-migration failure rolls back cleanly and the row commits atomically
+// with the schema change: either both land or neither does.
 func (m *Migrator) Apply(ctx context.Context, cfg *domain.Config) error {
 	if err := m.db.EnsureMigrationsTable(ctx); err != nil {
 		return fmt.Errorf("migrate: %w", err)
@@ -308,21 +308,20 @@ func (m *Migrator) Apply(ctx context.Context, cfg *domain.Config) error {
 		}
 	}
 
+	// Record the migration in the same transaction as the DDL. The history row
+	// and the schema change then commit together: the row is present iff the
+	// change was applied, so a later Apply never re-emits a committed statement
+	// against already-changed schema. This is why plan statements don't all
+	// need to be idempotent (e.g. RENAME COLUMN, which has no IF EXISTS form).
 	planSQL := strings.Join(stmts, "\n\n")
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("migrate commit: %w", err)
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO _instancez_migrations (checksum, sql, config_json) VALUES ($1, $2, $3)`,
+		configChecksum, planSQL, string(configJSON)); err != nil {
+		return fmt.Errorf("migrate record: %w", err)
 	}
 
-	// Record AFTER commit. If RecordMigration fails post-commit the DB schema
-	// is correct but the history is missing the row: next Apply will diff
-	// from the older lastGood and try to re-emit idempotent statements,
-	// which is safe (CREATE OR REPLACE / IF NOT EXISTS / DROP+CREATE
-	// patterns), so we accept that risk. The one exception is a column rename
-	// (ALTER TABLE ... RENAME COLUMN), which Postgres cannot express with an
-	// IF EXISTS guard; re-emitting it after a recorded-but-committed rename
-	// errors. Data is intact; recover by re-recording the history row.
-	if err := m.db.RecordMigration(ctx, configChecksum, planSQL, string(configJSON)); err != nil {
-		return fmt.Errorf("migrate record: %w", err)
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("migrate commit: %w", err)
 	}
 	return nil
 }

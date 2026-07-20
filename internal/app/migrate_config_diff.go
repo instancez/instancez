@@ -99,9 +99,10 @@ func applyRenames(old, new *domain.Config) (*domain.Config, []string) {
 		}
 		delete(rewritten.Tables, src)
 		rewritten.Tables[newName] = table
-		// IF EXISTS keeps this idempotent: if a prior Apply committed the
-		// rename but failed to record it, re-running skips instead of erroring.
-		ddl = append(ddl, fmt.Sprintf("ALTER TABLE IF EXISTS %s RENAME TO %s;", src, newName))
+		// RENAME TO takes a bare name (it can't move schemas); only the source
+		// side is schema-qualified.
+		ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s RENAME TO %s;",
+			qualifiedTableName(src, table), newName))
 	}
 
 	for _, tableName := range sortedKeys(new.Tables) {
@@ -132,14 +133,8 @@ func applyRenames(old, new *domain.Config) (*domain.Config, []string) {
 			}
 			table.Fields = renamed
 			rewritten.Tables[tableName] = table
-			// ponytail: not idempotent — Postgres has no RENAME COLUMN IF
-			// EXISTS. If a rename commits but its history row fails to record,
-			// the next Apply re-emits this and errors ("column does not
-			// exist"). Narrow window (post-commit record failure), no data
-			// loss. Upgrade path if it ever bites: wrap in a DO block guarded
-			// on information_schema.columns.
 			ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s RENAME COLUMN %s TO %s;",
-				tableName, src, newField.Name))
+				qualifiedTableName(tableName, table), src, newField.Name))
 		}
 	}
 
@@ -164,7 +159,7 @@ func diffRemovedTables(old, new *domain.Config) (ddl, destroyed []string) {
 			// this table, and nothing re-creates constraints on existing
 			// tables. CASCADE would drop the FK silently and permanently, so
 			// let Postgres refuse and roll the migration back instead.
-			ddl = append(ddl, fmt.Sprintf("DROP TABLE IF EXISTS %s;", name))
+			ddl = append(ddl, fmt.Sprintf("DROP TABLE IF EXISTS %s;", qualifiedTableName(name, old.Tables[name])))
 		}
 	}
 	return ddl, destroyed
@@ -179,11 +174,12 @@ func diffRemovedColumns(old, new *domain.Config) (ddl, destroyed []string) {
 		if !exists {
 			continue // table itself is being dropped
 		}
+		qual := qualifiedTableName(tableName, oldTable)
 		newFieldMap := newTable.FieldMap()
 		for _, field := range oldTable.Fields {
 			if _, exists := newFieldMap[field.Name]; !exists {
 				destroyed = append(destroyed, tableName+"."+field.Name)
-				ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s DROP COLUMN IF EXISTS %s;", tableName, field.Name))
+				ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s DROP COLUMN IF EXISTS %s;", qual, field.Name))
 			}
 		}
 	}
@@ -199,7 +195,13 @@ func diffRemovedIndexes(old, new *domain.Config) []string {
 		newTable, tableExists := new.Tables[tableName]
 
 		for _, idx := range oldTable.Indexes {
+			// The index lives in the table's schema, so DROP INDEX must
+			// schema-qualify the index name (the name itself is unqualified,
+			// matching generateIndexes).
 			indexName := fmt.Sprintf("idx_%s_%s", tableName, strings.Join(idx.Columns, "_"))
+			if s := oldTable.EffectiveSchema(); s != "public" {
+				indexName = s + "." + indexName
+			}
 			if !tableExists || !hasIndex(newTable.Indexes, idx) {
 				ddl = append(ddl, fmt.Sprintf("DROP INDEX IF EXISTS %s;", indexName))
 			}
@@ -228,18 +230,19 @@ func diffRemovedRLSPolicies(old, new *domain.Config) []string {
 			continue // table drop cascades policies
 		}
 
+		qual := qualifiedTableName(tableName, oldTable)
 		oldPolicies := rlsPolicyNames(tableName, oldTable.RLS)
 		newPolicies := rlsPolicyNames(tableName, newTable.RLS)
 
 		for _, name := range oldPolicies {
 			if !slices.Contains(newPolicies, name) {
-				ddl = append(ddl, fmt.Sprintf("DROP POLICY IF EXISTS %s ON %s;", name, tableName))
+				ddl = append(ddl, fmt.Sprintf("DROP POLICY IF EXISTS %s ON %s;", name, qual))
 			}
 		}
 
 		// If all RLS policies were removed, disable RLS on the table.
 		if len(oldTable.RLS) > 0 && len(newTable.RLS) == 0 {
-			ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s DISABLE ROW LEVEL SECURITY;", tableName))
+			ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s DISABLE ROW LEVEL SECURITY;", qual))
 		}
 	}
 	return ddl
@@ -387,6 +390,7 @@ func diffNewColumns(old, new *domain.Config) []string {
 		if !exists {
 			continue // new table handled by diffNewTables
 		}
+		qual := qualifiedTableName(tableName, newTable)
 		oldFieldMap := oldTable.FieldMap()
 		for _, field := range newTable.Fields {
 			fieldName := field.Name
@@ -394,7 +398,7 @@ func diffNewColumns(old, new *domain.Config) []string {
 				continue // existing field, handled by diffColumnChanges
 			}
 			colDef := formatColumnForAdd(fieldName, field)
-			ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s;", tableName, colDef))
+			ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s;", qual, colDef))
 
 			// Constraints for the new column
 			if len(field.Enum) > 0 {
@@ -403,27 +407,27 @@ func diffNewColumns(old, new *domain.Config) []string {
 					quoted[i] = "'" + v + "'"
 				}
 				ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ADD CHECK (%s IN (%s));",
-					tableName, fieldName, strings.Join(quoted, ", ")))
+					qual, fieldName, strings.Join(quoted, ", ")))
 			}
 			if field.Pattern != "" {
 				ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ADD CHECK (%s ~ '%s');",
-					tableName, fieldName, field.Pattern))
+					qual, fieldName, field.Pattern))
 			}
 			if field.Min != nil {
 				ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ADD CHECK (%s >= %g);",
-					tableName, fieldName, *field.Min))
+					qual, fieldName, *field.Min))
 			}
 			if field.Max != nil {
 				ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ADD CHECK (%s <= %g);",
-					tableName, fieldName, *field.Max))
+					qual, fieldName, *field.Max))
 			}
 			if field.Check != "" {
 				ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ADD CHECK (%s);",
-					tableName, field.Check))
+					qual, field.Check))
 			}
 			if field.Unique {
 				ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ADD UNIQUE (%s);",
-					tableName, fieldName))
+					qual, fieldName))
 			}
 		}
 	}
@@ -475,6 +479,7 @@ func diffColumnChanges(old, new *domain.Config) []string {
 		if !exists {
 			continue // new table, handled elsewhere
 		}
+		qual := qualifiedTableName(tableName, newTable)
 		oldFieldMap := oldTable.FieldMap()
 		for _, newField := range newTable.Fields {
 			fieldName := newField.Name
@@ -487,7 +492,7 @@ func diffColumnChanges(old, new *domain.Config) []string {
 			oldType := normalizeType(effectiveType(oldField))
 			if newType != oldType {
 				ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s TYPE %s;",
-					tableName, fieldName, effectiveType(newField)))
+					qual, fieldName, effectiveType(newField)))
 			}
 
 			newRequired := newField.Required || newField.PrimaryKey
@@ -495,10 +500,10 @@ func diffColumnChanges(old, new *domain.Config) []string {
 			if newRequired != oldRequired {
 				if newRequired {
 					ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET NOT NULL;",
-						tableName, fieldName))
+						qual, fieldName))
 				} else {
 					ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s DROP NOT NULL;",
-						tableName, fieldName))
+						qual, fieldName))
 				}
 			}
 		}

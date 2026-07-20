@@ -153,17 +153,6 @@ func (db *DB) GetLastMigration(ctx context.Context) (*domain.Migration, error) {
 	return &m, nil
 }
 
-// RecordMigration stores a new migration record.
-func (db *DB) RecordMigration(ctx context.Context, checksum, sql, configJSON string) error {
-	_, err := db.pool.Exec(ctx,
-		`INSERT INTO _instancez_migrations (checksum, sql, config_json) VALUES ($1, $2, $3)`,
-		checksum, sql, configJSON)
-	if err != nil {
-		return &domain.DatabaseError{Op: "record_migration", Err: err}
-	}
-	return nil
-}
-
 
 // ExecDDL executes raw DDL (migration SQL).
 func (db *DB) ExecDDL(ctx context.Context, sql string) error {

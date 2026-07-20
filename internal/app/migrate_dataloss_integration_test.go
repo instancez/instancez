@@ -301,6 +301,52 @@ func TestIntegration_RenamedFromChildFKColumnPreservesData(t *testing.T) {
 	}
 }
 
+// --- custom (non-public) schema ---
+
+// A table in a user-declared schema must survive incremental changes: the diff
+// has to schema-qualify its ALTER/DROP, or they run against the wrong
+// search_path and either error or silently miss.
+func TestIntegration_CustomSchemaIncrementalChanges(t *testing.T) {
+	ctx := context.Background()
+	db := startPostgres(t)
+
+	v1 := &domain.Config{Tables: map[string]domain.Table{
+		"notes": {Schema: "reporting", Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
+			{Name: "body", Type: "text"},
+			{Name: "scratch", Type: "text"},
+		}},
+	}}
+	if err := app.NewMigrator(db).Apply(ctx, v1); err != nil {
+		t.Fatalf("apply v1: %v", err)
+	}
+	if _, err := db.Exec(ctx, "INSERT INTO reporting.notes (body, scratch) VALUES ('keep', 'drop me')"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Add a column, drop a column, and rename body -> content, all in schema.
+	v2 := &domain.Config{Version: 2, Tables: map[string]domain.Table{
+		"notes": {Schema: "reporting", Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
+			{Name: "content", Type: "text", RenamedFrom: "body"},
+			{Name: "author", Type: "text"},
+		}},
+	}}
+	if err := app.NewMigrator(db).AllowDestructive(true).Apply(ctx, v2); err != nil {
+		t.Fatalf("apply v2: %v", err)
+	}
+
+	row, err := db.QueryRow(ctx, "SELECT content, author FROM reporting.notes LIMIT 1")
+	if err != nil {
+		t.Fatalf("select after incremental change: %v", err)
+	}
+	if row["content"] != "keep" {
+		t.Errorf("renamed column lost data: got %v", row["content"])
+	}
+	// scratch is gone, author exists and is null; the query above resolving
+	// both columns is proof the ADD/DROP/RENAME all hit reporting.notes.
+}
+
 // Renaming a child FK column is the silent case: the drop takes the column data
 // and the constraint with it. The gate must refuse.
 func TestIntegration_RenameChildFKColumnIsBlocked(t *testing.T) {
