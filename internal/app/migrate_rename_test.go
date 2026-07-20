@@ -88,6 +88,47 @@ func TestRenameTableEmitsRename(t *testing.T) {
 	}
 }
 
+// Table rename whose source doesn't exist in the old config: nothing to
+// rename, so it's just a new table (created, never a RENAME).
+func TestRenameTableFromUnknownSourceIsPlainCreate(t *testing.T) {
+	old := &domain.Config{Tables: map[string]domain.Table{
+		"other": tableWith(domain.Field{Name: "id", Type: "bigserial", PrimaryKey: true}),
+	}}
+	updated := &domain.Config{Tables: map[string]domain.Table{
+		"other": tableWith(domain.Field{Name: "id", Type: "bigserial", PrimaryKey: true}),
+		"books": {RenamedFrom: "never_existed", Fields: []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}}},
+	}}
+
+	diff := diffConfigs(old, updated)
+	if len(diff.Renames) != 0 {
+		t.Errorf("no source to rename, got %v", diff.Renames)
+	}
+	if !strings.Contains(strings.Join(diff.Additions, "\n"), "CREATE TABLE") {
+		t.Errorf("expected books to be created, got %v", diff.Additions)
+	}
+}
+
+// Table rename whose target name is already a live table: must not rename onto
+// it. The source table falls through to the (gated) drop path instead.
+func TestRenameTableSkippedWhenTargetAlreadyExists(t *testing.T) {
+	old := &domain.Config{Tables: map[string]domain.Table{
+		"tomes": tableWith(domain.Field{Name: "id", Type: "bigserial", PrimaryKey: true}),
+		"books": tableWith(domain.Field{Name: "id", Type: "bigserial", PrimaryKey: true}),
+	}}
+	// "books" already exists and now claims renamed_from: tomes.
+	updated := &domain.Config{Tables: map[string]domain.Table{
+		"books": {RenamedFrom: "tomes", Fields: []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}}},
+	}}
+
+	diff := diffConfigs(old, updated)
+	if len(diff.Renames) != 0 {
+		t.Errorf("must not rename onto an existing table, got %v", diff.Renames)
+	}
+	if !strings.Contains(strings.Join(diff.Destroys, ","), "tomes") {
+		t.Errorf("dropping the source table is still destructive, got %v", diff.Destroys)
+	}
+}
+
 // Once the rename has been applied, the stored config already carries the new
 // name. Leaving `renamed_from` in the YAML must then be a no-op, not an attempt
 // to rename a column that no longer exists.

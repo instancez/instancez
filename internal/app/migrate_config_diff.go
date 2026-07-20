@@ -154,7 +154,7 @@ func diffRemovedTables(old, new *domain.Config) (ddl, destroyed []string) {
 	for i := len(ordered) - 1; i >= 0; i-- {
 		name := ordered[i]
 		if _, exists := new.Tables[name]; !exists {
-			destroyed = append(destroyed, name)
+			destroyed = append(destroyed, qualifiedTableName(name, old.Tables[name]))
 			// No CASCADE: a surviving child table's FK constraint depends on
 			// this table, and nothing re-creates constraints on existing
 			// tables. CASCADE would drop the FK silently and permanently, so
@@ -178,7 +178,7 @@ func diffRemovedColumns(old, new *domain.Config) (ddl, destroyed []string) {
 		newFieldMap := newTable.FieldMap()
 		for _, field := range oldTable.Fields {
 			if _, exists := newFieldMap[field.Name]; !exists {
-				destroyed = append(destroyed, tableName+"."+field.Name)
+				destroyed = append(destroyed, qual+"."+field.Name)
 				ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s DROP COLUMN IF EXISTS %s;", qual, field.Name))
 			}
 		}

@@ -16,11 +16,14 @@ import (
 // they depend on server-side behavior (FK dependency rejection, DDL rollback)
 // that a config-level unit test can only assume.
 
-func rowCount(t *testing.T, db *postgres.DB, table string) int {
+// countRows runs a COUNT query and returns its single integer result. Callers
+// pass the full query as a constant; the table name is never taken from input,
+// so there is no dynamic SQL to inject into.
+func countRows(t *testing.T, db *postgres.DB, countQuery string) int {
 	t.Helper()
-	row, err := db.QueryRow(context.Background(), "SELECT COUNT(*) AS n FROM "+table)
+	row, err := db.QueryRow(context.Background(), countQuery)
 	if err != nil {
-		t.Fatalf("count %s: %v", table, err)
+		t.Fatalf("count: %v", err)
 	}
 	switch n := row["n"].(type) {
 	case int64:
@@ -122,10 +125,10 @@ func TestIntegration_DropParentTableWithChildFKRollsBack(t *testing.T) {
 	if !tableExists(t, db, "parent") {
 		t.Error("parent table should survive the rolled-back migration")
 	}
-	if got := rowCount(t, db, "parent"); got != 1 {
+	if got := countRows(t, db, "SELECT COUNT(*) AS n FROM parent"); got != 1 {
 		t.Errorf("parent rows = %d, want 1", got)
 	}
-	if got := rowCount(t, db, "child"); got != 1 {
+	if got := countRows(t, db, "SELECT COUNT(*) AS n FROM child"); got != 1 {
 		t.Errorf("child rows = %d, want 1", got)
 	}
 
@@ -174,7 +177,7 @@ func TestIntegration_RenamedFromColumnPreservesData(t *testing.T) {
 	if row["content"] != "survives" {
 		t.Errorf("content = %v, want 'survives'", row["content"])
 	}
-	if got := rowCount(t, db, "notes"); got != 1 {
+	if got := countRows(t, db, "SELECT COUNT(*) AS n FROM notes"); got != 1 {
 		t.Errorf("row count = %d, want 1", got)
 	}
 }
@@ -252,10 +255,10 @@ func TestIntegration_RenamedFromTablePreservesDataAndFK(t *testing.T) {
 	if tableExists(t, db, "parent") {
 		t.Error("old table name should be gone")
 	}
-	if got := rowCount(t, db, "owners"); got != 1 {
+	if got := countRows(t, db, "SELECT COUNT(*) AS n FROM owners"); got != 1 {
 		t.Errorf("owners rows = %d, want 1", got)
 	}
-	if got := rowCount(t, db, "child"); got != 1 {
+	if got := countRows(t, db, "SELECT COUNT(*) AS n FROM child"); got != 1 {
 		t.Errorf("child rows = %d, want 1", got)
 	}
 	// Postgres renames follow the constraint, so the FK must still bite.
