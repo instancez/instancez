@@ -314,9 +314,7 @@ func (m *Migrator) Apply(ctx context.Context, cfg *domain.Config) error {
 	// against already-changed schema. This is why plan statements don't all
 	// need to be idempotent (e.g. RENAME COLUMN, which has no IF EXISTS form).
 	planSQL := strings.Join(stmts, "\n\n")
-	if _, err := tx.Exec(ctx,
-		`INSERT INTO _instancez_migrations (checksum, sql, config_json) VALUES ($1, $2, $3)`,
-		configChecksum, planSQL, string(configJSON)); err != nil {
+	if err := recordMigration(ctx, tx, configChecksum, planSQL, string(configJSON)); err != nil {
 		return fmt.Errorf("migrate record: %w", err)
 	}
 
@@ -324,6 +322,17 @@ func (m *Migrator) Apply(ctx context.Context, cfg *domain.Config) error {
 		return fmt.Errorf("migrate commit: %w", err)
 	}
 	return nil
+}
+
+// recordMigration inserts the history row on the given transaction, so it
+// commits atomically with the DDL. The values arrive as parameters (both here
+// and in the bound $1/$2/$3 placeholders): the query text is a constant and
+// nothing is concatenated into it.
+func recordMigration(ctx context.Context, tx domain.Tx, checksum, planSQL, configJSON string) error {
+	_, err := tx.Exec(ctx,
+		`INSERT INTO _instancez_migrations (checksum, sql, config_json) VALUES ($1, $2, $3)`,
+		checksum, planSQL, configJSON)
+	return err
 }
 
 // isReservedSchema reports whether a schema is engine-owned (auth, storage).
