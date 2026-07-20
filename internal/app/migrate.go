@@ -329,6 +329,11 @@ func (m *Migrator) Apply(ctx context.Context, cfg *domain.Config) error {
 // and in the bound $1/$2/$3 placeholders): the query text is a constant and
 // nothing is concatenated into it.
 func recordMigration(ctx context.Context, tx domain.Tx, checksum, planSQL, configJSON string) error {
+	// The query text is a constant and every value is bound as a $1/$2/$3
+	// parameter, so nothing is interpolated into the SQL. The scanners flag any
+	// Exec on a changed line regardless, so suppress the false positive here.
+	//nosec G201,G202 -- constant query text; values are bound parameters
+	// nosemgrep -- constant query text; values are bound parameters
 	_, err := tx.Exec(ctx,
 		`INSERT INTO _instancez_migrations (checksum, sql, config_json) VALUES ($1, $2, $3)`,
 		checksum, planSQL, configJSON)
