@@ -400,10 +400,18 @@ func (h *AdminHandler) handlePutConfig(c *gin.Context) {
 	}
 
 	// Migration first: run via the migrator. If it fails, leave the backend
-	// untouched. Migrator failures are infrastructure errors at this point —
-	// user-fixable validation already ran above — so surface as 500.
+	// untouched. A destructive plan is the caller's doing (they removed a table
+	// or column), so it comes back as 422 with the list of what would have been
+	// dropped. Anything else at this point is infrastructure, hence 500.
 	migrator := app.NewMigrator(h.migrationDB())
 	if err := migrator.Apply(c.Request.Context(), &newCfg); err != nil {
+		if errors.Is(err, app.ErrDestructive) {
+			h.logger.Warn("rejected destructive config save",
+				"source", h.sourceDescribe(),
+				"error", err.Error())
+			problemJSON(c, 422, "destructive_change", err.Error())
+			return
+		}
 		h.logger.Error("migration failed",
 			"source", h.sourceDescribe(),
 			"error", err.Error())

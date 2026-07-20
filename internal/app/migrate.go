@@ -5,17 +5,32 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 
 	"github.com/instancez/instancez/internal/domain"
 )
 
+// ErrDestructive is returned when a migration plan would drop a table or a
+// column and the caller has not opted in via AllowDestructive.
+var ErrDestructive = errors.New("destructive migration")
+
 // Migrator generates and applies DDL migrations from config.
 type Migrator struct {
-	db    domain.Database
-	roles domain.Roles
+	db               domain.Database
+	roles            domain.Roles
+	allowDestructive bool
+	logger           *slog.Logger
+}
+
+// AllowDestructive permits DROP TABLE / DROP COLUMN in generated plans. It
+// returns the receiver so it can be chained onto NewMigrator.
+func (m *Migrator) AllowDestructive(v bool) *Migrator {
+	m.allowDestructive = v
+	return m
 }
 
 // NewMigrator builds a Migrator. Pass an explicit Roles value, or
@@ -25,12 +40,16 @@ func NewMigrator(db domain.Database, roles ...domain.Roles) *Migrator {
 	if len(roles) > 0 {
 		r = roles[0]
 	}
-	return &Migrator{db: db, roles: r}
+	return &Migrator{db: db, roles: r, logger: slog.Default()}
 }
 
 // Plan generates DDL statements to bring the DB in sync with the config.
 // When oldCfg is nil (first migration), it generates the full schema.
 // When oldCfg is provided, it generates only the diff between configs.
+//
+// Plan is the preview path and is deliberately not gated by AllowDestructive:
+// seeing the DROP statements is how an operator discovers a rename was about
+// to discard data. PlanStatements, which Apply executes, is the gated one.
 func (m *Migrator) Plan(ctx context.Context, oldCfg, newCfg *domain.Config) (string, error) {
 	if oldCfg == nil {
 		return planFromScratch(newCfg, m.roles), nil
@@ -41,11 +60,36 @@ func (m *Migrator) Plan(ctx context.Context, oldCfg, newCfg *domain.Config) (str
 // PlanStatements is like Plan but returns statements as a slice, so callers
 // can run them inside a single transaction. Returns nil when there are no
 // changes to apply.
+//
+// This is the execution path, so it returns ErrDestructive when the plan would
+// drop a table or column and AllowDestructive is unset. Use Plan to preview
+// such a change without tripping the gate.
 func (m *Migrator) PlanStatements(ctx context.Context, oldCfg, newCfg *domain.Config) ([]string, error) {
 	if oldCfg == nil {
 		return planFromScratchStatements(newCfg, m.roles), nil
 	}
+	if destroys := diffConfigs(oldCfg, newCfg).Destroys; len(destroys) > 0 {
+		if !m.allowDestructive {
+			return nil, destructiveError(destroys)
+		}
+		// Gate is open (dev, or an explicit opt-in), so this is the only
+		// warning before the data goes away.
+		m.logger.Warn("applying destructive migration",
+			"drops", strings.Join(destroys, ", "))
+	}
 	return planUpdateStatements(oldCfg, newCfg, m.roles), nil
+}
+
+// destructiveError explains what the plan would destroy and how to proceed.
+// A rename reaches this path as a drop plus an add, so the message calls that
+// case out: there is no way to tell the two apart from config alone.
+func destructiveError(destroys []string) error {
+	return fmt.Errorf(
+		"%w: this change drops %s.\n"+
+			"If you meant to rename it, declare the old name with renamed_from: "+
+			"so the data moves instead of being dropped.\n"+
+			"To drop it for real, pass --allow-destructive (or set INSTANCEZ_ALLOW_DESTRUCTIVE=true)",
+		ErrDestructive, strings.Join(destroys, ", "))
 }
 
 // planFromScratch generates full DDL for a fresh database using IF NOT EXISTS /
@@ -159,6 +203,9 @@ func planUpdateStatements(oldCfg, newCfg *domain.Config, roles domain.Roles) []s
 	// Always re-assert auth.jwt_keys (idempotent) so an app deployed without it
 	// heals on its next migration. This covers apps whose config has no auth block.
 	ddl = append(ddl, generateJWTKeysTable()...)
+
+	// 0. Renames, before anything else looks at these tables by name.
+	ddl = append(ddl, diff.Renames...)
 
 	// 1. Removals (DROP TABLE, DROP COLUMN, DROP INDEX, DROP POLICY, etc.)
 	ddl = append(ddl, diff.Removals...)

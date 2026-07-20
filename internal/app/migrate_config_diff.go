@@ -14,7 +14,14 @@ import (
 type configDiff struct {
 	Removals    []string // DROP TABLE, DROP COLUMN, DROP INDEX, DROP POLICY, DROP FUNCTION
 	Additions   []string // CREATE TABLE, ALTER TABLE ADD COLUMN, CREATE INDEX, CREATE POLICY
+	Renames     []string // ALTER TABLE RENAME TO, ALTER TABLE RENAME COLUMN
 	Alterations []string // ALTER TABLE ALTER COLUMN TYPE, SET/DROP NOT NULL
+
+	// Destroys names the objects whose data does not survive this diff —
+	// tables and columns, as "users" or "users.email". Indexes, policies and
+	// functions are excluded: they are rebuilt idempotently on every migration.
+	// Recorded by the same loops that emit the DROP DDL so the two can't drift.
+	Destroys []string
 }
 
 // diffConfigs compares an old config (from the last migration) against the new
@@ -26,11 +33,22 @@ func diffConfigs(old, new *domain.Config) configDiff {
 		return diff
 	}
 
+	// Resolve declared renames first and diff against the post-rename names, so
+	// everything below sees a matching name and emits no drop/add for them.
+	old, diff.Renames = applyRenames(old, new)
+
 	// Removals (order: policies → indexes → columns → tables → storage → functions)
 	diff.Removals = append(diff.Removals, diffRemovedRLSPolicies(old, new)...)
 	diff.Removals = append(diff.Removals, diffRemovedIndexes(old, new)...)
-	diff.Removals = append(diff.Removals, diffRemovedColumns(old, new)...)
-	diff.Removals = append(diff.Removals, diffRemovedTables(old, new)...)
+
+	droppedCols, colNames := diffRemovedColumns(old, new)
+	diff.Removals = append(diff.Removals, droppedCols...)
+	diff.Destroys = append(diff.Destroys, colNames...)
+
+	droppedTables, tableNames := diffRemovedTables(old, new)
+	diff.Removals = append(diff.Removals, droppedTables...)
+	diff.Destroys = append(diff.Destroys, tableNames...)
+
 	diff.Removals = append(diff.Removals, diffRemovedStorageRLS(old, new)...)
 	diff.Removals = append(diff.Removals, diffRemovedRPCFunctions(old, new)...)
 
@@ -46,24 +64,109 @@ func diffConfigs(old, new *domain.Config) configDiff {
 	return diff
 }
 
-// --- Removal functions ---
+// --- Renames ---
 
-// diffRemovedTables returns DROP TABLE statements for tables in old but not new.
-func diffRemovedTables(old, new *domain.Config) []string {
+// applyRenames returns a copy of old with every declared `renamed_from` applied
+// to its table and column names, plus the RENAME DDL that performs the same
+// change in Postgres. Diffing against the rewritten config is what keeps a
+// rename from surfacing as a drop plus an add.
+//
+// A rename is skipped when the source is missing or the target name is already
+// live in old. That makes it idempotent: after the rename lands, the stored
+// config carries the new name, so leaving `renamed_from` in the YAML does
+// nothing on later migrations.
+func applyRenames(old, new *domain.Config) (*domain.Config, []string) {
+	rewritten := *old
+	rewritten.Tables = make(map[string]domain.Table, len(old.Tables))
+	for name, table := range old.Tables {
+		rewritten.Tables[name] = table
+	}
+
 	var ddl []string
-	for name := range old.Tables {
-		if _, exists := new.Tables[name]; !exists {
-			ddl = append(ddl, fmt.Sprintf("DROP TABLE IF EXISTS %s CASCADE;", name))
+
+	// Tables first, so the column renames below can address the new name.
+	for _, newName := range sortedKeys(new.Tables) {
+		src := new.Tables[newName].RenamedFrom
+		if src == "" {
+			continue
+		}
+		if _, targetLive := rewritten.Tables[newName]; targetLive {
+			continue
+		}
+		table, ok := rewritten.Tables[src]
+		if !ok {
+			continue
+		}
+		delete(rewritten.Tables, src)
+		rewritten.Tables[newName] = table
+		ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s RENAME TO %s;", src, newName))
+	}
+
+	for _, tableName := range sortedKeys(new.Tables) {
+		table, ok := rewritten.Tables[tableName]
+		if !ok {
+			continue // newly created table; nothing inside it to rename
+		}
+		for _, newField := range new.Tables[tableName].Fields {
+			src := newField.RenamedFrom
+			if src == "" {
+				continue
+			}
+			fields := table.FieldMap()
+			if _, targetLive := fields[newField.Name]; targetLive {
+				continue
+			}
+			if _, ok := fields[src]; !ok {
+				continue
+			}
+			// Copy before renaming: the slice header came from the caller's
+			// config and its backing array is shared.
+			renamed := make([]domain.Field, len(table.Fields))
+			copy(renamed, table.Fields)
+			for i := range renamed {
+				if renamed[i].Name == src {
+					renamed[i].Name = newField.Name
+				}
+			}
+			table.Fields = renamed
+			rewritten.Tables[tableName] = table
+			ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s RENAME COLUMN %s TO %s;",
+				tableName, src, newField.Name))
 		}
 	}
-	return ddl
+
+	return &rewritten, ddl
+}
+
+// --- Removal functions ---
+
+// diffRemovedTables returns DROP TABLE statements for tables in old but not
+// new, alongside the names of the tables being destroyed.
+func diffRemovedTables(old, new *domain.Config) (ddl, destroyed []string) {
+	// Reverse topological order drops children before the parents they
+	// reference. Without CASCADE, dropping a parent first fails on the child's
+	// still-live FK. orderTables seeds from sorted names, so this stays
+	// deterministic.
+	ordered := orderTables(old.Tables)
+	for i := len(ordered) - 1; i >= 0; i-- {
+		name := ordered[i]
+		if _, exists := new.Tables[name]; !exists {
+			destroyed = append(destroyed, name)
+			// No CASCADE: a surviving child table's FK constraint depends on
+			// this table, and nothing re-creates constraints on existing
+			// tables. CASCADE would drop the FK silently and permanently, so
+			// let Postgres refuse and roll the migration back instead.
+			ddl = append(ddl, fmt.Sprintf("DROP TABLE IF EXISTS %s;", name))
+		}
+	}
+	return ddl, destroyed
 }
 
 // diffRemovedColumns returns DROP COLUMN statements for columns removed from
-// tables that still exist.
-func diffRemovedColumns(old, new *domain.Config) []string {
-	var ddl []string
-	for tableName, oldTable := range old.Tables {
+// tables that still exist, alongside the "table.column" names being destroyed.
+func diffRemovedColumns(old, new *domain.Config) (ddl, destroyed []string) {
+	for _, tableName := range sortedKeys(old.Tables) {
+		oldTable := old.Tables[tableName]
 		newTable, exists := new.Tables[tableName]
 		if !exists {
 			continue // table itself is being dropped
@@ -71,18 +174,20 @@ func diffRemovedColumns(old, new *domain.Config) []string {
 		newFieldMap := newTable.FieldMap()
 		for _, field := range oldTable.Fields {
 			if _, exists := newFieldMap[field.Name]; !exists {
+				destroyed = append(destroyed, tableName+"."+field.Name)
 				ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s DROP COLUMN IF EXISTS %s;", tableName, field.Name))
 			}
 		}
 	}
-	return ddl
+	return ddl, destroyed
 }
 
 // diffRemovedIndexes returns DROP INDEX statements for indexes that existed in
 // old but are no longer in new.
 func diffRemovedIndexes(old, new *domain.Config) []string {
 	var ddl []string
-	for tableName, oldTable := range old.Tables {
+	for _, tableName := range sortedKeys(old.Tables) {
+		oldTable := old.Tables[tableName]
 		newTable, tableExists := new.Tables[tableName]
 
 		for _, idx := range oldTable.Indexes {
@@ -108,7 +213,8 @@ func hasIndex(indexes []domain.Index, target domain.Index) bool {
 // existed in old but are no longer in new.
 func diffRemovedRLSPolicies(old, new *domain.Config) []string {
 	var ddl []string
-	for tableName, oldTable := range old.Tables {
+	for _, tableName := range sortedKeys(old.Tables) {
+		oldTable := old.Tables[tableName]
 		newTable, tableExists := new.Tables[tableName]
 		if !tableExists {
 			continue // table drop cascades policies
@@ -145,7 +251,8 @@ func rlsPolicyNames(tableName string, policies []domain.RLSPolicy) []string {
 // that existed in old but are no longer in new.
 func diffRemovedStorageRLS(old, new *domain.Config) []string {
 	var ddl []string
-	for bucketName, oldBucket := range old.Storage {
+	for _, bucketName := range sortedKeys(old.Storage) {
+		oldBucket := old.Storage[bucketName]
 		newBucket, bucketExists := new.Storage[bucketName]
 
 		// Drop public select policy if bucket removed or no longer public
@@ -183,7 +290,8 @@ func storageRLSPolicyNames(bucketName string, policies []domain.RLSPolicy) []str
 // that existed in old but are no longer in new.
 func diffRemovedRPCFunctions(old, new *domain.Config) []string {
 	var ddl []string
-	for name, fn := range old.RPC {
+	for _, name := range sortedKeys(old.RPC) {
+		fn := old.RPC[name]
 		if _, exists := new.RPC[name]; !exists {
 			sig := rpcFunctionDropSig(fn)
 			ddl = append(ddl, fmt.Sprintf("DROP FUNCTION IF EXISTS public.\"%s\"(%s);", name, sig))

@@ -66,7 +66,7 @@ inz serve [flags]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--allow-destructive` | `false` | **Not currently enforced.** Flag is accepted but DROP operations are always executed. |
+| `--allow-destructive` | `false` | Permit `DROP TABLE` and `DROP COLUMN` during migration. Without it, `inz serve` refuses to apply a plan that drops a table or column and reports what would have been lost. `inz dev` always permits drops and logs each one. Env: `INSTANCEZ_ALLOW_DESTRUCTIVE`. |
 | `--bundle` | — | Bundle pointer: file path or `s3://bucket/key[#version]`. When set, reads config and functions from the bundle archive instead of `--config`. Env: `INSTANCEZ_BUNDLE`. |
 | `--config` | `instancez.yaml` | Config source: file path or `s3://bucket/key`. Ignored when `--bundle` is set. Env: `INSTANCEZ_CONFIG`. |
 | `--dashboard` | `disabled` | Dashboard mode. Env: `INSTANCEZ_DASHBOARD`. |

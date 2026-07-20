@@ -105,6 +105,8 @@ export interface Table {
   fields: Field[];
   indexes: Index[];
   rls: RLSPolicy[];
+  /** Previous table name, so the migrator renames instead of dropping. */
+  renamed_from?: string;
 }
 
 export interface Field {
@@ -122,6 +124,8 @@ export interface Field {
   foreign_key?: ForeignKey | null;
   ref?: string;
   on_delete?: string;
+  /** Previous column name, so the migrator renames instead of dropping. */
+  renamed_from?: string;
 }
 
 export interface ForeignKey {
