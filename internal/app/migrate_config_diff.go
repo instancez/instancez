@@ -99,7 +99,9 @@ func applyRenames(old, new *domain.Config) (*domain.Config, []string) {
 		}
 		delete(rewritten.Tables, src)
 		rewritten.Tables[newName] = table
-		ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s RENAME TO %s;", src, newName))
+		// IF EXISTS keeps this idempotent: if a prior Apply committed the
+		// rename but failed to record it, re-running skips instead of erroring.
+		ddl = append(ddl, fmt.Sprintf("ALTER TABLE IF EXISTS %s RENAME TO %s;", src, newName))
 	}
 
 	for _, tableName := range sortedKeys(new.Tables) {
@@ -130,6 +132,12 @@ func applyRenames(old, new *domain.Config) (*domain.Config, []string) {
 			}
 			table.Fields = renamed
 			rewritten.Tables[tableName] = table
+			// ponytail: not idempotent — Postgres has no RENAME COLUMN IF
+			// EXISTS. If a rename commits but its history row fails to record,
+			// the next Apply re-emits this and errors ("column does not
+			// exist"). Narrow window (post-commit record failure), no data
+			// loss. Upgrade path if it ever bites: wrap in a DO block guarded
+			// on information_schema.columns.
 			ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s RENAME COLUMN %s TO %s;",
 				tableName, src, newField.Name))
 		}

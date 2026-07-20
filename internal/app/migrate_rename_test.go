@@ -77,7 +77,7 @@ func TestRenameTableEmitsRename(t *testing.T) {
 	diff := diffConfigs(old, updated)
 	all := strings.Join(append(append(diff.Renames, diff.Removals...), diff.Additions...), "\n")
 
-	if !strings.Contains(all, "ALTER TABLE tomes RENAME TO books;") {
+	if !strings.Contains(all, "ALTER TABLE IF EXISTS tomes RENAME TO books;") {
 		t.Errorf("expected table rename, got:\n%s", all)
 	}
 	if strings.Contains(all, "DROP TABLE") || strings.Contains(all, "CREATE TABLE") {
@@ -166,7 +166,7 @@ func TestRenameTableAndColumnTogether(t *testing.T) {
 	if len(diff.Renames) != 2 {
 		t.Fatalf("expected 2 renames, got %v", diff.Renames)
 	}
-	if !strings.Contains(diff.Renames[0], "ALTER TABLE tomes RENAME TO books;") {
+	if !strings.Contains(diff.Renames[0], "ALTER TABLE IF EXISTS tomes RENAME TO books;") {
 		t.Errorf("table rename must come first, got %v", diff.Renames)
 	}
 	if !strings.Contains(diff.Renames[1], "ALTER TABLE books RENAME COLUMN body TO content;") {

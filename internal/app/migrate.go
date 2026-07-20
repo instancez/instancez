@@ -314,10 +314,13 @@ func (m *Migrator) Apply(ctx context.Context, cfg *domain.Config) error {
 	}
 
 	// Record AFTER commit. If RecordMigration fails post-commit the DB schema
-	// is correct but the history is missing the row — next Apply will diff
+	// is correct but the history is missing the row: next Apply will diff
 	// from the older lastGood and try to re-emit idempotent statements,
 	// which is safe (CREATE OR REPLACE / IF NOT EXISTS / DROP+CREATE
-	// patterns), so we accept that risk.
+	// patterns), so we accept that risk. The one exception is a column rename
+	// (ALTER TABLE ... RENAME COLUMN), which Postgres cannot express with an
+	// IF EXISTS guard; re-emitting it after a recorded-but-committed rename
+	// errors. Data is intact; recover by re-recording the history row.
 	if err := m.db.RecordMigration(ctx, configChecksum, planSQL, string(configJSON)); err != nil {
 		return fmt.Errorf("migrate record: %w", err)
 	}

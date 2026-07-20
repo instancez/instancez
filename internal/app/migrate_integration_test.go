@@ -521,7 +521,7 @@ func TestIntegration_ConfigStoredAndRecovered(t *testing.T) {
 	}
 }
 
-func TestIntegration_FKTableRemoval_Cascades(t *testing.T) {
+func TestIntegration_FKTableRemoval_DropsChildBeforeParent(t *testing.T) {
 	db := startPostgres(t)
 	ctx := context.Background()
 
@@ -544,7 +544,8 @@ func TestIntegration_FKTableRemoval_Cascades(t *testing.T) {
 		t.Fatalf("v1 apply: %v", err)
 	}
 
-	// Remove both tables — CASCADE should handle the FK.
+	// Remove both tables. DROP TABLE no longer CASCADEs, so the child must be
+	// dropped before the parent it references (reverse-topological order).
 	cfgV2 := &domain.Config{
 		Version: 1,
 		Tables:  map[string]domain.Table{},
@@ -1190,7 +1191,7 @@ func TestIntegration_FK_BetweenUserTables(t *testing.T) {
 	}
 }
 
-func TestIntegration_RemoveReferencedTable_Cascades(t *testing.T) {
+func TestIntegration_RemoveReferencedTable_DropsChildBeforeParent(t *testing.T) {
 	db := startPostgres(t)
 	ctx := context.Background()
 
@@ -1213,7 +1214,8 @@ func TestIntegration_RemoveReferencedTable_Cascades(t *testing.T) {
 		t.Fatalf("v1 apply: %v", err)
 	}
 
-	// Remove the referenced table; CASCADE in DROP should handle the FK.
+	// Remove the referenced table. The referencing column is dropped first, so
+	// the parent table drop no longer collides with a live FK (no CASCADE).
 	cfgV2 := &domain.Config{
 		Version: 1,
 		Tables: map[string]domain.Table{
