@@ -344,6 +344,14 @@ func validateTables(tables map[string]domain.Table, auth *domain.Auth) domain.Va
 			errs = append(errs, err)
 		}
 
+		// renamed_from is interpolated into ALTER TABLE ... RENAME, so it has to
+		// clear the same identifier check as the name it replaces.
+		if table.RenamedFrom != "" {
+			if err := validateIdent(path+".renamed_from", table.RenamedFrom); err != nil {
+				errs = append(errs, err)
+			}
+		}
+
 		if table.Schema != "" {
 			if err := validateIdent(path+".schema", table.Schema); err != nil {
 				errs = append(errs, err)
@@ -385,6 +393,12 @@ func validateTables(tables map[string]domain.Table, auth *domain.Auth) domain.Va
 
 			if err := validateIdent(fpath, field.Name); err != nil {
 				errs = append(errs, err)
+			}
+
+			if field.RenamedFrom != "" {
+				if err := validateIdent(fpath+".renamed_from", field.RenamedFrom); err != nil {
+					errs = append(errs, err)
+				}
 			}
 
 			if field.PrimaryKey {
