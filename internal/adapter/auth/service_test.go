@@ -25,9 +25,6 @@ func (f *fakeDB) EnsureMigrationsTable(ctx context.Context) error { return nil }
 func (f *fakeDB) GetLastMigration(ctx context.Context) (*domain.Migration, error) {
 	return nil, nil
 }
-func (f *fakeDB) RecordMigration(ctx context.Context, checksum, sql, configJSON string) error {
-	return nil
-}
 func (f *fakeDB) ExecDDL(ctx context.Context, sql string) error { return nil }
 func (f *fakeDB) Query(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
 	if f.queryFn != nil {

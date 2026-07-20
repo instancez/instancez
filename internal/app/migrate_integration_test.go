@@ -15,6 +15,10 @@ import (
 	"github.com/instancez/instancez/internal/testutil/dbboot"
 )
 
+// These tests exercise what the generated DDL does to a real database, so they
+// run with the destructive gate open. The gate itself is covered separately in
+// migrate_dataloss_integration_test.go.
+
 func startPostgres(t *testing.T) *postgres.DB {
 	t.Helper()
 	owner, _ := dbboot.StartContainer(t)
@@ -100,7 +104,7 @@ func TestIntegration_FirstMigration(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfg); err != nil {
 		t.Fatalf("first apply: %v", err)
 	}
@@ -127,7 +131,7 @@ func TestIntegration_IdempotentRerun(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfg); err != nil {
 		t.Fatalf("first apply: %v", err)
 	}
@@ -161,7 +165,7 @@ func TestIntegration_AddColumn(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfgV1); err != nil {
 		t.Fatalf("v1 apply: %v", err)
 	}
@@ -201,7 +205,7 @@ func TestIntegration_RemoveColumn(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfgV1); err != nil {
 		t.Fatalf("v1 apply: %v", err)
 	}
@@ -237,7 +241,7 @@ func TestIntegration_RemoveTable(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfgV1); err != nil {
 		t.Fatalf("v1 apply: %v", err)
 	}
@@ -283,7 +287,7 @@ func TestIntegration_RLSPolicies_Idempotent(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 
 	// Apply twice — should not fail on "policy already exists".
 	if err := migrator.Apply(ctx, cfg); err != nil {
@@ -331,7 +335,7 @@ func TestIntegration_RemoveRLSPolicy(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfgV1); err != nil {
 		t.Fatalf("v1 apply: %v", err)
 	}
@@ -383,7 +387,7 @@ func TestIntegration_RemoveIndex(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfgV1); err != nil {
 		t.Fatalf("v1 apply: %v", err)
 	}
@@ -435,7 +439,7 @@ func TestIntegration_RPCFunction_CreateAndRemove(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfgV1); err != nil {
 		t.Fatalf("v1 apply: %v", err)
 	}
@@ -482,7 +486,7 @@ func TestIntegration_ConfigStoredAndRecovered(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfg); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -517,7 +521,7 @@ func TestIntegration_ConfigStoredAndRecovered(t *testing.T) {
 	}
 }
 
-func TestIntegration_FKTableRemoval_Cascades(t *testing.T) {
+func TestIntegration_FKTableRemoval_DropsChildBeforeParent(t *testing.T) {
 	db := startPostgres(t)
 	ctx := context.Background()
 
@@ -535,12 +539,13 @@ func TestIntegration_FKTableRemoval_Cascades(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfgV1); err != nil {
 		t.Fatalf("v1 apply: %v", err)
 	}
 
-	// Remove both tables — CASCADE should handle the FK.
+	// Remove both tables. DROP TABLE no longer CASCADEs, so the child must be
+	// dropped before the parent it references (reverse-topological order).
 	cfgV2 := &domain.Config{
 		Version: 1,
 		Tables:  map[string]domain.Table{},
@@ -607,7 +612,7 @@ func TestIntegration_NullabilityChange(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfgV1); err != nil {
 		t.Fatalf("v1 apply: %v", err)
 	}
@@ -658,7 +663,7 @@ func TestIntegration_ColumnTypeChange(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfgV1); err != nil {
 		t.Fatalf("v1 apply: %v", err)
 	}
@@ -700,7 +705,7 @@ func TestIntegration_AddColumnWithDefault_PopulatedTable(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfgV1); err != nil {
 		t.Fatalf("v1 apply: %v", err)
 	}
@@ -758,7 +763,7 @@ func TestIntegration_DataPreserved_AcrossMigrations(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfgV1); err != nil {
 		t.Fatalf("v1 apply: %v", err)
 	}
@@ -835,7 +840,7 @@ func TestIntegration_EnumCheck(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfg); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -867,7 +872,7 @@ func TestIntegration_UniqueConstraint(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfg); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -897,7 +902,7 @@ func TestIntegration_PatternCheck(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfg); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -928,7 +933,7 @@ func TestIntegration_MinMaxCheck(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfg); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -965,7 +970,7 @@ func TestIntegration_AddIndex_ExistingTable(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfgV1); err != nil {
 		t.Fatalf("v1 apply: %v", err)
 	}
@@ -1013,7 +1018,7 @@ func TestIntegration_UniqueIndex(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfg); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -1050,7 +1055,7 @@ func TestIntegration_PartialIndex(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfg); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -1078,7 +1083,7 @@ func TestIntegration_MultiColumnIndex(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfg); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -1103,7 +1108,7 @@ func TestIntegration_AddNewTable_ExistingSchema(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfgV1); err != nil {
 		t.Fatalf("v1 apply: %v", err)
 	}
@@ -1151,7 +1156,7 @@ func TestIntegration_FK_BetweenUserTables(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfg); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -1186,7 +1191,7 @@ func TestIntegration_FK_BetweenUserTables(t *testing.T) {
 	}
 }
 
-func TestIntegration_RemoveReferencedTable_Cascades(t *testing.T) {
+func TestIntegration_RemoveReferencedTable_DropsChildBeforeParent(t *testing.T) {
 	db := startPostgres(t)
 	ctx := context.Background()
 
@@ -1204,12 +1209,13 @@ func TestIntegration_RemoveReferencedTable_Cascades(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfgV1); err != nil {
 		t.Fatalf("v1 apply: %v", err)
 	}
 
-	// Remove the referenced table; CASCADE in DROP should handle the FK.
+	// Remove the referenced table. The referencing column is dropped first, so
+	// the parent table drop no longer collides with a live FK (no CASCADE).
 	cfgV2 := &domain.Config{
 		Version: 1,
 		Tables: map[string]domain.Table{
@@ -1246,7 +1252,7 @@ func TestIntegration_AuthUsersTable(t *testing.T) {
 		Tables: map[string]domain.Table{},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfg); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -1302,7 +1308,7 @@ func TestIntegration_StorageTable(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfg); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -1340,7 +1346,7 @@ func TestIntegration_RPCFunction_UpdateBody(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfgV1); err != nil {
 		t.Fatalf("v1 apply: %v", err)
 	}
@@ -1402,7 +1408,7 @@ func TestIntegration_RestrictiveRLSPolicy(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfg); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -1440,7 +1446,7 @@ func TestIntegration_RemoveAllRLS_DisablesRLS(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfgV1); err != nil {
 		t.Fatalf("v1 apply: %v", err)
 	}
@@ -1474,7 +1480,7 @@ func TestIntegration_RemoveAllRLS_DisablesRLS(t *testing.T) {
 func TestIntegration_ThreeStepMigration(t *testing.T) {
 	db := startPostgres(t)
 	ctx := context.Background()
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 
 	// v1: Create tables.
 	cfgV1 := &domain.Config{
@@ -1611,7 +1617,7 @@ func TestIntegration_DefaultValues(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfg); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -1661,7 +1667,7 @@ func TestIntegration_DropFKColumn(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfgV1); err != nil {
 		t.Fatalf("v1 apply: %v", err)
 	}
@@ -1708,7 +1714,7 @@ func TestIntegration_DropColumnWithIndex(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfgV1); err != nil {
 		t.Fatalf("v1 apply: %v", err)
 	}
@@ -1753,7 +1759,7 @@ func TestIntegration_DropReferencedColumnTarget(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfgV1); err != nil {
 		t.Fatalf("v1 apply: %v", err)
 	}
@@ -1800,7 +1806,7 @@ func TestIntegration_NewTableWithFK(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfgV1); err != nil {
 		t.Fatalf("v1 apply: %v", err)
 	}
@@ -1860,7 +1866,7 @@ func TestIntegration_AddColumnWithFK(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfgV1); err != nil {
 		t.Fatalf("v1 apply: %v", err)
 	}
@@ -1910,7 +1916,7 @@ func TestIntegration_ChangedRPCFunction_Body(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfgV1); err != nil {
 		t.Fatalf("v1 apply: %v", err)
 	}
@@ -1971,7 +1977,7 @@ func TestIntegration_MixedMigration(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfgV1); err != nil {
 		t.Fatalf("v1 apply: %v", err)
 	}
@@ -2030,7 +2036,7 @@ func TestIntegration_DiffSQL_StoredNotFullDDL(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfgV1); err != nil {
 		t.Fatalf("v1 apply: %v", err)
 	}
@@ -2085,7 +2091,7 @@ func TestIntegration_ChangedRLSPolicy(t *testing.T) {
 		},
 	}
 
-	migrator := app.NewMigrator(db)
+	migrator := app.NewMigrator(db).AllowDestructive(true)
 	if err := migrator.Apply(ctx, cfgV1); err != nil {
 		t.Fatalf("v1 apply: %v", err)
 	}

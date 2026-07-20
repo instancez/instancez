@@ -159,9 +159,51 @@ Set `where:` for a partial index: `where: "status = 'published'"`.
 ## How migrations work
 
 - **Additive changes apply immediately.** New tables, new columns, new indexes, new policies — the migrator adds them on the next run.
-- **Drops apply immediately too.** Removing a table or column from the YAML drops it on the next migration run — there is no confirmation step. The `--allow-destructive` flag exists on `inz dev`/`inz serve` but is not currently enforced, so it has no effect either way. Back up before removing anything you care about, and be especially careful with `inz dev`'s watch mode, which re-applies the diff (including drops) on every save.
+- **Drops need an opt-in under `inz serve`.** Removing a table or column from the YAML drops it, along with its data. `inz serve` refuses such a plan unless you pass `--allow-destructive` (or set `INSTANCEZ_ALLOW_DESTRUCTIVE=true`), and the error names what would have been dropped. `inz dev` still applies drops without asking, since rebuilding the schema is the normal dev loop, but it logs a warning listing each one. Be careful with watch mode, which re-applies the diff on every save.
+- **Renames are declared, not detected.** The migrator compares two versions of your YAML, and a rename looks exactly like a drop plus an add. Use `renamed_from:` so it renames in place instead. See below.
 - **The migrator never injects columns.** No hidden `id`, `created_at`, or `updated_at` is added. Every column must be declared.
 - **Dev mode watches for changes.** `inz dev` re-applies the schema diff on every save, so the feedback loop is instant. `inz validate` checks the YAML for errors without touching the database.
+
+## Renaming a table or column
+
+The migrator only sees two versions of your config. If you change a column's `name`, the old name is gone and a new one has appeared, which is indistinguishable from deleting one column and adding another. Applied literally, that discards the column's data.
+
+Declare the previous name with `renamed_from:` and the migrator issues a rename instead:
+
+```yaml
+tables:
+  notes:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: content
+        type: text
+        renamed_from: body
+```
+
+That produces `ALTER TABLE notes RENAME COLUMN body TO content`, so the values stay put. Tables take the same key:
+
+```yaml
+tables:
+  articles:
+    renamed_from: posts
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+```
+
+Renames run before everything else in the migration, so you can rename a table and its columns in one edit, and combine a rename with a type change on the same column.
+
+A few things worth knowing:
+
+- Once the rename has been applied, `renamed_from:` does nothing on later runs, because the stored config already carries the new name. You can leave it in place or delete it at your next cleanup.
+- If the old name never existed, the field is treated as a plain new column.
+- If both names exist in the live schema, no rename happens. The migrator will not overwrite a column that is already there.
+- Foreign keys follow a rename automatically, since Postgres renames the constraint's target with the object. Remember to update any `references:` in your YAML that pointed at the old name.
+
+Renaming is the one schema change you have to declare. Everything else is inferred from the config.
 
 ## What's next
 

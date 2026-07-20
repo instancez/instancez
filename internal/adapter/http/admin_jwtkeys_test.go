@@ -93,9 +93,6 @@ func (rotateFakeDB) EnsureMigrationsTable(ctx context.Context) error         { r
 func (rotateFakeDB) GetLastMigration(ctx context.Context) (*domain.Migration, error) {
 	return nil, nil
 }
-func (rotateFakeDB) RecordMigration(ctx context.Context, checksum, sql, configJSON string) error {
-	return nil
-}
 func (rotateFakeDB) Query(ctx context.Context, q string, a ...any) ([]map[string]any, error) {
 	return nil, nil
 }

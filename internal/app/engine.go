@@ -97,6 +97,11 @@ func NewEngine(cfg *domain.Config, ownerDB domain.OwnerDB, authDB domain.Request
 	for _, opt := range opts {
 		opt(e)
 	}
+	// Dev rebuilds its schema constantly, so drops stay permitted there and are
+	// only logged. serve requires the explicit opt-in: a rename reaching the
+	// diff as drop+add would otherwise discard production data silently.
+	e.migrator.AllowDestructive(e.allowDestructive || e.mode == ModeDev)
+	e.migrator.logger = e.logger
 	return e
 }
 

@@ -5,17 +5,32 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 
 	"github.com/instancez/instancez/internal/domain"
 )
 
+// ErrDestructive is returned when a migration plan would drop a table or a
+// column and the caller has not opted in via AllowDestructive.
+var ErrDestructive = errors.New("destructive migration")
+
 // Migrator generates and applies DDL migrations from config.
 type Migrator struct {
-	db    domain.Database
-	roles domain.Roles
+	db               domain.Database
+	roles            domain.Roles
+	allowDestructive bool
+	logger           *slog.Logger
+}
+
+// AllowDestructive permits DROP TABLE / DROP COLUMN in generated plans. It
+// returns the receiver so it can be chained onto NewMigrator.
+func (m *Migrator) AllowDestructive(v bool) *Migrator {
+	m.allowDestructive = v
+	return m
 }
 
 // NewMigrator builds a Migrator. Pass an explicit Roles value, or
@@ -25,12 +40,16 @@ func NewMigrator(db domain.Database, roles ...domain.Roles) *Migrator {
 	if len(roles) > 0 {
 		r = roles[0]
 	}
-	return &Migrator{db: db, roles: r}
+	return &Migrator{db: db, roles: r, logger: slog.Default()}
 }
 
 // Plan generates DDL statements to bring the DB in sync with the config.
 // When oldCfg is nil (first migration), it generates the full schema.
 // When oldCfg is provided, it generates only the diff between configs.
+//
+// Plan is the preview path and is deliberately not gated by AllowDestructive:
+// seeing the DROP statements is how an operator discovers a rename was about
+// to discard data. PlanStatements, which Apply executes, is the gated one.
 func (m *Migrator) Plan(ctx context.Context, oldCfg, newCfg *domain.Config) (string, error) {
 	if oldCfg == nil {
 		return planFromScratch(newCfg, m.roles), nil
@@ -41,11 +60,36 @@ func (m *Migrator) Plan(ctx context.Context, oldCfg, newCfg *domain.Config) (str
 // PlanStatements is like Plan but returns statements as a slice, so callers
 // can run them inside a single transaction. Returns nil when there are no
 // changes to apply.
+//
+// This is the execution path, so it returns ErrDestructive when the plan would
+// drop a table or column and AllowDestructive is unset. Use Plan to preview
+// such a change without tripping the gate.
 func (m *Migrator) PlanStatements(ctx context.Context, oldCfg, newCfg *domain.Config) ([]string, error) {
 	if oldCfg == nil {
 		return planFromScratchStatements(newCfg, m.roles), nil
 	}
+	if destroys := diffConfigs(oldCfg, newCfg).Destroys; len(destroys) > 0 {
+		if !m.allowDestructive {
+			return nil, destructiveError(destroys)
+		}
+		// Gate is open (dev, or an explicit opt-in), so this is the only
+		// warning before the data goes away.
+		m.logger.Warn("applying destructive migration",
+			"drops", strings.Join(destroys, ", "))
+	}
 	return planUpdateStatements(oldCfg, newCfg, m.roles), nil
+}
+
+// destructiveError explains what the plan would destroy and how to proceed.
+// A rename reaches this path as a drop plus an add, so the message calls that
+// case out: there is no way to tell the two apart from config alone.
+func destructiveError(destroys []string) error {
+	return fmt.Errorf(
+		"%w: this change drops %s.\n"+
+			"If you meant to rename it, declare the old name with renamed_from: "+
+			"so the data moves instead of being dropped.\n"+
+			"To drop it for real, pass --allow-destructive (or set INSTANCEZ_ALLOW_DESTRUCTIVE=true)",
+		ErrDestructive, strings.Join(destroys, ", "))
 }
 
 // planFromScratch generates full DDL for a fresh database using IF NOT EXISTS /
@@ -160,6 +204,9 @@ func planUpdateStatements(oldCfg, newCfg *domain.Config, roles domain.Roles) []s
 	// heals on its next migration. This covers apps whose config has no auth block.
 	ddl = append(ddl, generateJWTKeysTable()...)
 
+	// 0. Renames, before anything else looks at these tables by name.
+	ddl = append(ddl, diff.Renames...)
+
 	// 1. Removals (DROP TABLE, DROP COLUMN, DROP INDEX, DROP POLICY, etc.)
 	ddl = append(ddl, diff.Removals...)
 
@@ -208,9 +255,9 @@ func planUpdateStatements(oldCfg, newCfg *domain.Config, roles domain.Roles) []s
 // It stores the applied config as JSON so the next run can diff against it to
 // detect removed objects and avoid re-running unchanged migrations.
 //
-// All DDL statements run inside a single transaction so a mid-migration
-// failure rolls back cleanly: either every statement applies or none do.
-// The history row is recorded post-commit; see the comment below for why.
+// All DDL statements and the history row run inside a single transaction, so
+// a mid-migration failure rolls back cleanly and the row commits atomically
+// with the schema change: either both land or neither does.
 func (m *Migrator) Apply(ctx context.Context, cfg *domain.Config) error {
 	if err := m.db.EnsureMigrationsTable(ctx); err != nil {
 		return fmt.Errorf("migrate: %w", err)
@@ -261,20 +308,36 @@ func (m *Migrator) Apply(ctx context.Context, cfg *domain.Config) error {
 		}
 	}
 
+	// Record the migration in the same transaction as the DDL. The history row
+	// and the schema change then commit together: the row is present iff the
+	// change was applied, so a later Apply never re-emits a committed statement
+	// against already-changed schema. This is why plan statements don't all
+	// need to be idempotent (e.g. RENAME COLUMN, which has no IF EXISTS form).
 	planSQL := strings.Join(stmts, "\n\n")
+	if err := recordMigration(ctx, tx, configChecksum, planSQL, string(configJSON)); err != nil {
+		return fmt.Errorf("migrate record: %w", err)
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("migrate commit: %w", err)
 	}
-
-	// Record AFTER commit. If RecordMigration fails post-commit the DB schema
-	// is correct but the history is missing the row — next Apply will diff
-	// from the older lastGood and try to re-emit idempotent statements,
-	// which is safe (CREATE OR REPLACE / IF NOT EXISTS / DROP+CREATE
-	// patterns), so we accept that risk.
-	if err := m.db.RecordMigration(ctx, configChecksum, planSQL, string(configJSON)); err != nil {
-		return fmt.Errorf("migrate record: %w", err)
-	}
 	return nil
+}
+
+// recordMigration inserts the history row on the given transaction, so it
+// commits atomically with the DDL. The values arrive as parameters (both here
+// and in the bound $1/$2/$3 placeholders): the query text is a constant and
+// nothing is concatenated into it.
+func recordMigration(ctx context.Context, tx domain.Tx, checksum, planSQL, configJSON string) error {
+	// The query text is a constant and every value is bound as a $1/$2/$3
+	// parameter, so nothing is interpolated into the SQL. The scanners flag any
+	// Exec on a changed line regardless, so suppress the false positive here.
+	//nosec G201,G202 -- constant query text; values are bound parameters
+	// nosemgrep -- constant query text; values are bound parameters
+	_, err := tx.Exec(ctx,
+		`INSERT INTO _instancez_migrations (checksum, sql, config_json) VALUES ($1, $2, $3)`,
+		checksum, planSQL, configJSON)
+	return err
 }
 
 // isReservedSchema reports whether a schema is engine-owned (auth, storage).

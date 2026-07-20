@@ -246,6 +246,12 @@ type Table struct {
 	Fields  []Field     `yaml:"fields" json:"fields"`
 	Indexes []Index     `yaml:"indexes" json:"indexes"`
 	RLS     []RLSPolicy `yaml:"rls" json:"rls"`
+
+	// RenamedFrom names this table's previous name. The migrator cannot tell a
+	// rename from a drop-plus-create by comparing configs, so without this it
+	// would drop the old table and its rows. Once the rename has been applied
+	// it becomes a no-op and is safe to delete.
+	RenamedFrom string `yaml:"renamed_from" json:"renamed_from,omitempty"`
 }
 
 // EffectiveSchema returns the table's schema, defaulting to "public".
@@ -291,6 +297,11 @@ type Field struct {
 	ForeignKey *ForeignKey `yaml:"foreign_key" json:"foreign_key"`
 	Ref        string      `yaml:"ref" json:"ref"`             // storage reference: "storage.<bucket>"
 	OnDelete   string      `yaml:"on_delete" json:"on_delete"` // for storage refs: cascade | keep
+
+	// RenamedFrom names this column's previous name. See Table.RenamedFrom:
+	// without it a rename reaches the migrator as a drop plus an add, which
+	// discards the column's data.
+	RenamedFrom string `yaml:"renamed_from" json:"renamed_from,omitempty"`
 }
 
 // ForeignKey defines a foreign key reference.

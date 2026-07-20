@@ -34,7 +34,7 @@ func TestDiffConfigs_RemovedTable(t *testing.T) {
 
 	diff := diffConfigs(old, new)
 	joined := strings.Join(diff.Removals, "\n")
-	mustContain(t, joined, "DROP TABLE IF EXISTS comments CASCADE")
+	mustContain(t, joined, "DROP TABLE IF EXISTS comments;")
 }
 
 func TestDiffConfigs_RemovedColumn(t *testing.T) {
@@ -243,7 +243,7 @@ func TestDiffConfigs_RemovedTableSkipsColumnDrops(t *testing.T) {
 	diff := diffConfigs(old, new)
 	joined := strings.Join(diff.Removals, "\n")
 
-	mustContain(t, joined, "DROP TABLE IF EXISTS todos CASCADE")
+	mustContain(t, joined, "DROP TABLE IF EXISTS todos;")
 	if strings.Contains(joined, "DROP COLUMN") {
 		t.Error("should not generate DROP COLUMN for a table being fully dropped")
 	}
@@ -312,7 +312,7 @@ func TestDiffConfigs_IndexOnDroppedTable(t *testing.T) {
 
 	// Index DROP is still emitted even though table will be dropped with CASCADE.
 	// This is safe (IF EXISTS) and keeps the logic simple.
-	mustContain(t, joined, "DROP TABLE IF EXISTS todos CASCADE")
+	mustContain(t, joined, "DROP TABLE IF EXISTS todos;")
 }
 
 func TestDiffConfigs_MultiOp_RLSPolicy(t *testing.T) {
@@ -692,7 +692,7 @@ func TestDiffConfigs_MixedChanges(t *testing.T) {
 	diff := diffConfigs(old, new)
 
 	removals := strings.Join(diff.Removals, "\n")
-	mustContain(t, removals, "DROP TABLE IF EXISTS comments CASCADE")
+	mustContain(t, removals, "DROP TABLE IF EXISTS comments;")
 	mustContain(t, removals, "ALTER TABLE todos DROP COLUMN IF EXISTS status")
 
 	additions := strings.Join(diff.Additions, "\n")

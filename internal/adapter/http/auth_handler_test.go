@@ -613,9 +613,6 @@ func (s *stubDB) EnsureMigrationsTable(ctx context.Context) error { return nil }
 func (s *stubDB) GetLastMigration(ctx context.Context) (*domain.Migration, error) {
 	return nil, nil
 }
-func (s *stubDB) RecordMigration(ctx context.Context, checksum, sql, configJSON string) error {
-	return nil
-}
 func (s *stubDB) ExecDDL(ctx context.Context, sql string) error { return nil }
 func (s *stubDB) Query(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
 	if s.queryFn != nil {

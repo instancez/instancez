@@ -92,7 +92,6 @@ type Database interface {
 	// Migrations
 	EnsureMigrationsTable(ctx context.Context) error
 	GetLastMigration(ctx context.Context) (*Migration, error)
-	RecordMigration(ctx context.Context, checksum, sql, configJSON string) error
 	ExecDDL(ctx context.Context, sql string) error
 
 	// CRUD (called by PostgREST-compatible query engine)

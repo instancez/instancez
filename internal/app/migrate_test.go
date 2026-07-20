@@ -570,15 +570,6 @@ func (f *fakeDB) EnsureMigrationsTable(ctx context.Context) error {
 func (f *fakeDB) GetLastMigration(ctx context.Context) (*domain.Migration, error) {
 	return f.lastMigration, nil
 }
-func (f *fakeDB) RecordMigration(ctx context.Context, checksum, sql, configJSON string) error {
-	f.lastMigration = &domain.Migration{
-		Checksum:   checksum,
-		SQL:        sql,
-		ConfigJSON: configJSON,
-		AppliedAt:  time.Now(),
-	}
-	return nil
-}
 func (f *fakeDB) ExecDDL(ctx context.Context, sql string) error {
 	// Apply no longer calls ExecDDL after the tx refactor; if it does, that's
 	// a regression worth surfacing.
@@ -606,9 +597,10 @@ func (f *fakeDB) Begin(ctx context.Context) (domain.Tx, error) {
 // drops the per-tx counter on the floor, mirroring real transactional
 // semantics.
 type fakeTx struct {
-	db       *fakeDB
-	pending  int
-	finished bool
+	db            *fakeDB
+	pending       int
+	finished      bool
+	pendingRecord *domain.Migration // the history row, promoted to db.lastMigration on Commit
 }
 
 func (tx *fakeTx) Query(ctx context.Context, query string, args ...any) ([]map[string]any, error) {
@@ -624,6 +616,16 @@ func (tx *fakeTx) Exec(ctx context.Context, query string, args ...any) (int64, e
 	if tx.db.failOnStatementContaining != "" && strings.Contains(query, tx.db.failOnStatementContaining) {
 		return 0, fmt.Errorf("fakeTx: simulated failure on statement containing %q", tx.db.failOnStatementContaining)
 	}
+	// Apply records the migration with an INSERT inside the tx; stash it so
+	// Commit can publish it (and Rollback can drop it), mirroring atomicity.
+	if strings.Contains(query, "_instancez_migrations") && len(args) == 3 {
+		tx.pendingRecord = &domain.Migration{
+			Checksum:   args[0].(string),
+			SQL:        args[1].(string),
+			ConfigJSON: args[2].(string),
+			AppliedAt:  time.Now(),
+		}
+	}
 	tx.db.execs = append(tx.db.execs, query)
 	tx.pending++
 	return 0, nil
@@ -635,6 +637,9 @@ func (tx *fakeTx) Commit(ctx context.Context) error {
 	tx.finished = true
 	tx.db.committedStatements += tx.pending
 	tx.pending = 0
+	if tx.pendingRecord != nil {
+		tx.db.lastMigration = tx.pendingRecord
+	}
 	return nil
 }
 func (tx *fakeTx) Rollback(ctx context.Context) error {
