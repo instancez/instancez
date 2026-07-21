@@ -12,6 +12,16 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Fixed
 
+## [0.0.2]
+
+### Changed
+
+- Migrations now block renames that would silently drop data. A rename that isn't declared in `instancez.yaml` is treated as a drop-and-recreate and gated behind an explicit destructive-change confirmation instead of quietly discarding the column or table.
+
+### Fixed
+
+- REST writes now return 422 instead of 500 when a nested object is sent for a scalar column (e.g. `{"col":{"not":false}}`), with the PostgREST error envelope.
+
 ## [0.0.1]
 
 First tagged release.
@@ -30,5 +40,6 @@ First tagged release.
 - Deployment targets: Docker, Docker Compose, Kubernetes (Helm chart), AWS Lambda
 - A `@supabase/supabase-js` wire-compatibility test suite that runs on every commit
 
-[Unreleased]: https://github.com/instancez/instancez/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/instancez/instancez/compare/v0.0.2...HEAD
+[0.0.2]: https://github.com/instancez/instancez/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/instancez/instancez/releases/tag/v0.0.1
