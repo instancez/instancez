@@ -11,6 +11,7 @@ import (
 	"github.com/instancez/instancez/dashboard"
 	"github.com/instancez/instancez/internal/adapter/funcs"
 	instancezhttp "github.com/instancez/instancez/internal/adapter/http"
+	otel "github.com/instancez/instancez/internal/adapter/otel"
 	"github.com/instancez/instancez/internal/app"
 	"github.com/instancez/instancez/internal/cli/preflight"
 	"github.com/instancez/instancez/internal/config"
@@ -142,8 +143,15 @@ func runServe(opts serveOptions) error {
 	}
 
 	// Structured JSON logger for production. All startup output goes through
-	// the logger so prod stdout stays a single parseable JSON stream.
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	// the logger so prod stdout stays a single parseable JSON stream. The OTel
+	// bridge (nil unless OTEL_* env is set) fans out the same records to an
+	// OTLP exporter without touching stdout.
+	base := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
+	otelHandler, otelShutdown, err := otel.Setup(ctx)
+	if err != nil {
+		return fmt.Errorf("telemetry setup: %w", err)
+	}
+	logger := otel.ComposeLogger(base, otelHandler)
 
 	logger.Info("starting instancez",
 		"version", version,
@@ -269,6 +277,7 @@ func runServe(opts serveOptions) error {
 		app.WithLogger(logger),
 		app.WithHTTPServer(httpServer),
 		app.WithConfigSource(source),
+		app.WithOTelShutdown(otelShutdown),
 	}
 
 	// Hot-reload: when the watcher detects a new bundle version, rebuild the

@@ -88,6 +88,16 @@ func Setup(ctx context.Context) (slog.Handler, func(context.Context) error, erro
 	return handler, shutdown, nil
 }
 
+// ComposeLogger returns a logger that writes to base, plus the OTLP bridge when
+// bridge is non-nil. When bridge is nil it just wraps base — callers can pass
+// the Setup handler through unconditionally.
+func ComposeLogger(base slog.Handler, bridge slog.Handler) *slog.Logger {
+	if bridge == nil {
+		return slog.New(base)
+	}
+	return slog.New(newFanout(base, bridge))
+}
+
 // Enabled reports whether OpenTelemetry export should be turned on. Read live
 // (uncached) so it stays honest under tests that flip the env.
 func Enabled() bool {

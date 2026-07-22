@@ -1,7 +1,10 @@
 package otel
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"testing"
 )
 
@@ -49,5 +52,14 @@ func TestSetupDisabledIsNoop(t *testing.T) {
 	}
 	if err := shutdown(context.Background()); err != nil {
 		t.Fatalf("noop shutdown returned err: %v", err)
+	}
+}
+
+func TestComposeLoggerNilBridge(t *testing.T) {
+	var buf bytes.Buffer
+	base := slog.NewJSONHandler(&buf, nil)
+	ComposeLogger(base, nil).Info("x")
+	if !strings.Contains(buf.String(), "x") {
+		t.Fatal("base handler should still receive records when bridge is nil")
 	}
 }
