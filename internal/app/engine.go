@@ -36,6 +36,10 @@ type Engine struct {
 	migrator *Migrator
 	logger   *slog.Logger
 
+	// otelShutdown, when set, flushes OpenTelemetry batch span/log processors
+	// during shutdown. It is the func returned by otel.Setup.
+	otelShutdown func(context.Context) error
+
 	// Managed components
 	httpServer HTTPServer
 
@@ -75,6 +79,13 @@ func WithHTTPServer(s HTTPServer) EngineOption       { return func(e *Engine) { 
 func WithConfigPath(p string) EngineOption           { return func(e *Engine) { e.configPath = p } }
 func WithConfigSource(s config.Source) EngineOption  { return func(e *Engine) { e.source = s } }
 func WithWatchInterval(d time.Duration) EngineOption { return func(e *Engine) { e.watchInterval = d } }
+
+// WithOTelShutdown registers the OpenTelemetry flush func returned by
+// otel.Setup. It runs during engine shutdown so batch span/log processors
+// export their last buffer before the process exits.
+func WithOTelShutdown(fn func(context.Context) error) EngineOption {
+	return func(e *Engine) { e.otelShutdown = fn }
+}
 
 // WithFunctionReload registers a callback invoked by the config watcher after a
 // successful reload, with the newly-applied config. Used by serve to hot-swap
@@ -384,6 +395,14 @@ func (e *Engine) shutdown() error {
 	if e.httpServer != nil {
 		if err := e.httpServer.Shutdown(shutdownCtx); err != nil {
 			e.logger.Error("error shutting down HTTP server", "error", err)
+		}
+	}
+
+	// Flush telemetry before tearing down: batch processors otherwise drop
+	// their last buffer on exit.
+	if e.otelShutdown != nil {
+		if err := e.otelShutdown(shutdownCtx); err != nil {
+			e.logger.Error("error shutting down telemetry", "error", err)
 		}
 	}
 
