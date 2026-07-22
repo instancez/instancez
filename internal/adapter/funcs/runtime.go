@@ -25,7 +25,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	otelpkg "github.com/instancez/instancez/internal/adapter/otel"
 	"github.com/instancez/instancez/internal/domain"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // Typed errors the HTTP handler maps to status codes:
@@ -462,11 +464,17 @@ func (r *Runtime) spawnWorker(fnSpec string) (*worker, error) {
 	go scanWorkerStdout(stdoutPipe, r.logger, &r.scanWG)
 	go scanWorkerStderr(stderrPipe, r.logger, &r.scanWG)
 
-	client := &http.Client{Transport: &http.Transport{
+	var rt http.RoundTripper = &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "unix", sock)
 		},
-	}}
+	}
+	if otelpkg.Enabled() {
+		// Span per function invocation + traceparent injected into the worker
+		// request, so the Node side is continuable once it is instrumented.
+		rt = otelhttp.NewTransport(rt)
+	}
+	client := &http.Client{Transport: rt}
 
 	w := &worker{cmd: cmd, sock: sock, client: client}
 	w.healthy.Store(true)
