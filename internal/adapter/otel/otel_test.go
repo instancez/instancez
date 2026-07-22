@@ -1,6 +1,9 @@
 package otel
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestEnabled(t *testing.T) {
 	cases := []struct {
@@ -27,5 +30,24 @@ func TestEnabled(t *testing.T) {
 				t.Fatalf("Enabled() = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestSetupDisabledIsNoop(t *testing.T) {
+	for _, k := range gateVars {
+		t.Setenv(k, "")
+	}
+	h, shutdown, err := Setup(context.Background())
+	if err != nil {
+		t.Fatalf("Setup returned err: %v", err)
+	}
+	if h != nil {
+		t.Fatal("disabled Setup should return a nil handler")
+	}
+	if shutdown == nil {
+		t.Fatal("shutdown must never be nil")
+	}
+	if err := shutdown(context.Background()); err != nil {
+		t.Fatalf("noop shutdown returned err: %v", err)
 	}
 }
