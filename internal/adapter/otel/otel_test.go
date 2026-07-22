@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
 
 func TestEnabled(t *testing.T) {
@@ -53,6 +55,56 @@ func TestSetupDisabledIsNoop(t *testing.T) {
 	if err := shutdown(context.Background()); err != nil {
 		t.Fatalf("noop shutdown returned err: %v", err)
 	}
+}
+
+func TestSetupEnabledConsole(t *testing.T) {
+	t.Setenv("OTEL_TRACES_EXPORTER", "console")
+	t.Setenv("OTEL_LOGS_EXPORTER", "console")
+	h, shutdown, err := Setup(context.Background())
+	if err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	if h == nil {
+		t.Fatal("enabled Setup should return a non-nil handler")
+	}
+	if shutdown == nil {
+		t.Fatal("shutdown must not be nil")
+	}
+	if err := shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+}
+
+func TestBuildResourceServiceName(t *testing.T) {
+	t.Run("defaults to instancez", func(t *testing.T) {
+		t.Setenv("OTEL_SERVICE_NAME", "")
+		res, err := buildResource(context.Background())
+		if err != nil {
+			t.Fatalf("buildResource: %v", err)
+		}
+		got, ok := res.Set().Value(semconv.ServiceNameKey)
+		if !ok {
+			t.Fatal("service.name attribute missing")
+		}
+		if got.AsString() != defaultServiceName {
+			t.Fatalf("service.name = %q, want %q", got.AsString(), defaultServiceName)
+		}
+	})
+
+	t.Run("OTEL_SERVICE_NAME overrides the default", func(t *testing.T) {
+		t.Setenv("OTEL_SERVICE_NAME", "custom-svc")
+		res, err := buildResource(context.Background())
+		if err != nil {
+			t.Fatalf("buildResource: %v", err)
+		}
+		got, ok := res.Set().Value(semconv.ServiceNameKey)
+		if !ok {
+			t.Fatal("service.name attribute missing")
+		}
+		if got.AsString() != "custom-svc" {
+			t.Fatalf("service.name = %q, want %q", got.AsString(), "custom-svc")
+		}
+	})
 }
 
 func TestComposeLoggerNilBridge(t *testing.T) {

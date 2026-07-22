@@ -16,7 +16,12 @@ import (
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
+
+// defaultServiceName is what service.name resolves to when the operator
+// hasn't set OTEL_SERVICE_NAME.
+const defaultServiceName = "instancez"
 
 // gateVars are the env vars that switch OTLP export on. autoexport otherwise
 // defaults to otlp -> localhost:4318 and fails quietly forever, so we gate on
@@ -31,6 +36,21 @@ const scopeName = "github.com/instancez/instancez"
 
 func noopShutdown(context.Context) error { return nil }
 
+// buildResource assembles the OTEL resource, defaulting service.name to
+// defaultServiceName. WithFromEnv runs after the default so a set
+// OTEL_SERVICE_NAME still wins.
+func buildResource(ctx context.Context) (*resource.Resource, error) {
+	res, err := resource.New(ctx,
+		resource.WithAttributes(semconv.ServiceName(defaultServiceName)), // overridden below if OTEL_SERVICE_NAME is set
+		resource.WithFromEnv(), // OTEL_SERVICE_NAME, OTEL_RESOURCE_ATTRIBUTES
+		resource.WithTelemetrySDK(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return resource.Merge(resource.Default(), res)
+}
+
 // Setup wires OpenTelemetry from OTEL_* env. When disabled it returns a nil
 // slog handler (callers keep their stdout handler as-is) and a no-op shutdown.
 // When enabled it sets the global tracer provider + W3C propagator (so
@@ -41,14 +61,8 @@ func Setup(ctx context.Context) (slog.Handler, func(context.Context) error, erro
 		return nil, noopShutdown, nil
 	}
 
-	res, err := resource.New(ctx,
-		resource.WithFromEnv(), // OTEL_SERVICE_NAME, OTEL_RESOURCE_ATTRIBUTES
-		resource.WithTelemetrySDK(),
-	)
+	res, err := buildResource(ctx)
 	if err != nil {
-		return nil, noopShutdown, err
-	}
-	if res, err = resource.Merge(resource.Default(), res); err != nil {
 		return nil, noopShutdown, err
 	}
 
