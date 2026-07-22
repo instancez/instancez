@@ -37,6 +37,7 @@ type ServerDeps struct {
 	DB              domain.RequestDB
 	OwnerDB         domain.OwnerDB // privileged pool used for migrations from the dashboard
 	Logger          *slog.Logger
+	OTelLogHandler  slog.Handler // OTLP slog bridge (nil when OTel is off); lets dev export per-request logs
 	DevMode         bool
 	Email           domain.EmailSender
 	Storage         domain.ObjectStore
@@ -67,7 +68,7 @@ func NewServer(deps ServerDeps) *Server {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(requestIDMiddleware())
-	r.Use(requestLogger(deps.Logger, deps.DevMode))
+	r.Use(requestLogger(deps.Logger, deps.DevMode, deps.OTelLogHandler))
 
 	s := &Server{
 		engine:  r,

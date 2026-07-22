@@ -181,6 +181,7 @@ func runDev(opts devOptions) error {
 		DB:              authDB,
 		OwnerDB:         ownerDB,
 		Logger:          logger,
+		OTelLogHandler:  otelHandler,
 		DevMode:         true,
 		Email:           email,
 		Storage:         storage,

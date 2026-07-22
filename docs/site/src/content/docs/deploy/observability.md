@@ -25,6 +25,8 @@ Leave all three unset and instancez skips OTel setup entirely. This gate exists 
 
 Logs go out through an slog bridge, so anything already going to `log/slog` — request logs, migration logs, background job logs — is exported without call-site changes. stdout/stderr logging is unaffected either way; OTel export is teed alongside it, not a replacement.
 
+Per-request logs carry the request's `trace_id` and `span_id`, so a log lines up with its trace in the backend. This holds in `inz dev` too: the aligned request line still prints to the console, and the same record is exported through the bridge when OTel is on.
+
 ## What gets traced
 
 - **HTTP requests** — every inbound request gets a server span.
@@ -59,6 +61,6 @@ instancez runs long-lived behind the Lambda Web Adapter rather than as a per-inv
 
 ## Known gaps
 
-- **Dev request-logger lines aren't exported.** `inz dev`'s aligned stdout request log writes straight to stdout and doesn't go through the slog bridge.
+- **Worker health probes emit their own spans.** Each function worker is polled at `/healthz` when it spawns, and those startup probes come through as standalone client spans over the `unix` socket. They're harmless but add noise, especially in `inz dev` where hot-reload respawns workers.
 - **Function code isn't instrumented yet.** Spans and logs from code running inside the Node worker need the JS OTel SDK wired into the worker bootstrap, which is a later phase. The `traceparent` header injected into the worker call means that work can pick up the existing trace once it lands.
 - **No metrics yet.** This is traces and logs only; metrics export is a later phase. The existing Prometheus `/metrics` endpoint is unaffected by any of this.

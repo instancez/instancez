@@ -238,6 +238,7 @@ func runServe(opts serveOptions) error {
 		DB:              authDB,
 		OwnerDB:         ownerDB,
 		Logger:          logger,
+		OTelLogHandler:  otelHandler,
 		DevMode:         false,
 		Email:           email,
 		Storage:         storage,
