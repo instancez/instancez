@@ -61,6 +61,5 @@ instancez runs long-lived behind the Lambda Web Adapter rather than as a per-inv
 
 ## Known gaps
 
-- **Worker health probes emit their own spans.** Each function worker is polled at `/healthz` when it spawns, and those startup probes come through as standalone client spans over the `unix` socket. They're harmless but add noise, especially in `inz dev` where hot-reload respawns workers.
 - **Function code isn't instrumented yet.** Spans and logs from code running inside the Node worker need the JS OTel SDK wired into the worker bootstrap, which is a later phase. The `traceparent` header injected into the worker call means that work can pick up the existing trace once it lands.
 - **No metrics yet.** This is traces and logs only; metrics export is a later phase. The existing Prometheus `/metrics` endpoint is unaffected by any of this.
