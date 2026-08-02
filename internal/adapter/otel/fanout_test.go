@@ -30,6 +30,24 @@ func TestFanoutForwardsToAllChildrenWithAttrs(t *testing.T) {
 	}
 }
 
+// A group must nest attributes on every child, not just the first. If WithGroup
+// forgets a child, that side logs the attr unnested and the two streams disagree.
+func TestFanoutWithGroupNestsOnAllChildren(t *testing.T) {
+	var a, b bytes.Buffer
+	logger := slog.New(newFanout(
+		slog.NewJSONHandler(&a, nil),
+		slog.NewJSONHandler(&b, nil),
+	)).WithGroup("req").With("id", "42")
+	logger.Info("hello")
+
+	for name, buf := range map[string]*bytes.Buffer{"a": &a, "b": &b} {
+		out := buf.String()
+		if !strings.Contains(out, `"req":{"id":"42"}`) {
+			t.Fatalf("child %s missing grouped attr: %q", name, out)
+		}
+	}
+}
+
 func TestFanoutEnabledIsOr(t *testing.T) {
 	// A handler at LevelError is disabled for Info; one at LevelDebug is enabled.
 	off := slog.NewJSONHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelError})

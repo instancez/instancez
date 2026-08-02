@@ -115,3 +115,20 @@ func TestComposeLoggerNilBridge(t *testing.T) {
 		t.Fatal("base handler should still receive records when bridge is nil")
 	}
 }
+
+// With a bridge, stdout must keep working and the bridge must see the same
+// record — a logger that quietly drops one side is the failure worth catching.
+func TestComposeLoggerWritesToBaseAndBridge(t *testing.T) {
+	var base, bridge bytes.Buffer
+	ComposeLogger(
+		slog.NewJSONHandler(&base, nil),
+		slog.NewJSONHandler(&bridge, nil),
+	).Info("x", "k", "v")
+
+	for name, buf := range map[string]*bytes.Buffer{"base": &base, "bridge": &bridge} {
+		out := buf.String()
+		if !strings.Contains(out, `"msg":"x"`) || !strings.Contains(out, `"k":"v"`) {
+			t.Fatalf("%s handler missing record: %q", name, out)
+		}
+	}
+}
