@@ -12,6 +12,16 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Fixed
 
+## [0.0.3]
+
+### Added
+
+- Traces and logs now export over OTLP, driven by the standard `OTEL_*` environment variables. Export stays off unless `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_TRACES_EXPORTER`, or `OTEL_LOGS_EXPORTER` is set, so deployments that set none of them are unaffected. Spans cover HTTP requests, Postgres queries, code function calls, Resend, and S3, and request logs carry `trace_id` and `span_id`. Stdout logging keeps working either way. Code inside the Node worker and metrics aren't covered yet. See the Observability page in the docs.
+
+### Security
+
+- Bumped `go.opentelemetry.io/otel` to 1.43.0, the OpenTelemetry log modules to 0.19.0, and `golang.org/x/crypto` to 0.52.0, clearing ten advisories: CVE-2026-39882 and CVE-2026-39883 in OpenTelemetry, and eight ssh ones in `x/crypto`.
+
 ## [0.0.2]
 
 ### Changed
@@ -40,6 +50,7 @@ First tagged release.
 - Deployment targets: Docker, Docker Compose, Kubernetes (Helm chart), AWS Lambda
 - A `@supabase/supabase-js` wire-compatibility test suite that runs on every commit
 
-[Unreleased]: https://github.com/instancez/instancez/compare/v0.0.2...HEAD
+[Unreleased]: https://github.com/instancez/instancez/compare/v0.0.3...HEAD
+[0.0.3]: https://github.com/instancez/instancez/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/instancez/instancez/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/instancez/instancez/releases/tag/v0.0.1
