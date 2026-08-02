@@ -72,27 +72,48 @@ func generateRequestID() string {
 
 // requestLogger logs each request: fixed-width aligned columns in dev, the full
 // structured record in prod (for the JSON stream).
-func requestLogger(logger *slog.Logger, devMode bool) gin.HandlerFunc {
+//
+// The record is emitted with the request's context (LogAttrs), so when OTel is
+// enabled the slog bridge stamps the request's trace_id/span_id onto it and the
+// log lines up with its trace. bridge is the OTLP slog handler (nil when OTel is
+// off): in dev the pretty stdout line stays, but the same structured record is
+// also exported through bridge so per-request logs aren't lost to the console.
+func requestLogger(logger *slog.Logger, devMode bool, bridge slog.Handler) gin.HandlerFunc {
+	var bridgeLogger *slog.Logger
+	if bridge != nil {
+		bridgeLogger = slog.New(bridge)
+	}
 	return func(c *gin.Context) {
 		start := time.Now()
 		c.Next()
 		dur := time.Since(start).Round(time.Microsecond)
+
+		ctx := c.Request.Context()
+		emit := func(l *slog.Logger) {
+			l.LogAttrs(ctx, slog.LevelInfo, "request",
+				slog.String("method", c.Request.Method),
+				slog.String("path", c.Request.URL.Path),
+				slog.Int("status", c.Writer.Status()),
+				slog.Duration("duration", dur),
+				slog.String("user_id", c.GetString(contextKeyUserID)),
+				slog.String("request_id", c.GetString(contextKeyRequestID)),
+			)
+		}
+
 		if devMode {
 			// One fmt.Fprintf = one Write of a sub-4KB line, so concurrent
 			// requests can't interleave mid-line. Columns: status, duration
 			// (right-aligned), method, then the path trails free.
 			_, _ = fmt.Fprintf(os.Stdout, "  %3d  %s  %-7s %s\n",
 				c.Writer.Status(), padLeft(dur.String(), 8), c.Request.Method, c.Request.URL.Path)
+			// Keep the pretty console, but still export the request to OTLP when
+			// enabled (bridge is non-nil only then).
+			if bridgeLogger != nil {
+				emit(bridgeLogger)
+			}
 			return
 		}
-		logger.Info("request",
-			"method", c.Request.Method,
-			"path", c.Request.URL.Path,
-			"status", c.Writer.Status(),
-			"duration", dur,
-			"user_id", c.GetString(contextKeyUserID),
-			"request_id", c.GetString(contextKeyRequestID),
-		)
+		emit(logger)
 	}
 }
 

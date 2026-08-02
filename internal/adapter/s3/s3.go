@@ -12,7 +12,9 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	otelpkg "github.com/instancez/instancez/internal/adapter/otel"
 	"github.com/instancez/instancez/internal/domain"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-sdk-go-v2/otelaws"
 )
 
 // Store implements domain.ObjectStore using S3-compatible storage.
@@ -49,6 +51,11 @@ func New(ctx context.Context, cfg Config) (*Store, error) {
 	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("load AWS config: %w", err)
+	}
+
+	if otelpkg.Enabled() {
+		// One span per S3 API call, propagated under the request span.
+		otelaws.AppendMiddlewares(&awsCfg.APIOptions)
 	}
 
 	var s3Opts []func(*s3.Options)

@@ -12,8 +12,9 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/instancez/instancez/dashboard"
-	instancezhttp "github.com/instancez/instancez/internal/adapter/http"
 	"github.com/instancez/instancez/internal/adapter/funcs"
+	instancezhttp "github.com/instancez/instancez/internal/adapter/http"
+	otel "github.com/instancez/instancez/internal/adapter/otel"
 	"github.com/instancez/instancez/internal/app"
 	"github.com/instancez/instancez/internal/cli/preflight"
 	"github.com/instancez/instancez/internal/config"
@@ -109,7 +110,16 @@ func runDev(opts devOptions) error {
 	if opts.verbose {
 		level = slog.LevelDebug
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
+	// The OTel bridge (nil unless OTEL_* env is set) fans out the same records
+	// to an OTLP exporter without touching stdout. ctx isn't built yet at this
+	// point in dev's boot sequence, so Setup gets its own background context —
+	// it only uses it for resource/exporter init, not for request lifetime.
+	base := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level})
+	otelHandler, otelShutdown, err := otel.Setup(context.Background())
+	if err != nil {
+		return fmt.Errorf("telemetry setup: %w", err)
+	}
+	logger := otel.ComposeLogger(base, otelHandler)
 
 	// Gather startup facts for the sectioned banner printed just before serving.
 	banner := devBanner{embedded: embeddedSuperuserDSN != "", functions: -1, cfg: cfg, opts: opts}
@@ -171,6 +181,7 @@ func runDev(opts devOptions) error {
 		DB:              authDB,
 		OwnerDB:         ownerDB,
 		Logger:          logger,
+		OTelLogHandler:  otelHandler,
 		DevMode:         true,
 		Email:           email,
 		Storage:         storage,
@@ -212,6 +223,7 @@ func runDev(opts devOptions) error {
 		app.WithLogger(logger),
 		app.WithHTTPServer(httpServer),
 		app.WithFunctionReload(reloadFuncs),
+		app.WithOTelShutdown(otelShutdown),
 	)
 
 	banner.print()

@@ -7,11 +7,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/exaring/otelpgx"
 	"github.com/google/uuid"
+	otelpkg "github.com/instancez/instancez/internal/adapter/otel"
+	"github.com/instancez/instancez/internal/domain"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/instancez/instancez/internal/domain"
 )
 
 // DB implements domain.Database backed by a pgx connection pool. The roles
@@ -82,6 +84,13 @@ func parsePoolConfig(databaseURL string, poolCfg domain.PoolConfig) (*pgxpool.Co
 	// names to collide), and the Describe round-trip preserves parameter OID
 	// inference so types like map[string]any encode correctly into jsonb.
 	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeDescribeExec
+
+	// Query spans when telemetry is on. parsePoolConfig is shared by NewOwner
+	// and NewRequest, so both the request pool and the owner pool (migrations)
+	// get instrumented; off by default it is never attached.
+	if otelpkg.Enabled() {
+		cfg.ConnConfig.Tracer = otelpgx.NewTracer()
+	}
 
 	if poolCfg.Max > 0 {
 		cfg.MaxConns = int32(poolCfg.Max)

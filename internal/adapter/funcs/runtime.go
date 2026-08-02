@@ -25,7 +25,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	otelpkg "github.com/instancez/instancez/internal/adapter/otel"
 	"github.com/instancez/instancez/internal/domain"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // Typed errors the HTTP handler maps to status codes:
@@ -462,16 +464,29 @@ func (r *Runtime) spawnWorker(fnSpec string) (*worker, error) {
 	go scanWorkerStdout(stdoutPipe, r.logger, &r.scanWG)
 	go scanWorkerStderr(stderrPipe, r.logger, &r.scanWG)
 
-	client := &http.Client{Transport: &http.Transport{
+	base := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "unix", sock)
 		},
-	}}
+	}
+	// Health probes hammer /healthz every 20ms until the worker answers. Poll
+	// them over an uninstrumented client: otherwise every spawn emits a burst of
+	// standalone /healthz client spans (each poll its own parentless trace) —
+	// pure noise, worst of all under dev hot-reload. Invocations still get spans.
+	healthClient := &http.Client{Transport: base}
+
+	var rt http.RoundTripper = base
+	if otelpkg.Enabled() {
+		// Span per function invocation + traceparent injected into the worker
+		// request, so the Node side is continuable once it is instrumented.
+		rt = otelhttp.NewTransport(rt)
+	}
+	client := &http.Client{Transport: rt}
 
 	w := &worker{cmd: cmd, sock: sock, client: client}
 	w.healthy.Store(true)
 
-	if err := waitHealthy(client, r.opts.HealthTimeout); err != nil {
+	if err := waitHealthy(healthClient, r.opts.HealthTimeout); err != nil {
 		// Tear down this half-spawned worker: kill the process (which closes the
 		// pipe write ends so the scanners drain and exit), then reap it.
 		_ = cmd.Process.Kill()

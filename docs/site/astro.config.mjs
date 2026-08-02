@@ -97,6 +97,7 @@ export default defineConfig({
             { label: 'AWS Lambda', slug: 'deploy/lambda' },
             { label: 'Self-hosted', slug: 'deploy/self-hosted' },
             { label: 'Environment Variables', slug: 'deploy/env-vars' },
+            { label: 'Observability', slug: 'deploy/observability' },
           ],
         },
         {

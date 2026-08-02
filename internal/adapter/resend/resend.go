@@ -9,7 +9,9 @@ import (
 	"io"
 	"net/http"
 
+	otelpkg "github.com/instancez/instancez/internal/adapter/otel"
 	"github.com/instancez/instancez/internal/domain"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 const apiURL = "https://api.resend.com/emails"
@@ -21,10 +23,13 @@ type Sender struct {
 }
 
 func New(apiKey string) *Sender {
-	return &Sender{
-		apiKey: apiKey,
-		client: &http.Client{},
+	client := &http.Client{}
+	if otelpkg.Enabled() {
+		// Emits an outbound client span per Resend API call and injects the
+		// trace context; net/http default transport otherwise.
+		client.Transport = otelhttp.NewTransport(http.DefaultTransport)
 	}
+	return &Sender{apiKey: apiKey, client: client}
 }
 
 type sendRequest struct {

@@ -10,9 +10,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	otelpkg "github.com/instancez/instancez/internal/adapter/otel"
 	"github.com/instancez/instancez/internal/app"
 	"github.com/instancez/instancez/internal/config"
 	"github.com/instancez/instancez/internal/domain"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // Server wraps the gin engine and HTTP server.
@@ -35,6 +37,7 @@ type ServerDeps struct {
 	DB              domain.RequestDB
 	OwnerDB         domain.OwnerDB // privileged pool used for migrations from the dashboard
 	Logger          *slog.Logger
+	OTelLogHandler  slog.Handler // OTLP slog bridge (nil when OTel is off); lets dev export per-request logs
 	DevMode         bool
 	Email           domain.EmailSender
 	Storage         domain.ObjectStore
@@ -65,7 +68,7 @@ func NewServer(deps ServerDeps) *Server {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(requestIDMiddleware())
-	r.Use(requestLogger(deps.Logger, deps.DevMode))
+	r.Use(requestLogger(deps.Logger, deps.DevMode, deps.OTelLogHandler))
 
 	s := &Server{
 		engine:  r,
@@ -166,7 +169,13 @@ func buildHTTPServer(port int, handler http.Handler) *http.Server {
 
 // Start begins listening. Blocks until the server is stopped.
 func (s *Server) Start() error {
-	s.httpServer = buildHTTPServer(s.cfg.Server.Port, s.engine)
+	var handler http.Handler = s.engine
+	if otelpkg.Enabled() {
+		// Server span per request; picks up an inbound traceparent and roots
+		// the trace that the DB/HTTP/S3 child spans attach to.
+		handler = otelhttp.NewHandler(handler, "instancez.http")
+	}
+	s.httpServer = buildHTTPServer(s.cfg.Server.Port, handler)
 
 	// In dev the human banner already prints the API URL, so keep this to the
 	// debug stream; in prod it's part of the single JSON startup record.

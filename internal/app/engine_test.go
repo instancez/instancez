@@ -160,6 +160,23 @@ func TestDriftHeartbeatLogsPeriodically(t *testing.T) {
 	}
 }
 
+// TestShutdownCallsOTelShutdown: shutdown must invoke the otel flush func
+// registered via WithOTelShutdown so batch span/log processors export their
+// last buffer before the process exits.
+func TestShutdownCallsOTelShutdown(t *testing.T) {
+	called := false
+	e := NewEngine(&domain.Config{}, domain.OwnerDB{Database: newFakeDB(t)}, newFakeRequestDB(t), domain.Roles{},
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
+		WithOTelShutdown(func(context.Context) error { called = true; return nil }),
+	)
+	if err := e.shutdown(); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	if !called {
+		t.Fatal("otel shutdown func was not called")
+	}
+}
+
 // TestDriftHeartbeatFollowsTrackerSwap: Start launches the heartbeat bound to
 // e.Drift, not a captured *DriftTracker. Reassigning e.drift (as runWatcher
 // does on every successful reload) must be visible to the running heartbeat
