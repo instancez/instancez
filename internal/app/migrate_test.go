@@ -297,6 +297,15 @@ func TestGenerateStorageTablesEmptyWhenNoBuckets(t *testing.T) {
 	}
 }
 
+func TestStorageTablesIncludeUserMetadata(t *testing.T) {
+	cfg := &domain.Config{Storage: map[string]domain.Bucket{"avatars": {}}}
+	stmts := generateStorageTables(cfg)
+	joined := strings.Join(stmts, "\n")
+	if !strings.Contains(joined, "user_metadata") {
+		t.Fatalf("expected storage.objects DDL to define user_metadata, got:\n%s", joined)
+	}
+}
+
 func TestGenerateStorageRLS_Public(t *testing.T) {
 	bucket := domain.Bucket{
 		Public: true,

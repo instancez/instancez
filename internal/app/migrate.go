@@ -237,6 +237,14 @@ func planUpdateStatements(oldCfg, newCfg *domain.Config, roles domain.Roles) []s
 	}
 	ddl = append(ddl, generateStorageRLSAll(newCfg.Storage)...)
 
+	// Heal storage.objects on existing DBs. diffNewStorage only emits the
+	// table (and its columns) when storage is *newly* added, so a DB that
+	// already had storage.objects before user_metadata existed would never
+	// gain the column. This idempotent ALTER runs on every migration.
+	if len(newCfg.Storage) > 0 {
+		ddl = append(ddl, `ALTER TABLE storage.objects ADD COLUMN IF NOT EXISTS user_metadata JSONB;`)
+	}
+
 	// RPC functions (CREATE OR REPLACE FUNCTION)
 	if len(newCfg.RPC) > 0 {
 		fnNames := sortedKeys(newCfg.RPC)
@@ -787,8 +795,13 @@ func generateStorageTables(cfg *domain.Config) []string {
   uploaded_by UUID REFERENCES auth.users(id),
   uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   metadata JSONB,
+  user_metadata JSONB,
   UNIQUE (bucket_id, name)
 );`,
+		// Additive column for deployments whose storage.objects table predates
+		// user_metadata. supabase-js's .list() carries user_metadata separately
+		// from the storage-managed metadata blob.
+		`ALTER TABLE storage.objects ADD COLUMN IF NOT EXISTS user_metadata JSONB;`,
 	}
 }
 
