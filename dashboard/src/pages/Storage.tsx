@@ -31,7 +31,7 @@ export function Storage() {
   }, [backend]);
 
   useEffect(() => {
-    if (bucket != null) load(bucket, prefix);
+    if (bucket != null) void load(bucket, prefix);
   }, [bucket, prefix, load]);
 
   if (!config) return null;
@@ -46,13 +46,17 @@ export function Storage() {
       ...config!,
       storage: { ...config!.storage, [bucketName]: { max_size: "5MB", types: ["image/*"], public: false, rls: [] } },
     };
-    await save(updated);
+    try {
+      await save(updated);
+    } catch (err) {
+      await dialog.alert("Couldn't create bucket", { message: (err as Error)?.message });
+    }
   }
 
   // ── Bucket list ──────────────────────────────────────────────────────────
   if (bucket == null) {
     const addButton = canWriteConfig ? (
-      <Button onClick={addBucket}><Plus size={14} /> Add Bucket</Button>
+      <Button onClick={() => void addBucket()}><Plus size={14} /> Add Bucket</Button>
     ) : null;
     return (
       <Box pb="8">
@@ -90,35 +94,45 @@ export function Storage() {
   const openFolder = (f: StorageFolder) => setPrefix(`${prefix}${f.name}/`);
   const goTo = (i: number) => setPrefix(i < 0 ? "" : segments.slice(0, i + 1).join("/") + "/");
 
-  const reload = () => load(bucket, prefix);
+  const reload = () => { void load(bucket, prefix); };
 
   async function onUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files || []);
     e.target.value = "";
-    for (const f of files) await backend.uploadObject(bucket!, prefix + f.name, f);
+    try {
+      for (const f of files) await backend.uploadObject(bucket!, prefix + f.name, f);
+    } catch (err) {
+      await dialog.alert("Upload failed", { message: (err as Error)?.message });
+    }
     if (files.length) reload();
   }
 
-  async function onAction(a: "download" | "copyUrl" | "rename" | "delete", o: { name: string }) {
+  async function handleAction(a: "download" | "copyUrl" | "rename" | "delete", o: { name: string }) {
     const key = prefix + o.name;
-    if (a === "download" || a === "copyUrl") {
-      const { signedURL } = await backend.signObjectUrl(bucket!, key);
-      if (a === "download") window.open(signedURL, "_blank");
-      else await navigator.clipboard?.writeText(signedURL);
-      return;
-    }
-    if (a === "rename") {
-      const next = await dialog.prompt("Rename to:", { defaultValue: o.name });
-      if (!next?.trim() || next === o.name) return;
-      await backend.moveObject(bucket!, key, prefix + next.trim());
-      reload();
-      return;
-    }
-    if (a === "delete") {
-      const ok = await dialog.confirm(`Delete ${o.name}?`, { destructive: true });
-      if (!ok) return;
-      await backend.deleteObjects(bucket!, [key]);
-      reload();
+    try {
+      if (a === "download" || a === "copyUrl") {
+        const { signedURL } = await backend.signObjectUrl(bucket!, key);
+        // window.open (unlike <a target=_blank>) does not imply noopener; a signed
+        // URL can resolve to user-uploaded HTML, so isolate the opened tab.
+        if (a === "download") window.open(signedURL, "_blank", "noopener,noreferrer");
+        else await navigator.clipboard?.writeText(signedURL);
+        return;
+      }
+      if (a === "rename") {
+        const next = await dialog.prompt("Rename to:", { defaultValue: o.name });
+        if (!next?.trim() || next === o.name) return;
+        await backend.moveObject(bucket!, key, prefix + next.trim());
+        reload();
+        return;
+      }
+      if (a === "delete") {
+        const ok = await dialog.confirm(`Delete ${o.name}?`, { destructive: true });
+        if (!ok) return;
+        await backend.deleteObjects(bucket!, [key]);
+        reload();
+      }
+    } catch (err) {
+      await dialog.alert("Action failed", { message: (err as Error)?.message });
     }
   }
 
@@ -141,14 +155,14 @@ export function Storage() {
           ))}
         </HStack>
         <Button size="sm" onClick={() => fileRef.current?.click()}><UploadIcon size={14} /> Upload</Button>
-        <input ref={fileRef} type="file" multiple hidden onChange={onUpload} />
+        <input ref={fileRef} type="file" multiple hidden onChange={(e) => void onUpload(e)} />
       </HStack>
 
       {loading && !data ? (
         <Text px="1" py="4" fontSize="sm" color="fg.muted">Loading…</Text>
       ) : data && (data.folders.length || data.objects.length) ? (
         <Box borderWidth="1px" borderColor="border" borderRadius="xl" overflow="hidden">
-          <ObjectTable folders={data.folders} objects={data.objects} onOpenFolder={openFolder} onAction={onAction} />
+          <ObjectTable folders={data.folders} objects={data.objects} onOpenFolder={openFolder} onAction={(a, o) => void handleAction(a, o)} />
         </Box>
       ) : (
         <EmptyState icon={HardDrive} title="Empty" description="No files here yet. Upload one to get started." />
