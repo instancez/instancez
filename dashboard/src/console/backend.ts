@@ -1,4 +1,12 @@
-import type { Config, ConfigStatus, StatsResponse, DiffResponse, AdminUser } from "../lib/types";
+import type {
+  Config,
+  ConfigStatus,
+  StatsResponse,
+  DiffResponse,
+  AdminUser,
+  SqlResult,
+  StorageListResult,
+} from "../lib/types";
 import type { EnvVarsResponse, ConfigPreview } from "../api/client";
 
 /** What this consumer/deployment supports. Pages gate surfaces on these. */
@@ -94,4 +102,14 @@ export interface ConsoleBackend {
     patch: { email?: string; password?: string; ban_duration?: string; email_confirm?: boolean }
   ): Promise<AdminUser>;
   deleteUser(id: string): Promise<void>;
+
+  // SQL editor (platform-only — adminBackend throws)
+  runQuery(sql: string, production?: boolean): Promise<SqlResult>;
+
+  // storage explorer
+  listObjects(bucket: string, prefix: string, cursor?: string): Promise<StorageListResult>;
+  uploadObject(bucket: string, path: string, file: File): Promise<void>;
+  signObjectUrl(bucket: string, path: string, expiresIn?: number): Promise<{ signedURL: string }>;
+  moveObject(bucket: string, sourceKey: string, destinationKey: string): Promise<void>;
+  deleteObjects(bucket: string, prefixes: string[]): Promise<void>;
 }

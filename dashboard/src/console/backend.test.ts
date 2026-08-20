@@ -34,6 +34,12 @@ describe("ConsoleBackend types", () => {
       createUser: async () => ({ id: "" }) as any,
       updateUser: async () => ({ id: "" }) as any,
       deleteUser: async () => {},
+      runQuery: async () => ({ columns: [], rows: [], row_count: 0 }),
+      listObjects: async () => ({ folders: [], objects: [], has_next: false }),
+      uploadObject: async () => {},
+      signObjectUrl: async () => ({ signedURL: "" }),
+      moveObject: async () => {},
+      deleteObjects: async () => {},
     };
     expect(stub.capabilities.canWriteConfig).toBe(true);
   });

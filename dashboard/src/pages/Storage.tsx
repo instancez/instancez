@@ -1,12 +1,14 @@
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, HardDrive } from "lucide-react";
+import { Plus, HardDrive, Settings2, Upload as UploadIcon, ChevronRight, ArrowLeft } from "lucide-react";
 import { Box, HStack, Text, VStack } from "@chakra-ui/react";
 import { useConfig } from "../hooks/useConfig";
 import { useDialog } from "../components/Dialog";
 import { EmptyState } from "../components/EmptyState";
-import { StatusBadge } from "../components/StatusBadge";
-import { Button, ListRow } from "../components/ui";
+import { Button } from "../components/ui";
+import { ObjectTable } from "../components/ObjectTable";
 import { useBackend } from "../console/BackendContext";
+import type { StorageFolder, StorageListResult } from "../lib/types";
 
 export function Storage() {
   const backend = useBackend();
@@ -15,88 +17,145 @@ export function Storage() {
   const dialog = useDialog();
   const canWriteConfig = backend.capabilities.canWriteConfig;
 
+  const [bucket, setBucket] = useState<string | null>(null);
+  const [prefix, setPrefix] = useState("");
+  const [data, setData] = useState<StorageListResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const load = useCallback(async (b: string, p: string) => {
+    setLoading(true);
+    try { setData(await backend.listObjects(b, p)); }
+    catch { setData(null); }
+    finally { setLoading(false); }
+  }, [backend]);
+
+  useEffect(() => {
+    if (bucket != null) load(bucket, prefix);
+  }, [bucket, prefix, load]);
+
   if (!config) return null;
 
-  const buckets = Object.entries(config.storage || {}).sort(([a], [b]) =>
-    a.localeCompare(b)
-  );
+  const buckets = Object.entries(config.storage || {}).sort(([a], [b]) => a.localeCompare(b));
 
   async function addBucket() {
     const name = await dialog.prompt("Bucket name:");
     if (!name?.trim()) return;
     const bucketName = name.trim().toLowerCase().replace(/\s+/g, "_");
-
     const updated = {
       ...config!,
-      storage: {
-        ...config!.storage,
-        [bucketName]: {
-          max_size: "5MB",
-          types: ["image/*"],
-          public: false,
-          rls: [],
-        },
-      },
+      storage: { ...config!.storage, [bucketName]: { max_size: "5MB", types: ["image/*"], public: false, rls: [] } },
     };
-
-    const ok = await save(updated);
-    if (ok) navigate(bucketName, { relative: "path" });
+    await save(updated);
   }
 
-  const addButton = canWriteConfig ? (
-    <Button onClick={addBucket}>
-      <Plus size={14} />
-      Add Bucket
-    </Button>
-  ) : null;
-
-  return (
-    <Box>
+  // ── Bucket list ──────────────────────────────────────────────────────────
+  if (bucket == null) {
+    const addButton = canWriteConfig ? (
+      <Button onClick={addBucket}><Plus size={14} /> Add Bucket</Button>
+    ) : null;
+    return (
       <Box pb="8">
         <HStack justify="space-between" gap="4" pb="6">
-          <Text fontSize="sm" color="fg.muted">
-            {buckets.length} bucket{buckets.length !== 1 ? "s" : ""} configured
-          </Text>
+          <Text fontSize="sm" color="fg.muted">{buckets.length} bucket{buckets.length !== 1 ? "s" : ""} configured</Text>
           {addButton}
         </HStack>
         {buckets.length === 0 ? (
-          <EmptyState
-            icon={HardDrive}
-            title="No storage buckets"
-            description="Create a bucket to start managing file uploads."
-            action={addButton}
-          />
+          <EmptyState icon={HardDrive} title="No storage buckets"
+            description="Create a bucket to start managing file uploads." action={addButton} />
         ) : (
           <VStack gap="2" align="stretch">
-            {buckets.map(([name, bucket]) => (
-              <ListRow
-                key={name}
-                icon={HardDrive}
-                title={name}
-                onClick={() => navigate(name, { relative: "path" })}
-                badges={
-                  <>
-                    <StatusBadge variant="muted">{bucket.max_size}</StatusBadge>
-                    {(bucket.types || []).length > 0 && (
-                      <StatusBadge variant="muted">
-                        {bucket.types.length} type{bucket.types.length !== 1 ? "s" : ""}
-                      </StatusBadge>
-                    )}
-                    {bucket.public && (
-                      <StatusBadge variant="warning">public</StatusBadge>
-                    )}
-                    {(bucket.rls || []).length > 0 && (
-                      <StatusBadge variant="info">
-                        {bucket.rls.length} RLS
-                      </StatusBadge>
-                    )}
-                  </>
-                }
-              />
+            {buckets.map(([name]) => (
+              <HStack key={name} justify="space-between" px="5" py="3.5" borderRadius="xl" borderWidth="1px"
+                bg="bg" _hover={{ bg: "bg.subtle" }} transition="colors">
+                <HStack gap="3" minW="0" flex="1" cursor="pointer" onClick={() => { setPrefix(""); setBucket(name); }}>
+                  <Box as={HardDrive} boxSize="4" color="fg.muted" flexShrink="0" />
+                  <Text fontSize="sm" fontFamily="mono" fontWeight="medium" truncate>{name}</Text>
+                </HStack>
+                <Box as="button" aria-label="Bucket settings" p="1.5" borderRadius="md" color="fg.muted"
+                  _hover={{ bg: "bg.muted", color: "fg" }} cursor="pointer"
+                  onClick={() => navigate(name, { relative: "path" })}>
+                  <Settings2 size={15} />
+                </Box>
+              </HStack>
             ))}
           </VStack>
         )}
       </Box>
-    </Box>
+    );
+  }
+
+  // ── File explorer ────────────────────────────────────────────────────────
+  const segments = prefix.split("/").filter(Boolean);
+  const openFolder = (f: StorageFolder) => setPrefix(`${prefix}${f.name}/`);
+  const goTo = (i: number) => setPrefix(i < 0 ? "" : segments.slice(0, i + 1).join("/") + "/");
+
+  const reload = () => load(bucket, prefix);
+
+  async function onUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    for (const f of files) await backend.uploadObject(bucket!, prefix + f.name, f);
+    if (files.length) reload();
+  }
+
+  async function onAction(a: "download" | "copyUrl" | "rename" | "delete", o: { name: string }) {
+    const key = prefix + o.name;
+    if (a === "download" || a === "copyUrl") {
+      const { signedURL } = await backend.signObjectUrl(bucket!, key);
+      if (a === "download") window.open(signedURL, "_blank");
+      else await navigator.clipboard?.writeText(signedURL);
+      return;
+    }
+    if (a === "rename") {
+      const next = await dialog.prompt("Rename to:", { defaultValue: o.name });
+      if (!next?.trim() || next === o.name) return;
+      await backend.moveObject(bucket!, key, prefix + next.trim());
+      reload();
+      return;
+    }
+    if (a === "delete") {
+      const ok = await dialog.confirm(`Delete ${o.name}?`, { destructive: true });
+      if (!ok) return;
+      await backend.deleteObjects(bucket!, [key]);
+      reload();
+    }
+  }
+
+  return (
+    <VStack align="stretch" gap="0">
+      <HStack justify="space-between" px="1" pb="3" gap="3">
+        <HStack gap="1" fontSize="sm" minW="0" flexWrap="wrap">
+          <Box as="button" onClick={() => setBucket(null)} color="fg.muted" _hover={{ color: "fg" }} cursor="pointer">
+            <HStack gap="1"><ArrowLeft size={14} /> Buckets</HStack>
+          </Box>
+          <ChevronRight size={13} />
+          <Box as="button" onClick={() => goTo(-1)} fontFamily="mono" fontWeight="medium"
+            color={segments.length ? "fg.muted" : "fg"} _hover={{ color: "fg" }} cursor="pointer">{bucket}</Box>
+          {segments.map((s, i) => (
+            <HStack key={i} gap="1">
+              <ChevronRight size={13} />
+              <Box as="button" onClick={() => goTo(i)} fontFamily="mono"
+                color={i === segments.length - 1 ? "fg" : "fg.muted"} _hover={{ color: "fg" }} cursor="pointer">{s}</Box>
+            </HStack>
+          ))}
+        </HStack>
+        <Button size="sm" onClick={() => fileRef.current?.click()}><UploadIcon size={14} /> Upload</Button>
+        <input ref={fileRef} type="file" multiple hidden onChange={onUpload} />
+      </HStack>
+
+      {loading && !data ? (
+        <Text px="1" py="4" fontSize="sm" color="fg.muted">Loading…</Text>
+      ) : data && (data.folders.length || data.objects.length) ? (
+        <Box borderWidth="1px" borderColor="border" borderRadius="xl" overflow="hidden">
+          <ObjectTable folders={data.folders} objects={data.objects} onOpenFolder={openFolder} onAction={onAction} />
+        </Box>
+      ) : (
+        <EmptyState icon={HardDrive} title="Empty" description="No files here yet. Upload one to get started." />
+      )}
+      {data?.has_next && (
+        <Text px="1" pt="3" fontSize="xs" color="fg.muted">First 100 shown.</Text>
+      )}
+    </VStack>
   );
 }

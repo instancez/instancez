@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { renderWithChakra } from "../test/helpers";
 import { Storage } from "./Storage";
@@ -7,6 +7,7 @@ import { DialogProvider } from "../components/Dialog";
 import { ConfigContext } from "../hooks/useConfig";
 import { BackendProvider } from "../console/BackendContext";
 import { adminBackend } from "../console/adminBackend";
+import { fullCapabilities, type ConsoleBackend } from "../console/backend";
 import type { Config, ValidationError } from "../lib/types";
 
 const baseConfig = {
@@ -24,7 +25,7 @@ const baseConfig = {
   providers: { email: null, storage: null },
 } as unknown as Config;
 
-function renderStorage(config: Config) {
+function renderStorage(config: Config, backend: ConsoleBackend = adminBackend) {
   const ctx = {
     config,
     loading: false,
@@ -39,7 +40,7 @@ function renderStorage(config: Config) {
     updateConfig: vi.fn(),
   };
   return renderWithChakra(
-    <BackendProvider backend={adminBackend}>
+    <BackendProvider backend={backend}>
       <ConfigContext.Provider value={ctx}>
         <MemoryRouter>
           <DialogProvider>
@@ -56,5 +57,32 @@ describe("Storage", () => {
     renderStorage(baseConfig);
     expect(screen.getByText("uploads")).toBeInTheDocument();
     expect(screen.getByText("1 bucket configured")).toBeInTheDocument();
+  });
+
+  it("deletes an object via the context menu", async () => {
+    const deleteObjects = vi.fn(async () => {});
+    const backend = {
+      capabilities: fullCapabilities(),
+      listObjects: vi.fn(async () => ({
+        folders: [],
+        objects: [{ name: "a.png", id: "a.png", updated_at: "2026-08-16", metadata: { size: 10, mimetype: "image/png" } }],
+        has_next: false,
+      })),
+      deleteObjects,
+    } as unknown as ConsoleBackend;
+
+    renderStorage(baseConfig, backend);
+
+    // Open the bucket → file explorer.
+    fireEvent.click(screen.getByText("uploads"));
+    // Wait for the object row to load.
+    expect(await screen.findByText("a.png")).toBeInTheDocument();
+
+    // Open the row action menu, click Delete, confirm the dialog.
+    fireEvent.click(screen.getByLabelText("Actions"));
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^delete$/i }));
+
+    await waitFor(() => expect(deleteObjects).toHaveBeenCalledWith("uploads", ["a.png"]));
   });
 });

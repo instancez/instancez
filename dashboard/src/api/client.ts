@@ -5,6 +5,7 @@ import type {
   DiffResponse,
   ValidationError,
   AdminUser,
+  SqlResult,
 } from "../lib/types";
 
 const BASE = "/api/_admin";
@@ -257,6 +258,16 @@ export async function postFunctionDeps(
     method: "POST",
     body: JSON.stringify({ add, remove }),
   });
+}
+
+export async function runQuery(baseUrl: string, sql: string, production = false): Promise<SqlResult> {
+  const res = await fetch(`${baseUrl}/query`, {
+    method: "POST", credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sql, production }),
+  });
+  if (!res.ok) { const b = await res.json().catch(() => null); throw new Error(b?.error || `HTTP ${res.status}`); }
+  return res.json() as Promise<SqlResult>;
 }
 
 // Validate the secret key by calling status
