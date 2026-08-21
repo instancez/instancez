@@ -15,6 +15,7 @@ export {
   functionsRoutes,
   providersRoutes,
   projectRoutes,
+  sqlRoutes,
 } from "./routes";
 export { DiffViewer } from "../components/DiffViewer";
 export { ConfirmSaveDialog } from "../components/ConfirmSaveDialog";

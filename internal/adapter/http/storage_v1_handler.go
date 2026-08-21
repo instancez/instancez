@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -196,6 +197,29 @@ func (h *StorageV1Handler) cleanPath(p string) string {
 	return path.Clean(p)
 }
 
+// objectMetadataJSON builds the exact Supabase storage ObjectMetadata blob
+// persisted to storage.objects.metadata on upload. eTag is written empty: the
+// row is persisted before the bytes reach the object store (RLS-atomic
+// ordering), so the backend ETag isn't known yet. Migration preserves the real
+// eTag from the source.
+// ponytail: empty eTag at upload; upgrade to a post-commit Head()+jsonb_set if
+// clients need live eTags.
+func objectMetadataJSON(size int64, contentType, cacheControl string) string {
+	if cacheControl == "" {
+		cacheControl = "max-age=3600" // Supabase default
+	}
+	b, _ := json.Marshal(map[string]any{
+		"size":           size,
+		"contentLength":  size,
+		"mimetype":       contentType,
+		"cacheControl":   cacheControl,
+		"lastModified":   time.Now().UTC().Format(time.RFC3339),
+		"eTag":           "",
+		"httpStatusCode": 200,
+	})
+	return string(b)
+}
+
 func (h *StorageV1Handler) uploadObject(c *gin.Context) {
 	h.doUpload(c, false)
 }
@@ -287,6 +311,8 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 		size = 0
 	}
 
+	metaJSON := objectMetadataJSON(size, contentType, c.GetHeader("Cache-Control"))
+
 	// Write the metadata row FIRST, inside a transaction bound to the caller's
 	// role, so that RLS authorizes the write before any bytes reach the object
 	// store. If the policy denies the write we roll back and never touch S3;
@@ -301,8 +327,8 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 
 	if isUpdate {
 		n, err := tx.Exec(ctx,
-			"UPDATE storage.objects SET size = $1, mime = $2, uploaded_at = NOW(), uploaded_by = $3 WHERE bucket_id = $4 AND name = $5",
-			size, contentType, uploadedBy, bucketName, objPath)
+			"UPDATE storage.objects SET size = $1, mime = $2, metadata = $3::jsonb, uploaded_at = NOW(), uploaded_by = $4 WHERE bucket_id = $5 AND name = $6",
+			size, contentType, metaJSON, uploadedBy, bucketName, objPath)
 		if err != nil {
 			h.uploadWriteError(c, err)
 			return
@@ -316,18 +342,18 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 		upsert := c.GetHeader("x-upsert") == "true"
 		if upsert {
 			if _, err := tx.Exec(ctx,
-				`INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by)
-				 VALUES ($1, $2, $3, $4, $5)
+				`INSERT INTO storage.objects (bucket_id, name, size, mime, metadata, uploaded_by)
+				 VALUES ($1, $2, $3, $4, $5::jsonb, $6)
 				 ON CONFLICT (bucket_id, name)
-				 DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime, uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW()`,
-				bucketName, objPath, size, contentType, uploadedBy); err != nil {
+				 DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime, metadata = EXCLUDED.metadata, uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW()`,
+				bucketName, objPath, size, contentType, metaJSON, uploadedBy); err != nil {
 				h.uploadWriteError(c, err)
 				return
 			}
 		} else {
 			if _, err := tx.Exec(ctx,
-				"INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by) VALUES ($1, $2, $3, $4, $5)",
-				bucketName, objPath, size, contentType, uploadedBy); err != nil {
+				"INSERT INTO storage.objects (bucket_id, name, size, mime, metadata, uploaded_by) VALUES ($1, $2, $3, $4, $5::jsonb, $6)",
+				bucketName, objPath, size, contentType, metaJSON, uploadedBy); err != nil {
 				h.uploadWriteError(c, err)
 				return
 			}
@@ -1049,12 +1075,13 @@ func (h *StorageV1Handler) uploadToSignedURL(c *gin.Context) {
 	if owner != "" {
 		uploadedBy = owner
 	}
+	metaJSON := objectMetadataJSON(size, contentType, c.GetHeader("Cache-Control"))
 	_, _ = h.db.Exec(ctx,
-		`INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by)
-		 VALUES ($1, $2, $3, $4, $5)
+		`INSERT INTO storage.objects (bucket_id, name, size, mime, metadata, uploaded_by)
+		 VALUES ($1, $2, $3, $4, $5::jsonb, $6)
 		 ON CONFLICT (bucket_id, name)
-		 DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime, uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW()`,
-		bucketName, objPath, size, contentType, uploadedBy)
+		 DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime, metadata = EXCLUDED.metadata, uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW()`,
+		bucketName, objPath, size, contentType, metaJSON, uploadedBy)
 
 	c.JSON(200, gin.H{
 		"Key":      bucketName + "/" + objPath,

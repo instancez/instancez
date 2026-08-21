@@ -213,6 +213,34 @@ export type ConfigStatus = {
   oauth_callback_base?: string;
 };
 
+export interface SqlResult {
+  // Postgres/Go returns null (not []) for a zero-row or non-SELECT result;
+  // callers normalize with ?? before mapping.
+  columns: string[] | null;
+  rows: unknown[][] | null;
+  row_count: number | null;
+}
+
+// Storage explorer — Size/Type read from `metadata` (exact Supabase keys).
+export interface StorageObject {
+  name: string;
+  id: string;
+  updated_at: string;
+  metadata: ({ size?: number; mimetype?: string } & Record<string, unknown>) | null;
+}
+
+export interface StorageFolder {
+  name: string;
+  key: string;
+}
+
+export interface StorageListResult {
+  folders: StorageFolder[];
+  objects: StorageObject[];
+  has_next: boolean;
+  next_cursor?: string;
+}
+
 export interface AdminUser {
   id: string;
   email: string;

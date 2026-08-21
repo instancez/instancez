@@ -31,6 +31,7 @@ const FunctionDetail = lazy(() => import("../pages/FunctionDetail").then(m => ({
 const ProvidersPage = lazy(() => import("../pages/Providers").then(m => ({ default: m.ProvidersPage })));
 const UsersPage = lazy(() => import("../pages/Users").then(m => ({ default: m.UsersPage })));
 const ProjectPage = lazy(() => import("../pages/Project").then(m => ({ default: m.ProjectPage })));
+const SqlEditor = lazy(() => import("../pages/SqlEditor").then((m) => ({ default: m.SqlEditor })));
 
 export const overviewRoutes = (): RouteObject[] => [
   { index: true, element: <Overview />, handle: { title: null } satisfies ConsoleRouteHandle },
@@ -78,6 +79,11 @@ export const usersRoutes = (): RouteObject[] => [
 
 export const projectRoutes = (): RouteObject[] => [
   { index: true, element: <ProjectPage />, handle: { title: "Project" } satisfies ConsoleRouteHandle },
+];
+
+// Platform-only: registered by appBackend.tsx, not in the OSS Sidebar/consoleRoutes.
+export const sqlRoutes = (): RouteObject[] => [
+  { index: true, element: <SqlEditor />, handle: { title: "SQL Editor" } satisfies ConsoleRouteHandle },
 ];
 
 export function consoleRoutes(): RouteObject[] {

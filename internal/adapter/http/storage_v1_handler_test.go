@@ -14,6 +14,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/instancez/instancez/internal/domain"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // --- stubObjectStore ---
@@ -642,6 +644,45 @@ func TestUploadObject_Success(t *testing.T) {
 	if resp["Key"] != "avatars/photo.jpg" {
 		t.Errorf("response Key = %v", resp["Key"])
 	}
+}
+
+func TestUploadObject_WritesMetadata(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var gotQuery string
+	var gotArgs []any
+	tx := &stubTx{execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
+		gotQuery, gotArgs = q, args
+		return 1, nil
+	}}
+	db := &stubDB{beginFn: func(ctx context.Context) (domain.Tx, error) { return tx, nil }}
+	store := &stubObjectStore{}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
+
+	r := gin.New()
+	r.POST("/storage/v1/object/:bucket/*path", func(c *gin.Context) {
+		setTestSession(c, domain.Session{Role: "authenticated", UserID: "u1", IsAuthenticated: true})
+		h.uploadObject(c)
+	})
+	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/photo.jpg", strings.NewReader("hello world"))
+	req.Header.Set("Content-Type", "image/jpeg")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Contains(t, gotQuery, "metadata")
+	// find the metadata json arg and assert exact keys/values
+	var found string
+	for _, a := range gotArgs {
+		if s, ok := a.(string); ok && strings.Contains(s, "mimetype") {
+			found = s
+		}
+	}
+	require.NotEmpty(t, found, "metadata json arg not passed")
+	assert.Contains(t, found, `"mimetype":"image/jpeg"`)
+	assert.Contains(t, found, `"size":11`)
+	assert.Contains(t, found, `"cacheControl"`)
+	assert.Contains(t, found, `"httpStatusCode":200`)
 }
 
 func TestUploadObject_DuplicateKeyConflict(t *testing.T) {
