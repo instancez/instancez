@@ -78,7 +78,7 @@ export function Storage() {
                 </HStack>
                 <Box as="button" aria-label="Bucket settings" p="1.5" borderRadius="md" color="fg.muted"
                   _hover={{ bg: "bg.muted", color: "fg" }} cursor="pointer"
-                  onClick={() => void navigate(name, { relative: "path" })}>
+                  onClick={() => { void navigate(name, { relative: "path" }); }}>
                   <Settings2 size={15} />
                 </Box>
               </HStack>
