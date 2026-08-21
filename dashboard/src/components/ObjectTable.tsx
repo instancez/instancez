@@ -44,7 +44,7 @@ export function ObjectTable(props: {
         </Box>
         <Box as="tbody">
           {folders.map((f) => (
-            <Box as="tr" key={`d:${f.key}`} _hover={{ bg: "bg.subtle" }} cursor="pointer" onClick={() => onOpenFolder(f)}>
+            <Box as="tr" key={`d:${f.key}`} _hover={{ bg: "bg.subtle" }} cursor="pointer" onClick={() => { onOpenFolder(f); }}>
               <Box as="td" {...cell}>
                 <HStack gap="2"><Box as={Folder} boxSize="4" color="fg.muted" /><Text fontFamily="mono">{f.name}</Text></HStack>
               </Box>
@@ -69,13 +69,13 @@ export function ObjectTable(props: {
                   color="fg.muted"
                   _hover={{ bg: "bg.muted", color: "fg" }}
                   cursor="pointer"
-                  onClick={() => setOpen((k) => (k === (o.id || o.name) ? null : o.id || o.name))}
+                  onClick={() => { setOpen((k) => (k === (o.id || o.name) ? null : o.id || o.name)); }}
                 >
                   <MoreHorizontal size={16} />
                 </Box>
                 {open === (o.id || o.name) && (
                   <>
-                    <Box position="fixed" inset="0" zIndex="1" onClick={() => setOpen(null)} />
+                    <Box position="fixed" inset="0" zIndex="1" onClick={() => { setOpen(null); }} />
                     <Box
                       position="absolute" right="2" top="100%" zIndex="2" minW="150px"
                       bg="bg.panel" borderWidth="1px" borderColor="border" borderRadius="lg" boxShadow="lg" py="1"

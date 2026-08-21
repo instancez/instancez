@@ -6,6 +6,7 @@ import type { StorageListResult } from "../lib/types";
 // The browser session cookie authorizes; nothing extra to attach.
 const STORAGE = "/storage/v1";
 async function storageFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  // nosemgrep: rules_lgpl_javascript_ssrf_rule-node-ssrf -- host is the fixed app origin; only path segments are user data
   const res = await fetch(`${STORAGE}${path}`, { credentials: "include", ...init });
   if (!res.ok) {
     const b = await res.json().catch(() => null);

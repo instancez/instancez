@@ -214,9 +214,11 @@ export type ConfigStatus = {
 };
 
 export interface SqlResult {
-  columns: string[];
-  rows: unknown[][];
-  row_count: number;
+  // Postgres/Go returns null (not []) for a zero-row or non-SELECT result;
+  // callers normalize with ?? before mapping.
+  columns: string[] | null;
+  rows: unknown[][] | null;
+  row_count: number | null;
 }
 
 // Storage explorer — Size/Type read from `metadata` (exact Supabase keys).

@@ -36,20 +36,20 @@ export function Storage() {
 
   if (!config) return null;
 
-  const buckets = Object.entries(config.storage || {}).sort(([a], [b]) => a.localeCompare(b));
+  const buckets = Object.entries(config.storage).sort(([a], [b]) => a.localeCompare(b));
 
-  async function addBucket() {
+  const addBucket = async () => {
     const name = await dialog.prompt("Bucket name:");
     if (!name?.trim()) return;
     const bucketName = name.trim().toLowerCase().replace(/\s+/g, "_");
     const updated = {
-      ...config!,
-      storage: { ...config!.storage, [bucketName]: { max_size: "5MB", types: ["image/*"], public: false, rls: [] } },
+      ...config,
+      storage: { ...config.storage, [bucketName]: { max_size: "5MB", types: ["image/*"], public: false, rls: [] } },
     };
     try {
       await save(updated);
     } catch (err) {
-      await dialog.alert("Couldn't create bucket", { message: (err as Error)?.message });
+      await dialog.alert("Couldn't create bucket", { message: (err as Error).message });
     }
   }
 
@@ -91,48 +91,47 @@ export function Storage() {
 
   // ── File explorer ────────────────────────────────────────────────────────
   const segments = prefix.split("/").filter(Boolean);
-  const openFolder = (f: StorageFolder) => setPrefix(`${prefix}${f.name}/`);
-  const goTo = (i: number) => setPrefix(i < 0 ? "" : segments.slice(0, i + 1).join("/") + "/");
+  const openFolder = (f: StorageFolder) => { setPrefix(`${prefix}${f.name}/`); };
+  const goTo = (i: number) => { setPrefix(i < 0 ? "" : segments.slice(0, i + 1).join("/") + "/"); };
 
   const reload = () => { void load(bucket, prefix); };
 
-  async function onUpload(e: React.ChangeEvent<HTMLInputElement>) {
+  const onUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     e.target.value = "";
     try {
-      for (const f of files) await backend.uploadObject(bucket!, prefix + f.name, f);
+      for (const f of files) await backend.uploadObject(bucket, prefix + f.name, f);
     } catch (err) {
-      await dialog.alert("Upload failed", { message: (err as Error)?.message });
+      await dialog.alert("Upload failed", { message: (err as Error).message });
     }
     if (files.length) reload();
   }
 
-  async function handleAction(a: "download" | "copyUrl" | "rename" | "delete", o: { name: string }) {
+  const handleAction = async (a: "download" | "copyUrl" | "rename" | "delete", o: { name: string }) => {
     const key = prefix + o.name;
     try {
       if (a === "download" || a === "copyUrl") {
-        const { signedURL } = await backend.signObjectUrl(bucket!, key);
+        const { signedURL } = await backend.signObjectUrl(bucket, key);
         // window.open (unlike <a target=_blank>) does not imply noopener; a signed
         // URL can resolve to user-uploaded HTML, so isolate the opened tab.
         if (a === "download") window.open(signedURL, "_blank", "noopener,noreferrer");
-        else await navigator.clipboard?.writeText(signedURL);
+        else await navigator.clipboard.writeText(signedURL);
         return;
       }
       if (a === "rename") {
         const next = await dialog.prompt("Rename to:", { defaultValue: o.name });
         if (!next?.trim() || next === o.name) return;
-        await backend.moveObject(bucket!, key, prefix + next.trim());
+        await backend.moveObject(bucket, key, prefix + next.trim());
         reload();
         return;
       }
-      if (a === "delete") {
-        const ok = await dialog.confirm(`Delete ${o.name}?`, { destructive: true });
-        if (!ok) return;
-        await backend.deleteObjects(bucket!, [key]);
-        reload();
-      }
+      // a is narrowed to "delete" here (download/copyUrl/rename returned above).
+      const ok = await dialog.confirm(`Delete ${o.name}?`, { destructive: true });
+      if (!ok) return;
+      await backend.deleteObjects(bucket, [key]);
+      reload();
     } catch (err) {
-      await dialog.alert("Action failed", { message: (err as Error)?.message });
+      await dialog.alert("Action failed", { message: (err as Error).message });
     }
   }
 
@@ -140,16 +139,16 @@ export function Storage() {
     <VStack align="stretch" gap="0">
       <HStack justify="space-between" px="1" pb="3" gap="3">
         <HStack gap="1" fontSize="sm" minW="0" flexWrap="wrap">
-          <Box as="button" onClick={() => setBucket(null)} color="fg.muted" _hover={{ color: "fg" }} cursor="pointer">
+          <Box as="button" onClick={() => { setBucket(null); }} color="fg.muted" _hover={{ color: "fg" }} cursor="pointer">
             <HStack gap="1"><ArrowLeft size={14} /> Buckets</HStack>
           </Box>
           <ChevronRight size={13} />
-          <Box as="button" onClick={() => goTo(-1)} fontFamily="mono" fontWeight="medium"
+          <Box as="button" onClick={() => { goTo(-1); }} fontFamily="mono" fontWeight="medium"
             color={segments.length ? "fg.muted" : "fg"} _hover={{ color: "fg" }} cursor="pointer">{bucket}</Box>
           {segments.map((s, i) => (
             <HStack key={i} gap="1">
               <ChevronRight size={13} />
-              <Box as="button" onClick={() => goTo(i)} fontFamily="mono"
+              <Box as="button" onClick={() => { goTo(i); }} fontFamily="mono"
                 color={i === segments.length - 1 ? "fg" : "fg.muted"} _hover={{ color: "fg" }} cursor="pointer">{s}</Box>
             </HStack>
           ))}
