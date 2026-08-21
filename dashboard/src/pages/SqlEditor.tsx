@@ -28,7 +28,12 @@ export function SqlEditor() {
   const run = useCallback(async () => {
     if (!sql.trim() || running) return;
     setRunning(true); setError(null);
-    try { setResult(await backend.runQuery(sql)); }
+    try {
+      // Postgres/Go returns null (not []) for a zero-row or non-SELECT result;
+      // normalize so the grid never maps over null.
+      const r = await backend.runQuery(sql);
+      setResult({ columns: r.columns ?? [], rows: r.rows ?? [], row_count: r.row_count ?? 0 });
+    }
     catch (e) { setError((e as Error)?.message || "Query failed."); setResult(null); }
     finally { setRunning(false); }
   }, [backend, sql, running]);
