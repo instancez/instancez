@@ -121,7 +121,6 @@ If you didn't request a reset, you can safely ignore this email — your passwor
 
 const DEFAULT_AUTH: Auth = {
   jwt_expiry: "15m",
-  refresh_tokens: true,
   refresh_token_expiry: "7d",
   allow_signup: null,
   allow_anonymous: null,
@@ -333,11 +332,6 @@ export function AuthPage() {
                   />
                 </Field>
               </Grid>
-              <Toggle
-                checked={auth.refresh_tokens}
-                onChange={(v) => updateAuth((a) => ({ ...a, refresh_tokens: v }))}
-                label="Enable refresh tokens"
-              />
             </Section>
 
             <Section title="Sign-up & verification" icon={UserPlus}>

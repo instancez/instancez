@@ -523,6 +523,19 @@ func generateJWTKeysTable() []string {
 	}
 }
 
+// refreshTokensDDL is shared by generateAuthTables and diffNewAuth's
+// heal-existing-deployments path so the two stay in sync.
+const refreshTokensDDL = `CREATE TABLE IF NOT EXISTS auth.refresh_tokens (
+  id BIGSERIAL PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  token TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  session_id TEXT,
+  ip TEXT,
+  user_agent TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);`
+
 // generateAuthTables emits the auth.* tables. All tables live in the auth
 // schema; the underscore prefixes used pre-schema-move are dropped because
 // the schema already provides the namespace. Names align with Supabase's
@@ -570,16 +583,7 @@ func generateAuthTables(auth *domain.Auth) []string {
   UNIQUE(provider, provider_user_id)
 );`)
 
-	ddl = append(ddl, `CREATE TABLE IF NOT EXISTS auth.refresh_tokens (
-  id BIGSERIAL PRIMARY KEY,
-  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  token TEXT NOT NULL UNIQUE,
-  expires_at TIMESTAMPTZ NOT NULL,
-  session_id TEXT,
-  ip TEXT,
-  user_agent TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);`)
+	ddl = append(ddl, refreshTokensDDL)
 
 	if auth.Email != nil {
 		ddl = append(ddl, `CREATE TABLE IF NOT EXISTS auth.one_time_tokens (

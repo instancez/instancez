@@ -25,7 +25,6 @@ const makeConfig = (authEnabled: boolean): Config => ({
   auth: authEnabled
     ? {
         jwt_expiry: "15m",
-        refresh_tokens: true,
         refresh_token_expiry: "7d",
         allow_signup: null,
         allow_anonymous: null,

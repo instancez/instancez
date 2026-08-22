@@ -34,6 +34,18 @@ func TestAuth_IsRedirectAllowed(t *testing.T) {
 	}
 }
 
+// IsRedirectAllowed must be safe on a nil *Auth (no configured allowlist).
+func TestAuth_IsRedirectAllowed_NilReceiver(t *testing.T) {
+	var a *Auth
+	const base = "https://app.example.com"
+	if !a.IsRedirectAllowed("/reset", base) {
+		t.Error("relative path should be allowed on nil receiver")
+	}
+	if a.IsRedirectAllowed("https://evil.com", base) {
+		t.Error("off-origin absolute URL should be rejected on nil receiver")
+	}
+}
+
 // Nil defaults to allowed: this is the backward-compatibility contract for
 // configs written before the flags existed.
 func TestAuth_SignupAllowed_DefaultsTrue(t *testing.T) {
