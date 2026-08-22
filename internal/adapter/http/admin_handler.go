@@ -115,6 +115,7 @@ func (h *AdminHandler) Mount(api *gin.RouterGroup) {
 	admin.PUT("/config/dotenv", h.handlePutDotenv)
 	admin.POST("/config/preview", h.handlePreviewConfig)
 	admin.GET("/stats", h.handleStats)
+	admin.POST("/query", h.handleQuery)
 
 	// API keys (dashboard Settings → API equivalent). The admin key itself is
 	// never echoed back — the dashboard already holds it from login.
@@ -674,6 +675,45 @@ func (h *AdminHandler) handleStats(c *gin.Context) {
 	result["storage"] = storage
 
 	c.JSON(200, result)
+}
+
+// sqlRunner is the raw-SQL capability the SQL editor needs; the owner pool
+// (*postgres.DB) implements it, keeping RunSQL off the broad domain.Database interface.
+type sqlRunner interface {
+	RunSQL(ctx context.Context, sql string, readOnly bool, limit int) ([]string, [][]any, error)
+}
+
+const sqlEditorRowLimit = 1000
+
+// handleQuery runs an admin-submitted SQL buffer against the owner pool. In
+// readonly dashboard mode the buffer runs in a READ ONLY transaction.
+func (h *AdminHandler) handleQuery(c *gin.Context) {
+	if h.dashboardMode == DashboardDisabled {
+		adminErr(c, 403, "dashboard_disabled", "SQL editor is disabled")
+		return
+	}
+	var body struct {
+		SQL string `json:"sql"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		adminErr(c, 400, "bad_request", "Invalid request body")
+		return
+	}
+	if strings.TrimSpace(body.SQL) == "" {
+		adminErr(c, 400, "bad_request", "SQL is required")
+		return
+	}
+	runner, ok := h.migrationDB().(sqlRunner)
+	if !ok {
+		adminErr(c, 501, "not_implemented", "SQL editor is not available in this deployment")
+		return
+	}
+	cols, rows, err := runner.RunSQL(c.Request.Context(), body.SQL, h.dashboardMode == DashboardReadonly, sqlEditorRowLimit)
+	if err != nil {
+		adminErr(c, 400, "query_failed", err.Error())
+		return
+	}
+	c.JSON(200, gin.H{"columns": cols, "rows": rows, "row_count": len(rows)})
 }
 
 // handleGetFunctionCode reads the source file for a declared code function.
