@@ -70,6 +70,56 @@ func TestEngineFallsBackOnMigrationFailure(t *testing.T) {
 	}
 }
 
+// TestEngineProvisionsStorageWhenDestructiveBlocked: when a boot/reconcile apply
+// is gated as destructive (a dropped column) but the same config adds a bucket,
+// the engine falls back to last-known-good AND still provisions storage.objects,
+// so a configured bucket has its DB backing even while the drop stays gated.
+func TestEngineProvisionsStorageWhenDestructiveBlocked(t *testing.T) {
+	db := newFakeDB(t)
+	roles := domain.DefaultRoles()
+	authDB := newFakeRequestDB(t)
+
+	good := &domain.Config{
+		Tables: map[string]domain.Table{
+			"posts": {Fields: []domain.Field{
+				{Name: "id", Type: "BIGINT", PrimaryKey: true},
+				{Name: "featured_image_url", Type: "text"},
+			}},
+		},
+		Server: domain.Server{Port: 8080},
+	}
+	migrator := NewMigrator(db, roles)
+	if err := migrator.Apply(context.Background(), good); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	execsBefore := len(db.execs)
+
+	// Drop featured_image_url (destructive) AND add a bucket.
+	bad := &domain.Config{
+		Tables: map[string]domain.Table{
+			"posts": {Fields: []domain.Field{{Name: "id", Type: "BIGINT", PrimaryKey: true}}},
+		},
+		Storage: map[string]domain.Bucket{"blog_images": {Public: true}},
+		Server:  domain.Server{Port: 8080},
+	}
+
+	engine := NewEngine(bad, domain.OwnerDB{Database: db}, authDB, roles, WithMode(ModeProd), WithMigrate(true))
+	tracker, err := engine.applyMigrationsWithFallback(context.Background())
+	if err != nil {
+		t.Fatalf("engine should recover on a destructive block: %v", err)
+	}
+	if tracker.Snapshot().Status != DriftStatusDrift {
+		t.Fatalf("expected drift status, got %q", tracker.Snapshot().Status)
+	}
+	joined := strings.Join(db.execs[execsBefore:], "\n")
+	if !strings.Contains(joined, "storage.objects") {
+		t.Fatalf("storage.objects must be provisioned despite the destructive block:\n%s", joined)
+	}
+	if strings.Contains(joined, "DROP COLUMN") {
+		t.Fatalf("the destructive DROP must stay gated:\n%s", joined)
+	}
+}
+
 // TestEngineFailsHardOnFirstBootMigrationFailure: with no recorded
 // last-known-good, there is nothing to fall back to and the boot must error.
 func TestEngineFailsHardOnFirstBootMigrationFailure(t *testing.T) {

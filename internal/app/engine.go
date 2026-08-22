@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -167,6 +168,19 @@ func (e *Engine) applyMigrationsWithFallback(ctx context.Context) (*DriftTracker
 		return tracker, nil
 	} else {
 		applyErr := err
+
+		// A destructive change gates the whole plan, discarding the additive
+		// provisioning (e.g. storage.objects) that shipped in the same authoritative
+		// config. Provision the safe, idempotent subset so a configured bucket still
+		// gets its DB backing; the drop stays gated and we still fall back + report
+		// drift below. e.cfg is still the attempted config here (swap happens later).
+		if errors.Is(applyErr, ErrDestructive) {
+			if perr := e.migrator.ProvisionIdempotent(ctx, e.cfg); perr != nil {
+				e.logger.Error("idempotent provisioning after destructive block failed", "error", perr)
+			} else {
+				e.logger.Warn("destructive change blocked; applied additive provisioning only", "reason", applyErr.Error())
+			}
+		}
 
 		last, lastErr := e.ownerDB.GetLastMigration(ctx)
 		if lastErr != nil {
