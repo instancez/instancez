@@ -5,6 +5,7 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/instancez/instancez/internal/adapter/postgres"
@@ -123,6 +124,59 @@ func TestRunSQL(t *testing.T) {
 		}
 		if len(rows) != 1000 {
 			t.Fatalf("rows = %d, want 1000", len(rows))
+		}
+	})
+
+	t.Run("statement_timeout", func(t *testing.T) {
+		restore := postgres.SetSQLEditorStatementTimeoutForTest("150ms")
+		defer restore()
+		_, _, err := db.RunSQL(ctx, "SELECT pg_sleep(2)", false, 1000)
+		if err == nil {
+			t.Fatal("expected statement_timeout cancellation, got nil")
+		}
+	})
+
+	t.Run("readwrite_values_are_text", func(t *testing.T) {
+		_, rows, err := db.RunSQL(ctx, "SELECT true AS b, 7 AS n", false, 1000)
+		if err != nil {
+			t.Fatalf("RunSQL: %v", err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("rows = %v, want 1 row", rows)
+		}
+		if b, ok := rows[0][0].(string); !ok || b != "t" {
+			t.Fatalf("rows[0][0] = %#v, want string \"t\"", rows[0][0])
+		}
+		if n, ok := rows[0][1].(string); !ok || n != "7" {
+			t.Fatalf("rows[0][1] = %#v, want string \"7\"", rows[0][1])
+		}
+	})
+
+	t.Run("readonly_values_are_typed", func(t *testing.T) {
+		_, rows, err := db.RunSQL(ctx, "SELECT true AS b", true, 1000)
+		if err != nil {
+			t.Fatalf("RunSQL: %v", err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("rows = %v, want 1 row", rows)
+		}
+		if reflect.TypeOf(rows[0][0]).Kind() != reflect.Bool {
+			t.Fatalf("rows[0][0] = %#v (%T), want Go bool", rows[0][0], rows[0][0])
+		}
+		if b, ok := rows[0][0].(bool); !ok || !b {
+			t.Fatalf("rows[0][0] = %#v, want true", rows[0][0])
+		}
+	})
+
+	t.Run("read_only_rejects_data_modifying_cte", func(t *testing.T) {
+		_, _, err := db.RunSQL(ctx, "CREATE TABLE cte_t(x int)", false, 1000)
+		if err != nil {
+			t.Fatalf("RunSQL (setup): %v", err)
+		}
+		_, _, err = db.RunSQL(ctx,
+			"WITH ins AS (INSERT INTO cte_t VALUES (1) RETURNING x) SELECT * FROM ins", true, 1000)
+		if err == nil {
+			t.Fatal("expected read-only rejection of data-modifying CTE")
 		}
 	})
 }

@@ -122,5 +122,6 @@ describe("storage requests", () => {
       adminBackend.uploadObject("b", "p.txt", new File(["x"], "p.txt"))
     ).rejects.toThrow("Unauthorized");
     expect(sessionStorage.getItem("instancez_secret_key")).toBeNull();
+    expect(reloadMock).toHaveBeenCalledTimes(1);
   });
 });

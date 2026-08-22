@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -162,5 +163,48 @@ func TestHandleQueryReadonlyModePassesReadOnlyTrue(t *testing.T) {
 	}
 	if !runner.gotReadOnly {
 		t.Fatal("gotReadOnly = false, want true in readonly dashboard mode")
+	}
+}
+
+func TestHandleQueryAuditLogSuccess(t *testing.T) {
+	var buf bytes.Buffer
+	runner := &queryStubDB{cols: []string{"a"}, rows: [][]any{{"1"}}}
+	h := newQueryTestHandler(runner, DashboardReadwrite)
+	h.logger = slog.New(slog.NewJSONHandler(&buf, nil))
+
+	w := doQuery(h, `{"sql":"select secret_column from t"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	log := buf.String()
+	if !strings.Contains(log, "sql editor query") {
+		t.Fatalf("log missing \"sql editor query\": %s", log)
+	}
+	if !strings.Contains(log, `"rows":1`) {
+		t.Fatalf("log missing rows=1: %s", log)
+	}
+	if !strings.Contains(log, `"read_only":false`) {
+		t.Fatalf("log missing read_only=false: %s", log)
+	}
+	if strings.Contains(log, "secret_column") {
+		t.Fatalf("log must not contain SQL text: %s", log)
+	}
+}
+
+func TestHandleQueryAuditLogFailure(t *testing.T) {
+	var buf bytes.Buffer
+	runner := &queryStubDB{err: errors.New("syntax error")}
+	h := newQueryTestHandler(runner, DashboardReadwrite)
+	h.logger = slog.New(slog.NewJSONHandler(&buf, nil))
+
+	w := doQuery(h, `{"sql":"SELECT 1"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	log := buf.String()
+	if !strings.Contains(log, "sql editor query failed") {
+		t.Fatalf("log missing \"sql editor query failed\": %s", log)
 	}
 }
