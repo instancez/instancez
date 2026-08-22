@@ -13,7 +13,6 @@ providers:
         type: local
 auth:
     jwt_expiry: 15m
-    refresh_tokens: true
 tables:
     notes:
         fields:
