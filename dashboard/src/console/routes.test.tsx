@@ -43,4 +43,15 @@ describe("consoleRoutes", () => {
     );
     await waitFor(() => expect(screen.getByText("Email Provider")).toBeInTheDocument());
   });
+
+  it("mounts the SQL editor", async () => {
+    renderWithChakra(
+      <MemoryRouter initialEntries={["/sql"]}>
+        <ConsoleProvider backend={adminBackend}>
+          <Console />
+        </ConsoleProvider>
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(screen.getByRole("button", { name: /run/i })).toBeInTheDocument());
+  });
 });
