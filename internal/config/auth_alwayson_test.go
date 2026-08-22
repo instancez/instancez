@@ -46,6 +46,26 @@ func TestApplyDefaults_RefreshTokensDeprecationWarning(t *testing.T) {
 	}
 }
 
+// TestParseBytes_DeprecatedRefreshTokensFalseAccepted proves the strict YAML
+// decoder still accepts old config with auth.refresh_tokens: false (no
+// unknown-key/type error) and ignores it — refresh tokens stay always-on.
+func TestParseBytes_DeprecatedRefreshTokensFalseAccepted(t *testing.T) {
+	src := []byte("version: 1\nauth:\n  refresh_tokens: false\n")
+	cfg, err := ParseBytes(src, "test.yaml")
+	if err != nil {
+		t.Fatalf("strict decode should accept deprecated refresh_tokens key, got: %v", err)
+	}
+	if cfg.Auth == nil {
+		t.Fatal("Auth must be non-nil (always-on)")
+	}
+	if cfg.Auth.RefreshTokens == nil || *cfg.Auth.RefreshTokens != false {
+		t.Errorf("RefreshTokens should decode to a pointer to false, got %v", cfg.Auth.RefreshTokens)
+	}
+	if cfg.Auth.RefreshTokenExpiry == "" {
+		t.Error("RefreshTokenExpiry default should still be applied despite the ignored toggle")
+	}
+}
+
 func TestApplyDefaults_NoWarningWhenRefreshTokensUnset(t *testing.T) {
 	var buf bytes.Buffer
 	old := slog.Default()
