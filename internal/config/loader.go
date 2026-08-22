@@ -249,14 +249,16 @@ func applyDefaults(cfg *domain.Config) {
 		cfg.Database.Pool.IdleTimeout = "300s"
 	}
 
-	// Auth defaults
-	if cfg.Auth != nil {
-		if cfg.Auth.JWTExpiry == "" {
-			cfg.Auth.JWTExpiry = "15m"
-		}
-		if cfg.Auth.RefreshTokenExpiry == "" && cfg.Auth.RefreshTokens {
-			cfg.Auth.RefreshTokenExpiry = "7d"
-		}
+	// Auth is always-on: ensure the block exists so auth is provisioned even
+	// when the config omits it.
+	if cfg.Auth == nil {
+		cfg.Auth = &domain.Auth{}
+	}
+	if cfg.Auth.JWTExpiry == "" {
+		cfg.Auth.JWTExpiry = "15m"
+	}
+	if cfg.Auth.RefreshTokenExpiry == "" {
+		cfg.Auth.RefreshTokenExpiry = "7d"
 	}
 
 	// RPC: fill defaults and derive ReturnCategory.
