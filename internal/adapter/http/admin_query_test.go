@@ -34,6 +34,21 @@ func (s *queryStubDB) RunSQL(ctx context.Context, sql string, readOnly bool, lim
 	return s.cols, s.rows, s.err
 }
 
+// newQueryTestHandler builds the minimal AdminHandler the query tests need;
+// runner may be nil to exercise the no-RunSQL-support path.
+func newQueryTestHandler(runner *queryStubDB, mode DashboardMode) *AdminHandler {
+	h := &AdminHandler{
+		cfg:           &domain.Config{},
+		db:            &stubDB{},
+		logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		dashboardMode: mode,
+	}
+	if runner != nil {
+		h.ownerDB = domain.OwnerDB{Database: runner}
+	}
+	return h
+}
+
 func newQueryTestRouter(h *AdminHandler) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -52,13 +67,7 @@ func doQuery(h *AdminHandler, body string) *httptest.ResponseRecorder {
 
 func TestHandleQuerySuccess(t *testing.T) {
 	runner := &queryStubDB{cols: []string{"a", "b"}, rows: [][]any{{"1", "x"}}}
-	h := &AdminHandler{
-		cfg:           &domain.Config{},
-		db:            &stubDB{},
-		ownerDB:       domain.OwnerDB{Database: runner},
-		logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
-		dashboardMode: DashboardReadwrite,
-	}
+	h := newQueryTestHandler(runner, DashboardReadwrite)
 	w := doQuery(h, `{"sql":"SELECT 1 AS a, 'x' AS b"}`)
 
 	if w.Code != http.StatusOK {
@@ -92,13 +101,7 @@ func TestHandleQuerySuccess(t *testing.T) {
 func TestHandleQueryEmptySQL(t *testing.T) {
 	for _, body := range []string{`{"sql":""}`, `{"sql":"   "}`, `{}`} {
 		runner := &queryStubDB{}
-		h := &AdminHandler{
-			cfg:           &domain.Config{},
-			db:            &stubDB{},
-			ownerDB:       domain.OwnerDB{Database: runner},
-			logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
-			dashboardMode: DashboardReadwrite,
-		}
+		h := newQueryTestHandler(runner, DashboardReadwrite)
 		w := doQuery(h, body)
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("body %q: expected 400, got %d: %s", body, w.Code, w.Body.String())
@@ -108,13 +111,7 @@ func TestHandleQueryEmptySQL(t *testing.T) {
 
 func TestHandleQueryRunnerError(t *testing.T) {
 	runner := &queryStubDB{err: errors.New("syntax error at or near \"SELCT\"")}
-	h := &AdminHandler{
-		cfg:           &domain.Config{},
-		db:            &stubDB{},
-		ownerDB:       domain.OwnerDB{Database: runner},
-		logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
-		dashboardMode: DashboardReadwrite,
-	}
+	h := newQueryTestHandler(runner, DashboardReadwrite)
 	w := doQuery(h, `{"sql":"SELECT 1"}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
@@ -129,13 +126,8 @@ func TestHandleQueryRunnerError(t *testing.T) {
 }
 
 func TestHandleQueryNoRunner(t *testing.T) {
-	h := &AdminHandler{
-		cfg:           &domain.Config{},
-		db:            &stubDB{},
-		logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
-		dashboardMode: DashboardReadwrite,
-		// ownerDB intentionally unset; h.db is a plain stubDB lacking RunSQL.
-	}
+	// ownerDB intentionally unset (nil runner); h.db is a plain stubDB lacking RunSQL.
+	h := newQueryTestHandler(nil, DashboardReadwrite)
 	w := doQuery(h, `{"sql":"SELECT 1"}`)
 	if w.Code != http.StatusNotImplemented {
 		t.Fatalf("expected 501, got %d: %s", w.Code, w.Body.String())
@@ -144,13 +136,7 @@ func TestHandleQueryNoRunner(t *testing.T) {
 
 func TestHandleQueryDisabled(t *testing.T) {
 	runner := &queryStubDB{}
-	h := &AdminHandler{
-		cfg:           &domain.Config{},
-		db:            &stubDB{},
-		ownerDB:       domain.OwnerDB{Database: runner},
-		logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
-		dashboardMode: DashboardDisabled,
-	}
+	h := newQueryTestHandler(runner, DashboardDisabled)
 	w := doQuery(h, `{"sql":"SELECT 1"}`)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
@@ -169,13 +155,7 @@ func TestHandleQueryDisabled(t *testing.T) {
 
 func TestHandleQueryReadonlyModePassesReadOnlyTrue(t *testing.T) {
 	runner := &queryStubDB{}
-	h := &AdminHandler{
-		cfg:           &domain.Config{},
-		db:            &stubDB{},
-		ownerDB:       domain.OwnerDB{Database: runner},
-		logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
-		dashboardMode: DashboardReadonly,
-	}
+	h := newQueryTestHandler(runner, DashboardReadonly)
 	w := doQuery(h, `{"sql":"SELECT 1"}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
