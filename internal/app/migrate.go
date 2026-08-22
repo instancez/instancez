@@ -296,6 +296,11 @@ func (m *Migrator) Apply(ctx context.Context, cfg *domain.Config) error {
 
 	stmts, err := m.PlanStatements(ctx, oldCfg, cfg)
 	if err != nil {
+		// Apply stays pure: a rejected plan (e.g. ErrDestructive) runs no DDL, so
+		// the interactive config editor can reject a bad edit without side
+		// effects. The engine's boot/reconcile fallback calls ProvisionIdempotent
+		// when a destructive change blocks the plan — that path has the
+		// authoritative config, so a configured bucket still gets its DB backing.
 		return fmt.Errorf("migrate plan: %w", err)
 	}
 	if len(stmts) == 0 {
@@ -330,6 +335,66 @@ func (m *Migrator) Apply(ctx context.Context, cfg *domain.Config) error {
 		return fmt.Errorf("migrate commit: %w", err)
 	}
 	return nil
+}
+
+// ProvisionIdempotent runs the additive, IF-NOT-EXISTS provisioning subset for
+// cfg (schema grants, JWT keys, auth tables + RLS functions, storage.objects,
+// storage RLS) without recording a migration row. The engine's boot/reconcile
+// fallback calls it when a destructive change blocks the real plan, so a
+// configured bucket still gets its DB backing while the drop stays gated and the
+// engine reports drift. Safe to re-run: every statement is CREATE ... IF NOT
+// EXISTS / CREATE OR REPLACE / DROP POLICY IF EXISTS + CREATE POLICY.
+func (m *Migrator) ProvisionIdempotent(ctx context.Context, cfg *domain.Config) error {
+	prov := idempotentProvisioning(cfg, m.roles)
+	if len(prov) == 0 {
+		return nil
+	}
+	return m.applyStatements(ctx, prov)
+}
+
+// applyStatements runs stmts inside a single transaction without recording a
+// migration row. Used for the additive provisioning that runs when a
+// destructive change blocks the normal plan: it must not stamp _instancez_migrations
+// (the destructive part is still pending, so the config is NOT fully applied and
+// the engine should stay in drift), but the idempotent DDL must still land.
+func (m *Migrator) applyStatements(ctx context.Context, stmts []string) error {
+	if len(stmts) == 0 {
+		return nil
+	}
+	tx, err := m.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("provision begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	for _, stmt := range stmts {
+		if _, err := tx.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("provision exec: %w", err)
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// idempotentProvisioning returns the subset of the from-scratch plan that is
+// purely additive and safe to re-run any number of times: schema grants, the
+// JWT-keys store, auth tables (storage.objects FKs auth.users), the auth RLS
+// functions (storage policies call auth.uid()), the storage metadata table, and
+// the storage RLS policies. Every statement here uses CREATE ... IF NOT EXISTS,
+// CREATE OR REPLACE, or DROP POLICY IF EXISTS + CREATE POLICY, so running it
+// outside the diff — e.g. when a destructive change has blocked the real
+// migration — can only create missing objects, never drop or alter data. Table
+// and column diffs are deliberately excluded: those can be destructive or
+// order-sensitive and belong to the gated plan.
+func idempotentProvisioning(cfg *domain.Config, roles domain.Roles) []string {
+	var ddl []string
+	ddl = append(ddl, generateSchemaGrants(orderedSchemas(cfg), roles)...)
+	ddl = append(ddl, generateJWTKeysTable()...)
+	if cfg.Auth != nil {
+		ddl = append(ddl, generateAuthTables(cfg.Auth)...)
+		ddl = append(ddl, generateRLSFunctions()...)
+	}
+	ddl = append(ddl, generateStorageTables(cfg)...)
+	ddl = append(ddl, generateStorageRLSAll(cfg.Storage)...)
+	return ddl
 }
 
 // recordMigration inserts the history row on the given transaction, so it
