@@ -260,6 +260,10 @@ export async function postFunctionDeps(
   });
 }
 
+export async function adminRunQuery(sql: string): Promise<SqlResult> {
+  return request<SqlResult>("/query", { method: "POST", body: JSON.stringify({ sql }) });
+}
+
 export async function runQuery(baseUrl: string, sql: string, production = false): Promise<SqlResult> {
   // nosemgrep: rules_lgpl_javascript_ssrf_rule-node-ssrf -- host is the fixed app origin; only path segments are user data
   const res = await fetch(`${baseUrl}/query`, {

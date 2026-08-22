@@ -48,10 +48,7 @@ export const adminBackend: ConsoleBackend = {
   updateUser: (id, patch) => api.adminUpdateUser(id, patch),
   deleteUser: (id) => api.adminDeleteUser(id),
 
-  // SQL is platform-only: the OSS engine exposes no trusted SQL endpoint.
-  async runQuery(): Promise<never> {
-    throw new Error("SQL editor is not available in this deployment");
-  },
+  runQuery: (sql) => api.adminRunQuery(sql),
 
   async listObjects(bucket, prefix, cursor): Promise<StorageListResult> {
     const res = await storageFetch(`/object/list-v2/${bucket}`, {

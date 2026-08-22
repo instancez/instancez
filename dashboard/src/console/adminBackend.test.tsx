@@ -12,6 +12,7 @@ vi.mock("../api/client", async (importOriginal) => {
     putDotenv: vi.fn().mockResolvedValue({ message: "ok" }),
     putConfig: vi.fn().mockResolvedValue({ message: "ok" }),
     putFunctionCode: vi.fn().mockResolvedValue({ message: "ok" }),
+    adminRunQuery: vi.fn().mockResolvedValue({ columns: ["n"], rows: [[1]], row_count: 1 }),
   };
 });
 
@@ -41,6 +42,12 @@ describe("adminBackend", () => {
     expect(putConfig).toHaveBeenCalledWith(cfg, "sum-1");
     expect(putCode).toHaveBeenCalledWith("orders", "code-src");
     expect(putConfig.mock.invocationCallOrder[0]).toBeLessThan(putCode.mock.invocationCallOrder[0]!);
+  });
+
+  it("routes runQuery to adminRunQuery", async () => {
+    const result = await adminBackend.runQuery("select 1");
+    expect(api.adminRunQuery).toHaveBeenCalledWith("select 1");
+    expect(result).toEqual({ columns: ["n"], rows: [[1]], row_count: 1 });
   });
 
   it("useBackend defaults to adminBackend and can be overridden", () => {
