@@ -11,6 +11,7 @@ import (
 
 	"github.com/instancez/instancez/internal/adapter/postgres"
 	"github.com/instancez/instancez/internal/app"
+	"github.com/instancez/instancez/internal/config"
 	"github.com/instancez/instancez/internal/domain"
 	"github.com/instancez/instancez/internal/testutil/dbboot"
 )
@@ -1288,6 +1289,38 @@ func TestIntegration_AuthUsersTable(t *testing.T) {
 	}
 	if fmt.Sprint(row["role"]) != "anon" {
 		t.Fatalf("expected 'anon' role, got %v", row["role"])
+	}
+}
+
+func TestMigrate_AuthProvisionedWithoutAuthBlock(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+
+	yaml := []byte(`
+version: 1
+project:
+  name: "test"
+tables: {}
+`)
+	cfg, err := config.ParseBytes(yaml, "test.yaml")
+	if err != nil {
+		t.Fatalf("ParseBytes: %v", err)
+	}
+	config.ApplyDefaults(cfg)
+	if cfg.Auth == nil {
+		t.Fatal("loader must always populate Auth (always-on)")
+	}
+
+	migrator := app.NewMigrator(db).AllowDestructive(true)
+	if err := migrator.Apply(ctx, cfg); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	if !tableExists(t, db, "auth.users") {
+		t.Fatal("auth.users should exist without an auth: block in the config")
+	}
+	if !tableExists(t, db, "auth.refresh_tokens") {
+		t.Fatal("auth.refresh_tokens should exist without an auth: block in the config")
 	}
 }
 
