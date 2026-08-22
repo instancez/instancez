@@ -10,7 +10,7 @@ import type {
 
 const BASE = "/api/_admin";
 
-function getSecretKey(): string {
+export function getSecretKey(): string {
   return sessionStorage.getItem("instancez_secret_key") || "";
 }
 

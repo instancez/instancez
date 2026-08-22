@@ -163,7 +163,6 @@ func (db *DB) GetLastMigration(ctx context.Context) (*domain.Migration, error) {
 	return &m, nil
 }
 
-
 // ExecDDL executes raw DDL (migration SQL).
 func (db *DB) ExecDDL(ctx context.Context, sql string) error {
 	_, err := db.pool.Exec(ctx, sql)
@@ -260,9 +259,27 @@ func (db *DB) Exec(ctx context.Context, query string, args ...any) (int64, error
 	return tag.RowsAffected(), nil
 }
 
-// RunSQL runs a (possibly multi-statement) SQL buffer for the admin SQL editor
-// and returns the last result set's ordered columns and text-valued rows. The
-// buffer runs in one transaction (READ ONLY when readOnly), rolled back on error.
+// sqlEditorStatementTimeout bounds a single editor query. A package var (not a
+// const) so tests can shorten it; it is code-controlled, never user input.
+var sqlEditorStatementTimeout = "30s"
+
+// columnNames extracts ordered column names from a result's field descriptions.
+func columnNames(descs []pgconn.FieldDescription) []string {
+	cols := make([]string, len(descs))
+	for i, d := range descs {
+		cols[i] = d.Name
+	}
+	return cols
+}
+
+// RunSQL runs SQL for the admin SQL editor and returns the last result set's
+// columns and rows, in one transaction (READ ONLY when readOnly), rolled back
+// on error. readwrite runs the whole multi-statement buffer (simple protocol,
+// values as text); readonly runs a single statement (extended protocol, which
+// rejects multi-statement with 42601, so an embedded COMMIT can't escape the
+// READ ONLY tx; values come back type-decoded). The text-vs-typed difference
+// between modes is deliberate and harmless — both JSON-serialize and the grid
+// renders each cell as a string.
 func (db *DB) RunSQL(ctx context.Context, sql string, readOnly bool, limit int) ([]string, [][]any, error) {
 	conn, err := db.pool.Acquire(ctx)
 	if err != nil {
@@ -280,32 +297,35 @@ func (db *DB) RunSQL(ctx context.Context, sql string, readOnly bool, limit int) 
 	}
 
 	// Bound editor queries so one can't pin an owner-pool connection open.
-	if _, err := tx.Exec(ctx, "SET LOCAL statement_timeout = '30s'"); err != nil {
+	if _, err := tx.Exec(ctx, "SET LOCAL statement_timeout = '"+sqlEditorStatementTimeout+"'"); err != nil {
 		_ = tx.Rollback(ctx)
 		return nil, nil, &domain.DatabaseError{Op: "set_timeout", Err: err}
 	}
 
+	var cols []string
+	var rows [][]any
 	if readOnly {
-		cols, rows, qerr := runSingleStatement(ctx, tx, sql, limit)
-		if qerr != nil {
-			_ = tx.Rollback(ctx)
-			return nil, nil, qerr
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return nil, nil, &domain.DatabaseError{Op: "commit", Err: err}
-		}
-		return cols, rows, nil
+		cols, rows, err = runSingleStatement(ctx, tx, sql, limit)
+	} else {
+		cols, rows, err = runMultiStatement(ctx, conn, sql, limit)
 	}
-
-	results, execErr := conn.Conn().PgConn().Exec(ctx, sql).ReadAll()
-	if execErr != nil {
+	if err != nil {
 		_ = tx.Rollback(ctx)
-		return nil, nil, &domain.DatabaseError{Op: "run_sql", Err: execErr}
+		return nil, nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, nil, &domain.DatabaseError{Op: "commit", Err: err}
 	}
+	return cols, rows, nil
+}
 
+// runMultiStatement runs the whole buffer via the simple protocol (multiple
+// statements allowed) and returns the last result set with text-valued cells.
+func runMultiStatement(ctx context.Context, conn *pgxpool.Conn, sql string, limit int) ([]string, [][]any, error) {
+	results, err := conn.Conn().PgConn().Exec(ctx, sql).ReadAll()
+	if err != nil {
+		return nil, nil, &domain.DatabaseError{Op: "run_sql", Err: err}
+	}
 	var last *pgconn.Result
 	for _, r := range results {
 		if len(r.FieldDescriptions) > 0 {
@@ -314,10 +334,6 @@ func (db *DB) RunSQL(ctx context.Context, sql string, readOnly bool, limit int) 
 	}
 	if last == nil {
 		return []string{}, [][]any{}, nil
-	}
-	cols := make([]string, len(last.FieldDescriptions))
-	for i, f := range last.FieldDescriptions {
-		cols[i] = f.Name
 	}
 	out := make([][]any, 0, len(last.Rows))
 	for _, row := range last.Rows {
@@ -332,7 +348,7 @@ func (db *DB) RunSQL(ctx context.Context, sql string, readOnly bool, limit int) 
 		}
 		out = append(out, vals)
 	}
-	return cols, out, nil
+	return columnNames(last.FieldDescriptions), out, nil
 }
 
 // runSingleStatement runs one statement via the extended protocol; a
@@ -345,10 +361,7 @@ func runSingleStatement(ctx context.Context, tx pgx.Tx, sql string, limit int) (
 	defer rows.Close()
 
 	descs := rows.FieldDescriptions()
-	cols := make([]string, len(descs))
-	for i, d := range descs {
-		cols[i] = d.Name
-	}
+	cols := columnNames(descs)
 	out := make([][]any, 0)
 	for rows.Next() {
 		if limit > 0 && len(out) >= limit {

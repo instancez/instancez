@@ -5,7 +5,7 @@ import type { StorageListResult } from "../lib/types";
 // Same-origin storage against the engine's Supabase-compatible /storage/v1.
 const STORAGE = "/storage/v1";
 async function storageFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  const key = sessionStorage.getItem("instancez_secret_key") || "";
+  const key = api.getSecretKey();
   if (!key) throw new Error("No secret key configured");
   // nosemgrep: rules_lgpl_javascript_ssrf_rule-node-ssrf -- host is the fixed app origin; only path segments are user data
   const res = await fetch(`${STORAGE}${path}`, {
