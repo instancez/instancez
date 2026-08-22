@@ -80,7 +80,6 @@ providers:
 
 auth:
   jwt_expiry: 15m
-  refresh_tokens: true
   refresh_token_expiry: 7d
   email:
     verify_email: false

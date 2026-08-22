@@ -325,7 +325,7 @@ func rpcFunctionDropSig(fn domain.Function) string {
 
 // diffNewAuth returns DDL for auth table additions. If auth is newly added,
 // generates the full auth schema. If auth already existed, handles additive
-// schema changes (refresh tokens, email verification).
+// schema changes (email verification).
 func diffNewAuth(old, new *domain.Config) []string {
 	if new.Auth == nil {
 		return nil

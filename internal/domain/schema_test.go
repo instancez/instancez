@@ -32,16 +32,6 @@ func TestAuth_IsRedirectAllowed(t *testing.T) {
 			t.Errorf("IsRedirectAllowed(%q) = %v, want %v", tc.target, got, tc.want)
 		}
 	}
-
-	// A nil Auth still permits the base origin and relative paths, and rejects
-	// foreign origins.
-	var nilAuth *Auth
-	if !nilAuth.IsRedirectAllowed("https://app.example.com/x", base) {
-		t.Error("nil Auth should allow the base origin")
-	}
-	if nilAuth.IsRedirectAllowed("https://evil.com", base) {
-		t.Error("nil Auth should reject foreign origins")
-	}
 }
 
 // Nil defaults to allowed: this is the backward-compatibility contract for

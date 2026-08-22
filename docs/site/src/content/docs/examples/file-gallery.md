@@ -17,7 +17,6 @@ version: 1
 
 auth:
   jwt_expiry: 1h
-  refresh_tokens: true
   allow_signup: true
 
 providers:
