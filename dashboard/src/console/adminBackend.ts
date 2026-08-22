@@ -12,6 +12,11 @@ async function storageFetch(path: string, init: RequestInit = {}): Promise<Respo
     ...init,
     headers: { apikey: key, Authorization: `Bearer ${key}`, ...init.headers },
   });
+  if (res.status === 401) {
+    sessionStorage.removeItem("instancez_secret_key");
+    window.location.reload();
+    throw new Error("Unauthorized");
+  }
   if (!res.ok) {
     const b = await res.json().catch(() => null);
     throw new Error(b?.error || b?.message || `HTTP ${res.status}`);

@@ -65,6 +65,46 @@ func TestRunSQL(t *testing.T) {
 		}
 	})
 
+	t.Run("read_only_bypass_blocked", func(t *testing.T) {
+		_, _, err := db.RunSQL(ctx, "COMMIT; CREATE TABLE ro_bypass(x int)", true, 1000)
+		if err == nil {
+			t.Fatal("expected error for multi-statement buffer in read-only mode")
+		}
+		_, rows, err := db.RunSQL(ctx, "SELECT to_regclass('ro_bypass')", false, 1000)
+		if err != nil {
+			t.Fatalf("RunSQL: %v", err)
+		}
+		if len(rows) != 1 || rows[0][0] != nil {
+			t.Fatalf("rows = %v, want [[nil]] (ro_bypass must not exist)", rows)
+		}
+	})
+
+	t.Run("read_only_single_select", func(t *testing.T) {
+		cols, rows, err := db.RunSQL(ctx, "SELECT 1 AS a", true, 1000)
+		if err != nil {
+			t.Fatalf("RunSQL: %v", err)
+		}
+		if len(cols) != 1 || cols[0] != "a" {
+			t.Fatalf("cols = %v, want [a]", cols)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("rows = %v, want 1 row", rows)
+		}
+	})
+
+	t.Run("read_only_rejects_single_write_statement", func(t *testing.T) {
+		_, _, err := db.RunSQL(ctx, "CREATE TABLE ro_single(x int)", true, 1000)
+		if err == nil {
+			t.Fatal("expected error for write in read-only tx")
+		}
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			if pgErr.Code != "25006" {
+				t.Fatalf("SQLSTATE = %s, want 25006", pgErr.Code)
+			}
+		}
+	})
+
 	t.Run("rollback_on_mid_buffer_error", func(t *testing.T) {
 		_, _, err := db.RunSQL(ctx, "CREATE TABLE rb(x int); SELECT bad_col", false, 1000)
 		if err == nil {

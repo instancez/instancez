@@ -696,8 +696,17 @@ func (h *AdminHandler) handleQuery(c *gin.Context) {
 	}
 	cols, rows, err := runner.RunSQL(c.Request.Context(), body.SQL, h.dashboardMode == DashboardReadonly, sqlEditorRowLimit)
 	if err != nil {
+		if h.logger != nil {
+			h.logger.Warn("sql editor query failed", "error", err.Error(), "bytes", len(body.SQL))
+		}
 		adminErr(c, 400, "query_failed", err.Error())
 		return
+	}
+	if h.logger != nil {
+		h.logger.Info("sql editor query",
+			"read_only", h.dashboardMode == DashboardReadonly,
+			"bytes", len(body.SQL),
+			"rows", len(rows))
 	}
 	c.JSON(200, gin.H{"columns": cols, "rows": rows, "row_count": len(rows)})
 }

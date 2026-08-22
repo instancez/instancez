@@ -107,4 +107,20 @@ describe("storage requests", () => {
     ).rejects.toThrow("No secret key configured");
     expect(mockFetch).not.toHaveBeenCalled();
   });
+
+  it("clears the session key and logs out on a 401 from a storage op", async () => {
+    const reloadMock = vi.fn();
+    Object.defineProperty(window, "location", {
+      value: { reload: reloadMock },
+      writable: true,
+    });
+
+    sessionStorage.setItem("instancez_secret_key", "k");
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({}) });
+
+    await expect(
+      adminBackend.uploadObject("b", "p.txt", new File(["x"], "p.txt"))
+    ).rejects.toThrow("Unauthorized");
+    expect(sessionStorage.getItem("instancez_secret_key")).toBeNull();
+  });
 });

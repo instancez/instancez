@@ -8,13 +8,14 @@ The dashboard's Database section has a SQL Editor tab for running arbitrary SQL 
 ## What it does
 
 - Runs on the privileged owner connection: DDL-capable, bypasses RLS. Equivalent to Supabase's SQL editor `postgres` role.
-- The whole editor buffer runs as one transaction. Multiple statements are allowed; any error rolls back the whole buffer.
+- In `readwrite` dashboard mode, the whole editor buffer runs as one transaction. Multiple statements are allowed; any error rolls back the whole buffer.
+- In `readonly` dashboard mode, only a single statement runs per execution, inside a `READ ONLY` transaction — this also blocks a multi-statement buffer from smuggling a write past the read-only guard.
 - Shows the last result set from the buffer. Results are capped at 1000 rows.
 
 ## Permissions & modes
 
 - Admin-only, gated by the same admin/secret key as the rest of the dashboard.
-- In `readonly` dashboard mode, queries run in a `READ ONLY` transaction, so writes are rejected.
+- In `readonly` dashboard mode, queries run in a `READ ONLY` transaction and are limited to one statement, so writes are rejected.
 - In `disabled` dashboard mode, the dashboard isn't served at all, so the SQL Editor is unreachable.
 
 ## Reserved schemas caveat

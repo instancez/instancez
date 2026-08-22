@@ -279,6 +279,24 @@ func (db *DB) RunSQL(ctx context.Context, sql string, readOnly bool, limit int) 
 		return nil, nil, &domain.DatabaseError{Op: "begin", Err: err}
 	}
 
+	// Bound editor queries so one can't pin an owner-pool connection open.
+	if _, err := tx.Exec(ctx, "SET LOCAL statement_timeout = '30s'"); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, nil, &domain.DatabaseError{Op: "set_timeout", Err: err}
+	}
+
+	if readOnly {
+		cols, rows, qerr := runSingleStatement(ctx, tx, sql, limit)
+		if qerr != nil {
+			_ = tx.Rollback(ctx)
+			return nil, nil, qerr
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, nil, &domain.DatabaseError{Op: "commit", Err: err}
+		}
+		return cols, rows, nil
+	}
+
 	results, execErr := conn.Conn().PgConn().Exec(ctx, sql).ReadAll()
 	if execErr != nil {
 		_ = tx.Rollback(ctx)
@@ -313,6 +331,41 @@ func (db *DB) RunSQL(ctx context.Context, sql string, readOnly bool, limit int) 
 			}
 		}
 		out = append(out, vals)
+	}
+	return cols, out, nil
+}
+
+// runSingleStatement runs one statement via the extended protocol; a
+// multi-statement buffer is rejected by Postgres (SQLSTATE 42601).
+func runSingleStatement(ctx context.Context, tx pgx.Tx, sql string, limit int) ([]string, [][]any, error) {
+	rows, err := tx.Query(ctx, sql)
+	if err != nil {
+		return nil, nil, &domain.DatabaseError{Op: "run_sql", Err: err}
+	}
+	defer rows.Close()
+
+	descs := rows.FieldDescriptions()
+	cols := make([]string, len(descs))
+	for i, d := range descs {
+		cols[i] = d.Name
+	}
+	out := make([][]any, 0)
+	for rows.Next() {
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+		vals, err := rows.Values()
+		if err != nil {
+			return nil, nil, &domain.DatabaseError{Op: "scan_row", Err: err}
+		}
+		row := make([]any, len(vals))
+		for i, v := range vals {
+			row[i] = normalizeValue(descs[i].DataTypeOID, v)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, &domain.DatabaseError{Op: "run_sql", Err: err}
 	}
 	return cols, out, nil
 }
