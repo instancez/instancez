@@ -12,6 +12,7 @@ import (
 	otelpkg "github.com/instancez/instancez/internal/adapter/otel"
 	"github.com/instancez/instancez/internal/domain"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -257,6 +258,63 @@ func (db *DB) Exec(ctx context.Context, query string, args ...any) (int64, error
 		return 0, &domain.DatabaseError{Op: "exec", Err: err}
 	}
 	return tag.RowsAffected(), nil
+}
+
+// RunSQL runs a (possibly multi-statement) SQL buffer for the admin SQL editor
+// and returns the last result set's ordered columns and text-valued rows. The
+// buffer runs in one transaction (READ ONLY when readOnly), rolled back on error.
+func (db *DB) RunSQL(ctx context.Context, sql string, readOnly bool, limit int) ([]string, [][]any, error) {
+	conn, err := db.pool.Acquire(ctx)
+	if err != nil {
+		return nil, nil, &domain.DatabaseError{Op: "acquire", Err: err}
+	}
+	defer conn.Release()
+
+	txOpts := pgx.TxOptions{}
+	if readOnly {
+		txOpts.AccessMode = pgx.ReadOnly
+	}
+	tx, err := conn.BeginTx(ctx, txOpts)
+	if err != nil {
+		return nil, nil, &domain.DatabaseError{Op: "begin", Err: err}
+	}
+
+	results, execErr := conn.Conn().PgConn().Exec(ctx, sql).ReadAll()
+	if execErr != nil {
+		_ = tx.Rollback(ctx)
+		return nil, nil, &domain.DatabaseError{Op: "run_sql", Err: execErr}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, nil, &domain.DatabaseError{Op: "commit", Err: err}
+	}
+
+	var last *pgconn.Result
+	for _, r := range results {
+		if len(r.FieldDescriptions) > 0 {
+			last = r
+		}
+	}
+	if last == nil {
+		return []string{}, [][]any{}, nil
+	}
+	cols := make([]string, len(last.FieldDescriptions))
+	for i, f := range last.FieldDescriptions {
+		cols[i] = f.Name
+	}
+	out := make([][]any, 0, len(last.Rows))
+	for _, row := range last.Rows {
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+		vals := make([]any, len(row))
+		for i, cell := range row {
+			if cell != nil {
+				vals[i] = string(cell)
+			}
+		}
+		out = append(out, vals)
+	}
+	return cols, out, nil
 }
 
 // WithRLS sets session variables for RLS enforcement within a transaction.
