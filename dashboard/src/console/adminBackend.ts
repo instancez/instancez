@@ -3,11 +3,15 @@ import { fullCapabilities, type ConsoleBackend } from "./backend";
 import type { StorageListResult } from "../lib/types";
 
 // Same-origin storage against the engine's Supabase-compatible /storage/v1.
-// The browser session cookie authorizes; nothing extra to attach.
 const STORAGE = "/storage/v1";
 async function storageFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const key = sessionStorage.getItem("instancez_secret_key") || "";
+  if (!key) throw new Error("No secret key configured");
   // nosemgrep: rules_lgpl_javascript_ssrf_rule-node-ssrf -- host is the fixed app origin; only path segments are user data
-  const res = await fetch(`${STORAGE}${path}`, { credentials: "include", ...init });
+  const res = await fetch(`${STORAGE}${path}`, {
+    ...init,
+    headers: { apikey: key, Authorization: `Bearer ${key}`, ...init.headers },
+  });
   if (!res.ok) {
     const b = await res.json().catch(() => null);
     throw new Error(b?.error || b?.message || `HTTP ${res.status}`);

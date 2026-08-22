@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { adminBackend } from "./adminBackend";
 import { BackendProvider, useBackend } from "./BackendContext";
@@ -65,5 +65,46 @@ describe("adminBackend", () => {
       </BackendProvider>
     );
     expect(screen.getByText("no")).toBeInTheDocument();
+  });
+});
+
+describe("storage requests", () => {
+  const mockFetch = vi.fn();
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", mockFetch);
+  });
+
+  afterEach(() => {
+    mockFetch.mockReset();
+    vi.unstubAllGlobals();
+    sessionStorage.clear();
+  });
+
+  it("sends the secret key as apikey/Authorization plus the upload's own headers", async () => {
+    sessionStorage.setItem("instancez_secret_key", "k");
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+
+    const file = new File(["x"], "p.txt", { type: "text/plain" });
+    await adminBackend.uploadObject("b", "p.txt", file);
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/storage/v1/object/b/p.txt",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          apikey: "k",
+          Authorization: "Bearer k",
+          "x-upsert": "true",
+          "Content-Type": "text/plain",
+        }),
+      })
+    );
+  });
+
+  it("rejects with no secret key configured when none is set", async () => {
+    await expect(
+      adminBackend.uploadObject("b", "p.txt", new File(["x"], "p.txt"))
+    ).rejects.toThrow("No secret key configured");
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });
