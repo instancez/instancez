@@ -570,8 +570,7 @@ func generateAuthTables(auth *domain.Auth) []string {
   UNIQUE(provider, provider_user_id)
 );`)
 
-	if auth.RefreshTokens != nil && *auth.RefreshTokens {
-		ddl = append(ddl, `CREATE TABLE IF NOT EXISTS auth.refresh_tokens (
+	ddl = append(ddl, `CREATE TABLE IF NOT EXISTS auth.refresh_tokens (
   id BIGSERIAL PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   token TEXT NOT NULL UNIQUE,
@@ -581,7 +580,6 @@ func generateAuthTables(auth *domain.Auth) []string {
   user_agent TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );`)
-	}
 
 	if auth.Email != nil {
 		ddl = append(ddl, `CREATE TABLE IF NOT EXISTS auth.one_time_tokens (

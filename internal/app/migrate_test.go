@@ -174,6 +174,14 @@ func TestGenerateAuthTables(t *testing.T) {
 	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS auth.flow_state")
 }
 
+func TestGenerateAuthTables_AlwaysIncludesRefreshTokens(t *testing.T) {
+	ddl := generateAuthTables(&domain.Auth{})
+	joined := strings.Join(ddl, "\n")
+	if !strings.Contains(joined, "CREATE TABLE IF NOT EXISTS auth.refresh_tokens") {
+		t.Fatal("auth.refresh_tokens must always be created (refresh tokens are always-on)")
+	}
+}
+
 // A config without an auth block must still create auth.jwt_keys: the migrator
 // emits it for every app so the JWKS endpoint and user-token verification work
 // even with user-facing auth disabled. Regression for the "relation

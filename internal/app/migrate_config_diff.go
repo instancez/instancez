@@ -334,19 +334,6 @@ func diffNewAuth(old, new *domain.Config) []string {
 		return generateAuthTables(new.Auth)
 	}
 	var ddl []string
-	// Handle transition to refresh tokens
-	if (new.Auth.RefreshTokens != nil && *new.Auth.RefreshTokens) && !(old.Auth.RefreshTokens != nil && *old.Auth.RefreshTokens) {
-		ddl = append(ddl, `CREATE TABLE IF NOT EXISTS auth.refresh_tokens (
-  id BIGSERIAL PRIMARY KEY,
-  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  token TEXT NOT NULL UNIQUE,
-  expires_at TIMESTAMPTZ NOT NULL,
-  session_id TEXT,
-  ip TEXT,
-  user_agent TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);`)
-	}
 	// Handle transition to email verification
 	if new.Auth.Email != nil && old.Auth.Email == nil {
 		ddl = append(ddl, `CREATE TABLE IF NOT EXISTS auth.one_time_tokens (
