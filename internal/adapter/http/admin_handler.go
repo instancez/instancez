@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -641,19 +640,6 @@ func (h *AdminHandler) handleStats(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	result := gin.H{}
-
-	// Table row counts
-	tables := gin.H{}
-	for name := range h.cfg.Tables {
-		rows, err := h.db.QueryRow(ctx,
-			fmt.Sprintf("SELECT reltuples::BIGINT AS count FROM pg_class WHERE relname = '%s'", name))
-		if err == nil && rows != nil {
-			tables[name] = gin.H{"row_count": rows["count"]}
-		} else {
-			tables[name] = gin.H{"row_count": 0}
-		}
-	}
-	result["tables"] = tables
 
 	// Storage stats
 	storage := gin.H{}

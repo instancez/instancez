@@ -10,7 +10,7 @@ function renderOverview(config: any, stats: any = null, keys: { publishable_key:
     capabilities: { hasStats: !!stats },
     getConfig: async () => config,
     getConfigStatus: async () => null,
-    getStats: async () => stats ?? { tables: {}, storage: {} },
+    getStats: async () => stats ?? { storage: {} },
     getKeys: async () => keys,
     listUsers: async () => ({ users: [], total: 0 }),
   } as any;
@@ -81,7 +81,7 @@ test("platform mount depth: Database card click navigates absolutely to /tables 
     capabilities: { hasStats: false },
     getConfig: async () => config,
     getConfigStatus: async () => null,
-    getStats: async () => ({ tables: {}, storage: {} }),
+    getStats: async () => ({ storage: {} }),
     getKeys: async () => ({ publishable_key: "pub-xyz" }),
     listUsers: async () => ({ users: [], total: 0 }),
   } as any;
