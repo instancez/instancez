@@ -707,8 +707,7 @@ func TestDiffConfigs_NewAuth(t *testing.T) {
 	old := &domain.Config{}
 	new := &domain.Config{
 		Auth: &domain.Auth{
-			RefreshTokens: true,
-			Email:         &domain.AuthEmail{VerifyEmail: true},
+			Email: &domain.AuthEmail{VerifyEmail: true},
 		},
 		Tables: map[string]domain.Table{
 			"users": {Fields: []domain.Field{
@@ -723,24 +722,6 @@ func TestDiffConfigs_NewAuth(t *testing.T) {
 	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS auth.users")
 	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS auth.refresh_tokens")
 	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS auth.one_time_tokens")
-}
-
-func TestDiffConfigs_AuthRefreshTokensAdded(t *testing.T) {
-	old := &domain.Config{
-		Auth: &domain.Auth{
-			RefreshTokens: false,
-		},
-	}
-	new := &domain.Config{
-		Auth: &domain.Auth{
-			RefreshTokens: true,
-		},
-	}
-
-	diff := diffConfigs(old, new)
-	joined := strings.Join(diff.Additions, "\n")
-
-	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS auth.refresh_tokens")
 }
 
 func TestDiffConfigs_NormalizeType(t *testing.T) {

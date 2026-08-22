@@ -442,8 +442,7 @@ func TestAuthHandler_Mount_RegistersGoTrueRoutes(t *testing.T) {
 	h := &AuthHandler{
 		cfg: &domain.Config{
 			Auth: &domain.Auth{
-				RefreshTokens: true,
-				Email:         &domain.AuthEmail{VerifyEmail: true},
+				Email: &domain.AuthEmail{VerifyEmail: true},
 			},
 		},
 		jwtKeys: stubKeys(t),

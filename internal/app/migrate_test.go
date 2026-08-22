@@ -153,8 +153,7 @@ func TestGenerateTable_Default(t *testing.T) {
 
 func TestGenerateAuthTables(t *testing.T) {
 	auth := &domain.Auth{
-		RefreshTokens: true,
-		Email:         &domain.AuthEmail{VerifyEmail: true},
+		Email: &domain.AuthEmail{VerifyEmail: true},
 	}
 	ddl := generateAuthTables(auth)
 	joined := strings.Join(ddl, "\n")
@@ -197,21 +196,6 @@ func TestPlanUpdate_ReassertsJWTKeys(t *testing.T) {
 	joined := strings.Join(planUpdateStatements(oldCfg, newCfg, domain.DefaultRoles()), "\n")
 
 	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS auth.jwt_keys")
-}
-
-func TestGenerateAuthTables_NoRefreshTokens(t *testing.T) {
-	auth := &domain.Auth{
-		RefreshTokens: false,
-	}
-	ddl := generateAuthTables(auth)
-	joined := strings.Join(ddl, "\n")
-
-	if strings.Contains(joined, "auth.refresh_tokens") {
-		t.Error("should not create auth.refresh_tokens when refresh_tokens is false")
-	}
-	if strings.Contains(joined, "auth.one_time_tokens") {
-		t.Error("should not create auth.one_time_tokens when email is nil")
-	}
 }
 
 func TestGenerateRLSPolicies(t *testing.T) {
@@ -728,8 +712,8 @@ func TestQualifiedTableName(t *testing.T) {
 
 func TestRLSAndIndexesUseQualifiedNames(t *testing.T) {
 	tbl := domain.Table{
-		Schema: "analytics",
-		Fields: []domain.Field{{Name: "id", Type: "BIGINT", PrimaryKey: true}},
+		Schema:  "analytics",
+		Fields:  []domain.Field{{Name: "id", Type: "BIGINT", PrimaryKey: true}},
 		Indexes: []domain.Index{{Columns: []string{"id"}}},
 		RLS: []domain.RLSPolicy{
 			{Operations: []string{"select"}, Using: "true"},
@@ -767,4 +751,3 @@ func TestOrderedSchemasOmitsAuthWhenUnconfigured(t *testing.T) {
 		t.Errorf("orderedSchemas with no auth/storage: got %v, want [public]", got)
 	}
 }
-

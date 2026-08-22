@@ -11,16 +11,16 @@ import (
 
 // Config is the top-level Instancez configuration parsed from YAML.
 type Config struct {
-	Version    int                     `yaml:"version" json:"version"`
-	Project    Project                 `yaml:"project" json:"project"`
-	Database   DatabaseConfig          `yaml:"database" json:"database"`
-	Server     Server                  `yaml:"server" json:"server"`
-	Providers  Providers               `yaml:"providers" json:"providers"`
-	Auth       *Auth                   `yaml:"auth" json:"auth"`
-	Tables     map[string]Table        `yaml:"tables" json:"tables"`
-	Storage    map[string]Bucket       `yaml:"storage" json:"storage"`
-	RPC        map[string]Function     `yaml:"rpc" json:"rpc"`
-	Functions  map[string]CodeFunction `yaml:"functions" json:"functions"`
+	Version   int                     `yaml:"version" json:"version"`
+	Project   Project                 `yaml:"project" json:"project"`
+	Database  DatabaseConfig          `yaml:"database" json:"database"`
+	Server    Server                  `yaml:"server" json:"server"`
+	Providers Providers               `yaml:"providers" json:"providers"`
+	Auth      *Auth                   `yaml:"auth" json:"auth"`
+	Tables    map[string]Table        `yaml:"tables" json:"tables"`
+	Storage   map[string]Bucket       `yaml:"storage" json:"storage"`
+	RPC       map[string]Function     `yaml:"rpc" json:"rpc"`
+	Functions map[string]CodeFunction `yaml:"functions" json:"functions"`
 	// FunctionsBundle is a pointer to the pre-built functions bundle that
 	// `serve` consumes at runtime (it never builds). For self-hosted deployments,
 	// `inz bundle` builds the bundle (vendoring node_modules), uploads it, and
@@ -38,7 +38,6 @@ type Config struct {
 	// serialized — the decoders populate it, Validate reads it.
 	UnknownKeys ValidationErrors `yaml:"-" json:"-"`
 }
-
 
 // Project holds display-only metadata.
 type Project struct {
@@ -118,11 +117,12 @@ type StorageProvider struct {
 // false" (public registration is disabled). Always read them through the
 // SignupAllowed() / AnonymousAllowed() helpers.
 type Auth struct {
-	JWTExpiry          string         `yaml:"jwt_expiry" json:"jwt_expiry"`
-	RefreshTokens      bool           `yaml:"refresh_tokens" json:"refresh_tokens"`
-	RefreshTokenExpiry string         `yaml:"refresh_token_expiry" json:"refresh_token_expiry"`
-	AllowSignup        *bool          `yaml:"allow_signup" json:"allow_signup"`
-	AllowAnonymous     *bool          `yaml:"allow_anonymous" json:"allow_anonymous"`
+	JWTExpiry string `yaml:"jwt_expiry" json:"jwt_expiry"`
+	// RefreshTokens is deprecated and ignored; refresh tokens are always issued.
+	RefreshTokens      *bool  `yaml:"refresh_tokens" json:"refresh_tokens"`
+	RefreshTokenExpiry string `yaml:"refresh_token_expiry" json:"refresh_token_expiry"`
+	AllowSignup        *bool  `yaml:"allow_signup" json:"allow_signup"`
+	AllowAnonymous     *bool  `yaml:"allow_anonymous" json:"allow_anonymous"`
 	// RedirectURLs is the allowlist of external origins that post-auth flows
 	// (password recovery, email verification, OAuth) may redirect to. The
 	// server's own base URL is always allowed; relative same-origin paths are
@@ -343,10 +343,10 @@ type Index struct {
 // be set explicitly. See validateRLS in internal/config/validate.go for the
 // exact rule.
 type RLSPolicy struct {
-	Operations []string `yaml:"operations" json:"operations"`               // exactly one of select/insert/update/delete, or all four
-	Using      string   `yaml:"using,omitempty" json:"using,omitempty"`         // SQL boolean expression
+	Operations []string `yaml:"operations" json:"operations"`                     // exactly one of select/insert/update/delete, or all four
+	Using      string   `yaml:"using,omitempty" json:"using,omitempty"`           // SQL boolean expression
 	WithCheck  string   `yaml:"with_check,omitempty" json:"with_check,omitempty"` // SQL boolean expression
-	Type       string   `yaml:"type,omitempty" json:"type,omitempty"`       // permissive (default) | restrictive
+	Type       string   `yaml:"type,omitempty" json:"type,omitempty"`             // permissive (default) | restrictive
 }
 
 // Bucket defines a storage bucket.
@@ -446,4 +446,3 @@ type Migration struct {
 	ConfigJSON string    `json:"config_json"`
 	AppliedAt  time.Time `json:"applied_at"`
 }
-

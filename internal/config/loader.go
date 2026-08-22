@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"regexp"
 	"strings"
@@ -249,8 +250,7 @@ func applyDefaults(cfg *domain.Config) {
 		cfg.Database.Pool.IdleTimeout = "300s"
 	}
 
-	// Auth is always-on: ensure the block exists so auth is provisioned even
-	// when the config omits it.
+	// Auth is always-on: never nil after defaults.
 	if cfg.Auth == nil {
 		cfg.Auth = &domain.Auth{}
 	}
@@ -259,6 +259,9 @@ func applyDefaults(cfg *domain.Config) {
 	}
 	if cfg.Auth.RefreshTokenExpiry == "" {
 		cfg.Auth.RefreshTokenExpiry = "7d"
+	}
+	if cfg.Auth.RefreshTokens != nil && !*cfg.Auth.RefreshTokens {
+		slog.Warn("auth.refresh_tokens is deprecated and ignored; refresh tokens are always enabled")
 	}
 
 	// RPC: fill defaults and derive ReturnCategory.

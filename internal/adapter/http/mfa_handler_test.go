@@ -37,9 +37,8 @@ func newMFAHarness(t *testing.T, svc *stubAuthService) *mfaHarness {
 	km := stubKeys(t)
 	h := &AuthHandler{
 		cfg: &domain.Config{Auth: &domain.Auth{
-			JWTExpiry:     "1h",
-			RefreshTokens: false,
-			Email:         &domain.AuthEmail{},
+			JWTExpiry: "1h",
+			Email:     &domain.AuthEmail{},
 		}},
 		authSvc: svc,
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),

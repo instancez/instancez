@@ -335,7 +335,7 @@ func diffNewAuth(old, new *domain.Config) []string {
 	}
 	var ddl []string
 	// Handle transition to refresh tokens
-	if new.Auth.RefreshTokens && !old.Auth.RefreshTokens {
+	if (new.Auth.RefreshTokens != nil && *new.Auth.RefreshTokens) && !(old.Auth.RefreshTokens != nil && *old.Auth.RefreshTokens) {
 		ddl = append(ddl, `CREATE TABLE IF NOT EXISTS auth.refresh_tokens (
   id BIGSERIAL PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,

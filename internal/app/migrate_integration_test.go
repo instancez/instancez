@@ -458,9 +458,9 @@ func TestIntegration_RPCFunction_CreateAndRemove(t *testing.T) {
 	}
 
 	cfgV2 := &domain.Config{
-		Version:   1,
-		Tables:    map[string]domain.Table{},
-		RPC: map[string]domain.Function{},
+		Version: 1,
+		Tables:  map[string]domain.Table{},
+		RPC:     map[string]domain.Function{},
 	}
 
 	if err := migrator.Apply(ctx, cfgV2); err != nil {
@@ -1246,8 +1246,7 @@ func TestIntegration_AuthUsersTable(t *testing.T) {
 	cfg := &domain.Config{
 		Version: 1,
 		Auth: &domain.Auth{
-			RefreshTokens: true,
-			Email:         &domain.AuthEmail{VerifyEmail: true},
+			Email: &domain.AuthEmail{VerifyEmail: true},
 		},
 		Tables: map[string]domain.Table{},
 	}

@@ -570,7 +570,7 @@ func generateAuthTables(auth *domain.Auth) []string {
   UNIQUE(provider, provider_user_id)
 );`)
 
-	if auth.RefreshTokens {
+	if auth.RefreshTokens != nil && *auth.RefreshTokens {
 		ddl = append(ddl, `CREATE TABLE IF NOT EXISTS auth.refresh_tokens (
   id BIGSERIAL PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
