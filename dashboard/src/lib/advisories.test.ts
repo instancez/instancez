@@ -8,14 +8,9 @@ const cfg = {
   },
 } as any;
 
-test("databaseSummary merges rls counts with stats row counts", () => {
-  const stats = { tables: { deals: { row_count: 12 } }, storage: {} } as any;
-  expect(databaseSummary(cfg, stats)).toEqual([
-    { name: "activities", rlsCount: 0, rowCount: null },
-    { name: "deals", rlsCount: 1, rowCount: 12 },
+test("databaseSummary sorts tables and reports rls counts", () => {
+  expect(databaseSummary(cfg)).toEqual([
+    { name: "activities", rlsCount: 0 },
+    { name: "deals", rlsCount: 1 },
   ]);
-});
-
-test("databaseSummary yields null rowCount when stats absent", () => {
-  expect(databaseSummary(cfg, null).every(r => r.rowCount === null)).toBe(true);
 });

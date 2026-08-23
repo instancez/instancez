@@ -62,7 +62,7 @@ export function Overview() {
     ? Object.values(stats.storage).reduce((sum, s) => sum + s.total_bytes, 0)
     : 0;
 
-  const tableSummary = databaseSummary(config, stats);
+  const tableSummary = databaseSummary(config);
 
   return (
     <Box pt="8" pb="8">
@@ -109,7 +109,7 @@ export function Overview() {
             </CardValue>
             {tableSummary.length > 0 && (
               <VStack mt="3" gap="0" align="stretch">
-                {tableSummary.map(({ name, rlsCount, rowCount }) => (
+                {tableSummary.map(({ name, rlsCount }) => (
                   <HStack
                     key={name}
                     justify="space-between"
@@ -128,9 +128,6 @@ export function Overview() {
                       <Text fontSize="sm" color="fg">{name}</Text>
                     </HStack>
                     <HStack gap="2">
-                      {rowCount != null && (
-                        <Text fontSize="xs" color="fg.muted">{rowCount} rows</Text>
-                      )}
                       <StatusBadge variant={rlsCount > 0 ? "info" : "warning"}>
                         {rlsCount > 0 ? "RLS" : "exposed"}
                       </StatusBadge>

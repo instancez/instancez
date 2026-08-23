@@ -11,6 +11,7 @@ import {
   Database,
   Plug,
   Globe,
+  Terminal,
 } from "lucide-react";
 
 type NavItem = { to: string; icon: LucideIcon; label: string };
@@ -26,6 +27,7 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     items: [
       { to: "/tables", icon: Table2, label: "Tables" },
       { to: "/rpc", icon: Database, label: "Database Functions" },
+      { to: "/sql", icon: Terminal, label: "SQL Editor" },
     ],
   },
   {

@@ -10,7 +10,7 @@ import type {
 
 const BASE = "/api/_admin";
 
-function getSecretKey(): string {
+export function getSecretKey(): string {
   return sessionStorage.getItem("instancez_secret_key") || "";
 }
 
@@ -258,6 +258,10 @@ export async function postFunctionDeps(
     method: "POST",
     body: JSON.stringify({ add, remove }),
   });
+}
+
+export async function adminRunQuery(sql: string): Promise<SqlResult> {
+  return request<SqlResult>("/query", { method: "POST", body: JSON.stringify({ sql }) });
 }
 
 export async function runQuery(baseUrl: string, sql: string, production = false): Promise<SqlResult> {

@@ -84,6 +84,7 @@ export default defineConfig({
             { label: 'SQL Functions', slug: 'api-reference/rpc' },
             { label: 'Code Functions', slug: 'build/functions' },
             { label: 'Storage', slug: 'build/storage' },
+            { label: 'SQL Editor', slug: 'build/sql-editor' },
             { label: 'Querying', slug: 'build/querying' },
             { label: 'Supabase SDK Compatibility', slug: 'supabase-compatibility' },
           ],

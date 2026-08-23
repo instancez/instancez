@@ -886,16 +886,12 @@ func TestHandleSchema_ReflectsLiveConfig(t *testing.T) {
 
 // --- handleStats ---
 
-func TestHandleStats_ReturnsTableAndStorageCounts(t *testing.T) {
+func TestHandleStats_ReturnsStorageCounts(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &domain.Config{
-		Tables:  map[string]domain.Table{"todos": {}},
 		Storage: map[string]domain.Bucket{"avatars": {}},
 	}
 	db := &stubDB{queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-		if strings.Contains(q, "pg_class") {
-			return map[string]any{"count": int64(42)}, nil
-		}
 		return map[string]any{"object_count": 3, "total_bytes": int64(1024)}, nil
 	}}
 	h := &AdminHandler{db: db, cfg: cfg}
@@ -914,10 +910,8 @@ func TestHandleStats_ReturnsTableAndStorageCounts(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	tables, _ := body["tables"].(map[string]any)
-	todos, _ := tables["todos"].(map[string]any)
-	if todos["row_count"] != float64(42) {
-		t.Errorf("todos row_count = %v", todos["row_count"])
+	if _, ok := body["tables"]; ok {
+		t.Errorf("expected no tables key in stats response, got %v", body["tables"])
 	}
 	storage, _ := body["storage"].(map[string]any)
 	avatars, _ := storage["avatars"].(map[string]any)
@@ -926,9 +920,9 @@ func TestHandleStats_ReturnsTableAndStorageCounts(t *testing.T) {
 	}
 }
 
-func TestHandleStats_QueryErrorFallsBackToZero(t *testing.T) {
+func TestHandleStats_StorageQueryErrorFallsBackToZero(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	cfg := &domain.Config{Tables: map[string]domain.Table{"todos": {}}}
+	cfg := &domain.Config{Storage: map[string]domain.Bucket{"avatars": {}}}
 	db := &stubDB{queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
 		return nil, fmt.Errorf("relation does not exist")
 	}}
@@ -948,10 +942,10 @@ func TestHandleStats_QueryErrorFallsBackToZero(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	tables, _ := body["tables"].(map[string]any)
-	todos, _ := tables["todos"].(map[string]any)
-	if todos["row_count"] != float64(0) {
-		t.Errorf("expected row_count=0 fallback on query error, got %v", todos["row_count"])
+	storage, _ := body["storage"].(map[string]any)
+	avatars, _ := storage["avatars"].(map[string]any)
+	if avatars["object_count"] != float64(0) {
+		t.Errorf("expected object_count=0 fallback on query error, got %v", avatars["object_count"])
 	}
 }
 

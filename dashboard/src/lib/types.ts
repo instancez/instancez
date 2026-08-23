@@ -185,7 +185,6 @@ export interface FuncReturn {
 // API response types
 
 export interface StatsResponse {
-  tables: Record<string, { row_count: number }>;
   storage: Record<string, { object_count: number; total_bytes: number }>;
 }
 

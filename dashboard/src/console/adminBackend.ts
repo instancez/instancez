@@ -3,11 +3,20 @@ import { fullCapabilities, type ConsoleBackend } from "./backend";
 import type { StorageListResult } from "../lib/types";
 
 // Same-origin storage against the engine's Supabase-compatible /storage/v1.
-// The browser session cookie authorizes; nothing extra to attach.
 const STORAGE = "/storage/v1";
 async function storageFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const key = api.getSecretKey();
+  if (!key) throw new Error("No secret key configured");
   // nosemgrep: rules_lgpl_javascript_ssrf_rule-node-ssrf -- host is the fixed app origin; only path segments are user data
-  const res = await fetch(`${STORAGE}${path}`, { credentials: "include", ...init });
+  const res = await fetch(`${STORAGE}${path}`, {
+    ...init,
+    headers: { apikey: key, Authorization: `Bearer ${key}`, ...init.headers },
+  });
+  if (res.status === 401) {
+    sessionStorage.removeItem("instancez_secret_key");
+    window.location.reload();
+    throw new Error("Unauthorized");
+  }
   if (!res.ok) {
     const b = await res.json().catch(() => null);
     throw new Error(b?.error || b?.message || `HTTP ${res.status}`);
@@ -48,10 +57,7 @@ export const adminBackend: ConsoleBackend = {
   updateUser: (id, patch) => api.adminUpdateUser(id, patch),
   deleteUser: (id) => api.adminDeleteUser(id),
 
-  // SQL is platform-only: the OSS engine exposes no trusted SQL endpoint.
-  async runQuery(): Promise<never> {
-    throw new Error("SQL editor is not available in this deployment");
-  },
+  runQuery: (sql) => api.adminRunQuery(sql),
 
   async listObjects(bucket, prefix, cursor): Promise<StorageListResult> {
     const res = await storageFetch(`/object/list-v2/${bucket}`, {

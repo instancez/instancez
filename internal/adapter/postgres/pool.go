@@ -12,6 +12,7 @@ import (
 	otelpkg "github.com/instancez/instancez/internal/adapter/otel"
 	"github.com/instancez/instancez/internal/domain"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -162,7 +163,6 @@ func (db *DB) GetLastMigration(ctx context.Context) (*domain.Migration, error) {
 	return &m, nil
 }
 
-
 // ExecDDL executes raw DDL (migration SQL).
 func (db *DB) ExecDDL(ctx context.Context, sql string) error {
 	_, err := db.pool.Exec(ctx, sql)
@@ -257,6 +257,130 @@ func (db *DB) Exec(ctx context.Context, query string, args ...any) (int64, error
 		return 0, &domain.DatabaseError{Op: "exec", Err: err}
 	}
 	return tag.RowsAffected(), nil
+}
+
+// sqlEditorStatementTimeout bounds a single editor query. A package var (not a
+// const) so tests can shorten it; it is code-controlled, never user input.
+var sqlEditorStatementTimeout = "30s"
+
+// columnNames extracts ordered column names from a result's field descriptions.
+func columnNames(descs []pgconn.FieldDescription) []string {
+	cols := make([]string, len(descs))
+	for i, d := range descs {
+		cols[i] = d.Name
+	}
+	return cols
+}
+
+// RunSQL runs SQL for the admin SQL editor and returns the last result set's
+// columns and rows, in one transaction (READ ONLY when readOnly), rolled back
+// on error. readwrite runs the whole multi-statement buffer (simple protocol,
+// values as text); readonly runs a single statement (extended protocol, which
+// rejects multi-statement with 42601, so an embedded COMMIT can't escape the
+// READ ONLY tx; values come back type-decoded). The text-vs-typed difference
+// between modes is deliberate and harmless — both JSON-serialize and the grid
+// renders each cell as a string.
+func (db *DB) RunSQL(ctx context.Context, sql string, readOnly bool, limit int) ([]string, [][]any, error) {
+	conn, err := db.pool.Acquire(ctx)
+	if err != nil {
+		return nil, nil, &domain.DatabaseError{Op: "acquire", Err: err}
+	}
+	defer conn.Release()
+
+	txOpts := pgx.TxOptions{}
+	if readOnly {
+		txOpts.AccessMode = pgx.ReadOnly
+	}
+	tx, err := conn.BeginTx(ctx, txOpts)
+	if err != nil {
+		return nil, nil, &domain.DatabaseError{Op: "begin", Err: err}
+	}
+
+	// Bound editor queries so one can't pin an owner-pool connection open.
+	if _, err := tx.Exec(ctx, "SET LOCAL statement_timeout = '"+sqlEditorStatementTimeout+"'"); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, nil, &domain.DatabaseError{Op: "set_timeout", Err: err}
+	}
+
+	var cols []string
+	var rows [][]any
+	if readOnly {
+		cols, rows, err = runSingleStatement(ctx, tx, sql, limit)
+	} else {
+		cols, rows, err = runMultiStatement(ctx, conn, sql, limit)
+	}
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, nil, &domain.DatabaseError{Op: "commit", Err: err}
+	}
+	return cols, rows, nil
+}
+
+// runMultiStatement runs the whole buffer via the simple protocol (multiple
+// statements allowed) and returns the last result set with text-valued cells.
+func runMultiStatement(ctx context.Context, conn *pgxpool.Conn, sql string, limit int) ([]string, [][]any, error) {
+	results, err := conn.Conn().PgConn().Exec(ctx, sql).ReadAll()
+	if err != nil {
+		return nil, nil, &domain.DatabaseError{Op: "run_sql", Err: err}
+	}
+	var last *pgconn.Result
+	for _, r := range results {
+		if len(r.FieldDescriptions) > 0 {
+			last = r
+		}
+	}
+	if last == nil {
+		return []string{}, [][]any{}, nil
+	}
+	out := make([][]any, 0, len(last.Rows))
+	for _, row := range last.Rows {
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+		vals := make([]any, len(row))
+		for i, cell := range row {
+			if cell != nil {
+				vals[i] = string(cell)
+			}
+		}
+		out = append(out, vals)
+	}
+	return columnNames(last.FieldDescriptions), out, nil
+}
+
+// runSingleStatement runs one statement via the extended protocol; a
+// multi-statement buffer is rejected by Postgres (SQLSTATE 42601).
+func runSingleStatement(ctx context.Context, tx pgx.Tx, sql string, limit int) ([]string, [][]any, error) {
+	rows, err := tx.Query(ctx, sql)
+	if err != nil {
+		return nil, nil, &domain.DatabaseError{Op: "run_sql", Err: err}
+	}
+	defer rows.Close()
+
+	descs := rows.FieldDescriptions()
+	cols := columnNames(descs)
+	out := make([][]any, 0)
+	for rows.Next() {
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+		vals, err := rows.Values()
+		if err != nil {
+			return nil, nil, &domain.DatabaseError{Op: "scan_row", Err: err}
+		}
+		row := make([]any, len(vals))
+		for i, v := range vals {
+			row[i] = normalizeValue(descs[i].DataTypeOID, v)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, &domain.DatabaseError{Op: "run_sql", Err: err}
+	}
+	return cols, out, nil
 }
 
 // WithRLS sets session variables for RLS enforcement within a transaction.
