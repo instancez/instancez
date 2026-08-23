@@ -358,10 +358,6 @@ func (h *AuthHandler) handlePasswordGrant(c *gin.Context) {
 }
 
 func (h *AuthHandler) handleRefreshGrant(c *gin.Context) {
-	if !h.cfg.Auth.RefreshTokens {
-		problemJSON(c, 400, "bad_request", "Refresh tokens are disabled")
-		return
-	}
 	var req struct {
 		RefreshToken string `json:"refresh_token" binding:"required"`
 	}
@@ -561,7 +557,7 @@ func (h *AuthHandler) handleLogout(c *gin.Context) {
 	scope := c.DefaultQuery("scope", "global")
 
 	ctx := c.Request.Context()
-	if h.cfg.Auth.RefreshTokens && session.UserID != "" {
+	if session.UserID != "" {
 		sessionID := h.extractSessionID(session.JWT)
 		switch scope {
 		case "local":
@@ -1487,20 +1483,18 @@ func (h *AuthHandler) buildSession(ctx context.Context, userID string, userRow m
 		"user":         h.buildUser(userID, userRow, h.userIdentities(ctx, userID)),
 	}
 
-	if h.cfg.Auth.RefreshTokens {
-		refreshToken := generateRandomToken()
-		refreshExpiry, _ := time.ParseDuration(h.cfg.Auth.RefreshTokenExpiry)
-		if refreshExpiry == 0 {
-			refreshExpiry = 7 * 24 * time.Hour
-		}
-		ip, _ := ctx.Value(ctxKeyIP).(string)
-		ua, _ := ctx.Value(ctxKeyUA).(string)
-		meta := domain.SessionMeta{SessionID: sessionID, IP: ip, UserAgent: ua}
-		if err := h.authSvc.InsertRefreshToken(context.Background(), userID, refreshToken, meta, time.Now().Add(refreshExpiry).Unix()); err != nil {
-			return nil, err
-		}
-		result["refresh_token"] = refreshToken
+	refreshToken := generateRandomToken()
+	refreshExpiry, _ := time.ParseDuration(h.cfg.Auth.RefreshTokenExpiry)
+	if refreshExpiry == 0 {
+		refreshExpiry = 7 * 24 * time.Hour
 	}
+	ip, _ := ctx.Value(ctxKeyIP).(string)
+	ua, _ := ctx.Value(ctxKeyUA).(string)
+	meta := domain.SessionMeta{SessionID: sessionID, IP: ip, UserAgent: ua}
+	if err := h.authSvc.InsertRefreshToken(context.Background(), userID, refreshToken, meta, time.Now().Add(refreshExpiry).Unix()); err != nil {
+		return nil, err
+	}
+	result["refresh_token"] = refreshToken
 
 	return result, nil
 }

@@ -146,8 +146,7 @@ func TestSupabaseJSCompat(t *testing.T) {
 		Project: domain.Project{Name: "integration"},
 		Server:  domain.Server{Port: 0},
 		Auth: &domain.Auth{
-			JWTExpiry:     "1h",
-			RefreshTokens: true,
+			JWTExpiry: "1h",
 			// The recovery/verify flow redirects to the app; the allowlist must
 			// include it or the redirect (which carries the session tokens)
 			// falls back to the base URL. See the redirect-allowlist hardening.
@@ -770,4 +769,3 @@ func runPasswordResetFlow(t *testing.T, baseURL, publishableKey string, emails *
 		t.Fatal("password reset: old password should not work after reset")
 	}
 }
-

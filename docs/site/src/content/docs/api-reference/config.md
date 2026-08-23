@@ -83,16 +83,17 @@ Set `providers.email: null` to disable email sending.
 
 ## auth
 
-Omit the `auth:` block entirely to disable authentication endpoints.
+Auth is always provisioned, even if `auth:` is omitted entirely; the block only overrides defaults.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `auth.jwt_expiry` | `duration` | `15m` (when `auth:` is present) | Access token lifetime. Default applies only when `auth:` block is declared but `jwt_expiry` is not. |
-| `auth.refresh_tokens` | `boolean` | `false` | Enable refresh token issuance. |
-| `auth.refresh_token_expiry` | `duration` | `7d` | Refresh token lifetime (only used when `refresh_tokens: true`). |
+| `auth.jwt_expiry` | `duration` | `15m` | Access token lifetime. |
+| `auth.refresh_token_expiry` | `duration` | `7d` | Refresh token lifetime. Refresh tokens are always issued. |
 | `auth.allow_signup` | `boolean` | `true` | Allow public `POST /auth/v1/signup`. Set to `false` for invite-only. |
 | `auth.allow_anonymous` | `boolean` | `true` | Allow anonymous sign-in (empty-body signup). |
 | `auth.redirect_urls` | `string[]` | `[]` | Allowlist of origins for post-auth redirects (OAuth, email verification). The server's own origin is always allowed. |
+
+`auth.refresh_tokens` is deprecated and ignored — refresh tokens are always issued.
 
 ### auth.email
 
@@ -312,7 +313,6 @@ providers:
 
 auth:
   jwt_expiry: 1h
-  refresh_tokens: true
   refresh_token_expiry: 30d
   allow_signup: true
   allow_anonymous: false

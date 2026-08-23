@@ -87,9 +87,8 @@ func TestInjectedClientsRLSAndEscalation(t *testing.T) {
 		Project: domain.Project{Name: "funcs-rls"},
 		Server:  domain.Server{Port: 0},
 		Auth: &domain.Auth{
-			JWTExpiry:     "1h",
-			RefreshTokens: false,
-			Email:         &domain.AuthEmail{VerifyEmail: false},
+			JWTExpiry: "1h",
+			Email:     &domain.AuthEmail{VerifyEmail: false},
 		},
 		Tables: map[string]domain.Table{
 			"rls_secrets": {
@@ -194,8 +193,8 @@ func TestInjectedClientsRLSAndEscalation(t *testing.T) {
 	loopback := "http://" + ln.Addr().String()
 
 	rt, err := funcs.New(funcs.Options{
-		Dir:         fnDir,
-		Functions:   map[string]domain.CodeFunction{"rls": {Runtime: "node", File: "rls.js"}},
+		Dir:            fnDir,
+		Functions:      map[string]domain.CodeFunction{"rls": {Runtime: "node", File: "rls.js"}},
 		LoopbackURL:    loopback,
 		PublishableKey: publishableKey,
 		SecretKey:      secretKey,

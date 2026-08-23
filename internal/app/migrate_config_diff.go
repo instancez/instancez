@@ -325,7 +325,7 @@ func rpcFunctionDropSig(fn domain.Function) string {
 
 // diffNewAuth returns DDL for auth table additions. If auth is newly added,
 // generates the full auth schema. If auth already existed, handles additive
-// schema changes (refresh tokens, email verification).
+// schema changes (email verification).
 func diffNewAuth(old, new *domain.Config) []string {
 	if new.Auth == nil {
 		return nil
@@ -334,19 +334,10 @@ func diffNewAuth(old, new *domain.Config) []string {
 		return generateAuthTables(new.Auth)
 	}
 	var ddl []string
-	// Handle transition to refresh tokens
-	if new.Auth.RefreshTokens && !old.Auth.RefreshTokens {
-		ddl = append(ddl, `CREATE TABLE IF NOT EXISTS auth.refresh_tokens (
-  id BIGSERIAL PRIMARY KEY,
-  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  token TEXT NOT NULL UNIQUE,
-  expires_at TIMESTAMPTZ NOT NULL,
-  session_id TEXT,
-  ip TEXT,
-  user_agent TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);`)
-	}
+	// Heal deployments from before refresh tokens were always-on: an existing
+	// auth block may predate the table and diffNewTables never sees it since
+	// it isn't declared in domain.Config.Tables.
+	ddl = append(ddl, refreshTokensDDL)
 	// Handle transition to email verification
 	if new.Auth.Email != nil && old.Auth.Email == nil {
 		ddl = append(ddl, `CREATE TABLE IF NOT EXISTS auth.one_time_tokens (

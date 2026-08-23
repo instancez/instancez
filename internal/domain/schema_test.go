@@ -32,15 +32,17 @@ func TestAuth_IsRedirectAllowed(t *testing.T) {
 			t.Errorf("IsRedirectAllowed(%q) = %v, want %v", tc.target, got, tc.want)
 		}
 	}
+}
 
-	// A nil Auth still permits the base origin and relative paths, and rejects
-	// foreign origins.
-	var nilAuth *Auth
-	if !nilAuth.IsRedirectAllowed("https://app.example.com/x", base) {
-		t.Error("nil Auth should allow the base origin")
+// IsRedirectAllowed must be safe on a nil *Auth (no configured allowlist).
+func TestAuth_IsRedirectAllowed_NilReceiver(t *testing.T) {
+	var a *Auth
+	const base = "https://app.example.com"
+	if !a.IsRedirectAllowed("/reset", base) {
+		t.Error("relative path should be allowed on nil receiver")
 	}
-	if nilAuth.IsRedirectAllowed("https://evil.com", base) {
-		t.Error("nil Auth should reject foreign origins")
+	if a.IsRedirectAllowed("https://evil.com", base) {
+		t.Error("off-origin absolute URL should be rejected on nil receiver")
 	}
 }
 

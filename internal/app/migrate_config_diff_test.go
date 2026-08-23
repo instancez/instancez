@@ -707,8 +707,7 @@ func TestDiffConfigs_NewAuth(t *testing.T) {
 	old := &domain.Config{}
 	new := &domain.Config{
 		Auth: &domain.Auth{
-			RefreshTokens: true,
-			Email:         &domain.AuthEmail{VerifyEmail: true},
+			Email: &domain.AuthEmail{VerifyEmail: true},
 		},
 		Tables: map[string]domain.Table{
 			"users": {Fields: []domain.Field{
@@ -725,16 +724,16 @@ func TestDiffConfigs_NewAuth(t *testing.T) {
 	mustContain(t, joined, "CREATE TABLE IF NOT EXISTS auth.one_time_tokens")
 }
 
-func TestDiffConfigs_AuthRefreshTokensAdded(t *testing.T) {
+// TestDiffConfigs_ExistingAuthGetsRefreshTokensTable covers an upgrade from a
+// pre-always-on deployment: auth was already configured but never had
+// refresh_tokens enabled, so the table was never created. The additive diff
+// path must heal it.
+func TestDiffConfigs_ExistingAuthGetsRefreshTokensTable(t *testing.T) {
 	old := &domain.Config{
-		Auth: &domain.Auth{
-			RefreshTokens: false,
-		},
+		Auth: &domain.Auth{},
 	}
 	new := &domain.Config{
-		Auth: &domain.Auth{
-			RefreshTokens: true,
-		},
+		Auth: &domain.Auth{},
 	}
 
 	diff := diffConfigs(old, new)

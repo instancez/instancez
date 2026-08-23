@@ -80,9 +80,8 @@ func TestServeConsumesBundleEndToEnd(t *testing.T) {
 		Project: domain.Project{Name: "funcs-bundle"},
 		Server:  domain.Server{Port: 0},
 		Auth: &domain.Auth{
-			JWTExpiry:     "1h",
-			RefreshTokens: false,
-			Email:         &domain.AuthEmail{VerifyEmail: false},
+			JWTExpiry: "1h",
+			Email:     &domain.AuthEmail{VerifyEmail: false},
 		},
 		Functions: map[string]domain.CodeFunction{
 			"greet": {Runtime: "node", File: "functions/greet.js"},
@@ -129,8 +128,8 @@ func TestServeConsumesBundleEndToEnd(t *testing.T) {
 
 	// ---- 4. Runtime from the EXTRACTED bundle. ----
 	rt, err := funcs.New(funcs.Options{
-		Dir:         dir,
-		Functions:   cfg.Functions,
+		Dir:            dir,
+		Functions:      cfg.Functions,
 		LoopbackURL:    "http://127.0.0.1:0",
 		PublishableKey: "inz_publishable_bundletest",
 		SecretKey:      "inz_secret_bundletest",
@@ -235,4 +234,3 @@ func buildInlineBundle(t *testing.T, files map[string]string) []byte {
 	}
 	return buf.Bytes()
 }
-

@@ -72,7 +72,6 @@ export interface Providers {
 
 export interface Auth {
   jwt_expiry: string;
-  refresh_tokens: boolean;
   refresh_token_expiry: string;
   // null means "unset" (the server defaults both to allowed). The dashboard
   // writes an explicit boolean once the toggle is touched.

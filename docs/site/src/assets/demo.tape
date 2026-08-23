@@ -36,7 +36,7 @@ Env BAT_STYLE "numbers"
 
 Hide
   Type@1ms `tmux -f /dev/null -L demo kill-server 2>/dev/null; rm -rf /tmp/vhsdemo && mkdir -p /tmp/vhsdemo && cd /tmp/vhsdemo` Enter
-  Type@1ms `printf 'version: 1\n\nproject:\n  name: demo\n\nproviders:\n  storage:\n    type: local\n\nauth:\n  jwt_expiry: 15m\n  refresh_tokens: true\n  allow_anonymous: true\n\ntables:\n  todos:\n    fields:\n      - name: id\n        type: bigserial\n        primary_key: true\n      - name: user_id\n        foreign_key:\n          references: auth.users.id\n          on_delete: cascade\n      - name: title\n        type: text\n        required: true\n      - name: status\n        type: text\n        enum: [pending, active, done]\n        default: pending\n    rls:\n      - operations: [select, insert, update, delete]\n        using: "user_id = auth.uid()"\n        with_check: "user_id = auth.uid()"\n' > instancez.yaml` Enter
+  Type@1ms `printf 'version: 1\n\nproject:\n  name: demo\n\nproviders:\n  storage:\n    type: local\n\nauth:\n  jwt_expiry: 15m\n  allow_anonymous: true\n\ntables:\n  todos:\n    fields:\n      - name: id\n        type: bigserial\n        primary_key: true\n      - name: user_id\n        foreign_key:\n          references: auth.users.id\n          on_delete: cascade\n      - name: title\n        type: text\n        required: true\n      - name: status\n        type: text\n        enum: [pending, active, done]\n        default: pending\n    rls:\n      - operations: [select, insert, update, delete]\n        using: "user_id = auth.uid()"\n        with_check: "user_id = auth.uid()"\n' > instancez.yaml` Enter
   Type "clear" Enter
   Type "tmux -f /dev/null -L demo new-session -- bash --norc" Enter
   Type "tmux split-window -d -h -- bash --norc" Enter
