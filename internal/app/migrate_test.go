@@ -800,3 +800,22 @@ func TestOrderedSchemasOmitsAuthWhenUnconfigured(t *testing.T) {
 	}
 }
 
+func TestGenerateTable_ByteParity_UntypedIntegerFK(t *testing.T) {
+	tables := map[string]domain.Table{
+		"categories": {Fields: []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}}},
+		"products": {Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
+			{Name: "category_id", ForeignKey: &domain.ForeignKey{References: "categories.id"}},
+		}},
+	}
+	got := strings.Join(generateTable("products", tables["products"], tables), "\n")
+	want := `CREATE TABLE IF NOT EXISTS products (
+  id bigserial PRIMARY KEY,
+  category_id BIGINT,
+  FOREIGN KEY (category_id) REFERENCES public.categories(id) ON DELETE RESTRICT
+);`
+	if got != want {
+		t.Fatalf("DDL drifted:\n got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
