@@ -871,11 +871,26 @@ func validateForeignKeys(tables map[string]domain.Table) domain.ValidationErrors
 				continue
 			}
 
-			if _, colExists := targetFields[refCol]; !colExists {
+			targetField, colExists := targetFields[refCol]
+			if !colExists {
 				errs = append(errs, &domain.ValidationError{
 					Path:    fkPath + ".references",
 					Message: fmt.Sprintf("references %s.%s but column %q does not exist on table %q", refTable, refCol, refCol, refTable),
 				})
+			} else {
+				resolve := func(table, col string) (domain.Field, bool) {
+					f, ok := knownTables[table][col]
+					return f, ok
+				}
+				fkType := domain.EffectiveType(field, resolve)
+				refType := domain.EffectiveType(targetField, resolve)
+				if !domain.FKCompatible(fkType, refType) {
+					errs = append(errs, &domain.ValidationError{
+						Path:       fkPath + ".type",
+						Message:    fmt.Sprintf("column type %q does not match referenced %s.%s type %q", fkType, refTable, refCol, refType),
+						Suggestion: fmt.Sprintf("declare \"type: %s\" on %q, or change the reference", refType, fieldName),
+					})
+				}
 			}
 		}
 	}
