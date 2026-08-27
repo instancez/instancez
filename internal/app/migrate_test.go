@@ -451,10 +451,42 @@ func TestEffectiveTypeAutoUUIDForAuthUsers(t *testing.T) {
 		{"legacy users.id no longer auto-uuids", domain.Field{ForeignKey: &domain.ForeignKey{References: "users.id"}}, "BIGINT"},
 	}
 	for _, tt := range cases {
-		got := effectiveType(tt.f)
+		got := effectiveType(tt.f, nil)
 		if got != tt.want {
 			t.Errorf("%s: got %q want %q", tt.name, got, tt.want)
 		}
+	}
+}
+
+func TestGenerateTable_UntypedFKInheritsUUID(t *testing.T) {
+	tables := map[string]domain.Table{
+		"school_accounts": {Fields: []domain.Field{{Name: "id", Type: "uuid", PrimaryKey: true}}},
+		"schedule_workspaces": {Fields: []domain.Field{
+			{Name: "id", Type: "uuid", PrimaryKey: true},
+			{Name: "school_id", Required: true, ForeignKey: &domain.ForeignKey{References: "school_accounts.id", OnDelete: "cascade"}},
+		}},
+	}
+	ddl := strings.Join(generateTable("schedule_workspaces", tables["schedule_workspaces"], tables), "\n")
+	if !strings.Contains(ddl, "school_id uuid") {
+		t.Fatalf("expected school_id uuid, got:\n%s", ddl)
+	}
+}
+
+func TestGenerateTable_UntypedFKToBigserialStaysBigint(t *testing.T) {
+	// Parity: gearstore-shaped config (bigserial PK, untyped FK) must still emit BIGINT.
+	tables := map[string]domain.Table{
+		"categories": {Fields: []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}}},
+		"products": {Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
+			{Name: "category_id", ForeignKey: &domain.ForeignKey{References: "categories.id"}},
+		}},
+	}
+	ddl := strings.Join(generateTable("products", tables["products"], tables), "\n")
+	if !strings.Contains(ddl, "category_id BIGINT") {
+		t.Fatalf("expected category_id BIGINT (parity), got:\n%s", ddl)
+	}
+	if strings.Contains(strings.ToLower(ddl), "category_id bigserial") {
+		t.Fatalf("FK column must not be sequence-backed bigserial:\n%s", ddl)
 	}
 }
 

@@ -397,7 +397,7 @@ func diffNewColumns(old, new *domain.Config) []string {
 			if _, exists := oldFieldMap[fieldName]; exists {
 				continue // existing field, handled by diffColumnChanges
 			}
-			colDef := formatColumnForAdd(fieldName, field)
+			colDef := formatColumnForAdd(fieldName, field, new.Tables)
 			ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s;", qual, colDef))
 
 			// Constraints for the new column
@@ -436,8 +436,8 @@ func diffNewColumns(old, new *domain.Config) []string {
 
 // formatColumnForAdd builds a column definition for ALTER TABLE ADD COLUMN,
 // including inline REFERENCES for FK columns.
-func formatColumnForAdd(name string, field domain.Field) string {
-	def := formatColumn(name, field)
+func formatColumnForAdd(name string, field domain.Field, tables map[string]domain.Table) string {
+	def := formatColumn(name, field, tables)
 	if field.ForeignKey != nil {
 		schema, refTable, refCol, err := domain.ParseFKReference(field.ForeignKey.References)
 		if err == nil {
@@ -488,11 +488,11 @@ func diffColumnChanges(old, new *domain.Config) []string {
 				continue // new column, handled by diffNewColumns
 			}
 
-			newType := normalizeType(effectiveType(newField))
-			oldType := normalizeType(effectiveType(oldField))
+			newType := domain.Normalize(effectiveType(newField, new.Tables))
+			oldType := domain.Normalize(effectiveType(oldField, old.Tables))
 			if newType != oldType {
 				ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s TYPE %s;",
-					qual, fieldName, effectiveType(newField)))
+					qual, fieldName, effectiveType(newField, new.Tables)))
 			}
 
 			newRequired := newField.Required || newField.PrimaryKey
@@ -509,27 +509,6 @@ func diffColumnChanges(old, new *domain.Config) []string {
 		}
 	}
 	return ddl
-}
-
-// normalizeType maps config types to a comparable form so that equivalent
-// types (e.g. bigserial → bigint) don't trigger spurious ALTER statements.
-func normalizeType(t string) string {
-	t = strings.ToLower(t)
-	switch {
-	case t == "bigserial":
-		return "bigint"
-	case t == "serial":
-		return "integer"
-	case strings.HasPrefix(t, "varchar"):
-		return "varchar"
-	case t == "bool":
-		return "boolean"
-	case t == "timestamptz":
-		return "timestamptz"
-	case t == "int":
-		return "integer"
-	}
-	return t
 }
 
 // --- Helpers ---

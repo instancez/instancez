@@ -759,9 +759,9 @@ func TestDiffConfigs_NormalizeType(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			got := normalizeType(tt.input)
+			got := domain.Normalize(tt.input)
 			if got != tt.want {
-				t.Errorf("normalizeType(%q) = %q, want %q", tt.input, got, tt.want)
+				t.Errorf("domain.Normalize(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
 	}
