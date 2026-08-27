@@ -438,6 +438,87 @@ type StorageObject struct {
 	Metadata   map[string]any `json:"metadata,omitempty"`
 }
 
+// Normalize canonicalizes a SQL type name for comparison (case, aliases,
+// serial-to-underlying-type collapse).
+func Normalize(t string) string {
+	t = strings.ToLower(t)
+	switch {
+	case t == "bigserial":
+		return "bigint"
+	case t == "serial":
+		return "integer"
+	case strings.HasPrefix(t, "varchar"):
+		return "varchar"
+	case t == "bool":
+		return "boolean"
+	case t == "timestamptz":
+		return "timestamptz"
+	case t == "int":
+		return "integer"
+	}
+	return t
+}
+
+// integer-family types are mutually FK-compatible and are the ones the legacy
+// BIGINT default already worked against.
+func integerClass(t string) bool {
+	switch Normalize(t) {
+	case "bigint", "integer", "smallint":
+		return true
+	}
+	return false
+}
+
+// typeClass buckets a type for FK comparison: integer types collapse to one
+// class; everything else is its normalized self.
+func typeClass(t string) string {
+	if integerClass(t) {
+		return "integer"
+	}
+	return Normalize(t)
+}
+
+// FKCompatible reports whether an FK column type and its referenced column type
+// may share a foreign key (integer widths interoperate; otherwise types must match).
+func FKCompatible(a, b string) bool { return typeClass(a) == typeClass(b) }
+
+// FieldResolver looks up a table's column definition, if known.
+type FieldResolver func(table, col string) (Field, bool)
+
+// EffectiveType resolves a field's SQL type, inferring an untyped foreign-key
+// column's type from its referenced column. An integer-family target keeps the
+// legacy BIGINT default (parity); a nil/cross-schema/unresolved/cyclic target
+// also falls back to BIGINT.
+func EffectiveType(f Field, resolve FieldResolver) string {
+	return effectiveType(f, resolve, map[string]bool{})
+}
+
+func effectiveType(f Field, resolve FieldResolver, seen map[string]bool) string {
+	if f.Type != "" {
+		return f.Type
+	}
+	if f.ForeignKey != nil {
+		ref := f.ForeignKey.References
+		if strings.EqualFold(ref, "auth.users.id") {
+			return "UUID"
+		}
+		if resolve != nil && !seen[ref] {
+			seen[ref] = true
+			if _, table, col, err := ParseFKReference(ref); err == nil {
+				if rf, ok := resolve(table, col); ok {
+					rt := effectiveType(rf, resolve, seen)
+					if integerClass(rt) {
+						return "BIGINT"
+					}
+					return Normalize(rt)
+				}
+			}
+		}
+		return "BIGINT"
+	}
+	return f.Type
+}
+
 // Migration records an applied migration.
 type Migration struct {
 	ID         int64     `json:"id"`
