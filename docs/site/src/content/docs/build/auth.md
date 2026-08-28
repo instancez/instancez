@@ -5,12 +5,11 @@ description: Password, magic link, OTP, OAuth, anonymous sign-in, and TOTP MFA â
 
 ## Configuration
 
-The `auth:` block in `instancez.yaml` controls JWT lifetime, refresh tokens, sign-up permissions, and OAuth providers:
+The `auth:` block in `instancez.yaml` controls JWT lifetime, sign-up permissions, and OAuth providers:
 
 ```yaml
 auth:
   jwt_expiry: 1h
-  refresh_tokens: true
   refresh_token_expiry: 7d
 
   # Set to false to disable public sign-up (the secret key can still create users)
@@ -43,9 +42,7 @@ auth:
       redirect_url: https://api.myapp.example.com/auth/v1/callback/github
 ```
 
-All keys are optional. Omit `auth:` entirely and JWT auth still works with the defaults (15m expiry, no refresh tokens, sign-up open).
-
-**With `refresh_tokens` off, `supabase-js` reports `session: null` even on success.** The `/auth/v1/signup` and `/auth/v1/token` responses still carry a valid `access_token`, but `supabase-js`'s client-side check for "is there a session" requires `access_token`, `refresh_token`, and `expires_in` all to be present. No `refresh_token` means `data.session` comes back `null` from `signUp()` / `signInWithPassword()`, even though the token itself works. Set `refresh_tokens: true` if you want the SDK to actually see a session.
+All keys are optional. Auth is always provisioned, even if `auth:` is omitted entirely â€” JWT auth works with the defaults (15m expiry, 7d refresh token expiry, sign-up open). Refresh tokens are always issued; the old `auth.refresh_tokens` toggle is deprecated and ignored.
 
 The dashboard's **Auth** page edits these too: the Registration toggles map to `allow_signup` / `allow_anonymous`, and the Redirect URLs list maps to `redirect_urls`. When sign-up is off, the anonymous toggle is disabled, since anonymous sign-in is blocked along with it.
 

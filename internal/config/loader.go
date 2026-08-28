@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"regexp"
 	"strings"
@@ -249,14 +250,18 @@ func applyDefaults(cfg *domain.Config) {
 		cfg.Database.Pool.IdleTimeout = "300s"
 	}
 
-	// Auth defaults
-	if cfg.Auth != nil {
-		if cfg.Auth.JWTExpiry == "" {
-			cfg.Auth.JWTExpiry = "15m"
-		}
-		if cfg.Auth.RefreshTokenExpiry == "" && cfg.Auth.RefreshTokens {
-			cfg.Auth.RefreshTokenExpiry = "7d"
-		}
+	// Auth is always-on: never nil after defaults.
+	if cfg.Auth == nil {
+		cfg.Auth = &domain.Auth{}
+	}
+	if cfg.Auth.JWTExpiry == "" {
+		cfg.Auth.JWTExpiry = "15m"
+	}
+	if cfg.Auth.RefreshTokenExpiry == "" {
+		cfg.Auth.RefreshTokenExpiry = "7d"
+	}
+	if cfg.Auth.RefreshTokens != nil && !*cfg.Auth.RefreshTokens {
+		slog.Warn("auth.refresh_tokens is deprecated and ignored; refresh tokens are always enabled")
 	}
 
 	// RPC: fill defaults and derive ReturnCategory.

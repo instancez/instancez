@@ -78,8 +78,7 @@ describe("putConfig", () => {
 describe("getStats", () => {
   it("fetches stats", async () => {
     const stats = {
-      tables: { todos: { row_count: 42 } },
-      storage: {},
+      storage: { avatars: { object_count: 1, total_bytes: 100 } },
     };
     mockFetch.mockReturnValueOnce(jsonResponse(stats));
 

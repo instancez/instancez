@@ -81,7 +81,6 @@ export const projectRoutes = (): RouteObject[] => [
   { index: true, element: <ProjectPage />, handle: { title: "Project" } satisfies ConsoleRouteHandle },
 ];
 
-// Platform-only: registered by appBackend.tsx, not in the OSS Sidebar/consoleRoutes.
 export const sqlRoutes = (): RouteObject[] => [
   { index: true, element: <SqlEditor />, handle: { title: "SQL Editor" } satisfies ConsoleRouteHandle },
 ];
@@ -90,6 +89,7 @@ export function consoleRoutes(): RouteObject[] {
   return [
     ...overviewRoutes(),
     { path: "tables", children: tablesRoutes() },
+    { path: "sql", children: sqlRoutes() },
     { path: "auth", children: authRoutes() },
     { path: "users", children: usersRoutes() },
     { path: "storage", children: storageRoutes() },

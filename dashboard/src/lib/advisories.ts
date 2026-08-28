@@ -1,14 +1,7 @@
-import type { Config, StatsResponse } from "./types";
+import type { Config } from "./types";
 
-export function databaseSummary(
-  config: Config,
-  stats: StatsResponse | null,
-): { name: string; rlsCount: number; rowCount: number | null }[] {
+export function databaseSummary(config: Config): { name: string; rlsCount: number }[] {
   return Object.entries(config.tables ?? {})
-    .map(([name, t]) => ({
-      name,
-      rlsCount: t.rls?.length ?? 0,
-      rowCount: stats?.tables?.[name]?.row_count ?? null,
-    }))
+    .map(([name, t]) => ({ name, rlsCount: t.rls?.length ?? 0 }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }

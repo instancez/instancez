@@ -504,9 +504,8 @@ func TestValidate_FullExampleConfig(t *testing.T) {
 			Storage: &domain.StorageProvider{Type: "s3", Bucket: "${INSTANCEZ_S3_BUCKET}"},
 		},
 		Auth: &domain.Auth{
-			JWTExpiry:     "15m",
-			RefreshTokens: true,
-			Email:         &domain.AuthEmail{VerifyEmail: true},
+			JWTExpiry: "15m",
+			Email:     &domain.AuthEmail{VerifyEmail: true},
 		},
 		Tables: map[string]domain.Table{
 			"users": {
@@ -571,9 +570,8 @@ func TestValidate_UnknownEmailTemplateRejected(t *testing.T) {
 	withTemplates := func(templates map[string]domain.EmailTemplate) *domain.Config {
 		cfg := validBaseConfig()
 		cfg.Auth = &domain.Auth{
-			JWTExpiry:     "15m",
-			RefreshTokens: true,
-			Email:         &domain.AuthEmail{VerifyEmail: true, Templates: templates},
+			JWTExpiry: "15m",
+			Email:     &domain.AuthEmail{VerifyEmail: true, Templates: templates},
 		}
 		return cfg
 	}

@@ -72,7 +72,6 @@ export interface Providers {
 
 export interface Auth {
   jwt_expiry: string;
-  refresh_tokens: boolean;
   refresh_token_expiry: string;
   // null means "unset" (the server defaults both to allowed). The dashboard
   // writes an explicit boolean once the toggle is touched.
@@ -186,7 +185,6 @@ export interface FuncReturn {
 // API response types
 
 export interface StatsResponse {
-  tables: Record<string, { row_count: number }>;
   storage: Record<string, { object_count: number; total_bytes: number }>;
 }
 

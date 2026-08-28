@@ -442,8 +442,7 @@ func TestAuthHandler_Mount_RegistersGoTrueRoutes(t *testing.T) {
 	h := &AuthHandler{
 		cfg: &domain.Config{
 			Auth: &domain.Auth{
-				RefreshTokens: true,
-				Email:         &domain.AuthEmail{VerifyEmail: true},
+				Email: &domain.AuthEmail{VerifyEmail: true},
 			},
 		},
 		jwtKeys: stubKeys(t),
@@ -564,6 +563,62 @@ func TestHandleToken_UnknownGrantType(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != 400 {
 		t.Errorf("expected 400 for unknown grant_type, got %d", w.Code)
+	}
+}
+
+// TestHandleRefreshGrant_IgnoresDeprecatedRefreshTokensFalse pins refresh
+// tokens as always-on: the deprecated auth.refresh_tokens:false toggle must
+// not resurrect the removed "disabled" 400 — a refresh grant still succeeds
+// and issues a new refresh_token.
+func TestHandleRefreshGrant_IgnoresDeprecatedRefreshTokensFalse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	inserted := false
+	svc := &stubAuthService{
+		consumeRefreshFn: func(ctx context.Context, token string) (map[string]any, error) {
+			return map[string]any{
+				"id":                 "11111111-2222-3333-4444-555555555555",
+				"email":              "u@e.com",
+				"email_verified":     true,
+				"raw_app_meta_data":  `{}`,
+				"raw_user_meta_data": `{}`,
+				"created_at":         time.Now(),
+				"updated_at":         time.Now(),
+			}, nil
+		},
+		insertRefreshTokenFn: func(ctx context.Context, userID, token string, meta domain.SessionMeta, expiresAt int64) error {
+			inserted = true
+			return nil
+		},
+	}
+	h := &AuthHandler{
+		cfg: &domain.Config{Auth: &domain.Auth{
+			JWTExpiry:     "15m",
+			RefreshTokens: ptrBool(false), // deprecated toggle; must be ignored
+		}},
+		authSvc: svc,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		jwtKeys: stubKeys(t),
+	}
+	r := gin.New()
+	r.POST("/auth/v1/token", h.handleToken)
+
+	req := httptest.NewRequest("POST", "/auth/v1/token?grant_type=refresh_token",
+		strings.NewReader(`{"refresh_token":"old-token"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200 (refresh must succeed regardless of deprecated toggle), got %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	rt, _ := body["refresh_token"].(string)
+	if rt == "" {
+		t.Errorf("expected non-empty refresh_token in response, got %v", body["refresh_token"])
+	}
+	if !inserted {
+		t.Error("expected InsertRefreshToken to be called")
 	}
 }
 

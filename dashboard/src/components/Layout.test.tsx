@@ -26,7 +26,7 @@ vi.mock("../api/client", async (importOriginal) => {
     }),
     getConfigStatus: vi.fn().mockResolvedValue({ dotenv_writable: false }),
     getEnvVars: vi.fn().mockResolvedValue({ vars: {} }),
-    getStats: vi.fn().mockResolvedValue({ tables: {}, storage: {} }),
+    getStats: vi.fn().mockResolvedValue({ storage: {} }),
     getKeys: vi.fn().mockResolvedValue({ publishable_key: "test-publishable-key" }),
   };
 });

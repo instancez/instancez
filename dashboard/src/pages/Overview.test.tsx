@@ -30,7 +30,7 @@ const baseConfig: Config = {
       rls: [],
     },
   },
-  auth: { jwt_expiry: "15m", refresh_tokens: true, refresh_token_expiry: "7d", allow_signup: null, allow_anonymous: null, redirect_urls: [], email: { verify_email: false, templates: {} }, oauth: {} },
+  auth: { jwt_expiry: "15m", refresh_token_expiry: "7d", allow_signup: null, allow_anonymous: null, redirect_urls: [], email: { verify_email: false, templates: {} }, oauth: {} },
   storage: {
     avatars: { max_size: "5MB", types: ["image/*"], public: true, rls: [] },
   },
@@ -73,7 +73,6 @@ describe("Overview", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetStats.mockResolvedValue({
-      tables: { todos: { row_count: 42 } },
       storage: { avatars: { object_count: 10, total_bytes: 1048576 } },
     });
     mockGetStatus.mockResolvedValue({ database: "connected" });
@@ -104,6 +103,12 @@ describe("Overview", () => {
     expect(screen.queryByText("2 fields")).not.toBeInTheDocument();
     expect(screen.queryByText("avatars")).not.toBeInTheDocument();
     expect(screen.queryByText("Storage Buckets")).not.toBeInTheDocument();
+  });
+
+  it("does not render per-table row counts even when stats are loaded", async () => {
+    renderOverview();
+    await screen.findByText("todos");
+    expect(screen.queryByText(/\d+ rows/)).not.toBeInTheDocument();
   });
 
   it("shows client connection examples with the real URL and a PUBLISHABLE_KEY var", async () => {

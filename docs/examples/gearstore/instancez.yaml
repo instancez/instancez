@@ -18,7 +18,6 @@ auth:
     # Email + password auth. VerifyEmail is off so signup returns a session
     # immediately; no email provider is required in that mode.
     jwt_expiry: 1h
-    refresh_tokens: true
     refresh_token_expiry: 7d
     # allow_signup: false       # admin-only: POST /auth/v1/signup → 403 signup_disabled
     # allow_anonymous: false    # block empty-body anonymous sign-in
