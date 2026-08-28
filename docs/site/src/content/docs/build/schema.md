@@ -53,6 +53,16 @@ The `type` field accepts standard Postgres type names. The most commonly used on
 
 `type` is validated against a fixed allowlist (roughly: the integer/serial variants, `text`/`varchar`/`char`, `boolean`, `numeric`/`decimal`/`real`/`double`/`float`, the date/time types, `uuid`, `json`/`jsonb`, `bytea`, `inet`/`cidr`/`macaddr`, `money`, the geometric types, `tsquery`/`tsvector`, `xml`, and `bit`) — not an arbitrary Postgres type name. `varchar(n)`/`char(n)`/`bit(n)` parameterization and `[]` array suffixes are supported; unlisted types (e.g. `citext`, `hstore`, `ltree`, custom enums) fail validation with `unknown type`.
 
+### Unsupported column features
+
+The schema model has no equivalent for a few Postgres column features. Use `bigserial`/`serial` for auto-incrementing keys, and a `default` (see below) for computed defaults.
+
+| Postgres feature | Status | If you migrate from Supabase |
+|---|---|---|
+| `GENERATED ALWAYS AS (expr) STORED` (computed columns) | Not supported | The column becomes a plain column. Its current values are copied as **static data** and won't auto-recompute — the migration flags this as an advisory. |
+| `GENERATED ALWAYS/BY DEFAULT AS IDENTITY` | Not supported | Values are preserved, but auto-increment is **not** carried over. Add a `default` or re-seed a sequence afterward. The migration flags this as an advisory. Prefer `bigserial` for new tables. |
+| Unlisted / custom types (enums, `citext`, `hstore`, …) | Not supported | Blocks the migration with `unknown type` until the column is changed to an allowed type. |
+
 ## Field options
 
 | Option | Type | Description |
