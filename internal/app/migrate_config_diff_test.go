@@ -758,10 +758,23 @@ func TestDiffConfigs_NormalizeType(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			got := normalizeType(tt.input)
+			got := domain.Normalize(tt.input)
 			if got != tt.want {
-				t.Errorf("normalizeType(%q) = %q, want %q", tt.input, got, tt.want)
+				t.Errorf("domain.Normalize(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestDiffConfigs_SelfDiffEmpty(t *testing.T) {
+	cfg := &domain.Config{Tables: map[string]domain.Table{
+		"orgs": {Fields: []domain.Field{{Name: "id", Type: "uuid", PrimaryKey: true}}},
+		"members": {Fields: []domain.Field{
+			{Name: "id", Type: "uuid", PrimaryKey: true},
+			{Name: "org_id", ForeignKey: &domain.ForeignKey{References: "orgs.id"}}, // untyped FK
+		}},
+	}}
+	if ddl := diffColumnChanges(cfg, cfg); len(ddl) != 0 {
+		t.Fatalf("self-diff produced ALTERs: %v", ddl)
 	}
 }

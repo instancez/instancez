@@ -1212,3 +1212,42 @@ func TestValidateFunctionFiles(t *testing.T) {
 		}
 	})
 }
+
+func TestValidateForeignKeys_TypeMatch(t *testing.T) {
+	mk := func(fk domain.Field) map[string]domain.Table {
+		return map[string]domain.Table{
+			"school_accounts": {Fields: []domain.Field{{Name: "id", Type: "uuid", PrimaryKey: true}}},
+			"workspaces":      {Fields: []domain.Field{{Name: "id", Type: "uuid", PrimaryKey: true}, fk}},
+		}
+	}
+	if errs := validateForeignKeys(mk(domain.Field{Name: "school_id", ForeignKey: &domain.ForeignKey{References: "school_accounts.id"}})); len(errs) != 0 {
+		t.Fatalf("untyped FK to uuid PK should be valid, got: %v", errs)
+	}
+	if errs := validateForeignKeys(mk(domain.Field{Name: "school_id", Type: "text", ForeignKey: &domain.ForeignKey{References: "school_accounts.id"}})); len(errs) == 0 {
+		t.Fatalf("text FK to uuid PK should be rejected")
+	}
+	if errs := validateForeignKeys(mk(domain.Field{Name: "school_id", Type: "uuid", ForeignKey: &domain.ForeignKey{References: "school_accounts.id"}})); len(errs) != 0 {
+		t.Fatalf("uuid FK to uuid PK should be valid, got: %v", errs)
+	}
+}
+
+func TestValidateForeignKeys_IntegerFamilyCompatible(t *testing.T) {
+	tables := map[string]domain.Table{
+		"events":  {Fields: []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}}},
+		"tickets": {Fields: []domain.Field{{Name: "id", Type: "uuid", PrimaryKey: true}, {Name: "event_id", ForeignKey: &domain.ForeignKey{References: "events.id"}}}},
+	}
+	if errs := validateForeignKeys(tables); len(errs) != 0 {
+		t.Fatalf("untyped FK to bigserial PK should be valid (integer family), got: %v", errs)
+	}
+}
+
+func TestValidateForeignKeys_MissingColumn_NoSpuriousTypeError(t *testing.T) {
+	tables := map[string]domain.Table{
+		"events":  {Fields: []domain.Field{{Name: "id", Type: "uuid", PrimaryKey: true}}},
+		"tickets": {Fields: []domain.Field{{Name: "id", Type: "uuid", PrimaryKey: true}, {Name: "event_id", Type: "uuid", ForeignKey: &domain.ForeignKey{References: "events.missing"}}}},
+	}
+	errs := validateForeignKeys(tables)
+	if len(errs) != 1 {
+		t.Fatalf("missing referenced column should yield exactly one (existence) error, got %d: %v", len(errs), errs)
+	}
+}

@@ -678,7 +678,7 @@ func generateTable(name string, table domain.Table, allTables map[string]domain.
 
 	for _, field := range fields {
 		fname := field.Name
-		cols = append(cols, formatColumn(fname, field))
+		cols = append(cols, formatColumn(fname, field, allTables))
 
 		// FK constraint
 		if field.ForeignKey != nil {
@@ -777,23 +777,30 @@ func qualifiedTableName(name string, t domain.Table) string {
 	return s + "." + name
 }
 
-// effectiveType returns the resolved SQL type for a field, inferring from FK
-// references when the type is empty (auth.users.id → UUID, others → BIGINT).
-func effectiveType(f domain.Field) string {
-	if f.Type != "" {
-		return f.Type
+// resolverOver builds a domain.FieldResolver backed by tables, precomputing
+// each table's FieldMap once rather than per lookup.
+func resolverOver(tables map[string]domain.Table) domain.FieldResolver {
+	if tables == nil {
+		return nil
 	}
-	if f.ForeignKey != nil {
-		if strings.EqualFold(f.ForeignKey.References, "auth.users.id") {
-			return "UUID"
-		}
-		return "BIGINT"
+	fm := make(map[string]map[string]domain.Field, len(tables))
+	for name, t := range tables {
+		fm[name] = t.FieldMap()
 	}
-	return f.Type
+	return func(table, col string) (domain.Field, bool) {
+		f, ok := fm[table][col]
+		return f, ok
+	}
 }
 
-func formatColumn(name string, field domain.Field) string {
-	typ := effectiveType(field)
+// effectiveType returns the resolved SQL type for a field, inferring an
+// untyped FK column's type from its referenced column via tables.
+func effectiveType(f domain.Field, tables map[string]domain.Table) string {
+	return domain.EffectiveType(f, resolverOver(tables))
+}
+
+func formatColumn(name string, field domain.Field, tables map[string]domain.Table) string {
+	typ := effectiveType(field, tables)
 
 	parts := []string{name, typ}
 
