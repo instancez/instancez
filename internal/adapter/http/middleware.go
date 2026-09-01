@@ -152,11 +152,17 @@ func corsMiddleware(cfg domain.CORS, devMode bool) gin.HandlerFunc {
 
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 
-		// Includes the headers supabase-js attaches on every request (apikey,
-		// x-client-info) plus the PostgREST schema selectors (content-profile,
-		// accept-profile) and the existing set. Not app-configurable — no app
-		// has a reason to add custom headers to a supabase-js-shaped API.
-		c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type, Prefer, Accept, apikey, x-client-info, Range, Range-Unit, Content-Profile, Accept-Profile, X-Requested-With")
+		// Reflect the headers the client asks for on the preflight. supabase-js
+		// keeps adding request headers over time (apikey, x-client-info, and now
+		// x-supabase-api-version), so a fixed allow-list goes stale and silently
+		// blocks the preflight. Reflecting keeps this correct for any supabase-js
+		// version; the known supabase/PostgREST set is the fallback when the
+		// preflight names none (or on a non-preflight response).
+		allowHeaders := "Authorization, Content-Type, Prefer, Accept, apikey, x-client-info, x-supabase-api-version, Range, Range-Unit, Content-Profile, Accept-Profile, X-Requested-With"
+		if requested := c.GetHeader("Access-Control-Request-Headers"); requested != "" {
+			allowHeaders = requested
+		}
+		c.Header("Access-Control-Allow-Headers", allowHeaders)
 		c.Header("Access-Control-Expose-Headers", "Content-Range, Content-Profile, Location")
 		c.Header("Access-Control-Max-Age", "86400")
 
