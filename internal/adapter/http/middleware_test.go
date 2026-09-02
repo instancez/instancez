@@ -115,6 +115,41 @@ func TestCorsMiddleware(t *testing.T) {
 			t.Errorf("Access-Control-Max-Age = %q, want 86400", got)
 		}
 	})
+
+	t.Run("preflight reflects requested headers so new supabase-js headers pass", func(t *testing.T) {
+		r := gin.New()
+		r.Use(corsMiddleware(domain.CORS{Origins: []string{"*"}}, false))
+		r.OPTIONS("/x", func(c *gin.Context) {})
+
+		req := httptest.NewRequest(http.MethodOptions, "/x", nil)
+		req.Header.Set("Origin", "http://localhost:5173")
+		req.Header.Set("Access-Control-Request-Method", "POST")
+		req.Header.Set("Access-Control-Request-Headers", "authorization,apikey,x-supabase-api-version")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		// The exact set the client asked for is echoed — including a header the
+		// old fixed list omitted (x-supabase-api-version).
+		if got := w.Header().Get("Access-Control-Allow-Headers"); got != "authorization,apikey,x-supabase-api-version" {
+			t.Errorf("Access-Control-Allow-Headers = %q, want the reflected request headers", got)
+		}
+	})
+
+	t.Run("without a requested-headers preflight, the known set is served", func(t *testing.T) {
+		r := gin.New()
+		r.Use(corsMiddleware(domain.CORS{Origins: []string{"*"}}, false))
+		r.GET("/x", func(c *gin.Context) { c.Status(200) })
+
+		req := httptest.NewRequest(http.MethodGet, "/x", nil)
+		req.Header.Set("Origin", "http://localhost:5173")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		got := w.Header().Get("Access-Control-Allow-Headers")
+		if !strings.Contains(got, "x-supabase-api-version") || !strings.Contains(got, "Authorization") {
+			t.Errorf("fallback Access-Control-Allow-Headers = %q, want the known supabase set", got)
+		}
+	})
 }
 
 func TestProfileHeaderGuard(t *testing.T) {
