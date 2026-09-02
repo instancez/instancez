@@ -113,11 +113,9 @@ func NewServer(deps ServerDeps) *Server {
 	crudHandler := NewCRUDHandler(deps)
 	crudHandler.Mount(root)
 
-	// Code functions at /functions/v1/:name — same JWT gate as /rest/v1.
-	// FunctionRuntime may be nil (returns 501) so existing call sites that
-	// do not set FunctionRuntime continue to compile and work unchanged.
+	// Code functions at /functions/v1/:name — no apiKeyGuard so webhook senders
+	// without our apikey can reach them; per-function auth_required still gates.
 	functionsV1 := root.Group("/functions/v1")
-	functionsV1.Use(apiKeyGuard(deps.JWTKeys))
 	functionsV1.Use(jwtAuth(deps.JWTKeys, false))
 	NewFunctionsHandler(deps.FunctionRuntime).Mount(functionsV1)
 

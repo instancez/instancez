@@ -218,6 +218,8 @@ const { data, error } = await supabase.functions.invoke("todos", {
 });
 ```
 
+Unlike `/rest/v1`, `/auth/v1`, and `/storage/v1`, functions do **not** require the `apikey` header. This lets external webhook senders that can't attach your publishable key reach a function directly. A webhook function must verify the sender's own signature (use `rawBody`) and should keep `auth_required: false`, since the caller has no user JWT.
+
 ## Lifecycle
 
 | Command | npm | Hot reload |
