@@ -113,9 +113,11 @@ func NewServer(deps ServerDeps) *Server {
 	crudHandler := NewCRUDHandler(deps)
 	crudHandler.Mount(root)
 
-	// Code functions at /functions/v1/:name — no apiKeyGuard so webhook senders
-	// without our apikey can reach them; per-function auth_required still gates.
+	// Code functions at /functions/v1/:name. apiKeyOptional (not apiKeyGuard) so
+	// keyless webhook senders get in, but a present-but-bad key is still 401'd;
+	// per-function auth_required gates the rest.
 	functionsV1 := root.Group("/functions/v1")
+	functionsV1.Use(apiKeyOptional(deps.JWTKeys))
 	functionsV1.Use(jwtAuth(deps.JWTKeys, false))
 	NewFunctionsHandler(deps.FunctionRuntime).Mount(functionsV1)
 

@@ -365,6 +365,22 @@ func jwtAuth(keys *app.JWTKeyManager, required bool) gin.HandlerFunc {
 	}
 }
 
+// apiKeyOptional validates the apikey header only when it is present: a
+// keyless caller (a webhook that can't attach our key) passes through, while a
+// present-but-invalid key is rejected instead of silently downgraded to anon.
+// Used on /functions/v1.
+func apiKeyOptional(keys *app.JWTKeyManager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		key := c.GetHeader("apikey")
+		if keys == nil || key == "" || keyTier(key) != tierNone {
+			c.Next()
+			return
+		}
+		pgJSON(c, 401, "invalid_api_key", "Invalid API key", "", "")
+		c.Abort()
+	}
+}
+
 // apiKeyGuard enforces the apikey header supabase-js attaches to every request:
 // it must be the publishable or secret key. keys == nil means a unit test built
 // the handler without key support; skip the check rather than fail every such
