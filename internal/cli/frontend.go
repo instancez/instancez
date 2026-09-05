@@ -29,7 +29,7 @@ func newFrontendCmd() *cobra.Command {
 }
 
 func newFrontendDeployCmd() *cobra.Command {
-	var configPath, project string
+	var configPath, project, branch string
 	cmd := &cobra.Command{
 		Use:   "deploy <dist-dir>",
 		Short: "Upload a prebuilt static bundle (dist/) as the project's frontend",
@@ -38,19 +38,22 @@ func newFrontendDeployCmd() *cobra.Command {
 The bundle is served at the project's domain while /api still routes to the
 backend. <dist-dir> must contain an index.html at its root (a Vite/SPA build).
 
-The project id is read from project.cloud.project_id in instancez.yaml, or
-pass --project to target one directly.`,
+--branch selects which version to deploy to (validated server-side against the
+app's versions). The project id is read from project.cloud.project_id in
+instancez.yaml, or pass --project to target one directly.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runFrontendDeploy(args[0], configPath, project)
+			return runFrontendDeploy(args[0], configPath, project, branch)
 		},
 	}
 	cmd.Flags().StringVar(&configPath, "config", "instancez.yaml", "path to instancez.yaml (for the linked project id)")
 	cmd.Flags().StringVar(&project, "project", "", "target this cloud project id instead of instancez.yaml's project.cloud.project_id")
+	cmd.Flags().StringVar(&branch, "branch", "", "branch/version to deploy the frontend to (validated server-side)")
+	_ = cmd.MarkFlagRequired("branch")
 	return cmd
 }
 
-func runFrontendDeploy(distDir, configPath, project string) error {
+func runFrontendDeploy(distDir, configPath, project, branch string) error {
 	projectID := project
 	if projectID == "" {
 		src, err := os.ReadFile(configPath)
@@ -76,10 +79,10 @@ func runFrontendDeploy(distDir, configPath, project string) error {
 		return err
 	}
 	c := cloud.NewClient(cloud.APIURL(), creds.PAT)
-	if err := c.UploadFrontend(projectID, files); err != nil {
+	if err := c.UploadFrontend(projectID, branch, files); err != nil {
 		return err
 	}
-	fmt.Printf("  ✓ Deployed %d file(s) from %s\n", len(files), distDir)
+	fmt.Printf("  ✓ Deployed %d file(s) from %s to %s\n", len(files), distDir, branch)
 	return nil
 }
 

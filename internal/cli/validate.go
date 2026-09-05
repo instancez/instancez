@@ -18,10 +18,11 @@ import (
 
 func newValidateCmd() *cobra.Command {
 	var (
-		configPath string
-		jsonOutput bool
-		useDSN     string
-		project    string
+		configPath    string
+		jsonOutput    bool
+		useDSN        string
+		project       string
+		cloudValidate bool
 	)
 
 	cmd := &cobra.Command{
@@ -44,6 +45,15 @@ validate never creates a project and never writes anything server-side; use
 			if _, err := applyEnvDefaults(cmd.Flags(), nil, os.Getenv); err != nil {
 				return err
 			}
+			if cloudValidate {
+				if cmd.Flags().Changed("project") {
+					return errors.New("--cloud and --project are mutually exclusive (--cloud is projectless)")
+				}
+				if len(args) > 0 {
+					return fmt.Errorf("validate does not take positional arguments")
+				}
+				return validateAgainstCloud(cmd.Context(), configPath, jsonOutput)
+			}
 			if !cmd.Flags().Changed("project") {
 				if len(args) > 0 {
 					return fmt.Errorf("validate does not take positional arguments")
@@ -63,7 +73,43 @@ validate never creates a project and never writes anything server-side; use
 	cmd.Flags().StringVar(&useDSN, "use-dsn", "", "after syntax check, plan a migration against this owner-class DSN")
 	cmd.Flags().StringVar(&project, "project", "", "preview against a cloud project (bare --project uses instancez.yaml's project_id; --project <id> overrides it)")
 	cmd.Flags().Lookup("project").NoOptDefVal = useFileProjectID
+	cmd.Flags().BoolVar(&cloudValidate, "cloud", false, "validate against the cloud's policy rules server-side (projectless; the same rules a deploy enforces)")
 	return cmd
+}
+
+// validateAgainstCloud validates the local yaml against the cloud's policy rules
+// server-side, without a project and without writing anything. Backs `inz
+// validate --cloud`. Blocking problems exit non-zero; dropped entries are
+// non-blocking warnings.
+func validateAgainstCloud(ctx context.Context, configPath string, jsonOutput bool) error {
+	_ = ctx
+	if err := requireLocalConfig(configPath); err != nil {
+		return err
+	}
+	creds, err := cloud.Load()
+	if err != nil {
+		return fmt.Errorf("--cloud requires authentication: %w", err)
+	}
+	src, err := os.ReadFile(configPath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", configPath, err)
+	}
+	c := cloud.NewClient(cloud.APIURL(), creds.PAT)
+	problems, dropped, err := c.ValidateConfigCloud(string(src))
+	if err != nil {
+		return reportCloudErr("validate config", err)
+	}
+	if jsonOutput {
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{
+			"problems": problems, "dropped": dropped,
+		})
+	}
+	if perr := reportCloudProblems("validate", problems); perr != nil {
+		return perr
+	}
+	printDropped(dropped)
+	fmt.Println("  ✓ Cloud valid")
+	return nil
 }
 
 // useFileProjectID is the sentinel NoOptDefVal for --project, so bare

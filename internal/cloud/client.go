@@ -187,14 +187,34 @@ func (c *Client) UploadSecrets(projectID string, secrets map[string]string) erro
 		map[string]any{"secrets": secrets, "branch": wireBranch}, nil)
 }
 
-// UploadFrontend deploys an externally-built static bundle to the project's
-// frontend. files is path-keyed with base64-encoded contents (keys are relative
-// to the bundle root, e.g. "index.html", "assets/app.abc.js"). The cloud
-// validates it, uploads it under the version's frontend prefix, and redeploys.
-// Called by `inz cloud frontend deploy`.
-func (c *Client) UploadFrontend(projectID string, files map[string]string) error {
+type validateConfigResponse struct {
+	Problems []Problem `json:"problems"`
+	Dropped  []Problem `json:"dropped"`
+}
+
+// ValidateConfigCloud validates yamlContent against the cloud's policy rules
+// server-side (projectless), the same rules a deploy enforces — more lenient
+// than the OSS local validator (e.g. cloud auto-provides s3 storage). Returns
+// blocking problems and non-blocking dropped entries. Backs `inz validate
+// --cloud` and the pre-deploy check.
+func (c *Client) ValidateConfigCloud(yamlContent string) (problems, dropped []Problem, err error) {
+	var out validateConfigResponse
+	if err := c.do("POST", "/instancez/validate-config",
+		map[string]string{"config": yamlContent}, &out); err != nil {
+		return nil, nil, err
+	}
+	return out.Problems, out.Dropped, nil
+}
+
+// UploadFrontend deploys an externally-built static bundle to the given branch
+// of the project's frontend. files is path-keyed with base64-encoded contents
+// (keys are relative to the bundle root, e.g. "index.html", "assets/app.abc.js").
+// branch is validated server-side against the app's versions. The cloud
+// validates the bundle, uploads it under that version's frontend prefix, and
+// redeploys. Called by `inz cloud frontend deploy`.
+func (c *Client) UploadFrontend(projectID, branch string, files map[string]string) error {
 	return c.do("POST", "/instancez/projects/"+projectID+"/frontend",
-		map[string]any{"files": files, "branch": wireBranch}, nil)
+		map[string]any{"files": files, "branch": branch}, nil)
 }
 
 // GetAppResponse mirrors GET /instancez/projects/:id. It carries the project
