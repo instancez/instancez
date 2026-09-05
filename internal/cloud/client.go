@@ -187,6 +187,16 @@ func (c *Client) UploadSecrets(projectID string, secrets map[string]string) erro
 		map[string]any{"secrets": secrets, "branch": wireBranch}, nil)
 }
 
+// UploadFrontend deploys an externally-built static bundle to the project's
+// frontend. files is path-keyed with base64-encoded contents (keys are relative
+// to the bundle root, e.g. "index.html", "assets/app.abc.js"). The cloud
+// validates it, uploads it under the version's frontend prefix, and redeploys.
+// Called by `inz cloud frontend deploy`.
+func (c *Client) UploadFrontend(projectID string, files map[string]string) error {
+	return c.do("POST", "/instancez/projects/"+projectID+"/frontend",
+		map[string]any{"files": files, "branch": wireBranch}, nil)
+}
+
 // GetAppResponse mirrors GET /instancez/projects/:id. It carries the project
 // fields plus the app's deploy state (Deployment). Note: Status is the
 // project lifecycle status, distinct from Deployment.Status (the deploy state).
