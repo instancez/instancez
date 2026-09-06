@@ -55,7 +55,6 @@ export function Overview() {
   const bucketCount = Object.keys(config.storage || {}).length;
   const funcCount = Object.keys(config.functions || {}).length;
   const rpcCount = Object.keys(config.rpc || {}).length;
-  const authEnabled = !!config.auth;
   const exampleTable = Object.keys(config.tables || {}).sort()[0] ?? "todos";
 
   const totalStorage = stats
@@ -143,17 +142,15 @@ export function Overview() {
               <CardTitle>Auth</CardTitle>
               <Box as={Shield} boxSize="4.5" color="fg.muted" />
             </HStack>
-            <CardValue>{authEnabled ? "Enabled" : "Off"}</CardValue>
+            <CardValue>Enabled</CardValue>
             <Text mt="1" fontSize="xs" color="fg.muted">
-              {authEnabled
-                ? [
-                    config.auth?.email ? "Email" : null,
-                    config.auth?.oauth?.google ? "Google" : null,
-                    config.auth?.oauth?.github ? "GitHub" : null,
-                  ]
-                    .filter(Boolean)
-                    .join(", ") || "No providers"
-                : "Not configured"}
+              {[
+                config.auth?.email ? "Email" : null,
+                config.auth?.oauth?.google ? "Google" : null,
+                config.auth?.oauth?.github ? "GitHub" : null,
+              ]
+                .filter(Boolean)
+                .join(", ") || "No providers"}
             </Text>
           </Card>
 

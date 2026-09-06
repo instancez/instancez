@@ -18,21 +18,19 @@ vi.mock("../api/client", async (importOriginal) => {
   };
 });
 
-const makeConfig = (authEnabled: boolean): Config => ({
+const makeConfig = (): Config => ({
   version: 1,
   project: { name: "Test", description: "" },
   tables: {},
-  auth: authEnabled
-    ? {
-        jwt_expiry: "15m",
-        refresh_token_expiry: "7d",
-        allow_signup: null,
-        allow_anonymous: null,
-        redirect_urls: [],
-        email: { verify_email: false, templates: {} },
-        oauth: {},
-      }
-    : null,
+  auth: {
+    jwt_expiry: "15m",
+    refresh_token_expiry: "7d",
+    allow_signup: null,
+    allow_anonymous: null,
+    redirect_urls: [],
+    email: { verify_email: false, templates: {} },
+    oauth: {},
+  },
   storage: {},
   rpc: {},
   functions: {},
@@ -82,39 +80,31 @@ describe("AuthPage", () => {
     vi.mocked(api.getEnvVars).mockResolvedValue({ vars: {} });
   });
 
-  it("shows JWT settings when auth is enabled", () => {
-    renderAuth(makeConfig(true));
+  it("always shows JWT settings — auth is always on, no enable toggle", () => {
+    renderAuth(makeConfig());
     expect(screen.getByText("JWT Settings")).toBeInTheDocument();
     expect(screen.getByDisplayValue("15m")).toBeInTheDocument();
     expect(screen.getByDisplayValue("7d")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Enable authentication")).not.toBeInTheDocument();
+    expect(screen.queryByText("Auth is disabled")).not.toBeInTheDocument();
   });
 
-  it("shows disabled state when auth is off", () => {
-    renderAuth(makeConfig(false));
-    expect(screen.getByText("Auth is disabled")).toBeInTheDocument();
-    expect(screen.queryByText("JWT Settings")).not.toBeInTheDocument();
+  it("materializes defaults when config.auth is null", () => {
+    const config = makeConfig();
+    config.auth = null;
+    renderAuth(config);
+    expect(screen.getByText("JWT Settings")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("15m")).toBeInTheDocument();
   });
 
   it("shows OAuth provider toggles", () => {
-    renderAuth(makeConfig(true));
+    renderAuth(makeConfig());
     expect(screen.getByText("google")).toBeInTheDocument();
     expect(screen.getByText("github")).toBeInTheDocument();
   });
 
-  it("toggles auth on when clicking the toggle", async () => {
-    renderAuth(makeConfig(false));
-    expect(screen.getByText("Auth is disabled")).toBeInTheDocument();
-
-    const toggles = screen.getAllByRole("switch");
-    const authToggle = toggles[0]!;
-    await userEvent.click(authToggle);
-
-    expect(screen.getByText("JWT Settings")).toBeInTheDocument();
-    expect(screen.queryByText("Auth is disabled")).not.toBeInTheDocument();
-  });
-
   it("shows email verification in the combined sign-up section", () => {
-    renderAuth(makeConfig(true));
+    renderAuth(makeConfig());
     expect(screen.getByText("Sign-up & verification")).toBeInTheDocument();
     expect(screen.getByText("Require email verification")).toBeInTheDocument();
   });
@@ -145,7 +135,7 @@ describe("AuthPage", () => {
   });
 
   it("requests status for credential vars, even ones not yet saved in config", () => {
-    renderAuth(makeConfig(true));
+    renderAuth(makeConfig());
     expect(api.getEnvVars).toHaveBeenCalledWith(
       expect.arrayContaining([
         "INSTANCEZ_ENV_GOOGLE_CLIENT_SECRET",
@@ -155,7 +145,7 @@ describe("AuthPage", () => {
   });
 
   it("requests status for ${VAR} refs found in saved OAuth settings", () => {
-    const config = makeConfig(true);
+    const config = makeConfig();
     config.auth!.oauth.google = {
       client_id: "${MY_CUSTOM_CLIENT_ID}",
       client_secret: "${INSTANCEZ_ENV_GOOGLE_CLIENT_SECRET}",
@@ -167,7 +157,7 @@ describe("AuthPage", () => {
   });
 
   it("renders literal OAuth settings as plain editable inputs, creds first", () => {
-    const config = makeConfig(true);
+    const config = makeConfig();
     config.auth!.oauth.google = {
       client_id: "abc123",
       client_secret: "${INSTANCEZ_ENV_GOOGLE_CLIENT_SECRET}",
@@ -189,7 +179,7 @@ describe("AuthPage", () => {
   });
 
   it("shows all three email template editors with default-subject placeholders", () => {
-    renderAuth(makeConfig(true));
+    renderAuth(makeConfig());
     expect(screen.getByText("Verification")).toBeInTheDocument();
     expect(screen.getByText("Magic link")).toBeInTheDocument();
     expect(screen.getByText("Password reset")).toBeInTheDocument();
@@ -199,7 +189,7 @@ describe("AuthPage", () => {
   });
 
   it("reads template overrides from the backend's template keys", () => {
-    const config = makeConfig(true);
+    const config = makeConfig();
     config.auth!.email = {
       verify_email: true,
       templates: {
@@ -211,7 +201,7 @@ describe("AuthPage", () => {
   });
 
   it("hides the save bar again when an edit is undone", () => {
-    const config = makeConfig(true);
+    const config = makeConfig();
     config.auth!.oauth.google = {
       client_id: "abc123",
       client_secret: "${INSTANCEZ_ENV_GOOGLE_CLIENT_SECRET}",
@@ -225,7 +215,7 @@ describe("AuthPage", () => {
   });
 
   it("enabling a provider stages the secret as ${VAR} and settings as literals", async () => {
-    renderAuth(makeConfig(true));
+    renderAuth(makeConfig());
     await userEvent.click(screen.getByRole("switch", { name: /enable google/i }));
     expect(screen.getByText("INSTANCEZ_ENV_GOOGLE_CLIENT_SECRET")).toBeInTheDocument();
     expect(screen.getByLabelText("Client ID")).toHaveValue("");
@@ -237,7 +227,7 @@ describe("AuthPage", () => {
   // a top-level auth.google. Writing the flat key gets rejected as an unknown
   // key by the engine's strict config decode.
   it("saves an enabled provider under auth.oauth, not as a top-level key", async () => {
-    const { save } = renderAuth(makeConfig(true));
+    const { save } = renderAuth(makeConfig());
     await userEvent.click(screen.getByRole("switch", { name: /enable google/i }));
     await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
     const saved = save.mock.calls[0]![0].auth;
@@ -253,7 +243,7 @@ describe("AuthPage", () => {
   // Disabling drops the key entirely rather than leaving `google: null`, so the
   // emitted YAML carries no dead provider entry.
   it("removes the provider key from auth.oauth when disabled", async () => {
-    const config = makeConfig(true);
+    const config = makeConfig();
     config.auth!.oauth.google = {
       client_id: "abc123",
       client_secret: "${INSTANCEZ_ENV_GOOGLE_CLIENT_SECRET}",
@@ -265,7 +255,7 @@ describe("AuthPage", () => {
   });
 
   it("shows Google OAuth var names when Google is enabled", async () => {
-    const config = makeConfig(true);
+    const config = makeConfig();
     config.auth!.oauth.google = {
       client_id: "${INSTANCEZ_GOOGLE_CLIENT_ID}",
       client_secret: "${INSTANCEZ_ENV_GOOGLE_CLIENT_SECRET}",
@@ -279,7 +269,7 @@ describe("AuthPage", () => {
     vi.mocked(api.getEnvVars).mockResolvedValue({
       vars: { INSTANCEZ_GOOGLE_CLIENT_ID: { set: true, tail: "wxyz" } },
     });
-    const config = makeConfig(true);
+    const config = makeConfig();
     config.auth!.oauth.google = {
       client_id: "${INSTANCEZ_GOOGLE_CLIENT_ID}",
       client_secret: "${INSTANCEZ_ENV_GOOGLE_CLIENT_SECRET}",
@@ -289,7 +279,7 @@ describe("AuthPage", () => {
   });
 
   it("shows dotenv input when dotenvWritable=true and provider is enabled", () => {
-    const config = makeConfig(true);
+    const config = makeConfig();
     config.auth!.oauth.google = {
       client_id: "${INSTANCEZ_GOOGLE_CLIENT_ID}",
       client_secret: "${INSTANCEZ_ENV_GOOGLE_CLIENT_SECRET}",
@@ -304,7 +294,7 @@ describe("AuthPage", () => {
   });
 
   it("shows friendly field labels for OAuth config rows", () => {
-    const config = makeConfig(true);
+    const config = makeConfig();
     config.auth!.oauth.google = {
       client_id: "${INSTANCEZ_GOOGLE_CLIENT_ID}",
       client_secret: "${INSTANCEZ_ENV_GOOGLE_CLIENT_SECRET}",
@@ -316,7 +306,7 @@ describe("AuthPage", () => {
   });
 
   it("hides dotenv inputs when dotenvWritable=false", () => {
-    const config = makeConfig(true);
+    const config = makeConfig();
     config.auth!.oauth.google = {
       client_id: "${INSTANCEZ_GOOGLE_CLIENT_ID}",
       client_secret: "${INSTANCEZ_ENV_GOOGLE_CLIENT_SECRET}",
@@ -328,28 +318,28 @@ describe("AuthPage", () => {
   // ---------- Registration (allow_signup / allow_anonymous) ----------
 
   it("shows registration toggles, both on when the flags are unset", () => {
-    renderAuth(makeConfig(true));
+    renderAuth(makeConfig());
     expect(screen.getByText("Sign-up & verification")).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Allow public sign-up" })).toBeChecked();
     expect(screen.getByRole("switch", { name: "Allow anonymous sign-in" })).toBeChecked();
   });
 
   it("reflects allow_signup=false as the sign-up toggle being off", () => {
-    const config = makeConfig(true);
+    const config = makeConfig();
     config.auth!.allow_signup = false;
     renderAuth(config);
     expect(screen.getByRole("switch", { name: "Allow public sign-up" })).not.toBeChecked();
   });
 
   it("disables the anonymous toggle when sign-up is off", () => {
-    const config = makeConfig(true);
+    const config = makeConfig();
     config.auth!.allow_signup = false;
     renderAuth(config);
     expect(screen.getByRole("switch", { name: "Allow anonymous sign-in" })).toBeDisabled();
   });
 
   it("writes an explicit boolean when sign-up is toggled off", async () => {
-    const { save } = renderAuth(makeConfig(true));
+    const { save } = renderAuth(makeConfig());
     await userEvent.click(screen.getByRole("switch", { name: "Allow public sign-up" }));
     await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
     expect(save).toHaveBeenCalled();
@@ -359,28 +349,28 @@ describe("AuthPage", () => {
   // ---------- Redirect URLs ----------
 
   it("lists configured redirect URLs", () => {
-    const config = makeConfig(true);
+    const config = makeConfig();
     config.auth!.redirect_urls = ["https://app.example.com"];
     renderAuth(config);
     expect(screen.getByDisplayValue("https://app.example.com")).toBeInTheDocument();
   });
 
   it("flags an invalid redirect origin", () => {
-    const config = makeConfig(true);
+    const config = makeConfig();
     config.auth!.redirect_urls = ["app.example.com"];
     renderAuth(config);
     expect(screen.getByText(/absolute http\(s\) origin/i)).toBeInTheDocument();
   });
 
   it("adds an empty redirect URL row when clicking add", async () => {
-    renderAuth(makeConfig(true));
+    renderAuth(makeConfig());
     expect(screen.queryByLabelText("Redirect URL 1")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /add redirect url/i }));
     expect(screen.getByLabelText("Redirect URL 1")).toBeInTheDocument();
   });
 
   it("saves a typed redirect URL into the payload", async () => {
-    const { save } = renderAuth(makeConfig(true));
+    const { save } = renderAuth(makeConfig());
     await userEvent.click(screen.getByRole("button", { name: /add redirect url/i }));
     await userEvent.type(screen.getByLabelText("Redirect URL 1"), "https://app.example.com");
     await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
@@ -388,7 +378,7 @@ describe("AuthPage", () => {
   });
 
   it("removes a redirect URL from the payload", async () => {
-    const config = makeConfig(true);
+    const config = makeConfig();
     config.auth!.redirect_urls = ["https://a.example.com", "https://b.example.com"];
     const { save } = renderAuth(config);
     await userEvent.click(screen.getByRole("button", { name: "Remove redirect URL 1" }));
@@ -397,7 +387,7 @@ describe("AuthPage", () => {
   });
 
   it("drops blank redirect URL rows on save", async () => {
-    const config = makeConfig(true);
+    const config = makeConfig();
     config.auth!.redirect_urls = ["https://app.example.com"];
     const { save } = renderAuth(config);
     // Add a second, empty row, then save without filling it.
@@ -409,7 +399,7 @@ describe("AuthPage", () => {
   // ---------- Round-trip preservation ----------
 
   it("preserves allow_signup/allow_anonymous/redirect_urls across an unrelated edit", async () => {
-    const config = makeConfig(true);
+    const config = makeConfig();
     config.auth!.allow_signup = false;
     config.auth!.allow_anonymous = false;
     config.auth!.redirect_urls = ["https://app.example.com"];
