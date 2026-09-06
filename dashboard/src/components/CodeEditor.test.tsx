@@ -10,10 +10,10 @@ describe("CodeEditor onSubmit", () => {
     const { container } = renderWithChakra(
       <CodeEditor value="select 1" onChange={vi.fn()} onSubmit={onSubmit} />
     );
-    const content = container.querySelector(".cm-content") as HTMLElement;
-    fireEvent.keyDown(content, { key: "Enter" });
+    const editorEl = container.querySelector(".cm-content") as HTMLElement;
+    fireEvent.keyDown(editorEl, { key: "Enter" });
     expect(onSubmit).not.toHaveBeenCalled();
-    fireEvent.keyDown(content, { key: "Enter", ctrlKey: true });
+    fireEvent.keyDown(editorEl, { key: "Enter", ctrlKey: true });
     expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 
@@ -22,9 +22,9 @@ describe("CodeEditor onSubmit", () => {
     const { container } = renderWithChakra(
       <CodeEditor value="select 1" onChange={onChange} />
     );
-    const content = container.querySelector(".cm-content") as HTMLElement;
+    const editorEl = container.querySelector(".cm-content") as HTMLElement;
     const before = container.querySelectorAll(".cm-line").length;
-    fireEvent.keyDown(content, { key: "Enter", ctrlKey: true });
+    fireEvent.keyDown(editorEl, { key: "Enter", ctrlKey: true });
     expect(container.querySelectorAll(".cm-line").length).toBe(before + 1);
   });
 });

@@ -39,8 +39,8 @@ describe("SqlEditor", () => {
   it("runs on Cmd/Ctrl+Enter", async () => {
     const runQuery = vi.fn(async () => ({ columns: ["n"], rows: [[1]], row_count: 1 }));
     const { container } = renderPage(mk(runQuery));
-    const content = container.querySelector(".cm-content") as HTMLElement;
-    fireEvent.keyDown(content, { key: "Enter", ctrlKey: true });
+    const editorEl = container.querySelector(".cm-content") as HTMLElement;
+    fireEvent.keyDown(editorEl, { key: "Enter", ctrlKey: true });
     await waitFor(() => expect(runQuery).toHaveBeenCalled());
   });
 });
