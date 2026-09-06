@@ -1,7 +1,7 @@
 import { useRef, useEffect } from "react";
 import { Box } from "@chakra-ui/react";
 import { EditorView, basicSetup } from "codemirror";
-import { Decoration, type DecorationSet } from "@codemirror/view";
+import { Decoration, keymap, type DecorationSet } from "@codemirror/view";
 import {
   EditorState,
   EditorSelection,
@@ -9,6 +9,7 @@ import {
   StateEffect,
   Annotation,
   Transaction,
+  Prec,
   type Extension,
   type SelectionRange,
   type TransactionSpec,
@@ -46,6 +47,28 @@ const brandTheme = EditorView.theme({
   // The locked scaffold lines: real code lines, just tinted so they read as
   // fixed and the caret never lands in them.
   ".cm-readonly-line": { backgroundColor: "var(--syn-readonly-line)" },
+  // The autocomplete popup. Without a darkTheme facet CodeMirror paints it with
+  // its light defaults, so force our vars for both modes.
+  ".cm-tooltip": {
+    backgroundColor: "var(--c-surface)",
+    color: "var(--c-foreground)",
+    border: "1px solid var(--c-border)",
+    borderRadius: "6px",
+  },
+  ".cm-tooltip.cm-tooltip-autocomplete > ul": {
+    fontFamily: "var(--font-mono)",
+    fontSize: "12px",
+  },
+  ".cm-tooltip-autocomplete ul li[aria-selected]": {
+    backgroundColor: "var(--syn-selection)",
+    color: "var(--c-foreground)",
+  },
+  ".cm-completionDetail": { color: "var(--c-muted-foreground)" },
+  ".cm-completionMatchedText": {
+    color: "var(--syn-keyword)",
+    textDecoration: "none",
+    fontWeight: "600",
+  },
 });
 
 export interface Frame {
@@ -223,6 +246,10 @@ interface CodeEditorProps {
       syntax-highlighted lines above and below the body and kept out of
       `value`/`onChange`. */
   frame?: Frame;
+  /** Fired on Cmd/Ctrl+Enter, e.g. to run the current query. */
+  onSubmit?: () => void;
+  /** Table → column names, fed to SQL autocompletion as known identifiers. */
+  sqlSchema?: Record<string, string[]>;
 }
 
 export function CodeEditor({
@@ -233,17 +260,35 @@ export function CodeEditor({
   minHeight = "120px",
   readOnly = false,
   frame,
+  onSubmit,
+  sqlSchema,
 }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const onSubmitRef = useRef(onSubmit);
+  onSubmitRef.current = onSubmit;
 
   useEffect(() => {
     if (!containerRef.current) return;
     const initFrame = frame ?? null;
 
     const extensions = [
+      // Prec.highest so Mod-Enter wins over basicSetup, which binds it to
+      // insertBlankLine.
+      Prec.highest(
+        keymap.of([
+          {
+            key: "Mod-Enter",
+            run: () => {
+              if (!onSubmitRef.current) return false; // fall through to basicSetup
+              onSubmitRef.current();
+              return true;
+            },
+          },
+        ])
+      ),
       basicSetup,
       brandTheme,
       syntaxHighlighting(brandHighlight),
@@ -269,7 +314,8 @@ export function CodeEditor({
       }),
     ];
 
-    if (language === "sql") extensions.push(sql());
+    if (language === "sql")
+      extensions.push(sql(sqlSchema ? { schema: sqlSchema, upperCaseKeywords: false } : undefined));
     if (language === "javascript") extensions.push(javascript());
     if (readOnly) extensions.push(EditorState.readOnly.of(true));
     if (placeholder) {
@@ -292,7 +338,7 @@ export function CodeEditor({
     // Only re-create on language/readOnly change, not value. The frame and value
     // flow in through the effects below without tearing down the editor.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [language, readOnly, minHeight]);
+  }, [language, readOnly, minHeight, sqlSchema]);
 
   // Rewrite the scaffold in place when the frame prop changes (e.g. the RPC
   // header recomputing from form fields). The body and the caret stay put.

@@ -1,10 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
-import { Shield, KeySquare, Mails, Plug2, UserPlus, Link2, Plus, X } from "lucide-react";
+import { KeySquare, Mails, Plug2, UserPlus, Link2, Plus, X } from "lucide-react";
 import { Box, Grid, HStack, IconButton, Text, VStack } from "@chakra-ui/react";
 import { useConfig } from "../hooks/useConfig";
 import { SaveBar } from "../components/SaveBar";
 import { CodeEditor } from "../components/CodeEditor";
-import { EmptyState } from "../components/EmptyState";
 import { Toggle } from "../components/Toggle";
 import { Field, Input, Panel, Section } from "../components/ui";
 import { VarRow } from "../components/VarRow";
@@ -136,7 +135,6 @@ export function AuthPage() {
   const canWriteSecrets = backend.capabilities.canWriteSecrets && dotenvWritable;
   const showEnvName = backend.capabilities.showsEnvVarNames;
   const [auth, setAuth] = useState<Auth | null>(null);
-  const [enabled, setEnabled] = useState(false);
   const [envVarStatus, setEnvVarStatus] = useState<Record<string, { set: boolean; tail?: string }>>({});
   const [pendingDotenv, setPendingDotenv] = useState<Record<string, string>>({});
 
@@ -154,8 +152,7 @@ export function AuthPage() {
 
   useEffect(() => {
     if (config) {
-      setAuth(config.auth ? structuredClone(config.auth) : null);
-      setEnabled(!!config.auth);
+      setAuth(structuredClone(config.auth ?? DEFAULT_AUTH));
     }
   }, [config]);
 
@@ -173,12 +170,13 @@ export function AuthPage() {
 
   async function handleSave() {
     if (!config) return;
+    if (!auth) return;
     // Drop blank redirect rows (an added-but-unfilled entry) so they don't land
     // in the YAML as empty list items.
-    const cleanedAuth =
-      enabled && auth
-        ? { ...auth, redirect_urls: (auth.redirect_urls ?? []).map((u) => u.trim()).filter(Boolean) }
-        : null;
+    const cleanedAuth = {
+      ...auth,
+      redirect_urls: auth.redirect_urls.map((u) => u.trim()).filter(Boolean),
+    };
     const updated = { ...config, auth: cleanedAuth };
     const staged = Object.entries(pendingDotenv).filter(([, v]) => v !== "");
     const ok = await save(updated, {
@@ -211,14 +209,6 @@ export function AuthPage() {
         await loadEnvVars();
       }
     }
-  }
-
-  function toggleAuth() {
-    setEnabled((prev) => {
-      const next = !prev;
-      if (next && !auth) setAuth(structuredClone(DEFAULT_AUTH));
-      return next;
-    });
   }
 
   function toggleOAuth(provider: "google" | "github", isEnabled: boolean) {
@@ -283,32 +273,13 @@ export function AuthPage() {
 
   // Dirty is derived, not a sticky flag: undoing an edit hides the save bar.
   const dirty =
-    !jsonEqual(enabled ? auth : null, config.auth ?? null) ||
+    !jsonEqual(auth, config.auth ?? DEFAULT_AUTH) ||
     Object.values(pendingDotenv).some((v) => v !== "");
 
   return (
     <Box pb="20">
       <VStack pb="8" gap="6" maxW="3xl" align="stretch">
-        {/* Enable/Disable Toggle */}
-        <Section
-          title="Enable Authentication"
-          icon={Shield}
-          actions={
-            <Toggle
-              aria-label="Enable authentication"
-              checked={enabled}
-              onChange={toggleAuth}
-            />
-          }
-        />
-
-        {!enabled ? (
-          <EmptyState
-            icon={Shield}
-            title="Auth is disabled"
-            description="Enable authentication to configure providers and JWT settings."
-          />
-        ) : auth ? (
+        {auth && (
           <>
             <Section
               title="JWT Settings"
@@ -610,7 +581,7 @@ export function AuthPage() {
               })}
             </Section>
           </>
-        ) : null}
+        )}
       </VStack>
 
       {canWriteConfig && (

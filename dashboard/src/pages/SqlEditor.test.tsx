@@ -7,7 +7,11 @@ import { fullCapabilities, type ConsoleBackend } from "../console/backend";
 import { SqlEditor } from "./SqlEditor";
 
 function mk(runQuery: ConsoleBackend["runQuery"]) {
-  return { capabilities: fullCapabilities(), runQuery } as unknown as ConsoleBackend;
+  return {
+    capabilities: fullCapabilities(),
+    runQuery,
+    getConfig: async () => ({ tables: {} }),
+  } as unknown as ConsoleBackend;
 }
 function renderPage(b: ConsoleBackend) {
   return renderWithChakra(
@@ -30,5 +34,13 @@ describe("SqlEditor", () => {
     renderPage(mk(runQuery));
     fireEvent.click(screen.getByRole("button", { name: /run/i }));
     expect(await screen.findByText(/permission denied/i)).toBeInTheDocument();
+  });
+
+  it("runs on Cmd/Ctrl+Enter", async () => {
+    const runQuery = vi.fn(async () => ({ columns: ["n"], rows: [[1]], row_count: 1 }));
+    const { container } = renderPage(mk(runQuery));
+    const editorEl = container.querySelector(".cm-content") as HTMLElement;
+    fireEvent.keyDown(editorEl, { key: "Enter", ctrlKey: true });
+    await waitFor(() => expect(runQuery).toHaveBeenCalled());
   });
 });
