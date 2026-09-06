@@ -145,6 +145,12 @@ func uploadYAMLResponseBody(diffHasChanges bool) string {
 	return string(b)
 }
 
+// validateConfigOK is the happy-path response for the pre-deploy cloud
+// validation call (POST /instancez/validate-config): no blocking problems.
+const validateConfigOK = `{"problems":[],"dropped":[]}`
+
+const validateConfigPath = "/instancez/validate-config"
+
 // TestRunDeployPromptsAndDeclineAborts: deploy always previews and prompts;
 // declining means the write call never happens.
 func TestRunDeployPromptsAndDeclineAborts(t *testing.T) {
@@ -233,6 +239,10 @@ func TestRunDeployAcceptWrites(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, r.Method+" "+r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == validateConfigPath {
+			_, _ = w.Write([]byte(validateConfigOK))
+			return
+		}
 		var body struct {
 			Branch string `json:"branch"`
 		}
@@ -256,6 +266,7 @@ func TestRunDeployAcceptWrites(t *testing.T) {
 	cfg := writeDeployConfig(t, home)
 	require.NoError(t, runDeploy(cfg, deployOpts{}))
 	assert.Equal(t, []string{
+		"POST " + validateConfigPath,
 		"POST /instancez/projects/abc/config/preview",
 		"PUT /instancez/projects/abc/yaml",
 	}, calls)
@@ -367,16 +378,29 @@ func TestRunDeployMissingProjectID(t *testing.T) {
 	assert.ErrorContains(t, err, "--new")
 }
 
+// Cloud validation rejects the config (server-side), so deploy fails with a
+// reported error before touching the project.
 func TestRunDeployInvalidYAML(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "tok-123"}))
-	t.Setenv("INSTANCEZ_CLOUD_API", "http://127.0.0.1:1")
 
-	p := filepath.Join(home, "instancez.yaml")
-	require.NoError(t, os.WriteFile(p, []byte("version: 99\n"), 0o644))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == validateConfigPath {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"problems": []map[string]string{{"path": "version", "message": "unsupported version"}},
+				"dropped":  []any{},
+			})
+			return
+		}
+		t.Errorf("unexpected request past validation: %s %s", r.Method, r.URL.Path)
+	}))
+	defer srv.Close()
+	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
 
-	err := runDeploy(p, deployOpts{})
+	cfg := writeDeployConfig(t, home)
+	err := runDeploy(cfg, deployOpts{})
 	assert.ErrorIs(t, err, errReported)
 }
 
@@ -396,6 +420,8 @@ func TestRunDeployNewCreatesProjectAfterValidation(t *testing.T) {
 		calls = append(calls, r.Method+" "+r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.URL.Path == validateConfigPath:
+			_, _ = w.Write([]byte(validateConfigOK))
 		case r.Method == "POST" && r.URL.Path == "/instancez/projects":
 			_ = json.NewEncoder(w).Encode(map[string]any{"project_id": "newly-created", "slug": "s", "name": "demo"})
 		case r.Method == "POST" && r.URL.Path == "/instancez/projects/newly-created/config/preview":
@@ -416,9 +442,10 @@ func TestRunDeployNewCreatesProjectAfterValidation(t *testing.T) {
 	require.NoError(t, os.WriteFile(cfgPath, []byte("version: 1\nproject:\n  name: demo\n"), 0o644))
 
 	require.NoError(t, runDeploy(cfgPath, deployOpts{new: true, yes: true}))
-	// A brand-new project has no remote state to diff, so deploy skips preview
-	// and goes straight from create to upload.
+	// Config is cloud-validated first, then (a brand-new project has no remote
+	// state to diff) deploy skips preview and goes straight from create to upload.
 	assert.Equal(t, []string{
+		"POST " + validateConfigPath,
 		"POST /instancez/projects",
 		"PUT /instancez/projects/newly-created/yaml",
 	}, calls)
@@ -469,17 +496,36 @@ func TestRunDeployNewDeclineNeverCreatesProject(t *testing.T) {
 	assert.Equal(t, original, string(after), "declining must not write a project_id into the yaml")
 }
 
+// Cloud validation runs BEFORE project creation, so an invalid config with
+// --new fails without ever creating a project (no orphan).
 func TestRunDeployNewFailsValidationBeforeCreatingProject(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "tok-123"}))
-	t.Setenv("INSTANCEZ_CLOUD_API", "http://127.0.0.1:1")
+
+	createCalled := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == validateConfigPath:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"problems": []map[string]string{{"path": "version", "message": "unsupported version"}},
+				"dropped":  []any{},
+			})
+		case r.Method == "POST" && r.URL.Path == "/instancez/projects":
+			createCalled = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"project_id": "x"})
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
 
 	cfgPath := filepath.Join(home, "instancez.yaml")
-	require.NoError(t, os.WriteFile(cfgPath, []byte("version: 99\n"), 0o644))
+	require.NoError(t, os.WriteFile(cfgPath, []byte("version: 1\nproject:\n  name: demo\n"), 0o644))
 
 	err := runDeploy(cfgPath, deployOpts{new: true})
 	assert.ErrorIs(t, err, errReported)
+	assert.False(t, createCalled, "must not create a project when cloud validation fails")
 }
 
 func TestRunDeployNewErrorsWhenAlreadyLinked(t *testing.T) {
@@ -510,6 +556,7 @@ func TestRunDeployProjectFlagOverridesFile(t *testing.T) {
 	cfg := writeDeployConfig(t, home)
 	require.NoError(t, runDeploy(cfg, deployOpts{project: "override-id", yes: true}))
 	assert.Equal(t, []string{
+		"POST " + validateConfigPath,
 		"POST /instancez/projects/override-id/config/preview",
 		"PUT /instancez/projects/override-id/yaml",
 	}, calls)

@@ -17,6 +17,7 @@ func newCloudCmd() *cobra.Command {
 		newWhoamiCmd(),
 		newDeployCmd(),
 		newStatusCmd(),
+		newFrontendCmd(),
 	)
 	return cmd
 }

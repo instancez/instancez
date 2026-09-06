@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/instancez/instancez/internal/cli/preflight"
 	"github.com/instancez/instancez/internal/cloud"
 	"github.com/instancez/instancez/internal/config"
 	"github.com/spf13/cobra"
@@ -83,13 +82,6 @@ func runDeploy(configPath string, opts deployOpts) error {
 		return err
 	}
 
-	if r, failed := preflight.RunUntilFail([]preflight.Check{
-		preflight.ConfigValidCheck(configPath),
-	}); failed {
-		fmt.Fprintf(os.Stderr, "  ✗ %s — %s\n    hint: %s\n", r.Name, r.Detail, r.FixHint)
-		return errReported
-	}
-
 	src, err := os.ReadFile(configPath)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", configPath, err)
@@ -125,6 +117,19 @@ func runDeploy(configPath string, opts deployOpts) error {
 	}
 
 	c := cloud.NewClient(cloud.APIURL(), creds.PAT)
+
+	// Validate against the cloud's own policy rules (server-side, projectless),
+	// the authority a deploy is checked by — rather than the stricter OSS local
+	// validator, which rejects configs the cloud accepts (e.g. it auto-provides
+	// s3 storage). Blocking problems stop the deploy; dropped entries are warned.
+	problems, dropped, err := c.ValidateConfigCloud(string(src))
+	if err != nil {
+		return reportCloudErr("validate config", err)
+	}
+	if perr := reportCloudProblems("deploy", problems); perr != nil {
+		return perr
+	}
+	printDropped(dropped)
 
 	// Confirm before anything is written OR created, so declining leaves nothing
 	// behind: no cloud project, no project_id in the local yaml, no sources.

@@ -33,6 +33,26 @@ func reportCloudErr(action string, err error) error {
 	return errReported
 }
 
+// reportCloudProblems renders a slice of blocking validation problems (from the
+// cloud validate endpoint, which returns them with a 200 rather than as an
+// APIError) in the same shape as reportCloudErr, and returns errReported so
+// Execute doesn't also print a bare error. Returns nil when there are none.
+func reportCloudProblems(action string, problems []cloud.Problem) error {
+	if len(problems) == 0 {
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "\n  ✗ %s failed cloud validation:\n", action)
+	for _, p := range problems {
+		fmt.Fprintf(os.Stderr, "\n    %s\n", p.Path)
+		fmt.Fprintf(os.Stderr, "    %s\n", p.Message)
+		if p.Suggestion != "" {
+			fmt.Fprintf(os.Stderr, "    Suggestion: %s\n", p.Suggestion)
+		}
+	}
+	fmt.Fprintf(os.Stderr, "\n  Found %d problem(s)\n", len(problems))
+	return errReported
+}
+
 // printDropped prints one warning line per entry a successful UploadYAML
 // reported as dropped (providers content stripped before persisting, since
 // it's inert in the cloud runtime). Used by both `inz cloud deploy` and
