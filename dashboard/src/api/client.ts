@@ -3,7 +3,6 @@ import type {
   ConfigStatus,
   StatsResponse,
   DiffResponse,
-  ValidationError,
   AdminUser,
   SqlResult,
 } from "../lib/types";

@@ -10,7 +10,7 @@ import { useBackend } from "../console/BackendContext";
 
 export function Tables() {
   const backend = useBackend();
-  const { config, save } = useConfig();
+  const { config } = useConfig();
   const navigate = useNavigate();
   const dialog = useDialog();
   const canWriteConfig = backend.capabilities.canWriteConfig;

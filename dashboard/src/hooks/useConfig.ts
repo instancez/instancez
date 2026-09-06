@@ -5,7 +5,6 @@ import {
   useEffect,
   useCallback,
   useRef,
-  type ReactNode,
 } from "react";
 import { useBackend } from "../console/BackendContext";
 import { showSaveToast, showSaveErrorToast } from "../components/SaveToast";
