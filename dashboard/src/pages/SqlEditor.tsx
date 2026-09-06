@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Box, HStack, VStack, Text } from "@chakra-ui/react";
 import { Play, Download } from "lucide-react";
 import { CodeEditor } from "../components/CodeEditor";
@@ -24,6 +24,19 @@ export function SqlEditor() {
   const [result, setResult] = useState<SqlResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
+  const [schema, setSchema] = useState<Record<string, string[]>>();
+
+  useEffect(() => {
+    Promise.resolve(backend.getConfig?.())
+      .then((cfg) => {
+        if (!cfg) return;
+        const map: Record<string, string[]> = {};
+        for (const [name, table] of Object.entries(cfg.tables ?? {}))
+          map[name] = (table.fields ?? []).map((f) => f.name);
+        setSchema(map);
+      })
+      .catch(() => {}); // autocomplete is a nicety; a failed load just means keywords only
+  }, [backend]);
 
   const run = useCallback(async () => {
     if (!sql.trim() || running) return;
@@ -45,7 +58,7 @@ export function SqlEditor() {
         <Button size="sm" onClick={run} disabled={running}><Play size={13} /> Run</Button>
         <Text fontSize="xs" color="fg.subtle" fontFamily="mono">⌘↵</Text>
       </HStack>
-      <Box borderBottomWidth="1px" borderColor="border"><CodeEditor language="sql" value={sql} onChange={setSql} minHeight="220px" /></Box>
+      <Box borderBottomWidth="1px" borderColor="border"><CodeEditor language="sql" value={sql} onChange={setSql} onSubmit={run} sqlSchema={schema} minHeight="220px" /></Box>
       {error && <Box px="3" py="3"><Text fontSize="sm" color="fg.error" fontFamily="mono" whiteSpace="pre-wrap">{error}</Text></Box>}
       {result && (
         <>

@@ -1,8 +1,33 @@
 import { describe, it, expect, vi } from "vitest";
 import { useState } from "react";
-import { act } from "@testing-library/react";
+import { act, fireEvent } from "@testing-library/react";
 import { renderWithChakra } from "../test/helpers";
 import { CodeEditor } from "./CodeEditor";
+
+describe("CodeEditor onSubmit", () => {
+  it("fires onSubmit on Cmd/Ctrl+Enter, not a plain Enter", () => {
+    const onSubmit = vi.fn();
+    const { container } = renderWithChakra(
+      <CodeEditor value="select 1" onChange={vi.fn()} onSubmit={onSubmit} />
+    );
+    const content = container.querySelector(".cm-content")!;
+    fireEvent.keyDown(content, { key: "Enter" });
+    expect(onSubmit).not.toHaveBeenCalled();
+    fireEvent.keyDown(content, { key: "Enter", ctrlKey: true });
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves Mod-Enter to the default (insert blank line) when no onSubmit", () => {
+    const onChange = vi.fn();
+    const { container } = renderWithChakra(
+      <CodeEditor value="select 1" onChange={onChange} />
+    );
+    const content = container.querySelector(".cm-content")!;
+    const before = container.querySelectorAll(".cm-line").length;
+    fireEvent.keyDown(content, { key: "Enter", ctrlKey: true });
+    expect(container.querySelectorAll(".cm-line").length).toBe(before + 1);
+  });
+});
 
 /**
  * The `frame` prop renders a fixed scaffold (header/footer) as real, locked

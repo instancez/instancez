@@ -31,4 +31,12 @@ describe("SqlEditor", () => {
     fireEvent.click(screen.getByRole("button", { name: /run/i }));
     expect(await screen.findByText(/permission denied/i)).toBeInTheDocument();
   });
+
+  it("runs on Cmd/Ctrl+Enter", async () => {
+    const runQuery = vi.fn(async () => ({ columns: ["n"], rows: [[1]], row_count: 1 }));
+    const { container } = renderPage(mk(runQuery));
+    const content = container.querySelector(".cm-content")!;
+    fireEvent.keyDown(content, { key: "Enter", ctrlKey: true });
+    await waitFor(() => expect(runQuery).toHaveBeenCalled());
+  });
 });
