@@ -10,7 +10,7 @@ describe("CodeEditor onSubmit", () => {
     const { container } = renderWithChakra(
       <CodeEditor value="select 1" onChange={vi.fn()} onSubmit={onSubmit} />
     );
-    const content = container.querySelector(".cm-content")!;
+    const content = container.querySelector(".cm-content") as HTMLElement;
     fireEvent.keyDown(content, { key: "Enter" });
     expect(onSubmit).not.toHaveBeenCalled();
     fireEvent.keyDown(content, { key: "Enter", ctrlKey: true });
@@ -22,7 +22,7 @@ describe("CodeEditor onSubmit", () => {
     const { container } = renderWithChakra(
       <CodeEditor value="select 1" onChange={onChange} />
     );
-    const content = container.querySelector(".cm-content")!;
+    const content = container.querySelector(".cm-content") as HTMLElement;
     const before = container.querySelectorAll(".cm-line").length;
     fireEvent.keyDown(content, { key: "Enter", ctrlKey: true });
     expect(container.querySelectorAll(".cm-line").length).toBe(before + 1);

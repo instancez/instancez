@@ -27,13 +27,14 @@ export function SqlEditor() {
   const [schema, setSchema] = useState<Record<string, string[]>>();
 
   useEffect(() => {
-    Promise.resolve(backend.getConfig?.())
+    backend
+      .getConfig()
       .then((cfg) => {
-        if (!cfg) return;
-        const map: Record<string, string[]> = {};
-        for (const [name, table] of Object.entries(cfg.tables ?? {}))
-          map[name] = (table.fields ?? []).map((f) => f.name);
-        setSchema(map);
+        setSchema(
+          Object.fromEntries(
+            Object.entries(cfg.tables).map(([name, table]) => [name, table.fields.map((f) => f.name)])
+          )
+        );
       })
       .catch(() => {}); // autocomplete is a nicety; a failed load just means keywords only
   }, [backend]);
@@ -58,7 +59,7 @@ export function SqlEditor() {
         <Button size="sm" onClick={run} disabled={running}><Play size={13} /> Run</Button>
         <Text fontSize="xs" color="fg.subtle" fontFamily="mono">⌘↵</Text>
       </HStack>
-      <Box borderBottomWidth="1px" borderColor="border"><CodeEditor language="sql" value={sql} onChange={setSql} onSubmit={run} sqlSchema={schema} minHeight="220px" /></Box>
+      <Box borderBottomWidth="1px" borderColor="border"><CodeEditor language="sql" value={sql} onChange={setSql} onSubmit={() => void run()} sqlSchema={schema} minHeight="220px" /></Box>
       {error && <Box px="3" py="3"><Text fontSize="sm" color="fg.error" fontFamily="mono" whiteSpace="pre-wrap">{error}</Text></Box>}
       {result && (
         <>

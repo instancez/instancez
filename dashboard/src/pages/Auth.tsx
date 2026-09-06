@@ -175,7 +175,7 @@ export function AuthPage() {
     // in the YAML as empty list items.
     const cleanedAuth = {
       ...auth,
-      redirect_urls: (auth.redirect_urls ?? []).map((u) => u.trim()).filter(Boolean),
+      redirect_urls: auth.redirect_urls.map((u) => u.trim()).filter(Boolean),
     };
     const updated = { ...config, auth: cleanedAuth };
     const staged = Object.entries(pendingDotenv).filter(([, v]) => v !== "");
