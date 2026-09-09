@@ -51,6 +51,47 @@ const ConfigContext = createContext<ConfigState | null>(null);
 
 export { ConfigContext };
 
+// Both backends (engine + platform) serialize empty Go maps/slices as JSON
+// null, but the Config type marks these collections required and every tab
+// iterates them directly (Object.entries / .map / .length). Coerce null → the
+// empty collection at this single seam — the one place both the OSS refresh and
+// the platform-seeded config converge — so no tab, current or future, crashes.
+// Genuinely-nullable fields (auth, providers.*, oauth values, foreign_key,
+// min/max) are left untouched.
+// The `?? []`/`?? {}` live in these helpers so the coalesce operand is a
+// genuinely nullable type — the Config type marks the collections non-null
+// (that's the lie we're correcting), so an inline `x.fields ?? []` reads as
+// dead code to the type-aware linter.
+const orArr = <V,>(v: V[] | null | undefined): V[] => v ?? [];
+const orMap = <V,>(m: Record<string, V> | null | undefined): Record<string, V> => m ?? {};
+const mapVals = <V,>(m: Record<string, V> | null | undefined, fn: (v: V) => V): Record<string, V> =>
+  Object.fromEntries(Object.entries(orMap(m)).map(([k, v]) => [k, fn(v)]));
+
+function normalizeConfig<T extends Config | null>(cfg: T): T {
+  if (!cfg) return cfg;
+  const auth = cfg.auth;
+  return {
+    ...cfg,
+    tables: mapVals(cfg.tables, (t) => ({
+      ...t,
+      fields: orArr(t.fields),
+      indexes: orArr(t.indexes),
+      rls: orArr(t.rls),
+    })),
+    storage: mapVals(cfg.storage, (b) => ({ ...b, types: orArr(b.types), rls: orArr(b.rls) })),
+    rpc: mapVals(cfg.rpc, (r) => ({ ...r, args: orArr(r.args) })),
+    functions: orMap(cfg.functions),
+    auth: auth
+      ? {
+          ...auth,
+          redirect_urls: orArr(auth.redirect_urls),
+          oauth: orMap(auth.oauth),
+          email: auth.email ? { ...auth.email, templates: orMap(auth.email.templates) } : auth.email,
+        }
+      : auth,
+  } as T;
+}
+
 export function useConfig(): ConfigState {
   const ctx = useContext(ConfigContext);
   if (!ctx) throw new Error("useConfig must be used within ConfigProvider");
@@ -59,7 +100,7 @@ export function useConfig(): ConfigState {
 
 export function useConfigState(initialConfig?: Config | null): ConfigStateWithDialog {
   const backend = useBackend();
-  const [config, setConfig] = useState<Config | null>(initialConfig ?? null);
+  const [config, setConfig] = useState<Config | null>(normalizeConfig(initialConfig ?? null));
   const [loading, setLoading] = useState(initialConfig == null);
   const [error, setError] = useState<string | null>(null);
   const [checksum, setChecksum] = useState(initialConfig?._checksum ?? "");
@@ -79,7 +120,7 @@ export function useConfigState(initialConfig?: Config | null): ConfigStateWithDi
         backend.getConfigStatus().catch(() => null),
       ]);
       setChecksum(cfg._checksum || "");
-      setConfig(cfg);
+      setConfig(normalizeConfig(cfg));
       setDotenvWritable(status?.dotenv_writable ?? false);
       setOauthCallbackBase(status?.oauth_callback_base ?? "");
     } catch (e: any) {

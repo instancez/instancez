@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, act, renderHook } from "@testing-library/react";
 import { renderWithChakra } from "../test/helpers";
 import { useConfigState } from "./useConfig";
 import { ConfirmSaveDialog } from "../components/ConfirmSaveDialog";
@@ -208,5 +208,64 @@ describe("useConfigState error toast", () => {
     expect(showSaveErrorToast).toHaveBeenCalledWith(
       expect.objectContaining({ message: "server exploded" })
     );
+  });
+});
+
+// The wire shape a backend sends for an app with nothing configured: nil Go
+// maps/slices marshal to JSON null even though the Config type marks them
+// required. useConfigState must coerce these so tabs don't crash on
+// Object.entries / .map / .length.
+const nullConfig = {
+  version: 1,
+  project: { name: "P", description: "" },
+  providers: { email: null, storage: null },
+  auth: {
+    jwt_expiry: "1h",
+    refresh_token_expiry: "24h",
+    allow_signup: null,
+    allow_anonymous: null,
+    redirect_urls: null,
+    email: { verify_email: false, templates: null },
+    oauth: null,
+  },
+  tables: { todos: { fields: null, indexes: null, rls: null } },
+  storage: null,
+  rpc: { ping: { args: null } },
+  functions: null,
+  _checksum: "c1",
+} as unknown as Config;
+
+describe("useConfigState null-collection normalization", () => {
+  it("coerces null maps/slices to empty at every level on the seeded path", () => {
+    const { result } = renderHook(() => useConfigState(nullConfig));
+    const cfg = result.current.config;
+    expect(cfg?.storage).toEqual({});
+    expect(cfg?.functions).toEqual({});
+    expect(cfg?.tables.todos?.fields).toEqual([]);
+    expect(cfg?.tables.todos?.indexes).toEqual([]);
+    expect(cfg?.tables.todos?.rls).toEqual([]);
+    expect(cfg?.rpc.ping?.args).toEqual([]);
+    expect(cfg?.auth?.redirect_urls).toEqual([]);
+    expect(cfg?.auth?.oauth).toEqual({});
+    expect(cfg?.auth?.email?.templates).toEqual({});
+  });
+
+  it("preserves genuinely-nullable fields", () => {
+    const { result } = renderHook(() => useConfigState(nullConfig));
+    expect(result.current.config?.providers.email).toBeNull();
+    expect(result.current.config?.providers.storage).toBeNull();
+  });
+
+  it("leaves auth null when the whole block is null", () => {
+    const { result } = renderHook(() => useConfigState({ ...nullConfig, auth: null } as Config));
+    expect(result.current.config?.auth).toBeNull();
+  });
+
+  it("normalizes the fetched config on the unseeded (refresh) path", async () => {
+    vi.mocked(api.getConfig).mockResolvedValue(nullConfig);
+    const { result } = renderHook(() => useConfigState());
+    await waitFor(() => expect(result.current.config).not.toBeNull());
+    expect(result.current.config?.storage).toEqual({});
+    expect(result.current.config?.tables.todos?.fields).toEqual([]);
   });
 });
