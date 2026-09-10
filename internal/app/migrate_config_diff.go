@@ -210,9 +210,14 @@ func diffRemovedIndexes(old, new *domain.Config) []string {
 	return ddl
 }
 
+// hasIndex reports whether an identical index (columns, uniqueness, WHERE)
+// exists; a same-columns index that changed keeps its name, so it must be
+// dropped rather than silently no-op'd by CREATE INDEX IF NOT EXISTS.
 func hasIndex(indexes []domain.Index, target domain.Index) bool {
 	for _, idx := range indexes {
-		if strings.Join(idx.Columns, ",") == strings.Join(target.Columns, ",") {
+		if slices.Equal(idx.Columns, target.Columns) &&
+			idx.Unique == target.Unique &&
+			idx.Where == target.Where {
 			return true
 		}
 	}
@@ -297,18 +302,43 @@ func storageRLSPolicyNames(bucketName string, policies []domain.RLSPolicy) []str
 	return names
 }
 
-// diffRemovedRPCFunctions returns DROP FUNCTION statements for functions
-// that existed in old but are no longer in new.
+// diffRemovedRPCFunctions returns DROP FUNCTION statements for functions removed
+// from new, and for functions whose signature changed. CREATE OR REPLACE can't
+// reconcile a signature change, so the old function is dropped by its old
+// signature first and rebuilt by the idempotent re-emit in planUpdate.
 func diffRemovedRPCFunctions(old, new *domain.Config) []string {
 	var ddl []string
 	for _, name := range sortedKeys(old.RPC) {
-		fn := old.RPC[name]
-		if _, exists := new.RPC[name]; !exists {
-			sig := rpcFunctionDropSig(fn)
-			ddl = append(ddl, fmt.Sprintf("DROP FUNCTION IF EXISTS public.\"%s\"(%s);", name, sig))
+		oldFn := old.RPC[name]
+		newFn, exists := new.RPC[name]
+		if exists && !rpcSignatureChanged(oldFn, newFn) {
+			continue
 		}
+		ddl = append(ddl, fmt.Sprintf("DROP FUNCTION IF EXISTS public.\"%s\"(%s);", name, rpcFunctionDropSig(oldFn)))
 	}
 	return ddl
+}
+
+// rpcSignatureChanged reports whether a change breaks CREATE OR REPLACE: arg
+// count, any arg name or type, the return type, or a removed arg default (types
+// normalized so int/integer don't force a needless recreate).
+func rpcSignatureChanged(old, new domain.Function) bool {
+	if len(old.Args) != len(new.Args) {
+		return true
+	}
+	for i := range old.Args {
+		if old.Args[i].Name != new.Args[i].Name {
+			return true
+		}
+		if domain.Normalize(old.Args[i].Type) != domain.Normalize(new.Args[i].Type) {
+			return true
+		}
+		// Postgres refuses to remove a parameter default via CREATE OR REPLACE.
+		if old.Args[i].Default != nil && new.Args[i].Default == nil {
+			return true
+		}
+	}
+	return domain.Normalize(old.Returns.Type) != domain.Normalize(new.Returns.Type)
 }
 
 // rpcFunctionDropSig builds the argument type list needed for DROP FUNCTION
