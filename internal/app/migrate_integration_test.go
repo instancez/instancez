@@ -473,6 +473,107 @@ func TestIntegration_RPCFunction_CreateAndRemove(t *testing.T) {
 	}
 }
 
+func indexIsUnique(t *testing.T, db *postgres.DB, name string) bool {
+	t.Helper()
+	row, err := db.QueryRow(context.Background(),
+		`SELECT i.indisunique FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid WHERE c.relname = $1`, name)
+	if err != nil {
+		t.Fatalf("indexIsUnique: %v", err)
+	}
+	return row["indisunique"] == true
+}
+
+// TestIntegration_RPCSignatureChange proves the signature-change fix against a
+// real database. Postgres rejects a return-type change via CREATE OR REPLACE,
+// so without the DROP-first fix the v2 Apply would fail outright.
+func TestIntegration_RPCSignatureChange(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+
+	cfgV1 := &domain.Config{
+		Version: 1,
+		Tables:  map[string]domain.Table{},
+		RPC: map[string]domain.Function{
+			"describe": {
+				Language: "sql", Volatility: "immutable", Security: "invoker",
+				Returns: domain.FuncReturn{Type: "int"},
+				Body:    "SELECT 1;",
+			},
+		},
+	}
+	migrator := app.NewMigrator(db).AllowDestructive(true)
+	if err := migrator.Apply(ctx, cfgV1); err != nil {
+		t.Fatalf("v1 apply: %v", err)
+	}
+
+	// v2: same name, changed return type AND a new argument.
+	cfgV2 := &domain.Config{
+		Version: 1,
+		Tables:  map[string]domain.Table{},
+		RPC: map[string]domain.Function{
+			"describe": {
+				Language: "sql", Volatility: "immutable", Security: "invoker",
+				Returns: domain.FuncReturn{Type: "text"},
+				Args:    []domain.FuncArg{{Name: "n", Type: "int"}},
+				Body:    "SELECT n::text;",
+			},
+		},
+	}
+	if err := migrator.Apply(ctx, cfgV2); err != nil {
+		t.Fatalf("v2 apply (signature change) should succeed after DROP-first fix: %v", err)
+	}
+
+	// The new signature must be callable, and the old zero-arg overload gone.
+	row, err := db.QueryRow(ctx, `SELECT public."describe"(42) AS result`)
+	if err != nil {
+		t.Fatalf("call describe(int): %v", err)
+	}
+	if fmt.Sprint(row["result"]) != "42" {
+		t.Fatalf("expected \"42\", got %v", row["result"])
+	}
+	if _, err := db.QueryRow(ctx, `SELECT public."describe"()`); err == nil {
+		t.Fatal("old zero-arg describe() overload should no longer exist")
+	}
+}
+
+// TestIntegration_IndexAttributeChange proves the index-definition fix. Flipping
+// uniqueness keeps the generated name, so without the DROP the CREATE INDEX
+// IF NOT EXISTS no-ops and the index stays non-unique.
+func TestIntegration_IndexAttributeChange(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+
+	base := func(unique bool) *domain.Config {
+		return &domain.Config{
+			Version: 1,
+			Tables: map[string]domain.Table{
+				"todos": {
+					Fields: []domain.Field{
+						{Name: "id", Type: "bigserial", PrimaryKey: true},
+						{Name: "code", Type: "text"},
+					},
+					Indexes: []domain.Index{{Columns: []string{"code"}, Unique: unique}},
+				},
+			},
+		}
+	}
+
+	migrator := app.NewMigrator(db).AllowDestructive(true)
+	if err := migrator.Apply(ctx, base(false)); err != nil {
+		t.Fatalf("v1 apply: %v", err)
+	}
+	if indexIsUnique(t, db, "idx_todos_code") {
+		t.Fatal("index should be non-unique after v1")
+	}
+
+	if err := migrator.Apply(ctx, base(true)); err != nil {
+		t.Fatalf("v2 apply: %v", err)
+	}
+	if !indexIsUnique(t, db, "idx_todos_code") {
+		t.Fatal("index should be unique after v2 (drop + recreate)")
+	}
+}
+
 func TestIntegration_ConfigStoredAndRecovered(t *testing.T) {
 	db := startPostgres(t)
 	ctx := context.Background()

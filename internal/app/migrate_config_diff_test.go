@@ -778,3 +778,178 @@ func TestDiffConfigs_SelfDiffEmpty(t *testing.T) {
 		t.Fatalf("self-diff produced ALTERs: %v", ddl)
 	}
 }
+
+// --- RPC signature changes (CREATE OR REPLACE can't reconcile these) ---
+
+func rpcOf(fn domain.Function) *domain.Config {
+	return &domain.Config{RPC: map[string]domain.Function{"greet": fn}}
+}
+
+func TestDiffConfigs_RPCReturnTypeChange_DropsOldSignature(t *testing.T) {
+	old := rpcOf(domain.Function{Returns: domain.FuncReturn{Type: "int"}, Body: "SELECT 1", Language: "sql"})
+	new := rpcOf(domain.Function{Returns: domain.FuncReturn{Type: "text"}, Body: "SELECT 'x'", Language: "sql"})
+
+	diff := diffConfigs(old, new)
+	joined := strings.Join(diff.Removals, "\n")
+	mustContain(t, joined, `DROP FUNCTION IF EXISTS public."greet"()`)
+}
+
+func TestDiffConfigs_RPCArgTypeChange_DropsOldSignature(t *testing.T) {
+	old := rpcOf(domain.Function{Args: []domain.FuncArg{{Name: "a", Type: "int"}}, Returns: domain.FuncReturn{Type: "int"}, Body: "SELECT a", Language: "sql"})
+	new := rpcOf(domain.Function{Args: []domain.FuncArg{{Name: "a", Type: "text"}}, Returns: domain.FuncReturn{Type: "int"}, Body: "SELECT length(a)", Language: "sql"})
+
+	diff := diffConfigs(old, new)
+	joined := strings.Join(diff.Removals, "\n")
+	// Drop by the OLD signature: the new CREATE targets a different overload.
+	mustContain(t, joined, `DROP FUNCTION IF EXISTS public."greet"(int)`)
+}
+
+func TestDiffConfigs_RPCArgNameChange_DropsOldSignature(t *testing.T) {
+	old := rpcOf(domain.Function{Args: []domain.FuncArg{{Name: "a", Type: "int"}}, Returns: domain.FuncReturn{Type: "int"}, Body: "SELECT a", Language: "sql"})
+	new := rpcOf(domain.Function{Args: []domain.FuncArg{{Name: "b", Type: "int"}}, Returns: domain.FuncReturn{Type: "int"}, Body: "SELECT b", Language: "sql"})
+
+	diff := diffConfigs(old, new)
+	joined := strings.Join(diff.Removals, "\n")
+	mustContain(t, joined, `DROP FUNCTION IF EXISTS public."greet"(int)`)
+}
+
+func TestDiffConfigs_RPCArgDefaultRemoved_DropsOldSignature(t *testing.T) {
+	five := any(5)
+	old := rpcOf(domain.Function{Args: []domain.FuncArg{{Name: "a", Type: "int", Default: five}}, Returns: domain.FuncReturn{Type: "int"}, Body: "SELECT a", Language: "sql"})
+	new := rpcOf(domain.Function{Args: []domain.FuncArg{{Name: "a", Type: "int"}}, Returns: domain.FuncReturn{Type: "int"}, Body: "SELECT a", Language: "sql"})
+
+	diff := diffConfigs(old, new)
+	joined := strings.Join(diff.Removals, "\n")
+	// Postgres refuses to remove a parameter default via CREATE OR REPLACE.
+	mustContain(t, joined, `DROP FUNCTION IF EXISTS public."greet"(int)`)
+}
+
+func TestDiffConfigs_RPCArgDefaultAdded_NoDrop(t *testing.T) {
+	old := rpcOf(domain.Function{Args: []domain.FuncArg{{Name: "a", Type: "int"}}, Returns: domain.FuncReturn{Type: "int"}, Body: "SELECT a", Language: "sql"})
+	new := rpcOf(domain.Function{Args: []domain.FuncArg{{Name: "a", Type: "int", Default: any(5)}}, Returns: domain.FuncReturn{Type: "int"}, Body: "SELECT a", Language: "sql"})
+
+	diff := diffConfigs(old, new)
+	// Adding a default is accepted by CREATE OR REPLACE, so no drop.
+	if len(diff.Removals) != 0 {
+		t.Errorf("adding an arg default should not drop the function, got: %v", diff.Removals)
+	}
+}
+
+func TestDiffConfigs_RPCArgCountChange_DropsOldSignature(t *testing.T) {
+	old := rpcOf(domain.Function{Args: []domain.FuncArg{{Name: "a", Type: "int"}}, Returns: domain.FuncReturn{Type: "int"}, Body: "SELECT a", Language: "sql"})
+	new := rpcOf(domain.Function{Args: []domain.FuncArg{{Name: "a", Type: "int"}, {Name: "b", Type: "int"}}, Returns: domain.FuncReturn{Type: "int"}, Body: "SELECT a + b", Language: "sql"})
+
+	diff := diffConfigs(old, new)
+	joined := strings.Join(diff.Removals, "\n")
+	mustContain(t, joined, `DROP FUNCTION IF EXISTS public."greet"(int)`)
+}
+
+func TestDiffConfigs_RPCBodyOnlyChange_NoDrop(t *testing.T) {
+	old := rpcOf(domain.Function{Args: []domain.FuncArg{{Name: "a", Type: "int"}}, Returns: domain.FuncReturn{Type: "int"}, Body: "SELECT a", Language: "sql"})
+	new := rpcOf(domain.Function{Args: []domain.FuncArg{{Name: "a", Type: "int"}}, Returns: domain.FuncReturn{Type: "int"}, Body: "SELECT a * 2", Language: "sql"})
+
+	diff := diffConfigs(old, new)
+	// Same signature: CREATE OR REPLACE handles a body change, so no drop.
+	if len(diff.Removals) != 0 {
+		t.Errorf("body-only change should not drop the function, got: %v", diff.Removals)
+	}
+}
+
+func TestDiffConfigs_RPCArgTypeAlias_NoDrop(t *testing.T) {
+	old := rpcOf(domain.Function{Args: []domain.FuncArg{{Name: "a", Type: "int"}}, Returns: domain.FuncReturn{Type: "int"}, Body: "SELECT a", Language: "sql"})
+	new := rpcOf(domain.Function{Args: []domain.FuncArg{{Name: "a", Type: "integer"}}, Returns: domain.FuncReturn{Type: "int"}, Body: "SELECT a", Language: "sql"})
+
+	diff := diffConfigs(old, new)
+	// int and integer normalize to the same Postgres type: no needless drop.
+	if len(diff.Removals) != 0 {
+		t.Errorf("aliased arg type should not drop the function, got: %v", diff.Removals)
+	}
+}
+
+// Full-plan regression: a return-type change must produce DROP FUNCTION before
+// the re-emitted CREATE OR REPLACE, or the migration fails against Postgres.
+func TestPlanUpdate_RPCSignatureChange_DropBeforeCreate(t *testing.T) {
+	old := rpcOf(domain.Function{Returns: domain.FuncReturn{Type: "int"}, Body: "SELECT 1", Language: "sql"})
+	new := rpcOf(domain.Function{Returns: domain.FuncReturn{Type: "text"}, Body: "SELECT 'x'", Language: "sql"})
+
+	stmts := planUpdateStatements(old, new, domain.DefaultRoles())
+	joined := strings.Join(stmts, "\n")
+	dropAt := strings.Index(joined, `DROP FUNCTION IF EXISTS public."greet"`)
+	createAt := strings.Index(joined, `CREATE OR REPLACE FUNCTION public."greet"`)
+	if dropAt < 0 {
+		t.Fatalf("expected DROP FUNCTION in plan:\n%s", joined)
+	}
+	if createAt < 0 {
+		t.Fatalf("expected CREATE OR REPLACE FUNCTION in plan:\n%s", joined)
+	}
+	if dropAt > createAt {
+		t.Errorf("DROP FUNCTION must precede CREATE OR REPLACE, got drop@%d create@%d", dropAt, createAt)
+	}
+}
+
+// --- Index definition changes (same columns, different attributes) ---
+
+func TestDiffConfigs_IndexUniqueFlipped_DropsIndex(t *testing.T) {
+	old := &domain.Config{Tables: map[string]domain.Table{
+		"todos": {Fields: []domain.Field{{Name: "id", Type: "bigserial"}, {Name: "code", Type: "text"}},
+			Indexes: []domain.Index{{Columns: []string{"code"}, Unique: true}}},
+	}}
+	new := &domain.Config{Tables: map[string]domain.Table{
+		"todos": {Fields: []domain.Field{{Name: "id", Type: "bigserial"}, {Name: "code", Type: "text"}},
+			Indexes: []domain.Index{{Columns: []string{"code"}, Unique: false}}},
+	}}
+
+	diff := diffConfigs(old, new)
+	joined := strings.Join(diff.Removals, "\n")
+	mustContain(t, joined, "DROP INDEX IF EXISTS idx_todos_code;")
+}
+
+func TestDiffConfigs_IndexWhereChanged_DropsIndex(t *testing.T) {
+	old := &domain.Config{Tables: map[string]domain.Table{
+		"todos": {Fields: []domain.Field{{Name: "id", Type: "bigserial"}, {Name: "status", Type: "text"}},
+			Indexes: []domain.Index{{Columns: []string{"status"}, Where: "status = 'open'"}}},
+	}}
+	new := &domain.Config{Tables: map[string]domain.Table{
+		"todos": {Fields: []domain.Field{{Name: "id", Type: "bigserial"}, {Name: "status", Type: "text"}},
+			Indexes: []domain.Index{{Columns: []string{"status"}, Where: "status = 'done'"}}},
+	}}
+
+	diff := diffConfigs(old, new)
+	joined := strings.Join(diff.Removals, "\n")
+	mustContain(t, joined, "DROP INDEX IF EXISTS idx_todos_status;")
+}
+
+func TestDiffConfigs_IndexUnchanged_NoDrop(t *testing.T) {
+	cfg := &domain.Config{Tables: map[string]domain.Table{
+		"todos": {Fields: []domain.Field{{Name: "id", Type: "bigserial"}, {Name: "code", Type: "text"}},
+			Indexes: []domain.Index{{Columns: []string{"code"}, Unique: true, Where: "code IS NOT NULL"}}},
+	}}
+	diff := diffConfigs(cfg, cfg)
+	if strings.Contains(strings.Join(diff.Removals, "\n"), "DROP INDEX") {
+		t.Errorf("identical index should not be dropped, got: %v", diff.Removals)
+	}
+}
+
+// Full-plan regression: a changed index must DROP before the re-emitted CREATE,
+// since both share the generated name.
+func TestPlanUpdate_IndexChange_DropBeforeCreate(t *testing.T) {
+	old := &domain.Config{Tables: map[string]domain.Table{
+		"todos": {Fields: []domain.Field{{Name: "id", Type: "bigserial"}, {Name: "code", Type: "text"}},
+			Indexes: []domain.Index{{Columns: []string{"code"}, Unique: true}}},
+	}}
+	new := &domain.Config{Tables: map[string]domain.Table{
+		"todos": {Fields: []domain.Field{{Name: "id", Type: "bigserial"}, {Name: "code", Type: "text"}},
+			Indexes: []domain.Index{{Columns: []string{"code"}, Unique: false}}},
+	}}
+
+	stmts := planUpdateStatements(old, new, domain.DefaultRoles())
+	joined := strings.Join(stmts, "\n")
+	dropAt := strings.Index(joined, "DROP INDEX IF EXISTS idx_todos_code;")
+	createAt := strings.Index(joined, "CREATE INDEX IF NOT EXISTS idx_todos_code")
+	if dropAt < 0 || createAt < 0 {
+		t.Fatalf("expected both DROP and CREATE for idx_todos_code:\n%s", joined)
+	}
+	if dropAt > createAt {
+		t.Errorf("DROP INDEX must precede CREATE INDEX, got drop@%d create@%d", dropAt, createAt)
+	}
+}
