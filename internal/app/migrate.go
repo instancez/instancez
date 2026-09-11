@@ -147,23 +147,20 @@ func planFromScratchStatements(cfg *domain.Config, roles domain.Roles) []string 
 	// Storage metadata table
 	ddl = append(ddl, generateStorageTables(cfg)...)
 
-	// RLS policies
+	// RLS helper functions (auth.uid, etc.) and user RPCs must exist before the
+	// policies that call them: CREATE POLICY resolves the functions referenced
+	// in USING/WITH CHECK at creation time (e.g. a policy on can_access_school).
 	if cfg.Auth != nil {
 		ddl = append(ddl, generateRLSFunctions()...)
 	}
+	ddl = append(ddl, rpcFunctionStatements(cfg)...)
+
+	// RLS policies (may reference user RPCs, now created above).
 	for _, name := range ordered {
 		table := cfg.Tables[name]
 		ddl = append(ddl, generateRLSPolicies(name, table)...)
 	}
 	ddl = append(ddl, generateStorageRLSAll(cfg.Storage)...)
-
-	// RPC functions (Postgres stored functions)
-	if len(cfg.RPC) > 0 {
-		fnNames := sortedKeys(cfg.RPC)
-		for _, n := range fnNames {
-			ddl = append(ddl, generateRPCFunction(n, cfg.RPC[n]))
-		}
-	}
 
 	// Backfill grants on tables created earlier in this same migration —
 	// ALTER DEFAULT PRIVILEGES applies to objects created after the ALTER,
@@ -226,12 +223,16 @@ func planUpdateStatements(oldCfg, newCfg *domain.Config, roles domain.Roles) []s
 		ddl = append(ddl, generateIndexes(name, newCfg.Tables[name])...)
 	}
 
-	// RLS functions (CREATE OR REPLACE)
+	// RLS helper functions and user RPCs (CREATE OR REPLACE), before the
+	// policies that reference them — CREATE POLICY resolves the functions in
+	// USING/WITH CHECK at creation time.
 	if newCfg.Auth != nil {
 		ddl = append(ddl, generateRLSFunctions()...)
 	}
+	ddl = append(ddl, rpcFunctionStatements(newCfg)...)
 
-	// RLS policies (DROP IF EXISTS + CREATE POLICY — idempotent)
+	// RLS policies (DROP IF EXISTS + CREATE POLICY — idempotent; may reference
+	// the RPCs created above).
 	for _, name := range ordered {
 		ddl = append(ddl, generateRLSPolicies(name, newCfg.Tables[name])...)
 	}
@@ -243,14 +244,6 @@ func planUpdateStatements(oldCfg, newCfg *domain.Config, roles domain.Roles) []s
 	// gain the column. This idempotent ALTER runs on every migration.
 	if len(newCfg.Storage) > 0 {
 		ddl = append(ddl, `ALTER TABLE storage.objects ADD COLUMN IF NOT EXISTS user_metadata JSONB;`)
-	}
-
-	// RPC functions (CREATE OR REPLACE FUNCTION)
-	if len(newCfg.RPC) > 0 {
-		fnNames := sortedKeys(newCfg.RPC)
-		for _, n := range fnNames {
-			ddl = append(ddl, generateRPCFunction(n, newCfg.RPC[n]))
-		}
 	}
 
 	// Catch-up grants on any newly-added tables.
@@ -1131,6 +1124,26 @@ func orderTables(tables map[string]domain.Table) []string {
 	}
 
 	return result
+}
+
+// rpcFunctionStatements emits every user RPC (CREATE OR REPLACE FUNCTION, in
+// stable alphabetical order) wrapped in a check_function_bodies=false window.
+// Disabling body validation lets an RPC reference a sibling RPC that sorts later
+// in the batch (e.g. can_access_school → is_school_owner) or a table whose
+// grants land later in the same migration; Postgres re-validates the body on
+// first call. The window is a SET LOCAL, so it is scoped to the migration
+// transaction and reset at commit. Callers must emit this BEFORE RLS policies,
+// which resolve any RPCs they reference at CREATE POLICY time regardless of
+// check_function_bodies.
+func rpcFunctionStatements(cfg *domain.Config) []string {
+	if len(cfg.RPC) == 0 {
+		return nil
+	}
+	stmts := []string{"SET LOCAL check_function_bodies = false;"}
+	for _, n := range sortedKeys(cfg.RPC) {
+		stmts = append(stmts, generateRPCFunction(n, cfg.RPC[n]))
+	}
+	return append(stmts, "SET LOCAL check_function_bodies = true;")
 }
 
 // generateRPCFunction emits a CREATE OR REPLACE FUNCTION statement for a
