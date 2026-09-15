@@ -71,11 +71,33 @@ func validateIdent(path, name string) *domain.ValidationError {
 }
 
 // dbFunctionTypeRE permits a conservative subset of Postgres type syntax:
-// identifiers, whitespace, commas, parentheses and brackets. This covers
-// scalar types, "setof foo", and "table(id int, name text)". It deliberately
-// excludes semicolons, quotes, and dollar signs so a malicious YAML can't
-// inject CREATE/DROP statements through the returns or arg type fields.
-var dbFunctionTypeRE = regexp.MustCompile(`^[a-zA-Z0-9_ ,()\[\]]{1,256}$`)
+// identifiers, whitespace, commas, dots, parentheses and brackets. This covers
+// scalar types, schema-qualified names, "setof foo", and
+// "table(id int, name text)". It deliberately excludes semicolons, quotes, and
+// dollar signs so a malicious YAML can't inject CREATE/DROP statements through
+// the returns or arg type fields.
+var dbFunctionTypeRE = regexp.MustCompile(`^[a-zA-Z0-9_ ,.()\[\]]{1,256}$`)
+
+// rpcTypeTokenRE matches one Postgres type reference: an identifier, optionally
+// schema-qualified, optionally parameterized with (n) and/or an array []
+// suffix. Multiword types (see multiwordScalarTypes) are matched separately.
+var rpcTypeTokenRE = regexp.MustCompile(`^[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)?(\([0-9, ]*\))?(\[\])?$`)
+
+// rpcColumnNameRE matches a table(...) column name.
+var rpcColumnNameRE = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+
+// multiwordScalarTypes are the standard multiword Postgres type names, which
+// rpcTypeTokenRE (single-token) can't match. A migration (pg_dump, Supabase)
+// can carry any of these, so they must validate as scalar return/arg types.
+var multiwordScalarTypes = map[string]bool{
+	"double precision":            true,
+	"character varying":           true,
+	"bit varying":                 true,
+	"timestamp without time zone": true,
+	"timestamp with time zone":    true,
+	"time without time zone":      true,
+	"time with time zone":         true,
+}
 
 // validPostgresTypes is a non-exhaustive allowlist of common Postgres type prefixes.
 var validPostgresTypes = map[string]bool{
@@ -704,16 +726,8 @@ func validateRPCFunction(path, name string, fn domain.Function) domain.Validatio
 		})
 	}
 
-	if fn.Returns.Type == "" {
-		errs = append(errs, &domain.ValidationError{
-			Path:    path + ".returns.type",
-			Message: "returns.type is required (use \"void\" for no return value)",
-		})
-	} else if !dbFunctionTypeRE.MatchString(fn.Returns.Type) {
-		errs = append(errs, &domain.ValidationError{
-			Path:    path + ".returns.type",
-			Message: fmt.Sprintf("invalid return type %q", fn.Returns.Type),
-		})
+	if e := validateRPCReturnType(path+".returns.type", fn.Returns.Type); e != nil {
+		errs = append(errs, e)
 	}
 
 	if !validRPCLanguages[strings.ToLower(fn.Language)] {
@@ -765,6 +779,113 @@ func validateRPCFunction(path, name string, fn domain.Function) domain.Validatio
 		}
 	}
 	return errs
+}
+
+// validateRPCReturnType checks a returns.type against the recognized return
+// kinds: void, record, a scalar/composite type, setof <type>, or table(...).
+// It stays a permissive superset so Supabase-migrated functions import cleanly;
+// it only rejects an empty value, charset-unsafe input, and a setof or
+// table(...) with a missing or malformed payload.
+func validateRPCReturnType(path, raw string) *domain.ValidationError {
+	t := strings.TrimSpace(raw)
+	if t == "" {
+		return &domain.ValidationError{
+			Path:    path,
+			Message: "returns.type is required (use \"void\" for no return value)",
+		}
+	}
+	if !dbFunctionTypeRE.MatchString(t) {
+		return &domain.ValidationError{
+			Path:    path,
+			Message: fmt.Sprintf("invalid return type %q", raw),
+		}
+	}
+
+	// void, record, and plain scalar/composite names all fall through to the
+	// default identifier check.
+	lower := strings.ToLower(t)
+	switch {
+	case lower == "setof" || strings.HasPrefix(lower, "setof "):
+		target := strings.TrimSpace(t[len("setof"):])
+		if !isRPCTypeToken(target) {
+			return &domain.ValidationError{
+				Path:       path,
+				Message:    fmt.Sprintf("setof requires a table or type name, got %q", raw),
+				Suggestion: "e.g. setof todos",
+			}
+		}
+		return nil
+	case strings.HasPrefix(lower, "table(") || strings.HasPrefix(lower, "table ("):
+		return validateRPCTableReturn(path, t, raw)
+	default:
+		if !isRPCTypeToken(t) {
+			return &domain.ValidationError{
+				Path:    path,
+				Message: fmt.Sprintf("invalid return type %q", raw),
+			}
+		}
+		return nil
+	}
+}
+
+// validateRPCTableReturn checks a table(col type, ...) return type has a
+// balanced, non-empty column list where every column carries a name and a type.
+func validateRPCTableReturn(path, t, raw string) *domain.ValidationError {
+	invalid := &domain.ValidationError{
+		Path:       path,
+		Message:    fmt.Sprintf("invalid table(...) return type %q", raw),
+		Suggestion: "e.g. table(id int, name text)",
+	}
+	open := strings.Index(t, "(")
+	end := strings.LastIndex(t, ")")
+	if open < 0 || end < open || strings.TrimSpace(t[end+1:]) != "" {
+		return invalid
+	}
+	inner := strings.TrimSpace(t[open+1 : end])
+	if inner == "" {
+		return invalid
+	}
+	for _, col := range splitTopLevelCommas(inner) {
+		parts := strings.Fields(strings.TrimSpace(col))
+		if len(parts) < 2 || !rpcColumnNameRE.MatchString(parts[0]) {
+			return invalid
+		}
+	}
+	return nil
+}
+
+// isRPCTypeToken reports whether s is one type reference: an identifier
+// (optionally schema-qualified, parameterized, and/or an array), or one of the
+// standard multiword types (see multiwordScalarTypes).
+func isRPCTypeToken(s string) bool {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if multiwordScalarTypes[strings.TrimSuffix(s, "[]")] {
+		return true
+	}
+	return rpcTypeTokenRE.MatchString(s)
+}
+
+// splitTopLevelCommas splits on commas that are not nested inside parentheses,
+// so a column type like numeric(10,2) stays intact in a table(...) return type.
+func splitTopLevelCommas(s string) []string {
+	var parts []string
+	depth, start := 0, 0
+	for i, r := range s {
+		switch r {
+		case '(':
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		case ',':
+			if depth == 0 {
+				parts = append(parts, s[start:i])
+				start = i + 1
+			}
+		}
+	}
+	return append(parts, s[start:])
 }
 
 // codeFunctionNameRE enforces safe URL path segments for code function names.
@@ -823,7 +944,6 @@ func validateCodeFunctions(functions map[string]domain.CodeFunction) domain.Vali
 	}
 	return errs
 }
-
 
 func validateForeignKeys(tables map[string]domain.Table) domain.ValidationErrors {
 	var errs domain.ValidationErrors

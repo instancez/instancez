@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { renderWithChakra } from "../test/helpers";
 import { RpcDetail } from "./RpcDetail";
@@ -89,6 +89,32 @@ describe("RpcDetail", () => {
   it("renders return type", () => {
     renderRpcDetail(baseConfig, "get_todos");
     expect(screen.getByDisplayValue("setof todos")).toBeInTheDocument();
+  });
+
+  it("renders the return type as a dropdown of the fixed Supabase types", () => {
+    renderRpcDetail(baseConfig, "no_args_fn"); // returns text (in the list)
+    const select = screen.getByRole("combobox", { name: "Return Type" });
+    const opts = within(select)
+      .getAllByRole("option")
+      .map((o) => o.textContent);
+    expect(opts).toContain("void");
+    expect(opts).toContain("record");
+    expect(opts).toContain("uuid");
+    // trigger is not callable via /rpc; vector needs an unsupported extension.
+    expect(opts).not.toContain("trigger");
+    expect(opts).not.toContain("vector");
+  });
+
+  it("preserves a migrated setof/table return type as a selectable option", () => {
+    renderRpcDetail(baseConfig, "get_todos"); // "setof todos" is not in the fixed list
+    const select = screen.getByRole("combobox", {
+      name: "Return Type",
+    }) as HTMLSelectElement;
+    expect(select.value).toBe("setof todos");
+    const opts = within(select)
+      .getAllByRole("option")
+      .map((o) => o.textContent);
+    expect(opts).toContain("setof todos");
   });
 
   it("handles RPC with no arguments", () => {
