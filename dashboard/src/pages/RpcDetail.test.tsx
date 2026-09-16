@@ -107,10 +107,8 @@ describe("RpcDetail", () => {
 
   it("preserves a migrated setof/table return type as a selectable option", () => {
     renderRpcDetail(baseConfig, "get_todos"); // "setof todos" is not in the fixed list
-    const combo = screen.getByRole("combobox", {
-      name: "Return Type",
-    }) as HTMLSelectElement;
-    expect(combo.value).toBe("setof todos");
+    const combo = screen.getByRole("combobox", { name: "Return Type" });
+    expect(combo).toHaveValue("setof todos");
     const opts = within(combo)
       .getAllByRole("option")
       .map((o) => o.textContent);
