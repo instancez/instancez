@@ -700,6 +700,61 @@ func TestValidate_RPCFunction_RejectsReservedDollarTag(t *testing.T) {
 	assertHasErrorAt(t, errs, "rpc.f.body")
 }
 
+func TestValidate_RPCFunction_ReturnTypeAccepted(t *testing.T) {
+	// The validator is a permissive superset so Supabase-migrated functions
+	// (composite types, setof, table(...)) never break on import.
+	accepted := []string{
+		"void", "record",
+		"int", "integer", "int4", "int8", "bigint", "text", "bool", "boolean",
+		"uuid", "jsonb", "numeric", "timestamptz", "double precision",
+		"varchar(255)", "integer[]",
+		"character varying", "timestamp with time zone", // migrated multiword types
+		"my_composite_type", // user-defined composite
+		"setof todos", "setof public.todos", "setof my_type[]",
+		"table(id int, name text)",
+		"table(id int, price double precision)",
+		"table(price numeric(10,2))", // comma inside a type parameter
+		"table(id int, price numeric(10,2), t text)",
+	}
+	for _, rt := range accepted {
+		t.Run(rt, func(t *testing.T) {
+			cfg := validBaseConfig()
+			fn := validRPCFunction()
+			fn.Returns = domain.FuncReturn{Type: rt}
+			cfg.RPC = map[string]domain.Function{"f": fn}
+			if errs := Validate(cfg); errs != nil {
+				t.Errorf("return type %q should be accepted, got %v", rt, errs)
+			}
+		})
+	}
+}
+
+func TestValidate_RPCFunction_ReturnTypeRejected(t *testing.T) {
+	rejected := []string{
+		"",                  // required
+		"setof ",            // empty setof target
+		"setof 3bad",        // non-identifier target
+		"table()",           // no columns
+		"table(id)",         // column missing type
+		"table(id int",      // unclosed paren
+		"int; DROP TABLE x", // injection / charset
+		"foo bar baz",       // garbage multiword scalar
+	}
+	for _, rt := range rejected {
+		t.Run(rt, func(t *testing.T) {
+			cfg := validBaseConfig()
+			fn := validRPCFunction()
+			fn.Returns = domain.FuncReturn{Type: rt}
+			cfg.RPC = map[string]domain.Function{"f": fn}
+			errs := Validate(cfg)
+			if errs == nil {
+				t.Fatalf("return type %q should be rejected", rt)
+			}
+			assertHasErrorAt(t, errs, "rpc.f.returns.type")
+		})
+	}
+}
+
 func TestValidate_RPCFunction_UnknownLanguage(t *testing.T) {
 	cfg := validBaseConfig()
 	fn := validRPCFunction()

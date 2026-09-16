@@ -24,6 +24,27 @@ const LANGUAGES = ["plpgsql", "sql"];
 const VOLATILITIES = ["volatile", "stable", "immutable"];
 const SECURITIES = ["invoker", "definer"];
 
+// Fixed return types offered in the dropdown, mirroring Supabase's function
+// editor minus `trigger` (not callable via /rpc) and `vector` (needs an
+// unsupported extension). setof/table(...) stay valid in YAML; a migrated
+// function that uses one keeps it as its selected option (see returnTypeOptions).
+const RPC_RETURN_TYPES = [
+  "void", "record", "integer", "bool", "bytea", "date", "double precision",
+  "float4", "float8", "int2", "int4", "int8", "json", "jsonb", "numeric",
+  "text", "time", "timestamp", "timestamptz", "timetz", "uuid", "varchar",
+];
+
+// returnTypeOptions keeps values not in the fixed list (setof/table/composite,
+// typically from a Supabase migration) as selectable options so the dropdown
+// can still show and round-trip them. Preserve both the originally-loaded type
+// and the current draft, so switching away and back stays possible.
+function returnTypeOptions(original: string, current: string): string[] {
+  const extras = [original, current].filter(
+    (v) => v && !RPC_RETURN_TYPES.includes(v),
+  );
+  return [...new Set(extras), ...RPC_RETURN_TYPES];
+}
+
 export function RpcDetail() {
   const { name } = useParams<{ name: string }>();
   const navigate = useNavigate();
@@ -72,6 +93,9 @@ export function RpcDetail() {
 
   // Dirty is derived, not a sticky flag: undoing an edit hides the save bar.
   const dirty = !jsonEqual(fn, (config.rpc || {})[name] ?? null);
+
+  const loaded = Object.entries(config.rpc).find(([k]) => k === name)?.[1];
+  const originalReturnType = loaded ? loaded.returns.type : "";
 
   const args = fn.args || [];
 
@@ -134,17 +158,21 @@ export function RpcDetail() {
           </Grid>
 
           <Field label="Return Type">
-            <Input
+            <Select
               mono
-              value={fn.returns?.type || ""}
+              aria-label="Return Type"
+              value={fn.returns.type || "void"}
               onChange={(e) =>
                 updateFn((f) => ({
                   ...f,
                   returns: { ...f.returns, type: e.target.value },
                 }))
               }
-              placeholder="void, int, setof posts, etc."
-            />
+            >
+              {returnTypeOptions(originalReturnType, fn.returns.type).map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </Select>
           </Field>
 
           <Field label="Function Body">

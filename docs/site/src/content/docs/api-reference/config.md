@@ -237,7 +237,7 @@ rpc:
 | `rpc.<name>.args[].type` | `string` | required | Postgres type. |
 | `rpc.<name>.args[].required` | `boolean` | `false` | Return 400 if argument is absent. |
 | `rpc.<name>.args[].default` | `any` | — | Postgres DEFAULT value for optional args. |
-| `rpc.<name>.returns.type` | `string` | — | Return type: `void`, a scalar type, or `setof <table>`. |
+| `rpc.<name>.returns.type` | `string` | — | Return type: `void`, `record`, a scalar or composite type, `setof <type>`, or `table(col type, …)`. |
 | `rpc.<name>.body` | `string` | required | Function body (PL/pgSQL or SQL). |
 
 ## functions
