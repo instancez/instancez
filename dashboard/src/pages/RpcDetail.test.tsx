@@ -93,8 +93,8 @@ describe("RpcDetail", () => {
 
   it("renders the return type as a dropdown of the fixed Supabase types", () => {
     renderRpcDetail(baseConfig, "no_args_fn"); // returns text (in the list)
-    const select = screen.getByRole("combobox", { name: "Return Type" });
-    const opts = within(select)
+    const combo = screen.getByRole("combobox", { name: "Return Type" });
+    const opts = within(combo)
       .getAllByRole("option")
       .map((o) => o.textContent);
     expect(opts).toContain("void");
@@ -107,11 +107,11 @@ describe("RpcDetail", () => {
 
   it("preserves a migrated setof/table return type as a selectable option", () => {
     renderRpcDetail(baseConfig, "get_todos"); // "setof todos" is not in the fixed list
-    const select = screen.getByRole("combobox", {
+    const combo = screen.getByRole("combobox", {
       name: "Return Type",
     }) as HTMLSelectElement;
-    expect(select.value).toBe("setof todos");
-    const opts = within(select)
+    expect(combo.value).toBe("setof todos");
+    const opts = within(combo)
       .getAllByRole("option")
       .map((o) => o.textContent);
     expect(opts).toContain("setof todos");

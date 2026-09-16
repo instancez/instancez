@@ -94,7 +94,8 @@ export function RpcDetail() {
   // Dirty is derived, not a sticky flag: undoing an edit hides the save bar.
   const dirty = !jsonEqual(fn, (config.rpc || {})[name] ?? null);
 
-  const originalReturnType = (config.rpc || {})[name]?.returns?.type || "";
+  const loaded = Object.entries(config.rpc).find(([k]) => k === name)?.[1];
+  const originalReturnType = loaded ? loaded.returns.type : "";
 
   const args = fn.args || [];
 
@@ -160,7 +161,7 @@ export function RpcDetail() {
             <Select
               mono
               aria-label="Return Type"
-              value={fn.returns?.type || "void"}
+              value={fn.returns.type || "void"}
               onChange={(e) =>
                 updateFn((f) => ({
                   ...f,
@@ -168,7 +169,7 @@ export function RpcDetail() {
                 }))
               }
             >
-              {returnTypeOptions(originalReturnType, fn.returns?.type || "").map((t) => (
+              {returnTypeOptions(originalReturnType, fn.returns.type).map((t) => (
                 <option key={t} value={t}>{t}</option>
               ))}
             </Select>
