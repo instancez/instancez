@@ -38,6 +38,39 @@ func TestExtraHeadersUnsetIsNil(t *testing.T) {
 	assert.Nil(t, ExtraHeaders())
 }
 
+func TestClientSendsOrgHeaderFromFlag(t *testing.T) {
+	t.Setenv("INSTANCEZ_ORG", "")
+	SetOrg("org_abc123")
+	defer SetOrg("")
+	var gotOrg string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotOrg = r.Header.Get("X-Instancez-Org")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"email": "a@b.c", "user_id": "u1"})
+	}))
+	defer srv.Close()
+
+	_, err := NewClient(srv.URL, "pat").Whoami()
+	require.NoError(t, err)
+	assert.Equal(t, "org_abc123", gotOrg, "selected org must be sent as X-Instancez-Org")
+}
+
+func TestClientOmitsOrgHeaderWhenUnset(t *testing.T) {
+	t.Setenv("INSTANCEZ_ORG", "")
+	SetOrg("")
+	sawHeader := true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, sawHeader = r.Header["X-Instancez-Org"]
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"email": "a@b.c", "user_id": "u1"})
+	}))
+	defer srv.Close()
+
+	_, err := NewClient(srv.URL, "pat").Whoami()
+	require.NoError(t, err)
+	assert.False(t, sawHeader, "no org header when none selected (server resolves the sole org)")
+}
+
 func TestClientDeviceTokenSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

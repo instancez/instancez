@@ -46,3 +46,20 @@ func ExtraHeaders() http.Header {
 	}
 	return h
 }
+
+// orgOverride is set by the global --org flag; it takes precedence over the
+// INSTANCEZ_ORG env var.
+var orgOverride string
+
+// SetOrg records the org id chosen via the --org flag.
+func SetOrg(id string) { orgOverride = id }
+
+// SelectedOrg returns the org id to send in X-Instancez-Org: the --org flag,
+// else INSTANCEZ_ORG. Empty means "let the server pick" — it resolves to the
+// user's org when they belong to exactly one.
+func SelectedOrg() string {
+	if orgOverride != "" {
+		return orgOverride
+	}
+	return os.Getenv("INSTANCEZ_ORG")
+}

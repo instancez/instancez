@@ -21,6 +21,10 @@ type Client struct {
 	// Headers are attached to every request (e.g. an edge/WAF bypass token from
 	// INSTANCEZ_CLOUD_HEADERS), applied after Authorization and Content-Type.
 	Headers http.Header
+	// Org, when set, is sent as X-Instancez-Org on every request so org-scoped
+	// endpoints act on the chosen org. Empty lets the server pick the user's
+	// sole org.
+	Org string
 }
 
 // NewClient returns a client with sane defaults.
@@ -30,6 +34,7 @@ func NewClient(baseURL, bearer string) *Client {
 		Bearer:  bearer,
 		HTTP:    &http.Client{Timeout: 60 * time.Second},
 		Headers: ExtraHeaders(),
+		Org:     SelectedOrg(),
 	}
 }
 
@@ -251,8 +256,17 @@ func (c *Client) GetApp(projectID string) (*GetAppResponse, error) {
 
 // WhoamiResponse mirrors GET /instancez/whoami.
 type WhoamiResponse struct {
-	Email  string `json:"email"`
-	UserID string `json:"user_id"`
+	Email  string      `json:"email"`
+	UserID string      `json:"user_id"`
+	Orgs   []WhoamiOrg `json:"orgs"`
+}
+
+// WhoamiOrg is one organization the caller belongs to.
+type WhoamiOrg struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+	Role string `json:"role"`
 }
 
 // Whoami returns the identity of the PAT holder. Useful for `inz cloud whoami`
@@ -360,6 +374,9 @@ func (c *Client) do(method, path string, payload, out any) error {
 	}
 	if c.Bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Bearer)
+	}
+	if c.Org != "" {
+		req.Header.Set("X-Instancez-Org", c.Org)
 	}
 	for name, values := range c.Headers {
 		for _, v := range values {
