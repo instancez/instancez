@@ -24,26 +24,19 @@ const LANGUAGES = ["plpgsql", "sql"];
 const VOLATILITIES = ["volatile", "stable", "immutable"];
 const SECURITIES = ["invoker", "definer"];
 
-// Fixed return types offered in the dropdown, mirroring Supabase's function
-// editor minus `trigger` (not callable via /rpc) and `vector` (needs an
-// unsupported extension). setof/table(...) stay valid in YAML; a migrated
-// function that uses one keeps it as its selected option (see returnTypeOptions).
+// Fixed return types offered in the dropdown: Supabase's list (minus trigger/vector) plus common scalars it omits.
 const RPC_RETURN_TYPES = [
-  "void", "record", "integer", "bool", "bytea", "date", "double precision",
-  "float4", "float8", "int2", "int4", "int8", "json", "jsonb", "numeric",
-  "text", "time", "timestamp", "timestamptz", "timetz", "uuid", "varchar",
+  "void", "record", "integer", "bigint", "smallint", "boolean", "bool", "bytea",
+  "date", "double precision", "float4", "float8", "int2", "int4", "int8",
+  "inet", "interval", "json", "jsonb", "numeric", "text", "time", "timestamp",
+  "timestamptz", "timetz", "uuid", "varchar",
 ];
 
-// returnTypeOptions keeps values not in the fixed list (setof/table/composite,
-// typically from a Supabase migration) as selectable options so the dropdown
-// can still show and round-trip them. Preserve both the originally-loaded type
-// and the current draft, so switching away and back stays possible.
-function returnTypeOptions(original: string, current: string): string[] {
-  const extras = [original, current].filter(
-    (v) => v && !RPC_RETURN_TYPES.includes(v),
-  );
-  return [...new Set(extras), ...RPC_RETURN_TYPES];
-}
+// Anything else (setof/table(...)/a custom type) is typed directly into the RETURNS line via the `hole` frame below.
+const CUSTOM_RETURN_TYPE = "__custom__";
+
+// Starting template for Custom mode, so the RETURNS line isn't blank.
+const DEFAULT_CUSTOM_RETURN_TYPE = "table(id int)";
 
 export function RpcDetail() {
   const { name } = useParams<{ name: string }>();
@@ -51,11 +44,20 @@ export function RpcDetail() {
   const { config, save, saving, saveErrors } = useConfig();
   const dialog = useDialog();
   const [fn, setFn] = useState<RpcFunction | null>(null);
+  // Sticky, not derived from fn.returns.type: deriving it would flip the RETURNS line to locked mid-keystroke whenever typing passes through a preset name (e.g. "time" en route to "timestamptz").
+  const [customMode, setCustomMode] = useState(false);
+  // Last Custom value, kept aside while a preset is selected.
+  const [customDraft, setCustomDraft] = useState("");
 
   useEffect(() => {
-    if (config && name && (config.rpc || {})[name]) {
-      setFn(structuredClone((config.rpc || {})[name]!));
-    }
+    if (!config || !name) return;
+    const existing = Object.entries(config.rpc).find(([k]) => k === name)?.[1];
+    if (!existing) return;
+    const loaded = structuredClone(existing);
+    setFn(loaded);
+    const isCustom = !RPC_RETURN_TYPES.includes(loaded.returns.type);
+    setCustomMode(isCustom);
+    setCustomDraft(isCustom ? loaded.returns.type : "");
   }, [config, name]);
 
   function updateFn(updater: (prev: RpcFunction) => RpcFunction) {
@@ -94,10 +96,27 @@ export function RpcDetail() {
   // Dirty is derived, not a sticky flag: undoing an edit hides the save bar.
   const dirty = !jsonEqual(fn, (config.rpc || {})[name] ?? null);
 
-  const loaded = Object.entries(config.rpc).find(([k]) => k === name)?.[1];
-  const originalReturnType = loaded ? loaded.returns.type : "";
+  function selectReturnType(value: string) {
+    if (!fn) return;
+    if (value === CUSTOM_RETURN_TYPE) {
+      setCustomMode(true);
+      updateFn((f) => ({
+        ...f,
+        returns: { ...f.returns, type: customDraft || DEFAULT_CUSTOM_RETURN_TYPE },
+      }));
+      return;
+    }
+    if (customMode) setCustomDraft(fn.returns.type);
+    setCustomMode(false);
+    updateFn((f) => ({ ...f, returns: { ...f.returns, type: value } }));
+  }
 
   const args = fn.args || [];
+  const argsSig = args.map((a) => `"${a.name}" ${a.type}`).join(", ");
+  const signaturePrefix = `CREATE OR REPLACE FUNCTION public."${name}"(${argsSig})\nRETURNS `;
+  const signatureSuffix = `\nLANGUAGE ${(fn.language || "plpgsql").toLowerCase()}\n${(
+    fn.volatility || "volatile"
+  ).toUpperCase()}\nSECURITY ${(fn.security || "invoker").toUpperCase()}\nAS $ub$`;
 
   return (
     <Box pb="20">
@@ -161,17 +180,13 @@ export function RpcDetail() {
             <Select
               mono
               aria-label="Return Type"
-              value={fn.returns.type || "void"}
-              onChange={(e) =>
-                updateFn((f) => ({
-                  ...f,
-                  returns: { ...f.returns, type: e.target.value },
-                }))
-              }
+              value={customMode ? CUSTOM_RETURN_TYPE : fn.returns.type || "void"}
+              onChange={(e) => { selectReturnType(e.target.value); }}
             >
-              {returnTypeOptions(originalReturnType, fn.returns.type).map((t) => (
+              {RPC_RETURN_TYPES.map((t) => (
                 <option key={t} value={t}>{t}</option>
               ))}
+              <option value={CUSTOM_RETURN_TYPE}>Custom…</option>
             </Select>
           </Field>
 
@@ -186,19 +201,27 @@ export function RpcDetail() {
             <Box borderRadius="lg" borderWidth="1px" borderColor="border" overflow="hidden">
               <CodeEditor
                 value={fn.body || ""}
-                onChange={(val) => updateFn((f) => ({ ...f, body: val }))}
+                onChange={(val) => { updateFn((f) => ({ ...f, body: val })); }}
                 language="sql"
                 minHeight="160px"
-                frame={{
-                  header: `CREATE OR REPLACE FUNCTION public."${name}"(${(fn.args || [])
-                    .map((a) => `"${a.name}" ${a.type}`)
-                    .join(", ")})\nRETURNS ${fn.returns?.type || "void"}\nLANGUAGE ${(
-                    fn.language || "plpgsql"
-                  ).toLowerCase()}\n${(fn.volatility || "volatile").toUpperCase()}\nSECURITY ${(
-                    fn.security || "invoker"
-                  ).toUpperCase()}\nAS $ub$`,
-                  footer: "$ub$;",
-                }}
+                frame={
+                  customMode
+                    ? {
+                        hole: {
+                          before: signaturePrefix,
+                          after: signatureSuffix,
+                          value: fn.returns.type,
+                          onChange: (v) => {
+                            updateFn((f) => ({ ...f, returns: { ...f.returns, type: v } }));
+                          },
+                        },
+                        footer: "$ub$;",
+                      }
+                    : {
+                        header: `${signaturePrefix}${fn.returns.type || "void"}${signatureSuffix}`,
+                        footer: "$ub$;",
+                      }
+                }
               />
             </Box>
           </Field>

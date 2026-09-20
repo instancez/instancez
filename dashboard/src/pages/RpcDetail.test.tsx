@@ -86,9 +86,26 @@ describe("RpcDetail", () => {
     expect(screen.getByText("user_id")).toBeInTheDocument();
   });
 
-  it("renders return type", () => {
-    renderRpcDetail(baseConfig, "get_todos");
-    expect(screen.getByDisplayValue("setof todos")).toBeInTheDocument();
+  it("renders a non-preset return type in Custom mode, editable in place", () => {
+    const { container } = renderRpcDetail(baseConfig, "get_todos");
+    // "setof todos" isn't one of the fixed dropdown options, so it loads into
+    // Custom mode: the dropdown shows the sentinel, the actual value lives in
+    // the RETURNS line inside the code editor.
+    expect(screen.getByRole("combobox", { name: "Return Type" })).toHaveValue("__custom__");
+    const lines = [...container.querySelectorAll(".cm-line")].map((l) => l.textContent);
+    expect(lines).toContain("RETURNS setof todos");
+  });
+
+  it("renders a preset return type directly on the dropdown", () => {
+    renderRpcDetail(baseConfig, "no_args_fn");
+    expect(screen.getByRole("combobox", { name: "Return Type" })).toHaveValue("text");
+  });
+
+  it("offers a Custom option on the return type dropdown", () => {
+    renderRpcDetail(baseConfig, "no_args_fn");
+    const select = screen.getByRole("combobox", { name: "Return Type" });
+    const labels = [...select.querySelectorAll("option")].map((o) => o.textContent);
+    expect(labels).toContain("Custom…");
   });
 
   it("renders the return type as a dropdown of the fixed Supabase types", () => {
@@ -105,14 +122,35 @@ describe("RpcDetail", () => {
     expect(opts).not.toContain("vector");
   });
 
-  it("preserves a migrated setof/table return type as a selectable option", () => {
-    renderRpcDetail(baseConfig, "get_todos"); // "setof todos" is not in the fixed list
+  it("preserves the Custom draft across dropdown toggles, without touching the body", () => {
+    const { container } = renderRpcDetail(baseConfig, "get_todos"); // loads "setof todos"
     const combo = screen.getByRole("combobox", { name: "Return Type" });
-    expect(combo).toHaveValue("setof todos");
-    const opts = within(combo)
-      .getAllByRole("option")
-      .map((o) => o.textContent);
-    expect(opts).toContain("setof todos");
+    const lines = () => [...container.querySelectorAll(".cm-line")].map((l) => l.textContent);
+    const editableLines = () =>
+      [...container.querySelectorAll(".cm-line")]
+        .filter((l) => !l.classList.contains("cm-readonly-line"))
+        .map((l) => l.textContent);
+
+    expect(lines()).toContain("RETURNS setof todos");
+
+    // Switch to a preset: the Custom draft is set aside, not lost.
+    fireEvent.change(combo, { target: { value: "void" } });
+    expect(combo).toHaveValue("void");
+    expect(lines()).toContain("RETURNS void");
+    expect(lines()).not.toContain("RETURNS setof todos");
+
+    // Back to Custom: the original draft comes back, not an empty field.
+    fireEvent.change(combo, { target: { value: "__custom__" } });
+    expect(combo).toHaveValue("__custom__");
+    expect(lines()).toContain("RETURNS setof todos");
+
+    // A second round trip through a different preset still restores it.
+    fireEvent.change(combo, { target: { value: "text" } });
+    fireEvent.change(combo, { target: { value: "__custom__" } });
+    expect(lines()).toContain("RETURNS setof todos");
+
+    // The body was never touched by any of this.
+    expect(editableLines()).toEqual(["SELECT * FROM todos WHERE user_id = $1"]);
   });
 
   it("handles RPC with no arguments", () => {
@@ -161,7 +199,7 @@ describe("RpcDetail", () => {
   it("recomputes the framed signature when a definition field changes, keeping the body", () => {
     const { container } = renderRpcDetail(baseConfig, "get_todos");
     expect(container.textContent).toContain("RETURNS setof todos");
-    fireEvent.change(screen.getByDisplayValue("setof todos"), {
+    fireEvent.change(screen.getByRole("combobox", { name: "Return Type" }), {
       target: { value: "void" },
     });
     expect(container.textContent).toContain("RETURNS void");
@@ -176,20 +214,20 @@ describe("RpcDetail", () => {
   it("keeps the save bar when the save is cancelled in the confirm dialog", async () => {
     // save resolving false is what a cancelled ConfirmSaveDialog produces
     const save = vi.fn().mockResolvedValue(false);
-    renderRpcDetail(baseConfig, "get_todos", save);
-    fireEvent.change(screen.getByDisplayValue("setof todos"), { target: { value: "text" } });
+    renderRpcDetail(baseConfig, "no_args_fn", save);
+    fireEvent.change(screen.getByDisplayValue("text"), { target: { value: "void" } });
     fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
     await vi.waitFor(() => expect(save).toHaveBeenCalled());
     expect(screen.getByRole("button", { name: /save changes/i })).toBeInTheDocument();
   });
 
   it("hides the save bar again when an edit is undone", () => {
-    renderRpcDetail(baseConfig, "get_todos");
-    const returns = screen.getByDisplayValue("setof todos");
+    renderRpcDetail(baseConfig, "no_args_fn");
+    const returns = screen.getByDisplayValue("text");
     expect(screen.queryByRole("button", { name: /save changes/i })).not.toBeInTheDocument();
-    fireEvent.change(returns, { target: { value: "text" } });
+    fireEvent.change(returns, { target: { value: "void" } });
     expect(screen.getByRole("button", { name: /save changes/i })).toBeInTheDocument();
-    fireEvent.change(returns, { target: { value: "setof todos" } });
+    fireEvent.change(returns, { target: { value: "text" } });
     expect(screen.queryByRole("button", { name: /save changes/i })).not.toBeInTheDocument();
   });
 });
