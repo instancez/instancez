@@ -71,32 +71,45 @@ const brandTheme = EditorView.theme({
   },
 });
 
+/** A single editable line cut into the header (e.g. RPC `RETURNS <type>`); `header` is ignored when set. */
+export interface FrameHole {
+  before: string;
+  after: string;
+  value: string;
+  onChange: (value: string) => void;
+}
+
 export interface Frame {
   header?: string;
   footer?: string;
+  hole?: FrameHole;
 }
 
-/* The frame's header and footer live in the document as real lines so they get
-   syntax highlighting and line numbers, but they're locked from editing and the
-   caret is kept out of them. The document is laid out as
-
-       <header>\n <body> \n<footer>
-
-   and these helpers are the single source of truth for where the locked regions
-   end and the editable body begins. The change filter, the selection filter,
-   and the value/onChange plumbing all measure off them. The separating newlines
-   count as part of the locked prefix/suffix so the body always keeps its own
-   line. */
+// Doc layout: `<header>\n<body>\n<footer>`, or with a hole, `<hole.before><hole.value><hole.after>\n<body>\n<footer>`.
 export function regionLengths(frame: Frame | null) {
-  const prefixLen = frame?.header != null ? frame.header.length + 1 : 0;
+  const prefixLen = frame?.hole
+    ? frame.hole.before.length + frame.hole.value.length + frame.hole.after.length + 1
+    : frame?.header != null
+      ? frame.header.length + 1
+      : 0;
   const suffixLen = frame?.footer != null ? frame.footer.length + 1 : 0;
   return { prefixLen, suffixLen };
 }
 
+/** The hole's [from, to) range in a doc freshly composed from `frame` (stale once the user types; see `holeField`). */
+export function holeRange(frame: Frame | null): { from: number; to: number } | null {
+  if (!frame?.hole) return null;
+  const from = frame.hole.before.length;
+  return { from, to: from + frame.hole.value.length };
+}
+
 export function composeDoc(frame: Frame | null, body: string) {
-  const header = frame?.header != null ? frame.header + "\n" : "";
+  const header = frame?.hole
+    ? frame.hole.before + frame.hole.value + frame.hole.after
+    : (frame?.header ?? null);
+  const headerPart = header != null ? header + "\n" : "";
   const footer = frame?.footer != null ? "\n" + frame.footer : "";
-  return header + body + footer;
+  return headerPart + body + footer;
 }
 
 export function extractBody(frame: Frame | null, doc: string) {
@@ -104,14 +117,32 @@ export function extractBody(frame: Frame | null, doc: string) {
   return doc.slice(prefixLen, doc.length - suffixLen);
 }
 
-/* The char ranges CodeMirror must leave untouched, as the flat [from, to, …]
-   list its change filter expects. */
-export function protectedRanges(frame: Frame | null, docLen: number): number[] {
-  const { prefixLen, suffixLen } = regionLengths(frame);
+export function extractHole(frame: Frame | null, doc: string): string | null {
+  const range = holeRange(frame);
+  return range ? doc.slice(range.from, range.to) : null;
+}
+
+// The locked [from, to, …] ranges around a hole (if any) and the body, shared by `protectedRanges` and `liveProtectedRanges`.
+function lockedRanges(
+  hole: { from: number; to: number } | null,
+  bodyFrom: number,
+  suffixLen: number,
+  docLen: number
+): number[] {
   const ranges: number[] = [];
-  if (prefixLen) ranges.push(0, prefixLen);
+  if (hole) {
+    if (hole.from > 0) ranges.push(0, hole.from);
+    if (hole.to < bodyFrom) ranges.push(hole.to, bodyFrom);
+  } else if (bodyFrom > 0) {
+    ranges.push(0, bodyFrom);
+  }
   if (suffixLen) ranges.push(docLen - suffixLen, docLen);
   return ranges;
+}
+
+export function protectedRanges(frame: Frame | null, docLen: number): number[] {
+  const { prefixLen, suffixLen } = regionLengths(frame);
+  return lockedRanges(holeRange(frame), prefixLen, suffixLen, docLen);
 }
 
 const setFrame = StateEffect.define<Frame | null>();
@@ -127,65 +158,148 @@ const frameField = StateField.define<Frame | null>({
   },
 });
 
-function clampSelection(
+// The hole's live [from, to) range, kept accurate across ordinary typing by mapping through each transaction's changes.
+const setHole = StateEffect.define<{ from: number; to: number } | null>();
+
+const holeField = StateField.define<{ from: number; to: number } | null>({
+  create: () => null,
+  update(value, tr) {
+    for (const e of tr.effects) if (e.is(setHole)) return e.value;
+    if (!value) return value;
+    return { from: tr.changes.mapPos(value.from, -1), to: tr.changes.mapPos(value.to, 1) };
+  },
+});
+
+/** The live hole range tracked by a running editor's state, or null. */
+export function liveHoleRange(state: EditorState): { from: number; to: number } | null {
+  return state.field(holeField, false) ?? null;
+}
+
+/** The body's live [from, to) bounds, accounting for the hole's current live length. */
+function liveBodyBounds(state: EditorState): { from: number; to: number } {
+  const frame = state.field(frameField);
+  const hole = state.field(holeField);
+  const to = state.doc.length - regionLengths(frame).suffixLen;
+  if (hole && frame?.hole) return { from: hole.to + frame.hole.after.length + 1, to };
+  return { from: regionLengths(frame).prefixLen, to };
+}
+
+function liveProtectedRanges(state: EditorState): number[] {
+  const frame = state.field(frameField);
+  const body = liveBodyBounds(state);
+  const suffixLen = regionLengths(frame).suffixLen;
+  return lockedRanges(state.field(holeField), body.from, suffixLen, state.doc.length);
+}
+
+// Clamps a selection into a single editable window (hole or body); both ends resolve to whichever window the anchor is nearest, so a range can't straddle the locked gap between them.
+function clampToWindows(
   sel: EditorSelection,
-  lo: number,
-  hi: number
+  windows: Array<[number, number]>
 ): EditorSelection {
-  const clamp = (n: number) => Math.min(Math.max(n, lo), hi);
-  const ranges = sel.ranges.map((r: SelectionRange) =>
-    EditorSelection.range(clamp(r.anchor), clamp(r.head))
-  );
+  const windowFor = (n: number): [number, number] => {
+    for (const w of windows) if (n >= w[0] && n <= w[1]) return w;
+    let best = windows[0]!;
+    let bestDist = Infinity;
+    for (const w of windows) {
+      const edge = n < w[0] ? w[0] : w[1];
+      const dist = Math.abs(edge - n);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = w;
+      }
+    }
+    return best;
+  };
+  const ranges = sel.ranges.map((r: SelectionRange) => {
+    const [lo, hi] = windowFor(r.anchor);
+    const clamp = (n: number) => Math.min(Math.max(n, lo), hi);
+    return EditorSelection.range(clamp(r.anchor), clamp(r.head));
+  });
   return EditorSelection.create(ranges, sel.mainIndex);
 }
 
-/* Locks the scaffold: drops edits that fall inside the header/footer and pulls
-   the caret/selection back into the body if it strays. */
+// Locks the scaffold: drops edits inside the header/footer and fences the caret into the body or hole.
 const lockScaffold: Extension = [
   EditorState.changeFilter.of((tr) => {
     if (tr.annotation(reframe)) return true; // our own scaffold rewrite
-    const ranges = protectedRanges(
-      tr.startState.field(frameField),
-      tr.startState.doc.length
-    );
-    // Returning the protected ranges drops changes inside them; a zero-width
-    // insertion sitting exactly on a boundary is attributed to the body side, so
-    // typing at the very start or end of the body still goes through.
+    const ranges = liveProtectedRanges(tr.startState);
     return ranges.length ? ranges : true;
   }),
   EditorState.transactionFilter.of((tr) => {
     if (!tr.selection || tr.annotation(reframe)) return tr;
-    const frame = tr.startState.field(frameField);
-    const { prefixLen, suffixLen } = regionLengths(frame);
-    if (!prefixLen && !suffixLen) return tr;
-    const clamped = clampSelection(
-      tr.selection,
-      prefixLen,
-      tr.newDoc.length - suffixLen
-    );
+    const frame = tr.state.field(frameField);
+    if (!frame) return tr;
+    const body = liveBodyBounds(tr.state);
+    const hole = tr.state.field(holeField);
+    const windows: Array<[number, number]> = [];
+    if (hole && frame.hole) windows.push([hole.from, hole.to]);
+    windows.push([body.from, body.to]);
+    const clamped = clampToWindows(tr.selection, windows);
     return clamped.eq(tr.selection)
       ? tr
       : [tr, { selection: clamped, sequential: true }];
   }),
 ];
 
-/* The transaction that rewrites the scaffold in place when the header/footer
-   changes: it replaces the locked prefix and suffix and moves the frame field to
-   match. Kept out of undo history on purpose — the setFrame effect isn't
-   invertible, so letting history revert the scaffold text alone would leave the
-   field pointing at the wrong region and corrupt the extracted body. */
+// Rewrites the scaffold in place when the header/footer/hole shape changes, preserving body and hole content; kept out of undo history since the setFrame/setHole effects aren't invertible.
 export function reframeSpec(
   oldFrame: Frame | null,
   next: Frame | null,
-  docLen: number
+  docLen: number,
+  liveHole: { from: number; to: number } | null = holeRange(oldFrame)
 ): TransactionSpec {
-  const old = regionLengths(oldFrame);
+  const changes: { from: number; to: number; insert: string }[] = [];
+  let newHole: { from: number; to: number } | null = null;
+
+  if (oldFrame?.hole && liveHole) {
+    const oldAfterEnd = liveHole.to + oldFrame.hole.after.length + 1;
+    if (next?.hole) {
+      // hole -> hole: rewrite only the locked before/after text; the hole's
+      // own (possibly since-grown) content is left in place, untouched.
+      changes.push({ from: 0, to: liveHole.from, insert: next.hole.before });
+      changes.push({ from: liveHole.to, to: oldAfterEnd, insert: next.hole.after + "\n" });
+      newHole = {
+        from: next.hole.before.length,
+        to: next.hole.before.length + (liveHole.to - liveHole.from),
+      };
+    } else {
+      // hole -> none: nothing on-doc to preserve, collapse in one shot.
+      changes.push({
+        from: 0,
+        to: oldAfterEnd,
+        insert: next?.header != null ? next.header + "\n" : "",
+      });
+    }
+  } else {
+    const oldPrefixLen = regionLengths(oldFrame).prefixLen;
+    if (next?.hole) {
+      // none -> hole: fresh insert, nothing on-doc to preserve, so the value
+      // prop's length is exactly right here.
+      changes.push({
+        from: 0,
+        to: oldPrefixLen,
+        insert: next.hole.before + next.hole.value + next.hole.after + "\n",
+      });
+      newHole = holeRange(next);
+    } else {
+      changes.push({
+        from: 0,
+        to: oldPrefixLen,
+        insert: next?.header != null ? next.header + "\n" : "",
+      });
+    }
+  }
+
+  const oldSuffixLen = regionLengths(oldFrame).suffixLen;
+  changes.push({
+    from: docLen - oldSuffixLen,
+    to: docLen,
+    insert: next?.footer != null ? "\n" + next.footer : "",
+  });
+
   return {
-    changes: [
-      { from: 0, to: old.prefixLen, insert: next?.header != null ? next.header + "\n" : "" },
-      { from: docLen - old.suffixLen, to: docLen, insert: next?.footer != null ? "\n" + next.footer : "" },
-    ],
-    effects: setFrame.of(next),
+    changes,
+    effects: [setFrame.of(next), setHole.of(newHole)],
     annotations: [reframe.of(true), Transaction.addToHistory.of(false)],
   };
 }
@@ -209,13 +323,20 @@ const scaffoldLines = StateField.define<DecorationSet>({
    lines, and keeps edits and the caret out of them. Exported so it can be
    exercised against a bare EditorState in tests. */
 export function scaffoldExtensions(initialFrame: Frame | null): Extension {
-  return [frameField.init(() => initialFrame), scaffoldLines, lockScaffold];
+  return [
+    frameField.init(() => initialFrame),
+    holeField.init(() => holeRange(initialFrame)),
+    scaffoldLines,
+    lockScaffold,
+  ];
 }
 
 function buildLineDeco(state: EditorState): DecorationSet {
   const frame = state.field(frameField);
   if (!frame) return Decoration.none;
-  const { prefixLen, suffixLen } = regionLengths(frame);
+  // ponytail: a hole's line is tinted like the rest of the locked header; add a lighter sub-tint if that reads as misleadingly locked.
+  const body = liveBodyBounds(state);
+  const suffixLen = regionLengths(frame).suffixLen;
   const docLen = state.doc.length;
   const deco = [] as ReturnType<typeof readonlyLine.range>[];
   const mark = (from: number, to: number) => {
@@ -227,9 +348,9 @@ function buildLineDeco(state: EditorState): DecorationSet {
       pos = line.to + 1;
     }
   };
-  // Header chars are [0, header.length); the trailing newline at header.length
-  // sits on the header's last line, so stop there and the body line stays clean.
-  if (prefixLen) mark(0, prefixLen - 1);
+  // Header chars are [0, body.from); the trailing newline sits on the header's
+  // last line, so stop there and the body line stays clean.
+  if (body.from > 0) mark(0, body.from - 1);
   // Footer chars start one past the separating newline.
   if (suffixLen) mark(docLen - suffixLen + 1, docLen);
   return Decoration.set(deco, true);
@@ -301,16 +422,24 @@ export function CodeEditor({
       EditorView.updateListener.of((update) => {
         if (!update.docChanged) return;
         // Compare the body before and after: a reframe mutates the doc (header
-        // text) without touching the body, and shouldn't fire onChange.
-        const before = extractBody(
-          update.startState.field(frameField),
-          update.startState.doc.toString()
-        );
-        const after = extractBody(
-          update.state.field(frameField),
-          update.state.doc.toString()
-        );
+        // text) without touching the body, and shouldn't fire onChange. Uses
+        // the live bounds, not the (possibly hole-stale) frame-only ones.
+        const beforeBounds = liveBodyBounds(update.startState);
+        const afterBounds = liveBodyBounds(update.state);
+        const before = update.startState.doc.sliceString(beforeBounds.from, beforeBounds.to);
+        const after = update.state.doc.sliceString(afterBounds.from, afterBounds.to);
         if (before !== after) onChangeRef.current(after);
+
+        const afterFrame = update.state.field(frameField);
+        const holeAfter = update.state.field(holeField);
+        if (afterFrame?.hole && holeAfter) {
+          const holeBefore = update.startState.field(holeField);
+          const afterHoleText = update.state.doc.sliceString(holeAfter.from, holeAfter.to);
+          const beforeHoleText = holeBefore
+            ? update.startState.doc.sliceString(holeBefore.from, holeBefore.to)
+            : null;
+          if (afterHoleText !== beforeHoleText) afterFrame.hole.onChange(afterHoleText);
+        }
       }),
     ];
 
@@ -340,34 +469,56 @@ export function CodeEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [language, readOnly, minHeight, sqlSchema]);
 
-  // Rewrite the scaffold in place when the frame prop changes (e.g. the RPC
-  // header recomputing from form fields). The body and the caret stay put.
+  // Rewrite the scaffold in place when the frame's structure changes (header,
+  // footer, or the hole's before/after text — e.g. the RPC header recomputing
+  // from form fields). The body, the hole's own content, and both carets stay
+  // put; a hole's live growth since the last reframe is passed through so it
+  // survives (see reframeSpec).
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
     const oldFrame = view.state.field(frameField);
     const next = frame ?? null;
-    if (
+    const sameHeaderFooter =
       (oldFrame?.header ?? null) === (next?.header ?? null) &&
-      (oldFrame?.footer ?? null) === (next?.footer ?? null)
-    )
-      return;
-    view.dispatch(reframeSpec(oldFrame, next, view.state.doc.length));
-  }, [frame?.header, frame?.footer]);
+      (oldFrame?.footer ?? null) === (next?.footer ?? null);
+    const sameHole =
+      !oldFrame?.hole === !next?.hole &&
+      (oldFrame?.hole?.before ?? null) === (next?.hole?.before ?? null) &&
+      (oldFrame?.hole?.after ?? null) === (next?.hole?.after ?? null);
+    if (sameHeaderFooter && sameHole) return;
+    view.dispatch(
+      reframeSpec(oldFrame, next, view.state.doc.length, liveHoleRange(view.state))
+    );
+  }, [frame?.header, frame?.footer, frame?.hole?.before, frame?.hole?.after, !!frame?.hole]);
 
   // Sync external value changes into the body region only.
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    const frameNow = view.state.field(frameField);
+    const body = liveBodyBounds(view.state);
     const doc = view.state.doc.toString();
-    if (extractBody(frameNow, doc) === value) return;
-    const { prefixLen, suffixLen } = regionLengths(frameNow);
+    if (doc.slice(body.from, body.to) === value) return;
     view.dispatch({
-      changes: { from: prefixLen, to: doc.length - suffixLen, insert: value },
+      changes: { from: body.from, to: body.to, insert: value },
       annotations: Transaction.addToHistory.of(false),
     });
   }, [value]);
+
+  // Sync external hole-value changes (e.g. picking a different preset while
+  // still in custom mode) into the hole region only.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !frame?.hole) return;
+    const hole = liveHoleRange(view.state);
+    if (!hole) return;
+    const doc = view.state.doc.toString();
+    if (doc.slice(hole.from, hole.to) === frame.hole.value) return;
+    view.dispatch({
+      changes: { from: hole.from, to: hole.to, insert: frame.hole.value },
+      annotations: Transaction.addToHistory.of(false),
+    });
+  }, [frame?.hole?.value]);
 
   return <Box ref={containerRef} overflow="hidden" borderRadius="lg" />;
 }

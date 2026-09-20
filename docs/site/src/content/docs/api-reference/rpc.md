@@ -37,7 +37,7 @@ rpc:
 | `args` | no | Ordered list of named arguments |
 | `args[].required` | no | Return 400 if the argument is absent |
 | `args[].default` | no | Postgres DEFAULT value for optional args |
-| `returns.type` | yes | Return type; `void` emits 204 No Content. One of: `void`, `record`, a scalar or composite type (`int`, `text`, `uuid`, a table's row type, …), `setof <type>`, or `table(col type, …)`. In the dashboard this is a dropdown of the common scalar types plus `void`/`record`; `setof`/`table(...)` are authored in YAML and a migrated function keeps its own type in the dropdown. |
+| `returns.type` | yes | Return type; `void` emits 204 No Content. One of: `void`, `record`, a scalar or composite type (`int`, `text`, `uuid`, a table's row type, …), `setof <type>`, or `table(col type, …)`. In the dashboard this is a dropdown of the common scalar types plus `void`/`record`, or `Custom…` to type `setof`/`table(...)`/a composite type directly into the generated `RETURNS` line. |
 
 ## Calling via HTTP
 
