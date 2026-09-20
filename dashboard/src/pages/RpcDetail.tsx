@@ -181,7 +181,7 @@ export function RpcDetail() {
               mono
               aria-label="Return Type"
               value={customMode ? CUSTOM_RETURN_TYPE : fn.returns.type || "void"}
-              onChange={(e) => selectReturnType(e.target.value)}
+              onChange={(e) => { selectReturnType(e.target.value); }}
             >
               {RPC_RETURN_TYPES.map((t) => (
                 <option key={t} value={t}>{t}</option>
