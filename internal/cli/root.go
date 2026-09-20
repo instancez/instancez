@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/instancez/instancez/internal/cloud"
 	"github.com/spf13/cobra"
 )
 
@@ -22,13 +23,18 @@ var (
 var errReported = errors.New("reported")
 
 func NewRootCmd() *cobra.Command {
+	var orgFlag string
 	root := &cobra.Command{
 		Use:           "inz",
 		Short:         "instancez — declarative backend from a single YAML file",
 		Long:          "instancez turns a YAML config into a full backend: Postgres CRUD, auth, storage, events, and more.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		PersistentPreRun: func(_ *cobra.Command, _ []string) {
+			cloud.SetOrg(orgFlag)
+		},
 	}
+	root.PersistentFlags().StringVar(&orgFlag, "org", "", "organization id (org_...) for org-scoped cloud commands; defaults to your only org")
 
 	root.AddCommand(
 		newInitCmd(),

@@ -30,5 +30,19 @@ func runWhoami() error {
 		return fmt.Errorf("whoami: %w", err)
 	}
 	fmt.Println(resp.Email)
+	if len(resp.Orgs) > 0 {
+		selected := cloud.SelectedOrg()
+		fmt.Println("\nOrganizations:")
+		for _, o := range resp.Orgs {
+			marker := "  "
+			if o.ID == selected || (selected == "" && len(resp.Orgs) == 1) {
+				marker = "* "
+			}
+			fmt.Printf("%s%s  %s  (%s)\n", marker, o.ID, o.Name, o.Role)
+		}
+		if selected == "" && len(resp.Orgs) > 1 {
+			fmt.Println("\nMultiple orgs — pass --org <id> (or set INSTANCEZ_ORG) for org-scoped commands.")
+		}
+	}
 	return nil
 }
