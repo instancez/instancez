@@ -278,8 +278,9 @@ describe("hole reframe", () => {
     // The tracked hole range itself must reflect the preserved "int8", not
     // `next.hole.value`'s stale "int" — otherwise later typing/locking drifts
     // by the length difference from here on.
-    const hole = liveHoleRange(state)!;
-    expect(state.doc.sliceString(hole.from, hole.to)).toBe("int8");
+    const hole = liveHoleRange(state);
+    expect(hole).not.toBeNull();
+    expect(state.doc.sliceString(hole?.from ?? 0, hole?.to ?? 0)).toBe("int8");
   });
 });
 

@@ -50,13 +50,14 @@ export function RpcDetail() {
   const [customDraft, setCustomDraft] = useState("");
 
   useEffect(() => {
-    if (config && name && (config.rpc || {})[name]) {
-      const loaded = structuredClone((config.rpc || {})[name]!);
-      setFn(loaded);
-      const isCustom = !RPC_RETURN_TYPES.includes(loaded.returns.type);
-      setCustomMode(isCustom);
-      setCustomDraft(isCustom ? loaded.returns.type : "");
-    }
+    if (!config || !name) return;
+    const existing = Object.entries(config.rpc).find(([k]) => k === name)?.[1];
+    if (!existing) return;
+    const loaded = structuredClone(existing);
+    setFn(loaded);
+    const isCustom = !RPC_RETURN_TYPES.includes(loaded.returns.type);
+    setCustomMode(isCustom);
+    setCustomDraft(isCustom ? loaded.returns.type : "");
   }, [config, name]);
 
   function updateFn(updater: (prev: RpcFunction) => RpcFunction) {
@@ -200,7 +201,7 @@ export function RpcDetail() {
             <Box borderRadius="lg" borderWidth="1px" borderColor="border" overflow="hidden">
               <CodeEditor
                 value={fn.body || ""}
-                onChange={(val) => updateFn((f) => ({ ...f, body: val }))}
+                onChange={(val) => { updateFn((f) => ({ ...f, body: val })); }}
                 language="sql"
                 minHeight="160px"
                 frame={
@@ -210,8 +211,9 @@ export function RpcDetail() {
                           before: signaturePrefix,
                           after: signatureSuffix,
                           value: fn.returns.type,
-                          onChange: (v) =>
-                            updateFn((f) => ({ ...f, returns: { ...f.returns, type: v } })),
+                          onChange: (v) => {
+                            updateFn((f) => ({ ...f, returns: { ...f.returns, type: v } }));
+                          },
                         },
                         footer: "$ub$;",
                       }

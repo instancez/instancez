@@ -198,17 +198,11 @@ function clampToWindows(
 ): EditorSelection {
   const windowFor = (n: number): [number, number] => {
     for (const w of windows) if (n >= w[0] && n <= w[1]) return w;
-    let best = windows[0]!;
-    let bestDist = Infinity;
-    for (const w of windows) {
+    return windows.reduce((best, w) => {
       const edge = n < w[0] ? w[0] : w[1];
-      const dist = Math.abs(edge - n);
-      if (dist < bestDist) {
-        bestDist = dist;
-        best = w;
-      }
-    }
-    return best;
+      const bestEdge = n < best[0] ? best[0] : best[1];
+      return Math.abs(edge - n) < Math.abs(bestEdge - n) ? w : best;
+    });
   };
   const ranges = sel.ranges.map((r: SelectionRange) => {
     const [lo, hi] = windowFor(r.anchor);
