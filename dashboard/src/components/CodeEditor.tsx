@@ -405,6 +405,7 @@ export function CodeEditor({
         ])
       ),
       basicSetup,
+      EditorView.lineWrapping,
       brandTheme,
       syntaxHighlighting(brandHighlight),
       scaffoldExtensions(initFrame),

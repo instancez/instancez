@@ -128,7 +128,7 @@ export function RlsPolicyCard({
             label="Using"
             hint="Available: auth.uid(), auth.role(), auth.email(), auth.jwt(), auth.is_authenticated()"
           >
-            <Box borderRadius="lg" borderWidth="1px" overflow="hidden">
+            <Box w="full" borderRadius="lg" borderWidth="1px" overflow="hidden">
               <CodeEditor
                 value={policy.using || ""}
                 onChange={(val) => onChange({ ...policy, using: val })}
@@ -147,7 +147,7 @@ export function RlsPolicyCard({
             label="With Check"
             hint="Available: auth.uid(), auth.role(), auth.email(), auth.jwt(), auth.is_authenticated()"
           >
-            <Box borderRadius="lg" borderWidth="1px" overflow="hidden">
+            <Box w="full" borderRadius="lg" borderWidth="1px" overflow="hidden">
               <CodeEditor
                 value={policy.with_check || ""}
                 onChange={(val) => onChange({ ...policy, with_check: val })}
