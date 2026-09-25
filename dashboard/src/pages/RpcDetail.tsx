@@ -198,7 +198,7 @@ export function RpcDetail() {
                 fields, so each dropdown change is reflected in the header.
                 Pasting full DDL into the editor is visibly wrong and rejected by
                 validation. */}
-            <Box borderRadius="lg" borderWidth="1px" borderColor="border" overflow="hidden">
+            <Box w="full" borderRadius="lg" borderWidth="1px" borderColor="border" overflow="hidden">
               <CodeEditor
                 value={fn.body || ""}
                 onChange={(val) => { updateFn((f) => ({ ...f, body: val })); }}

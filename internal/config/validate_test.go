@@ -715,6 +715,12 @@ func TestValidate_RPCFunction_ReturnTypeAccepted(t *testing.T) {
 		"table(id int, price double precision)",
 		"table(price numeric(10,2))", // comma inside a type parameter
 		"table(id int, price numeric(10,2), t text)",
+		// pg_dump style: uppercase TABLE, multiword types, well past 256 chars.
+		"TABLE(total_count bigint, id bigint, first_name character varying, last_name character varying, " +
+			"dob date, address character varying, city character varying, postal_code character varying, " +
+			"phone character varying, expiration date, nationality character varying, notes text, " +
+			"created_at timestamp with time zone, yellow_card bigint, updated_by character varying, " +
+			"updated_at timestamp without time zone)",
 	}
 	for _, rt := range accepted {
 		t.Run(rt, func(t *testing.T) {
@@ -739,6 +745,7 @@ func TestValidate_RPCFunction_ReturnTypeRejected(t *testing.T) {
 		"table(id int",      // unclosed paren
 		"int; DROP TABLE x", // injection / charset
 		"foo bar baz",       // garbage multiword scalar
+		"table(id int, n text); DROP TABLE x; --" + strings.Repeat(" ", 300), // charset still applies past 256
 	}
 	for _, rt := range rejected {
 		t.Run(rt, func(t *testing.T) {

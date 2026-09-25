@@ -22,7 +22,8 @@ func startMinIO(t *testing.T) (endpoint, accessKey, secretKey string) {
 	t.Helper()
 	ctx := context.Background()
 	req := testcontainers.ContainerRequest{
-		Image:        "quay.io/minio/minio:RELEASE.2024-09-13T20-26-02Z",
+		// Upstream MinIO images are no longer publicly pullable; Chainguard only serves latest for free.
+		Image:        "cgr.dev/chainguard/minio:latest",
 		ExposedPorts: []string{"9000/tcp"},
 		Env: map[string]string{
 			"MINIO_ROOT_USER":     "minioadmin",
