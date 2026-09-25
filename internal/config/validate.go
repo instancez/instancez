@@ -78,6 +78,9 @@ func validateIdent(path, name string) *domain.ValidationError {
 // the returns or arg type fields.
 var dbFunctionTypeRE = regexp.MustCompile(`^[a-zA-Z0-9_ ,.()\[\]]{1,256}$`)
 
+// rpcReturnTypeRE is dbFunctionTypeRE without the length cap, since a table(...) return lists every column.
+var rpcReturnTypeRE = regexp.MustCompile(`^[a-zA-Z0-9_ ,.()\[\]]+$`)
+
 // rpcTypeTokenRE matches one Postgres type reference: an identifier, optionally
 // schema-qualified, optionally parameterized with (n) and/or an array []
 // suffix. Multiword types (see multiwordScalarTypes) are matched separately.
@@ -794,7 +797,7 @@ func validateRPCReturnType(path, raw string) *domain.ValidationError {
 			Message: "returns.type is required (use \"void\" for no return value)",
 		}
 	}
-	if !dbFunctionTypeRE.MatchString(t) {
+	if !rpcReturnTypeRE.MatchString(t) {
 		return &domain.ValidationError{
 			Path:    path,
 			Message: fmt.Sprintf("invalid return type %q", raw),
