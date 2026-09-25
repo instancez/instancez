@@ -12,16 +12,20 @@ test.beforeEach(async ({ page }) => {
 async function expectLongLineWraps(page: Page) {
   const editor = page.locator(".cm-editor").first();
   await expect(editor).toBeVisible();
-  const before = (await editor.boundingBox())!.width;
+  const width = () => editor.evaluate((el) => el.getBoundingClientRect().width);
+  const before = await width();
   expect(before).toBeGreaterThan(300);
 
   await editor.locator(".cm-content").click();
   await page.keyboard.insertText(" -- " + "x".repeat(400) + " " + "word ".repeat(80));
 
   await expect(editor.getByText("x".repeat(400), { exact: false })).toBeVisible();
-  expect((await editor.boundingBox())!.width).toBeLessThanOrEqual(before + 1);
-  const pageWidth = await page.evaluate(() => document.documentElement.scrollWidth);
-  expect(pageWidth).toBeLessThanOrEqual(page.viewportSize()!.width);
+  expect(await width()).toBeLessThanOrEqual(before + 1);
+  const [scrollWidth, viewportWidth] = await page.evaluate(() => [
+    document.documentElement.scrollWidth,
+    window.innerWidth,
+  ]);
+  expect(scrollWidth).toBeLessThanOrEqual(viewportWidth);
 }
 
 test("a long function body line wraps instead of widening the editor", async ({ page }) => {
