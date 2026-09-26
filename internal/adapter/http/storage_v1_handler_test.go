@@ -1501,3 +1501,82 @@ func TestStorageErrShape(t *testing.T) {
 		t.Errorf("message = %#v", body["message"])
 	}
 }
+
+// --- Object key validation (C1) ---
+
+func TestCleanPath(t *testing.T) {
+	ok := map[string]string{
+		"a.txt":          "a.txt",
+		"/a.txt":         "a.txt",
+		"//etc/passwd":   "etc/passwd",
+		"dir/./file":     "dir/file",
+		"dir//file":      "dir/file",
+		"dir/":           "dir",
+		"ünï/çødé 😀.png": "ünï/çødé 😀.png",
+		"a..b/c...":      "a..b/c...",
+	}
+	for in, want := range ok {
+		got, err := cleanPath(in)
+		if err != nil || got != want {
+			t.Errorf("cleanPath(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"", "/", ".", "..", "../x", "a/../../x", "a/..", "/../etc", "a\x00b"} {
+		if got, err := cleanPath(in); err == nil {
+			t.Errorf("cleanPath(%q) = %q, want error", in, got)
+		}
+	}
+}
+
+func TestStorageRoutes_RejectTraversalKeys(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	touched := false
+	store := &stubObjectStore{
+		uploadFn: func(context.Context, string, io.Reader, string, int64) error { touched = true; return nil },
+		downloadFn: func(context.Context, string) (io.ReadCloser, string, error) {
+			touched = true
+			return io.NopCloser(strings.NewReader("")), "", nil
+		},
+		copyFn: func(context.Context, string, string) error { touched = true; return nil },
+	}
+	db := &stubDB{
+		beginFn: func(context.Context) (domain.Tx, error) { touched = true; return &stubTx{}, nil },
+		queryRowFn: func(context.Context, string, ...any) (map[string]any, error) {
+			touched = true
+			return map[string]any{"id": "x"}, nil
+		},
+	}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {Public: true}})
+	auth := func(c *gin.Context) {
+		setTestSession(c, domain.Session{Role: "authenticated", UserID: "u1", IsAuthenticated: true})
+	}
+	r := gin.New()
+	r.POST("/storage/v1/object/move", auth, h.moveObject)
+	r.POST("/storage/v1/object/copy", auth, h.copyObject)
+	r.POST("/storage/v1/object/sign/:bucket/*path", auth, h.createSignedURL)
+	r.POST("/storage/v1/object/:bucket/*path", auth, h.uploadObject)
+	r.GET("/storage/v1/object/*all", h.objectGetDispatch)
+
+	cases := []struct{ method, target, body string }{
+		{http.MethodPost, "/storage/v1/object/avatars/%2e%2e/%2e%2e/etc/passwd", "x"},
+		{http.MethodPost, "/storage/v1/object/avatars/..%2f..%2fetc", "x"},
+		{http.MethodGet, "/storage/v1/object/public/avatars/%2e%2e/secret", ""},
+		{http.MethodPost, "/storage/v1/object/sign/avatars/a/../../b", "{}"},
+		{http.MethodPost, "/storage/v1/object/move", `{"bucketId":"avatars","sourceKey":"a.txt","destinationKey":"../../x"}`},
+		{http.MethodPost, "/storage/v1/object/copy", `{"bucketId":"avatars","sourceKey":"../a","destinationKey":"b"}`},
+		{http.MethodPost, "/storage/v1/object/copy", `{"bucketId":"avatars","sourceKey":"","destinationKey":"b"}`},
+	}
+	for _, tc := range cases {
+		touched = false
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(tc.method, tc.target, strings.NewReader(tc.body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s %s: got %d, want 400: %s", tc.method, tc.target, w.Code, w.Body.String())
+		}
+		if touched {
+			t.Errorf("%s %s: reached DB or object store", tc.method, tc.target)
+		}
+	}
+}

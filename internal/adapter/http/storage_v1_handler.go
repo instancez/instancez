@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -192,9 +193,33 @@ func (h *StorageV1Handler) rlsCtx(c *gin.Context) context.Context {
 	return ctx
 }
 
-func (h *StorageV1Handler) cleanPath(p string) string {
-	p = strings.TrimPrefix(p, "/")
-	return path.Clean(p)
+var errInvalidKey = errors.New("invalid object key")
+
+// cleanPath normalizes an object key and rejects empty, NUL and ".." keys.
+func cleanPath(p string) (string, error) {
+	p = strings.TrimLeft(p, "/")
+	if p == "" || strings.ContainsRune(p, 0) {
+		return "", errInvalidKey
+	}
+	for _, seg := range strings.Split(p, "/") {
+		if seg == ".." {
+			return "", errInvalidKey
+		}
+	}
+	if p = path.Clean(p); p == "." {
+		return "", errInvalidKey
+	}
+	return p, nil
+}
+
+// objectPath cleans raw and writes a 400 when it is not a valid key.
+func objectPath(c *gin.Context, raw string) (string, bool) {
+	p, err := cleanPath(raw)
+	if err != nil {
+		storageErr(c, 400, "invalid_key", "Invalid key")
+		return "", false
+	}
+	return p, true
 }
 
 // objectMetadataJSON builds the exact Supabase storage ObjectMetadata blob
@@ -230,7 +255,10 @@ func (h *StorageV1Handler) updateObject(c *gin.Context) {
 
 func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 	bucketName := c.Param("bucket")
-	objPath := h.cleanPath(c.Param("path"))
+	objPath, ok := objectPath(c, c.Param("path"))
+	if !ok {
+		return
+	}
 
 	bucket, ok := h.getBucketConfig(bucketName)
 	if !ok {
@@ -479,7 +507,10 @@ func (h *StorageV1Handler) objectGetDispatch(c *gin.Context) {
 }
 
 func (h *StorageV1Handler) serveDownload(c *gin.Context, bucketName, objPath string, publicOnly bool) {
-	objPath = h.cleanPath(objPath)
+	var ok bool
+	if objPath, ok = objectPath(c, objPath); !ok {
+		return
+	}
 
 	bucket, ok := h.getBucketConfig(bucketName)
 	if !ok {
@@ -707,7 +738,10 @@ func (h *StorageV1Handler) listObjectsV2(c *gin.Context) {
 
 func (h *StorageV1Handler) objectInfo(c *gin.Context) {
 	bucketName := c.GetString("_bucket")
-	objPath := h.cleanPath(c.GetString("_path"))
+	objPath, ok := objectPath(c, c.GetString("_path"))
+	if !ok {
+		return
+	}
 
 	if _, ok := h.getBucketConfig(bucketName); !ok {
 		storageErr(c, 404, "not_found", "Bucket not found")
@@ -736,7 +770,10 @@ func (h *StorageV1Handler) objectInfo(c *gin.Context) {
 
 func (h *StorageV1Handler) objectExists(c *gin.Context) {
 	bucketName := c.Param("bucket")
-	objPath := h.cleanPath(c.Param("path"))
+	objPath, ok := objectPath(c, c.Param("path"))
+	if !ok {
+		return
+	}
 
 	if _, ok := h.getBucketConfig(bucketName); !ok {
 		c.Status(404)
@@ -812,9 +849,16 @@ func (h *StorageV1Handler) moveObject(c *gin.Context) {
 		return
 	}
 
+	src, errS := cleanPath(req.SourceKey)
+	dst, errD := cleanPath(req.DestinationKey)
+	if errS != nil || errD != nil {
+		storageErr(c, 400, "invalid_key", "Invalid key")
+		return
+	}
+
 	ctx := h.rlsCtx(c)
-	srcKey := srcBucket + "/" + req.SourceKey
-	dstKey := dstBucket + "/" + req.DestinationKey
+	srcKey := srcBucket + "/" + src
+	dstKey := dstBucket + "/" + dst
 
 	if err := h.storage.Copy(ctx, srcKey, dstKey); err != nil {
 		h.logger.Error("move copy", "error", err)
@@ -828,7 +872,7 @@ func (h *StorageV1Handler) moveObject(c *gin.Context) {
 	// Update DB
 	_, _ = h.db.Exec(ctx,
 		"UPDATE storage.objects SET bucket_id = $1, name = $2 WHERE bucket_id = $3 AND name = $4",
-		dstBucket, req.DestinationKey, srcBucket, req.SourceKey)
+		dstBucket, dst, srcBucket, src)
 
 	c.JSON(200, gin.H{"message": "Successfully moved"})
 }
@@ -860,9 +904,16 @@ func (h *StorageV1Handler) copyObject(c *gin.Context) {
 		return
 	}
 
+	src, errS := cleanPath(req.SourceKey)
+	dst, errD := cleanPath(req.DestinationKey)
+	if errS != nil || errD != nil {
+		storageErr(c, 400, "invalid_key", "Invalid key")
+		return
+	}
+
 	ctx := h.rlsCtx(c)
-	srcKey := srcBucket + "/" + req.SourceKey
-	dstKey := dstBucket + "/" + req.DestinationKey
+	srcKey := srcBucket + "/" + src
+	dstKey := dstBucket + "/" + dst
 
 	if err := h.storage.Copy(ctx, srcKey, dstKey); err != nil {
 		h.logger.Error("copy", "error", err)
@@ -875,16 +926,19 @@ func (h *StorageV1Handler) copyObject(c *gin.Context) {
 		`INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by, metadata)
 		 SELECT $1, $2, size, mime, uploaded_by, metadata FROM storage.objects WHERE bucket_id = $3 AND name = $4
 		 ON CONFLICT (bucket_id, name) DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime, uploaded_at = NOW()`,
-		dstBucket, req.DestinationKey, srcBucket, req.SourceKey)
+		dstBucket, dst, srcBucket, src)
 
-	c.JSON(200, gin.H{"Key": dstBucket + "/" + req.DestinationKey})
+	c.JSON(200, gin.H{"Key": dstBucket + "/" + dst})
 }
 
 // --- Signed URL handlers ---
 
 func (h *StorageV1Handler) createSignedURL(c *gin.Context) {
 	bucketName := c.Param("bucket")
-	objPath := h.cleanPath(c.Param("path"))
+	objPath, ok := objectPath(c, c.Param("path"))
+	if !ok {
+		return
+	}
 
 	if _, ok := h.getBucketConfig(bucketName); !ok {
 		storageErr(c, 404, "not_found", "Bucket not found")
@@ -950,7 +1004,10 @@ func (h *StorageV1Handler) createSignedURLs(c *gin.Context) {
 
 func (h *StorageV1Handler) createSignedUploadURL(c *gin.Context) {
 	bucketName := c.Param("bucket")
-	objPath := h.cleanPath(c.Param("path"))
+	objPath, ok := objectPath(c, c.Param("path"))
+	if !ok {
+		return
+	}
 
 	if _, ok := h.getBucketConfig(bucketName); !ok {
 		storageErr(c, 404, "not_found", "Bucket not found")
@@ -1018,7 +1075,10 @@ func (h *StorageV1Handler) probeUploadPermission(c *gin.Context, bucketName, obj
 
 func (h *StorageV1Handler) uploadToSignedURL(c *gin.Context) {
 	bucketName := c.Param("bucket")
-	objPath := h.cleanPath(c.Param("path"))
+	objPath, ok := objectPath(c, c.Param("path"))
+	if !ok {
+		return
+	}
 
 	bucket, ok := h.getBucketConfig(bucketName)
 	if !ok {
