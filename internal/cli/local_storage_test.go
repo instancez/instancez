@@ -178,9 +178,7 @@ func TestLocalStore_RejectsEscapingKeys(t *testing.T) {
 			t.Errorf("Head(%q) succeeded, want error", k)
 		}
 	}
-	// SignUpload/EnsureBucket run against fresh stores: several bad keys resolve to the
-	// same on-disk path once keyPrefix cancels "..", and reusing s above would let a file
-	// the mutating loop already wrote there mask a missing guard as an unrelated mkdir error.
+	// Fresh stores so files written by the loop above can't mask a missing guard.
 	for _, k := range bad {
 		fresh, err := NewLocalStore(filepath.Join(t.TempDir(), "store"), "app1")
 		if err != nil {
