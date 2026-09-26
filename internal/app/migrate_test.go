@@ -640,6 +640,9 @@ func (tx *fakeTx) Query(ctx context.Context, query string, args ...any) ([]map[s
 	return nil, nil
 }
 func (tx *fakeTx) QueryRow(ctx context.Context, query string, args ...any) (map[string]any, error) {
+	if last := tx.db.lastMigration; last != nil && strings.Contains(query, "_instancez_migrations") {
+		return map[string]any{"checksum": last.Checksum, "config_json": last.ConfigJSON}, nil
+	}
 	return nil, nil
 }
 func (tx *fakeTx) Exec(ctx context.Context, query string, args ...any) (int64, error) {

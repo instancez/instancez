@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/instancez/instancez/internal/domain"
 )
@@ -23,13 +24,24 @@ type Migrator struct {
 	db               domain.Database
 	roles            domain.Roles
 	allowDestructive bool
+	lockTimeout      time.Duration
 	logger           *slog.Logger
 }
+
+// DefaultMigrateLockTimeout bounds how long one migration DDL statement waits
+// for a table lock before the migration fails.
+const DefaultMigrateLockTimeout = 5 * time.Second
 
 // AllowDestructive permits DROP TABLE / DROP COLUMN in generated plans. It
 // returns the receiver so it can be chained onto NewMigrator.
 func (m *Migrator) AllowDestructive(v bool) *Migrator {
 	m.allowDestructive = v
+	return m
+}
+
+// LockTimeout sets the Postgres lock_timeout for migration DDL; 0 disables it.
+func (m *Migrator) LockTimeout(d time.Duration) *Migrator {
+	m.lockTimeout = d
 	return m
 }
 
@@ -40,7 +52,7 @@ func NewMigrator(db domain.Database, roles ...domain.Roles) *Migrator {
 	if len(roles) > 0 {
 		r = roles[0]
 	}
-	return &Migrator{db: db, roles: r, logger: slog.Default()}
+	return &Migrator{db: db, roles: r, lockTimeout: DefaultMigrateLockTimeout, logger: slog.Default()}
 }
 
 // Plan generates DDL statements to bring the DB in sync with the config.
@@ -277,7 +289,16 @@ func (m *Migrator) Apply(ctx context.Context, cfg *domain.Config) error {
 	}
 	configChecksum := fmt.Sprintf("%x", sha256.Sum256(configJSON))
 
-	last, err := m.db.GetLastMigration(ctx)
+	tx, err := m.beginLocked(ctx)
+	if err != nil {
+		return fmt.Errorf("migrate begin: %w", err)
+	}
+	// Safe to defer: tx.Rollback after a successful Commit is a no-op error
+	// we ignore. Calling Rollback before return guarantees no leak on panic.
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Read under the lock so an instance that waited sees the winner's row.
+	last, err := lastMigration(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
@@ -306,14 +327,6 @@ func (m *Migrator) Apply(ctx context.Context, cfg *domain.Config) error {
 	if len(stmts) == 0 {
 		return nil
 	}
-
-	tx, err := m.db.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("migrate begin: %w", err)
-	}
-	// Safe to defer: tx.Rollback after a successful Commit is a no-op error
-	// we ignore. Calling Rollback before return guarantees no leak on panic.
-	defer func() { _ = tx.Rollback(ctx) }()
 
 	for _, stmt := range stmts {
 		if _, err := tx.Exec(ctx, stmt); err != nil {
@@ -361,7 +374,7 @@ func (m *Migrator) applyStatements(ctx context.Context, stmts []string) error {
 	if len(stmts) == 0 {
 		return nil
 	}
-	tx, err := m.db.Begin(ctx)
+	tx, err := m.beginLocked(ctx)
 	if err != nil {
 		return fmt.Errorf("provision begin: %w", err)
 	}
@@ -372,6 +385,36 @@ func (m *Migrator) applyStatements(ctx context.Context, stmts []string) error {
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+// beginLocked opens a tx holding the migration lock; lock_timeout covers DDL only.
+// The lock wait is unbounded so waiters queue behind a slow migration.
+func (m *Migrator) beginLocked(ctx context.Context) (domain.Tx, error) {
+	tx, err := m.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", domain.MigrationLockKey); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL lock_timeout = '%dms'", m.lockTimeout.Milliseconds())); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, err
+	}
+	return tx, nil
+}
+
+// lastMigration reads on the locked tx; a pool read can deadlock a small pool.
+func lastMigration(ctx context.Context, tx domain.Tx) (*domain.Migration, error) {
+	row, err := tx.QueryRow(ctx,
+		`SELECT checksum, config_json FROM _instancez_migrations ORDER BY id DESC LIMIT 1`)
+	if err != nil || row == nil {
+		return nil, err
+	}
+	checksum, _ := row["checksum"].(string)
+	configJSON, _ := row["config_json"].(string)
+	return &domain.Migration{Checksum: checksum, ConfigJSON: configJSON}, nil
 }
 
 // idempotentProvisioning returns the subset of the from-scratch plan that is

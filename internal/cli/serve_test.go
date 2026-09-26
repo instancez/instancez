@@ -265,3 +265,33 @@ func TestParseDotenvFlag_DevDefault(t *testing.T) {
 		t.Errorf("dotenvPath = %q, want .development.env", opts.dotenvPath)
 	}
 }
+
+func TestParseServeFlagsMigrateLockTimeout(t *testing.T) {
+	got, err := parseServeFlags([]string{}, func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got.migrateLockTimeout != 5*time.Second {
+		t.Fatalf("default migrate lock timeout = %v, want 5s", got.migrateLockTimeout)
+	}
+
+	got, err = parseServeFlags([]string{}, func(k string) string {
+		if k == "INSTANCEZ_MIGRATE_LOCK_TIMEOUT" {
+			return "0s"
+		}
+		return ""
+	})
+	if err != nil {
+		t.Fatalf("parse env: %v", err)
+	}
+	if got.migrateLockTimeout != 0 {
+		t.Fatalf("env migrate lock timeout = %v, want 0 (disabled)", got.migrateLockTimeout)
+	}
+
+	for _, bad := range []string{"-1s", "500us", "1000h"} {
+		_, err = parseServeFlags([]string{"--migrate-lock-timeout=" + bad}, func(string) string { return "" })
+		if err == nil || !strings.Contains(err.Error(), "--migrate-lock-timeout") {
+			t.Fatalf("timeout %s err = %v, want rejection naming the flag", bad, err)
+		}
+	}
+}

@@ -123,6 +123,7 @@ Only variables matching the pattern `INSTANCEZ_ENV_*` are forwarded to function 
 |----------|----------------|---------|-------------|
 | `INSTANCEZ_MIGRATE` | `--migrate` | `false` | Run pending schema migrations on startup |
 | `INSTANCEZ_ALLOW_DESTRUCTIVE` | `--allow-destructive` | `false` | Permit `DROP TABLE` and `DROP COLUMN` in migrations. `inz serve` rejects a plan that drops a table or column unless this is set. `inz dev` permits drops regardless and logs each one. |
+| `INSTANCEZ_MIGRATE_LOCK_TIMEOUT` | `--migrate-lock-timeout` | `5s` | Longest an `inz serve` migration statement waits for a table lock before the migration fails. `0` disables the limit; otherwise 1ms to about 24 days. |
 
 ## Cloud
 

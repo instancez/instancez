@@ -67,6 +67,7 @@ inz serve [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--allow-destructive` | `false` | Permit `DROP TABLE` and `DROP COLUMN` during migration. Without it, `inz serve` refuses to apply a plan that drops a table or column and reports what would have been lost. `inz dev` always permits drops and logs each one. Env: `INSTANCEZ_ALLOW_DESTRUCTIVE`. |
+| `--migrate-lock-timeout` | `5s` | Longest an `inz serve` migration statement waits for a table lock. If a long query holds the table, the migration fails and the server keeps running on the last applied config instead of blocking traffic behind the pending lock. `0` disables the limit. Env: `INSTANCEZ_MIGRATE_LOCK_TIMEOUT`. |
 | `--bundle` | — | Bundle pointer: file path or `s3://bucket/key[#version]`. When set, reads config and functions from the bundle archive instead of `--config`. Env: `INSTANCEZ_BUNDLE`. |
 | `--config` | `instancez.yaml` | Config source: file path or `s3://bucket/key`. Ignored when `--bundle` is set. Env: `INSTANCEZ_CONFIG`. |
 | `--dashboard` | `disabled` | Dashboard mode. Env: `INSTANCEZ_DASHBOARD`. |

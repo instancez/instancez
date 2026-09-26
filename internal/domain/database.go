@@ -83,6 +83,10 @@ func (r Roles) AssumableFromSession(s Session) string {
 	}
 }
 
+// MigrationLockKey is the pg_advisory_xact_lock key that serializes schema
+// migrations across every instance sharing a database.
+const MigrationLockKey int64 = 0x696e7a6d6967
+
 // Database is the port for all database operations.
 type Database interface {
 	// Lifecycle
