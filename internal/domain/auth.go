@@ -141,6 +141,9 @@ type AuthService interface {
 	RevokeSessionByID(ctx context.Context, sessionID string) error
 	// RevokeOtherSessions deletes the user's refresh tokens except keepSessionID.
 	RevokeOtherSessions(ctx context.Context, userID, keepSessionID string) error
+	// RevokeBelowAAL2 deletes the user's refresh tokens whose aal is below
+	// aal2, in sessionID only unless allSessions is set.
+	RevokeBelowAAL2(ctx context.Context, userID, sessionID string, allSessions bool) error
 	// RevokeAllUserSessions deletes every refresh token for the user.
 	RevokeAllUserSessions(ctx context.Context, userID string) error
 
@@ -206,19 +209,18 @@ type AuthService interface {
 	// to userID, so the handler can validate the TOTP code. Errors: ErrNotFound.
 	GetFactorForVerify(ctx context.Context, factorID, userID string) (MFAFactor, error)
 	// ValidateChallenge checks that the challenge exists, belongs to factorID,
-	// is unverified, is within its 5-minute window, and is under the TOTP
-	// attempt cap. Called before the TOTP code is validated, mirroring
-	// GoTrue's ordering. Errors: ErrNotFound, ErrChallengeUsed,
-	// ErrChallengeExpired, ErrChallengeTooManyAttempts.
+	// is unverified and within its 5-minute window, and atomically spends one
+	// attempt; call it before comparing the code. Errors: ErrNotFound,
+	// ErrChallengeUsed, ErrChallengeExpired, ErrChallengeTooManyAttempts.
 	ValidateChallenge(ctx context.Context, challengeID, factorID string) error
-	// IncrementChallengeAttempt records a failed TOTP guess against
-	// challengeID, bounding brute-force of the 10^6 code space.
-	IncrementChallengeAttempt(ctx context.Context, challengeID string) error
-	// MarkChallengeVerified stamps verified_at on the challenge. Security-
-	// critical: the caller MUST surface an error as a 500, never swallow it.
+	// ConsumeTOTPStep marks a TOTP time step used on the factor. fresh=false
+	// means the step (or a later one) was already used: a replayed code.
+	ConsumeTOTPStep(ctx context.Context, factorID string, step int64) (fresh bool, err error)
+	// MarkChallengeVerified stamps verified_at on the challenge and returns
+	// ErrChallengeUsed when it was already verified.
 	MarkChallengeVerified(ctx context.Context, challengeID string) error
-	// PromoteFactorToVerified flips an unverified factor to 'verified' on the
-	// first successful TOTP. Security-critical: errors must surface as 500.
+	// PromoteFactorToVerified flips an unverified factor to 'verified' and
+	// also deletes the user's other unverified factors.
 	PromoteFactorToVerified(ctx context.Context, factorID string) error
 	// ListFactors returns the caller's factors (secret excluded) ordered by
 	// created_at, for the GoTrue listFactors response.

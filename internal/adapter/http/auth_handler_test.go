@@ -766,14 +766,15 @@ type stubAuthService struct {
 	revokeOtherSessionsFn   func(ctx context.Context, userID, keep string) error
 	revokeAllUserSessionsFn func(ctx context.Context, userID string) error
 
-	enrollFactorFn              func(ctx context.Context, userID, friendlyName, secret string) (string, error)
-	createChallengeFn           func(ctx context.Context, factorID, userID string) (string, time.Time, error)
-	getFactorForVerifyFn        func(ctx context.Context, factorID, userID string) (domain.MFAFactor, error)
-	validateChallengeFn         func(ctx context.Context, challengeID, factorID string) error
-	incrementChallengeAttemptFn func(ctx context.Context, challengeID string) error
-	markChallengeVerifiedFn     func(ctx context.Context, challengeID string) error
-	promoteFactorToVerifiedFn   func(ctx context.Context, factorID string) error
-	listFactorsFn               func(ctx context.Context, userID string) ([]map[string]any, error)
+	enrollFactorFn            func(ctx context.Context, userID, friendlyName, secret string) (string, error)
+	createChallengeFn         func(ctx context.Context, factorID, userID string) (string, time.Time, error)
+	getFactorForVerifyFn      func(ctx context.Context, factorID, userID string) (domain.MFAFactor, error)
+	validateChallengeFn       func(ctx context.Context, challengeID, factorID string) error
+	consumeTOTPStepFn         func(ctx context.Context, factorID string, step int64) (bool, error)
+	revokeBelowAAL2Fn         func(ctx context.Context, userID, sessionID string, allSessions bool) error
+	markChallengeVerifiedFn   func(ctx context.Context, challengeID string) error
+	promoteFactorToVerifiedFn func(ctx context.Context, factorID string) error
+	listFactorsFn             func(ctx context.Context, userID string) ([]map[string]any, error)
 }
 
 // Compile-time check that stubAuthService satisfies the interface.
@@ -978,9 +979,15 @@ func (s *stubAuthService) ValidateChallenge(ctx context.Context, challengeID, fa
 	}
 	return nil
 }
-func (s *stubAuthService) IncrementChallengeAttempt(ctx context.Context, challengeID string) error {
-	if s.incrementChallengeAttemptFn != nil {
-		return s.incrementChallengeAttemptFn(ctx, challengeID)
+func (s *stubAuthService) ConsumeTOTPStep(ctx context.Context, factorID string, step int64) (bool, error) {
+	if s.consumeTOTPStepFn != nil {
+		return s.consumeTOTPStepFn(ctx, factorID, step)
+	}
+	return true, nil
+}
+func (s *stubAuthService) RevokeBelowAAL2(ctx context.Context, userID, sessionID string, allSessions bool) error {
+	if s.revokeBelowAAL2Fn != nil {
+		return s.revokeBelowAAL2Fn(ctx, userID, sessionID, allSessions)
 	}
 	return nil
 }

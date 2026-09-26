@@ -255,3 +255,172 @@ func TestBanIntegration(t *testing.T) {
 		t.Fatal("expired ban must not block")
 	}
 }
+
+func TestMFAIntegration(t *testing.T) {
+	s, db := newIntegrationService(t, &domain.Auth{})
+	ctx := context.Background()
+	uid := mustUser(t, s, "mfa@example.com")
+	f1, _ := s.EnrollFactor(ctx, uid, "a", "SECRET1")
+	f2, _ := s.EnrollFactor(ctx, uid, "b", "SECRET2")
+
+	t.Run("concurrent guesses never exceed the cap", func(t *testing.T) {
+		ch, _, err := s.CreateChallenge(ctx, f1, uid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var mu sync.Mutex
+		ok := 0
+		var wg sync.WaitGroup
+		for i := 0; i < 20; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if s.ValidateChallenge(ctx, ch, f1) == nil {
+					mu.Lock()
+					ok++
+					mu.Unlock()
+				}
+			}()
+		}
+		wg.Wait()
+		if ok != maxMFAAttempts {
+			t.Fatalf("%d attempts allowed, want %d", ok, maxMFAAttempts)
+		}
+		if err := s.ValidateChallenge(ctx, ch, f1); !errors.Is(err, domain.ErrChallengeTooManyAttempts) {
+			t.Fatalf("want too many attempts, got %v", err)
+		}
+	})
+
+	t.Run("challenge verifies exactly once under concurrency", func(t *testing.T) {
+		ch, _, _ := s.CreateChallenge(ctx, f1, uid)
+		var mu sync.Mutex
+		wins := 0
+		var wg sync.WaitGroup
+		for i := 0; i < 5; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if s.MarkChallengeVerified(ctx, ch) == nil {
+					mu.Lock()
+					wins++
+					mu.Unlock()
+				}
+			}()
+		}
+		wg.Wait()
+		if wins != 1 {
+			t.Fatalf("%d winners, want 1", wins)
+		}
+		if err := s.ValidateChallenge(ctx, ch, f1); !errors.Is(err, domain.ErrChallengeUsed) {
+			t.Fatalf("want used, got %v", err)
+		}
+	})
+
+	t.Run("expired and foreign challenges rejected", func(t *testing.T) {
+		ch, _, _ := s.CreateChallenge(ctx, f1, uid)
+		if err := s.ValidateChallenge(ctx, ch, f2); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("wrong factor: %v", err)
+		}
+		_, _ = db.Exec(ctx, `UPDATE auth.mfa_challenges SET created_at = NOW() - INTERVAL '10 minutes' WHERE id = $1::uuid`, ch)
+		if err := s.ValidateChallenge(ctx, ch, f1); !errors.Is(err, domain.ErrChallengeExpired) {
+			t.Fatalf("want expired, got %v", err)
+		}
+		if _, _, err := s.CreateChallenge(ctx, f1, mustUser(t, s, "other@example.com")); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("foreign factor challenge: %v", err)
+		}
+	})
+
+	t.Run("totp step is single-use and monotonic", func(t *testing.T) {
+		steps := []struct {
+			step int64
+			want bool
+		}{{100, true}, {100, false}, {99, false}, {101, true}}
+		for _, st := range steps {
+			if got, err := s.ConsumeTOTPStep(ctx, f1, st.step); err != nil || got != st.want {
+				t.Fatalf("step %d: got %v,%v want %v", st.step, got, err, st.want)
+			}
+		}
+		var mu sync.Mutex
+		fresh := 0
+		var wg sync.WaitGroup
+		for i := 0; i < 10; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if ok, _ := s.ConsumeTOTPStep(ctx, f1, 200); ok {
+					mu.Lock()
+					fresh++
+					mu.Unlock()
+				}
+			}()
+		}
+		wg.Wait()
+		if fresh != 1 {
+			t.Fatalf("same step accepted %d times", fresh)
+		}
+	})
+
+	t.Run("promoting a factor drops other pending factors", func(t *testing.T) {
+		if err := s.PromoteFactorToVerified(ctx, f1); err != nil {
+			t.Fatal(err)
+		}
+		rows, _ := s.ListFactors(ctx, uid)
+		if len(rows) != 1 || asString(rows[0]["id"]) != f1 || rows[0]["status"] != "verified" {
+			t.Fatalf("factors after promote = %v", rows)
+		}
+	})
+
+	t.Run("revoke below aal2 drops aal1 rows only", func(t *testing.T) {
+		other := mustUser(t, s, "bystander@example.com")
+		exp := time.Now().Add(time.Hour).Unix()
+		seed := map[string]struct {
+			user, sid, aal string
+		}{
+			"cur-aal1": {uid, "cur", "aal1"}, "cur-aal2": {uid, "cur", "aal2"},
+			"old-aal1": {uid, "old", "aal1"}, "old-aal2": {uid, "old", "aal2"},
+			"bystander": {other, "by", "aal1"},
+		}
+		alive := func() map[string]bool {
+			rows, err := db.Query(ctx, `SELECT token FROM auth.refresh_tokens WHERE token = ANY($1)`,
+				[]string{"cur-aal1", "cur-aal2", "old-aal1", "old-aal2", "bystander"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			out := map[string]bool{}
+			for _, r := range rows {
+				out[asString(r["token"])] = true
+			}
+			return out
+		}
+		reseed := func() {
+			for tok, r := range seed {
+				_, _ = db.Exec(ctx, `DELETE FROM auth.refresh_tokens WHERE token = $1`, tok)
+				if err := s.InsertRefreshToken(ctx, r.user, tok, domain.SessionMeta{SessionID: r.sid, AAL: r.aal}, exp); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		cases := []struct {
+			all  bool
+			want []string
+		}{
+			{false, []string{"cur-aal2", "old-aal1", "old-aal2", "bystander"}},
+			{true, []string{"cur-aal2", "old-aal2", "bystander"}},
+		}
+		for _, tc := range cases {
+			reseed()
+			if err := s.RevokeBelowAAL2(ctx, uid, "cur", tc.all); err != nil {
+				t.Fatal(err)
+			}
+			got := alive()
+			if len(got) != len(tc.want) {
+				t.Fatalf("all=%v: alive %v want %v", tc.all, got, tc.want)
+			}
+			for _, w := range tc.want {
+				if !got[w] {
+					t.Fatalf("all=%v: alive %v want %v", tc.all, got, tc.want)
+				}
+			}
+		}
+	})
+}

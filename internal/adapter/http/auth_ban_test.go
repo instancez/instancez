@@ -159,7 +159,7 @@ func TestBannedUser_MFAVerifyRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate code: %v", err)
 	}
-	w := m.do("POST", "/auth/v1/factors/"+factorID+"/verify", `{"code":"`+code+`"}`)
+	w := m.do("POST", "/auth/v1/factors/"+factorID+"/verify", `{"challenge_id":"c1","code":"`+code+`"}`)
 	if w.Code != 403 || !strings.Contains(w.Body.String(), "user_banned") {
 		t.Fatalf("status %d body %s", w.Code, w.Body.String())
 	}

@@ -476,6 +476,13 @@ func (s *Service) RevokeOtherSessions(ctx context.Context, userID, keepSessionID
 	return err
 }
 
+func (s *Service) RevokeBelowAAL2(ctx context.Context, userID, sessionID string, allSessions bool) error {
+	_, err := s.db.Exec(ctx,
+		"DELETE FROM auth.refresh_tokens WHERE user_id = $1::uuid AND aal <> 'aal2' AND ($3 OR session_id = $2)",
+		userID, sessionID, allSessions)
+	return err
+}
+
 func (s *Service) RevokeAllUserSessions(ctx context.Context, userID string) error {
 	_, err := s.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE user_id = $1::uuid", userID)
 	return err
@@ -834,6 +841,18 @@ func (s *Service) GetFactorForVerify(ctx context.Context, factorID, userID strin
 }
 
 func (s *Service) ValidateChallenge(ctx context.Context, challengeID, factorID string) error {
+	reserved, err := s.db.QueryRow(ctx,
+		`UPDATE auth.mfa_challenges SET attempts = attempts + 1
+		  WHERE id = $1::uuid AND factor_id = $2::uuid AND verified_at IS NULL
+		    AND created_at > NOW() - make_interval(secs => $3) AND attempts < $4
+		  RETURNING id::text`,
+		challengeID, factorID, challengeTTL.Seconds(), maxMFAAttempts)
+	if err != nil {
+		return err
+	}
+	if reserved != nil {
+		return nil
+	}
 	ch, err := s.db.QueryRow(ctx,
 		"SELECT factor_id::text, verified_at, created_at, attempts FROM auth.mfa_challenges WHERE id = $1::uuid",
 		challengeID)
@@ -846,33 +865,38 @@ func (s *Service) ValidateChallenge(ctx context.Context, challengeID, factorID s
 	if _, verified := ch["verified_at"].(time.Time); verified {
 		return domain.ErrChallengeUsed
 	}
-	createdAt, _ := ch["created_at"].(time.Time)
-	if time.Since(createdAt) > challengeTTL {
+	if createdAt, _ := ch["created_at"].(time.Time); time.Since(createdAt) > challengeTTL {
 		return domain.ErrChallengeExpired
 	}
-	if asInt64(ch["attempts"]) >= maxMFAAttempts {
-		return domain.ErrChallengeTooManyAttempts
+	return domain.ErrChallengeTooManyAttempts
+}
+
+func (s *Service) MarkChallengeVerified(ctx context.Context, challengeID string) error {
+	affected, err := s.db.Exec(ctx,
+		"UPDATE auth.mfa_challenges SET verified_at = NOW() WHERE id = $1::uuid AND verified_at IS NULL", challengeID)
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return domain.ErrChallengeUsed
 	}
 	return nil
 }
 
-// IncrementChallengeAttempt records a failed TOTP guess against challengeID,
-// bounding brute-force of the 10^6 code space (see maxMFAAttempts).
-func (s *Service) IncrementChallengeAttempt(ctx context.Context, challengeID string) error {
-	_, err := s.db.Exec(ctx,
-		"UPDATE auth.mfa_challenges SET attempts = attempts + 1 WHERE id = $1::uuid", challengeID)
-	return err
-}
-
-func (s *Service) MarkChallengeVerified(ctx context.Context, challengeID string) error {
-	_, err := s.db.Exec(ctx,
-		"UPDATE auth.mfa_challenges SET verified_at = NOW() WHERE id = $1::uuid", challengeID)
-	return err
+func (s *Service) ConsumeTOTPStep(ctx context.Context, factorID string, step int64) (bool, error) {
+	affected, err := s.db.Exec(ctx,
+		`UPDATE auth.mfa_factors SET last_totp_step = $2, updated_at = NOW()
+		  WHERE id = $1::uuid AND (last_totp_step IS NULL OR last_totp_step < $2)`, factorID, step)
+	return affected == 1, err
 }
 
 func (s *Service) PromoteFactorToVerified(ctx context.Context, factorID string) error {
 	_, err := s.db.Exec(ctx,
-		"UPDATE auth.mfa_factors SET status = 'verified', updated_at = NOW() WHERE id = $1::uuid", factorID)
+		`WITH promoted AS (
+		   UPDATE auth.mfa_factors SET status = 'verified', updated_at = NOW() WHERE id = $1::uuid RETURNING user_id
+		 )
+		 DELETE FROM auth.mfa_factors f USING promoted p
+		  WHERE f.user_id = p.user_id AND f.status = 'unverified' AND f.id <> $1::uuid`, factorID)
 	return err
 }
 

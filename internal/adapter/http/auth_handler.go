@@ -501,7 +501,7 @@ func (h *AuthHandler) handleGetUser(c *gin.Context) {
 		problemJSON(c, 404, "not_found", "User not found")
 		return
 	}
-	c.JSON(200, h.buildUser(session.UserID, row, h.userIdentities(ctx, session.UserID)))
+	c.JSON(200, h.fullUser(ctx, session.UserID, row))
 }
 
 func (h *AuthHandler) handleUpdateUser(c *gin.Context) {
@@ -553,7 +553,7 @@ func (h *AuthHandler) handleUpdateUser(c *gin.Context) {
 		problemJSON(c, 500, "internal", "Failed to update user")
 		return
 	}
-	c.JSON(200, h.buildUser(session.UserID, row, h.userIdentities(ctx, session.UserID)))
+	c.JSON(200, h.fullUser(ctx, session.UserID, row))
 }
 
 // ---------- /logout ----------
@@ -1544,7 +1544,7 @@ func (h *AuthHandler) signSession(ctx context.Context, userID string, userRow ma
 		"token_type":   "bearer",
 		"expires_in":   int(expiry.Seconds()),
 		"expires_at":   exp.Unix(),
-		"user":         h.buildUser(userID, userRow, h.userIdentities(ctx, userID)),
+		"user":         h.fullUser(ctx, userID, userRow),
 	}
 	return result, nil
 }
@@ -1595,6 +1595,27 @@ func (h *AuthHandler) buildUser(userID string, row map[string]any, identities []
 		"created_at":         createdAt,
 		"updated_at":         updatedAt,
 	}
+}
+
+// fullUser is buildUser plus the identities and MFA factors supabase-js reads.
+func (h *AuthHandler) fullUser(ctx context.Context, userID string, row map[string]any) gin.H {
+	u := h.buildUser(userID, row, h.userIdentities(ctx, userID))
+	rows, err := h.authSvc.ListFactors(ctx, userID)
+	if err != nil {
+		h.logger.Error("list factors for user object failed", "error", err, "user_id", userID)
+	}
+	if len(rows) == 0 {
+		return u
+	}
+	factors := make([]gin.H, 0, len(rows))
+	for _, r := range rows {
+		factors = append(factors, gin.H{
+			"id": asString(r["id"]), "friendly_name": r["friendly_name"], "factor_type": r["factor_type"],
+			"status": r["status"], "created_at": asTimeString(r["created_at"]), "updated_at": asTimeString(r["updated_at"]),
+		})
+	}
+	u["factors"] = factors
+	return u
 }
 
 // userIdentities returns the user's linked identities for embedding in the

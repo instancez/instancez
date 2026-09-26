@@ -223,62 +223,72 @@ func TestVerifyOTP_PurposeMismatch(t *testing.T) {
 	}
 }
 
-// TestValidateChallenge_UnderCap allows verification while attempts remain
-// below maxMFAAttempts.
-func TestValidateChallenge_UnderCap(t *testing.T) {
-	db := &fakeDB{
-		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			return map[string]any{
-				"factor_id":   "f1",
-				"verified_at": nil,
-				"created_at":  time.Now(),
-				"attempts":    int64(maxMFAAttempts - 1),
-			}, nil
-		},
-	}
-	s := newTestService(db)
+func TestValidateChallenge_SpendsAttemptAtomically(t *testing.T) {
+	var q string
+	s := newTestService(&fakeDB{queryRowFn: func(ctx context.Context, sql string, args ...any) (map[string]any, error) {
+		q = sql
+		return map[string]any{"id": "c1"}, nil
+	}})
 	if err := s.ValidateChallenge(context.Background(), "c1", "f1"); err != nil {
-		t.Fatalf("expected challenge to validate under the attempt cap, got %v", err)
+		t.Fatal(err)
+	}
+	for _, want := range []string{"UPDATE auth.mfa_challenges", "attempts = attempts + 1", "verified_at IS NULL", "attempts < $4"} {
+		if !strings.Contains(q, want) {
+			t.Errorf("reserve query missing %q: %s", want, q)
+		}
 	}
 }
 
-// TestValidateChallenge_AtCapRejects mirrors the OTP brute-force guard: once a
-// challenge has hit maxMFAAttempts wrong TOTP guesses, further attempts are
-// rejected even before the code is compared.
-func TestValidateChallenge_AtCapRejects(t *testing.T) {
-	db := &fakeDB{
-		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			return map[string]any{
-				"factor_id":   "f1",
-				"verified_at": nil,
-				"created_at":  time.Now(),
-				"attempts":    int64(maxMFAAttempts),
-			}, nil
-		},
+func TestValidateChallenge_ClassifiesRejection(t *testing.T) {
+	cases := map[string]struct {
+		row  map[string]any
+		want error
+	}{
+		"missing":      {nil, domain.ErrNotFound},
+		"other factor": {map[string]any{"factor_id": "f2", "created_at": time.Now(), "attempts": int64(0)}, domain.ErrNotFound},
+		"used":         {map[string]any{"factor_id": "f1", "verified_at": time.Now(), "created_at": time.Now(), "attempts": int64(1)}, domain.ErrChallengeUsed},
+		"expired":      {map[string]any{"factor_id": "f1", "created_at": time.Now().Add(-10 * time.Minute), "attempts": int64(0)}, domain.ErrChallengeExpired},
+		"at cap":       {map[string]any{"factor_id": "f1", "created_at": time.Now(), "attempts": int64(maxMFAAttempts)}, domain.ErrChallengeTooManyAttempts},
 	}
-	s := newTestService(db)
-	err := s.ValidateChallenge(context.Background(), "c1", "f1")
-	if err != domain.ErrChallengeTooManyAttempts {
-		t.Fatalf("want ErrChallengeTooManyAttempts, got %v", err)
+	for name, tc := range cases {
+		s := newTestService(&fakeDB{queryRowFn: func(ctx context.Context, sql string, args ...any) (map[string]any, error) {
+			if strings.HasPrefix(sql, "UPDATE") {
+				return nil, nil
+			}
+			return tc.row, nil
+		}})
+		if err := s.ValidateChallenge(context.Background(), "c1", "f1"); !errors.Is(err, tc.want) {
+			t.Errorf("%s: got %v want %v", name, err, tc.want)
+		}
 	}
 }
 
-// TestIncrementChallengeAttempt_IssuesUpdate verifies the SQL shape so a typo
-// in the column/table name fails loudly rather than silently no-op'ing the cap.
-func TestIncrementChallengeAttempt_IssuesUpdate(t *testing.T) {
-	var gotQuery string
-	db := &fakeDB{
-		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
-			gotQuery = q
-			return 1, nil
-		},
+func TestMarkChallengeVerified_LosingRaceIsUsed(t *testing.T) {
+	for affected, want := range map[int64]error{1: nil, 0: domain.ErrChallengeUsed} {
+		s := newTestService(&fakeDB{execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
+			if !strings.Contains(q, "verified_at IS NULL") {
+				t.Errorf("mark must be conditional: %s", q)
+			}
+			return affected, nil
+		}})
+		if err := s.MarkChallengeVerified(context.Background(), "c1"); !errors.Is(err, want) {
+			t.Errorf("affected=%d: got %v want %v", affected, err, want)
+		}
 	}
-	s := newTestService(db)
-	if err := s.IncrementChallengeAttempt(context.Background(), "c1"); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(gotQuery, "auth.mfa_challenges") || !strings.Contains(gotQuery, "attempts = attempts + 1") {
-		t.Fatalf("expected an attempts-increment UPDATE on auth.mfa_challenges, got query: %q", gotQuery)
+}
+
+func TestConsumeTOTPStep(t *testing.T) {
+	for affected, want := range map[int64]bool{1: true, 0: false} {
+		s := newTestService(&fakeDB{execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
+			if !strings.Contains(q, "last_totp_step < $2") || args[1] != int64(42) {
+				t.Errorf("bad query/args: %s %v", q, args)
+			}
+			return affected, nil
+		}})
+		got, err := s.ConsumeTOTPStep(context.Background(), "f1", 42)
+		if err != nil || got != want {
+			t.Errorf("affected=%d: got %v,%v", affected, got, err)
+		}
 	}
 }
 

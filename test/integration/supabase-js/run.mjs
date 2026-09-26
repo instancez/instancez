@@ -1667,18 +1667,74 @@ await step('mfa: verify with valid TOTP code flips factor to verified and upgrad
   const [, payload] = ver.data.access_token.split('.')
   const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'))
   assertEq(claims.aal, 'aal2', 'aal bumped to aal2')
+  globalThis.__mfaCode = code
+  globalThis.__aal2Access = ver.data.access_token
+  globalThis.__aal2Refresh = ver.data.refresh_token
 })
 
-await step('mfa: unenroll deletes the factor', async () => {
-  const client = createClient(URL, PUBLISHABLE_KEY, {
+const bearerClient = (tok) =>
+  createClient(URL, PUBLISHABLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
-    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+    global: { headers: { Authorization: `Bearer ${tok}` } },
   })
+
+await step('mfa: verify without challenge_id is rejected', async () => {
+  const resp = await fetch(`${URL}/auth/v1/factors/${globalThis.__mfaFactorId}/verify`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${globalThis.__aal2Access}`, apikey: PUBLISHABLE_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: await generateTOTP(globalThis.__mfaSecret) }),
+  })
+  assertEq(resp.status, 400, 'challenge_id is required')
+})
+
+await step('mfa: a used TOTP code is rejected on a fresh challenge', async () => {
+  const client = bearerClient(globalThis.__aal2Access)
+  const ch = await client.auth.mfa.challenge({ factorId: globalThis.__mfaFactorId })
+  if (ch.error) throw ch.error
+  const { error } = await client.auth.mfa.verify({
+    factorId: globalThis.__mfaFactorId,
+    challengeId: ch.data.id,
+    code: globalThis.__mfaCode,
+  })
+  assert(error, 'replayed code must fail')
+  assertEq(error.status, 401, 'replay status')
+})
+
+await step('mfa: an aal1 session cannot enroll a second factor', async () => {
+  const { error } = await bearerClient(accessToken).auth.mfa.enroll({ factorType: 'totp', friendlyName: 'attacker' })
+  assert(error, 'aal1 enroll must fail once a factor is verified')
+  assertEq(error.status, 403, 'insufficient_aal status')
+})
+
+await step('mfa: an aal1 session cannot unenroll the verified factor', async () => {
+  const { error } = await bearerClient(accessToken).auth.mfa.unenroll({ factorId: globalThis.__mfaFactorId })
+  assert(error, 'aal1 unenroll of a verified factor must fail')
+  assertEq(error.status, 422, 'insufficient_aal status')
+})
+
+await step('mfa: getAuthenticatorAssuranceLevel + listFactors read user.factors', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  const { error: setErr } = await client.auth.setSession({
+    access_token: globalThis.__aal2Access,
+    refresh_token: globalThis.__aal2Refresh,
+  })
+  if (setErr) throw setErr
+  const { data: aal, error } = await client.auth.mfa.getAuthenticatorAssuranceLevel()
+  if (error) throw error
+  assertEq(aal.currentLevel, 'aal2', 'currentLevel')
+  assertEq(aal.nextLevel, 'aal2', 'nextLevel (from user.factors)')
+  const { data: factors, error: listErr } = await client.auth.mfa.listFactors()
+  if (listErr) throw listErr
+  assert(factors.totp.some((f) => f.id === globalThis.__mfaFactorId), 'verified factor listed via supabase-js')
+})
+
+await step('mfa: aal2 session unenrolls the factor', async () => {
+  const client = bearerClient(globalThis.__aal2Access)
   const { error } = await client.auth.mfa.unenroll({ factorId: globalThis.__mfaFactorId })
   if (error) throw error
 
   const resp = await fetch(`${URL}/auth/v1/factors`, {
-    headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY },
+    headers: { Authorization: `Bearer ${globalThis.__aal2Access}`, apikey: PUBLISHABLE_KEY },
   })
   const body = await resp.json()
   const stillThere = (body.totp || []).some((f) => f.id === globalThis.__mfaFactorId)

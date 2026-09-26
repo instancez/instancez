@@ -182,7 +182,7 @@ func TestMFAVerify_KeepsSessionIDAndPrependsTOTP(t *testing.T) {
 		"amr": []map[string]any{{"method": "totp", "timestamp": 150}, {"method": "password", "timestamp": 100}},
 	})
 	code, _ := totp.GenerateCode(secret, time.Now())
-	w := m.do("POST", "/auth/v1/factors/f1/verify", `{"code":"`+code+`"}`)
+	w := m.do("POST", "/auth/v1/factors/f1/verify", `{"challenge_id":"c1","code":"`+code+`"}`)
 	if w.Code != 200 {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}
