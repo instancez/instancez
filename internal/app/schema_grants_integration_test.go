@@ -6,6 +6,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,20 +57,10 @@ func authTables(t *testing.T, db domain.Database) []string {
 	return out
 }
 
-// TestSchemaGrants_AuthClosedStorageOpen: anon/authenticated reach storage.objects
-// (RLS-guarded) but no auth.* table, sequence, or migration history.
-func TestSchemaGrants_AuthClosedStorageOpen(t *testing.T) {
-	db := startPostgres(t)
-	ctx := context.Background()
-	cfg := &domain.Config{
-		Version: 1,
-		Auth:    &domain.Auth{Email: &domain.AuthEmail{}},
-		Storage: map[string]domain.Bucket{"avatars": {Public: true}},
-	}
-	if err := app.NewMigrator(db).Apply(ctx, cfg); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-
+// assertAuthClosed: anon/authenticated reach storage.objects (RLS-guarded) but no
+// auth.* table, sequence, or migration history.
+func assertAuthClosed(t *testing.T, db domain.Database) {
+	t.Helper()
 	type priv struct {
 		role, fqn, priv string
 		want            bool
@@ -98,7 +89,7 @@ func TestSchemaGrants_AuthClosedStorageOpen(t *testing.T) {
 		}
 	}
 
-	row, err := db.QueryRow(ctx, `SELECT has_sequence_privilege('anon', 'auth.refresh_tokens_id_seq', 'USAGE') AS anon_seq,
+	row, err := db.QueryRow(context.Background(), `SELECT has_sequence_privilege('anon', 'auth.refresh_tokens_id_seq', 'USAGE') AS anon_seq,
 		has_sequence_privilege('service_role', 'auth.refresh_tokens_id_seq', 'USAGE') AS svc_seq`)
 	if err != nil {
 		t.Fatalf("sequence privs: %v", err)
@@ -109,6 +100,56 @@ func TestSchemaGrants_AuthClosedStorageOpen(t *testing.T) {
 	if n := authDefaultACLGrants(t, db); n != 0 {
 		t.Errorf("auth default ACL still grants anon/authenticated (%d entries)", n)
 	}
+}
+
+func TestSchemaGrants_AuthClosedStorageOpen(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+	cfg := &domain.Config{
+		Version: 1,
+		Auth:    &domain.Auth{Email: &domain.AuthEmail{}},
+		Storage: map[string]domain.Bucket{"avatars": {Public: true}},
+	}
+	if err := app.NewMigrator(db).Apply(ctx, cfg); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	assertAuthClosed(t, db)
+}
+
+// TestSchemaGrants_UpgradeClosesPreviouslyOpenAuth: a DB migrated by an older binary
+// (auth.* granted to anon/authenticated) is closed by the next migration.
+func TestSchemaGrants_UpgradeClosesPreviouslyOpenAuth(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+	cfg := &domain.Config{
+		Version: 1,
+		Auth:    &domain.Auth{Email: &domain.AuthEmail{}},
+		Storage: map[string]domain.Bucket{"avatars": {Public: true}},
+	}
+	if err := app.NewMigrator(db).Apply(ctx, cfg); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	for _, q := range []string{
+		"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA auth TO anon, authenticated, service_role",
+		"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA auth TO anon, authenticated",
+		"ALTER DEFAULT PRIVILEGES IN SCHEMA auth GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO anon, authenticated",
+		"ALTER DEFAULT PRIVILEGES IN SCHEMA auth GRANT USAGE, SELECT ON SEQUENCES TO anon, authenticated",
+		"GRANT SELECT ON _instancez_migrations TO anon, authenticated, service_role",
+	} {
+		if _, err := db.Exec(ctx, q); err != nil {
+			t.Fatalf("reopen %q: %v", q, err)
+		}
+	}
+	if !hasPriv(t, db, "anon", "auth.jwt_keys", "SELECT") {
+		t.Fatal("setup: legacy grants not applied")
+	}
+
+	// A changed config forces a new migration instead of the checksum early return.
+	cfg.Tables = map[string]domain.Table{"extra": {Fields: []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}}}}
+	if err := app.NewMigrator(db).Apply(ctx, cfg); err != nil {
+		t.Fatalf("second migrate: %v", err)
+	}
+	assertAuthClosed(t, db)
 }
 
 // TestAuthSchemaClosed_HelpersFKsAndServiceStillWork: closing auth.* must not break
@@ -152,8 +193,8 @@ func TestAuthSchemaClosed_HelpersFKsAndServiceStillWork(t *testing.T) {
 		"SELECT 1 FROM auth.users", "SELECT 1 FROM auth.jwt_keys",
 		"SELECT 1 FROM auth.refresh_tokens", "SELECT 1 FROM _instancez_migrations",
 	} {
-		if _, err := req.Query(anonCtx, q); err == nil {
-			t.Errorf("anon was allowed: %s", q)
+		if _, err := req.Query(anonCtx, q); err == nil || !strings.Contains(err.Error(), "permission denied") {
+			t.Errorf("anon %s: want permission denied, got %v", q, err)
 		}
 	}
 
@@ -165,8 +206,8 @@ func TestAuthSchemaClosed_HelpersFKsAndServiceStillWork(t *testing.T) {
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("authenticated select under RLS: rows=%v err=%v", rows, err)
 	}
-	if _, err := req.Query(userCtx, "SELECT 1 FROM auth.users"); err == nil {
-		t.Error("authenticated read auth.users")
+	if _, err := req.Query(userCtx, "SELECT 1 FROM auth.users"); err == nil || !strings.Contains(err.Error(), "permission denied") {
+		t.Errorf("authenticated auth.users: want permission denied, got %v", err)
 	}
 
 	svc := adapterauth.NewService(req.Database, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
