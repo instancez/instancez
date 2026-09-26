@@ -343,8 +343,38 @@ func TestActive_NoRowMintsOnce(t *testing.T) {
 	}
 }
 
+// memKeysDB stores inserted keys so reloads see them, like a real table.
+type memKeysDB struct {
+	fakeDB
+	mu   sync.Mutex
+	rows []map[string]any
+}
+
+func (d *memKeysDB) Exec(ctx context.Context, q string, args ...any) (int64, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.execs = append(d.execs, q)
+	d.rows = append(d.rows, map[string]any{"kid": args[0], "secret": args[1], "algorithm": args[2], "created_at": args[3]})
+	return 1, nil
+}
+
+func (d *memKeysDB) Query(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]map[string]any(nil), d.rows...), nil
+}
+
+func (d *memKeysDB) QueryRow(ctx context.Context, q string, args ...any) (map[string]any, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.rows) == 0 {
+		return nil, nil
+	}
+	return d.rows[len(d.rows)-1], nil
+}
+
 func TestActive_ConcurrentOnEmptyTableMintsOnce(t *testing.T) {
-	db := &fakeDB{}
+	db := &memKeysDB{}
 	m := NewJWTKeyManager(db)
 	keys := make([]*JWTKey, 16)
 	var wg sync.WaitGroup
@@ -367,5 +397,41 @@ func TestActive_ConcurrentOnEmptyTableMintsOnce(t *testing.T) {
 	}
 	if len(db.execs) != 1 {
 		t.Fatalf("want exactly one insert, got %d", len(db.execs))
+	}
+}
+
+// rotatedElsewhereDB reports old as retired and next as the active key.
+type rotatedElsewhereDB struct {
+	fakeDB
+	rows   []map[string]any
+	active map[string]any
+}
+
+func (d *rotatedElsewhereDB) Query(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
+	return d.rows, nil
+}
+
+func (d *rotatedElsewhereDB) QueryRow(ctx context.Context, q string, args ...any) (map[string]any, error) {
+	return d.active, nil
+}
+
+func TestActive_PicksUpRotationElsewhere(t *testing.T) {
+	old, next := newKey(t), newKey(t)
+	db := &rotatedElsewhereDB{
+		rows:   []map[string]any{keyRow(t, old, time.Now().Add(-time.Hour)), keyRow(t, next, time.Time{})},
+		active: keyRow(t, next, time.Time{}),
+	}
+	m := NewJWTKeyManager(db)
+	m.active = old
+	m.byKID[old.KID] = old
+	got, err := m.Active(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.KID != next.KID {
+		t.Fatalf("Active kept signing with %s, retired by another instance; want %s", got.KID, next.KID)
+	}
+	if len(db.execs) != 0 {
+		t.Fatalf("Active minted a key instead of loading the new one: %v", db.execs)
 	}
 }

@@ -227,6 +227,7 @@ func NewInMemoryJWTKeyManager(kid string, privateKey *rsa.PrivateKey) (*JWTKeyMa
 
 // Active returns the current signing key, creating one on first use.
 func (m *JWTKeyManager) Active(ctx context.Context) (*JWTKey, error) {
+	m.refresh(ctx, keyReloadInterval, false)
 	m.mu.RLock()
 	if m.active != nil {
 		key := m.active
