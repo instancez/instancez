@@ -425,14 +425,14 @@ func diffNewColumns(old, new *domain.Config) []string {
 			if len(field.Enum) > 0 {
 				quoted := make([]string, len(field.Enum))
 				for i, v := range field.Enum {
-					quoted[i] = "'" + v + "'"
+					quoted[i] = sqlLiteral(v)
 				}
 				ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ADD CHECK (%s IN (%s));",
 					qual, fieldName, strings.Join(quoted, ", ")))
 			}
 			if field.Pattern != "" {
-				ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ADD CHECK (%s ~ '%s');",
-					qual, fieldName, field.Pattern))
+				ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ADD CHECK (%s ~ %s);",
+					qual, fieldName, sqlLiteral(field.Pattern)))
 			}
 			if field.Min != nil {
 				ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ADD CHECK (%s >= %g);",

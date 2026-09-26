@@ -814,3 +814,14 @@ func TestGenerateTable_ByteParity_UntypedIntegerFK(t *testing.T) {
 	}
 }
 
+func TestGenerateTable_EnumAndPatternEscapeQuotes(t *testing.T) {
+	table := domain.Table{Fields: []domain.Field{
+		{Name: "id", Type: "bigserial", PrimaryKey: true},
+		{Name: "owner", Type: "text", Enum: []string{"O'Brien", "", "ünï"}},
+		{Name: "code", Type: "text", Pattern: `^[a-z']+\d$`},
+	}}
+	joined := strings.Join(generateTable("people", table, nil), "\n")
+	mustContain(t, joined, "CHECK (owner IN ('O''Brien', '', 'ünï'))")
+	mustContain(t, joined, `CHECK (code ~ '^[a-z'']+\d$')`)
+}
+

@@ -953,3 +953,23 @@ func TestPlanUpdate_IndexChange_DropBeforeCreate(t *testing.T) {
 		t.Errorf("DROP INDEX must precede CREATE INDEX, got drop@%d create@%d", dropAt, createAt)
 	}
 }
+
+func TestDiffNewColumns_EscapesEnumAndPattern(t *testing.T) {
+	old := &domain.Config{Tables: map[string]domain.Table{
+		"people": {Fields: []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}}},
+	}}
+	nu := &domain.Config{Tables: map[string]domain.Table{
+		"people": {Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
+			{Name: "owner", Type: "text", Enum: []string{"O'Brien"}},
+			{Name: "code", Type: "text", Pattern: "it's"},
+		}},
+	}}
+	joined := strings.Join(diffNewColumns(old, nu), "\n")
+	if !strings.Contains(joined, "IN ('O''Brien')") {
+		t.Errorf("enum not escaped:\n%s", joined)
+	}
+	if !strings.Contains(joined, "~ 'it''s'") {
+		t.Errorf("pattern not escaped:\n%s", joined)
+	}
+}

@@ -1020,6 +1020,42 @@ func TestIntegration_PatternCheck(t *testing.T) {
 	}
 }
 
+func TestIntegration_EnumAndPatternWithApostrophes(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+
+	cfg := &domain.Config{
+		Version: 1,
+		Tables: map[string]domain.Table{
+			"people": {Fields: []domain.Field{
+				{Name: "id", Type: "bigserial", PrimaryKey: true},
+				{Name: "owner", Type: "text", Enum: []string{"O'Brien", "Smith", "O'Connor"}},
+				{Name: "code", Type: "text", Pattern: `^[a-z']+\d$`},
+			}},
+		},
+	}
+
+	migrator := app.NewMigrator(db).AllowDestructive(true)
+	if err := migrator.Apply(ctx, cfg); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	_, err := db.Exec(ctx, "INSERT INTO people (owner, code) VALUES ('O''Brien', 'abc''1')")
+	if err != nil {
+		t.Fatalf("insert with apostrophes failed: %v", err)
+	}
+
+	_, err = db.Exec(ctx, "INSERT INTO people (owner, code) VALUES ('invalid', 'abc''1')")
+	if err == nil {
+		t.Fatal("expected CHECK violation for invalid enum value with apostrophe escaping")
+	}
+
+	_, err = db.Exec(ctx, "INSERT INTO people (owner, code) VALUES ('O''Brien', 'ABC1')")
+	if err == nil {
+		t.Fatal("expected CHECK violation for pattern not matching uppercase")
+	}
+}
+
 func TestIntegration_MinMaxCheck(t *testing.T) {
 	db := startPostgres(t)
 	ctx := context.Background()

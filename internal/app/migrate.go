@@ -749,7 +749,7 @@ func generateTable(name string, table domain.Table, allTables map[string]domain.
 		if len(field.Enum) > 0 {
 			quoted := make([]string, len(field.Enum))
 			for i, v := range field.Enum {
-				quoted[i] = "'" + v + "'"
+				quoted[i] = sqlLiteral(v)
 			}
 			constraints = append(constraints,
 				fmt.Sprintf("CHECK (%s IN (%s))", fname, strings.Join(quoted, ", ")))
@@ -758,7 +758,7 @@ func generateTable(name string, table domain.Table, allTables map[string]domain.
 		// CHECK from pattern
 		if field.Pattern != "" {
 			constraints = append(constraints,
-				fmt.Sprintf("CHECK (%s ~ '%s')", fname, field.Pattern))
+				fmt.Sprintf("CHECK (%s ~ %s)", fname, sqlLiteral(field.Pattern)))
 		}
 
 		// CHECK from min/max
@@ -863,6 +863,10 @@ func formatColumn(name string, field domain.Field, tables map[string]domain.Tabl
 	return strings.Join(parts, " ")
 }
 
+func sqlLiteral(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
 func formatDefault(val any, colType string) string {
 	switch v := val.(type) {
 	case string:
@@ -880,7 +884,7 @@ func formatDefault(val any, colType string) string {
 			}
 		}
 		// String literal
-		return "'" + strings.ReplaceAll(v, "'", "''") + "'"
+		return sqlLiteral(v)
 	case bool:
 		if v {
 			return "TRUE"
