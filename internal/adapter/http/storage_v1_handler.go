@@ -23,6 +23,23 @@ import (
 
 const storageUploadTokenExpiry = 2 * time.Hour
 
+const (
+	maxSignedURLExpiry = 7 * 24 * 3600 // S3 presign limit
+	maxSignPaths       = 1000
+	errNoObjectAccess  = "Either the object does not exist or you do not have access to it"
+)
+
+// signedExpiry defaults non-positive values to one hour and caps at seven days.
+func signedExpiry(sec int) time.Duration {
+	switch {
+	case sec <= 0:
+		sec = 3600
+	case sec > maxSignedURLExpiry:
+		sec = maxSignedURLExpiry
+	}
+	return time.Duration(sec) * time.Second
+}
+
 // StorageV1Handler serves supabase-js compatible /storage/v1/ endpoints.
 type StorageV1Handler struct {
 	cfg     *domain.Config
@@ -220,6 +237,17 @@ func objectPath(c *gin.Context, raw string) (string, bool) {
 		return "", false
 	}
 	return p, true
+}
+
+// validKeys cleans ps and drops the paths that fail cleanPath.
+func validKeys(ps []string) []string {
+	keys := make([]string, 0, len(ps))
+	for _, p := range ps {
+		if k, err := cleanPath(p); err == nil {
+			keys = append(keys, k)
+		}
+	}
+	return keys
 }
 
 // objectMetadataJSON builds the exact Supabase storage ObjectMetadata blob
@@ -948,9 +976,7 @@ func (h *StorageV1Handler) createSignedURL(c *gin.Context) {
 	var req struct {
 		ExpiresIn int `json:"expiresIn"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.ExpiresIn <= 0 {
-		req.ExpiresIn = 3600
-	}
+	_ = c.ShouldBindJSON(&req)
 
 	ctx := h.rlsCtx(c)
 	row, err := h.db.QueryRow(ctx, "SELECT id FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
@@ -959,7 +985,7 @@ func (h *StorageV1Handler) createSignedURL(c *gin.Context) {
 		return
 	}
 
-	url, err := h.storage.SignDownload(ctx, bucketName+"/"+objPath, time.Duration(req.ExpiresIn)*time.Second)
+	url, err := h.storage.SignDownload(ctx, bucketName+"/"+objPath, signedExpiry(req.ExpiresIn))
 	if err != nil {
 		h.logger.Error("sign download", "error", err)
 		storageErr(c, 500, "internal", "Failed to create signed URL")
@@ -980,24 +1006,41 @@ func (h *StorageV1Handler) createSignedURLs(c *gin.Context) {
 		ExpiresIn int      `json:"expiresIn"`
 		Paths     []string `json:"paths"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		storageErr(c, 400, "bad_request", "Invalid request")
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.Paths) == 0 || len(req.Paths) > maxSignPaths {
+		storageErr(c, 400, "bad_request", fmt.Sprintf("Expected 1-%d paths", maxSignPaths))
 		return
-	}
-	if req.ExpiresIn <= 0 {
-		req.ExpiresIn = 3600
 	}
 
 	ctx := h.rlsCtx(c)
-	var results []gin.H
-	for _, p := range req.Paths {
-		p = strings.TrimPrefix(p, "/")
-		url, err := h.storage.SignDownload(ctx, bucketName+"/"+p, time.Duration(req.ExpiresIn)*time.Second)
+	keys := validKeys(req.Paths)
+	visible := map[string]bool{}
+	if len(keys) > 0 {
+		rows, err := h.db.Query(ctx, "SELECT name FROM storage.objects WHERE bucket_id = $1 AND name = ANY($2::text[])", bucketName, keys)
 		if err != nil {
-			results = append(results, gin.H{"path": p, "error": err.Error()})
+			h.logger.Error("sign urls lookup", "error", err)
+			storageErr(c, 500, "internal", "Failed to create signed URLs")
+			return
+		}
+		for _, row := range rows {
+			visible[asString(row["name"])] = true
+		}
+	}
+
+	expiry := signedExpiry(req.ExpiresIn)
+	results := make([]gin.H, 0, len(req.Paths))
+	for _, p := range req.Paths {
+		k, err := cleanPath(p)
+		if err != nil || !visible[k] {
+			results = append(results, gin.H{"path": p, "signedURL": nil, "error": errNoObjectAccess})
 			continue
 		}
-		results = append(results, gin.H{"path": p, "signedURL": url})
+		url, err := h.storage.SignDownload(ctx, bucketName+"/"+k, expiry)
+		if err != nil {
+			h.logger.Error("sign download", "error", err)
+			results = append(results, gin.H{"path": p, "signedURL": nil, "error": "Failed to create signed URL"})
+			continue
+		}
+		results = append(results, gin.H{"path": p, "signedURL": url, "error": nil})
 	}
 	c.JSON(200, results)
 }

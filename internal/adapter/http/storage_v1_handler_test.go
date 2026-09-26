@@ -1,9 +1,11 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -1437,43 +1439,184 @@ func TestCopyObject_DestinationBucketNotFound(t *testing.T) {
 
 // --- createSignedURLs (batch) tests ---
 
-func TestCreateSignedURLs_MixedResults(t *testing.T) {
+func TestCreateSignedURLs_EnforcesRLSPerPath(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	var signed []string
 	store := &stubObjectStore{
-		signDownloadFn: func(ctx context.Context, key string, expiry time.Duration) (string, error) {
-			if strings.Contains(key, "bad") {
-				return "", errors.New("sign failed")
+		signDownloadFn: func(_ context.Context, key string, _ time.Duration) (string, error) {
+			signed = append(signed, key)
+			if strings.Contains(key, "broken") {
+				return "", errors.New("presign failed: secret detail")
 			}
 			return "https://example.com/" + key, nil
 		},
 	}
-	buckets := map[string]domain.Bucket{"avatars": {}}
-	h := newStorageHandler(&stubDB{}, store, buckets)
-
-	w := httptest.NewRecorder()
+	var gotArgs []any
+	db := &stubDB{queryFn: func(_ context.Context, q string, args ...any) ([]map[string]any, error) {
+		require.Contains(t, q, "SELECT name FROM storage.objects")
+		gotArgs = args
+		// RLS hides "secret.jpg"; everything else in the ANY list is visible.
+		return []map[string]any{{"name": "good.jpg"}, {"name": "ünï.png"}, {"name": "broken.jpg"}}, nil
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
 	r := gin.New()
 	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
 
-	body := `{"expiresIn":60,"paths":["good.jpg","bad.jpg"]}`
+	body := `{"expiresIn":60,"paths":["good.jpg","secret.jpg","../x","ünï.png","broken.jpg"]}`
+	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
-	if w.Code != 200 {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
+	require.Equal(t, 200, w.Code, w.Body.String())
+	require.Len(t, gotArgs, 2)
+	assert.Equal(t, []string{"good.jpg", "secret.jpg", "ünï.png", "broken.jpg"}, gotArgs[1], "traversal key must not reach SQL")
+	assert.Equal(t, []string{"avatars/good.jpg", "avatars/ünï.png", "avatars/broken.jpg"}, signed, "hidden path must never be signed")
 	var resp []map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatal(err)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp, 5)
+	assert.NotNil(t, resp[0]["signedURL"])
+	assert.Nil(t, resp[0]["error"])
+	for _, i := range []int{1, 2} {
+		assert.Nil(t, resp[i]["signedURL"], resp[i])
+		assert.Equal(t, "Either the object does not exist or you do not have access to it", resp[i]["error"])
 	}
-	if len(resp) != 2 {
-		t.Fatalf("expected 2 results, got %d: %v", len(resp), resp)
+	assert.NotNil(t, resp[3]["signedURL"])
+	assert.Nil(t, resp[4]["signedURL"])
+	assert.NotContains(t, w.Body.String(), "secret detail", "backend error must not leak")
+}
+
+func TestCreateSignedURLs_BadInput(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	queried := false
+	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) { queried = true; return nil, nil }}
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
+	tooMany, _ := json.Marshal(map[string]any{"paths": make([]string, maxSignPaths+1)})
+	for _, body := range []string{`{"paths":[]}`, `{}`, `not json`, string(tooMany), `{"expiresIn":"abc","paths":["a"]}`} {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		assert.Equal(t, 400, w.Code, body)
 	}
-	if resp[0]["signedURL"] == nil {
-		t.Errorf("expected signedURL for good.jpg, got %v", resp[0])
+	assert.False(t, queried)
+}
+
+func TestCreateSignedURLs_DBErrorIs500(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) { return nil, errors.New("db down") }}
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars", strings.NewReader(`{"paths":["a"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	assert.Equal(t, 500, w.Code)
+}
+
+func TestCreateSignedURLs_ExactCapAndDuplicates(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	queries := 0
+	db := &stubDB{queryFn: func(_ context.Context, _ string, args ...any) ([]map[string]any, error) {
+		queries++
+		keys := args[1].([]string)
+		rows := make([]map[string]any, len(keys))
+		for i, k := range keys {
+			rows[i] = map[string]any{"name": k}
+		}
+		return rows, nil
+	}}
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
+
+	// Exactly maxSignPaths valid paths must pass (not >=).
+	paths := make([]string, maxSignPaths)
+	for i := range paths {
+		paths[i] = fmt.Sprintf("f%d.jpg", i)
 	}
-	if resp[1]["error"] == nil {
-		t.Errorf("expected error for bad.jpg, got %v", resp[1])
+	body, _ := json.Marshal(map[string]any{"paths": paths})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	require.Equal(t, 200, w.Code, w.Body.String())
+
+	// Duplicate paths each get their own result, deduped into one SQL call.
+	queries = 0
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars", strings.NewReader(`{"paths":["a","a","/a"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	var resp []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp, 3)
+	for _, item := range resp {
+		assert.NotNil(t, item["signedURL"], item)
+	}
+	assert.Equal(t, 1, queries, "one SQL lookup regardless of duplicate paths")
+}
+
+func TestCreateSignedURLs_ExpiryClamped(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var got time.Duration
+	store := &stubObjectStore{signDownloadFn: func(_ context.Context, _ string, e time.Duration) (string, error) { got = e; return "u", nil }}
+	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) {
+		return []map[string]any{{"name": "a"}}, nil
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
+	cases := map[string]time.Duration{
+		`{"expiresIn":60,"paths":["a"]}`:       time.Minute,
+		`{"paths":["a"]}`:                      time.Hour,
+		`{"expiresIn":31536000,"paths":["a"]}`: 7 * 24 * time.Hour,
+	}
+	for body, want := range cases {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		require.Equal(t, 200, w.Code, body)
+		assert.Equal(t, want, got, body)
+	}
+}
+
+func TestSignedExpiry(t *testing.T) {
+	week := 7 * 24 * time.Hour
+	cases := map[int]time.Duration{
+		60: time.Minute, 0: time.Hour, -5: time.Hour, maxSignedURLExpiry: week,
+		maxSignedURLExpiry + 1: week, 1 << 62: week,
+	}
+	for in, want := range cases {
+		assert.Equal(t, want, signedExpiry(in), in)
+	}
+}
+
+func TestCreateSignedURL_ExpiryClamped(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var got time.Duration
+	store := &stubObjectStore{signDownloadFn: func(_ context.Context, _ string, e time.Duration) (string, error) { got = e; return "u", nil }}
+	db := &stubDB{queryRowFn: func(context.Context, string, ...any) (map[string]any, error) { return map[string]any{"id": "x"}, nil }}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.POST("/storage/v1/object/sign/:bucket/*path", h.createSignedURL)
+	cases := map[string]time.Duration{
+		`{"expiresIn":60}`: time.Minute, `{}`: time.Hour, `{"expiresIn":-5}`: time.Hour,
+		`{"expiresIn":31536000}`: 7 * 24 * time.Hour, `{"expiresIn":9223372036854775807}`: 7 * 24 * time.Hour,
+		`{"expiresIn":"abc"}`: time.Hour,
+	}
+	for body, want := range cases {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars/a.txt", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		require.Equal(t, 200, w.Code, body)
+		assert.Equal(t, want, got, body)
 	}
 }
 
