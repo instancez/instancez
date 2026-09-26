@@ -395,16 +395,8 @@ func (h *CRUDHandler) resolveRPCTargetTable(fn domain.Function) (domain.Table, b
 	return domain.Table{}, false
 }
 
-// parseRPCChain parses the PostgREST-style query parameters layered on top of
-// a SETOF RPC call. Columns are validated against the target table when
-// fn.Returns names a known table, against a synthetic table when it declares
-// a TABLE(...) shape, or against a safe-identifier pattern otherwise; Postgres
-// still rejects unknown columns at execute time. Function argument keys are
-// skipped so GET calls can carry both function args and filters in the same
-// query string without collision.
-//
-// argIdx is the first free placeholder index; the returned args slice is
-// appended to the caller's existing placeholder list.
+// parseRPCChain parses PostgREST-style query params on a SETOF RPC, validating
+// columns against the known table, the declared TABLE(...) shape, or identRe.
 func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames map[string]bool, argIdx int) (*rpcChainSQL, []any, error) {
 	chain := &rpcChainSQL{}
 
