@@ -380,15 +380,6 @@ type rpcChainSQL struct {
 	offset      int // echoed into Content-Range as "start-end/total"
 }
 
-// parseRPCChain parses the PostgREST-style query parameters layered on top
-// of a SETOF RPC call. Columns are validated against the target table when
-// fn.Returns names a known table, or against a safe-identifier pattern
-// otherwise; Postgres still rejects unknown columns at execute time.
-// Function argument keys are skipped so GET calls can carry both function
-// args and filters in the same query string without collision.
-//
-// argIdx is the first free placeholder index; the returned args slice is
-// appended to the caller's existing placeholder list.
 // resolveRPCTargetTable resolves the table behind a SETOF <table> return type.
 func (h *CRUDHandler) resolveRPCTargetTable(fn domain.Function) (domain.Table, bool) {
 	target := parseSetofTarget(fn.Returns.Type)
@@ -404,30 +395,44 @@ func (h *CRUDHandler) resolveRPCTargetTable(fn domain.Function) (domain.Table, b
 	return domain.Table{}, false
 }
 
+// parseRPCChain parses the PostgREST-style query parameters layered on top of
+// a SETOF RPC call. Columns are validated against the target table when
+// fn.Returns names a known table, against a synthetic table when it declares
+// a TABLE(...) shape, or against a safe-identifier pattern otherwise; Postgres
+// still rejects unknown columns at execute time. Function argument keys are
+// skipped so GET calls can carry both function args and filters in the same
+// query string without collision.
+//
+// argIdx is the first free placeholder index; the returned args slice is
+// appended to the caller's existing placeholder list.
 func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames map[string]bool, argIdx int) (*rpcChainSQL, []any, error) {
 	chain := &rpcChainSQL{}
 
 	target := parseSetofTarget(fn.Returns.Type)
 	targetTable, targetFound := h.resolveRPCTargetTable(fn)
+	shape, isShape := rpcTableShape(fn.Returns.Type)
+
+	table := targetTable
+	if !targetFound && isShape {
+		table = shape
+	}
+	declared := targetFound || isShape
 
 	var validate postgrest.ColValidator
-	if targetFound {
-		tbl := targetTable
-		validate = func(col string) error { return postgrest.ValidateColumn(tbl, col) }
+	if declared {
+		validate = postgrest.ColumnValidator(table)
 	} else {
 		validate = postgrest.ValidateIdentPath
 	}
 
 	if sel := c.Query("select"); sel != "" {
-		table := targetTable
-		tableFound := targetFound
 		var embedParams []string
 		for _, raw := range postgrest.ParseSelectParam(sel) {
 			if raw == "" {
 				continue
 			}
 			if strings.Contains(raw, "(") && !postgrest.IsAggSelectEntry(raw) {
-				if !tableFound {
+				if !targetFound {
 					return nil, nil, fmt.Errorf("embeds are not supported on RPC results returning unknown tables")
 				}
 				embedParams = append(embedParams, raw)
@@ -438,7 +443,7 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 				chain.selectItems = nil
 				break
 			}
-			if target != "" {
+			if declared {
 				if err := postgrest.ValidateSelectItem(table, item); err != nil {
 					return nil, nil, fmt.Errorf("invalid select item: %w", err)
 				}
@@ -497,7 +502,7 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 				selStrings = append(selStrings, raw)
 			}
 		}
-		havingNode, err := postgrest.ParseHavingParam(havingRaw, "_rpc", targetTable, selStrings)
+		havingNode, err := postgrest.ParseHavingParam(havingRaw, "_rpc", table, selStrings)
 		if err != nil {
 			return nil, nil, fmt.Errorf("invalid having: %w", err)
 		}
@@ -599,6 +604,32 @@ func parseSetofTarget(raw string) string {
 		return ""
 	}
 	return t
+}
+
+// rpcTableShape parses a table(col type, ...) return type into a synthetic table.
+func rpcTableShape(raw string) (domain.Table, bool) {
+	t := strings.TrimSpace(raw)
+	lower := strings.ToLower(t)
+	if !strings.HasPrefix(lower, "table") || !strings.HasSuffix(t, ")") {
+		return domain.Table{}, false
+	}
+	open := strings.Index(t, "(")
+	if open < 0 || strings.TrimSpace(lower[len("table"):open]) != "" {
+		return domain.Table{}, false
+	}
+	cols, err := postgrest.SplitTopLevel(t[open+1:len(t)-1], ',')
+	if err != nil {
+		return domain.Table{}, false
+	}
+	var tbl domain.Table
+	for _, col := range cols {
+		parts := strings.Fields(col)
+		if len(parts) < 2 || !identRe.MatchString(parts[0]) {
+			return domain.Table{}, false
+		}
+		tbl.Fields = append(tbl.Fields, domain.Field{Name: strings.ToLower(parts[0]), Type: strings.Join(parts[1:], " ")})
+	}
+	return tbl, true
 }
 
 // wrapRPCCallForChain wraps a raw "SELECT * FROM fn(...)" call in a subquery

@@ -588,10 +588,9 @@ func TestParseRPCChain_UnknownSetofRejectsUnsafeIdentifiers(t *testing.T) {
 	}
 }
 
-// TestParseRPCChain_TableShapeSelectUsesIdentValidator covers the select
-// fallback branch, reached only when parseSetofTarget can't resolve a named
-// table (e.g. a TABLE(...) return shape). Before the fix this branch used
-// permissiveColValidator, which accepted any non-empty column.
+// TestParseRPCChain_TableShapeSelectUsesIdentValidator: "setof table(...)" is
+// not a valid declared shape (rpcTableShape rejects the "setof " prefix), so
+// it falls back to the ident validator.
 func TestParseRPCChain_TableShapeSelectUsesIdentValidator(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := &CRUDHandler{cfg: &domain.Config{}}
@@ -607,5 +606,73 @@ func TestParseRPCChain_TableShapeSelectUsesIdentValidator(t *testing.T) {
 	c.Request = httptest.NewRequest("GET", "/rpc/f?select=id", nil)
 	if _, _, err := h.parseRPCChain(c, fn, map[string]bool{}, 1); err != nil {
 		t.Fatalf("select=id: valid column rejected: %v", err)
+	}
+}
+
+// TestParseRPCChain_SetofRecordSelectUsesIdentValidator: "setof record" is
+// not found/declared, so select must go through the ident validator, not a
+// zero-value target table (regression: it used to key off `target != ""`).
+func TestParseRPCChain_SetofRecordSelectUsesIdentValidator(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &CRUDHandler{cfg: &domain.Config{}}
+	fn := domain.Function{ReturnCategory: "setof", Returns: domain.FuncReturn{Type: "setof record"}}
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET", "/rpc/f?select=name", nil)
+	if _, _, err := h.parseRPCChain(c, fn, map[string]bool{}, 1); err != nil {
+		t.Fatalf("select=name: safe identifier rejected: %v", err)
+	}
+
+	c, _ = gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET", "/rpc/f?select="+url.QueryEscape("a;b"), nil)
+	if _, _, err := h.parseRPCChain(c, fn, map[string]bool{}, 1); err == nil {
+		t.Error("select=a;b: expected rejection")
+	}
+}
+
+// TestRPCTableShape parses a TABLE(...) return type into a synthetic domain.Table.
+func TestRPCTableShape(t *testing.T) {
+	tbl, ok := rpcTableShape("TABLE(id int, total numeric(10,2), Label text)")
+	if !ok || len(tbl.Fields) != 3 {
+		t.Fatalf("got %+v ok=%v", tbl, ok)
+	}
+	if tbl.Fields[1].Name != "total" || tbl.Fields[1].Type != "numeric(10,2)" {
+		t.Errorf("field[1] = %+v", tbl.Fields[1])
+	}
+	if tbl.Fields[2].Name != "label" {
+		t.Errorf("unquoted column must fold to lower case, got %q", tbl.Fields[2].Name)
+	}
+	for _, raw := range []string{"", "setof users", "int", "table()", "table(id)", "table(id int", "table (a int, (b) int)"} {
+		if _, ok := rpcTableShape(raw); ok {
+			t.Errorf("rpcTableShape(%q) ok, want false", raw)
+		}
+	}
+}
+
+// TestParseRPCChain_TableShapeValidatesColumns: declared TABLE(...) shape
+// filters/select/order/having must validate against the declared columns.
+func TestParseRPCChain_TableShapeValidatesColumns(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &CRUDHandler{cfg: &domain.Config{}}
+	fn := domain.Function{ReturnCategory: "setof", Returns: domain.FuncReturn{Type: "table(id int, meta jsonb)"}}
+	good := "/rpc/f?select=id&id=gt.1&meta->>k=eq.v&order=id.desc&having=" + url.QueryEscape("id.gt.0")
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET", good, nil)
+	if _, _, err := h.parseRPCChain(c, fn, map[string]bool{}, 1); err != nil {
+		t.Fatalf("declared columns rejected: %v", err)
+	}
+	reject := []string{
+		"/rpc/f?other=eq.1",
+		"/rpc/f?select=other",
+		"/rpc/f?order=other",
+		"/rpc/f?or=" + url.QueryEscape("(other.eq.1)"),
+		"/rpc/f?" + url.QueryEscape("other->>k") + "=eq.1",
+	}
+	for _, target := range reject {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest("GET", target, nil)
+		if _, _, err := h.parseRPCChain(c, fn, map[string]bool{}, 1); err == nil {
+			t.Errorf("%s: undeclared column accepted", target)
+		}
 	}
 }
