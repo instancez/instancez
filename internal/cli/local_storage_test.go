@@ -178,6 +178,21 @@ func TestLocalStore_RejectsEscapingKeys(t *testing.T) {
 			t.Errorf("Head(%q) succeeded, want error", k)
 		}
 	}
+	// SignUpload/EnsureBucket run against fresh stores: several bad keys resolve to the
+	// same on-disk path once keyPrefix cancels "..", and reusing s above would let a file
+	// the mutating loop already wrote there mask a missing guard as an unrelated mkdir error.
+	for _, k := range bad {
+		fresh, err := NewLocalStore(filepath.Join(t.TempDir(), "store"), "app1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fresh.SignUpload(ctx, k, "", 0); err == nil {
+			t.Errorf("SignUpload(%q) succeeded, want error", k)
+		}
+		if err := fresh.EnsureBucket(ctx, k); err == nil {
+			t.Errorf("EnsureBucket(%q) succeeded, want error", k)
+		}
+	}
 	if _, err := os.Stat(filepath.Join(root, "escape.txt")); !os.IsNotExist(err) {
 		t.Fatalf("file written outside base: %v", err)
 	}
