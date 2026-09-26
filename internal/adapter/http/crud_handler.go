@@ -1027,7 +1027,7 @@ func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allT
 		qp.Select = postgrest.ParseSelectParam(sel)
 		for _, s := range qp.Select {
 			if strings.Contains(s, "(") && !postgrest.IsAggSelectEntry(s) {
-				continue // embed — validated via resolveEmbeds
+				continue // embed — validated in ResolveEmbeds
 			}
 			item := postgrest.ParseSelectItem(s)
 			if err := postgrest.ValidateSelectItem(table, item); err != nil {

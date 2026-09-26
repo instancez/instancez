@@ -744,8 +744,6 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 	return sql, embedArgs
 }
 
-// buildOrderSQL serializes a list of OrderClauses into a PostgREST-compatible
-// ORDER BY fragment. Columns have already been validated at parse time.
 // executeRPCCount runs COUNT(*) over the filtered RPC subquery for clients
 // that sent Prefer: count=exact. It rebuilds both the base call and the
 // WHERE from scratch so the count statement gets its own $1.. numbering and

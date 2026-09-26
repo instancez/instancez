@@ -1,6 +1,7 @@
 package http
 
 import (
+	"net/url"
 	"strings"
 	"testing"
 
@@ -849,5 +850,64 @@ func TestAliasWhereColumns_LeafAndTree(t *testing.T) {
 	// original tree must be unchanged
 	if tree.Children[0].Leaf.Column != "name" {
 		t.Error("aliasWhereColumns mutated input")
+	}
+}
+
+func TestResolveEmbeds_RejectsUnsafeSpecs(t *testing.T) {
+	all := map[string]domain.Table{
+		"posts": {Fields: []domain.Field{
+			{Name: "id", Type: "int", PrimaryKey: true},
+			{Name: "author_id", Type: "int", ForeignKey: &domain.ForeignKey{References: "authors.id"}},
+		}},
+		"authors": {Fields: []domain.Field{
+			{Name: "id", Type: "int", PrimaryKey: true},
+			{Name: "name", Type: "text"},
+		}},
+	}
+	good := []string{"authors(id,name)", "authors(*)", "authors()", "writer:authors(name)", "authors( name , id )"}
+	for _, raw := range good {
+		if _, err := resolveEmbeds("posts", all["posts"], []string{raw}, all); err != nil {
+			t.Errorf("%q rejected: %v", raw, err)
+		}
+	}
+	if _, err := resolveEmbeds("authors", all["authors"], []string{"posts(id,author_id)"}, all); err != nil {
+		t.Errorf("has-many rejected: %v", err)
+	}
+	bad := []string{
+		"authors(bogus)",
+		"authors(name x)",
+		`authors(na"me)`,
+		"authors(name'x)",
+		"authors(id,name",
+		"authors(id,(name)",
+		"authors(id))",
+		"authors(name::text)",
+		"authors(nick:name)",
+		"authors(name->>k)",
+		"a b:authors(name)",
+		`w"x:authors(name)`,
+		"é:authors(name)",
+	}
+	for _, raw := range bad {
+		if _, err := resolveEmbeds("posts", all["posts"], []string{raw}, all); err == nil {
+			t.Errorf("%q accepted, want error", raw)
+		}
+	}
+	if _, err := resolveEmbeds("authors", all["authors"], []string{"posts(id x)"}, all); err == nil {
+		t.Error("unsafe has-many column accepted")
+	}
+}
+
+func TestParseQueryParams_EmbedColumnValidated(t *testing.T) {
+	all := map[string]domain.Table{
+		"posts": {Fields: []domain.Field{
+			{Name: "id", Type: "int", PrimaryKey: true},
+			{Name: "author_id", Type: "int", ForeignKey: &domain.ForeignKey{References: "authors.id"}},
+		}},
+		"authors": {Fields: []domain.Field{{Name: "id", Type: "int", PrimaryKey: true}}},
+	}
+	c := testContext("select=" + url.QueryEscape("id,authors(id x)"))
+	if _, err := parseQueryParams(c, "posts", all["posts"], all); err == nil {
+		t.Fatal("unsafe embed column accepted by parseQueryParams")
 	}
 }
