@@ -519,6 +519,9 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 		chain.hasLimit = true
 		chain.limit = n
 	}
+	if maxRows := h.cfg.Server.MaxLimit; maxRows > 0 && (!chain.hasLimit || chain.limit > maxRows) {
+		chain.hasLimit, chain.limit = true, maxRows
+	}
 
 	// OFFSET.
 	if o := c.Query("offset"); o != "" {

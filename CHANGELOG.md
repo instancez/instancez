@@ -12,6 +12,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 - Requests running as `anon` or `authenticated` can no longer read or write `auth.*` tables, which matches Supabase. RLS policies or `security: invoker` RPCs that query `auth.users` directly now get `permission denied`; move that data into your own table or use a `security: definer` RPC. `auth.uid()`, `auth.role()`, `auth.email()`, `auth.jwt()` and foreign keys to `auth.users.id` are unaffected.
 - Startup now re-applies database privilege fixes on every boot, including `inz serve` without `--migrate`, and boot fails if the privilege fix fails.
+- REST reads no longer stop at 20 rows when no `limit` is given, matching PostgREST. `server.max_limit` (new default 1000, `-1` to disable) now caps table reads, setof RPCs and top-level has-many embeds, the way PostgREST's `db-max-rows` does.
 
 ### Fixed
 

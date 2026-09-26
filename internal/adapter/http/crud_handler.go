@@ -139,6 +139,8 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 			qp.Limit = end - start + 1
 			rangeUsed = true
 		}
+		qp.Limit = capLimit(qp.Limit, h.cfg.Server.MaxLimit)
+		capEmbeds(qp.Embeds, h.cfg.Server.MaxLimit)
 
 		// Build SQL
 		query, args := postgrest.BuildSelectQueryFull(tableName, qp, table, allTbls)
@@ -1017,10 +1019,7 @@ type Filter = postgrest.Filter
 type OrderClause = postgrest.OrderClause
 
 func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allTables map[string]domain.Table) (*QueryParams, error) {
-	qp := &QueryParams{
-		Limit:  20, // default
-		Offset: 0,
-	}
+	qp := &QueryParams{Limit: postgrest.NoLimit}
 
 	// Parse select
 	if sel := c.Query("select"); sel != "" {
@@ -1132,6 +1131,26 @@ var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // parseRangeHeader parses a simple "start-end" Range value (as PostgREST
 // expects with Range-Unit: items). Both bounds are inclusive and 0-based.
+// capLimit applies server.max_limit (PostgREST db-max-rows); maxRows <= 0 disables it.
+func capLimit(limit, maxRows int) int {
+	if maxRows > 0 && (limit < 0 || limit > maxRows) {
+		return maxRows
+	}
+	return limit
+}
+
+// capEmbeds caps top-level has-many embeds the same way PostgREST caps every read node.
+func capEmbeds(embeds []postgrest.Embed, maxRows int) {
+	if maxRows <= 0 {
+		return
+	}
+	for i := range embeds {
+		if e := &embeds[i]; e.IsReverse && (e.Limit == nil || *e.Limit > maxRows) {
+			e.Limit = &maxRows
+		}
+	}
+}
+
 func parseRangeHeader(h string) (start, end int, ok bool) {
 	h = strings.TrimSpace(h)
 	h = strings.TrimPrefix(h, "items=")

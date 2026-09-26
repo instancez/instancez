@@ -615,7 +615,11 @@ func BuildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 		sql += " ORDER BY " + RenderOrderBy(order)
 	}
 
-	sql += fmt.Sprintf(" LIMIT %d OFFSET %d", qp.Limit, qp.Offset)
+	if qp.Limit >= 0 {
+		sql += fmt.Sprintf(" LIMIT %d OFFSET %d", qp.Limit, qp.Offset)
+	} else if qp.Offset > 0 {
+		sql += fmt.Sprintf(" OFFSET %d", qp.Offset)
+	}
 
 	return sql, allArgs
 }

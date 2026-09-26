@@ -14,7 +14,7 @@ const { data, error } = await supabase.from('todos').select('*')
 // GET /rest/v1/todos?select=*
 ```
 
-List queries default to `LIMIT 20` when no `.limit()`/`.range()` is given — use pagination (below) to get more than 20 rows back.
+There's no default limit, same as PostgREST. A list query returns every matching row, up to `server.max_limit` (default 1000). Page with `.limit()`/`.range()`.
 
 Fetch specific columns:
 

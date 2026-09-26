@@ -35,7 +35,7 @@ Env vars are interpolated using `${VAR}` or `${VAR:-default}`. They are resolved
 |-----|------|---------|-------------|
 | `server.port` | `integer` | `8080` | HTTP listen port. |
 | `server.max_body_size` | `string` | `1MB` | Maximum request body size for non-upload endpoints. |
-| `server.max_limit` | `integer` | `100` | **Not currently enforced.** Configuration value is defined but not validated on REST queries. Default query limit is 20. |
+| `server.max_limit` | `integer` | `1000` | Most rows one REST table read, setof RPC, or top-level has-many embed returns (PostgREST `db-max-rows`). Applies with or without `limit`/`Range`; `Content-Range` shows the capped range. `-1` disables the cap. |
 
 ### server.cors
 

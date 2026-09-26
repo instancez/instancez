@@ -1,0 +1,127 @@
+//go:build integration
+
+package pgrupstream
+
+import (
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	instancezhttp "github.com/instancez/instancez/internal/adapter/http"
+	"github.com/instancez/instancez/internal/domain"
+	"github.com/stretchr/testify/require"
+)
+
+// serverWith boots a second instancez server on the shared pools with a tweaked config.
+func serverWith(t *testing.T, mutate func(*domain.Config)) string {
+	t.Helper()
+	cfg := buildConfig()
+	mutate(cfg)
+	srv := instancezhttp.NewServer(instancezhttp.ServerDeps{
+		Config: cfg, DB: testAuthDB, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), DevMode: true,
+	})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	return ts.URL
+}
+
+// call sends a request (as service_role unless anon) and returns status, headers and raw body.
+func call(t *testing.T, method, url, body string, headers map[string]string, anon bool) (int, http.Header, []byte) {
+	t.Helper()
+	req, err := http.NewRequest(method, url, strings.NewReader(body))
+	require.NoError(t, err)
+	if !anon {
+		req.Header.Set("Authorization", "Bearer "+testAdminKey)
+		req.Header.Set("apikey", testAdminKey)
+	}
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	return resp.StatusCode, resp.Header, raw
+}
+
+func rowsOf(t *testing.T, raw []byte) []map[string]any {
+	t.Helper()
+	var rows []map[string]any
+	require.NoError(t, json.Unmarshal(raw, &rows), "body: %s", raw)
+	return rows
+}
+
+func TestHardening_NoDefaultLimit(t *testing.T) {
+	if testTS == nil {
+		t.Skip("no upstream")
+	}
+	status, _, raw := call(t, "GET", testTS.URL+"/rest/v1/users?select=username", "", nil, false)
+	require.Equal(t, 200, status)
+	require.Len(t, rowsOf(t, raw), 5)
+
+	// max_limit: -1 turns the cap off.
+	off := serverWith(t, func(c *domain.Config) { c.Server.MaxLimit = -1 })
+	status, _, raw = call(t, "GET", off+"/rest/v1/users?select=username", "", nil, false)
+	require.Equal(t, 200, status, "%s", raw)
+	require.Len(t, rowsOf(t, raw), 5)
+	status, _, raw = call(t, "POST", off+"/rest/v1/rpc/users_by_status", `{"target":"ONLINE"}`, nil, false)
+	require.Equal(t, 200, status, "%s", raw)
+	require.Len(t, rowsOf(t, raw), 3)
+}
+
+func TestHardening_MaxRows(t *testing.T) {
+	if testTS == nil {
+		t.Skip("no upstream")
+	}
+	base := serverWith(t, func(c *domain.Config) { c.Server.MaxLimit = 2 })
+	exact := map[string]string{"Prefer": "count=exact"}
+
+	status, hdr, raw := call(t, "GET", base+"/rest/v1/users?select=username&order=username", "", exact, false)
+	require.Contains(t, []int{200, 206}, status, "%s", raw)
+	require.Len(t, rowsOf(t, raw), 2)
+	require.Equal(t, "0-1/5", hdr.Get("Content-Range"))
+
+	for path, want := range map[string]int{
+		"/rest/v1/users?select=username&limit=100":          2,
+		"/rest/v1/users?select=username&limit=1":            1,
+		"/rest/v1/users?select=username&limit=0":            0,
+		"/rest/v1/users?select=username&offset=4":           1,
+		"/rest/v1/users?select=username&limit=100&offset=1": 2,
+	} {
+		status, _, raw := call(t, "GET", base+path, "", nil, false)
+		require.Equal(t, 200, status, "%s: %s", path, raw)
+		require.Len(t, rowsOf(t, raw), want, path)
+	}
+	for _, path := range []string{"limit=-1", "limit=NaN", "limit=99999999999999999999"} {
+		status, _, raw := call(t, "GET", base+"/rest/v1/users?select=username&"+path, "", nil, false)
+		require.Equal(t, 400, status, "%s: %s", path, raw)
+	}
+
+	// Range end - start + 1 overflows int; the cap must still hold.
+	_, hdr, raw = call(t, "GET", base+"/rest/v1/users?select=username", "", map[string]string{"Range": "0-9223372036854775807"}, false)
+	require.Len(t, rowsOf(t, raw), 2)
+	require.Equal(t, "0-1/*", hdr.Get("Content-Range"))
+	_, _, raw = call(t, "GET", base+"/rest/v1/users?select=username", "", map[string]string{"Range": "1-10"}, false)
+	require.Len(t, rowsOf(t, raw), 2)
+
+	status, hdr, raw = call(t, "POST", base+"/rest/v1/rpc/users_by_status", `{"target":"ONLINE"}`, exact, false)
+	require.Equal(t, 200, status, "%s", raw)
+	require.Len(t, rowsOf(t, raw), 2, "setof RPC capped (3 ONLINE users)")
+	require.Equal(t, "0-1/3", hdr.Get("Content-Range"))
+	_, _, raw = call(t, "POST", base+"/rest/v1/rpc/users_by_status?limit=1", `{"target":"ONLINE"}`, nil, false)
+	require.Len(t, rowsOf(t, raw), 1)
+
+	one := serverWith(t, func(c *domain.Config) { c.Server.MaxLimit = 1 })
+	_, _, raw = call(t, "GET", one+"/rest/v1/users?select=username,messages(id)&username=eq.supabot", "", nil, false)
+	rows := rowsOf(t, raw)
+	require.Len(t, rows, 1)
+	require.Len(t, rows[0]["messages"], 1, "has-many embed capped (supabot has 2 messages)")
+}
