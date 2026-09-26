@@ -220,7 +220,7 @@ func (h *AuthHandler) handleSignupAnonymous(c *gin.Context, probe map[string]any
 	ctx = ctxWithRequestMeta(ctx, c)
 	session, err := h.buildSession(ctx, userID, row, "anonymous")
 	if err != nil {
-		problemJSON(c, 500, "internal", "Failed to generate token")
+		sessionError(c, err)
 		return
 	}
 	c.JSON(200, session)
@@ -270,7 +270,7 @@ func (h *AuthHandler) handleSignup(c *gin.Context) {
 	ctx = ctxWithRequestMeta(ctx, c)
 	session, err := h.buildSession(ctx, userID, row, "password")
 	if err != nil {
-		problemJSON(c, 500, "internal", "Failed to generate token")
+		sessionError(c, err)
 		return
 	}
 	c.JSON(200, session)
@@ -352,7 +352,7 @@ func (h *AuthHandler) handlePasswordGrant(c *gin.Context) {
 	ctx = ctxWithRequestMeta(ctx, c)
 	session, err := h.buildSession(ctx, userID, row, "password")
 	if err != nil {
-		problemJSON(c, 500, "internal", "Failed to generate token")
+		sessionError(c, err)
 		return
 	}
 	c.JSON(200, session)
@@ -383,10 +383,14 @@ func (h *AuthHandler) handleRefreshGrant(c *gin.Context) {
 		}
 		return
 	}
+	if banned, _ := userRow["is_banned"].(bool); banned {
+		sessionError(c, domain.ErrUserBanned)
+		return
+	}
 
 	session, err := h.signSession(ctx, asString(userRow["id"]), userRow, meta)
 	if err != nil {
-		problemJSON(c, 500, "internal", "Failed to generate token")
+		sessionError(c, err)
 		return
 	}
 	session["refresh_token"] = refreshToken
@@ -426,7 +430,7 @@ func (h *AuthHandler) handlePKCEGrant(c *gin.Context) {
 	ctx = ctxWithRequestMeta(ctx, c)
 	session, err := h.buildSession(ctx, userID, userRow, "oauth")
 	if err != nil {
-		problemJSON(c, 500, "internal", "Failed to generate token")
+		sessionError(c, err)
 		return
 	}
 	c.JSON(200, session)
@@ -480,7 +484,7 @@ func (h *AuthHandler) handleIDTokenGrant(c *gin.Context) {
 	ctx = ctxWithRequestMeta(ctx, c)
 	session, err := h.buildSession(ctx, userID, row, "oauth")
 	if err != nil {
-		problemJSON(c, 500, "internal", "Failed to generate token")
+		sessionError(c, err)
 		return
 	}
 	c.JSON(200, session)
@@ -690,7 +694,7 @@ func (h *AuthHandler) handleVerify(c *gin.Context) {
 	ctx = ctxWithRequestMeta(ctx, c)
 	session, err := h.buildSession(ctx, userID, userRow, verifyAMRMethod[req.Type])
 	if err != nil {
-		problemJSON(c, 500, "internal", "Failed to generate token")
+		sessionError(c, err)
 		return
 	}
 	c.JSON(200, session)
@@ -740,6 +744,10 @@ func (h *AuthHandler) handleVerifyGET(c *gin.Context) {
 		ctx = ctxWithRequestMeta(ctx, c)
 		session, err := h.buildSession(ctx, userID, userRow, "recovery")
 		if err != nil {
+			if errors.Is(err, domain.ErrUserBanned) {
+				c.String(403, "User is banned")
+				return
+			}
 			c.String(500, "Failed to generate session")
 			return
 		}
@@ -1094,6 +1102,10 @@ func (h *AuthHandler) handleAdminUpdateUser(c *gin.Context) {
 		return
 	}
 
+	if req.BanDuration != nil && *req.BanDuration != "none" {
+		_ = h.authSvc.RevokeAllUserSessions(ctx, uid)
+	}
+
 	c.JSON(200, h.buildUser(asString(row["id"]), row, nil))
 }
 
@@ -1380,7 +1392,7 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 		ctx = ctxWithRequestMeta(ctx, c)
 		session, err := h.buildSession(ctx, userID, row, "oauth")
 		if err != nil {
-			problemJSON(c, 500, "internal", "Failed to generate token")
+			sessionError(c, err)
 			return
 		}
 
@@ -1420,6 +1432,9 @@ func (h *AuthHandler) buildSession(ctx context.Context, userID string, userRow m
 // issueSession signs an access token and stores a new refresh token for the
 // session in meta, returning the GoTrue-shaped session payload.
 func (h *AuthHandler) issueSession(ctx context.Context, userID string, userRow map[string]any, meta domain.SessionMeta) (gin.H, error) {
+	if banned, _ := userRow["is_banned"].(bool); banned {
+		return nil, domain.ErrUserBanned
+	}
 	if meta.SessionID == "" {
 		meta.SessionID = uuid.NewString()
 	}
@@ -1903,6 +1918,15 @@ func generateNumericCode(n int) string {
 
 func isDuplicateKeyErr(err error) bool {
 	return err != nil && (strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "unique"))
+}
+
+// sessionError reports a failed issueSession/buildSession.
+func sessionError(c *gin.Context, err error) {
+	if errors.Is(err, domain.ErrUserBanned) {
+		problemJSON(c, 403, "user_banned", "User is banned")
+		return
+	}
+	problemJSON(c, 500, "internal", "Failed to generate token")
 }
 
 func hashPassword(c *gin.Context, password string) (string, bool) {

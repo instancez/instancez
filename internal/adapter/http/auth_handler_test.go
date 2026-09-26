@@ -738,31 +738,33 @@ func (t *stubTx) Rollback(ctx context.Context) error {
 // Only the methods a given test exercises need non-nil functions; everything
 // else has a safe no-op default.
 type stubAuthService struct {
-	createUserFn          func(ctx context.Context, p domain.CreateUserParams) (map[string]any, error)
-	getUserByEmailFn      func(ctx context.Context, email string) (map[string]any, error)
-	getUserIDByEmailFn    func(ctx context.Context, email string) (string, error)
-	getUserByIDFn         func(ctx context.Context, id string) (map[string]any, error)
-	updateUserFn          func(ctx context.Context, id string, p domain.UpdateUserParams) (map[string]any, error)
-	deleteUserFn          func(ctx context.Context, id string) error
-	listUsersFn           func(ctx context.Context, page, perPage int) ([]map[string]any, int, error)
-	verifyPasswordFn      func(ctx context.Context, email, password string) (map[string]any, error)
-	getUserEmailFn        func(ctx context.Context, userID string) (string, error)
-	hasPasswordFn         func(ctx context.Context, userID string) (bool, error)
-	consumeRefreshFn      func(ctx context.Context, token string, next domain.RefreshRotation) (map[string]any, domain.SessionMeta, string, error)
-	createOneTimeTokenFn  func(ctx context.Context, userID, token, purpose string, expiresAt int64) error
-	createOTPCodeFn       func(ctx context.Context, userID, token, code, email, purpose string, expiresAt int64) error
-	verifyOTPFn           func(ctx context.Context, token, email string, allowedPurposes []string) (domain.OTPRow, error)
-	peekOneTimeTokenFn    func(ctx context.Context, token string) (domain.OTPRow, error)
-	deleteOneTimeTokenFn  func(ctx context.Context, token string) error
-	markEmailVerifiedFn   func(ctx context.Context, userID string)
-	insertRefreshTokenFn  func(ctx context.Context, userID, token string, meta domain.SessionMeta, expiresAt int64) error
-	getPKCEFlowStateFn    func(ctx context.Context, authCode string) (string, string, string, error)
-	countIdentitiesFn     func(ctx context.Context, userID string) (int, error)
-	deleteIdentityByIDFn  func(ctx context.Context, identityID, userID string) error
-	upsertOAuthUserFn     func(ctx context.Context, provider, providerUserID, email, name string) (map[string]any, error)
-	listIdentitiesFn      func(ctx context.Context, userID string) ([]map[string]any, error)
-	consumeOAuthFlowFn    func(ctx context.Context, state string) (domain.FlowState, error)
-	deleteFactorForUserFn func(ctx context.Context, factorID, userID string) error
+	createUserFn            func(ctx context.Context, p domain.CreateUserParams) (map[string]any, error)
+	getUserByEmailFn        func(ctx context.Context, email string) (map[string]any, error)
+	getUserIDByEmailFn      func(ctx context.Context, email string) (string, error)
+	getUserByIDFn           func(ctx context.Context, id string) (map[string]any, error)
+	updateUserFn            func(ctx context.Context, id string, p domain.UpdateUserParams) (map[string]any, error)
+	deleteUserFn            func(ctx context.Context, id string) error
+	listUsersFn             func(ctx context.Context, page, perPage int) ([]map[string]any, int, error)
+	verifyPasswordFn        func(ctx context.Context, email, password string) (map[string]any, error)
+	getUserEmailFn          func(ctx context.Context, userID string) (string, error)
+	hasPasswordFn           func(ctx context.Context, userID string) (bool, error)
+	consumeRefreshFn        func(ctx context.Context, token string, next domain.RefreshRotation) (map[string]any, domain.SessionMeta, string, error)
+	createOneTimeTokenFn    func(ctx context.Context, userID, token, purpose string, expiresAt int64) error
+	createOTPCodeFn         func(ctx context.Context, userID, token, code, email, purpose string, expiresAt int64) error
+	verifyOTPFn             func(ctx context.Context, token, email string, allowedPurposes []string) (domain.OTPRow, error)
+	peekOneTimeTokenFn      func(ctx context.Context, token string) (domain.OTPRow, error)
+	deleteOneTimeTokenFn    func(ctx context.Context, token string) error
+	markEmailVerifiedFn     func(ctx context.Context, userID string)
+	insertRefreshTokenFn    func(ctx context.Context, userID, token string, meta domain.SessionMeta, expiresAt int64) error
+	getPKCEFlowStateFn      func(ctx context.Context, authCode string) (string, string, string, error)
+	countIdentitiesFn       func(ctx context.Context, userID string) (int, error)
+	deleteIdentityByIDFn    func(ctx context.Context, identityID, userID string) error
+	upsertOAuthUserFn       func(ctx context.Context, provider, providerUserID, email, name string) (map[string]any, error)
+	listIdentitiesFn        func(ctx context.Context, userID string) ([]map[string]any, error)
+	consumeOAuthFlowFn      func(ctx context.Context, state string) (domain.FlowState, error)
+	deleteFactorForUserFn   func(ctx context.Context, factorID, userID string) error
+	revokeOtherSessionsFn   func(ctx context.Context, userID, keep string) error
+	revokeAllUserSessionsFn func(ctx context.Context, userID string) error
 
 	enrollFactorFn              func(ctx context.Context, userID, friendlyName, secret string) (string, error)
 	createChallengeFn           func(ctx context.Context, factorID, userID string) (string, time.Time, error)
@@ -852,9 +854,17 @@ func (s *stubAuthService) ConsumeRefreshToken(ctx context.Context, token string,
 }
 func (s *stubAuthService) RevokeSessionByID(ctx context.Context, sessionID string) error { return nil }
 func (s *stubAuthService) RevokeOtherSessions(ctx context.Context, userID, keep string) error {
+	if s.revokeOtherSessionsFn != nil {
+		return s.revokeOtherSessionsFn(ctx, userID, keep)
+	}
 	return nil
 }
-func (s *stubAuthService) RevokeAllUserSessions(ctx context.Context, userID string) error { return nil }
+func (s *stubAuthService) RevokeAllUserSessions(ctx context.Context, userID string) error {
+	if s.revokeAllUserSessionsFn != nil {
+		return s.revokeAllUserSessionsFn(ctx, userID)
+	}
+	return nil
+}
 func (s *stubAuthService) CreateOneTimeToken(ctx context.Context, userID, token, purpose string, expiresAt int64) error {
 	if s.createOneTimeTokenFn != nil {
 		return s.createOneTimeTokenFn(ctx, userID, token, purpose, expiresAt)

@@ -225,7 +225,12 @@ func (h *AdminHandler) handleDisableUser(c *gin.Context) {
 	id := c.Param("id")
 	ctx := c.Request.Context()
 
-	// Delete refresh tokens to force logout
+	// Ban first so a fresh login can't undo the disable.
+	if _, err := h.db.Exec(ctx, "UPDATE auth.users SET banned_until = 'infinity', updated_at = NOW() WHERE id = $1", id); err != nil {
+		adminErr(c, 500, "internal", "Failed to disable user")
+		return
+	}
+
 	if _, err := h.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE user_id = $1", id); err != nil {
 		adminErr(c, 500, "internal", "Failed to revoke sessions")
 		return

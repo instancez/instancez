@@ -15,6 +15,7 @@ var (
 	ErrOAuthOnlyAccount = errors.New("account uses oauth login")
 	ErrRefreshExpired   = errors.New("refresh token expired")
 	ErrRefreshReuse     = errors.New("refresh token reuse detected")
+	ErrUserBanned       = errors.New("user is banned")
 	ErrTokenExpired     = errors.New("token expired")
 	ErrInvalidToken     = errors.New("invalid or expired token")
 	ErrPurposeMismatch  = errors.New("token purpose mismatch")

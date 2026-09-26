@@ -191,7 +191,7 @@ func (h *AuthHandler) handleVerifyFactor(c *gin.Context) {
 	}
 	sess, err := h.issueSession(ctxWithRequestMeta(ctx, c), session.UserID, userRow, meta)
 	if err != nil {
-		problemJSON(c, 500, "internal", "Failed to generate token")
+		sessionError(c, err)
 		return
 	}
 	c.JSON(200, sess)

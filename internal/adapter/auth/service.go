@@ -72,7 +72,7 @@ func (d serviceRoleDB) Begin(ctx context.Context) (domain.Tx, error) {
 // userSelectCols is the canonical auth.users projection consumed by the HTTP
 // handler's buildUser/buildSession. mfa_handler.go keeps its own copy of this
 // column list; any change here must be mirrored there.
-const userSelectCols = `id::text, email, email_verified, email_confirmed_at, last_sign_in_at, banned_until, raw_app_meta_data, raw_user_meta_data, created_at, updated_at`
+const userSelectCols = `id::text, email, email_verified, email_confirmed_at, last_sign_in_at, banned_until, raw_app_meta_data, raw_user_meta_data, created_at, updated_at, COALESCE(banned_until > NOW(), false) AS is_banned`
 
 // maxOTPAttempts bounds brute-force of the 10^6 numeric-code space.
 const maxOTPAttempts = 5
@@ -296,7 +296,7 @@ func (s *Service) ListUsers(ctx context.Context, page, perPage int) ([]map[strin
 
 func (s *Service) VerifyPassword(ctx context.Context, email, password string) (map[string]any, error) {
 	row, err := s.db.QueryRow(ctx,
-		`SELECT id::text, email, password_hash, email_verified, email_confirmed_at, last_sign_in_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at
+		`SELECT id::text, email, password_hash, email_verified, email_confirmed_at, last_sign_in_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at, COALESCE(banned_until > NOW(), false) AS is_banned
 		 FROM auth.users WHERE email = $1`, email)
 	if err != nil || row == nil {
 		return nil, domain.ErrUnauthorized

@@ -211,3 +211,47 @@ func TestRefreshTokensIntegration(t *testing.T) {
 		}
 	})
 }
+
+func TestBanIntegration(t *testing.T) {
+	s, db := newIntegrationService(t, &domain.Auth{})
+	ctx := context.Background()
+	hash, _ := HashPassword("correct horse")
+	row, err := s.CreateUser(ctx, domain.CreateUserParams{Email: "ban@example.com", Password: hash})
+	if err != nil {
+		t.Fatal(err)
+	}
+	uid := asString(row["id"])
+	isBanned := func() bool {
+		r, err := s.GetUserByID(ctx, uid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := r["is_banned"].(bool)
+		return b
+	}
+	yes, none, hour := true, "none", "1 hour"
+	if isBanned() {
+		t.Fatal("new user must not be banned")
+	}
+	_, _ = s.UpdateUser(ctx, uid, domain.UpdateUserParams{Banned: &yes})
+	if !isBanned() {
+		t.Fatal("permanent ban (infinity) not detected")
+	}
+	if r, _ := s.VerifyPassword(ctx, "ban@example.com", "correct horse"); r["is_banned"] != true {
+		t.Fatalf("VerifyPassword must project is_banned, got %v", r["is_banned"])
+	}
+	_, _ = s.UpdateUser(ctx, uid, domain.UpdateUserParams{BanDuration: &none})
+	if isBanned() {
+		t.Fatal("ban_duration none must clear the ban")
+	}
+	_, _ = s.UpdateUser(ctx, uid, domain.UpdateUserParams{BanDuration: &hour})
+	if !isBanned() {
+		t.Fatal("timed ban not detected")
+	}
+	if _, err := db.Exec(ctx, `UPDATE auth.users SET banned_until = NOW() - INTERVAL '1 minute' WHERE id = $1::uuid`, uid); err != nil {
+		t.Fatal(err)
+	}
+	if isBanned() {
+		t.Fatal("expired ban must not block")
+	}
+}

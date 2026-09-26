@@ -495,6 +495,7 @@ var errTypeToCode = map[string]string{
 	// Policy errors with no SQLSTATE / PGRST equivalent: the slug doubles
 	// as the stable client-facing `code` so callers can branch on it.
 	"signup_disabled": "signup_disabled",
+	"user_banned":     "user_banned",
 }
 
 // profileHeaderGuard enforces that Accept-Profile (for reads) and
