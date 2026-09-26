@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -67,6 +68,7 @@ func NewServer(deps ServerDeps) *Server {
 
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(apiDeadline(deps.Config.Server.Timeouts.Request))
 	r.Use(requestIDMiddleware())
 	r.Use(statementTimeout(deps.Config))
 	r.Use(requestLogger(deps.Logger, deps.DevMode, deps.OTelLogHandler))
@@ -151,6 +153,23 @@ func NewServer(deps ServerDeps) *Server {
 // (typically tests) can serve it with httptest.NewServer.
 func (s *Server) Handler() http.Handler {
 	return s.engine
+}
+
+// apiDeadline bounds body reads and response writes on the JSON APIs; streaming routes are exempt.
+func apiDeadline(timeout string) gin.HandlerFunc {
+	d, _ := time.ParseDuration(timeout)
+	return func(c *gin.Context) {
+		rc := http.NewResponseController(c.Writer)
+		p := c.Request.URL.Path
+		if d > 0 && (strings.HasPrefix(p, "/rest/v1/") || strings.HasPrefix(p, "/auth/v1/")) {
+			deadline := time.Now().Add(d)
+			_ = rc.SetReadDeadline(deadline)
+			_ = rc.SetWriteDeadline(deadline)
+		} else {
+			_ = rc.SetWriteDeadline(time.Time{})
+		}
+		c.Next()
+	}
 }
 
 // buildHTTPServer constructs the net/http server with connection timeouts.

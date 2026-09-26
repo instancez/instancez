@@ -28,6 +28,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - A transient database error while loading the signing key no longer mints a replacement key, which used to sign every user out.
 - Query plans (`Accept: application/vnd.pgrst.plan+json|text`) are only returned to the secret key. Anon and user tokens could read execution plans before, which exposed table sizes and index layout.
 - `server.timeouts.db_query` (default 10s) is now a Postgres `statement_timeout` on every API transaction, not just list reads. It holds for anon, authenticated and service_role, so one slow RPC or filter can no longer pin a pool connection.
+- `server.timeouts.request` (default 25s) now bounds how long `/rest/v1` and `/auth/v1` requests may take to read or write, which stops slow-body and slow-reader clients from holding connections open. Storage and functions are exempt.
 
 ### Upgrading
 
