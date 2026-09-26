@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -399,7 +400,8 @@ func (m *Migrator) beginLocked(ctx context.Context) (domain.Tx, error) {
 		return nil, err
 	}
 	// set_config with is_local=true is SET LOCAL with a bound value.
-	if _, err := tx.Exec(ctx, "SELECT set_config('lock_timeout', $1, true)", fmt.Sprintf("%dms", m.lockTimeout.Milliseconds())); err != nil {
+	timeout := strconv.FormatInt(m.lockTimeout.Milliseconds(), 10) + "ms"
+	if _, err := tx.Exec(ctx, "SELECT set_config('lock_timeout', $1, true)", timeout); err != nil {
 		_ = tx.Rollback(ctx)
 		return nil, err
 	}
