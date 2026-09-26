@@ -4,65 +4,174 @@ package app_test
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"testing"
+	"time"
 
+	adapterauth "github.com/instancez/instancez/internal/adapter/auth"
 	"github.com/instancez/instancez/internal/app"
 	"github.com/instancez/instancez/internal/domain"
 	"github.com/instancez/instancez/internal/testutil/dbboot"
 )
 
-// TestSchemaGrantsCoverAuthAndStorage confirms that anon, authenticated, and
-// service_role receive the expected privileges on auth.users and
-// storage.objects after a migrator apply with auth + storage configured.
-// service_role is also checked for INSERT and UPDATE (it expects full DML).
-func TestSchemaGrantsCoverAuthAndStorage(t *testing.T) {
+// hasPriv reports has_table_privilege(role, fqn, priv).
+func hasPriv(t *testing.T, db domain.Database, role, fqn, priv string) bool {
+	t.Helper()
+	row, err := db.QueryRow(context.Background(), `SELECT has_table_privilege($1, $2, $3) AS ok`, role, fqn, priv)
+	if err != nil {
+		t.Fatalf("has_table_privilege(%s, %s, %s): %v", role, fqn, priv, err)
+	}
+	return row["ok"] == true
+}
+
+// authDefaultACLGrants counts default-privilege entries in schema auth for anon/authenticated.
+func authDefaultACLGrants(t *testing.T, db domain.Database) int64 {
+	t.Helper()
+	row, err := db.QueryRow(context.Background(), `
+		SELECT count(*) AS n FROM pg_default_acl d
+		JOIN pg_namespace n ON n.oid = d.defaclnamespace
+		CROSS JOIN LATERAL aclexplode(d.defaclacl) a
+		WHERE n.nspname = 'auth' AND a.grantee IN ('anon'::regrole, 'authenticated'::regrole)`)
+	if err != nil {
+		t.Fatalf("pg_default_acl: %v", err)
+	}
+	return row["n"].(int64)
+}
+
+func authTables(t *testing.T, db domain.Database) []string {
+	t.Helper()
+	rows, err := db.Query(context.Background(),
+		`SELECT 'auth.' || tablename AS fqn FROM pg_tables WHERE schemaname = 'auth' ORDER BY 1`)
+	if err != nil {
+		t.Fatalf("list auth tables: %v", err)
+	}
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r["fqn"].(string))
+	}
+	if len(out) < 8 {
+		t.Fatalf("expected the full auth schema, got %v", out)
+	}
+	return out
+}
+
+// TestSchemaGrants_AuthClosedStorageOpen: anon/authenticated reach storage.objects
+// (RLS-guarded) but no auth.* table, sequence, or migration history.
+func TestSchemaGrants_AuthClosedStorageOpen(t *testing.T) {
 	db := startPostgres(t)
 	ctx := context.Background()
-
 	cfg := &domain.Config{
 		Version: 1,
-		Auth:    &domain.Auth{},
+		Auth:    &domain.Auth{Email: &domain.AuthEmail{}},
 		Storage: map[string]domain.Bucket{"avatars": {Public: true}},
 	}
 	if err := app.NewMigrator(db).Apply(ctx, cfg); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	selectPrivs := []struct{ role, fqn string }{
-		{"anon", "auth.users"},
-		{"anon", "storage.objects"},
-		{"authenticated", "auth.users"},
-		{"authenticated", "storage.objects"},
-		{"service_role", "auth.users"},
-		{"service_role", "storage.objects"},
+	type priv struct {
+		role, fqn, priv string
+		want            bool
 	}
-	for _, tc := range selectPrivs {
-		row, err := db.QueryRow(ctx,
-			`SELECT has_table_privilege($1, $2, 'SELECT')`, tc.role, tc.fqn)
-		if err != nil {
-			t.Fatalf("has_table_privilege(%s, %s, SELECT): %v", tc.role, tc.fqn, err)
+	cases := []priv{
+		{"anon", "storage.objects", "SELECT", true},
+		{"authenticated", "storage.objects", "INSERT", true},
+		{"service_role", "storage.objects", "UPDATE", true},
+		{"service_role", "auth.users", "SELECT", true},
+		{"service_role", "auth.users", "INSERT", true},
+		{"service_role", "auth.refresh_tokens", "DELETE", true},
+		{"service_role", "auth.jwt_keys", "SELECT", false},
+		{"service_role", "_instancez_migrations", "SELECT", false},
+	}
+	for _, role := range []string{"anon", "authenticated"} {
+		for _, fqn := range authTables(t, db) {
+			for _, p := range []string{"SELECT", "INSERT", "UPDATE", "DELETE"} {
+				cases = append(cases, priv{role, fqn, p, false})
+			}
 		}
-		if v, ok := row["has_table_privilege"].(bool); !ok || !v {
-			t.Errorf("expected %s to have SELECT on %s", tc.role, tc.fqn)
+		cases = append(cases, priv{role, "_instancez_migrations", "SELECT", false})
+	}
+	for _, c := range cases {
+		if got := hasPriv(t, db, c.role, c.fqn, c.priv); got != c.want {
+			t.Errorf("%s %s on %s = %v, want %v", c.role, c.priv, c.fqn, got, c.want)
 		}
 	}
 
-	// service_role expects full DML on both auth and storage tables.
-	dmlPrivs := []struct{ fqn, priv string }{
-		{"auth.users", "INSERT"},
-		{"auth.users", "UPDATE"},
-		{"storage.objects", "INSERT"},
-		{"storage.objects", "UPDATE"},
+	row, err := db.QueryRow(ctx, `SELECT has_sequence_privilege('anon', 'auth.refresh_tokens_id_seq', 'USAGE') AS anon_seq,
+		has_sequence_privilege('service_role', 'auth.refresh_tokens_id_seq', 'USAGE') AS svc_seq`)
+	if err != nil {
+		t.Fatalf("sequence privs: %v", err)
 	}
-	for _, tc := range dmlPrivs {
-		row, err := db.QueryRow(ctx,
-			`SELECT has_table_privilege($1, $2, $3)`, "service_role", tc.fqn, tc.priv)
-		if err != nil {
-			t.Fatalf("has_table_privilege(service_role, %s, %s): %v", tc.fqn, tc.priv, err)
+	if row["anon_seq"] == true || row["svc_seq"] != true {
+		t.Errorf("sequence grants wrong: %v", row)
+	}
+	if n := authDefaultACLGrants(t, db); n != 0 {
+		t.Errorf("auth default ACL still grants anon/authenticated (%d entries)", n)
+	}
+}
+
+// TestAuthSchemaClosed_HelpersFKsAndServiceStillWork: closing auth.* must not break
+// auth.uid() in policies, FKs to auth.users, or the auth service's bare-context writes.
+func TestAuthSchemaClosed_HelpersFKsAndServiceStillWork(t *testing.T) {
+	owner, req := dbboot.StartContainer(t)
+	ctx := context.Background()
+	cfg := &domain.Config{
+		Version: 1,
+		Auth:    &domain.Auth{},
+		Tables: map[string]domain.Table{
+			"notes": {
+				Fields: []domain.Field{
+					{Name: "id", Type: "bigserial", PrimaryKey: true},
+					{Name: "user_id", Type: "uuid", ForeignKey: &domain.ForeignKey{References: "auth.users.id"}},
+				},
+				RLS: []domain.RLSPolicy{
+					{Operations: []string{"insert"}, WithCheck: "user_id = auth.uid()"},
+					{Operations: []string{"select"}, Using: "user_id = auth.uid()"},
+				},
+			},
+		},
+	}
+	if err := app.NewMigrator(owner).Apply(ctx, cfg); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	uid := "11111111-1111-1111-1111-111111111111"
+	if _, err := owner.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1::uuid, 'a@example.com')`, uid); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+
+	anonCtx, _ := req.WithRLS(ctx, domain.Session{Role: "anon"})
+	row, err := req.QueryRow(anonCtx, `SELECT auth.uid() IS NULL AS no_uid, auth.role() AS role`)
+	if err != nil {
+		t.Fatalf("anon auth helpers: %v", err)
+	}
+	if row["no_uid"] != true || row["role"] != "anon" {
+		t.Fatalf("anon helpers = %v", row)
+	}
+	for _, q := range []string{
+		"SELECT 1 FROM auth.users", "SELECT 1 FROM auth.jwt_keys",
+		"SELECT 1 FROM auth.refresh_tokens", "SELECT 1 FROM _instancez_migrations",
+	} {
+		if _, err := req.Query(anonCtx, q); err == nil {
+			t.Errorf("anon was allowed: %s", q)
 		}
-		if v, ok := row["has_table_privilege"].(bool); !ok || !v {
-			t.Errorf("expected service_role to have %s on %s", tc.priv, tc.fqn)
-		}
+	}
+
+	userCtx, _ := req.WithRLS(ctx, domain.Session{Role: "authenticated", UserID: uid, IsAuthenticated: true})
+	if _, err := req.Exec(userCtx, `INSERT INTO notes (user_id) VALUES ($1::uuid)`, uid); err != nil {
+		t.Fatalf("authenticated insert with FK to auth.users: %v", err)
+	}
+	rows, err := req.Query(userCtx, `SELECT id FROM notes`)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("authenticated select under RLS: rows=%v err=%v", rows, err)
+	}
+	if _, err := req.Query(userCtx, "SELECT 1 FROM auth.users"); err == nil {
+		t.Error("authenticated read auth.users")
+	}
+
+	svc := adapterauth.NewService(req.Database, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err := svc.InsertRefreshToken(context.Background(), uid, "tok-bare-ctx", domain.SessionMeta{}, time.Now().Add(time.Hour).Unix()); err != nil {
+		t.Fatalf("auth service on bare context must run as service_role: %v", err)
 	}
 }
 

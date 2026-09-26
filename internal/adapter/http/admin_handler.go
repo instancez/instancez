@@ -201,7 +201,7 @@ func (h *AdminHandler) handleRotateJWTKey(c *gin.Context) {
 
 func (h *AdminHandler) handleListMigrations(c *gin.Context) {
 	ctx := c.Request.Context()
-	rows, err := h.db.Query(ctx,
+	rows, err := h.migrationDB().Query(ctx,
 		"SELECT id, checksum, applied_at FROM _instancez_migrations ORDER BY id DESC LIMIT 100")
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to query migrations")

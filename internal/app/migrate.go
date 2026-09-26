@@ -478,11 +478,12 @@ func generateSchemaGrants(schemas []string, roles domain.Roles) []string {
 	// every major we support. public always exists, so this can't miss.
 	ddl = append(ddl, "REVOKE CREATE ON SCHEMA public FROM PUBLIC;")
 	for _, s := range schemas {
+		grantees := tableGrantees(s, roles)
 		ddl = append(ddl,
 			fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s;", s),
 			fmt.Sprintf("GRANT USAGE ON SCHEMA %s TO %s;", s, rlist),
-			fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA %s GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %s;", s, rlist),
-			fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA %s GRANT USAGE, SELECT ON SEQUENCES TO %s;", s, rlist),
+			fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA %s GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %s;", s, grantees),
+			fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA %s GRANT USAGE, SELECT ON SEQUENCES TO %s;", s, grantees),
 		)
 		if roles.Seed != "" && !isReservedSchema(s) {
 			ddl = append(ddl,
@@ -500,12 +501,12 @@ func generateSchemaGrants(schemas []string, roles domain.Roles) []string {
 // ALTER DEFAULT PRIVILEGES took effect). Emitted near the end of the plan
 // so it picks up tables created in the same migration.
 func generateExistingObjectGrants(schemas []string, roles domain.Roles) []string {
-	rlist := apiRoleList(roles)
-	ddl := make([]string, 0, len(schemas)*2)
+	ddl := make([]string, 0, len(schemas)*2+6)
 	for _, s := range schemas {
+		grantees := tableGrantees(s, roles)
 		ddl = append(ddl,
-			fmt.Sprintf("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %s TO %s;", s, rlist),
-			fmt.Sprintf("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA %s TO %s;", s, rlist),
+			fmt.Sprintf("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %s TO %s;", s, grantees),
+			fmt.Sprintf("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA %s TO %s;", s, grantees),
 		)
 		if roles.Seed != "" && !isReservedSchema(s) {
 			ddl = append(ddl,
@@ -514,18 +515,37 @@ func generateExistingObjectGrants(schemas []string, roles domain.Roles) []string
 			)
 		}
 	}
-	// _instancez_migrations lives in public and is caught by the public GRANT
-	// above; revoke it so the seed role cannot touch migration history. This
-	// runs near the end of the plan, after EnsureMigrationsTable has created
-	// the table, so the REVOKE target always exists.
-	if roles.Seed != "" {
-		ddl = append(ddl, fmt.Sprintf("REVOKE ALL ON _instancez_migrations FROM %s;", roles.Seed))
-	}
-	return ddl
+	// Runs after the public backfill, which re-grants _instancez_migrations.
+	return append(ddl, generatePrivilegeRevokes(roles)...)
 }
 
 func apiRoleList(roles domain.Roles) string {
 	return fmt.Sprintf("%s, %s, %s", roles.Anon, roles.Authenticated, roles.Service)
+}
+
+// tableGrantees limits auth tables to service_role; other schemas get every API role.
+func tableGrantees(schema string, roles domain.Roles) string {
+	if schema == "auth" {
+		return roles.Service
+	}
+	return apiRoleList(roles)
+}
+
+// generatePrivilegeRevokes strips API-role access to auth.* and migration history; idempotent.
+func generatePrivilegeRevokes(roles domain.Roles) []string {
+	users := fmt.Sprintf("%s, %s", roles.Anon, roles.Authenticated)
+	history := apiRoleList(roles)
+	if roles.Seed != "" {
+		history += ", " + roles.Seed
+	}
+	return []string{
+		fmt.Sprintf("REVOKE ALL ON ALL TABLES IN SCHEMA auth FROM %s;", users),
+		fmt.Sprintf("REVOKE ALL ON ALL SEQUENCES IN SCHEMA auth FROM %s;", users),
+		fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA auth REVOKE ALL ON TABLES FROM %s;", users),
+		fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA auth REVOKE ALL ON SEQUENCES FROM %s;", users),
+		fmt.Sprintf("REVOKE ALL ON auth.jwt_keys FROM %s;", apiRoleList(roles)),
+		fmt.Sprintf("REVOKE ALL ON _instancez_migrations FROM %s;", history),
+	}
 }
 
 // orderedSchemas returns the deduped list of schemas the migrator manages,
