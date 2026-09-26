@@ -26,7 +26,6 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 - Keep the mixed-version window short. The first upgraded instance revokes anon's access to `auth.*`. From then on, older instances can't store refresh tokens, so sign-in and refresh routed to them fail until the rollout finishes.
 - Rolling back to an older release needs a manual step: re-grant the old privileges yourself. An older binary with an unchanged config never re-runs the grants.
-- `inz serve` without `--migrate` now needs an owner DSN that can GRANT/REVOKE on `auth`, `public`, and `storage`, or boot fails.
 
 ## [0.0.3]
 
