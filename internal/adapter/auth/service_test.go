@@ -305,3 +305,70 @@ func TestCreateUser_CredentialedEmailIsPreserved(t *testing.T) {
 		t.Fatalf("expected email to be preserved, got %#v", gotEmailArg)
 	}
 }
+
+type sessionCtxKey struct{}
+
+// sessionRecordingDB records the DB session every auth query runs under.
+type sessionRecordingDB struct {
+	fakeDB
+	sessions []domain.Session
+}
+
+func (d *sessionRecordingDB) WithRLS(ctx context.Context, s domain.Session) (context.Context, error) {
+	return context.WithValue(ctx, sessionCtxKey{}, s), nil
+}
+
+func (d *sessionRecordingDB) record(ctx context.Context) {
+	s, _ := ctx.Value(sessionCtxKey{}).(domain.Session)
+	d.sessions = append(d.sessions, s)
+}
+
+func (d *sessionRecordingDB) Exec(ctx context.Context, q string, args ...any) (int64, error) {
+	d.record(ctx)
+	return 1, nil
+}
+
+func (d *sessionRecordingDB) QueryRow(ctx context.Context, q string, args ...any) (map[string]any, error) {
+	d.record(ctx)
+	return nil, nil
+}
+
+func (d *sessionRecordingDB) Query(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
+	d.record(ctx)
+	return nil, nil
+}
+
+// Regression: auth_handler.go issued refresh-token and signup-token writes on
+// context.Background(), which the request pool runs as anon.
+func TestService_BareContextRunsAsServiceRole(t *testing.T) {
+	db := &sessionRecordingDB{}
+	svc := newTestService(db)
+	ctx := context.Background()
+	exp := time.Now().Add(time.Hour).Unix()
+
+	_ = svc.InsertRefreshToken(ctx, "u1", "tok", domain.SessionMeta{}, exp)
+	_ = svc.CreateOneTimeToken(ctx, "u1", "tok", "signup", exp)
+	_, _ = svc.GetUserByID(ctx, "u1")
+	_, _ = svc.ListIdentities(ctx, "u1")
+
+	if len(db.sessions) != 4 {
+		t.Fatalf("want 4 queries, got %d", len(db.sessions))
+	}
+	for i, s := range db.sessions {
+		if s.Role != domain.JWTRoleService || !s.IsAuthenticated {
+			t.Errorf("query %d ran as %+v, want service_role", i, s)
+		}
+	}
+}
+
+func TestService_OverridesCallerSession(t *testing.T) {
+	db := &sessionRecordingDB{}
+	svc := newTestService(db)
+	ctx, _ := db.WithRLS(context.Background(), domain.Session{Role: domain.JWTRoleAnon})
+
+	_, _ = svc.GetUserByID(ctx, "u1")
+
+	if len(db.sessions) != 1 || db.sessions[0].Role != domain.JWTRoleService {
+		t.Fatalf("caller's anon session leaked into auth query: %+v", db.sessions)
+	}
+}

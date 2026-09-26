@@ -24,7 +24,33 @@ type Service struct {
 
 // NewService creates an AuthService backed by db.
 func NewService(db domain.Database, cfg *domain.Config, logger *slog.Logger) *Service {
-	return &Service{db: db, cfg: cfg, logger: logger}
+	return &Service{db: serviceRoleDB{db}, cfg: cfg, logger: logger}
+}
+
+// serviceRoleDB runs every auth query as service_role; anon/authenticated have no grants on auth.*.
+type serviceRoleDB struct{ domain.Database }
+
+func (d serviceRoleDB) pin(ctx context.Context) context.Context {
+	if c, err := d.WithRLS(ctx, domain.Session{Role: domain.JWTRoleService, IsAuthenticated: true}); err == nil {
+		return c
+	}
+	return ctx
+}
+
+func (d serviceRoleDB) Query(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
+	return d.Database.Query(d.pin(ctx), q, args...)
+}
+
+func (d serviceRoleDB) QueryRow(ctx context.Context, q string, args ...any) (map[string]any, error) {
+	return d.Database.QueryRow(d.pin(ctx), q, args...)
+}
+
+func (d serviceRoleDB) Exec(ctx context.Context, q string, args ...any) (int64, error) {
+	return d.Database.Exec(d.pin(ctx), q, args...)
+}
+
+func (d serviceRoleDB) Begin(ctx context.Context) (domain.Tx, error) {
+	return d.Database.Begin(d.pin(ctx))
 }
 
 // userSelectCols is the canonical auth.users projection consumed by the HTTP
