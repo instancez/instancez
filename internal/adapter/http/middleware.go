@@ -219,8 +219,8 @@ func verifySignedJWT(ctx context.Context, keys *app.JWTKeyManager, tokenStr stri
 		}
 	},
 		jwt.WithExpirationRequired(),
-		// 30s clock-skew allowance, matching PostgREST/Supabase exp validation.
-		jwt.WithLeeway(30*time.Second))
+		// Clock-skew allowance, matching PostgREST/Supabase exp validation.
+		jwt.WithLeeway(app.JWTVerifyLeeway))
 }
 
 // API key tiers. The publishable key (inz_publishable_…) is the client-safe

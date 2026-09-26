@@ -118,7 +118,7 @@ func TestExpired_CutoffBoundary(t *testing.T) {
 	m := &JWTKeyManager{}
 	m.SetMaxTokenLifetime(time.Hour)
 	k := &JWTKey{RetiredAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
-	cutoff := k.RetiredAt.Add(time.Hour + verifyLeeway)
+	cutoff := k.RetiredAt.Add(time.Hour + JWTVerifyLeeway)
 	if m.expired(k, cutoff) {
 		t.Error("key rejected exactly at the cutoff")
 	}

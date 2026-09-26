@@ -96,10 +96,11 @@ var (
 	keyMissReloadInterval = time.Second
 )
 
-const (
-	defaultMaxTokenLifetime = 15 * time.Minute
-	verifyLeeway            = 30 * time.Second // matches jwt.WithLeeway in verifySignedJWT
-)
+const defaultMaxTokenLifetime = 15 * time.Minute
+
+// JWTVerifyLeeway is the clock-skew allowance for JWT exp/nbf validation,
+// shared with adapter/http's jwt.WithLeeway call.
+const JWTVerifyLeeway = 30 * time.Second
 
 // SetMaxTokenLifetime sets how long a retired key keeps verifying (plus leeway).
 func (m *JWTKeyManager) SetMaxTokenLifetime(d time.Duration) {
@@ -111,10 +112,10 @@ func (m *JWTKeyManager) retiredGrace() time.Duration {
 	if d <= 0 {
 		d = defaultMaxTokenLifetime
 	}
-	if d > math.MaxInt64-verifyLeeway {
+	if d > math.MaxInt64-JWTVerifyLeeway {
 		return math.MaxInt64
 	}
-	return d + verifyLeeway
+	return d + JWTVerifyLeeway
 }
 
 func (m *JWTKeyManager) expired(k *JWTKey, now time.Time) bool {
