@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/instancez/instancez/internal/domain"
 )
 
@@ -364,43 +366,102 @@ func (s *Service) InsertRefreshToken(ctx context.Context, userID, token string, 
 	return err
 }
 
-func (s *Service) ConsumeRefreshToken(ctx context.Context, token string) (map[string]any, domain.SessionMeta, error) {
-	row, err := s.db.QueryRow(ctx,
-		`UPDATE auth.refresh_tokens SET revoked_at = NOW() WHERE token = $1 AND revoked_at IS NULL
-		 RETURNING user_id::text, session_id, aal, amr, expires_at`, token)
-	if err != nil {
-		return nil, domain.SessionMeta{}, domain.ErrUnauthorized
+func (s *Service) ConsumeRefreshToken(ctx context.Context, token string, next domain.RefreshRotation) (map[string]any, domain.SessionMeta, string, error) {
+	fail := func(err error) (map[string]any, domain.SessionMeta, string, error) {
+		return nil, domain.SessionMeta{}, "", err
 	}
-	if row == nil {
-		row, err = s.db.QueryRow(ctx,
-			"SELECT user_id::text, session_id, aal, amr, expires_at, revoked_at FROM auth.refresh_tokens WHERE token = $1", token)
-		if err != nil || row == nil {
-			return nil, domain.SessionMeta{}, domain.ErrUnauthorized
+	if token == "" {
+		return fail(domain.ErrUnauthorized)
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fail(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	row, err := tx.QueryRow(ctx,
+		`UPDATE auth.refresh_tokens SET revoked_at = NOW() WHERE token = $1 AND revoked_at IS NULL
+		 RETURNING user_id::text, session_id, aal, amr, expires_at <= NOW() AS expired`, token)
+	if err != nil {
+		return fail(domain.ErrUnauthorized)
+	}
+	var meta domain.SessionMeta
+	var refreshToken string
+	if row != nil {
+		if expired, _ := row["expired"].(bool); expired {
+			return fail(domain.ErrRefreshExpired)
 		}
-		if revokedAt, _ := row["revoked_at"].(time.Time); time.Since(revokedAt) > refreshReuseInterval {
-			userID, sessionID := asString(row["user_id"]), asString(row["session_id"])
+		meta = sessionMetaFromRow(row)
+		if meta.SessionID == "" {
+			meta.SessionID = uuid.NewString()
+		}
+		amrJSON, err := json.Marshal(meta.AMR)
+		if err != nil {
+			return fail(err)
+		}
+		if _, err := tx.Exec(ctx,
+			"INSERT INTO auth.refresh_tokens (user_id, token, session_id, ip, user_agent, expires_at, aal, amr) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8::jsonb)",
+			asString(row["user_id"]), next.Token, meta.SessionID, next.IP, next.UserAgent, time.Unix(next.ExpiresAt, 0), meta.AAL, string(amrJSON)); err != nil {
+			return fail(err)
+		}
+		refreshToken = next.Token
+	} else {
+		row, err = tx.QueryRow(ctx,
+			`SELECT user_id::text, session_id, aal, revoked_at > NOW() - $2::float8 * INTERVAL '1 second' AS in_grace
+			 FROM auth.refresh_tokens WHERE token = $1`, token, refreshReuseInterval.Seconds())
+		if err != nil || row == nil {
+			return fail(domain.ErrUnauthorized)
+		}
+		userID, sessionID := asString(row["user_id"]), asString(row["session_id"])
+		var child map[string]any
+		if inGrace, _ := row["in_grace"].(bool); inGrace && sessionID != "" {
+			child, _ = tx.QueryRow(ctx,
+				`SELECT token, session_id, aal, amr FROM auth.refresh_tokens
+				 WHERE session_id = $1 AND aal = $2 AND revoked_at IS NULL AND expires_at > NOW()
+				 ORDER BY id DESC LIMIT 1`, sessionID, asString(row["aal"]))
+		}
+		if child == nil {
 			s.logger.Warn("refresh token reuse detected, revoking session", "user_id", userID, "session_id", sessionID)
 			if sessionID != "" {
-				_ = s.RevokeSessionByID(ctx, sessionID)
+				_, err = tx.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE session_id = $1", sessionID)
 			} else {
-				_ = s.RevokeAllUserSessions(ctx, userID)
+				_, err = tx.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE user_id = $1::uuid", userID)
 			}
-			return nil, domain.SessionMeta{}, domain.ErrRefreshReuse
+			if err == nil {
+				err = tx.Commit(ctx)
+			}
+			if err != nil {
+				return fail(err)
+			}
+			return fail(domain.ErrRefreshReuse)
 		}
+		meta = sessionMetaFromRow(child)
+		refreshToken = asString(child["token"])
 	}
-	if expiresAt, _ := row["expires_at"].(time.Time); time.Now().After(expiresAt) {
-		return nil, domain.SessionMeta{}, domain.ErrRefreshExpired
+
+	// ponytail: pruned only when the session rotates again; add a sweeper if idle sessions pile up.
+	if _, err := tx.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE session_id = $1 AND revoked_at IS NOT NULL AND expires_at < NOW()", meta.SessionID); err != nil {
+		return fail(err)
 	}
+	userRow, err := tx.QueryRow(ctx, "SELECT "+userSelectCols+" FROM auth.users WHERE id = $1::uuid", asString(row["user_id"]))
+	if err != nil || userRow == nil {
+		return fail(domain.ErrUnauthorized)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fail(err)
+	}
+	return userRow, meta, refreshToken, nil
+}
+
+func sessionMetaFromRow(row map[string]any) domain.SessionMeta {
 	meta := domain.SessionMeta{SessionID: asString(row["session_id"]), AAL: asString(row["aal"]), AMR: domain.ParseAMR(row["amr"])}
-	if meta.SessionID != "" {
-		// ponytail: pruned only when the session rotates again; add a sweeper if idle sessions pile up.
-		_, _ = s.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE session_id = $1 AND revoked_at IS NOT NULL AND expires_at < NOW()", meta.SessionID)
+	if meta.AAL == "" {
+		meta.AAL = "aal1"
 	}
-	userRow, err := s.GetUserByID(ctx, asString(row["user_id"]))
-	if err != nil {
-		return nil, domain.SessionMeta{}, domain.ErrUnauthorized
+	if meta.AMR == nil {
+		meta.AMR = []domain.AMREntry{}
 	}
-	return userRow, meta, nil
+	return meta
 }
 
 func (s *Service) RevokeSessionByID(ctx context.Context, sessionID string) error {

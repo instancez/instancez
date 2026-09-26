@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/instancez/instancez/internal/domain"
 )
 
@@ -18,7 +20,23 @@ type fakeDB struct {
 	queryRowFn func(ctx context.Context, q string, args ...any) (map[string]any, error)
 	queryFn    func(ctx context.Context, q string, args ...any) ([]map[string]any, error)
 	execFn     func(ctx context.Context, q string, args ...any) (int64, error)
+	committed  bool
 }
+
+// fakeTx runs statements through its fakeDB and records Commit.
+type fakeTx struct{ db *fakeDB }
+
+func (t fakeTx) Query(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
+	return t.db.Query(ctx, q, args...)
+}
+func (t fakeTx) QueryRow(ctx context.Context, q string, args ...any) (map[string]any, error) {
+	return t.db.QueryRow(ctx, q, args...)
+}
+func (t fakeTx) Exec(ctx context.Context, q string, args ...any) (int64, error) {
+	return t.db.Exec(ctx, q, args...)
+}
+func (t fakeTx) Commit(ctx context.Context) error   { t.db.committed = true; return nil }
+func (t fakeTx) Rollback(ctx context.Context) error { return nil }
 
 func (f *fakeDB) Close() error                                    { return nil }
 func (f *fakeDB) Ping(ctx context.Context) error                  { return nil }
@@ -48,7 +66,7 @@ func (f *fakeDB) Exec(ctx context.Context, q string, args ...any) (int64, error)
 func (f *fakeDB) WithRLS(ctx context.Context, session domain.Session) (context.Context, error) {
 	return ctx, nil
 }
-func (f *fakeDB) Begin(ctx context.Context) (domain.Tx, error) { return nil, nil }
+func (f *fakeDB) Begin(ctx context.Context) (domain.Tx, error) { return fakeTx{f}, nil }
 
 func newTestService(db domain.Database) *Service {
 	return NewService(db, &domain.Config{Auth: &domain.Auth{}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -436,15 +454,17 @@ func TestInsertRefreshToken_DefaultsEmptySessionState(t *testing.T) {
 	}
 }
 
-// refreshDB scripts the rotate UPDATE, the fallback SELECT, and the user fetch.
-func refreshDB(rotated, existing map[string]any, execs *[]string) *fakeDB {
+// refreshDB scripts the rotate UPDATE, the parent lookup, the grace child lookup and the user fetch.
+func refreshDB(rotated, parent, child map[string]any, execs *[]string) *fakeDB {
 	return &fakeDB{
 		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
 			switch {
 			case strings.HasPrefix(q, "UPDATE auth.refresh_tokens"):
 				return rotated, nil
-			case strings.Contains(q, "FROM auth.refresh_tokens"):
-				return existing, nil
+			case strings.Contains(q, "AS in_grace"):
+				return parent, nil
+			case strings.Contains(q, "ORDER BY id DESC"):
+				return child, nil
 			case strings.Contains(q, "FROM auth.users"):
 				return map[string]any{"id": "u1"}, nil
 			}
@@ -457,76 +477,128 @@ func refreshDB(rotated, existing map[string]any, execs *[]string) *fakeDB {
 	}
 }
 
+var testRotation = domain.RefreshRotation{Token: "child-new", ExpiresAt: 1 << 40}
+
 func TestConsumeRefreshToken_RotatesAndReturnsSessionState(t *testing.T) {
 	var execs []string
-	s := newTestService(refreshDB(map[string]any{
-		"user_id": "u1", "session_id": "s1", "aal": "aal2",
-		"amr":        []any{map[string]any{"method": "totp", "timestamp": float64(9)}},
-		"expires_at": time.Now().Add(time.Hour),
-	}, nil, &execs))
-	row, meta, err := s.ConsumeRefreshToken(context.Background(), "raw")
-	if err != nil || row["id"] != "u1" {
-		t.Fatalf("row=%v err=%v", row, err)
+	db := refreshDB(map[string]any{
+		"user_id": "u1", "session_id": "s1", "aal": "aal2", "expired": false,
+		"amr": []any{map[string]any{"method": "totp", "timestamp": float64(9)}},
+	}, nil, nil, &execs)
+	row, meta, rt, err := newTestService(db).ConsumeRefreshToken(context.Background(), "raw", testRotation)
+	if err != nil || row["id"] != "u1" || rt != "child-new" {
+		t.Fatalf("row=%v rt=%q err=%v", row, rt, err)
 	}
 	if meta.SessionID != "s1" || meta.AAL != "aal2" || len(meta.AMR) != 1 || meta.AMR[0].Method != "totp" {
 		t.Fatalf("meta = %+v", meta)
 	}
+	if len(execs) == 0 || !strings.HasPrefix(execs[0], "INSERT INTO auth.refresh_tokens") {
+		t.Fatalf("child not inserted: %v", execs)
+	}
+	if !db.committed {
+		t.Fatal("rotation must commit")
+	}
 }
 
-func TestConsumeRefreshToken_ReuseWithinGraceSucceeds(t *testing.T) {
+func TestConsumeRefreshToken_LegacyNullSessionGetsUUIDOnRotate(t *testing.T) {
+	var inserted []any
+	db := refreshDB(map[string]any{"user_id": "u1", "session_id": nil, "aal": nil, "amr": nil, "expired": false}, nil, nil, new([]string))
+	db.execFn = func(ctx context.Context, q string, args ...any) (int64, error) {
+		if strings.HasPrefix(q, "INSERT") {
+			inserted = args
+		}
+		return 1, nil
+	}
+	_, meta, _, err := newTestService(db).ConsumeRefreshToken(context.Background(), "raw", testRotation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, perr := uuid.Parse(meta.SessionID); perr != nil || inserted[2] != meta.SessionID {
+		t.Fatalf("sid %q (insert %v) must be a uuid", meta.SessionID, inserted[2])
+	}
+	if meta.AAL != "aal1" || inserted[6] != "aal1" || inserted[7] != "[]" {
+		t.Fatalf("defaults lost: meta=%+v insert=%v", meta, inserted)
+	}
+}
+
+func TestConsumeRefreshToken_ExpiredDoesNotBurnToken(t *testing.T) {
 	var execs []string
-	s := newTestService(refreshDB(nil, map[string]any{
-		"user_id": "u1", "session_id": "s1", "aal": "aal1", "amr": "[]",
-		"expires_at": time.Now().Add(time.Hour), "revoked_at": time.Now().Add(-2 * time.Second),
-	}, &execs))
-	if _, _, err := s.ConsumeRefreshToken(context.Background(), "raw"); err != nil {
-		t.Fatalf("concurrent refresh inside grace must succeed, got %v", err)
+	db := refreshDB(map[string]any{"user_id": "u1", "session_id": "s1", "aal": "aal1", "amr": "[]", "expired": true}, nil, nil, &execs)
+	_, _, _, err := newTestService(db).ConsumeRefreshToken(context.Background(), "raw", testRotation)
+	if !errors.Is(err, domain.ErrRefreshExpired) || db.committed || len(execs) != 0 {
+		t.Fatalf("err=%v committed=%v execs=%v", err, db.committed, execs)
+	}
+}
+
+func TestConsumeRefreshToken_ReuseWithinGraceReturnsCurrentChild(t *testing.T) {
+	var execs []string
+	var childArgs []any
+	db := refreshDB(nil,
+		map[string]any{"user_id": "u1", "session_id": "s1", "aal": "aal2", "in_grace": true},
+		map[string]any{"token": "child-live", "session_id": "s1", "aal": "aal2", "amr": "[]"}, &execs)
+	inner := db.queryRowFn
+	db.queryRowFn = func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+		if strings.Contains(q, "ORDER BY id DESC") {
+			childArgs = args
+		}
+		return inner(ctx, q, args...)
+	}
+	_, meta, rt, err := newTestService(db).ConsumeRefreshToken(context.Background(), "raw", testRotation)
+	if err != nil || rt != "child-live" || meta.SessionID != "s1" {
+		t.Fatalf("grace replay must return the live child, got rt=%q meta=%+v err=%v", rt, meta, err)
+	}
+	if childArgs[0] != "s1" || childArgs[1] != "aal2" {
+		t.Fatalf("child lookup must stay in the parent's session and aal, got %v", childArgs)
 	}
 	for _, q := range execs {
 		if !strings.Contains(q, "expires_at < NOW()") {
-			t.Fatalf("grace reuse may only prune expired rows, got %q", q)
+			t.Fatalf("grace reuse may not mint or revoke, got %q", q)
 		}
+	}
+}
+
+func TestConsumeRefreshToken_ReuseWithinGraceWithoutChildRevokesFamily(t *testing.T) {
+	var execs []string
+	db := refreshDB(nil, map[string]any{"user_id": "u1", "session_id": "s1", "aal": "aal1", "in_grace": true}, nil, &execs)
+	_, _, _, err := newTestService(db).ConsumeRefreshToken(context.Background(), "raw", testRotation)
+	if !errors.Is(err, domain.ErrRefreshReuse) || len(execs) != 1 || !strings.Contains(execs[0], "WHERE session_id = $1") {
+		t.Fatalf("err=%v execs=%v", err, execs)
 	}
 }
 
 func TestConsumeRefreshToken_ReuseAfterGraceRevokesFamily(t *testing.T) {
 	var execs []string
-	s := newTestService(refreshDB(nil, map[string]any{
-		"user_id": "u1", "session_id": "s1", "aal": "aal1", "amr": "[]",
-		"expires_at": time.Now().Add(time.Hour), "revoked_at": time.Now().Add(-time.Minute),
-	}, &execs))
-	_, _, err := s.ConsumeRefreshToken(context.Background(), "raw")
+	db := refreshDB(nil,
+		map[string]any{"user_id": "u1", "session_id": "s1", "aal": "aal1", "in_grace": false},
+		map[string]any{"token": "child-live"}, &execs)
+	_, _, _, err := newTestService(db).ConsumeRefreshToken(context.Background(), "raw", testRotation)
 	if !errors.Is(err, domain.ErrRefreshReuse) {
 		t.Fatalf("want ErrRefreshReuse, got %v", err)
 	}
-	if len(execs) != 1 || !strings.Contains(execs[0], "WHERE session_id = $1") {
-		t.Fatalf("expected one session-family revoke, got %v", execs)
+	if len(execs) != 1 || !strings.Contains(execs[0], "WHERE session_id = $1") || !db.committed {
+		t.Fatalf("expected one committed session-family revoke, got %v committed=%v", execs, db.committed)
 	}
 }
 
 func TestConsumeRefreshToken_LegacyNullSessionRevokesAllUserTokens(t *testing.T) {
 	var execs []string
-	s := newTestService(refreshDB(nil, map[string]any{
-		"user_id": "u1", "session_id": nil, "aal": "aal1", "amr": "[]",
-		"expires_at": time.Now().Add(time.Hour), "revoked_at": time.Now().Add(-time.Minute),
-	}, &execs))
-	_, _, err := s.ConsumeRefreshToken(context.Background(), "raw")
+	db := refreshDB(nil, map[string]any{"user_id": "u1", "session_id": nil, "aal": "aal1", "in_grace": true}, nil, &execs)
+	_, _, _, err := newTestService(db).ConsumeRefreshToken(context.Background(), "raw", testRotation)
 	if !errors.Is(err, domain.ErrRefreshReuse) || len(execs) != 1 || !strings.Contains(execs[0], "WHERE user_id = $1") {
 		t.Fatalf("err=%v execs=%v", err, execs)
 	}
 }
 
-func TestConsumeRefreshToken_UnknownAndExpired(t *testing.T) {
+func TestConsumeRefreshToken_UnknownAndEmpty(t *testing.T) {
 	var execs []string
-	s := newTestService(refreshDB(nil, nil, &execs))
-	if _, _, err := s.ConsumeRefreshToken(context.Background(), ""); !errors.Is(err, domain.ErrUnauthorized) {
-		t.Fatalf("empty/unknown token: want ErrUnauthorized, got %v", err)
+	s := newTestService(refreshDB(nil, nil, nil, &execs))
+	for _, tok := range []string{"", "nope"} {
+		if _, _, _, err := s.ConsumeRefreshToken(context.Background(), tok, testRotation); !errors.Is(err, domain.ErrUnauthorized) {
+			t.Fatalf("%q: want ErrUnauthorized, got %v", tok, err)
+		}
 	}
-	s = newTestService(refreshDB(map[string]any{
-		"user_id": "u1", "session_id": "s1", "aal": "aal1", "amr": "[]", "expires_at": time.Now().Add(-time.Second),
-	}, nil, &execs))
-	if _, _, err := s.ConsumeRefreshToken(context.Background(), "raw"); !errors.Is(err, domain.ErrRefreshExpired) {
-		t.Fatalf("expired: want ErrRefreshExpired, got %v", err)
+	if len(execs) != 0 {
+		t.Fatalf("unknown token must not write, got %v", execs)
 	}
 }
 

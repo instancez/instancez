@@ -572,9 +572,10 @@ func TestHandleToken_UnknownGrantType(t *testing.T) {
 // and issues a new refresh_token.
 func TestHandleRefreshGrant_IgnoresDeprecatedRefreshTokensFalse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	inserted := false
+	var minted string
 	svc := &stubAuthService{
-		consumeRefreshFn: func(ctx context.Context, token string) (map[string]any, domain.SessionMeta, error) {
+		consumeRefreshFn: func(ctx context.Context, token string, next domain.RefreshRotation) (map[string]any, domain.SessionMeta, string, error) {
+			minted = next.Token
 			return map[string]any{
 				"id":                 "11111111-2222-3333-4444-555555555555",
 				"email":              "u@e.com",
@@ -583,11 +584,7 @@ func TestHandleRefreshGrant_IgnoresDeprecatedRefreshTokensFalse(t *testing.T) {
 				"raw_user_meta_data": `{}`,
 				"created_at":         time.Now(),
 				"updated_at":         time.Now(),
-			}, domain.SessionMeta{}, nil
-		},
-		insertRefreshTokenFn: func(ctx context.Context, userID, token string, meta domain.SessionMeta, expiresAt int64) error {
-			inserted = true
-			return nil
+			}, domain.SessionMeta{}, next.Token, nil
 		},
 	}
 	h := &AuthHandler{
@@ -614,11 +611,8 @@ func TestHandleRefreshGrant_IgnoresDeprecatedRefreshTokensFalse(t *testing.T) {
 	var body map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &body)
 	rt, _ := body["refresh_token"].(string)
-	if rt == "" {
-		t.Errorf("expected non-empty refresh_token in response, got %v", body["refresh_token"])
-	}
-	if !inserted {
-		t.Error("expected InsertRefreshToken to be called")
+	if rt == "" || rt != minted {
+		t.Errorf("expected the rotated refresh_token %q in response, got %v", minted, body["refresh_token"])
 	}
 }
 
@@ -754,7 +748,7 @@ type stubAuthService struct {
 	verifyPasswordFn      func(ctx context.Context, email, password string) (map[string]any, error)
 	getUserEmailFn        func(ctx context.Context, userID string) (string, error)
 	hasPasswordFn         func(ctx context.Context, userID string) (bool, error)
-	consumeRefreshFn      func(ctx context.Context, token string) (map[string]any, domain.SessionMeta, error)
+	consumeRefreshFn      func(ctx context.Context, token string, next domain.RefreshRotation) (map[string]any, domain.SessionMeta, string, error)
 	createOneTimeTokenFn  func(ctx context.Context, userID, token, purpose string, expiresAt int64) error
 	createOTPCodeFn       func(ctx context.Context, userID, token, code, email, purpose string, expiresAt int64) error
 	verifyOTPFn           func(ctx context.Context, token, email string, allowedPurposes []string) (domain.OTPRow, error)
@@ -850,11 +844,11 @@ func (s *stubAuthService) InsertRefreshToken(ctx context.Context, userID, token 
 	}
 	return nil
 }
-func (s *stubAuthService) ConsumeRefreshToken(ctx context.Context, token string) (map[string]any, domain.SessionMeta, error) {
+func (s *stubAuthService) ConsumeRefreshToken(ctx context.Context, token string, next domain.RefreshRotation) (map[string]any, domain.SessionMeta, string, error) {
 	if s.consumeRefreshFn != nil {
-		return s.consumeRefreshFn(ctx, token)
+		return s.consumeRefreshFn(ctx, token, next)
 	}
-	return nil, domain.SessionMeta{}, domain.ErrUnauthorized
+	return nil, domain.SessionMeta{}, "", domain.ErrUnauthorized
 }
 func (s *stubAuthService) RevokeSessionByID(ctx context.Context, sessionID string) error { return nil }
 func (s *stubAuthService) RevokeOtherSessions(ctx context.Context, userID, keep string) error {

@@ -6,12 +6,14 @@ import (
 	"io"
 	"log/slog"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"github.com/pquerna/otp/totp"
 
 	"github.com/instancez/instancez/internal/domain"
@@ -82,8 +84,10 @@ func TestPasswordGrant_JWTCarriesSupabaseSessionClaims(t *testing.T) {
 	if len(amr) != 1 || first["method"] != "password" || first["timestamp"] == nil {
 		t.Errorf("amr = %v", c["amr"])
 	}
-	if sid, _ := c["session_id"].(string); sid == "" || sid != saved.SessionID {
+	if sid, _ := c["session_id"].(string); sid != saved.SessionID {
 		t.Errorf("session_id %q must match the persisted refresh row %q", sid, saved.SessionID)
+	} else if _, err := uuid.Parse(sid); err != nil {
+		t.Errorf("session_id %q must be a uuid: %v", sid, err)
 	}
 	if am, _ := c["app_metadata"].(map[string]any); am["aal"] != nil {
 		t.Errorf("aal must not leak into app_metadata: %v", am)
@@ -91,15 +95,17 @@ func TestPasswordGrant_JWTCarriesSupabaseSessionClaims(t *testing.T) {
 }
 
 func TestRefreshGrant_PreservesSessionState(t *testing.T) {
-	var saved domain.SessionMeta
+	var next domain.RefreshRotation
+	inserted := false
 	in := domain.SessionMeta{SessionID: "sess-1", AAL: "aal2",
 		AMR: []domain.AMREntry{{Method: "totp", Timestamp: 200}, {Method: "password", Timestamp: 100}}}
 	svc := &stubAuthService{
-		consumeRefreshFn: func(ctx context.Context, tok string) (map[string]any, domain.SessionMeta, error) {
-			return testUserRow("u1"), in, nil
+		consumeRefreshFn: func(ctx context.Context, tok string, n domain.RefreshRotation) (map[string]any, domain.SessionMeta, string, error) {
+			next = n
+			return testUserRow("u1"), in, "existing-child", nil
 		},
 		insertRefreshTokenFn: func(ctx context.Context, uid, tok string, m domain.SessionMeta, exp int64) error {
-			saved = m
+			inserted = true
 			return nil
 		},
 	}
@@ -115,8 +121,16 @@ func TestRefreshGrant_PreservesSessionState(t *testing.T) {
 	if len(amr) != 2 || amr[0].(map[string]any)["method"] != "totp" {
 		t.Errorf("amr order lost: %v", c["amr"])
 	}
-	if saved.SessionID != "sess-1" || saved.AAL != "aal2" || len(saved.AMR) != 2 {
-		t.Errorf("rotated row lost session state: %+v", saved)
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["refresh_token"] != "existing-child" {
+		t.Errorf("refresh_token = %v, want the token the service handed out", body["refresh_token"])
+	}
+	if inserted {
+		t.Error("refresh grant must not mint a second refresh row")
+	}
+	if next.Token == "" || next.ExpiresAt <= time.Now().Unix() || next.IP == "" {
+		t.Errorf("rotation request incomplete: %+v", next)
 	}
 }
 
@@ -129,8 +143,8 @@ func TestRefreshGrant_ErrorMapping(t *testing.T) {
 		{domain.ErrRefreshExpired, "expired"},
 		{domain.ErrUnauthorized, "Invalid refresh token"},
 	} {
-		svc := &stubAuthService{consumeRefreshFn: func(ctx context.Context, tok string) (map[string]any, domain.SessionMeta, error) {
-			return nil, domain.SessionMeta{}, tc.err
+		svc := &stubAuthService{consumeRefreshFn: func(ctx context.Context, tok string, n domain.RefreshRotation) (map[string]any, domain.SessionMeta, string, error) {
+			return nil, domain.SessionMeta{}, "", tc.err
 		}}
 		w := postJSON(newTokenRouter(t, svc, nil), "/auth/v1/token?grant_type=refresh_token", `{"refresh_token":"rt"}`)
 		if w.Code != 401 || !strings.Contains(w.Body.String(), tc.want) {
@@ -165,7 +179,7 @@ func TestMFAVerify_KeepsSessionIDAndPrependsTOTP(t *testing.T) {
 		"sub": m.userID, "role": "authenticated", "aud": "authenticated",
 		"iat": time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix(),
 		"session_id": "sess-mfa", "aal": "aal1",
-		"amr": []map[string]any{{"method": "password", "timestamp": 100}},
+		"amr": []map[string]any{{"method": "totp", "timestamp": 150}, {"method": "password", "timestamp": 100}},
 	})
 	code, _ := totp.GenerateCode(secret, time.Now())
 	w := m.do("POST", "/auth/v1/factors/f1/verify", `{"code":"`+code+`"}`)
@@ -207,6 +221,25 @@ func TestVerify_AMRMethodPerType(t *testing.T) {
 		amr, _ := accessClaims(t, w)["amr"].([]any)
 		if len(amr) != 1 || amr[0].(map[string]any)["method"] != want {
 			t.Errorf("%s: amr = %v, want method %s", typ, amr, want)
+		}
+	}
+}
+
+func TestAddAMR(t *testing.T) {
+	e := func(m string, ts int64) domain.AMREntry { return domain.AMREntry{Method: m, Timestamp: ts} }
+	for name, tc := range map[string]struct {
+		in   []domain.AMREntry
+		add  domain.AMREntry
+		want []domain.AMREntry
+	}{
+		"nil":              {nil, e("totp", 5), []domain.AMREntry{e("totp", 5)}},
+		"re-verify":        {[]domain.AMREntry{e("totp", 3), e("password", 1)}, e("totp", 5), []domain.AMREntry{e("totp", 5), e("password", 1)}},
+		"same second":      {[]domain.AMREntry{e("totp", 5)}, e("totp", 5), []domain.AMREntry{e("totp", 5)}},
+		"legacy dupes":     {[]domain.AMREntry{e("password", 1), e("password", 4)}, e("totp", 5), []domain.AMREntry{e("totp", 5), e("password", 4)}},
+		"unsorted history": {[]domain.AMREntry{e("otp", 1), e("password", 2)}, e("totp", 3), []domain.AMREntry{e("totp", 3), e("password", 2), e("otp", 1)}},
+	} {
+		if got := addAMR(tc.in, tc.add); !slices.Equal(got, tc.want) {
+			t.Errorf("%s: got %v, want %v", name, got, tc.want)
 		}
 	}
 }

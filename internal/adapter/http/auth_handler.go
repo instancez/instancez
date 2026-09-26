@@ -21,6 +21,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	adapterauth "github.com/instancez/instancez/internal/adapter/auth"
 	"github.com/instancez/instancez/internal/app"
 	"github.com/instancez/instancez/internal/domain"
@@ -366,8 +367,11 @@ func (h *AuthHandler) handleRefreshGrant(c *gin.Context) {
 		return
 	}
 
-	ctx := c.Request.Context()
-	userRow, meta, err := h.authSvc.ConsumeRefreshToken(ctx, req.RefreshToken)
+	ctx := ctxWithRequestMeta(c.Request.Context(), c)
+	next := domain.RefreshRotation{Token: generateRandomToken(), ExpiresAt: time.Now().Add(h.refreshExpiry()).Unix()}
+	next.IP, _ = ctx.Value(ctxKeyIP).(string)
+	next.UserAgent, _ = ctx.Value(ctxKeyUA).(string)
+	userRow, meta, refreshToken, err := h.authSvc.ConsumeRefreshToken(ctx, req.RefreshToken, next)
 	if err != nil {
 		switch {
 		case errors.Is(err, domain.ErrRefreshExpired):
@@ -380,14 +384,12 @@ func (h *AuthHandler) handleRefreshGrant(c *gin.Context) {
 		return
 	}
 
-	userID := asString(userRow["id"])
-
-	ctx = ctxWithRequestMeta(ctx, c)
-	session, err := h.issueSession(ctx, userID, userRow, meta)
+	session, err := h.signSession(ctx, asString(userRow["id"]), userRow, meta)
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to generate token")
 		return
 	}
+	session["refresh_token"] = refreshToken
 	c.JSON(200, session)
 }
 
@@ -613,16 +615,16 @@ func (h *AuthHandler) handleRecover(c *gin.Context) {
 
 // ---------- /verify ----------
 
-// handleVerify implements POST /verify {type, token, email} — the
-// supabase-js verifyOtp entrypoint. On success it consumes the token and
-// returns a full session so the client can transition to a recovery /
-// confirmed state.
 // verifyAMRMethod maps a verify type to GoTrue's amr method name.
 var verifyAMRMethod = map[string]string{
 	"signup": "email/signup", "email": "otp", "magiclink": "magiclink",
 	"recovery": "recovery", "email_change": "email_change",
 }
 
+// handleVerify implements POST /verify {type, token, email} — the
+// supabase-js verifyOtp entrypoint. On success it consumes the token and
+// returns a full session so the client can transition to a recovery /
+// confirmed state.
 func (h *AuthHandler) handleVerify(c *gin.Context) {
 	var req struct {
 		Type  string `json:"type" binding:"required"`
@@ -1415,9 +1417,36 @@ func (h *AuthHandler) buildSession(ctx context.Context, userID string, userRow m
 	})
 }
 
-// issueSession signs an access token and a refresh token for the session in
-// meta and returns the GoTrue-shaped session payload.
+// issueSession signs an access token and stores a new refresh token for the
+// session in meta, returning the GoTrue-shaped session payload.
 func (h *AuthHandler) issueSession(ctx context.Context, userID string, userRow map[string]any, meta domain.SessionMeta) (gin.H, error) {
+	if meta.SessionID == "" {
+		meta.SessionID = uuid.NewString()
+	}
+	result, err := h.signSession(ctx, userID, userRow, meta)
+	if err != nil {
+		return nil, err
+	}
+	refreshToken := generateRandomToken()
+	meta.IP, _ = ctx.Value(ctxKeyIP).(string)
+	meta.UserAgent, _ = ctx.Value(ctxKeyUA).(string)
+	if err := h.authSvc.InsertRefreshToken(context.Background(), userID, refreshToken, meta, time.Now().Add(h.refreshExpiry()).Unix()); err != nil {
+		return nil, err
+	}
+	result["refresh_token"] = refreshToken
+	return result, nil
+}
+
+func (h *AuthHandler) refreshExpiry() time.Duration {
+	d, _ := time.ParseDuration(h.cfg.Auth.RefreshTokenExpiry)
+	if d <= 0 {
+		d = 7 * 24 * time.Hour
+	}
+	return d
+}
+
+// signSession signs the access token for meta's session, without a refresh token.
+func (h *AuthHandler) signSession(ctx context.Context, userID string, userRow map[string]any, meta domain.SessionMeta) (gin.H, error) {
 	key, err := h.jwtKeys.Active(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("jwt key: %w", err)
@@ -1430,9 +1459,6 @@ func (h *AuthHandler) issueSession(ctx context.Context, userID string, userRow m
 
 	now := time.Now()
 	exp := now.Add(expiry)
-	if meta.SessionID == "" {
-		meta.SessionID = generateRandomToken()
-	}
 	if meta.AAL == "" {
 		meta.AAL = "aal1"
 	}
@@ -1505,19 +1531,6 @@ func (h *AuthHandler) issueSession(ctx context.Context, userID string, userRow m
 		"expires_at":   exp.Unix(),
 		"user":         h.buildUser(userID, userRow, h.userIdentities(ctx, userID)),
 	}
-
-	refreshToken := generateRandomToken()
-	refreshExpiry, _ := time.ParseDuration(h.cfg.Auth.RefreshTokenExpiry)
-	if refreshExpiry == 0 {
-		refreshExpiry = 7 * 24 * time.Hour
-	}
-	meta.IP, _ = ctx.Value(ctxKeyIP).(string)
-	meta.UserAgent, _ = ctx.Value(ctxKeyUA).(string)
-	if err := h.authSvc.InsertRefreshToken(context.Background(), userID, refreshToken, meta, time.Now().Add(refreshExpiry).Unix()); err != nil {
-		return nil, err
-	}
-	result["refresh_token"] = refreshToken
-
 	return result, nil
 }
 

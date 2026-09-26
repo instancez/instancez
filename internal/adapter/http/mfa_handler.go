@@ -2,6 +2,7 @@ package http
 
 import (
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -186,7 +187,7 @@ func (h *AuthHandler) handleVerifyFactor(c *gin.Context) {
 	meta := domain.SessionMeta{
 		SessionID: sid,
 		AAL:       "aal2",
-		AMR:       append([]domain.AMREntry{{Method: "totp", Timestamp: time.Now().Unix()}}, domain.ParseAMR(claims["amr"])...),
+		AMR:       addAMR(domain.ParseAMR(claims["amr"]), domain.AMREntry{Method: "totp", Timestamp: time.Now().Unix()}),
 	}
 	sess, err := h.issueSession(ctxWithRequestMeta(ctx, c), session.UserID, userRow, meta)
 	if err != nil {
@@ -194,6 +195,21 @@ func (h *AuthHandler) handleVerifyFactor(c *gin.Context) {
 		return
 	}
 	c.JSON(200, sess)
+}
+
+// addAMR records e and keeps one entry per method, newest first.
+func addAMR(amr []domain.AMREntry, e domain.AMREntry) []domain.AMREntry {
+	all := append([]domain.AMREntry{e}, amr...)
+	sort.SliceStable(all, func(i, j int) bool { return all[i].Timestamp > all[j].Timestamp })
+	seen := map[string]bool{}
+	out := all[:0]
+	for _, a := range all {
+		if !seen[a.Method] {
+			seen[a.Method] = true
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // handleUnenrollFactor deletes a factor row. Challenges cascade via the

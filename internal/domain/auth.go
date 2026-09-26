@@ -50,6 +50,14 @@ type SessionMeta struct {
 	AMR       []AMREntry
 }
 
+// RefreshRotation is the child token a refresh grant mints when it rotates.
+type RefreshRotation struct {
+	Token     string
+	ExpiresAt int64
+	IP        string
+	UserAgent string
+}
+
 // ParseAMR decodes an amr value from a JSONB column or a decoded JWT claim.
 func ParseAMR(v any) []AMREntry {
 	var b []byte
@@ -123,10 +131,12 @@ type AuthService interface {
 	// ---- sessions / refresh tokens ----
 	// InsertRefreshToken persists a refresh token row carrying request meta.
 	InsertRefreshToken(ctx context.Context, userID, token string, meta SessionMeta, expiresAt int64) error
-	// ConsumeRefreshToken rotates a refresh token and returns the user row plus
-	// the session state to carry forward. Errors: ErrRefreshExpired,
-	// ErrRefreshReuse (session family revoked), ErrUnauthorized.
-	ConsumeRefreshToken(ctx context.Context, token string) (userRow map[string]any, meta SessionMeta, err error)
+	// ConsumeRefreshToken rotates a refresh token to next.Token and returns the
+	// user row, the session state and the refresh token to hand out. A replay
+	// inside the reuse interval gets the session's current child instead.
+	// Errors: ErrRefreshExpired, ErrRefreshReuse (session family revoked),
+	// ErrUnauthorized.
+	ConsumeRefreshToken(ctx context.Context, token string, next RefreshRotation) (userRow map[string]any, meta SessionMeta, refreshToken string, err error)
 	// RevokeSessionByID deletes refresh tokens for a single session.
 	RevokeSessionByID(ctx context.Context, sessionID string) error
 	// RevokeOtherSessions deletes the user's refresh tokens except keepSessionID.
