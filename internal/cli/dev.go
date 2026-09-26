@@ -143,6 +143,9 @@ func runDev(opts devOptions) error {
 	}
 
 	km := app.NewJWTKeyManager(ownerDB)
+	if d, err := time.ParseDuration(cfg.Auth.JWTExpiry); err == nil {
+		km.SetMaxTokenLifetime(d)
+	}
 
 	// Function runtime (dev builds: `npm ci` runs in functions/ when a
 	// package.json is present, then a worker pool is spawned pointing at the

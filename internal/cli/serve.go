@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/instancez/instancez/dashboard"
 	"github.com/instancez/instancez/internal/adapter/funcs"
@@ -195,6 +196,9 @@ func runServe(opts serveOptions) error {
 	}
 
 	km := app.NewJWTKeyManager(ownerDB)
+	if d, err := time.ParseDuration(cfg.Auth.JWTExpiry); err == nil {
+		km.SetMaxTokenLifetime(d)
+	}
 
 	// Function runtime (serve consumes the pre-built bundle; it NEVER builds).
 	// The runtime is wrapped in a SwapRuntime so the config watcher can

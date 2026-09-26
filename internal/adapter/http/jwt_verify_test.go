@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -156,38 +155,35 @@ func TestJWTAuth_RejectsUnknownKid(t *testing.T) {
 	}
 }
 
-// After rotation the old key is retired but must still verify tokens it signed
-// before the rotation. The by-kid lookup therefore must NOT filter on
-// retired_at (unlike Active/AllPublicKeys), and such a token must yield 200.
-func TestJWTAuth_AcceptsRetiredKey(t *testing.T) {
+// A retired key verifies tokens it signed until jwt_expiry (plus leeway) has passed, then stops.
+func TestJWTAuth_RetiredKeyCutoff(t *testing.T) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("gen key: %v", err)
 	}
 	privPEM := pkcs1PEM(t, priv)
-
-	var gotQuery string
-	db := &stubDB{
-		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			gotQuery = q
-			// The row exists even though this key has been retired.
-			return map[string]any{
-				"kid":        "retired-kid",
-				"algorithm":  "RS256",
-				"secret":     privPEM,
-				"created_at": time.Now(),
-			}, nil
-		},
-	}
-	km := app.NewJWTKeyManager(db)
 	tok := rs256Token(t, priv, "retired-kid", authClaims())
 
-	w := probe(km, tok)
-	if w.Code != 200 {
-		t.Fatalf("status = %d, want 200 for retired-key token (body: %s)", w.Code, w.Body.String())
-	}
-	if strings.Contains(gotQuery, "retired_at") {
-		t.Fatalf("by-kid lookup filters on retired_at, so retired keys would stop verifying: %q", gotQuery)
+	for _, c := range []struct {
+		ago  time.Duration
+		want int
+	}{{time.Minute, 200}, {time.Hour, 401}} {
+		db := &stubDB{
+			queryFn: func(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
+				return []map[string]any{{
+					"kid":        "retired-kid",
+					"algorithm":  "RS256",
+					"secret":     privPEM,
+					"created_at": time.Now().Add(-2 * time.Hour),
+					"retired_at": time.Now().Add(-c.ago),
+				}}, nil
+			},
+		}
+		km := app.NewJWTKeyManager(db)
+		km.SetMaxTokenLifetime(15 * time.Minute)
+		if w := probe(km, tok); w.Code != c.want {
+			t.Fatalf("retired %v ago: status = %d, want %d (body: %s)", c.ago, w.Code, c.want, w.Body.String())
+		}
 	}
 }
 
@@ -196,13 +192,13 @@ func TestJWTAuth_AcceptsRetiredKey(t *testing.T) {
 func TestJWTAuth_AcceptsHS256LegacyKey(t *testing.T) {
 	secret := []byte("legacy-hs256-shared-secret")
 	db := &stubDB{
-		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			return map[string]any{
+		queryFn: func(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
+			return []map[string]any{{
 				"kid":        "legacy-kid",
 				"algorithm":  "HS256",
 				"secret":     secret,
 				"created_at": time.Now(),
-			}, nil
+			}}, nil
 		},
 	}
 	km := app.NewJWTKeyManager(db)
