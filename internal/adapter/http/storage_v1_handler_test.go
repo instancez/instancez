@@ -1539,6 +1539,7 @@ func TestCleanPath(t *testing.T) {
 
 func TestStorageRoutes_RejectTraversalKeys(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	t.Setenv("INSTANCEZ_SECRET_KEY", "test-secret-key")
 	touched := false
 	store := &stubObjectStore{
 		uploadFn: func(context.Context, string, io.Reader, string, int64) error { touched = true; return nil },
@@ -1556,6 +1557,10 @@ func TestStorageRoutes_RejectTraversalKeys(t *testing.T) {
 		},
 	}
 	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {Public: true}})
+	h.jwtKeys = stubKeys(t)
+	// Bound to the raw (uncleaned) wildcard param gin hands the handler, so the
+	// case below tests the objectPath check itself, not token/path mismatch.
+	forgedTraversalToken := h.signUploadToken("avatars", "/../secret", "")
 	auth := func(c *gin.Context) {
 		setTestSession(c, domain.Session{Role: "authenticated", UserID: "u1", IsAuthenticated: true})
 	}
@@ -1564,22 +1569,35 @@ func TestStorageRoutes_RejectTraversalKeys(t *testing.T) {
 	r.POST("/storage/v1/object/copy", auth, h.copyObject)
 	r.POST("/storage/v1/object/sign/:bucket/*path", auth, h.createSignedURL)
 	r.POST("/storage/v1/object/:bucket/*path", auth, h.uploadObject)
+	r.HEAD("/storage/v1/object/:bucket/*path", auth, h.objectExists)
+	r.POST("/storage/v1/object/upload/sign/:bucket/*path", auth, h.createSignedUploadURL)
+	r.PUT("/storage/v1/object/upload/sign/:bucket/*path", h.uploadToSignedURL)
 	r.GET("/storage/v1/object/*all", h.objectGetDispatch)
 
-	cases := []struct{ method, target, body string }{
-		{http.MethodPost, "/storage/v1/object/avatars/%2e%2e/%2e%2e/etc/passwd", "x"},
-		{http.MethodPost, "/storage/v1/object/avatars/..%2f..%2fetc", "x"},
-		{http.MethodGet, "/storage/v1/object/public/avatars/%2e%2e/secret", ""},
-		{http.MethodPost, "/storage/v1/object/sign/avatars/a/../../b", "{}"},
-		{http.MethodPost, "/storage/v1/object/move", `{"bucketId":"avatars","sourceKey":"a.txt","destinationKey":"../../x"}`},
-		{http.MethodPost, "/storage/v1/object/copy", `{"bucketId":"avatars","sourceKey":"../a","destinationKey":"b"}`},
-		{http.MethodPost, "/storage/v1/object/copy", `{"bucketId":"avatars","sourceKey":"","destinationKey":"b"}`},
+	cases := []struct {
+		method, target, body string
+		apikey               string
+	}{
+		{http.MethodPost, "/storage/v1/object/avatars/%2e%2e/%2e%2e/etc/passwd", "x", ""},
+		{http.MethodPost, "/storage/v1/object/avatars/..%2f..%2fetc", "x", ""},
+		{http.MethodGet, "/storage/v1/object/public/avatars/%2e%2e/secret", "", ""},
+		{http.MethodPost, "/storage/v1/object/sign/avatars/a/../../b", "{}", ""},
+		{http.MethodPost, "/storage/v1/object/move", `{"bucketId":"avatars","sourceKey":"a.txt","destinationKey":"../../x"}`, ""},
+		{http.MethodPost, "/storage/v1/object/copy", `{"bucketId":"avatars","sourceKey":"../a","destinationKey":"b"}`, ""},
+		{http.MethodPost, "/storage/v1/object/copy", `{"bucketId":"avatars","sourceKey":"","destinationKey":"b"}`, ""},
+		{http.MethodHead, "/storage/v1/object/avatars/%2e%2e/secret", "", ""},
+		{http.MethodGet, "/storage/v1/object/info/authenticated/avatars/%2e%2e/secret", "", "test-secret-key"},
+		{http.MethodPost, "/storage/v1/object/upload/sign/avatars/%2e%2e/secret", "", ""},
+		{http.MethodPut, "/storage/v1/object/upload/sign/avatars/%2e%2e/secret?token=" + forgedTraversalToken, "", ""},
 	}
 	for _, tc := range cases {
 		touched = false
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest(tc.method, tc.target, strings.NewReader(tc.body))
 		req.Header.Set("Content-Type", "application/json")
+		if tc.apikey != "" {
+			req.Header.Set("apikey", tc.apikey)
+		}
 		r.ServeHTTP(w, req)
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("%s %s: got %d, want 400: %s", tc.method, tc.target, w.Code, w.Body.String())
