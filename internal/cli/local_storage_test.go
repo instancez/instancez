@@ -142,3 +142,64 @@ func TestLocalStore_ListStripsPrefix(t *testing.T) {
 		t.Fatalf("expected logical key 'avatars/x' (prefix stripped), got %q", items[0].Key)
 	}
 }
+
+func TestLocalStore_RejectsEscapingKeys(t *testing.T) {
+	root := t.TempDir()
+	base := filepath.Join(root, "store")
+	s, err := NewLocalStore(base, "app1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := s.Upload(ctx, "avatars/ok.txt", strings.NewReader("ok"), "text/plain", 2); err != nil {
+		t.Fatalf("valid upload rejected: %v", err)
+	}
+	bad := []string{"../escape.txt", "avatars/../../escape.txt", "avatars/../../../escape.txt", "/etc/passwd", ""}
+	for _, k := range bad {
+		if err := s.Upload(ctx, k, strings.NewReader("x"), "text/plain", 1); err == nil {
+			t.Errorf("Upload(%q) succeeded, want error", k)
+		}
+		if _, _, err := s.Download(ctx, k); err == nil {
+			t.Errorf("Download(%q) succeeded, want error", k)
+		}
+		if err := s.Delete(ctx, k); err == nil {
+			t.Errorf("Delete(%q) succeeded, want error", k)
+		}
+		if err := s.Copy(ctx, "avatars/ok.txt", k); err == nil {
+			t.Errorf("Copy(dst=%q) succeeded, want error", k)
+		}
+		if err := s.Copy(ctx, k, "avatars/dst.txt"); err == nil {
+			t.Errorf("Copy(src=%q) succeeded, want error", k)
+		}
+		if _, err := s.SignDownload(ctx, k, 0); err == nil {
+			t.Errorf("SignDownload(%q) succeeded, want error", k)
+		}
+		if _, err := s.Head(ctx, k); err == nil {
+			t.Errorf("Head(%q) succeeded, want error", k)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "escape.txt")); !os.IsNotExist(err) {
+		t.Fatalf("file written outside base: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(base, "escape.txt")); !os.IsNotExist(err) {
+		t.Fatalf("file escaped keyPrefix: %v", err)
+	}
+	if _, err := s.List(ctx, "../"); err == nil {
+		t.Error("List(\"../\") succeeded, want error")
+	}
+}
+
+func TestLocalStore_UnicodeAndDotKeysStayInside(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := NewLocalStore(dir, "")
+	ctx := context.Background()
+	for _, k := range []string{"avatars/ünï/çødé 😀.txt", "avatars/a..b.txt", "avatars/x/../y.txt"} {
+		if err := s.Upload(ctx, k, strings.NewReader("v"), "text/plain", 1); err != nil {
+			t.Errorf("Upload(%q): %v", k, err)
+		}
+	}
+	items, err := s.List(ctx, "")
+	if err != nil || len(items) != 3 {
+		t.Fatalf("List(\"\") = %v, %v; want 3 items", items, err)
+	}
+}
