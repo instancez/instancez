@@ -370,9 +370,9 @@ func buildRPCCall(name string, fn domain.Function, callArgs map[string]any) (str
 // structured for the same reason even though order never carries params.
 type rpcChainSQL struct {
 	where       *postgrest.WhereNode
-	having      *postgrest.WhereNode // HAVING clause for aggregate filtering
+	having      *postgrest.WhereNode   // HAVING clause for aggregate filtering
 	selectItems []postgrest.SelectItem // non-empty → project these instead of SELECT *
-	embeds      []postgrest.Embed    // resolved embeds when RPC returns SETOF <known table>
+	embeds      []postgrest.Embed      // resolved embeds when RPC returns SETOF <known table>
 	order       []postgrest.OrderClause
 	hasLimit    bool
 	limit       int
@@ -565,8 +565,8 @@ func renderRPCChain(chain *rpcChainSQL, argIdx int) (string, []any) {
 		}
 	}
 	if len(chain.order) > 0 {
-		b.WriteString(" ")
-		b.WriteString(buildOrderSQL(chain.order))
+		b.WriteString(" ORDER BY ")
+		b.WriteString(postgrest.RenderOrderBy(chain.order))
 	}
 	if chain.hasLimit {
 		fmt.Fprintf(&b, " LIMIT $%d", argIdx)
@@ -746,26 +746,6 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 
 // buildOrderSQL serializes a list of OrderClauses into a PostgREST-compatible
 // ORDER BY fragment. Columns have already been validated at parse time.
-func buildOrderSQL(clauses []OrderClause) string {
-	var parts []string
-	for _, oc := range clauses {
-		s := fmt.Sprintf(`"%s"`, oc.Column)
-		if oc.Desc {
-			s += " DESC"
-		} else {
-			s += " ASC"
-		}
-		switch oc.Nulls {
-		case "first":
-			s += " NULLS FIRST"
-		case "last":
-			s += " NULLS LAST"
-		}
-		parts = append(parts, s)
-	}
-	return "ORDER BY " + strings.Join(parts, ", ")
-}
-
 // executeRPCCount runs COUNT(*) over the filtered RPC subquery for clients
 // that sent Prefer: count=exact. It rebuilds both the base call and the
 // WHERE from scratch so the count statement gets its own $1.. numbering and

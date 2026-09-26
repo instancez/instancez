@@ -676,3 +676,48 @@ func TestParseRPCChain_TableShapeValidatesColumns(t *testing.T) {
 		}
 	}
 }
+
+// TestRenderRPCChain_OrderUsesValidatedUnquotedColumns verifies that order
+// columns render unquoted through the shared RenderOrderBy to match filter
+// emission and preserve JSONB operators like "data->>k".
+func TestRenderRPCChain_OrderUsesValidatedUnquotedColumns(t *testing.T) {
+	chain := &rpcChainSQL{order: []postgrest.OrderClause{
+		{Column: "age", Desc: true, Nulls: "last"},
+		{Column: "username"},
+	}}
+	sql, args := renderRPCChain(chain, 1)
+	if sql != " ORDER BY age DESC NULLS LAST, username ASC" {
+		t.Errorf("sql = %q, want %q", sql, " ORDER BY age DESC NULLS LAST, username ASC")
+	}
+	if len(args) != 0 {
+		t.Errorf("order must not add args, got %v", args)
+	}
+}
+
+// TestRenderRPCChain_OrderPreservesJSONBOperators ensures JSONB operators
+// like ->> are not broken by quote wrapping.
+func TestRenderRPCChain_OrderPreservesJSONBOperators(t *testing.T) {
+	chain := &rpcChainSQL{order: []postgrest.OrderClause{
+		{Column: "data->>key", Desc: false, Nulls: ""},
+	}}
+	sql, args := renderRPCChain(chain, 1)
+	if sql != " ORDER BY data->>key ASC" {
+		t.Errorf("sql = %q, want %q", sql, " ORDER BY data->>key ASC")
+	}
+	if len(args) != 0 {
+		t.Errorf("order must not add args, got %v", args)
+	}
+}
+
+// TestRenderRPCChain_EmptyOrderNoEmission ensures no ORDER BY clause
+// is emitted when order is empty.
+func TestRenderRPCChain_EmptyOrderNoEmission(t *testing.T) {
+	chain := &rpcChainSQL{order: []postgrest.OrderClause{}}
+	sql, args := renderRPCChain(chain, 1)
+	if sql != "" {
+		t.Errorf("empty order should emit nothing, got %q", sql)
+	}
+	if len(args) != 0 {
+		t.Errorf("empty order should have no args, got %v", args)
+	}
+}
