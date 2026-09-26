@@ -2401,7 +2401,7 @@ await step('storage: cleanup documents bucket', async () => {
 })
 
 // --- explain() response ---
-await step('rest: explain returns query plan', async () => {
+await step('rest: explain returns query plan only to the secret key', async () => {
   const resp = await fetch(`${URL}/rest/v1/todos?select=*`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -2409,8 +2409,20 @@ await step('rest: explain returns query plan', async () => {
       Accept: 'application/vnd.pgrst.plan+json',
     },
   })
-  assertEq(resp.status, 200)
-  const plan = await resp.json()
+  assertEq(resp.status, 406, 'plan refused for non-secret caller')
+  const err = await resp.json()
+  assertEq(err.code, 'PGRST107', 'plan refusal code')
+
+  if (!SECRET_KEY) return
+  const adminResp = await fetch(`${URL}/rest/v1/todos?select=*`, {
+    headers: {
+      Authorization: `Bearer ${SECRET_KEY}`,
+      apikey: SECRET_KEY,
+      Accept: 'application/vnd.pgrst.plan+json',
+    },
+  })
+  assertEq(adminResp.status, 200)
+  const plan = await adminResp.json()
   assert(Array.isArray(plan) || (typeof plan === 'object'), 'plan returned')
 })
 

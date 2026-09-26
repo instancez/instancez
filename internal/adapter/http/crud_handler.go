@@ -116,6 +116,12 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 			return
 		}
 
+		accept := c.GetHeader("Accept")
+		if strings.HasPrefix(accept, "application/vnd.pgrst.plan") && !isAdmin(c) {
+			pgJSON(c, 406, "PGRST107", "None of these media types are available: "+accept, "", "")
+			return
+		}
+
 		// Parse query params
 		qp, err := parseQueryParams(c, tableName, table, allTbls)
 		if err != nil {
@@ -158,7 +164,6 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 		}
 
 		// EXPLAIN plan response
-		accept := c.GetHeader("Accept")
 		if accept == "application/vnd.pgrst.plan+json" || accept == "application/vnd.pgrst.plan+text" {
 			explainOpts := "FORMAT JSON"
 			if strings.Contains(accept, "+text") {

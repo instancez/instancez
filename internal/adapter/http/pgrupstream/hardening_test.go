@@ -155,3 +155,16 @@ func TestHardening_CountMatchesRows(t *testing.T) {
 	_, hdr, _ = call(t, "GET", testTS.URL+"/rest/v1/users?select=username,messages!inner(id)", "", map[string]string{"Prefer": "count=planned"}, false)
 	require.Regexp(t, `^0-0/\d+$`, hdr.Get("Content-Range"))
 }
+
+func TestHardening_PlanOnlyForServiceRole(t *testing.T) {
+	if testTS == nil {
+		t.Skip("no upstream")
+	}
+	plan := map[string]string{"Accept": "application/vnd.pgrst.plan+json"}
+	status, _, raw := call(t, "GET", testTS.URL+"/rest/v1/users", "", plan, true)
+	require.Equal(t, 406, status, "%s", raw)
+	require.Contains(t, string(raw), "PGRST107")
+	status, _, raw = call(t, "GET", testTS.URL+"/rest/v1/users", "", plan, false)
+	require.Equal(t, 200, status, "%s", raw)
+	require.Contains(t, string(raw), "Plan")
+}

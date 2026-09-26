@@ -9,7 +9,7 @@ instancez implements the Supabase wire protocol. Any official Supabase SDK works
 
 | Feature | Status | Notes |
 |---|---|---|
-| **Database — `supabase.from()`** | ✅ Full | `select`, `insert`, `update`, `upsert`, `delete`. All PostgREST filter operators (`eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `like`, `ilike`, `is`, `in`, `contains`, `containedBy`, `overlaps`, …). Embeds (`!inner`, `!left`, FK hints). `order`, `limit`, `offset`, Range-header pagination. `Prefer: return`, `count`, `resolution`, `missing`, `max-affected`, `tx`. CSV responses (`Accept: text/csv`). HEAD requests. |
+| **Database — `supabase.from()`** | ✅ Full | `select`, `insert`, `update`, `upsert`, `delete`. All PostgREST filter operators (`eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `like`, `ilike`, `is`, `in`, `contains`, `containedBy`, `overlaps`, …). Embeds (`!inner`, `!left`, FK hints). `order`, `limit`, `offset`, Range-header pagination. `Prefer: return`, `count`, `resolution`, `missing`, `max-affected`, `tx`. CSV responses (`Accept: text/csv`). HEAD requests. `.explain()` needs the secret key (PostgREST `db-plan-enabled` is off by default); other callers get 406 `PGRST107`. |
 | **Auth — `supabase.auth.*`** | ✅ Full | Email + password, magic link / OTP, anonymous sign-in, session refresh, `updateUser`, `resetPasswordForEmail`, identity linking/unlinking, PKCE. |
 | **OAuth — `signInWithOAuth`** | ⚠️ Google and GitHub only | The `provider` field accepts `google` and `github`. Other providers return a 400. |
 | **Auth Admin — `supabase.auth.admin.*`** | ✅ Full | `createUser`, `listUsers` (paginated), `getUserById`, `updateUserById`, `deleteUser`, `inviteUserByEmail`, `generateLink`, `signOut` (user), `deleteFactor`. |
