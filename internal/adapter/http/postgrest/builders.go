@@ -176,9 +176,6 @@ func validateEmbedBalance(raw string) error {
 // validateEmbedSpec rejects embed columns/aliases that aren't safe to
 // interpolate into the JSON-building SQL the renderer emits.
 func validateEmbedSpec(raw, alias string, cols []string, ref domain.Table) error {
-	if err := validateEmbedBalance(raw); err != nil {
-		return err
-	}
 	if alias != "" && !identRe.MatchString(alias) {
 		return fmt.Errorf("invalid embed alias %q", alias)
 	}
