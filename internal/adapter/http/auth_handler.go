@@ -1102,7 +1102,7 @@ func (h *AuthHandler) handleAdminUpdateUser(c *gin.Context) {
 		return
 	}
 
-	if req.BanDuration != nil && *req.BanDuration != "none" {
+	if banned, _ := row["is_banned"].(bool); banned {
 		_ = h.authSvc.RevokeAllUserSessions(ctx, uid)
 	}
 

@@ -90,16 +90,25 @@ func TestBannedUser_RecoveryLinkRefused(t *testing.T) {
 
 func TestAdminUpdateUser_BanRevokesSessions(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	// The stub mirrors real UpdateUser: is_banned reflects the row's actual
+	// banned_until state after the write, not merely whether ban_duration was
+	// present on the request (a "0s"/"-1h" duration must not revoke).
 	for body, wantRevoke := range map[string]bool{
 		`{"ban_duration":"24h"}`:  true,
 		`{"ban_duration":"none"}`: false,
 		`{"user_metadata":{}}`:    false,
+		// A non-positive duration sets banned_until <= NOW(), so the row
+		// comes back not banned even though ban_duration was present and
+		// not "none" — a naive `BanDuration != nil && != "none"` check
+		// would wrongly revoke every session here.
+		`{"ban_duration":"0s"}`: false,
 	} {
 		revoked := ""
 		h := &AuthHandler{cfg: &domain.Config{Auth: &domain.Auth{}}, logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 			authSvc: &stubAuthService{
 				updateUserFn: func(ctx context.Context, id string, p domain.UpdateUserParams) (map[string]any, error) {
-					return testUserRow(id), nil
+					banned := p.BanDuration != nil && *p.BanDuration != "none" && *p.BanDuration != "0s"
+					return bannedRow(banned), nil
 				},
 				revokeAllUserSessionsFn: func(ctx context.Context, uid string) error { revoked = uid; return nil },
 			}}
