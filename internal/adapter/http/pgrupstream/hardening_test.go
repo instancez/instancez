@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	instancezhttp "github.com/instancez/instancez/internal/adapter/http"
 	"github.com/instancez/instancez/internal/domain"
@@ -167,4 +168,31 @@ func TestHardening_PlanOnlyForServiceRole(t *testing.T) {
 	status, _, raw = call(t, "GET", testTS.URL+"/rest/v1/users", "", plan, false)
 	require.Equal(t, 200, status, "%s", raw)
 	require.Contains(t, string(raw), "Plan")
+}
+
+func TestHardening_StatementTimeout(t *testing.T) {
+	if testTS == nil {
+		t.Skip("no upstream")
+	}
+	fast := serverWith(t, func(c *domain.Config) { c.Server.Timeouts.DBQuery = "300ms" })
+	start := time.Now()
+	status, _, raw := call(t, "POST", fast+"/rest/v1/rpc/sleep_for", `{"secs":3}`, nil, false)
+	require.Equal(t, 500, status, "%s", raw)
+	require.Contains(t, string(raw), "57014")
+	require.Less(t, time.Since(start), 2*time.Second)
+
+	// Prefer can lower the timeout but not raise it.
+	start = time.Now()
+	status, _, raw = call(t, "POST", fast+"/rest/v1/rpc/sleep_for", `{"secs":3}`, map[string]string{"Prefer": "statement-timeout=999999"}, false)
+	require.Equal(t, 500, status, "%s", raw)
+	require.Less(t, time.Since(start), 2*time.Second)
+
+	slow := serverWith(t, func(c *domain.Config) { c.Server.Timeouts.DBQuery = "10s" })
+	start = time.Now()
+	status, _, raw = call(t, "POST", slow+"/rest/v1/rpc/sleep_for", `{"secs":3}`, map[string]string{"Prefer": "statement-timeout=100"}, false)
+	require.Equal(t, 500, status, "%s", raw)
+	require.Less(t, time.Since(start), 2*time.Second)
+
+	status, _, _ = call(t, "POST", slow+"/rest/v1/rpc/sleep_for", `{"secs":0.05}`, nil, false)
+	require.Equal(t, 200, status)
 }

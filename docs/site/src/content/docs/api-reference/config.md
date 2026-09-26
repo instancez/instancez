@@ -50,8 +50,8 @@ defaults — origins is the only knob, matching Supabase's own gateway.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `server.timeouts.request` | `duration` | `30s` | Per-request deadline. |
-| `server.timeouts.db_query` | `duration` | `10s` | Per-query deadline. |
+| `server.timeouts.request` | `duration` | `25s` | Per-request deadline. |
+| `server.timeouts.db_query` | `duration` | `10s` | `statement_timeout` for every API query (all roles), applied per transaction. `Prefer: statement-timeout=<ms>` can lower it for one request. `0` or empty disables it. |
 | `server.timeouts.upload` | `duration` | `5m` | Deadline for file upload requests. |
 | `server.timeouts.shutdown` | `duration` | `30s` | Graceful shutdown window. |
 

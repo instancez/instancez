@@ -68,6 +68,7 @@ func NewServer(deps ServerDeps) *Server {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(requestIDMiddleware())
+	r.Use(statementTimeout(deps.Config))
 	r.Use(requestLogger(deps.Logger, deps.DevMode, deps.OTelLogHandler))
 
 	s := &Server{

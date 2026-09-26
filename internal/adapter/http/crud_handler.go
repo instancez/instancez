@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -1176,29 +1177,27 @@ func parseResolutionPrefer(prefer string) string {
 	return ""
 }
 
-// withDBTimeout wraps ctx with the configured db_query timeout. If
-// Prefer: statement-timeout=N is present (milliseconds), that overrides
-// the config value but is capped at the configured max.
-func (h *CRUDHandler) withDBTimeout(ctx context.Context, prefer string) (context.Context, context.CancelFunc) {
-	cfgTimeout, _ := time.ParseDuration(h.cfg.Server.Timeouts.DBQuery)
-
-	// Check Prefer header for statement-timeout
-	if idx := strings.Index(prefer, "statement-timeout="); idx >= 0 {
-		val := prefer[idx+len("statement-timeout="):]
-		if end := strings.IndexAny(val, ", "); end > 0 {
-			val = val[:end]
-		}
-		if ms, err := strconv.Atoi(val); err == nil && ms > 0 {
-			d := time.Duration(ms) * time.Millisecond
-			if cfgTimeout > 0 && d > cfgTimeout {
-				d = cfgTimeout
+// dbTimeout returns server.timeouts.db_query, lowered (never raised) by Prefer: statement-timeout=<ms>.
+func dbTimeout(cfgVal, prefer string) time.Duration {
+	cfgTimeout, _ := time.ParseDuration(cfgVal)
+	cfgTimeout = max(cfgTimeout, 0)
+	if val, ok := findPreferDirective(prefer, "statement-timeout"); ok {
+		if ms, err := strconv.ParseInt(val, 10, 64); err == nil && ms > 0 {
+			if cfgTimeout > 0 && ms >= cfgTimeout.Milliseconds() {
+				return cfgTimeout
 			}
-			return context.WithTimeout(ctx, d)
+			if ms <= math.MaxInt64/int64(time.Millisecond) {
+				return time.Duration(ms) * time.Millisecond
+			}
 		}
 	}
+	return cfgTimeout
+}
 
-	if cfgTimeout > 0 {
-		return context.WithTimeout(ctx, cfgTimeout)
+// withDBTimeout also bounds pool acquire and Begin for list reads.
+func (h *CRUDHandler) withDBTimeout(ctx context.Context, prefer string) (context.Context, context.CancelFunc) {
+	if d := dbTimeout(h.cfg.Server.Timeouts.DBQuery, prefer); d > 0 {
+		return context.WithTimeout(ctx, d)
 	}
 	return ctx, nil
 }
