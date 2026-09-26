@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -2157,4 +2158,65 @@ func TestConf_CSVTypeCoercion(t *testing.T) {
 
 func nowNano() int64 {
 	return time.Now().UnixNano()
+}
+
+// TestConf_IdentifierHardening proves unsafe identifiers are rejected by the validator (PGRST100), not merely by a Postgres error that happens to map to 400.
+func TestConf_IdentifierHardening(t *testing.T) {
+	if testTS == nil {
+		t.Skip("no upstream")
+	}
+	get := func(path string) (int, []byte) {
+		req, err := http.NewRequest("GET", testTS.URL+path, nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+testAdminKey)
+		req.Header.Set("apikey", testAdminKey)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer func() { _ = resp.Body.Close() }()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, b
+	}
+	countUsers := func() int {
+		row, err := testDB.QueryRow(context.Background(), "SELECT count(*) AS n FROM users")
+		require.NoError(t, err)
+		return int(row["n"].(int64))
+	}
+	before := countUsers()
+
+	t.Run("table() rpc declared columns work", func(t *testing.T) {
+		code, body := get("/rest/v1/rpc/user_ages?age=gte.28&order=age.desc&select=username")
+		require.Equal(t, 200, code, string(body))
+		var rows []map[string]any
+		require.NoError(t, json.Unmarshal(body, &rows))
+		require.Len(t, rows, 2)
+		assert.Equal(t, "kiwicopple", rows[0]["username"])
+	})
+
+	for name, path := range map[string]string{
+		"table() rpc undeclared filter": "/rest/v1/rpc/user_ages?status=eq.ONLINE",
+		"table() rpc quoted filter key": "/rest/v1/rpc/user_ages?" + url.QueryEscape(`age"x`) + "=eq.1",
+		"table() rpc quoted order":      "/rest/v1/rpc/user_ages?order=" + url.QueryEscape(`age"x.desc`),
+		"table() rpc spaced select":     "/rest/v1/rpc/user_ages?select=" + url.QueryEscape("age x"),
+		"embed column with space":       "/rest/v1/messages?select=" + url.QueryEscape("id,users(username x)"),
+		"embed alias with quote":        "/rest/v1/messages?select=" + url.QueryEscape(`id,a"b:users(username)`),
+		"embed unbalanced parens":       "/rest/v1/messages?select=" + url.QueryEscape("id,users(username"),
+		"embed undeclared column":       "/rest/v1/messages?select=" + url.QueryEscape("id,users(bogus)"),
+		"rpc embed column with space":   "/rest/v1/rpc/users_by_status?target=ONLINE&select=" + url.QueryEscape("username,messages(id x)"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			code, body := get(path)
+			require.Equal(t, 400, code, string(body))
+			var errBody map[string]any
+			require.NoError(t, json.Unmarshal(body, &errBody), string(body))
+			assert.Equal(t, "PGRST100", errBody["code"], "must be a validator rejection, not a Postgres error mapped to 400: %s", string(body))
+		})
+	}
+
+	t.Run("valid embed still works", func(t *testing.T) {
+		code, body := get("/rest/v1/messages?select=" + url.QueryEscape("id,author:users(username,status)") + "&limit=1")
+		require.Equal(t, 200, code, string(body))
+		assert.Contains(t, string(body), `"author":{`)
+	})
+
+	assert.Equal(t, before, countUsers(), "no request may change table state")
 }

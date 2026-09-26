@@ -12,6 +12,10 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Fixed
 
+### Security
+
+- RPC and REST select/filter/order identifiers and embed columns/aliases are now strictly validated, so unsafe or undeclared identifiers return 400, and enum/pattern CHECK literals are escaped.
+
 ## [0.0.3]
 
 ### Added

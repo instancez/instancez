@@ -95,6 +95,12 @@ CREATE OR REPLACE FUNCTION public.current_request_id()
 RETURNS text LANGUAGE sql STABLE AS $$
   SELECT current_setting('request.request_id', true)
 $$;
+
+-- table() RPC used by TestConf_IdentifierHardening.
+CREATE OR REPLACE FUNCTION public.user_ages()
+RETURNS TABLE(username text, age int) LANGUAGE sql STABLE AS $$
+  SELECT username, age FROM users ORDER BY username
+$$;
 `
 
 const seedSQL = `
@@ -198,6 +204,11 @@ func buildConfig() *domain.Config {
 				Language: "sql", Volatility: "stable", Security: "invoker",
 				Returns: domain.FuncReturn{Type: "text"}, ReturnCategory: "scalar",
 				Body: "SELECT current_setting('request.request_id', true)",
+			},
+			"user_ages": {
+				Language: "sql", Volatility: "stable", Security: "invoker",
+				Returns: domain.FuncReturn{Type: "table(username text, age int)"}, ReturnCategory: "setof",
+				Body: "SELECT username, age FROM users ORDER BY username",
 			},
 		},
 	}
