@@ -485,6 +485,35 @@ func TestParseRPCChain_EmbedOnKnownTable(t *testing.T) {
 	}
 }
 
+// TestParseRPCChain_EmbedOnKnownTable_RejectsUnsafeColumn verifies the RPC
+// embed path (setof a known table) routes through ResolveEmbeds' column
+// validation the same as the CRUD path.
+func TestParseRPCChain_EmbedOnKnownTable_RejectsUnsafeColumn(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &CRUDHandler{cfg: &domain.Config{
+		Tables: map[string]domain.Table{
+			"posts": {
+				Fields: []domain.Field{
+					{Name: "id", Type: "int", PrimaryKey: true},
+					{Name: "author_id", Type: "int", ForeignKey: &domain.ForeignKey{References: "authors.id"}},
+				},
+			},
+			"authors": {
+				Fields: []domain.Field{
+					{Name: "id", Type: "int", PrimaryKey: true},
+				},
+			},
+		},
+	}}
+	fn := domain.Function{ReturnCategory: "setof", Returns: domain.FuncReturn{Type: "setof posts"}}
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET", "/rpc/recent_posts?select="+url.QueryEscape("id,authors(id x)"), nil)
+	if _, _, err := h.parseRPCChain(c, fn, map[string]bool{}, 1); err == nil {
+		t.Fatal("unsafe embed column accepted on RPC embed path")
+	}
+}
+
 // TestWrapRPCCallForChain_BelongsToEmbed verifies that a belongs-to embed
 // produces a LEFT JOIN with the correct alias and row_to_json projection.
 func TestWrapRPCCallForChain_BelongsToEmbed(t *testing.T) {

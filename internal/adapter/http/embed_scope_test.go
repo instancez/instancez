@@ -864,7 +864,12 @@ func TestResolveEmbeds_RejectsUnsafeSpecs(t *testing.T) {
 			{Name: "name", Type: "text"},
 		}},
 	}
-	good := []string{"authors(id,name)", "authors(*)", "authors()", "writer:authors(name)", "authors( name , id )"}
+	good := []string{
+		"authors(id,name)", "authors(*)", "authors()", "writer:authors(name)", "authors( name , id )",
+		// supabase-js shapes seen in test/integration/supabase-js/run.mjs:
+		// alias, !inner and fkHint variants, and a two-level nested embed.
+		"authors!inner(name)", "writer:authors!author_id(name)", "authors(name,posts(id,author_id))",
+	}
 	for _, raw := range good {
 		if _, err := resolveEmbeds("posts", all["posts"], []string{raw}, all); err != nil {
 			t.Errorf("%q rejected: %v", raw, err)
