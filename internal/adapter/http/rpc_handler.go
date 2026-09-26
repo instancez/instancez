@@ -382,10 +382,10 @@ type rpcChainSQL struct {
 
 // parseRPCChain parses the PostgREST-style query parameters layered on top
 // of a SETOF RPC call. Columns are validated against the target table when
-// fn.Returns names a known table; otherwise an any-column-goes validator is
-// used and Postgres rejects mismatches at execute time. Function argument
-// keys are skipped so GET calls can carry both function args and filters in
-// the same query string without collision.
+// fn.Returns names a known table, or against a safe-identifier pattern
+// otherwise; Postgres still rejects unknown columns at execute time.
+// Function argument keys are skipped so GET calls can carry both function
+// args and filters in the same query string without collision.
 //
 // argIdx is the first free placeholder index; the returned args slice is
 // appended to the caller's existing placeholder list.

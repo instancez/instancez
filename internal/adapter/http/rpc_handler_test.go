@@ -573,8 +573,6 @@ func TestParseRPCChain_UnknownSetofRejectsUnsafeIdentifiers(t *testing.T) {
 		"/rpc/f?" + url.QueryEscape("data->>k'x") + "=eq.1",
 		"/rpc/f?or=" + url.QueryEscape("(a;b.eq.1)"),
 		"/rpc/f?order=" + url.QueryEscape(`x"y.desc`),
-		"/rpc/f?select=" + url.QueryEscape("a;b"),
-		"/rpc/f?select=" + url.QueryEscape("x y"),
 	}
 	for _, target := range cases {
 		c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -587,5 +585,27 @@ func TestParseRPCChain_UnknownSetofRejectsUnsafeIdentifiers(t *testing.T) {
 	c.Request = httptest.NewRequest("GET", "/rpc/f?name=eq.x&data->>k=eq.y&order=name.desc", nil)
 	if _, _, err := h.parseRPCChain(c, fn, map[string]bool{}, 1); err != nil {
 		t.Fatalf("safe identifiers rejected: %v", err)
+	}
+}
+
+// TestParseRPCChain_TableShapeSelectUsesIdentValidator covers the select
+// fallback branch, reached only when parseSetofTarget can't resolve a named
+// table (e.g. a TABLE(...) return shape). Before the fix this branch used
+// permissiveColValidator, which accepted any non-empty column.
+func TestParseRPCChain_TableShapeSelectUsesIdentValidator(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &CRUDHandler{cfg: &domain.Config{}}
+	fn := domain.Function{ReturnCategory: "setof", Returns: domain.FuncReturn{Type: "setof table(id int)"}}
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET", "/rpc/f?select="+url.QueryEscape("a;b"), nil)
+	if _, _, err := h.parseRPCChain(c, fn, map[string]bool{}, 1); err == nil {
+		t.Error("select=a;b: expected rejection")
+	}
+
+	c, _ = gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET", "/rpc/f?select=id", nil)
+	if _, _, err := h.parseRPCChain(c, fn, map[string]bool{}, 1); err != nil {
+		t.Fatalf("select=id: valid column rejected: %v", err)
 	}
 }
