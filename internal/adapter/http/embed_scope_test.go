@@ -892,6 +892,10 @@ func TestResolveEmbeds_RejectsUnsafeSpecs(t *testing.T) {
 		"a b:authors(name)",
 		`w"x:authors(name)`,
 		"é:authors(name)",
+		"authors(",
+		"authors)(",
+		"(",
+		")",
 	}
 	for _, raw := range bad {
 		if _, err := resolveEmbeds("posts", all["posts"], []string{raw}, all); err == nil {
@@ -914,5 +918,23 @@ func TestParseQueryParams_EmbedColumnValidated(t *testing.T) {
 	c := testContext("select=" + url.QueryEscape("id,authors(id x)"))
 	if _, err := parseQueryParams(c, "posts", all["posts"], all); err == nil {
 		t.Fatal("unsafe embed column accepted by parseQueryParams")
+	}
+}
+
+// TestParseQueryParams_EmbedUnbalancedParens covers the HTTP entry point for
+// a truncated embed spec (e.g. select=id,authors( ), which must error, not panic.
+func TestParseQueryParams_EmbedUnbalancedParens(t *testing.T) {
+	all := map[string]domain.Table{
+		"posts": {Fields: []domain.Field{
+			{Name: "id", Type: "int", PrimaryKey: true},
+			{Name: "author_id", Type: "int", ForeignKey: &domain.ForeignKey{References: "authors.id"}},
+		}},
+		"authors": {Fields: []domain.Field{{Name: "id", Type: "int", PrimaryKey: true}}},
+	}
+	for _, sel := range []string{"id,authors(", "id,authors)(", "id,(", "id,)"} {
+		c := testContext("select=" + url.QueryEscape(sel))
+		if _, err := parseQueryParams(c, "posts", all["posts"], all); err == nil {
+			t.Errorf("select=%q: unbalanced embed accepted, want error", sel)
+		}
 	}
 }

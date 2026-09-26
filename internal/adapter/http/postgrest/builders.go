@@ -160,14 +160,24 @@ func ParseEmbedParam(s string) (name, alias string, cols []string, nested []stri
 	return
 }
 
-// validateEmbedSpec rejects embed columns/aliases that aren't safe to
-// interpolate into the JSON-building SQL the renderer emits.
-func validateEmbedSpec(raw, alias string, cols []string, ref domain.Table) error {
+// validateEmbedBalance rejects an embed spec with unbalanced parentheses.
+// It must run before ParseEmbedParam, which slices on the assumption that
+// any "(" has a matching trailing ")".
+func validateEmbedBalance(raw string) error {
 	if strings.Contains(raw, "(") && !strings.HasSuffix(raw, ")") {
 		return fmt.Errorf("unbalanced parentheses in embed %q", raw)
 	}
 	if _, err := SplitTopLevel(raw, ','); err != nil {
 		return fmt.Errorf("embed %q: %w", raw, err)
+	}
+	return nil
+}
+
+// validateEmbedSpec rejects embed columns/aliases that aren't safe to
+// interpolate into the JSON-building SQL the renderer emits.
+func validateEmbedSpec(raw, alias string, cols []string, ref domain.Table) error {
+	if err := validateEmbedBalance(raw); err != nil {
+		return err
 	}
 	if alias != "" && !identRe.MatchString(alias) {
 		return fmt.Errorf("invalid embed alias %q", alias)
@@ -185,6 +195,9 @@ func ResolveEmbeds(tableName string, table domain.Table, embedNames []string, al
 	var embeds []Embed
 
 	for _, raw := range embedNames {
+		if err := validateEmbedBalance(raw); err != nil {
+			return nil, err
+		}
 		name, alias, cols, nested, spread := ParseEmbedParam(raw)
 		name, inner, fkHint := ParseEmbedHint(name)
 		if spread && alias != "" {
