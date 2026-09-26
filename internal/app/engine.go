@@ -71,9 +71,14 @@ const (
 
 type EngineOption func(*Engine)
 
-func WithMode(m Mode) EngineOption                   { return func(e *Engine) { e.mode = m } }
-func WithMigrate(v bool) EngineOption                { return func(e *Engine) { e.migrate = v } }
-func WithAllowDestructive(v bool) EngineOption       { return func(e *Engine) { e.allowDestructive = v } }
+func WithMode(m Mode) EngineOption             { return func(e *Engine) { e.mode = m } }
+func WithMigrate(v bool) EngineOption          { return func(e *Engine) { e.migrate = v } }
+func WithAllowDestructive(v bool) EngineOption { return func(e *Engine) { e.allowDestructive = v } }
+
+// WithMigrateLockTimeout sets the lock_timeout for migration DDL; 0 disables it.
+func WithMigrateLockTimeout(d time.Duration) EngineOption {
+	return func(e *Engine) { e.migrator.LockTimeout(d) }
+}
 func WithWatch(v bool) EngineOption                  { return func(e *Engine) { e.watch = v } }
 func WithLogger(l *slog.Logger) EngineOption         { return func(e *Engine) { e.logger = l } }
 func WithHTTPServer(s HTTPServer) EngineOption       { return func(e *Engine) { e.httpServer = s } }
@@ -102,9 +107,9 @@ func NewEngine(cfg *domain.Config, ownerDB domain.OwnerDB, authDB domain.Request
 		authDB:   authDB,
 		migrator: NewMigrator(ownerDB, roles),
 		logger:   slog.Default(),
-		mode:    ModeDev,
-		migrate: true,
-		watch:   true,
+		mode:     ModeDev,
+		migrate:  true,
+		watch:    true,
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -379,7 +384,6 @@ func (e *Engine) Start(ctx context.Context) error {
 	return e.waitForShutdown(ctx, srvErrCh)
 }
 
-
 func (e *Engine) waitForShutdown(ctx context.Context, srvErrCh <-chan error) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -435,7 +439,6 @@ func (e *Engine) modeStr() string {
 	}
 	return "production"
 }
-
 
 // runDriftHeartbeat logs a loud error periodically while the tracker shows
 // drift, so the failure mode doesn't get buried in log volume. getTracker is

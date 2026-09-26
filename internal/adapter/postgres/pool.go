@@ -125,8 +125,17 @@ func (db *DB) Pool() *pgxpool.Pool {
 }
 
 // EnsureMigrationsTable creates the _instancez_migrations table if it doesn't exist.
+// It holds the migration lock so concurrent first boots don't race the CREATE.
 func (db *DB) EnsureMigrationsTable(ctx context.Context) error {
-	_, err := db.pool.Exec(ctx, `
+	tx, err := db.pool.Begin(ctx)
+	if err != nil {
+		return &domain.DatabaseError{Op: "ensure_migrations_table", Err: err}
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", domain.MigrationLockKey); err != nil {
+		return &domain.DatabaseError{Op: "ensure_migrations_table", Err: err}
+	}
+	_, err = tx.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS _instancez_migrations (
 			id BIGSERIAL PRIMARY KEY,
 			checksum TEXT NOT NULL,
@@ -139,9 +148,12 @@ func (db *DB) EnsureMigrationsTable(ctx context.Context) error {
 		return &domain.DatabaseError{Op: "ensure_migrations_table", Err: err}
 	}
 	// Additive column for existing deployments that predate config storage.
-	_, err = db.pool.Exec(ctx,
+	_, err = tx.Exec(ctx,
 		`ALTER TABLE _instancez_migrations ADD COLUMN IF NOT EXISTS config_json TEXT NOT NULL DEFAULT '{}'`)
 	if err != nil {
+		return &domain.DatabaseError{Op: "ensure_migrations_table", Err: err}
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return &domain.DatabaseError{Op: "ensure_migrations_table", Err: err}
 	}
 	return nil

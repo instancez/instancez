@@ -25,6 +25,12 @@ func (p *priorConfigDB) GetLastMigration(ctx context.Context) (*domain.Migration
 	return &domain.Migration{Checksum: "prior", ConfigJSON: p.configJSON}, nil
 }
 
+func (p *priorConfigDB) Begin(ctx context.Context) (domain.Tx, error) {
+	return &stubTx{queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+		return map[string]any{"checksum": "prior", "config_json": p.configJSON}, nil
+	}}, nil
+}
+
 // Saving a config that drops a column is the user's doing, not a server fault:
 // it must come back as a 422 naming the column, not a 500.
 func TestHandlePutConfig_DestructiveChangeIsUnprocessable(t *testing.T) {

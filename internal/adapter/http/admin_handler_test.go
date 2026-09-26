@@ -227,7 +227,7 @@ func TestPutConfigSourceVersionMismatchReturns409(t *testing.T) {
 	// Drive the migrator's Apply to its early-return path: we stub
 	// GetLastMigration to return a record whose checksum matches the
 	// marshaled config the handler will receive, so Apply returns nil
-	// without touching Begin/Exec.
+	// without running any DDL.
 	parsedCfg := &domain.Config{Version: 1}
 	cfgJSON, err := json.Marshal(parsedCfg)
 	if err != nil {
@@ -326,6 +326,12 @@ type lastMigrationStubDB struct {
 
 func (l *lastMigrationStubDB) GetLastMigration(ctx context.Context) (*domain.Migration, error) {
 	return &domain.Migration{Checksum: l.checksum, ConfigJSON: "{}"}, nil
+}
+
+func (l *lastMigrationStubDB) Begin(ctx context.Context) (domain.Tx, error) {
+	return &stubTx{queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+		return map[string]any{"checksum": l.checksum, "config_json": "{}"}, nil
+	}}, nil
 }
 
 func TestHandleGetEnvVars(t *testing.T) {

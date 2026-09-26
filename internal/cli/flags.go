@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	instancezhttp "github.com/instancez/instancez/internal/adapter/http"
+	"github.com/instancez/instancez/internal/app"
 	"github.com/spf13/pflag"
 )
 
@@ -172,11 +174,12 @@ func applyEnvDefaults(fs *pflag.FlagSet, aliases map[string][]string, lookup fun
 
 // serveOptions holds the parsed values that runServe needs.
 type serveOptions struct {
-	port             int
-	configPath       string
-	bundlePath       string // --bundle: replaces --config when non-empty
-	migrate          bool
-	allowDestructive bool
+	port               int
+	configPath         string
+	bundlePath         string // --bundle: replaces --config when non-empty
+	migrate            bool
+	allowDestructive   bool
+	migrateLockTimeout time.Duration
 
 	watch         bool
 	watchInterval time.Duration
@@ -195,18 +198,19 @@ type serveOptions struct {
 type serveFlagSet struct {
 	flags *pflag.FlagSet
 
-	port             int
-	configPath       string
-	bundlePath       string
-	migrate          bool
-	allowDestructive bool
-	watch            bool
-	watchInterval    time.Duration
-	dashboard        string
-	dotenvWritable   bool
-	dotenvPath       string
-	publishableKey   string
-	secretKey        string
+	port               int
+	configPath         string
+	bundlePath         string
+	migrate            bool
+	allowDestructive   bool
+	migrateLockTimeout time.Duration
+	watch              bool
+	watchInterval      time.Duration
+	dashboard          string
+	dotenvWritable     bool
+	dotenvPath         string
+	publishableKey     string
+	secretKey          string
 }
 
 func newServeFlagSet() *serveFlagSet {
@@ -216,6 +220,7 @@ func newServeFlagSet() *serveFlagSet {
 	fs.flags.StringVar(&fs.bundlePath, "bundle", "", "bundle pointer (file path or s3://bucket/key[#version]); replaces --config when set (env: INSTANCEZ_BUNDLE)")
 	fs.flags.BoolVar(&fs.migrate, "migrate", false, "run pending migrations on startup")
 	fs.flags.BoolVar(&fs.allowDestructive, "allow-destructive", false, "permit DROP TABLE/COLUMN in migrations")
+	fs.flags.DurationVar(&fs.migrateLockTimeout, "migrate-lock-timeout", app.DefaultMigrateLockTimeout, "max wait for a table lock per migration statement; 0 disables (env: INSTANCEZ_MIGRATE_LOCK_TIMEOUT)")
 	fs.flags.BoolVar(&fs.watch, "watch", false, "watch the config source for changes (env: INSTANCEZ_WATCH)")
 	fs.flags.DurationVar(&fs.watchInterval, "watch-interval", 60*time.Second, "S3-watch poll interval; min 10s (env: INSTANCEZ_WATCH_INTERVAL)")
 	fs.flags.StringVar(&fs.dashboard, "dashboard", "disabled", "dashboard mode: disabled | readonly | readwrite (env: INSTANCEZ_DASHBOARD)")
@@ -240,6 +245,11 @@ func resolveServeFlags(fs *serveFlagSet, lookup func(string) string) (serveOptio
 		return serveOptions{}, fmt.Errorf("%s must be at least %s", source(setBy, "watch-interval", "--watch-interval"), minWatchInterval)
 	}
 
+	// Postgres lock_timeout is whole milliseconds up to INT_MAX; 0 disables it.
+	if t := fs.migrateLockTimeout; t < 0 || (t > 0 && t < time.Millisecond) || t.Milliseconds() > math.MaxInt32 {
+		return serveOptions{}, fmt.Errorf("%s must be 0 or between 1ms and %s", source(setBy, "migrate-lock-timeout", "--migrate-lock-timeout"), time.Duration(math.MaxInt32)*time.Millisecond)
+	}
+
 	mode, err := parseDashboardMode(fs.dashboard)
 	if err != nil {
 		if s, ok := setBy["dashboard"]; ok {
@@ -257,18 +267,19 @@ func resolveServeFlags(fs *serveFlagSet, lookup func(string) string) (serveOptio
 	}
 
 	return serveOptions{
-		port:             fs.port,
-		configPath:       fs.configPath,
-		bundlePath:       fs.bundlePath,
-		migrate:          fs.migrate,
-		allowDestructive: fs.allowDestructive,
-		watch:            fs.watch,
-		watchInterval:    fs.watchInterval,
-		dashboard:        mode,
-		dotenvWritable:   fs.dotenvWritable,
-		dotenvPath:       fs.dotenvPath,
-		publishableKey:   fs.publishableKey,
-		secretKey:        fs.secretKey,
+		port:               fs.port,
+		configPath:         fs.configPath,
+		bundlePath:         fs.bundlePath,
+		migrate:            fs.migrate,
+		allowDestructive:   fs.allowDestructive,
+		migrateLockTimeout: fs.migrateLockTimeout,
+		watch:              fs.watch,
+		watchInterval:      fs.watchInterval,
+		dashboard:          mode,
+		dotenvWritable:     fs.dotenvWritable,
+		dotenvPath:         fs.dotenvPath,
+		publishableKey:     fs.publishableKey,
+		secretKey:          fs.secretKey,
 	}, nil
 }
 
@@ -390,16 +401,16 @@ func resolveDevFlags(fs *devFlagSet, lookup func(string) string) (devOptions, er
 			dotenvWritable: fs.dotenvWritable,
 			dotenvPath:     fs.dotenvPath,
 		},
-		noWatch:   fs.noWatch,
-		verbose:   fs.verbose,
-		dbSrc:     dbSrc,
+		noWatch: fs.noWatch,
+		verbose: fs.verbose,
+		dbSrc:   dbSrc,
 		pgDataDir: func() string {
 			if fs.embeddedPG {
 				return filepath.Join(filepath.Dir(fs.configPath), "pgdata")
 			}
 			return ""
 		}(),
-		resetPG:   fs.resetPG,
+		resetPG: fs.resetPG,
 	}, nil
 }
 

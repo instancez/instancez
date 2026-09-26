@@ -41,7 +41,13 @@ func TestApplyRejectsDestructiveWithoutProvisioning(t *testing.T) {
 		t.Fatalf("expected destructive rejection, got: %v", err)
 	}
 	// Apply must not have executed any DDL for the rejected plan.
-	if delta := strings.Join(db.execs[execsBefore:], "\n"); strings.TrimSpace(delta) != "" {
+	var ddl []string
+	for _, q := range db.execs[execsBefore:] {
+		if !strings.Contains(q, "pg_advisory_xact_lock") && !strings.Contains(q, "lock_timeout") {
+			ddl = append(ddl, q)
+		}
+	}
+	if delta := strings.Join(ddl, "\n"); strings.TrimSpace(delta) != "" {
 		t.Fatalf("Apply must run no DDL on a destructive plan, ran:\n%s", delta)
 	}
 }

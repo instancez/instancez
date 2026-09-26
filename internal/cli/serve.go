@@ -273,6 +273,7 @@ func runServe(opts serveOptions) error {
 		app.WithMode(app.ModeProd),
 		app.WithMigrate(opts.migrate),
 		app.WithAllowDestructive(opts.allowDestructive),
+		app.WithMigrateLockTimeout(opts.migrateLockTimeout),
 		app.WithWatch(opts.watch),
 		app.WithWatchInterval(opts.watchInterval),
 		app.WithLogger(logger),
