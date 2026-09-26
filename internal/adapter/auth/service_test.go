@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"strings"
@@ -370,5 +371,40 @@ func TestService_OverridesCallerSession(t *testing.T) {
 
 	if len(db.sessions) != 1 || db.sessions[0].Role != domain.JWTRoleService {
 		t.Fatalf("caller's anon session leaked into auth query: %+v", db.sessions)
+	}
+}
+
+var errWithRLS = errors.New("withrls boom")
+
+// erroringWithRLSDB simulates a WithRLS failure (e.g. a poisoned session GUC).
+type erroringWithRLSDB struct {
+	fakeDB
+}
+
+func (d *erroringWithRLSDB) WithRLS(ctx context.Context, s domain.Session) (context.Context, error) {
+	return ctx, errWithRLS
+}
+
+// Regression: pin() must fail closed. A WithRLS error must never let a query
+// run under the caller's ambient (unpinned) session.
+func TestService_PinFailsClosedOnWithRLSError(t *testing.T) {
+	ran := false
+	db := &erroringWithRLSDB{
+		fakeDB: fakeDB{
+			queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+				ran = true
+				return nil, nil
+			},
+		},
+	}
+	svc := newTestService(db)
+
+	_, err := svc.GetUserByID(context.Background(), "u1")
+
+	if ran {
+		t.Fatal("query ran despite WithRLS error")
+	}
+	if !errors.Is(err, errWithRLS) {
+		t.Fatalf("want errWithRLS, got %v", err)
 	}
 }
