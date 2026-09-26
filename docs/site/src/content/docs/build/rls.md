@@ -61,6 +61,10 @@ instancez installs these helper functions in the `auth` schema at startup. They 
 
 `auth.uid()` is the right function for owner-scoped policies. `auth.is_authenticated()` is useful as a simpler signed-in-only gate. The underlying implementation reads session GUCs (`app.user_id`, `app.role`, etc.) set at the start of every request transaction.
 
+### The `auth` schema is not readable from requests
+
+`anon` and `authenticated` can call the helpers above, but they have no privileges on the `auth.*` tables, the same as on Supabase. A policy or `security: invoker` RPC that runs `SELECT … FROM auth.users` fails with `permission denied`. Keep user data you need in policies in your own table (for example a `profiles` table with `user_id` referencing `auth.users.id`), or read it in an RPC declared with `security: definer`. Foreign keys to `auth.users.id` keep working.
+
 ## Common patterns
 
 ### Public read, owner write

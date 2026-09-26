@@ -60,6 +60,8 @@ Start the production server.
 
 Unlike `dev`, does not hot-reload and defaults to dashboard disabled.
 
+Even without `--migrate`, every boot re-applies database privilege fixes (GRANT/REVOKE on `auth`, `public`, and `storage`) under the migration lock, so it needs an owner DSN that can run those. Boot fails if this step fails.
+
 ```
 inz serve [flags]
 ```

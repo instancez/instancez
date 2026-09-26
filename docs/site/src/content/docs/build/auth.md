@@ -42,7 +42,7 @@ auth:
       redirect_url: https://api.myapp.example.com/auth/v1/callback/github
 ```
 
-All keys are optional. Auth is always provisioned, even if `auth:` is omitted entirely — JWT auth works with the defaults (15m expiry, 7d refresh token expiry, sign-up open). Refresh tokens are always issued; the old `auth.refresh_tokens` toggle is deprecated and ignored.
+All keys are optional. Auth is always provisioned, even if `auth:` is omitted entirely — JWT auth works with the defaults (15m expiry, 7d refresh token expiry, sign-up open). Refresh tokens are always issued; the old `auth.refresh_tokens` toggle is deprecated and ignored. After a signing-key rotation, tokens signed by the old key keep verifying until `jwt_expiry` (plus 30 seconds of clock skew) has passed, and are rejected after that.
 
 The dashboard's **Auth** page edits these too: the Registration toggles map to `allow_signup` / `allow_anonymous`, and the Redirect URLs list maps to `redirect_urls`. When sign-up is off, the anonymous toggle is disabled, since anonymous sign-in is blocked along with it.
 

@@ -10,11 +10,23 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Changed
 
+- Requests running as `anon` or `authenticated` can no longer read or write `auth.*` tables, which matches Supabase. RLS policies or `security: invoker` RPCs that query `auth.users` directly now get `permission denied`; move that data into your own table or use a `security: definer` RPC. `auth.uid()`, `auth.role()`, `auth.email()`, `auth.jwt()` and foreign keys to `auth.users.id` are unaffected.
+- Startup now re-applies database privilege fixes on every boot, including `inz serve` without `--migrate`, and boot fails if the privilege fix fails.
+
 ### Fixed
 
 ### Security
 
 - RPC and REST select/filter/order identifiers and embed columns/aliases are now strictly validated, so unsafe or undeclared identifiers return 400, and enum/pattern CHECK literals are escaped.
+- `anon` and `authenticated` could read **and modify** every `auth.*` table. That covered password hashes, refresh tokens, TOTP secrets and the JWT signing private keys in `auth.jwt_keys`. The worst case: a client holding only the publishable key could insert its own signing key into `auth.jwt_keys` and mint accepted tokens for any user, or overwrite `password_hash`. They could also read `_instancez_migrations`, which stores the resolved config including OAuth client secrets, S3 keys, the Resend API key and function env values. Both are now revoked. Existing databases are fixed on the next boot, without a config change.
+- A retired JWT signing key stops verifying once `jwt_expiry` has passed since its retirement. Before this change it verified forever.
+- A transient database error while loading the signing key no longer mints a replacement key, which used to sign every user out.
+
+### Upgrading
+
+- Keep the mixed-version window short. The first upgraded instance revokes anon's access to `auth.*`. From then on, older instances can't store refresh tokens, so sign-in and refresh routed to them fail until the rollout finishes.
+- Rolling back to an older release needs a manual step: re-grant the old privileges yourself. An older binary with an unchanged config never re-runs the grants.
+- `inz serve` without `--migrate` now needs an owner DSN that can GRANT/REVOKE on `auth`, `public`, and `storage`, or boot fails.
 
 ## [0.0.3]
 
