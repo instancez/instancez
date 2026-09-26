@@ -825,3 +825,46 @@ func TestGenerateTable_EnumAndPatternEscapeQuotes(t *testing.T) {
 	mustContain(t, joined, `CHECK (code ~ '^[a-z'']+\d$')`)
 }
 
+func TestHarden_LocksThenRevokesInOneTx(t *testing.T) {
+	for _, cfg := range []*domain.Config{nil, {}, {Auth: &domain.Auth{}}} {
+		db := newFakeDB(t)
+		if err := NewMigrator(db).Harden(context.Background(), cfg); err != nil {
+			t.Fatalf("Harden(%+v): %v", cfg, err)
+		}
+		if len(db.execs) == 0 || !strings.Contains(db.execs[0], "pg_advisory_xact_lock") {
+			t.Fatalf("advisory lock must be the first statement: %v", db.execs)
+		}
+		if !db.migrationsTableEnsured {
+			t.Fatal("Harden must ensure _instancez_migrations exists before revoking on it")
+		}
+		joined := strings.Join(db.execs, "\n")
+		mustContain(t, joined, "CREATE TABLE IF NOT EXISTS auth.jwt_keys")
+		mustContain(t, joined, "REVOKE ALL ON ALL TABLES IN SCHEMA auth FROM anon, authenticated;")
+		mustContain(t, joined, "REVOKE ALL ON _instancez_migrations FROM anon, authenticated, service_role;")
+		if db.committedStatements != len(db.execs) {
+			t.Fatalf("committed %d of %d statements", db.committedStatements, len(db.execs))
+		}
+	}
+}
+
+func TestHarden_RevokesFromCustomRoles(t *testing.T) {
+	db := newFakeDB(t)
+	roles := domain.Roles{Anon: "web_anon", Authenticated: "web_user", Service: "web_admin", Seed: "seeder"}
+	if err := NewMigrator(db, roles).Harden(context.Background(), nil); err != nil {
+		t.Fatalf("Harden: %v", err)
+	}
+	joined := strings.Join(db.execs, "\n")
+	mustContain(t, joined, "REVOKE ALL ON auth.jwt_keys FROM web_anon, web_user, web_admin;")
+	mustContain(t, joined, "REVOKE ALL ON _instancez_migrations FROM web_anon, web_user, web_admin, seeder;")
+}
+
+func TestHarden_RollsBackOnFailure(t *testing.T) {
+	db := newFakeDB(t)
+	db.failOnStatementContaining = "REVOKE ALL ON auth.jwt_keys"
+	if err := NewMigrator(db).Harden(context.Background(), nil); err == nil {
+		t.Fatal("expected error")
+	}
+	if db.committedStatements != 0 {
+		t.Fatalf("partial harden committed %d statements", db.committedStatements)
+	}
+}
