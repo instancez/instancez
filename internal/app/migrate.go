@@ -372,6 +372,9 @@ func (m *Migrator) Harden(ctx context.Context, cfg *domain.Config) error {
 		return fmt.Errorf("harden: %w", err)
 	}
 	stmts := append(generateJWTKeysTable(), generatePrivilegeRevokes(m.roles)...)
+	if cfg != nil && cfg.Auth != nil {
+		stmts = append(stmts, authHealDDL...)
+	}
 	return m.applyStatements(ctx, stmts)
 }
 
@@ -611,6 +614,35 @@ const refreshTokensDDL = `CREATE TABLE IF NOT EXISTS auth.refresh_tokens (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );`
 
+// authHealDDL adds auth columns and indexes introduced after the tables first shipped.
+var authHealDDL = []string{
+	healAuthColumn("refresh_tokens", "revoked_at", "TIMESTAMPTZ"),
+	healAuthColumn("refresh_tokens", "aal", "TEXT NOT NULL DEFAULT 'aal1'"),
+	healAuthColumn("refresh_tokens", "amr", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+	healAuthIndex("idx_refresh_tokens_session", "refresh_tokens", "session_id"),
+	healAuthColumn("one_time_tokens", "attempts", "INT NOT NULL DEFAULT 0"),
+	healAuthColumn("mfa_challenges", "attempts", "INT NOT NULL DEFAULT 0"),
+	healAuthColumn("mfa_factors", "last_totp_step", "BIGINT"),
+	healAuthIndex("idx_users_email_lower", "users", "lower(email)"),
+}
+
+// healAuthColumn checks the catalog first, since ADD COLUMN IF NOT EXISTS locks the table even when it skips.
+func healAuthColumn(table, column, def string) string {
+	return fmt.Sprintf(`DO $$ BEGIN
+IF to_regclass('auth.%[1]s') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('auth.%[1]s') AND attname = '%[2]s' AND NOT attisdropped) THEN
+  ALTER TABLE auth.%[1]s ADD COLUMN %[2]s %[3]s;
+END IF;
+END $$;`, table, column, def)
+}
+
+func healAuthIndex(name, table, expr string) string {
+	return fmt.Sprintf(`DO $$ BEGIN
+IF to_regclass('auth.%[2]s') IS NOT NULL AND to_regclass('auth.%[1]s') IS NULL THEN
+  CREATE INDEX %[1]s ON auth.%[2]s (%[3]s);
+END IF;
+END $$;`, name, table, expr)
+}
+
 // generateAuthTables emits the auth.* tables. All tables live in the auth
 // schema; the underscore prefixes used pre-schema-move are dropped because
 // the schema already provides the namespace. Names align with Supabase's
@@ -672,9 +704,6 @@ func generateAuthTables(auth *domain.Auth) []string {
   expires_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );`)
-		// Additive column for deployments whose one_time_tokens table predates
-		// OTP attempt-limiting.
-		ddl = append(ddl, `ALTER TABLE auth.one_time_tokens ADD COLUMN IF NOT EXISTS attempts INT NOT NULL DEFAULT 0;`)
 		ddl = append(ddl, `CREATE INDEX IF NOT EXISTS idx_one_time_tokens_email_code ON auth.one_time_tokens (email, code);`)
 	}
 
@@ -700,9 +729,6 @@ func generateAuthTables(auth *domain.Auth) []string {
   attempts INT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );`)
-	// Additive column for deployments whose mfa_challenges table predates
-	// TOTP attempt-limiting.
-	ddl = append(ddl, `ALTER TABLE auth.mfa_challenges ADD COLUMN IF NOT EXISTS attempts INT NOT NULL DEFAULT 0;`)
 
 	// auth.flow_state — consolidates PKCE auth codes and OAuth state into one
 	// Supabase-shaped table. provider_type distinguishes the two flows
@@ -732,7 +758,7 @@ func generateAuthTables(auth *domain.Auth) []string {
 	ddl = append(ddl, `CREATE UNIQUE INDEX IF NOT EXISTS idx_flow_state_auth_code ON auth.flow_state (auth_code) WHERE auth_code IS NOT NULL;`)
 	ddl = append(ddl, `CREATE INDEX IF NOT EXISTS idx_flow_state_user_id_auth_method ON auth.flow_state (user_id, authentication_method);`)
 
-	return ddl
+	return append(ddl, authHealDDL...)
 }
 
 func generateTable(name string, table domain.Table, allTables map[string]domain.Table) []string {

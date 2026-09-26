@@ -15,6 +15,8 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Fixed
 
+- Upgrading instancez with an unchanged `instancez.yaml` now adds new `auth.*` columns and indexes at boot. Before, they only reached a database when the config changed. This also adds the missing `attempts` column to `auth.one_time_tokens` on databases that enabled email auth after first boot.
+
 ### Security
 
 - RPC and REST select/filter/order identifiers and embed columns/aliases are now strictly validated, so unsafe or undeclared identifiers return 400, and enum/pattern CHECK literals are escaped.

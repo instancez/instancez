@@ -868,3 +868,61 @@ func TestHarden_RollsBackOnFailure(t *testing.T) {
 		t.Fatalf("partial harden committed %d statements", db.committedStatements)
 	}
 }
+
+func TestAuthHealDDL_EmittedOnFreshAndDiff(t *testing.T) {
+	auth := &domain.Auth{Email: &domain.AuthEmail{}}
+	fresh := strings.Join(generateAuthTables(auth), "\n")
+	diff := strings.Join(diffNewAuth(&domain.Config{Auth: auth}, &domain.Config{Auth: auth}), "\n")
+	if len(authHealDDL) == 0 {
+		t.Fatal("authHealDDL is empty")
+	}
+	for _, stmt := range authHealDDL {
+		mustContain(t, fresh, stmt)
+		mustContain(t, diff, stmt)
+	}
+}
+
+func TestAuthHealDDL_ChecksCatalogBeforeTouchingTables(t *testing.T) {
+	joined := strings.Join(authHealDDL, "\n")
+	for _, want := range []string{"refresh_tokens", "revoked_at", "aal", "amr", "idx_refresh_tokens_session",
+		"mfa_factors", "last_totp_step", "mfa_challenges", "one_time_tokens", "idx_users_email_lower", "lower(email)"} {
+		mustContain(t, joined, want)
+	}
+	for _, stmt := range authHealDDL {
+		if !strings.HasPrefix(stmt, "DO $$") || !strings.Contains(stmt, "to_regclass('auth.") {
+			t.Errorf("heal stmt must skip missing tables and existing objects: %s", stmt)
+		}
+		if strings.Contains(stmt, "IF NOT EXISTS") {
+			t.Errorf("IF NOT EXISTS takes the table lock before checking; use the catalog guard: %s", stmt)
+		}
+	}
+}
+
+func TestDiffNewAuth_OneTimeTokensHasAttempts(t *testing.T) {
+	old := &domain.Config{Auth: &domain.Auth{}}
+	nw := &domain.Config{Auth: &domain.Auth{Email: &domain.AuthEmail{}}}
+	joined := strings.Join(diffNewAuth(old, nw), "\n")
+	mustContain(t, joined, "code TEXT,\n  attempts INT NOT NULL DEFAULT 0,")
+}
+
+func TestHarden_HealsAuthColumnsOnlyWhenAuthConfigured(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  *domain.Config
+		heal bool
+	}{{"nil", nil, false}, {"no auth", &domain.Config{}, false}, {"auth", &domain.Config{Auth: &domain.Auth{}}, true}} {
+		db := newFakeDB(t)
+		if err := NewMigrator(db).Harden(context.Background(), tc.cfg); err != nil {
+			t.Fatalf("%s: Harden: %v", tc.name, err)
+		}
+		joined := strings.Join(db.execs, "\n")
+		for _, stmt := range authHealDDL {
+			if got := strings.Contains(joined, stmt); got != tc.heal {
+				t.Errorf("%s: heal stmt present=%v, want %v: %s", tc.name, got, tc.heal, stmt)
+			}
+		}
+		if db.committedStatements != len(db.execs) {
+			t.Fatalf("committed %d of %d statements", db.committedStatements, len(db.execs))
+		}
+	}
+}

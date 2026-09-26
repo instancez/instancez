@@ -377,12 +377,13 @@ func diffNewAuth(old, new *domain.Config) []string {
   purpose TEXT NOT NULL DEFAULT 'signup',
   email TEXT,
   code TEXT,
+  attempts INT NOT NULL DEFAULT 0,
   expires_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );`)
 		ddl = append(ddl, `CREATE INDEX IF NOT EXISTS idx_one_time_tokens_email_code ON auth.one_time_tokens (email, code);`)
 	}
-	return ddl
+	return append(ddl, authHealDDL...)
 }
 
 // diffNewTables returns CREATE TABLE + CREATE INDEX statements for tables in

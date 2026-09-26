@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/instancez/instancez/internal/adapter/postgres"
 	"github.com/instancez/instancez/internal/app"
@@ -2299,5 +2300,106 @@ func TestIntegration_ChangedRLSPolicy(t *testing.T) {
 	qual := fmt.Sprint(row["qual"])
 	if !strings.Contains(qual, "uid") {
 		t.Fatalf("expected policy to reference auth.uid(), got qual: %s", qual)
+	}
+}
+
+// authSchemaSnapshot ignores ordinal_position since re-added columns go last.
+func authSchemaSnapshot(t *testing.T, db *postgres.DB) string {
+	t.Helper()
+	rows, err := db.Query(context.Background(), `
+SELECT 'col ' || table_name || '.' || column_name || ' ' || data_type || ' ' || is_nullable || ' ' || coalesce(column_default, '') AS line
+  FROM information_schema.columns WHERE table_schema = 'auth'
+UNION ALL
+SELECT 'idx ' || indexdef FROM pg_indexes WHERE schemaname = 'auth'
+ORDER BY 1`)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	lines := make([]string, len(rows))
+	for i, r := range rows {
+		lines[i] = fmt.Sprint(r["line"])
+	}
+	return strings.Join(lines, "\n")
+}
+
+// A binary upgrade with an unchanged YAML must still add new auth columns.
+func TestAuthHeal_HardenRestoresColumnsToFreshSchema(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+	cfg := &domain.Config{Version: 1, Auth: &domain.Auth{Email: &domain.AuthEmail{}}}
+	m := app.NewMigrator(db)
+	if err := m.Apply(ctx, cfg); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	fresh := authSchemaSnapshot(t, db)
+	for _, s := range []string{
+		`ALTER TABLE auth.refresh_tokens DROP COLUMN amr, DROP COLUMN aal, DROP COLUMN revoked_at`,
+		`ALTER TABLE auth.mfa_factors DROP COLUMN last_totp_step`,
+		`ALTER TABLE auth.mfa_challenges DROP COLUMN attempts`,
+		`ALTER TABLE auth.one_time_tokens DROP COLUMN attempts`,
+		`DROP INDEX auth.idx_refresh_tokens_session, auth.idx_users_email_lower`,
+	} {
+		if _, err := db.Exec(ctx, s); err != nil {
+			t.Fatalf("simulate old schema %q: %v", s, err)
+		}
+	}
+	if err := m.Apply(ctx, cfg); err != nil {
+		t.Fatalf("unchanged apply: %v", err)
+	}
+	if columnExists(t, db, "auth.refresh_tokens", "amr") {
+		t.Fatal("precondition: unchanged-config Apply is a no-op")
+	}
+	for i := 0; i < 2; i++ {
+		if err := m.Harden(ctx, cfg); err != nil {
+			t.Fatalf("harden #%d: %v", i+1, err)
+		}
+	}
+	if healed := authSchemaSnapshot(t, db); healed != fresh {
+		t.Fatalf("healed schema differs from fresh:\n--- fresh\n%s\n--- healed\n%s", fresh, healed)
+	}
+}
+
+func TestAuthHeal_HardenSkipsMissingAuthTables(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+	cfg := &domain.Config{Version: 1, Auth: &domain.Auth{}}
+	m := app.NewMigrator(db)
+	for i := 0; i < 2; i++ {
+		if err := m.Harden(ctx, cfg); err != nil {
+			t.Fatalf("harden #%d without auth tables: %v", i+1, err)
+		}
+	}
+	for _, tbl := range []string{"auth.users", "auth.refresh_tokens", "auth.mfa_factors", "auth.mfa_challenges", "auth.one_time_tokens"} {
+		if tableExists(t, db, tbl) {
+			t.Errorf("heal must not create %s", tbl)
+		}
+	}
+	if err := m.Apply(ctx, cfg); err != nil {
+		t.Fatalf("apply after harden: %v", err)
+	}
+	if !columnExists(t, db, "auth.refresh_tokens", "amr") || !indexExists(t, db, "idx_users_email_lower") {
+		t.Fatal("fresh install is missing heal columns")
+	}
+}
+
+// Harden runs on every boot, so a healed DB must not wait on live table locks.
+func TestAuthHeal_HealedDBTakesNoTableLocks(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+	cfg := &domain.Config{Version: 1, Auth: &domain.Auth{Email: &domain.AuthEmail{}}}
+	m := app.NewMigrator(db).LockTimeout(200 * time.Millisecond)
+	if err := m.Apply(ctx, cfg); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `LOCK TABLE auth.users, auth.refresh_tokens, auth.mfa_factors, auth.mfa_challenges, auth.one_time_tokens IN ROW EXCLUSIVE MODE`); err != nil {
+		t.Fatalf("hold locks: %v", err)
+	}
+	if err := m.Harden(ctx, cfg); err != nil {
+		t.Fatalf("harden blocked by live writers: %v", err)
 	}
 }
