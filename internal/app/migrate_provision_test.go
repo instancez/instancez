@@ -43,7 +43,7 @@ func TestApplyRejectsDestructiveWithoutProvisioning(t *testing.T) {
 	// Apply must not have executed any DDL for the rejected plan.
 	var ddl []string
 	for _, q := range db.execs[execsBefore:] {
-		if !strings.Contains(q, "pg_advisory_xact_lock") && !strings.HasPrefix(q, "SET LOCAL lock_timeout") {
+		if !strings.Contains(q, "pg_advisory_xact_lock") && !strings.Contains(q, "lock_timeout") {
 			ddl = append(ddl, q)
 		}
 	}

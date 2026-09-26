@@ -398,7 +398,8 @@ func (m *Migrator) beginLocked(ctx context.Context) (domain.Tx, error) {
 		_ = tx.Rollback(ctx)
 		return nil, err
 	}
-	if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL lock_timeout = '%dms'", m.lockTimeout.Milliseconds())); err != nil {
+	// set_config with is_local=true is SET LOCAL with a bound value.
+	if _, err := tx.Exec(ctx, "SELECT set_config('lock_timeout', $1, true)", fmt.Sprintf("%dms", m.lockTimeout.Milliseconds())); err != nil {
 		_ = tx.Rollback(ctx)
 		return nil, err
 	}
