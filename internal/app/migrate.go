@@ -371,17 +371,8 @@ func (m *Migrator) Harden(ctx context.Context, cfg *domain.Config) error {
 	if err := m.db.EnsureMigrationsTable(ctx); err != nil {
 		return fmt.Errorf("harden: %w", err)
 	}
-	tx, err := m.beginLocked(ctx)
-	if err != nil {
-		return fmt.Errorf("harden begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	for _, s := range append(generateJWTKeysTable(), generatePrivilegeRevokes(m.roles)...) {
-		if _, err := tx.Exec(ctx, s); err != nil {
-			return fmt.Errorf("harden: %w", err)
-		}
-	}
-	return tx.Commit(ctx)
+	stmts := append(generateJWTKeysTable(), generatePrivilegeRevokes(m.roles)...)
+	return m.applyStatements(ctx, stmts)
 }
 
 // applyStatements runs stmts inside a single transaction without recording a
