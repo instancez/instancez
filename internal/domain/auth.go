@@ -2,6 +2,7 @@ package domain
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
@@ -34,11 +35,39 @@ type UpdateUserParams struct {
 	ClearEmailVerified bool
 }
 
-// SessionMeta carries request-scoped metadata persisted on a refresh token row.
+// AMREntry is one entry of the Supabase JWT amr claim.
+type AMREntry struct {
+	Method    string `json:"method"`
+	Timestamp int64  `json:"timestamp"`
+}
+
+// SessionMeta is a session's state, persisted on each refresh-token row.
 type SessionMeta struct {
 	SessionID string
 	IP        string
 	UserAgent string
+	AAL       string
+	AMR       []AMREntry
+}
+
+// ParseAMR decodes an amr value from a JSONB column or a decoded JWT claim.
+func ParseAMR(v any) []AMREntry {
+	var b []byte
+	switch x := v.(type) {
+	case nil:
+		return nil
+	case []byte:
+		b = x
+	case string:
+		b = []byte(x)
+	default:
+		b, _ = json.Marshal(x)
+	}
+	var out []AMREntry
+	if json.Unmarshal(b, &out) != nil {
+		return nil
+	}
+	return out
 }
 
 // OTPRow is a consumed/validated one-time token; the handler inspects Purpose
@@ -94,10 +123,10 @@ type AuthService interface {
 	// ---- sessions / refresh tokens ----
 	// InsertRefreshToken persists a refresh token row carrying request meta.
 	InsertRefreshToken(ctx context.Context, userID, token string, meta SessionMeta, expiresAt int64) error
-	// ConsumeRefreshToken validates + rotates a refresh token. It returns the
-	// user row for a valid, single-use token. Errors: ErrRefreshExpired,
-	// ErrRefreshReuse (all sessions revoked), ErrUnauthorized.
-	ConsumeRefreshToken(ctx context.Context, token string) (userRow map[string]any, err error)
+	// ConsumeRefreshToken rotates a refresh token and returns the user row plus
+	// the session state to carry forward. Errors: ErrRefreshExpired,
+	// ErrRefreshReuse (session family revoked), ErrUnauthorized.
+	ConsumeRefreshToken(ctx context.Context, token string) (userRow map[string]any, meta SessionMeta, err error)
 	// RevokeSessionByID deletes refresh tokens for a single session.
 	RevokeSessionByID(ctx context.Context, sessionID string) error
 	// RevokeOtherSessions deletes the user's refresh tokens except keepSessionID.

@@ -10,7 +10,7 @@ import { supabase } from './supabase.js'
 //   supabase.auth.mfa.unenroll({ factorId })
 //
 // A successful verify against an unverified factor flips the row to
-// verified and re-issues a session JWT with aal=aal2 in app_metadata —
+// verified and re-issues a session JWT with a top-level aal=aal2 claim —
 // the AuthBar reads that claim back to render the "aal2" badge.
 export function SecurityPanel({ session }) {
   const [factors, setFactors] = useState([])
@@ -107,7 +107,7 @@ export function SecurityPanel({ session }) {
     }
   }
 
-  const aal = session?.user?.app_metadata?.aal || 'aal1'
+  const aal = (session?.access_token && JSON.parse(atob(session.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).aal) || 'aal1'
 
   return (
     <section className="security">

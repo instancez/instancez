@@ -408,3 +408,147 @@ func TestService_PinFailsClosedOnWithRLSError(t *testing.T) {
 		t.Fatalf("want errWithRLS, got %v", err)
 	}
 }
+
+func TestInsertRefreshToken_PersistsAALAndAMR(t *testing.T) {
+	var got []any
+	s := newTestService(&fakeDB{execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
+		got = args
+		return 1, nil
+	}})
+	meta := domain.SessionMeta{SessionID: "s1", AAL: "aal2", AMR: []domain.AMREntry{{Method: "totp", Timestamp: 7}}}
+	if err := s.InsertRefreshToken(context.Background(), "u1", "raw", meta, time.Now().Add(time.Hour).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	if got[6] != "aal2" || got[7] != `[{"method":"totp","timestamp":7}]` {
+		t.Fatalf("aal/amr args = %v / %v", got[6], got[7])
+	}
+}
+
+func TestInsertRefreshToken_DefaultsEmptySessionState(t *testing.T) {
+	var got []any
+	s := newTestService(&fakeDB{execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
+		got = args
+		return 1, nil
+	}})
+	_ = s.InsertRefreshToken(context.Background(), "u1", "raw", domain.SessionMeta{}, time.Now().Unix())
+	if got[6] != "aal1" || got[7] != "[]" {
+		t.Fatalf("defaults = %v / %v, want aal1 / []", got[6], got[7])
+	}
+}
+
+// refreshDB scripts the rotate UPDATE, the fallback SELECT, and the user fetch.
+func refreshDB(rotated, existing map[string]any, execs *[]string) *fakeDB {
+	return &fakeDB{
+		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+			switch {
+			case strings.HasPrefix(q, "UPDATE auth.refresh_tokens"):
+				return rotated, nil
+			case strings.Contains(q, "FROM auth.refresh_tokens"):
+				return existing, nil
+			case strings.Contains(q, "FROM auth.users"):
+				return map[string]any{"id": "u1"}, nil
+			}
+			return nil, nil
+		},
+		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
+			*execs = append(*execs, q)
+			return 1, nil
+		},
+	}
+}
+
+func TestConsumeRefreshToken_RotatesAndReturnsSessionState(t *testing.T) {
+	var execs []string
+	s := newTestService(refreshDB(map[string]any{
+		"user_id": "u1", "session_id": "s1", "aal": "aal2",
+		"amr":        []any{map[string]any{"method": "totp", "timestamp": float64(9)}},
+		"expires_at": time.Now().Add(time.Hour),
+	}, nil, &execs))
+	row, meta, err := s.ConsumeRefreshToken(context.Background(), "raw")
+	if err != nil || row["id"] != "u1" {
+		t.Fatalf("row=%v err=%v", row, err)
+	}
+	if meta.SessionID != "s1" || meta.AAL != "aal2" || len(meta.AMR) != 1 || meta.AMR[0].Method != "totp" {
+		t.Fatalf("meta = %+v", meta)
+	}
+}
+
+func TestConsumeRefreshToken_ReuseWithinGraceSucceeds(t *testing.T) {
+	var execs []string
+	s := newTestService(refreshDB(nil, map[string]any{
+		"user_id": "u1", "session_id": "s1", "aal": "aal1", "amr": "[]",
+		"expires_at": time.Now().Add(time.Hour), "revoked_at": time.Now().Add(-2 * time.Second),
+	}, &execs))
+	if _, _, err := s.ConsumeRefreshToken(context.Background(), "raw"); err != nil {
+		t.Fatalf("concurrent refresh inside grace must succeed, got %v", err)
+	}
+	for _, q := range execs {
+		if !strings.Contains(q, "expires_at < NOW()") {
+			t.Fatalf("grace reuse may only prune expired rows, got %q", q)
+		}
+	}
+}
+
+func TestConsumeRefreshToken_ReuseAfterGraceRevokesFamily(t *testing.T) {
+	var execs []string
+	s := newTestService(refreshDB(nil, map[string]any{
+		"user_id": "u1", "session_id": "s1", "aal": "aal1", "amr": "[]",
+		"expires_at": time.Now().Add(time.Hour), "revoked_at": time.Now().Add(-time.Minute),
+	}, &execs))
+	_, _, err := s.ConsumeRefreshToken(context.Background(), "raw")
+	if !errors.Is(err, domain.ErrRefreshReuse) {
+		t.Fatalf("want ErrRefreshReuse, got %v", err)
+	}
+	if len(execs) != 1 || !strings.Contains(execs[0], "WHERE session_id = $1") {
+		t.Fatalf("expected one session-family revoke, got %v", execs)
+	}
+}
+
+func TestConsumeRefreshToken_LegacyNullSessionRevokesAllUserTokens(t *testing.T) {
+	var execs []string
+	s := newTestService(refreshDB(nil, map[string]any{
+		"user_id": "u1", "session_id": nil, "aal": "aal1", "amr": "[]",
+		"expires_at": time.Now().Add(time.Hour), "revoked_at": time.Now().Add(-time.Minute),
+	}, &execs))
+	_, _, err := s.ConsumeRefreshToken(context.Background(), "raw")
+	if !errors.Is(err, domain.ErrRefreshReuse) || len(execs) != 1 || !strings.Contains(execs[0], "WHERE user_id = $1") {
+		t.Fatalf("err=%v execs=%v", err, execs)
+	}
+}
+
+func TestConsumeRefreshToken_UnknownAndExpired(t *testing.T) {
+	var execs []string
+	s := newTestService(refreshDB(nil, nil, &execs))
+	if _, _, err := s.ConsumeRefreshToken(context.Background(), ""); !errors.Is(err, domain.ErrUnauthorized) {
+		t.Fatalf("empty/unknown token: want ErrUnauthorized, got %v", err)
+	}
+	s = newTestService(refreshDB(map[string]any{
+		"user_id": "u1", "session_id": "s1", "aal": "aal1", "amr": "[]", "expires_at": time.Now().Add(-time.Second),
+	}, nil, &execs))
+	if _, _, err := s.ConsumeRefreshToken(context.Background(), "raw"); !errors.Is(err, domain.ErrRefreshExpired) {
+		t.Fatalf("expired: want ErrRefreshExpired, got %v", err)
+	}
+}
+
+func TestParseAMR(t *testing.T) {
+	cases := map[string]any{
+		"nil":    nil,
+		"string": `[{"method":"password","timestamp":1}]`,
+		"bytes":  []byte(`[{"method":"password","timestamp":1}]`),
+		"claim":  []any{map[string]any{"method": "password", "timestamp": float64(1)}},
+		"junk":   "not json",
+	}
+	for name, in := range cases {
+		got := domain.ParseAMR(in)
+		switch name {
+		case "nil", "junk":
+			if len(got) != 0 {
+				t.Errorf("%s: want empty, got %v", name, got)
+			}
+		default:
+			if len(got) != 1 || got[0] != (domain.AMREntry{Method: "password", Timestamp: 1}) {
+				t.Errorf("%s: got %v", name, got)
+			}
+		}
+	}
+}

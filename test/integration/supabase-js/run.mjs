@@ -136,7 +136,7 @@ await step('auth.refreshSession rotates tokens', async () => {
   const { data, error } = await anon.auth.refreshSession({ refresh_token: refreshToken })
   if (error) throw error
   assert(data.session, 'session returned')
-  assert(data.session.access_token !== accessToken, 'access_token rotated')
+  assert(data.session.refresh_token !== refreshToken, 'refresh_token rotated')
   accessToken = data.session.access_token
   refreshToken = data.session.refresh_token
 })
@@ -1663,10 +1663,10 @@ await step('mfa: verify with valid TOTP code flips factor to verified and upgrad
   })
   if (ver.error) throw ver.error
   assert(ver.data?.access_token, 'new access_token from verify')
-  // Decode the new JWT and assert aal=aal2 in app_metadata.
+  // Decode the new JWT and assert the top-level aal claim.
   const [, payload] = ver.data.access_token.split('.')
   const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'))
-  assertEq(claims.app_metadata?.aal, 'aal2', 'aal bumped to aal2')
+  assertEq(claims.aal, 'aal2', 'aal bumped to aal2')
 })
 
 await step('mfa: unenroll deletes the factor', async () => {

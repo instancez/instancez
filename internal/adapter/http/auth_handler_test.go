@@ -574,7 +574,7 @@ func TestHandleRefreshGrant_IgnoresDeprecatedRefreshTokensFalse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	inserted := false
 	svc := &stubAuthService{
-		consumeRefreshFn: func(ctx context.Context, token string) (map[string]any, error) {
+		consumeRefreshFn: func(ctx context.Context, token string) (map[string]any, domain.SessionMeta, error) {
 			return map[string]any{
 				"id":                 "11111111-2222-3333-4444-555555555555",
 				"email":              "u@e.com",
@@ -583,7 +583,7 @@ func TestHandleRefreshGrant_IgnoresDeprecatedRefreshTokensFalse(t *testing.T) {
 				"raw_user_meta_data": `{}`,
 				"created_at":         time.Now(),
 				"updated_at":         time.Now(),
-			}, nil
+			}, domain.SessionMeta{}, nil
 		},
 		insertRefreshTokenFn: func(ctx context.Context, userID, token string, meta domain.SessionMeta, expiresAt int64) error {
 			inserted = true
@@ -754,7 +754,7 @@ type stubAuthService struct {
 	verifyPasswordFn      func(ctx context.Context, email, password string) (map[string]any, error)
 	getUserEmailFn        func(ctx context.Context, userID string) (string, error)
 	hasPasswordFn         func(ctx context.Context, userID string) (bool, error)
-	consumeRefreshFn      func(ctx context.Context, token string) (map[string]any, error)
+	consumeRefreshFn      func(ctx context.Context, token string) (map[string]any, domain.SessionMeta, error)
 	createOneTimeTokenFn  func(ctx context.Context, userID, token, purpose string, expiresAt int64) error
 	createOTPCodeFn       func(ctx context.Context, userID, token, code, email, purpose string, expiresAt int64) error
 	verifyOTPFn           func(ctx context.Context, token, email string, allowedPurposes []string) (domain.OTPRow, error)
@@ -850,11 +850,11 @@ func (s *stubAuthService) InsertRefreshToken(ctx context.Context, userID, token 
 	}
 	return nil
 }
-func (s *stubAuthService) ConsumeRefreshToken(ctx context.Context, token string) (map[string]any, error) {
+func (s *stubAuthService) ConsumeRefreshToken(ctx context.Context, token string) (map[string]any, domain.SessionMeta, error) {
 	if s.consumeRefreshFn != nil {
 		return s.consumeRefreshFn(ctx, token)
 	}
-	return nil, domain.ErrUnauthorized
+	return nil, domain.SessionMeta{}, domain.ErrUnauthorized
 }
 func (s *stubAuthService) RevokeSessionByID(ctx context.Context, sessionID string) error { return nil }
 func (s *stubAuthService) RevokeOtherSessions(ctx context.Context, userID, keep string) error {

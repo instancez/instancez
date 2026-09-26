@@ -109,7 +109,7 @@ func TestMFA_EnrollCreatesUnverifiedFactor(t *testing.T) {
 // TestMFA_VerifyGoodCodeFlipsFactorAndReturnsAAL2 stubs an unverified factor,
 // then drives /verify with a code freshly computed against the stored secret.
 // It asserts the factor flips to 'verified' and the issued session JWT carries
-// aal=aal2 in app_metadata.
+// a top-level aal=aal2 claim.
 func TestMFA_VerifyGoodCodeFlipsFactorAndReturnsAAL2(t *testing.T) {
 	// Known secret so the test can compute a valid TOTP.
 	secret := "JBSWY3DPEHPK3PXP"
@@ -162,9 +162,11 @@ func TestMFA_VerifyGoodCodeFlipsFactorAndReturnsAAL2(t *testing.T) {
 		t.Fatalf("parse token: %v", err)
 	}
 	claims := parsed.Claims.(jwt.MapClaims)
-	appMeta, _ := claims["app_metadata"].(map[string]any)
-	if appMeta == nil || appMeta["aal"] != "aal2" {
-		t.Errorf("expected aal=aal2 in app_metadata, got %v", appMeta)
+	if claims["aal"] != "aal2" {
+		t.Errorf("expected top-level aal=aal2, got %v", claims["aal"])
+	}
+	if am, _ := claims["app_metadata"].(map[string]any); am["aal"] != nil {
+		t.Errorf("aal must not be in app_metadata: %v", am)
 	}
 }
 

@@ -342,42 +342,65 @@ func (s *Service) RecordSignIn(ctx context.Context, userID string) {
 
 // ---------- sessions / refresh tokens ----------
 
+// refreshReuseInterval lets concurrent refreshes (e.g. two tabs) share one rotation.
+const refreshReuseInterval = 10 * time.Second
+
 func (s *Service) InsertRefreshToken(ctx context.Context, userID, token string, meta domain.SessionMeta, expiresAt int64) error {
-	_, err := s.db.Exec(ctx,
-		"INSERT INTO auth.refresh_tokens (user_id, token, session_id, ip, user_agent, expires_at) VALUES ($1::uuid, $2, $3, $4, $5, $6)",
-		userID, token, meta.SessionID, meta.IP, meta.UserAgent, time.Unix(expiresAt, 0))
+	aal := meta.AAL
+	if aal == "" {
+		aal = "aal1"
+	}
+	amr := meta.AMR
+	if amr == nil {
+		amr = []domain.AMREntry{}
+	}
+	amrJSON, err := json.Marshal(amr)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(ctx,
+		"INSERT INTO auth.refresh_tokens (user_id, token, session_id, ip, user_agent, expires_at, aal, amr) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8::jsonb)",
+		userID, token, meta.SessionID, meta.IP, meta.UserAgent, time.Unix(expiresAt, 0), aal, string(amrJSON))
 	return err
 }
 
-func (s *Service) ConsumeRefreshToken(ctx context.Context, token string) (map[string]any, error) {
+func (s *Service) ConsumeRefreshToken(ctx context.Context, token string) (map[string]any, domain.SessionMeta, error) {
 	row, err := s.db.QueryRow(ctx,
-		"SELECT user_id::text, expires_at FROM auth.refresh_tokens WHERE token = $1", token)
-	if err != nil || row == nil {
-		return nil, domain.ErrUnauthorized
+		`UPDATE auth.refresh_tokens SET revoked_at = NOW() WHERE token = $1 AND revoked_at IS NULL
+		 RETURNING user_id::text, session_id, aal, amr, expires_at`, token)
+	if err != nil {
+		return nil, domain.SessionMeta{}, domain.ErrUnauthorized
 	}
-
-	expiresAt, _ := row["expires_at"].(time.Time)
-	if time.Now().After(expiresAt) {
-		_, _ = s.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE token = $1", token)
-		return nil, domain.ErrRefreshExpired
+	if row == nil {
+		row, err = s.db.QueryRow(ctx,
+			"SELECT user_id::text, session_id, aal, amr, expires_at, revoked_at FROM auth.refresh_tokens WHERE token = $1", token)
+		if err != nil || row == nil {
+			return nil, domain.SessionMeta{}, domain.ErrUnauthorized
+		}
+		if revokedAt, _ := row["revoked_at"].(time.Time); time.Since(revokedAt) > refreshReuseInterval {
+			userID, sessionID := asString(row["user_id"]), asString(row["session_id"])
+			s.logger.Warn("refresh token reuse detected, revoking session", "user_id", userID, "session_id", sessionID)
+			if sessionID != "" {
+				_ = s.RevokeSessionByID(ctx, sessionID)
+			} else {
+				_ = s.RevokeAllUserSessions(ctx, userID)
+			}
+			return nil, domain.SessionMeta{}, domain.ErrRefreshReuse
+		}
 	}
-
-	userID := asString(row["user_id"])
-
-	// Rotation: each token is single-use.
-	affected, _ := s.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE token = $1", token)
-	if affected == 0 {
-		s.logger.Warn("refresh token reuse detected, revoking all tokens", "user_id", userID)
-		_, _ = s.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE user_id = $1::uuid", userID)
-		return nil, domain.ErrRefreshReuse
+	if expiresAt, _ := row["expires_at"].(time.Time); time.Now().After(expiresAt) {
+		return nil, domain.SessionMeta{}, domain.ErrRefreshExpired
 	}
-
-	userRow, err := s.db.QueryRow(ctx,
-		"SELECT "+userSelectCols+" FROM auth.users WHERE id = $1::uuid", userID)
-	if err != nil || userRow == nil {
-		return nil, domain.ErrUnauthorized
+	meta := domain.SessionMeta{SessionID: asString(row["session_id"]), AAL: asString(row["aal"]), AMR: domain.ParseAMR(row["amr"])}
+	if meta.SessionID != "" {
+		// ponytail: pruned only when the session rotates again; add a sweeper if idle sessions pile up.
+		_, _ = s.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE session_id = $1 AND revoked_at IS NOT NULL AND expires_at < NOW()", meta.SessionID)
 	}
-	return userRow, nil
+	userRow, err := s.GetUserByID(ctx, asString(row["user_id"]))
+	if err != nil {
+		return nil, domain.SessionMeta{}, domain.ErrUnauthorized
+	}
+	return userRow, meta, nil
 }
 
 func (s *Service) RevokeSessionByID(ctx context.Context, sessionID string) error {

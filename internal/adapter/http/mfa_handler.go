@@ -113,7 +113,7 @@ func (h *AuthHandler) handleChallengeFactor(c *gin.Context) {
 
 // handleVerifyFactor checks the TOTP code against the stored secret. On
 // success: the factor flips to 'verified' (if first-time enrollment) and
-// a fresh session is issued with aal=aal2 in app_metadata.
+// a fresh session is issued with a top-level aal=aal2 claim, keeping the session_id.
 func (h *AuthHandler) handleVerifyFactor(c *gin.Context) {
 	session := getSession(c)
 	factorID := c.Param("factor_id")
@@ -181,17 +181,14 @@ func (h *AuthHandler) handleVerifyFactor(c *gin.Context) {
 		problemJSON(c, 500, "internal", "User not found")
 		return
 	}
-	// Flag aal=aal2 in raw_app_meta_data so buildSession's JWT claim
-	// reflects the elevated assurance level. This does NOT persist the
-	// change — AAL is per-session.
-	appMeta := decodeJSONB(userRow["raw_app_meta_data"])
-	if appMeta == nil {
-		appMeta = map[string]any{}
+	claims := jwtClaims(session.JWT)
+	sid, _ := claims["session_id"].(string)
+	meta := domain.SessionMeta{
+		SessionID: sid,
+		AAL:       "aal2",
+		AMR:       append([]domain.AMREntry{{Method: "totp", Timestamp: time.Now().Unix()}}, domain.ParseAMR(claims["amr"])...),
 	}
-	appMeta["aal"] = "aal2"
-	userRow["raw_app_meta_data"] = appMeta
-
-	sess, err := h.buildSession(ctx, session.UserID, userRow)
+	sess, err := h.issueSession(ctxWithRequestMeta(ctx, c), session.UserID, userRow, meta)
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to generate token")
 		return

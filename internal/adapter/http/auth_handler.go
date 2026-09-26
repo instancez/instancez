@@ -217,7 +217,7 @@ func (h *AuthHandler) handleSignupAnonymous(c *gin.Context, probe map[string]any
 
 	userID := asString(row["id"])
 	ctx = ctxWithRequestMeta(ctx, c)
-	session, err := h.buildSession(ctx, userID, row)
+	session, err := h.buildSession(ctx, userID, row, "anonymous")
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to generate token")
 		return
@@ -267,7 +267,7 @@ func (h *AuthHandler) handleSignup(c *gin.Context) {
 	}
 
 	ctx = ctxWithRequestMeta(ctx, c)
-	session, err := h.buildSession(ctx, userID, row)
+	session, err := h.buildSession(ctx, userID, row, "password")
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to generate token")
 		return
@@ -349,7 +349,7 @@ func (h *AuthHandler) handlePasswordGrant(c *gin.Context) {
 	row["last_sign_in_at"] = time.Now().UTC()
 
 	ctx = ctxWithRequestMeta(ctx, c)
-	session, err := h.buildSession(ctx, userID, row)
+	session, err := h.buildSession(ctx, userID, row, "password")
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to generate token")
 		return
@@ -367,13 +367,13 @@ func (h *AuthHandler) handleRefreshGrant(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	userRow, err := h.authSvc.ConsumeRefreshToken(ctx, req.RefreshToken)
+	userRow, meta, err := h.authSvc.ConsumeRefreshToken(ctx, req.RefreshToken)
 	if err != nil {
 		switch {
 		case errors.Is(err, domain.ErrRefreshExpired):
 			problemJSON(c, 401, "invalid_grant", "Refresh token expired")
 		case errors.Is(err, domain.ErrRefreshReuse):
-			problemJSON(c, 401, "invalid_grant", "Refresh token reuse detected. All sessions revoked.")
+			problemJSON(c, 401, "invalid_grant", "Refresh token reuse detected. Session revoked.")
 		default:
 			problemJSON(c, 401, "invalid_grant", "Invalid refresh token")
 		}
@@ -383,7 +383,7 @@ func (h *AuthHandler) handleRefreshGrant(c *gin.Context) {
 	userID := asString(userRow["id"])
 
 	ctx = ctxWithRequestMeta(ctx, c)
-	session, err := h.buildSession(ctx, userID, userRow)
+	session, err := h.issueSession(ctx, userID, userRow, meta)
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to generate token")
 		return
@@ -422,7 +422,7 @@ func (h *AuthHandler) handlePKCEGrant(c *gin.Context) {
 	}
 
 	ctx = ctxWithRequestMeta(ctx, c)
-	session, err := h.buildSession(ctx, userID, userRow)
+	session, err := h.buildSession(ctx, userID, userRow, "oauth")
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to generate token")
 		return
@@ -476,7 +476,7 @@ func (h *AuthHandler) handleIDTokenGrant(c *gin.Context) {
 	userID := asString(row["id"])
 
 	ctx = ctxWithRequestMeta(ctx, c)
-	session, err := h.buildSession(ctx, userID, row)
+	session, err := h.buildSession(ctx, userID, row, "oauth")
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to generate token")
 		return
@@ -617,6 +617,12 @@ func (h *AuthHandler) handleRecover(c *gin.Context) {
 // supabase-js verifyOtp entrypoint. On success it consumes the token and
 // returns a full session so the client can transition to a recovery /
 // confirmed state.
+// verifyAMRMethod maps a verify type to GoTrue's amr method name.
+var verifyAMRMethod = map[string]string{
+	"signup": "email/signup", "email": "otp", "magiclink": "magiclink",
+	"recovery": "recovery", "email_change": "email_change",
+}
+
 func (h *AuthHandler) handleVerify(c *gin.Context) {
 	var req struct {
 		Type  string `json:"type" binding:"required"`
@@ -680,7 +686,7 @@ func (h *AuthHandler) handleVerify(c *gin.Context) {
 	}
 
 	ctx = ctxWithRequestMeta(ctx, c)
-	session, err := h.buildSession(ctx, userID, userRow)
+	session, err := h.buildSession(ctx, userID, userRow, verifyAMRMethod[req.Type])
 	if err != nil {
 		problemJSON(c, 500, "internal", "Failed to generate token")
 		return
@@ -730,7 +736,7 @@ func (h *AuthHandler) handleVerifyGET(c *gin.Context) {
 			return
 		}
 		ctx = ctxWithRequestMeta(ctx, c)
-		session, err := h.buildSession(ctx, userID, userRow)
+		session, err := h.buildSession(ctx, userID, userRow, "recovery")
 		if err != nil {
 			c.String(500, "Failed to generate session")
 			return
@@ -1370,7 +1376,7 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 		}
 
 		ctx = ctxWithRequestMeta(ctx, c)
-		session, err := h.buildSession(ctx, userID, row)
+		session, err := h.buildSession(ctx, userID, row, "oauth")
 		if err != nil {
 			problemJSON(c, 500, "internal", "Failed to generate token")
 			return
@@ -1401,10 +1407,17 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 
 // ---------- session / user builders ----------
 
-// buildSession issues a JWT access token (and optional refresh token) and
-// returns the GoTrue-shaped session payload: {access_token, token_type,
-// expires_in, expires_at, refresh_token, user}.
-func (h *AuthHandler) buildSession(ctx context.Context, userID string, userRow map[string]any) (gin.H, error) {
+// buildSession starts a new aal1 session authenticated by method.
+func (h *AuthHandler) buildSession(ctx context.Context, userID string, userRow map[string]any, method string) (gin.H, error) {
+	return h.issueSession(ctx, userID, userRow, domain.SessionMeta{
+		AAL: "aal1",
+		AMR: []domain.AMREntry{{Method: method, Timestamp: time.Now().Unix()}},
+	})
+}
+
+// issueSession signs an access token and a refresh token for the session in
+// meta and returns the GoTrue-shaped session payload.
+func (h *AuthHandler) issueSession(ctx context.Context, userID string, userRow map[string]any, meta domain.SessionMeta) (gin.H, error) {
 	key, err := h.jwtKeys.Active(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("jwt key: %w", err)
@@ -1417,7 +1430,15 @@ func (h *AuthHandler) buildSession(ctx context.Context, userID string, userRow m
 
 	now := time.Now()
 	exp := now.Add(expiry)
-	sessionID := generateRandomToken()
+	if meta.SessionID == "" {
+		meta.SessionID = generateRandomToken()
+	}
+	if meta.AAL == "" {
+		meta.AAL = "aal1"
+	}
+	if meta.AMR == nil {
+		meta.AMR = []domain.AMREntry{}
+	}
 	email, _ := userRow["email"].(string)
 
 	appMeta := decodeJSONB(userRow["raw_app_meta_data"])
@@ -1452,7 +1473,9 @@ func (h *AuthHandler) buildSession(ctx context.Context, userID string, userRow m
 		"email":         email,
 		"iat":           now.Unix(),
 		"exp":           exp.Unix(),
-		"session_id":    sessionID,
+		"session_id":    meta.SessionID,
+		"aal":           meta.AAL,
+		"amr":           meta.AMR,
 		"app_metadata":  appMeta,
 		"user_metadata": userMeta,
 		"is_anonymous":  isAnon,
@@ -1488,9 +1511,8 @@ func (h *AuthHandler) buildSession(ctx context.Context, userID string, userRow m
 	if refreshExpiry == 0 {
 		refreshExpiry = 7 * 24 * time.Hour
 	}
-	ip, _ := ctx.Value(ctxKeyIP).(string)
-	ua, _ := ctx.Value(ctxKeyUA).(string)
-	meta := domain.SessionMeta{SessionID: sessionID, IP: ip, UserAgent: ua}
+	meta.IP, _ = ctx.Value(ctxKeyIP).(string)
+	meta.UserAgent, _ = ctx.Value(ctxKeyUA).(string)
 	if err := h.authSvc.InsertRefreshToken(context.Background(), userID, refreshToken, meta, time.Now().Add(refreshExpiry).Unix()); err != nil {
 		return nil, err
 	}
@@ -2153,15 +2175,20 @@ func (h *AuthHandler) handleAdminDeleteFactor(c *gin.Context) {
 	c.Status(200)
 }
 
-// extractSessionID parses the session_id claim from a raw JWT without
-// re-verifying the signature (already done by middleware).
-func (h *AuthHandler) extractSessionID(rawJWT string) string {
-	parser := jwt.NewParser(jwt.WithoutClaimsValidation())
-	token, _, err := parser.ParseUnverified(rawJWT, jwt.MapClaims{})
+// jwtClaims decodes a bearer token the middleware already verified.
+func jwtClaims(raw string) jwt.MapClaims {
+	token, _, err := jwt.NewParser(jwt.WithoutClaimsValidation()).ParseUnverified(raw, jwt.MapClaims{})
 	if err != nil {
-		return ""
+		return jwt.MapClaims{}
 	}
-	claims, _ := token.Claims.(jwt.MapClaims)
-	sid, _ := claims["session_id"].(string)
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return jwt.MapClaims{}
+	}
+	return claims
+}
+
+func (h *AuthHandler) extractSessionID(rawJWT string) string {
+	sid, _ := jwtClaims(rawJWT)["session_id"].(string)
 	return sid
 }
