@@ -81,24 +81,39 @@ func (n *WhereNode) BuildSQL(argIdx int) (string, []any, int) {
 	return sql, args, argIdx
 }
 
+// ValidateIdentPath accepts a bare identifier with an optional safe JSONB path.
+func ValidateIdentPath(col string) error {
+	_, err := checkIdentPath(col)
+	return err
+}
+
+func checkIdentPath(col string) (string, error) {
+	base, steps := splitJSONBPath(col)
+	if !identRe.MatchString(base) {
+		return "", fmt.Errorf("invalid column %q", col)
+	}
+	for _, s := range steps {
+		if s.key == "" {
+			return "", fmt.Errorf("empty JSONB key in %q", col)
+		}
+		if !s.isInt && !jsonKeyRe.MatchString(s.key) {
+			return "", fmt.Errorf("invalid JSONB key %q", s.key)
+		}
+	}
+	return base, nil
+}
+
 // ValidateColumn ensures col references a field declared on the table.
-// JSONB access expressions (e.g. "metadata->>theme") are accepted when the
-// base column exists and the path key is a safe identifier.
 func ValidateColumn(table domain.Table, col string) error {
 	if col == "" {
 		return fmt.Errorf("empty column name")
 	}
-	base, steps := splitJSONBPath(col)
+	base, err := checkIdentPath(col)
+	if err != nil {
+		return err
+	}
 	if _, ok := table.GetField(base); !ok {
 		return fmt.Errorf("unknown column %q", base)
-	}
-	for _, s := range steps {
-		if s.key == "" {
-			return fmt.Errorf("empty JSONB key in %q", col)
-		}
-		if !s.isInt && !jsonKeyRe.MatchString(s.key) {
-			return fmt.Errorf("invalid JSONB key %q", s.key)
-		}
 	}
 	return nil
 }

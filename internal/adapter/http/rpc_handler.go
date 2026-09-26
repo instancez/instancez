@@ -415,7 +415,7 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 		tbl := targetTable
 		validate = func(col string) error { return postgrest.ValidateColumn(tbl, col) }
 	} else {
-		validate = permissiveColValidator
+		validate = postgrest.ValidateIdentPath
 	}
 
 	if sel := c.Query("select"); sel != "" {
@@ -581,16 +581,6 @@ func renderRPCChain(chain *rpcChainSQL, argIdx int) (string, []any) {
 		args = append(args, chain.offset)
 	}
 	return b.String(), args
-}
-
-// permissiveColValidator accepts any non-empty column name. Used when a RPC
-// returns SETOF of an ad-hoc TABLE(...) shape that's not declared as a YAML
-// table, so we can't validate column names up front.
-func permissiveColValidator(col string) error {
-	if col == "" {
-		return fmt.Errorf("empty column name")
-	}
-	return nil
 }
 
 // parseSetofTarget extracts the table name from a SETOF return type. Returns

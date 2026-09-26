@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -555,5 +556,36 @@ func TestWrapRPCCallForChain_BelongsToWithColumns(t *testing.T) {
 	}
 	if !strings.Contains(got, "'id', _emb_author.id") {
 		t.Errorf("missing column projection: %s", got)
+	}
+}
+
+// TestParseRPCChain_UnknownSetofRejectsUnsafeIdentifiers covers the
+// fallback path used when an RPC's return shape isn't a known table:
+// the chain parser must still reject unsafe identifiers instead of
+// falling back to the old permissive validator.
+func TestParseRPCChain_UnknownSetofRejectsUnsafeIdentifiers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &CRUDHandler{cfg: &domain.Config{}}
+	fn := domain.Function{ReturnCategory: "setof", Returns: domain.FuncReturn{Type: "setof record"}}
+	cases := []string{
+		"/rpc/f?" + url.QueryEscape(`a"b`) + "=eq.1",
+		"/rpc/f?" + url.QueryEscape("a b") + "=eq.1",
+		"/rpc/f?" + url.QueryEscape("data->>k'x") + "=eq.1",
+		"/rpc/f?or=" + url.QueryEscape("(a;b.eq.1)"),
+		"/rpc/f?order=" + url.QueryEscape(`x"y.desc`),
+		"/rpc/f?select=" + url.QueryEscape("a;b"),
+		"/rpc/f?select=" + url.QueryEscape("x y"),
+	}
+	for _, target := range cases {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest("GET", target, nil)
+		if _, _, err := h.parseRPCChain(c, fn, map[string]bool{}, 1); err == nil {
+			t.Errorf("%s: expected rejection", target)
+		}
+	}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET", "/rpc/f?name=eq.x&data->>k=eq.y&order=name.desc", nil)
+	if _, _, err := h.parseRPCChain(c, fn, map[string]bool{}, 1); err != nil {
+		t.Fatalf("safe identifiers rejected: %v", err)
 	}
 }
