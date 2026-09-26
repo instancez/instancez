@@ -1526,6 +1526,15 @@ func TestCleanPath(t *testing.T) {
 			t.Errorf("cleanPath(%q) = %q, want error", in, got)
 		}
 	}
+
+	longSeg := strings.Repeat("a", 5000)
+	if got, err := cleanPath(longSeg); err != nil || got != longSeg {
+		t.Errorf("cleanPath(long segment) = %q, %v; want unchanged", got, err)
+	}
+	deep := strings.Repeat("a/", 1000) + "file"
+	if got, err := cleanPath(deep); err != nil || got != deep {
+		t.Errorf("cleanPath(deep path) = %q, %v; want unchanged", got, err)
+	}
 }
 
 func TestStorageRoutes_RejectTraversalKeys(t *testing.T) {
