@@ -774,17 +774,5 @@ func (h *CRUDHandler) executeRPCCount(c *gin.Context, name string, fn domain.Fun
 	if isAdmin(c) {
 		dbCtx = c.Request.Context()
 	}
-	row, err := h.db.QueryRow(dbCtx, countSQL, args...)
-	if err != nil {
-		return -1, err
-	}
-	if v, ok := row["count"]; ok {
-		switch n := v.(type) {
-		case int64:
-			return int(n), nil
-		case float64:
-			return int(n), nil
-		}
-	}
-	return -1, nil
+	return queryCount(dbCtx, h.db, countSQL, args...)
 }

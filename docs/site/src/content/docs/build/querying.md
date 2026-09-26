@@ -231,9 +231,9 @@ Count modes:
 
 | Mode | Behavior |
 |------|----------|
-| `exact` | `COUNT(*)` — precise but adds a query |
+| `exact` | `COUNT(*)` over the same joins and filters as the rows (`!inner` embeds, embed filters, `Accept-Profile` schema), in the same transaction. |
 | `planned` | Uses the Postgres query planner estimate |
-| `estimated` | `pg_class.reltuples` statistic when no filters exist, planner estimate (via `EXPLAIN`) when filters exist. Never executes `COUNT(*)`. |
+| `estimated` | `pg_class.reltuples` for an unfiltered read of a plain table; the planner estimate otherwise. |
 
 ## Embeds (joins)
 

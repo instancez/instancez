@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -124,4 +125,33 @@ func TestHardening_MaxRows(t *testing.T) {
 	rows := rowsOf(t, raw)
 	require.Len(t, rows, 1)
 	require.Len(t, rows[0]["messages"], 1, "has-many embed capped (supabot has 2 messages)")
+}
+
+func TestHardening_CountMatchesRows(t *testing.T) {
+	if testTS == nil {
+		t.Skip("no upstream")
+	}
+	exact := map[string]string{"Prefer": "count=exact"}
+	cases := []struct {
+		path, wantRange string
+		wantRows        int
+	}{
+		{"/rest/v1/users?select=username,messages!inner(id)", "0-0/1", 1},
+		{"/rest/v1/messages?select=id,users!inner(username)&users.status=eq.OFFLINE", "0-0/0", 0},
+		{"/rest/v1/users?select=username&limit=2", "0-1/5", 2},
+	}
+	for _, c := range cases {
+		status, hdr, raw := call(t, "GET", testTS.URL+c.path, "", exact, false)
+		require.Equal(t, 200, status, "%s: %s", c.path, raw)
+		require.Len(t, rowsOf(t, raw), c.wantRows, c.path)
+		require.Equal(t, c.wantRange, hdr.Get("Content-Range"), c.path)
+	}
+	// Known builder bug: a non-inner to-one embed filter drops parent rows, so only check count == rows.
+	status, hdr, raw := call(t, "GET", testTS.URL+"/rest/v1/messages?select=id,users(username)&users.username=eq.kiwicopple", "", exact, false)
+	require.Equal(t, 200, status, "%s", raw)
+	cr := hdr.Get("Content-Range")
+	require.Equal(t, strconv.Itoa(len(rowsOf(t, raw))), cr[strings.LastIndex(cr, "/")+1:], cr)
+
+	_, hdr, _ = call(t, "GET", testTS.URL+"/rest/v1/users?select=username,messages!inner(id)", "", map[string]string{"Prefer": "count=planned"}, false)
+	require.Regexp(t, `^0-0/\d+$`, hdr.Get("Content-Range"))
 }

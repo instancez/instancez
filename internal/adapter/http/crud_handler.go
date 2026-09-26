@@ -211,19 +211,20 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 			return
 		}
 
-		if err := tx.Commit(ctx); err != nil {
-			problemJSON(c, 500, "internal", "Transaction commit failed")
-			return
-		}
-
-		// Count if requested
 		countMode := parseCountPrefer(prefer)
 		total := -1
 		if countMode != "" {
-			total, err = h.executeCount(ctx, tableName, qp, countMode)
+			total, err = executeCount(ctx, tx, tableName, table, qp, allTbls, countMode)
 			if err != nil {
-				h.logger.Error("count error", "error", err)
+				h.logger.Error("count error", "table", tableName, "error", err)
+				handleDBError(c, err)
+				return
 			}
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			problemJSON(c, 500, "internal", "Transaction commit failed")
+			return
 		}
 
 		// Content-Range header
@@ -648,93 +649,77 @@ func (h *CRUDHandler) handleDelete(tableName string, table domain.Table) gin.Han
 	}
 }
 
-func (h *CRUDHandler) executeCount(ctx interface{ Value(any) any }, tableName string, qp *QueryParams, mode string) (int, error) {
+// executeCount counts the rows the list query would return, using its joins and filters in the caller's tx.
+func executeCount(ctx context.Context, tx domain.Tx, tableName string, table domain.Table, qp *QueryParams, allTbls map[string]domain.Table, mode string) (int, error) {
+	if mode == "estimated" && plainScan(qp) {
+		return queryCount(ctx, tx, "SELECT reltuples::bigint AS count FROM pg_class WHERE oid = to_regclass($1)", tableName)
+	}
+	unpaged := *qp
+	unpaged.Limit, unpaged.Offset, unpaged.Order = postgrest.NoLimit, 0, nil
+	inner, args := postgrest.BuildSelectQueryFull(tableName, &unpaged, table, allTbls)
 	switch mode {
 	case "exact":
-		return h.executeExactCount(ctx.(context.Context), tableName, qp)
-	case "planned":
-		return h.executePlannedCount(ctx.(context.Context), tableName, qp)
-	case "estimated":
-		// Use planned count if filters exist, otherwise use reltuples
-		if qp.Where != nil {
-			return h.executePlannedCount(ctx.(context.Context), tableName, qp)
+		return queryCount(ctx, tx, "SELECT COUNT(*) AS count FROM ("+inner+") AS _count", args...)
+	case "planned", "estimated":
+		rows, err := tx.Query(ctx, "EXPLAIN "+inner, args...)
+		if err != nil {
+			return -1, err
 		}
-		return h.executeEstimateCount(ctx.(context.Context), tableName)
-	default:
-		return -1, nil
-	}
-}
-
-func (h *CRUDHandler) executeExactCount(ctx context.Context, tableName string, qp *QueryParams) (int, error) {
-	sql := fmt.Sprintf("SELECT COUNT(*) AS count FROM %s", tableName)
-	whereSQL, args, _ := qp.Where.BuildSQL(1)
-	if whereSQL != "" {
-		sql += " WHERE " + whereSQL
-	}
-
-	row, err := h.db.QueryRow(ctx, sql, args...)
-	if err != nil {
-		return -1, err
-	}
-	if v, ok := row["count"]; ok {
-		switch n := v.(type) {
-		case int64:
-			return int(n), nil
-		case float64:
-			return int(n), nil
-		}
+		return planRows(rows), nil
 	}
 	return -1, nil
 }
 
-func (h *CRUDHandler) executePlannedCount(ctx context.Context, tableName string, qp *QueryParams) (int, error) {
-	innerSQL := fmt.Sprintf("SELECT 1 FROM %s", tableName)
-	whereSQL, args, _ := qp.Where.BuildSQL(1)
-	if whereSQL != "" {
-		innerSQL += " WHERE " + whereSQL
+// plainScan reports whether the query reads the whole table with no filter, join or grouping.
+func plainScan(qp *QueryParams) bool {
+	if qp.Where != nil || qp.Having != nil || len(qp.Embeds) > 0 {
+		return false
 	}
+	for _, s := range qp.Select {
+		if postgrest.IsAggSelectEntry(s) {
+			return false
+		}
+	}
+	return true
+}
 
-	explainSQL := "EXPLAIN " + innerSQL
-	rows, err := h.db.Query(ctx, explainSQL, args...)
+func queryCount(ctx context.Context, q interface {
+	QueryRow(context.Context, string, ...any) (map[string]any, error)
+}, sql string, args ...any) (int, error) {
+	row, err := q.QueryRow(ctx, sql, args...)
 	if err != nil {
 		return -1, err
 	}
+	switch n := row["count"].(type) {
+	case int64:
+		return int(n), nil
+	case float64:
+		return int(n), nil
+	}
+	return -1, nil
+}
 
-	// Parse the first row's QUERY PLAN for "rows=N"
-	if len(rows) > 0 {
-		for _, v := range rows[0] {
-			if plan, ok := v.(string); ok {
-				if idx := strings.Index(plan, "rows="); idx != -1 {
-					numStr := plan[idx+5:]
-					if spaceIdx := strings.IndexAny(numStr, " )"); spaceIdx != -1 {
-						numStr = numStr[:spaceIdx]
-					}
-					if n, err := strconv.Atoi(numStr); err == nil {
-						return n, nil
-					}
-				}
+// planRows reads the top plan node's rows= estimate from text EXPLAIN output.
+func planRows(rows []map[string]any) int {
+	if len(rows) == 0 {
+		return -1
+	}
+	for _, v := range rows[0] {
+		plan, ok := v.(string)
+		if !ok {
+			continue
+		}
+		if idx := strings.Index(plan, "rows="); idx != -1 {
+			numStr := plan[idx+5:]
+			if end := strings.IndexAny(numStr, " )"); end != -1 {
+				numStr = numStr[:end]
+			}
+			if n, err := strconv.Atoi(numStr); err == nil {
+				return n
 			}
 		}
 	}
-
-	return -1, nil
-}
-
-func (h *CRUDHandler) executeEstimateCount(ctx context.Context, tableName string) (int, error) {
-	row, err := h.db.QueryRow(ctx,
-		"SELECT reltuples::bigint AS count FROM pg_class WHERE relname = $1", tableName)
-	if err != nil {
-		return -1, err
-	}
-	if v, ok := row["count"]; ok {
-		switch n := v.(type) {
-		case int64:
-			return int(n), nil
-		case float64:
-			return int(n), nil
-		}
-	}
-	return -1, nil
+	return -1
 }
 
 // joinPrefer concatenates all Prefer header values on the request into a
@@ -1129,8 +1114,6 @@ func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allT
 // references it directly within the same package.
 var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// parseRangeHeader parses a simple "start-end" Range value (as PostgREST
-// expects with Range-Unit: items). Both bounds are inclusive and 0-based.
 // capLimit applies server.max_limit (PostgREST db-max-rows); maxRows <= 0 disables it.
 func capLimit(limit, maxRows int) int {
 	if maxRows > 0 && (limit < 0 || limit > maxRows) {
@@ -1151,6 +1134,8 @@ func capEmbeds(embeds []postgrest.Embed, maxRows int) {
 	}
 }
 
+// parseRangeHeader parses a simple "start-end" Range value (as PostgREST
+// expects with Range-Unit: items). Both bounds are inclusive and 0-based.
 func parseRangeHeader(h string) (start, end int, ok bool) {
 	h = strings.TrimSpace(h)
 	h = strings.TrimPrefix(h, "items=")
