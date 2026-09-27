@@ -1,9 +1,14 @@
 package funcs
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -204,7 +209,7 @@ func TestWorkerResponsive(t *testing.T) {
 		if unixWorker(sock).responsive() {
 			t.Fatal("want unresponsive")
 		}
-		if d := time.Since(start); d < healthProbeTimeout || d > healthProbeTimeout+500*time.Millisecond {
+		if d := time.Since(start); d < healthProbeTimeout || d > healthProbeTimeout+2*time.Second {
 			t.Fatalf("probe took %v, want about %v", d, healthProbeTimeout)
 		}
 	})
@@ -214,4 +219,29 @@ func TestWorkerResponsive(t *testing.T) {
 			t.Fatal("want unresponsive")
 		}
 	})
+}
+
+func TestTimeoutProbeSkippedAfterClose(t *testing.T) {
+	var logs bytes.Buffer
+	r := &Runtime{closed: true, done: make(chan struct{}), logger: slog.New(slog.NewTextHandler(&logs, nil))}
+	w := unixWorker(filepath.Join(t.TempDir(), "missing.sock"))
+	w.cmd = &exec.Cmd{Process: &os.Process{Pid: 1}}
+	w.healthy.Store(true)
+	ctx := context.Background()
+	if err := r.classifyDoErr(ctx, ctx, w, context.DeadlineExceeded); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("got %v, want ErrTimeout", err)
+	}
+	deadline := time.Now().Add(healthProbeTimeout + 2*time.Second)
+	for w.probing.Load() {
+		if time.Now().After(deadline) {
+			t.Fatal("probe never finished")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if strings.Contains(logs.String(), "unresponsive") {
+		t.Fatalf("closed runtime logged a replace: %s", logs.String())
+	}
+	if !w.healthy.Load() {
+		t.Fatal("closed runtime marked the worker unhealthy")
+	}
 }

@@ -503,7 +503,7 @@ func (r *Runtime) spawnWorker(fnSpec string) (*worker, error) {
 }
 
 const (
-	healthProbeTimeout = time.Second
+	healthProbeTimeout = 3 * time.Second
 	// maxResponseBytes matches the AWS Lambda sync response ceiling.
 	maxResponseBytes = 6 << 20
 )
@@ -693,7 +693,7 @@ func (r *Runtime) classifyDoErr(callerCtx, reqCtx context.Context, w *worker, er
 		if w.probing.CompareAndSwap(false, true) {
 			go func() {
 				defer w.probing.Store(false)
-				if !w.responsive() && w.healthy.CompareAndSwap(true, false) {
+				if !w.responsive() && !r.isClosed() && w.healthy.CompareAndSwap(true, false) {
 					r.logger.Warn("funcs: worker unresponsive after timeout; replacing", "pid", w.cmd.Process.Pid)
 					r.triggerRestart(w)
 				}
@@ -781,10 +781,7 @@ func (r *Runtime) triggerRestart(dead *worker) {
 			// Bail promptly if we're closing (checked at the top of each
 			// iteration so a pending loop never outlives Close beyond one
 			// in-flight spawn attempt).
-			r.mu.Lock()
-			closed := r.closed
-			r.mu.Unlock()
-			if closed {
+			if r.isClosed() {
 				return
 			}
 
@@ -831,6 +828,12 @@ func (r *Runtime) fnSpec() string {
 		spec = append(spec, name+"="+filepath.Join(r.opts.Dir, fn.File))
 	}
 	return strings.Join(spec, ",")
+}
+
+func (r *Runtime) isClosed() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.closed
 }
 
 func (r *Runtime) Close() error {
