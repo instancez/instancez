@@ -444,11 +444,7 @@ func TestDeleteFactorForUser_ZeroRowsIsNotFound(t *testing.T) {
 	}
 }
 
-// TestCreateUser_AnonymousEmailIsNULLNotEmptyString: email is UNIQUE, and
-// Postgres treats ” as a real value subject to that constraint (unlike NULL,
-// which never collides). Anonymous signup passes Email == "", so the insert
-// must bind NULL there — otherwise a second anonymous sign-in hits a
-// duplicate-key error on the first anonymous user's row.
+// Anonymous users must bind a NULL email, since an empty string collides on the UNIQUE constraint.
 func TestCreateUser_AnonymousEmailIsNULLNotEmptyString(t *testing.T) {
 	var gotEmailArg any
 	db := &fakeDB{

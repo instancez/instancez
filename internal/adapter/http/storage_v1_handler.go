@@ -79,16 +79,7 @@ func (h *StorageV1Handler) Mount(root *gin.RouterGroup) {
 	sg.POST("/object/:bucket/*path", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.uploadObject)
 	sg.PUT("/object/:bucket/*path", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.updateObject)
 
-	// GET /object/* catch-all — dispatches to public download, authenticated
-	// download, or object info based on path prefix. supabase-js sends:
-	//   GET /object/<bucket>/<path>          — authenticated download
-	//   GET /object/public/<bucket>/<path>   — public download
-	//   GET /object/authenticated/<bucket>/<path> — authenticated download (alt)
-	//   GET /object/info/[authenticated/]<bucket>/<path> — object info
-	// Gin can't register overlapping param routes, so one handler parses them.
-	// apikey is checked inside objectGetDispatch itself — public downloads
-	// must stay unauthenticated (real Supabase public bucket URLs need zero
-	// headers), everything else on this path requires it.
+	// One catch-all, since gin cannot overlap param routes; objectGetDispatch checks apikey except on public downloads.
 	sg.GET("/object/*all", h.objectGetDispatch)
 
 	// List
@@ -495,8 +486,7 @@ func storageErr(c *gin.Context, status int, errSlug, message string) {
 	})
 }
 
-// uploadWriteError maps a failed metadata write to the right client response:
-// no row to update → 404, duplicate key → 409, an RLS/permission denial → 403, anything else → 500.
+// uploadWriteError maps a failed metadata write to 404, 409, 403 or 500.
 func (h *StorageV1Handler) uploadWriteError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, errObjectNotFound):

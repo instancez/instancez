@@ -117,10 +117,6 @@ func TestMFA_EnrollCreatesUnverifiedFactor(t *testing.T) {
 	}
 }
 
-// TestMFA_VerifyGoodCodeFlipsFactorAndReturnsAAL2 stubs an unverified factor,
-// then drives /verify with a code freshly computed against the stored secret.
-// It asserts the factor flips to 'verified' and the issued session JWT carries
-// a top-level aal=aal2 claim.
 func TestMFA_VerifyGoodCodeFlipsFactorAndReturnsAAL2(t *testing.T) {
 	// Known secret so the test can compute a valid TOTP.
 	secret := "JBSWY3DPEHPK3PXP"

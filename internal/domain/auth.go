@@ -180,8 +180,7 @@ type AuthService interface {
 	// GET /verify link-click flow without consuming it. Returns the row;
 	// caller consumes via DeleteOneTimeToken. Errors: ErrInvalidToken, ErrTokenExpired.
 	PeekOneTimeToken(ctx context.Context, token string) (OTPRow, error)
-	// DeleteOneTimeToken removes a token by its canonical token column.
-	// Errors: ErrInvalidToken when already consumed.
+	// DeleteOneTimeToken removes a token, or returns ErrInvalidToken when already consumed.
 	DeleteOneTimeToken(ctx context.Context, token string) error
 
 	// MarkEmailVerified sets email_verified = true and confirms the address.
