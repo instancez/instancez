@@ -660,6 +660,7 @@ type stubDB struct {
 	queryFn    func(ctx context.Context, q string, args ...any) ([]map[string]any, error)
 	execFn     func(ctx context.Context, q string, args ...any) (int64, error)
 	beginFn    func(ctx context.Context) (domain.Tx, error)
+	withRLSFn  func(ctx context.Context, s domain.Session) (context.Context, error)
 }
 
 func (s *stubDB) Close() error                                    { return nil }
@@ -688,6 +689,9 @@ func (s *stubDB) Exec(ctx context.Context, q string, args ...any) (int64, error)
 	return 0, nil
 }
 func (s *stubDB) WithRLS(ctx context.Context, session domain.Session) (context.Context, error) {
+	if s.withRLSFn != nil {
+		return s.withRLSFn(ctx, session)
+	}
 	return ctx, nil
 }
 func (s *stubDB) Begin(ctx context.Context) (domain.Tx, error) {

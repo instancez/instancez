@@ -35,22 +35,9 @@ func (h *StorageHandler) Mount(api *gin.RouterGroup) {
 		name := bucketName
 		b := bucket
 
-		// storage.objects is a reserved-schema table with no user-configurable
-		// RLS, so writes here need service_role explicitly rather than the
-		// request pool's anon default.
-		group := api.Group("/storage/"+name, serviceRoleSession(h.db))
-
-		// Sign upload — requires auth
+		group := api.Group("/storage/" + name)
 		group.POST("/sign", jwtAuth(h.jwtKeys, true), h.handleSignUpload(name, b))
-
-		// Sign download — public buckets don't need auth
-		if b.Public {
-			group.GET("/:id", h.handleSignDownload(name, b))
-		} else {
-			group.GET("/:id", jwtAuth(h.jwtKeys, true), h.handleSignDownload(name, b))
-		}
-
-		// Delete — requires auth
+		group.GET("/:id", jwtAuth(h.jwtKeys, !b.Public), h.handleSignDownload(name, b))
 		group.DELETE("/:id", jwtAuth(h.jwtKeys, true), h.handleDelete(name, b))
 	}
 }
@@ -96,14 +83,17 @@ func (h *StorageHandler) handleSignUpload(bucketName string, bucket domain.Bucke
 		}
 
 		// Record in storage.objects
-		ctx := c.Request.Context()
 		var uploadedBy any
 		if session.UserID != "" {
 			uploadedBy = session.UserID
 		}
-		if _, err := h.db.Exec(ctx,
+		if _, err := h.db.Exec(rlsContext(h.db, c),
 			"INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by) VALUES ($1, $2, 0, $3, $4)",
 			bucketName, key, req.ContentType, uploadedBy); err != nil {
+			if isPermissionDenied(err) {
+				problemJSON(c, 403, "forbidden", "Not authorized to upload to this bucket")
+				return
+			}
 			problemJSON(c, 500, "internal", "Failed to record object")
 			return
 		}
@@ -117,9 +107,13 @@ func (h *StorageHandler) handleSignUpload(bucketName string, bucket domain.Bucke
 
 func (h *StorageHandler) handleSignDownload(bucketName string, bucket domain.Bucket) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		name := c.Param("id")
+		name, err := cleanPath(c.Param("id"))
+		if err != nil {
+			problemJSON(c, 400, "bad_request", "Invalid key")
+			return
+		}
 
-		ctx := c.Request.Context()
+		ctx := rlsContext(h.db, c)
 		row, err := h.db.QueryRow(ctx,
 			"SELECT id FROM storage.objects WHERE name = $1 AND bucket_id = $2", name, bucketName)
 		if err != nil || row == nil {
@@ -141,17 +135,25 @@ func (h *StorageHandler) handleSignDownload(bucketName string, bucket domain.Buc
 
 func (h *StorageHandler) handleDelete(bucketName string, bucket domain.Bucket) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		name := c.Param("id")
-		ctx := c.Request.Context()
+		name, err := cleanPath(c.Param("id"))
+		if err != nil {
+			problemJSON(c, 400, "bad_request", "Invalid key")
+			return
+		}
 
-		if err := h.storage.Delete(ctx, bucketName+"/"+name); err != nil {
+		rows, err := h.db.Query(rlsContext(h.db, c),
+			"DELETE FROM storage.objects WHERE name = $1 AND bucket_id = $2 RETURNING name", name, bucketName)
+		if err != nil {
 			h.logger.Error("storage delete error", "error", err)
 			problemJSON(c, 500, "internal", "Failed to delete object")
 			return
 		}
+		if len(rows) == 0 {
+			problemJSON(c, 404, "not_found", "Object not found")
+			return
+		}
 
-		_, _ = h.db.Exec(ctx, "DELETE FROM storage.objects WHERE name = $1 AND bucket_id = $2", name, bucketName)
-
+		deleteBytes(c.Request.Context(), h.storage, h.logger, bucketName, rows)
 		c.Status(204)
 	}
 }

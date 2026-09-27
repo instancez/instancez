@@ -2694,6 +2694,59 @@ await step('storage: serverless-friendly presigned URL — sign via /api/storage
   const signData = await signResp.json()
   assert(signData.id, 'id present')
   assert(signData.upload_url, 'upload_url present')
+
+  // Sign minted a storage.objects row even before bytes are uploaded, and
+  // avatars is a public bucket, so an unauthenticated caller can sign-download
+  // it through the same legacy route.
+  const anonDl = await fetch(`${URL}/api/storage/avatars/${signData.id}`, {
+    headers: { apikey: PUBLISHABLE_KEY },
+  })
+  assertEq(anonDl.status, 200, 'anon sign-download on a public bucket via the legacy route')
+})
+
+await step('storage: legacy /api/storage routes run under the caller\'s RLS, not service_role (C6)', async () => {
+  const { data: signIn } = await anon.auth.signInWithPassword({ email, password })
+  if (!signIn?.session) throw new Error('re-login failed')
+  const ownerToken = signIn.session.access_token
+
+  // legacy_private is owner-scoped (uploaded_by = auth.uid()). The owner can
+  // sign an upload into it and read it straight back.
+  const signResp = await fetch(`${URL}/api/storage/legacy_private/sign`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${ownerToken}`, apikey: PUBLISHABLE_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content_type: 'text/plain', size: 10 }),
+  })
+  assert(signResp.ok, `owner sign failed: ${signResp.status} ${await signResp.clone().text()}`)
+  const { id } = await signResp.json()
+  assert(id, 'id present')
+
+  const ownerDl = await fetch(`${URL}/api/storage/legacy_private/${id}`, {
+    headers: { Authorization: `Bearer ${ownerToken}`, apikey: PUBLISHABLE_KEY },
+  })
+  assertEq(ownerDl.status, 200, 'owner sign-download of their own private object')
+
+  // A different authenticated user's RLS can't see the row: not a leak (200
+  // with someone else's signed URL), and not a silent wipe (204 on delete).
+  const { data: other } = await anon.auth.signInAnonymously()
+  const otherToken = other.session.access_token
+
+  const otherDl = await fetch(`${URL}/api/storage/legacy_private/${id}`, {
+    headers: { Authorization: `Bearer ${otherToken}`, apikey: PUBLISHABLE_KEY },
+  })
+  assertEq(otherDl.status, 404, 'another user cannot sign-download a private object via the legacy route')
+
+  const otherDel = await fetch(`${URL}/api/storage/legacy_private/${id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${otherToken}`, apikey: PUBLISHABLE_KEY },
+  })
+  assertEq(otherDel.status, 404, 'another user cannot delete a private object via the legacy route')
+
+  // The owner can still delete their own object.
+  const ownerDel = await fetch(`${URL}/api/storage/legacy_private/${id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${ownerToken}`, apikey: PUBLISHABLE_KEY },
+  })
+  assertEq(ownerDel.status, 204, 'owner can delete their own object via the legacy route')
 })
 
 // --- RLS / two-login enforcement ---

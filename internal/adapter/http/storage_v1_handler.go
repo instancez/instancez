@@ -204,9 +204,11 @@ func (h *StorageV1Handler) getBucketConfig(name string) (domain.Bucket, bool) {
 // This is the authorization boundary for object access — the metadata row a
 // query can see/insert/update/delete is exactly what the bucket's policies
 // allow, and the actual S3 bytes are only reachable once the metadata row is.
-func (h *StorageV1Handler) rlsCtx(c *gin.Context) context.Context {
-	session := getSession(c)
-	ctx, err := h.db.WithRLS(c.Request.Context(), session)
+func (h *StorageV1Handler) rlsCtx(c *gin.Context) context.Context { return rlsContext(h.db, c) }
+
+// rlsContext binds the request context to the caller's role so storage.objects RLS applies.
+func rlsContext(db domain.Database, c *gin.Context) context.Context {
+	ctx, err := db.WithRLS(c.Request.Context(), getSession(c))
 	if err != nil {
 		// WithRLS only stashes the session on the context; it does not perform
 		// I/O and never errors in practice. Fall back to the raw context.
@@ -465,16 +467,25 @@ func storageErr(c *gin.Context, status int, errSlug, message string) {
 // uploadWriteError maps a failed metadata write to the right client response:
 // duplicate key → 409, an RLS/permission denial → 403, anything else → 500.
 func (h *StorageV1Handler) uploadWriteError(c *gin.Context, err error) {
-	msg := err.Error()
 	switch {
-	case strings.Contains(msg, "duplicate key") || strings.Contains(msg, "23505"):
+	case isDuplicate(err):
 		storageErr(c, 409, "duplicate", "The resource already exists")
-	case strings.Contains(msg, "row-level security") || strings.Contains(msg, "42501") || strings.Contains(msg, "permission denied"):
+	case isPermissionDenied(err):
 		storageErr(c, 403, "forbidden", "Not authorized to write this object")
 	default:
 		h.logger.Error("record object", "error", err)
 		storageErr(c, 500, "internal", "Failed to record object")
 	}
+}
+
+func isDuplicate(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "duplicate key") || strings.Contains(msg, "23505")
+}
+
+func isPermissionDenied(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "row-level security") || strings.Contains(msg, "42501") || strings.Contains(msg, "permission denied")
 }
 
 func (h *StorageV1Handler) objectGetDispatch(c *gin.Context) {

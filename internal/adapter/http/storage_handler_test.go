@@ -14,6 +14,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/instancez/instancez/internal/domain"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func newLegacyStorageHandler(db domain.Database, store domain.ObjectStore) *StorageHandler {
@@ -176,7 +178,10 @@ func TestHandleDelete_Success(t *testing.T) {
 	store := &stubObjectStore{
 		deleteFn: func(ctx context.Context, key string) error { deletedKey = key; return nil },
 	}
-	h := newLegacyStorageHandler(&stubDB{}, store)
+	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) {
+		return []map[string]any{{"name": "photo.jpg"}}, nil
+	}}
+	h := newLegacyStorageHandler(db, store)
 
 	w := httptest.NewRecorder()
 	r := gin.New()
@@ -198,7 +203,10 @@ func TestHandleDelete_StoreError(t *testing.T) {
 	store := &stubObjectStore{
 		deleteFn: func(ctx context.Context, key string) error { return errors.New("store unavailable") },
 	}
-	h := newLegacyStorageHandler(&stubDB{}, store)
+	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) {
+		return []map[string]any{{"name": "photo.jpg"}}, nil
+	}}
+	h := newLegacyStorageHandler(db, store)
 
 	w := httptest.NewRecorder()
 	r := gin.New()
@@ -207,7 +215,190 @@ func TestHandleDelete_StoreError(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, "/storage/avatars/photo.jpg", nil)
 	r.ServeHTTP(w, req)
 
-	if w.Code != 500 {
-		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	if w.Code != 204 {
+		t.Fatalf("expected 204, got %d: %s", w.Code, w.Body.String())
 	}
+}
+
+func TestLegacyMount_RunsAsCallerNotServiceRole(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var roles []string
+	db := &stubDB{
+		withRLSFn: func(ctx context.Context, s domain.Session) (context.Context, error) {
+			roles = append(roles, s.Role)
+			return ctx, nil
+		},
+		queryRowFn: func(context.Context, string, ...any) (map[string]any, error) { return map[string]any{"id": "x"}, nil },
+	}
+	h := newLegacyStorageHandler(db, &stubObjectStore{})
+	h.cfg.Storage = map[string]domain.Bucket{"pub": {Public: true}, "priv": {}}
+	r := gin.New()
+	h.Mount(r.Group("/api"))
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/storage/pub/a.txt", nil))
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Equal(t, []string{"anon"}, roles, "public download must run as anon, never service_role")
+
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/storage/priv/a.txt", nil))
+	assert.Equal(t, 401, w.Code)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/api/storage/pub/a.txt", nil))
+	assert.Equal(t, 401, w.Code)
+}
+
+func TestHandleSignDownload_UsesCallerSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var got domain.Session
+	db := &stubDB{
+		withRLSFn:  func(ctx context.Context, s domain.Session) (context.Context, error) { got = s; return ctx, nil },
+		queryRowFn: func(context.Context, string, ...any) (map[string]any, error) { return nil, nil },
+	}
+	h := newLegacyStorageHandler(db, &stubObjectStore{})
+	r := gin.New()
+	r.GET("/storage/avatars/:id", func(c *gin.Context) {
+		setTestSession(c, domain.Session{Role: "authenticated", UserID: "u1", IsAuthenticated: true})
+		h.handleSignDownload("avatars", domain.Bucket{})(c)
+	})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/storage/avatars/other-users.jpg", nil))
+	assert.Equal(t, 404, w.Code)
+	assert.Equal(t, "authenticated", got.Role)
+	assert.Equal(t, "u1", got.UserID)
+}
+
+func TestHandleDelete_RLSHiddenIs404AndKeepsBytes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	deleted := false
+	store := &stubObjectStore{deleteFn: func(context.Context, string) error { deleted = true; return nil }}
+	db := &stubDB{queryFn: func(_ context.Context, q string, _ ...any) ([]map[string]any, error) {
+		require.Contains(t, q, "RETURNING name")
+		return nil, nil
+	}}
+	h := newLegacyStorageHandler(db, store)
+	r := gin.New()
+	r.DELETE("/storage/avatars/:id", h.handleDelete("avatars", domain.Bucket{}))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/storage/avatars/victim.jpg", nil))
+	assert.Equal(t, 404, w.Code)
+	assert.False(t, deleted, "bytes deleted without an authorized metadata delete")
+}
+
+func TestHandleSignUpload_RLSDeniedIs403(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := &stubDB{execFn: func(context.Context, string, ...any) (int64, error) {
+		return 0, errors.New(`new row violates row-level security policy for table "objects"`)
+	}}
+	h := newLegacyStorageHandler(db, &stubObjectStore{})
+	r := gin.New()
+	r.POST("/storage/avatars/sign", h.handleSignUpload("avatars", domain.Bucket{}))
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/storage/avatars/sign", strings.NewReader(`{"content_type":"image/png"}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	assert.Equal(t, 403, w.Code)
+}
+
+// TestHandleSignDownload_InvalidKeyRejected proves the legacy sign-download
+// route cleans the key: a ".." id never reaches the DB or the store.
+func TestHandleSignDownload_InvalidKeyRejected(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := &stubDB{queryRowFn: func(context.Context, string, ...any) (map[string]any, error) {
+		t.Fatal("query must not run for an invalid key")
+		return nil, nil
+	}}
+	store := &stubObjectStore{signDownloadFn: func(context.Context, string, time.Duration) (string, error) {
+		t.Fatal("sign must not run for an invalid key")
+		return "", nil
+	}}
+	h := newLegacyStorageHandler(db, store)
+	r := gin.New()
+	r.GET("/storage/avatars/:id", h.handleSignDownload("avatars", domain.Bucket{}))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/storage/avatars/..", nil))
+	assert.Equal(t, 400, w.Code)
+}
+
+// TestHandleDelete_InvalidKeyRejected proves the legacy delete route cleans
+// the key: a ".." id never reaches the DB or the store.
+func TestHandleDelete_InvalidKeyRejected(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) {
+		t.Fatal("query must not run for an invalid key")
+		return nil, nil
+	}}
+	store := &stubObjectStore{deleteFn: func(context.Context, string) error {
+		t.Fatal("delete must not run for an invalid key")
+		return nil
+	}}
+	h := newLegacyStorageHandler(db, store)
+	r := gin.New()
+	r.DELETE("/storage/avatars/:id", h.handleDelete("avatars", domain.Bucket{}))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/storage/avatars/..", nil))
+	assert.Equal(t, 400, w.Code)
+}
+
+// TestHandleDelete_AnotherUsersPrivateObjectDenied proves a caller whose RLS
+// context can't see the row gets a 404, and the object's bytes stay put —
+// the legacy delete route can't be used to wipe another user's private file.
+func TestHandleDelete_AnotherUsersPrivateObjectDenied(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var capturedRole string
+	deleted := false
+	store := &stubObjectStore{deleteFn: func(context.Context, string) error { deleted = true; return nil }}
+	db := &stubDB{
+		withRLSFn: func(ctx context.Context, s domain.Session) (context.Context, error) {
+			capturedRole = s.Role
+			return ctx, nil
+		},
+		// RLS scopes the DELETE to rows the caller owns; another user's row
+		// simply isn't matched, so RETURNING comes back empty.
+		queryFn: func(context.Context, string, ...any) ([]map[string]any, error) { return nil, nil },
+	}
+	h := newLegacyStorageHandler(db, store)
+	r := gin.New()
+	r.DELETE("/storage/avatars/:id", func(c *gin.Context) {
+		setTestSession(c, domain.Session{Role: "authenticated", UserID: "attacker", IsAuthenticated: true})
+		h.handleDelete("avatars", domain.Bucket{})(c)
+	})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/storage/avatars/victim-private.jpg", nil))
+	assert.Equal(t, 404, w.Code)
+	assert.False(t, deleted, "bytes must not be deleted when the caller's RLS can't see the row")
+	assert.Equal(t, "authenticated", capturedRole, "delete must run under the caller's role, not service_role")
+}
+
+// TestHandleSignDownload_AnotherUsersPrivateObjectDenied proves a caller
+// whose RLS context can't see another user's private object gets a 404
+// instead of a signed URL to someone else's file.
+func TestHandleSignDownload_AnotherUsersPrivateObjectDenied(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var capturedRole string
+	signed := false
+	store := &stubObjectStore{signDownloadFn: func(context.Context, string, time.Duration) (string, error) {
+		signed = true
+		return "https://example.com/download?sig=leak", nil
+	}}
+	db := &stubDB{
+		withRLSFn: func(ctx context.Context, s domain.Session) (context.Context, error) {
+			capturedRole = s.Role
+			return ctx, nil
+		},
+		// RLS scopes the SELECT to rows the caller can read; another user's
+		// private object isn't visible, so the lookup returns no row.
+		queryRowFn: func(context.Context, string, ...any) (map[string]any, error) { return nil, nil },
+	}
+	h := newLegacyStorageHandler(db, store)
+	r := gin.New()
+	r.GET("/storage/avatars/:id", func(c *gin.Context) {
+		setTestSession(c, domain.Session{Role: "authenticated", UserID: "attacker", IsAuthenticated: true})
+		h.handleSignDownload("avatars", domain.Bucket{})(c)
+	})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/storage/avatars/victim-private.jpg", nil))
+	assert.Equal(t, 404, w.Code)
+	assert.False(t, signed, "no signed URL must be issued for a row the caller's RLS can't see")
+	assert.Equal(t, "authenticated", capturedRole, "sign-download must run under the caller's role, not service_role")
 }
