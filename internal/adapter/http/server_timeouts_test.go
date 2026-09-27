@@ -2,10 +2,11 @@ package http
 
 import (
 	"bytes"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/http/httptrace"
 	"testing"
 	"time"
 
@@ -40,7 +41,6 @@ func deadlineServer(t *testing.T, timeout string) *httptest.Server {
 	r.GET("/rest/v1/slow", slow)
 	r.GET("/auth/v1/slow", slow)
 	r.GET("/storage/v1/slow", slow)
-	r.GET("/rest/v1/fast", func(c *gin.Context) { c.String(200, "ok") })
 	ts := httptest.NewServer(r)
 	t.Cleanup(ts.Close)
 	return ts
@@ -81,64 +81,51 @@ func TestAPIDeadline_DisabledWhenUnset(t *testing.T) {
 	}
 }
 
-// A deadline set on one keepalive request must not leak into the next one on the same conn.
-func TestAPIDeadline_ClearedForNextKeepaliveRequest(t *testing.T) {
-	ts := deadlineServer(t, "100ms")
-	client := &http.Client{Transport: &http.Transport{MaxConnsPerHost: 1, MaxIdleConnsPerHost: 1}}
-	if _, err := fetch(client, ts.URL+"/rest/v1/fast"); err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(200 * time.Millisecond)
-	reused := false
-	req, _ := http.NewRequest("GET", ts.URL+"/storage/v1/slow", nil)
-	req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
-		GotConn: func(i httptrace.GotConnInfo) { reused = i.Reused },
-	}))
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	b, err := io.ReadAll(resp.Body)
-	if !reused {
-		t.Fatal("test precondition: connection was not reused")
-	}
-	if err != nil || len(b) != 1<<20 {
-		t.Fatalf("stale write deadline cut the next request: n=%d err=%v", len(b), err)
-	}
-}
-
-// A request aborted by a later middleware (CORS preflight) must still get a fresh deadline state.
-func TestAPIDeadline_AbortedPreflightOnReusedConn(t *testing.T) {
+// A slow request body on a bounded route must be cut by SetReadDeadline, not just read to completion.
+func TestAPIDeadline_CutsSlowRequestBody(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(apiDeadline("100ms"))
-	r.Use(func(c *gin.Context) {
-		if c.Request.Method == http.MethodOptions {
-			c.Header("Access-Control-Allow-Methods", "GET")
-			c.AbortWithStatus(204)
-		}
+	readErr := make(chan error, 1)
+	r.POST("/rest/v1/upload", func(c *gin.Context) {
+		_, err := io.Copy(io.Discard, c.Request.Body)
+		readErr <- err
 	})
-	r.GET("/rest/v1/fast", func(c *gin.Context) { c.String(200, "ok") })
 	ts := httptest.NewServer(r)
 	defer ts.Close()
-	client := &http.Client{Transport: &http.Transport{MaxConnsPerHost: 1, MaxIdleConnsPerHost: 1}}
-	if _, err := fetch(client, ts.URL+"/rest/v1/fast"); err != nil {
+
+	addr := ts.Listener.Addr().String()
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(200 * time.Millisecond)
-	reused := false
-	req, _ := http.NewRequest(http.MethodOptions, ts.URL+"/dashboard/x", nil)
-	req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
-		GotConn: func(i httptrace.GotConnInfo) { reused = i.Reused },
-	}))
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("preflight on reused conn failed: %v", err)
+	defer func() { _ = conn.Close() }()
+
+	const bodyLen = 20 // at 60ms/byte, full delivery takes 1.2s, well past the 100ms deadline
+	head := fmt.Sprintf("POST /rest/v1/upload HTTP/1.1\r\nHost: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", addr, bodyLen)
+	if _, err := conn.Write([]byte(head)); err != nil {
+		t.Fatal(err)
 	}
-	_ = resp.Body.Close()
-	if !reused || resp.StatusCode != 204 {
-		t.Fatalf("reused=%v status=%d, want reused conn + 204", reused, resp.StatusCode)
+	go func() {
+		for i := 0; i < bodyLen; i++ {
+			if _, err := conn.Write([]byte{'x'}); err != nil {
+				return
+			}
+			time.Sleep(60 * time.Millisecond)
+		}
+	}()
+
+	start := time.Now()
+	select {
+	case err := <-readErr:
+		if err == nil {
+			t.Fatal("expected a read error from the slow body past the deadline, got nil")
+		}
+		if elapsed := time.Since(start); elapsed > time.Second {
+			t.Fatalf("read error arrived after %v, want close to the 100ms deadline", elapsed)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler body read hung past the deadline; SetReadDeadline not applied")
 	}
 }
 

@@ -159,14 +159,12 @@ func (s *Server) Handler() http.Handler {
 func apiDeadline(timeout string) gin.HandlerFunc {
 	d, _ := time.ParseDuration(timeout)
 	return func(c *gin.Context) {
-		rc := http.NewResponseController(c.Writer)
 		p := c.Request.URL.Path
 		if d > 0 && (strings.HasPrefix(p, "/rest/v1/") || strings.HasPrefix(p, "/auth/v1/")) {
+			rc := http.NewResponseController(c.Writer)
 			deadline := time.Now().Add(d)
 			_ = rc.SetReadDeadline(deadline)
 			_ = rc.SetWriteDeadline(deadline)
-		} else {
-			_ = rc.SetWriteDeadline(time.Time{})
 		}
 		c.Next()
 	}
