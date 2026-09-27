@@ -235,6 +235,8 @@ Count modes:
 | `planned` | Uses the Postgres query planner estimate |
 | `estimated` | `pg_class.reltuples` for an unfiltered read of a plain table; the planner estimate otherwise. |
 
+On a setof RPC, `exact` counts the function's result after filters in the same statement as the rows, so the function runs once. `planned` and `estimated` use the planner estimate and don't run the function again.
+
 ## Embeds (joins)
 
 Embeds use foreign key relationships declared in `instancez.yaml` to join related tables in a single request.

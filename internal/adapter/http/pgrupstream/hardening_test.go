@@ -3,6 +3,7 @@
 package pgrupstream
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -179,6 +180,65 @@ func TestHardening_RPCCountRunsInReadOnlyTx(t *testing.T) {
 	require.Equal(t, 200, status, "%s", raw)
 	require.Len(t, rowsOf(t, raw), 5)
 	require.Equal(t, "0-4/5", hdr.Get("Content-Range"))
+}
+
+func TestHardening_RPCCountRunsFunctionOnce(t *testing.T) {
+	if testTS == nil {
+		t.Skip("no upstream")
+	}
+	calls := func() int64 {
+		row, err := testDB.QueryRow(context.Background(), "SELECT n FROM rpc_calls")
+		require.NoError(t, err)
+		return row["n"].(int64)
+	}
+	cases := []struct {
+		query, prefer, wantRange string
+		wantRows                 int
+	}{
+		{"", "count=exact", "0-4/5", 5},
+		{"?username=neq.supabot&order=username.desc&limit=2", "count=exact", "0-1/4", 2},
+		{"?offset=10", "count=exact", "10-10/5", 0},
+		{"?limit=0", "count=exact", "0-0/5", 0},
+		{"?username=eq.nobody", "count=exact", "0-0/0", 0},
+		{"?select=username,messages(id)&username=eq.supabot", "count=exact", "0-0/1", 1},
+		{"?select=count()", "count=exact", "0-0/5", 1},
+		{"", "count=planned", `^0-4/\d+$`, 5},
+		{"", "count=estimated", `^0-4/\d+$`, 5},
+		{"?username=neq.supabot", "count=planned", `^0-3/\d+$`, 4},
+		{"", "", "0-4/*", 5},
+	}
+	for _, c := range cases {
+		before := calls()
+		hdrs := map[string]string{}
+		if c.prefer != "" {
+			hdrs["Prefer"] = c.prefer
+		}
+		status, hdr, raw := call(t, "POST", testTS.URL+"/rest/v1/rpc/counted_users"+c.query, `{}`, hdrs, false)
+		require.Equal(t, 200, status, "%s: %s", c.query, raw)
+		rows := rowsOf(t, raw)
+		require.Len(t, rows, c.wantRows, c.query)
+		require.NotContains(t, string(raw), "__inz_")
+		if strings.HasPrefix(c.wantRange, "^") {
+			require.Regexp(t, c.wantRange, hdr.Get("Content-Range"), c.query)
+		} else {
+			require.Equal(t, c.wantRange, hdr.Get("Content-Range"), c.query)
+		}
+		require.Equal(t, before+1, calls(), "%s %s: function must run exactly once", c.query, c.prefer)
+	}
+
+	_, _, raw := call(t, "POST", testTS.URL+"/rest/v1/rpc/counted_users?order=username.desc&select=username", `{}`, map[string]string{"Prefer": "count=exact"}, false)
+	got := rowsOf(t, raw)
+	require.Len(t, got, 5)
+	require.Equal(t, "supabot", got[0]["username"])
+	require.Equal(t, "acupofjose", got[4]["username"])
+
+	status, _, raw := call(t, "POST", testTS.URL+"/rest/v1/rpc/counted_users?username=eq.supabot", `{}`,
+		map[string]string{"Prefer": "count=exact", "Accept": "application/vnd.pgrst.object+json"}, false)
+	require.Equal(t, 200, status, "%s", raw)
+	var obj map[string]any
+	require.NoError(t, json.Unmarshal(raw, &obj), "%s", raw)
+	require.Equal(t, "supabot", obj["username"])
+	require.NotContains(t, string(raw), "__inz_")
 }
 
 func TestHardening_PlanOnlyForServiceRole(t *testing.T) {

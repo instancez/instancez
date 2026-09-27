@@ -1757,6 +1757,24 @@ await step('rpc: setof function with .order().limit()', async () => {
   assertEq(data[0].title, 'a-first', 'ordered first')
   assertEq(data[1].title, 'm-middle', 'ordered second')
 
+  const counted = await client
+    .rpc('list_todos', undefined, { count: 'exact' })
+    .in('title', ['z-last', 'a-first', 'm-middle'])
+    .order('title')
+    .limit(2)
+  if (counted.error) throw counted.error
+  assertEq(counted.count, 3, 'count ignores limit on setof')
+  assertEq(counted.data.map((r) => r.title).join(','), 'a-first,m-middle', 'counted page keeps order')
+  assert(!Object.keys(counted.data[0]).some((k) => k.startsWith('__inz_')), 'no helper columns leak')
+
+  const empty = await client
+    .rpc('list_todos', undefined, { count: 'exact' })
+    .in('title', ['z-last', 'a-first', 'm-middle'])
+    .range(10, 11)
+  if (empty.error) throw empty.error
+  assertEq(empty.data.length, 0, 'page past end is empty')
+  assertEq(empty.count, 3, 'page past end still counts')
+
   for (const id of setofIds) {
     await client.from('todos').delete().eq('id', id)
   }

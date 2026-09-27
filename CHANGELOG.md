@@ -48,6 +48,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - Storage: presigned download URLs now set S3 response overrides for `Content-Type`, `Content-Disposition` (attachment for active content) and `Cache-Control`.
 - supabase-js `createSignedUrl` and `createSignedUrls` now return URLs that work. Before, storage-js glued the absolute S3 URL onto the API URL, which broke them. The `download` option (`true` or a filename) now sets `Content-Disposition`, safely encoded.
 - Storage: `?download=` on public and authenticated downloads now sets `Content-Disposition`, so `getPublicUrl(path, { download })` and `download=` links work.
+- A setof RPC with `Prefer: count=exact` runs the function once instead of twice, so VOLATILE functions no longer apply their side effects twice. `count=planned` and `count=estimated` on RPCs now return an estimate instead of `*`.
 
 ### Security
 
