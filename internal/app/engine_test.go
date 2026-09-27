@@ -697,3 +697,31 @@ func TestEngineRunWatcher_HardensAfterReload(t *testing.T) {
 		t.Fatalf("Harden must run after a hot-reload migration:\n%s", strings.Join(db.execs, "\n"))
 	}
 }
+
+type closeCountingDB struct {
+	*fakeDB
+	closes int
+}
+
+func (c *closeCountingDB) Close() error { c.closes++; return nil }
+
+func TestShutdownClosesBothPools(t *testing.T) {
+	owner := &closeCountingDB{fakeDB: newFakeDB(t)}
+	auth := &closeCountingDB{fakeDB: newFakeDB(t)}
+	e := NewEngine(&domain.Config{}, domain.OwnerDB{Database: owner}, domain.RequestDB{Database: auth}, domain.Roles{},
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	if err := e.shutdown(); err != nil {
+		t.Fatal(err)
+	}
+	if owner.closes != 1 || auth.closes != 1 {
+		t.Fatalf("closes: owner=%d auth=%d, want 1/1", owner.closes, auth.closes)
+	}
+}
+
+func TestShutdownToleratesMissingRequestDB(t *testing.T) {
+	e := NewEngine(&domain.Config{}, domain.OwnerDB{Database: newFakeDB(t)}, domain.RequestDB{}, domain.Roles{},
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	if err := e.shutdown(); err != nil {
+		t.Fatal(err)
+	}
+}

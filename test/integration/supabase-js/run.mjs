@@ -669,6 +669,26 @@ await step('rest: insert comment for nested embed test', async () => {
   if (error) throw error
 })
 
+await step('rest: count exact honors !inner embeds', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { data: lonely, error: insErr } = await client
+    .from('todos').insert({ title: 'no comments here', user_id: userId }).select('id').single()
+  if (insErr) throw insErr
+  try {
+    const { data, count, error } = await client
+      .from('todos').select('id, comments!inner(id)', { count: 'exact' }).eq('user_id', userId)
+    if (error) throw error
+    assert(data.length >= 1, 'at least the commented todo')
+    assertEq(count, data.length, 'count must match the !inner-filtered rows')
+    assert(!data.some((t) => t.id === lonely.id), 'todo without comments excluded')
+  } finally {
+    await client.from('todos').delete().eq('id', lonely.id)
+  }
+})
+
 await step('rest: nested embed — has-many with nested belongs-to', async () => {
   // todos → comments(body, todos(title))
   // The nested belongs-to back to todos exercises the parent-of-child embed
@@ -773,6 +793,25 @@ await step('rest: bulk insert an array of rows', async () => {
   assertEq(JSON.stringify(titles), JSON.stringify(['bulk-a', 'bulk-b', 'bulk-c']), 'titles round-trip')
   for (const r of data) {
     await client.from('todos').delete().eq('id', r.id)
+  }
+})
+
+await step('rest: select without .limit() returns every row (no default page of 20)', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const rows = Array.from({ length: 25 }, (_, i) => ({ title: `bulk25-${i}`, user_id: userId }))
+  const { error: insErr } = await client.from('todos').insert(rows)
+  if (insErr) throw insErr
+  try {
+    const { data, count, error } = await client
+      .from('todos').select('id', { count: 'exact' }).eq('user_id', userId).like('title', 'bulk25-%')
+    if (error) throw error
+    assertEq(data.length, 25, 'all 25 rows returned without .limit()')
+    assertEq(count, 25, 'exact count')
+  } finally {
+    await client.from('todos').delete().eq('user_id', userId).like('title', 'bulk25-%')
   }
 })
 
@@ -1057,6 +1096,17 @@ await step('rest: select with exact count + rows', async () => {
   assertEq(data.length, 5, 'rows still returned with count')
 })
 
+await step('rest: .explain() is refused without the secret key', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { error, status } = await client.from('todos').select('id').explain()
+  assert(error, 'explain must fail for an authenticated user')
+  assertEq(status, 406, 'PGRST107 status')
+  assertEq(error.code, 'PGRST107', 'PGRST107 code')
+})
+
 await step('rest: .csv() returns text/csv body', async () => {
   const client = createClient(URL, PUBLISHABLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -1154,6 +1204,17 @@ await step('rest: Accept-Profile / Content-Profile switch to the app schema', as
   assert(listResp.ok, `list app.notes failed: ${listResp.status}`)
   const rows = await listResp.json()
   assert(rows.some((r) => r.body === 'hello from app schema'), 'inserted row visible via Accept-Profile')
+})
+
+await step('rest: count exact on a non-public schema table', async () => {
+  const app = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    db: { schema: 'app' },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { count, error } = await app.from('notes').select('*', { count: 'exact', head: true })
+  if (error) throw error
+  assert(typeof count === 'number' && count >= 1, `count via Accept-Profile: got ${count}`)
 })
 
 await step('rest: Accept-Profile rejects an unconfigured schema', async () => {
@@ -2579,7 +2640,7 @@ await step('storage: cleanup documents bucket', async () => {
 })
 
 // --- explain() response ---
-await step('rest: explain returns query plan', async () => {
+await step('rest: explain returns query plan only to the secret key', async () => {
   const resp = await fetch(`${URL}/rest/v1/todos?select=*`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -2587,8 +2648,20 @@ await step('rest: explain returns query plan', async () => {
       Accept: 'application/vnd.pgrst.plan+json',
     },
   })
-  assertEq(resp.status, 200)
-  const plan = await resp.json()
+  assertEq(resp.status, 406, 'plan refused for non-secret caller')
+  const err = await resp.json()
+  assertEq(err.code, 'PGRST107', 'plan refusal code')
+
+  if (!SECRET_KEY) return
+  const adminResp = await fetch(`${URL}/rest/v1/todos?select=*`, {
+    headers: {
+      Authorization: `Bearer ${SECRET_KEY}`,
+      apikey: SECRET_KEY,
+      Accept: 'application/vnd.pgrst.plan+json',
+    },
+  })
+  assertEq(adminResp.status, 200)
+  const plan = await adminResp.json()
   assert(Array.isArray(plan) || (typeof plan === 'object'), 'plan returned')
 })
 
@@ -2816,6 +2889,39 @@ await step('rls: authenticated user can write + read own row', async () => {
   }
   for (const row of selRes.data) {
     assertEq(toUuid(row.owner_id), userId, 'user must only see own rows')
+  }
+})
+
+// rls_locked has rls_enabled: true and no policies: deny-all except service_role.
+await step('rls_enabled: service_role seeds rls_locked', async () => {
+  const adminClient = createClient(URL, SECRET_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${SECRET_KEY}` } },
+  })
+  const { error } = await adminClient.from('rls_locked').insert({ body: 'locked' })
+  if (error) throw error
+  const { data, error: selErr } = await adminClient.from('rls_locked').select('*')
+  if (selErr) throw selErr
+  assert(data.length >= 1, 'service_role must see seeded row')
+})
+
+await step('rls_enabled: anon and authenticated see nothing and cannot insert', async () => {
+  const anonClient = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+  const userClient = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  for (const [who, client] of [['anon', anonClient], ['authenticated', userClient]]) {
+    const { data, error } = await client.from('rls_locked').select('*')
+    if (error) throw error
+    assertEq(data.length, 0, `${who} must see zero rows`)
+    const ins = await client.from('rls_locked').insert({ body: 'nope' })
+    assert(
+      ins.error && /row-level security/i.test(ins.error.message),
+      `${who} insert must be RLS-rejected: ${JSON.stringify(ins.error)}`
+    )
   }
 })
 

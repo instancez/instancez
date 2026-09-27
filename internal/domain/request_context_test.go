@@ -3,6 +3,7 @@ package domain
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestRequestIDContext(t *testing.T) {
@@ -29,5 +30,20 @@ func TestRequestIDContext(t *testing.T) {
 	ctx3 := ContextWithRequestID(ctx, "xyz-9")
 	if got := RequestIDFromContext(ctx3); got != "xyz-9" {
 		t.Errorf("override: got %q, want xyz-9", got)
+	}
+}
+
+func TestStatementTimeoutContext(t *testing.T) {
+	ctx := context.Background()
+	if got := StatementTimeoutFromContext(ctx); got != 0 {
+		t.Fatalf("empty ctx = %v", got)
+	}
+	for _, d := range []time.Duration{0, -time.Second} {
+		if ContextWithStatementTimeout(ctx, d) != ctx {
+			t.Errorf("%v must leave ctx unchanged", d)
+		}
+	}
+	if got := StatementTimeoutFromContext(ContextWithStatementTimeout(ctx, 3*time.Second)); got != 3*time.Second {
+		t.Fatalf("got %v", got)
 	}
 }

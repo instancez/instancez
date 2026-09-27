@@ -519,6 +519,9 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 		chain.hasLimit = true
 		chain.limit = n
 	}
+	if maxRows := h.cfg.Server.MaxLimit; maxRows > 0 && (!chain.hasLimit || chain.limit > maxRows) {
+		chain.hasLimit, chain.limit = true, maxRows
+	}
 
 	// OFFSET.
 	if o := c.Query("offset"); o != "" {
@@ -771,17 +774,5 @@ func (h *CRUDHandler) executeRPCCount(c *gin.Context, name string, fn domain.Fun
 	if isAdmin(c) {
 		dbCtx = c.Request.Context()
 	}
-	row, err := h.db.QueryRow(dbCtx, countSQL, args...)
-	if err != nil {
-		return -1, err
-	}
-	if v, ok := row["count"]; ok {
-		switch n := v.(type) {
-		case int64:
-			return int(n), nil
-		case float64:
-			return int(n), nil
-		}
-	}
-	return -1, nil
+	return queryCount(dbCtx, h.db, countSQL, args...)
 }

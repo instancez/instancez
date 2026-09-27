@@ -596,3 +596,13 @@ func computeHMACSignature(secret, timestamp, body string) string {
 	mac.Write([]byte(timestamp + "." + body))
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
+
+// statementTimeout hands the request pool its SET LOCAL statement_timeout via the request context.
+func statementTimeout(cfg *domain.Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if d := dbTimeout(cfg.Server.Timeouts.DBQuery, joinPrefer(c)); d > 0 {
+			c.Request = c.Request.WithContext(domain.ContextWithStatementTimeout(c.Request.Context(), d))
+		}
+		c.Next()
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -116,6 +117,12 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 			return
 		}
 
+		accept := c.GetHeader("Accept")
+		if strings.HasPrefix(accept, "application/vnd.pgrst.plan") && !isAdmin(c) {
+			pgJSON(c, 406, "PGRST107", "None of these media types are available: "+accept, "", "")
+			return
+		}
+
 		// Parse query params
 		qp, err := parseQueryParams(c, tableName, table, allTbls)
 		if err != nil {
@@ -139,6 +146,8 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 			qp.Limit = end - start + 1
 			rangeUsed = true
 		}
+		qp.Limit = capLimit(qp.Limit, h.cfg.Server.MaxLimit)
+		capEmbeds(qp.Embeds, h.cfg.Server.MaxLimit)
 
 		// Build SQL
 		query, args := postgrest.BuildSelectQueryFull(tableName, qp, table, allTbls)
@@ -156,7 +165,6 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 		}
 
 		// EXPLAIN plan response
-		accept := c.GetHeader("Accept")
 		if accept == "application/vnd.pgrst.plan+json" || accept == "application/vnd.pgrst.plan+text" {
 			explainOpts := "FORMAT JSON"
 			if strings.Contains(accept, "+text") {
@@ -209,19 +217,20 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 			return
 		}
 
-		if err := tx.Commit(ctx); err != nil {
-			problemJSON(c, 500, "internal", "Transaction commit failed")
-			return
-		}
-
-		// Count if requested
 		countMode := parseCountPrefer(prefer)
 		total := -1
 		if countMode != "" {
-			total, err = h.executeCount(ctx, tableName, qp, countMode)
+			total, err = executeCount(ctx, tx, tableName, table, qp, allTbls, countMode)
 			if err != nil {
-				h.logger.Error("count error", "error", err)
+				h.logger.Error("count error", "table", tableName, "error", err)
+				handleDBError(c, err)
+				return
 			}
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			problemJSON(c, 500, "internal", "Transaction commit failed")
+			return
 		}
 
 		// Content-Range header
@@ -646,93 +655,77 @@ func (h *CRUDHandler) handleDelete(tableName string, table domain.Table) gin.Han
 	}
 }
 
-func (h *CRUDHandler) executeCount(ctx interface{ Value(any) any }, tableName string, qp *QueryParams, mode string) (int, error) {
+// executeCount counts the rows the list query would return, using its joins and filters in the caller's tx.
+func executeCount(ctx context.Context, tx domain.Tx, tableName string, table domain.Table, qp *QueryParams, allTbls map[string]domain.Table, mode string) (int, error) {
+	if mode == "estimated" && plainScan(qp) {
+		return queryCount(ctx, tx, "SELECT reltuples::bigint AS count FROM pg_class WHERE oid = to_regclass($1)", tableName)
+	}
+	unpaged := *qp
+	unpaged.Limit, unpaged.Offset, unpaged.Order = postgrest.NoLimit, 0, nil
+	inner, args := postgrest.BuildSelectQueryFull(tableName, &unpaged, table, allTbls)
 	switch mode {
 	case "exact":
-		return h.executeExactCount(ctx.(context.Context), tableName, qp)
-	case "planned":
-		return h.executePlannedCount(ctx.(context.Context), tableName, qp)
-	case "estimated":
-		// Use planned count if filters exist, otherwise use reltuples
-		if qp.Where != nil {
-			return h.executePlannedCount(ctx.(context.Context), tableName, qp)
+		return queryCount(ctx, tx, "SELECT COUNT(*) AS count FROM ("+inner+") AS _count", args...)
+	case "planned", "estimated":
+		rows, err := tx.Query(ctx, "EXPLAIN "+inner, args...)
+		if err != nil {
+			return -1, err
 		}
-		return h.executeEstimateCount(ctx.(context.Context), tableName)
-	default:
-		return -1, nil
-	}
-}
-
-func (h *CRUDHandler) executeExactCount(ctx context.Context, tableName string, qp *QueryParams) (int, error) {
-	sql := fmt.Sprintf("SELECT COUNT(*) AS count FROM %s", tableName)
-	whereSQL, args, _ := qp.Where.BuildSQL(1)
-	if whereSQL != "" {
-		sql += " WHERE " + whereSQL
-	}
-
-	row, err := h.db.QueryRow(ctx, sql, args...)
-	if err != nil {
-		return -1, err
-	}
-	if v, ok := row["count"]; ok {
-		switch n := v.(type) {
-		case int64:
-			return int(n), nil
-		case float64:
-			return int(n), nil
-		}
+		return planRows(rows), nil
 	}
 	return -1, nil
 }
 
-func (h *CRUDHandler) executePlannedCount(ctx context.Context, tableName string, qp *QueryParams) (int, error) {
-	innerSQL := fmt.Sprintf("SELECT 1 FROM %s", tableName)
-	whereSQL, args, _ := qp.Where.BuildSQL(1)
-	if whereSQL != "" {
-		innerSQL += " WHERE " + whereSQL
+// plainScan reports whether the query reads the whole table with no filter, join or grouping.
+func plainScan(qp *QueryParams) bool {
+	if qp.Where != nil || qp.Having != nil || len(qp.Embeds) > 0 {
+		return false
 	}
+	for _, s := range qp.Select {
+		if postgrest.IsAggSelectEntry(s) {
+			return false
+		}
+	}
+	return true
+}
 
-	explainSQL := "EXPLAIN " + innerSQL
-	rows, err := h.db.Query(ctx, explainSQL, args...)
+func queryCount(ctx context.Context, q interface {
+	QueryRow(context.Context, string, ...any) (map[string]any, error)
+}, sql string, args ...any) (int, error) {
+	row, err := q.QueryRow(ctx, sql, args...)
 	if err != nil {
 		return -1, err
 	}
+	switch n := row["count"].(type) {
+	case int64:
+		return int(n), nil
+	case float64:
+		return int(n), nil
+	}
+	return -1, nil
+}
 
-	// Parse the first row's QUERY PLAN for "rows=N"
-	if len(rows) > 0 {
-		for _, v := range rows[0] {
-			if plan, ok := v.(string); ok {
-				if idx := strings.Index(plan, "rows="); idx != -1 {
-					numStr := plan[idx+5:]
-					if spaceIdx := strings.IndexAny(numStr, " )"); spaceIdx != -1 {
-						numStr = numStr[:spaceIdx]
-					}
-					if n, err := strconv.Atoi(numStr); err == nil {
-						return n, nil
-					}
-				}
+// planRows reads the top plan node's rows= estimate from text EXPLAIN output.
+func planRows(rows []map[string]any) int {
+	if len(rows) == 0 {
+		return -1
+	}
+	for _, v := range rows[0] {
+		plan, ok := v.(string)
+		if !ok {
+			continue
+		}
+		if idx := strings.Index(plan, "rows="); idx != -1 {
+			numStr := plan[idx+5:]
+			if end := strings.IndexAny(numStr, " )"); end != -1 {
+				numStr = numStr[:end]
+			}
+			if n, err := strconv.Atoi(numStr); err == nil {
+				return n
 			}
 		}
 	}
-
-	return -1, nil
-}
-
-func (h *CRUDHandler) executeEstimateCount(ctx context.Context, tableName string) (int, error) {
-	row, err := h.db.QueryRow(ctx,
-		"SELECT reltuples::bigint AS count FROM pg_class WHERE relname = $1", tableName)
-	if err != nil {
-		return -1, err
-	}
-	if v, ok := row["count"]; ok {
-		switch n := v.(type) {
-		case int64:
-			return int(n), nil
-		case float64:
-			return int(n), nil
-		}
-	}
-	return -1, nil
+	return -1
 }
 
 // joinPrefer concatenates all Prefer header values on the request into a
@@ -1017,10 +1010,7 @@ type Filter = postgrest.Filter
 type OrderClause = postgrest.OrderClause
 
 func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allTables map[string]domain.Table) (*QueryParams, error) {
-	qp := &QueryParams{
-		Limit:  20, // default
-		Offset: 0,
-	}
+	qp := &QueryParams{Limit: postgrest.NoLimit}
 
 	// Parse select
 	if sel := c.Query("select"); sel != "" {
@@ -1130,6 +1120,26 @@ func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allT
 // references it directly within the same package.
 var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
+// capLimit applies server.max_limit (PostgREST db-max-rows); maxRows <= 0 disables it.
+func capLimit(limit, maxRows int) int {
+	if maxRows > 0 && (limit < 0 || limit > maxRows) {
+		return maxRows
+	}
+	return limit
+}
+
+// capEmbeds caps top-level has-many embeds the same way PostgREST caps every read node.
+func capEmbeds(embeds []postgrest.Embed, maxRows int) {
+	if maxRows <= 0 {
+		return
+	}
+	for i := range embeds {
+		if e := &embeds[i]; e.IsReverse && (e.Limit == nil || *e.Limit > maxRows) {
+			e.Limit = &maxRows
+		}
+	}
+}
+
 // parseRangeHeader parses a simple "start-end" Range value (as PostgREST
 // expects with Range-Unit: items). Both bounds are inclusive and 0-based.
 func parseRangeHeader(h string) (start, end int, ok bool) {
@@ -1167,29 +1177,27 @@ func parseResolutionPrefer(prefer string) string {
 	return ""
 }
 
-// withDBTimeout wraps ctx with the configured db_query timeout. If
-// Prefer: statement-timeout=N is present (milliseconds), that overrides
-// the config value but is capped at the configured max.
-func (h *CRUDHandler) withDBTimeout(ctx context.Context, prefer string) (context.Context, context.CancelFunc) {
-	cfgTimeout, _ := time.ParseDuration(h.cfg.Server.Timeouts.DBQuery)
-
-	// Check Prefer header for statement-timeout
-	if idx := strings.Index(prefer, "statement-timeout="); idx >= 0 {
-		val := prefer[idx+len("statement-timeout="):]
-		if end := strings.IndexAny(val, ", "); end > 0 {
-			val = val[:end]
-		}
-		if ms, err := strconv.Atoi(val); err == nil && ms > 0 {
-			d := time.Duration(ms) * time.Millisecond
-			if cfgTimeout > 0 && d > cfgTimeout {
-				d = cfgTimeout
+// dbTimeout returns server.timeouts.db_query, lowered (never raised) by Prefer: statement-timeout=<ms>.
+func dbTimeout(cfgVal, prefer string) time.Duration {
+	cfgTimeout, _ := time.ParseDuration(cfgVal)
+	cfgTimeout = max(cfgTimeout, 0)
+	if val, ok := findPreferDirective(prefer, "statement-timeout"); ok {
+		if ms, err := strconv.ParseInt(val, 10, 64); err == nil && ms > 0 {
+			if cfgTimeout > 0 && ms >= cfgTimeout.Milliseconds() {
+				return cfgTimeout
 			}
-			return context.WithTimeout(ctx, d)
+			if ms <= math.MaxInt64/int64(time.Millisecond) {
+				return time.Duration(ms) * time.Millisecond
+			}
 		}
 	}
+	return cfgTimeout
+}
 
-	if cfgTimeout > 0 {
-		return context.WithTimeout(ctx, cfgTimeout)
+// withDBTimeout also bounds pool acquire and Begin for list reads.
+func (h *CRUDHandler) withDBTimeout(ctx context.Context, prefer string) (context.Context, context.CancelFunc) {
+	if d := dbTimeout(h.cfg.Server.Timeouts.DBQuery, prefer); d > 0 {
+		return context.WithTimeout(ctx, d)
 	}
 	return ctx, nil
 }

@@ -129,7 +129,7 @@ functions:
     runtime: node         # required; "node" is the only supported value
     file: functions/todos.js   # path relative to the config root
     auth_required: true   # when true, unauthenticated callers receive 401 before the handler runs
-    timeout: 30s          # per-request deadline; defaults to 30s
+    timeout: 25s          # per-request deadline; defaults to 25s
     env:                  # secrets injected as ctx.env
       STRIPE_KEY: ${INSTANCEZ_ENV_STRIPE_KEY}
       FIXED_VALUE: "literal"
@@ -140,7 +140,7 @@ functions:
 | `runtime` | `string` | Runtime identifier. Only `"node"` is supported. |
 | `file` | `string` | Path to the handler file, relative to the config root. |
 | `auth_required` | `bool` | If `true`, instancez returns `401` for anonymous requests before invoking the handler. Default `false`. |
-| `timeout` | `string` | Go duration string (e.g. `"30s"`, `"5s"`). Defaults to `30s`. Exceeding the timeout returns `504`. |
+| `timeout` | `string` | Go duration string (e.g. `"10s"`, `"5s"`). Defaults to `25s`, which is also the maximum. Exceeding the timeout returns `504`. |
 | `env` | `map[string]string` | Secrets available as `ctx.env`. Values are either plain literals or `${INSTANCEZ_ENV_*}` references. |
 
 ## Creating from the dashboard
@@ -224,27 +224,28 @@ Unlike `/rest/v1`, `/auth/v1`, and `/storage/v1`, functions do **not** require t
 
 | Command | npm | Hot reload |
 |---------|-----|------------|
-| `inz dev` | Runs `npm ci` on startup. Falls back to `npm install` when no lockfile exists yet (first run). Restart required only when adding or removing npm dependencies. | JS code changes and `functions:` YAML changes are picked up automatically without a restart. |
+| `inz dev` | Runs `npm ci` on startup. Falls back to `npm install` when no lockfile exists yet (first run). Restart required only when adding or removing npm dependencies. | JS code changes and `functions:` YAML changes are picked up automatically without a restart. Calls already running finish on the old workers (up to 30s) before those stop. |
 | `inz cloud deploy` | Uploads function sources; the cloud installs dependencies and builds the bundle. A committed `package-lock.json` is required. | N/A |
 | `inz bundle` | Runs `npm ci` (requires a committed `package-lock.json`) and produces a tar archive. Use `--output s3://…` for self-hosted deploys. | N/A |
-| `inz serve` | Never runs npm. Consumes the pre-built bundle produced by `inz bundle --output s3://…`. | N/A |
+| `inz serve` | Never runs npm. Consumes the pre-built bundle produced by `inz bundle --output s3://…`. | With `--watch`, a new bundle version is loaded without a restart. Calls already running finish on the old workers (up to 30s) before those stop. |
 
 ## Runtime limits
 
 | Setting | Value |
 |---------|-------|
-| Default timeout | `30s` (configurable per-function via `timeout:`) |
+| Default timeout | `25s` (configurable per-function via `timeout:`, max `25s`) |
 | Worker pool size | `min(4, GOMAXPROCS)` Node processes |
 | Max concurrent requests | `pool_size × 64` |
+| Max response body | 6 MB (larger → 502) |
 
 **Error codes:**
 
 | Code | Meaning |
 |------|---------|
 | `401` | `auth_required: true` and no valid JWT provided |
-| `504` | Handler exceeded the `timeout` |
+| `504` | Handler exceeded the `timeout`. If the worker then stops answering health checks (e.g. a CPU-bound loop), it is killed and replaced. |
 | `503` | All in-flight slots are occupied (runtime saturated) |
-| `502` | Worker process died or no healthy worker available |
+| `502` | Worker process died, no healthy worker available, or the response was over 6 MB |
 | `500` | Handler threw an unhandled exception |
 
 ## What's next

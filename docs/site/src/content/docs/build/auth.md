@@ -118,6 +118,7 @@ Every request carries the user's JWT. The middleware switches the Postgres role 
 ```yaml
 tables:
   posts:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial

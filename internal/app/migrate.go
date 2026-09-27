@@ -1043,7 +1043,7 @@ func rlsPolicyTypeClause(policy domain.RLSPolicy) string {
 }
 
 func generateRLSPolicies(tableName string, table domain.Table) []string {
-	if len(table.RLS) == 0 {
+	if !table.EffectiveRLSEnabled() {
 		return nil
 	}
 	qualName := qualifiedTableName(tableName, table)

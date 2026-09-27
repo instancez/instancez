@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -58,7 +59,7 @@ validate never creates a project and never writes anything server-side; use
 				if len(args) > 0 {
 					return fmt.Errorf("validate does not take positional arguments")
 				}
-				return runValidate(cmd.Context(), configPath, jsonOutput, useDSN)
+				return runValidate(cmd.Context(), cmd.ErrOrStderr(), configPath, jsonOutput, useDSN)
 			}
 			override := project
 			if len(args) == 1 {
@@ -118,7 +119,7 @@ func validateAgainstCloud(ctx context.Context, configPath string, jsonOutput boo
 // can equal, since ids are Mongo ObjectID hex strings.
 const useFileProjectID = "\x00use-file-project-id\x00"
 
-func runValidate(ctx context.Context, configPath string, jsonOutput bool, useDSN string) error {
+func runValidate(ctx context.Context, errOut io.Writer, configPath string, jsonOutput bool, useDSN string) error {
 	if err := requireLocalConfig(configPath); err != nil {
 		return err
 	}
@@ -140,6 +141,8 @@ func runValidate(ctx context.Context, configPath string, jsonOutput bool, useDSN
 		}
 		return printPrettyErrors(errs)
 	}
+
+	printWarnings(errOut, config.Warnings(cfg))
 
 	if fileErrs := config.ValidateFunctionFiles(cfg, filepath.Dir(configPath)); fileErrs != nil {
 		if jsonOutput {
@@ -261,6 +264,16 @@ func printPrettyErrors(errs domain.ValidationErrors) error {
 	}
 	fmt.Fprintf(os.Stderr, "\n  Found %d error(s)\n", len(errs))
 	return errReported
+}
+
+// printWarnings writes non-blocking findings; it never fails the command.
+func printWarnings(w io.Writer, ws domain.ValidationErrors) {
+	for _, e := range ws {
+		_, _ = fmt.Fprintf(w, "\n  ! Warning: %s\n    %s\n", e.Path, e.Message)
+		if e.Suggestion != "" {
+			_, _ = fmt.Fprintf(w, "    Suggestion: %s\n", e.Suggestion)
+		}
+	}
 }
 
 type jsonError struct {

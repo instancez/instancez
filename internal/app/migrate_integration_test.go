@@ -691,14 +691,14 @@ func columnNullable(t *testing.T, db *postgres.DB, table, column string) bool {
 	return fmt.Sprint(row["is_nullable"]) == "YES"
 }
 
-func rlsEnabled(t *testing.T, db *postgres.DB, table string) bool {
+func rlsEnabled(t *testing.T, db domain.Database, table string) (enabled, forced bool) {
 	t.Helper()
 	row, err := db.QueryRow(context.Background(),
-		`SELECT rowsecurity FROM pg_tables WHERE tablename=$1`, table)
+		`SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE oid = ('public.' || $1)::regclass`, table)
 	if err != nil {
 		t.Fatalf("rlsEnabled: %v", err)
 	}
-	return row["rowsecurity"] == true
+	return row["relrowsecurity"] == true, row["relforcerowsecurity"] == true
 }
 
 func TestIntegration_NullabilityChange(t *testing.T) {
@@ -1621,7 +1621,7 @@ func TestIntegration_RemoveAllRLS_DisablesRLS(t *testing.T) {
 		t.Fatalf("v1 apply: %v", err)
 	}
 
-	if !rlsEnabled(t, db, "todos") {
+	if en, _ := rlsEnabled(t, db, "todos"); !en {
 		t.Fatal("RLS should be enabled after v1")
 	}
 
@@ -1640,7 +1640,7 @@ func TestIntegration_RemoveAllRLS_DisablesRLS(t *testing.T) {
 		t.Fatalf("v2 apply: %v", err)
 	}
 
-	if rlsEnabled(t, db, "todos") {
+	if en, _ := rlsEnabled(t, db, "todos"); en {
 		t.Fatal("RLS should be disabled after removing all policies")
 	}
 }
@@ -1745,7 +1745,7 @@ func TestIntegration_ThreeStepMigration(t *testing.T) {
 	if !columnExists(t, db, "todos", "title") {
 		t.Fatal("title should survive v3")
 	}
-	if rlsEnabled(t, db, "todos") {
+	if en, _ := rlsEnabled(t, db, "todos"); en {
 		t.Fatal("RLS should be disabled after v3")
 	}
 

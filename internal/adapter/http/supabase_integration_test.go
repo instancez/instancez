@@ -145,7 +145,8 @@ func TestSupabaseJSCompat(t *testing.T) {
 	cfg := &domain.Config{
 		Version: 1,
 		Project: domain.Project{Name: "integration"},
-		Server:  domain.Server{Port: 0},
+		// Production defaults, so the contract covers the max-rows cap, statement_timeout and API deadlines.
+		Server: domain.Server{Port: 0, MaxLimit: 1000, Timeouts: domain.Timeouts{Request: "25s", DBQuery: "10s"}},
 		Auth: &domain.Auth{
 			JWTExpiry: "1h",
 			// The recovery/verify flow redirects to the app; the allowlist must
@@ -208,6 +209,15 @@ func TestSupabaseJSCompat(t *testing.T) {
 				RLS: []domain.RLSPolicy{
 					{Operations: []string{"select"}, Using: "true"},
 					{Operations: []string{"insert", "update"}, Using: "auth.uid() = id", WithCheck: "auth.uid() = id"},
+				},
+			},
+			// rls_locked: rls_enabled true, zero policies. supabase-js must see
+			// deny-all for anon/authenticated and a bypass for service_role.
+			"rls_locked": {
+				RLSEnabled: func() *bool { b := true; return &b }(),
+				Fields: []domain.Field{
+					{Name: "id", Type: "bigserial", PrimaryKey: true},
+					{Name: "body", Type: "text", Required: true},
 				},
 			},
 			// rls_secrets exercises the two-login model end-to-end:

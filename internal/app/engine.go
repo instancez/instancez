@@ -431,6 +431,12 @@ func (e *Engine) shutdown() error {
 		}
 	}
 
+	if e.authDB.Database != nil {
+		if err := e.authDB.Close(); err != nil {
+			e.logger.Error("error closing request pool", "error", err)
+		}
+	}
+
 	// Close database
 	if err := e.ownerDB.Close(); err != nil {
 		e.logger.Error("error closing database", "error", err)

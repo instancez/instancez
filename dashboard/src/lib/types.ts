@@ -103,6 +103,8 @@ export interface OAuthProvider {
 export interface Table {
   fields: Field[];
   indexes: Index[];
+  /** Explicit RLS switch; unset means "on iff rls has policies". */
+  rls_enabled?: boolean;
   rls: RLSPolicy[];
   /** Previous table name, so the migrator renames instead of dropping. */
   renamed_from?: string;

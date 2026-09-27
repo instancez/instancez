@@ -39,6 +39,7 @@ auth:
             redirect_url: http://localhost:5174/auth/v1/callback/google
 tables:
     profiles:
+        rls_enabled: true
         fields:
             - name: id
               foreign_key:
@@ -57,6 +58,7 @@ tables:
               using: "auth.uid() = id"
               with_check: "auth.uid() = id"
     categories:
+        rls_enabled: true
         fields:
             - name: id
               type: bigserial
@@ -78,6 +80,7 @@ tables:
               using: "true"
               with_check: "true"
     products:
+        rls_enabled: true
         fields:
             - name: id
               type: bigserial
@@ -146,6 +149,7 @@ tables:
               using: "true"
               with_check: "true"
     reviews:
+        rls_enabled: true
         fields:
             - name: id
               type: bigserial

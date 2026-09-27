@@ -245,8 +245,8 @@ func diffRemovedRLSPolicies(old, new *domain.Config) []string {
 			}
 		}
 
-		// If all RLS policies were removed, disable RLS on the table.
-		if len(oldTable.RLS) > 0 && len(newTable.RLS) == 0 {
+		// Losing the last policy under rls_enabled: true keeps deny-all.
+		if oldTable.EffectiveRLSEnabled() && !newTable.EffectiveRLSEnabled() {
 			ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s DISABLE ROW LEVEL SECURITY;", qual))
 		}
 	}

@@ -8,18 +8,25 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Added
 
+- Per-table `rls_enabled` in `instancez.yaml`. `true` enables and forces RLS even with no policies (deny-all for `anon`/`authenticated`), and with `true` set, removing the last policy no longer turns RLS off. `false` disables RLS and is rejected when the table declares policies. Leaving it unset keeps the old behavior (on only if the table has policies, off the moment the last policy is removed), so existing projects migrate with no DDL change. `inz init`, the examples, and the dashboard's new-table flow now write it explicitly, defaulting to `true`.
+- `inz validate` and `inz dev` print non-blocking warnings. The first two: a table without `rls_enabled`, and a table with RLS disabled.
+
 ### Changed
 
 - Requests running as `anon` or `authenticated` can no longer read or write `auth.*` tables, which matches Supabase. RLS policies or `security: invoker` RPCs that query `auth.users` directly now get `permission denied`; move that data into your own table or use a `security: definer` RPC. `auth.uid()`, `auth.role()`, `auth.email()`, `auth.jwt()` and foreign keys to `auth.users.id` are unaffected.
 - Startup now re-applies database privilege fixes on every boot, including `inz serve` without `--migrate`, and boot fails if the privilege fix fails.
 - **Breaking:** session JWTs now carry Supabase's top-level `aal` and `amr` (`[{method, timestamp}]`) claims, with a `session_id` that stays the same across refreshes. `aal` is no longer written into `app_metadata`; RLS policies reading `auth.jwt()->'app_metadata'->>'aal'` must switch to `auth.jwt()->>'aal'`.
 - `GET /auth/v1/user` and session responses now include `user.factors`, so supabase-js `mfa.listFactors()` and `mfa.getAuthenticatorAssuranceLevel()` work.
+- REST reads no longer stop at 20 rows when no `limit` is given, matching PostgREST. `server.max_limit` (new default 1000, `-1` to disable) now caps table reads, setof RPCs and top-level has-many embeds, the way PostgREST's `db-max-rows` does.
 
 ### Fixed
 
 - supabase-js `linkIdentity()` works: `/user/identities/authorize` now accepts GET, which supabase-js sends, as well as POST.
 - `verifyOtp({ type: 'magiclink' })` now marks the email confirmed, as GoTrue does, so magic-link users can later link a Google login by email.
+- `count=exact` / `planned` / `estimated` now count what the query actually returns. They include `!inner` and belongs-to embed filters, work on non-public schemas, run in the same transaction as the rows, and return an error instead of silently dropping the count.
 - Upgrading instancez with an unchanged `instancez.yaml` now adds new `auth.*` columns and indexes at boot. Before, they only reached a database when the config changed. This also adds the missing `attempts` column to `auth.one_time_tokens` on databases that enabled email auth after first boot.
+- A code function stuck in a CPU-bound loop no longer permanently takes out a worker. After a timeout the worker is health-checked and replaced if unresponsive. Function responses over 6 MB now return 502 instead of being buffered without limit.
+- Reloading functions (dev hot reload, `serve --watch` bundle change) no longer kills calls in flight. The old runtime drains for up to 30s before its workers stop.
 
 ### Security
 
@@ -37,6 +44,11 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - Refresh-token reuse is now detected: replaying an already-rotated token revokes its whole session family. A 10-second grace window returns the session's live token instead, so two tabs refreshing at the same moment don't knock each other out.
 - `banned_until` is now enforced on every sign-in and refresh path (403 `user_banned`). GoTrue returns 400 on the password grant specifically; instancez returns 403 everywhere, a deliberate deviation for one uniform status. The dashboard's "disable user" action now bans the user instead of only revoking their tokens.
 - JWT verification now pins `RS256`/`HS256` (`jwt.WithValidMethods`), and `/auth/v1/token/verify` shares the same verifier as the request middleware instead of its own unpinned parse. `oauth_state`/`oauth_redirect_to` cookies are now `Secure` and `SameSite=Lax` over HTTPS, with a `__Host-` prefix, matching `oauth_link_state`.
+- Query plans (`Accept: application/vnd.pgrst.plan+json|text`) are only returned to the secret key. Anon and user tokens could read execution plans before, which exposed table sizes and index layout.
+- `server.timeouts.db_query` (default 10s) is now a Postgres `statement_timeout` on every API transaction, not just list reads. It holds for anon, authenticated and service_role, so one slow RPC or filter can no longer pin a pool connection.
+- `server.timeouts.request` (default 25s) now bounds how long `/rest/v1` and `/auth/v1` requests may take to read or write, which stops slow-body and slow-reader clients from holding connections open. Storage and functions are exempt.
+- `/metrics` labels now use route templates (`/rest/v1/rpc/:name`), with `unmatched` for unknown paths and `OTHER` for non-standard methods. Before, every distinct URL added a series that was never freed. The mislabelled `quantile="0.5"` (it was a mean) is gone, and `_count`/`_sum` are now true cumulative totals.
+- A table with `rls_enabled: true` and no policies is deny-all for `anon`/`authenticated` (reads return zero rows, writes fail), rather than having RLS left off. Removing a table's last policy while `rls_enabled: true` stays set no longer opens the table back up. The dashboard's new-table default is `rls_enabled: true`, so new tables start deny-all until you add policies.
 
 ### Upgrading
 

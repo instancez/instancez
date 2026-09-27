@@ -40,6 +40,7 @@ storage:
 
 tables:
   photos:
+    rls_enabled: true
     fields:
       - name: id
         type: uuid

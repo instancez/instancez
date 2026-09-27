@@ -609,6 +609,90 @@ func TestValidate_RemovedProvidersRejected(t *testing.T) {
 	assertHasErrorAt(t, errs, "providers.email.type")
 }
 
+func TestValidate_RLSEnabled(t *testing.T) {
+	on, off := true, false
+	pol := []domain.RLSPolicy{{Operations: []string{"select"}, Using: "true"}}
+	cases := []struct {
+		name    string
+		enabled *bool
+		rls     []domain.RLSPolicy
+		wantErr bool
+	}{
+		{"unset, no policies", nil, nil, false},
+		{"unset, with policies", nil, pol, false},
+		{"true, no policies", &on, nil, false},
+		{"true, with policies", &on, pol, false},
+		{"false, no policies", &off, nil, false},
+		{"false, with policies", &off, pol, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validBaseConfig()
+			tbl := cfg.Tables["todos"]
+			tbl.RLSEnabled, tbl.RLS = tc.enabled, tc.rls
+			cfg.Tables["todos"] = tbl
+			errs := Validate(cfg)
+			if tc.wantErr {
+				assertHasErrorAt(t, errs, "tables.todos.rls_enabled")
+				return
+			}
+			if errs != nil {
+				t.Fatalf("unexpected errors: %v", errs)
+			}
+		})
+	}
+}
+
+func TestWarnings_RLSEnabled(t *testing.T) {
+	on, off := true, false
+	pol := []domain.RLSPolicy{{Operations: []string{"select"}, Using: "true"}}
+	cases := []struct {
+		name    string
+		enabled *bool
+		rls     []domain.RLSPolicy
+		want    string // substring of Message; "" = no warning
+	}{
+		{"unset, no policies", nil, nil, "set rls_enabled explicitly"},
+		{"unset, with policies", nil, pol, "set rls_enabled explicitly"},
+		{"false, no policies", &off, nil, "RLS is disabled"},
+		{"true, no policies", &on, nil, ""},
+		{"true, with policies", &on, pol, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validBaseConfig()
+			tbl := cfg.Tables["todos"]
+			tbl.RLSEnabled, tbl.RLS = tc.enabled, tc.rls
+			cfg.Tables["todos"] = tbl
+			ws := Warnings(cfg)
+			if tc.want == "" {
+				if len(ws) != 0 {
+					t.Fatalf("want no warnings, got %v", ws)
+				}
+				return
+			}
+			if len(ws) != 1 || ws[0].Path != "tables.todos.rls_enabled" || !strings.Contains(ws[0].Message, tc.want) {
+				t.Fatalf("want one warning at tables.todos.rls_enabled containing %q, got %v", tc.want, ws)
+			}
+		})
+	}
+}
+
+func TestWarnings_NoTablesAndStableOrder(t *testing.T) {
+	if ws := Warnings(&domain.Config{Version: 1}); ws != nil {
+		t.Fatalf("no tables: want nil, got %v", ws)
+	}
+	cfg := validBaseConfig()
+	cfg.Tables["alpha"] = cfg.Tables["todos"]
+	cfg.Tables["zeta"] = cfg.Tables["todos"]
+	for range 20 { // map order is random; ordering must not be
+		ws := Warnings(cfg)
+		if len(ws) != 3 || ws[0].Path != "tables.alpha.rls_enabled" || ws[2].Path != "tables.zeta.rls_enabled" {
+			t.Fatalf("warnings not sorted by table: %v", ws)
+		}
+	}
+}
+
 // assertHasErrorAt checks that at least one error has the given path prefix.
 func assertHasErrorAt(t *testing.T, errs domain.ValidationErrors, pathPrefix string) {
 	t.Helper()
