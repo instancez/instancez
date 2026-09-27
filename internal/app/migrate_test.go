@@ -336,6 +336,40 @@ func TestGenerateStorageRLS_UpdateDivergentUsingWithCheck(t *testing.T) {
 	mustContain(t, joined, "FOR UPDATE USING (bucket_id = 'documents' AND (uploaded_by = auth.uid())) WITH CHECK (bucket_id = 'documents' AND (uploaded_by = auth.uid() AND name LIKE 'mine/%'))")
 }
 
+// T6: a restrictive policy must scope with OR-negation, not AND, or it denies every other bucket.
+func TestGenerateStorageRLS_RestrictiveScopedByOr(t *testing.T) {
+	bucket := domain.Bucket{
+		RLS: []domain.RLSPolicy{
+			{Operations: []string{"select"}, Using: "name LIKE 'ok/%'", Type: "restrictive"},
+			{Operations: []string{"update"}, WithCheck: "name LIKE 'ok/%'", Type: "restrictive"},
+		},
+	}
+	ddl := generateStorageRLS("secrets", bucket)
+	joined := strings.Join(ddl, "\n")
+
+	mustContain(t, joined, "FOR SELECT USING (bucket_id <> 'secrets' OR (name LIKE 'ok/%'))")
+	mustContain(t, joined, "FOR UPDATE WITH CHECK (bucket_id <> 'secrets' OR (name LIKE 'ok/%'))")
+	if strings.Contains(joined, "bucket_id = 'secrets' AND") {
+		t.Fatalf("restrictive policy must not use AND-scoping, got:\n%s", joined)
+	}
+}
+
+// An empty using/with_check must stay empty, even for a restrictive policy.
+func TestGenerateStorageRLS_RestrictiveEmptyExprStaysEmpty(t *testing.T) {
+	bucket := domain.Bucket{
+		RLS: []domain.RLSPolicy{
+			{Operations: []string{"insert"}, WithCheck: "name LIKE 'ok/%'", Type: "restrictive"},
+		},
+	}
+	ddl := generateStorageRLS("secrets", bucket)
+	joined := strings.Join(ddl, "\n")
+
+	mustContain(t, joined, "FOR INSERT WITH CHECK (bucket_id <> 'secrets' OR (name LIKE 'ok/%'))")
+	if strings.Contains(joined, "USING") {
+		t.Fatalf("insert-only policy must not emit a USING clause, got:\n%s", joined)
+	}
+}
+
 // TestGenerateStorageRLSAll_GatingModel locks in the storage authorization
 // model: RLS is only enabled on storage.objects when a bucket opts in by
 // declaring policies, and opt-out buckets stay open via a default-allow policy.

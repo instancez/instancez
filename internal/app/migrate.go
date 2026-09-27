@@ -1160,8 +1160,9 @@ func generateStorageRLS(bucketName string, bucket domain.Bucket) []string {
 
 	for i, policy := range bucket.RLS {
 		typeClause := rlsPolicyTypeClause(policy)
-		scopedUsing := scopeToBucket(bucketName, policy.Using)
-		scopedWithCheck := scopeToBucket(bucketName, policy.WithCheck)
+		restrictive := policy.Type == "restrictive"
+		scopedUsing := scopeToBucket(bucketName, policy.Using, restrictive)
+		scopedWithCheck := scopeToBucket(bucketName, policy.WithCheck, restrictive)
 		for _, op := range policy.Operations {
 			policyName := fmt.Sprintf("storage_%s_%s_%d", bucketName, op, i)
 			pgOp := strings.ToUpper(op)
@@ -1175,12 +1176,13 @@ func generateStorageRLS(bucketName string, bucket domain.Bucket) []string {
 	return ddl
 }
 
-// scopeToBucket ANDs the bucket_id predicate onto a possibly-empty RLS
-// expression. Empty stays empty so rlsClauses can still tell "not set" from
-// "set to a scoped expression".
-func scopeToBucket(bucketName, expr string) string {
+// scopeToBucket confines a possibly-empty RLS expression to bucketName, using OR-negation for restrictive policies so they don't AND-deny other buckets.
+func scopeToBucket(bucketName, expr string, restrictive bool) string {
 	if expr == "" {
 		return ""
+	}
+	if restrictive {
+		return fmt.Sprintf("bucket_id <> '%s' OR (%s)", bucketName, expr)
 	}
 	return fmt.Sprintf("bucket_id = '%s' AND (%s)", bucketName, expr)
 }

@@ -41,6 +41,8 @@ storage:
 
 Buckets are managed exclusively through `instancez.yaml` — the migrator creates or updates them on boot.
 
+`storage.objects` is one table shared by every bucket, so a bucket's policies are scoped to `bucket_id` under the hood. A restrictive policy (`type: restrictive`, see [RLS](/instancez/build/rls/)) only narrows access within its own bucket — it never affects other buckets' rows.
+
 ## Using from a Supabase client
 
 instancez exposes the same storage API as Supabase. Any Supabase client library works — examples below use `@supabase/supabase-js`:
