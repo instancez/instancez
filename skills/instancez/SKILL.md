@@ -57,6 +57,7 @@ functions:     # Node.js handlers at /functions/v1/<name>
 ```yaml
 tables:
   posts:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial          # or: uuid with default: uuid_v7()
@@ -127,7 +128,7 @@ rls:
 
 Helpers available inside policy expressions: `auth.uid()` (uuid, NULL for anon and service_role), `auth.role()`, `auth.email()`, `auth.jwt()`, `auth.is_authenticated()`.
 
-A table with no `rls:` block has RLS disabled entirely: every role sees every row. For private data that is a bug, not a default to leave in place. Conversely, a table with policies but none matching a request returns empty results or silent write failures rather than errors; when a query "returns nothing" under the publishable key, suspect RLS before suspecting the query.
+Set `rls_enabled` on every table. `rls_enabled: true` with no policies is deny-all for the publishable key, which is the safe default for new tables. Add policies to open specific access. `rls_enabled: false` exposes every row to every role and should only be used for deliberately public tables. `false` combined with policies is rejected. A table with policies but none matching a request returns empty results or silent write failures rather than errors; when a query "returns nothing" under the publishable key, suspect RLS before suspecting the query.
 
 ## Auth
 
@@ -224,7 +225,7 @@ Or `inz cloud deploy` for a managed project (shows a diff and asks before writin
 ## Checklist before you finish
 
 - `inz validate` passes.
-- Every table with private data has an `rls:` block, and every `update` policy sets `using`.
+- Every table sets rls_enabled explicitly; private tables use rls_enabled: true, and every update policy sets using.
 - Nothing was removed from the YAML unintentionally; removals become DROPs.
 - Secrets are `${INSTANCEZ_ENV_*}` references, never literals committed to the YAML.
 - Postgres stored procedures live under `rpc:`, JavaScript under `functions:`.

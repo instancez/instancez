@@ -8,6 +8,9 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Added
 
+- Per-table `rls_enabled` in `instancez.yaml`. `true` enables and forces RLS even with no policies (deny-all for `anon`/`authenticated`), and with `true` set, removing the last policy no longer turns RLS off. `false` disables RLS and is rejected when the table declares policies. Leaving it unset keeps the old behavior (on only if the table has policies, off the moment the last policy is removed), so existing projects migrate with no DDL change. `inz init`, the examples, and the dashboard's new-table flow now write it explicitly, defaulting to `true`.
+- `inz validate` and `inz dev` print non-blocking warnings. The first two: a table without `rls_enabled`, and a table with RLS disabled.
+
 ### Changed
 
 - Requests running as `anon` or `authenticated` can no longer read or write `auth.*` tables, which matches Supabase. RLS policies or `security: invoker` RPCs that query `auth.users` directly now get `permission denied`; move that data into your own table or use a `security: definer` RPC. `auth.uid()`, `auth.role()`, `auth.email()`, `auth.jwt()` and foreign keys to `auth.users.id` are unaffected.
@@ -32,6 +35,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - `server.timeouts.db_query` (default 10s) is now a Postgres `statement_timeout` on every API transaction, not just list reads. It holds for anon, authenticated and service_role, so one slow RPC or filter can no longer pin a pool connection.
 - `server.timeouts.request` (default 25s) now bounds how long `/rest/v1` and `/auth/v1` requests may take to read or write, which stops slow-body and slow-reader clients from holding connections open. Storage and functions are exempt.
 - `/metrics` labels now use route templates (`/rest/v1/rpc/:name`), with `unmatched` for unknown paths and `OTHER` for non-standard methods. Before, every distinct URL added a series that was never freed. The mislabelled `quantile="0.5"` (it was a mean) is gone, and `_count`/`_sum` are now true cumulative totals.
+- A table with `rls_enabled: true` and no policies is deny-all for `anon`/`authenticated` (reads return zero rows, writes fail), rather than having RLS left off. Removing a table's last policy while `rls_enabled: true` stays set no longer opens the table back up. The dashboard's new-table default is `rls_enabled: true`, so new tables start deny-all until you add policies.
 
 ### Upgrading
 

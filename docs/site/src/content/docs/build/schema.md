@@ -12,6 +12,7 @@ Tables go under the top-level `tables:` key. Each table gets a name and a list o
 ```yaml
 tables:
   posts:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -137,6 +138,7 @@ By default a table lives in the `public` Postgres schema. Set `schema:` on the t
 tables:
   events:
     schema: analytics
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -152,6 +154,7 @@ Add indexes under the table's `indexes:` key:
 ```yaml
 tables:
   posts:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -184,6 +187,7 @@ Declare the previous name with `renamed_from:` and the migrator issues a rename 
 ```yaml
 tables:
   notes:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -199,6 +203,7 @@ That produces `ALTER TABLE notes RENAME COLUMN body TO content`, so the values s
 tables:
   articles:
     renamed_from: posts
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial

@@ -124,6 +124,7 @@ Tables map to Postgres tables in the `public` schema by default. The migrator di
 tables:
   posts:
     schema: public       # optional; default "public"
+    rls_enabled: true    # recommended; see RLS page
     fields:
       - name: id
         type: bigserial
@@ -157,6 +158,12 @@ tables:
 
 No columns are injected automatically. Every column, including primary keys, must be declared.
 
+### tables.\<name\>.rls_enabled
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `rls_enabled` | `boolean` | inferred: `true` if `rls` has policies, else `false` | Turn row-level security on or off for the table. `true` with no policies denies `anon`/`authenticated` everything. `false` with policies is a validation error. Leaving it unset produces a validation warning. See [RLS](/instancez/build/rls/). |
+
 ### tables.\<name\>.indexes
 
 | Key | Type | Default | Description |
@@ -167,12 +174,13 @@ No columns are injected automatically. Every column, including primary keys, mus
 
 ### tables.\<name\>.rls
 
-RLS is the only authorization layer. Declare policies here; instancez applies `ENABLE ROW LEVEL SECURITY` and creates the policies automatically.
+RLS is the only authorization layer. Declare policies here; instancez creates them automatically. Whether RLS itself is on is controlled by [`rls_enabled`](#tablesnamerls_enabled), not by whether this list is empty.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `rls[].operations` | `string[]` | required | One or more of `select`, `insert`, `update`, `delete`. |
-| `rls[].check` | `string` | required | SQL boolean expression evaluated per row. |
+| `rls[].using` | `string` | conditional | SQL boolean expression selecting which existing rows the operation can see or target. |
+| `rls[].with_check` | `string` | conditional | SQL boolean expression deciding what a written row is allowed to look like. |
 | `rls[].type` | `string` | `permissive` | `permissive` or `restrictive`. |
 
 Useful SQL helpers available in RLS expressions:
@@ -323,6 +331,7 @@ auth:
 
 tables:
   profiles:
+    rls_enabled: true
     fields:
       - name: id
         foreign_key:
