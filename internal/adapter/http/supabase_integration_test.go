@@ -210,6 +210,15 @@ func TestSupabaseJSCompat(t *testing.T) {
 					{Operations: []string{"insert", "update"}, Using: "auth.uid() = id", WithCheck: "auth.uid() = id"},
 				},
 			},
+			// rls_locked: rls_enabled true, zero policies. supabase-js must see
+			// deny-all for anon/authenticated and a bypass for service_role.
+			"rls_locked": {
+				RLSEnabled: func() *bool { b := true; return &b }(),
+				Fields: []domain.Field{
+					{Name: "id", Type: "bigserial", PrimaryKey: true},
+					{Name: "body", Type: "text", Required: true},
+				},
+			},
 			// rls_secrets exercises the two-login model end-to-end:
 			//   - anon clients must be denied by RLS,
 			//   - service_role (admin key) must bypass RLS,

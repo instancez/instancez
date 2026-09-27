@@ -2714,6 +2714,39 @@ await step('rls: authenticated user can write + read own row', async () => {
   }
 })
 
+// rls_locked has rls_enabled: true and no policies: deny-all except service_role.
+await step('rls_enabled: service_role seeds rls_locked', async () => {
+  const adminClient = createClient(URL, SECRET_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${SECRET_KEY}` } },
+  })
+  const { error } = await adminClient.from('rls_locked').insert({ body: 'locked' })
+  if (error) throw error
+  const { data, error: selErr } = await adminClient.from('rls_locked').select('*')
+  if (selErr) throw selErr
+  assert(data.length >= 1, 'service_role must see seeded row')
+})
+
+await step('rls_enabled: anon and authenticated see nothing and cannot insert', async () => {
+  const anonClient = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+  const userClient = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  for (const [who, client] of [['anon', anonClient], ['authenticated', userClient]]) {
+    const { data, error } = await client.from('rls_locked').select('*')
+    if (error) throw error
+    assertEq(data.length, 0, `${who} must see zero rows`)
+    const ins = await client.from('rls_locked').insert({ body: 'nope' })
+    assert(
+      ins.error && /row-level security/i.test(ins.error.message),
+      `${who} insert must be RLS-rejected: ${JSON.stringify(ins.error)}`
+    )
+  }
+})
+
 // --- Cross-schema FK + RLS via auth.uid() ---
 // `profiles` lives in public, with id FK'd to auth.users.id, RLS gated
 // by auth.uid() = id. This is the supabase-canonical pattern for
