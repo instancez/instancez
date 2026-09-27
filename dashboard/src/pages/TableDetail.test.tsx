@@ -11,6 +11,12 @@ import { renderWithChakra } from "../test/helpers";
 import type { Config, ValidationError, Table } from "../lib/types";
 import type { ConsoleBackend } from "../console/backend";
 
+function assertDefined<T>(value: T | undefined, message: string): asserts value is T {
+  if (value === undefined) {
+    throw new Error(message);
+  }
+}
+
 const baseConfig: Config = {
   version: 1,
   project: { name: "P", description: "" },
@@ -161,7 +167,7 @@ describe("TableDetail", () => {
     expect(save).toHaveBeenCalledTimes(1);
     const arg = save.mock.calls[0]![0] as Config;
     const orders = arg.tables["orders"];
-    if (!orders) throw new Error("orders table missing");
+    assertDefined(orders, "orders table missing");
     expect(orders.rls_enabled).toBe(true);
   });
 
@@ -178,9 +184,9 @@ describe("TableDetail", () => {
       fireEvent.click(screen.getByRole("button", { name: /save/i }));
     });
     const call = save.mock.calls[0];
-    if (!call) throw new Error("save was not called");
+    assertDefined(call, "save was not called");
     const saved = (call[0] as Config).tables["orders"];
-    if (!saved) throw new Error("orders table missing");
+    assertDefined(saved, "orders table missing");
     expect(saved.rls_enabled).toBe(true);
     expect(saved.rls).toHaveLength(1);
   });
