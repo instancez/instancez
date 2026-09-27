@@ -379,7 +379,7 @@ func closeSpool(f *os.File) {
 	_ = os.Remove(f.Name())
 }
 
-// readUpload spools a validated body; authorize, if set, runs before spooling so a denied caller never gets bytes onto disk.
+// readUpload writes the error response itself on !ok; authorize, if set, runs before spooling so a denied caller never gets bytes onto disk.
 func (h *StorageV1Handler) readUpload(c *gin.Context, bucket domain.Bucket, authorize func(contentType string) error) (f *os.File, size int64, contentType string, ok bool) {
 	body, contentType, err := uploadBody(c)
 	if err != nil {
