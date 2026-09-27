@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/instancez/instancez/internal/app"
 	"github.com/instancez/instancez/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -350,47 +351,44 @@ func TestEmptyBucket_DBErrorSkipsStore(t *testing.T) {
 
 func TestCreateSignedURL_Success(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-
-	store := &stubObjectStore{
-		signDownloadFn: func(ctx context.Context, key string, expiry time.Duration, _ domain.DownloadOptions) (string, error) {
-			return "https://example.com/signed?token=abc123", nil
-		},
-	}
-
-	db := &stubDB{
-		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			// Object found
-			return map[string]any{"mime": "image/jpeg"}, nil
-		},
-	}
-
-	buckets := map[string]domain.Bucket{
-		"avatars": {Public: false},
-	}
-	h := newStorageHandler(db, store, buckets)
-
-	w := httptest.NewRecorder()
+	store := &stubObjectStore{signDownloadFn: func(context.Context, string, time.Duration, domain.DownloadOptions) (string, error) {
+		t.Fatal("minting must not presign; redemption does")
+		return "", nil
+	}}
+	db := &stubDB{queryRowFn: func(context.Context, string, ...any) (map[string]any, error) {
+		return map[string]any{"id": "x"}, nil
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
+	h.jwtKeys = stubKeys(t)
 	r := gin.New()
 	r.POST("/storage/v1/object/sign/:bucket/*path", func(c *gin.Context) {
 		setTestSession(c, domain.Session{Role: "service_role"})
 		h.createSignedURL(c)
 	})
+	for path, want := range map[string]string{
+		"photo.jpg":      "photo.jpg",
+		"/a/./ünï 1.png": "a/ünï 1.png",
+	} {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars/"+url.PathEscape(path), strings.NewReader(`{"expiresIn":3600}`))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		require.Equal(t, 200, w.Code, w.Body.String())
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.WithinDuration(t, time.Now().Add(time.Hour), signedURLExp(t, h, resp["signedURL"], "avatars", want), 2*time.Second)
+	}
+}
 
-	body := strings.NewReader(`{"expiresIn":3600}`)
-	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars/photo.jpg", body)
-	req.Header.Set("Content-Type", "application/json")
-	r.ServeHTTP(w, req)
-
-	if w.Code != 200 {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	var resp map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if resp["signedURL"] != "https://example.com/signed?token=abc123" {
-		t.Errorf("expected signedURL in response, got %v", resp)
-	}
+// signedURLExp checks su is the relative Supabase-shaped URL for bucket/path and returns its token's expiry.
+func signedURLExp(t *testing.T, h *StorageV1Handler, su any, bucket, objPath string) time.Time {
+	t.Helper()
+	s, _ := su.(string)
+	prefix := "/object/sign/" + bucket + "/" + objPath + "?token="
+	require.True(t, strings.HasPrefix(s, prefix), s)
+	exp, ok := h.verifyDownloadToken(context.Background(), strings.TrimPrefix(s, prefix), bucket, objPath)
+	require.True(t, ok, s)
+	return exp
 }
 
 // A signed upload URL is a capability: once minted, the holder can write the
@@ -648,62 +646,6 @@ func TestDownloadOptions(t *testing.T) {
 			t.Errorf("%+v: got %+v", c, got)
 		}
 	}
-}
-
-func TestCreateSignedURL_PassesSafeHeaderOptions(t *testing.T) {
-	for _, public := range []bool{false, true} {
-		var got domain.DownloadOptions
-		store := &stubObjectStore{signDownloadFn: func(_ context.Context, _ string, _ time.Duration, o domain.DownloadOptions) (string, error) {
-			got = o
-			return "https://example.com/signed", nil
-		}}
-		db := &stubDB{queryRowFn: func(context.Context, string, ...any) (map[string]any, error) {
-			return map[string]any{"mime": "text/html"}, nil
-		}}
-		h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {Public: public}})
-		r := gin.New()
-		r.POST("/storage/v1/object/sign/:bucket/*path", func(c *gin.Context) {
-			setTestSession(c, domain.Session{Role: "service_role"})
-			h.createSignedURL(c)
-		})
-		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars/page.html", strings.NewReader(`{"expiresIn":60}`))
-		req.Header.Set("Content-Type", "application/json")
-		r.ServeHTTP(w, req)
-		require.Equal(t, 200, w.Code, w.Body.String())
-		cache := "private, max-age=3600"
-		if public {
-			cache = "public, max-age=3600"
-		}
-		assert.Equal(t, domain.DownloadOptions{ContentType: "text/html", ContentDisposition: "attachment", CacheControl: cache}, got)
-	}
-}
-
-func TestCreateSignedURLs_NullMimeStillSigns(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	var got domain.DownloadOptions
-	store := &stubObjectStore{signDownloadFn: func(_ context.Context, _ string, _ time.Duration, o domain.DownloadOptions) (string, error) {
-		got = o
-		return "https://example.com/signed", nil
-	}}
-	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) {
-		return []map[string]any{{"name": "a.bin", "mime": nil}}, nil
-	}}
-	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
-	r := gin.New()
-	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
-
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars", strings.NewReader(`{"paths":["a.bin"]}`))
-	req.Header.Set("Content-Type", "application/json")
-	r.ServeHTTP(w, req)
-
-	require.Equal(t, 200, w.Code, w.Body.String())
-	var resp []map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Len(t, resp, 1)
-	assert.NotNil(t, resp[0]["signedURL"], "a NULL mime must not be treated as invisible")
-	assert.Equal(t, "application/octet-stream", got.ContentType)
 }
 
 // --- Upload / update object tests ---
@@ -1843,28 +1785,19 @@ func TestNullIfEmpty(t *testing.T) {
 
 func TestCreateSignedURLs_EnforcesRLSPerPath(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	var signed []string
-	store := &stubObjectStore{
-		signDownloadFn: func(_ context.Context, key string, _ time.Duration, _ domain.DownloadOptions) (string, error) {
-			signed = append(signed, key)
-			if strings.Contains(key, "broken") {
-				return "", errors.New("presign failed: secret detail")
-			}
-			return "https://example.com/" + key, nil
-		},
-	}
 	var gotArgs []any
 	db := &stubDB{queryFn: func(_ context.Context, q string, args ...any) ([]map[string]any, error) {
-		require.Contains(t, q, "SELECT name, mime FROM storage.objects")
+		require.Contains(t, q, "SELECT name FROM storage.objects")
 		gotArgs = args
 		// RLS hides "secret.jpg"; everything else in the ANY list is visible.
-		return []map[string]any{{"name": "good.jpg"}, {"name": "ünï.png"}, {"name": "broken.jpg"}}, nil
+		return []map[string]any{{"name": "good.jpg"}, {"name": "ünï.png"}}, nil
 	}}
-	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
+	h.jwtKeys = stubKeys(t)
 	r := gin.New()
 	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
 
-	body := `{"expiresIn":60,"paths":["good.jpg","secret.jpg","../x","ünï.png","broken.jpg"]}`
+	body := `{"expiresIn":60,"paths":["good.jpg","secret.jpg","../x","ünï.png",""]}`
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -1872,20 +1805,17 @@ func TestCreateSignedURLs_EnforcesRLSPerPath(t *testing.T) {
 
 	require.Equal(t, 200, w.Code, w.Body.String())
 	require.Len(t, gotArgs, 2)
-	assert.Equal(t, []string{"good.jpg", "secret.jpg", "ünï.png", "broken.jpg"}, gotArgs[1], "traversal key must not reach SQL")
-	assert.Equal(t, []string{"avatars/good.jpg", "avatars/ünï.png", "avatars/broken.jpg"}, signed, "hidden path must never be signed")
+	assert.Equal(t, []string{"good.jpg", "secret.jpg", "ünï.png"}, gotArgs[1], "traversal key must not reach SQL")
 	var resp []map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Len(t, resp, 5)
-	assert.NotNil(t, resp[0]["signedURL"])
+	signedURLExp(t, h, resp[0]["signedURL"], "avatars", "good.jpg")
 	assert.Nil(t, resp[0]["error"])
-	for _, i := range []int{1, 2} {
+	signedURLExp(t, h, resp[3]["signedURL"], "avatars", "ünï.png")
+	for _, i := range []int{1, 2, 4} {
 		assert.Nil(t, resp[i]["signedURL"], resp[i])
 		assert.Equal(t, "Either the object does not exist or you do not have access to it", resp[i]["error"])
 	}
-	assert.NotNil(t, resp[3]["signedURL"])
-	assert.Nil(t, resp[4]["signedURL"])
-	assert.NotContains(t, w.Body.String(), "secret detail", "backend error must not leak")
 }
 
 func TestCreateSignedURLs_BadInput(t *testing.T) {
@@ -1932,6 +1862,7 @@ func TestCreateSignedURLs_ExactCapAndDuplicates(t *testing.T) {
 		return rows, nil
 	}}
 	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
+	h.jwtKeys = stubKeys(t)
 	r := gin.New()
 	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
 
@@ -1958,22 +1889,18 @@ func TestCreateSignedURLs_ExactCapAndDuplicates(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Len(t, resp, 3)
 	for _, item := range resp {
-		assert.NotNil(t, item["signedURL"], item)
+		signedURLExp(t, h, item["signedURL"], "avatars", "a")
 	}
 	assert.Equal(t, 1, queries, "one SQL lookup regardless of duplicate paths")
 }
 
 func TestCreateSignedURLs_ExpiryClamped(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	var got time.Duration
-	store := &stubObjectStore{signDownloadFn: func(_ context.Context, _ string, e time.Duration, _ domain.DownloadOptions) (string, error) {
-		got = e
-		return "u", nil
-	}}
 	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) {
 		return []map[string]any{{"name": "a"}}, nil
 	}}
-	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
+	h.jwtKeys = stubKeys(t)
 	r := gin.New()
 	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
 	cases := map[string]time.Duration{
@@ -1987,7 +1914,9 @@ func TestCreateSignedURLs_ExpiryClamped(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		r.ServeHTTP(w, req)
 		require.Equal(t, 200, w.Code, body)
-		assert.Equal(t, want, got, body)
+		var resp []map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.WithinDuration(t, time.Now().Add(want), signedURLExp(t, h, resp[0]["signedURL"], "avatars", "a"), 2*time.Second, body)
 	}
 }
 
@@ -2004,13 +1933,9 @@ func TestSignedExpiry(t *testing.T) {
 
 func TestCreateSignedURL_ExpiryClamped(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	var got time.Duration
-	store := &stubObjectStore{signDownloadFn: func(_ context.Context, _ string, e time.Duration, _ domain.DownloadOptions) (string, error) {
-		got = e
-		return "u", nil
-	}}
 	db := &stubDB{queryRowFn: func(context.Context, string, ...any) (map[string]any, error) { return map[string]any{"id": "x"}, nil }}
-	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
+	h.jwtKeys = stubKeys(t)
 	r := gin.New()
 	r.POST("/storage/v1/object/sign/:bucket/*path", h.createSignedURL)
 	cases := map[string]time.Duration{
@@ -2024,7 +1949,9 @@ func TestCreateSignedURL_ExpiryClamped(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		r.ServeHTTP(w, req)
 		require.Equal(t, 200, w.Code, body)
-		assert.Equal(t, want, got, body)
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.WithinDuration(t, time.Now().Add(want), signedURLExp(t, h, resp["signedURL"], "avatars", "a.txt"), 2*time.Second, body)
 	}
 }
 
@@ -2633,4 +2560,263 @@ func TestServeDownload_TransformErrors(t *testing.T) {
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/storage/v1/object/public/avatars/a.png?width=100", nil))
 	assert.Equal(t, 413, w.Code, "oversized image must not return an empty 200")
+}
+
+// --- Signed download redemption (/object/sign/<bucket>/<path>?token=) ---
+
+func TestDownloadToken_RoundTripAndConfusion(t *testing.T) {
+	ctx := context.Background()
+	h := newStorageHandler(&stubDB{}, &stubObjectStore{}, map[string]domain.Bucket{"docs": {}})
+	h.jwtKeys = stubKeys(t)
+	tok := h.signDownloadToken(ctx, "docs", "a/b.txt", time.Minute)
+	require.NotEmpty(t, tok)
+	exp, ok := h.verifyDownloadToken(ctx, tok, "docs", "a/b.txt")
+	require.True(t, ok)
+	assert.WithinDuration(t, time.Now().Add(time.Minute), exp, 2*time.Second)
+
+	expStr, sig, _ := strings.Cut(tok, ".")
+	flipped := sig[:len(sig)-1] + string("0123456789abcdef"[(strings.IndexByte("0123456789abcdef", sig[len(sig)-1])+1)%16])
+	for name, c := range map[string]struct{ tok, bucket, path string }{
+		"path bound":       {tok, "docs", "a/c.txt"},
+		"prefix path":      {tok, "docs", "a/b.txt/x"},
+		"bucket bound":     {tok, "other", "a/b.txt"},
+		"bucket/path join": {tok, "docs/a", "b.txt"},
+		"flipped sig":      {expStr + "." + flipped, "docs", "a/b.txt"},
+		"appended":         {tok + "0", "docs", "a/b.txt"},
+		"plus exp":         {"+" + tok, "docs", "a/b.txt"},
+		"zero-padded exp":  {"0" + tok, "docs", "a/b.txt"},
+		"later exp":        {fmt.Sprint(time.Now().Add(time.Hour).Unix()) + "." + sig, "docs", "a/b.txt"},
+		"empty":            {"", "docs", "a/b.txt"},
+		"no sig":           {expStr + ".", "docs", "a/b.txt"},
+		"no dot":           {expStr, "docs", "a/b.txt"},
+		"huge exp":         {"99999999999999999999999." + sig, "docs", "a/b.txt"},
+		"expired":          {h.signDownloadToken(ctx, "docs", "a/b.txt", -2*time.Second), "docs", "a/b.txt"},
+		"upload token":     {h.signUploadToken("docs", "a/b.txt", ""), "docs", "a/b.txt"},
+	} {
+		_, ok := h.verifyDownloadToken(ctx, c.tok, c.bucket, c.path)
+		assert.False(t, ok, name)
+	}
+	_, ok = h.verifyUploadToken(tok, "docs", "a/b.txt")
+	assert.False(t, ok, "download token must not redeem an upload")
+
+	rotated := newStorageHandler(&stubDB{}, &stubObjectStore{}, nil)
+	rotated.jwtKeys = stubKeys(t)
+	_, ok = rotated.verifyDownloadToken(ctx, tok, "docs", "a/b.txt")
+	assert.False(t, ok, "a different signing key invalidates the token")
+
+	noKeys := newStorageHandler(&stubDB{}, &stubObjectStore{}, nil)
+	noKeys.jwtKeys = app.NewJWTKeyManager(&stubDB{queryRowFn: func(context.Context, string, ...any) (map[string]any, error) {
+		return nil, errors.New("db down")
+	}})
+	assert.Empty(t, noKeys.signDownloadToken(ctx, "docs", "a/b.txt", time.Minute), "no key, no token")
+	_, ok = noKeys.verifyDownloadToken(ctx, tok, "docs", "a/b.txt")
+	assert.False(t, ok, "no key fails closed")
+}
+
+type redeemCalls struct{ query, sign, download int }
+
+// newRedeemRouter mounts the real routes so the no-apikey behavior is exercised.
+func newRedeemRouter(t *testing.T, signURL string, mime any) (*StorageV1Handler, *gin.Engine, *redeemCalls, *domain.DownloadOptions, *time.Duration) {
+	calls := &redeemCalls{}
+	var opts domain.DownloadOptions
+	var expiry time.Duration
+	store := &stubObjectStore{
+		signDownloadFn: func(_ context.Context, key string, e time.Duration, o domain.DownloadOptions) (string, error) {
+			calls.sign++
+			require.Equal(t, "docs/cat.png", key)
+			opts, expiry = o, e
+			return signURL, nil
+		},
+		downloadFn: func(_ context.Context, key string) (io.ReadCloser, string, error) {
+			calls.download++
+			require.Equal(t, "docs/cat.png", key)
+			return io.NopCloser(strings.NewReader("meow")), "application/octet-stream", nil
+		},
+	}
+	db := &stubDB{
+		queryRowFn: func(_ context.Context, q string, args ...any) (map[string]any, error) {
+			calls.query++
+			require.Equal(t, []any{"docs", "cat.png"}, args)
+			return map[string]any{"mime": mime}, nil
+		},
+		withRLSFn: func(ctx context.Context, s domain.Session) (context.Context, error) {
+			require.Equal(t, "service_role", s.Role)
+			return ctx, nil
+		},
+	}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"docs": {}, "other": {}})
+	h.jwtKeys = stubKeys(t)
+	r := gin.New()
+	h.Mount(&r.RouterGroup)
+	return h, r, calls, &opts, &expiry
+}
+
+func getRaw(r *gin.Engine, target string) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, target, nil))
+	return w
+}
+
+func TestRedeemSignedURL_RedirectsWithDownloadOverride(t *testing.T) {
+	const presigned = "https://s3.example/k?X-Amz-Signature=x"
+	h, r, calls, opts, expiry := newRedeemRouter(t, presigned, "image/png")
+	tok := h.signDownloadToken(context.Background(), "docs", "cat.png", time.Hour)
+
+	w := getRaw(r, "/storage/v1/object/sign/docs/cat.png?token="+tok+"&download=kitty.png")
+	require.Equal(t, 302, w.Code, w.Body.String())
+	assert.Equal(t, presigned, w.Header().Get("Location"))
+	assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
+	assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+	assert.Equal(t, domain.DownloadOptions{ContentType: "image/png", ContentDisposition: "attachment; filename=kitty.png", CacheControl: "private, max-age=3600"}, *opts)
+	assert.Equal(t, time.Minute, *expiry, "presign is short-lived")
+
+	w = getRaw(r, "/storage/v1/object/sign/docs/cat.png?token="+tok)
+	require.Equal(t, 302, w.Code)
+	assert.Empty(t, opts.ContentDisposition, "png stays inline without download")
+
+	w = getRaw(r, "/storage/v1/object/sign/docs/cat.png?token="+tok+"&download=")
+	require.Equal(t, 302, w.Code)
+	assert.Equal(t, "attachment", opts.ContentDisposition)
+
+	w = getRaw(r, "/storage/v1/object/sign/docs/cat.png?token="+tok+"&download=x%0D%0ASet-Cookie:%20a=b")
+	require.Equal(t, 302, w.Code)
+	assert.Equal(t, "attachment; filename*=utf-8''x%0D%0ASet-Cookie%3A%20a%3Db", opts.ContentDisposition)
+	assert.Empty(t, w.Header().Get("Set-Cookie"))
+
+	short := h.signDownloadToken(context.Background(), "docs", "cat.png", 5*time.Second)
+	require.Equal(t, 302, getRaw(r, "/storage/v1/object/sign/docs/cat.png?token="+short).Code)
+	assert.LessOrEqual(t, *expiry, 5*time.Second, "presign never outlives the token")
+	assert.GreaterOrEqual(t, *expiry, time.Second)
+	assert.Equal(t, 5, calls.sign)
+	assert.Zero(t, calls.download, "S3 bytes never pass through instancez")
+}
+
+func TestRedeemSignedURL_LocalProviderStreams(t *testing.T) {
+	h, r, calls, _, _ := newRedeemRouter(t, "file:///tmp/uploads/docs/cat.png", "image/png")
+	tok := h.signDownloadToken(context.Background(), "docs", "cat.png", time.Hour)
+
+	w := getRaw(r, "/storage/v1/object/sign/docs/cat.png?token="+tok+"&download=%C3%BC.png")
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Equal(t, "meow", w.Body.String())
+	assert.Equal(t, "image/png", w.Header().Get("Content-Type"))
+	assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
+	assert.Equal(t, "private, max-age=3600", w.Header().Get("Cache-Control"))
+	assert.Equal(t, "attachment; filename*=utf-8''%C3%BC.png", w.Header().Get("Content-Disposition"))
+	assert.Empty(t, w.Header().Get("Location"))
+	assert.Equal(t, 1, calls.download)
+}
+
+func TestRedeemSignedURL_ActiveContentForcedAttachment(t *testing.T) {
+	h, r, _, _, _ := newRedeemRouter(t, "file:///x", "text/html")
+	tok := h.signDownloadToken(context.Background(), "docs", "cat.png", time.Hour)
+	w := getRaw(r, "/storage/v1/object/sign/docs/cat.png?token="+tok)
+	require.Equal(t, 200, w.Code)
+	assert.Equal(t, "attachment", w.Header().Get("Content-Disposition"))
+}
+
+func TestRedeemSignedURL_RejectsBeforeAnyLookup(t *testing.T) {
+	h, r, calls, _, _ := newRedeemRouter(t, "https://s3.example/k", "image/png")
+	ctx := context.Background()
+	tok := h.signDownloadToken(ctx, "docs", "cat.png", time.Hour)
+	other := h.signDownloadToken(ctx, "docs", "dog.png", time.Hour)
+	missingBucket := h.signDownloadToken(ctx, "nope", "cat.png", time.Hour)
+	cases := map[string]struct {
+		target string
+		code   int
+		slug   string
+	}{
+		"no token":             {"/storage/v1/object/sign/docs/cat.png", 400, "invalid_token"},
+		"other path's token":   {"/storage/v1/object/sign/docs/cat.png?token=" + other, 400, "invalid_token"},
+		"token on other path":  {"/storage/v1/object/sign/docs/dog.png?token=" + tok, 400, "invalid_token"},
+		"token on other bkt":   {"/storage/v1/object/sign/other/cat.png?token=" + tok, 400, "invalid_token"},
+		"unknown bucket probe": {"/storage/v1/object/sign/nope/cat.png?token=1.00", 400, "invalid_token"},
+		"upload token":         {"/storage/v1/object/sign/docs/cat.png?token=" + h.signUploadToken("docs", "cat.png", ""), 400, "invalid_token"},
+		"dotdot":               {"/storage/v1/object/sign/docs/x/../cat.png?token=" + tok, 400, "invalid_key"},
+		"dotdot out of bucket": {"/storage/v1/object/sign/docs/../other/cat.png?token=" + tok, 400, "invalid_key"},
+		"encoded dotdot":       {"/storage/v1/object/sign/docs/x/%2e%2e/cat.png?token=" + tok, 400, "invalid_key"},
+		"nul":                  {"/storage/v1/object/sign/docs/cat.png%00?token=" + tok, 400, "invalid_key"},
+		"no path":              {"/storage/v1/object/sign/docs?token=" + tok, 400, "bad_request"},
+		"empty path":           {"/storage/v1/object/sign/docs/?token=" + tok, 400, "invalid_key"},
+		"valid token, no bkt":  {"/storage/v1/object/sign/nope/cat.png?token=" + missingBucket, 404, "not_found"},
+	}
+	for name, c := range cases {
+		w := getRaw(r, c.target)
+		assert.Equal(t, c.code, w.Code, name+": "+w.Body.String())
+		assert.Contains(t, w.Body.String(), c.slug, name)
+		assert.Empty(t, w.Header().Get("Location"), name)
+	}
+	assert.Equal(t, redeemCalls{}, *calls, "no DB or storage call for a rejected request")
+
+	// A cleaned path is the same object, so ./ is allowed.
+	assert.Equal(t, 302, getRaw(r, "/storage/v1/object/sign/docs/./cat.png?token="+tok).Code)
+}
+
+func TestRedeemSignedURL_MissingObjectAndFailures(t *testing.T) {
+	store := &stubObjectStore{signDownloadFn: func(context.Context, string, time.Duration, domain.DownloadOptions) (string, error) {
+		return "", errors.New("presign: secret detail")
+	}}
+	var row map[string]any
+	db := &stubDB{queryRowFn: func(context.Context, string, ...any) (map[string]any, error) { return row, nil }}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"docs": {}})
+	h.jwtKeys = stubKeys(t)
+	r := gin.New()
+	h.Mount(&r.RouterGroup)
+	tok := h.signDownloadToken(context.Background(), "docs", "cat.png", time.Hour)
+
+	w := getRaw(r, "/storage/v1/object/sign/docs/cat.png?token="+tok)
+	assert.Equal(t, 404, w.Code, "deleted object")
+
+	row = map[string]any{"mime": "image/png"}
+	w = getRaw(r, "/storage/v1/object/sign/docs/cat.png?token="+tok)
+	assert.Equal(t, 500, w.Code)
+	assert.NotContains(t, w.Body.String(), "secret detail")
+}
+
+func TestServeDownload_HonorsDownloadParam(t *testing.T) {
+	store := &stubObjectStore{downloadFn: func(context.Context, string) (io.ReadCloser, string, error) {
+		return io.NopCloser(strings.NewReader("hi")), "text/plain", nil
+	}}
+	db := &stubDB{queryRowFn: func(context.Context, string, ...any) (map[string]any, error) { return map[string]any{"id": "1"}, nil }}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"pub": {Public: true}})
+	r := gin.New()
+	r.GET("/storage/v1/object/*all", h.objectGetDispatch)
+	for q, want := range map[string]string{
+		"":                        "",
+		"?download":               "attachment",
+		"?download=":              "attachment",
+		"?download=a%20b.txt":     `attachment; filename="a b.txt"`,
+		"?download=x%0D%0Ay:%20z": "attachment; filename*=utf-8''x%0D%0Ay%3A%20z",
+	} {
+		w := getRaw(r, "/storage/v1/object/public/pub/a.txt"+q)
+		require.Equal(t, 200, w.Code, q)
+		assert.Equal(t, want, w.Header().Get("Content-Disposition"), q)
+	}
+}
+
+func TestCreateSignedURL_NoSigningKeyFails(t *testing.T) {
+	db := &stubDB{
+		queryRowFn: func(_ context.Context, q string, _ ...any) (map[string]any, error) {
+			if strings.Contains(q, "jwt_keys") {
+				return nil, errors.New("db down")
+			}
+			return map[string]any{"id": "x"}, nil
+		},
+		queryFn: func(context.Context, string, ...any) ([]map[string]any, error) {
+			return []map[string]any{{"name": "a"}}, nil
+		},
+	}
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
+	h.jwtKeys = app.NewJWTKeyManager(db)
+	r := gin.New()
+	r.POST("/storage/v1/object/sign/:bucket/*path", h.createSignedURL)
+	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars/a", strings.NewReader(`{}`)))
+	assert.Equal(t, 500, w.Code)
+
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars", strings.NewReader(`{"paths":["a"]}`)))
+	require.Equal(t, 200, w.Code)
+	assert.JSONEq(t, `[{"path":"a","signedURL":null,"error":"Failed to create signed URL"}]`, w.Body.String())
 }

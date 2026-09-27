@@ -2,7 +2,6 @@
 // assertion failure. Output is streamed to the Go test log.
 import { createClient } from '@supabase/supabase-js'
 import crypto from 'node:crypto'
-import fs from 'node:fs'
 // Aliased: this file's own `URL` const (the server base URL, below) shadows
 // the global URL constructor for the rest of the module.
 import { URL as NodeURL } from 'node:url'
@@ -2464,47 +2463,54 @@ await step('storage: move object', async () => {
 })
 
 // --- Signed download URL ---
+// This harness runs LocalStore, so redemption streams; the S3 302 path is covered by Go unit + MinIO tests.
 
-await step('storage: createSignedUrl returns a URL', async () => {
-  const resp = await fetch(`${URL}/storage/v1/object/sign/avatars/test-file.txt`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      apikey: PUBLISHABLE_KEY,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ expiresIn: 3600 }),
-  })
-  assert(resp.ok, `createSignedUrl failed: ${resp.status}`)
-  const data = await resp.json()
-  assert(data.signedURL, 'signedURL present')
-  // The signed URL must actually resolve to the real object content, not
-  // just exist as a string. This harness always runs against LocalStore,
-  // whose SignDownload returns a file:// path on the same host (a real S3
-  // backend would instead presign a remote URL) — read it directly.
-  const content = fs.readFileSync(new NodeURL(data.signedURL), 'utf8')
-  assertEq(content, 'final content', 'signed URL resolves to the real object content')
+await step('storage: createSignedUrl works through supabase-js, with download', async () => {
+  const bucket = storageClient().storage.from('avatars')
+  const { data, error } = await bucket.createSignedUrl('test-file.txt', 3600)
+  if (error) throw error
+  assert(data.signedUrl.startsWith(`${URL}/storage/v1/object/sign/avatars/test-file.txt?token=`), data.signedUrl)
+  const plain = await fetch(data.signedUrl)
+  assertEq(plain.status, 200, 'signed URL redeems without apikey')
+  assertEq(await plain.text(), 'final content', 'signed URL body')
+  assertEq(plain.headers.get('x-content-type-options'), 'nosniff')
+  assertEq(plain.headers.get('content-disposition'), null, 'inline by default for text/plain')
+
+  const { data: named } = await bucket.createSignedUrl('test-file.txt', 3600, { download: 'report.txt' })
+  assertEq((await fetch(named.signedUrl)).headers.get('content-disposition'), 'attachment; filename=report.txt')
+  const { data: bare } = await bucket.createSignedUrl('test-file.txt', 3600, { download: true })
+  assertEq((await fetch(bare.signedUrl)).headers.get('content-disposition'), 'attachment')
+
+  const u = new NodeURL(data.signedUrl)
+  const tok = u.searchParams.get('token')
+  const last = tok.at(-1) === '0' ? '1' : '0'
+  const flipped = await fetch(data.signedUrl.replace(tok, tok.slice(0, -1) + last))
+  assertEq(flipped.status, 400, 'tampered signature rejected')
+  assertEq((await flipped.json()).error, 'invalid_token')
+  const elsewhere = await fetch(`${URL}/storage/v1/object/sign/avatars/test-file-moved.txt?token=${tok}`)
+  assertEq(elsewhere.status, 400, 'token cannot read another object')
+  const { data: up } = await bucket.createSignedUploadUrl('never-written.txt')
+  const swapped = await fetch(`${URL}/storage/v1/object/sign/avatars/never-written.txt?token=${up.token}`)
+  assertEq(swapped.status, 400, 'upload token cannot redeem a download')
 })
 
-// --- Batch signed URLs ---
+await step('storage: createSignedUrls batch URLs redeem, with download', async () => {
+  const bucket = storageClient().storage.from('avatars')
+  const { data, error } = await bucket.createSignedUrls(['test-file.txt', 'no-such-file.txt'], 3600, { download: true })
+  if (error) throw error
+  const resp = await fetch(data[0].signedUrl)
+  assertEq(resp.status, 200)
+  assertEq(await resp.text(), 'final content')
+  assertEq(resp.headers.get('content-disposition'), 'attachment')
+  assertEq(data[1].signedUrl, null, 'missing object is not signed')
+  assert(data[1].error, 'missing object carries an error')
+})
 
-await step('storage: createSignedUrls returns batch URLs', async () => {
-  const resp = await fetch(`${URL}/storage/v1/object/sign/avatars`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      apikey: PUBLISHABLE_KEY,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ expiresIn: 3600, paths: ['test-file.txt'] }),
-  })
-  assert(resp.ok, `createSignedUrls failed: ${resp.status}`)
-  const data = await resp.json()
-  assert(Array.isArray(data), 'batch returns array')
-  assert(data.length >= 1, 'at least one URL')
-  assert(data[0].signedURL, 'signedURL in batch item')
-  const content = fs.readFileSync(new NodeURL(data[0].signedURL), 'utf8')
-  assertEq(content, 'final content', 'batch signed URL resolves to the real object content')
+await step('storage: getPublicUrl honors download', async () => {
+  const { data } = storageClient().storage.from('avatars').getPublicUrl('test-file.txt', { download: 'pub.txt' })
+  const resp = await fetch(data.publicUrl)
+  assertEq(resp.status, 200)
+  assertEq(resp.headers.get('content-disposition'), 'attachment; filename=pub.txt')
 })
 
 // --- Signed upload URL + uploadToSignedUrl ---
@@ -2654,6 +2660,9 @@ if (SECRET_KEY) {
     const own = data.find(d => d.path === 'mine/file.txt')
     assert(hidden && !hidden.signedUrl && hidden.error, `hidden path must not be signed: ${JSON.stringify(hidden)}`)
     assert(own && own.signedUrl && !own.error, `own path must be signed: ${JSON.stringify(own)}`)
+    const ownResp = await fetch(own.signedUrl)
+    assertEq(ownResp.status, 200, 'own signed URL redeems')
+    assertEq(await ownResp.text(), 'owned content')
 
     const { error: infoErr } = await bucket.info('mine/admin.txt')
     assert(infoErr, 'info() of a hidden object must fail')

@@ -113,7 +113,7 @@ const { data } = await supabase
   .from('photos')
   .createSignedUrl(fileName, 3600)  // expires in 1 hour
 
-// data.signedUrl is a short-lived S3 URL — use it in <img src> or an anchor
+// data.signedUrl is a short-lived instancez URL (on S3 it redirects to S3); use it in <img src> or an anchor
 ```
 
 ## Delete
