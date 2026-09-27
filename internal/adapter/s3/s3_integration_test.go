@@ -37,7 +37,10 @@ func newMinIOStore(t *testing.T) *Store {
 func TestStoreCopy_SpecialCharacterKeys(t *testing.T) {
 	st := newMinIOStore(t)
 	ctx := context.Background()
-	for _, key := range []string{"avatars/plain.txt", "avatars/a b.txt", "avatars/c+d.txt", "avatars/ünï/çødé 😀.txt", "avatars/q?x#y%z.txt"} {
+	for _, key := range []string{
+		"avatars/plain.txt", "avatars/a b.txt", "avatars/c+d.txt", "avatars/ünï/çødé 😀.txt", "avatars/q?x#y%z.txt",
+		"avatars/q?x.txt", "avatars/h#y.txt", "avatars/%41.txt", "avatars/50%.txt",
+	} {
 		t.Run(key, func(t *testing.T) {
 			body := "data:" + key
 			require.NoError(t, st.Upload(ctx, key, strings.NewReader(body), "text/plain", int64(len(body))))
