@@ -23,7 +23,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - Storage: `/storage/v1/object/info/authenticated/<bucket>` with no path now returns 400 (was 404).
 - **Breaking:** a filter on a non-`!inner` embed (`users.username=eq.x`) no longer drops parent rows. Like PostgREST, it only filters the embed: an unmatched to-one embed is `null`, a to-many embed is `[]`, and `count` follows. Use `!inner` to filter the parents.
 - **Breaking:** the JSON query plan (`Accept: application/vnd.pgrst.plan+json`) is now returned bare, as in PostgREST: `[{"Plan": ...}]`, not `[{"QUERY PLAN": [{"Plan": ...}]}]`. See Upgrading.
-- **Breaking:** `POST /storage/v1/object/sign/...` now returns a relative `signedURL` (`/object/sign/<bucket>/<path>?token=...`), as Supabase does, instead of an absolute S3 or `file://` URL. It is redeemed at `GET /storage/v1/object/sign/...` with no apikey: on S3 that 302s to a presigned URL valid for at most 60 seconds, and on the local provider instancez streams the object. Rotating the JWT signing key invalidates every outstanding signed download URL. See Upgrading.
+- **Breaking:** `POST /storage/v1/object/sign/...` now returns a relative `signedURL` (`/object/sign/<bucket>/<path>?token=...`), as Supabase does, instead of an absolute S3 or `file://` URL. It is redeemed at `GET /storage/v1/object/sign/...` with no apikey: on S3 that 302s to a presigned URL valid for at most 60 seconds, and on the local provider instancez streams the object. Rotating the JWT signing key invalidates every outstanding signed download URL. A bucket named `sign` can no longer be read with `.download()`. See Upgrading.
 
 ### Fixed
 
@@ -85,6 +85,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - Over HTTPS, an OAuth login that starts on one version and finishes on the other fails (during a rolling deploy, or across the upgrade). The state cookie is now `__Host-oauth_state`, so the callback can't find the cookie it expects. Users just retry the login.
 - Code that reads JSON plans from raw HTTP must drop the `QUERY PLAN` wrapper: read `body[0].Plan` instead of `body[0]["QUERY PLAN"][0].Plan`. supabase-js `.explain({ format: 'json' })` needed no wrapper and now just works.
 - Raw HTTP clients of `POST /storage/v1/object/sign/...` must prefix the returned `signedURL` with `<api url>/storage/v1`, the same as for Supabase. supabase-js does this already. Signed download URLs minted before the upgrade are absolute presigned S3 URLs and keep working until they expire. Rotating the JWT signing key now invalidates signed download URLs, as it already did for signed upload tokens. Anyone holding one gets 400 `invalid_token` and must request a new URL.
+- During a rolling deploy, a signed download URL minted on an upgraded instance fails if an older instance redeems it (the old router reads `sign` as a bucket name and asks for an apikey). Keep the window short. Rename a bucket called `sign` before upgrading if you use `.download()` on it.
 
 ## [0.0.3]
 

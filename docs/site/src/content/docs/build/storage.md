@@ -88,7 +88,7 @@ A row must be visible under a `select` policy before `update` or `delete` can fi
 | `copy` | `select` on the source and `insert` on the destination. Copying onto an existing destination object also needs `update` on that row, since copy always upserts. The caller owns the copy. |
 | `update` (PUT) | `select` and `update` on the existing object. A hidden or missing object returns 404, like `move`. |
 
-A project that declares no `rls:` on any bucket leaves `storage.objects` RLS off entirely: every operation runs on route-level auth alone, with no per-row check. Every write (upload, update, remove, move, copy, sign) requires a JWT regardless of the bucket's `public` flag; only the `public/` GET route skips auth.
+A project that declares no `rls:` on any bucket leaves `storage.objects` RLS off entirely: every operation runs on route-level auth alone, with no per-row check. Every write (upload, update, remove, move, copy, sign) requires a JWT regardless of the bucket's `public` flag; only the `public/` GET route and signed-URL redemption (`GET /object/sign/...`, where the token is the grant) skip auth.
 
 Object keys with a `..` segment, a NUL byte, or nothing at all return 400 on the single-object routes (upload, download, sign, info, move, copy). `remove` drops bad keys from its batch silently instead; `createSignedUrls` reports a per-path `error` instead of failing the whole call.
 
