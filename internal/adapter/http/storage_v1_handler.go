@@ -1005,11 +1005,10 @@ func (h *StorageV1Handler) moveObject(c *gin.Context) {
 		return
 	}
 	if err := tx.Commit(ctx); err != nil {
+		// A failed commit is ambiguous (it may have applied with the reply
+		// lost), so don't touch storage here: the orphaned copy is unreachable
+		// either way since the metadata row never committed.
 		h.logger.Error("move commit", "error", err)
-		// The unique index proved dst was free, so this only drops our copy.
-		if derr := h.storage.Delete(c.Request.Context(), dstKey); derr != nil {
-			h.logger.Error("move drop copy", "key", dstKey, "error", derr)
-		}
 		storageErr(c, 500, "internal", "Move failed")
 		return
 	}

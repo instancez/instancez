@@ -1603,13 +1603,17 @@ func TestMoveObject_CopyFailureRollsBack(t *testing.T) {
 	assert.Equal(t, []string{"exec", "copy:avatars/old.jpg>avatars/new.jpg", "rollback"}, log.ops)
 }
 
-func TestMoveObject_CommitFailureDropsCopyKeepsSource(t *testing.T) {
+// A failed commit is ambiguous: it may have applied with the reply lost, so
+// deleting the copied destination bytes could delete data a concurrent
+// reader now depends on. Leave the orphaned copy alone; it's unreachable
+// either way since the metadata row never committed.
+func TestMoveObject_CommitFailureLeavesCopyOrphaned(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h, log, _ := moveCopyHarness(t, 1, nil, nil, errors.New("commit failed"))
 	w := runMoveCopy(h, "/storage/v1/object/move", moveBody)
 	assert.Equal(t, 500, w.Code)
-	assert.Contains(t, log.ops, "delete:avatars/new.jpg")
-	assert.NotContains(t, log.ops, "delete:avatars/old.jpg")
+	assert.Equal(t, []string{"exec", "copy:avatars/old.jpg>avatars/new.jpg", "commit", "rollback"}, log.ops,
+		"no compensating delete: an ambiguous commit must not touch storage")
 }
 
 func TestMoveCopy_BeginFailureNoStore(t *testing.T) {
