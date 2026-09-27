@@ -415,6 +415,11 @@ func (h *StorageV1Handler) spoolFailed(c *gin.Context, err error, maxSize string
 		storageErr(c, 413, "payload_too_large", fmt.Sprintf("File exceeds maximum size of %s", maxSize))
 		return
 	}
+	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, context.Canceled) {
+		h.logger.Warn("spool upload aborted by client", "error", err)
+		storageErr(c, 400, "bad_request", "Upload aborted before completion")
+		return
+	}
 	h.logger.Error("spool upload", "error", err)
 	storageErr(c, 500, "internal", "Upload failed")
 }

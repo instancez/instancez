@@ -2117,6 +2117,29 @@ func TestUploadObject_TxOpensOnlyAfterBodyFinishes(t *testing.T) {
 	assertNoSpoolLeft(t, dir)
 }
 
+func TestSpoolFailed_ClassifiesAbortsAsClientError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		name      string
+		err       error
+		wantCode  int
+		wantLevel string
+	}{
+		{"unexpected eof", io.ErrUnexpectedEOF, 400, "WARN"},
+		{"context canceled", context.Canceled, 400, "WARN"},
+		{"other io error", errors.New("disk full"), 500, "ERROR"},
+	}
+	for _, tc := range cases {
+		var buf bytes.Buffer
+		h := &StorageV1Handler{logger: slog.New(slog.NewTextHandler(&buf, nil))}
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		h.spoolFailed(c, tc.err, "")
+		assert.Equal(t, tc.wantCode, w.Code, tc.name)
+		assert.Contains(t, buf.String(), "level="+tc.wantLevel, tc.name)
+	}
+}
+
 func TestUploadObject_ClientAbortNeverOpensTx(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	dir := isolatedTempDir(t)
@@ -2140,7 +2163,7 @@ func TestUploadObject_ClientAbortNeverOpensTx(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/a.txt", pr))
 
-	assert.Equal(t, 500, w.Code)
+	assert.Equal(t, 400, w.Code, w.Body.String())
 	assert.Equal(t, 1, begins, "only the permission probe should open a tx for an aborted body")
 	assert.False(t, committed, "no tx may be committed for an aborted body")
 	assertNoSpoolLeft(t, dir)
