@@ -4,6 +4,7 @@ package app_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/instancez/instancez/internal/app"
@@ -89,11 +90,14 @@ func TestIntegration_RLSEnabledZeroPoliciesDeniesAndSurvivesPolicyRemoval(t *tes
 			t.Fatalf("v2 %s sees %d rows, want 0 (deny-all)", role, n)
 		}
 	}
-	if err := asRole(t, req, "anon", func(ctx context.Context, tx domain.Tx) error {
-		_, err := tx.Exec(ctx, "INSERT INTO secrets (body) VALUES ('nope')")
-		return err
-	}); err == nil {
-		t.Fatal("v2 anon insert succeeded, want RLS violation")
+	for _, role := range []string{"anon", "authenticated"} {
+		err := asRole(t, req, role, func(ctx context.Context, tx domain.Tx) error {
+			_, err := tx.Exec(ctx, "INSERT INTO secrets (body) VALUES ('nope')")
+			return err
+		})
+		if err == nil || !strings.Contains(err.Error(), "row-level security") {
+			t.Fatalf("v2 %s insert = %v, want a row-level security violation", role, err)
+		}
 	}
 	if n := visibleRows(t, req, "service_role"); n != 1 {
 		t.Fatalf("service_role must bypass RLS, sees %d rows", n)
@@ -133,6 +137,12 @@ func TestIntegration_RLSEnabledTrueToFalseDisables(t *testing.T) {
 	}
 	if n := visibleRows(t, req, "anon"); n != 1 {
 		t.Fatalf("anon sees %d rows after disabling RLS, want 1", n)
+	}
+	if err := asRole(t, req, "anon", func(ctx context.Context, tx domain.Tx) error {
+		_, err := tx.Exec(ctx, "INSERT INTO secrets (body) VALUES ('open')")
+		return err
+	}); err != nil {
+		t.Fatalf("anon insert after disabling RLS: %v, want grants to apply", err)
 	}
 	// false -> true re-enables on the next migration.
 	if err := m.Apply(ctx, rlsCfg(&on)); err != nil {
