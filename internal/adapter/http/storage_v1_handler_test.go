@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
@@ -16,6 +17,7 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -2131,6 +2133,8 @@ func TestSpoolFailed_ClassifiesAbortsAsClientError(t *testing.T) {
 	}{
 		{"unexpected eof", io.ErrUnexpectedEOF, 400, "WARN"},
 		{"context canceled", context.Canceled, 400, "WARN"},
+		{"connection reset (wrapped)", &net.OpError{Op: "read", Err: syscall.ECONNRESET}, 400, "WARN"},
+		{"connection reset (bare)", syscall.ECONNRESET, 400, "WARN"},
 		{"other io error", errors.New("disk full"), 500, "ERROR"},
 	}
 	for _, tc := range cases {

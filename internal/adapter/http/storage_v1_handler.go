@@ -17,6 +17,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -415,7 +416,7 @@ func (h *StorageV1Handler) spoolFailed(c *gin.Context, err error, maxSize string
 		storageErr(c, 413, "payload_too_large", fmt.Sprintf("File exceeds maximum size of %s", maxSize))
 		return
 	}
-	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, context.Canceled) {
+	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, context.Canceled) || errors.Is(err, syscall.ECONNRESET) {
 		h.logger.Warn("spool upload aborted by client", "error", err)
 		storageErr(c, 400, "bad_request", "Upload aborted before completion")
 		return
