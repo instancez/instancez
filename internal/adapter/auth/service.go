@@ -674,12 +674,11 @@ func (s *Service) CreateOAuthFlowState(ctx context.Context, state, codeChallenge
 
 func (s *Service) ConsumeOAuthFlowState(ctx context.Context, state string) (domain.FlowState, error) {
 	row, err := s.db.QueryRow(ctx,
-		"SELECT code_challenge, code_challenge_method, redirect_to, linking_user_id FROM auth.flow_state WHERE auth_code = $1 AND provider_type = 'oauth' AND auth_code_issued_at > NOW() - INTERVAL '10 minutes'",
+		"DELETE FROM auth.flow_state WHERE auth_code = $1 AND provider_type = 'oauth' RETURNING code_challenge, code_challenge_method, redirect_to, linking_user_id, auth_code_issued_at > NOW() - INTERVAL '10 minutes' AS fresh",
 		state)
-	if err != nil || row == nil {
+	if err != nil || row == nil || row["fresh"] != true {
 		return domain.FlowState{}, domain.ErrNotFound
 	}
-	_, _ = s.db.Exec(ctx, "DELETE FROM auth.flow_state WHERE auth_code = $1 AND provider_type = 'oauth'", state)
 	return domain.FlowState{
 		CodeChallenge:       asString(row["code_challenge"]),
 		CodeChallengeMethod: asString(row["code_challenge_method"]),
@@ -723,7 +722,8 @@ func (s *Service) UpsertOAuthUser(ctx context.Context, in domain.OAuthLogin) (ma
 const oauthByEmail = "SELECT " + userSelectCols + `,
 	COALESCE(password_hash, '') <> ''
 	OR EXISTS (SELECT 1 FROM auth.identities i WHERE i.user_id = users.id)
-	OR EXISTS (SELECT 1 FROM auth.refresh_tokens r WHERE r.user_id = users.id) AS claimed
+	OR EXISTS (SELECT 1 FROM auth.refresh_tokens r WHERE r.user_id = users.id)
+	OR is_anonymous AS claimed
 	FROM auth.users WHERE lower(email) = lower($1) ORDER BY email_verified DESC, created_at LIMIT 1`
 
 func (s *Service) linkOrCreateOAuthUser(ctx context.Context, in domain.OAuthLogin) (map[string]any, error) {

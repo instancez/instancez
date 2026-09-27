@@ -226,25 +226,59 @@ await step('auth: signInWithOAuth (PKCE) completes via /authorize + /callback + 
   assertEq(sessionData.user.app_metadata.provider, 'fake', 'oauth user provider metadata')
 })
 
-await step('auth: identity linking adds a new identity for the signed-in user', async () => {
-  const authorizeResp = await fetch(`${URL}/auth/v1/user/identities/authorize?provider=fake`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY },
+await step('auth: linkIdentity binds the link to the initiating browser', async () => {
+  // Node has no cookie jar, so capture the binding cookie a browser would store.
+  let bindingCookie = ''
+  const linkClient = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: {
+      fetch: async (...args) => {
+        const resp = await fetch(...args)
+        const set = resp.headers.get('set-cookie')
+        if (set && set.startsWith('oauth_link_state=')) bindingCookie = set.split(';')[0]
+        return resp
+      },
+    },
   })
-  assertEq(authorizeResp.status, 200, 'link-identity authorize status')
-  const { url: linkURL } = await authorizeResp.json()
-  assert(linkURL, 'expected an authorize url for linking')
+  const { error: signInError } = await linkClient.auth.signInWithPassword({ email, password })
+  if (signInError) throw signInError
+  const listFake = async () => {
+    const idResp = await fetch(`${URL}/auth/v1/user/identities`, {
+      headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY },
+    })
+    const { identities } = await idResp.json()
+    return identities.filter((i) => i.provider === 'fake').length
+  }
+  const before = await listFake()
 
-  const followResp = await fetch(linkURL)
+  // A victim browser following someone else's link URL carries no binding cookie.
+  const { data: forged, error: forgedError } = await linkClient.auth.linkIdentity({
+    provider: 'fake',
+    options: { skipBrowserRedirect: true },
+  })
+  if (forgedError) throw forgedError
+  assert(bindingCookie, 'authorize should set the binding cookie')
+  const forgedResp = await fetch(forged.url, { redirect: 'manual' })
+  assertEq(forgedResp.status, 302, 'unbound link callback redirects with an error')
+  assert(forgedResp.headers.get('location').includes('error='), 'error params on the redirect')
+  assertEq(await listFake(), before, 'unbound callback must not link')
+
+  // The initiating browser presents its cookie and the link succeeds.
+  bindingCookie = ''
+  const { data, error } = await linkClient.auth.linkIdentity({
+    provider: 'fake',
+    options: { skipBrowserRedirect: true },
+  })
+  if (error) throw error
+  assert(data.url, 'expected an authorize url for linking')
+  const followResp = await fetch(data.url, { headers: { Cookie: bindingCookie } })
   assert(followResp.ok, `link-identity callback failed: ${followResp.status}`)
-  const followBody = await followResp.json()
-  assertEq(followBody.message, 'Identity linked', 'link confirmation message')
+  assertEq((await followResp.json()).message, 'Identity linked', 'link confirmation message')
+  assertEq(await listFake(), before + 1, 'linked fake identity should appear in the list')
 
-  const idResp = await fetch(`${URL}/auth/v1/user/identities`, {
-    headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY },
-  })
-  const { identities } = await idResp.json()
-  assert(identities.some((i) => i.provider === 'fake'), 'linked fake identity should appear in the list')
+  // The state is single use, even with the right cookie.
+  const replay = await fetch(data.url, { headers: { Cookie: bindingCookie } })
+  assert(!replay.ok, `replayed link state must fail, got ${replay.status}`)
 })
 
 // --- Admin signOut ---

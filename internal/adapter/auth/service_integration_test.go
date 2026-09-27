@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -628,6 +629,22 @@ func TestOAuthIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("unverified anonymous account with an email is refused", func(t *testing.T) {
+		anon, err := s.CreateUser(ctx, domain.CreateUserParams{Anonymous: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(ctx, "UPDATE auth.users SET email = 'anon@example.com' WHERE id = $1::uuid", anon["id"]); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := login("g-anon", "anon@example.com", true, true); !errors.Is(err, domain.ErrOAuthLinkRefused) {
+			t.Fatalf("want ErrOAuthLinkRefused, got %v", err)
+		}
+		if col("anon@example.com", "email_verified") != false || identities("g-anon") != int64(0) {
+			t.Fatal("refused link must not touch the anonymous account")
+		}
+	})
+
 	t.Run("unverified provider email without identity is refused", func(t *testing.T) {
 		_, _ = s.CreateUser(ctx, domain.CreateUserParams{Email: "known@example.com", EmailConfirmed: true})
 		for _, email := range []string{"unv@example.com", "known@example.com"} {
@@ -689,6 +706,54 @@ func TestOAuthIntegration(t *testing.T) {
 			if id != ids[0] {
 				t.Fatalf("ids diverged: %v", ids)
 			}
+		}
+	})
+}
+
+func TestOAuthFlowStateIntegration(t *testing.T) {
+	s, _ := newIntegrationService(t, &domain.Auth{})
+	ctx := context.Background()
+	uid := mustUser(t, s, "linker@example.com")
+
+	t.Run("round trip keeps linking user and is single use", func(t *testing.T) {
+		if err := s.CreateOAuthFlowState(ctx, "st-1", "", "", "http://app/cb", uid); err != nil {
+			t.Fatal(err)
+		}
+		flow, err := s.ConsumeOAuthFlowState(ctx, "st-1")
+		if err != nil || flow.LinkingUserID != uid || flow.RedirectTo != "http://app/cb" || flow.CodeChallenge != "" {
+			t.Fatalf("flow=%+v err=%v", flow, err)
+		}
+		if _, err := s.ConsumeOAuthFlowState(ctx, "st-1"); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("reuse: want ErrNotFound, got %v", err)
+		}
+	})
+
+	t.Run("unknown and empty state are not found", func(t *testing.T) {
+		for _, st := range []string{"", "nope", "st'; DROP TABLE auth.flow_state; --"} {
+			if _, err := s.ConsumeOAuthFlowState(ctx, st); !errors.Is(err, domain.ErrNotFound) {
+				t.Fatalf("%q: got %v", st, err)
+			}
+		}
+	})
+
+	t.Run("concurrent consumers get the state once", func(t *testing.T) {
+		if err := s.CreateOAuthFlowState(ctx, "st-race", "", "", "", uid); err != nil {
+			t.Fatal(err)
+		}
+		var wg sync.WaitGroup
+		var wins atomic.Int32
+		for range 8 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if _, err := s.ConsumeOAuthFlowState(ctx, "st-race"); err == nil {
+					wins.Add(1)
+				}
+			}()
+		}
+		wg.Wait()
+		if wins.Load() != 1 {
+			t.Fatalf("state consumed %d times", wins.Load())
 		}
 	})
 }

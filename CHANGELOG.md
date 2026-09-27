@@ -15,6 +15,8 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Fixed
 
+- supabase-js `linkIdentity()` works: `/user/identities/authorize` now accepts GET, which supabase-js sends, as well as POST.
+- `verifyOtp({ type: 'magiclink' })` now marks the email confirmed, as GoTrue does, so magic-link users can later link a Google login by email.
 - Upgrading instancez with an unchanged `instancez.yaml` now adds new `auth.*` columns and indexes at boot. Before, they only reached a database when the config changed. This also adds the missing `attempts` column to `auth.one_time_tokens` on databases that enabled email auth after first boot.
 
 ### Security
@@ -26,6 +28,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - A transient database error while loading the signing key no longer mints a replacement key, which used to sign every user out.
 - OAuth and Google ID-token logins no longer take over accounts by email. A returning login matches on the provider user ID first. A new login links by email only when the provider marks the email verified (Google `verified_email`/`email_verified`, GitHub's verified email list instead of the public profile email), and never to an unverified account that has a password, a session or another identity. That case now returns 422 `email_exists`; an unverified provider email returns 422 `provider_email_needs_verification`. OAuth sign-up now honors `allow_signup: false` (403 `signup_disabled`). The admin-update duplicate-email 422 now carries code `email_exists` instead of `PGRST000`.
 - MFA challenge creation is now capped at 10 per factor per 5-minute window (429 `over_request_rate_limit`), closing a TOTP brute-force path where an aal1 session could cycle unlimited challenges instead of reusing one under `maxMFAAttempts`. Unenrolling a factor is now also conditional in SQL on its verified status, closing a race where an aal1 session could delete a factor the instant it was promoted to verified.
+- `linkIdentity` is now bound to the browser that started it. Before, anyone could send a signed-in user's link URL to a victim; finishing it attached the victim's provider identity to the sender's account, and since logins now match on provider identity first, the victim's next OAuth login landed in the sender's account. `/user/identities/authorize` now sets an HttpOnly, SameSite=Lax `oauth_link_state` cookie (Secure over HTTPS), and the callback refuses the link without a matching cookie. The link state is now single use under concurrency. The cookie only reaches the browser when the frontend calls the API on the same origin, so a cross-origin frontend can't complete `linkIdentity`. An anonymous account is now never linked to an OAuth login by email.
 
 ### Upgrading
 

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -49,7 +50,7 @@ func TestOAuthLoginError(t *testing.T) {
 	}{
 		{domain.ErrSignupDisabled, 403, "signup_disabled", "Signups not allowed"},
 		{domain.ErrProviderEmailUnverified, 422, "provider_email_needs_verification", "Unverified email with google"},
-		{domain.ErrOAuthLinkRefused, 422, "email_exists", "sign in to it first"},
+		{domain.ErrOAuthLinkRefused, 422, "email_exists", "confirm your email"},
 		{errors.New("db"), 500, "internal", "Failed to create or find user"},
 		{nil, 500, "internal", "Failed to create or find user"},
 	}
@@ -147,5 +148,146 @@ func TestIDTokenGrant_PassesEmailVerifiedClaim(t *testing.T) {
 		if w.Code != 422 || !strings.Contains(w.Body.String(), "provider_email_needs_verification") {
 			t.Fatalf("email_verified=%v: status %d body %s", verified, w.Code, w.Body.String())
 		}
+	}
+}
+
+func linkHandler(t *testing.T, svc *stubAuthService) *AuthHandler {
+	return &AuthHandler{
+		cfg: &domain.Config{Auth: &domain.Auth{RedirectURLs: []string{"http://app.local"},
+			OAuth: map[string]*domain.OAuthProvider{"unitfake": {ClientID: "c", RedirectURL: "http://api/cb"}}}},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)), jwtKeys: stubKeys(t), authSvc: svc,
+	}
+}
+
+func responseCookie(w *httptest.ResponseRecorder, name string) *http.Cookie {
+	for _, ck := range (&http.Response{Header: w.Header()}).Cookies() {
+		if ck.Name == name {
+			return ck
+		}
+	}
+	return nil
+}
+
+func TestLinkIdentity_SetsBindingCookie(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	adapterauth.RegisterOAuth(unitOAuthProvider{})
+	cases := []struct {
+		name, base, target string
+		secure             bool
+	}{
+		{"https base url", "https://app.example.com", "http://api/link?provider=unitfake", true},
+		{"tls request", "http://localhost:8080", "https://api/link?provider=unitfake", true},
+		{"plain http dev", "http://localhost:8080", "http://api/link?provider=unitfake", false},
+	}
+	for _, tc := range cases {
+		t.Setenv("INSTANCEZ_BASE_URL", tc.base)
+		var state, linking string
+		h := linkHandler(t, &stubAuthService{createOAuthFlowFn: func(_ context.Context, s, _, _, _, uid string) error {
+			state, linking = s, uid
+			return nil
+		}})
+		r := gin.New()
+		r.GET("/link", func(c *gin.Context) { c.Set(contextKeySession, domain.Session{UserID: "u-1"}) }, h.handleLinkIdentity)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest("GET", tc.target, nil))
+		if w.Code != 200 || linking != "u-1" || state == "" {
+			t.Fatalf("%s: status %d linking %q state %q", tc.name, w.Code, linking, state)
+		}
+		ck := responseCookie(w, linkStateCookie)
+		if ck == nil || ck.Value != state || ck.Path != "/" || ck.MaxAge != 600 ||
+			!ck.HttpOnly || ck.SameSite != http.SameSiteLaxMode || ck.Secure != tc.secure {
+			t.Fatalf("%s: cookie %+v", tc.name, ck)
+		}
+	}
+}
+
+func TestLinkIdentity_StoreFailureSetsNoCookie(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	adapterauth.RegisterOAuth(unitOAuthProvider{})
+	h := linkHandler(t, &stubAuthService{createOAuthFlowFn: func(context.Context, string, string, string, string, string) error {
+		return errors.New("db down")
+	}})
+	r := gin.New()
+	r.GET("/link", func(c *gin.Context) { c.Set(contextKeySession, domain.Session{UserID: "u-1"}) }, h.handleLinkIdentity)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/link?provider=unitfake", nil))
+	if w.Code != 500 || responseCookie(w, linkStateCookie) != nil {
+		t.Fatalf("status %d cookie %v", w.Code, responseCookie(w, linkStateCookie))
+	}
+}
+
+func TestOAuthCallback_LinkRequiresInitiatorCookie(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	adapterauth.RegisterOAuth(unitOAuthProvider{})
+	cases := []struct {
+		name, cookie string
+		send, linked bool
+	}{
+		{"no cookie", "", false, false},
+		{"empty cookie", "", true, false},
+		{"wrong cookie", "other-state", true, false},
+		{"prefix of state", "link-stat", true, false},
+		{"unicode cookie", "l%C3%AFnk-state", true, false},
+		{"matching cookie", "link-state", true, true},
+	}
+	for _, tc := range cases {
+		var linkedUser string
+		upserted := false
+		h := linkHandler(t, &stubAuthService{
+			consumeOAuthFlowFn: func(context.Context, string) (domain.FlowState, error) {
+				return domain.FlowState{RedirectTo: "http://app.local/cb", LinkingUserID: "attacker"}, nil
+			},
+			linkIdentityFn: func(_ context.Context, uid, _, _, _ string) { linkedUser = uid },
+			upsertOAuthUserFn: func(context.Context, domain.OAuthLogin) (map[string]any, error) {
+				upserted = true
+				return map[string]any{"id": "x"}, nil
+			},
+		})
+		r := gin.New()
+		r.GET("/cb", h.handleOAuthCallback("unitfake"))
+		req := httptest.NewRequest("GET", "/cb?state=link-state&code=c", nil)
+		if tc.send {
+			req.AddCookie(&http.Cookie{Name: linkStateCookie, Value: tc.cookie})
+		}
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		loc := w.Header().Get("Location")
+		if upserted {
+			t.Fatalf("%s: a link flow must never fall through to login", tc.name)
+		}
+		if tc.linked {
+			if linkedUser != "attacker" || w.Code != 302 || loc != "http://app.local/cb#message=identity_linked" {
+				t.Fatalf("%s: linked %q status %d loc %q", tc.name, linkedUser, w.Code, loc)
+			}
+		} else if linkedUser != "" || w.Code != 302 || !strings.Contains(loc, "error=") || strings.Contains(loc, "identity_linked") {
+			t.Fatalf("%s: linked %q status %d loc %q", tc.name, linkedUser, w.Code, loc)
+		}
+		if ck := responseCookie(w, linkStateCookie); ck == nil || ck.MaxAge >= 0 {
+			t.Fatalf("%s: binding cookie not cleared: %+v", tc.name, ck)
+		}
+	}
+}
+
+func TestOAuthCallback_LoginFlowIgnoresLinkCookie(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	adapterauth.RegisterOAuth(unitOAuthProvider{})
+	linked := false
+	h := linkHandler(t, &stubAuthService{
+		consumeOAuthFlowFn: func(context.Context, string) (domain.FlowState, error) {
+			return domain.FlowState{RedirectTo: "http://app.local/cb"}, nil
+		},
+		linkIdentityFn: func(context.Context, string, string, string, string) { linked = true },
+		upsertOAuthUserFn: func(context.Context, domain.OAuthLogin) (map[string]any, error) {
+			return nil, domain.ErrOAuthLinkRefused
+		},
+	})
+	r := gin.New()
+	r.GET("/cb", h.handleOAuthCallback("unitfake"))
+	req := httptest.NewRequest("GET", "/cb?state=s&code=c", nil)
+	req.AddCookie(&http.Cookie{Name: linkStateCookie, Value: "s"})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if linked || !strings.Contains(w.Header().Get("Location"), "confirm+your+email") {
+		t.Fatalf("linked=%v loc %q", linked, w.Header().Get("Location"))
 	}
 }

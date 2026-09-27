@@ -56,7 +56,7 @@ When `email.verify_email` is `false` (the default), `signUp` returns a session i
 
 **Magic link / Email OTP** — `supabase.auth.signInWithOtp()` / `supabase.auth.verifyOtp()`
 
-Requires an `auth.email` block in the config — without it, the OTP endpoint isn't mounted at all and the call 404s. With the block present but no email provider configured to actually send it, `signInWithOtp` returns a 200 with an empty response body.
+Requires an `auth.email` block in the config — without it, the OTP endpoint isn't mounted at all and the call 404s. With the block present but no email provider configured to actually send it, `signInWithOtp` returns a 200 with an empty response body. Verifying a magic-link or signup code marks the email confirmed.
 
 **OAuth (Google, GitHub)** — `supabase.auth.signInWithOAuth({ provider: 'google' })`
 
@@ -91,10 +91,14 @@ By default this is the implicit flow (tokens in the URL fragment, which supabase
 How an OAuth login finds its account:
 
 1. A returning login matches on the provider's user ID, even if the email at the provider changed.
-2. A first login links to an existing account with the same email (case-insensitive), but only when the provider says the email is verified. It links to a verified account, or to an unverified one nobody can sign in to yet (for example an invited user). An unverified account that has a password, a session or another identity is never linked; the login fails with `email_exists` so a squatter can't capture the real owner's OAuth login. Sign in to that account and link the provider from there.
+2. A first login links to an existing account with the same email (case-insensitive), but only when the provider says the email is verified. It links to a verified account, or to an unverified one nobody can sign in to yet (for example an invited user). An unverified account that has a password, a session, another identity, or is anonymous is never linked; the login fails with `email_exists` so a squatter can't capture the real owner's OAuth login. Confirm the email on that account, or sign in to it and link the provider from there.
 3. Otherwise a new user is created, unless `allow_signup` is `false`, which returns `signup_disabled`.
 
 An unverified provider email that matches no existing identity fails with `provider_email_needs_verification`. GitHub logins use the verified address from GitHub's email list, not the public profile email.
+
+**Linking an identity** — `supabase.auth.linkIdentity({ provider: 'google' })`
+
+The signed-in user's browser must finish the link. `/auth/v1/user/identities/authorize` sets an HttpOnly `oauth_link_state` cookie, and the provider callback links the identity only when that cookie matches the link's state, so a link URL sent to someone else can't attach their account to yours. Browsers keep that cookie only when the frontend calls the API on the same origin (the default when instancez hosts the frontend, with the API under `/api`). A frontend on a different origin can't complete `linkIdentity`.
 
 **Anonymous** — `supabase.auth.signInAnonymously()`
 

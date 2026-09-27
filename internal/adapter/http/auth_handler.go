@@ -114,6 +114,8 @@ func (h *AuthHandler) Mount(root *gin.RouterGroup) {
 
 	// Identity management
 	auth.GET("/user/identities", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.handleListIdentities)
+	// supabase-js linkIdentity() calls GET; POST stays for existing callers.
+	auth.GET("/user/identities/authorize", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.handleLinkIdentity)
 	auth.POST("/user/identities/authorize", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.handleLinkIdentity)
 	auth.DELETE("/user/identities/:id", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.handleUnlinkIdentity)
 
@@ -453,7 +455,7 @@ func oauthLoginError(err error, provider string) (int, string, string) {
 	case errors.Is(err, domain.ErrProviderEmailUnverified):
 		return 422, "provider_email_needs_verification", "Unverified email with " + provider
 	case errors.Is(err, domain.ErrOAuthLinkRefused):
-		return 422, "email_exists", "An account with this email already exists; sign in to it first and link " + provider
+		return 422, "email_exists", "An account with this email already exists; confirm your email, or sign in to it and link " + provider
 	}
 	return 500, "internal", "Failed to create or find user"
 }
@@ -704,10 +706,9 @@ func (h *AuthHandler) handleVerify(c *gin.Context) {
 
 	userID := otp.UserID
 
-	// Side-effect based on purpose. Recovery and magiclink make no immediate
-	// change; the email-confirmation types mark the address verified.
-	switch req.Type {
-	case "signup", "email", "email_change":
+	// Signup and magic-link codes were mailed to this address, so they prove it.
+	switch otp.Purpose {
+	case "signup", "magiclink":
 		h.authSvc.MarkEmailVerified(ctx, userID)
 	}
 
@@ -1331,6 +1332,12 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 				isPKCE = true
 			}
 			if flow.LinkingUserID != "" {
+				bound, _ := c.Cookie(linkStateCookie)
+				h.setLaxCookie(c, linkStateCookie, "", -1)
+				if !constantTimeEqual(bound, state) {
+					h.oauthCallbackFail(c, redirectTo, isPKCE, "Identity linking must be finished in the browser that started it")
+					return
+				}
 				linkingUserID = flow.LinkingUserID
 			}
 		} else {
@@ -2188,6 +2195,14 @@ func (h *AuthHandler) handleListIdentities(c *gin.Context) {
 	c.JSON(200, gin.H{"identities": rows})
 }
 
+// linkStateCookie binds a link flow to the browser that started it.
+const linkStateCookie = "oauth_link_state"
+
+func (h *AuthHandler) setLaxCookie(c *gin.Context, name, value string, maxAge int) {
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie(name, value, maxAge, "/", "", c.Request.TLS != nil || strings.HasPrefix(h.baseURL(), "https://"), true)
+}
+
 func (h *AuthHandler) handleLinkIdentity(c *gin.Context) {
 	session := getSession(c)
 	provider := c.Query("provider")
@@ -2207,6 +2222,7 @@ func (h *AuthHandler) handleLinkIdentity(c *gin.Context) {
 		problemJSON(c, 500, "internal", "Failed to store OAuth state")
 		return
 	}
+	h.setLaxCookie(c, linkStateCookie, state, 600)
 
 	c.JSON(200, gin.H{"url": prov.AuthorizeURL(cfg, state)})
 }

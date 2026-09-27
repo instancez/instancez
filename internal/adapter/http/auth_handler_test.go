@@ -762,6 +762,8 @@ type stubAuthService struct {
 	upsertOAuthUserFn       func(ctx context.Context, in domain.OAuthLogin) (map[string]any, error)
 	listIdentitiesFn        func(ctx context.Context, userID string) ([]map[string]any, error)
 	consumeOAuthFlowFn      func(ctx context.Context, state string) (domain.FlowState, error)
+	createOAuthFlowFn       func(ctx context.Context, state, codeChallenge, method, redirectTo, linkingUserID string) error
+	linkIdentityFn          func(ctx context.Context, userID, provider, providerUserID, email string)
 	deleteFactorForUserFn   func(ctx context.Context, factorID, userID string, allowVerified bool) error
 	revokeOtherSessionsFn   func(ctx context.Context, userID, keep string) error
 	revokeAllUserSessionsFn func(ctx context.Context, userID string) error
@@ -915,6 +917,9 @@ func (s *stubAuthService) CreatePKCEFlowState(ctx context.Context, authCode, use
 	return nil
 }
 func (s *stubAuthService) CreateOAuthFlowState(ctx context.Context, state, codeChallenge, method, redirectTo, linkingUserID string) error {
+	if s.createOAuthFlowFn != nil {
+		return s.createOAuthFlowFn(ctx, state, codeChallenge, method, redirectTo, linkingUserID)
+	}
 	return nil
 }
 func (s *stubAuthService) ConsumeOAuthFlowState(ctx context.Context, state string) (domain.FlowState, error) {
@@ -930,6 +935,9 @@ func (s *stubAuthService) UpsertOAuthUser(ctx context.Context, in domain.OAuthLo
 	return map[string]any{"id": "user-1"}, nil
 }
 func (s *stubAuthService) LinkIdentity(ctx context.Context, userID, provider, providerUserID, email string) {
+	if s.linkIdentityFn != nil {
+		s.linkIdentityFn(ctx, userID, provider, providerUserID, email)
+	}
 }
 func (s *stubAuthService) ListIdentities(ctx context.Context, userID string) ([]map[string]any, error) {
 	if s.listIdentitiesFn != nil {
@@ -1540,52 +1548,54 @@ func TestHandleVerify_InvalidTokenMapsTo401(t *testing.T) {
 }
 
 // TestHandleVerify_MagiclinkType asserts the magiclink verify type accepts any
-// stored purpose (nil allowed-set) and does not mark the email verified.
+// stored purpose and marks the address verified only when the code proved it.
 func TestHandleVerify_MagiclinkType(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	marked := false
-	var gotPurposes []string
-	svc := &stubAuthService{
-		verifyOTPFn: func(ctx context.Context, token, email string, allowedPurposes []string) (domain.OTPRow, error) {
-			gotPurposes = allowedPurposes
-			return domain.OTPRow{UserID: "11111111-2222-3333-4444-555555555555", Purpose: "magiclink"}, nil
-		},
-		markEmailVerifiedFn: func(ctx context.Context, userID string) { marked = true },
-		getUserByIDFn: func(ctx context.Context, id string) (map[string]any, error) {
-			return map[string]any{
-				"id":                 id,
-				"email":              "u@e.com",
-				"email_verified":     true,
-				"raw_app_meta_data":  `{}`,
-				"raw_user_meta_data": `{}`,
-				"created_at":         time.Now(),
-				"updated_at":         time.Now(),
-			}, nil
-		},
-	}
-	h := &AuthHandler{
-		cfg:     &domain.Config{Auth: &domain.Auth{JWTExpiry: "1h", Email: &domain.AuthEmail{}}},
-		authSvc: svc,
-		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-		jwtKeys: stubKeys(t),
-	}
-	r := gin.New()
-	r.POST("/auth/v1/verify", h.handleVerify)
+	for purpose, wantMarked := range map[string]bool{"magiclink": true, "signup": true, "recovery": false, "email_change": false} {
+		var marked string
+		var gotPurposes []string
+		svc := &stubAuthService{
+			verifyOTPFn: func(ctx context.Context, token, email string, allowedPurposes []string) (domain.OTPRow, error) {
+				gotPurposes = allowedPurposes
+				return domain.OTPRow{UserID: "11111111-2222-3333-4444-555555555555", Purpose: purpose}, nil
+			},
+			markEmailVerifiedFn: func(ctx context.Context, userID string) { marked = userID },
+			getUserByIDFn: func(ctx context.Context, id string) (map[string]any, error) {
+				return map[string]any{
+					"id":                 id,
+					"email":              "u@e.com",
+					"email_verified":     true,
+					"raw_app_meta_data":  `{}`,
+					"raw_user_meta_data": `{}`,
+					"created_at":         time.Now(),
+					"updated_at":         time.Now(),
+				}, nil
+			},
+		}
+		h := &AuthHandler{
+			cfg:     &domain.Config{Auth: &domain.Auth{JWTExpiry: "1h", Email: &domain.AuthEmail{}}},
+			authSvc: svc,
+			logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+			jwtKeys: stubKeys(t),
+		}
+		r := gin.New()
+		r.POST("/auth/v1/verify", h.handleVerify)
 
-	req := httptest.NewRequest("POST", "/auth/v1/verify",
-		strings.NewReader(`{"type":"magiclink","email":"u@e.com","token":"aaaaaaaabbbbbbbbccccccccdddddddd"}`))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
+		req := httptest.NewRequest("POST", "/auth/v1/verify",
+			strings.NewReader(`{"type":"magiclink","email":"u@e.com","token":"aaaaaaaabbbbbbbbccccccccdddddddd"}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
 
-	if w.Code != 200 {
-		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
-	}
-	if gotPurposes != nil {
-		t.Errorf("magiclink type should allow any purpose (nil), got %v", gotPurposes)
-	}
-	if marked {
-		t.Error("magiclink verify must not mark the email verified")
+		if w.Code != 200 {
+			t.Fatalf("%s: status = %d: %s", purpose, w.Code, w.Body.String())
+		}
+		if gotPurposes != nil {
+			t.Errorf("%s: magiclink type should allow any purpose (nil), got %v", purpose, gotPurposes)
+		}
+		if (marked == "11111111-2222-3333-4444-555555555555") != wantMarked {
+			t.Errorf("%s: marked=%q want marked=%v", purpose, marked, wantMarked)
+		}
 	}
 }
 
