@@ -189,7 +189,7 @@ func TestBannedUser_OAuthCallbackRefused(t *testing.T) {
 			OAuth:     map[string]*domain.OAuthProvider{"banoauth": {ClientID: "cid", ClientSecret: "sec"}},
 		}},
 		authSvc: &stubAuthService{
-			upsertOAuthUserFn: func(context.Context, string, string, string, string) (map[string]any, error) {
+			upsertOAuthUserFn: func(context.Context, domain.OAuthLogin) (map[string]any, error) {
 				return bannedRow(true), nil
 			},
 		},

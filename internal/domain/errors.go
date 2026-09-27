@@ -20,6 +20,10 @@ var (
 	ErrInvalidToken     = errors.New("invalid or expired token")
 	ErrPurposeMismatch  = errors.New("token purpose mismatch")
 
+	ErrSignupDisabled          = errors.New("signups not allowed")
+	ErrProviderEmailUnverified = errors.New("provider email not verified")
+	ErrOAuthLinkRefused        = errors.New("email belongs to an unverified account")
+
 	// MFA challenge sentinels. ErrChallengeUsed is a challenge whose
 	// verified_at is already set (replay); ErrChallengeExpired is past its
 	// 5-minute window; ErrChallengeTooManyAttempts has hit the per-challenge

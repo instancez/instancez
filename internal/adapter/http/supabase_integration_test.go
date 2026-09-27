@@ -60,9 +60,10 @@ func (fakeOAuthProvider) FetchUser(accessToken string) (*adapterauth.OAuthUserIn
 	sum := sha256.Sum256([]byte(accessToken))
 	suffix := hex.EncodeToString(sum[:6])
 	return &adapterauth.OAuthUserInfo{
-		ProviderID: "fake-" + suffix,
-		Email:      fmt.Sprintf("oauth-fake-%s@example.com", suffix),
-		Name:       "Fake OAuth User",
+		ProviderID:    "fake-" + suffix,
+		Email:         fmt.Sprintf("oauth-fake-%s@example.com", suffix),
+		Name:          "Fake OAuth User",
+		EmailVerified: true,
 	}, nil
 }
 

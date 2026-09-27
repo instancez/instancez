@@ -690,50 +690,76 @@ func (s *Service) ConsumeOAuthFlowState(ctx context.Context, state string) (doma
 
 // ---------- OAuth / ID-token user provisioning ----------
 
-func (s *Service) UpsertOAuthUser(ctx context.Context, provider, providerUserID, email, name string) (map[string]any, error) {
-	row, _ := s.db.QueryRow(ctx,
-		"SELECT "+userSelectCols+" FROM auth.users WHERE email = $1", email)
-
-	var userID string
-	if row == nil {
-		metaJSON, _ := json.Marshal(map[string]any{
-			"provider":       provider,
-			"full_name":      name,
-			"email":          email,
-			"email_verified": true,
-		})
-		appMetaJSON, _ := json.Marshal(map[string]any{
-			"provider":  provider,
-			"providers": []string{provider},
-		})
-		newRow, err := s.db.QueryRow(ctx,
-			"INSERT INTO auth.users (email, email_verified, email_confirmed_at, raw_user_meta_data, raw_app_meta_data) VALUES ($1, true, NOW(), $2::jsonb, $3::jsonb) RETURNING "+userSelectCols,
-			email, string(metaJSON), string(appMetaJSON))
-		if err != nil {
-			// Race: another request created the user between lookup and insert.
-			row, err = s.db.QueryRow(ctx,
-				"SELECT "+userSelectCols+" FROM auth.users WHERE email = $1", email)
-			if err != nil || row == nil {
-				return nil, fmt.Errorf("create or find user: %w", err)
-			}
-			userID = asString(row["id"])
-		} else {
-			row = newRow
-			userID = asString(newRow["id"])
-		}
-	} else {
-		userID = asString(row["id"])
-		_, _ = s.db.Exec(ctx, "UPDATE auth.users SET email_verified = true, email_confirmed_at = COALESCE(email_confirmed_at, NOW()), last_sign_in_at = NOW(), updated_at = NOW() WHERE id = $1::uuid", userID)
+func (s *Service) UpsertOAuthUser(ctx context.Context, in domain.OAuthLogin) (map[string]any, error) {
+	if in.Provider == "" || in.ProviderUserID == "" {
+		return nil, fmt.Errorf("oauth login needs a provider and provider user id")
 	}
-
+	row, err := s.db.QueryRow(ctx,
+		"SELECT "+userSelectCols+" FROM auth.users WHERE id = (SELECT user_id FROM auth.identities WHERE provider = $1 AND provider_user_id = $2)",
+		in.Provider, in.ProviderUserID)
+	if err != nil {
+		return nil, err
+	}
+	if row == nil {
+		if !in.EmailVerified || in.Email == "" {
+			return nil, domain.ErrProviderEmailUnverified
+		}
+		if row, err = s.linkOrCreateOAuthUser(ctx, in); err != nil {
+			return nil, err
+		}
+	}
+	userID := asString(row["id"])
+	s.RecordSignIn(ctx, userID)
 	_, _ = s.db.Exec(ctx,
 		`INSERT INTO auth.identities (user_id, provider, provider_user_id, email, last_sign_in_at, updated_at)
 		 VALUES ($1::uuid, $2, $3, $4, NOW(), NOW())
 		 ON CONFLICT (provider, provider_user_id)
-		 DO UPDATE SET last_sign_in_at = EXCLUDED.last_sign_in_at, updated_at = EXCLUDED.updated_at`,
-		userID, provider, providerUserID, email)
-
+		 DO UPDATE SET email = EXCLUDED.email, last_sign_in_at = EXCLUDED.last_sign_in_at, updated_at = EXCLUDED.updated_at`,
+		userID, in.Provider, in.ProviderUserID, in.Email)
 	return row, nil
+}
+
+// oauthByEmail prefers a verified match; claimed means someone can already sign in to the account.
+const oauthByEmail = "SELECT " + userSelectCols + `,
+	COALESCE(password_hash, '') <> ''
+	OR EXISTS (SELECT 1 FROM auth.identities i WHERE i.user_id = users.id)
+	OR EXISTS (SELECT 1 FROM auth.refresh_tokens r WHERE r.user_id = users.id) AS claimed
+	FROM auth.users WHERE lower(email) = lower($1) ORDER BY email_verified DESC, created_at LIMIT 1`
+
+func (s *Service) linkOrCreateOAuthUser(ctx context.Context, in domain.OAuthLogin) (map[string]any, error) {
+	row, err := s.db.QueryRow(ctx, oauthByEmail, in.Email)
+	if err != nil {
+		return nil, err
+	}
+	if row == nil {
+		if !in.AllowSignup {
+			return nil, domain.ErrSignupDisabled
+		}
+		userMeta, _ := json.Marshal(map[string]any{"provider": in.Provider, "full_name": in.Name, "email": in.Email, "email_verified": true})
+		appMeta, _ := json.Marshal(map[string]any{"provider": in.Provider, "providers": []string{in.Provider}})
+		created, insErr := s.db.QueryRow(ctx,
+			"INSERT INTO auth.users (email, email_verified, email_confirmed_at, raw_user_meta_data, raw_app_meta_data) VALUES ($1, true, NOW(), $2::jsonb, $3::jsonb) RETURNING "+userSelectCols,
+			in.Email, string(userMeta), string(appMeta))
+		if insErr == nil {
+			return created, nil
+		}
+		// Lost an insert race: judge the winner's row like any other match.
+		if row, err = s.db.QueryRow(ctx, oauthByEmail, in.Email); err != nil || row == nil {
+			return nil, fmt.Errorf("create or find user: %w", insErr)
+		}
+	}
+	claimed, _ := row["claimed"].(bool)
+	delete(row, "claimed")
+	if verified, _ := row["email_verified"].(bool); verified {
+		return row, nil
+	}
+	// Whoever holds an unproven account may have squatted this address.
+	if claimed {
+		return nil, domain.ErrOAuthLinkRefused
+	}
+	return s.db.QueryRow(ctx,
+		"UPDATE auth.users SET email_verified = true, email_confirmed_at = NOW(), updated_at = NOW() WHERE id = $1::uuid RETURNING "+userSelectCols,
+		row["id"])
 }
 
 func (s *Service) LinkIdentity(ctx context.Context, userID, provider, providerUserID, email string) {

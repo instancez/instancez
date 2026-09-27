@@ -85,6 +85,13 @@ type OTPRow struct {
 	Purpose string
 }
 
+// OAuthLogin is one external-provider sign-in handed to UpsertOAuthUser.
+type OAuthLogin struct {
+	Provider, ProviderUserID, Email, Name string
+	EmailVerified                         bool // provider asserts the address is verified
+	AllowSignup                           bool // create a user when nothing matches
+}
+
 // FlowState is the OAuth/PKCE flow_state row read by the OAuth callback.
 type FlowState struct {
 	CodeChallenge       string
@@ -181,10 +188,10 @@ type AuthService interface {
 	ConsumeOAuthFlowState(ctx context.Context, state string) (FlowState, error)
 
 	// ---- OAuth / ID-token user provisioning ----
-	// UpsertOAuthUser finds-or-creates a user by email for an OAuth/OIDC login,
-	// marks the email verified, bumps sign-in, and upserts the identity row.
-	// Returns the user row.
-	UpsertOAuthUser(ctx context.Context, provider, providerUserID, email, name string) (map[string]any, error)
+	// UpsertOAuthUser resolves an OAuth/OIDC login: known identity first, then
+	// a provider-verified email match, then signup. Errors:
+	// ErrProviderEmailUnverified, ErrOAuthLinkRefused, ErrSignupDisabled.
+	UpsertOAuthUser(ctx context.Context, in OAuthLogin) (map[string]any, error)
 	// LinkIdentity adds an identity to an existing user (best-effort).
 	LinkIdentity(ctx context.Context, userID, provider, providerUserID, email string)
 

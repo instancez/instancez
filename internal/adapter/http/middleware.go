@@ -498,6 +498,9 @@ var errTypeToCode = map[string]string{
 	"user_banned":             "user_banned",
 	"insufficient_aal":        "insufficient_aal",
 	"over_request_rate_limit": "over_request_rate_limit",
+
+	"provider_email_needs_verification": "provider_email_needs_verification",
+	"email_exists":                      "email_exists",
 }
 
 // profileHeaderGuard enforces that Accept-Profile (for reads) and

@@ -88,6 +88,14 @@ instancez → exchanges the code, then redirects to the original redirect_to
 
 By default this is the implicit flow (tokens in the URL fragment, which supabase-js parses automatically via `detectSessionInUrl`). PKCE is also supported: create the client with `createClient(url, key, { auth: { flowType: 'pkce' } })` and supabase-js adds `code_challenge`/`code_challenge_method` to `/authorize` for you, getting back an auth code on the redirect instead of tokens directly.
 
+How an OAuth login finds its account:
+
+1. A returning login matches on the provider's user ID, even if the email at the provider changed.
+2. A first login links to an existing account with the same email (case-insensitive), but only when the provider says the email is verified. It links to a verified account, or to an unverified one nobody can sign in to yet (for example an invited user). An unverified account that has a password, a session or another identity is never linked; the login fails with `email_exists` so a squatter can't capture the real owner's OAuth login. Sign in to that account and link the provider from there.
+3. Otherwise a new user is created, unless `allow_signup` is `false`, which returns `signup_disabled`.
+
+An unverified provider email that matches no existing identity fails with `provider_email_needs_verification`. GitHub logins use the verified address from GitHub's email list, not the public profile email.
+
 **Anonymous** — `supabase.auth.signInAnonymously()`
 
 Issues a JWT with `is_anonymous: true` and the `anon` Postgres role. Set `allow_anonymous: false` to disable. Anonymous users can be promoted to a full account by calling `signUp` or linking an OAuth identity.

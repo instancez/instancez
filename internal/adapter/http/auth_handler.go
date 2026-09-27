@@ -436,6 +436,28 @@ func (h *AuthHandler) handlePKCEGrant(c *gin.Context) {
 	c.JSON(200, session)
 }
 
+// emailVerifiedClaim reads an OIDC email_verified claim, which some IdPs send as a string.
+func emailVerifiedClaim(v any) bool {
+	if b, ok := v.(bool); ok {
+		return b
+	}
+	s, _ := v.(string)
+	return s == "true"
+}
+
+// oauthLoginError maps an UpsertOAuthUser failure to a status, code and message.
+func oauthLoginError(err error, provider string) (int, string, string) {
+	switch {
+	case errors.Is(err, domain.ErrSignupDisabled):
+		return 403, "signup_disabled", "Signups not allowed for this instance"
+	case errors.Is(err, domain.ErrProviderEmailUnverified):
+		return 422, "provider_email_needs_verification", "Unverified email with " + provider
+	case errors.Is(err, domain.ErrOAuthLinkRefused):
+		return 422, "email_exists", "An account with this email already exists; sign in to it first and link " + provider
+	}
+	return 500, "internal", "Failed to create or find user"
+}
+
 func (h *AuthHandler) handleIDTokenGrant(c *gin.Context) {
 	var req struct {
 		Provider string `json:"provider" binding:"required"`
@@ -474,9 +496,13 @@ func (h *AuthHandler) handleIDTokenGrant(c *gin.Context) {
 	name, _ := claims["name"].(string)
 
 	ctx := c.Request.Context()
-	row, err := h.authSvc.UpsertOAuthUser(ctx, req.Provider, sub, email, name)
+	row, err := h.authSvc.UpsertOAuthUser(ctx, domain.OAuthLogin{
+		Provider: req.Provider, ProviderUserID: sub, Email: email, Name: name,
+		EmailVerified: emailVerifiedClaim(claims["email_verified"]), AllowSignup: h.cfg.Auth.SignupAllowed(),
+	})
 	if err != nil || row == nil {
-		problemJSON(c, 500, "internal", "Failed to create or find user")
+		st, code, msg := oauthLoginError(err, req.Provider)
+		problemJSON(c, st, code, msg)
 		return
 	}
 	userID := asString(row["id"])
@@ -1359,9 +1385,13 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 			return
 		}
 
-		row, err := h.authSvc.UpsertOAuthUser(ctx, provider, userInfo.ProviderID, userInfo.Email, userInfo.Name)
+		row, err := h.authSvc.UpsertOAuthUser(ctx, domain.OAuthLogin{
+			Provider: provider, ProviderUserID: userInfo.ProviderID, Email: userInfo.Email, Name: userInfo.Name,
+			EmailVerified: userInfo.EmailVerified, AllowSignup: h.cfg.Auth.SignupAllowed(),
+		})
 		if err != nil || row == nil {
-			problemJSON(c, 500, "internal", "Failed to create or find user")
+			_, _, msg := oauthLoginError(err, provider)
+			h.oauthCallbackFail(c, redirectTo, isPKCE, msg)
 			return
 		}
 		userID := asString(row["id"])

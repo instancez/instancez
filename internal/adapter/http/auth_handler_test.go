@@ -759,7 +759,7 @@ type stubAuthService struct {
 	getPKCEFlowStateFn      func(ctx context.Context, authCode string) (string, string, string, error)
 	countIdentitiesFn       func(ctx context.Context, userID string) (int, error)
 	deleteIdentityByIDFn    func(ctx context.Context, identityID, userID string) error
-	upsertOAuthUserFn       func(ctx context.Context, provider, providerUserID, email, name string) (map[string]any, error)
+	upsertOAuthUserFn       func(ctx context.Context, in domain.OAuthLogin) (map[string]any, error)
 	listIdentitiesFn        func(ctx context.Context, userID string) ([]map[string]any, error)
 	consumeOAuthFlowFn      func(ctx context.Context, state string) (domain.FlowState, error)
 	deleteFactorForUserFn   func(ctx context.Context, factorID, userID string, allowVerified bool) error
@@ -923,9 +923,9 @@ func (s *stubAuthService) ConsumeOAuthFlowState(ctx context.Context, state strin
 	}
 	return domain.FlowState{}, domain.ErrNotFound
 }
-func (s *stubAuthService) UpsertOAuthUser(ctx context.Context, provider, providerUserID, email, name string) (map[string]any, error) {
+func (s *stubAuthService) UpsertOAuthUser(ctx context.Context, in domain.OAuthLogin) (map[string]any, error) {
 	if s.upsertOAuthUserFn != nil {
-		return s.upsertOAuthUserFn(ctx, provider, providerUserID, email, name)
+		return s.upsertOAuthUserFn(ctx, in)
 	}
 	return map[string]any{"id": "user-1"}, nil
 }

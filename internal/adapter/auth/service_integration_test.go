@@ -532,3 +532,163 @@ func TestMFAIntegration(t *testing.T) {
 		}
 	})
 }
+
+func TestOAuthIntegration(t *testing.T) {
+	s, db := newIntegrationService(t, &domain.Auth{})
+	ctx := context.Background()
+	login := func(pid, email string, verified, signup bool) (map[string]any, error) {
+		return s.UpsertOAuthUser(ctx, domain.OAuthLogin{Provider: "google", ProviderUserID: pid, Email: email, Name: "N", EmailVerified: verified, AllowSignup: signup})
+	}
+	col := func(email, expr string) any {
+		r, _ := db.QueryRow(ctx, "SELECT "+expr+" AS v FROM auth.users WHERE email = $1", email)
+		return r["v"]
+	}
+	identities := func(pid string) any {
+		r, _ := db.QueryRow(ctx, "SELECT count(*) AS n FROM auth.identities WHERE provider_user_id = $1", pid)
+		return r["n"]
+	}
+
+	t.Run("new verified login creates a verified user", func(t *testing.T) {
+		row, err := login("g-new", "new@example.com", true, true)
+		if err != nil || row["email_verified"] != true || identities("g-new") != int64(1) {
+			t.Fatalf("row=%v err=%v", row, err)
+		}
+	})
+
+	t.Run("known identity wins even if email changed and signups closed", func(t *testing.T) {
+		first, _ := login("g-id", "first@example.com", true, true)
+		again, err := login("g-id", "changed@elsewhere.com", false, false)
+		if err != nil || again["id"] != first["id"] {
+			t.Fatalf("again=%v err=%v", again, err)
+		}
+		if _, err := s.GetUserByEmail(ctx, "changed@elsewhere.com"); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatal("a returning identity must not create a second user")
+		}
+	})
+
+	t.Run("case-variant email links to verified local user", func(t *testing.T) {
+		local, _ := s.CreateUser(ctx, domain.CreateUserParams{Email: "Carol@Example.com", EmailConfirmed: true})
+		row, err := login("g-carol", "carol@EXAMPLE.com", true, false)
+		if err != nil || row["id"] != local["id"] {
+			t.Fatalf("row=%v err=%v", row, err)
+		}
+	})
+
+	t.Run("verified case variant is preferred over an older unverified squatter", func(t *testing.T) {
+		hash, _ := HashPassword("attacker-pass")
+		_, _ = s.CreateUser(ctx, domain.CreateUserParams{Email: "DAVE@example.com", Password: hash})
+		victim, _ := s.CreateUser(ctx, domain.CreateUserParams{Email: "dave@example.com", EmailConfirmed: true})
+		row, err := login("g-dave", "dave@example.com", true, false)
+		if err != nil || row["id"] != victim["id"] {
+			t.Fatalf("row=%v err=%v", row, err)
+		}
+	})
+
+	t.Run("unverified local account with password is never linked", func(t *testing.T) {
+		hash, _ := HashPassword("attacker-pass")
+		_, _ = s.CreateUser(ctx, domain.CreateUserParams{Email: "victim@example.com", Password: hash})
+		if _, err := login("g-victim", "Victim@Example.com", true, true); !errors.Is(err, domain.ErrOAuthLinkRefused) {
+			t.Fatalf("want ErrOAuthLinkRefused, got %v", err)
+		}
+		if col("victim@example.com", "password_hash") == nil || col("victim@example.com", "email_verified") != false {
+			t.Fatal("refused link must not touch the local account")
+		}
+		if n := identities("g-victim"); n != int64(0) {
+			t.Fatalf("no identity may be created, got %v", n)
+		}
+	})
+
+	t.Run("unverified passwordless account is linked and verified", func(t *testing.T) {
+		local, _ := s.CreateUser(ctx, domain.CreateUserParams{Email: "otp@example.com"})
+		row, err := login("g-otp", "otp@example.com", true, false)
+		if err != nil || row["id"] != local["id"] || row["email_verified"] != true {
+			t.Fatalf("row=%v err=%v", row, err)
+		}
+		if _, ok := row["claimed"]; ok {
+			t.Fatal("internal column leaked into the user row")
+		}
+	})
+
+	t.Run("unverified passwordless account someone can already sign in to is refused", func(t *testing.T) {
+		live, _ := s.CreateUser(ctx, domain.CreateUserParams{Email: "live@example.com"})
+		exp := time.Now().Add(time.Hour).Unix()
+		if err := s.InsertRefreshToken(ctx, asString(live["id"]), "live-tok", domain.SessionMeta{SessionID: "11111111-1111-1111-1111-111111111111"}, exp); err != nil {
+			t.Fatal(err)
+		}
+		linked, _ := s.CreateUser(ctx, domain.CreateUserParams{Email: "linked@example.com"})
+		s.LinkIdentity(ctx, asString(linked["id"]), "github", "gh-1", "linked@example.com")
+
+		for _, email := range []string{"live@example.com", "linked@example.com"} {
+			if _, err := login("g-"+email, email, true, true); !errors.Is(err, domain.ErrOAuthLinkRefused) {
+				t.Errorf("%s: want ErrOAuthLinkRefused, got %v", email, err)
+			}
+			if col(email, "email_verified") != false {
+				t.Errorf("%s: must stay unverified", email)
+			}
+		}
+	})
+
+	t.Run("unverified provider email without identity is refused", func(t *testing.T) {
+		_, _ = s.CreateUser(ctx, domain.CreateUserParams{Email: "known@example.com", EmailConfirmed: true})
+		for _, email := range []string{"unv@example.com", "known@example.com"} {
+			if _, err := login("g-unv", email, false, true); !errors.Is(err, domain.ErrProviderEmailUnverified) {
+				t.Fatalf("%s: got %v", email, err)
+			}
+		}
+		if _, err := s.GetUserByEmail(ctx, "unv@example.com"); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatal("no user may be created")
+		}
+		if n := identities("g-unv"); n != int64(0) {
+			t.Fatalf("no identity may be created, got %v", n)
+		}
+	})
+
+	t.Run("no match with signups closed is refused", func(t *testing.T) {
+		if _, err := login("g-closed", "closed@example.com", true, false); !errors.Is(err, domain.ErrSignupDisabled) {
+			t.Fatalf("got %v", err)
+		}
+	})
+
+	t.Run("empty email with verified flag is refused and creates nothing", func(t *testing.T) {
+		for _, signup := range []bool{false, true} {
+			if _, err := login("g-empty", "", true, signup); !errors.Is(err, domain.ErrProviderEmailUnverified) {
+				t.Fatalf("signup=%v: got %v", signup, err)
+			}
+		}
+		if r, _ := db.QueryRow(ctx, "SELECT count(*) AS n FROM auth.users WHERE email = ''"); r["n"] != int64(0) {
+			t.Fatalf("user with empty email created: %v", r["n"])
+		}
+	})
+
+	t.Run("empty provider user id is rejected", func(t *testing.T) {
+		if row, err := login("", "blank1@example.com", true, true); err == nil {
+			t.Fatalf("blank id accepted: %v", row)
+		}
+		if n := identities(""); n != int64(0) {
+			t.Fatalf("blank identity stored: %v", n)
+		}
+	})
+
+	t.Run("concurrent first logins create one user", func(t *testing.T) {
+		var wg sync.WaitGroup
+		ids := make([]any, 8)
+		for i := range ids {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				row, err := login("g-race", "race@example.com", true, true)
+				if err != nil {
+					t.Errorf("login %d: %v", i, err)
+					return
+				}
+				ids[i] = row["id"]
+			}(i)
+		}
+		wg.Wait()
+		for _, id := range ids {
+			if id != ids[0] {
+				t.Fatalf("ids diverged: %v", ids)
+			}
+		}
+	})
+}
