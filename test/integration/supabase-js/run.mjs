@@ -2355,6 +2355,83 @@ await step('storage: signed upload threads owner so the uploader can read it bac
   assertEq(await dl.text(), 'owned content', 'owner reads back their object')
 })
 
+// --- Storage RLS on batch sign and info, traversal keys, download headers ---
+// Move/copy/remove/emptyBucket denials and the legacy routes have their own steps below.
+const adminStorage = () => createClient(URL, SECRET_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+  global: { headers: { Authorization: `Bearer ${SECRET_KEY}` } },
+})
+
+if (SECRET_KEY) {
+  await step('storage: createSignedUrls and info() withhold objects RLS hides', async () => {
+    const { error: seedErr } = await adminStorage().storage.from('owned')
+      .upload('mine/admin.txt', 'admin secret', { contentType: 'text/plain', upsert: true })
+    if (seedErr) throw seedErr
+
+    const bucket = storageClient().storage.from('owned')
+    const { data, error } = await bucket.createSignedUrls(['mine/admin.txt', 'mine/file.txt'], 60)
+    if (error) throw error
+    const hidden = data.find(d => d.path === 'mine/admin.txt')
+    const own = data.find(d => d.path === 'mine/file.txt')
+    assert(hidden && !hidden.signedUrl && hidden.error, `hidden path must not be signed: ${JSON.stringify(hidden)}`)
+    assert(own && own.signedUrl && !own.error, `own path must be signed: ${JSON.stringify(own)}`)
+
+    const { error: infoErr } = await bucket.info('mine/admin.txt')
+    assert(infoErr, 'info() of a hidden object must fail')
+    const { data: ownInfo, error: ownInfoErr } = await bucket.info('mine/file.txt')
+    if (ownInfoErr) throw ownInfoErr
+    assertEq(ownInfo.name, 'mine/file.txt')
+
+    const { error: rmErr } = await adminStorage().storage.from('owned').remove(['mine/admin.txt'])
+    if (rmErr) throw rmErr
+  })
+
+  await step('storage: emptyBucket removes only what the caller may delete', async () => {
+    const admin = adminStorage().storage.from('owned')
+    const { error: seedErr } = await admin.upload('mine/admin.txt', 'admin secret', { contentType: 'text/plain', upsert: true })
+    if (seedErr) throw seedErr
+
+    const { error } = await storageClient().storage.emptyBucket('owned')
+    if (error) throw error
+    assertEq((await admin.exists('mine/admin.txt')).data, true, 'hidden object survives emptyBucket')
+    assertEq((await admin.exists('mine/file.txt')).data, false, "caller's own object was removed")
+    const bytes = await (await admin.download('mine/admin.txt')).data.text()
+    assertEq(bytes, 'admin secret', 'hidden bytes untouched')
+
+    // Later steps read mine/file.txt, so the owner puts it back.
+    const { error: restoreErr } = await storageClient().storage.from('owned')
+      .upload('mine/file.txt', 'owned content', { contentType: 'text/plain' })
+    if (restoreErr) throw restoreErr
+    const { error: rmErr } = await admin.remove(['mine/admin.txt'])
+    if (rmErr) throw rmErr
+  })
+}
+
+// fetch normalizes %2e%2e segments away, so use one segment with encoded slashes.
+await step('storage: traversal keys are rejected', async () => {
+  const resp = await fetch(`${URL}/storage/v1/object/avatars/..%2f..%2fescape.txt`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY, 'Content-Type': 'text/plain' },
+    body: 'x',
+  })
+  assertEq(resp.status, 400, 'upload to a traversal key')
+  const { error } = await storageClient().storage.from('avatars').copy('test-file.txt', '../../escape.txt')
+  assert(error, 'copy to a traversal key must fail')
+})
+
+await step('storage: private downloads are private, nosniff, and HTML is an attachment', async () => {
+  const { error: upErr } = await storageClient().storage.from('documents')
+    .upload('page.html', '<html><script>alert(1)</script></html>', { contentType: 'text/html', upsert: true })
+  if (upErr) throw upErr
+  const dl = await fetch(`${URL}/storage/v1/object/authenticated/documents/page.html`, {
+    headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY },
+  })
+  assert(dl.ok, `download failed: ${dl.status}`)
+  assert((dl.headers.get('cache-control') || '').startsWith('private'), `cache-control: ${dl.headers.get('cache-control')}`)
+  assertEq(dl.headers.get('x-content-type-options'), 'nosniff')
+  assert((dl.headers.get('content-disposition') || '').startsWith('attachment'), 'html must download, not render')
+})
+
 // --- Remove ---
 
 await step('storage: remove objects', async () => {
