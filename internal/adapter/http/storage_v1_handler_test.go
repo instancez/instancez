@@ -2228,6 +2228,7 @@ func TestUploadObject_TooLargeRejectedBeforeTx(t *testing.T) {
 
 func TestUploadObject_TooLargeDefaultLimitNamesIt(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	dir := isolatedTempDir(t)
 	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { return &stubTx{}, nil }}
 	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
 	r := gin.New()
@@ -2236,6 +2237,7 @@ func TestUploadObject_TooLargeDefaultLimitNamesIt(t *testing.T) {
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/a.bin", io.LimitReader(zeroes{}, 50<<20+1)))
 	assert.Equal(t, 413, w.Code)
 	assert.Contains(t, w.Body.String(), "50MB")
+	assertNoSpoolLeft(t, dir)
 }
 
 type zeroes struct{}
