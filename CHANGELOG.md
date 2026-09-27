@@ -25,7 +25,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - Storage: image transforms are capped at 2500px, 25MB and 50MP. Signed URL expiry is capped at 7 days. Uploads no longer hold a database connection while the body streams. Multipart and signed uploads record real sizes, and signed uploads enforce the bucket's MIME allowlist. S3 copies of keys with special characters work.
 - Storage: `createSignedUploadUrl`'s response `url` now includes `?token=`, so `@supabase/supabase-js`'s `uploadToSignedUrl()` and `createSignedUploadUrl()` work end-to-end (storage-js reads the token from the URL).
 - Storage: `bucket.info()` now works, served at `/storage/v1/object/info/<bucket>/<path>`.
-- Storage: an upload no longer deletes the just-written object bytes when the commit fails, since a failed commit is ambiguous and may have applied — deleting could destroy live bytes under a committed row, especially on an update.
+- Storage: a failed upload commit no longer deletes the object's bytes; when the commit had actually applied (common on update/upsert), that deleted live data.
 
 ### Security
 
