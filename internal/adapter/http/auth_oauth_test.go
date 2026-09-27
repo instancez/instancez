@@ -2,14 +2,18 @@ package http
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 
 	adapterauth "github.com/instancez/instancez/internal/adapter/auth"
 	"github.com/instancez/instancez/internal/domain"
@@ -95,6 +99,53 @@ func TestOAuthCallback_PassesVerificationAndSignupPolicy(t *testing.T) {
 		loc := w.Header().Get("Location")
 		if w.Code != 302 || !strings.Contains(loc, "error_description=Unverified+email") || strings.Contains(loc, "access_token") {
 			t.Fatalf("%s: status %d location %q", name, w.Code, loc)
+		}
+	}
+}
+
+func TestIDTokenGrant_PassesEmailVerifiedClaim(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	providerJWKS.mu.Lock()
+	providerJWKS.cache["google"] = &jwksCache{keys: map[string]*rsa.PublicKey{"k1": &key.PublicKey}, fetchedAt: time.Now()}
+	providerJWKS.mu.Unlock()
+	t.Cleanup(func() {
+		providerJWKS.mu.Lock()
+		delete(providerJWKS.cache, "google")
+		providerJWKS.mu.Unlock()
+	})
+
+	for _, verified := range []any{false, true, "true", nil} {
+		claims := jwt.MapClaims{"iss": "https://accounts.google.com", "aud": "cid", "sub": "g-1", "email": "v@e.com", "exp": time.Now().Add(time.Minute).Unix()}
+		if verified != nil {
+			claims["email_verified"] = verified
+		}
+		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		tok.Header["kid"] = "k1"
+		signed, _ := tok.SignedString(key)
+
+		var got domain.OAuthLogin
+		h := &AuthHandler{
+			cfg:    &domain.Config{Auth: &domain.Auth{OAuth: map[string]*domain.OAuthProvider{"google": {ClientID: "cid"}}}},
+			logger: slog.New(slog.NewTextHandler(io.Discard, nil)), jwtKeys: stubKeys(t),
+			authSvc: &stubAuthService{upsertOAuthUserFn: func(ctx context.Context, in domain.OAuthLogin) (map[string]any, error) {
+				got = in
+				return nil, domain.ErrProviderEmailUnverified
+			}},
+		}
+		r := gin.New()
+		r.POST("/token", h.handleIDTokenGrant)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest("POST", "/token", strings.NewReader(`{"provider":"google","token":"`+signed+`"}`)))
+		want := verified == true || verified == "true"
+		if got.EmailVerified != want || !got.AllowSignup || got.ProviderUserID != "g-1" || got.Email != "v@e.com" {
+			t.Fatalf("email_verified=%v: login passed to service = %+v", verified, got)
+		}
+		if w.Code != 422 || !strings.Contains(w.Body.String(), "provider_email_needs_verification") {
+			t.Fatalf("email_verified=%v: status %d body %s", verified, w.Code, w.Body.String())
 		}
 	}
 }
