@@ -379,7 +379,7 @@ func closeSpool(f *os.File) {
 	_ = os.Remove(f.Name())
 }
 
-// readUpload writes the error response itself on !ok; authorize, if set, runs before spooling so a denied caller never gets bytes onto disk.
+// readUpload spools the body; on !ok the error response is already written.
 func (h *StorageV1Handler) readUpload(c *gin.Context, bucket domain.Bucket, authorize func(contentType string) error) (f *os.File, size int64, contentType string, ok bool) {
 	body, contentType, err := uploadBody(c)
 	if err != nil {
@@ -470,6 +470,7 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 	}
 	if err := tx.Commit(ctx); err != nil {
 		// An ambiguous commit may have applied, so leave storage alone (no compensating delete).
+		h.logger.Error("upload commit failed", "bucket", bucketName, "key", objPath, "error", err)
 		storageErr(c, 500, "internal", "Upload failed")
 		return
 	}

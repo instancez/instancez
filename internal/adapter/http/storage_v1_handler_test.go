@@ -898,7 +898,7 @@ func uploadHarness(execErr, uploadErr, commitErr error) (*StorageV1Handler, *opL
 	return newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}}), log
 }
 
-// The leading "exec","rollback" pair in each wantOps is the pre-spool probe; the real write tx follows.
+// wantOps' leading exec/rollback pair is the pre-spool probe.
 func TestUploadObject_CommitFailureNoCompensatingDelete(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cases := []struct {
