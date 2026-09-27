@@ -1352,40 +1352,6 @@ func TestRemoveObjects_BadRequestBody(t *testing.T) {
 
 // --- Move / Copy tests ---
 
-func TestMoveObject_Success(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	var gotSrc, gotDst string
-	store := &stubObjectStore{
-		copyFn: func(ctx context.Context, srcKey, dstKey string) error {
-			gotSrc, gotDst = srcKey, dstKey
-			return nil
-		},
-	}
-	var deletedKey string
-	store.deleteFn = func(ctx context.Context, key string) error { deletedKey = key; return nil }
-	buckets := map[string]domain.Bucket{"avatars": {}}
-	h := newStorageHandler(&stubDB{}, store, buckets)
-
-	w := httptest.NewRecorder()
-	r := gin.New()
-	r.POST("/storage/v1/object/move", h.moveObject)
-
-	body := `{"bucketId":"avatars","sourceKey":"old.jpg","destinationKey":"new.jpg"}`
-	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/move", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	r.ServeHTTP(w, req)
-
-	if w.Code != 200 {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	if gotSrc != "avatars/old.jpg" || gotDst != "avatars/new.jpg" {
-		t.Errorf("Copy(src, dst) = (%q, %q)", gotSrc, gotDst)
-	}
-	if deletedKey != "avatars/old.jpg" {
-		t.Errorf("expected source deleted after move, got %q", deletedKey)
-	}
-}
-
 func TestMoveObject_SourceBucketNotFound(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := newStorageHandler(&stubDB{}, &stubObjectStore{}, nil)
@@ -1401,66 +1367,6 @@ func TestMoveObject_SourceBucketNotFound(t *testing.T) {
 
 	if w.Code != 404 {
 		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestMoveObject_CopyFailurePropagates(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	store := &stubObjectStore{
-		copyFn: func(ctx context.Context, srcKey, dstKey string) error {
-			return errors.New("store unavailable")
-		},
-	}
-	buckets := map[string]domain.Bucket{"avatars": {}}
-	h := newStorageHandler(&stubDB{}, store, buckets)
-
-	w := httptest.NewRecorder()
-	r := gin.New()
-	r.POST("/storage/v1/object/move", h.moveObject)
-
-	body := `{"bucketId":"avatars","sourceKey":"old.jpg","destinationKey":"new.jpg"}`
-	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/move", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	r.ServeHTTP(w, req)
-
-	if w.Code != 500 {
-		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestCopyObject_Success(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	var gotSrc, gotDst string
-	store := &stubObjectStore{
-		copyFn: func(ctx context.Context, srcKey, dstKey string) error {
-			gotSrc, gotDst = srcKey, dstKey
-			return nil
-		},
-	}
-	buckets := map[string]domain.Bucket{"avatars": {}, "backups": {}}
-	h := newStorageHandler(&stubDB{}, store, buckets)
-
-	w := httptest.NewRecorder()
-	r := gin.New()
-	r.POST("/storage/v1/object/copy", h.copyObject)
-
-	body := `{"bucketId":"avatars","sourceKey":"old.jpg","destinationKey":"copy.jpg","destinationBucket":"backups"}`
-	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/copy", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	r.ServeHTTP(w, req)
-
-	if w.Code != 200 {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	if gotSrc != "avatars/old.jpg" || gotDst != "backups/copy.jpg" {
-		t.Errorf("Copy(src, dst) = (%q, %q)", gotSrc, gotDst)
-	}
-	var resp map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatal(err)
-	}
-	if resp["Key"] != "backups/copy.jpg" {
-		t.Errorf("response Key = %v", resp["Key"])
 	}
 }
 
@@ -1481,6 +1387,202 @@ func TestCopyObject_DestinationBucketNotFound(t *testing.T) {
 	if w.Code != 404 {
 		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
 	}
+}
+
+type opLog struct{ ops []string }
+
+func (l *opLog) add(s string) { l.ops = append(l.ops, s) }
+
+func moveCopyHarness(t *testing.T, execN int64, execErr, copyErr, commitErr error) (*StorageV1Handler, *opLog, *[]any) {
+	t.Helper()
+	log := &opLog{}
+	var args []any
+	tx := &stubTx{
+		execFn: func(_ context.Context, _ string, a ...any) (int64, error) {
+			log.add("exec")
+			args = a
+			return execN, execErr
+		},
+		commitFn:   func(context.Context) error { log.add("commit"); return commitErr },
+		rollbackFn: func(context.Context) error { log.add("rollback"); return nil },
+	}
+	store := &stubObjectStore{
+		copyFn:   func(_ context.Context, s, d string) error { log.add("copy:" + s + ">" + d); return copyErr },
+		deleteFn: func(_ context.Context, k string) error { log.add("delete:" + k); return nil },
+	}
+	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { return tx, nil }}
+	return newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}, "backups": {}}), log, &args
+}
+
+func runMoveCopyAs(h *StorageV1Handler, s domain.Session, route, body string) *httptest.ResponseRecorder {
+	r := gin.New()
+	auth := func(c *gin.Context) { setTestSession(c, s) }
+	r.POST("/storage/v1/object/move", auth, h.moveObject)
+	r.POST("/storage/v1/object/copy", auth, h.copyObject)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, route, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	return w
+}
+
+func runMoveCopy(h *StorageV1Handler, route, body string) *httptest.ResponseRecorder {
+	return runMoveCopyAs(h, domain.Session{Role: "authenticated", UserID: "11111111-1111-1111-1111-111111111111", IsAuthenticated: true}, route, body)
+}
+
+const moveBody = `{"bucketId":"avatars","sourceKey":"old.jpg","destinationKey":"new.jpg"}`
+const copyBody = `{"bucketId":"avatars","sourceKey":"old.jpg","destinationKey":"copy.jpg","destinationBucket":"backups"}`
+
+func TestMoveObject_OrderDBThenCopyThenCommitThenDelete(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, log, args := moveCopyHarness(t, 1, nil, nil, nil)
+	w := runMoveCopy(h, "/storage/v1/object/move", moveBody)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Equal(t, []string{"exec", "copy:avatars/old.jpg>avatars/new.jpg", "commit", "delete:avatars/old.jpg", "rollback"}, log.ops)
+	assert.Equal(t, []any{"avatars", "new.jpg", "avatars", "old.jpg"}, *args)
+}
+
+func TestMoveObject_Denials(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		name string
+		n    int64
+		err  error
+		want int
+	}{
+		{"hidden by RLS", 0, nil, 404},
+		{"dest violates policy", 0, errors.New(`new row violates row-level security policy for table "objects"`), 403},
+		{"dest exists", 0, errors.New(`duplicate key value violates unique constraint (SQLSTATE 23505)`), 409},
+		{"db down", 0, errors.New("conn reset"), 500},
+	}
+	for _, tc := range cases {
+		h, log, _ := moveCopyHarness(t, tc.n, tc.err, nil, nil)
+		w := runMoveCopy(h, "/storage/v1/object/move", moveBody)
+		assert.Equal(t, tc.want, w.Code, tc.name)
+		assert.Equal(t, []string{"exec", "rollback"}, log.ops, "%s: store touched before authorization", tc.name)
+	}
+}
+
+func TestMoveObject_CopyFailureRollsBack(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, log, _ := moveCopyHarness(t, 1, nil, errors.New("s3 down"), nil)
+	w := runMoveCopy(h, "/storage/v1/object/move", moveBody)
+	assert.Equal(t, 500, w.Code)
+	assert.Equal(t, []string{"exec", "copy:avatars/old.jpg>avatars/new.jpg", "rollback"}, log.ops)
+}
+
+func TestMoveObject_CommitFailureDropsCopyKeepsSource(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, log, _ := moveCopyHarness(t, 1, nil, nil, errors.New("commit failed"))
+	w := runMoveCopy(h, "/storage/v1/object/move", moveBody)
+	assert.Equal(t, 500, w.Code)
+	assert.Contains(t, log.ops, "delete:avatars/new.jpg")
+	assert.NotContains(t, log.ops, "delete:avatars/old.jpg")
+}
+
+func TestMoveCopy_BeginFailureNoStore(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, route := range []string{"/storage/v1/object/move", "/storage/v1/object/copy"} {
+		var touched bool
+		store := &stubObjectStore{
+			copyFn:   func(context.Context, string, string) error { touched = true; return nil },
+			deleteFn: func(context.Context, string) error { touched = true; return nil },
+		}
+		db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { return nil, errors.New("pool exhausted") }}
+		h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}, "backups": {}})
+		w := runMoveCopy(h, route, moveBody)
+		assert.Equal(t, 500, w.Code, route)
+		assert.False(t, touched, route)
+	}
+}
+
+func TestMoveCopy_SameSourceAndDestRejected(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, route := range []string{"/storage/v1/object/move", "/storage/v1/object/copy"} {
+		for _, body := range []string{
+			`{"bucketId":"avatars","sourceKey":"a.jpg","destinationKey":"/a.jpg"}`,
+			`{"bucketId":"avatars","sourceKey":"a.jpg","destinationKey":"a.jpg","destinationBucket":"avatars"}`,
+			`{"bucketId":"avatars","sourceKey":"dir//a.jpg","destinationKey":"dir/./a.jpg"}`,
+		} {
+			h, log, _ := moveCopyHarness(t, 1, nil, nil, nil)
+			w := runMoveCopy(h, route, body)
+			assert.Equal(t, 400, w.Code, route+" "+body)
+			assert.Empty(t, log.ops, route+" "+body)
+		}
+	}
+}
+
+func TestMoveCopy_SameKeyAcrossBucketsAllowed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	want := map[string][]string{
+		"/storage/v1/object/move": {"exec", "copy:avatars/a.jpg>backups/a.jpg", "commit", "delete:avatars/a.jpg", "rollback"},
+		"/storage/v1/object/copy": {"exec", "copy:avatars/a.jpg>backups/a.jpg", "commit", "rollback"},
+	}
+	for route, ops := range want {
+		h, log, _ := moveCopyHarness(t, 1, nil, nil, nil)
+		w := runMoveCopy(h, route, `{"bucketId":"avatars","sourceKey":"a.jpg","destinationKey":"a.jpg","destinationBucket":"backups"}`)
+		assert.Equal(t, 200, w.Code, route)
+		assert.Equal(t, ops, log.ops, route)
+	}
+}
+
+func TestCopyObject_OrderAndOwner(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, log, args := moveCopyHarness(t, 1, nil, nil, nil)
+	w := runMoveCopy(h, "/storage/v1/object/copy", copyBody)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Equal(t, []string{"exec", "copy:avatars/old.jpg>backups/copy.jpg", "commit", "rollback"}, log.ops)
+	assert.Equal(t, "11111111-1111-1111-1111-111111111111", (*args)[4], "copy must be owned by the caller")
+	assert.JSONEq(t, `{"Key":"backups/copy.jpg"}`, w.Body.String())
+}
+
+func TestCopyObject_AnonOwnerIsNull(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, _, args := moveCopyHarness(t, 1, nil, nil, nil)
+	w := runMoveCopyAs(h, domain.Session{Role: "anon"}, "/storage/v1/object/copy", copyBody)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Nil(t, (*args)[4], "empty user id must bind as NULL, not ''")
+}
+
+func TestCopyObject_Denials(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		name string
+		n    int64
+		err  error
+		want int
+	}{
+		{"source hidden by RLS", 0, nil, 404},
+		{"dest insert denied", 0, errors.New(`new row violates row-level security policy for table "objects" (SQLSTATE 42501)`), 403},
+		{"db down", 0, errors.New("conn reset"), 500},
+	}
+	for _, tc := range cases {
+		h, log, _ := moveCopyHarness(t, tc.n, tc.err, nil, nil)
+		w := runMoveCopy(h, "/storage/v1/object/copy", copyBody)
+		assert.Equal(t, tc.want, w.Code, tc.name)
+		assert.Equal(t, []string{"exec", "rollback"}, log.ops, "%s: store touched before authorization", tc.name)
+	}
+}
+
+func TestCopyObject_CopyFailureNoCommit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, log, _ := moveCopyHarness(t, 1, nil, errors.New("s3 down"), nil)
+	w := runMoveCopy(h, "/storage/v1/object/copy", copyBody)
+	assert.Equal(t, 500, w.Code)
+	assert.Equal(t, []string{"exec", "copy:avatars/old.jpg>backups/copy.jpg", "rollback"}, log.ops)
+}
+
+func TestCopyObject_CommitFailureIs500(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, _, _ := moveCopyHarness(t, 1, nil, nil, errors.New("commit failed"))
+	w := runMoveCopy(h, "/storage/v1/object/copy", copyBody)
+	assert.Equal(t, 500, w.Code)
+}
+
+func TestNullIfEmpty(t *testing.T) {
+	assert.Nil(t, nullIfEmpty(""))
+	assert.Equal(t, "u", nullIfEmpty("u"))
+	assert.Equal(t, " ", nullIfEmpty(" "))
 }
 
 // --- createSignedURLs (batch) tests ---

@@ -364,10 +364,7 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 
 	limitedBody := http.MaxBytesReader(c.Writer, io.NopCloser(body), maxBytes)
 
-	var uploadedBy any
-	if session.UserID != "" {
-		uploadedBy = session.UserID
-	}
+	uploadedBy := nullIfEmpty(session.UserID)
 	if size < 0 {
 		size = 0
 	}
@@ -445,6 +442,14 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 		"Key": bucketName + "/" + objPath,
 		"Id":  objPath,
 	})
+}
+
+// nullIfEmpty binds "" as SQL NULL.
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // storageErr writes a storage-js compatible error body: {statusCode, error, message}.
@@ -891,24 +896,48 @@ func (h *StorageV1Handler) moveObject(c *gin.Context) {
 		return
 	}
 
+	if srcBucket == dstBucket && src == dst {
+		storageErr(c, 400, "invalid_key", "Source and destination are the same")
+		return
+	}
 	ctx := h.rlsCtx(c)
-	srcKey := srcBucket + "/" + src
-	dstKey := dstBucket + "/" + dst
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		h.logger.Error("move begin", "error", err)
+		storageErr(c, 500, "internal", "Move failed")
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 
-	if err := h.storage.Copy(ctx, srcKey, dstKey); err != nil {
+	n, err := tx.Exec(ctx,
+		"UPDATE storage.objects SET bucket_id = $1, name = $2 WHERE bucket_id = $3 AND name = $4",
+		dstBucket, dst, srcBucket, src)
+	if err != nil {
+		h.uploadWriteError(c, err)
+		return
+	}
+	if n == 0 {
+		storageErr(c, 404, "not_found", "Object not found")
+		return
+	}
+	srcKey, dstKey := srcBucket+"/"+src, dstBucket+"/"+dst
+	if err := h.storage.Copy(c.Request.Context(), srcKey, dstKey); err != nil {
 		h.logger.Error("move copy", "error", err)
 		storageErr(c, 500, "internal", "Move failed")
 		return
 	}
-	if err := h.storage.Delete(ctx, srcKey); err != nil {
-		h.logger.Error("move delete", "error", err)
+	if err := tx.Commit(ctx); err != nil {
+		h.logger.Error("move commit", "error", err)
+		// The unique index proved dst was free, so this only drops our copy.
+		if derr := h.storage.Delete(c.Request.Context(), dstKey); derr != nil {
+			h.logger.Error("move drop copy", "key", dstKey, "error", derr)
+		}
+		storageErr(c, 500, "internal", "Move failed")
+		return
 	}
-
-	// Update DB
-	_, _ = h.db.Exec(ctx,
-		"UPDATE storage.objects SET bucket_id = $1, name = $2 WHERE bucket_id = $3 AND name = $4",
-		dstBucket, dst, srcBucket, src)
-
+	if err := h.storage.Delete(c.Request.Context(), srcKey); err != nil {
+		h.logger.Warn("move delete source", "key", srcKey, "error", err)
+	}
 	c.JSON(200, gin.H{"message": "Successfully moved"})
 }
 
@@ -946,24 +975,45 @@ func (h *StorageV1Handler) copyObject(c *gin.Context) {
 		return
 	}
 
+	if srcBucket == dstBucket && src == dst {
+		storageErr(c, 400, "invalid_key", "Source and destination are the same")
+		return
+	}
 	ctx := h.rlsCtx(c)
-	srcKey := srcBucket + "/" + src
-	dstKey := dstBucket + "/" + dst
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		h.logger.Error("copy begin", "error", err)
+		storageErr(c, 500, "internal", "Copy failed")
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 
-	if err := h.storage.Copy(ctx, srcKey, dstKey); err != nil {
+	n, err := tx.Exec(ctx,
+		`INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by, metadata)
+		 SELECT $1, $2, size, mime, $5::uuid, metadata FROM storage.objects WHERE bucket_id = $3 AND name = $4
+		 ON CONFLICT (bucket_id, name) DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime,
+		   metadata = EXCLUDED.metadata, uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW()`,
+		dstBucket, dst, srcBucket, src, nullIfEmpty(getSession(c).UserID))
+	if err != nil {
+		h.uploadWriteError(c, err)
+		return
+	}
+	if n == 0 {
+		storageErr(c, 404, "not_found", "Object not found")
+		return
+	}
+	dstKey := dstBucket + "/" + dst
+	if err := h.storage.Copy(c.Request.Context(), srcBucket+"/"+src, dstKey); err != nil {
 		h.logger.Error("copy", "error", err)
 		storageErr(c, 500, "internal", "Copy failed")
 		return
 	}
-
-	// Copy DB row
-	_, _ = h.db.Exec(ctx,
-		`INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by, metadata)
-		 SELECT $1, $2, size, mime, uploaded_by, metadata FROM storage.objects WHERE bucket_id = $3 AND name = $4
-		 ON CONFLICT (bucket_id, name) DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime, uploaded_at = NOW()`,
-		dstBucket, dst, srcBucket, src)
-
-	c.JSON(200, gin.H{"Key": dstBucket + "/" + dst})
+	if err := tx.Commit(ctx); err != nil {
+		h.logger.Error("copy commit", "error", err)
+		storageErr(c, 500, "internal", "Copy failed")
+		return
+	}
+	c.JSON(200, gin.H{"Key": dstKey})
 }
 
 // --- Signed URL handlers ---
@@ -1072,10 +1122,7 @@ func (h *StorageV1Handler) createSignedUploadURL(c *gin.Context) {
 	// handed out. This mirrors the download path (createSignedURL probes a
 	// SELECT) and Supabase's signUploadObjectUrl, which runs canUpload first.
 	session := getSession(c)
-	var uploadedBy any
-	if session.UserID != "" {
-		uploadedBy = session.UserID
-	}
+	uploadedBy := nullIfEmpty(session.UserID)
 	if err := h.probeUploadPermission(c, bucketName, objPath, uploadedBy); err != nil {
 		h.uploadWriteError(c, err)
 		return

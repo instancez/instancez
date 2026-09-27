@@ -2442,6 +2442,71 @@ if (SECRET_KEY) {
       headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY },
     })
   })
+
+  // Move/copy must pass RLS before any bytes move.
+  const userPost = (path, body) => fetch(`${URL}/storage/v1/object/${path}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const adminGet = (path) => fetch(`${URL}/storage/v1/object/authenticated/${path}`, {
+    headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY },
+  })
+
+  await step('storage: move and copy are denied without the matching RLS policy, bytes untouched', async () => {
+    const put = await fetch(`${URL}/storage/v1/object/readonly/ro-move.txt`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY, 'Content-Type': 'text/plain' },
+      body: 'ro move bytes',
+    })
+    assert(put.ok, `admin seed upload failed: ${put.status}`)
+
+    const mv = await userPost('move', { bucketId: 'readonly', sourceKey: 'ro-move.txt', destinationKey: 'ro-moved.txt' })
+    assertEq(mv.status, 404, 'move without an update policy matches no row')
+    const src = await adminGet('readonly/ro-move.txt')
+    assert(src.ok, `source must survive a denied move: ${src.status}`)
+    assertEq(await src.text(), 'ro move bytes', 'source bytes untouched')
+    assertEq((await adminGet('readonly/ro-moved.txt')).status, 404, 'no destination after denied move')
+
+    const cp = await userPost('copy', { bucketId: 'readonly', sourceKey: 'ro-move.txt', destinationKey: 'ro-copy.txt' })
+    assertEq(cp.status, 403, 'copy without an insert policy is forbidden')
+    assertEq((await adminGet('readonly/ro-copy.txt')).status, 404, 'no destination bytes after denied copy')
+
+    await fetch(`${URL}/storage/v1/bucket/readonly/empty`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY },
+    })
+  })
+
+  await step('storage: copy cannot read a victim object the caller cannot select', async () => {
+    const put = await fetch(`${URL}/storage/v1/object/owned/mine/victim.txt`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY, 'Content-Type': 'text/plain' },
+      body: 'victim secret',
+    })
+    assert(put.ok, `admin seed upload failed: ${put.status}`)
+
+    for (const [bucket, key] of [['avatars', 'stolen.txt'], ['owned', 'mine/stolen.txt']]) {
+      const cp = await userPost('copy', { bucketId: 'owned', sourceKey: 'mine/victim.txt', destinationKey: key, destinationBucket: bucket })
+      assertEq(cp.status, 404, `copy of hidden source into ${bucket} is not found`)
+      assertEq((await adminGet(`${bucket}/${key}`)).status, 404, `no stolen bytes in ${bucket}`)
+    }
+
+    const { error } = await createClient(URL, SECRET_KEY, { auth: { persistSession: false } })
+      .storage.from('owned').remove(['mine/victim.txt'])
+    if (error) throw error
+  })
+
+  await step('storage: move is forbidden when the destination fails WITH CHECK', async () => {
+    const mv = await userPost('move', { bucketId: 'owned', sourceKey: 'mine/file.txt', destinationKey: 'escape.txt' })
+    assertEq(mv.status, 403, 'destination outside mine/ violates the policy')
+    const dl = await fetch(`${URL}/storage/v1/object/authenticated/owned/mine/file.txt`, {
+      headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY },
+    })
+    assert(dl.ok, `owner still reads the source: ${dl.status}`)
+    assertEq(await dl.text(), 'owned content', 'source bytes untouched')
+    assertEq((await adminGet('owned/escape.txt')).status, 404, 'no escaped copy')
+  })
 }
 
 // --- Cleanup documents bucket ---
