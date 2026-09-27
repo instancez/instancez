@@ -98,8 +98,7 @@ var (
 
 const defaultMaxTokenLifetime = 15 * time.Minute
 
-// JWTVerifyLeeway is the clock-skew allowance for JWT exp/nbf validation,
-// shared with adapter/http's jwt.WithLeeway call.
+// JWTVerifyLeeway is the clock-skew allowance for JWT exp/nbf checks.
 const JWTVerifyLeeway = 30 * time.Second
 
 // SetMaxTokenLifetime sets how long a retired key keeps verifying (plus leeway).
@@ -129,8 +128,7 @@ func (m *JWTKeyManager) cached(kid string) (*JWTKey, bool) {
 	return k, ok
 }
 
-// refresh reloads verifiable keys when the cache is older than maxAge, querying without
-// holding the lock. If a reload is already running, wait decides whether to block on it.
+// refresh reloads keys older than maxAge; wait says whether to block on an in-flight reload.
 func (m *JWTKeyManager) refresh(ctx context.Context, maxAge time.Duration, wait bool) {
 	if m.db == nil {
 		return

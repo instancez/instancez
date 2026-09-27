@@ -209,8 +209,7 @@ func TestTableEffectiveRLSEnabled(t *testing.T) {
 	}
 }
 
-// An unset field must not change the JSON stored in _instancez_migrations, or
-// every upgraded app would see a checksum change and re-migrate.
+// An unset field must not change the stored JSON, or every app would re-migrate.
 func TestTableRLSEnabledOmittedWhenUnset(t *testing.T) {
 	b, err := json.Marshal(Table{})
 	if err != nil {

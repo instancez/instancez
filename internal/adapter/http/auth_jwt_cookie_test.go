@@ -99,8 +99,6 @@ func TestAuthorize_OAuthCookiesSecureOnHTTPS(t *testing.T) {
 	}
 }
 
-// TestAuthorize_OAuthStateCookieHostPrefix pins the same __Host- naming E5b
-// gave oauth_link_state to the login-flow state cookies.
 func TestAuthorize_OAuthStateCookieHostPrefix(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	adapterauth.RegisterOAuth(unitOAuthProvider{})
@@ -126,10 +124,7 @@ func TestAuthorize_OAuthStateCookieHostPrefix(t *testing.T) {
 	}
 }
 
-// TestOAuthCallback_StateCookieRejectsTossedBareName proves a sibling
-// *.instancez.app tenant can't toss a bare oauth_state cookie into an https
-// callback: only the __Host- name is honored over https, and only the bare
-// name over http.
+// Over https only the __Host- state cookie counts, so a tossed bare cookie is ignored.
 func TestOAuthCallback_StateCookieRejectsTossedBareName(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	adapterauth.RegisterOAuth(unitOAuthProvider{})
@@ -157,9 +152,7 @@ func TestOAuthCallback_StateCookieRejectsTossedBareName(t *testing.T) {
 	}
 }
 
-// TestUpdateUser_PasswordChangeRevokeSurvivesCancel proves the post-commit
-// session revoke runs even if the client disconnects (request ctx canceled)
-// right after the password update commits.
+// The post-commit revoke must survive a client disconnect.
 func TestUpdateUser_PasswordChangeRevokeSurvivesCancel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	km := stubKeys(t)
@@ -197,9 +190,7 @@ func TestUpdateUser_PasswordChangeRevokeSurvivesCancel(t *testing.T) {
 	}
 }
 
-// TestMFAVerify_RevokeBelowAAL2SurvivesCancel is the same regression for
-// mfa_handler's post-verify RevokeBelowAAL2 call: a client disconnect right
-// after the new AAL2 session is issued must not stop the aal1 revoke.
+// The post-verify aal1 revoke must survive a client disconnect.
 func TestMFAVerify_RevokeBelowAAL2SurvivesCancel(t *testing.T) {
 	secret := "JBSWY3DPEHPK3PXP"
 	factorID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"

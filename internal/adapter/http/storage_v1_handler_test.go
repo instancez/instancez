@@ -2005,8 +2005,7 @@ func TestStorageRoutes_RejectTraversalKeys(t *testing.T) {
 	}
 	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {Public: true}})
 	h.jwtKeys = stubKeys(t)
-	// Bound to the raw (uncleaned) wildcard param gin hands the handler, so the
-	// case below tests the objectPath check itself, not token/path mismatch.
+	// Signed for the raw wildcard param, so this tests the objectPath check itself.
 	forgedTraversalToken := h.signUploadToken("avatars", "/../secret", "")
 	auth := func(c *gin.Context) {
 		setTestSession(c, domain.Session{Role: "authenticated", UserID: "u1", IsAuthenticated: true})

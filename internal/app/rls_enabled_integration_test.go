@@ -143,8 +143,7 @@ func TestIntegration_RLSEnabledTrueToFalseDisables(t *testing.T) {
 	}
 }
 
-// An app migrated by an older engine (config JSON without rls_enabled) that
-// adds rls_enabled: true while dropping its policies must stay locked.
+// A legacy app adding rls_enabled: true while dropping policies must stay locked.
 func TestIntegration_LegacyAppAddsRLSEnabledKeepsDeny(t *testing.T) {
 	owner, req := dbboot.StartContainer(t)
 	ctx := context.Background()

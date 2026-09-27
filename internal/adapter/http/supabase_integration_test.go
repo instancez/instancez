@@ -211,8 +211,7 @@ func TestSupabaseJSCompat(t *testing.T) {
 					{Operations: []string{"insert", "update"}, Using: "auth.uid() = id", WithCheck: "auth.uid() = id"},
 				},
 			},
-			// rls_locked: rls_enabled true, zero policies. supabase-js must see
-			// deny-all for anon/authenticated and a bypass for service_role.
+			// rls_locked has RLS on and no policies: deny-all except service_role.
 			"rls_locked": {
 				RLSEnabled: func() *bool { b := true; return &b }(),
 				Fields: []domain.Field{
@@ -269,10 +268,7 @@ func TestSupabaseJSCompat(t *testing.T) {
 					{Operations: []string{"select", "insert", "update", "delete"}, Using: "uploaded_by = auth.uid() AND name LIKE 'mine/%'", WithCheck: "uploaded_by = auth.uid() AND name LIKE 'mine/%'"},
 				},
 			},
-			// readonly exercises the C4 regression directly: a caller who can
-			// SELECT storage.objects but not DELETE must not be able to wipe
-			// bytes via remove/emptyBucket. No insert/update/delete policy is
-			// declared, so those operations match no policy and are denied.
+			// readonly can SELECT but not DELETE, so remove/emptyBucket must not wipe bytes.
 			"readonly": {
 				MaxSize: "5MB",
 				Types:   []string{"text/plain"},
@@ -280,11 +276,7 @@ func TestSupabaseJSCompat(t *testing.T) {
 					{Operations: []string{"select"}, Using: "true"},
 				},
 			},
-			// legacy_private exercises the C6 fix end-to-end: the legacy
-			// /api/storage routes now run under the caller's RLS
-			// (uploaded_by = auth.uid()), not service_role. Unlike "owned",
-			// there's no path prefix, since the legacy sign-upload route mints
-			// its own random key rather than taking a client-supplied path.
+			// legacy_private checks the legacy routes run under the caller's RLS.
 			"legacy_private": {
 				MaxSize: "1MB",
 				Types:   []string{"text/plain"},
@@ -669,8 +661,6 @@ func (c *captureEmailSender) countTo(addr string) int {
 	return n
 }
 
-// runOTPBurnKeepsCooldownFlow checks that burning a code with wrong guesses
-// doesn't let /otp mail a fresh one inside the cooldown.
 func runOTPBurnKeepsCooldownFlow(t *testing.T, baseURL, publishableKey string, emails *captureEmailSender) {
 	t.Helper()
 	email := fmt.Sprintf("burn_%d_%d@example.com", time.Now().UnixNano(), rand.Int63())

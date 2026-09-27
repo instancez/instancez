@@ -95,9 +95,7 @@ func equalStrings(a, b []string) bool {
 	return true
 }
 
-// The dashboard edits config via GET JSON → PUT JSON → yaml.Marshal. rls_enabled
-// must survive that loop in all three states, or a dashboard save would silently
-// flip a locked table open (false lost → inferred) or drop an explicit true.
+// rls_enabled must survive the dashboard's GET/PUT/yaml.Marshal round trip in all three states.
 func TestRLSEnabledSurvivesConfigRoundTrip(t *testing.T) {
 	src := []byte(`version: 1
 project:

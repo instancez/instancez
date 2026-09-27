@@ -90,17 +90,12 @@ func TestBannedUser_RecoveryLinkRefused(t *testing.T) {
 
 func TestAdminUpdateUser_BanRevokesSessions(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	// The stub mirrors real UpdateUser: is_banned reflects the row's actual
-	// banned_until state after the write, not merely whether ban_duration was
-	// present on the request (a "0s"/"-1h" duration must not revoke).
+	// The stub's is_banned reflects banned_until after the write, like the real UpdateUser.
 	for body, wantRevoke := range map[string]bool{
 		`{"ban_duration":"24h"}`:  true,
 		`{"ban_duration":"none"}`: false,
 		`{"user_metadata":{}}`:    false,
-		// A non-positive duration sets banned_until <= NOW(), so the row
-		// comes back not banned even though ban_duration was present and
-		// not "none" — a naive `BanDuration != nil && != "none"` check
-		// would wrongly revoke every session here.
+		// A non-positive duration leaves the row unbanned, so nothing is revoked.
 		`{"ban_duration":"0s"}`: false,
 	} {
 		revoked := ""
@@ -165,8 +160,7 @@ func TestBannedUser_MFAVerifyRefused(t *testing.T) {
 	}
 }
 
-// banOAuthProvider stands in for a real provider whose exchange/fetch both
-// succeed, so the callback reaches the ban check on the returned user row.
+// banOAuthProvider always succeeds so the callback reaches the ban check.
 type banOAuthProvider struct{}
 
 func (banOAuthProvider) Name() string { return "banoauth" }

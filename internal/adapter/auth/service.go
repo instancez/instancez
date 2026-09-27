@@ -69,9 +69,7 @@ func (d serviceRoleDB) Begin(ctx context.Context) (domain.Tx, error) {
 	return d.Database.Begin(c)
 }
 
-// userSelectCols is the canonical auth.users projection consumed by the HTTP
-// handler's buildUser/buildSession. mfa_handler.go keeps its own copy of this
-// column list; any change here must be mirrored there.
+// userSelectCols is the auth.users projection behind the handler's buildUser/buildSession.
 const userSelectCols = `id::text, email, email_verified, email_confirmed_at, last_sign_in_at, banned_until, raw_app_meta_data, raw_user_meta_data, created_at, updated_at, COALESCE(banned_until > NOW(), false) AS is_banned`
 
 // maxOTPAttempts bounds brute-force of the 10^6 numeric-code space.
@@ -347,8 +345,7 @@ func (s *Service) RecordSignIn(ctx context.Context, userID string) {
 // refreshReuseInterval lets concurrent refreshes (e.g. two tabs) share one rotation.
 const refreshReuseInterval = 10 * time.Second
 
-// execer is the Exec subset shared by domain.Database and domain.Tx, so the
-// same insert can run standalone or inside a caller's transaction.
+// execer lets the same insert run standalone or inside a caller's tx.
 type execer interface {
 	Exec(ctx context.Context, query string, args ...any) (int64, error)
 }
@@ -808,16 +805,10 @@ func (s *Service) DeleteIdentityByID(ctx context.Context, identityID, userID str
 
 // ---------- MFA ----------
 
-// challengeTTL bounds how long an MFA challenge can be verified after
-// creation. It also doubles as the sliding window for maxChallengesPerFactor:
-// a challenge older than this can never be verified, so it never needs to
-// count against the cap.
+// challengeTTL is how long a challenge stays verifiable, and the maxChallengesPerFactor window.
 const challengeTTL = 5 * time.Minute
 
-// maxChallengesPerFactor bounds how many challenges can be created for one
-// factor within challengeTTL. Without this, an aal1 session can cycle
-// challenges indefinitely and brute-force the factor's TOTP code past
-// maxMFAAttempts (5 guesses per challenge).
+// maxChallengesPerFactor stops an aal1 session from cycling challenges to brute-force TOTP.
 const maxChallengesPerFactor = 10
 
 func (s *Service) EnrollFactor(ctx context.Context, userID, friendlyName, secret string) (string, error) {
@@ -842,8 +833,7 @@ func (s *Service) CreateChallenge(ctx context.Context, factorID, userID string) 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Lock the factor row so concurrent callers on the same factor serialize:
-	// the count-then-insert below must see every sibling's committed insert.
+	// Lock the factor so concurrent count-then-insert calls serialize.
 	owner, err := tx.QueryRow(ctx,
 		"SELECT 1 FROM auth.mfa_factors WHERE id = $1::uuid AND user_id = $2::uuid FOR UPDATE", factorID, userID)
 	if err != nil {

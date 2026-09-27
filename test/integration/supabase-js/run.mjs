@@ -1445,8 +1445,7 @@ await step('auth.updateUser updates user_metadata', async () => {
 })
 
 await step('auth.updateUser password change revokes other sessions', async () => {
-  // Dedicated user, so this doesn't disturb the shared user's password for
-  // later steps that still sign in with the original one.
+  // Dedicated user so the shared user's password stays intact.
   const pwEmail = `pwchange_${Date.now()}_${Math.floor(Math.random() * 1e6)}@example.com`
   const oldPassword = 'first-password-1'
   const newPassword = 'second-password-2'
@@ -2494,8 +2493,7 @@ await step('storage: createSignedUploadUrl + uploadToSignedUrl flow', async () =
   if (dlErr) throw dlErr
   assertEq(await file.text(), 'signed upload content')
 
-  // avatars is a public bucket, but download() hits the caller-authenticated
-  // route, so the response must not be cached as public: RLS is per-caller.
+  // download() is caller-authenticated, so it must not be cached as public.
   const raw = await fetch(`${URL}/storage/v1/object/avatars/signed-upload.txt`, {
     headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY },
   })
@@ -2604,7 +2602,6 @@ await step('storage: signed upload threads owner so the uploader can read it bac
 })
 
 // --- Storage RLS on batch sign and info, traversal keys, download headers ---
-// Move/copy/remove/emptyBucket denials and the legacy routes have their own steps below.
 const adminStorage = () => createClient(URL, SECRET_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
   global: { headers: { Authorization: `Bearer ${SECRET_KEY}` } },
@@ -2740,9 +2737,6 @@ await step('storage: emptyBucket removes all objects', async () => {
 })
 
 // --- RLS-denied delete: a SELECT-only caller must not wipe bytes ---
-// (regression coverage for the emptyBucket/remove RLS-first fix; readonly's
-// policy grants select but declares no delete policy, so DELETE matches
-// nothing and must leave the bytes in place, not just the metadata row).
 if (SECRET_KEY) {
   await step('storage: remove leaves bytes in place when RLS denies the delete', async () => {
     const put = await fetch(`${URL}/storage/v1/object/readonly/ro-remove.txt`, {
@@ -3054,9 +3048,7 @@ await step('storage: serverless-friendly presigned URL — sign via /api/storage
   assert(signData.id, 'id present')
   assert(signData.upload_url, 'upload_url present')
 
-  // Sign minted a storage.objects row even before bytes are uploaded, and
-  // avatars is a public bucket, so an unauthenticated caller can sign-download
-  // it through the same legacy route.
+  // Sign already minted a row in the public avatars bucket, so anon can sign-download it.
   const anonDl = await fetch(`${URL}/api/storage/avatars/${signData.id}`, {
     headers: { apikey: PUBLISHABLE_KEY },
   })
@@ -3068,8 +3060,7 @@ await step('storage: legacy /api/storage routes run under the caller\'s RLS, not
   if (!signIn?.session) throw new Error('re-login failed')
   const ownerToken = signIn.session.access_token
 
-  // legacy_private is owner-scoped (uploaded_by = auth.uid()). The owner can
-  // sign an upload into it and read it straight back.
+  // The owner can sign an upload into legacy_private and read it back.
   const signResp = await fetch(`${URL}/api/storage/legacy_private/sign`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${ownerToken}`, apikey: PUBLISHABLE_KEY, 'Content-Type': 'application/json' },
@@ -3084,8 +3075,7 @@ await step('storage: legacy /api/storage routes run under the caller\'s RLS, not
   })
   assertEq(ownerDl.status, 200, 'owner sign-download of their own private object')
 
-  // A different authenticated user's RLS can't see the row: not a leak (200
-  // with someone else's signed URL), and not a silent wipe (204 on delete).
+  // Another user's RLS can't see the row: no leaked URL, no silent delete.
   const { data: other } = await anon.auth.signInAnonymously()
   const otherToken = other.session.access_token
 

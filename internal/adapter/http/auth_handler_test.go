@@ -1642,8 +1642,6 @@ func TestHandleVerify_InvalidTokenMapsTo401(t *testing.T) {
 	}
 }
 
-// TestHandleVerify_MagiclinkType asserts the magiclink verify type accepts only
-// signup and magiclink codes, and marks the address verified.
 func TestHandleVerify_MagiclinkType(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for purpose, allowed := range map[string]bool{"magiclink": true, "signup": true, "recovery": false, "email_change": false} {

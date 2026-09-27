@@ -149,18 +149,13 @@ type AuthService interface {
 	// ---- sessions / refresh tokens ----
 	// InsertRefreshToken persists a refresh token row carrying request meta.
 	InsertRefreshToken(ctx context.Context, userID, token string, meta SessionMeta, expiresAt int64) error
-	// ConsumeRefreshToken rotates a refresh token to next.Token and returns the
-	// user row, the session state and the refresh token to hand out. A replay
-	// inside the reuse interval gets the session's current child instead.
-	// Errors: ErrRefreshExpired, ErrRefreshReuse (session family revoked),
-	// ErrUnauthorized.
+	// ConsumeRefreshToken rotates the token (a replay in the reuse interval gets the current child).
 	ConsumeRefreshToken(ctx context.Context, token string, next RefreshRotation) (userRow map[string]any, meta SessionMeta, refreshToken string, err error)
 	// RevokeSessionByID deletes refresh tokens for a single session.
 	RevokeSessionByID(ctx context.Context, sessionID string) error
 	// RevokeOtherSessions deletes the user's refresh tokens except keepSessionID.
 	RevokeOtherSessions(ctx context.Context, userID, keepSessionID string) error
-	// RevokeBelowAAL2 deletes the user's refresh tokens whose aal is below
-	// aal2, in sessionID only unless allSessions is set.
+	// RevokeBelowAAL2 deletes the user's sub-aal2 refresh tokens, in sessionID only unless allSessions.
 	RevokeBelowAAL2(ctx context.Context, userID, sessionID string, allSessions bool) error
 	// RevokeAllUserSessions deletes every refresh token for the user.
 	RevokeAllUserSessions(ctx context.Context, userID string) error
@@ -202,9 +197,7 @@ type AuthService interface {
 	ConsumeOAuthFlowState(ctx context.Context, state string) (FlowState, error)
 
 	// ---- OAuth / ID-token user provisioning ----
-	// UpsertOAuthUser resolves an OAuth/OIDC login: known identity first, then
-	// a provider-verified email match, then signup. Errors:
-	// ErrProviderEmailUnverified, ErrOAuthLinkRefused, ErrSignupDisabled.
+	// UpsertOAuthUser resolves an OAuth login by identity, then verified email, then signup.
 	UpsertOAuthUser(ctx context.Context, in OAuthLogin) (map[string]any, error)
 	// LinkIdentity adds an identity to an existing user (best-effort).
 	LinkIdentity(ctx context.Context, userID, provider, providerUserID, email string)
@@ -222,36 +215,22 @@ type AuthService interface {
 	// secret and returns the new factor id. The handler generates the secret
 	// and otpauth URI; the service only persists.
 	EnrollFactor(ctx context.Context, userID, friendlyName, secret string) (factorID string, err error)
-	// CreateChallenge verifies the factor belongs to userID, then inserts a
-	// challenge row. Returns the challenge id and its created_at (the handler
-	// derives expires_at = created_at + 5m). Race-safe against concurrent
-	// callers on the same factor. Errors: ErrNotFound, ErrChallengeRateLimited
-	// (too many challenges created for this factor recently).
+	// CreateChallenge inserts a challenge for the user's factor, rate-limited per factor.
 	CreateChallenge(ctx context.Context, factorID, userID string) (challengeID string, createdAt time.Time, err error)
 	// GetFactorForVerify returns the factor's secret + status when it belongs
 	// to userID, so the handler can validate the TOTP code. Errors: ErrNotFound.
 	GetFactorForVerify(ctx context.Context, factorID, userID string) (MFAFactor, error)
-	// ValidateChallenge checks that the challenge exists, belongs to factorID,
-	// is unverified and within its 5-minute window, and atomically spends one
-	// attempt; call it before comparing the code. Errors: ErrNotFound,
-	// ErrChallengeUsed, ErrChallengeExpired, ErrChallengeTooManyAttempts.
+	// ValidateChallenge atomically spends one attempt on a live, unverified challenge.
 	ValidateChallenge(ctx context.Context, challengeID, factorID string) error
-	// ConsumeTOTPStep marks a TOTP time step used on the factor. fresh=false
-	// means the step (or a later one) was already used: a replayed code.
+	// ConsumeTOTPStep marks a TOTP step used; fresh=false means a replayed code.
 	ConsumeTOTPStep(ctx context.Context, factorID string, step int64) (fresh bool, err error)
-	// MarkChallengeVerified stamps verified_at on the challenge and returns
-	// ErrChallengeUsed when it was already verified.
+	// MarkChallengeVerified stamps verified_at, or returns ErrChallengeUsed.
 	MarkChallengeVerified(ctx context.Context, challengeID string) error
-	// PromoteFactorToVerified flips an unverified factor to 'verified' and
-	// also deletes the user's other unverified factors.
+	// PromoteFactorToVerified verifies the factor and deletes the user's other unverified ones.
 	PromoteFactorToVerified(ctx context.Context, factorID string) error
 	// ListFactors returns the caller's factors (secret excluded) ordered by
 	// created_at, for the GoTrue listFactors response.
 	ListFactors(ctx context.Context, userID string) ([]map[string]any, error)
-	// DeleteFactorForUser removes a factor owned by userID. The delete only
-	// applies if the factor is unverified, unless allowVerified is set (the
-	// caller is aal2, or an admin), so it stays correct even if the factor
-	// is promoted between the handler's status check and this call. Errors:
-	// ErrNotFound.
+	// DeleteFactorForUser deletes a factor, verified ones only when allowVerified.
 	DeleteFactorForUser(ctx context.Context, factorID, userID string, allowVerified bool) error
 }

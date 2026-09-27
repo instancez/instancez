@@ -300,8 +300,6 @@ func TestHandleSignUpload_RLSDeniedIs403(t *testing.T) {
 	assert.Equal(t, 403, w.Code)
 }
 
-// TestHandleSignDownload_InvalidKeyRejected proves the legacy sign-download
-// route cleans the key: a ".." id never reaches the DB or the store.
 func TestHandleSignDownload_InvalidKeyRejected(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := &stubDB{queryRowFn: func(context.Context, string, ...any) (map[string]any, error) {
@@ -320,8 +318,6 @@ func TestHandleSignDownload_InvalidKeyRejected(t *testing.T) {
 	assert.Equal(t, 400, w.Code)
 }
 
-// TestHandleDelete_InvalidKeyRejected proves the legacy delete route cleans
-// the key: a ".." id never reaches the DB or the store.
 func TestHandleDelete_InvalidKeyRejected(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) {
@@ -340,9 +336,6 @@ func TestHandleDelete_InvalidKeyRejected(t *testing.T) {
 	assert.Equal(t, 400, w.Code)
 }
 
-// TestHandleDelete_AnotherUsersPrivateObjectDenied proves a caller whose RLS
-// context can't see the row gets a 404, and the object's bytes stay put —
-// the legacy delete route can't be used to wipe another user's private file.
 func TestHandleDelete_AnotherUsersPrivateObjectDenied(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	var capturedRole string
@@ -353,8 +346,7 @@ func TestHandleDelete_AnotherUsersPrivateObjectDenied(t *testing.T) {
 			capturedRole = s.Role
 			return ctx, nil
 		},
-		// RLS scopes the DELETE to rows the caller owns; another user's row
-		// simply isn't matched, so RETURNING comes back empty.
+		// RLS hides another user's row, so RETURNING is empty.
 		queryFn: func(context.Context, string, ...any) ([]map[string]any, error) { return nil, nil },
 	}
 	h := newLegacyStorageHandler(db, store)
@@ -370,9 +362,6 @@ func TestHandleDelete_AnotherUsersPrivateObjectDenied(t *testing.T) {
 	assert.Equal(t, "authenticated", capturedRole, "delete must run under the caller's role, not service_role")
 }
 
-// TestHandleSignDownload_AnotherUsersPrivateObjectDenied proves a caller
-// whose RLS context can't see another user's private object gets a 404
-// instead of a signed URL to someone else's file.
 func TestHandleSignDownload_AnotherUsersPrivateObjectDenied(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	var capturedRole string
@@ -386,8 +375,7 @@ func TestHandleSignDownload_AnotherUsersPrivateObjectDenied(t *testing.T) {
 			capturedRole = s.Role
 			return ctx, nil
 		},
-		// RLS scopes the SELECT to rows the caller can read; another user's
-		// private object isn't visible, so the lookup returns no row.
+		// RLS hides another user's row, so the lookup returns nothing.
 		queryRowFn: func(context.Context, string, ...any) (map[string]any, error) { return nil, nil },
 	}
 	h := newLegacyStorageHandler(db, store)

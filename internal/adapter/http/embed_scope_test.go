@@ -866,8 +866,7 @@ func TestResolveEmbeds_RejectsUnsafeSpecs(t *testing.T) {
 	}
 	good := []string{
 		"authors(id,name)", "authors(*)", "authors()", "writer:authors(name)", "authors( name , id )",
-		// supabase-js shapes seen in test/integration/supabase-js/run.mjs:
-		// alias, !inner and fkHint variants, and a two-level nested embed.
+		// supabase-js shapes from run.mjs.
 		"authors!inner(name)", "writer:authors!author_id(name)", "authors(name,posts(id,author_id))",
 	}
 	for _, raw := range good {
@@ -921,8 +920,6 @@ func TestParseQueryParams_EmbedColumnValidated(t *testing.T) {
 	}
 }
 
-// TestParseQueryParams_EmbedUnbalancedParens covers the HTTP entry point for
-// a truncated embed spec (e.g. select=id,authors( ), which must error, not panic.
 func TestParseQueryParams_EmbedUnbalancedParens(t *testing.T) {
 	all := map[string]domain.Table{
 		"posts": {Fields: []domain.Field{

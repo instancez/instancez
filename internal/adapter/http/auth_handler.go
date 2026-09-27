@@ -585,8 +585,7 @@ func (h *AuthHandler) handleUpdateUser(c *gin.Context) {
 		return
 	}
 	if params.Password != nil {
-		// Like GoTrue, a new password signs out every other session. Detach from
-		// the request context so a client disconnect can't skip the revoke.
+		// A new password signs out other sessions; detached so a disconnect can't skip it.
 		revokeCtx := context.WithoutCancel(ctx)
 		var revokeErr error
 		if sid := h.extractSessionID(session.JWT); sid != "" {
@@ -1495,8 +1494,7 @@ func (h *AuthHandler) buildSession(ctx context.Context, userID string, userRow m
 	})
 }
 
-// issueSession signs an access token and stores a new refresh token for the
-// session in meta, returning the GoTrue-shaped session payload.
+// issueSession signs an access token and stores a refresh token for meta's session.
 func (h *AuthHandler) issueSession(ctx context.Context, userID string, userRow map[string]any, meta domain.SessionMeta) (gin.H, error) {
 	if meta.SessionID == "" {
 		meta.SessionID = uuid.NewString()
@@ -2227,8 +2225,7 @@ func (h *AuthHandler) secureCookies(c *gin.Context) bool {
 	return c.Request.TLS != nil || strings.HasPrefix(h.baseURL(), "https://")
 }
 
-// hostCookieName adds the __Host- prefix when the cookie is Secure, which
-// stops sibling *.instancez.app tenants from tossing a same-named cookie in.
+// hostCookieName adds the __Host- prefix on Secure cookies so sibling tenants can't toss one in.
 func (h *AuthHandler) hostCookieName(c *gin.Context, name string) string {
 	if h.secureCookies(c) {
 		return "__Host-" + name

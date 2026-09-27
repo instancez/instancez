@@ -128,8 +128,7 @@ func (h *AuthHandler) handleChallengeFactor(c *gin.Context) {
 	})
 }
 
-// handleVerifyFactor checks a TOTP code against a challenge and, on success,
-// reissues the caller's session at aal2 (top-level aal/amr claims).
+// handleVerifyFactor checks a TOTP code and reissues the session at aal2.
 func (h *AuthHandler) handleVerifyFactor(c *gin.Context) {
 	session := getSession(c)
 	factorID := c.Param("factor_id")
@@ -223,8 +222,7 @@ func (h *AuthHandler) handleVerifyFactor(c *gin.Context) {
 		sessionError(c, err)
 		return
 	}
-	// A new factor drops every aal1 session, like GoTrue; a step-up drops this
-	// session's aal1 token. Detach so a client disconnect can't skip it.
+	// Drop aal1 sessions like GoTrue; detached so a disconnect can't skip it.
 	if err := h.authSvc.RevokeBelowAAL2(context.WithoutCancel(ctx), session.UserID, sid, firstVerify); err != nil {
 		h.logger.Error("revoke aal1 sessions after mfa verify failed", "error", err)
 	}

@@ -115,8 +115,6 @@ func TestApplyTransform_UndecodableReturnsOriginal(t *testing.T) {
 	assert.Equal(t, "image/webp", ct)
 }
 
-// assertCoverBounded runs a default-cover transform and checks it stays within a sane
-// allocation budget and produces an exact target-sized output.
 func assertCoverBounded(t *testing.T, src []byte, params *transformParams) {
 	t.Helper()
 	var before, after runtime.MemStats

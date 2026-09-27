@@ -1212,12 +1212,7 @@ func (h *StorageV1Handler) createSignedUploadURL(c *gin.Context) {
 	})
 }
 
-// probeUploadPermission reports whether the bucket's RLS policies permit the
-// caller to write this object, without persisting anything. It runs the same
-// write writeObjectRow would perform for isUpdate/upsert, under the caller's
-// Postgres role, inside a transaction that is always rolled back, and returns
-// the raw database error so callers can map an RLS denial to 403, a
-// duplicate to 409, a missing row to 404, etc. via uploadWriteError.
+// probeUploadPermission runs the object write under the caller's role in a rolled-back tx and returns the raw DB error.
 func (h *StorageV1Handler) probeUploadPermission(c *gin.Context, row objectRow, isUpdate, upsert bool) error {
 	ctx := h.rlsCtx(c)
 	tx, err := h.db.Begin(ctx)

@@ -485,9 +485,6 @@ func TestParseRPCChain_EmbedOnKnownTable(t *testing.T) {
 	}
 }
 
-// TestParseRPCChain_EmbedOnKnownTable_RejectsUnsafeColumn verifies the RPC
-// embed path (setof a known table) routes through ResolveEmbeds' column
-// validation the same as the CRUD path.
 func TestParseRPCChain_EmbedOnKnownTable_RejectsUnsafeColumn(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := &CRUDHandler{cfg: &domain.Config{
@@ -588,10 +585,6 @@ func TestWrapRPCCallForChain_BelongsToWithColumns(t *testing.T) {
 	}
 }
 
-// TestParseRPCChain_UnknownSetofRejectsUnsafeIdentifiers covers the
-// fallback path used when an RPC's return shape isn't a known table:
-// the chain parser must still reject unsafe identifiers instead of
-// falling back to the old permissive validator.
 func TestParseRPCChain_UnknownSetofRejectsUnsafeIdentifiers(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := &CRUDHandler{cfg: &domain.Config{}}
@@ -617,9 +610,7 @@ func TestParseRPCChain_UnknownSetofRejectsUnsafeIdentifiers(t *testing.T) {
 	}
 }
 
-// TestParseRPCChain_TableShapeSelectUsesIdentValidator: "setof table(...)" is
-// not a valid declared shape (rpcTableShape rejects the "setof " prefix), so
-// it falls back to the ident validator.
+// "setof table(...)" isn't a valid declared shape, so it falls back to the ident validator.
 func TestParseRPCChain_TableShapeSelectUsesIdentValidator(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := &CRUDHandler{cfg: &domain.Config{}}
@@ -638,9 +629,7 @@ func TestParseRPCChain_TableShapeSelectUsesIdentValidator(t *testing.T) {
 	}
 }
 
-// TestParseRPCChain_SetofRecordSelectUsesIdentValidator: "setof record" is
-// not found/declared, so select must go through the ident validator, not a
-// zero-value target table (regression: it used to key off `target != ""`).
+// Regression: "setof record" must use the ident validator, not a zero-value table.
 func TestParseRPCChain_SetofRecordSelectUsesIdentValidator(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := &CRUDHandler{cfg: &domain.Config{}}
@@ -678,8 +667,6 @@ func TestRPCTableShape(t *testing.T) {
 	}
 }
 
-// TestParseRPCChain_TableShapeValidatesColumns: declared TABLE(...) shape
-// filters/select/order/having must validate against the declared columns.
 func TestParseRPCChain_TableShapeValidatesColumns(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := &CRUDHandler{cfg: &domain.Config{}}
@@ -706,9 +693,6 @@ func TestParseRPCChain_TableShapeValidatesColumns(t *testing.T) {
 	}
 }
 
-// TestRenderRPCChain_OrderUsesValidatedUnquotedColumns verifies that order
-// columns render unquoted through the shared RenderOrderBy to match filter
-// emission and preserve JSONB operators like "data->>k".
 func TestRenderRPCChain_OrderUsesValidatedUnquotedColumns(t *testing.T) {
 	chain := &rpcChainSQL{order: []postgrest.OrderClause{
 		{Column: "age", Desc: true, Nulls: "last"},
@@ -723,8 +707,6 @@ func TestRenderRPCChain_OrderUsesValidatedUnquotedColumns(t *testing.T) {
 	}
 }
 
-// TestRenderRPCChain_OrderPreservesJSONBOperators ensures JSONB operators
-// like ->> are not broken by quote wrapping.
 func TestRenderRPCChain_OrderPreservesJSONBOperators(t *testing.T) {
 	chain := &rpcChainSQL{order: []postgrest.OrderClause{
 		{Column: "data->>key", Desc: false, Nulls: ""},
@@ -738,8 +720,6 @@ func TestRenderRPCChain_OrderPreservesJSONBOperators(t *testing.T) {
 	}
 }
 
-// TestRenderRPCChain_EmptyOrderNoEmission ensures no ORDER BY clause
-// is emitted when order is empty.
 func TestRenderRPCChain_EmptyOrderNoEmission(t *testing.T) {
 	chain := &rpcChainSQL{order: []postgrest.OrderClause{}}
 	sql, args := renderRPCChain(chain, 1)

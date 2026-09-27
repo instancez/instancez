@@ -32,8 +32,7 @@ var (
 	ErrChallengeUsed            = errors.New("challenge already verified")
 	ErrChallengeExpired         = errors.New("challenge expired")
 	ErrChallengeTooManyAttempts = errors.New("too many verification attempts")
-	// ErrChallengeRateLimited is returned when a factor has hit
-	// maxChallengesPerFactor challenge creations within challengeTTL.
+	// ErrChallengeRateLimited means a factor hit its challenge-creation cap.
 	ErrChallengeRateLimited = errors.New("too many challenges created")
 )
 

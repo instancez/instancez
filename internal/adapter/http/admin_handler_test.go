@@ -1220,8 +1220,7 @@ func TestAdminErrShape(t *testing.T) {
 	}
 }
 
-// Regression: service_role lost SELECT on _instancez_migrations, so the list
-// must read through the owner pool.
+// Regression: the migrations list must read through the owner pool.
 func TestHandleListMigrations_ReadsOwnerPool(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	owner := &stubDB{queryFn: func(ctx context.Context, q string, args ...any) ([]map[string]any, error) {

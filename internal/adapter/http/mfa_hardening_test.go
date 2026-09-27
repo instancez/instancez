@@ -270,9 +270,6 @@ func TestGetUser_ExposesFactorsForSupabaseJS(t *testing.T) {
 	}
 }
 
-// TestMFA_ChallengeRateLimited asserts CreateChallenge's rate-limit sentinel
-// maps to 429 over_request_rate_limit, the GoTrue-style code, so a stolen
-// aal1 session can't brute-force TOTP by cycling challenges.
 func TestMFA_ChallengeRateLimited(t *testing.T) {
 	svc := &stubAuthService{
 		createChallengeFn: func(ctx context.Context, factorID, userID string) (string, time.Time, error) {

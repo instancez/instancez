@@ -57,9 +57,7 @@ func parseTransformParams(c *gin.Context) (*transformParams, error) {
 	}, nil
 }
 
-// coverResize crops to the target aspect ratio first, bounded by the source size, then resizes to
-// exactly width x height. imaging.Fill resizes before cropping for sources under 100px on a side,
-// which lets an extreme aspect ratio (e.g. 1xN) blow the intermediate resize up unboundedly.
+// coverResize crops before resizing so an extreme aspect ratio can't blow up the intermediate image.
 func coverResize(img image.Image, width, height int, filter imaging.ResampleFilter) *image.NRGBA {
 	srcBounds := img.Bounds()
 	srcW, srcH := srcBounds.Dx(), srcBounds.Dy()

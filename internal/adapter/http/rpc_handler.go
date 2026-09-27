@@ -395,8 +395,7 @@ func (h *CRUDHandler) resolveRPCTargetTable(fn domain.Function) (domain.Table, b
 	return domain.Table{}, false
 }
 
-// parseRPCChain parses PostgREST-style query params on a SETOF RPC, validating
-// columns against the known table, the declared TABLE(...) shape, or identRe.
+// parseRPCChain parses PostgREST query params on a setof RPC and validates their columns.
 func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames map[string]bool, argIdx int) (*rpcChainSQL, []any, error) {
 	chain := &rpcChainSQL{}
 

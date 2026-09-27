@@ -35,9 +35,7 @@ import (
 //   - ErrSaturated    → 503 Service Unavailable (in-flight cap reached)
 //   - ErrWorkerFailed → 502 Bad Gateway (worker process died / no healthy worker)
 var (
-	// ErrTimeout is returned when a function invocation exceeds its configured
-	// per-request timeout, and its late response is discarded. The worker is
-	// kept unless it stops answering /healthz, in which case it is replaced.
+	// ErrTimeout means an invocation exceeded its timeout and its late response was dropped.
 	ErrTimeout = errors.New("funcs: function invocation timed out")
 	// ErrSaturated is returned when the bounded in-flight gate is full and a new
 	// invocation cannot acquire a slot without blocking.
@@ -683,12 +681,7 @@ func (r *Runtime) Invoke(ctx context.Context, in domain.FunctionRequest) (*domai
 	return &domain.FunctionResponse{Status: resp.StatusCode, Headers: resp.Header, Body: body.Bytes()}, nil
 }
 
-// classifyDoErr maps a client.Do / body-read error to the right typed error and
-// triggers a worker restart on a genuine transport/connection failure.
-//
-// A timeout keeps the worker unless a follow-up /healthz probe fails (a
-// CPU-bound handler); a transport error means the process died, so we mark it
-// unhealthy and restart it.
+// classifyDoErr maps a client.Do error to a typed error and restarts the worker if it died.
 func (r *Runtime) classifyDoErr(callerCtx, reqCtx context.Context, w *worker, err error) error {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):

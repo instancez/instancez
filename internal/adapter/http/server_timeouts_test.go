@@ -129,8 +129,7 @@ func TestAPIDeadline_CutsSlowRequestBody(t *testing.T) {
 	}
 }
 
-// httptest.ResponseRecorder doesn't implement http.Pusher/deadline setters,
-// so ResponseController returns ErrNotSupported; that must not fail the request.
+// ResponseRecorder can't set deadlines, and ErrNotSupported must not fail the request.
 func TestAPIDeadline_HTTPTestRecorderNotSupported(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

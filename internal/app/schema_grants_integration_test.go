@@ -57,8 +57,7 @@ func authTables(t *testing.T, db domain.Database) []string {
 	return out
 }
 
-// assertAuthClosed: anon/authenticated reach storage.objects (RLS-guarded) but no
-// auth.* table, sequence, or migration history.
+// assertAuthClosed checks anon/authenticated reach storage.objects but nothing in auth.
 func assertAuthClosed(t *testing.T, db domain.Database) {
 	t.Helper()
 	type priv struct {
@@ -116,8 +115,6 @@ func TestSchemaGrants_AuthClosedStorageOpen(t *testing.T) {
 	assertAuthClosed(t, db)
 }
 
-// TestSchemaGrants_UpgradeClosesPreviouslyOpenAuth: a DB migrated by an older binary
-// (auth.* granted to anon/authenticated) is closed by the next migration.
 func TestSchemaGrants_UpgradeClosesPreviouslyOpenAuth(t *testing.T) {
 	db := startPostgres(t)
 	ctx := context.Background()
@@ -152,8 +149,6 @@ func TestSchemaGrants_UpgradeClosesPreviouslyOpenAuth(t *testing.T) {
 	assertAuthClosed(t, db)
 }
 
-// TestAuthSchemaClosed_HelpersFKsAndServiceStillWork: closing auth.* must not break
-// auth.uid() in policies, FKs to auth.users, or the auth service's bare-context writes.
 func TestAuthSchemaClosed_HelpersFKsAndServiceStillWork(t *testing.T) {
 	owner, req := dbboot.StartContainer(t)
 	ctx := context.Background()

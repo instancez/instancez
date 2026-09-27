@@ -160,9 +160,7 @@ func ParseEmbedParam(s string) (name, alias string, cols []string, nested []stri
 	return
 }
 
-// validateEmbedBalance rejects an embed spec with unbalanced parentheses.
-// It must run before ParseEmbedParam, which slices on the assumption that
-// any "(" has a matching trailing ")".
+// validateEmbedBalance rejects unbalanced parentheses before ParseEmbedParam slices on them.
 func validateEmbedBalance(raw string) error {
 	if strings.Contains(raw, "(") && !strings.HasSuffix(raw, ")") {
 		return fmt.Errorf("unbalanced parentheses in embed %q", raw)
@@ -173,8 +171,7 @@ func validateEmbedBalance(raw string) error {
 	return nil
 }
 
-// validateEmbedSpec rejects embed columns/aliases that aren't safe to
-// interpolate into the JSON-building SQL the renderer emits.
+// validateEmbedSpec rejects embed columns and aliases unsafe to interpolate.
 func validateEmbedSpec(raw, alias string, cols []string, ref domain.Table) error {
 	if alias != "" && !identRe.MatchString(alias) {
 		return fmt.Errorf("invalid embed alias %q", alias)

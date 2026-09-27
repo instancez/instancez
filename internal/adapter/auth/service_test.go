@@ -77,8 +77,6 @@ func otpRow(attempts int64) map[string]any {
 		"expires_at": time.Now().Add(time.Hour), "token": "longtoken", "code": "123456", "attempts": attempts}
 }
 
-// TestVerifyOTP_NumericCodeAttemptLimit checks a wrong guess spends an attempt
-// in one capped UPDATE and leaves the code alive.
 func TestVerifyOTP_NumericCodeAttemptLimit(t *testing.T) {
 	var spendQ string
 	var spendArgs []any
@@ -130,8 +128,7 @@ func TestVerifyOTP_CorrectCodeOnLastAttemptSucceeds(t *testing.T) {
 	}
 }
 
-// TestVerifyOTP_WrongCodeOnLastAttemptKeepsRow checks a burned code stays in
-// place, since deleting it would reset the resend cooldown.
+// A burned code stays, since deleting it would reset the resend cooldown.
 func TestVerifyOTP_WrongCodeOnLastAttemptKeepsRow(t *testing.T) {
 	deleted := false
 	s := newTestService(&fakeDB{
@@ -522,8 +519,7 @@ func (d *sessionRecordingDB) Query(ctx context.Context, q string, args ...any) (
 	return nil, nil
 }
 
-// Regression: auth_handler.go issued refresh-token and signup-token writes on
-// context.Background(), which the request pool runs as anon.
+// Regression: bare-context writes must run as service_role, not anon.
 func TestService_BareContextRunsAsServiceRole(t *testing.T) {
 	db := &sessionRecordingDB{}
 	svc := newTestService(db)
@@ -568,8 +564,7 @@ func (d *erroringWithRLSDB) WithRLS(ctx context.Context, s domain.Session) (cont
 	return ctx, errWithRLS
 }
 
-// Regression: pin() must fail closed. A WithRLS error must never let a query
-// run under the caller's ambient (unpinned) session.
+// Regression: a WithRLS error must never let a query run unpinned.
 func TestService_PinFailsClosedOnWithRLSError(t *testing.T) {
 	ran := false
 	db := &erroringWithRLSDB{

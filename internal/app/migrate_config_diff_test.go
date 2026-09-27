@@ -1012,8 +1012,7 @@ func TestDiffConfigs_RLSEnabledTransitions(t *testing.T) {
 	}
 }
 
-// _instancez_migrations stores configs written before rls_enabled existed. They
-// decode with RLSEnabled == nil and must be read as "inferred", not as false.
+// Stored configs from before rls_enabled must read as inferred, not false.
 func TestPlanUpdate_LegacyStoredConfigWithoutRLSEnabled(t *testing.T) {
 	legacy := `{"version":1,"tables":{"todos":{"schema":"","fields":[{"name":"id","type":"bigserial"}],"indexes":null,"rls":[{"operations":["select"],"using":"true"}]}}}`
 	var old domain.Config
@@ -1048,8 +1047,7 @@ func TestPlanUpdate_FalseToTrueEnablesAndForces(t *testing.T) {
 	mustNotContain(t, stmts, "DISABLE ROW LEVEL SECURITY")
 }
 
-// A table added in the same migration that turns RLS on must get exactly one
-// ENABLE statement (from the idempotent re-emit pass), not a second from diffNewTables.
+// A new table with RLS on must get exactly one ENABLE statement.
 func TestPlanUpdate_NewTableWithRLSEnabled_NoDuplicateEnable(t *testing.T) {
 	on := true
 	old := &domain.Config{Tables: map[string]domain.Table{}}
