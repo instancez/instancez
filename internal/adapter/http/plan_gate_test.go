@@ -49,8 +49,9 @@ func TestRejectPlan(t *testing.T) {
 			`application/vnd.pgrst.plan+text; for="application/json"; options=;`: 406,
 			"Application/Vnd.Pgrst.Plan+JSON":                                    406,
 			`application/vnd.pgrst.plan; for="text/xml"`:                         406,
-			"application/json":                                                   200,
-			"":                                                                   200,
+			"application/vnd.pgrst.plan+json, application/json":                  406,
+			"application/json": 200,
+			"":                 200,
 		} {
 			ran := false
 			r := gin.New()
@@ -70,5 +71,21 @@ func TestRejectPlan(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestHandleList_PlanWalWithoutAnalyzeIs400(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &CRUDHandler{cfg: &domain.Config{}, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/rest/v1/todos", nil)
+	c.Request.Header.Set("Accept", `application/vnd.pgrst.plan+json; for="application/json"; options=wal|buffers;`)
+	c.Set("is_admin", true)
+	h.handleList("todos", testTable())(c) // db is nil: reaching it would panic
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if w.Code != 400 || body["code"] != "22023" {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
 	}
 }

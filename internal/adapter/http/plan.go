@@ -1,7 +1,9 @@
 package http
 
 import (
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -22,15 +24,15 @@ var planForTypes = map[string]bool{
 	"text/csv": true, "application/geo+json": true, "*/*": true,
 }
 
-// splitParams splits on ';' outside double quotes; mime.ParseMediaType rejects the `options=;` postgrest-js sends.
-func splitParams(s string) []string {
+// splitUnquoted splits on sep outside double quotes; mime.ParseMediaType rejects the `options=;` postgrest-js sends.
+func splitUnquoted(s string, sep rune) []string {
 	var out []string
 	inQ, start := false, 0
 	for i, r := range s {
 		switch {
 		case r == '"':
 			inQ = !inQ
-		case r == ';' && !inQ:
+		case r == sep && !inQ:
 			out = append(out, s[start:i])
 			start = i + 1
 		}
@@ -39,7 +41,7 @@ func splitParams(s string) []string {
 }
 
 func parsePlanAccept(accept string) (planRequest, bool, error) {
-	parts := splitParams(accept)
+	parts := splitUnquoted(accept, ';')
 	var p planRequest
 	switch strings.ToLower(strings.TrimSpace(parts[0])) {
 	case "application/vnd.pgrst.plan", "application/vnd.pgrst.plan+text":
@@ -74,6 +76,23 @@ func parsePlanAccept(accept string) (planRequest, bool, error) {
 	return p, true, nil
 }
 
+func (p planRequest) validate() error {
+	if slices.Contains(p.options, "WAL") && !slices.Contains(p.options, "ANALYZE") {
+		return errors.New("EXPLAIN option WAL requires ANALYZE")
+	}
+	return nil
+}
+
+// hasPlanMediaType reports whether any media range in an Accept list is a plan type.
+func hasPlanMediaType(accept string) bool {
+	for _, mr := range splitUnquoted(accept, ',') {
+		if _, isPlan, _ := parsePlanAccept(mr); isPlan {
+			return true
+		}
+	}
+	return false
+}
+
 func (p planRequest) explainSQL(query string) string {
 	opts := append([]string{"FORMAT " + strings.ToUpper(p.format)}, p.options...)
 	return "EXPLAIN (" + strings.Join(opts, ", ") + ") " + query
@@ -86,7 +105,7 @@ func (p planRequest) contentType() string {
 // rejectPlan refuses plan requests on routes that would otherwise execute writes or RPCs.
 func rejectPlan(c *gin.Context) {
 	accept := c.GetHeader("Accept")
-	if _, isPlan, _ := parsePlanAccept(accept); isPlan {
+	if hasPlanMediaType(accept) {
 		pgJSON(c, 406, "PGRST107", "None of these media types are available: "+accept, "", "")
 		c.Abort()
 	}

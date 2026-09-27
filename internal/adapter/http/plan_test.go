@@ -54,3 +54,28 @@ func TestPlanRequestExplainSQL(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestPlanRequestValidate(t *testing.T) {
+	for opts, ok := range map[string]bool{"": true, "analyze|wal": true, "wal|analyze": true, "buffers": true, "wal": false, "wal|buffers|verbose": false} {
+		p, _, _ := parsePlanAccept("application/vnd.pgrst.plan; options=" + opts)
+		if err := p.validate(); (err == nil) != ok {
+			t.Errorf("options=%q: err=%v", opts, err)
+		}
+	}
+}
+
+func TestHasPlanMediaType(t *testing.T) {
+	for accept, want := range map[string]bool{
+		"application/vnd.pgrst.plan+json, application/json":                                     true,
+		"application/json,Application/Vnd.Pgrst.Plan":                                           true,
+		`application/json;q=0.9, application/vnd.pgrst.plan; for="application/json"; options=;`: true,
+		"application/json, text/csv":                                                            false,
+		`text/plain; x="a, application/vnd.pgrst.plan"`:                                         false,
+		",,": false,
+		"":   false,
+	} {
+		if got := hasPlanMediaType(accept); got != want {
+			t.Errorf("%q: got %v", accept, got)
+		}
+	}
+}

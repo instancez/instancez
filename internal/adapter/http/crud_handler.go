@@ -90,19 +90,19 @@ func (h *CRUDHandler) Mount(root *gin.RouterGroup) {
 		group := rest.Group("/" + name)
 		// JWT not required at HTTP level — anon falls through with
 		// session.Role="anon" and SQL-layer grants + RLS gate access.
-		// Matches Supabase's PostgREST behavior.
-		group.Use(jwtAuth(h.jwtKeys, false))
+		// Matches Supabase's PostgREST behavior. Writes refuse plans before auth.
+		auth := jwtAuth(h.jwtKeys, false)
 
 		list := h.handleList(name, t)
-		group.GET("", list)
+		group.GET("", auth, list)
 		// HEAD reuses the list handler: Gin/net/http will write the status
 		// line and headers (Content-Range, Content-Type) but strip the body
 		// so clients can fetch counts and pagination metadata cheaply.
-		group.HEAD("", list)
-		group.POST("", rejectPlan, h.handleCreate(name, t))
-		group.PUT("", rejectPlan, h.handleUpsert(name, t))
-		group.PATCH("", rejectPlan, h.handleUpdate(name, t))
-		group.DELETE("", rejectPlan, h.handleDelete(name, t))
+		group.HEAD("", auth, list)
+		group.POST("", rejectPlan, auth, h.handleCreate(name, t))
+		group.PUT("", rejectPlan, auth, h.handleUpsert(name, t))
+		group.PATCH("", rejectPlan, auth, h.handleUpdate(name, t))
+		group.DELETE("", rejectPlan, auth, h.handleDelete(name, t))
 	}
 }
 
@@ -122,6 +122,12 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 		if isPlan && (!isAdmin(c) || planErr != nil) {
 			pgJSON(c, 406, "PGRST107", "None of these media types are available: "+accept, "", "")
 			return
+		}
+		if isPlan {
+			if err := plan.validate(); err != nil {
+				pgJSON(c, 400, "22023", err.Error(), "", "")
+				return
+			}
 		}
 
 		// Parse query params

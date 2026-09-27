@@ -210,6 +210,11 @@ func TestHardening_PlanOnlyForServiceRole(t *testing.T) {
 	require.Contains(t, string(raw), "Execution Time")
 	require.Contains(t, string(raw), "Buffers")
 
+	status, _, raw = call(t, "GET", testTS.URL+"/rest/v1/users", "", map[string]string{
+		"Accept": `application/vnd.pgrst.plan+text; for="application/json"; options=wal;`}, false)
+	require.Equal(t, 400, status, "%s", raw)
+	require.Contains(t, string(raw), "22023")
+
 	status, _, _ = call(t, "GET", testTS.URL+"/rest/v1/users", "", map[string]string{"Accept": `application/vnd.pgrst.plan; for="text/xml"`}, false)
 	require.Equal(t, 406, status)
 	status, _, _ = call(t, "GET", testTS.URL+"/rest/v1/users", "", map[string]string{"Accept": "Application/Vnd.Pgrst.Plan"}, true)
@@ -249,6 +254,25 @@ func TestHardening_PlanRefusedOnWritesAndRPC(t *testing.T) {
 			status, _, raw := call(t, "POST", testTS.URL+"/rest/v1/rpc/sleep_for", `{"secs":2}`, plan, anon)
 			require.Equal(t, 406, status, "%s", raw)
 			require.Less(t, time.Since(start), time.Second)
+		}
+	}
+	// A malformed token or an Accept list that only mentions a plan must still be refused before auth or SQL.
+	for _, h := range []map[string]string{
+		{"Accept": "application/vnd.pgrst.plan+json", "Authorization": "Bearer not.a.jwt"},
+		{"Accept": "application/vnd.pgrst.plan+json, application/json", "Prefer": "return=representation"},
+		{"Accept": "application/json, Application/Vnd.Pgrst.Plan", "Prefer": "return=representation"},
+	} {
+		anon := h["Authorization"] != "" // the secret apikey would skip token checks
+		for _, r := range []struct{ method, path, body string }{
+			{"POST", "/rest/v1/channels", `{"slug":"planned"}`},
+			{"PUT", "/rest/v1/channels?id=eq.1", `{"id":1,"slug":"planned"}`},
+			{"PATCH", "/rest/v1/channels?id=eq.1", `{"slug":"planned"}`},
+			{"DELETE", "/rest/v1/channels?id=eq.1", ""},
+			{"POST", "/rest/v1/rpc/greet", `{}`},
+		} {
+			status, _, raw := call(t, r.method, testTS.URL+r.path, r.body, h, anon)
+			require.Equal(t, 406, status, "%s %s %v: %s", r.method, r.path, h, raw)
+			require.Contains(t, string(raw), "PGRST107")
 		}
 	}
 	require.Equal(t, before, channels())
