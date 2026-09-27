@@ -18,6 +18,21 @@ func TestValidateYAML_InvalidYAMLReturnsProblem(t *testing.T) {
 	}
 }
 
+func TestWarningsYAML(t *testing.T) {
+	unset := []byte("version: 1\nproject:\n  name: demo\ntables:\n  todos:\n    fields:\n      - name: id\n        type: bigserial\n        primary_key: true\n")
+	ws := WarningsYAML(unset)
+	if len(ws) != 1 || ws[0].Path != "tables.todos.rls_enabled" {
+		t.Fatalf("want one rls_enabled warning, got %+v", ws)
+	}
+	explicit := []byte(strings.Replace(string(unset), "    fields:", "    rls_enabled: true\n    fields:", 1))
+	if ws := WarningsYAML(explicit); len(ws) != 0 {
+		t.Fatalf("explicit rls_enabled: want no warnings, got %+v", ws)
+	}
+	if ws := WarningsYAML([]byte("version: 1\n  bad: : :")); ws != nil {
+		t.Fatalf("unparseable YAML: want nil (ValidateYAML reports it), got %+v", ws)
+	}
+}
+
 func TestValidateYAML_SemanticErrorMapped(t *testing.T) {
 	// A config that parses but violates a semantic rule must yield a Problem with a Path.
 	yamlSrc := []byte("version: 1\nproviders:\n  storage:\n    type: badtype\n")

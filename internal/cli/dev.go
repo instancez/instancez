@@ -95,6 +95,7 @@ func runDev(opts devOptions) error {
 	if errs != nil {
 		return printPrettyErrors(errs)
 	}
+	printWarnings(os.Stderr, config.Warnings(cfg))
 
 	// Build a Source handle for the engine + http deps.
 	// In dev mode we also watch .development.env so changes to env vars are

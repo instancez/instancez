@@ -31,6 +31,19 @@ func ValidateYAML(data []byte) []Problem {
 	return probs
 }
 
+// WarningsYAML returns non-blocking findings, or nil on a parse failure (ValidateYAML reports those).
+func WarningsYAML(data []byte) []Problem {
+	cfg, err := config.ParseBytesLenient(data, "instancez.yaml")
+	if err != nil {
+		return nil
+	}
+	var probs []Problem
+	for _, w := range config.Warnings(cfg) {
+		probs = append(probs, Problem{Path: w.Path, Message: w.Message, Suggestion: w.Suggestion})
+	}
+	return probs
+}
+
 // ScanEnvRefs returns the unique names of all ${VAR} references in data,
 // extracted with instancez's canonical interpolation pattern.
 func ScanEnvRefs(data []byte) []string {

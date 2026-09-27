@@ -1,15 +1,18 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/instancez/instancez/internal/cloud"
+	"github.com/instancez/instancez/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -175,4 +178,37 @@ func TestPlanAgainstProjectSendsWireBranch(t *testing.T) {
 
 	require.NoError(t, planAgainstProject(context.Background(), yamlPath, false, "explicit-id"))
 	assert.Equal(t, "production", gotBranch)
+}
+
+func TestPrintWarnings(t *testing.T) {
+	var buf bytes.Buffer
+	printWarnings(&buf, nil)
+	if buf.Len() != 0 {
+		t.Fatalf("nil warnings printed %q", buf.String())
+	}
+	printWarnings(&buf, domain.ValidationErrors{{Path: "tables.todos.rls_enabled", Message: "m", Suggestion: "s"}})
+	out := buf.String()
+	for _, want := range []string{"! Warning: tables.todos.rls_enabled", "m", "Suggestion: s"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// Warnings must never fail validate; CI pipelines gate on its exit code.
+func TestRunValidateWarningsDoNotFail(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "instancez.yaml")
+	src := "version: 1\nproject:\n  name: demo\ntables:\n  todos:\n    fields:\n      - name: id\n        type: bigserial\n        primary_key: true\n"
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var errOut bytes.Buffer
+	if err := runValidate(context.Background(), &errOut, path, false, ""); err != nil {
+		t.Fatalf("runValidate with only warnings returned %v", err)
+	}
+	if !strings.Contains(errOut.String(), "! Warning: tables.todos.rls_enabled") {
+		t.Fatalf("expected runValidate to print the rls_enabled warning, got:\n%s", errOut.String())
+	}
 }
