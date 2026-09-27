@@ -21,13 +21,14 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - Storage: a legacy `/api/storage` `GET` on a public bucket with a present but invalid `Authorization: Bearer` token now returns 401 instead of falling back to anonymous access.
 - Storage: `createSignedUrls` with an empty path list or more than 1000 paths now returns 400.
 - Storage: `/storage/v1/object/info/authenticated/<bucket>` with no path now returns 400 (was 404).
+- **Breaking:** a filter on a non-`!inner` embed (`users.username=eq.x`) no longer drops parent rows. Like PostgREST, it only filters the embed: an unmatched to-one embed is `null`, a to-many embed is `[]`, and `count` follows. Use `!inner` to filter the parents.
 
 ### Fixed
 
 - supabase-js `linkIdentity()` works: `/user/identities/authorize` now accepts GET, which supabase-js sends, as well as POST.
 - supabase-js `error.code` now returns the auth error code (`user_banned`, `insufficient_aal`, …). `/auth/v1` error bodies carry GoTrue's `error_code` field next to `code`; REST errors are unchanged.
 - `verifyOtp({ type: 'magiclink' })` now marks the email confirmed, as GoTrue does, so magic-link users can later link a Google login by email.
-- `count=exact` / `planned` / `estimated` now count what the query actually returns. They include `!inner` and belongs-to embed filters, work on non-public schemas, run in the same transaction as the rows, and return an error instead of silently dropping the count.
+- `count=exact` / `planned` / `estimated` now count what the query actually returns. They include `!inner` embeds and `!inner` embed filters, work on non-public schemas, run in the same transaction as the rows, and return an error instead of silently dropping the count.
 - Upgrading instancez with an unchanged `instancez.yaml` now adds new `auth.*` columns and indexes at boot. Before, they only reached a database when the config changed. This also adds the missing `attempts` column to `auth.one_time_tokens` on databases that enabled email auth after first boot.
 - A code function stuck in a CPU-bound loop no longer permanently takes out a worker. After a timeout the worker is health-checked and replaced if unresponsive. Function responses over 6 MB now return 502 instead of being buffered without limit.
 - Reloading functions (dev hot reload, `serve --watch` bundle change) no longer kills calls in flight. The old runtime drains for up to 30s before its workers stop.
@@ -38,6 +39,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - Storage: `createSignedUploadUrl`'s response `url` now includes `?token=`, so `@supabase/supabase-js`'s `uploadToSignedUrl()` and `createSignedUploadUrl()` work end-to-end (storage-js reads the token from the URL).
 - Storage: `bucket.info()` now works, served at `/storage/v1/object/info/<bucket>/<path>`.
 - Storage: an upload commit failure no longer deletes the object's bytes; on update/upsert the row already pointed at the key that was just overwritten, so the old delete destroyed live data whether or not the commit actually failed.
+- A column-list to-one embed (`author(name)`) with no matching row is now `null` instead of `{"name": null}`.
 
 ### Security
 

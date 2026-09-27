@@ -689,6 +689,35 @@ await step('rest: count exact honors !inner embeds', async () => {
   }
 })
 
+await step('rest: non-inner embed filters keep parent rows', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { data: toOne, count: c1, error: e1 } = await client
+    .from('comments').select('body, todos(title)', { count: 'exact' })
+    .eq('user_id', userId).eq('todos.title', '__no_such_title__')
+  if (e1) throw e1
+  assert(toOne.length >= 1, 'comments kept despite the embed filter')
+  assert(toOne.every((r) => r.todos === null), `unmatched to-one embed must be null: ${JSON.stringify(toOne)}`)
+  assertEq(c1, toOne.length, 'count matches kept rows')
+
+  const { data: todo, error: te } = await client.from('todos').select('title').eq('id', todoId).single()
+  if (te) throw te
+  const { data: hit, error: e3 } = await client
+    .from('comments').select('body, todos(title)').eq('todo_id', todoId).eq('todos.title', todo.title)
+  if (e3) throw e3
+  assert(hit.length >= 1 && hit.every((r) => r.todos?.title === todo.title), `matched to-one embed kept: ${JSON.stringify(hit)}`)
+
+  const { data: toMany, count: c2, error: e2 } = await client
+    .from('todos').select('id, comments(body)', { count: 'exact' })
+    .eq('user_id', userId).eq('comments.body', '__no_such_body__')
+  if (e2) throw e2
+  assert(toMany.length >= 1, 'todos kept despite the embed filter')
+  assert(toMany.every((t) => Array.isArray(t.comments) && t.comments.length === 0), 'to-many embed filtered to []')
+  assertEq(c2, toMany.length, 'count matches kept rows')
+})
+
 await step('rest: nested embed — has-many with nested belongs-to', async () => {
   // todos → comments(body, todos(title))
   // The nested belongs-to back to todos exercises the parent-of-child embed

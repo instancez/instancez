@@ -219,28 +219,84 @@ func TestBuildSelectQuery_HasManyEmbedWithFilterOrderLimit(t *testing.T) {
 	}
 }
 
-func TestBuildSelectQuery_BelongsToFilterGoesToOuterWhere(t *testing.T) {
+func TestBuildSelectQuery_BelongsToFilterGoesToJoinOn(t *testing.T) {
 	tables := postsAuthorTables()
 	qp := &QueryParams{
 		Select: []string{"*", "author(*)"},
 		Embeds: []Embed{{
-			Name:      "author",
-			FKColumn:  "author_id",
-			RefTable:  "authors",
-			RefColumn: "id",
-			Where:     postgrest.AndLeaves(postgrest.Filter{Column: "name", Operator: "eq", Value: "bob"}),
+			Name: "author", FKColumn: "author_id", RefTable: "authors", RefColumn: "id",
+			Where: postgrest.AndLeaves(postgrest.Filter{Column: "name", Operator: "eq", Value: "bob"}),
 		}},
 		Limit: 20,
 	}
 	sql, args := buildSelectQuery("posts", qp, tables["posts"])
-	if !strings.Contains(sql, "LEFT JOIN authors AS _emb_author") {
-		t.Errorf("missing join: %s", sql)
+	if !strings.Contains(sql, "LEFT JOIN authors AS _emb_author ON posts.author_id = _emb_author.id AND _emb_author.name = $1") {
+		t.Errorf("filter must be in the LEFT JOIN ON clause: %s", sql)
 	}
-	if !strings.Contains(sql, "WHERE _emb_author.name = $1") {
-		t.Errorf("expected belongs-to filter in outer WHERE, got: %s", sql)
+	if strings.Contains(sql, " WHERE ") {
+		t.Errorf("non-inner to-one filter must not reach the outer WHERE: %s", sql)
 	}
 	if len(args) != 1 || args[0] != "bob" {
 		t.Errorf("args = %v", args)
+	}
+}
+
+func TestBuildSelectQuery_InnerBelongsToFilterInJoinOn(t *testing.T) {
+	tables := postsAuthorTables()
+	qp := &QueryParams{
+		Select: []string{"*", "author(*)"},
+		Embeds: []Embed{{
+			Name: "author", FKColumn: "author_id", RefTable: "authors", RefColumn: "id", Inner: true,
+			Where: postgrest.AndLeaves(postgrest.Filter{Column: "name", Operator: "eq", Value: "bob"}),
+		}},
+		Limit: 20,
+	}
+	sql, _ := buildSelectQuery("posts", qp, tables["posts"])
+	if !strings.Contains(sql, "INNER JOIN authors AS _emb_author ON posts.author_id = _emb_author.id AND _emb_author.name = $1") {
+		t.Errorf("inner filter must be in INNER JOIN ON: %s", sql)
+	}
+}
+
+func TestBuildSelectQuery_ToOneColumnsNullWhenNoMatch(t *testing.T) {
+	tables := postsAuthorTables()
+	qp := &QueryParams{
+		Select: []string{"*", "author(name)"},
+		Embeds: []Embed{{Name: "author", Columns: []string{"name"}, FKColumn: "author_id", RefTable: "authors", RefColumn: "id"}},
+		Limit:  -1,
+	}
+	sql, _ := buildSelectQuery("posts", qp, tables["posts"])
+	want := "CASE WHEN _emb_author.id IS NULL THEN NULL ELSE json_build_object('name', _emb_author.name) END AS author"
+	if !strings.Contains(sql, want) {
+		t.Errorf("missing null guard:\n got %s\nwant %s", sql, want)
+	}
+}
+
+func TestBuildSelectQuery_ToOneWithChildrenNullWhenNoMatch(t *testing.T) {
+	tables := postsAuthorTables()
+	qp := &QueryParams{
+		Select: []string{"*", "author(name,posts(id))"},
+		Embeds: []Embed{{
+			Name: "author", Columns: []string{"name"}, FKColumn: "author_id", RefTable: "authors", RefColumn: "id",
+			Children: []Embed{{Name: "posts", Columns: []string{"id"}, FKColumn: "author_id", RefTable: "posts", RefColumn: "id", IsReverse: true}},
+		}},
+		Limit: -1,
+	}
+	sql, _ := buildSelectQuery("posts", qp, tables["posts"])
+	if !strings.Contains(sql, "CASE WHEN _emb_author.id IS NULL THEN NULL ELSE json_build_object('name', _emb_author.name, 'posts', ") {
+		t.Errorf("nested to-one embed missing null guard: %s", sql)
+	}
+}
+
+func TestBuildSelectQuery_ToOneStarStaysRowToJSON(t *testing.T) {
+	tables := postsAuthorTables()
+	qp := &QueryParams{
+		Select: []string{"*", "author(*)"},
+		Embeds: []Embed{{Name: "author", FKColumn: "author_id", RefTable: "authors", RefColumn: "id"}},
+		Limit:  -1,
+	}
+	sql, _ := buildSelectQuery("posts", qp, tables["posts"])
+	if !strings.Contains(sql, "row_to_json(_emb_author.*) AS author") || strings.Contains(sql, "CASE WHEN") {
+		t.Errorf("row_to_json is already null on a miss and needs no guard: %s", sql)
 	}
 }
 

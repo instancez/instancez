@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -147,11 +146,26 @@ func TestHardening_CountMatchesRows(t *testing.T) {
 		require.Len(t, rowsOf(t, raw), c.wantRows, c.path)
 		require.Equal(t, c.wantRange, hdr.Get("Content-Range"), c.path)
 	}
-	// Known builder bug: a non-inner to-one embed filter drops parent rows, so only check count == rows.
+	// Non-inner to-one filter nulls the embed and keeps every parent row.
 	status, hdr, raw := call(t, "GET", testTS.URL+"/rest/v1/messages?select=id,users(username)&users.username=eq.kiwicopple", "", exact, false)
 	require.Equal(t, 200, status, "%s", raw)
-	cr := hdr.Get("Content-Range")
-	require.Equal(t, strconv.Itoa(len(rowsOf(t, raw))), cr[strings.LastIndex(cr, "/")+1:], cr)
+	rows := rowsOf(t, raw)
+	require.Len(t, rows, 2)
+	require.Equal(t, "0-1/2", hdr.Get("Content-Range"))
+	for _, r := range rows {
+		require.Contains(t, r, "users")
+		require.Nil(t, r["users"], "unmatched to-one embed must be null: %v", r)
+	}
+	_, _, raw = call(t, "GET", testTS.URL+"/rest/v1/messages?select=id,users(username)&users.username=eq.supabot", "", exact, false)
+	for _, r := range rowsOf(t, raw) {
+		require.Equal(t, map[string]any{"username": "supabot"}, r["users"])
+	}
+	status, hdr, raw = call(t, "GET", testTS.URL+"/rest/v1/users?select=username,messages(id)&messages.id=eq.-1&username=eq.supabot", "", exact, false)
+	require.Equal(t, 200, status, "%s", raw)
+	rows = rowsOf(t, raw)
+	require.Len(t, rows, 1)
+	require.Equal(t, []any{}, rows[0]["messages"])
+	require.Equal(t, "0-0/1", hdr.Get("Content-Range"))
 
 	_, hdr, _ = call(t, "GET", testTS.URL+"/rest/v1/users?select=username,messages!inner(id)", "", map[string]string{"Prefer": "count=planned"}, false)
 	require.Regexp(t, `^0-0/\d+$`, hdr.Get("Content-Range"))

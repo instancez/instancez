@@ -722,8 +722,8 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 				for _, c := range emb.Columns {
 					embCols = append(embCols, fmt.Sprintf("'%s', %s.%s", c, alias, c))
 				}
-				embedSelectParts = append(embedSelectParts,
-					fmt.Sprintf("json_build_object(%s) AS %s", strings.Join(embCols, ", "), emb.Name))
+				obj := postgrest.NullIfNoMatch(alias, emb.RefColumn, fmt.Sprintf("json_build_object(%s)", strings.Join(embCols, ", ")))
+				embedSelectParts = append(embedSelectParts, obj+" AS "+emb.Name)
 			}
 		}
 	}

@@ -9,8 +9,7 @@ import (
 	"github.com/instancez/instancez/internal/domain"
 )
 
-// Gap 1: belongs-to embed filter + outer WHERE — verify $N indices chain
-// across the two different code paths (alias rewrite vs direct emission).
+// Gap 1: belongs-to embed filter in JOIN ON binds before the outer WHERE.
 func TestBuildSelectQuery_BelongsToFilterAndOuterWhere_ArgOrdering(t *testing.T) {
 	tables := postsAuthorTables()
 	qp := &QueryParams{
@@ -26,23 +25,13 @@ func TestBuildSelectQuery_BelongsToFilterAndOuterWhere_ArgOrdering(t *testing.T)
 		Limit: 20,
 	}
 	sql, args := buildSelectQuery("posts", qp, tables["posts"])
-	// Belongs-to filter args are collected first (during JOIN emission),
-	// outer WHERE args come second. So _emb_author.name should bind $1 and
-	// status should bind $2.
-	if !strings.Contains(sql, "_emb_author.name = $1") {
-		t.Errorf("expected belongs-to filter at $1, got: %s", sql)
-	}
-	if !strings.Contains(sql, "status = $2") {
-		t.Errorf("expected outer filter at $2, got: %s", sql)
-	}
-	// WHERE clause must contain both, joined by AND (order-independent).
-	if !strings.Contains(sql, " WHERE ") {
-		t.Fatalf("missing WHERE: %s", sql)
-	}
+	onIdx := strings.Index(sql, " ON ")
 	whereIdx := strings.Index(sql, " WHERE ")
-	whereClause := sql[whereIdx:]
-	if !strings.Contains(whereClause, "status = $2") || !strings.Contains(whereClause, "_emb_author.name = $1") {
-		t.Errorf("WHERE should contain both clauses: %s", whereClause)
+	if onIdx < 0 || whereIdx < 0 || !strings.Contains(sql[onIdx:whereIdx], "_emb_author.name = $1") {
+		t.Fatalf("belongs-to filter must be in JOIN ON at $1: %s", sql)
+	}
+	if !strings.Contains(sql[whereIdx:], "posts.status = $2") || strings.Contains(sql[whereIdx:], "_emb_author") {
+		t.Errorf("outer WHERE must hold only the parent filter at $2: %s", sql)
 	}
 	if len(args) != 2 || args[0] != "bob" || args[1] != "published" {
 		t.Errorf("args = %v", args)

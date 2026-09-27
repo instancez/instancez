@@ -583,6 +583,9 @@ func TestWrapRPCCallForChain_BelongsToWithColumns(t *testing.T) {
 	if !strings.Contains(got, "'id', _emb_author.id") {
 		t.Errorf("missing column projection: %s", got)
 	}
+	if !strings.Contains(got, "CASE WHEN _emb_author.id IS NULL THEN NULL ELSE json_build_object(") {
+		t.Errorf("unmatched to-one embed must be null, not an object of nulls: %s", got)
+	}
 }
 
 func TestParseRPCChain_UnknownSetofRejectsUnsafeIdentifiers(t *testing.T) {

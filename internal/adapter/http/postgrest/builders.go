@@ -49,6 +49,11 @@ func ParseOrderValue(val string, table domain.Table) ([]OrderClause, error) {
 	return ParseOrderValueWith(val, func(col string) error { return ValidateColumn(table, col) })
 }
 
+// NullIfNoMatch makes a to-one embed JSON null when its LEFT JOIN found no row.
+func NullIfNoMatch(alias, refCol, expr string) string {
+	return fmt.Sprintf("CASE WHEN %s.%s IS NULL THEN NULL ELSE %s END", alias, refCol, expr)
+}
+
 // HasBelongsToJoin reports whether any embed will produce a JOIN on the
 // outer FROM clause.
 func HasBelongsToJoin(embeds []Embed) bool {
@@ -432,7 +437,6 @@ func BuildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 
 	var allArgs []any
 	argIdx := 1
-	var belongsToWhere []string
 
 	for _, emb := range qp.Embeds {
 		alias := "_emb_" + emb.OutputKey()
@@ -513,7 +517,7 @@ func BuildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 			rowExpr, rowArgs, nextIdx := BuildEmbedRowExpr(emb, alias, allTables, argIdx)
 			allArgs = append(allArgs, rowArgs...)
 			argIdx = nextIdx
-			selectParts = append(selectParts, fmt.Sprintf("%s AS %s", rowExpr, emb.OutputKey()))
+			selectParts = append(selectParts, fmt.Sprintf("%s AS %s", NullIfNoMatch(alias, emb.RefColumn, rowExpr), emb.OutputKey()))
 		} else {
 			if len(emb.Columns) == 0 {
 				selectParts = append(selectParts,
@@ -523,8 +527,8 @@ func BuildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 				for _, c := range emb.Columns {
 					embCols = append(embCols, fmt.Sprintf("'%s', %s.%s", c, alias, c))
 				}
-				selectParts = append(selectParts,
-					fmt.Sprintf("json_build_object(%s) AS %s", strings.Join(embCols, ", "), emb.OutputKey()))
+				obj := NullIfNoMatch(alias, emb.RefColumn, fmt.Sprintf("json_build_object(%s)", strings.Join(embCols, ", ")))
+				selectParts = append(selectParts, obj+" AS "+emb.OutputKey())
 			}
 		}
 	}
@@ -540,16 +544,15 @@ func BuildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 		if emb.Inner {
 			joinKind = "INNER JOIN"
 		}
-		sql += fmt.Sprintf(" %s %s AS %s ON %s.%s = %s.%s",
-			joinKind, emb.RefTable, alias, tableName, emb.FKColumn, alias, emb.RefColumn)
+		on := fmt.Sprintf("%s.%s = %s.%s", tableName, emb.FKColumn, alias, emb.RefColumn)
 		if emb.Where != nil {
-			clauseSQL, clauseArgs, next := AliasWhereColumns(emb.Where, alias).BuildSQL(argIdx)
-			if clauseSQL != "" {
-				belongsToWhere = append(belongsToWhere, clauseSQL)
+			if clauseSQL, clauseArgs, next := AliasWhereColumns(emb.Where, alias).BuildSQL(argIdx); clauseSQL != "" {
+				on += " AND " + clauseSQL
 				allArgs = append(allArgs, clauseArgs...)
 				argIdx = next
 			}
 		}
+		sql += fmt.Sprintf(" %s %s AS %s ON %s", joinKind, emb.RefTable, alias, on)
 	}
 
 	parentWhere := qp.Where
@@ -565,7 +568,6 @@ func BuildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 	if whereSQL != "" {
 		whereParts = append(whereParts, whereSQL)
 	}
-	whereParts = append(whereParts, belongsToWhere...)
 
 	for _, emb := range qp.Embeds {
 		if !emb.IsReverse || !emb.Inner {

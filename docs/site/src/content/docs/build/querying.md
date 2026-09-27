@@ -231,7 +231,7 @@ Count modes:
 
 | Mode | Behavior |
 |------|----------|
-| `exact` | `COUNT(*)` over the same joins and filters as the rows (`!inner` embeds, embed filters, `Accept-Profile` schema), in the same transaction. |
+| `exact` | `COUNT(*)` over the same joins and filters as the rows (`!inner` embeds, `!inner` embed filters, `Accept-Profile` schema), in the same transaction. |
 | `planned` | Uses the Postgres query planner estimate |
 | `estimated` | `pg_class.reltuples` for an unfiltered read of a plain table; the planner estimate otherwise. |
 
@@ -268,6 +268,8 @@ By default, embeds use a LEFT join — rows with no matching related record are 
 // GET /rest/v1/todos?select=title,comments!inner(body)
 ```
 
+A filter on a non-`!inner` embed (`?select=*,author(name)&author.name=eq.bob`) only filters the embedded rows. A to-one embed that doesn't match becomes `null` and a to-many embed becomes `[]`, and every parent row is still returned. Add `!inner` to filter the parents.
+
 ### Alias
 
 Rename the embed key in the response:
@@ -298,7 +300,7 @@ GET /rest/v1/comments?select=body,...todos(title)
 
 ### Embed-scoped filters, order, and limit
 
-Filter, order, or paginate within a has-many embed using `<embed>.` prefixes:
+Filter, order, or paginate within an embed using `<embed>.` prefixes:
 
 ```
 GET /rest/v1/todos?select=title,comments(body)&comments.body=like.%important%&comments.order=created_at.desc&comments.limit=5
