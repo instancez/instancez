@@ -2239,35 +2239,21 @@ await step('storage: createSignedUrls returns batch URLs', async () => {
 // --- Signed upload URL + uploadToSignedUrl ---
 
 await step('storage: createSignedUploadUrl + uploadToSignedUrl flow', async () => {
-  // 1. Get signed upload token
-  const signResp = await fetch(`${URL}/storage/v1/object/upload/sign/avatars/signed-upload.txt`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      apikey: PUBLISHABLE_KEY,
-      'Content-Type': 'application/json',
-    },
-    body: '{}',
-  })
-  assert(signResp.ok, `createSignedUploadUrl failed: ${signResp.status}`)
-  const signData = await signResp.json()
-  assert(signData.token, 'token present')
+  const bucket = storageClient().storage.from('avatars')
+  const { data: signed, error } = await bucket.createSignedUploadUrl('signed-upload.txt')
+  if (error) throw error
+  assert(signed.token, 'token present')
+  assertEq(signed.path, 'signed-upload.txt')
+  const u = new NodeURL(signed.signedUrl)
+  assertEq(u.pathname, new NodeURL(`${URL}/storage/v1/object/upload/sign/avatars/signed-upload.txt`).pathname, 'signedUrl points at the upload route')
+  assertEq(u.searchParams.get('token'), signed.token, 'signedUrl carries the token')
 
-  // 2. Upload to signed URL
-  const upResp = await fetch(`${URL}/storage/v1/object/upload/sign/avatars/signed-upload.txt?token=${signData.token}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'text/plain' },
-    body: 'signed upload content',
-  })
-  assert(upResp.ok, `uploadToSignedUrl failed: ${upResp.status}`)
+  const up = await bucket.uploadToSignedUrl(signed.path, signed.token, 'signed upload content', { contentType: 'text/plain' })
+  if (up.error) throw up.error
 
-  // 3. Verify the upload
-  const dl = await fetch(`${URL}/storage/v1/object/authenticated/avatars/signed-upload.txt`, {
-    headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY },
-  })
-  assert(dl.ok, 'download signed upload')
-  const body = await dl.text()
-  assertEq(body, 'signed upload content')
+  const { data: file, error: dlErr } = await bucket.download('signed-upload.txt')
+  if (dlErr) throw dlErr
+  assertEq(await file.text(), 'signed upload content')
 })
 
 await step('storage: uploadToSignedUrl rejects bad token', async () => {
@@ -2279,15 +2265,10 @@ await step('storage: uploadToSignedUrl rejects bad token', async () => {
   assertEq(resp.status, 400, 'bad token rejected')
 })
 
-// Mints via fetch: supabase-js createSignedUploadUrl expects a ?token= in the returned url, which we don't emit yet.
 const mintUploadToken = async (bucket, path) => {
-  const resp = await fetch(`${URL}/storage/v1/object/upload/sign/${bucket}/${path}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY, 'Content-Type': 'application/json' },
-    body: '{}',
-  })
-  assert(resp.ok, `mint failed: ${resp.status}`)
-  return (await resp.json()).token
+  const { data, error } = await storageClient().storage.from(bucket).createSignedUploadUrl(path)
+  if (error) throw error
+  return data.token
 }
 
 await step('storage: uploadToSignedUrl with a Blob stores the file, not the multipart framing', async () => {

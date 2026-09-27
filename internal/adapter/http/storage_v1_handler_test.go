@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"net/url"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -477,6 +478,37 @@ func TestCreateSignedUploadURL_AllowedMintsTokenAndRollsBack(t *testing.T) {
 	}
 	if committed {
 		t.Errorf("the permission-probe transaction must never be committed")
+	}
+}
+
+// supabase-js parses the token out of `url` relative to its /storage/v1 base.
+func TestCreateSignedUploadURL_URLCarriesToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tx := &stubTx{execFn: func(ctx context.Context, q string, args ...any) (int64, error) { return 1, nil }}
+	db := &stubDB{beginFn: func(ctx context.Context) (domain.Tx, error) { return tx, nil }}
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
+	h.jwtKeys = stubKeys(t)
+	r := gin.New()
+	r.POST("/storage/v1/object/upload/sign/:bucket/*path", func(c *gin.Context) {
+		setTestSession(c, domain.Session{Role: "authenticated", UserID: "11111111-1111-1111-1111-111111111111", IsAuthenticated: true})
+		h.createSignedUploadURL(c)
+	})
+
+	for _, objPath := range []string{"photo.jpg", "dir/sub/a b.txt", "q?x=1#frag.txt", "caf\u00e9/\u65e5\u672c.txt", "100%.txt"} {
+		w := httptest.NewRecorder()
+		target := (&url.URL{Path: "/storage/v1/object/upload/sign/avatars/" + objPath}).EscapedPath()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, target, nil))
+		require.Equal(t, 200, w.Code, "%s: %s", objPath, w.Body.String())
+
+		var resp struct{ URL, Token, Path string }
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		require.NotEmpty(t, resp.Token, objPath)
+		u, err := url.Parse("http://host/storage/v1" + resp.URL)
+		require.NoError(t, err, objPath)
+		assert.Equal(t, resp.Token, u.Query().Get("token"), objPath)
+		assert.Equal(t, "/storage/v1/object/upload/sign/avatars/"+objPath, u.Path, objPath)
+		assert.Empty(t, u.Fragment, objPath)
+		assert.Equal(t, objPath, resp.Path, objPath)
 	}
 }
 

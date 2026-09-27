@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"strconv"
@@ -1194,7 +1195,10 @@ func (h *StorageV1Handler) createSignedUploadURL(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{
-		"url":   fmt.Sprintf("/storage/v1/object/upload/sign/%s/%s", bucketName, objPath),
+		"url": (&url.URL{
+			Path:     "/object/upload/sign/" + bucketName + "/" + objPath,
+			RawQuery: url.Values{"token": {token}}.Encode(),
+		}).String(),
 		"token": token,
 		"path":  objPath,
 	})
