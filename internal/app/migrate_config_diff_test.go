@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -971,5 +972,94 @@ func TestDiffNewColumns_EscapesEnumAndPattern(t *testing.T) {
 	}
 	if !strings.Contains(joined, "~ 'it''s'") {
 		t.Errorf("pattern not escaped:\n%s", joined)
+	}
+}
+
+func TestDiffConfigs_RLSEnabledTransitions(t *testing.T) {
+	on, off := true, false
+	pol := []domain.RLSPolicy{{Operations: []string{"select"}, Using: "true"}}
+	cfg := func(enabled *bool, rls []domain.RLSPolicy) *domain.Config {
+		return &domain.Config{Tables: map[string]domain.Table{"todos": {
+			Fields:     []domain.Field{{Name: "id", Type: "bigserial"}},
+			RLSEnabled: enabled,
+			RLS:        rls,
+		}}}
+	}
+	cases := []struct {
+		name     string
+		old, new *domain.Config
+		disable  bool
+	}{
+		{"true -> false disables", cfg(&on, nil), cfg(&off, nil), true},
+		{"true+policies -> false disables", cfg(&on, pol), cfg(&off, nil), true},
+		{"true: removing last policy keeps RLS", cfg(&on, pol), cfg(&on, nil), false},
+		{"false -> true never disables", cfg(&off, nil), cfg(&on, nil), false},
+		{"false -> false is a no-op", cfg(&off, nil), cfg(&off, nil), false},
+		{"legacy inferred-on -> explicit true keeps RLS", cfg(nil, pol), cfg(&on, nil), false},
+		{"legacy inferred-on -> explicit false disables", cfg(nil, pol), cfg(&off, nil), true},
+		{"legacy inferred-on -> inferred-off disables (old behavior)", cfg(nil, pol), cfg(nil, nil), true},
+		{"legacy inferred-off -> explicit false is a no-op", cfg(nil, nil), cfg(&off, nil), false},
+		{"explicit true -> unset with no policies disables", cfg(&on, nil), cfg(nil, nil), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			joined := strings.Join(diffConfigs(tc.old, tc.new).Removals, "\n")
+			got := strings.Contains(joined, "ALTER TABLE todos DISABLE ROW LEVEL SECURITY;")
+			if got != tc.disable {
+				t.Fatalf("DISABLE emitted = %v, want %v\n%s", got, tc.disable, joined)
+			}
+		})
+	}
+}
+
+// _instancez_migrations stores configs written before rls_enabled existed. They
+// decode with RLSEnabled == nil and must be read as "inferred", not as false.
+func TestPlanUpdate_LegacyStoredConfigWithoutRLSEnabled(t *testing.T) {
+	legacy := `{"version":1,"tables":{"todos":{"schema":"","fields":[{"name":"id","type":"bigserial"}],"indexes":null,"rls":[{"operations":["select"],"using":"true"}]}}}`
+	var old domain.Config
+	if err := json.Unmarshal([]byte(legacy), &old); err != nil {
+		t.Fatal(err)
+	}
+	if old.Tables["todos"].RLSEnabled != nil {
+		t.Fatal("legacy JSON must decode to nil RLSEnabled")
+	}
+	on := true
+	newCfg := &domain.Config{Tables: map[string]domain.Table{"todos": {
+		Fields:     []domain.Field{{Name: "id", Type: "bigserial"}},
+		RLSEnabled: &on,
+	}}}
+	stmts := strings.Join(planUpdateStatements(&old, newCfg, domain.DefaultRoles()), "\n")
+	mustNotContain(t, stmts, "DISABLE ROW LEVEL SECURITY")
+	mustContain(t, stmts, "DROP POLICY IF EXISTS todos_select_0 ON todos;")
+	mustContain(t, stmts, "ALTER TABLE todos ENABLE ROW LEVEL SECURITY;")
+	mustContain(t, stmts, "ALTER TABLE todos FORCE ROW LEVEL SECURITY;")
+}
+
+func TestPlanUpdate_FalseToTrueEnablesAndForces(t *testing.T) {
+	on, off := true, false
+	mk := func(p *bool) *domain.Config {
+		return &domain.Config{Tables: map[string]domain.Table{"todos": {
+			Fields: []domain.Field{{Name: "id", Type: "bigserial"}}, RLSEnabled: p,
+		}}}
+	}
+	stmts := strings.Join(planUpdateStatements(mk(&off), mk(&on), domain.DefaultRoles()), "\n")
+	mustContain(t, stmts, "ALTER TABLE todos ENABLE ROW LEVEL SECURITY;")
+	mustContain(t, stmts, "ALTER TABLE todos FORCE ROW LEVEL SECURITY;")
+	mustNotContain(t, stmts, "DISABLE ROW LEVEL SECURITY")
+}
+
+// A table added in the same migration that turns RLS on must get exactly one
+// ENABLE statement (from the idempotent re-emit pass), not a second from diffNewTables.
+func TestPlanUpdate_NewTableWithRLSEnabled_NoDuplicateEnable(t *testing.T) {
+	on := true
+	old := &domain.Config{Tables: map[string]domain.Table{}}
+	newCfg := &domain.Config{Tables: map[string]domain.Table{"todos": {
+		Fields:     []domain.Field{{Name: "id", Type: "bigserial"}},
+		RLSEnabled: &on,
+	}}}
+	stmts := strings.Join(planUpdateStatements(old, newCfg, domain.DefaultRoles()), "\n")
+	count := strings.Count(stmts, "ALTER TABLE todos ENABLE ROW LEVEL SECURITY;")
+	if count != 1 {
+		t.Fatalf("expected exactly 1 ENABLE ROW LEVEL SECURITY for todos, got %d\n%s", count, stmts)
 	}
 }
