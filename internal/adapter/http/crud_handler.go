@@ -118,7 +118,8 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 		}
 
 		accept := c.GetHeader("Accept")
-		if strings.HasPrefix(accept, "application/vnd.pgrst.plan") && !isAdmin(c) {
+		plan, isPlan, planErr := parsePlanAccept(accept)
+		if isPlan && (!isAdmin(c) || planErr != nil) {
 			pgJSON(c, 406, "PGRST107", "None of these media types are available: "+accept, "", "")
 			return
 		}
@@ -164,39 +165,38 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 			return
 		}
 
-		// EXPLAIN plan response
-		if accept == "application/vnd.pgrst.plan+json" || accept == "application/vnd.pgrst.plan+text" {
-			explainOpts := "FORMAT JSON"
-			if strings.Contains(accept, "+text") {
-				explainOpts = "FORMAT TEXT"
-			}
-			explainQuery := fmt.Sprintf("EXPLAIN (%s) %s", explainOpts, query)
+		if isPlan {
 			tx, err := h.db.Begin(ctx)
 			if err != nil {
 				problemJSON(c, 500, "internal", "Failed to start transaction")
 				return
 			}
+			// ANALYZE runs the query, so never commit.
 			defer func() { _ = tx.Rollback(ctx) }()
-			rows, err := tx.Query(ctx, explainQuery, args...)
+			applySchemaSearchPath(c, ctx, tx)
+			rows, err := tx.Query(ctx, plan.explainSQL(query), args...)
 			if err != nil {
 				handleDBError(c, err)
 				return
 			}
-			if err := tx.Commit(ctx); err != nil {
-				problemJSON(c, 500, "internal", "Failed to commit explain transaction")
+			if plan.format == "text" {
+				lines := make([]string, 0, len(rows))
+				for _, r := range rows {
+					lines = append(lines, fmt.Sprintf("%v", r["QUERY PLAN"]))
+				}
+				c.Data(200, plan.contentType(), []byte(strings.Join(lines, "\n")))
 				return
 			}
-			if strings.Contains(accept, "+text") {
-				var lines []string
-				for _, r := range rows {
-					for _, v := range r {
-						lines = append(lines, fmt.Sprintf("%v", v))
-					}
-				}
-				c.Data(200, "application/vnd.pgrst.plan+text", []byte(strings.Join(lines, "\n")))
-			} else {
-				c.JSON(200, rows)
+			var body any = []any{}
+			if len(rows) > 0 {
+				body = rows[0]["QUERY PLAN"]
 			}
+			out, err := json.Marshal(body)
+			if err != nil {
+				problemJSON(c, 500, "internal", "Failed to encode plan")
+				return
+			}
+			c.Data(200, plan.contentType(), out)
 			return
 		}
 

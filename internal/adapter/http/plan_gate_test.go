@@ -19,6 +19,8 @@ func TestHandleList_PlanRefusedWithoutSecretKey(t *testing.T) {
 		"application/vnd.pgrst.plan+text",
 		`application/vnd.pgrst.plan+text; for="application/json"; options=analyze`, // supabase-js .explain()
 		"application/vnd.pgrst.plan",
+		"Application/Vnd.Pgrst.Plan+Json",
+		`application/vnd.pgrst.plan+text; for="application/json"; options=;`,
 	}
 	for _, role := range []string{"anon", "authenticated"} {
 		for _, accept := range accepts {

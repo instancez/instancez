@@ -2907,16 +2907,19 @@ await step('rest: explain returns query plan only to the secret key', async () =
   assertEq(err.code, 'PGRST107', 'plan refusal code')
 
   if (!SECRET_KEY) return
-  const adminResp = await fetch(`${URL}/rest/v1/todos?select=*`, {
-    headers: {
-      Authorization: `Bearer ${SECRET_KEY}`,
-      apikey: SECRET_KEY,
-      Accept: 'application/vnd.pgrst.plan+json',
-    },
+  const admin = createClient(URL, SECRET_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${SECRET_KEY}` } },
   })
-  assertEq(adminResp.status, 200)
-  const plan = await adminResp.json()
-  assert(Array.isArray(plan) || (typeof plan === 'object'), 'plan returned')
+  const { data: text, error: e1 } = await admin.from('todos').select('id').explain()
+  if (e1) throw e1
+  assert(typeof text === 'string' && text.includes('cost='), `text plan expected: ${text}`)
+  const { data: json, error: e2 } = await admin.from('todos').select('id').explain({ format: 'json', analyze: true })
+  if (e2) throw e2
+  assert(Array.isArray(json) && json[0].Plan && json[0]['Execution Time'] !== undefined, `json analyze plan expected: ${JSON.stringify(json)}`)
+  const { data: single, error: e3 } = await admin.from('todos').select('id').limit(1).single().explain()
+  if (e3) throw e3
+  assert(typeof single === 'string' && single.includes('cost='), `plan for object media type: ${single}`)
 })
 
 // --- signOut scope=local ---

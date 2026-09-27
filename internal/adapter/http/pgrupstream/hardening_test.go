@@ -192,6 +192,28 @@ func TestHardening_PlanOnlyForServiceRole(t *testing.T) {
 	status, _, raw = call(t, "GET", testTS.URL+"/rest/v1/users", "", plan, false)
 	require.Equal(t, 200, status, "%s", raw)
 	require.Contains(t, string(raw), "Plan")
+
+	// supabase-js .explain() default header; the JSON body is the bare EXPLAIN document.
+	status, hdr, raw := call(t, "GET", testTS.URL+"/rest/v1/users", "", map[string]string{
+		"Accept": `application/vnd.pgrst.plan+json; for="application/json"; options=;`}, false)
+	require.Equal(t, 200, status, "%s", raw)
+	require.Contains(t, hdr.Get("Content-Type"), "application/vnd.pgrst.plan+json")
+	var doc []map[string]any
+	require.NoError(t, json.Unmarshal(raw, &doc), "%s", raw)
+	require.Contains(t, doc[0], "Plan")
+	require.NotContains(t, doc[0], "Execution Time")
+
+	status, hdr, raw = call(t, "GET", testTS.URL+"/rest/v1/users", "", map[string]string{
+		"Accept": `application/vnd.pgrst.plan+text; for="application/json"; options=analyze|buffers;`}, false)
+	require.Equal(t, 200, status, "%s", raw)
+	require.Contains(t, hdr.Get("Content-Type"), "application/vnd.pgrst.plan+text")
+	require.Contains(t, string(raw), "Execution Time")
+	require.Contains(t, string(raw), "Buffers")
+
+	status, _, _ = call(t, "GET", testTS.URL+"/rest/v1/users", "", map[string]string{"Accept": `application/vnd.pgrst.plan; for="text/xml"`}, false)
+	require.Equal(t, 406, status)
+	status, _, _ = call(t, "GET", testTS.URL+"/rest/v1/users", "", map[string]string{"Accept": "Application/Vnd.Pgrst.Plan"}, true)
+	require.Equal(t, 406, status)
 }
 
 func TestHardening_StatementTimeout(t *testing.T) {
