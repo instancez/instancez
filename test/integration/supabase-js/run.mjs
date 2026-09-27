@@ -2279,6 +2279,48 @@ await step('storage: uploadToSignedUrl rejects bad token', async () => {
   assertEq(resp.status, 400, 'bad token rejected')
 })
 
+// Mints via fetch: supabase-js createSignedUploadUrl expects a ?token= in the returned url, which we don't emit yet.
+const mintUploadToken = async (bucket, path) => {
+  const resp = await fetch(`${URL}/storage/v1/object/upload/sign/${bucket}/${path}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY, 'Content-Type': 'application/json' },
+    body: '{}',
+  })
+  assert(resp.ok, `mint failed: ${resp.status}`)
+  return (await resp.json()).token
+}
+
+await step('storage: uploadToSignedUrl with a Blob stores the file, not the multipart framing', async () => {
+  const bucket = storageClient().storage.from('avatars')
+  const token = await mintUploadToken('avatars', 'signed-blob.txt')
+  const { error } = await bucket.uploadToSignedUrl('signed-blob.txt', token, new Blob(['blob via signed url'], { type: 'text/plain' }))
+  if (error) throw error
+  const { data: file, error: dlErr } = await bucket.download('signed-blob.txt')
+  if (dlErr) throw dlErr
+  assertEq(await file.text(), 'blob via signed url')
+  const resp = await fetch(`${URL}/storage/v1/object/info/authenticated/avatars/signed-blob.txt`, {
+    headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY },
+  })
+  assert(resp.ok, `info failed: ${resp.status}`)
+  const info = await resp.json()
+  assertEq(Number(info.size), 'blob via signed url'.length, 'real size recorded for a multipart upload')
+})
+
+await step('storage: uploadToSignedUrl enforces the bucket MIME allowlist', async () => {
+  const bucket = storageClient().storage.from('avatars')
+  const token = await mintUploadToken('avatars', 'signed-evil.html')
+  const raw = await fetch(`${URL}/storage/v1/object/upload/sign/avatars/signed-evil.html?token=${token}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'text/html' },
+    body: '<script>alert(1)</script>',
+  })
+  assertEq(raw.status, 422, 'raw text/html rejected')
+  const { error } = await bucket.uploadToSignedUrl('signed-evil.html', token, new Blob(['<script>'], { type: 'text/html' }))
+  assert(error, 'Blob text/html rejected')
+  const { data: exists } = await bucket.exists('signed-evil.html')
+  assert(!exists, 'rejected signed upload left no object behind')
+})
+
 // --- Signed upload authorization (owner-scoped RLS on the `owned` bucket) ---
 
 await step('storage: createSignedUploadUrl enforces the bucket insert policy at mint time', async () => {

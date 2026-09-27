@@ -8,9 +8,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
+	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -750,29 +754,6 @@ func TestUploadObject_RLSDenied(t *testing.T) {
 
 	if w.Code != 403 {
 		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestUploadObject_StoreUploadTooLarge(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	store := &stubObjectStore{
-		uploadFn: func(ctx context.Context, key string, r io.Reader, contentType string, size int64) error {
-			return errors.New("http: request body too large")
-		},
-	}
-	tx := &stubTx{execFn: func(ctx context.Context, q string, args ...any) (int64, error) { return 1, nil }}
-	db := &stubDB{beginFn: func(ctx context.Context) (domain.Tx, error) { return tx, nil }}
-	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {MaxSize: "1kb"}})
-
-	w := httptest.NewRecorder()
-	r := gin.New()
-	r.POST("/storage/v1/object/:bucket/*path", h.uploadObject)
-
-	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/photo.jpg", strings.NewReader("data"))
-	r.ServeHTTP(w, req)
-
-	if w.Code != 413 {
-		t.Fatalf("expected 413, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -1897,4 +1878,340 @@ func TestStorageRoutes_RejectTraversalKeys(t *testing.T) {
 			t.Errorf("%s %s: reached DB or object store", tc.method, tc.target)
 		}
 	}
+}
+
+// --- C7: spooled uploads ---
+
+func multipartBody(t *testing.T, filename, ct, content string) (*bytes.Buffer, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	require.NoError(t, mw.WriteField("cacheControl", "3600"))
+	hdr := textproto.MIMEHeader{}
+	hdr.Set("Content-Disposition", fmt.Sprintf(`form-data; name=""; filename=%q`, filename))
+	hdr.Set("Content-Type", ct)
+	pw, err := mw.CreatePart(hdr)
+	require.NoError(t, err)
+	_, _ = pw.Write([]byte(content))
+	require.NoError(t, mw.Close())
+	return &buf, mw.FormDataContentType()
+}
+
+// isolatedTempDir points os.CreateTemp at a fresh dir so a test can check for leaked spool files.
+func isolatedTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", dir)
+	return dir
+}
+
+func assertNoSpoolLeft(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "spool file leaked")
+}
+
+func TestUploadObject_TxOpensOnlyAfterBodyFinishes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dir := isolatedTempDir(t)
+	var began, bodyClosed atomic.Bool
+	tx := &stubTx{execFn: func(context.Context, string, ...any) (int64, error) { return 1, nil }}
+	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) {
+		assert.True(t, bodyClosed.Load(), "DB tx opened while the client body was still streaming")
+		began.Store(true)
+		return tx, nil
+	}}
+	var stored string
+	var storedSize int64
+	store := &stubObjectStore{uploadFn: func(_ context.Context, _ string, r io.Reader, _ string, size int64) error {
+		_, ok := r.(*os.File)
+		assert.True(t, ok, "store should receive the spooled file")
+		b, _ := io.ReadAll(r)
+		stored, storedSize = string(b), size
+		return nil
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.POST("/storage/v1/object/:bucket/*path", h.uploadObject)
+
+	pr, pw := io.Pipe()
+	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/a.txt", pr)
+	req.Header.Set("Content-Type", "text/plain")
+	w := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() { r.ServeHTTP(w, req); close(done) }()
+
+	// Each Write returns only once the handler has read it, so the handler is mid-body here.
+	_, _ = pw.Write([]byte("slow "))
+	_, _ = pw.Write([]byte("client "))
+	assert.False(t, began.Load(), "tx began before the body finished")
+	_, _ = pw.Write([]byte("body"))
+	bodyClosed.Store(true)
+	_ = pw.Close()
+	<-done
+
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.True(t, began.Load())
+	assert.Equal(t, "slow client body", stored)
+	assert.Equal(t, int64(len(stored)), storedSize)
+	assertNoSpoolLeft(t, dir)
+}
+
+func TestUploadObject_ClientAbortNeverOpensTx(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dir := isolatedTempDir(t)
+	began := false
+	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { began = true; return &stubTx{}, nil }}
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.POST("/storage/v1/object/:bucket/*path", h.uploadObject)
+
+	pr, pw := io.Pipe()
+	go func() {
+		_, _ = pw.Write([]byte("partial"))
+		_ = pw.CloseWithError(io.ErrUnexpectedEOF)
+	}()
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/a.txt", pr))
+
+	assert.Equal(t, 500, w.Code)
+	assert.False(t, began, "tx opened for an aborted body")
+	assertNoSpoolLeft(t, dir)
+}
+
+func TestUploadObject_SpoolRemovedOnPanic(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dir := isolatedTempDir(t)
+	tx := &stubTx{execFn: func(context.Context, string, ...any) (int64, error) { return 1, nil }}
+	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { return tx, nil }}
+	store := &stubObjectStore{uploadFn: func(context.Context, string, io.Reader, string, int64) error { panic("boom") }}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.POST("/storage/v1/object/:bucket/*path", h.uploadObject)
+
+	assert.Panics(t, func() {
+		r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/a.txt", strings.NewReader("x")))
+	})
+	assertNoSpoolLeft(t, dir)
+}
+
+func TestUploadObject_TooLargeRejectedBeforeTx(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dir := isolatedTempDir(t)
+	var began, streamed bool
+	tx := &stubTx{execFn: func(context.Context, string, ...any) (int64, error) { return 1, nil }}
+	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { began = true; return tx, nil }}
+	store := &stubObjectStore{uploadFn: func(context.Context, string, io.Reader, string, int64) error { streamed = true; return nil }}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {MaxSize: "1KB"}})
+	r := gin.New()
+	r.POST("/storage/v1/object/:bucket/*path", h.uploadObject)
+	send := func(n int, multi bool) *httptest.ResponseRecorder {
+		began, streamed = false, false
+		var req *http.Request
+		if multi {
+			body, ct := multipartBody(t, "blob", "text/plain", strings.Repeat("x", n))
+			req = httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/a.bin", body)
+			req.Header.Set("Content-Type", ct)
+		} else {
+			req = httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/a.bin", strings.NewReader(strings.Repeat("x", n)))
+		}
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+	for _, multi := range []bool{false, true} {
+		for _, n := range []int{1025, 4096} {
+			w := send(n, multi)
+			assert.Equal(t, 413, w.Code, "%d bytes multipart=%v", n, multi)
+			assert.Contains(t, w.Body.String(), "1KB")
+			assert.False(t, began, "%d bytes: tx opened for an oversized body", n)
+			assert.False(t, streamed, "%d bytes: oversized body reached the store", n)
+		}
+		w := send(1024, multi)
+		assert.Equal(t, 200, w.Code, "exactly max_size must be accepted (multipart=%v)", multi)
+		assert.True(t, began && streamed)
+	}
+	assertNoSpoolLeft(t, dir)
+}
+
+func TestUploadObject_TooLargeDefaultLimitNamesIt(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := newStorageHandler(&stubDB{}, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.POST("/storage/v1/object/:bucket/*path", h.uploadObject)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/a.bin", io.LimitReader(zeroes{}, 50<<20+1)))
+	assert.Equal(t, 413, w.Code)
+	assert.Contains(t, w.Body.String(), "50MB")
+}
+
+type zeroes struct{}
+
+func (zeroes) Read(p []byte) (int, error) { clear(p); return len(p), nil }
+
+func TestUploadObject_RecordsRealSize(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		name, content string
+		multipart     bool
+	}{
+		{"multipart", "hello world", true},
+		{"raw", "hello world", false},
+		{"raw empty", "", false},
+		{"multipart empty", "", true},
+		{"multipart unicode", "ünïcødé 😀", true},
+	}
+	for _, tc := range cases {
+		var args []any
+		stored := "<not called>"
+		tx := &stubTx{execFn: func(_ context.Context, _ string, a ...any) (int64, error) { args = a; return 1, nil }}
+		db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { return tx, nil }}
+		store := &stubObjectStore{uploadFn: func(_ context.Context, _ string, r io.Reader, _ string, _ int64) error {
+			b, _ := io.ReadAll(r)
+			stored = string(b)
+			return nil
+		}}
+		h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
+		r := gin.New()
+		r.POST("/storage/v1/object/:bucket/*path", h.uploadObject)
+		var req *http.Request
+		if tc.multipart {
+			body, ct := multipartBody(t, "blob", "text/plain", tc.content)
+			req = httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/f.txt", body)
+			req.Header.Set("Content-Type", ct)
+		} else {
+			req = httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/f.txt", strings.NewReader(tc.content))
+			req.Header.Set("Content-Type", "text/plain")
+		}
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		require.Equal(t, 200, w.Code, tc.name+": "+w.Body.String())
+		assert.Equal(t, tc.content, stored, tc.name)
+		require.Len(t, args, 6, tc.name)
+		assert.Equal(t, int64(len(tc.content)), args[2], tc.name)
+		assert.Equal(t, "text/plain", args[3], tc.name)
+		assert.Contains(t, args[4], fmt.Sprintf(`"size":%d`, len(tc.content)), tc.name)
+	}
+}
+
+func TestUploadObject_ConflictSemantics(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		name, method, upsert string
+		want, notWant        string
+	}{
+		{"insert", http.MethodPost, "", "INSERT", "ON CONFLICT"},
+		{"insert x-upsert false", http.MethodPost, "false", "INSERT", "ON CONFLICT"},
+		{"upsert", http.MethodPost, "true", "DO UPDATE", "UPDATE storage.objects"},
+		{"update ignores x-upsert", http.MethodPut, "true", "UPDATE storage.objects", "INSERT"},
+	}
+	for _, tc := range cases {
+		var q string
+		tx := &stubTx{execFn: func(_ context.Context, query string, _ ...any) (int64, error) { q = query; return 1, nil }}
+		db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { return tx, nil }}
+		h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
+		r := gin.New()
+		r.POST("/storage/v1/object/:bucket/*path", h.uploadObject)
+		r.PUT("/storage/v1/object/:bucket/*path", h.updateObject)
+		req := httptest.NewRequest(tc.method, "/storage/v1/object/avatars/f.txt", strings.NewReader("x"))
+		if tc.upsert != "" {
+			req.Header.Set("x-upsert", tc.upsert)
+		}
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		require.Equal(t, 200, w.Code, tc.name)
+		assert.Contains(t, q, tc.want, tc.name)
+		assert.NotContains(t, q, tc.notWant, tc.name)
+	}
+}
+
+func TestWriteObjectRow(t *testing.T) {
+	row := objectRow{bucket: "b", name: "n", size: 3, mime: "text/plain", metadata: "{}", uploadedBy: nil}
+	cases := []struct {
+		name             string
+		isUpdate, upsert bool
+		rows             int64
+		execErr, want    error
+	}{
+		{"update hits a row", true, false, 1, nil, nil},
+		{"update hits nothing", true, false, 0, nil, errObjectNotFound},
+		{"update error wins over zero rows", true, false, 0, errors.New("rls"), errors.New("rls")},
+		{"insert zero rows is fine", false, false, 0, nil, nil},
+		{"upsert zero rows is fine", false, true, 0, nil, nil},
+	}
+	for _, tc := range cases {
+		var args []any
+		db := &stubDB{execFn: func(_ context.Context, _ string, a ...any) (int64, error) { args = a; return tc.rows, tc.execErr }}
+		err := writeObjectRow(context.Background(), db, row, tc.isUpdate, tc.upsert)
+		if tc.want == nil {
+			assert.NoError(t, err, tc.name)
+		} else {
+			assert.EqualError(t, err, tc.want.Error(), tc.name)
+		}
+		assert.Equal(t, []any{"b", "n", int64(3), "text/plain", "{}", nil}, args, tc.name)
+	}
+}
+
+func TestUploadToSignedURL_Hardening(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	newH := func(b domain.Bucket, execErr error) (*StorageV1Handler, *string, *[]any) {
+		stored := "<not called>"
+		var args []any
+		db := &stubDB{execFn: func(_ context.Context, _ string, a ...any) (int64, error) { args = a; return 1, execErr }}
+		store := &stubObjectStore{uploadFn: func(_ context.Context, _ string, r io.Reader, _ string, _ int64) error {
+			b, _ := io.ReadAll(r)
+			stored = string(b)
+			return nil
+		}}
+		h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": b})
+		h.jwtKeys = stubKeys(t)
+		return h, &stored, &args
+	}
+	do := func(h *StorageV1Handler, body io.Reader, ct string) *httptest.ResponseRecorder {
+		token := h.signUploadToken("avatars", "f.txt", "")
+		r := gin.New()
+		r.PUT("/storage/v1/object/upload/sign/:bucket/*path", h.uploadToSignedURL)
+		req := httptest.NewRequest(http.MethodPut, "/storage/v1/object/upload/sign/avatars/f.txt?token="+token, body)
+		req.Header.Set("Content-Type", ct)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+
+	t.Run("raw MIME outside allowlist", func(t *testing.T) {
+		h, stored, args := newH(domain.Bucket{Types: []string{"image/*"}}, nil)
+		w := do(h, strings.NewReader("<script>"), "text/html")
+		assert.Equal(t, 422, w.Code, "MIME allowlist bypassed on signed upload")
+		assert.Equal(t, "<not called>", *stored)
+		assert.Nil(t, *args)
+	})
+	t.Run("multipart MIME outside allowlist", func(t *testing.T) {
+		h, stored, _ := newH(domain.Bucket{Types: []string{"image/*"}}, nil)
+		body, ct := multipartBody(t, "x.html", "text/html", "<script>")
+		w := do(h, body, ct)
+		assert.Equal(t, 422, w.Code)
+		assert.Equal(t, "<not called>", *stored)
+	})
+	t.Run("multipart stores the file part and its size", func(t *testing.T) {
+		h, stored, args := newH(domain.Bucket{Types: []string{"text/plain"}}, nil)
+		body, ct := multipartBody(t, "blob", "text/plain", "blob body")
+		w := do(h, body, ct)
+		require.Equal(t, 200, w.Code, w.Body.String())
+		assert.Equal(t, "blob body", *stored, "multipart framing stored as file content")
+		require.Len(t, *args, 6)
+		assert.Equal(t, int64(len("blob body")), (*args)[2])
+		assert.Nil(t, (*args)[5], "anonymous token must record NULL uploaded_by")
+	})
+	t.Run("over max_size", func(t *testing.T) {
+		h, stored, _ := newH(domain.Bucket{MaxSize: "1KB"}, nil)
+		w := do(h, strings.NewReader(strings.Repeat("x", 1025)), "text/plain")
+		assert.Equal(t, 413, w.Code)
+		assert.Equal(t, "<not called>", *stored)
+	})
+	t.Run("failed metadata insert", func(t *testing.T) {
+		h, _, _ := newH(domain.Bucket{}, errors.New("db down"))
+		w := do(h, strings.NewReader("x"), "text/plain")
+		assert.Equal(t, 500, w.Code, "failed metadata insert reported as success")
+	})
 }

@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"path"
 	"strconv"
 	"strings"
@@ -288,95 +289,148 @@ func (h *StorageV1Handler) updateObject(c *gin.Context) {
 	h.doUpload(c, true)
 }
 
+var errObjectNotFound = errors.New("object not found")
+
+type execer interface {
+	Exec(ctx context.Context, query string, args ...any) (int64, error)
+}
+
+type objectRow struct {
+	bucket, name, mime, metadata string
+	size                         int64
+	uploadedBy                   any
+}
+
+// writeObjectRow inserts, upserts or updates one storage.objects row under ctx's role.
+func writeObjectRow(ctx context.Context, db execer, r objectRow, isUpdate, upsert bool) error {
+	q := "INSERT INTO storage.objects (bucket_id, name, size, mime, metadata, uploaded_by) VALUES ($1, $2, $3, $4, $5::jsonb, $6)"
+	switch {
+	case isUpdate:
+		q = "UPDATE storage.objects SET size = $3, mime = $4, metadata = $5::jsonb, uploaded_at = NOW(), uploaded_by = $6 WHERE bucket_id = $1 AND name = $2"
+	case upsert:
+		q += " ON CONFLICT (bucket_id, name) DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime, metadata = EXCLUDED.metadata, uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW()"
+	}
+	n, err := db.Exec(ctx, q, r.bucket, r.name, r.size, r.mime, r.metadata, r.uploadedBy)
+	if err == nil && isUpdate && n == 0 {
+		return errObjectNotFound
+	}
+	return err
+}
+
+const defaultMaxUpload = 50 << 20
+
+func bucketMaxBytes(b domain.Bucket) int64 {
+	if n := parseSizeBytes(b.MaxSize); n > 0 {
+		return n
+	}
+	return defaultMaxUpload
+}
+
+func defaultMIME(ct string) string {
+	if ct == "" {
+		return "application/octet-stream"
+	}
+	return ct
+}
+
+// uploadBody returns the file stream and content type from a raw or multipart upload.
+func uploadBody(c *gin.Context) (io.Reader, string, error) {
+	if !strings.HasPrefix(c.ContentType(), "multipart/form-data") {
+		return c.Request.Body, defaultMIME(c.ContentType()), nil
+	}
+	mr, err := c.Request.MultipartReader()
+	if err != nil {
+		return nil, "", errors.New("failed to parse multipart form")
+	}
+	for {
+		part, err := mr.NextPart()
+		if err != nil {
+			return nil, "", errors.New("no file found in multipart upload")
+		}
+		if part.FileName() != "" {
+			return part, defaultMIME(part.Header.Get("Content-Type")), nil
+		}
+		_ = part.Close()
+	}
+}
+
+// spool copies r to a temp file so no DB connection waits on a slow client.
+func spool(r io.Reader) (*os.File, int64, error) {
+	f, err := os.CreateTemp("", "inz-upload-*")
+	if err != nil {
+		return nil, 0, err
+	}
+	n, err := io.Copy(f, r)
+	if err == nil {
+		_, err = f.Seek(0, io.SeekStart)
+	}
+	if err != nil {
+		closeSpool(f)
+		return nil, 0, err
+	}
+	return f, n, nil
+}
+
+func closeSpool(f *os.File) {
+	_ = f.Close()
+	_ = os.Remove(f.Name())
+}
+
+// readUpload spools a validated body; on !ok the error response is already written.
+func (h *StorageV1Handler) readUpload(c *gin.Context, bucket domain.Bucket) (f *os.File, size int64, contentType string, ok bool) {
+	body, contentType, err := uploadBody(c)
+	if err != nil {
+		storageErr(c, 400, "bad_request", err.Error())
+		return nil, 0, "", false
+	}
+	if len(bucket.Types) > 0 && !matchesMIME(contentType, bucket.Types) {
+		storageErr(c, 422, "invalid_mime_type", fmt.Sprintf("Content type %q not allowed", contentType))
+		return nil, 0, "", false
+	}
+	f, size, err = spool(http.MaxBytesReader(c.Writer, io.NopCloser(body), bucketMaxBytes(bucket)))
+	if err != nil {
+		h.spoolFailed(c, err, bucket.MaxSize)
+		return nil, 0, "", false
+	}
+	return f, size, contentType, true
+}
+
+func (h *StorageV1Handler) spoolFailed(c *gin.Context, err error, maxSize string) {
+	var tooBig *http.MaxBytesError
+	if errors.As(err, &tooBig) {
+		if maxSize == "" {
+			maxSize = fmt.Sprintf("%dMB", defaultMaxUpload>>20)
+		}
+		storageErr(c, 413, "payload_too_large", fmt.Sprintf("File exceeds maximum size of %s", maxSize))
+		return
+	}
+	h.logger.Error("spool upload", "error", err)
+	storageErr(c, 500, "internal", "Upload failed")
+}
+
 func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 	bucketName := c.Param("bucket")
 	objPath, ok := objectPath(c, c.Param("path"))
 	if !ok {
 		return
 	}
-
 	bucket, ok := h.getBucketConfig(bucketName)
 	if !ok {
 		storageErr(c, 404, "not_found", "Bucket not found")
 		return
 	}
-
-	session := getSession(c)
-
-	// Enforce bucket size limit
-	var maxBytes int64 = 50 * 1024 * 1024
-	if bucket.MaxSize != "" {
-		if mb := parseSizeBytes(bucket.MaxSize); mb > 0 {
-			maxBytes = mb
-		}
-	}
-
-	// supabase-js sends uploads as multipart/form-data with the file in a
-	// form field. Extract the actual file and its content type from the part.
-	var body io.Reader
-	var contentType string
-	var size int64
-
-	if strings.HasPrefix(c.ContentType(), "multipart/form-data") {
-		mr, err := c.Request.MultipartReader()
-		if err != nil {
-			storageErr(c, 400, "bad_request", "Failed to parse multipart form")
-			return
-		}
-		var found bool
-		for {
-			part, err := mr.NextPart()
-			if err != nil {
-				break
-			}
-			if part.FileName() == "" {
-				_ = part.Close()
-				continue
-			}
-			body = part
-			contentType = part.Header.Get("Content-Type")
-			size = -1
-			found = true
-			defer func() { _ = part.Close() }()
-			break
-		}
-		if !found {
-			storageErr(c, 400, "bad_request", "No file found in multipart upload")
-			return
-		}
-	} else {
-		body = c.Request.Body
-		contentType = c.ContentType()
-		if ct := c.GetHeader("Content-Type"); ct != "" {
-			contentType = strings.Split(ct, ";")[0]
-			contentType = strings.TrimSpace(contentType)
-		}
-		size = c.Request.ContentLength
-	}
-
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-
-	// Validate MIME
-	if len(bucket.Types) > 0 && !matchesMIME(contentType, bucket.Types) {
-		storageErr(c, 422, "invalid_mime_type", fmt.Sprintf("Content type %q not allowed", contentType))
+	file, size, contentType, ok := h.readUpload(c, bucket)
+	if !ok {
 		return
 	}
+	defer closeSpool(file)
 
-	limitedBody := http.MaxBytesReader(c.Writer, io.NopCloser(body), maxBytes)
+	upsert := !isUpdate && c.GetHeader("x-upsert") == "true"
+	row := objectRow{bucket: bucketName, name: objPath, size: size, mime: contentType,
+		uploadedBy: nullIfEmpty(getSession(c).UserID),
+		metadata:   objectMetadataJSON(size, contentType, c.GetHeader("Cache-Control"))}
 
-	uploadedBy := nullIfEmpty(session.UserID)
-	if size < 0 {
-		size = 0
-	}
-
-	metaJSON := objectMetadataJSON(size, contentType, c.GetHeader("Cache-Control"))
-
-	// Write the metadata row FIRST, inside a transaction bound to the caller's
-	// role, so that RLS authorizes the write before any bytes reach the object
-	// store. If the policy denies the write we roll back and never touch S3;
-	// the actual upload only happens once the metadata insert/update succeeds.
+	// The RLS-checked row write comes first, so bytes only land once the caller is authorized.
 	ctx := h.rlsCtx(c)
 	tx, err := h.db.Begin(ctx)
 	if err != nil {
@@ -384,66 +438,23 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 		return
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-
-	if isUpdate {
-		n, err := tx.Exec(ctx,
-			"UPDATE storage.objects SET size = $1, mime = $2, metadata = $3::jsonb, uploaded_at = NOW(), uploaded_by = $4 WHERE bucket_id = $5 AND name = $6",
-			size, contentType, metaJSON, uploadedBy, bucketName, objPath)
-		if err != nil {
-			h.uploadWriteError(c, err)
-			return
-		}
-		if n == 0 {
-			// No row the caller is permitted to update (RLS-filtered or absent).
-			storageErr(c, 404, "not_found", "Object not found")
-			return
-		}
-	} else {
-		upsert := c.GetHeader("x-upsert") == "true"
-		if upsert {
-			if _, err := tx.Exec(ctx,
-				`INSERT INTO storage.objects (bucket_id, name, size, mime, metadata, uploaded_by)
-				 VALUES ($1, $2, $3, $4, $5::jsonb, $6)
-				 ON CONFLICT (bucket_id, name)
-				 DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime, metadata = EXCLUDED.metadata, uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW()`,
-				bucketName, objPath, size, contentType, metaJSON, uploadedBy); err != nil {
-				h.uploadWriteError(c, err)
-				return
-			}
-		} else {
-			if _, err := tx.Exec(ctx,
-				"INSERT INTO storage.objects (bucket_id, name, size, mime, metadata, uploaded_by) VALUES ($1, $2, $3, $4, $5::jsonb, $6)",
-				bucketName, objPath, size, contentType, metaJSON, uploadedBy); err != nil {
-				h.uploadWriteError(c, err)
-				return
-			}
-		}
+	if err := writeObjectRow(ctx, tx, row, isUpdate, upsert); err != nil {
+		h.uploadWriteError(c, err)
+		return
 	}
 
-	// Metadata write authorized — now stream the bytes to the object store.
 	key := bucketName + "/" + objPath
-	if err := h.storage.Upload(c.Request.Context(), key, limitedBody, contentType, size); err != nil {
-		if strings.Contains(err.Error(), "http: request body too large") {
-			storageErr(c, 413, "payload_too_large", fmt.Sprintf("File exceeds maximum size of %s", bucket.MaxSize))
-			return
-		}
+	if err := h.storage.Upload(c.Request.Context(), key, file, contentType, size); err != nil {
 		h.logger.Error("upload error", "error", err)
 		storageErr(c, 500, "internal", "Upload failed")
 		return
 	}
-
 	if err := tx.Commit(ctx); err != nil {
-		// Best-effort cleanup of the now-orphaned object; the metadata never
-		// committed so it would be invisible anyway.
 		_ = h.storage.Delete(c.Request.Context(), key)
 		storageErr(c, 500, "internal", "Upload failed")
 		return
 	}
-
-	c.JSON(200, gin.H{
-		"Key": bucketName + "/" + objPath,
-		"Id":  objPath,
-	})
+	c.JSON(200, gin.H{"Key": key, "Id": objPath})
 }
 
 // nullIfEmpty binds "" as SQL NULL.
@@ -465,9 +476,11 @@ func storageErr(c *gin.Context, status int, errSlug, message string) {
 }
 
 // uploadWriteError maps a failed metadata write to the right client response:
-// duplicate key → 409, an RLS/permission denial → 403, anything else → 500.
+// no row to update → 404, duplicate key → 409, an RLS/permission denial → 403, anything else → 500.
 func (h *StorageV1Handler) uploadWriteError(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, errObjectNotFound):
+		storageErr(c, 404, "not_found", "Object not found")
 	case isDuplicate(err):
 		storageErr(c, 409, "duplicate", "The resource already exists")
 	case isPermissionDenied(err):
@@ -1201,25 +1214,14 @@ func (h *StorageV1Handler) uploadToSignedURL(c *gin.Context) {
 		return
 	}
 
-	contentType := c.ContentType()
-	if contentType == "" {
-		contentType = "application/octet-stream"
+	file, size, contentType, ok := h.readUpload(c, bucket)
+	if !ok {
+		return
 	}
-
-	var maxBytes int64 = 50 * 1024 * 1024
-	if bucket.MaxSize != "" {
-		if mb := parseSizeBytes(bucket.MaxSize); mb > 0 {
-			maxBytes = mb
-		}
-	}
-	limitedBody := http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+	defer closeSpool(file)
 
 	key := bucketName + "/" + objPath
-	if err := h.storage.Upload(c.Request.Context(), key, limitedBody, contentType, c.Request.ContentLength); err != nil {
-		if strings.Contains(err.Error(), "http: request body too large") {
-			storageErr(c, 413, "payload_too_large", "File too large")
-			return
-		}
+	if err := h.storage.Upload(c.Request.Context(), key, file, contentType, size); err != nil {
 		h.logger.Error("signed upload error", "error", err)
 		storageErr(c, 500, "internal", "Upload failed")
 		return
@@ -1235,21 +1237,13 @@ func (h *StorageV1Handler) uploadToSignedURL(c *gin.Context) {
 	if err != nil {
 		ctx = c.Request.Context()
 	}
-	size := c.Request.ContentLength
-	if size < 0 {
-		size = 0
+	row := objectRow{bucket: bucketName, name: objPath, size: size, mime: contentType, uploadedBy: nullIfEmpty(owner),
+		metadata: objectMetadataJSON(size, contentType, c.GetHeader("Cache-Control"))}
+	if err := writeObjectRow(ctx, h.db, row, false, true); err != nil {
+		h.logger.Error("signed upload record", "error", err)
+		storageErr(c, 500, "internal", "Failed to record object")
+		return
 	}
-	var uploadedBy any
-	if owner != "" {
-		uploadedBy = owner
-	}
-	metaJSON := objectMetadataJSON(size, contentType, c.GetHeader("Cache-Control"))
-	_, _ = h.db.Exec(ctx,
-		`INSERT INTO storage.objects (bucket_id, name, size, mime, metadata, uploaded_by)
-		 VALUES ($1, $2, $3, $4, $5::jsonb, $6)
-		 ON CONFLICT (bucket_id, name)
-		 DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime, metadata = EXCLUDED.metadata, uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW()`,
-		bucketName, objPath, size, contentType, metaJSON, uploadedBy)
 
 	c.JSON(200, gin.H{
 		"Key":      bucketName + "/" + objPath,
