@@ -988,6 +988,7 @@ func TestHarden_RestrictiveBucketPolicy_ReemitsStorageRLS(t *testing.T) {
 		t.Fatalf("Harden: %v", err)
 	}
 	joined := strings.Join(db.execs, "\n")
+	mustContain(t, joined, "to_regclass('storage.objects') IS NOT NULL")
 	mustContain(t, joined, "DROP POLICY IF EXISTS storage_secrets_select_0 ON storage.objects;")
 	mustContain(t, joined, "bucket_id <> 'secrets' OR (name LIKE 'ok/%')")
 }

@@ -150,3 +150,18 @@ func TestIntegration_Harden_HealsRestrictiveBucketPolicyOnUnchangedConfig(t *tes
 		t.Fatalf("post-heal visible = %v, want %v", got, want)
 	}
 }
+
+// T6 guard: Harden must not fail when storage.objects doesn't exist yet
+// (reachable via engine.Start with migrate=false, config drift, and a
+// first-ever restrictive bucket policy).
+func TestIntegration_Harden_RestrictiveBucketPolicy_NoStorageSchema(t *testing.T) {
+	owner, _ := dbboot.StartContainer(t)
+	cfg := &domain.Config{Storage: map[string]domain.Bucket{
+		"secrets": {RLS: []domain.RLSPolicy{
+			{Operations: []string{"select"}, Using: "name LIKE 'ok/%'", Type: "restrictive"},
+		}},
+	}}
+	if err := app.NewMigrator(owner).Harden(context.Background(), cfg); err != nil {
+		t.Fatalf("Harden without storage.objects must not fail: %v", err)
+	}
+}
