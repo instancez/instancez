@@ -687,8 +687,7 @@ func (h *AuthHandler) handleVerify(c *gin.Context) {
 	case "recovery":
 		allowedPurposes = []string{"recovery"}
 	case "magiclink":
-		// Treat as a login; any purpose is accepted (no state change).
-		allowedPurposes = nil
+		allowedPurposes = []string{"signup", "magiclink"}
 	default:
 		problemJSON(c, 400, "bad_request", "Unsupported verify type")
 		return
@@ -2066,15 +2065,28 @@ func (h *AuthHandler) handleResend(c *gin.Context) {
 		return
 	}
 
+	// Email changes apply immediately here, so there is never a pending one to resend.
+	if purpose == "email_change" {
+		c.JSON(200, gin.H{})
+		return
+	}
+
 	ctx := c.Request.Context()
 	userID, err := h.authSvc.GetUserIDByEmail(ctx, req.Email)
 	if err != nil || userID == "" {
 		c.JSON(200, gin.H{})
 		return
 	}
+	if purpose == "signup" {
+		if u, _ := h.authSvc.GetUserByID(ctx, userID); u != nil && u["email_verified"] == true {
+			c.JSON(200, gin.H{})
+			return
+		}
+	}
 
 	if h.otpCooldown(c, userID, purpose) {
-		problemJSON(c, 429, "over_email_send_rate_limit", "For security purposes, you can only request this after 60 seconds.")
+		problemJSON(c, 429, "over_email_send_rate_limit",
+			fmt.Sprintf("For security purposes, you can only request this after %d seconds.", int(emailResendCooldown.Seconds())))
 		return
 	}
 	_ = h.authSvc.DeleteUserTokensByPurpose(ctx, userID, purpose)

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1558,16 +1559,19 @@ func TestHandleVerify_InvalidTokenMapsTo401(t *testing.T) {
 	}
 }
 
-// TestHandleVerify_MagiclinkType asserts the magiclink verify type accepts any
-// stored purpose and marks the address verified only when the code proved it.
+// TestHandleVerify_MagiclinkType asserts the magiclink verify type accepts only
+// signup and magiclink codes, and marks the address verified.
 func TestHandleVerify_MagiclinkType(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	for purpose, wantMarked := range map[string]bool{"magiclink": true, "signup": true, "recovery": false, "email_change": false} {
+	for purpose, allowed := range map[string]bool{"magiclink": true, "signup": true, "recovery": false, "email_change": false} {
 		var marked string
 		var gotPurposes []string
 		svc := &stubAuthService{
 			verifyOTPFn: func(ctx context.Context, token, email string, allowedPurposes []string) (domain.OTPRow, error) {
 				gotPurposes = allowedPurposes
+				if !slices.Contains(allowedPurposes, purpose) {
+					return domain.OTPRow{}, domain.ErrPurposeMismatch
+				}
 				return domain.OTPRow{UserID: "11111111-2222-3333-4444-555555555555", Purpose: purpose}, nil
 			},
 			markEmailVerifiedFn: func(ctx context.Context, userID string) { marked = userID },
@@ -1598,14 +1602,14 @@ func TestHandleVerify_MagiclinkType(t *testing.T) {
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 
-		if w.Code != 200 {
-			t.Fatalf("%s: status = %d: %s", purpose, w.Code, w.Body.String())
+		if want := map[bool]int{true: 200, false: 400}[allowed]; w.Code != want {
+			t.Fatalf("%s: status = %d, want %d: %s", purpose, w.Code, want, w.Body.String())
 		}
-		if gotPurposes != nil {
-			t.Errorf("%s: magiclink type should allow any purpose (nil), got %v", purpose, gotPurposes)
+		if !slices.Equal(gotPurposes, []string{"signup", "magiclink"}) {
+			t.Errorf("%s: allowed purposes = %v", purpose, gotPurposes)
 		}
-		if (marked == "11111111-2222-3333-4444-555555555555") != wantMarked {
-			t.Errorf("%s: marked=%q want marked=%v", purpose, marked, wantMarked)
+		if (marked == "11111111-2222-3333-4444-555555555555") != allowed {
+			t.Errorf("%s: marked=%q want marked=%v", purpose, marked, allowed)
 		}
 	}
 }

@@ -810,11 +810,31 @@ func TestOTPIntegration(t *testing.T) {
 		uid := mustUser(t, s, "guess@example.com")
 		mustCode(t, uid, "tok-guess", "123456", "guess@example.com")
 		parallel(20, func() bool { _, err := s.VerifyOTP(ctx, "000000", "guess@example.com", nil); return err == nil })
-		if row, _ := db.QueryRow(ctx, `SELECT 1 AS x FROM auth.one_time_tokens WHERE token = 'tok-guess'`); row != nil {
-			t.Fatal("code must be burned once the cap is spent")
+		row, _ := db.QueryRow(ctx, `SELECT attempts = $1 AS at_cap FROM auth.one_time_tokens WHERE token = 'tok-guess'`, maxOTPAttempts)
+		if row == nil || row["at_cap"] != true {
+			t.Fatalf("burned code must stay at the cap, got %v", row)
 		}
 		if _, err := s.VerifyOTP(ctx, "123456", "guess@example.com", nil); !errors.Is(err, domain.ErrInvalidToken) {
 			t.Fatalf("correct code after the cap: %v", err)
+		}
+		if _, err := s.VerifyOTP(ctx, "tok-guess", "", nil); !errors.Is(err, domain.ErrInvalidToken) {
+			t.Fatalf("link of a burned code: %v", err)
+		}
+		if _, err := s.PeekOneTimeToken(ctx, "tok-guess"); !errors.Is(err, domain.ErrInvalidToken) {
+			t.Fatalf("link click of a burned code: %v", err)
+		}
+	})
+
+	t.Run("burning a code keeps the resend cooldown", func(t *testing.T) {
+		uid := mustUser(t, s, "burn@example.com")
+		mustCode(t, uid, "tok-burn", "444444", "burn@example.com")
+		for i := 0; i < maxOTPAttempts; i++ {
+			if _, err := s.VerifyOTP(ctx, "000000", "burn@example.com", nil); !errors.Is(err, domain.ErrInvalidToken) {
+				t.Fatalf("guess %d: %v", i, err)
+			}
+		}
+		if hit, err := s.RecentOTPSent(ctx, uid, "magiclink", time.Minute); err != nil || !hit {
+			t.Fatalf("burn must not reset the cooldown: hit=%v err=%v", hit, err)
 		}
 	})
 
@@ -836,8 +856,8 @@ func TestOTPIntegration(t *testing.T) {
 		if _, err := s.VerifyOTP(ctx, "333333", "spent@example.com", nil); !errors.Is(err, domain.ErrInvalidToken) {
 			t.Fatalf("correct code past the cap: %v", err)
 		}
-		row, _ := db.QueryRow(ctx, `SELECT attempts FROM auth.one_time_tokens WHERE token = 'tok-spent'`)
-		if row == nil || asInt64(row["attempts"]) != maxOTPAttempts {
+		row, _ := db.QueryRow(ctx, `SELECT attempts = $1 AS at_cap FROM auth.one_time_tokens WHERE token = 'tok-spent'`, maxOTPAttempts)
+		if row == nil || row["at_cap"] != true {
 			t.Fatalf("a rejected call must not spend past the cap: %v", row)
 		}
 	})

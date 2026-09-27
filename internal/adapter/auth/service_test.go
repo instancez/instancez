@@ -130,7 +130,9 @@ func TestVerifyOTP_CorrectCodeOnLastAttemptSucceeds(t *testing.T) {
 	}
 }
 
-func TestVerifyOTP_WrongCodeOnLastAttemptBurns(t *testing.T) {
+// TestVerifyOTP_WrongCodeOnLastAttemptKeepsRow checks a burned code stays in
+// place, since deleting it would reset the resend cooldown.
+func TestVerifyOTP_WrongCodeOnLastAttemptKeepsRow(t *testing.T) {
 	deleted := false
 	s := newTestService(&fakeDB{
 		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
@@ -141,8 +143,32 @@ func TestVerifyOTP_WrongCodeOnLastAttemptBurns(t *testing.T) {
 			return 1, nil
 		},
 	})
-	if _, err := s.VerifyOTP(context.Background(), "000000", "otp@example.com", nil); err != domain.ErrInvalidToken || !deleted {
+	if _, err := s.VerifyOTP(context.Background(), "000000", "otp@example.com", nil); err != domain.ErrInvalidToken || deleted {
 		t.Fatalf("err=%v deleted=%v", err, deleted)
+	}
+}
+
+// TestOpaqueLookupsSkipBurnedRows checks the link paths refuse a row whose code budget is spent.
+func TestOpaqueLookupsSkipBurnedRows(t *testing.T) {
+	var qs []string
+	var argsSeen [][]any
+	s := newTestService(&fakeDB{queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+		qs, argsSeen = append(qs, q), append(argsSeen, args)
+		return nil, nil
+	}})
+	if _, err := s.VerifyOTP(context.Background(), "aaaaaaaabbbbbbbbccccccccdddddddd", "", nil); err != domain.ErrInvalidToken {
+		t.Fatalf("verify: %v", err)
+	}
+	if _, err := s.PeekOneTimeToken(context.Background(), "aaaaaaaabbbbbbbbccccccccdddddddd"); err != domain.ErrInvalidToken {
+		t.Fatalf("peek: %v", err)
+	}
+	for i, q := range qs {
+		if !strings.Contains(q, "attempts < $2") || len(argsSeen[i]) != 2 || argsSeen[i][1] != maxOTPAttempts {
+			t.Errorf("lookup %d must skip burned rows: %s %v", i, q, argsSeen[i])
+		}
+	}
+	if len(qs) != 2 {
+		t.Fatalf("lookups = %d", len(qs))
 	}
 }
 

@@ -442,6 +442,7 @@ func TestSupabaseJSCompat(t *testing.T) {
 	// has no mailbox; the capturing EmailSender wired above lets us
 	// extract the code directly from the sent message body.
 	runEmailOTPFlow(t, ts.URL, publishableKey, capturedEmail)
+	runOTPBurnKeepsCooldownFlow(t, ts.URL, publishableKey, capturedEmail)
 
 	// ---- 7. Password reset flow (Go-driven) ----
 	// Like the email OTP flow, we need the capturing EmailSender to
@@ -620,6 +621,71 @@ func runEmailOTPFlow(t *testing.T, baseURL, publishableKey string, emails *captu
 }
 
 var tokenRE = regexp.MustCompile(`token=([a-f0-9]{64})`)
+
+func (c *captureEmailSender) countTo(addr string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for _, m := range c.sent {
+		for _, to := range m.To {
+			if to == addr {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// runOTPBurnKeepsCooldownFlow checks that burning a code with wrong guesses
+// doesn't let /otp mail a fresh one inside the cooldown.
+func runOTPBurnKeepsCooldownFlow(t *testing.T, baseURL, publishableKey string, emails *captureEmailSender) {
+	t.Helper()
+	email := fmt.Sprintf("burn_%d_%d@example.com", time.Now().UnixNano(), rand.Int63())
+	post := func(path, body string) int {
+		req, _ := http.NewRequest("POST", baseURL+path, bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("apikey", publishableKey)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("otp burn: %s: %v", path, err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	waitFor := func(n int) {
+		for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline) && emails.countTo(email) < n; {
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	if code := post("/auth/v1/otp", fmt.Sprintf(`{"email":%q}`, email)); code != 200 {
+		t.Fatalf("otp burn: first /otp status %d", code)
+	}
+	waitFor(1)
+	msg, ok := emails.latestTo(email)
+	if !ok {
+		t.Fatalf("otp burn: no email for %s", email)
+	}
+	realCode := otpCodeRE.FindString(msg.Text)
+	wrong := "000000"
+	if realCode == wrong {
+		wrong = "111111"
+	}
+	for i := 0; i < 5; i++ {
+		if code := post("/auth/v1/verify", fmt.Sprintf(`{"type":"email","email":%q,"token":%q}`, email, wrong)); code != 401 {
+			t.Fatalf("otp burn: wrong guess %d status %d", i, code)
+		}
+	}
+	if code := post("/auth/v1/otp", fmt.Sprintf(`{"email":%q}`, email)); code != 200 {
+		t.Fatalf("otp burn: second /otp status %d, want a silent 200", code)
+	}
+	waitFor(2)
+	if n := emails.countTo(email); n != 1 {
+		t.Fatalf("otp burn: %d emails sent, burning the code must not reset the cooldown", n)
+	}
+	if code := post("/auth/v1/verify", fmt.Sprintf(`{"type":"email","email":%q,"token":%q}`, email, realCode)); code != 401 {
+		t.Fatalf("otp burn: burned code still verifies, status %d", code)
+	}
+}
 
 func runPasswordResetFlow(t *testing.T, baseURL, publishableKey string, emails *captureEmailSender) {
 	t.Helper()

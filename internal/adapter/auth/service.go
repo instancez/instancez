@@ -556,18 +556,16 @@ func (s *Service) VerifyOTP(ctx context.Context, token, email string, allowedPur
 			_, _ = s.db.Exec(ctx, "DELETE FROM auth.one_time_tokens WHERE id = $1", cand["id"])
 			return domain.OTPRow{}, domain.ErrTokenExpired
 		}
+		// A burned row stays so it keeps the resend cooldown; every lookup skips it.
 		if !constantTimeEqual(asString(cand["code"]), token) {
-			if asInt64(cand["attempts"]) >= maxOTPAttempts {
-				_, _ = s.db.Exec(ctx, "DELETE FROM auth.one_time_tokens WHERE id = $1", cand["id"])
-			}
 			return domain.OTPRow{}, domain.ErrInvalidToken
 		}
 		row = cand
 	} else {
 		var err error
 		row, err = s.db.QueryRow(ctx,
-			"SELECT user_id::text, purpose, expires_at, token FROM auth.one_time_tokens WHERE token = $1",
-			token)
+			"SELECT user_id::text, purpose, expires_at, token FROM auth.one_time_tokens WHERE token = $1 AND attempts < $2",
+			token, maxOTPAttempts)
 		if err != nil || row == nil {
 			return domain.OTPRow{}, domain.ErrInvalidToken
 		}
@@ -610,8 +608,8 @@ func purposeAllowed(purpose string, allowed []string) bool {
 
 func (s *Service) PeekOneTimeToken(ctx context.Context, token string) (domain.OTPRow, error) {
 	row, err := s.db.QueryRow(ctx,
-		"SELECT user_id::text, purpose, expires_at FROM auth.one_time_tokens WHERE token = $1",
-		token)
+		"SELECT user_id::text, purpose, expires_at FROM auth.one_time_tokens WHERE token = $1 AND attempts < $2",
+		token, maxOTPAttempts)
 	if err != nil || row == nil {
 		return domain.OTPRow{}, domain.ErrInvalidToken
 	}
