@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"os"
 	"path"
@@ -609,12 +610,37 @@ func (h *StorageV1Handler) serveDownload(c *gin.Context, bucketName, objPath str
 		}
 	}
 
-	if contentType != "" {
-		c.Header("Content-Type", contentType)
-	}
-	c.Header("Cache-Control", "public, max-age=3600")
+	setDownloadHeaders(c, contentType, bucket.Public)
 	c.Status(200)
 	_, _ = io.Copy(c.Writer, body)
+}
+
+// activeContentTypes can run script when rendered inline on our origin.
+var activeContentTypes = map[string]bool{
+	"text/html": true, "text/xsl": true,
+	"text/javascript": true, "application/javascript": true, "application/x-javascript": true,
+}
+
+// isActiveContent covers HTML/JS plus every XML family type (svg, xhtml, rss, atom, mathml).
+func isActiveContent(mt string) bool {
+	return activeContentTypes[mt] || strings.HasSuffix(mt, "+xml") || strings.HasSuffix(mt, "/xml")
+}
+
+func setDownloadHeaders(c *gin.Context, contentType string, public bool) {
+	mt, _, err := mime.ParseMediaType(contentType)
+	if err != nil || !strings.Contains(mt, "/") {
+		contentType, mt = "application/octet-stream", ""
+	}
+	c.Header("Content-Type", contentType)
+	c.Header("X-Content-Type-Options", "nosniff")
+	if isActiveContent(mt) {
+		c.Header("Content-Disposition", "attachment")
+	}
+	if public {
+		c.Header("Cache-Control", "public, max-age=3600")
+	} else {
+		c.Header("Cache-Control", "private, max-age=3600")
+	}
 }
 
 func (h *StorageV1Handler) listObjects(c *gin.Context) {

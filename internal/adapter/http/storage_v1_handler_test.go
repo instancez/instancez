@@ -2215,3 +2215,58 @@ func TestUploadToSignedURL_Hardening(t *testing.T) {
 		assert.Equal(t, 500, w.Code, "failed metadata insert reported as success")
 	})
 }
+
+// --- Download headers (C8) ---
+
+func TestSetDownloadHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const pub, priv = "public, max-age=3600", "private, max-age=3600"
+	cases := []struct {
+		ct             string
+		public         bool
+		wantCT, wantCC string
+		attach         bool
+	}{
+		{"image/png", true, "image/png", pub, false},
+		{"image/png", false, "image/png", priv, false},
+		{"text/plain", false, "text/plain", priv, false},
+		{"text/html; charset=utf-8", false, "text/html; charset=utf-8", priv, true},
+		{"TEXT/HTML", true, "TEXT/HTML", pub, true},
+		{"image/svg+xml", true, "image/svg+xml", pub, true},
+		{"application/xhtml+xml", true, "application/xhtml+xml", pub, true},
+		{"text/xml", true, "text/xml", pub, true},
+		{"application/javascript", true, "application/javascript", pub, true},
+		{"application/rss+xml", true, "application/rss+xml", pub, true},
+		{"application/mathml+xml", true, "application/mathml+xml", pub, true},
+		{"html", false, "application/octet-stream", priv, false},
+		{"", false, "application/octet-stream", priv, false},
+		{"not a mime", false, "application/octet-stream", priv, false},
+	}
+	for _, tc := range cases {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		setDownloadHeaders(c, tc.ct, tc.public)
+		hd := w.Header()
+		assert.Equal(t, tc.wantCT, hd.Get("Content-Type"), tc.ct)
+		assert.Equal(t, tc.wantCC, hd.Get("Cache-Control"), tc.ct)
+		assert.Equal(t, "nosniff", hd.Get("X-Content-Type-Options"), tc.ct)
+		assert.Equal(t, tc.attach, strings.HasPrefix(hd.Get("Content-Disposition"), "attachment"), tc.ct)
+	}
+}
+
+func TestServeDownload_PrivateHTMLIsAttachmentAndPrivate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := &stubDB{queryRowFn: func(context.Context, string, ...any) (map[string]any, error) { return map[string]any{"id": "x"}, nil }}
+	store := &stubObjectStore{downloadFn: func(context.Context, string) (io.ReadCloser, string, error) {
+		return io.NopCloser(strings.NewReader("<script>alert(1)</script>")), "text/html", nil
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"docs": {Public: false}})
+	r := gin.New()
+	r.GET("/dl/:bucket/*path", func(c *gin.Context) { h.serveDownload(c, c.Param("bucket"), c.Param("path"), false) })
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/dl/docs/x.html", nil))
+	require.Equal(t, 200, w.Code)
+	assert.Equal(t, "private, max-age=3600", w.Header().Get("Cache-Control"))
+	assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
+	assert.True(t, strings.HasPrefix(w.Header().Get("Content-Disposition"), "attachment"))
+}
