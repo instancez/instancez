@@ -77,12 +77,12 @@ func (h *CRUDHandler) Mount(root *gin.RouterGroup) {
 	// anon calls still parse a token if present; per-function
 	// auth_required enforcement happens inside handleRPC.
 	rpc := h.handleRPC()
-	rest.POST("/rpc/:name", jwtAuth(h.jwtKeys, false), rpc)
-	rest.GET("/rpc/:name", jwtAuth(h.jwtKeys, false), rpc)
+	rest.POST("/rpc/:name", rejectPlan, jwtAuth(h.jwtKeys, false), rpc)
+	rest.GET("/rpc/:name", rejectPlan, jwtAuth(h.jwtKeys, false), rpc)
 	// HEAD reuses the same handler so supabase-js .rpc('fn', {}, { head: true })
 	// picks up Content-Range without streaming the row body. As with the CRUD
 	// list path, net/http strips the body after the status + headers fly.
-	rest.HEAD("/rpc/:name", jwtAuth(h.jwtKeys, false), rpc)
+	rest.HEAD("/rpc/:name", rejectPlan, jwtAuth(h.jwtKeys, false), rpc)
 
 	for tableName, table := range h.cfg.Tables {
 		name := tableName
@@ -99,10 +99,10 @@ func (h *CRUDHandler) Mount(root *gin.RouterGroup) {
 		// line and headers (Content-Range, Content-Type) but strip the body
 		// so clients can fetch counts and pagination metadata cheaply.
 		group.HEAD("", list)
-		group.POST("", h.handleCreate(name, t))
-		group.PUT("", h.handleUpsert(name, t))
-		group.PATCH("", h.handleUpdate(name, t))
-		group.DELETE("", h.handleDelete(name, t))
+		group.POST("", rejectPlan, h.handleCreate(name, t))
+		group.PUT("", rejectPlan, h.handleUpsert(name, t))
+		group.PATCH("", rejectPlan, h.handleUpdate(name, t))
+		group.DELETE("", rejectPlan, h.handleDelete(name, t))
 	}
 }
 

@@ -41,3 +41,34 @@ func TestHandleList_PlanRefusedWithoutSecretKey(t *testing.T) {
 		}
 	}
 }
+
+func TestRejectPlan(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, method := range []string{"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"} {
+		for accept, want := range map[string]int{
+			`application/vnd.pgrst.plan+text; for="application/json"; options=;`: 406,
+			"Application/Vnd.Pgrst.Plan+JSON":                                    406,
+			`application/vnd.pgrst.plan; for="text/xml"`:                         406,
+			"application/json":                                                   200,
+			"":                                                                   200,
+		} {
+			ran := false
+			r := gin.New()
+			r.Handle(method, "/x", rejectPlan, func(c *gin.Context) { ran = true; c.Status(200) })
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(method, "/x", nil)
+			req.Header.Set("Accept", accept)
+			r.ServeHTTP(w, req)
+			if w.Code != want || ran != (want == 200) {
+				t.Fatalf("%s %q: status %d ran %v", method, accept, w.Code, ran)
+			}
+			if want == 406 && method != "HEAD" {
+				var body map[string]any
+				_ = json.Unmarshal(w.Body.Bytes(), &body)
+				if body["code"] != "PGRST107" {
+					t.Fatalf("%s %q: code %v", method, accept, body["code"])
+				}
+			}
+		}
+	}
+}

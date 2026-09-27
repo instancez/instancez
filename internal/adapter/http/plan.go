@@ -3,6 +3,8 @@ package http
 import (
 	"fmt"
 	"strings"
+
+	"github.com/gin-gonic/gin"
 )
 
 // planRequest is a parsed application/vnd.pgrst.plan Accept header.
@@ -79,4 +81,13 @@ func (p planRequest) explainSQL(query string) string {
 
 func (p planRequest) contentType() string {
 	return fmt.Sprintf(`application/vnd.pgrst.plan+%s; for="%s"; charset=utf-8`, p.format, p.forType)
+}
+
+// rejectPlan refuses plan requests on routes that would otherwise execute writes or RPCs.
+func rejectPlan(c *gin.Context) {
+	accept := c.GetHeader("Accept")
+	if _, isPlan, _ := parsePlanAccept(accept); isPlan {
+		pgJSON(c, 406, "PGRST107", "None of these media types are available: "+accept, "", "")
+		c.Abort()
+	}
 }

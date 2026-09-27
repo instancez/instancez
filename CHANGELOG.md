@@ -26,6 +26,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 ### Fixed
 
 - supabase-js `.explain()` now returns the query plan for the secret key. The `for` and `options` Accept parameters are honored, media types match case-insensitively, and the JSON plan is returned bare, as in PostgREST (was wrapped in `[{"QUERY PLAN": ...}]`). Plan transactions are always rolled back.
+- `.explain()` on insert, upsert, update, delete and rpc now returns 406 `PGRST107` before any SQL runs. Before, a secret-key `.delete().explain()` ran the delete and returned rows.
 - supabase-js `linkIdentity()` works: `/user/identities/authorize` now accepts GET, which supabase-js sends, as well as POST.
 - supabase-js `error.code` now returns the auth error code (`user_banned`, `insufficient_aal`, …). `/auth/v1` error bodies carry GoTrue's `error_code` field next to `code`; REST errors are unchanged.
 - `verifyOtp({ type: 'magiclink' })` now marks the email confirmed, as GoTrue does, so magic-link users can later link a Google login by email.

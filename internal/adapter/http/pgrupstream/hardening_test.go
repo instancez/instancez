@@ -216,6 +216,44 @@ func TestHardening_PlanOnlyForServiceRole(t *testing.T) {
 	require.Equal(t, 406, status)
 }
 
+func TestHardening_PlanRefusedOnWritesAndRPC(t *testing.T) {
+	if testTS == nil {
+		t.Skip("no upstream")
+	}
+	channels := func() []map[string]any {
+		status, _, raw := call(t, "GET", testTS.URL+"/rest/v1/channels?select=id,slug&order=id", "", nil, false)
+		require.Equal(t, 200, status, "%s", raw)
+		return rowsOf(t, raw)
+	}
+	before := channels()
+	require.NotEmpty(t, before)
+	for _, accept := range []string{`application/vnd.pgrst.plan+text; for="application/json"; options=analyze;`, "Application/Vnd.Pgrst.Plan+Json"} {
+		for _, anon := range []bool{false, true} {
+			plan := map[string]string{"Accept": accept, "Prefer": "return=representation,resolution=merge-duplicates"}
+			for _, r := range []struct{ method, path, body string }{
+				{"POST", "/rest/v1/channels", `{"slug":"planned"}`},
+				{"PUT", "/rest/v1/channels?id=eq.1", `{"id":1,"slug":"planned"}`},
+				{"PATCH", "/rest/v1/channels?id=eq.1", `{"slug":"planned"}`},
+				{"DELETE", "/rest/v1/channels?id=eq.1", ""},
+				{"GET", "/rest/v1/rpc/greet", ""},
+				{"HEAD", "/rest/v1/rpc/greet", ""},
+			} {
+				status, _, raw := call(t, r.method, testTS.URL+r.path, r.body, plan, anon)
+				require.Equal(t, 406, status, "%s %s anon=%v: %s", r.method, r.path, anon, raw)
+				if r.method != "HEAD" {
+					require.Contains(t, string(raw), "PGRST107")
+				}
+			}
+			// A volatile RPC that ran would take 2s.
+			start := time.Now()
+			status, _, raw := call(t, "POST", testTS.URL+"/rest/v1/rpc/sleep_for", `{"secs":2}`, plan, anon)
+			require.Equal(t, 406, status, "%s", raw)
+			require.Less(t, time.Since(start), time.Second)
+		}
+	}
+	require.Equal(t, before, channels())
+}
+
 func TestHardening_StatementTimeout(t *testing.T) {
 	if testTS == nil {
 		t.Skip("no upstream")

@@ -2920,6 +2920,20 @@ await step('rest: explain returns query plan only to the secret key', async () =
   const { data: single, error: e3 } = await admin.from('todos').select('id').limit(1).single().explain()
   if (e3) throw e3
   assert(typeof single === 'string' && single.includes('cost='), `plan for object media type: ${single}`)
+
+  const { data: row, error: e4 } = await admin
+    .from('todos').insert({ title: 'explain must not delete', user_id: userId }).select('id').single()
+  if (e4) throw e4
+  const { error: e5, status: s5 } = await admin.from('todos').delete().eq('id', row.id).explain({ analyze: true })
+  assertEq(s5, 406, 'delete explain refused')
+  assertEq(e5?.code, 'PGRST107', 'delete explain code')
+  const { error: e6, status: s6 } = await admin.rpc('add_two', { a: 1, b: 2 }).explain()
+  assertEq(s6, 406, 'rpc explain refused')
+  assertEq(e6?.code, 'PGRST107', 'rpc explain code')
+  const { data: still, error: e7 } = await admin.from('todos').select('id').eq('id', row.id)
+  if (e7) throw e7
+  assertEq(still.length, 1, 'row survives delete explain')
+  await admin.from('todos').delete().eq('id', row.id)
 })
 
 // --- signOut scope=local ---
