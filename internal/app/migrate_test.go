@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -925,4 +926,30 @@ func TestHarden_HealsAuthColumnsOnlyWhenAuthConfigured(t *testing.T) {
 			t.Fatalf("committed %d of %d statements", db.committedStatements, len(db.execs))
 		}
 	}
+}
+
+func TestGenerateRLSPolicies_EnabledWithZeroPoliciesIsDenyAll(t *testing.T) {
+	on := true
+	ddl := generateRLSPolicies("todos", domain.Table{RLSEnabled: &on})
+	want := []string{
+		"ALTER TABLE todos ENABLE ROW LEVEL SECURITY;",
+		"ALTER TABLE todos FORCE ROW LEVEL SECURITY;",
+	}
+	if !slices.Equal(ddl, want) {
+		t.Fatalf("got %q, want %q", ddl, want)
+	}
+}
+
+func TestGenerateRLSPolicies_ExplicitFalseEmitsNothing(t *testing.T) {
+	off := false
+	if ddl := generateRLSPolicies("todos", domain.Table{RLSEnabled: &off}); len(ddl) != 0 {
+		t.Fatalf("rls_enabled: false must emit no RLS DDL, got %q", ddl)
+	}
+}
+
+func TestGenerateRLSPolicies_EnabledSchemaQualified(t *testing.T) {
+	on := true
+	joined := strings.Join(generateRLSPolicies("notes", domain.Table{Schema: "reporting", RLSEnabled: &on}), "\n")
+	mustContain(t, joined, "ALTER TABLE reporting.notes ENABLE ROW LEVEL SECURITY;")
+	mustContain(t, joined, "ALTER TABLE reporting.notes FORCE ROW LEVEL SECURITY;")
 }

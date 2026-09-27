@@ -94,3 +94,63 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+// The dashboard edits config via GET JSON → PUT JSON → yaml.Marshal. rls_enabled
+// must survive that loop in all three states, or a dashboard save would silently
+// flip a locked table open (false lost → inferred) or drop an explicit true.
+func TestRLSEnabledSurvivesConfigRoundTrip(t *testing.T) {
+	src := []byte(`version: 1
+project:
+  name: Demo
+tables:
+  locked:
+    rls_enabled: true
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+  open:
+    rls_enabled: false
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+  legacy:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+`)
+	cfg, err := ParseBytesRaw(src, "test")
+	if err != nil {
+		t.Fatalf("ParseBytesRaw: %v", err)
+	}
+	getJSON, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	putCfg, err := UnmarshalConfigJSON(getJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(putCfg.UnknownKeys) != 0 {
+		t.Fatalf("rls_enabled reported as unknown key: %v", putCfg.UnknownKeys)
+	}
+	outYAML, err := yaml.Marshal(putCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	final, err := ParseBytes(outYAML, "test")
+	if err != nil {
+		t.Fatalf("ParseBytes(final): %v\n%s", err, outYAML)
+	}
+	if p := final.Tables["locked"].RLSEnabled; p == nil || !*p {
+		t.Errorf("locked: rls_enabled true lost: %v\n%s", p, outYAML)
+	}
+	if p := final.Tables["open"].RLSEnabled; p == nil || *p {
+		t.Errorf("open: rls_enabled false lost: %v\n%s", p, outYAML)
+	}
+	if p := final.Tables["legacy"].RLSEnabled; p != nil {
+		t.Errorf("legacy: unset rls_enabled materialized as %v\n%s", *p, outYAML)
+	}
+}
