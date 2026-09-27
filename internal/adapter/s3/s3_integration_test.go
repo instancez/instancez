@@ -66,7 +66,7 @@ func TestStoreSignDownload_ResponseOverrides(t *testing.T) {
 	st := newMinIOStore(t)
 	ctx := context.Background()
 	body := "<script>alert(1)</script>"
-	require.NoError(t, st.Upload(ctx, "b/page.html", strings.NewReader(body), "text/html", int64(len(body))))
+	require.NoError(t, st.Upload(ctx, "b/page.html", strings.NewReader(body), "application/octet-stream", int64(len(body))))
 
 	get := func(u string) *http.Response {
 		resp, err := http.Get(u)
