@@ -12,6 +12,9 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 - Requests running as `anon` or `authenticated` can no longer read or write `auth.*` tables, which matches Supabase. RLS policies or `security: invoker` RPCs that query `auth.users` directly now get `permission denied`; move that data into your own table or use a `security: definer` RPC. `auth.uid()`, `auth.role()`, `auth.email()`, `auth.jwt()` and foreign keys to `auth.users.id` are unaffected.
 - Startup now re-applies database privilege fixes on every boot, including `inz serve` without `--migrate`, and boot fails if the privilege fix fails.
+- Storage: a legacy `/api/storage` `GET` on a public bucket with a present but invalid `Authorization: Bearer` token now returns 401 instead of falling back to anonymous access.
+- Storage: `createSignedUrls` with an empty path list or more than 1000 paths now returns 400.
+- Storage: `/storage/v1/object/info/authenticated/<bucket>` with no path now returns 400 (was 404).
 
 ### Fixed
 
@@ -20,6 +23,8 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - Storage: object keys with `..` segments are rejected, and the local provider can no longer write outside its directory.
 - Storage: downloads send `nosniff`, private buckets are no longer publicly cacheable, and HTML/SVG/XML/JS are served as attachments.
 - Storage: image transforms are capped at 2500px, 25MB and 50MP. Signed URL expiry is capped at 7 days. Uploads no longer hold a database connection while the body streams. Multipart and signed uploads record real sizes, and signed uploads enforce the bucket's MIME allowlist. S3 copies of keys with special characters work.
+- Storage: `createSignedUploadUrl`'s response `url` now includes `?token=`, so `@supabase/supabase-js`'s `uploadToSignedUrl()` and `createSignedUploadUrl()` work end-to-end (storage-js reads the token from the URL).
+- Storage: `bucket.info()` now works, served at `/storage/v1/object/info/<bucket>/<path>`.
 
 ### Security
 
