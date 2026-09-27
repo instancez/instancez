@@ -1282,8 +1282,8 @@ func (h *AuthHandler) handleAuthorize(c *gin.Context) {
 			return
 		}
 	} else {
-		c.SetCookie("oauth_state", state, 600, "/", "", false, true)
-		c.SetCookie("oauth_redirect_to", redirectTo, 600, "/", "", false, true)
+		h.setLaxCookie(c, "oauth_state", state, 600)
+		h.setLaxCookie(c, "oauth_redirect_to", redirectTo, 600)
 	}
 
 	c.Redirect(http.StatusTemporaryRedirect, prov.AuthorizeURL(cfg, state))
@@ -2166,36 +2166,7 @@ func (h *AuthHandler) handleTokenVerify(c *gin.Context) {
 		return
 	}
 
-	parser := jwt.NewParser(jwt.WithoutClaimsValidation())
-	token, _, err := parser.ParseUnverified(req.Token, jwt.MapClaims{})
-	if err != nil {
-		problemJSON(c, 401, "invalid_token", "Malformed token")
-		return
-	}
-
-	kid, _ := token.Header["kid"].(string)
-	key, err := h.jwtKeys.Get(c.Request.Context(), kid)
-	if err != nil {
-		problemJSON(c, 401, "invalid_token", "Unknown signing key")
-		return
-	}
-
-	verified, err := jwt.Parse(req.Token, func(t *jwt.Token) (any, error) {
-		switch t.Method.(type) {
-		case *jwt.SigningMethodRSA:
-			if key.PublicKey == nil {
-				return nil, fmt.Errorf("no RSA public key for kid %s", kid)
-			}
-			return key.PublicKey, nil
-		case *jwt.SigningMethodHMAC:
-			if len(key.Secret) == 0 {
-				return nil, fmt.Errorf("no HMAC secret for kid %s", kid)
-			}
-			return key.Secret, nil
-		default:
-			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
-		}
-	})
+	verified, err := verifySignedJWT(c.Request.Context(), h.jwtKeys, req.Token)
 	if err != nil || !verified.Valid {
 		problemJSON(c, 401, "invalid_token", "Token verification failed")
 		return

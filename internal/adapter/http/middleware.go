@@ -219,6 +219,7 @@ func verifySignedJWT(ctx context.Context, keys *app.JWTKeyManager, tokenStr stri
 		}
 	},
 		jwt.WithExpirationRequired(),
+		jwt.WithValidMethods([]string{"RS256", "HS256"}),
 		// Clock-skew allowance, matching PostgREST/Supabase exp validation.
 		jwt.WithLeeway(app.JWTVerifyLeeway))
 }
