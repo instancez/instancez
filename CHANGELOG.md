@@ -9,7 +9,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 ### Added
 
 - Per-table `rls_enabled` in `instancez.yaml`. `true` enables and forces RLS even with no policies (deny-all for `anon`/`authenticated`), and with `true` set, removing the last policy no longer turns RLS off. `false` disables RLS and is rejected when the table declares policies. Leaving it unset keeps the old behavior (on only if the table has policies, off the moment the last policy is removed), so existing projects migrate with no DDL change. `inz init`, the examples, and the dashboard's new-table flow now write it explicitly, defaulting to `true`.
-- `inz validate` and `inz dev` print non-blocking warnings. The first two: a table without `rls_enabled`, and a table with RLS disabled.
+- `inz validate` and `inz dev` print non-blocking warnings: a table without `rls_enabled`, a table with RLS disabled, and `server.max_limit: 100` (the old default).
 
 ### Changed
 
@@ -17,7 +17,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - Startup now re-applies database privilege fixes on every boot, including `inz serve` without `--migrate`, and boot fails if the privilege fix fails.
 - **Breaking:** session JWTs now carry Supabase's top-level `aal` and `amr` (`[{method, timestamp}]`) claims, with a `session_id` that stays the same across refreshes. `aal` is no longer written into `app_metadata`; RLS policies reading `auth.jwt()->'app_metadata'->>'aal'` must switch to `auth.jwt()->>'aal'`.
 - `GET /auth/v1/user` and session responses now include `user.factors`, so supabase-js `mfa.listFactors()` and `mfa.getAuthenticatorAssuranceLevel()` work.
-- REST reads no longer stop at 20 rows when no `limit` is given, matching PostgREST. `server.max_limit` (new default 1000, `-1` to disable) now caps table reads, setof RPCs and top-level has-many embeds, the way PostgREST's `db-max-rows` does.
+- **Breaking:** REST reads no longer stop at 20 rows when no `limit` is given, matching PostgREST. `server.max_limit` (new default 1000, `-1` to disable) now caps table reads, setof RPCs and top-level has-many embeds, the way PostgREST's `db-max-rows` does. Clients that relied on the 20-row default now get up to 1000 rows; see Upgrading if your YAML has `max_limit: 100`.
 - Storage: a legacy `/api/storage` `GET` on a public bucket with a present but invalid `Authorization: Bearer` token now returns 401 instead of falling back to anonymous access.
 - Storage: `createSignedUrls` with an empty path list or more than 1000 paths now returns 400.
 - Storage: `/storage/v1/object/info/authenticated/<bucket>` with no path now returns 400 (was 404).
@@ -67,6 +67,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 - Keep the mixed-version window short. The first upgraded instance revokes anon's access to `auth.*`. From then on, older instances run their refresh-token, signup-confirmation, and one-time-token (resend) writes as `anon` and lose access, so sign-in, refresh, and signup confirmation/resend routed to them fail until the rollout finishes.
 - Rolling back to an older release needs a manual step: re-grant the old privileges yourself. An older binary with an unchanged config never re-runs the grants.
+- Check `server.max_limit` in your `instancez.yaml`. Dashboard saves from older releases wrote the old default, `max_limit: 100`, which was never enforced. It is now a hard cap, so every read, `.range()` included, silently stops at 100 rows (only `Content-Range` shows it). Remove the line to get the 1000 default, or set the cap you want. `inz validate` and `inz dev` warn about this value.
 - `aal` moved out of `app_metadata` into a top-level JWT claim. Before rolling out, update any RLS policy or client code that reads `auth.jwt()->'app_metadata'->>'aal'` or `user.app_metadata.aal` to `auth.jwt()->>'aal'` and the top-level `aal` claim instead.
 
 ## [0.0.3]

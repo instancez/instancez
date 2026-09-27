@@ -258,6 +258,13 @@ func Warnings(cfg *domain.Config) domain.ValidationErrors {
 			})
 		}
 	}
+	if cfg.Server.MaxLimit == 100 {
+		ws = append(ws, &domain.ValidationError{
+			Path:       "server.max_limit",
+			Message:    "100 was the old unenforced default and now caps every read at 100 rows",
+			Suggestion: "Remove max_limit to use the 1000 default, or set the cap you want (-1 disables it)",
+		})
+	}
 	return ws
 }
 

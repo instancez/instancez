@@ -693,6 +693,23 @@ func TestWarnings_NoTablesAndStableOrder(t *testing.T) {
 	}
 }
 
+func TestWarnings_MaxLimitOldDefault(t *testing.T) {
+	for _, n := range []int{-1, 0, 1, 99, 101, 1000} {
+		if ws := Warnings(&domain.Config{Version: 1, Server: domain.Server{MaxLimit: n}}); ws != nil {
+			t.Errorf("max_limit %d: want no warning, got %v", n, ws)
+		}
+	}
+	ws := Warnings(&domain.Config{Version: 1, Server: domain.Server{MaxLimit: 100}})
+	if len(ws) != 1 || ws[0].Path != "server.max_limit" || !strings.Contains(ws[0].Message, "caps") {
+		t.Fatalf("max_limit 100: want one server.max_limit warning, got %v", ws)
+	}
+	cfg := validBaseConfig()
+	cfg.Server.MaxLimit = 100
+	if ws := Warnings(cfg); len(ws) != 2 || ws[1].Path != "server.max_limit" {
+		t.Fatalf("want the max_limit warning after table warnings, got %v", ws)
+	}
+}
+
 // assertHasErrorAt checks that at least one error has the given path prefix.
 func assertHasErrorAt(t *testing.T, errs domain.ValidationErrors, pathPrefix string) {
 	t.Helper()
