@@ -24,6 +24,9 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - `anon` and `authenticated` could read **and modify** every `auth.*` table. That covered password hashes, refresh tokens, TOTP secrets and the JWT signing private keys in `auth.jwt_keys`. The worst case: a client holding only the publishable key could insert its own signing key into `auth.jwt_keys` and mint accepted tokens for any user, or overwrite `password_hash`. They could also read `_instancez_migrations`, which stores the resolved config including OAuth client secrets, S3 keys, the Resend API key and function env values. `auth.jwt_keys` is now revoked from all three API roles (`anon`, `authenticated`, `service_role`); `_instancez_migrations` is revoked from those three plus the seed role used by `run_sql`, if one is configured. Existing databases are fixed on the next boot, without a config change, provided the migration (owner) login owns the `auth` tables — Postgres only warns, and does not error, when a non-owner role runs `REVOKE`, so a misconfigured owner DSN silently leaves the old grants in place.
 - A retired JWT signing key stops verifying once `jwt_expiry` has passed since its retirement. Before this change it verified forever.
 - A transient database error while loading the signing key no longer mints a replacement key, which used to sign every user out.
+- Storage uploads now check the caller's RLS policy before spooling the request body to disk, so an RLS-denied or anonymous caller can no longer force up to `max_size` bytes of disk I/O per request.
+- Storage downloads through an authenticated route (not the `public/` route) on a public bucket now get `Cache-Control: private`, not `public`, since RLS on that route can still be per-caller.
+- Storage downloads with a `multipart/*` content type (e.g. `multipart/x-mixed-replace`) now download as an attachment instead of rendering inline.
 
 ### Upgrading
 
