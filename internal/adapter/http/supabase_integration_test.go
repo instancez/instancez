@@ -144,7 +144,8 @@ func TestSupabaseJSCompat(t *testing.T) {
 	cfg := &domain.Config{
 		Version: 1,
 		Project: domain.Project{Name: "integration"},
-		Server:  domain.Server{Port: 0},
+		// Production defaults, so the contract covers the max-rows cap, statement_timeout and API deadlines.
+		Server: domain.Server{Port: 0, MaxLimit: 1000, Timeouts: domain.Timeouts{Request: "25s", DBQuery: "10s"}},
 		Auth: &domain.Auth{
 			JWTExpiry: "1h",
 			// The recovery/verify flow redirects to the app; the allowlist must
