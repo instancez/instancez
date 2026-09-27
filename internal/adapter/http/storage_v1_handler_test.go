@@ -879,31 +879,53 @@ func TestUploadObject_StoreUploadInternalError(t *testing.T) {
 	}
 }
 
+// uploadHarness wires a stubDB/stubObjectStore that record ops in order, mirroring moveCopyHarness.
+func uploadHarness(execErr, uploadErr, commitErr error) (*StorageV1Handler, *opLog) {
+	log := &opLog{}
+	tx := &stubTx{
+		execFn:     func(context.Context, string, ...any) (int64, error) { log.add("exec"); return 1, execErr },
+		commitFn:   func(context.Context) error { log.add("commit"); return commitErr },
+		rollbackFn: func(context.Context) error { log.add("rollback"); return nil },
+	}
+	store := &stubObjectStore{
+		uploadFn: func(_ context.Context, key string, _ io.Reader, _ string, _ int64) error {
+			log.add("upload:" + key)
+			return uploadErr
+		},
+		deleteFn: func(_ context.Context, key string) error { log.add("delete:" + key); return nil },
+	}
+	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { return tx, nil }}
+	return newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}}), log
+}
+
+// The leading "exec","rollback" pair in each wantOps is the pre-spool probe; the real write tx follows.
 func TestUploadObject_CommitFailureNoCompensatingDelete(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	deleted := false
-	store := &stubObjectStore{
-		deleteFn: func(ctx context.Context, key string) error { deleted = true; return nil },
+	cases := []struct {
+		name    string
+		method  string
+		upsert  bool
+		wantOps []string
+	}{
+		{"insert", http.MethodPost, false, []string{"exec", "rollback", "exec", "upload:avatars/photo.jpg", "commit", "rollback"}},
+		{"update", http.MethodPut, false, []string{"exec", "rollback", "exec", "upload:avatars/photo.jpg", "commit", "rollback"}},
+		{"upsert", http.MethodPost, true, []string{"exec", "rollback", "exec", "upload:avatars/photo.jpg", "commit", "rollback"}},
 	}
-	tx := &stubTx{
-		execFn:   func(ctx context.Context, q string, args ...any) (int64, error) { return 1, nil },
-		commitFn: func(ctx context.Context) error { return errors.New("commit failed") },
-	}
-	db := &stubDB{beginFn: func(ctx context.Context) (domain.Tx, error) { return tx, nil }}
-	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
+	for _, tc := range cases {
+		h, log := uploadHarness(nil, nil, errors.New("commit failed"))
+		r := gin.New()
+		r.POST("/storage/v1/object/:bucket/*path", h.uploadObject)
+		r.PUT("/storage/v1/object/:bucket/*path", h.updateObject)
 
-	w := httptest.NewRecorder()
-	r := gin.New()
-	r.POST("/storage/v1/object/:bucket/*path", h.uploadObject)
+		req := httptest.NewRequest(tc.method, "/storage/v1/object/avatars/photo.jpg", strings.NewReader("data"))
+		if tc.upsert {
+			req.Header.Set("x-upsert", "true")
+		}
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
 
-	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/photo.jpg", strings.NewReader("data"))
-	r.ServeHTTP(w, req)
-
-	if w.Code != 500 {
-		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
-	}
-	if deleted {
-		t.Error("commit failure is ambiguous; store.Delete must not run (would delete live bytes if the commit actually applied)")
+		require.Equal(t, 500, w.Code, tc.name)
+		assert.Equal(t, tc.wantOps, log.ops, "%s: an ambiguous commit must not touch storage", tc.name)
 	}
 }
 
