@@ -68,6 +68,7 @@ const assert = (cond, msg) => {
 const assertEq = (got, want, msg) => {
   if (got !== want) throw new Error(`${msg || 'assertEq'}: got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`)
 }
+const decodeJWT = (tok) => JSON.parse(Buffer.from(tok.split('.')[1], 'base64url').toString('utf8'))
 
 const anon = createClient(URL, PUBLISHABLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -139,6 +140,19 @@ await step('auth.refreshSession rotates tokens', async () => {
   assert(data.session.refresh_token !== refreshToken, 'refresh_token rotated')
   accessToken = data.session.access_token
   refreshToken = data.session.refresh_token
+})
+
+await step('auth: two concurrent refreshes of one token both succeed (reuse grace)', async () => {
+  const { data: s } = await anon.auth.signInWithPassword({ email, password })
+  const rt = s.session.refresh_token
+  // Separate clients: one auth-js client dedupes concurrent refreshes itself.
+  const tab = () => createClient(URL, PUBLISHABLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  const [a, b] = await Promise.all([
+    tab().auth.refreshSession({ refresh_token: rt }),
+    tab().auth.refreshSession({ refresh_token: rt }),
+  ])
+  assert(!a.error && !b.error, `both tabs must refresh: ${a.error?.message} / ${b.error?.message}`)
+  assertEq(decodeJWT(a.data.session.access_token).session_id, decodeJWT(b.data.session.access_token).session_id, 'same session family')
 })
 
 // --- Resend OTP ---
@@ -1425,6 +1439,12 @@ await step('auth.resend returns success', async () => {
   if (error) throw error
 })
 
+await step('auth.resend within 60s is rate limited', async () => {
+  const { error } = await anon.auth.resend({ type: 'signup', email })
+  assert(error, 'second resend inside the cooldown must fail')
+  assertEq(error.status, 429, 'over_email_send_rate_limit status')
+})
+
 await step('auth.reauthenticate returns success', async () => {
   // reauthenticate() reads the client's in-memory session, so sign in on a
   // dedicated client first (a Bearer header alone isn't enough).
@@ -1667,6 +1687,16 @@ await step('rest: delete row', async () => {
   if (error) throw error
 })
 
+await step('jwt: password session carries Supabase aal/amr/session_id claims', async () => {
+  const claims = decodeJWT(accessToken)
+  assertEq(claims.aal, 'aal1', 'top-level aal')
+  assert(Array.isArray(claims.amr) && claims.amr.length >= 1, 'amr is a non-empty array')
+  assertEq(claims.amr[0].method, 'password', 'amr[0].method')
+  assert(Number.isInteger(claims.amr[0].timestamp), 'amr[0].timestamp is unix seconds')
+  assert(typeof claims.session_id === 'string' && claims.session_id.length > 0, 'session_id present')
+  assertEq(claims.app_metadata?.aal, undefined, 'aal is not in app_metadata')
+})
+
 // --- MFA / TOTP ---
 // supabase-js exposes auth.mfa.{enroll, challenge, verify, unenroll, listFactors}.
 // We drive the lot against a real, password-verified session so the JWT
@@ -1790,9 +1820,19 @@ await step('mfa: getAuthenticatorAssuranceLevel + listFactors read user.factors'
   if (error) throw error
   assertEq(aal.currentLevel, 'aal2', 'currentLevel')
   assertEq(aal.nextLevel, 'aal2', 'nextLevel (from user.factors)')
+  assert(aal.currentAuthenticationMethods.some((m) => m.method === 'totp'), 'amr includes totp')
   const { data: factors, error: listErr } = await client.auth.mfa.listFactors()
   if (listErr) throw listErr
   assert(factors.totp.some((f) => f.id === globalThis.__mfaFactorId), 'verified factor listed via supabase-js')
+})
+
+await step('mfa: refresh keeps aal2 and the session id', async () => {
+  const { data, error } = await anon.auth.refreshSession({ refresh_token: globalThis.__aal2Refresh })
+  if (error) throw error
+  const claims = decodeJWT(data.session.access_token)
+  assertEq(claims.aal, 'aal2', 'aal survives refresh')
+  assertEq(claims.session_id, decodeJWT(globalThis.__aal2Access).session_id, 'session_id survives refresh')
+  globalThis.__aal2Access = data.session.access_token
 })
 
 await step('mfa: aal2 session unenrolls the factor', async () => {
@@ -1956,6 +1996,18 @@ if (SECRET_KEY) {
     })
     if (error) throw error
     assertEq(data.user.user_metadata.plan, 'enterprise', 'metadata updated')
+  })
+
+  await step('admin ban blocks sign-in until lifted', async () => {
+    const { error: banErr } = await adminClient.auth.admin.updateUserById(adminUserId, { ban_duration: '24h' })
+    if (banErr) throw banErr
+    const { error } = await anon.auth.signInWithPassword({ email: adminEmail, password: 'hunter2hunter2' })
+    assert(error, 'banned user must not sign in')
+    assertEq(error.status, 403, 'user_banned status')
+    const { error: unbanErr } = await adminClient.auth.admin.updateUserById(adminUserId, { ban_duration: 'none' })
+    if (unbanErr) throw unbanErr
+    const { error: again } = await anon.auth.signInWithPassword({ email: adminEmail, password: 'hunter2hunter2' })
+    if (again) throw again
   })
 
   await step('admin.deleteUser removes the user', async () => {

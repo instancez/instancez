@@ -13,11 +13,23 @@ instancez implements the Supabase wire protocol. Any official Supabase SDK works
 | **Auth — `supabase.auth.*`** | ✅ Full | Email + password, magic link / OTP, anonymous sign-in, session refresh, `updateUser`, `resetPasswordForEmail`, identity linking/unlinking (`linkIdentity` needs the frontend on the API's origin, see [Auth](/build/auth/)), PKCE. |
 | **OAuth — `signInWithOAuth`** | ⚠️ Google and GitHub only | The `provider` field accepts `google` and `github`. Other providers return a 400. |
 | **Auth Admin — `supabase.auth.admin.*`** | ✅ Full | `createUser`, `listUsers` (paginated), `getUserById`, `updateUserById`, `deleteUser`, `inviteUserByEmail`, `generateLink`, `signOut` (user), `deleteFactor`. |
-| **MFA — `supabase.auth.mfa.*`** | ⚠️ TOTP only | `enroll`, `challenge`, `verify`, `unenroll`, `listFactors` all work for TOTP. Phone/SMS factors are not supported. |
+| **MFA — `supabase.auth.mfa.*`** | ⚠️ TOTP only | `enroll`, `challenge`, `verify`, `challengeAndVerify`, `unenroll`, `listFactors` and `getAuthenticatorAssuranceLevel` all work for TOTP, with Supabase's `aal`/`amr` JWT claims. Phone/SMS factors are not supported. |
 | **Storage — `supabase.storage.*`** | ✅ Full | Upload, download, move, copy, remove, list. Public URLs. Signed URLs (download and upload). Bucket management (create, update, delete, empty). Image transforms: resize (`cover`, `contain`, `fill`), quality, format (`jpeg`, `png`); WebP and AVIF output are not supported. |
 | **Edge Functions — `supabase.functions.invoke()`** | ✅ Full | Calls code functions at `/functions/v1/<name>`. |
 | **RPC — `supabase.rpc()`** | ✅ Full | Calls SQL functions declared under `rpc:` in `instancez.yaml`. |
 | **Realtime — `supabase.channel()`** | ❌ Not supported yet | instancez has no pub/sub listener. For event-driven patterns in the meantime, use a code function with Postgres LISTEN/NOTIFY or a webhook receiver. |
+
+## Auth behavior differences from GoTrue
+
+instancez's auth server matches Supabase's GoTrue on the wire, with a few deliberate differences:
+
+- A banned user gets 403 `user_banned` on every path, including the password grant. GoTrue returns 400 there and 403 elsewhere.
+- A TOTP code is rejected if its 30-second step was already used on that factor, even within the normal replay window GoTrue allows.
+- Linking an OAuth identity to an account that has a password but isn't verified is refused (422 `email_exists`). GoTrue strips the password and links instead; on an instance with `verify_email: false`, every password user is unverified, so GoTrue's behavior would silently drop their password.
+- `/otp` with `allow_signup: false` returns an empty 200 for an unknown address, not GoTrue's 422, so the response never reveals whether the account exists.
+- `/resend` returns 429 `over_email_send_rate_limit` on a repeat within 60 seconds, which does reveal that the account exists (`/otp` and `/recover` return an empty 200 instead).
+- An access token issued before a ban or a password change stays valid until it expires; it isn't revoked early.
+- JWTs are only accepted if signed `RS256` or `HS256`.
 
 ## Direct storage upload (no SDK needed)
 
