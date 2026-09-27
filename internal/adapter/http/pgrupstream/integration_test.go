@@ -103,6 +103,12 @@ RETURNS TABLE(username text, age int) LANGUAGE sql STABLE AS $$
   SELECT username, age FROM users ORDER BY username
 $$;
 
+-- Returns rows only inside a read-only tx, so an RPC count run outside it counts 0.
+CREATE OR REPLACE FUNCTION public.users_if_read_only()
+RETURNS SETOF users LANGUAGE sql STABLE AS $$
+  SELECT * FROM users WHERE current_setting('transaction_read_only') = 'on'
+$$;
+
 CREATE OR REPLACE FUNCTION public.sleep_for(secs float8)
 RETURNS int LANGUAGE sql VOLATILE AS $$ SELECT 1 FROM pg_sleep(secs) $$;
 `
@@ -213,6 +219,11 @@ func buildConfig() *domain.Config {
 				Language: "sql", Volatility: "stable", Security: "invoker",
 				Returns: domain.FuncReturn{Type: "table(username text, age int)"}, ReturnCategory: "setof",
 				Body: "SELECT username, age FROM users ORDER BY username",
+			},
+			"users_if_read_only": {
+				Language: "sql", Volatility: "stable", Security: "invoker",
+				Returns: domain.FuncReturn{Type: "setof users"}, ReturnCategory: "setof",
+				Body: "SELECT * FROM users WHERE current_setting('transaction_read_only') = 'on'",
 			},
 			"sleep_for": {
 				Language: "sql", Volatility: "volatile", Security: "invoker",

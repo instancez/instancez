@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -154,6 +155,15 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 				handleDBError(c, err)
 				return
 			}
+			total := -1
+			if parseCountPrefer(joinPrefer(c)) == "exact" {
+				total, err = executeRPCCount(ctx, tx, name, fn, callArgs, rpcChain)
+				if err != nil {
+					h.logger.Error("rpc count error", "fn", name, "error", err)
+					handleDBError(c, err)
+					return
+				}
+			}
 			if err := tx.Commit(ctx); err != nil {
 				problemJSON(c, http.StatusInternalServerError, "internal", "Transaction commit failed")
 				return
@@ -161,10 +171,7 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 			if rows == nil {
 				rows = []map[string]any{}
 			}
-			// Content-Range: emit on every setof response to match
-			// PostgREST. When Prefer: count=exact is set, run a separate
-			// COUNT(*) over the same filtered subquery and put the real
-			// total after the slash; otherwise use "*".
+			// Content-Range goes on every setof response, like PostgREST.
 			offset := 0
 			if rpcChain != nil {
 				offset = rpcChain.offset
@@ -172,14 +179,6 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 			end := offset + len(rows) - 1
 			if len(rows) == 0 {
 				end = offset
-			}
-			countMode := parseCountPrefer(joinPrefer(c))
-			total := -1
-			if countMode == "exact" {
-				total, err = h.executeRPCCount(c, name, fn, callArgs, rpcChain, session)
-				if err != nil {
-					h.logger.Error("rpc count error", "fn", name, "error", err)
-				}
 			}
 			if total >= 0 {
 				c.Header("Content-Range", fmt.Sprintf("%d-%d/%d", offset, end, total))
@@ -746,32 +745,13 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 	return sql, embedArgs
 }
 
-// executeRPCCount runs COUNT(*) over the filtered RPC subquery for clients
-// that sent Prefer: count=exact. It rebuilds both the base call and the
-// WHERE from scratch so the count statement gets its own $1.. numbering and
-// never shares placeholder state with the data query. LIMIT/OFFSET are
-// intentionally dropped: the total is the full filtered cardinality, not
-// the size of the current page. The gin context is passed through so RLS
-// can be bypassed for admin callers the same way the data query does.
-func (h *CRUDHandler) executeRPCCount(c *gin.Context, name string, fn domain.Function, callArgs map[string]any, chain *rpcChainSQL, session domain.Session) (int, error) {
+// executeRPCCount counts the filtered, unpaged RPC result inside the data tx.
+func executeRPCCount(ctx context.Context, tx domain.Tx, name string, fn domain.Function, callArgs map[string]any, chain *rpcChainSQL) (int, error) {
 	callSQL, args := buildRPCCall(name, fn, callArgs)
-
-	// Only the WHERE portion matters for the total; synthesize a chain
-	// that carries the filter tree and nothing else.
 	countChain := &rpcChainSQL{}
 	if chain != nil {
 		countChain.where = chain.where
 	}
 	suffix, whereArgs := renderRPCChain(countChain, len(args)+1)
-	countSQL := fmt.Sprintf("SELECT COUNT(*) AS count FROM (%s) AS _rpc%s", callSQL, suffix)
-	args = append(args, whereArgs...)
-
-	dbCtx, err := h.db.WithRLS(c.Request.Context(), session)
-	if err != nil {
-		return -1, err
-	}
-	if isAdmin(c) {
-		dbCtx = c.Request.Context()
-	}
-	return queryCount(dbCtx, h.db, countSQL, args...)
+	return queryCount(ctx, tx, fmt.Sprintf("SELECT COUNT(*) AS count FROM (%s) AS _rpc%s", callSQL, suffix), append(args, whereArgs...)...)
 }

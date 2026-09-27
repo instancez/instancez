@@ -157,6 +157,16 @@ func TestHardening_CountMatchesRows(t *testing.T) {
 	require.Regexp(t, `^0-0/\d+$`, hdr.Get("Content-Range"))
 }
 
+func TestHardening_RPCCountRunsInReadOnlyTx(t *testing.T) {
+	if testTS == nil {
+		t.Skip("no upstream")
+	}
+	status, hdr, raw := call(t, "GET", testTS.URL+"/rest/v1/rpc/users_if_read_only?select=username", "", map[string]string{"Prefer": "count=exact"}, false)
+	require.Equal(t, 200, status, "%s", raw)
+	require.Len(t, rowsOf(t, raw), 5)
+	require.Equal(t, "0-4/5", hdr.Get("Content-Range"))
+}
+
 func TestHardening_PlanOnlyForServiceRole(t *testing.T) {
 	if testTS == nil {
 		t.Skip("no upstream")
