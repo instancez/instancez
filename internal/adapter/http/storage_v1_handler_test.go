@@ -2465,6 +2465,22 @@ func TestServeDownload_PrivateHTMLIsAttachmentAndPrivate(t *testing.T) {
 	assert.True(t, strings.HasPrefix(w.Header().Get("Content-Disposition"), "attachment"))
 }
 
+func TestServeDownload_AuthenticatedRouteOnPublicBucketIsPrivate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := &stubDB{queryRowFn: func(context.Context, string, ...any) (map[string]any, error) { return map[string]any{"id": "x"}, nil }}
+	store := &stubObjectStore{downloadFn: func(context.Context, string) (io.ReadCloser, string, error) {
+		return io.NopCloser(strings.NewReader("bytes")), "image/png", nil
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {Public: true}})
+	r := gin.New()
+	r.GET("/dl/:bucket/*path", func(c *gin.Context) { h.serveDownload(c, c.Param("bucket"), c.Param("path"), false) })
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/dl/avatars/a.png", nil))
+	require.Equal(t, 200, w.Code)
+	assert.Equal(t, "private, max-age=3600", w.Header().Get("Cache-Control"),
+		"an authenticated-route download on a public bucket must not be cached publicly; RLS may be per-caller")
+}
+
 func TestServeDownload_TransformErrors(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	huge := pngWithDims(t, 20000, 20000)

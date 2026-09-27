@@ -2254,6 +2254,15 @@ await step('storage: createSignedUploadUrl + uploadToSignedUrl flow', async () =
   const { data: file, error: dlErr } = await bucket.download('signed-upload.txt')
   if (dlErr) throw dlErr
   assertEq(await file.text(), 'signed upload content')
+
+  // avatars is a public bucket, but download() hits the caller-authenticated
+  // route, so the response must not be cached as public: RLS is per-caller.
+  const raw = await fetch(`${URL}/storage/v1/object/avatars/signed-upload.txt`, {
+    headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY },
+  })
+  assert(raw.ok, `authenticated download failed: ${raw.status}`)
+  assert((raw.headers.get('cache-control') || '').startsWith('private'),
+    `authenticated route on a public bucket must be private: ${raw.headers.get('cache-control')}`)
 })
 
 await step('storage: uploadToSignedUrl rejects bad token', async () => {

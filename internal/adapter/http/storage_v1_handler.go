@@ -636,7 +636,7 @@ func (h *StorageV1Handler) serveDownload(c *gin.Context, bucketName, objPath str
 		body, contentType = transformed, newCT
 	}
 
-	setDownloadHeaders(c, contentType, bucket.Public)
+	setDownloadHeaders(c, contentType, publicOnly)
 	c.Status(200)
 	_, _ = io.Copy(c.Writer, body)
 }
