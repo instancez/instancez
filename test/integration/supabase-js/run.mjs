@@ -2279,11 +2279,10 @@ await step('storage: uploadToSignedUrl with a Blob stores the file, not the mult
   const { data: file, error: dlErr } = await bucket.download('signed-blob.txt')
   if (dlErr) throw dlErr
   assertEq(await file.text(), 'blob via signed url')
-  const resp = await fetch(`${URL}/storage/v1/object/info/authenticated/avatars/signed-blob.txt`, {
-    headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY },
-  })
-  assert(resp.ok, `info failed: ${resp.status}`)
-  const info = await resp.json()
+  const { data: info, error: infoErr } = await bucket.info('signed-blob.txt')
+  if (infoErr) throw infoErr
+  assertEq(info.name, 'signed-blob.txt')
+  assertEq(info.contentType, 'text/plain')
   assertEq(Number(info.size), 'blob via signed url'.length, 'real size recorded for a multipart upload')
 })
 

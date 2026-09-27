@@ -1078,6 +1078,57 @@ func TestObjectGetDispatch_Authenticated_SecretKeySucceeds(t *testing.T) {
 	}
 }
 
+// supabase-js info() calls /object/info/<bucket>/<path>, without "authenticated/".
+func TestObjectGetDispatch_InfoRoutes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("INSTANCEZ_SECRET_KEY", "test-secret-key")
+
+	var gotArgs []any
+	var rlsCalls int
+	db := &stubDB{
+		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+			gotArgs = args
+			return map[string]any{"id": "obj1", "name": args[1], "size": int64(3), "mime": "text/plain"}, nil
+		},
+		withRLSFn: func(ctx context.Context, s domain.Session) (context.Context, error) { rlsCalls++; return ctx, nil },
+	}
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"docs": {}})
+	r := gin.New()
+	r.GET("/storage/v1/object/*all", h.objectGetDispatch)
+
+	cases := []struct {
+		target string
+		code   int
+		path   string
+	}{
+		{"/storage/v1/object/info/authenticated/docs/a/b.txt", 200, "a/b.txt"},
+		{"/storage/v1/object/info/docs/a/b.txt", 200, "a/b.txt"},
+		{"/storage/v1/object/info/docs/f.txt", 200, "f.txt"},
+		{"/storage/v1/object/info/docs/caf%C3%A9%20x.txt", 200, "caf\u00e9 x.txt"},
+		{"/storage/v1/object/info/docs", 400, ""},
+		{"/storage/v1/object/info/docs/", 400, ""},
+		{"/storage/v1/object/info/authenticated/docs", 400, ""},
+		{"/storage/v1/object/info/missing/f.txt", 404, ""},
+	}
+	for _, tc := range cases {
+		gotArgs, rlsCalls = nil, 0
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, tc.target, nil)
+		req.Header.Set("apikey", "test-secret-key")
+		r.ServeHTTP(w, req)
+		require.Equal(t, tc.code, w.Code, "%s: %s", tc.target, w.Body.String())
+		if tc.code != 200 {
+			assert.Nil(t, gotArgs, tc.target)
+			continue
+		}
+		assert.Equal(t, []any{"docs", tc.path}, gotArgs, tc.target)
+		assert.Equal(t, 1, rlsCalls, "%s must query under the caller's RLS", tc.target)
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+		assert.Equal(t, tc.path, body["name"], tc.target)
+	}
+}
+
 // --- List / list-v2 tests ---
 
 func TestListObjects_BucketNotFound(t *testing.T) {
@@ -1893,6 +1944,7 @@ func TestStorageRoutes_RejectTraversalKeys(t *testing.T) {
 		{http.MethodPost, "/storage/v1/object/copy", `{"bucketId":"avatars","sourceKey":"","destinationKey":"b"}`, ""},
 		{http.MethodHead, "/storage/v1/object/avatars/%2e%2e/secret", "", ""},
 		{http.MethodGet, "/storage/v1/object/info/authenticated/avatars/%2e%2e/secret", "", "test-secret-key"},
+		{http.MethodGet, "/storage/v1/object/info/avatars/%2e%2e/secret", "", "test-secret-key"},
 		{http.MethodPost, "/storage/v1/object/upload/sign/avatars/%2e%2e/secret", "", ""},
 		{http.MethodPut, "/storage/v1/object/upload/sign/avatars/%2e%2e/secret?token=" + forgedTraversalToken, "", ""},
 	}

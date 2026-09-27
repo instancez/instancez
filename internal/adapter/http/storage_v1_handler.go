@@ -83,7 +83,7 @@ func (h *StorageV1Handler) Mount(root *gin.RouterGroup) {
 	//   GET /object/<bucket>/<path>          — authenticated download
 	//   GET /object/public/<bucket>/<path>   — public download
 	//   GET /object/authenticated/<bucket>/<path> — authenticated download (alt)
-	//   GET /object/info/authenticated/<bucket>/<path> — object info
+	//   GET /object/info/[authenticated/]<bucket>/<path> — object info
 	// Gin can't register overlapping param routes, so one handler parses them.
 	// apikey is checked inside objectGetDispatch itself — public downloads
 	// must stay unauthenticated (real Supabase public bucket URLs need zero
@@ -541,18 +541,15 @@ func (h *StorageV1Handler) objectGetDispatch(c *gin.Context) {
 		if c.IsAborted() {
 			return
 		}
-		rest := strings.SplitN(strings.TrimPrefix(all, "info/"), "/", 3)
-		if len(rest) >= 2 && rest[0] == "authenticated" {
-			c.Set("_bucket", rest[1])
-			objPath := ""
-			if len(rest) == 3 {
-				objPath = rest[2]
-			}
-			c.Set("_path", objPath)
-			h.objectInfo(c)
+		rest := strings.TrimPrefix(strings.TrimPrefix(all, "info/"), "authenticated/")
+		bucket, objPath, ok := strings.Cut(rest, "/")
+		if !ok {
+			storageErr(c, 400, "bad_request", "Missing bucket or path")
 			return
 		}
-		storageErr(c, 404, "not_found", "Not found")
+		c.Set("_bucket", bucket)
+		c.Set("_path", objPath)
+		h.objectInfo(c)
 	default:
 		if len(segments) < 2 {
 			storageErr(c, 400, "bad_request", "Missing path")
