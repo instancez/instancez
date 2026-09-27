@@ -267,9 +267,13 @@ func (h *AuthHandler) handleSignup(c *gin.Context) {
 
 	userID := asString(row["id"])
 
-	// Send verification email if configured
-	if h.cfg.Auth.Email != nil && h.cfg.Auth.Email.VerifyEmail && h.email != nil {
-		h.sendVerificationEmail(userID, req.Email, h.resolveEmailRedirect(c, "signup"))
+	if h.cfg.Auth.Email != nil && h.cfg.Auth.Email.VerifyEmail {
+		if h.email != nil {
+			h.sendVerificationEmail(userID, req.Email, h.resolveEmailRedirect(c, "signup"))
+		}
+		// Supabase withholds the session until the address is confirmed.
+		c.JSON(200, h.buildUser(userID, row, nil))
+		return
 	}
 
 	ctx = ctxWithRequestMeta(ctx, c)
@@ -583,6 +587,14 @@ func (h *AuthHandler) handleUpdateUser(c *gin.Context) {
 		}
 		problemJSON(c, 500, "internal", "Failed to update user")
 		return
+	}
+	if params.Password != nil {
+		// Like GoTrue, a new password signs out every other session.
+		if sid := h.extractSessionID(session.JWT); sid != "" {
+			_ = h.authSvc.RevokeOtherSessions(ctx, session.UserID, sid)
+		} else {
+			_ = h.authSvc.RevokeAllUserSessions(ctx, session.UserID)
+		}
 	}
 	c.JSON(200, h.fullUser(ctx, session.UserID, row))
 }

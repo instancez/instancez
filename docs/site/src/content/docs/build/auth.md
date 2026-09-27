@@ -52,7 +52,9 @@ instancez exposes the same auth API as Supabase, so any Supabase client library 
 
 **Email + password** — `supabase.auth.signUp()` / `supabase.auth.signInWithPassword()`
 
-When `email.verify_email` is `false` (the default), `signUp` returns a session immediately. Set it to `true` and configure an email provider to require confirmation first.
+When `email.verify_email` is `false` (the default), `signUp` returns a session immediately. Set it to `true` and configure an email provider: `signUp` then returns the user with no session, same as Supabase, until the address is confirmed.
+
+`updateUser({ password })` signs out the account's other sessions, keeping only the one that made the call.
 
 **Magic link / Email OTP** — `supabase.auth.signInWithOtp()` / `supabase.auth.verifyOtp()`
 
