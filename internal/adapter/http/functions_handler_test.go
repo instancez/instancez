@@ -5,9 +5,11 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/instancez/instancez/internal/adapter/funcs"
 	"github.com/instancez/instancez/internal/domain"
 )
 
@@ -132,6 +134,25 @@ func TestFunctionsRoute502OnInvokeError(t *testing.T) {
 	r.ServeHTTP(w, httptest.NewRequest("POST", "/functions/v1/boom", nil))
 	if w.Code != http.StatusBadGateway {
 		t.Fatalf("want 502, got %d", w.Code)
+	}
+}
+
+// An oversize function reply is a 502 whose message names the limit.
+func TestFunctionsRoute502OnOversizeResponse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rt := &fakeRuntime{
+		known: map[string]*domain.FunctionResponse{"big": nil},
+		invokeFunc: func(_ context.Context, _ domain.FunctionRequest) (*domain.FunctionResponse, error) {
+			return nil, funcs.ErrResponseTooLarge
+		},
+	}
+	h := NewFunctionsHandler(rt)
+	r := gin.New()
+	h.Mount(r.Group("/functions/v1"))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("POST", "/functions/v1/big", nil))
+	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "function response exceeds 6 MB") {
+		t.Fatalf("want 502 naming the limit, got %d %s", w.Code, w.Body.String())
 	}
 }
 

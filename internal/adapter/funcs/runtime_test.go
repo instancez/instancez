@@ -1,6 +1,10 @@
 package funcs
 
 import (
+	"context"
+	"net"
+	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -152,4 +156,62 @@ func containsAll(s string, subs ...string) bool {
 		}
 	}
 	return true
+}
+
+// unixWorker returns a worker whose health client dials sock.
+func unixWorker(sock string) *worker {
+	return &worker{health: &http.Client{Transport: &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", sock)
+		},
+	}}}
+}
+
+func TestWorkerResponsive(t *testing.T) {
+	dir := t.TempDir()
+
+	t.Run("answers", func(t *testing.T) {
+		sock := filepath.Join(dir, "ok.sock")
+		ln, err := net.Listen("unix", sock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {})}
+		go func() { _ = srv.Serve(ln) }()
+		defer func() { _ = srv.Close() }()
+		if !unixWorker(sock).responsive() {
+			t.Fatal("want responsive")
+		}
+	})
+
+	t.Run("accepts but never replies", func(t *testing.T) {
+		sock := filepath.Join(dir, "hang.sock")
+		ln, err := net.Listen("unix", sock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = ln.Close() }()
+		go func() {
+			for {
+				c, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				defer func() { _ = c.Close() }()
+			}
+		}()
+		start := time.Now()
+		if unixWorker(sock).responsive() {
+			t.Fatal("want unresponsive")
+		}
+		if d := time.Since(start); d < healthProbeTimeout || d > healthProbeTimeout+500*time.Millisecond {
+			t.Fatalf("probe took %v, want about %v", d, healthProbeTimeout)
+		}
+	})
+
+	t.Run("no socket", func(t *testing.T) {
+		if unixWorker(filepath.Join(dir, "missing.sock")).responsive() {
+			t.Fatal("want unresponsive")
+		}
+	})
 }
