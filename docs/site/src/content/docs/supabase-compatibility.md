@@ -27,7 +27,7 @@ instancez's auth server matches Supabase's GoTrue on the wire, with a few delibe
 - A TOTP code is rejected if its 30-second step was already used on that factor, even within the normal replay window GoTrue allows.
 - Linking an OAuth identity to an account that has a password but isn't verified is refused (422 `email_exists`). GoTrue strips the password and links instead; on an instance with `verify_email: false`, every password user is unverified, so GoTrue's behavior would silently drop their password.
 - `/otp` with `allow_signup: false` returns an empty 200 for an unknown address, not GoTrue's 422, so the response never reveals whether the account exists.
-- `/resend` returns 429 `over_email_send_rate_limit` on a repeat within 60 seconds, matching GoTrue. The inconsistency is within instancez itself: `/otp` and `/recover` stay silent with an empty 200 on the same cooldown, so only `/resend` reveals whether the account exists.
+- `/otp` and `/recover` return a silent empty 200 on a repeat within 60 seconds, so neither reveals whether the account exists. `/resend` instead returns 429 `over_email_send_rate_limit` on the same cooldown — matching GoTrue, but inconsistent with instancez's own `/otp` and `/recover`.
 - An access token issued before a ban or a password change stays valid until it expires; it isn't revoked early.
 - JWTs are only accepted if signed `RS256` or `HS256`.
 
