@@ -471,7 +471,7 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 		return
 	}
 	if err := tx.Commit(ctx); err != nil {
-		_ = h.storage.Delete(c.Request.Context(), key)
+		// An ambiguous commit may have applied, so leave storage alone (no compensating delete).
 		storageErr(c, 500, "internal", "Upload failed")
 		return
 	}

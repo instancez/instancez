@@ -878,11 +878,11 @@ func TestUploadObject_StoreUploadInternalError(t *testing.T) {
 	}
 }
 
-func TestUploadObject_CommitFailureCleansUpStore(t *testing.T) {
+func TestUploadObject_CommitFailureNoCompensatingDelete(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	var deletedKey string
+	deleted := false
 	store := &stubObjectStore{
-		deleteFn: func(ctx context.Context, key string) error { deletedKey = key; return nil },
+		deleteFn: func(ctx context.Context, key string) error { deleted = true; return nil },
 	}
 	tx := &stubTx{
 		execFn:   func(ctx context.Context, q string, args ...any) (int64, error) { return 1, nil },
@@ -901,8 +901,8 @@ func TestUploadObject_CommitFailureCleansUpStore(t *testing.T) {
 	if w.Code != 500 {
 		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
 	}
-	if deletedKey != "avatars/photo.jpg" {
-		t.Errorf("expected orphaned object cleanup, deletedKey = %q", deletedKey)
+	if deleted {
+		t.Error("commit failure is ambiguous; store.Delete must not run (would delete live bytes if the commit actually applied)")
 	}
 }
 
