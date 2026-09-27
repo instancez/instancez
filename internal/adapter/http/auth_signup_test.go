@@ -51,6 +51,33 @@ func TestSignup_VerifyEmailWithholdsSession(t *testing.T) {
 	}
 }
 
+type stubEmailSender struct{ sent int }
+
+func (s *stubEmailSender) Send(context.Context, domain.EmailMessage) error {
+	s.sent++
+	return nil
+}
+
+func TestSignup_VerifyEmailSendsVerificationEmail(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &stubAuthService{
+		createUserFn: func(ctx context.Context, p domain.CreateUserParams) (map[string]any, error) { return testUserRow("real-id"), nil },
+	}
+	sender := &stubEmailSender{}
+	h := &AuthHandler{cfg: &domain.Config{Auth: &domain.Auth{JWTExpiry: "15m", Email: &domain.AuthEmail{VerifyEmail: true}}},
+		authSvc: svc, email: sender, logger: slog.New(slog.NewTextHandler(io.Discard, nil)), jwtKeys: stubKeys(t)}
+	r := gin.New()
+	r.POST("/signup", h.handleSignupDispatch)
+
+	w := postJSON(r, "/signup", signupBody)
+	if w.Code != 200 {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	if sender.sent != 1 {
+		t.Errorf("verification email sent %d times, want 1", sender.sent)
+	}
+}
+
 func TestUpdateUser_PasswordChangeSignsOutOtherSessions(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cases := []struct {

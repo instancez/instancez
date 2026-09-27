@@ -590,10 +590,14 @@ func (h *AuthHandler) handleUpdateUser(c *gin.Context) {
 	}
 	if params.Password != nil {
 		// Like GoTrue, a new password signs out every other session.
+		var revokeErr error
 		if sid := h.extractSessionID(session.JWT); sid != "" {
-			_ = h.authSvc.RevokeOtherSessions(ctx, session.UserID, sid)
+			revokeErr = h.authSvc.RevokeOtherSessions(ctx, session.UserID, sid)
 		} else {
-			_ = h.authSvc.RevokeAllUserSessions(ctx, session.UserID)
+			revokeErr = h.authSvc.RevokeAllUserSessions(ctx, session.UserID)
+		}
+		if revokeErr != nil {
+			h.logger.Error("password change: revoke other sessions failed", "user_id", session.UserID, "error", revokeErr)
 		}
 	}
 	c.JSON(200, h.fullUser(ctx, session.UserID, row))

@@ -1366,6 +1366,39 @@ await step('auth.updateUser updates user_metadata', async () => {
   assertEq(data.user.user_metadata.display_name, 'Alice', 'existing metadata preserved')
 })
 
+await step('auth.updateUser password change revokes other sessions', async () => {
+  // Dedicated user, so this doesn't disturb the shared user's password for
+  // later steps that still sign in with the original one.
+  const pwEmail = `pwchange_${Date.now()}_${Math.floor(Math.random() * 1e6)}@example.com`
+  const oldPassword = 'first-password-1'
+  const newPassword = 'second-password-2'
+
+  const { error: signUpErr } = await anon.auth.signUp({ email: pwEmail, password: oldPassword })
+  if (signUpErr) throw signUpErr
+
+  const clientA = createClient(URL, PUBLISHABLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  const clientB = createClient(URL, PUBLISHABLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  const { data: sA, error: signInAErr } = await clientA.auth.signInWithPassword({ email: pwEmail, password: oldPassword })
+  if (signInAErr) throw signInAErr
+  const { data: sB, error: signInBErr } = await clientB.auth.signInWithPassword({ email: pwEmail, password: oldPassword })
+  if (signInBErr) throw signInBErr
+
+  const { error: updateErr } = await clientA.auth.updateUser({ password: newPassword })
+  if (updateErr) throw updateErr
+
+  // B's session was signed out; its refresh token must no longer work.
+  const { error: refreshBErr } = await clientB.auth.refreshSession({ refresh_token: sB.session.refresh_token })
+  assert(refreshBErr, 'other session refresh should fail after password change')
+
+  // A's own session (the one that made the change) must still work.
+  const { error: refreshAErr } = await clientA.auth.refreshSession({ refresh_token: sA.session.refresh_token })
+  if (refreshAErr) throw refreshAErr
+
+  // The password actually changed.
+  const { error: signInNewErr } = await anon.auth.signInWithPassword({ email: pwEmail, password: newPassword })
+  if (signInNewErr) throw signInNewErr
+})
+
 await step('auth.signInWithOtp issues an OTP without erroring', async () => {
   // No SMTP provider is configured in the harness, so this exercises the
   // request/token path; GoTrue-style enumeration protection means it returns
