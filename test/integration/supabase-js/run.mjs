@@ -1446,9 +1446,9 @@ await step('auth.updateUser updates user_metadata', async () => {
 
 await step('auth.updateUser password change revokes other sessions', async () => {
   // Dedicated user so the shared user's password stays intact.
-  const pwEmail = `pwchange_${Date.now()}_${Math.floor(Math.random() * 1e6)}@example.com`
-  const oldPassword = 'first-password-1'
-  const newPassword = 'second-password-2'
+  const pwEmail = `pwchange_${Date.now()}_${crypto.randomUUID()}@example.com`
+  const oldPassword = `old-${crypto.randomBytes(6).toString('hex')}`
+  const newPassword = `new-${crypto.randomBytes(6).toString('hex')}`
 
   const { error: signUpErr } = await anon.auth.signUp({ email: pwEmail, password: oldPassword })
   if (signUpErr) throw signUpErr
@@ -2539,6 +2539,7 @@ await step('storage: uploadToSignedUrl with a Blob stores the file, not the mult
 await step('storage: uploadToSignedUrl enforces the bucket MIME allowlist', async () => {
   const bucket = storageClient().storage.from('avatars')
   const token = await mintUploadToken('avatars', 'signed-evil.html')
+  // nosemgrep -- URL and TOKEN are the test harness's own server URL and self-minted token, not user input
   const raw = await fetch(`${URL}/storage/v1/object/upload/sign/avatars/signed-evil.html?token=${token}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'text/html' },
@@ -2789,6 +2790,7 @@ if (SECRET_KEY) {
   })
 
   // Move/copy must pass RLS before any bytes move.
+  // nosemgrep -- URL is the test harness's own server URL; path is a test-authored literal, not user input
   const userPost = (path, body) => fetch(`${URL}/storage/v1/object/${path}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY, 'Content-Type': 'application/json' },

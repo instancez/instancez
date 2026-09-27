@@ -667,6 +667,7 @@ func executeCount(ctx context.Context, tx domain.Tx, tableName string, table dom
 	case "exact":
 		return queryCount(ctx, tx, "SELECT COUNT(*) AS count FROM ("+inner+") AS _count", args...)
 	case "planned", "estimated":
+		// nosemgrep -- inner comes from BuildSelectQueryFull, whose identifiers are validated and whose values are bound as args
 		rows, err := tx.Query(ctx, "EXPLAIN "+inner, args...)
 		if err != nil {
 			return -1, err
@@ -692,6 +693,7 @@ func plainScan(qp *QueryParams) bool {
 func queryCount(ctx context.Context, q interface {
 	QueryRow(context.Context, string, ...any) (map[string]any, error)
 }, sql string, args ...any) (int, error) {
+	// nosemgrep -- callers only pass constant query text built from validated identifiers; values are bound args
 	row, err := q.QueryRow(ctx, sql, args...)
 	if err != nil {
 		return -1, err

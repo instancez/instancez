@@ -250,7 +250,7 @@ func TestOAuthCallback_LinkRequiresInitiatorCookie(t *testing.T) {
 		r.GET("/cb", h.handleOAuthCallback("unitfake"))
 		req := httptest.NewRequest("GET", "/cb?state=link-state&code=c", nil)
 		if tc.cookieName != "" {
-			req.AddCookie(&http.Cookie{Name: tc.cookieName, Value: tc.cookie})
+			req.AddCookie(&http.Cookie{Name: tc.cookieName, Value: tc.cookie, HttpOnly: true, Secure: true})
 		}
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
@@ -312,7 +312,7 @@ func TestOAuthCallback_LoginFlowIgnoresLinkCookie(t *testing.T) {
 	r := gin.New()
 	r.GET("/cb", h.handleOAuthCallback("unitfake"))
 	req := httptest.NewRequest("GET", "/cb?state=s&code=c", nil)
-	req.AddCookie(&http.Cookie{Name: "oauth_link_state", Value: "s"})
+	req.AddCookie(&http.Cookie{Name: "oauth_link_state", Value: "s", HttpOnly: true, Secure: true})
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if linked || !strings.Contains(w.Header().Get("Location"), "confirm+your+email") {

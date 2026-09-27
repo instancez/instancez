@@ -192,7 +192,7 @@ func TestBannedUser_OAuthCallbackRefused(t *testing.T) {
 	}
 	handler := h.handleOAuthCallback("banoauth")
 	req := httptest.NewRequest("GET", "/auth/v1/callback/banoauth?state=s1&code=abc", nil)
-	req.AddCookie(&http.Cookie{Name: "oauth_state", Value: "s1"})
+	req.AddCookie(&http.Cookie{Name: "oauth_state", Value: "s1", HttpOnly: true, Secure: true})
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = req

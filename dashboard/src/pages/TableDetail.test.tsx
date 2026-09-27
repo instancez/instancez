@@ -160,8 +160,9 @@ describe("TableDetail", () => {
     });
     expect(save).toHaveBeenCalledTimes(1);
     const arg = save.mock.calls[0]![0] as Config;
-    expect(arg.tables["orders"]).toBeDefined();
-    expect(arg.tables["orders"]!.rls_enabled).toBe(true);
+    const orders = arg.tables["orders"];
+    expect(orders).toBeDefined();
+    expect(orders?.rls_enabled).toBe(true);
   });
 
   it("keeps rls_enabled when a policy is added before saving", async () => {
@@ -176,9 +177,10 @@ describe("TableDetail", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /save/i }));
     });
-    const saved = (save.mock.calls[0]![0] as Config).tables["orders"]!;
-    expect(saved.rls_enabled).toBe(true);
-    expect(saved.rls).toHaveLength(1);
+    const saved = (save.mock.calls[0]![0] as Config).tables["orders"];
+    expect(saved).toBeDefined();
+    expect(saved?.rls_enabled).toBe(true);
+    expect(saved?.rls).toHaveLength(1);
   });
 
   it("discards in-memory table when leaving new mode without saving", () => {

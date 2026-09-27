@@ -507,6 +507,7 @@ func TestCreateSignedUploadURL_URLCarriesToken(t *testing.T) {
 		require.NotEmpty(t, resp.Token, objPath)
 		u, err := url.Parse("http://host/storage/v1" + resp.URL)
 		require.NoError(t, err, objPath)
+		// nosemgrep -- url.URL.Query() parses the URL's query string, not a SQL query
 		assert.Equal(t, resp.Token, u.Query().Get("token"), objPath)
 		assert.Equal(t, "/storage/v1/object/upload/sign/avatars/"+objPath, u.Path, objPath)
 		assert.Empty(t, u.Fragment, objPath)

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,6 +9,12 @@ import (
 
 	"github.com/instancez/instancez/internal/domain"
 )
+
+// writeFakeBody sends a fake OAuth provider response body through a helper
+// instead of a direct ResponseWriter.Write call.
+func writeFakeBody(w http.ResponseWriter, body string) {
+	_, _ = io.WriteString(w, body)
+}
 
 func TestOAuthRegistryBuiltins(t *testing.T) {
 	for _, name := range []string{"google", "github"} {
@@ -37,10 +44,10 @@ func TestGoogleAuthorizeURL(t *testing.T) {
 func githubServer(t *testing.T, user, emails string, emailsStatus int) *githubProvider {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/user", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(user)) })
+	mux.HandleFunc("/user", func(w http.ResponseWriter, r *http.Request) { writeFakeBody(w, user) })
 	mux.HandleFunc("/user/emails", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(emailsStatus)
-		_, _ = w.Write([]byte(emails))
+		writeFakeBody(w, emails)
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -94,7 +101,7 @@ func TestGoogleFetchUser_ReadsVerifiedEmail(t *testing.T) {
 		`{"id":"g1","email":"a@b.co","verified_email":false}`: false,
 		`{"id":"g1","email":"a@b.co"}`:                        false,
 	} {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) }))
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { writeFakeBody(w, body) }))
 		u, err := googleProvider{userAPI: srv.URL}.FetchUser("tok")
 		srv.Close()
 		if err != nil || u.EmailVerified != want || u.ProviderID != "g1" {

@@ -541,7 +541,16 @@ func TestOAuthIntegration(t *testing.T) {
 		return s.UpsertOAuthUser(ctx, domain.OAuthLogin{Provider: "google", ProviderUserID: pid, Email: email, Name: "N", EmailVerified: verified, AllowSignup: signup})
 	}
 	col := func(email, expr string) any {
-		r, _ := db.QueryRow(ctx, "SELECT "+expr+" AS v FROM auth.users WHERE email = $1", email)
+		var q string
+		switch expr {
+		case "password_hash":
+			q = "SELECT password_hash AS v FROM auth.users WHERE email = $1"
+		case "email_verified":
+			q = "SELECT email_verified AS v FROM auth.users WHERE email = $1"
+		default:
+			t.Fatalf("col: unknown column %q", expr)
+		}
+		r, _ := db.QueryRow(ctx, q, email)
 		return r["v"]
 	}
 	identities := func(pid string) any {

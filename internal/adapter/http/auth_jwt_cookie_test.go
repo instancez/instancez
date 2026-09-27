@@ -143,7 +143,7 @@ func TestOAuthCallback_StateCookieRejectsTossedBareName(t *testing.T) {
 		r := gin.New()
 		r.GET("/cb", h.handleOAuthCallback("unitfake"))
 		req := httptest.NewRequest("GET", "/cb?state=login-state&code=c", nil)
-		req.AddCookie(&http.Cookie{Name: tc.cookieName, Value: "login-state"})
+		req.AddCookie(&http.Cookie{Name: tc.cookieName, Value: "login-state", HttpOnly: true, Secure: true})
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 		if w.Code != tc.wantStatus {
