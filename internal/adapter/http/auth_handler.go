@@ -1282,8 +1282,8 @@ func (h *AuthHandler) handleAuthorize(c *gin.Context) {
 			return
 		}
 	} else {
-		h.setLaxCookie(c, "oauth_state", state, 600)
-		h.setLaxCookie(c, "oauth_redirect_to", redirectTo, 600)
+		h.setLaxCookie(c, h.oauthStateCookie(c), state, 600)
+		h.setLaxCookie(c, h.oauthRedirectCookie(c), redirectTo, 600)
 	}
 
 	c.Redirect(http.StatusTemporaryRedirect, prov.AuthorizeURL(cfg, state))
@@ -1372,12 +1372,12 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 				linkingUserID = flow.LinkingUserID
 			}
 		} else {
-			savedState, _ := c.Cookie("oauth_state")
+			savedState, _ := c.Cookie(h.oauthStateCookie(c))
 			if state == "" || state != savedState {
 				problemJSON(c, 400, "bad_request", "Invalid OAuth state")
 				return
 			}
-			redirectTo, _ = c.Cookie("oauth_redirect_to")
+			redirectTo, _ = c.Cookie(h.oauthRedirectCookie(c))
 		}
 
 		code := c.Query("code")
@@ -2224,12 +2224,26 @@ func (h *AuthHandler) secureCookies(c *gin.Context) bool {
 	return c.Request.TLS != nil || strings.HasPrefix(h.baseURL(), "https://")
 }
 
+// hostCookieName adds the __Host- prefix when the cookie is Secure, which
+// stops sibling *.instancez.app tenants from tossing a same-named cookie in.
+func (h *AuthHandler) hostCookieName(c *gin.Context, name string) string {
+	if h.secureCookies(c) {
+		return "__Host-" + name
+	}
+	return name
+}
+
 // linkStateCookie binds a link flow to its browser; __Host- stops sibling subdomains tossing it.
 func (h *AuthHandler) linkStateCookie(c *gin.Context) string {
-	if h.secureCookies(c) {
-		return "__Host-oauth_link_state"
-	}
-	return "oauth_link_state"
+	return h.hostCookieName(c, "oauth_link_state")
+}
+
+func (h *AuthHandler) oauthStateCookie(c *gin.Context) string {
+	return h.hostCookieName(c, "oauth_state")
+}
+
+func (h *AuthHandler) oauthRedirectCookie(c *gin.Context) string {
+	return h.hostCookieName(c, "oauth_redirect_to")
 }
 
 func (h *AuthHandler) setLaxCookie(c *gin.Context, name, value string, maxAge int) {

@@ -96,3 +96,61 @@ func TestAuthorize_OAuthCookiesSecureOnHTTPS(t *testing.T) {
 		}
 	}
 }
+
+// TestAuthorize_OAuthStateCookieHostPrefix pins the same __Host- naming E5b
+// gave oauth_link_state to the login-flow state cookies.
+func TestAuthorize_OAuthStateCookieHostPrefix(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	adapterauth.RegisterOAuth(unitOAuthProvider{})
+	cases := []struct {
+		name, base string
+		want       string
+	}{
+		{"https", "https://app.example.com", "__Host-oauth_state"},
+		{"http", "http://localhost:8080", "oauth_state"},
+	}
+	for _, tc := range cases {
+		t.Setenv("INSTANCEZ_BASE_URL", tc.base)
+		h := &AuthHandler{cfg: &domain.Config{Auth: &domain.Auth{
+			OAuth: map[string]*domain.OAuthProvider{"unitfake": {ClientID: "c", RedirectURL: "http://api/cb"}}}},
+			authSvc: &stubAuthService{}, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+		r := gin.New()
+		r.GET("/authorize", h.handleAuthorize)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest("GET", "http://api/authorize?provider=unitfake", nil))
+		if ck := responseCookie(w, tc.want); ck == nil {
+			t.Fatalf("%s: want cookie %s, got %v", tc.name, tc.want, w.Header().Values("Set-Cookie"))
+		}
+	}
+}
+
+// TestOAuthCallback_StateCookieRejectsTossedBareName proves a sibling
+// *.instancez.app tenant can't toss a bare oauth_state cookie into an https
+// callback: only the __Host- name is honored over https, and only the bare
+// name over http.
+func TestOAuthCallback_StateCookieRejectsTossedBareName(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	adapterauth.RegisterOAuth(unitOAuthProvider{})
+	cases := []struct {
+		name, base, cookieName string
+		wantStatus             int
+	}{
+		{"https matching __Host- cookie", "https://app.instancez.app", "__Host-oauth_state", 302},
+		{"https tossed bare cookie rejected", "https://app.instancez.app", "oauth_state", 400},
+		{"http matching bare cookie", "http://localhost:8080", "oauth_state", 302},
+		{"http ignores __Host- cookie", "http://localhost:8080", "__Host-oauth_state", 400},
+	}
+	for _, tc := range cases {
+		t.Setenv("INSTANCEZ_BASE_URL", tc.base)
+		h := linkHandler(t, &stubAuthService{})
+		r := gin.New()
+		r.GET("/cb", h.handleOAuthCallback("unitfake"))
+		req := httptest.NewRequest("GET", "/cb?state=login-state&code=c", nil)
+		req.AddCookie(&http.Cookie{Name: tc.cookieName, Value: "login-state"})
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != tc.wantStatus {
+			t.Fatalf("%s: status %d want %d body %s", tc.name, w.Code, tc.wantStatus, w.Body.String())
+		}
+	}
+}
