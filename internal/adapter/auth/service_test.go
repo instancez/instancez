@@ -292,6 +292,90 @@ func TestConsumeTOTPStep(t *testing.T) {
 	}
 }
 
+func TestCreateChallenge_LocksFactorAndChecksWindowCap(t *testing.T) {
+	var lockQ, insertQ string
+	var lockArgs, insertArgs []any
+	s := newTestService(&fakeDB{queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+		switch {
+		case strings.Contains(q, "FOR UPDATE"):
+			lockQ, lockArgs = q, args
+			return map[string]any{"exists": int64(1)}, nil
+		case strings.Contains(q, "INSERT INTO auth.mfa_challenges"):
+			insertQ, insertArgs = q, args
+			return map[string]any{"id": "c1", "created_at": time.Now()}, nil
+		}
+		return nil, nil
+	}})
+	id, _, err := s.CreateChallenge(context.Background(), "f1", "u1")
+	if err != nil || id != "c1" {
+		t.Fatalf("id=%q err=%v", id, err)
+	}
+	if !strings.Contains(lockQ, "auth.mfa_factors") || !strings.Contains(lockQ, "user_id = $2") {
+		t.Errorf("lock query missing ownership check: %s", lockQ)
+	}
+	if lockArgs[0] != "f1" || lockArgs[1] != "u1" {
+		t.Errorf("lock args = %v", lockArgs)
+	}
+	for _, want := range []string{"count(*)", "< $3", "created_at >"} {
+		if !strings.Contains(insertQ, want) {
+			t.Errorf("insert query missing %q: %s", want, insertQ)
+		}
+	}
+	if insertArgs[2] != maxChallengesPerFactor {
+		t.Errorf("cap arg = %v, want %d", insertArgs[2], maxChallengesPerFactor)
+	}
+}
+
+func TestCreateChallenge_UnknownOrForeignFactor(t *testing.T) {
+	s := newTestService(&fakeDB{queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+		return nil, nil // the FOR UPDATE lock finds no matching (id, user_id) row
+	}})
+	if _, _, err := s.CreateChallenge(context.Background(), "f1", "u1"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("got %v want ErrNotFound", err)
+	}
+}
+
+func TestCreateChallenge_AtCapIsRateLimited(t *testing.T) {
+	s := newTestService(&fakeDB{queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+		if strings.Contains(q, "FOR UPDATE") {
+			return map[string]any{"exists": int64(1)}, nil
+		}
+		return nil, nil // the capped insert's WHERE was false, no row returned
+	}})
+	if _, _, err := s.CreateChallenge(context.Background(), "f1", "u1"); !errors.Is(err, domain.ErrChallengeRateLimited) {
+		t.Fatalf("got %v want ErrChallengeRateLimited", err)
+	}
+}
+
+func TestDeleteFactorForUser_ConditionOnStatusOrAAL2(t *testing.T) {
+	var q string
+	var args []any
+	s := newTestService(&fakeDB{execFn: func(ctx context.Context, sql string, a ...any) (int64, error) {
+		q, args = sql, a
+		return 1, nil
+	}})
+	if err := s.DeleteFactorForUser(context.Background(), "f1", "u1", true); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"status = 'unverified'", "OR $3"} {
+		if !strings.Contains(q, want) {
+			t.Errorf("query missing %q: %s", want, q)
+		}
+	}
+	if args[2] != true {
+		t.Errorf("allowVerified arg = %v, want true", args[2])
+	}
+}
+
+func TestDeleteFactorForUser_ZeroRowsIsNotFound(t *testing.T) {
+	s := newTestService(&fakeDB{execFn: func(ctx context.Context, sql string, a ...any) (int64, error) {
+		return 0, nil
+	}})
+	if err := s.DeleteFactorForUser(context.Background(), "f1", "u1", false); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("got %v want ErrNotFound", err)
+	}
+}
+
 // TestCreateUser_AnonymousEmailIsNULLNotEmptyString: email is UNIQUE, and
 // Postgres treats '' as a real value subject to that constraint (unlike NULL,
 // which never collides). Anonymous signup passes Email == "", so the insert

@@ -2222,7 +2222,7 @@ func (h *AuthHandler) handleAdminDeleteFactor(c *gin.Context) {
 	uid := c.Param("uid")
 	factorID := c.Param("factor_id")
 	ctx := c.Request.Context()
-	if err := h.authSvc.DeleteFactorForUser(ctx, factorID, uid); err != nil {
+	if err := h.authSvc.DeleteFactorForUser(ctx, factorID, uid, true); err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			problemJSON(c, 404, "not_found", "Factor not found")
 			return

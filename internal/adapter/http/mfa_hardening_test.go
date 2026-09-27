@@ -213,8 +213,10 @@ func TestMFA_UnenrollVerifiedRequiresAAL2(t *testing.T) {
 	}
 	for _, tc := range cases {
 		deleted := false
+		var gotAllowVerified bool
 		svc := factorsSvc(map[string]string{"fv": "verified", "fu": "unverified"}, nil)
-		svc.deleteFactorForUserFn = func(ctx context.Context, fid, uid string) error {
+		svc.deleteFactorForUserFn = func(ctx context.Context, fid, uid string, allowVerified bool) error {
+			gotAllowVerified = allowVerified
 			if fid == "nope" {
 				return domain.ErrNotFound
 			}
@@ -227,6 +229,9 @@ func TestMFA_UnenrollVerifiedRequiresAAL2(t *testing.T) {
 		}
 		if tc.want == 422 && (deleted || !strings.Contains(w.Body.String(), "insufficient_aal")) {
 			t.Errorf("%s: deleted=%v body %s", tc.name, deleted, w.Body.String())
+		}
+		if tc.want != 422 && gotAllowVerified != (tc.aal == "aal2") {
+			t.Errorf("%s: allowVerified=%v, want %v", tc.name, gotAllowVerified, tc.aal == "aal2")
 		}
 	}
 	svc := factorsSvc(nil, errors.New("db down"))
@@ -262,5 +267,55 @@ func TestGetUser_ExposesFactorsForSupabaseJS(t *testing.T) {
 		if !withFactor && body["factors"] != nil {
 			t.Errorf("empty factors must be omitted like GoTrue, got %v", body["factors"])
 		}
+	}
+}
+
+// TestMFA_ChallengeRateLimited asserts CreateChallenge's rate-limit sentinel
+// maps to 429 over_request_rate_limit, the GoTrue-style code, so a stolen
+// aal1 session can't brute-force TOTP by cycling challenges.
+func TestMFA_ChallengeRateLimited(t *testing.T) {
+	svc := &stubAuthService{
+		createChallengeFn: func(ctx context.Context, factorID, userID string) (string, time.Time, error) {
+			return "", time.Time{}, domain.ErrChallengeRateLimited
+		},
+	}
+	w := newMFAHarness(t, svc).do("POST", "/auth/v1/factors/f1/challenge", ``)
+	if w.Code != 429 {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["code"] != "over_request_rate_limit" {
+		t.Errorf("code = %v, want over_request_rate_limit", body["code"])
+	}
+}
+
+func TestMFA_ChallengeUnknownFactor(t *testing.T) {
+	svc := &stubAuthService{
+		createChallengeFn: func(ctx context.Context, factorID, userID string) (string, time.Time, error) {
+			return "", time.Time{}, domain.ErrNotFound
+		},
+	}
+	w := newMFAHarness(t, svc).do("POST", "/auth/v1/factors/f1/challenge", ``)
+	if w.Code != 404 {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestMFA_ChallengeCreatesOK(t *testing.T) {
+	now := time.Now()
+	svc := &stubAuthService{
+		createChallengeFn: func(ctx context.Context, factorID, userID string) (string, time.Time, error) {
+			return "c1", now, nil
+		},
+	}
+	w := newMFAHarness(t, svc).do("POST", "/auth/v1/factors/f1/challenge", ``)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["id"] != "c1" {
+		t.Errorf("id = %v", body["id"])
 	}
 }

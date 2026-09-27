@@ -229,7 +229,7 @@ func TestMFA_VerifyRejectsChallengeAtAttemptCap(t *testing.T) {
 // the WHERE clause pins user_id) and the handler returns 404.
 func TestMFA_UnenrollRejectsWrongOwner(t *testing.T) {
 	svc := &stubAuthService{
-		deleteFactorForUserFn: func(ctx context.Context, factorID, userID string) error {
+		deleteFactorForUserFn: func(ctx context.Context, factorID, userID string, allowVerified bool) error {
 			return domain.ErrNotFound
 		},
 	}

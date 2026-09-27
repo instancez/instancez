@@ -203,7 +203,9 @@ type AuthService interface {
 	EnrollFactor(ctx context.Context, userID, friendlyName, secret string) (factorID string, err error)
 	// CreateChallenge verifies the factor belongs to userID, then inserts a
 	// challenge row. Returns the challenge id and its created_at (the handler
-	// derives expires_at = created_at + 5m). Errors: ErrNotFound.
+	// derives expires_at = created_at + 5m). Race-safe against concurrent
+	// callers on the same factor. Errors: ErrNotFound, ErrChallengeRateLimited
+	// (too many challenges created for this factor recently).
 	CreateChallenge(ctx context.Context, factorID, userID string) (challengeID string, createdAt time.Time, err error)
 	// GetFactorForVerify returns the factor's secret + status when it belongs
 	// to userID, so the handler can validate the TOTP code. Errors: ErrNotFound.
@@ -225,6 +227,10 @@ type AuthService interface {
 	// ListFactors returns the caller's factors (secret excluded) ordered by
 	// created_at, for the GoTrue listFactors response.
 	ListFactors(ctx context.Context, userID string) ([]map[string]any, error)
-	// DeleteFactorForUser removes a factor owned by userID. Errors: ErrNotFound.
-	DeleteFactorForUser(ctx context.Context, factorID, userID string) error
+	// DeleteFactorForUser removes a factor owned by userID. The delete only
+	// applies if the factor is unverified, unless allowVerified is set (the
+	// caller is aal2, or an admin), so it stays correct even if the factor
+	// is promoted between the handler's status check and this call. Errors:
+	// ErrNotFound.
+	DeleteFactorForUser(ctx context.Context, factorID, userID string, allowVerified bool) error
 }

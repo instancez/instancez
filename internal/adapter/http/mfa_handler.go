@@ -110,11 +110,14 @@ func (h *AuthHandler) handleChallengeFactor(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	challengeID, createdAt, err := h.authSvc.CreateChallenge(ctx, factorID, session.UserID)
-	if errors.Is(err, domain.ErrNotFound) {
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
 		problemJSON(c, 404, "not_found", "Factor not found")
 		return
-	}
-	if err != nil {
+	case errors.Is(err, domain.ErrChallengeRateLimited):
+		problemJSON(c, 429, "over_request_rate_limit", "Too many challenges created for this factor")
+		return
+	case err != nil:
 		problemJSON(c, 500, "internal", "Failed to create challenge")
 		return
 	}
@@ -297,7 +300,7 @@ func (h *AuthHandler) handleUnenrollFactor(c *gin.Context) {
 		problemJSON(c, 422, "insufficient_aal", "AAL2 required to unenroll verified factor")
 		return
 	}
-	err = h.authSvc.DeleteFactorForUser(ctx, factorID, session.UserID)
+	err = h.authSvc.DeleteFactorForUser(ctx, factorID, session.UserID, sessionAAL(session) == "aal2")
 	if errors.Is(err, domain.ErrNotFound) {
 		problemJSON(c, 404, "not_found", "Factor not found")
 		return

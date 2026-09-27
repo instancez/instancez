@@ -370,6 +370,114 @@ func TestMFAIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("challenge creation is capped per factor in a window", func(t *testing.T) {
+		f3, err := s.EnrollFactor(ctx, uid, "c", "SECRET3")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < maxChallengesPerFactor; i++ {
+			if _, _, err := s.CreateChallenge(ctx, f3, uid); err != nil {
+				t.Fatalf("create %d: %v", i, err)
+			}
+		}
+		if _, _, err := s.CreateChallenge(ctx, f3, uid); !errors.Is(err, domain.ErrChallengeRateLimited) {
+			t.Fatalf("want rate limited, got %v", err)
+		}
+		// A second factor for the same user has its own budget.
+		f4, _ := s.EnrollFactor(ctx, uid, "d", "SECRET4")
+		if _, _, err := s.CreateChallenge(ctx, f4, uid); err != nil {
+			t.Fatalf("sibling factor should be unaffected: %v", err)
+		}
+		// Once the window passes, the cap resets.
+		if _, err := db.Exec(ctx, `UPDATE auth.mfa_challenges SET created_at = NOW() - INTERVAL '10 minutes' WHERE factor_id = $1::uuid`, f3); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := s.CreateChallenge(ctx, f3, uid); err != nil {
+			t.Fatalf("after window: %v", err)
+		}
+	})
+
+	t.Run("creating a challenge on a foreign factor is not found, not rate limited", func(t *testing.T) {
+		f5, _ := s.EnrollFactor(ctx, uid, "e", "SECRET5")
+		other := mustUser(t, s, "foreign-create@example.com")
+		if _, _, err := s.CreateChallenge(ctx, f5, other); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("foreign caller: %v", err)
+		}
+	})
+
+	t.Run("concurrent challenge creates on one factor never exceed the cap", func(t *testing.T) {
+		f6, err := s.EnrollFactor(ctx, uid, "f", "SECRET6")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var mu sync.Mutex
+		ok, rateLimited := 0, 0
+		var wg sync.WaitGroup
+		for i := 0; i < 20; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, _, err := s.CreateChallenge(ctx, f6, uid)
+				mu.Lock()
+				defer mu.Unlock()
+				switch {
+				case err == nil:
+					ok++
+				case errors.Is(err, domain.ErrChallengeRateLimited):
+					rateLimited++
+				default:
+					t.Errorf("unexpected error: %v", err)
+				}
+			}()
+		}
+		wg.Wait()
+		if ok != maxChallengesPerFactor || rateLimited != 20-maxChallengesPerFactor {
+			t.Fatalf("ok=%d rateLimited=%d, want ok=%d", ok, rateLimited, maxChallengesPerFactor)
+		}
+	})
+
+	t.Run("a verified factor survives an aal1 delete but not an aal2 one", func(t *testing.T) {
+		f7, err := s.EnrollFactor(ctx, uid, "g", "SECRET7")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.PromoteFactorToVerified(ctx, f7); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.DeleteFactorForUser(ctx, f7, uid, false); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("aal1 delete of verified factor: %v", err)
+		}
+		rows, _ := s.ListFactors(ctx, uid)
+		found := false
+		for _, r := range rows {
+			if asString(r["id"]) == f7 {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatal("verified factor was deleted by an aal1 caller")
+		}
+		if err := s.DeleteFactorForUser(ctx, f7, uid, true); err != nil {
+			t.Fatalf("aal2 delete: %v", err)
+		}
+		rows, _ = s.ListFactors(ctx, uid)
+		for _, r := range rows {
+			if asString(r["id"]) == f7 {
+				t.Fatal("verified factor survived an aal2 delete")
+			}
+		}
+	})
+
+	t.Run("an unverified factor can be deleted at aal1", func(t *testing.T) {
+		f8, err := s.EnrollFactor(ctx, uid, "h", "SECRET8")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.DeleteFactorForUser(ctx, f8, uid, false); err != nil {
+			t.Fatalf("aal1 delete of unverified factor: %v", err)
+		}
+	})
+
 	t.Run("revoke below aal2 drops aal1 rows only", func(t *testing.T) {
 		other := mustUser(t, s, "bystander@example.com")
 		exp := time.Now().Add(time.Hour).Unix()

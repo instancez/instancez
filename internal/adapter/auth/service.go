@@ -782,8 +782,17 @@ func (s *Service) DeleteIdentityByID(ctx context.Context, identityID, userID str
 
 // ---------- MFA ----------
 
-// challengeTTL bounds how long an MFA challenge can be verified after creation.
+// challengeTTL bounds how long an MFA challenge can be verified after
+// creation. It also doubles as the sliding window for maxChallengesPerFactor:
+// a challenge older than this can never be verified, so it never needs to
+// count against the cap.
 const challengeTTL = 5 * time.Minute
+
+// maxChallengesPerFactor bounds how many challenges can be created for one
+// factor within challengeTTL. Without this, an aal1 session can cycle
+// challenges indefinitely and brute-force the factor's TOTP code past
+// maxMFAAttempts (5 guesses per challenge).
+const maxChallengesPerFactor = 10
 
 func (s *Service) EnrollFactor(ctx context.Context, userID, friendlyName, secret string) (string, error) {
 	row, err := s.db.QueryRow(ctx,
@@ -801,25 +810,47 @@ func (s *Service) EnrollFactor(ctx context.Context, userID, friendlyName, secret
 }
 
 func (s *Service) CreateChallenge(ctx context.Context, factorID, userID string) (string, time.Time, error) {
-	// Ownership check: factor must belong to the caller.
-	owner, err := s.db.QueryRow(ctx,
-		"SELECT user_id::text FROM auth.mfa_factors WHERE id = $1::uuid", factorID)
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	if owner == nil || asString(owner["user_id"]) != userID {
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Lock the factor row so concurrent callers on the same factor serialize:
+	// the count-then-insert below must see every sibling's committed insert.
+	owner, err := tx.QueryRow(ctx,
+		"SELECT 1 FROM auth.mfa_factors WHERE id = $1::uuid AND user_id = $2::uuid FOR UPDATE", factorID, userID)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	if owner == nil {
 		return "", time.Time{}, domain.ErrNotFound
 	}
 
-	row, err := s.db.QueryRow(ctx,
-		`INSERT INTO auth.mfa_challenges (factor_id) VALUES ($1::uuid)
+	row, err := tx.QueryRow(ctx,
+		`INSERT INTO auth.mfa_challenges (factor_id)
+		 SELECT $1::uuid WHERE (
+		   SELECT count(*) FROM auth.mfa_challenges
+		    WHERE factor_id = $1::uuid AND created_at > NOW() - make_interval(secs => $2)
+		 ) < $3
 		 RETURNING id::text, created_at`,
-		factorID)
+		factorID, challengeTTL.Seconds(), maxChallengesPerFactor)
 	if err != nil {
 		return "", time.Time{}, err
 	}
 	if row == nil {
-		return "", time.Time{}, fmt.Errorf("create challenge returned no row")
+		return "", time.Time{}, domain.ErrChallengeRateLimited
+	}
+
+	// Prune challenges outside the window; they can never verify again.
+	if _, err := tx.Exec(ctx,
+		"DELETE FROM auth.mfa_challenges WHERE factor_id = $1::uuid AND created_at <= NOW() - make_interval(secs => $2)",
+		factorID, challengeTTL.Seconds()); err != nil {
+		return "", time.Time{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return "", time.Time{}, err
 	}
 	createdAt, _ := row["created_at"].(time.Time)
 	return asString(row["id"]), createdAt, nil
@@ -914,10 +945,11 @@ func (s *Service) ListFactors(ctx context.Context, userID string) ([]map[string]
 	return rows, nil
 }
 
-func (s *Service) DeleteFactorForUser(ctx context.Context, factorID, userID string) error {
+func (s *Service) DeleteFactorForUser(ctx context.Context, factorID, userID string, allowVerified bool) error {
 	affected, err := s.db.Exec(ctx,
-		"DELETE FROM auth.mfa_factors WHERE id = $1::uuid AND user_id = $2::uuid",
-		factorID, userID)
+		`DELETE FROM auth.mfa_factors
+		  WHERE id = $1::uuid AND user_id = $2::uuid AND (status = 'unverified' OR $3::bool)`,
+		factorID, userID, allowVerified)
 	if err != nil {
 		return err
 	}

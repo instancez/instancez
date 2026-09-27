@@ -28,6 +28,9 @@ var (
 	ErrChallengeUsed            = errors.New("challenge already verified")
 	ErrChallengeExpired         = errors.New("challenge expired")
 	ErrChallengeTooManyAttempts = errors.New("too many verification attempts")
+	// ErrChallengeRateLimited is returned when a factor has hit
+	// maxChallengesPerFactor challenge creations within challengeTTL.
+	ErrChallengeRateLimited = errors.New("too many challenges created")
 )
 
 // ValidationError represents a single schema validation error with location info.

@@ -885,7 +885,7 @@ func TestAuthHealDDL_EmittedOnFreshAndDiff(t *testing.T) {
 func TestAuthHealDDL_ChecksCatalogBeforeTouchingTables(t *testing.T) {
 	joined := strings.Join(authHealDDL, "\n")
 	for _, want := range []string{"refresh_tokens", "revoked_at", "aal", "amr", "idx_refresh_tokens_session",
-		"mfa_factors", "last_totp_step", "mfa_challenges", "one_time_tokens", "idx_users_email_lower", "lower(email)"} {
+		"mfa_factors", "last_totp_step", "mfa_challenges", "idx_mfa_challenges_factor_created", "one_time_tokens", "idx_users_email_lower", "lower(email)"} {
 		mustContain(t, joined, want)
 	}
 	for _, stmt := range authHealDDL {

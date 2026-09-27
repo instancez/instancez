@@ -622,6 +622,7 @@ var authHealDDL = []string{
 	healAuthIndex("idx_refresh_tokens_session", "refresh_tokens", "session_id"),
 	healAuthColumn("one_time_tokens", "attempts", "INT NOT NULL DEFAULT 0"),
 	healAuthColumn("mfa_challenges", "attempts", "INT NOT NULL DEFAULT 0"),
+	healAuthIndex("idx_mfa_challenges_factor_created", "mfa_challenges", "factor_id, created_at"),
 	healAuthColumn("mfa_factors", "last_totp_step", "BIGINT"),
 	healAuthIndex("idx_users_email_lower", "users", "lower(email)"),
 }

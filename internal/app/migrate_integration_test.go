@@ -2337,7 +2337,7 @@ func TestAuthHeal_HardenRestoresColumnsToFreshSchema(t *testing.T) {
 		`ALTER TABLE auth.mfa_factors DROP COLUMN last_totp_step`,
 		`ALTER TABLE auth.mfa_challenges DROP COLUMN attempts`,
 		`ALTER TABLE auth.one_time_tokens DROP COLUMN attempts`,
-		`DROP INDEX auth.idx_refresh_tokens_session, auth.idx_users_email_lower`,
+		`DROP INDEX auth.idx_refresh_tokens_session, auth.idx_users_email_lower, auth.idx_mfa_challenges_factor_created`,
 	} {
 		if _, err := db.Exec(ctx, s); err != nil {
 			t.Fatalf("simulate old schema %q: %v", s, err)

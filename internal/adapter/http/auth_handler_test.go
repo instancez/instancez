@@ -762,7 +762,7 @@ type stubAuthService struct {
 	upsertOAuthUserFn       func(ctx context.Context, provider, providerUserID, email, name string) (map[string]any, error)
 	listIdentitiesFn        func(ctx context.Context, userID string) ([]map[string]any, error)
 	consumeOAuthFlowFn      func(ctx context.Context, state string) (domain.FlowState, error)
-	deleteFactorForUserFn   func(ctx context.Context, factorID, userID string) error
+	deleteFactorForUserFn   func(ctx context.Context, factorID, userID string, allowVerified bool) error
 	revokeOtherSessionsFn   func(ctx context.Context, userID, keep string) error
 	revokeAllUserSessionsFn func(ctx context.Context, userID string) error
 
@@ -949,9 +949,9 @@ func (s *stubAuthService) DeleteIdentityByID(ctx context.Context, identityID, us
 	}
 	return nil
 }
-func (s *stubAuthService) DeleteFactorForUser(ctx context.Context, factorID, userID string) error {
+func (s *stubAuthService) DeleteFactorForUser(ctx context.Context, factorID, userID string, allowVerified bool) error {
 	if s.deleteFactorForUserFn != nil {
-		return s.deleteFactorForUserFn(ctx, factorID, userID)
+		return s.deleteFactorForUserFn(ctx, factorID, userID, allowVerified)
 	}
 	return nil
 }
