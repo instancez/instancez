@@ -1506,6 +1506,7 @@ await step('auth.resend within 60s is rate limited', async () => {
   const { error } = await anon.auth.resend({ type: 'signup', email })
   assert(error, 'second resend inside the cooldown must fail')
   assertEq(error.status, 429, 'over_email_send_rate_limit status')
+  assertEq(error.code, 'over_email_send_rate_limit', 'over_email_send_rate_limit code')
 })
 
 await step('auth.reauthenticate returns success', async () => {
@@ -1864,12 +1865,14 @@ await step('mfa: an aal1 session cannot enroll a second factor', async () => {
   const { error } = await bearerClient(accessToken).auth.mfa.enroll({ factorType: 'totp', friendlyName: 'attacker' })
   assert(error, 'aal1 enroll must fail once a factor is verified')
   assertEq(error.status, 403, 'insufficient_aal status')
+  assertEq(error.code, 'insufficient_aal', 'insufficient_aal code')
 })
 
 await step('mfa: an aal1 session cannot unenroll the verified factor', async () => {
   const { error } = await bearerClient(accessToken).auth.mfa.unenroll({ factorId: globalThis.__mfaFactorId })
   assert(error, 'aal1 unenroll of a verified factor must fail')
   assertEq(error.status, 422, 'insufficient_aal status')
+  assertEq(error.code, 'insufficient_aal', 'insufficient_aal code')
 })
 
 await step('mfa: getAuthenticatorAssuranceLevel + listFactors read user.factors', async () => {
@@ -2067,6 +2070,7 @@ if (SECRET_KEY) {
     const { error } = await anon.auth.signInWithPassword({ email: adminEmail, password: 'hunter2hunter2' })
     assert(error, 'banned user must not sign in')
     assertEq(error.status, 403, 'user_banned status')
+    assertEq(error.code, 'user_banned', 'user_banned code')
     const { error: unbanErr } = await adminClient.auth.admin.updateUserById(adminUserId, { ban_duration: 'none' })
     if (unbanErr) throw unbanErr
     const { error: again } = await anon.auth.signInWithPassword({ email: adminEmail, password: 'hunter2hunter2' })

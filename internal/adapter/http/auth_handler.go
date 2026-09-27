@@ -84,7 +84,7 @@ func NewAuthHandler(deps ServerDeps) *AuthHandler {
 // here operates on the auth schema (users, sessions, MFA factors), gated by
 // application logic rather than RLS, so the whole group runs as service_role.
 func (h *AuthHandler) Mount(root *gin.RouterGroup) {
-	auth := root.Group("/auth/v1", serviceRoleSession(h.db))
+	auth := root.Group("/auth/v1", goTrueErrors, serviceRoleSession(h.db))
 	// Per-IP rate limiting for these sensitive endpoints is enforced at the
 	// edge (Traefik, configured by the deployer) rather than here: in the
 	// hosted deployment the backend runs as a Lambda behind a proxy, so it

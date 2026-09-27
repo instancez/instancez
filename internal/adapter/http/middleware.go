@@ -544,15 +544,26 @@ func profileHeaderGuard(schemas ...string) gin.HandlerFunc {
 	}
 }
 
+const contextKeyGoTrueErrors = "_gotrue_errors"
+
+// goTrueErrors makes pgJSON add GoTrue's error_code, which auth-js reads without an API version header.
+func goTrueErrors(c *gin.Context) {
+	c.Set(contextKeyGoTrueErrors, true)
+	c.Next()
+}
+
 // pgJSON writes a PostgREST-compatible error body: {code, message, details, hint}.
-// All four fields are always present so clients can rely on the shape.
 func pgJSON(c *gin.Context, status int, code, message, details, hint string) {
-	c.JSON(status, gin.H{
+	body := gin.H{
 		"code":    code,
 		"message": message,
 		"details": details,
 		"hint":    hint,
-	})
+	}
+	if c.GetBool(contextKeyGoTrueErrors) {
+		body["error_code"] = code
+	}
+	c.JSON(status, body)
 }
 
 // problemJSON writes a PostgREST-compatible error response. The errType slug

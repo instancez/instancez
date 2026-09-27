@@ -25,6 +25,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 ### Fixed
 
 - supabase-js `linkIdentity()` works: `/user/identities/authorize` now accepts GET, which supabase-js sends, as well as POST.
+- supabase-js `error.code` now returns the auth error code (`user_banned`, `insufficient_aal`, …). `/auth/v1` error bodies carry GoTrue's `error_code` field next to `code`; REST errors are unchanged.
 - `verifyOtp({ type: 'magiclink' })` now marks the email confirmed, as GoTrue does, so magic-link users can later link a Google login by email.
 - `count=exact` / `planned` / `estimated` now count what the query actually returns. They include `!inner` and belongs-to embed filters, work on non-public schemas, run in the same transaction as the rows, and return an error instead of silently dropping the count.
 - Upgrading instancez with an unchanged `instancez.yaml` now adds new `auth.*` columns and indexes at boot. Before, they only reached a database when the config changed. This also adds the missing `attempts` column to `auth.one_time_tokens` on databases that enabled email auth after first boot.
