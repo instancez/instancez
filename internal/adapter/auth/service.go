@@ -347,7 +347,13 @@ func (s *Service) RecordSignIn(ctx context.Context, userID string) {
 // refreshReuseInterval lets concurrent refreshes (e.g. two tabs) share one rotation.
 const refreshReuseInterval = 10 * time.Second
 
-func (s *Service) InsertRefreshToken(ctx context.Context, userID, token string, meta domain.SessionMeta, expiresAt int64) error {
+// execer is the Exec subset shared by domain.Database and domain.Tx, so the
+// same insert can run standalone or inside a caller's transaction.
+type execer interface {
+	Exec(ctx context.Context, query string, args ...any) (int64, error)
+}
+
+func insertRefreshToken(ctx context.Context, ex execer, userID, token string, meta domain.SessionMeta, expiresAt int64) error {
 	aal := meta.AAL
 	if aal == "" {
 		aal = "aal1"
@@ -360,10 +366,14 @@ func (s *Service) InsertRefreshToken(ctx context.Context, userID, token string, 
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(ctx,
+	_, err = ex.Exec(ctx,
 		"INSERT INTO auth.refresh_tokens (user_id, token, session_id, ip, user_agent, expires_at, aal, amr) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8::jsonb)",
 		userID, token, meta.SessionID, meta.IP, meta.UserAgent, time.Unix(expiresAt, 0), aal, string(amrJSON))
 	return err
+}
+
+func (s *Service) InsertRefreshToken(ctx context.Context, userID, token string, meta domain.SessionMeta, expiresAt int64) error {
+	return insertRefreshToken(ctx, s.db, userID, token, meta, expiresAt)
 }
 
 func (s *Service) ConsumeRefreshToken(ctx context.Context, token string, next domain.RefreshRotation) (map[string]any, domain.SessionMeta, string, error) {
@@ -395,13 +405,9 @@ func (s *Service) ConsumeRefreshToken(ctx context.Context, token string, next do
 		if meta.SessionID == "" {
 			meta.SessionID = uuid.NewString()
 		}
-		amrJSON, err := json.Marshal(meta.AMR)
-		if err != nil {
-			return fail(err)
-		}
-		if _, err := tx.Exec(ctx,
-			"INSERT INTO auth.refresh_tokens (user_id, token, session_id, ip, user_agent, expires_at, aal, amr) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8::jsonb)",
-			asString(row["user_id"]), next.Token, meta.SessionID, next.IP, next.UserAgent, time.Unix(next.ExpiresAt, 0), meta.AAL, string(amrJSON)); err != nil {
+		insertMeta := meta
+		insertMeta.IP, insertMeta.UserAgent = next.IP, next.UserAgent
+		if err := insertRefreshToken(ctx, tx, asString(row["user_id"]), next.Token, insertMeta, next.ExpiresAt); err != nil {
 			return fail(err)
 		}
 		refreshToken = next.Token
