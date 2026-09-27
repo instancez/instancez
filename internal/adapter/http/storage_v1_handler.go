@@ -501,7 +501,7 @@ func (h *StorageV1Handler) uploadWriteError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, errObjectNotFound):
 		storageErr(c, 404, "not_found", "Object not found")
-	case isDuplicate(err):
+	case isDuplicateKeyErr(err):
 		storageErr(c, 409, "duplicate", "The resource already exists")
 	case isPermissionDenied(err):
 		storageErr(c, 403, "forbidden", "Not authorized to write this object")
@@ -509,11 +509,6 @@ func (h *StorageV1Handler) uploadWriteError(c *gin.Context, err error) {
 		h.logger.Error("record object", "error", err)
 		storageErr(c, 500, "internal", "Failed to record object")
 	}
-}
-
-func isDuplicate(err error) bool {
-	msg := err.Error()
-	return strings.Contains(msg, "duplicate key") || strings.Contains(msg, "23505")
 }
 
 func isPermissionDenied(err error) bool {

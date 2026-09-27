@@ -24,6 +24,7 @@ import (
 	adapterauth "github.com/instancez/instancez/internal/adapter/auth"
 	"github.com/instancez/instancez/internal/app"
 	"github.com/instancez/instancez/internal/domain"
+	"github.com/jackc/pgx/v5/pgconn"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -1888,8 +1889,17 @@ func generateNumericCode(n int) string {
 	return string(out)
 }
 
+// isDuplicateKeyErr reports a unique-constraint violation (SQLSTATE 23505).
 func isDuplicateKeyErr(err error) bool {
-	return err != nil && (strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "unique"))
+	if err == nil {
+		return false
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505"
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "duplicate key") || strings.Contains(msg, "23505")
 }
 
 func hashPassword(c *gin.Context, password string) (string, bool) {
