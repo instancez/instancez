@@ -29,6 +29,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - Query plans (`Accept: application/vnd.pgrst.plan+json|text`) are only returned to the secret key. Anon and user tokens could read execution plans before, which exposed table sizes and index layout.
 - `server.timeouts.db_query` (default 10s) is now a Postgres `statement_timeout` on every API transaction, not just list reads. It holds for anon, authenticated and service_role, so one slow RPC or filter can no longer pin a pool connection.
 - `server.timeouts.request` (default 25s) now bounds how long `/rest/v1` and `/auth/v1` requests may take to read or write, which stops slow-body and slow-reader clients from holding connections open. Storage and functions are exempt.
+- `/metrics` labels now use route templates (`/rest/v1/rpc/:name`), with `unmatched` for unknown paths and `OTHER` for non-standard methods. Before, every distinct URL added a series that was never freed. The mislabelled `quantile="0.5"` (it was a mean) is gone, and `_count`/`_sum` are now true cumulative totals.
 
 ### Upgrading
 
