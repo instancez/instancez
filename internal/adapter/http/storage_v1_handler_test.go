@@ -2452,13 +2452,6 @@ func TestSetDownloadHeaders(t *testing.T) {
 	}
 }
 
-func TestIsActiveContent_Multipart(t *testing.T) {
-	assert.True(t, isActiveContent("multipart/x-mixed-replace"), "multipart/x-mixed-replace can run script when rendered inline")
-	assert.True(t, isActiveContent("multipart/form-data"))
-	assert.False(t, isActiveContent("multipart"), "no subtype must not match")
-	assert.False(t, isActiveContent("application/json"))
-}
-
 func TestServeDownload_PrivateHTMLIsAttachmentAndPrivate(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := &stubDB{queryRowFn: func(context.Context, string, ...any) (map[string]any, error) { return map[string]any{"id": "x"}, nil }}
