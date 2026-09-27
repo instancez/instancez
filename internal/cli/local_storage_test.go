@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/instancez/instancez/internal/domain"
 )
 
 func TestLocalStore_KeyPrefix(t *testing.T) {
@@ -54,7 +56,7 @@ func TestLocalStore_SignDownload(t *testing.T) {
 	}
 
 	// Returns path regardless of file existence (consumer handles missing files)
-	url, err := store.SignDownload(context.Background(), "bucket/file.txt", 0)
+	url, err := store.SignDownload(context.Background(), "bucket/file.txt", 0, domain.DownloadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +173,7 @@ func TestLocalStore_RejectsEscapingKeys(t *testing.T) {
 		if err := s.Copy(ctx, k, "avatars/dst.txt"); err == nil {
 			t.Errorf("Copy(src=%q) succeeded, want error", k)
 		}
-		if _, err := s.SignDownload(ctx, k, 0); err == nil {
+		if _, err := s.SignDownload(ctx, k, 0, domain.DownloadOptions{}); err == nil {
 			t.Errorf("SignDownload(%q) succeeded, want error", k)
 		}
 		if _, err := s.Head(ctx, k); err == nil {

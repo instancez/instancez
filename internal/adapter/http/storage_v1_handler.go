@@ -636,21 +636,45 @@ func isActiveContent(mt string) bool {
 	return activeContentTypes[mt] || strings.HasSuffix(mt, "+xml") || strings.HasSuffix(mt, "/xml") || strings.HasPrefix(mt, "multipart/")
 }
 
-func setDownloadHeaders(c *gin.Context, contentType string, public bool) {
+func contentDisposition(name string) string {
+	if name == "" {
+		return "attachment"
+	}
+	if v := mime.FormatMediaType("attachment", map[string]string{"filename": name}); v != "" {
+		return v
+	}
+	return "attachment"
+}
+
+func downloadOptions(contentType string, public bool, download string, hasDownload bool) domain.DownloadOptions {
 	mt, _, err := mime.ParseMediaType(contentType)
 	if err != nil || !strings.Contains(mt, "/") {
 		contentType, mt = "application/octet-stream", ""
 	}
-	c.Header("Content-Type", contentType)
-	c.Header("X-Content-Type-Options", "nosniff")
-	if isActiveContent(mt) {
-		c.Header("Content-Disposition", "attachment")
-	}
+	o := domain.DownloadOptions{ContentType: contentType, CacheControl: "private, max-age=3600"}
 	if public {
-		c.Header("Cache-Control", "public, max-age=3600")
-	} else {
-		c.Header("Cache-Control", "private, max-age=3600")
+		o.CacheControl = "public, max-age=3600"
 	}
+	switch {
+	case hasDownload:
+		o.ContentDisposition = contentDisposition(download)
+	case isActiveContent(mt):
+		o.ContentDisposition = "attachment"
+	}
+	return o
+}
+
+func writeDownloadHeaders(c *gin.Context, o domain.DownloadOptions) {
+	c.Header("Content-Type", o.ContentType)
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Header("Cache-Control", o.CacheControl)
+	if o.ContentDisposition != "" {
+		c.Header("Content-Disposition", o.ContentDisposition)
+	}
+}
+
+func setDownloadHeaders(c *gin.Context, contentType string, public bool) {
+	writeDownloadHeaders(c, downloadOptions(contentType, public, "", false))
 }
 
 func (h *StorageV1Handler) listObjects(c *gin.Context) {
@@ -1082,7 +1106,8 @@ func (h *StorageV1Handler) createSignedURL(c *gin.Context) {
 		return
 	}
 
-	if _, ok := h.getBucketConfig(bucketName); !ok {
+	bucket, ok := h.getBucketConfig(bucketName)
+	if !ok {
 		storageErr(c, 404, "not_found", "Bucket not found")
 		return
 	}
@@ -1093,13 +1118,14 @@ func (h *StorageV1Handler) createSignedURL(c *gin.Context) {
 	_ = c.ShouldBindJSON(&req)
 
 	ctx := h.rlsCtx(c)
-	row, err := h.db.QueryRow(ctx, "SELECT id FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
+	row, err := h.db.QueryRow(ctx, "SELECT mime FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
 	if err != nil || row == nil {
 		storageErr(c, 404, "not_found", "Object not found")
 		return
 	}
 
-	url, err := h.storage.SignDownload(ctx, bucketName+"/"+objPath, signedExpiry(req.ExpiresIn))
+	opts := downloadOptions(asString(row["mime"]), bucket.Public, "", false)
+	url, err := h.storage.SignDownload(ctx, bucketName+"/"+objPath, signedExpiry(req.ExpiresIn), opts)
 	if err != nil {
 		h.logger.Error("sign download", "error", err)
 		storageErr(c, 500, "internal", "Failed to create signed URL")
@@ -1111,7 +1137,8 @@ func (h *StorageV1Handler) createSignedURL(c *gin.Context) {
 
 func (h *StorageV1Handler) createSignedURLs(c *gin.Context) {
 	bucketName := c.Param("bucket")
-	if _, ok := h.getBucketConfig(bucketName); !ok {
+	bucket, ok := h.getBucketConfig(bucketName)
+	if !ok {
 		storageErr(c, 404, "not_found", "Bucket not found")
 		return
 	}
@@ -1127,16 +1154,16 @@ func (h *StorageV1Handler) createSignedURLs(c *gin.Context) {
 
 	ctx := h.rlsCtx(c)
 	keys := validKeys(req.Paths)
-	visible := map[string]bool{}
+	mimes := map[string]string{}
 	if len(keys) > 0 {
-		rows, err := h.db.Query(ctx, "SELECT name FROM storage.objects WHERE bucket_id = $1 AND name = ANY($2::text[])", bucketName, keys)
+		rows, err := h.db.Query(ctx, "SELECT name, mime FROM storage.objects WHERE bucket_id = $1 AND name = ANY($2::text[])", bucketName, keys)
 		if err != nil {
 			h.logger.Error("sign urls lookup", "error", err)
 			storageErr(c, 500, "internal", "Failed to create signed URLs")
 			return
 		}
 		for _, row := range rows {
-			visible[asString(row["name"])] = true
+			mimes[asString(row["name"])] = asString(row["mime"])
 		}
 	}
 
@@ -1144,11 +1171,13 @@ func (h *StorageV1Handler) createSignedURLs(c *gin.Context) {
 	results := make([]gin.H, 0, len(req.Paths))
 	for _, p := range req.Paths {
 		k, err := cleanPath(p)
-		if err != nil || !visible[k] {
+		mt, visible := mimes[k]
+		if err != nil || !visible {
 			results = append(results, gin.H{"path": p, "signedURL": nil, "error": errNoObjectAccess})
 			continue
 		}
-		url, err := h.storage.SignDownload(ctx, bucketName+"/"+k, expiry)
+		opts := downloadOptions(mt, bucket.Public, "", false)
+		url, err := h.storage.SignDownload(ctx, bucketName+"/"+k, expiry, opts)
 		if err != nil {
 			h.logger.Error("sign download", "error", err)
 			results = append(results, gin.H{"path": p, "signedURL": nil, "error": "Failed to create signed URL"})

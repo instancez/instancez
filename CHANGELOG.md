@@ -43,6 +43,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - Storage: an upload commit failure no longer deletes the object's bytes; on update/upsert the row already pointed at the key that was just overwritten, so the old delete destroyed live data whether or not the commit actually failed.
 - A column-list to-one embed (`author(name)`) with no matching row is now `null` instead of `{"name": null}`.
 - Storage: a restrictive RLS policy on one bucket no longer denies every other bucket. `storage.objects` is shared across buckets, so a restrictive policy scoped with `bucket_id = X AND (...)` ANDs against every other bucket's rows too; it's now scoped with `bucket_id <> X OR (...)` so the restriction applies only to its own bucket. Existing databases get the fixed policy on the next boot, without a config change.
+- Storage: presigned download URLs now set S3 response overrides for `Content-Type`, `Content-Disposition` (attachment for active content) and `Cache-Control`.
 
 ### Security
 

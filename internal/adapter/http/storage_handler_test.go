@@ -128,7 +128,7 @@ func TestHandleSignDownload_Success(t *testing.T) {
 		return map[string]any{"id": "obj1"}, nil
 	}}
 	store := &stubObjectStore{
-		signDownloadFn: func(ctx context.Context, key string, expiry time.Duration) (string, error) {
+		signDownloadFn: func(ctx context.Context, key string, expiry time.Duration, _ domain.DownloadOptions) (string, error) {
 			return "https://example.com/download?sig=xyz", nil
 		},
 	}
@@ -306,7 +306,7 @@ func TestHandleSignDownload_InvalidKeyRejected(t *testing.T) {
 		t.Fatal("query must not run for an invalid key")
 		return nil, nil
 	}}
-	store := &stubObjectStore{signDownloadFn: func(context.Context, string, time.Duration) (string, error) {
+	store := &stubObjectStore{signDownloadFn: func(context.Context, string, time.Duration, domain.DownloadOptions) (string, error) {
 		t.Fatal("sign must not run for an invalid key")
 		return "", nil
 	}}
@@ -366,7 +366,7 @@ func TestHandleSignDownload_AnotherUsersPrivateObjectDenied(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	var capturedRole string
 	signed := false
-	store := &stubObjectStore{signDownloadFn: func(context.Context, string, time.Duration) (string, error) {
+	store := &stubObjectStore{signDownloadFn: func(context.Context, string, time.Duration, domain.DownloadOptions) (string, error) {
 		signed = true
 		return "https://example.com/download?sig=leak", nil
 	}}

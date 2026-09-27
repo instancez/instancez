@@ -94,7 +94,7 @@ The server needs a writable temp directory sized for concurrent uploads × `max_
 
 ### Downloads
 
-For an object served by instancez (every `/object/...` route except a presigned URL from `createSignedUrl(s)`), the response sends `X-Content-Type-Options: nosniff`. Only the `public/` route sends `Cache-Control: public, max-age=3600`; every other route, including an authenticated download of a public bucket, sends `Cache-Control: private, max-age=3600`, since RLS on that route can still be per-caller. HTML, SVG, XML, JavaScript and `multipart/*` responses are sent with `Content-Disposition: attachment`, so an uploaded page can't run script on your API's origin. A presigned S3 URL is fetched directly from S3, so none of these headers apply to it; S3 serves its own.
+For an object served by instancez (every `/object/...` route except a presigned URL from `createSignedUrl(s)`), the response sends `X-Content-Type-Options: nosniff`. Only the `public/` route sends `Cache-Control: public, max-age=3600`; every other route, including an authenticated download of a public bucket, sends `Cache-Control: private, max-age=3600`, since RLS on that route can still be per-caller. HTML, SVG, XML, JavaScript and `multipart/*` responses are sent with `Content-Disposition: attachment`, so an uploaded page can't run script on your API's origin. A presigned S3 URL from `createSignedUrl(s)` asks S3 to send the same `Content-Type`, `Content-Disposition` (attachment for HTML/SVG/XML/JS/multipart) and `Cache-Control` (private unless the bucket is public). S3 has no override for `X-Content-Type-Options`, so presigned responses don't carry `nosniff`.
 
 ### Image transformations
 

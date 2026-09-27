@@ -30,7 +30,7 @@ import (
 // --- stubObjectStore ---
 
 type stubObjectStore struct {
-	signDownloadFn func(ctx context.Context, key string, expiry time.Duration) (string, error)
+	signDownloadFn func(ctx context.Context, key string, expiry time.Duration, opts domain.DownloadOptions) (string, error)
 	signUploadFn   func(ctx context.Context, key, contentType string, expiry time.Duration) (string, error)
 	deleteFn       func(ctx context.Context, key string) error
 	uploadFn       func(ctx context.Context, key string, r io.Reader, contentType string, size int64) error
@@ -44,9 +44,9 @@ func (s *stubObjectStore) SignUpload(ctx context.Context, key, contentType strin
 	}
 	return "", nil
 }
-func (s *stubObjectStore) SignDownload(ctx context.Context, key string, expiry time.Duration) (string, error) {
+func (s *stubObjectStore) SignDownload(ctx context.Context, key string, expiry time.Duration, opts domain.DownloadOptions) (string, error) {
 	if s.signDownloadFn != nil {
-		return s.signDownloadFn(ctx, key, expiry)
+		return s.signDownloadFn(ctx, key, expiry, opts)
 	}
 	return "", nil
 }
@@ -352,7 +352,7 @@ func TestCreateSignedURL_Success(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	store := &stubObjectStore{
-		signDownloadFn: func(ctx context.Context, key string, expiry time.Duration) (string, error) {
+		signDownloadFn: func(ctx context.Context, key string, expiry time.Duration, _ domain.DownloadOptions) (string, error) {
 			return "https://example.com/signed?token=abc123", nil
 		},
 	}
@@ -360,7 +360,7 @@ func TestCreateSignedURL_Success(t *testing.T) {
 	db := &stubDB{
 		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
 			// Object found
-			return map[string]any{"id": "some-id"}, nil
+			return map[string]any{"mime": "image/jpeg"}, nil
 		},
 	}
 
@@ -607,6 +607,103 @@ func TestCreateSignedURL_ObjectNotFound(t *testing.T) {
 	if w.Code != 404 {
 		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
 	}
+}
+
+func TestContentDisposition(t *testing.T) {
+	for name, want := range map[string]string{
+		"":                     "attachment",
+		"report.pdf":           "attachment; filename=report.pdf",
+		`a b"c.pdf`:            `attachment; filename="a b\"c.pdf"`,
+		"ünï 😀.txt":            "attachment; filename*=utf-8''%C3%BCn%C3%AF%20%F0%9F%98%80.txt",
+		"x\r\nSet-Cookie: a=b": "attachment; filename*=utf-8''x%0D%0ASet-Cookie%3A%20a%3Db",
+	} {
+		if got := contentDisposition(name); got != want {
+			t.Errorf("%q: got %q want %q", name, got, want)
+		}
+	}
+}
+
+func TestDownloadOptions(t *testing.T) {
+	cases := []struct {
+		ct     string
+		public bool
+		dl     string
+		hasDL  bool
+		want   domain.DownloadOptions
+	}{
+		{"text/html", false, "", false, domain.DownloadOptions{ContentType: "text/html", ContentDisposition: "attachment", CacheControl: "private, max-age=3600"}},
+		{"image/svg+xml", true, "", false, domain.DownloadOptions{ContentType: "image/svg+xml", ContentDisposition: "attachment", CacheControl: "public, max-age=3600"}},
+		{"image/png", false, "", false, domain.DownloadOptions{ContentType: "image/png", CacheControl: "private, max-age=3600"}},
+		{"image/png", false, "", true, domain.DownloadOptions{ContentType: "image/png", ContentDisposition: "attachment", CacheControl: "private, max-age=3600"}},
+		{"image/png", false, "cat.png", true, domain.DownloadOptions{ContentType: "image/png", ContentDisposition: "attachment; filename=cat.png", CacheControl: "private, max-age=3600"}},
+		{"", false, "", false, domain.DownloadOptions{ContentType: "application/octet-stream", CacheControl: "private, max-age=3600"}},
+		{"not a mime", false, "", false, domain.DownloadOptions{ContentType: "application/octet-stream", CacheControl: "private, max-age=3600"}},
+		// Mixed-case type + params: matching stays case-insensitive, but the original Content-Type header is preserved verbatim.
+		{"TEXT/HTML; charset=utf-8", false, "", false, domain.DownloadOptions{ContentType: "TEXT/HTML; charset=utf-8", ContentDisposition: "attachment", CacheControl: "private, max-age=3600"}},
+		// Header injection in the stored mime falls back to octet-stream like any unparseable value.
+		{"text/plain\r\nSet-Cookie: x", false, "", false, domain.DownloadOptions{ContentType: "application/octet-stream", CacheControl: "private, max-age=3600"}},
+	}
+	for _, c := range cases {
+		if got := downloadOptions(c.ct, c.public, c.dl, c.hasDL); got != c.want {
+			t.Errorf("%+v: got %+v", c, got)
+		}
+	}
+}
+
+func TestCreateSignedURL_PassesSafeHeaderOptions(t *testing.T) {
+	for _, public := range []bool{false, true} {
+		var got domain.DownloadOptions
+		store := &stubObjectStore{signDownloadFn: func(_ context.Context, _ string, _ time.Duration, o domain.DownloadOptions) (string, error) {
+			got = o
+			return "https://example.com/signed", nil
+		}}
+		db := &stubDB{queryRowFn: func(context.Context, string, ...any) (map[string]any, error) {
+			return map[string]any{"mime": "text/html"}, nil
+		}}
+		h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {Public: public}})
+		r := gin.New()
+		r.POST("/storage/v1/object/sign/:bucket/*path", func(c *gin.Context) {
+			setTestSession(c, domain.Session{Role: "service_role"})
+			h.createSignedURL(c)
+		})
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars/page.html", strings.NewReader(`{"expiresIn":60}`))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		require.Equal(t, 200, w.Code, w.Body.String())
+		cache := "private, max-age=3600"
+		if public {
+			cache = "public, max-age=3600"
+		}
+		assert.Equal(t, domain.DownloadOptions{ContentType: "text/html", ContentDisposition: "attachment", CacheControl: cache}, got)
+	}
+}
+
+func TestCreateSignedURLs_NullMimeStillSigns(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var got domain.DownloadOptions
+	store := &stubObjectStore{signDownloadFn: func(_ context.Context, _ string, _ time.Duration, o domain.DownloadOptions) (string, error) {
+		got = o
+		return "https://example.com/signed", nil
+	}}
+	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) {
+		return []map[string]any{{"name": "a.bin", "mime": nil}}, nil
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars", strings.NewReader(`{"paths":["a.bin"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, 200, w.Code, w.Body.String())
+	var resp []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp, 1)
+	assert.NotNil(t, resp[0]["signedURL"], "a NULL mime must not be treated as invisible")
+	assert.Equal(t, "application/octet-stream", got.ContentType)
 }
 
 // --- Upload / update object tests ---
@@ -1748,7 +1845,7 @@ func TestCreateSignedURLs_EnforcesRLSPerPath(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	var signed []string
 	store := &stubObjectStore{
-		signDownloadFn: func(_ context.Context, key string, _ time.Duration) (string, error) {
+		signDownloadFn: func(_ context.Context, key string, _ time.Duration, _ domain.DownloadOptions) (string, error) {
 			signed = append(signed, key)
 			if strings.Contains(key, "broken") {
 				return "", errors.New("presign failed: secret detail")
@@ -1758,7 +1855,7 @@ func TestCreateSignedURLs_EnforcesRLSPerPath(t *testing.T) {
 	}
 	var gotArgs []any
 	db := &stubDB{queryFn: func(_ context.Context, q string, args ...any) ([]map[string]any, error) {
-		require.Contains(t, q, "SELECT name FROM storage.objects")
+		require.Contains(t, q, "SELECT name, mime FROM storage.objects")
 		gotArgs = args
 		// RLS hides "secret.jpg"; everything else in the ANY list is visible.
 		return []map[string]any{{"name": "good.jpg"}, {"name": "ünï.png"}, {"name": "broken.jpg"}}, nil
@@ -1869,7 +1966,10 @@ func TestCreateSignedURLs_ExactCapAndDuplicates(t *testing.T) {
 func TestCreateSignedURLs_ExpiryClamped(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	var got time.Duration
-	store := &stubObjectStore{signDownloadFn: func(_ context.Context, _ string, e time.Duration) (string, error) { got = e; return "u", nil }}
+	store := &stubObjectStore{signDownloadFn: func(_ context.Context, _ string, e time.Duration, _ domain.DownloadOptions) (string, error) {
+		got = e
+		return "u", nil
+	}}
 	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) {
 		return []map[string]any{{"name": "a"}}, nil
 	}}
@@ -1905,7 +2005,10 @@ func TestSignedExpiry(t *testing.T) {
 func TestCreateSignedURL_ExpiryClamped(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	var got time.Duration
-	store := &stubObjectStore{signDownloadFn: func(_ context.Context, _ string, e time.Duration) (string, error) { got = e; return "u", nil }}
+	store := &stubObjectStore{signDownloadFn: func(_ context.Context, _ string, e time.Duration, _ domain.DownloadOptions) (string, error) {
+		got = e
+		return "u", nil
+	}}
 	db := &stubDB{queryRowFn: func(context.Context, string, ...any) (map[string]any, error) { return map[string]any{"id": "x"}, nil }}
 	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
 	r := gin.New()

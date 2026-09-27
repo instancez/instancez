@@ -46,7 +46,7 @@ func (s *LocalStore) SignUpload(_ context.Context, key string, _ string, _ time.
 	return "file://" + fullPath, nil
 }
 
-func (s *LocalStore) SignDownload(_ context.Context, key string, _ time.Duration) (string, error) {
+func (s *LocalStore) SignDownload(_ context.Context, key string, _ time.Duration, _ domain.DownloadOptions) (string, error) {
 	fullPath, err := s.fullPath(key)
 	if err != nil {
 		return "", err

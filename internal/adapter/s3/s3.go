@@ -105,10 +105,19 @@ func (s *Store) SignUpload(ctx context.Context, key string, contentType string, 
 	return req.URL, nil
 }
 
-func (s *Store) SignDownload(ctx context.Context, key string, expiry time.Duration) (string, error) {
+func (s *Store) SignDownload(ctx context.Context, key string, expiry time.Duration, opts domain.DownloadOptions) (string, error) {
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(s.fullKey(key)),
+	}
+	if opts.ContentType != "" {
+		input.ResponseContentType = aws.String(opts.ContentType)
+	}
+	if opts.ContentDisposition != "" {
+		input.ResponseContentDisposition = aws.String(opts.ContentDisposition)
+	}
+	if opts.CacheControl != "" {
+		input.ResponseCacheControl = aws.String(opts.CacheControl)
 	}
 
 	req, err := s.presignClient.PresignGetObject(ctx, input, s3.WithPresignExpires(expiry))
