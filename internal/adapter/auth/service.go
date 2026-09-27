@@ -511,8 +511,24 @@ func (s *Service) DeleteUserTokensByPurpose(ctx context.Context, userID, purpose
 }
 
 func (s *Service) DeleteOneTimeToken(ctx context.Context, token string) error {
-	_, err := s.db.Exec(ctx, "DELETE FROM auth.one_time_tokens WHERE token = $1", token)
-	return err
+	affected, err := s.db.Exec(ctx, "DELETE FROM auth.one_time_tokens WHERE token = $1", token)
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return domain.ErrInvalidToken
+	}
+	return nil
+}
+
+// ponytail: check-then-insert, so two simultaneous requests can both send; fine for a mail cooldown.
+func (s *Service) RecentOTPSent(ctx context.Context, userID, purpose string, within time.Duration) (bool, error) {
+	row, err := s.db.QueryRow(ctx,
+		`SELECT 1 AS hit FROM auth.one_time_tokens
+		  WHERE user_id = $1::uuid AND purpose = $2 AND created_at > NOW() - make_interval(secs => $3)
+		  LIMIT 1`,
+		userID, purpose, within.Seconds())
+	return err == nil && row != nil, err
 }
 
 // VerifyOTP consumes a one-time token for POST /verify. It handles both the
@@ -526,16 +542,13 @@ func (s *Service) VerifyOTP(ctx context.Context, token, email string, allowedPur
 	}) == -1
 
 	if isNumericCode && email != "" {
-		// Numeric codes live in a 10^6 space, so the verify endpoint must be
-		// brute-force resistant. Fetch the most recent code-bearing token for
-		// the email, enforce a per-token attempt cap, and compare the code in
-		// constant time. On too many failures the token is destroyed.
+		// Spend the attempt first so concurrent guesses can't exceed the cap.
 		cand, cerr := s.db.QueryRow(ctx,
-			`SELECT id, user_id::text, purpose, expires_at, token, code, attempts
-			   FROM auth.one_time_tokens
-			  WHERE email = $1 AND code IS NOT NULL
-			  ORDER BY created_at DESC LIMIT 1`,
-			email)
+			`UPDATE auth.one_time_tokens SET attempts = attempts + 1
+			  WHERE id = (SELECT id FROM auth.one_time_tokens WHERE email = $1 AND code IS NOT NULL ORDER BY created_at DESC LIMIT 1)
+			    AND attempts < $2
+			  RETURNING id, user_id::text, purpose, expires_at, token, code, attempts`,
+			email, maxOTPAttempts)
 		if cerr != nil || cand == nil {
 			return domain.OTPRow{}, domain.ErrInvalidToken
 		}
@@ -543,12 +556,8 @@ func (s *Service) VerifyOTP(ctx context.Context, token, email string, allowedPur
 			_, _ = s.db.Exec(ctx, "DELETE FROM auth.one_time_tokens WHERE id = $1", cand["id"])
 			return domain.OTPRow{}, domain.ErrTokenExpired
 		}
-		attempts := asInt64(cand["attempts"])
-		codeOK := constantTimeEqual(asString(cand["code"]), token)
-		if attempts >= maxOTPAttempts || !codeOK {
-			if !codeOK && attempts+1 < maxOTPAttempts {
-				_, _ = s.db.Exec(ctx, "UPDATE auth.one_time_tokens SET attempts = attempts + 1 WHERE id = $1", cand["id"])
-			} else {
+		if !constantTimeEqual(asString(cand["code"]), token) {
+			if asInt64(cand["attempts"]) >= maxOTPAttempts {
 				_, _ = s.db.Exec(ctx, "DELETE FROM auth.one_time_tokens WHERE id = $1", cand["id"])
 			}
 			return domain.OTPRow{}, domain.ErrInvalidToken
@@ -578,10 +587,10 @@ func (s *Service) VerifyOTP(ctx context.Context, token, email string, allowedPur
 		return domain.OTPRow{}, domain.ErrPurposeMismatch
 	}
 
-	// Consume the token (single-use). Always delete by the canonical token
-	// column so 6-digit code flows also clear the row.
-	_, _ = s.db.Exec(ctx, "DELETE FROM auth.one_time_tokens WHERE token = $1", rowToken)
-
+	// Single-use: only the request whose DELETE hits the row wins.
+	if affected, err := s.db.Exec(ctx, "DELETE FROM auth.one_time_tokens WHERE token = $1", rowToken); err != nil || affected == 0 {
+		return domain.OTPRow{}, domain.ErrInvalidToken
+	}
 	return domain.OTPRow{UserID: asString(row["user_id"]), Purpose: purpose}, nil
 }
 

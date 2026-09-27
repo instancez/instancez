@@ -161,6 +161,8 @@ type AuthService interface {
 	CreateOTPCode(ctx context.Context, userID, token, code, email, purpose string, expiresAt int64) error
 	// DeleteUserTokensByPurpose clears outstanding tokens for a purpose (resend).
 	DeleteUserTokensByPurpose(ctx context.Context, userID, purpose string) error
+	// RecentOTPSent reports whether a token for (userID, purpose) was issued within the window.
+	RecentOTPSent(ctx context.Context, userID, purpose string, within time.Duration) (bool, error)
 
 	// VerifyOTP consumes a one-time token for POST /verify. It handles both the
 	// numeric-code (email + 6 digits) and opaque-token flows, including attempt
@@ -173,6 +175,7 @@ type AuthService interface {
 	// caller consumes via DeleteOneTimeToken. Errors: ErrInvalidToken, ErrTokenExpired.
 	PeekOneTimeToken(ctx context.Context, token string) (OTPRow, error)
 	// DeleteOneTimeToken removes a token by its canonical token column.
+	// Errors: ErrInvalidToken when already consumed.
 	DeleteOneTimeToken(ctx context.Context, token string) error
 
 	// MarkEmailVerified sets email_verified = true and confirms the address.

@@ -72,81 +72,126 @@ func newTestService(db domain.Database) *Service {
 	return NewService(db, &domain.Config{Auth: &domain.Auth{}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
-// TestVerifyOTP_NumericCodeAttemptLimit verifies that a wrong 6-digit code
-// increments the attempt counter (not deletes) on the first guess.
+func otpRow(attempts int64) map[string]any {
+	return map[string]any{"id": int64(7), "user_id": "u1", "purpose": "magiclink",
+		"expires_at": time.Now().Add(time.Hour), "token": "longtoken", "code": "123456", "attempts": attempts}
+}
+
+// TestVerifyOTP_NumericCodeAttemptLimit checks a wrong guess spends an attempt
+// in one capped UPDATE and leaves the code alive.
 func TestVerifyOTP_NumericCodeAttemptLimit(t *testing.T) {
-	incremented, deleted := false, false
-	db := &fakeDB{
+	var spendQ string
+	var spendArgs []any
+	deleted := false
+	s := newTestService(&fakeDB{
 		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "code IS NOT NULL") {
-				return map[string]any{
-					"id":         int64(7),
-					"user_id":    "u1",
-					"purpose":    "magiclink",
-					"expires_at": time.Now().Add(time.Hour),
-					"token":      "longtoken",
-					"code":       "123456",
-					"attempts":   int64(0),
-				}, nil
-			}
-			return nil, nil
+			spendQ, spendArgs = q, args
+			return otpRow(1), nil
 		},
 		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
-			if strings.Contains(q, "SET attempts = attempts + 1") {
-				incremented = true
-			}
-			if strings.Contains(q, "DELETE FROM auth.one_time_tokens") {
-				deleted = true
-			}
+			deleted = deleted || strings.Contains(q, "DELETE")
 			return 1, nil
 		},
-	}
-	s := newTestService(db)
-	_, err := s.VerifyOTP(context.Background(), "000000", "otp@example.com", []string{"signup", "magiclink"})
-	if err != domain.ErrInvalidToken {
+	})
+	if _, err := s.VerifyOTP(context.Background(), "000000", "otp@example.com", []string{"signup", "magiclink"}); err != domain.ErrInvalidToken {
 		t.Fatalf("want ErrInvalidToken, got %v", err)
 	}
-	if !incremented {
-		t.Error("expected attempts bumped on a wrong guess")
+	if !strings.Contains(spendQ, "SET attempts = attempts + 1") || !strings.Contains(spendQ, "attempts < $2") {
+		t.Errorf("attempt must be spent atomically under the cap: %s", spendQ)
+	}
+	if len(spendArgs) != 2 || spendArgs[0] != "otp@example.com" || spendArgs[1] != maxOTPAttempts {
+		t.Errorf("args = %v", spendArgs)
 	}
 	if deleted {
 		t.Error("token should not be deleted on the first wrong guess")
 	}
 }
 
-// TestVerifyOTP_BurnsTokenAtCap verifies the token is destroyed once the
-// attempt budget is exhausted — even for a correct code.
+// TestVerifyOTP_BurnsTokenAtCap checks a spent budget rejects even the right code.
 func TestVerifyOTP_BurnsTokenAtCap(t *testing.T) {
-	deleted := false
-	db := &fakeDB{
-		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-			if strings.Contains(q, "code IS NOT NULL") {
-				return map[string]any{
-					"id":         int64(7),
-					"user_id":    "u1",
-					"purpose":    "magiclink",
-					"expires_at": time.Now().Add(time.Hour),
-					"token":      "longtoken",
-					"code":       "123456",
-					"attempts":   int64(maxOTPAttempts),
-				}, nil
-			}
-			return nil, nil
-		},
-		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
-			if strings.Contains(q, "DELETE FROM auth.one_time_tokens") {
-				deleted = true
-			}
-			return 1, nil
-		},
-	}
-	s := newTestService(db)
-	_, err := s.VerifyOTP(context.Background(), "123456", "otp@example.com", nil)
-	if err != domain.ErrInvalidToken {
+	s := newTestService(&fakeDB{
+		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) { return nil, nil },
+		execFn:     func(ctx context.Context, q string, args ...any) (int64, error) { return 1, nil },
+	})
+	if _, err := s.VerifyOTP(context.Background(), "123456", "otp@example.com", nil); err != domain.ErrInvalidToken {
 		t.Fatalf("want ErrInvalidToken, got %v", err)
 	}
-	if !deleted {
-		t.Error("token should be destroyed once the attempt budget is exhausted")
+}
+
+func TestVerifyOTP_CorrectCodeOnLastAttemptSucceeds(t *testing.T) {
+	s := newTestService(&fakeDB{
+		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+			return otpRow(maxOTPAttempts), nil
+		},
+		execFn: func(ctx context.Context, q string, args ...any) (int64, error) { return 1, nil },
+	})
+	if row, err := s.VerifyOTP(context.Background(), "123456", "otp@example.com", nil); err != nil || row.UserID != "u1" {
+		t.Fatalf("row=%v err=%v", row, err)
+	}
+}
+
+func TestVerifyOTP_WrongCodeOnLastAttemptBurns(t *testing.T) {
+	deleted := false
+	s := newTestService(&fakeDB{
+		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+			return otpRow(maxOTPAttempts), nil
+		},
+		execFn: func(ctx context.Context, q string, args ...any) (int64, error) {
+			deleted = deleted || strings.Contains(q, "DELETE")
+			return 1, nil
+		},
+	})
+	if _, err := s.VerifyOTP(context.Background(), "000000", "otp@example.com", nil); err != domain.ErrInvalidToken || !deleted {
+		t.Fatalf("err=%v deleted=%v", err, deleted)
+	}
+}
+
+func TestVerifyOTP_LosingConsumeRaceIsInvalid(t *testing.T) {
+	for name, tok := range map[string]string{"code": "123456", "opaque": "aaaaaaaabbbbbbbbccccccccdddddddd"} {
+		s := newTestService(&fakeDB{
+			queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) { return otpRow(1), nil },
+			execFn:     func(ctx context.Context, q string, args ...any) (int64, error) { return 0, nil },
+		})
+		if _, err := s.VerifyOTP(context.Background(), tok, "otp@example.com", nil); err != domain.ErrInvalidToken {
+			t.Errorf("%s: second consumer must fail, got %v", name, err)
+		}
+	}
+}
+
+func TestDeleteOneTimeToken_ReportsMissing(t *testing.T) {
+	for affected, want := range map[int64]error{1: nil, 0: domain.ErrInvalidToken} {
+		s := newTestService(&fakeDB{execFn: func(ctx context.Context, q string, args ...any) (int64, error) { return affected, nil }})
+		if err := s.DeleteOneTimeToken(context.Background(), "t"); !errors.Is(err, want) {
+			t.Errorf("affected=%d: got %v", affected, err)
+		}
+	}
+}
+
+func TestRecentOTPSent(t *testing.T) {
+	boom := errors.New("boom")
+	for _, tc := range []struct {
+		name string
+		row  map[string]any
+		err  error
+		want bool
+	}{
+		{"hit", map[string]any{"hit": int64(1)}, nil, true},
+		{"miss", nil, nil, false},
+		{"db error", nil, boom, false},
+	} {
+		var gotQ string
+		var gotArgs []any
+		s := newTestService(&fakeDB{queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+			gotQ, gotArgs = q, args
+			return tc.row, tc.err
+		}})
+		got, err := s.RecentOTPSent(context.Background(), "u1", "recovery", 90*time.Second)
+		if got != tc.want || !errors.Is(err, tc.err) {
+			t.Errorf("%s: got %v, %v", tc.name, got, err)
+		}
+		if !strings.Contains(gotQ, "NOW()") || len(gotArgs) != 3 || gotArgs[0] != "u1" || gotArgs[1] != "recovery" || gotArgs[2] != 90.0 {
+			t.Errorf("%s: must use DB time per (user, purpose): %s %v", tc.name, gotQ, gotArgs)
+		}
 	}
 }
 
@@ -377,7 +422,7 @@ func TestDeleteFactorForUser_ZeroRowsIsNotFound(t *testing.T) {
 }
 
 // TestCreateUser_AnonymousEmailIsNULLNotEmptyString: email is UNIQUE, and
-// Postgres treats '' as a real value subject to that constraint (unlike NULL,
+// Postgres treats ” as a real value subject to that constraint (unlike NULL,
 // which never collides). Anonymous signup passes Email == "", so the insert
 // must bind NULL there — otherwise a second anonymous sign-in hits a
 // duplicate-key error on the first anonymous user's row.

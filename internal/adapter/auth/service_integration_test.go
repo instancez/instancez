@@ -779,3 +779,104 @@ func TestVerifyOTPReturnsPurposeIntegration(t *testing.T) {
 		}
 	}
 }
+
+func TestOTPIntegration(t *testing.T) {
+	s, db := newIntegrationService(t, &domain.Auth{Email: &domain.AuthEmail{}})
+	ctx := context.Background()
+	exp := time.Now().Add(time.Hour).Unix()
+	parallel := func(n int, fn func() bool) int {
+		var wins atomic.Int32
+		var wg sync.WaitGroup
+		for i := 0; i < n; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if fn() {
+					wins.Add(1)
+				}
+			}()
+		}
+		wg.Wait()
+		return int(wins.Load())
+	}
+	mustCode := func(t *testing.T, uid, tok, code, email string) {
+		t.Helper()
+		if err := s.CreateOTPCode(ctx, uid, tok, code, email, "magiclink", exp); err != nil {
+			t.Fatalf("create code: %v", err)
+		}
+	}
+
+	t.Run("concurrent wrong guesses cannot exceed the cap", func(t *testing.T) {
+		uid := mustUser(t, s, "guess@example.com")
+		mustCode(t, uid, "tok-guess", "123456", "guess@example.com")
+		parallel(20, func() bool { _, err := s.VerifyOTP(ctx, "000000", "guess@example.com", nil); return err == nil })
+		if row, _ := db.QueryRow(ctx, `SELECT 1 AS x FROM auth.one_time_tokens WHERE token = 'tok-guess'`); row != nil {
+			t.Fatal("code must be burned once the cap is spent")
+		}
+		if _, err := s.VerifyOTP(ctx, "123456", "guess@example.com", nil); !errors.Is(err, domain.ErrInvalidToken) {
+			t.Fatalf("correct code after the cap: %v", err)
+		}
+	})
+
+	t.Run("concurrent wrong guesses below the cap keep the last attempt", func(t *testing.T) {
+		uid := mustUser(t, s, "edge@example.com")
+		mustCode(t, uid, "tok-edge", "222222", "edge@example.com")
+		parallel(maxOTPAttempts-1, func() bool { _, err := s.VerifyOTP(ctx, "000000", "edge@example.com", nil); return err == nil })
+		if _, err := s.VerifyOTP(ctx, "222222", "edge@example.com", nil); err != nil {
+			t.Fatalf("last attempt with the right code: %v", err)
+		}
+	})
+
+	t.Run("correct code consumed exactly once", func(t *testing.T) {
+		uid := mustUser(t, s, "once@example.com")
+		mustCode(t, uid, "tok-once", "654321", "once@example.com")
+		if wins := parallel(20, func() bool { _, err := s.VerifyOTP(ctx, "654321", "once@example.com", nil); return err == nil }); wins != 1 {
+			t.Fatalf("%d winners", wins)
+		}
+	})
+
+	t.Run("opaque token consumed exactly once", func(t *testing.T) {
+		uid := mustUser(t, s, "link@example.com")
+		if err := s.CreateOneTimeToken(ctx, uid, "opaque-token-0123456789abcdef", "recovery", exp); err != nil {
+			t.Fatal(err)
+		}
+		if wins := parallel(20, func() bool {
+			_, err := s.VerifyOTP(ctx, "opaque-token-0123456789abcdef", "", []string{"recovery"})
+			return err == nil
+		}); wins != 1 {
+			t.Fatalf("%d winners", wins)
+		}
+		if err := s.DeleteOneTimeToken(ctx, "opaque-token-0123456789abcdef"); !errors.Is(err, domain.ErrInvalidToken) {
+			t.Fatalf("second delete: %v", err)
+		}
+	})
+
+	t.Run("resend cooldown is per user and purpose", func(t *testing.T) {
+		uid := mustUser(t, s, "cool@example.com")
+		other := mustUser(t, s, "cool2@example.com")
+		hit := func(uid, purpose string) bool {
+			t.Helper()
+			h, err := s.RecentOTPSent(ctx, uid, purpose, time.Minute)
+			if err != nil {
+				t.Fatalf("RecentOTPSent: %v", err)
+			}
+			return h
+		}
+		if hit(uid, "magiclink") {
+			t.Fatal("no token yet")
+		}
+		mustCode(t, uid, "tok-cool", "111111", "cool@example.com")
+		if !hit(uid, "magiclink") {
+			t.Fatal("fresh token must trip the cooldown")
+		}
+		if hit(uid, "recovery") || hit(other, "magiclink") {
+			t.Fatal("other purpose or user must not trip it")
+		}
+		if _, err := db.Exec(ctx, `UPDATE auth.one_time_tokens SET created_at = NOW() - INTERVAL '2 minutes' WHERE user_id = $1::uuid`, uid); err != nil {
+			t.Fatal(err)
+		}
+		if hit(uid, "magiclink") {
+			t.Fatal("cooldown must expire")
+		}
+	})
+}

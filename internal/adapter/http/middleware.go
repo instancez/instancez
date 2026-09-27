@@ -494,10 +494,11 @@ var errTypeToCode = map[string]string{
 	"internal":     "XX000",
 	// Policy errors with no SQLSTATE / PGRST equivalent: the slug doubles
 	// as the stable client-facing `code` so callers can branch on it.
-	"signup_disabled":         "signup_disabled",
-	"user_banned":             "user_banned",
-	"insufficient_aal":        "insufficient_aal",
-	"over_request_rate_limit": "over_request_rate_limit",
+	"signup_disabled":            "signup_disabled",
+	"user_banned":                "user_banned",
+	"insufficient_aal":           "insufficient_aal",
+	"over_email_send_rate_limit": "over_email_send_rate_limit",
+	"over_request_rate_limit":    "over_request_rate_limit",
 
 	"provider_email_needs_verification": "provider_email_needs_verification",
 	"email_exists":                      "email_exists",

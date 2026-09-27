@@ -40,6 +40,9 @@ const (
 // provider doesn't stall the HTTP response indefinitely.
 const emailSendTimeout = 5 * time.Second
 
+// emailResendCooldown matches GoTrue's default per-email send frequency.
+const emailResendCooldown = 60 * time.Second
+
 // Default post-auth redirect paths, used by resolveEmailRedirect when the
 // client sends no redirect_to (or sends one that isn't allowlisted).
 const (
@@ -631,7 +634,7 @@ func (h *AuthHandler) handleRecover(c *gin.Context) {
 
 	ctx := c.Request.Context()
 	userID, err := h.authSvc.GetUserIDByEmail(ctx, req.Email)
-	if err == nil && userID != "" {
+	if err == nil && userID != "" && !h.otpCooldown(c, userID, "recovery") {
 		token := generateRandomToken()
 		expiresAt := time.Now().Add(1 * time.Hour)
 		_ = h.authSvc.CreateOneTimeToken(ctx, userID, token, "recovery", expiresAt.Unix())
@@ -754,8 +757,10 @@ func (h *AuthHandler) handleVerifyGET(c *gin.Context) {
 	userID := otp.UserID
 	purpose := otp.Purpose
 
-	// Consume the token (single-use).
-	_ = h.authSvc.DeleteOneTimeToken(ctx, token)
+	if err := h.authSvc.DeleteOneTimeToken(ctx, token); err != nil {
+		c.String(400, "Invalid verification token")
+		return
+	}
 
 	verifyType := c.DefaultQuery("type", "")
 
@@ -836,7 +841,7 @@ func (h *AuthHandler) handleOTP(c *gin.Context) {
 	ctx := c.Request.Context()
 	userID, err := h.authSvc.GetUserIDByEmail(ctx, req.Email)
 	if err != nil || userID == "" {
-		if !createUser {
+		if !createUser || !h.cfg.Auth.SignupAllowed() {
 			c.JSON(200, gin.H{})
 			return
 		}
@@ -850,6 +855,11 @@ func (h *AuthHandler) handleOTP(c *gin.Context) {
 			return
 		}
 		userID = asString(newRow["id"])
+	}
+	// A cooldown hit stays a silent 200 so it can't reveal the account.
+	if h.otpCooldown(c, userID, "magiclink") {
+		c.JSON(200, gin.H{})
+		return
 	}
 
 	token := generateRandomToken()
@@ -2029,6 +2039,12 @@ func bigIntBytes(i int) []byte {
 
 // ---------- /resend ----------
 
+// otpCooldown reports whether this user got a token for purpose too recently; a failed check allows the send.
+func (h *AuthHandler) otpCooldown(c *gin.Context, userID, purpose string) bool {
+	recent, err := h.authSvc.RecentOTPSent(c.Request.Context(), userID, purpose, emailResendCooldown)
+	return err == nil && recent
+}
+
 func (h *AuthHandler) handleResend(c *gin.Context) {
 	var req struct {
 		Type  string `json:"type" binding:"required"`
@@ -2057,6 +2073,10 @@ func (h *AuthHandler) handleResend(c *gin.Context) {
 		return
 	}
 
+	if h.otpCooldown(c, userID, purpose) {
+		problemJSON(c, 429, "over_email_send_rate_limit", "For security purposes, you can only request this after 60 seconds.")
+		return
+	}
 	_ = h.authSvc.DeleteUserTokensByPurpose(ctx, userID, purpose)
 
 	token := generateRandomToken()
