@@ -789,6 +789,72 @@ func TestUploadObject_RLSDenied(t *testing.T) {
 	}
 }
 
+// countingReader records how many times its body was read, so a test can
+// prove a denied upload's body was never touched.
+type countingReader struct {
+	r io.Reader
+	n *int
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	*c.n++
+	return c.r.Read(p)
+}
+
+func TestUploadObject_RLSDeniedNeverReadsBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dir := isolatedTempDir(t)
+	var rolledBack, committed bool
+	tx := &stubTx{
+		execFn: func(context.Context, string, ...any) (int64, error) {
+			return 0, errors.New(`new row violates row-level security policy for table "objects"`)
+		},
+		rollbackFn: func(context.Context) error { rolledBack = true; return nil },
+		commitFn:   func(context.Context) error { committed = true; return nil },
+	}
+	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { return tx, nil }}
+	store := &stubObjectStore{uploadFn: func(context.Context, string, io.Reader, string, int64) error {
+		t.Fatal("store.Upload must not run for a denied caller")
+		return nil
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.POST("/storage/v1/object/:bucket/*path", h.uploadObject)
+
+	var reads int
+	body := &countingReader{r: strings.NewReader(strings.Repeat("x", 1<<20)), n: &reads}
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/photo.jpg", body)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, 403, w.Code, w.Body.String())
+	assert.Zero(t, reads, "a denied caller's body must never be read/spooled")
+	assert.True(t, rolledBack, "the permission-probe transaction must be rolled back")
+	assert.False(t, committed, "the permission-probe transaction must never be committed")
+	assertNoSpoolLeft(t, dir)
+}
+
+func TestUpdateObject_ProbeUsesUpdateNotInsert(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var queries []string
+	tx := &stubTx{execFn: func(_ context.Context, q string, _ ...any) (int64, error) {
+		queries = append(queries, q)
+		return 1, nil
+	}}
+	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { return tx, nil }}
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.PUT("/storage/v1/object/:bucket/*path", h.updateObject)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/storage/v1/object/avatars/photo.jpg", strings.NewReader("data")))
+
+	require.Equal(t, 200, w.Code, w.Body.String())
+	require.NotEmpty(t, queries)
+	assert.True(t, strings.HasPrefix(strings.TrimSpace(queries[0]), "UPDATE"),
+		"the pre-spool probe on an update must UPDATE the existing row, not INSERT a new one: %q", queries[0])
+}
+
 func TestUploadObject_StoreUploadInternalError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	store := &stubObjectStore{
@@ -2001,11 +2067,16 @@ func assertNoSpoolLeft(t *testing.T, dir string) {
 func TestUploadObject_TxOpensOnlyAfterBodyFinishes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	dir := isolatedTempDir(t)
-	var began, bodyClosed atomic.Bool
-	tx := &stubTx{execFn: func(context.Context, string, ...any) (int64, error) { return 1, nil }}
+	var txOpen atomic.Bool
+	var opened atomic.Int32
+	tx := &stubTx{
+		execFn:     func(context.Context, string, ...any) (int64, error) { return 1, nil },
+		commitFn:   func(context.Context) error { txOpen.Store(false); return nil },
+		rollbackFn: func(context.Context) error { txOpen.Store(false); return nil },
+	}
 	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) {
-		assert.True(t, bodyClosed.Load(), "DB tx opened while the client body was still streaming")
-		began.Store(true)
+		txOpen.Store(true)
+		opened.Add(1)
 		return tx, nil
 	}}
 	var stored string
@@ -2028,17 +2099,19 @@ func TestUploadObject_TxOpensOnlyAfterBodyFinishes(t *testing.T) {
 	done := make(chan struct{})
 	go func() { r.ServeHTTP(w, req); close(done) }()
 
-	// Each Write returns only once the handler has read it, so the handler is mid-body here.
+	// Each Write returns only once the handler has read it. By then the
+	// pre-spool permission probe (begin+exec+rollback, no body IO) has
+	// already run and closed, so no tx should be open mid-body.
 	_, _ = pw.Write([]byte("slow "))
+	assert.False(t, txOpen.Load(), "a tx stayed open while the client body was still streaming")
 	_, _ = pw.Write([]byte("client "))
-	assert.False(t, began.Load(), "tx began before the body finished")
+	assert.False(t, txOpen.Load(), "a tx stayed open while the client body was still streaming")
 	_, _ = pw.Write([]byte("body"))
-	bodyClosed.Store(true)
 	_ = pw.Close()
 	<-done
 
 	require.Equal(t, 200, w.Code, w.Body.String())
-	assert.True(t, began.Load())
+	assert.Equal(t, int32(2), opened.Load(), "expected the permission probe and the real write tx")
 	assert.Equal(t, "slow client body", stored)
 	assert.Equal(t, int64(len(stored)), storedSize)
 	assertNoSpoolLeft(t, dir)
@@ -2047,9 +2120,15 @@ func TestUploadObject_TxOpensOnlyAfterBodyFinishes(t *testing.T) {
 func TestUploadObject_ClientAbortNeverOpensTx(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	dir := isolatedTempDir(t)
-	began := false
-	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { began = true; return &stubTx{}, nil }}
-	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
+	var begins int
+	var committed bool
+	tx := &stubTx{commitFn: func(context.Context) error { committed = true; return nil }}
+	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { begins++; return tx, nil }}
+	store := &stubObjectStore{uploadFn: func(context.Context, string, io.Reader, string, int64) error {
+		t.Fatal("store must not receive an aborted upload")
+		return nil
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
 	r := gin.New()
 	r.POST("/storage/v1/object/:bucket/*path", h.uploadObject)
 
@@ -2062,7 +2141,8 @@ func TestUploadObject_ClientAbortNeverOpensTx(t *testing.T) {
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/a.txt", pr))
 
 	assert.Equal(t, 500, w.Code)
-	assert.False(t, began, "tx opened for an aborted body")
+	assert.Equal(t, 1, begins, "only the permission probe should open a tx for an aborted body")
+	assert.False(t, committed, "no tx may be committed for an aborted body")
 	assertNoSpoolLeft(t, dir)
 }
 
@@ -2085,15 +2165,16 @@ func TestUploadObject_SpoolRemovedOnPanic(t *testing.T) {
 func TestUploadObject_TooLargeRejectedBeforeTx(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	dir := isolatedTempDir(t)
-	var began, streamed bool
+	var begins int
+	var streamed bool
 	tx := &stubTx{execFn: func(context.Context, string, ...any) (int64, error) { return 1, nil }}
-	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { began = true; return tx, nil }}
+	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { begins++; return tx, nil }}
 	store := &stubObjectStore{uploadFn: func(context.Context, string, io.Reader, string, int64) error { streamed = true; return nil }}
 	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {MaxSize: "1KB"}})
 	r := gin.New()
 	r.POST("/storage/v1/object/:bucket/*path", h.uploadObject)
 	send := func(n int, multi bool) *httptest.ResponseRecorder {
-		began, streamed = false, false
+		begins, streamed = 0, false
 		var req *http.Request
 		if multi {
 			body, ct := multipartBody(t, "blob", "text/plain", strings.Repeat("x", n))
@@ -2111,19 +2192,21 @@ func TestUploadObject_TooLargeRejectedBeforeTx(t *testing.T) {
 			w := send(n, multi)
 			assert.Equal(t, 413, w.Code, "%d bytes multipart=%v", n, multi)
 			assert.Contains(t, w.Body.String(), "1KB")
-			assert.False(t, began, "%d bytes: tx opened for an oversized body", n)
+			assert.Equal(t, 1, begins, "%d bytes: only the permission probe should open a tx for an oversized body", n)
 			assert.False(t, streamed, "%d bytes: oversized body reached the store", n)
 		}
 		w := send(1024, multi)
 		assert.Equal(t, 200, w.Code, "exactly max_size must be accepted (multipart=%v)", multi)
-		assert.True(t, began && streamed)
+		assert.Equal(t, 2, begins, "expected the permission probe and the real write tx")
+		assert.True(t, streamed)
 	}
 	assertNoSpoolLeft(t, dir)
 }
 
 func TestUploadObject_TooLargeDefaultLimitNamesIt(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	h := newStorageHandler(&stubDB{}, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
+	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { return &stubTx{}, nil }}
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
 	r := gin.New()
 	r.POST("/storage/v1/object/:bucket/*path", h.uploadObject)
 	w := httptest.NewRecorder()

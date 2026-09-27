@@ -378,8 +378,11 @@ func closeSpool(f *os.File) {
 	_ = os.Remove(f.Name())
 }
 
-// readUpload spools a validated body; on !ok the error response is already written.
-func (h *StorageV1Handler) readUpload(c *gin.Context, bucket domain.Bucket) (f *os.File, size int64, contentType string, ok bool) {
+// readUpload spools a validated body; on !ok the error response is already
+// written. authorize, when set, runs after the MIME check but before the
+// body is spooled to disk (with the now-known content type), so a denied or
+// anonymous caller never gets bytes onto TMPDIR.
+func (h *StorageV1Handler) readUpload(c *gin.Context, bucket domain.Bucket, authorize func(contentType string) error) (f *os.File, size int64, contentType string, ok bool) {
 	body, contentType, err := uploadBody(c)
 	if err != nil {
 		storageErr(c, 400, "bad_request", err.Error())
@@ -388,6 +391,12 @@ func (h *StorageV1Handler) readUpload(c *gin.Context, bucket domain.Bucket) (f *
 	if len(bucket.Types) > 0 && !matchesMIME(contentType, bucket.Types) {
 		storageErr(c, 422, "invalid_mime_type", fmt.Sprintf("Content type %q not allowed", contentType))
 		return nil, 0, "", false
+	}
+	if authorize != nil {
+		if err := authorize(contentType); err != nil {
+			h.uploadWriteError(c, err)
+			return nil, 0, "", false
+		}
 	}
 	f, size, err = spool(http.MaxBytesReader(c.Writer, io.NopCloser(body), bucketMaxBytes(bucket)))
 	if err != nil {
@@ -421,18 +430,23 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 		storageErr(c, 404, "not_found", "Bucket not found")
 		return
 	}
-	file, size, contentType, ok := h.readUpload(c, bucket)
+	uploadedBy := nullIfEmpty(getSession(c).UserID)
+	upsert := !isUpdate && c.GetHeader("x-upsert") == "true"
+	file, size, contentType, ok := h.readUpload(c, bucket, func(ct string) error {
+		probeRow := objectRow{bucket: bucketName, name: objPath, mime: ct, uploadedBy: uploadedBy,
+			metadata: objectMetadataJSON(0, ct, c.GetHeader("Cache-Control"))}
+		return h.probeUploadPermission(c, probeRow, isUpdate, upsert)
+	})
 	if !ok {
 		return
 	}
 	defer closeSpool(file)
 
-	upsert := !isUpdate && c.GetHeader("x-upsert") == "true"
 	row := objectRow{bucket: bucketName, name: objPath, size: size, mime: contentType,
-		uploadedBy: nullIfEmpty(getSession(c).UserID),
+		uploadedBy: uploadedBy,
 		metadata:   objectMetadataJSON(size, contentType, c.GetHeader("Cache-Control"))}
 
-	// The RLS-checked row write comes first, so bytes only land once the caller is authorized.
+	// The tx write below is the real gate; the pre-spool probe above only avoids spooling for a denied caller.
 	ctx := h.rlsCtx(c)
 	tx, err := h.db.Begin(ctx)
 	if err != nil {
@@ -1180,7 +1194,8 @@ func (h *StorageV1Handler) createSignedUploadURL(c *gin.Context) {
 	// SELECT) and Supabase's signUploadObjectUrl, which runs canUpload first.
 	session := getSession(c)
 	uploadedBy := nullIfEmpty(session.UserID)
-	if err := h.probeUploadPermission(c, bucketName, objPath, uploadedBy); err != nil {
+	probeRow := objectRow{bucket: bucketName, name: objPath, uploadedBy: uploadedBy, metadata: objectMetadataJSON(0, "", "")}
+	if err := h.probeUploadPermission(c, probeRow, false, c.GetHeader("x-upsert") == "true"); err != nil {
 		h.uploadWriteError(c, err)
 		return
 	}
@@ -1203,31 +1218,18 @@ func (h *StorageV1Handler) createSignedUploadURL(c *gin.Context) {
 
 // probeUploadPermission reports whether the bucket's RLS policies permit the
 // caller to write this object, without persisting anything. It runs the same
-// INSERT (or upsert, honouring x-upsert) the signed-upload redemption performs,
-// under the caller's Postgres role, inside a transaction that is always rolled
-// back, and returns the raw database error so callers can map an RLS denial to
-// 403, a duplicate to 409, etc. via uploadWriteError.
-func (h *StorageV1Handler) probeUploadPermission(c *gin.Context, bucketName, objPath string, uploadedBy any) error {
+// write writeObjectRow would perform for isUpdate/upsert, under the caller's
+// Postgres role, inside a transaction that is always rolled back, and returns
+// the raw database error so callers can map an RLS denial to 403, a
+// duplicate to 409, a missing row to 404, etc. via uploadWriteError.
+func (h *StorageV1Handler) probeUploadPermission(c *gin.Context, row objectRow, isUpdate, upsert bool) error {
 	ctx := h.rlsCtx(c)
 	tx, err := h.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-
-	if c.GetHeader("x-upsert") == "true" {
-		_, err = tx.Exec(ctx,
-			`INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by)
-			 VALUES ($1, $2, 0, '', $3)
-			 ON CONFLICT (bucket_id, name)
-			 DO UPDATE SET uploaded_at = NOW()`,
-			bucketName, objPath, uploadedBy)
-	} else {
-		_, err = tx.Exec(ctx,
-			"INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by) VALUES ($1, $2, 0, '', $3)",
-			bucketName, objPath, uploadedBy)
-	}
-	return err
+	return writeObjectRow(ctx, tx, row, isUpdate, upsert)
 }
 
 func (h *StorageV1Handler) uploadToSignedURL(c *gin.Context) {
@@ -1250,7 +1252,7 @@ func (h *StorageV1Handler) uploadToSignedURL(c *gin.Context) {
 		return
 	}
 
-	file, size, contentType, ok := h.readUpload(c, bucket)
+	file, size, contentType, ok := h.readUpload(c, bucket, nil)
 	if !ok {
 		return
 	}
