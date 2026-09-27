@@ -98,7 +98,7 @@ An unverified provider email that matches no existing identity fails with `provi
 
 **Linking an identity** — `supabase.auth.linkIdentity({ provider: 'google' })`
 
-The signed-in user's browser must finish the link. `/auth/v1/user/identities/authorize` sets an HttpOnly `oauth_link_state` cookie, and the provider callback links the identity only when that cookie matches the link's state, so a link URL sent to someone else can't attach their account to yours. Browsers keep that cookie only when the frontend calls the API on the same origin (the default when instancez hosts the frontend, with the API under `/api`). A frontend on a different origin can't complete `linkIdentity`.
+The signed-in user's browser must finish the link. `/auth/v1/user/identities/authorize` sets an HttpOnly `oauth_link_state` cookie (`__Host-oauth_link_state` over HTTPS, so another subdomain can't plant one), and the provider callback links the identity only when that cookie matches the link's state, so a link URL sent to someone else can't attach their account to yours. A missing or wrong cookie fails with `bad_oauth_state` (an error redirect when there's a redirect target, otherwise 400). Browsers keep that cookie only when the frontend calls the API on the same origin (the default when instancez hosts the frontend, with the API under `/api`). A frontend on a different origin can't complete `linkIdentity`.
 
 **Anonymous** — `supabase.auth.signInAnonymously()`
 

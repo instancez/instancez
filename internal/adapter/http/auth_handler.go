@@ -1332,10 +1332,16 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 				isPKCE = true
 			}
 			if flow.LinkingUserID != "" {
-				bound, _ := c.Cookie(linkStateCookie)
-				h.setLaxCookie(c, linkStateCookie, "", -1)
+				name := h.linkStateCookie(c)
+				bound, _ := c.Cookie(name)
+				h.setLaxCookie(c, name, "", -1)
 				if !constantTimeEqual(bound, state) {
-					h.oauthCallbackFail(c, redirectTo, isPKCE, "Identity linking must be finished in the browser that started it")
+					const msg = "Identity linking must be finished in the browser that started it"
+					if _, ok := h.oauthLanding(redirectTo); !ok {
+						problemJSON(c, 400, "bad_oauth_state", msg)
+						return
+					}
+					h.oauthCallbackFail(c, redirectTo, isPKCE, msg)
 					return
 				}
 				linkingUserID = flow.LinkingUserID
@@ -2195,12 +2201,21 @@ func (h *AuthHandler) handleListIdentities(c *gin.Context) {
 	c.JSON(200, gin.H{"identities": rows})
 }
 
-// linkStateCookie binds a link flow to the browser that started it.
-const linkStateCookie = "oauth_link_state"
+func (h *AuthHandler) secureCookies(c *gin.Context) bool {
+	return c.Request.TLS != nil || strings.HasPrefix(h.baseURL(), "https://")
+}
+
+// linkStateCookie binds a link flow to its browser; __Host- stops sibling subdomains tossing it.
+func (h *AuthHandler) linkStateCookie(c *gin.Context) string {
+	if h.secureCookies(c) {
+		return "__Host-oauth_link_state"
+	}
+	return "oauth_link_state"
+}
 
 func (h *AuthHandler) setLaxCookie(c *gin.Context, name, value string, maxAge int) {
 	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie(name, value, maxAge, "/", "", c.Request.TLS != nil || strings.HasPrefix(h.baseURL(), "https://"), true)
+	c.SetCookie(name, value, maxAge, "/", "", h.secureCookies(c), true)
 }
 
 func (h *AuthHandler) handleLinkIdentity(c *gin.Context) {
@@ -2222,7 +2237,7 @@ func (h *AuthHandler) handleLinkIdentity(c *gin.Context) {
 		problemJSON(c, 500, "internal", "Failed to store OAuth state")
 		return
 	}
-	h.setLaxCookie(c, linkStateCookie, state, 600)
+	h.setLaxCookie(c, h.linkStateCookie(c), state, 600)
 
 	c.JSON(200, gin.H{"url": prov.AuthorizeURL(cfg, state)})
 }

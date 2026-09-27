@@ -235,7 +235,7 @@ await step('auth: linkIdentity binds the link to the initiating browser', async 
       fetch: async (...args) => {
         const resp = await fetch(...args)
         const set = resp.headers.get('set-cookie')
-        if (set && set.startsWith('oauth_link_state=')) bindingCookie = set.split(';')[0]
+        if (set && /^(__Host-)?oauth_link_state=/.test(set)) bindingCookie = set.split(';')[0]
         return resp
       },
     },
