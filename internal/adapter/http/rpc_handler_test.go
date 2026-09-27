@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -484,6 +485,32 @@ func TestParseRPCChain_EmbedOnKnownTable(t *testing.T) {
 	}
 }
 
+func TestParseRPCChain_EmbedOnKnownTable_RejectsUnsafeColumn(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &CRUDHandler{cfg: &domain.Config{
+		Tables: map[string]domain.Table{
+			"posts": {
+				Fields: []domain.Field{
+					{Name: "id", Type: "int", PrimaryKey: true},
+					{Name: "author_id", Type: "int", ForeignKey: &domain.ForeignKey{References: "authors.id"}},
+				},
+			},
+			"authors": {
+				Fields: []domain.Field{
+					{Name: "id", Type: "int", PrimaryKey: true},
+				},
+			},
+		},
+	}}
+	fn := domain.Function{ReturnCategory: "setof", Returns: domain.FuncReturn{Type: "setof posts"}}
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET", "/rpc/recent_posts?select="+url.QueryEscape("id,authors(id x)"), nil)
+	if _, _, err := h.parseRPCChain(c, fn, map[string]bool{}, 1); err == nil {
+		t.Fatal("unsafe embed column accepted on RPC embed path")
+	}
+}
+
 // TestWrapRPCCallForChain_BelongsToEmbed verifies that a belongs-to embed
 // produces a LEFT JOIN with the correct alias and row_to_json projection.
 func TestWrapRPCCallForChain_BelongsToEmbed(t *testing.T) {
@@ -555,5 +582,151 @@ func TestWrapRPCCallForChain_BelongsToWithColumns(t *testing.T) {
 	}
 	if !strings.Contains(got, "'id', _emb_author.id") {
 		t.Errorf("missing column projection: %s", got)
+	}
+}
+
+func TestParseRPCChain_UnknownSetofRejectsUnsafeIdentifiers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &CRUDHandler{cfg: &domain.Config{}}
+	fn := domain.Function{ReturnCategory: "setof", Returns: domain.FuncReturn{Type: "setof record"}}
+	cases := []string{
+		"/rpc/f?" + url.QueryEscape(`a"b`) + "=eq.1",
+		"/rpc/f?" + url.QueryEscape("a b") + "=eq.1",
+		"/rpc/f?" + url.QueryEscape("data->>k'x") + "=eq.1",
+		"/rpc/f?or=" + url.QueryEscape("(a;b.eq.1)"),
+		"/rpc/f?order=" + url.QueryEscape(`x"y.desc`),
+	}
+	for _, target := range cases {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest("GET", target, nil)
+		if _, _, err := h.parseRPCChain(c, fn, map[string]bool{}, 1); err == nil {
+			t.Errorf("%s: expected rejection", target)
+		}
+	}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET", "/rpc/f?name=eq.x&data->>k=eq.y&order=name.desc", nil)
+	if _, _, err := h.parseRPCChain(c, fn, map[string]bool{}, 1); err != nil {
+		t.Fatalf("safe identifiers rejected: %v", err)
+	}
+}
+
+// "setof table(...)" isn't a valid declared shape, so it falls back to the ident validator.
+func TestParseRPCChain_TableShapeSelectUsesIdentValidator(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &CRUDHandler{cfg: &domain.Config{}}
+	fn := domain.Function{ReturnCategory: "setof", Returns: domain.FuncReturn{Type: "setof table(id int)"}}
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET", "/rpc/f?select="+url.QueryEscape("a;b"), nil)
+	if _, _, err := h.parseRPCChain(c, fn, map[string]bool{}, 1); err == nil {
+		t.Error("select=a;b: expected rejection")
+	}
+
+	c, _ = gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET", "/rpc/f?select=id", nil)
+	if _, _, err := h.parseRPCChain(c, fn, map[string]bool{}, 1); err != nil {
+		t.Fatalf("select=id: valid column rejected: %v", err)
+	}
+}
+
+// Regression: "setof record" must use the ident validator, not a zero-value table.
+func TestParseRPCChain_SetofRecordSelectUsesIdentValidator(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &CRUDHandler{cfg: &domain.Config{}}
+	fn := domain.Function{ReturnCategory: "setof", Returns: domain.FuncReturn{Type: "setof record"}}
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET", "/rpc/f?select=name", nil)
+	if _, _, err := h.parseRPCChain(c, fn, map[string]bool{}, 1); err != nil {
+		t.Fatalf("select=name: safe identifier rejected: %v", err)
+	}
+
+	c, _ = gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET", "/rpc/f?select="+url.QueryEscape("a;b"), nil)
+	if _, _, err := h.parseRPCChain(c, fn, map[string]bool{}, 1); err == nil {
+		t.Error("select=a;b: expected rejection")
+	}
+}
+
+// TestRPCTableShape parses a TABLE(...) return type into a synthetic domain.Table.
+func TestRPCTableShape(t *testing.T) {
+	tbl, ok := rpcTableShape("TABLE(id int, total numeric(10,2), Label text)")
+	if !ok || len(tbl.Fields) != 3 {
+		t.Fatalf("got %+v ok=%v", tbl, ok)
+	}
+	if tbl.Fields[1].Name != "total" || tbl.Fields[1].Type != "numeric(10,2)" {
+		t.Errorf("field[1] = %+v", tbl.Fields[1])
+	}
+	if tbl.Fields[2].Name != "label" {
+		t.Errorf("unquoted column must fold to lower case, got %q", tbl.Fields[2].Name)
+	}
+	for _, raw := range []string{"", "setof users", "int", "table()", "table(id)", "table(id int", "table (a int, (b) int)"} {
+		if _, ok := rpcTableShape(raw); ok {
+			t.Errorf("rpcTableShape(%q) ok, want false", raw)
+		}
+	}
+}
+
+func TestParseRPCChain_TableShapeValidatesColumns(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &CRUDHandler{cfg: &domain.Config{}}
+	fn := domain.Function{ReturnCategory: "setof", Returns: domain.FuncReturn{Type: "table(id int, meta jsonb)"}}
+	good := "/rpc/f?select=id&id=gt.1&meta->>k=eq.v&order=id.desc&having=" + url.QueryEscape("id.gt.0")
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET", good, nil)
+	if _, _, err := h.parseRPCChain(c, fn, map[string]bool{}, 1); err != nil {
+		t.Fatalf("declared columns rejected: %v", err)
+	}
+	reject := []string{
+		"/rpc/f?other=eq.1",
+		"/rpc/f?select=other",
+		"/rpc/f?order=other",
+		"/rpc/f?or=" + url.QueryEscape("(other.eq.1)"),
+		"/rpc/f?" + url.QueryEscape("other->>k") + "=eq.1",
+	}
+	for _, target := range reject {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest("GET", target, nil)
+		if _, _, err := h.parseRPCChain(c, fn, map[string]bool{}, 1); err == nil {
+			t.Errorf("%s: undeclared column accepted", target)
+		}
+	}
+}
+
+func TestRenderRPCChain_OrderUsesValidatedUnquotedColumns(t *testing.T) {
+	chain := &rpcChainSQL{order: []postgrest.OrderClause{
+		{Column: "age", Desc: true, Nulls: "last"},
+		{Column: "username"},
+	}}
+	sql, args := renderRPCChain(chain, 1)
+	if sql != " ORDER BY age DESC NULLS LAST, username ASC" {
+		t.Errorf("sql = %q, want %q", sql, " ORDER BY age DESC NULLS LAST, username ASC")
+	}
+	if len(args) != 0 {
+		t.Errorf("order must not add args, got %v", args)
+	}
+}
+
+func TestRenderRPCChain_OrderPreservesJSONBOperators(t *testing.T) {
+	chain := &rpcChainSQL{order: []postgrest.OrderClause{
+		{Column: "data->>key", Desc: false, Nulls: ""},
+	}}
+	sql, args := renderRPCChain(chain, 1)
+	if sql != " ORDER BY data->>key ASC" {
+		t.Errorf("sql = %q, want %q", sql, " ORDER BY data->>key ASC")
+	}
+	if len(args) != 0 {
+		t.Errorf("order must not add args, got %v", args)
+	}
+}
+
+func TestRenderRPCChain_EmptyOrderNoEmission(t *testing.T) {
+	chain := &rpcChainSQL{order: []postgrest.OrderClause{}}
+	sql, args := renderRPCChain(chain, 1)
+	if sql != "" {
+		t.Errorf("empty order should emit nothing, got %q", sql)
+	}
+	if len(args) != 0 {
+		t.Errorf("empty order should have no args, got %v", args)
 	}
 }

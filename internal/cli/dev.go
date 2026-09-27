@@ -95,6 +95,7 @@ func runDev(opts devOptions) error {
 	if errs != nil {
 		return printPrettyErrors(errs)
 	}
+	printWarnings(os.Stderr, config.Warnings(cfg))
 
 	// Build a Source handle for the engine + http deps.
 	// In dev mode we also watch .development.env so changes to env vars are
@@ -143,6 +144,9 @@ func runDev(opts devOptions) error {
 	}
 
 	km := app.NewJWTKeyManager(ownerDB)
+	if d, err := time.ParseDuration(cfg.Auth.JWTExpiry); err == nil {
+		km.SetMaxTokenLifetime(d)
+	}
 
 	// Function runtime (dev builds: `npm ci` runs in functions/ when a
 	// package.json is present, then a worker pool is spawned pointing at the

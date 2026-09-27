@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/instancez/instancez/internal/adapter/postgres"
 	"github.com/instancez/instancez/internal/app"
@@ -690,14 +691,14 @@ func columnNullable(t *testing.T, db *postgres.DB, table, column string) bool {
 	return fmt.Sprint(row["is_nullable"]) == "YES"
 }
 
-func rlsEnabled(t *testing.T, db *postgres.DB, table string) bool {
+func rlsEnabled(t *testing.T, db domain.Database, table string) (enabled, forced bool) {
 	t.Helper()
 	row, err := db.QueryRow(context.Background(),
-		`SELECT rowsecurity FROM pg_tables WHERE tablename=$1`, table)
+		`SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE oid = ('public.' || $1)::regclass`, table)
 	if err != nil {
 		t.Fatalf("rlsEnabled: %v", err)
 	}
-	return row["rowsecurity"] == true
+	return row["relrowsecurity"] == true, row["relforcerowsecurity"] == true
 }
 
 func TestIntegration_NullabilityChange(t *testing.T) {
@@ -1017,6 +1018,42 @@ func TestIntegration_PatternCheck(t *testing.T) {
 	_, err = db.Exec(ctx, "INSERT INTO contacts (email) VALUES ('not-an-email')")
 	if err == nil {
 		t.Fatal("expected CHECK violation for invalid email pattern")
+	}
+}
+
+func TestIntegration_EnumAndPatternWithApostrophes(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+
+	cfg := &domain.Config{
+		Version: 1,
+		Tables: map[string]domain.Table{
+			"people": {Fields: []domain.Field{
+				{Name: "id", Type: "bigserial", PrimaryKey: true},
+				{Name: "owner", Type: "text", Enum: []string{"O'Brien", "Smith", "O'Connor"}},
+				{Name: "code", Type: "text", Pattern: `^[a-z']+\d$`},
+			}},
+		},
+	}
+
+	migrator := app.NewMigrator(db).AllowDestructive(true)
+	if err := migrator.Apply(ctx, cfg); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	_, err := db.Exec(ctx, "INSERT INTO people (owner, code) VALUES ('O''Brien', 'abc''1')")
+	if err != nil {
+		t.Fatalf("insert with apostrophes failed: %v", err)
+	}
+
+	_, err = db.Exec(ctx, "INSERT INTO people (owner, code) VALUES ('invalid', 'abc''1')")
+	if err == nil {
+		t.Fatal("expected CHECK violation for invalid enum value with apostrophe escaping")
+	}
+
+	_, err = db.Exec(ctx, "INSERT INTO people (owner, code) VALUES ('O''Brien', 'ABC1')")
+	if err == nil {
+		t.Fatal("expected CHECK violation for pattern not matching uppercase")
 	}
 }
 
@@ -1584,7 +1621,7 @@ func TestIntegration_RemoveAllRLS_DisablesRLS(t *testing.T) {
 		t.Fatalf("v1 apply: %v", err)
 	}
 
-	if !rlsEnabled(t, db, "todos") {
+	if en, _ := rlsEnabled(t, db, "todos"); !en {
 		t.Fatal("RLS should be enabled after v1")
 	}
 
@@ -1603,7 +1640,7 @@ func TestIntegration_RemoveAllRLS_DisablesRLS(t *testing.T) {
 		t.Fatalf("v2 apply: %v", err)
 	}
 
-	if rlsEnabled(t, db, "todos") {
+	if en, _ := rlsEnabled(t, db, "todos"); en {
 		t.Fatal("RLS should be disabled after removing all policies")
 	}
 }
@@ -1708,7 +1745,7 @@ func TestIntegration_ThreeStepMigration(t *testing.T) {
 	if !columnExists(t, db, "todos", "title") {
 		t.Fatal("title should survive v3")
 	}
-	if rlsEnabled(t, db, "todos") {
+	if en, _ := rlsEnabled(t, db, "todos"); en {
 		t.Fatal("RLS should be disabled after v3")
 	}
 
@@ -2263,5 +2300,106 @@ func TestIntegration_ChangedRLSPolicy(t *testing.T) {
 	qual := fmt.Sprint(row["qual"])
 	if !strings.Contains(qual, "uid") {
 		t.Fatalf("expected policy to reference auth.uid(), got qual: %s", qual)
+	}
+}
+
+// authSchemaSnapshot ignores ordinal_position since re-added columns go last.
+func authSchemaSnapshot(t *testing.T, db *postgres.DB) string {
+	t.Helper()
+	rows, err := db.Query(context.Background(), `
+SELECT 'col ' || table_name || '.' || column_name || ' ' || data_type || ' ' || is_nullable || ' ' || coalesce(column_default, '') AS line
+  FROM information_schema.columns WHERE table_schema = 'auth'
+UNION ALL
+SELECT 'idx ' || indexdef FROM pg_indexes WHERE schemaname = 'auth'
+ORDER BY 1`)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	lines := make([]string, len(rows))
+	for i, r := range rows {
+		lines[i] = fmt.Sprint(r["line"])
+	}
+	return strings.Join(lines, "\n")
+}
+
+// A binary upgrade with an unchanged YAML must still add new auth columns.
+func TestAuthHeal_HardenRestoresColumnsToFreshSchema(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+	cfg := &domain.Config{Version: 1, Auth: &domain.Auth{Email: &domain.AuthEmail{}}}
+	m := app.NewMigrator(db)
+	if err := m.Apply(ctx, cfg); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	fresh := authSchemaSnapshot(t, db)
+	for _, s := range []string{
+		`ALTER TABLE auth.refresh_tokens DROP COLUMN amr, DROP COLUMN aal, DROP COLUMN revoked_at`,
+		`ALTER TABLE auth.mfa_factors DROP COLUMN last_totp_step`,
+		`ALTER TABLE auth.mfa_challenges DROP COLUMN attempts`,
+		`ALTER TABLE auth.one_time_tokens DROP COLUMN attempts`,
+		`DROP INDEX auth.idx_refresh_tokens_session, auth.idx_users_email_lower, auth.idx_mfa_challenges_factor_created`,
+	} {
+		if _, err := db.Exec(ctx, s); err != nil {
+			t.Fatalf("simulate old schema %q: %v", s, err)
+		}
+	}
+	if err := m.Apply(ctx, cfg); err != nil {
+		t.Fatalf("unchanged apply: %v", err)
+	}
+	if columnExists(t, db, "auth.refresh_tokens", "amr") {
+		t.Fatal("precondition: unchanged-config Apply is a no-op")
+	}
+	for i := 0; i < 2; i++ {
+		if err := m.Harden(ctx, cfg); err != nil {
+			t.Fatalf("harden #%d: %v", i+1, err)
+		}
+	}
+	if healed := authSchemaSnapshot(t, db); healed != fresh {
+		t.Fatalf("healed schema differs from fresh:\n--- fresh\n%s\n--- healed\n%s", fresh, healed)
+	}
+}
+
+func TestAuthHeal_HardenSkipsMissingAuthTables(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+	cfg := &domain.Config{Version: 1, Auth: &domain.Auth{}}
+	m := app.NewMigrator(db)
+	for i := 0; i < 2; i++ {
+		if err := m.Harden(ctx, cfg); err != nil {
+			t.Fatalf("harden #%d without auth tables: %v", i+1, err)
+		}
+	}
+	for _, tbl := range []string{"auth.users", "auth.refresh_tokens", "auth.mfa_factors", "auth.mfa_challenges", "auth.one_time_tokens"} {
+		if tableExists(t, db, tbl) {
+			t.Errorf("heal must not create %s", tbl)
+		}
+	}
+	if err := m.Apply(ctx, cfg); err != nil {
+		t.Fatalf("apply after harden: %v", err)
+	}
+	if !columnExists(t, db, "auth.refresh_tokens", "amr") || !indexExists(t, db, "idx_users_email_lower") {
+		t.Fatal("fresh install is missing heal columns")
+	}
+}
+
+// Harden runs on every boot, so a healed DB must not wait on live table locks.
+func TestAuthHeal_HealedDBTakesNoTableLocks(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+	cfg := &domain.Config{Version: 1, Auth: &domain.Auth{Email: &domain.AuthEmail{}}}
+	m := app.NewMigrator(db).LockTimeout(200 * time.Millisecond)
+	if err := m.Apply(ctx, cfg); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `LOCK TABLE auth.users, auth.refresh_tokens, auth.mfa_factors, auth.mfa_challenges, auth.one_time_tokens IN ROW EXCLUSIVE MODE`); err != nil {
+		t.Fatalf("hold locks: %v", err)
+	}
+	if err := m.Harden(ctx, cfg); err != nil {
+		t.Fatalf("harden blocked by live writers: %v", err)
 	}
 }

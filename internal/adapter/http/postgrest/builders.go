@@ -160,11 +160,38 @@ func ParseEmbedParam(s string) (name, alias string, cols []string, nested []stri
 	return
 }
 
+// validateEmbedBalance rejects unbalanced parentheses before ParseEmbedParam slices on them.
+func validateEmbedBalance(raw string) error {
+	if strings.Contains(raw, "(") && !strings.HasSuffix(raw, ")") {
+		return fmt.Errorf("unbalanced parentheses in embed %q", raw)
+	}
+	if _, err := SplitTopLevel(raw, ','); err != nil {
+		return fmt.Errorf("embed %q: %w", raw, err)
+	}
+	return nil
+}
+
+// validateEmbedSpec rejects embed columns and aliases unsafe to interpolate.
+func validateEmbedSpec(raw, alias string, cols []string, ref domain.Table) error {
+	if alias != "" && !identRe.MatchString(alias) {
+		return fmt.Errorf("invalid embed alias %q", alias)
+	}
+	for _, c := range cols {
+		if _, ok := ref.GetField(c); !ok {
+			return fmt.Errorf("unknown column %q in embed", c)
+		}
+	}
+	return nil
+}
+
 // ResolveEmbeds resolves embed names to FK relationships using the table config.
 func ResolveEmbeds(tableName string, table domain.Table, embedNames []string, allTables map[string]domain.Table) ([]Embed, error) {
 	var embeds []Embed
 
 	for _, raw := range embedNames {
+		if err := validateEmbedBalance(raw); err != nil {
+			return nil, err
+		}
 		name, alias, cols, nested, spread := ParseEmbedParam(raw)
 		name, inner, fkHint := ParseEmbedHint(name)
 		if spread && alias != "" {
@@ -203,6 +230,9 @@ func ResolveEmbeds(tableName string, table domain.Table, embedNames []string, al
 				RefColumn: refCol,
 				Inner:     inner,
 				Spread:    spread,
+			}
+			if err := validateEmbedSpec(raw, alias, cols, allTables[refTable]); err != nil {
+				return nil, err
 			}
 			if len(nested) > 0 {
 				refTbl, ok := allTables[refTable]
@@ -257,6 +287,9 @@ func ResolveEmbeds(tableName string, table domain.Table, embedNames []string, al
 						RefColumn: parts[1],
 						IsReverse: true,
 						Inner:     inner,
+					}
+					if err := validateEmbedSpec(raw, alias, cols, otherTable); err != nil {
+						return nil, err
 					}
 					if len(nested) > 0 {
 						children, err := ResolveEmbeds(otherName, otherTable, nested, allTables)
@@ -579,7 +612,11 @@ func BuildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 		sql += " ORDER BY " + RenderOrderBy(order)
 	}
 
-	sql += fmt.Sprintf(" LIMIT %d OFFSET %d", qp.Limit, qp.Offset)
+	if qp.Limit >= 0 {
+		sql += fmt.Sprintf(" LIMIT %d OFFSET %d", qp.Limit, qp.Offset)
+	} else if qp.Offset > 0 {
+		sql += fmt.Sprintf(" OFFSET %d", qp.Offset)
+	}
 
 	return sql, allArgs
 }

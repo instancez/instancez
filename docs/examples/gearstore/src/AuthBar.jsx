@@ -218,7 +218,7 @@ export function AuthBar({ variant = 'bar' }) {
   if (session?.user) {
     const u = session.user
     const isAnon = u.is_anonymous || u.app_metadata?.provider === 'anonymous'
-    const aal = u.app_metadata?.aal || 'aal1'
+    const aal = (session?.access_token && JSON.parse(atob(session.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).aal) || 'aal1'
     const name = isAnon
       ? 'Guest'
       : u.user_metadata?.display_name || u.email || u.id

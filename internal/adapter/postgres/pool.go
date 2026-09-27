@@ -469,6 +469,9 @@ func buildSessionSetup(ctx context.Context, roles *domain.Roles) string {
 
 		if roles != nil {
 			fmt.Fprintf(&b, "SET LOCAL ROLE %s;", roles.AssumableFromSession(session))
+			if d := domain.StatementTimeoutFromContext(ctx); d > 0 {
+				fmt.Fprintf(&b, "SET LOCAL statement_timeout = %d;", max(d.Milliseconds(), 1))
+			}
 		}
 	}
 	if reqID := domain.RequestIDFromContext(ctx); reqID != "" {

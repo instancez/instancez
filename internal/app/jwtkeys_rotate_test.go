@@ -29,13 +29,9 @@ func TestRotateActive_RetiresThenInserts(t *testing.T) {
 		t.Fatalf("second exec is not an INSERT: %q", db.execs[1])
 	}
 
-	// The new key is now active without re-reading the DB.
-	got, err := m.Active(context.Background())
-	if err != nil {
-		t.Fatalf("Active after rotate: %v", err)
-	}
-	if got.KID != key.KID {
-		t.Fatalf("active kid = %q, want %q", got.KID, key.KID)
+	// fakeDB returns no rows, so check the cache directly instead of via Active's reload.
+	if m.active != key || m.byKID[key.KID] != key {
+		t.Fatalf("rotated key %q not cached as active", key.KID)
 	}
 }
 

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -154,6 +155,15 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 				handleDBError(c, err)
 				return
 			}
+			total := -1
+			if parseCountPrefer(joinPrefer(c)) == "exact" {
+				total, err = executeRPCCount(ctx, tx, name, fn, callArgs, rpcChain)
+				if err != nil {
+					h.logger.Error("rpc count error", "fn", name, "error", err)
+					handleDBError(c, err)
+					return
+				}
+			}
 			if err := tx.Commit(ctx); err != nil {
 				problemJSON(c, http.StatusInternalServerError, "internal", "Transaction commit failed")
 				return
@@ -161,10 +171,7 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 			if rows == nil {
 				rows = []map[string]any{}
 			}
-			// Content-Range: emit on every setof response to match
-			// PostgREST. When Prefer: count=exact is set, run a separate
-			// COUNT(*) over the same filtered subquery and put the real
-			// total after the slash; otherwise use "*".
+			// Content-Range goes on every setof response, like PostgREST.
 			offset := 0
 			if rpcChain != nil {
 				offset = rpcChain.offset
@@ -172,14 +179,6 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 			end := offset + len(rows) - 1
 			if len(rows) == 0 {
 				end = offset
-			}
-			countMode := parseCountPrefer(joinPrefer(c))
-			total := -1
-			if countMode == "exact" {
-				total, err = h.executeRPCCount(c, name, fn, callArgs, rpcChain, session)
-				if err != nil {
-					h.logger.Error("rpc count error", "fn", name, "error", err)
-				}
 			}
 			if total >= 0 {
 				c.Header("Content-Range", fmt.Sprintf("%d-%d/%d", offset, end, total))
@@ -370,9 +369,9 @@ func buildRPCCall(name string, fn domain.Function, callArgs map[string]any) (str
 // structured for the same reason even though order never carries params.
 type rpcChainSQL struct {
 	where       *postgrest.WhereNode
-	having      *postgrest.WhereNode // HAVING clause for aggregate filtering
+	having      *postgrest.WhereNode   // HAVING clause for aggregate filtering
 	selectItems []postgrest.SelectItem // non-empty → project these instead of SELECT *
-	embeds      []postgrest.Embed    // resolved embeds when RPC returns SETOF <known table>
+	embeds      []postgrest.Embed      // resolved embeds when RPC returns SETOF <known table>
 	order       []postgrest.OrderClause
 	hasLimit    bool
 	limit       int
@@ -380,15 +379,6 @@ type rpcChainSQL struct {
 	offset      int // echoed into Content-Range as "start-end/total"
 }
 
-// parseRPCChain parses the PostgREST-style query parameters layered on top
-// of a SETOF RPC call. Columns are validated against the target table when
-// fn.Returns names a known table; otherwise an any-column-goes validator is
-// used and Postgres rejects mismatches at execute time. Function argument
-// keys are skipped so GET calls can carry both function args and filters in
-// the same query string without collision.
-//
-// argIdx is the first free placeholder index; the returned args slice is
-// appended to the caller's existing placeholder list.
 // resolveRPCTargetTable resolves the table behind a SETOF <table> return type.
 func (h *CRUDHandler) resolveRPCTargetTable(fn domain.Function) (domain.Table, bool) {
 	target := parseSetofTarget(fn.Returns.Type)
@@ -404,30 +394,35 @@ func (h *CRUDHandler) resolveRPCTargetTable(fn domain.Function) (domain.Table, b
 	return domain.Table{}, false
 }
 
+// parseRPCChain parses PostgREST query params on a setof RPC and validates their columns.
 func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames map[string]bool, argIdx int) (*rpcChainSQL, []any, error) {
 	chain := &rpcChainSQL{}
 
 	target := parseSetofTarget(fn.Returns.Type)
 	targetTable, targetFound := h.resolveRPCTargetTable(fn)
+	shape, isShape := rpcTableShape(fn.Returns.Type)
+
+	table := targetTable
+	if !targetFound && isShape {
+		table = shape
+	}
+	declared := targetFound || isShape
 
 	var validate postgrest.ColValidator
-	if targetFound {
-		tbl := targetTable
-		validate = func(col string) error { return postgrest.ValidateColumn(tbl, col) }
+	if declared {
+		validate = postgrest.ColumnValidator(table)
 	} else {
-		validate = permissiveColValidator
+		validate = postgrest.ValidateIdentPath
 	}
 
 	if sel := c.Query("select"); sel != "" {
-		table := targetTable
-		tableFound := targetFound
 		var embedParams []string
 		for _, raw := range postgrest.ParseSelectParam(sel) {
 			if raw == "" {
 				continue
 			}
 			if strings.Contains(raw, "(") && !postgrest.IsAggSelectEntry(raw) {
-				if !tableFound {
+				if !targetFound {
 					return nil, nil, fmt.Errorf("embeds are not supported on RPC results returning unknown tables")
 				}
 				embedParams = append(embedParams, raw)
@@ -438,7 +433,7 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 				chain.selectItems = nil
 				break
 			}
-			if target != "" {
+			if declared {
 				if err := postgrest.ValidateSelectItem(table, item); err != nil {
 					return nil, nil, fmt.Errorf("invalid select item: %w", err)
 				}
@@ -497,7 +492,7 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 				selStrings = append(selStrings, raw)
 			}
 		}
-		havingNode, err := postgrest.ParseHavingParam(havingRaw, "_rpc", targetTable, selStrings)
+		havingNode, err := postgrest.ParseHavingParam(havingRaw, "_rpc", table, selStrings)
 		if err != nil {
 			return nil, nil, fmt.Errorf("invalid having: %w", err)
 		}
@@ -521,6 +516,9 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 		}
 		chain.hasLimit = true
 		chain.limit = n
+	}
+	if maxRows := h.cfg.Server.MaxLimit; maxRows > 0 && (!chain.hasLimit || chain.limit > maxRows) {
+		chain.hasLimit, chain.limit = true, maxRows
 	}
 
 	// OFFSET.
@@ -568,8 +566,8 @@ func renderRPCChain(chain *rpcChainSQL, argIdx int) (string, []any) {
 		}
 	}
 	if len(chain.order) > 0 {
-		b.WriteString(" ")
-		b.WriteString(buildOrderSQL(chain.order))
+		b.WriteString(" ORDER BY ")
+		b.WriteString(postgrest.RenderOrderBy(chain.order))
 	}
 	if chain.hasLimit {
 		fmt.Fprintf(&b, " LIMIT $%d", argIdx)
@@ -581,16 +579,6 @@ func renderRPCChain(chain *rpcChainSQL, argIdx int) (string, []any) {
 		args = append(args, chain.offset)
 	}
 	return b.String(), args
-}
-
-// permissiveColValidator accepts any non-empty column name. Used when a RPC
-// returns SETOF of an ad-hoc TABLE(...) shape that's not declared as a YAML
-// table, so we can't validate column names up front.
-func permissiveColValidator(col string) error {
-	if col == "" {
-		return fmt.Errorf("empty column name")
-	}
-	return nil
 }
 
 // parseSetofTarget extracts the table name from a SETOF return type. Returns
@@ -609,6 +597,32 @@ func parseSetofTarget(raw string) string {
 		return ""
 	}
 	return t
+}
+
+// rpcTableShape parses a table(col type, ...) return type into a synthetic table.
+func rpcTableShape(raw string) (domain.Table, bool) {
+	t := strings.TrimSpace(raw)
+	lower := strings.ToLower(t)
+	if !strings.HasPrefix(lower, "table") || !strings.HasSuffix(t, ")") {
+		return domain.Table{}, false
+	}
+	open := strings.Index(t, "(")
+	if open < 0 || strings.TrimSpace(lower[len("table"):open]) != "" {
+		return domain.Table{}, false
+	}
+	cols, err := postgrest.SplitTopLevel(t[open+1:len(t)-1], ',')
+	if err != nil {
+		return domain.Table{}, false
+	}
+	var tbl domain.Table
+	for _, col := range cols {
+		parts := strings.Fields(col)
+		if len(parts) < 2 || !identRe.MatchString(parts[0]) {
+			return domain.Table{}, false
+		}
+		tbl.Fields = append(tbl.Fields, domain.Field{Name: strings.ToLower(parts[0]), Type: strings.Join(parts[1:], " ")})
+	}
+	return tbl, true
 }
 
 // wrapRPCCallForChain wraps a raw "SELECT * FROM fn(...)" call in a subquery
@@ -731,66 +745,13 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 	return sql, embedArgs
 }
 
-// buildOrderSQL serializes a list of OrderClauses into a PostgREST-compatible
-// ORDER BY fragment. Columns have already been validated at parse time.
-func buildOrderSQL(clauses []OrderClause) string {
-	var parts []string
-	for _, oc := range clauses {
-		s := fmt.Sprintf(`"%s"`, oc.Column)
-		if oc.Desc {
-			s += " DESC"
-		} else {
-			s += " ASC"
-		}
-		switch oc.Nulls {
-		case "first":
-			s += " NULLS FIRST"
-		case "last":
-			s += " NULLS LAST"
-		}
-		parts = append(parts, s)
-	}
-	return "ORDER BY " + strings.Join(parts, ", ")
-}
-
-// executeRPCCount runs COUNT(*) over the filtered RPC subquery for clients
-// that sent Prefer: count=exact. It rebuilds both the base call and the
-// WHERE from scratch so the count statement gets its own $1.. numbering and
-// never shares placeholder state with the data query. LIMIT/OFFSET are
-// intentionally dropped: the total is the full filtered cardinality, not
-// the size of the current page. The gin context is passed through so RLS
-// can be bypassed for admin callers the same way the data query does.
-func (h *CRUDHandler) executeRPCCount(c *gin.Context, name string, fn domain.Function, callArgs map[string]any, chain *rpcChainSQL, session domain.Session) (int, error) {
+// executeRPCCount counts the filtered, unpaged RPC result inside the data tx.
+func executeRPCCount(ctx context.Context, tx domain.Tx, name string, fn domain.Function, callArgs map[string]any, chain *rpcChainSQL) (int, error) {
 	callSQL, args := buildRPCCall(name, fn, callArgs)
-
-	// Only the WHERE portion matters for the total; synthesize a chain
-	// that carries the filter tree and nothing else.
 	countChain := &rpcChainSQL{}
 	if chain != nil {
 		countChain.where = chain.where
 	}
 	suffix, whereArgs := renderRPCChain(countChain, len(args)+1)
-	countSQL := fmt.Sprintf("SELECT COUNT(*) AS count FROM (%s) AS _rpc%s", callSQL, suffix)
-	args = append(args, whereArgs...)
-
-	dbCtx, err := h.db.WithRLS(c.Request.Context(), session)
-	if err != nil {
-		return -1, err
-	}
-	if isAdmin(c) {
-		dbCtx = c.Request.Context()
-	}
-	row, err := h.db.QueryRow(dbCtx, countSQL, args...)
-	if err != nil {
-		return -1, err
-	}
-	if v, ok := row["count"]; ok {
-		switch n := v.(type) {
-		case int64:
-			return int(n), nil
-		case float64:
-			return int(n), nil
-		}
-	}
-	return -1, nil
+	return queryCount(ctx, tx, fmt.Sprintf("SELECT COUNT(*) AS count FROM (%s) AS _rpc%s", callSQL, suffix), append(args, whereArgs...)...)
 }

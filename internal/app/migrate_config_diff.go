@@ -245,8 +245,8 @@ func diffRemovedRLSPolicies(old, new *domain.Config) []string {
 			}
 		}
 
-		// If all RLS policies were removed, disable RLS on the table.
-		if len(oldTable.RLS) > 0 && len(newTable.RLS) == 0 {
+		// Losing the last policy under rls_enabled: true keeps deny-all.
+		if oldTable.EffectiveRLSEnabled() && !newTable.EffectiveRLSEnabled() {
 			ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s DISABLE ROW LEVEL SECURITY;", qual))
 		}
 	}
@@ -377,12 +377,13 @@ func diffNewAuth(old, new *domain.Config) []string {
   purpose TEXT NOT NULL DEFAULT 'signup',
   email TEXT,
   code TEXT,
+  attempts INT NOT NULL DEFAULT 0,
   expires_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );`)
 		ddl = append(ddl, `CREATE INDEX IF NOT EXISTS idx_one_time_tokens_email_code ON auth.one_time_tokens (email, code);`)
 	}
-	return ddl
+	return append(ddl, authHealDDL...)
 }
 
 // diffNewTables returns CREATE TABLE + CREATE INDEX statements for tables in
@@ -425,14 +426,14 @@ func diffNewColumns(old, new *domain.Config) []string {
 			if len(field.Enum) > 0 {
 				quoted := make([]string, len(field.Enum))
 				for i, v := range field.Enum {
-					quoted[i] = "'" + v + "'"
+					quoted[i] = sqlLiteral(v)
 				}
 				ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ADD CHECK (%s IN (%s));",
 					qual, fieldName, strings.Join(quoted, ", ")))
 			}
 			if field.Pattern != "" {
-				ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ADD CHECK (%s ~ '%s');",
-					qual, fieldName, field.Pattern))
+				ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ADD CHECK (%s ~ %s);",
+					qual, fieldName, sqlLiteral(field.Pattern)))
 			}
 			if field.Min != nil {
 				ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ADD CHECK (%s >= %g);",

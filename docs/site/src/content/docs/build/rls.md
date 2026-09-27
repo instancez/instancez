@@ -19,6 +19,7 @@ An optional `type` field accepts `permissive` (default) or `restrictive`. Multip
 ```yaml
 tables:
   posts:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -43,7 +44,31 @@ tables:
         using: "auth.uid() = user_id"
 ```
 
-When a table has at least one `rls:` entry, instancez emits `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` and `FORCE ROW LEVEL SECURITY`. Tables with no `rls:` block have RLS disabled — all rows are visible to all roles.
+## Turning RLS on and off: `rls_enabled`
+
+Every table should say whether RLS is on:
+
+```yaml
+tables:
+  posts:
+    rls_enabled: true
+    fields: [...]
+    rls: [...]
+```
+
+| `rls_enabled` | Policies | Result |
+|---|---|---|
+| `true` | any, including none | `ENABLE` + `FORCE ROW LEVEL SECURITY`. With no policies, `anon` and `authenticated` are denied everything (reads return zero rows, writes fail). Removing the last policy never turns RLS off. |
+| `false` | none | RLS disabled: every role can read and write every row. `inz validate` warns, like Supabase's `rls_disabled_in_public` lint. |
+| `false` | one or more | Validation error: the policies would never apply. |
+| not set | none | Treated as `false` (RLS off). `inz validate` warns to set it explicitly. |
+| not set | one or more | Treated as `true`. `inz validate` warns to set it explicitly. |
+
+The unset behavior matches instancez before `rls_enabled` existed, so existing projects migrate with no DDL change. `service_role` (the secret key) bypasses RLS in every case.
+
+**Known gap:** if `rls_enabled` is unset and you remove a table's last policy, the inferred value flips from `true` to `false` and RLS turns off — unlike the explicit `true` case above, where removing the last policy leaves RLS enabled and deny-all. Set `rls_enabled` explicitly to avoid this; the `inz validate`/`inz dev` warning for an unset field covers it.
+
+Changing the value migrates the table: `true → false` runs `DISABLE ROW LEVEL SECURITY`, `false → true` runs `ENABLE` + `FORCE`.
 
 instancez passes `using` straight through to Postgres's `USING` clause and `with_check` to `WITH CHECK`. This matches standard Postgres semantics, including the asymmetric `update`-only auto-fill behavior described above.
 
@@ -60,6 +85,10 @@ instancez installs these helper functions in the `auth` schema at startup. They 
 | `auth.is_authenticated()` | `boolean` | Role is `authenticated` or `service_role`. Returns `false` for `anon`. |
 
 `auth.uid()` is the right function for owner-scoped policies. `auth.is_authenticated()` is useful as a simpler signed-in-only gate. The underlying implementation reads session GUCs (`app.user_id`, `app.role`, etc.) set at the start of every request transaction.
+
+### The `auth` schema is not readable from `anon`/`authenticated` requests
+
+`anon` and `authenticated` can call the helpers above, but they have no privileges on the `auth.*` tables, the same as on Supabase. A policy or `security: invoker` RPC running as one of those roles that runs `SELECT … FROM auth.users` fails with `permission denied`. Keep user data you need in policies in your own table (for example a `profiles` table with `user_id` referencing `auth.users.id`), or read it in an RPC declared with `security: definer`. Foreign keys to `auth.users.id` keep working. Requests made with the secret key (`service_role`) are unaffected and can still read `auth.*` directly, including through an invoker RPC.
 
 ## Common patterns
 

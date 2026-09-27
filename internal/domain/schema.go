@@ -242,10 +242,12 @@ type OAuthProvider struct {
 
 // Table defines a database table.
 type Table struct {
-	Schema  string      `yaml:"schema" json:"schema"`
-	Fields  []Field     `yaml:"fields" json:"fields"`
-	Indexes []Index     `yaml:"indexes" json:"indexes"`
-	RLS     []RLSPolicy `yaml:"rls" json:"rls"`
+	Schema  string  `yaml:"schema" json:"schema"`
+	Fields  []Field `yaml:"fields" json:"fields"`
+	Indexes []Index `yaml:"indexes" json:"indexes"`
+	// RLSEnabled nil means "infer from RLS"; see EffectiveRLSEnabled.
+	RLSEnabled *bool       `yaml:"rls_enabled,omitempty" json:"rls_enabled,omitempty"`
+	RLS        []RLSPolicy `yaml:"rls" json:"rls"`
 
 	// RenamedFrom names this table's previous name. The migrator cannot tell a
 	// rename from a drop-plus-create by comparing configs, so without this it
@@ -260,6 +262,14 @@ func (t Table) EffectiveSchema() string {
 		return "public"
 	}
 	return t.Schema
+}
+
+// EffectiveRLSEnabled returns rls_enabled, or whether the table has policies when unset.
+func (t Table) EffectiveRLSEnabled() bool {
+	if t.RLSEnabled != nil {
+		return *t.RLSEnabled
+	}
+	return len(t.RLS) > 0
 }
 
 // GetField returns the named field and true, or zero value and false.

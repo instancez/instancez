@@ -68,6 +68,7 @@ const assert = (cond, msg) => {
 const assertEq = (got, want, msg) => {
   if (got !== want) throw new Error(`${msg || 'assertEq'}: got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`)
 }
+const decodeJWT = (tok) => JSON.parse(Buffer.from(tok.split('.')[1], 'base64url').toString('utf8'))
 
 const anon = createClient(URL, PUBLISHABLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -136,9 +137,25 @@ await step('auth.refreshSession rotates tokens', async () => {
   const { data, error } = await anon.auth.refreshSession({ refresh_token: refreshToken })
   if (error) throw error
   assert(data.session, 'session returned')
-  assert(data.session.access_token !== accessToken, 'access_token rotated')
+  assert(data.session.refresh_token !== refreshToken, 'refresh_token rotated')
   accessToken = data.session.access_token
   refreshToken = data.session.refresh_token
+})
+
+await step('auth: two concurrent refreshes of one token both succeed (reuse grace)', async () => {
+  const { data: s } = await anon.auth.signInWithPassword({ email, password })
+  const rt = s.session.refresh_token
+  // Separate clients: one auth-js client dedupes concurrent refreshes itself.
+  const tab = () => createClient(URL, PUBLISHABLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  const [a, b] = await Promise.all([
+    tab().auth.refreshSession({ refresh_token: rt }),
+    tab().auth.refreshSession({ refresh_token: rt }),
+  ])
+  assert(!a.error && !b.error, `both tabs must refresh: ${a.error?.message} / ${b.error?.message}`)
+  const sessionId = decodeJWT(a.data.session.access_token).session_id
+  assertEq(sessionId, decodeJWT(b.data.session.access_token).session_id, 'same session family')
+  assertEq(a.data.session.refresh_token, b.data.session.refresh_token, 'replay gets the legit rotation refresh_token')
+  assert(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId), 'session_id is a uuid')
 })
 
 // --- Resend OTP ---
@@ -226,25 +243,59 @@ await step('auth: signInWithOAuth (PKCE) completes via /authorize + /callback + 
   assertEq(sessionData.user.app_metadata.provider, 'fake', 'oauth user provider metadata')
 })
 
-await step('auth: identity linking adds a new identity for the signed-in user', async () => {
-  const authorizeResp = await fetch(`${URL}/auth/v1/user/identities/authorize?provider=fake`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY },
+await step('auth: linkIdentity binds the link to the initiating browser', async () => {
+  // Node has no cookie jar, so capture the binding cookie a browser would store.
+  let bindingCookie = ''
+  const linkClient = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: {
+      fetch: async (...args) => {
+        const resp = await fetch(...args)
+        const set = resp.headers.get('set-cookie')
+        if (set && /^(__Host-)?oauth_link_state=/.test(set)) bindingCookie = set.split(';')[0]
+        return resp
+      },
+    },
   })
-  assertEq(authorizeResp.status, 200, 'link-identity authorize status')
-  const { url: linkURL } = await authorizeResp.json()
-  assert(linkURL, 'expected an authorize url for linking')
+  const { error: signInError } = await linkClient.auth.signInWithPassword({ email, password })
+  if (signInError) throw signInError
+  const listFake = async () => {
+    const idResp = await fetch(`${URL}/auth/v1/user/identities`, {
+      headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY },
+    })
+    const { identities } = await idResp.json()
+    return identities.filter((i) => i.provider === 'fake').length
+  }
+  const before = await listFake()
 
-  const followResp = await fetch(linkURL)
+  // A victim browser following someone else's link URL carries no binding cookie.
+  const { data: forged, error: forgedError } = await linkClient.auth.linkIdentity({
+    provider: 'fake',
+    options: { skipBrowserRedirect: true },
+  })
+  if (forgedError) throw forgedError
+  assert(bindingCookie, 'authorize should set the binding cookie')
+  const forgedResp = await fetch(forged.url, { redirect: 'manual' })
+  assertEq(forgedResp.status, 302, 'unbound link callback redirects with an error')
+  assert(forgedResp.headers.get('location').includes('error='), 'error params on the redirect')
+  assertEq(await listFake(), before, 'unbound callback must not link')
+
+  // The initiating browser presents its cookie and the link succeeds.
+  bindingCookie = ''
+  const { data, error } = await linkClient.auth.linkIdentity({
+    provider: 'fake',
+    options: { skipBrowserRedirect: true },
+  })
+  if (error) throw error
+  assert(data.url, 'expected an authorize url for linking')
+  const followResp = await fetch(data.url, { headers: { Cookie: bindingCookie } })
   assert(followResp.ok, `link-identity callback failed: ${followResp.status}`)
-  const followBody = await followResp.json()
-  assertEq(followBody.message, 'Identity linked', 'link confirmation message')
+  assertEq((await followResp.json()).message, 'Identity linked', 'link confirmation message')
+  assertEq(await listFake(), before + 1, 'linked fake identity should appear in the list')
 
-  const idResp = await fetch(`${URL}/auth/v1/user/identities`, {
-    headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY },
-  })
-  const { identities } = await idResp.json()
-  assert(identities.some((i) => i.provider === 'fake'), 'linked fake identity should appear in the list')
+  // The state is single use, even with the right cookie.
+  const replay = await fetch(data.url, { headers: { Cookie: bindingCookie } })
+  assert(!replay.ok, `replayed link state must fail, got ${replay.status}`)
 })
 
 // --- Admin signOut ---
@@ -618,6 +669,26 @@ await step('rest: insert comment for nested embed test', async () => {
   if (error) throw error
 })
 
+await step('rest: count exact honors !inner embeds', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { data: lonely, error: insErr } = await client
+    .from('todos').insert({ title: 'no comments here', user_id: userId }).select('id').single()
+  if (insErr) throw insErr
+  try {
+    const { data, count, error } = await client
+      .from('todos').select('id, comments!inner(id)', { count: 'exact' }).eq('user_id', userId)
+    if (error) throw error
+    assert(data.length >= 1, 'at least the commented todo')
+    assertEq(count, data.length, 'count must match the !inner-filtered rows')
+    assert(!data.some((t) => t.id === lonely.id), 'todo without comments excluded')
+  } finally {
+    await client.from('todos').delete().eq('id', lonely.id)
+  }
+})
+
 await step('rest: nested embed — has-many with nested belongs-to', async () => {
   // todos → comments(body, todos(title))
   // The nested belongs-to back to todos exercises the parent-of-child embed
@@ -722,6 +793,25 @@ await step('rest: bulk insert an array of rows', async () => {
   assertEq(JSON.stringify(titles), JSON.stringify(['bulk-a', 'bulk-b', 'bulk-c']), 'titles round-trip')
   for (const r of data) {
     await client.from('todos').delete().eq('id', r.id)
+  }
+})
+
+await step('rest: select without .limit() returns every row (no default page of 20)', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const rows = Array.from({ length: 25 }, (_, i) => ({ title: `bulk25-${i}`, user_id: userId }))
+  const { error: insErr } = await client.from('todos').insert(rows)
+  if (insErr) throw insErr
+  try {
+    const { data, count, error } = await client
+      .from('todos').select('id', { count: 'exact' }).eq('user_id', userId).like('title', 'bulk25-%')
+    if (error) throw error
+    assertEq(data.length, 25, 'all 25 rows returned without .limit()')
+    assertEq(count, 25, 'exact count')
+  } finally {
+    await client.from('todos').delete().eq('user_id', userId).like('title', 'bulk25-%')
   }
 })
 
@@ -1006,6 +1096,17 @@ await step('rest: select with exact count + rows', async () => {
   assertEq(data.length, 5, 'rows still returned with count')
 })
 
+await step('rest: .explain() is refused without the secret key', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { error, status } = await client.from('todos').select('id').explain()
+  assert(error, 'explain must fail for an authenticated user')
+  assertEq(status, 406, 'PGRST107 status')
+  assertEq(error.code, 'PGRST107', 'PGRST107 code')
+})
+
 await step('rest: .csv() returns text/csv body', async () => {
   const client = createClient(URL, PUBLISHABLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -1103,6 +1204,17 @@ await step('rest: Accept-Profile / Content-Profile switch to the app schema', as
   assert(listResp.ok, `list app.notes failed: ${listResp.status}`)
   const rows = await listResp.json()
   assert(rows.some((r) => r.body === 'hello from app schema'), 'inserted row visible via Accept-Profile')
+})
+
+await step('rest: count exact on a non-public schema table', async () => {
+  const app = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    db: { schema: 'app' },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { count, error } = await app.from('notes').select('*', { count: 'exact', head: true })
+  if (error) throw error
+  assert(typeof count === 'number' && count >= 1, `count via Accept-Profile: got ${count}`)
 })
 
 await step('rest: Accept-Profile rejects an unconfigured schema', async () => {
@@ -1332,6 +1444,38 @@ await step('auth.updateUser updates user_metadata', async () => {
   assertEq(data.user.user_metadata.display_name, 'Alice', 'existing metadata preserved')
 })
 
+await step('auth.updateUser password change revokes other sessions', async () => {
+  // Dedicated user so the shared user's password stays intact.
+  const pwEmail = `pwchange_${Date.now()}_${crypto.randomUUID()}@example.com`
+  const oldPassword = `old-${crypto.randomBytes(6).toString('hex')}`
+  const newPassword = `new-${crypto.randomBytes(6).toString('hex')}`
+
+  const { error: signUpErr } = await anon.auth.signUp({ email: pwEmail, password: oldPassword })
+  if (signUpErr) throw signUpErr
+
+  const clientA = createClient(URL, PUBLISHABLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  const clientB = createClient(URL, PUBLISHABLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  const { data: sA, error: signInAErr } = await clientA.auth.signInWithPassword({ email: pwEmail, password: oldPassword })
+  if (signInAErr) throw signInAErr
+  const { data: sB, error: signInBErr } = await clientB.auth.signInWithPassword({ email: pwEmail, password: oldPassword })
+  if (signInBErr) throw signInBErr
+
+  const { error: updateErr } = await clientA.auth.updateUser({ password: newPassword })
+  if (updateErr) throw updateErr
+
+  // B's session was signed out; its refresh token must no longer work.
+  const { error: refreshBErr } = await clientB.auth.refreshSession({ refresh_token: sB.session.refresh_token })
+  assert(refreshBErr, 'other session refresh should fail after password change')
+
+  // A's own session (the one that made the change) must still work.
+  const { error: refreshAErr } = await clientA.auth.refreshSession({ refresh_token: sA.session.refresh_token })
+  if (refreshAErr) throw refreshAErr
+
+  // The password actually changed.
+  const { error: signInNewErr } = await anon.auth.signInWithPassword({ email: pwEmail, password: newPassword })
+  if (signInNewErr) throw signInNewErr
+})
+
 await step('auth.signInWithOtp issues an OTP without erroring', async () => {
   // No SMTP provider is configured in the harness, so this exercises the
   // request/token path; GoTrue-style enumeration protection means it returns
@@ -1356,6 +1500,13 @@ await step('auth.resend returns success', async () => {
   // only checked status, masking this.)
   const { error } = await anon.auth.resend({ type: 'signup', email })
   if (error) throw error
+})
+
+await step('auth.resend within 60s is rate limited', async () => {
+  const { error } = await anon.auth.resend({ type: 'signup', email })
+  assert(error, 'second resend inside the cooldown must fail')
+  assertEq(error.status, 429, 'over_email_send_rate_limit status')
+  assertEq(error.code, 'over_email_send_rate_limit', 'over_email_send_rate_limit code')
 })
 
 await step('auth.reauthenticate returns success', async () => {
@@ -1600,6 +1751,16 @@ await step('rest: delete row', async () => {
   if (error) throw error
 })
 
+await step('jwt: password session carries Supabase aal/amr/session_id claims', async () => {
+  const claims = decodeJWT(accessToken)
+  assertEq(claims.aal, 'aal1', 'top-level aal')
+  assert(Array.isArray(claims.amr) && claims.amr.length >= 1, 'amr is a non-empty array')
+  assertEq(claims.amr[0].method, 'password', 'amr[0].method')
+  assert(Number.isInteger(claims.amr[0].timestamp), 'amr[0].timestamp is unix seconds')
+  assert(typeof claims.session_id === 'string' && claims.session_id.length > 0, 'session_id present')
+  assertEq(claims.app_metadata?.aal, undefined, 'aal is not in app_metadata')
+})
+
 // --- MFA / TOTP ---
 // supabase-js exposes auth.mfa.{enroll, challenge, verify, unenroll, listFactors}.
 // We drive the lot against a real, password-verified session so the JWT
@@ -1663,22 +1824,90 @@ await step('mfa: verify with valid TOTP code flips factor to verified and upgrad
   })
   if (ver.error) throw ver.error
   assert(ver.data?.access_token, 'new access_token from verify')
-  // Decode the new JWT and assert aal=aal2 in app_metadata.
+  // Decode the new JWT and assert the top-level aal claim.
   const [, payload] = ver.data.access_token.split('.')
   const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'))
-  assertEq(claims.app_metadata?.aal, 'aal2', 'aal bumped to aal2')
+  assertEq(claims.aal, 'aal2', 'aal bumped to aal2')
+  globalThis.__mfaCode = code
+  globalThis.__aal2Access = ver.data.access_token
+  globalThis.__aal2Refresh = ver.data.refresh_token
 })
 
-await step('mfa: unenroll deletes the factor', async () => {
-  const client = createClient(URL, PUBLISHABLE_KEY, {
+const bearerClient = (tok) =>
+  createClient(URL, PUBLISHABLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
-    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+    global: { headers: { Authorization: `Bearer ${tok}` } },
   })
+
+await step('mfa: verify without challenge_id is rejected', async () => {
+  const resp = await fetch(`${URL}/auth/v1/factors/${globalThis.__mfaFactorId}/verify`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${globalThis.__aal2Access}`, apikey: PUBLISHABLE_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: await generateTOTP(globalThis.__mfaSecret) }),
+  })
+  assertEq(resp.status, 400, 'challenge_id is required')
+})
+
+await step('mfa: a used TOTP code is rejected on a fresh challenge', async () => {
+  const client = bearerClient(globalThis.__aal2Access)
+  const ch = await client.auth.mfa.challenge({ factorId: globalThis.__mfaFactorId })
+  if (ch.error) throw ch.error
+  const { error } = await client.auth.mfa.verify({
+    factorId: globalThis.__mfaFactorId,
+    challengeId: ch.data.id,
+    code: globalThis.__mfaCode,
+  })
+  assert(error, 'replayed code must fail')
+  assertEq(error.status, 401, 'replay status')
+})
+
+await step('mfa: an aal1 session cannot enroll a second factor', async () => {
+  const { error } = await bearerClient(accessToken).auth.mfa.enroll({ factorType: 'totp', friendlyName: 'attacker' })
+  assert(error, 'aal1 enroll must fail once a factor is verified')
+  assertEq(error.status, 403, 'insufficient_aal status')
+  assertEq(error.code, 'insufficient_aal', 'insufficient_aal code')
+})
+
+await step('mfa: an aal1 session cannot unenroll the verified factor', async () => {
+  const { error } = await bearerClient(accessToken).auth.mfa.unenroll({ factorId: globalThis.__mfaFactorId })
+  assert(error, 'aal1 unenroll of a verified factor must fail')
+  assertEq(error.status, 422, 'insufficient_aal status')
+  assertEq(error.code, 'insufficient_aal', 'insufficient_aal code')
+})
+
+await step('mfa: getAuthenticatorAssuranceLevel + listFactors read user.factors', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  const { error: setErr } = await client.auth.setSession({
+    access_token: globalThis.__aal2Access,
+    refresh_token: globalThis.__aal2Refresh,
+  })
+  if (setErr) throw setErr
+  const { data: aal, error } = await client.auth.mfa.getAuthenticatorAssuranceLevel()
+  if (error) throw error
+  assertEq(aal.currentLevel, 'aal2', 'currentLevel')
+  assertEq(aal.nextLevel, 'aal2', 'nextLevel (from user.factors)')
+  assert(aal.currentAuthenticationMethods.some((m) => m.method === 'totp'), 'amr includes totp')
+  const { data: factors, error: listErr } = await client.auth.mfa.listFactors()
+  if (listErr) throw listErr
+  assert(factors.totp.some((f) => f.id === globalThis.__mfaFactorId), 'verified factor listed via supabase-js')
+})
+
+await step('mfa: refresh keeps aal2 and the session id', async () => {
+  const { data, error } = await anon.auth.refreshSession({ refresh_token: globalThis.__aal2Refresh })
+  if (error) throw error
+  const claims = decodeJWT(data.session.access_token)
+  assertEq(claims.aal, 'aal2', 'aal survives refresh')
+  assertEq(claims.session_id, decodeJWT(globalThis.__aal2Access).session_id, 'session_id survives refresh')
+  globalThis.__aal2Access = data.session.access_token
+})
+
+await step('mfa: aal2 session unenrolls the factor', async () => {
+  const client = bearerClient(globalThis.__aal2Access)
   const { error } = await client.auth.mfa.unenroll({ factorId: globalThis.__mfaFactorId })
   if (error) throw error
 
   const resp = await fetch(`${URL}/auth/v1/factors`, {
-    headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY },
+    headers: { Authorization: `Bearer ${globalThis.__aal2Access}`, apikey: PUBLISHABLE_KEY },
   })
   const body = await resp.json()
   const stillThere = (body.totp || []).some((f) => f.id === globalThis.__mfaFactorId)
@@ -1833,6 +2062,19 @@ if (SECRET_KEY) {
     })
     if (error) throw error
     assertEq(data.user.user_metadata.plan, 'enterprise', 'metadata updated')
+  })
+
+  await step('admin ban blocks sign-in until lifted', async () => {
+    const { error: banErr } = await adminClient.auth.admin.updateUserById(adminUserId, { ban_duration: '24h' })
+    if (banErr) throw banErr
+    const { error } = await anon.auth.signInWithPassword({ email: adminEmail, password: 'hunter2hunter2' })
+    assert(error, 'banned user must not sign in')
+    assertEq(error.status, 403, 'user_banned status')
+    assertEq(error.code, 'user_banned', 'user_banned code')
+    const { error: unbanErr } = await adminClient.auth.admin.updateUserById(adminUserId, { ban_duration: 'none' })
+    if (unbanErr) throw unbanErr
+    const { error: again } = await anon.auth.signInWithPassword({ email: adminEmail, password: 'hunter2hunter2' })
+    if (again) throw again
   })
 
   await step('admin.deleteUser removes the user', async () => {
@@ -2239,35 +2481,29 @@ await step('storage: createSignedUrls returns batch URLs', async () => {
 // --- Signed upload URL + uploadToSignedUrl ---
 
 await step('storage: createSignedUploadUrl + uploadToSignedUrl flow', async () => {
-  // 1. Get signed upload token
-  const signResp = await fetch(`${URL}/storage/v1/object/upload/sign/avatars/signed-upload.txt`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      apikey: PUBLISHABLE_KEY,
-      'Content-Type': 'application/json',
-    },
-    body: '{}',
-  })
-  assert(signResp.ok, `createSignedUploadUrl failed: ${signResp.status}`)
-  const signData = await signResp.json()
-  assert(signData.token, 'token present')
+  const bucket = storageClient().storage.from('avatars')
+  const { data: signed, error } = await bucket.createSignedUploadUrl('signed-upload.txt')
+  if (error) throw error
+  assert(signed.token, 'token present')
+  assertEq(signed.path, 'signed-upload.txt')
+  const u = new NodeURL(signed.signedUrl)
+  assertEq(u.pathname, new NodeURL(`${URL}/storage/v1/object/upload/sign/avatars/signed-upload.txt`).pathname, 'signedUrl points at the upload route')
+  assertEq(u.searchParams.get('token'), signed.token, 'signedUrl carries the token')
 
-  // 2. Upload to signed URL
-  const upResp = await fetch(`${URL}/storage/v1/object/upload/sign/avatars/signed-upload.txt?token=${signData.token}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'text/plain' },
-    body: 'signed upload content',
-  })
-  assert(upResp.ok, `uploadToSignedUrl failed: ${upResp.status}`)
+  const up = await bucket.uploadToSignedUrl(signed.path, signed.token, 'signed upload content', { contentType: 'text/plain' })
+  if (up.error) throw up.error
 
-  // 3. Verify the upload
-  const dl = await fetch(`${URL}/storage/v1/object/authenticated/avatars/signed-upload.txt`, {
+  const { data: file, error: dlErr } = await bucket.download('signed-upload.txt')
+  if (dlErr) throw dlErr
+  assertEq(await file.text(), 'signed upload content')
+
+  // download() is caller-authenticated, so it must not be cached as public.
+  const raw = await fetch(`${URL}/storage/v1/object/avatars/signed-upload.txt`, {
     headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY },
   })
-  assert(dl.ok, 'download signed upload')
-  const body = await dl.text()
-  assertEq(body, 'signed upload content')
+  assert(raw.ok, `authenticated download failed: ${raw.status}`)
+  assert((raw.headers.get('cache-control') || '').startsWith('private'),
+    `authenticated route on a public bucket must be private: ${raw.headers.get('cache-control')}`)
 })
 
 await step('storage: uploadToSignedUrl rejects bad token', async () => {
@@ -2277,6 +2513,43 @@ await step('storage: uploadToSignedUrl rejects bad token', async () => {
     body: 'should fail',
   })
   assertEq(resp.status, 400, 'bad token rejected')
+})
+
+const mintUploadToken = async (bucket, path) => {
+  const { data, error } = await storageClient().storage.from(bucket).createSignedUploadUrl(path)
+  if (error) throw error
+  return data.token
+}
+
+await step('storage: uploadToSignedUrl with a Blob stores the file, not the multipart framing', async () => {
+  const bucket = storageClient().storage.from('avatars')
+  const token = await mintUploadToken('avatars', 'signed-blob.txt')
+  const { error } = await bucket.uploadToSignedUrl('signed-blob.txt', token, new Blob(['blob via signed url'], { type: 'text/plain' }))
+  if (error) throw error
+  const { data: file, error: dlErr } = await bucket.download('signed-blob.txt')
+  if (dlErr) throw dlErr
+  assertEq(await file.text(), 'blob via signed url')
+  const { data: info, error: infoErr } = await bucket.info('signed-blob.txt')
+  if (infoErr) throw infoErr
+  assertEq(info.name, 'signed-blob.txt')
+  assertEq(info.contentType, 'text/plain')
+  assertEq(Number(info.size), 'blob via signed url'.length, 'real size recorded for a multipart upload')
+})
+
+await step('storage: uploadToSignedUrl enforces the bucket MIME allowlist', async () => {
+  const bucket = storageClient().storage.from('avatars')
+  const token = await mintUploadToken('avatars', 'signed-evil.html')
+  // nosemgrep -- URL and TOKEN are the test harness's own server URL and self-minted token, not user input
+  const raw = await fetch(`${URL}/storage/v1/object/upload/sign/avatars/signed-evil.html?token=${token}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'text/html' },
+    body: '<script>alert(1)</script>',
+  })
+  assertEq(raw.status, 422, 'raw text/html rejected')
+  const { error } = await bucket.uploadToSignedUrl('signed-evil.html', token, new Blob(['<script>'], { type: 'text/html' }))
+  assert(error, 'Blob text/html rejected')
+  const { data: exists } = await bucket.exists('signed-evil.html')
+  assert(!exists, 'rejected signed upload left no object behind')
 })
 
 // --- Signed upload authorization (owner-scoped RLS on the `owned` bucket) ---
@@ -2331,6 +2604,82 @@ await step('storage: signed upload threads owner so the uploader can read it bac
   })
   assert(dl.ok, `owner read-back failed (uploaded_by not threaded?): ${dl.status}`)
   assertEq(await dl.text(), 'owned content', 'owner reads back their object')
+})
+
+// --- Storage RLS on batch sign and info, traversal keys, download headers ---
+const adminStorage = () => createClient(URL, SECRET_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+  global: { headers: { Authorization: `Bearer ${SECRET_KEY}` } },
+})
+
+if (SECRET_KEY) {
+  await step('storage: createSignedUrls and info() withhold objects RLS hides', async () => {
+    const { error: seedErr } = await adminStorage().storage.from('owned')
+      .upload('mine/admin.txt', 'admin secret', { contentType: 'text/plain', upsert: true })
+    if (seedErr) throw seedErr
+
+    const bucket = storageClient().storage.from('owned')
+    const { data, error } = await bucket.createSignedUrls(['mine/admin.txt', 'mine/file.txt'], 60)
+    if (error) throw error
+    const hidden = data.find(d => d.path === 'mine/admin.txt')
+    const own = data.find(d => d.path === 'mine/file.txt')
+    assert(hidden && !hidden.signedUrl && hidden.error, `hidden path must not be signed: ${JSON.stringify(hidden)}`)
+    assert(own && own.signedUrl && !own.error, `own path must be signed: ${JSON.stringify(own)}`)
+
+    const { error: infoErr } = await bucket.info('mine/admin.txt')
+    assert(infoErr, 'info() of a hidden object must fail')
+    const { data: ownInfo, error: ownInfoErr } = await bucket.info('mine/file.txt')
+    if (ownInfoErr) throw ownInfoErr
+    assertEq(ownInfo.name, 'mine/file.txt')
+
+    const { error: rmErr } = await adminStorage().storage.from('owned').remove(['mine/admin.txt'])
+    if (rmErr) throw rmErr
+  })
+
+  await step('storage: emptyBucket removes only what the caller may delete', async () => {
+    const admin = adminStorage().storage.from('owned')
+    const { error: seedErr } = await admin.upload('mine/admin.txt', 'admin secret', { contentType: 'text/plain', upsert: true })
+    if (seedErr) throw seedErr
+
+    const { error } = await storageClient().storage.emptyBucket('owned')
+    if (error) throw error
+    assertEq((await admin.exists('mine/admin.txt')).data, true, 'hidden object survives emptyBucket')
+    assertEq((await admin.exists('mine/file.txt')).data, false, "caller's own object was removed")
+    const bytes = await (await admin.download('mine/admin.txt')).data.text()
+    assertEq(bytes, 'admin secret', 'hidden bytes untouched')
+
+    // Later steps read mine/file.txt, so the owner puts it back.
+    const { error: restoreErr } = await storageClient().storage.from('owned')
+      .upload('mine/file.txt', 'owned content', { contentType: 'text/plain' })
+    if (restoreErr) throw restoreErr
+    const { error: rmErr } = await admin.remove(['mine/admin.txt'])
+    if (rmErr) throw rmErr
+  })
+}
+
+// fetch normalizes %2e%2e segments away, so use one segment with encoded slashes.
+await step('storage: traversal keys are rejected', async () => {
+  const resp = await fetch(`${URL}/storage/v1/object/avatars/..%2f..%2fescape.txt`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY, 'Content-Type': 'text/plain' },
+    body: 'x',
+  })
+  assertEq(resp.status, 400, 'upload to a traversal key')
+  const { error } = await storageClient().storage.from('avatars').copy('test-file.txt', '../../escape.txt')
+  assert(error, 'copy to a traversal key must fail')
+})
+
+await step('storage: private downloads are private, nosniff, and HTML is an attachment', async () => {
+  const { error: upErr } = await storageClient().storage.from('documents')
+    .upload('page.html', '<html><script>alert(1)</script></html>', { contentType: 'text/html', upsert: true })
+  if (upErr) throw upErr
+  const dl = await fetch(`${URL}/storage/v1/object/authenticated/documents/page.html`, {
+    headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY },
+  })
+  assert(dl.ok, `download failed: ${dl.status}`)
+  assert((dl.headers.get('cache-control') || '').startsWith('private'), `cache-control: ${dl.headers.get('cache-control')}`)
+  assertEq(dl.headers.get('x-content-type-options'), 'nosniff')
+  assert((dl.headers.get('content-disposition') || '').startsWith('attachment'), 'html must download, not render')
 })
 
 // --- Remove ---
@@ -2392,6 +2741,121 @@ await step('storage: emptyBucket removes all objects', async () => {
   assertEq(items.length, 0, 'bucket is empty after emptyBucket')
 })
 
+// --- RLS-denied delete: a SELECT-only caller must not wipe bytes ---
+if (SECRET_KEY) {
+  await step('storage: remove leaves bytes in place when RLS denies the delete', async () => {
+    const put = await fetch(`${URL}/storage/v1/object/readonly/ro-remove.txt`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY, 'Content-Type': 'text/plain' },
+      body: 'read-only bytes',
+    })
+    assert(put.ok, `admin seed upload failed: ${put.status}`)
+
+    const { data, error } = await storageClient().storage.from('readonly').remove(['ro-remove.txt'])
+    if (error) throw error
+    assertEq(data.length, 0, 'RLS denies the delete, so nothing is reported removed')
+
+    const dl = await fetch(`${URL}/storage/v1/object/authenticated/readonly/ro-remove.txt`, {
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY },
+    })
+    assert(dl.ok, `object bytes must survive a denied remove: ${dl.status}`)
+    assertEq(await dl.text(), 'read-only bytes', 'bytes are untouched')
+  })
+
+  await step('storage: emptyBucket leaves bytes in place when RLS denies the delete', async () => {
+    const put = await fetch(`${URL}/storage/v1/object/readonly/ro-empty.txt`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY, 'Content-Type': 'text/plain' },
+      body: 'read-only bytes 2',
+    })
+    assert(put.ok, `admin seed upload failed: ${put.status}`)
+
+    const resp = await fetch(`${URL}/storage/v1/bucket/readonly/empty`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY },
+    })
+    assert(resp.ok, `emptyBucket failed: ${resp.status}`)
+
+    const dl = await fetch(`${URL}/storage/v1/object/authenticated/readonly/ro-empty.txt`, {
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY },
+    })
+    assert(dl.ok, `object bytes must survive a denied emptyBucket: ${dl.status}`)
+    assertEq(await dl.text(), 'read-only bytes 2', 'bytes are untouched')
+
+    // Admin (service_role, bypasses RLS) cleans up what the user could not.
+    await fetch(`${URL}/storage/v1/bucket/readonly/empty`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY },
+    })
+  })
+
+  // Move/copy must pass RLS before any bytes move.
+  // nosemgrep -- URL is the test harness's own server URL; path is a test-authored literal, not user input
+  const userPost = (path, body) => fetch(`${URL}/storage/v1/object/${path}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const adminGet = (path) => fetch(`${URL}/storage/v1/object/authenticated/${path}`, {
+    headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY },
+  })
+
+  await step('storage: move and copy are denied without the matching RLS policy, bytes untouched', async () => {
+    const put = await fetch(`${URL}/storage/v1/object/readonly/ro-move.txt`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY, 'Content-Type': 'text/plain' },
+      body: 'ro move bytes',
+    })
+    assert(put.ok, `admin seed upload failed: ${put.status}`)
+
+    const mv = await userPost('move', { bucketId: 'readonly', sourceKey: 'ro-move.txt', destinationKey: 'ro-moved.txt' })
+    assertEq(mv.status, 404, 'move without an update policy matches no row')
+    const src = await adminGet('readonly/ro-move.txt')
+    assert(src.ok, `source must survive a denied move: ${src.status}`)
+    assertEq(await src.text(), 'ro move bytes', 'source bytes untouched')
+    assertEq((await adminGet('readonly/ro-moved.txt')).status, 404, 'no destination after denied move')
+
+    const cp = await userPost('copy', { bucketId: 'readonly', sourceKey: 'ro-move.txt', destinationKey: 'ro-copy.txt' })
+    assertEq(cp.status, 403, 'copy without an insert policy is forbidden')
+    assertEq((await adminGet('readonly/ro-copy.txt')).status, 404, 'no destination bytes after denied copy')
+
+    await fetch(`${URL}/storage/v1/bucket/readonly/empty`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY },
+    })
+  })
+
+  await step('storage: copy cannot read a victim object the caller cannot select', async () => {
+    const put = await fetch(`${URL}/storage/v1/object/owned/mine/victim.txt`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY, 'Content-Type': 'text/plain' },
+      body: 'victim secret',
+    })
+    assert(put.ok, `admin seed upload failed: ${put.status}`)
+
+    for (const [bucket, key] of [['avatars', 'stolen.txt'], ['owned', 'mine/stolen.txt']]) {
+      const cp = await userPost('copy', { bucketId: 'owned', sourceKey: 'mine/victim.txt', destinationKey: key, destinationBucket: bucket })
+      assertEq(cp.status, 404, `copy of hidden source into ${bucket} is not found`)
+      assertEq((await adminGet(`${bucket}/${key}`)).status, 404, `no stolen bytes in ${bucket}`)
+    }
+
+    const { error } = await createClient(URL, SECRET_KEY, { auth: { persistSession: false } })
+      .storage.from('owned').remove(['mine/victim.txt'])
+    if (error) throw error
+  })
+
+  await step('storage: move is forbidden when the destination fails WITH CHECK', async () => {
+    const mv = await userPost('move', { bucketId: 'owned', sourceKey: 'mine/file.txt', destinationKey: 'escape.txt' })
+    assertEq(mv.status, 403, 'destination outside mine/ violates the policy')
+    const dl = await fetch(`${URL}/storage/v1/object/authenticated/owned/mine/file.txt`, {
+      headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY },
+    })
+    assert(dl.ok, `owner still reads the source: ${dl.status}`)
+    assertEq(await dl.text(), 'owned content', 'source bytes untouched')
+    assertEq((await adminGet('owned/escape.txt')).status, 404, 'no escaped copy')
+  })
+}
+
 // --- Cleanup documents bucket ---
 await step('storage: cleanup documents bucket', async () => {
   await fetch(`${URL}/storage/v1/bucket/documents/empty`, {
@@ -2401,7 +2865,7 @@ await step('storage: cleanup documents bucket', async () => {
 })
 
 // --- explain() response ---
-await step('rest: explain returns query plan', async () => {
+await step('rest: explain returns query plan only to the secret key', async () => {
   const resp = await fetch(`${URL}/rest/v1/todos?select=*`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -2409,8 +2873,20 @@ await step('rest: explain returns query plan', async () => {
       Accept: 'application/vnd.pgrst.plan+json',
     },
   })
-  assertEq(resp.status, 200)
-  const plan = await resp.json()
+  assertEq(resp.status, 406, 'plan refused for non-secret caller')
+  const err = await resp.json()
+  assertEq(err.code, 'PGRST107', 'plan refusal code')
+
+  if (!SECRET_KEY) return
+  const adminResp = await fetch(`${URL}/rest/v1/todos?select=*`, {
+    headers: {
+      Authorization: `Bearer ${SECRET_KEY}`,
+      apikey: SECRET_KEY,
+      Accept: 'application/vnd.pgrst.plan+json',
+    },
+  })
+  assertEq(adminResp.status, 200)
+  const plan = await adminResp.json()
   assert(Array.isArray(plan) || (typeof plan === 'object'), 'plan returned')
 })
 
@@ -2577,6 +3053,55 @@ await step('storage: serverless-friendly presigned URL — sign via /api/storage
   const signData = await signResp.json()
   assert(signData.id, 'id present')
   assert(signData.upload_url, 'upload_url present')
+
+  // Sign already minted a row in the public avatars bucket, so anon can sign-download it.
+  const anonDl = await fetch(`${URL}/api/storage/avatars/${signData.id}`, {
+    headers: { apikey: PUBLISHABLE_KEY },
+  })
+  assertEq(anonDl.status, 200, 'anon sign-download on a public bucket via the legacy route')
+})
+
+await step('storage: legacy /api/storage routes run under the caller\'s RLS, not service_role (C6)', async () => {
+  const { data: signIn } = await anon.auth.signInWithPassword({ email, password })
+  if (!signIn?.session) throw new Error('re-login failed')
+  const ownerToken = signIn.session.access_token
+
+  // The owner can sign an upload into legacy_private and read it back.
+  const signResp = await fetch(`${URL}/api/storage/legacy_private/sign`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${ownerToken}`, apikey: PUBLISHABLE_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content_type: 'text/plain', size: 10 }),
+  })
+  assert(signResp.ok, `owner sign failed: ${signResp.status} ${await signResp.clone().text()}`)
+  const { id } = await signResp.json()
+  assert(id, 'id present')
+
+  const ownerDl = await fetch(`${URL}/api/storage/legacy_private/${id}`, {
+    headers: { Authorization: `Bearer ${ownerToken}`, apikey: PUBLISHABLE_KEY },
+  })
+  assertEq(ownerDl.status, 200, 'owner sign-download of their own private object')
+
+  // Another user's RLS can't see the row: no leaked URL, no silent delete.
+  const { data: other } = await anon.auth.signInAnonymously()
+  const otherToken = other.session.access_token
+
+  const otherDl = await fetch(`${URL}/api/storage/legacy_private/${id}`, {
+    headers: { Authorization: `Bearer ${otherToken}`, apikey: PUBLISHABLE_KEY },
+  })
+  assertEq(otherDl.status, 404, 'another user cannot sign-download a private object via the legacy route')
+
+  const otherDel = await fetch(`${URL}/api/storage/legacy_private/${id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${otherToken}`, apikey: PUBLISHABLE_KEY },
+  })
+  assertEq(otherDel.status, 404, 'another user cannot delete a private object via the legacy route')
+
+  // The owner can still delete their own object.
+  const ownerDel = await fetch(`${URL}/api/storage/legacy_private/${id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${ownerToken}`, apikey: PUBLISHABLE_KEY },
+  })
+  assertEq(ownerDel.status, 204, 'owner can delete their own object via the legacy route')
 })
 
 // --- RLS / two-login enforcement ---
@@ -2638,6 +3163,39 @@ await step('rls: authenticated user can write + read own row', async () => {
   }
   for (const row of selRes.data) {
     assertEq(toUuid(row.owner_id), userId, 'user must only see own rows')
+  }
+})
+
+// rls_locked has rls_enabled: true and no policies: deny-all except service_role.
+await step('rls_enabled: service_role seeds rls_locked', async () => {
+  const adminClient = createClient(URL, SECRET_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${SECRET_KEY}` } },
+  })
+  const { error } = await adminClient.from('rls_locked').insert({ body: 'locked' })
+  if (error) throw error
+  const { data, error: selErr } = await adminClient.from('rls_locked').select('*')
+  if (selErr) throw selErr
+  assert(data.length >= 1, 'service_role must see seeded row')
+})
+
+await step('rls_enabled: anon and authenticated see nothing and cannot insert', async () => {
+  const anonClient = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+  const userClient = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  for (const [who, client] of [['anon', anonClient], ['authenticated', userClient]]) {
+    const { data, error } = await client.from('rls_locked').select('*')
+    if (error) throw error
+    assertEq(data.length, 0, `${who} must see zero rows`)
+    const ins = await client.from('rls_locked').insert({ body: 'nope' })
+    assert(
+      ins.error && /row-level security/i.test(ins.error.message),
+      `${who} insert must be RLS-rejected: ${JSON.stringify(ins.error)}`
+    )
   }
 })
 

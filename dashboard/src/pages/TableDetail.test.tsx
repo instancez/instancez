@@ -11,6 +11,12 @@ import { renderWithChakra } from "../test/helpers";
 import type { Config, ValidationError, Table } from "../lib/types";
 import type { ConsoleBackend } from "../console/backend";
 
+function assertDefined<T>(value: T | undefined, message: string): asserts value is T {
+  if (value === undefined) {
+    throw new Error(message);
+  }
+}
+
 const baseConfig: Config = {
   version: 1,
   project: { name: "P", description: "" },
@@ -149,7 +155,7 @@ describe("TableDetail", () => {
 
   it("persists a new table only on save", async () => {
     const save = vi.fn().mockResolvedValue(true);
-    renderTableDetailNew({ tableName: "orders", seed: SEED, save });
+    renderTableDetailNew({ tableName: "orders", seed: { ...SEED, rls_enabled: true }, save });
     // The seed fields should be visible in the editor
     expect(screen.getAllByText("id").length).toBeGreaterThan(0);
     // Nothing is persisted before the user explicitly clicks Save
@@ -160,7 +166,29 @@ describe("TableDetail", () => {
     });
     expect(save).toHaveBeenCalledTimes(1);
     const arg = save.mock.calls[0]![0] as Config;
-    expect(arg.tables["orders"]).toBeDefined();
+    const orders = arg.tables["orders"];
+    assertDefined(orders, "orders table missing");
+    expect(orders.rls_enabled).toBe(true);
+  });
+
+  it("keeps rls_enabled when a policy is added before saving", async () => {
+    const save = vi.fn().mockResolvedValue(true);
+    renderTableDetailNew({ tableName: "orders", seed: { ...SEED, rls_enabled: true }, save });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: /rls/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /add rls policy/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    });
+    const call = save.mock.calls[0];
+    assertDefined(call, "save was not called");
+    const saved = (call[0] as Config).tables["orders"];
+    assertDefined(saved, "orders table missing");
+    expect(saved.rls_enabled).toBe(true);
+    expect(saved.rls).toHaveLength(1);
   });
 
   it("discards in-memory table when leaving new mode without saving", () => {

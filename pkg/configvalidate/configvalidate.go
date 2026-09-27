@@ -6,6 +6,7 @@ package configvalidate
 
 import (
 	"github.com/instancez/instancez/internal/config"
+	"github.com/instancez/instancez/internal/domain"
 	"gopkg.in/yaml.v3"
 )
 
@@ -16,6 +17,15 @@ type Problem struct {
 	Suggestion string `json:"suggestion,omitempty"`
 }
 
+// toProblems maps domain.ValidationErrors to Problems; instancez's ValidationError.Line is not currently surfaced.
+func toProblems(errs domain.ValidationErrors) []Problem {
+	var probs []Problem
+	for _, e := range errs {
+		probs = append(probs, Problem{Path: e.Path, Message: e.Message, Suggestion: e.Suggestion})
+	}
+	return probs
+}
+
 // ValidateYAML parses config bytes with missing-env-tolerant interpolation, then
 // runs the canonical instancez validator. Returns nil when the config is valid.
 func ValidateYAML(data []byte) []Problem {
@@ -23,12 +33,16 @@ func ValidateYAML(data []byte) []Problem {
 	if err != nil {
 		return []Problem{{Path: "", Message: err.Error()}}
 	}
-	var probs []Problem
-	for _, ve := range config.Validate(cfg) {
-		// Note: instancez's ValidationError.Line is not currently surfaced in Problem.
-		probs = append(probs, Problem{Path: ve.Path, Message: ve.Message, Suggestion: ve.Suggestion})
+	return toProblems(config.Validate(cfg))
+}
+
+// WarningsYAML returns non-blocking findings, or nil on a parse failure (ValidateYAML reports those).
+func WarningsYAML(data []byte) []Problem {
+	cfg, err := config.ParseBytesLenient(data, "instancez.yaml")
+	if err != nil {
+		return nil
 	}
-	return probs
+	return toProblems(config.Warnings(cfg))
 }
 
 // ScanEnvRefs returns the unique names of all ${VAR} references in data,

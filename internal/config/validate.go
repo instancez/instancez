@@ -2,9 +2,11 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -233,6 +235,37 @@ func Validate(cfg *domain.Config) domain.ValidationErrors {
 		return nil
 	}
 	return errs
+}
+
+// Warnings reports config that is valid but probably not what the author meant; it never blocks a deploy.
+func Warnings(cfg *domain.Config) domain.ValidationErrors {
+	var ws domain.ValidationErrors
+	for _, name := range slices.Sorted(maps.Keys(cfg.Tables)) {
+		t := cfg.Tables[name]
+		path := "tables." + name + ".rls_enabled"
+		switch {
+		case t.RLSEnabled == nil:
+			ws = append(ws, &domain.ValidationError{
+				Path:       path,
+				Message:    fmt.Sprintf("not set, inferred as %t from the rls policies; set rls_enabled explicitly", t.EffectiveRLSEnabled()),
+				Suggestion: "Add rls_enabled: true (deny by default) or rls_enabled: false (public table)",
+			})
+		case !*t.RLSEnabled:
+			ws = append(ws, &domain.ValidationError{
+				Path:       path,
+				Message:    "RLS is disabled: anon and authenticated clients can read and write every row",
+				Suggestion: "Set rls_enabled: true and add policies, unless this table is meant to be public",
+			})
+		}
+	}
+	if cfg.Server.MaxLimit == 100 {
+		ws = append(ws, &domain.ValidationError{
+			Path:       "server.max_limit",
+			Message:    "100 was the old unenforced default and now caps every read at 100 rows",
+			Suggestion: "Remove max_limit to use the 1000 default, or set the cap you want (-1 disables it)",
+		})
+	}
+	return ws
 }
 
 func validateProviders(p *domain.Providers) domain.ValidationErrors {
@@ -506,6 +539,14 @@ func validateTables(tables map[string]domain.Table, auth *domain.Auth) domain.Va
 					})
 				}
 			}
+		}
+
+		if table.RLSEnabled != nil && !*table.RLSEnabled && len(table.RLS) > 0 {
+			errs = append(errs, &domain.ValidationError{
+				Path:       path + ".rls_enabled",
+				Message:    "rls_enabled is false but the table declares rls policies, which would never apply",
+				Suggestion: "Set rls_enabled: true, or remove the rls policies",
+			})
 		}
 
 		// Validate RLS

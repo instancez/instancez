@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -814,3 +815,155 @@ func TestGenerateTable_ByteParity_UntypedIntegerFK(t *testing.T) {
 	}
 }
 
+func TestGenerateTable_EnumAndPatternEscapeQuotes(t *testing.T) {
+	table := domain.Table{Fields: []domain.Field{
+		{Name: "id", Type: "bigserial", PrimaryKey: true},
+		{Name: "owner", Type: "text", Enum: []string{"O'Brien", "", "ünï"}},
+		{Name: "code", Type: "text", Pattern: `^[a-z']+\d$`},
+	}}
+	joined := strings.Join(generateTable("people", table, nil), "\n")
+	mustContain(t, joined, "CHECK (owner IN ('O''Brien', '', 'ünï'))")
+	mustContain(t, joined, `CHECK (code ~ '^[a-z'']+\d$')`)
+}
+
+func TestHarden_LocksThenRevokesInOneTx(t *testing.T) {
+	for _, cfg := range []*domain.Config{nil, {}, {Auth: &domain.Auth{}}} {
+		db := newFakeDB(t)
+		if err := NewMigrator(db).Harden(context.Background(), cfg); err != nil {
+			t.Fatalf("Harden(%+v): %v", cfg, err)
+		}
+		if len(db.execs) == 0 || !strings.Contains(db.execs[0], "pg_advisory_xact_lock") {
+			t.Fatalf("advisory lock must be the first statement: %v", db.execs)
+		}
+		if !db.migrationsTableEnsured {
+			t.Fatal("Harden must ensure _instancez_migrations exists before revoking on it")
+		}
+		joined := strings.Join(db.execs, "\n")
+		mustContain(t, joined, "CREATE TABLE IF NOT EXISTS auth.jwt_keys")
+		mustContain(t, joined, "REVOKE ALL ON ALL TABLES IN SCHEMA auth FROM anon, authenticated;")
+		mustContain(t, joined, "REVOKE ALL ON _instancez_migrations FROM anon, authenticated, service_role;")
+		if db.committedStatements != len(db.execs) {
+			t.Fatalf("committed %d of %d statements", db.committedStatements, len(db.execs))
+		}
+	}
+}
+
+func TestHarden_RevokesFromCustomRoles(t *testing.T) {
+	db := newFakeDB(t)
+	roles := domain.Roles{Anon: "web_anon", Authenticated: "web_user", Service: "web_admin", Seed: "seeder"}
+	if err := NewMigrator(db, roles).Harden(context.Background(), nil); err != nil {
+		t.Fatalf("Harden: %v", err)
+	}
+	joined := strings.Join(db.execs, "\n")
+	mustContain(t, joined, "REVOKE ALL ON auth.jwt_keys FROM web_anon, web_user, web_admin;")
+	mustContain(t, joined, "REVOKE ALL ON _instancez_migrations FROM web_anon, web_user, web_admin, seeder;")
+}
+
+func TestHarden_RollsBackOnFailure(t *testing.T) {
+	db := newFakeDB(t)
+	db.failOnStatementContaining = "REVOKE ALL ON auth.jwt_keys"
+	if err := NewMigrator(db).Harden(context.Background(), nil); err == nil {
+		t.Fatal("expected error")
+	}
+	if db.committedStatements != 0 {
+		t.Fatalf("partial harden committed %d statements", db.committedStatements)
+	}
+}
+
+func TestAuthHealDDL_EmittedOnFreshAndDiff(t *testing.T) {
+	auth := &domain.Auth{Email: &domain.AuthEmail{}}
+	fresh := strings.Join(generateAuthTables(auth), "\n")
+	diff := strings.Join(diffNewAuth(&domain.Config{Auth: auth}, &domain.Config{Auth: auth}), "\n")
+	if len(authHealDDL) == 0 {
+		t.Fatal("authHealDDL is empty")
+	}
+	for _, stmt := range authHealDDL {
+		mustContain(t, fresh, stmt)
+		mustContain(t, diff, stmt)
+	}
+}
+
+func TestAuthHealDDL_ChecksCatalogBeforeTouchingTables(t *testing.T) {
+	joined := strings.Join(authHealDDL, "\n")
+	for _, want := range []string{"refresh_tokens", "revoked_at", "aal", "amr", "idx_refresh_tokens_session",
+		"mfa_factors", "last_totp_step", "mfa_challenges", "idx_mfa_challenges_factor_created", "one_time_tokens", "idx_users_email_lower", "lower(email)"} {
+		mustContain(t, joined, want)
+	}
+	for _, stmt := range authHealDDL {
+		if !strings.HasPrefix(stmt, "DO $$") || !strings.Contains(stmt, "to_regclass('auth.") {
+			t.Errorf("heal stmt must skip missing tables and existing objects: %s", stmt)
+		}
+		if strings.Contains(stmt, "IF NOT EXISTS") {
+			t.Errorf("IF NOT EXISTS takes the table lock before checking; use the catalog guard: %s", stmt)
+		}
+	}
+}
+
+// Index builds must not run while the refresh_tokens heal holds its table lock.
+func TestAuthHealDDL_IndexesBeforeRefreshTokenAlters(t *testing.T) {
+	firstAlter := slices.IndexFunc(authHealDDL, func(s string) bool { return strings.Contains(s, "ALTER TABLE auth.refresh_tokens") })
+	if firstAlter < 0 {
+		t.Fatal("no refresh_tokens ALTER in authHealDDL")
+	}
+	for _, idx := range []string{"idx_users_email_lower", "idx_mfa_challenges_factor_created"} {
+		i := slices.IndexFunc(authHealDDL, func(s string) bool { return strings.Contains(s, idx) })
+		if i < 0 || i > firstAlter {
+			t.Errorf("%s at %d, want before the first refresh_tokens ALTER at %d", idx, i, firstAlter)
+		}
+	}
+}
+
+func TestDiffNewAuth_OneTimeTokensHasAttempts(t *testing.T) {
+	old := &domain.Config{Auth: &domain.Auth{}}
+	nw := &domain.Config{Auth: &domain.Auth{Email: &domain.AuthEmail{}}}
+	joined := strings.Join(diffNewAuth(old, nw), "\n")
+	mustContain(t, joined, "code TEXT,\n  attempts INT NOT NULL DEFAULT 0,")
+}
+
+func TestHarden_HealsAuthColumnsOnlyWhenAuthConfigured(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  *domain.Config
+		heal bool
+	}{{"nil", nil, false}, {"no auth", &domain.Config{}, false}, {"auth", &domain.Config{Auth: &domain.Auth{}}, true}} {
+		db := newFakeDB(t)
+		if err := NewMigrator(db).Harden(context.Background(), tc.cfg); err != nil {
+			t.Fatalf("%s: Harden: %v", tc.name, err)
+		}
+		joined := strings.Join(db.execs, "\n")
+		for _, stmt := range authHealDDL {
+			if got := strings.Contains(joined, stmt); got != tc.heal {
+				t.Errorf("%s: heal stmt present=%v, want %v: %s", tc.name, got, tc.heal, stmt)
+			}
+		}
+		if db.committedStatements != len(db.execs) {
+			t.Fatalf("committed %d of %d statements", db.committedStatements, len(db.execs))
+		}
+	}
+}
+
+func TestGenerateRLSPolicies_EnabledWithZeroPoliciesIsDenyAll(t *testing.T) {
+	on := true
+	ddl := generateRLSPolicies("todos", domain.Table{RLSEnabled: &on})
+	want := []string{
+		"ALTER TABLE todos ENABLE ROW LEVEL SECURITY;",
+		"ALTER TABLE todos FORCE ROW LEVEL SECURITY;",
+	}
+	if !slices.Equal(ddl, want) {
+		t.Fatalf("got %q, want %q", ddl, want)
+	}
+}
+
+func TestGenerateRLSPolicies_ExplicitFalseEmitsNothing(t *testing.T) {
+	off := false
+	if ddl := generateRLSPolicies("todos", domain.Table{RLSEnabled: &off}); len(ddl) != 0 {
+		t.Fatalf("rls_enabled: false must emit no RLS DDL, got %q", ddl)
+	}
+}
+
+func TestGenerateRLSPolicies_EnabledSchemaQualified(t *testing.T) {
+	on := true
+	joined := strings.Join(generateRLSPolicies("notes", domain.Table{Schema: "reporting", RLSEnabled: &on}), "\n")
+	mustContain(t, joined, "ALTER TABLE reporting.notes ENABLE ROW LEVEL SECURITY;")
+	mustContain(t, joined, "ALTER TABLE reporting.notes FORCE ROW LEVEL SECURITY;")
+}

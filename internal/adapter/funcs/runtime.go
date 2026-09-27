@@ -35,9 +35,7 @@ import (
 //   - ErrSaturated    → 503 Service Unavailable (in-flight cap reached)
 //   - ErrWorkerFailed → 502 Bad Gateway (worker process died / no healthy worker)
 var (
-	// ErrTimeout is returned when a function invocation exceeds its configured
-	// per-request timeout. The worker process is left running (it's healthy; the
-	// handler was just slow), and its late response is discarded.
+	// ErrTimeout means an invocation exceeded its timeout and its late response was dropped.
 	ErrTimeout = errors.New("funcs: function invocation timed out")
 	// ErrSaturated is returned when the bounded in-flight gate is full and a new
 	// invocation cannot acquire a slot without blocking.
@@ -45,6 +43,8 @@ var (
 	// ErrWorkerFailed is returned when the worker process died (transport/connect
 	// error) or when no healthy worker is available to serve the request.
 	ErrWorkerFailed = errors.New("funcs: worker failed")
+	// ErrResponseTooLarge is an ErrWorkerFailed for a reply over maxResponseBytes.
+	ErrResponseTooLarge = fmt.Errorf("%w: response exceeds %d bytes", ErrWorkerFailed, maxResponseBytes)
 )
 
 // defaultTimeout is used when a function's Timeout config is empty or fails to
@@ -135,6 +135,9 @@ type worker struct {
 	// error on client.Do flips it to false (via CompareAndSwap, so exactly one
 	// restart is triggered per crash even under concurrent in-flight requests).
 	healthy atomic.Bool
+	// health is uninstrumented so probes don't emit spans.
+	health  *http.Client
+	probing atomic.Bool
 }
 
 type Runtime struct {
@@ -483,7 +486,7 @@ func (r *Runtime) spawnWorker(fnSpec string) (*worker, error) {
 	}
 	client := &http.Client{Transport: rt}
 
-	w := &worker{cmd: cmd, sock: sock, client: client}
+	w := &worker{cmd: cmd, sock: sock, client: client, health: healthClient}
 	w.healthy.Store(true)
 
 	if err := waitHealthy(healthClient, r.opts.HealthTimeout); err != nil {
@@ -495,6 +498,28 @@ func (r *Runtime) spawnWorker(fnSpec string) (*worker, error) {
 		return nil, err
 	}
 	return w, nil
+}
+
+// drainTimeout bounds how long Close waits for in-flight calls; any call ends within maxTimeout.
+var drainTimeout = maxTimeout + 5*time.Second
+
+const (
+	healthProbeTimeout = 3 * time.Second
+	// maxResponseBytes matches the AWS Lambda sync response ceiling.
+	maxResponseBytes = 6 << 20
+)
+
+// responsive reports whether the worker's event loop still answers /healthz.
+func (w *worker) responsive() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), healthProbeTimeout)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", "http://unix/healthz", nil)
+	resp, err := w.health.Do(req)
+	if err != nil {
+		return false
+	}
+	_ = resp.Body.Close()
+	return true
 }
 
 // waitHealthy polls the worker's /healthz over its unix-socket client until it
@@ -646,24 +671,30 @@ func (r *Runtime) Invoke(ctx context.Context, in domain.FunctionRequest) (*domai
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body := new(bytes.Buffer)
-	if _, err := body.ReadFrom(resp.Body); err != nil {
+	if _, err := body.ReadFrom(io.LimitReader(resp.Body, maxResponseBytes+1)); err != nil {
 		// The deadline can fire mid-read; classify the same way as Do.
 		return nil, r.classifyDoErr(ctx, reqCtx, w, err)
+	}
+	if body.Len() > maxResponseBytes {
+		return nil, ErrResponseTooLarge
 	}
 	return &domain.FunctionResponse{Status: resp.StatusCode, Headers: resp.Header, Body: body.Bytes()}, nil
 }
 
-// classifyDoErr maps a client.Do / body-read error to the right typed error and
-// triggers a worker restart on a genuine transport/connection failure.
-//
-// A timeout and a crash look identical at the call site but must be handled
-// oppositely: a timeout means the worker is FINE (just slow) so we must NOT
-// mark it unhealthy or restart it; a transport error means the process died so
-// we mark it unhealthy and restart it.
+// classifyDoErr maps a client.Do error to a typed error and restarts the worker if it died.
 func (r *Runtime) classifyDoErr(callerCtx, reqCtx context.Context, w *worker, err error) error {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
-		// Per-request deadline fired: worker is healthy, response discarded.
+		// A blocked event loop never recovers, so probe off the request path and replace it.
+		if w.probing.CompareAndSwap(false, true) {
+			go func() {
+				defer w.probing.Store(false)
+				if !w.responsive() && !r.isClosed() && w.healthy.CompareAndSwap(true, false) {
+					r.logger.Warn("funcs: worker unresponsive after timeout; replacing", "pid", w.cmd.Process.Pid)
+					r.triggerRestart(w)
+				}
+			}()
+		}
 		return ErrTimeout
 	case callerCtx.Err() != nil:
 		// The caller's context was cancelled (not our timeout): propagate it.
@@ -746,10 +777,7 @@ func (r *Runtime) triggerRestart(dead *worker) {
 			// Bail promptly if we're closing (checked at the top of each
 			// iteration so a pending loop never outlives Close beyond one
 			// in-flight spawn attempt).
-			r.mu.Lock()
-			closed := r.closed
-			r.mu.Unlock()
-			if closed {
+			if r.isClosed() {
 				return
 			}
 
@@ -798,6 +826,26 @@ func (r *Runtime) fnSpec() string {
 	return strings.Join(spec, ",")
 }
 
+// drain holds every in-flight slot, so no call is running once it returns.
+func (r *Runtime) drain() {
+	timer := time.NewTimer(drainTimeout)
+	defer timer.Stop()
+	for i := 0; i < cap(r.sem); i++ {
+		select {
+		case r.sem <- struct{}{}:
+		case <-timer.C:
+			r.logger.Warn("funcs: drain timed out; stopping workers with calls in flight")
+			return
+		}
+	}
+}
+
+func (r *Runtime) isClosed() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.closed
+}
+
 func (r *Runtime) Close() error {
 	// Mark closed under mu so any restart goroutine that observes closed will
 	// not Store a resurrected worker after this point.
@@ -812,6 +860,8 @@ func (r *Runtime) Close() error {
 	// pending restart backoff so restartWG.Wait() below cannot deadlock.
 	close(r.done)
 	r.mu.Unlock()
+
+	r.drain()
 
 	// Wait for any in-flight restart goroutines to finish (they'll either have
 	// installed a worker before we set closed, or will tear down and bail).

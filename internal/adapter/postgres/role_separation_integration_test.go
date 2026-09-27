@@ -4,13 +4,16 @@ package postgres_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/instancez/instancez/internal/app"
 	"github.com/instancez/instancez/internal/domain"
 	"github.com/instancez/instancez/internal/testutil/dbboot"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // TestRequestPool_SetLocalRole verifies that the request-pool Begin issues
@@ -191,4 +194,31 @@ func TestSeedBypassesForceRLS(t *testing.T) {
 		t.Fatalf("anon insert should have been denied by RLS")
 	}
 	tx.Rollback(rctx)
+}
+
+func TestRequestPool_StatementTimeout(t *testing.T) {
+	_, auth := dbboot.StartContainer(t)
+	ctx := domain.ContextWithStatementTimeout(context.Background(), 200*time.Millisecond)
+	rctx, err := auth.WithRLS(ctx, domain.Session{Role: "anon"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := auth.Begin(rctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(rctx) }()
+	row, err := tx.QueryRow(rctx, "SHOW statement_timeout")
+	if err != nil || row["statement_timeout"] != "200ms" {
+		t.Fatalf("statement_timeout = %v (err %v), want 200ms", row["statement_timeout"], err)
+	}
+	start := time.Now()
+	_, err = tx.Exec(rctx, "SELECT pg_sleep(2)")
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "57014" {
+		t.Fatalf("err = %v, want SQLSTATE 57014", err)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatalf("timeout not enforced: took %v", time.Since(start))
+	}
 }

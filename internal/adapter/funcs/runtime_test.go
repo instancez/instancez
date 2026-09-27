@@ -1,6 +1,15 @@
 package funcs
 
 import (
+	"bytes"
+	"context"
+	"errors"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -152,4 +161,87 @@ func containsAll(s string, subs ...string) bool {
 		}
 	}
 	return true
+}
+
+// unixWorker returns a worker whose health client dials sock.
+func unixWorker(sock string) *worker {
+	return &worker{health: &http.Client{Transport: &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", sock)
+		},
+	}}}
+}
+
+func TestWorkerResponsive(t *testing.T) {
+	dir := t.TempDir()
+
+	t.Run("answers", func(t *testing.T) {
+		sock := filepath.Join(dir, "ok.sock")
+		ln, err := net.Listen("unix", sock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {})}
+		go func() { _ = srv.Serve(ln) }()
+		defer func() { _ = srv.Close() }()
+		if !unixWorker(sock).responsive() {
+			t.Fatal("want responsive")
+		}
+	})
+
+	t.Run("accepts but never replies", func(t *testing.T) {
+		sock := filepath.Join(dir, "hang.sock")
+		ln, err := net.Listen("unix", sock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = ln.Close() }()
+		go func() {
+			for {
+				c, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				defer func() { _ = c.Close() }()
+			}
+		}()
+		start := time.Now()
+		if unixWorker(sock).responsive() {
+			t.Fatal("want unresponsive")
+		}
+		if d := time.Since(start); d < healthProbeTimeout || d > healthProbeTimeout+2*time.Second {
+			t.Fatalf("probe took %v, want about %v", d, healthProbeTimeout)
+		}
+	})
+
+	t.Run("no socket", func(t *testing.T) {
+		if unixWorker(filepath.Join(dir, "missing.sock")).responsive() {
+			t.Fatal("want unresponsive")
+		}
+	})
+}
+
+func TestTimeoutProbeSkippedAfterClose(t *testing.T) {
+	var logs bytes.Buffer
+	r := &Runtime{closed: true, done: make(chan struct{}), logger: slog.New(slog.NewTextHandler(&logs, nil))}
+	w := unixWorker(filepath.Join(t.TempDir(), "missing.sock"))
+	w.cmd = &exec.Cmd{Process: &os.Process{Pid: 1}}
+	w.healthy.Store(true)
+	ctx := context.Background()
+	if err := r.classifyDoErr(ctx, ctx, w, context.DeadlineExceeded); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("got %v, want ErrTimeout", err)
+	}
+	deadline := time.Now().Add(healthProbeTimeout + 2*time.Second)
+	for w.probing.Load() {
+		if time.Now().After(deadline) {
+			t.Fatal("probe never finished")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if strings.Contains(logs.String(), "unresponsive") {
+		t.Fatalf("closed runtime logged a replace: %s", logs.String())
+	}
+	if !w.healthy.Load() {
+		t.Fatal("closed runtime marked the worker unhealthy")
+	}
 }

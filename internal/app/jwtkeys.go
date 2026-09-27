@@ -10,8 +10,10 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
+	"math"
 	"math/big"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/instancez/instancez/internal/domain"
@@ -25,6 +27,7 @@ type JWTKey struct {
 	PrivateKey *rsa.PrivateKey
 	PublicKey  *rsa.PublicKey
 	CreatedAt  time.Time // when the signing key was created; zero if unknown
+	RetiredAt  time.Time // zero while active
 }
 
 // SymmetricSecret returns a non-empty key suitable for HMAC operations that
@@ -76,11 +79,116 @@ func kidOf(k *JWTKey) string {
 
 // JWTKeyManager loads and caches JWT signing keys from the database.
 type JWTKeyManager struct {
-	db domain.Database
+	db               domain.Database
+	maxTokenLifetime atomic.Int64 // nanoseconds; <= 0 means defaultMaxTokenLifetime
 
-	mu     sync.RWMutex
-	active *JWTKey
-	byKID  map[string]*JWTKey
+	mu       sync.RWMutex
+	active   *JWTKey
+	byKID    map[string]*JWTKey
+	loadedAt time.Time
+	loading  chan struct{} // non-nil while a reload query runs
+	gen      uint64        // bumped by local key writes so a stale reload can't overwrite them
+}
+
+// Key cache reload intervals; vars so tests can shorten them.
+var (
+	keyReloadInterval     = 30 * time.Second
+	keyMissReloadInterval = time.Second
+)
+
+const defaultMaxTokenLifetime = 15 * time.Minute
+
+// JWTVerifyLeeway is the clock-skew allowance for JWT exp/nbf checks.
+const JWTVerifyLeeway = 30 * time.Second
+
+// SetMaxTokenLifetime sets how long a retired key keeps verifying (plus leeway).
+func (m *JWTKeyManager) SetMaxTokenLifetime(d time.Duration) {
+	m.maxTokenLifetime.Store(int64(d))
+}
+
+func (m *JWTKeyManager) retiredGrace() time.Duration {
+	d := time.Duration(m.maxTokenLifetime.Load())
+	if d <= 0 {
+		d = defaultMaxTokenLifetime
+	}
+	if d > math.MaxInt64-JWTVerifyLeeway {
+		return math.MaxInt64
+	}
+	return d + JWTVerifyLeeway
+}
+
+func (m *JWTKeyManager) expired(k *JWTKey, now time.Time) bool {
+	return !k.RetiredAt.IsZero() && now.Sub(k.RetiredAt) > m.retiredGrace()
+}
+
+func (m *JWTKeyManager) cached(kid string) (*JWTKey, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	k, ok := m.byKID[kid]
+	return k, ok
+}
+
+// refresh reloads keys older than maxAge; wait says whether to block on an in-flight reload.
+func (m *JWTKeyManager) refresh(ctx context.Context, maxAge time.Duration, wait bool) {
+	if m.db == nil {
+		return
+	}
+	m.mu.RLock()
+	idle := m.loading == nil && time.Since(m.loadedAt) < maxAge
+	m.mu.RUnlock()
+	if idle {
+		return
+	}
+
+	m.mu.Lock()
+	if ch := m.loading; ch != nil {
+		m.mu.Unlock()
+		if wait {
+			select {
+			case <-ch:
+			case <-ctx.Done():
+			}
+		}
+		return
+	}
+	if time.Since(m.loadedAt) < maxAge {
+		m.mu.Unlock()
+		return
+	}
+	ch := make(chan struct{})
+	m.loading = ch
+	m.loadedAt = time.Now()
+	gen := m.gen
+	cutoff := m.loadedAt.Add(-m.retiredGrace())
+	m.mu.Unlock()
+
+	rows, err := m.db.Query(ctx,
+		`SELECT kid, secret, algorithm, created_at, retired_at FROM auth.jwt_keys
+		 WHERE retired_at IS NULL OR retired_at >= $1`, cutoff)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.loading = nil
+	close(ch)
+	if err != nil {
+		return
+	}
+	if gen != m.gen {
+		m.loadedAt = time.Time{}
+		return
+	}
+	byKID := make(map[string]*JWTKey, len(rows))
+	for _, row := range rows {
+		if key, err := rowToKey(row); err == nil {
+			byKID[key.KID] = key
+		}
+	}
+	if m.active != nil {
+		if k, ok := byKID[m.active.KID]; !ok || !k.RetiredAt.IsZero() {
+			m.active = nil
+		}
+	}
+	m.byKID = byKID
 }
 
 func NewJWTKeyManager(db domain.Database) *JWTKeyManager {
@@ -118,6 +226,7 @@ func NewInMemoryJWTKeyManager(kid string, privateKey *rsa.PrivateKey) (*JWTKeyMa
 
 // Active returns the current signing key, creating one on first use.
 func (m *JWTKeyManager) Active(ctx context.Context) (*JWTKey, error) {
+	m.refresh(ctx, keyReloadInterval, false)
 	m.mu.RLock()
 	if m.active != nil {
 		key := m.active
@@ -137,7 +246,10 @@ func (m *JWTKeyManager) Active(ctx context.Context) (*JWTKey, error) {
 	row, err := m.db.QueryRow(ctx,
 		`SELECT kid, secret, algorithm, created_at FROM auth.jwt_keys
 		 WHERE retired_at IS NULL ORDER BY created_at DESC LIMIT 1`)
-	if err == nil && row != nil {
+	if err != nil {
+		return nil, fmt.Errorf("jwt key: load active: %w", err)
+	}
+	if row != nil {
 		key, kerr := rowToKey(row)
 		if kerr != nil {
 			return nil, kerr
@@ -165,42 +277,29 @@ func (m *JWTKeyManager) Active(ctx context.Context) (*JWTKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("jwt key: insert: %w", err)
 	}
+	m.gen++
 	m.active = key
 	m.byKID[key.KID] = key
 	return key, nil
 }
 
-// Get fetches a key by its KID. Retired keys are still returned for
-// verification of tokens signed before rotation.
+// Get returns the key for kid. A retired key verifies only until tokens it signed have expired.
 func (m *JWTKeyManager) Get(ctx context.Context, kid string) (*JWTKey, error) {
 	if kid == "" {
 		return nil, fmt.Errorf("jwt key: empty kid")
 	}
-
-	m.mu.RLock()
-	if key, ok := m.byKID[kid]; ok {
-		m.mu.RUnlock()
-		return key, nil
+	m.refresh(ctx, keyReloadInterval, false)
+	key, ok := m.cached(kid)
+	if !ok {
+		m.refresh(ctx, keyMissReloadInterval, true)
+		key, ok = m.cached(kid)
 	}
-	m.mu.RUnlock()
-
-	row, err := m.db.QueryRow(ctx,
-		`SELECT kid, secret, algorithm, created_at FROM auth.jwt_keys WHERE kid = $1`, kid)
-	if err != nil {
-		return nil, fmt.Errorf("jwt key: lookup %s: %w", kid, err)
-	}
-	if row == nil {
+	if !ok {
 		return nil, fmt.Errorf("jwt key: unknown kid %s", kid)
 	}
-
-	key, err := rowToKey(row)
-	if err != nil {
-		return nil, err
+	if m.expired(key, time.Now()) {
+		return nil, fmt.Errorf("jwt key: kid %s is retired", kid)
 	}
-
-	m.mu.Lock()
-	m.byKID[key.KID] = key
-	m.mu.Unlock()
 	return key, nil
 }
 
@@ -236,6 +335,9 @@ func rowToKey(row map[string]any) (*JWTKey, error) {
 	key := &JWTKey{KID: kid, Algorithm: alg}
 	if created, ok := row["created_at"].(time.Time); ok {
 		key.CreatedAt = created.UTC()
+	}
+	if retired, ok := row["retired_at"].(time.Time); ok {
+		key.RetiredAt = retired.UTC()
 	}
 
 	switch alg {
@@ -318,6 +420,12 @@ func (m *JWTKeyManager) RotateActive(ctx context.Context) (*JWTKey, error) {
 
 	// Only update in-memory state after the write commits, so a failed rotation
 	// leaves the manager pointing at the still-valid prior key.
+	m.gen++
+	if m.active != nil {
+		old := *m.active
+		old.RetiredAt = time.Now().UTC()
+		m.byKID[old.KID] = &old
+	}
 	m.active = key
 	m.byKID[key.KID] = key
 	return key, nil

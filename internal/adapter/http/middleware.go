@@ -219,8 +219,9 @@ func verifySignedJWT(ctx context.Context, keys *app.JWTKeyManager, tokenStr stri
 		}
 	},
 		jwt.WithExpirationRequired(),
-		// 30s clock-skew allowance, matching PostgREST/Supabase exp validation.
-		jwt.WithLeeway(30*time.Second))
+		jwt.WithValidMethods([]string{"RS256", "HS256"}),
+		// Clock-skew allowance, matching PostgREST/Supabase exp validation.
+		jwt.WithLeeway(app.JWTVerifyLeeway))
 }
 
 // API key tiers. The publishable key (inz_publishable_…) is the client-safe
@@ -494,7 +495,15 @@ var errTypeToCode = map[string]string{
 	"internal":     "XX000",
 	// Policy errors with no SQLSTATE / PGRST equivalent: the slug doubles
 	// as the stable client-facing `code` so callers can branch on it.
-	"signup_disabled": "signup_disabled",
+	"signup_disabled":            "signup_disabled",
+	"user_banned":                "user_banned",
+	"insufficient_aal":           "insufficient_aal",
+	"over_email_send_rate_limit": "over_email_send_rate_limit",
+	"over_request_rate_limit":    "over_request_rate_limit",
+
+	"provider_email_needs_verification": "provider_email_needs_verification",
+	"email_exists":                      "email_exists",
+	"bad_oauth_state":                   "bad_oauth_state",
 }
 
 // profileHeaderGuard enforces that Accept-Profile (for reads) and
@@ -535,15 +544,26 @@ func profileHeaderGuard(schemas ...string) gin.HandlerFunc {
 	}
 }
 
+const contextKeyGoTrueErrors = "_gotrue_errors"
+
+// goTrueErrors makes pgJSON add GoTrue's error_code, which auth-js reads without an API version header.
+func goTrueErrors(c *gin.Context) {
+	c.Set(contextKeyGoTrueErrors, true)
+	c.Next()
+}
+
 // pgJSON writes a PostgREST-compatible error body: {code, message, details, hint}.
-// All four fields are always present so clients can rely on the shape.
 func pgJSON(c *gin.Context, status int, code, message, details, hint string) {
-	c.JSON(status, gin.H{
+	body := gin.H{
 		"code":    code,
 		"message": message,
 		"details": details,
 		"hint":    hint,
-	})
+	}
+	if c.GetBool(contextKeyGoTrueErrors) {
+		body["error_code"] = code
+	}
+	c.JSON(status, body)
 }
 
 // problemJSON writes a PostgREST-compatible error response. The errType slug
@@ -586,4 +606,14 @@ func computeHMACSignature(secret, timestamp, body string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(timestamp + "." + body))
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+}
+
+// statementTimeout hands the request pool its SET LOCAL statement_timeout via the request context.
+func statementTimeout(cfg *domain.Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if d := dbTimeout(cfg.Server.Timeouts.DBQuery, joinPrefer(c)); d > 0 {
+			c.Request = c.Request.WithContext(domain.ContextWithStatementTimeout(c.Request.Context(), d))
+		}
+		c.Next()
+	}
 }

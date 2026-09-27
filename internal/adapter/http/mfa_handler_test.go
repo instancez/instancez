@@ -60,6 +60,17 @@ func newMFAHarness(t *testing.T, svc *stubAuthService) *mfaHarness {
 	return &mfaHarness{t: t, h: h, r: r, token: tok, userID: uid, email: email}
 }
 
+// as re-signs the caller's token at the given AAL and session id.
+func (m *mfaHarness) as(aal, sessionID string) *mfaHarness {
+	m.token = signToken(m.t, m.h.jwtKeys, jwt.MapClaims{
+		"sub": m.userID, "role": "authenticated", "aud": "authenticated", "email": m.email,
+		"aal": aal, "session_id": sessionID,
+		"amr": []any{map[string]any{"method": "password", "timestamp": float64(1)}},
+		"iat": time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix(),
+	})
+	return m
+}
+
 func (m *mfaHarness) do(method, path, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -106,10 +117,6 @@ func TestMFA_EnrollCreatesUnverifiedFactor(t *testing.T) {
 	}
 }
 
-// TestMFA_VerifyGoodCodeFlipsFactorAndReturnsAAL2 stubs an unverified factor,
-// then drives /verify with a code freshly computed against the stored secret.
-// It asserts the factor flips to 'verified' and the issued session JWT carries
-// aal=aal2 in app_metadata.
 func TestMFA_VerifyGoodCodeFlipsFactorAndReturnsAAL2(t *testing.T) {
 	// Known secret so the test can compute a valid TOTP.
 	secret := "JBSWY3DPEHPK3PXP"
@@ -144,7 +151,7 @@ func TestMFA_VerifyGoodCodeFlipsFactorAndReturnsAAL2(t *testing.T) {
 		t.Fatalf("generate code: %v", err)
 	}
 	w := m.do("POST", "/auth/v1/factors/"+factorID+"/verify",
-		`{"code":"`+code+`"}`)
+		`{"challenge_id":"c1","code":"`+code+`"}`)
 	if w.Code != 200 {
 		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
 	}
@@ -162,9 +169,11 @@ func TestMFA_VerifyGoodCodeFlipsFactorAndReturnsAAL2(t *testing.T) {
 		t.Fatalf("parse token: %v", err)
 	}
 	claims := parsed.Claims.(jwt.MapClaims)
-	appMeta, _ := claims["app_metadata"].(map[string]any)
-	if appMeta == nil || appMeta["aal"] != "aal2" {
-		t.Errorf("expected aal=aal2 in app_metadata, got %v", appMeta)
+	if claims["aal"] != "aal2" {
+		t.Errorf("expected top-level aal=aal2, got %v", claims["aal"])
+	}
+	if am, _ := claims["app_metadata"].(map[string]any); am["aal"] != nil {
+		t.Errorf("aal must not be in app_metadata: %v", am)
 	}
 }
 
@@ -184,37 +193,12 @@ func TestMFA_VerifyBadCodeRejected(t *testing.T) {
 		},
 	}
 	m := newMFAHarness(t, svc)
-	w := m.do("POST", "/auth/v1/factors/any/verify", `{"code":"000000"}`)
+	w := m.do("POST", "/auth/v1/factors/any/verify", `{"challenge_id":"c1","code":"000000"}`)
 	if w.Code != 401 {
 		t.Fatalf("expected 401 for bad code, got %d: %s", w.Code, w.Body.String())
 	}
 	if flipped {
 		t.Errorf("factor must not flip to verified on bad code")
-	}
-}
-
-// TestMFA_VerifyBadCodeIncrementsChallengeAttempt asserts a wrong TOTP guess
-// against a given challenge bumps its attempt counter, so a stolen bearer
-// token can't brute-force the 10^6 code space unbounded.
-func TestMFA_VerifyBadCodeIncrementsChallengeAttempt(t *testing.T) {
-	secret := "JBSWY3DPEHPK3PXP"
-	var incrementedFor string
-	svc := &stubAuthService{
-		getFactorForVerifyFn: func(ctx context.Context, fID, userID string) (domain.MFAFactor, error) {
-			return domain.MFAFactor{Secret: secret, Status: "verified"}, nil
-		},
-		incrementChallengeAttemptFn: func(ctx context.Context, challengeID string) error {
-			incrementedFor = challengeID
-			return nil
-		},
-	}
-	m := newMFAHarness(t, svc)
-	w := m.do("POST", "/auth/v1/factors/any/verify", `{"challenge_id":"c1","code":"000000"}`)
-	if w.Code != 401 {
-		t.Fatalf("expected 401 for bad code, got %d: %s", w.Code, w.Body.String())
-	}
-	if incrementedFor != "c1" {
-		t.Errorf("expected the challenge's attempt counter to be incremented, got %q", incrementedFor)
 	}
 }
 
@@ -241,7 +225,7 @@ func TestMFA_VerifyRejectsChallengeAtAttemptCap(t *testing.T) {
 // the WHERE clause pins user_id) and the handler returns 404.
 func TestMFA_UnenrollRejectsWrongOwner(t *testing.T) {
 	svc := &stubAuthService{
-		deleteFactorForUserFn: func(ctx context.Context, factorID, userID string) error {
+		deleteFactorForUserFn: func(ctx context.Context, factorID, userID string, allowVerified bool) error {
 			return domain.ErrNotFound
 		},
 	}

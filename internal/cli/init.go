@@ -203,6 +203,7 @@ auth:
 
 tables:
   todos:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial

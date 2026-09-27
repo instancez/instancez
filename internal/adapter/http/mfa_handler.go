@@ -1,10 +1,15 @@
 package http
 
 import (
+	"context"
 	"errors"
+	"maps"
+	"slices"
+	"sort"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 
 	"github.com/instancez/instancez/internal/domain"
@@ -44,6 +49,16 @@ func (h *AuthHandler) handleEnrollFactor(c *gin.Context) {
 		problemJSON(c, 400, "bad_request", "Unsupported factor_type: "+req.FactorType)
 		return
 	}
+	ctx := c.Request.Context()
+	statuses, err := h.factorStatuses(ctx, session.UserID)
+	if err != nil {
+		problemJSON(c, 500, "internal", "Failed to enroll factor")
+		return
+	}
+	if sessionAAL(session) != "aal2" && hasVerified(statuses) {
+		problemJSON(c, 403, "insufficient_aal", "AAL2 required to enroll a new factor")
+		return
+	}
 
 	issuer := req.Issuer
 	if issuer == "" {
@@ -64,7 +79,6 @@ func (h *AuthHandler) handleEnrollFactor(c *gin.Context) {
 		return
 	}
 
-	ctx := c.Request.Context()
 	factorID, err := h.authSvc.EnrollFactor(ctx, session.UserID, req.FriendlyName, key.Secret())
 	if err != nil {
 		h.logger.Error("mfa enroll insert failed", "error", err)
@@ -96,11 +110,14 @@ func (h *AuthHandler) handleChallengeFactor(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	challengeID, createdAt, err := h.authSvc.CreateChallenge(ctx, factorID, session.UserID)
-	if errors.Is(err, domain.ErrNotFound) {
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
 		problemJSON(c, 404, "not_found", "Factor not found")
 		return
-	}
-	if err != nil {
+	case errors.Is(err, domain.ErrChallengeRateLimited):
+		problemJSON(c, 429, "over_request_rate_limit", "Too many challenges created for this factor")
+		return
+	case err != nil:
 		problemJSON(c, 500, "internal", "Failed to create challenge")
 		return
 	}
@@ -111,14 +128,12 @@ func (h *AuthHandler) handleChallengeFactor(c *gin.Context) {
 	})
 }
 
-// handleVerifyFactor checks the TOTP code against the stored secret. On
-// success: the factor flips to 'verified' (if first-time enrollment) and
-// a fresh session is issued with aal=aal2 in app_metadata.
+// handleVerifyFactor checks a TOTP code and reissues the session at aal2.
 func (h *AuthHandler) handleVerifyFactor(c *gin.Context) {
 	session := getSession(c)
 	factorID := c.Param("factor_id")
 	var req struct {
-		ChallengeID string `json:"challenge_id"`
+		ChallengeID string `json:"challenge_id" binding:"required"`
 		Code        string `json:"code" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -132,44 +147,58 @@ func (h *AuthHandler) handleVerifyFactor(c *gin.Context) {
 		problemJSON(c, 404, "not_found", "Factor not found")
 		return
 	}
-
-	// Challenge must exist, belong to this factor, be unverified, and be
-	// under its attempt cap.
-	if req.ChallengeID != "" {
-		err := h.authSvc.ValidateChallenge(ctx, req.ChallengeID, factorID)
-		switch {
-		case errors.Is(err, domain.ErrChallengeUsed):
-			problemJSON(c, 400, "bad_request", "Challenge already verified")
+	// A factor planted before the enroll gate existed must not self-elevate past a verified one.
+	if factor.Status == "unverified" && sessionAAL(session) != "aal2" {
+		statuses, err := h.factorStatuses(ctx, session.UserID)
+		if err != nil {
+			problemJSON(c, 500, "internal", "Failed to verify factor")
 			return
-		case errors.Is(err, domain.ErrChallengeExpired):
-			problemJSON(c, 401, "expired", "Challenge expired")
-			return
-		case errors.Is(err, domain.ErrChallengeTooManyAttempts):
-			problemJSON(c, 429, "too_many_attempts", "Too many verification attempts")
-			return
-		case err != nil:
-			problemJSON(c, 404, "not_found", "Challenge not found")
+		}
+		if hasVerified(statuses) {
+			problemJSON(c, 403, "insufficient_aal", "AAL2 required to verify a new factor")
 			return
 		}
 	}
 
-	if !totp.Validate(req.Code, factor.Secret) {
-		if req.ChallengeID != "" {
-			if err := h.authSvc.IncrementChallengeAttempt(ctx, req.ChallengeID); err != nil {
-				h.logger.Error("mfa attempt increment failed", "error", err)
-			}
-		}
-		problemJSON(c, 401, "invalid_code", "Invalid TOTP code")
+	switch err := h.authSvc.ValidateChallenge(ctx, req.ChallengeID, factorID); {
+	case errors.Is(err, domain.ErrChallengeUsed):
+		problemJSON(c, 400, "bad_request", "Challenge already verified")
+		return
+	case errors.Is(err, domain.ErrChallengeExpired):
+		problemJSON(c, 401, "expired", "Challenge expired")
+		return
+	case errors.Is(err, domain.ErrChallengeTooManyAttempts):
+		problemJSON(c, 429, "too_many_attempts", "Too many verification attempts")
+		return
+	case err != nil:
+		problemJSON(c, 404, "not_found", "Challenge not found")
 		return
 	}
 
-	if req.ChallengeID != "" {
-		if err := h.authSvc.MarkChallengeVerified(ctx, req.ChallengeID); err != nil {
-			problemJSON(c, 500, "internal", "Failed to mark challenge verified")
+	step, ok := matchTOTPStep(req.Code, factor.Secret, time.Now())
+	if !ok {
+		problemJSON(c, 401, "invalid_code", "Invalid TOTP code")
+		return
+	}
+	fresh, err := h.authSvc.ConsumeTOTPStep(ctx, factorID, step)
+	if err != nil {
+		problemJSON(c, 500, "internal", "Failed to verify factor")
+		return
+	}
+	if !fresh {
+		problemJSON(c, 401, "invalid_code", "Invalid TOTP code")
+		return
+	}
+	if err := h.authSvc.MarkChallengeVerified(ctx, req.ChallengeID); err != nil {
+		if errors.Is(err, domain.ErrChallengeUsed) {
+			problemJSON(c, 400, "bad_request", "Challenge already verified")
 			return
 		}
+		problemJSON(c, 500, "internal", "Failed to mark challenge verified")
+		return
 	}
-	if factor.Status == "unverified" {
+	firstVerify := factor.Status == "unverified"
+	if firstVerify {
 		if err := h.authSvc.PromoteFactorToVerified(ctx, factorID); err != nil {
 			problemJSON(c, 500, "internal", "Failed to verify factor")
 			return
@@ -181,22 +210,76 @@ func (h *AuthHandler) handleVerifyFactor(c *gin.Context) {
 		problemJSON(c, 500, "internal", "User not found")
 		return
 	}
-	// Flag aal=aal2 in raw_app_meta_data so buildSession's JWT claim
-	// reflects the elevated assurance level. This does NOT persist the
-	// change — AAL is per-session.
-	appMeta := decodeJSONB(userRow["raw_app_meta_data"])
-	if appMeta == nil {
-		appMeta = map[string]any{}
+	claims := jwtClaims(session.JWT)
+	sid, _ := claims["session_id"].(string)
+	meta := domain.SessionMeta{
+		SessionID: sid,
+		AAL:       "aal2",
+		AMR:       addAMR(domain.ParseAMR(claims["amr"]), domain.AMREntry{Method: "totp", Timestamp: time.Now().Unix()}),
 	}
-	appMeta["aal"] = "aal2"
-	userRow["raw_app_meta_data"] = appMeta
-
-	sess, err := h.buildSession(ctx, session.UserID, userRow)
+	sess, err := h.issueSession(ctxWithRequestMeta(ctx, c), session.UserID, userRow, meta)
 	if err != nil {
-		problemJSON(c, 500, "internal", "Failed to generate token")
+		sessionError(c, err)
 		return
 	}
+	// Drop aal1 sessions like GoTrue; detached so a disconnect can't skip it.
+	if err := h.authSvc.RevokeBelowAAL2(context.WithoutCancel(ctx), session.UserID, sid, firstVerify); err != nil {
+		h.logger.Error("revoke aal1 sessions after mfa verify failed", "error", err)
+	}
 	c.JSON(200, sess)
+}
+
+// matchTOTPStep returns the 30s step code matches within ±1 step of now.
+func matchTOTPStep(code, secret string, now time.Time) (int64, bool) {
+	if len(code) != 6 || secret == "" {
+		return 0, false
+	}
+	for _, off := range []time.Duration{0, -30 * time.Second, 30 * time.Second} {
+		at := now.Add(off)
+		want, err := totp.GenerateCodeCustom(secret, at, totp.ValidateOpts{Period: 30, Digits: otp.DigitsSix, Algorithm: otp.AlgorithmSHA1})
+		if err == nil && constantTimeEqual(want, code) {
+			return at.Unix() / 30, true
+		}
+	}
+	return 0, false
+}
+
+func sessionAAL(s domain.Session) string {
+	if aal, _ := jwtClaims(s.JWT)["aal"].(string); aal != "" {
+		return aal
+	}
+	return "aal1"
+}
+
+func (h *AuthHandler) factorStatuses(ctx context.Context, userID string) (map[string]string, error) {
+	rows, err := h.authSvc.ListFactors(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(rows))
+	for _, r := range rows {
+		out[asString(r["id"])] = asString(r["status"])
+	}
+	return out, nil
+}
+
+func hasVerified(statuses map[string]string) bool {
+	return slices.Contains(slices.Collect(maps.Values(statuses)), "verified")
+}
+
+// addAMR records e and keeps one entry per method, newest first.
+func addAMR(amr []domain.AMREntry, e domain.AMREntry) []domain.AMREntry {
+	all := append([]domain.AMREntry{e}, amr...)
+	sort.SliceStable(all, func(i, j int) bool { return all[i].Timestamp > all[j].Timestamp })
+	seen := map[string]bool{}
+	out := all[:0]
+	for _, a := range all {
+		if !seen[a.Method] {
+			seen[a.Method] = true
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // handleUnenrollFactor deletes a factor row. Challenges cascade via the
@@ -207,7 +290,16 @@ func (h *AuthHandler) handleUnenrollFactor(c *gin.Context) {
 	factorID := c.Param("factor_id")
 	ctx := c.Request.Context()
 
-	err := h.authSvc.DeleteFactorForUser(ctx, factorID, session.UserID)
+	statuses, err := h.factorStatuses(ctx, session.UserID)
+	if err != nil {
+		problemJSON(c, 500, "internal", "Failed to unenroll factor")
+		return
+	}
+	if statuses[factorID] == "verified" && sessionAAL(session) != "aal2" {
+		problemJSON(c, 422, "insufficient_aal", "AAL2 required to unenroll verified factor")
+		return
+	}
+	err = h.authSvc.DeleteFactorForUser(ctx, factorID, session.UserID, sessionAAL(session) == "aal2")
 	if errors.Is(err, domain.ErrNotFound) {
 		problemJSON(c, 404, "not_found", "Factor not found")
 		return

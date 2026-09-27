@@ -3,13 +3,18 @@
 package funcs_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -364,4 +369,275 @@ export default async (req) => {
 	}
 
 	wg.Wait()
+}
+
+const pidFn = `export default async () => ({ status: 200, body: { pid: process.pid } });`
+
+// workerPID asks the pool's worker for its process id.
+func workerPID(t *testing.T, rt *funcs.Runtime) int {
+	t.Helper()
+	resp, err := rt.Invoke(context.Background(), domain.FunctionRequest{Name: "pid", Method: "POST", Body: []byte("{}")})
+	if err != nil || resp.Status != 200 {
+		t.Fatalf("pid: resp=%v err=%v", resp, err)
+	}
+	var out struct{ PID int }
+	if err := json.Unmarshal(resp.Body, &out); err != nil || out.PID == 0 {
+		t.Fatalf("pid: bad body %q: %v", resp.Body, err)
+	}
+	return out.PID
+}
+
+// waitPID polls until the pool answers the pid function again, e.g. after a restart.
+func waitPID(t *testing.T, rt *funcs.Runtime) int {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		resp, err := rt.Invoke(context.Background(), domain.FunctionRequest{Name: "pid", Method: "POST", Body: []byte("{}")})
+		if err == nil && resp.Status == 200 {
+			var out struct{ PID int }
+			if json.Unmarshal(resp.Body, &out) == nil && out.PID != 0 {
+				return out.PID
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pool never recovered; last err %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// childProcs returns the state letter of each direct child process, keyed by pid.
+func childProcs(t *testing.T) map[int]string {
+	t.Helper()
+	stats, _ := filepath.Glob("/proc/[0-9]*/stat")
+	me := os.Getpid()
+	out := map[int]string{}
+	for _, p := range stats {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		// Fields after the ")" that closes comm: state, ppid, ...
+		f := strings.Fields(string(b[bytes.LastIndexByte(b, ')')+1:]))
+		if len(f) < 2 {
+			continue
+		}
+		ppid, _ := strconv.Atoi(f[1])
+		if ppid != me {
+			continue
+		}
+		pid, _ := strconv.Atoi(strings.Fields(string(b))[0])
+		out[pid] = f[0]
+	}
+	return out
+}
+
+// A CPU-bound handler blocks Node's event loop; the pool must replace that worker, not keep routing to it.
+func TestPoolReplacesWedgedWorker(t *testing.T) {
+	dir := t.TempDir()
+	writeFn(t, dir, "spin.js", `export default async () => { while (true) {} };`)
+	writeFn(t, dir, "pid.js", pidFn)
+	rt, err := funcs.New(funcs.Options{
+		Dir:      dir,
+		PoolSize: 1,
+		Functions: map[string]domain.CodeFunction{
+			"spin": {Runtime: "node", File: "spin.js", Timeout: "200ms"},
+			"pid":  {Runtime: "node", File: "pid.js", Timeout: "1s"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rt.Close() }()
+
+	before := workerPID(t, rt)
+	if _, err := rt.Invoke(context.Background(), domain.FunctionRequest{Name: "spin", Method: "POST"}); !errors.Is(err, funcs.ErrTimeout) {
+		t.Fatalf("spin: got %v, want ErrTimeout", err)
+	}
+	after := waitPID(t, rt)
+	if after == before {
+		t.Fatalf("worker %d was not replaced", before)
+	}
+
+	// The killed worker must be reaped: no zombie children, only the live worker.
+	if _, err := os.Stat("/proc/self/stat"); err != nil {
+		t.Skip("no /proc")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		kids := childProcs(t)
+		zombie := false
+		for _, st := range kids {
+			zombie = zombie || st == "Z"
+		}
+		_, liveOK := kids[after]
+		if !zombie && liveOK && len(kids) == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("children after replace: %v (want only %d, no zombies)", kids, after)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// A slow handler that awaits leaves the event loop free, so its worker must survive the timeout.
+func TestPoolKeepsSlowButHealthyWorker(t *testing.T) {
+	dir := t.TempDir()
+	writeFn(t, dir, "lag.js", `export default async () => { await new Promise(r => setTimeout(r, 3000)); return { status: 200 }; };`)
+	writeFn(t, dir, "pid.js", pidFn)
+	rt, err := funcs.New(funcs.Options{
+		Dir:      dir,
+		PoolSize: 1,
+		Functions: map[string]domain.CodeFunction{
+			"lag": {Runtime: "node", File: "lag.js", Timeout: "150ms"},
+			"pid": {Runtime: "node", File: "pid.js", Timeout: "1s"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rt.Close() }()
+
+	before := workerPID(t, rt)
+	if _, err := rt.Invoke(context.Background(), domain.FunctionRequest{Name: "lag", Method: "POST"}); !errors.Is(err, funcs.ErrTimeout) {
+		t.Fatalf("lag: got %v, want ErrTimeout", err)
+	}
+	// Outlast the probe deadline so a wrong kill would have landed.
+	time.Sleep(1500 * time.Millisecond)
+	if after := workerPID(t, rt); after != before {
+		t.Fatalf("healthy slow worker was replaced: pid %d -> %d", before, after)
+	}
+}
+
+// Many requests timing out on one wedged worker must replace it exactly once.
+func TestPoolConcurrentTimeoutsRestartOnce(t *testing.T) {
+	var mu sync.Mutex
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&lockedWriter{&mu, &buf}, nil))
+
+	dir := t.TempDir()
+	writeFn(t, dir, "spin.js", `export default async () => { while (true) {} };`)
+	writeFn(t, dir, "pid.js", pidFn)
+	rt, err := funcs.New(funcs.Options{
+		Dir:      dir,
+		PoolSize: 1,
+		Logger:   logger,
+		Functions: map[string]domain.CodeFunction{
+			"spin": {Runtime: "node", File: "spin.js", Timeout: "300ms"},
+			"pid":  {Runtime: "node", File: "pid.js", Timeout: "1s"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rt.Close() }()
+
+	before := workerPID(t, rt)
+	var wg sync.WaitGroup
+	for range 5 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := rt.Invoke(context.Background(), domain.FunctionRequest{Name: "spin", Method: "POST"})
+			if !errors.Is(err, funcs.ErrTimeout) {
+				t.Errorf("spin: got %v, want ErrTimeout", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if after := waitPID(t, rt); after == before {
+		t.Fatalf("worker %d was not replaced", before)
+	}
+	// Let any stray second probe finish before counting.
+	time.Sleep(1500 * time.Millisecond)
+	mu.Lock()
+	n := strings.Count(buf.String(), "worker unresponsive")
+	mu.Unlock()
+	if n != 1 {
+		t.Fatalf("got %d replacements, want 1; log:\n%s", n, buf.String())
+	}
+}
+
+func TestPoolRejectsOversizeResponse(t *testing.T) {
+	const limit = 6 << 20
+	dir := t.TempDir()
+	// String bodies are written as-is, so these hit the cap byte-exact.
+	writeFn(t, dir, "at.js", fmt.Sprintf(`export default async () => ({ status: 200, body: "x".repeat(%d) });`, limit))
+	writeFn(t, dir, "over.js", fmt.Sprintf(`export default async () => ({ status: 200, body: "x".repeat(%d) });`, limit+1))
+	writeFn(t, dir, "huge.js", `export default async () => ({ status: 200, body: { s: "x".repeat(64 * 1024 * 1024) } });`)
+	writeFn(t, dir, "pid.js", pidFn)
+	rt, err := funcs.New(funcs.Options{
+		Dir:      dir,
+		PoolSize: 1,
+		Functions: map[string]domain.CodeFunction{
+			"at":   {Runtime: "node", File: "at.js"},
+			"over": {Runtime: "node", File: "over.js"},
+			"huge": {Runtime: "node", File: "huge.js"},
+			"pid":  {Runtime: "node", File: "pid.js"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rt.Close() }()
+
+	before := workerPID(t, rt)
+	resp, err := rt.Invoke(context.Background(), domain.FunctionRequest{Name: "at", Method: "POST"})
+	if err != nil || resp.Status != 200 || len(resp.Body) != limit {
+		t.Fatalf("at cap: err=%v len=%d", err, func() int {
+			if resp == nil {
+				return -1
+			}
+			return len(resp.Body)
+		}())
+	}
+	for _, name := range []string{"over", "huge"} {
+		_, err = rt.Invoke(context.Background(), domain.FunctionRequest{Name: name, Method: "POST"})
+		if !errors.Is(err, funcs.ErrResponseTooLarge) || !errors.Is(err, funcs.ErrWorkerFailed) {
+			t.Fatalf("%s: got %v, want ErrResponseTooLarge", name, err)
+		}
+	}
+	// An oversize reply is not a crash: the same worker keeps serving.
+	if after := workerPID(t, rt); after != before {
+		t.Fatalf("worker replaced after oversize reply: pid %d -> %d", before, after)
+	}
+}
+
+// A reload swaps runtimes and closes the old one; calls already running on it must still complete.
+func TestCloseLetsInFlightInvokeFinish(t *testing.T) {
+	dir := t.TempDir()
+	writeFn(t, dir, "slow.js",
+		`export default async () => { await new Promise(r => setTimeout(r, 500)); return { status: 200, body: { ok: true } }; };`)
+	opts := funcs.Options{Dir: dir, PoolSize: 1, Functions: map[string]domain.CodeFunction{"slow": {Runtime: "node", File: "slow.js"}}}
+	old, err := funcs.New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	swap := funcs.NewSwapRuntime(old)
+	defer func() { _ = swap.Close() }()
+	type result struct {
+		resp *domain.FunctionResponse
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		resp, err := swap.Invoke(context.Background(), domain.FunctionRequest{Name: "slow", Method: "POST"})
+		done <- result{resp, err}
+	}()
+	time.Sleep(100 * time.Millisecond)
+	next, err := funcs.New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := swap.Swap(next).Close(); err != nil {
+		t.Fatal(err)
+	}
+	res := <-done
+	if res.err != nil || res.resp.Status != 200 {
+		t.Fatalf("in-flight call killed by Close: resp=%v err=%v", res.resp, res.err)
+	}
+	if resp, err := swap.Invoke(context.Background(), domain.FunctionRequest{Name: "slow", Method: "POST"}); err != nil || resp.Status != 200 {
+		t.Fatalf("call after swap: resp=%v err=%v", resp, err)
+	}
 }

@@ -60,6 +60,8 @@ Start the production server.
 
 Unlike `dev`, does not hot-reload and defaults to dashboard disabled.
 
+Even without `--migrate`, every boot creates the migration-history table if missing, as its own locked step, then — in a second locked transaction — creates `auth.jwt_keys` if missing, re-applies the privilege revokes on `auth.*` and `_instancez_migrations`, and adds any auth columns or indexes that newer releases introduced. Boot fails if either step fails. With `--watch`, this also re-runs after every hot-reloaded migration; a failure there is logged, not fatal.
+
 ```
 inz serve [flags]
 ```

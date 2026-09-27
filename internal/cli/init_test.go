@@ -69,6 +69,12 @@ func TestRunInitScaffoldStartsCleanly(t *testing.T) {
 		t.Fatalf("todos.user_id FK references %q, want auth.users.id "+
 			"(2-part users.id resolves to a nonexistent public.users table)", fk)
 	}
+	if p := todos.RLSEnabled; p == nil || !*p {
+		t.Fatalf("scaffold todos must set rls_enabled: true explicitly, got %v", p)
+	}
+	if ws := config.Warnings(cfg); len(ws) != 0 {
+		t.Fatalf("scaffold must be warning-free, got %v", ws)
+	}
 }
 
 // TestRunInitScaffoldsFunctions verifies init drops a working starter code

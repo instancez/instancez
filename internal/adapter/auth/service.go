@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/instancez/instancez/internal/domain"
 )
 
@@ -24,13 +26,51 @@ type Service struct {
 
 // NewService creates an AuthService backed by db.
 func NewService(db domain.Database, cfg *domain.Config, logger *slog.Logger) *Service {
-	return &Service{db: db, cfg: cfg, logger: logger}
+	return &Service{db: serviceRoleDB{db}, cfg: cfg, logger: logger}
 }
 
-// userSelectCols is the canonical auth.users projection consumed by the HTTP
-// handler's buildUser/buildSession. mfa_handler.go keeps its own copy of this
-// column list; any change here must be mirrored there.
-const userSelectCols = `id::text, email, email_verified, email_confirmed_at, last_sign_in_at, banned_until, raw_app_meta_data, raw_user_meta_data, created_at, updated_at`
+// serviceRoleDB runs every auth query as service_role; anon/authenticated have no grants on auth.*.
+type serviceRoleDB struct{ domain.Database }
+
+// pin fails closed: a WithRLS error must never let a query run unpinned.
+func (d serviceRoleDB) pin(ctx context.Context) (context.Context, error) {
+	return d.WithRLS(ctx, domain.Session{Role: domain.JWTRoleService, IsAuthenticated: true})
+}
+
+func (d serviceRoleDB) Query(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
+	c, err := d.pin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return d.Database.Query(c, q, args...)
+}
+
+func (d serviceRoleDB) QueryRow(ctx context.Context, q string, args ...any) (map[string]any, error) {
+	c, err := d.pin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return d.Database.QueryRow(c, q, args...)
+}
+
+func (d serviceRoleDB) Exec(ctx context.Context, q string, args ...any) (int64, error) {
+	c, err := d.pin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return d.Database.Exec(c, q, args...)
+}
+
+func (d serviceRoleDB) Begin(ctx context.Context) (domain.Tx, error) {
+	c, err := d.pin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return d.Database.Begin(c)
+}
+
+// userSelectCols is the auth.users projection behind the handler's buildUser/buildSession.
+const userSelectCols = `id::text, email, email_verified, email_confirmed_at, last_sign_in_at, banned_until, raw_app_meta_data, raw_user_meta_data, created_at, updated_at, COALESCE(banned_until > NOW(), false) AS is_banned`
 
 // maxOTPAttempts bounds brute-force of the 10^6 numeric-code space.
 const maxOTPAttempts = 5
@@ -254,7 +294,7 @@ func (s *Service) ListUsers(ctx context.Context, page, perPage int) ([]map[strin
 
 func (s *Service) VerifyPassword(ctx context.Context, email, password string) (map[string]any, error) {
 	row, err := s.db.QueryRow(ctx,
-		`SELECT id::text, email, password_hash, email_verified, email_confirmed_at, last_sign_in_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at
+		`SELECT id::text, email, password_hash, email_verified, email_confirmed_at, last_sign_in_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at, COALESCE(banned_until > NOW(), false) AS is_banned
 		 FROM auth.users WHERE email = $1`, email)
 	if err != nil || row == nil {
 		return nil, domain.ErrUnauthorized
@@ -302,42 +342,116 @@ func (s *Service) RecordSignIn(ctx context.Context, userID string) {
 
 // ---------- sessions / refresh tokens ----------
 
-func (s *Service) InsertRefreshToken(ctx context.Context, userID, token string, meta domain.SessionMeta, expiresAt int64) error {
-	_, err := s.db.Exec(ctx,
-		"INSERT INTO auth.refresh_tokens (user_id, token, session_id, ip, user_agent, expires_at) VALUES ($1::uuid, $2, $3, $4, $5, $6)",
-		userID, token, meta.SessionID, meta.IP, meta.UserAgent, time.Unix(expiresAt, 0))
+// refreshReuseInterval lets concurrent refreshes (e.g. two tabs) share one rotation.
+const refreshReuseInterval = 10 * time.Second
+
+// execer lets the same insert run standalone or inside a caller's tx.
+type execer interface {
+	Exec(ctx context.Context, query string, args ...any) (int64, error)
+}
+
+func insertRefreshToken(ctx context.Context, ex execer, userID, token string, meta domain.SessionMeta, expiresAt int64) error {
+	meta = meta.Normalize()
+	amrJSON, err := json.Marshal(meta.AMR)
+	if err != nil {
+		return err
+	}
+	_, err = ex.Exec(ctx,
+		"INSERT INTO auth.refresh_tokens (user_id, token, session_id, ip, user_agent, expires_at, aal, amr) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8::jsonb)",
+		userID, token, meta.SessionID, meta.IP, meta.UserAgent, time.Unix(expiresAt, 0), meta.AAL, string(amrJSON))
 	return err
 }
 
-func (s *Service) ConsumeRefreshToken(ctx context.Context, token string) (map[string]any, error) {
-	row, err := s.db.QueryRow(ctx,
-		"SELECT user_id::text, expires_at FROM auth.refresh_tokens WHERE token = $1", token)
-	if err != nil || row == nil {
-		return nil, domain.ErrUnauthorized
+func (s *Service) InsertRefreshToken(ctx context.Context, userID, token string, meta domain.SessionMeta, expiresAt int64) error {
+	return insertRefreshToken(ctx, s.db, userID, token, meta, expiresAt)
+}
+
+func (s *Service) ConsumeRefreshToken(ctx context.Context, token string, next domain.RefreshRotation) (map[string]any, domain.SessionMeta, string, error) {
+	fail := func(err error) (map[string]any, domain.SessionMeta, string, error) {
+		return nil, domain.SessionMeta{}, "", err
+	}
+	if token == "" {
+		return fail(domain.ErrUnauthorized)
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fail(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	row, err := tx.QueryRow(ctx,
+		`UPDATE auth.refresh_tokens SET revoked_at = NOW() WHERE token = $1 AND revoked_at IS NULL
+		 RETURNING user_id::text, session_id, aal, amr, expires_at <= NOW() AS expired`, token)
+	if err != nil {
+		return fail(domain.ErrUnauthorized)
+	}
+	var meta domain.SessionMeta
+	var refreshToken string
+	if row != nil {
+		if expired, _ := row["expired"].(bool); expired {
+			return fail(domain.ErrRefreshExpired)
+		}
+		meta = sessionMetaFromRow(row)
+		if meta.SessionID == "" {
+			meta.SessionID = uuid.NewString()
+		}
+		insertMeta := meta
+		insertMeta.IP, insertMeta.UserAgent = next.IP, next.UserAgent
+		if err := insertRefreshToken(ctx, tx, asString(row["user_id"]), next.Token, insertMeta, next.ExpiresAt); err != nil {
+			return fail(err)
+		}
+		refreshToken = next.Token
+	} else {
+		row, err = tx.QueryRow(ctx,
+			`SELECT user_id::text, session_id, aal, revoked_at > NOW() - $2::float8 * INTERVAL '1 second' AS in_grace
+			 FROM auth.refresh_tokens WHERE token = $1`, token, refreshReuseInterval.Seconds())
+		if err != nil || row == nil {
+			return fail(domain.ErrUnauthorized)
+		}
+		userID, sessionID := asString(row["user_id"]), asString(row["session_id"])
+		var child map[string]any
+		if inGrace, _ := row["in_grace"].(bool); inGrace && sessionID != "" {
+			child, _ = tx.QueryRow(ctx,
+				`SELECT token, session_id, aal, amr FROM auth.refresh_tokens
+				 WHERE session_id = $1 AND aal = $2 AND revoked_at IS NULL AND expires_at > NOW()
+				 ORDER BY id DESC LIMIT 1`, sessionID, asString(row["aal"]))
+		}
+		if child == nil {
+			s.logger.Warn("refresh token reuse detected, revoking session", "user_id", userID, "session_id", sessionID)
+			if sessionID != "" {
+				_, err = tx.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE session_id = $1", sessionID)
+			} else {
+				_, err = tx.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE user_id = $1::uuid", userID)
+			}
+			if err == nil {
+				err = tx.Commit(ctx)
+			}
+			if err != nil {
+				return fail(err)
+			}
+			return fail(domain.ErrRefreshReuse)
+		}
+		meta = sessionMetaFromRow(child)
+		refreshToken = asString(child["token"])
 	}
 
-	expiresAt, _ := row["expires_at"].(time.Time)
-	if time.Now().After(expiresAt) {
-		_, _ = s.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE token = $1", token)
-		return nil, domain.ErrRefreshExpired
+	// ponytail: pruned only when the session rotates again; add a sweeper if idle sessions pile up.
+	if _, err := tx.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE session_id = $1 AND revoked_at IS NOT NULL AND expires_at < NOW()", meta.SessionID); err != nil {
+		return fail(err)
 	}
-
-	userID := asString(row["user_id"])
-
-	// Rotation: each token is single-use.
-	affected, _ := s.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE token = $1", token)
-	if affected == 0 {
-		s.logger.Warn("refresh token reuse detected, revoking all tokens", "user_id", userID)
-		_, _ = s.db.Exec(ctx, "DELETE FROM auth.refresh_tokens WHERE user_id = $1::uuid", userID)
-		return nil, domain.ErrRefreshReuse
-	}
-
-	userRow, err := s.db.QueryRow(ctx,
-		"SELECT "+userSelectCols+" FROM auth.users WHERE id = $1::uuid", userID)
+	userRow, err := tx.QueryRow(ctx, "SELECT "+userSelectCols+" FROM auth.users WHERE id = $1::uuid", asString(row["user_id"]))
 	if err != nil || userRow == nil {
-		return nil, domain.ErrUnauthorized
+		return fail(domain.ErrUnauthorized)
 	}
-	return userRow, nil
+	if err := tx.Commit(ctx); err != nil {
+		return fail(err)
+	}
+	return userRow, meta, refreshToken, nil
+}
+
+func sessionMetaFromRow(row map[string]any) domain.SessionMeta {
+	meta := domain.SessionMeta{SessionID: asString(row["session_id"]), AAL: asString(row["aal"]), AMR: domain.ParseAMR(row["amr"])}
+	return meta.Normalize()
 }
 
 func (s *Service) RevokeSessionByID(ctx context.Context, sessionID string) error {
@@ -349,6 +463,13 @@ func (s *Service) RevokeOtherSessions(ctx context.Context, userID, keepSessionID
 	_, err := s.db.Exec(ctx,
 		"DELETE FROM auth.refresh_tokens WHERE user_id = $1::uuid AND (session_id IS NULL OR session_id != $2)",
 		userID, keepSessionID)
+	return err
+}
+
+func (s *Service) RevokeBelowAAL2(ctx context.Context, userID, sessionID string, allSessions bool) error {
+	_, err := s.db.Exec(ctx,
+		"DELETE FROM auth.refresh_tokens WHERE user_id = $1::uuid AND aal <> 'aal2' AND ($3 OR session_id = $2)",
+		userID, sessionID, allSessions)
 	return err
 }
 
@@ -380,8 +501,24 @@ func (s *Service) DeleteUserTokensByPurpose(ctx context.Context, userID, purpose
 }
 
 func (s *Service) DeleteOneTimeToken(ctx context.Context, token string) error {
-	_, err := s.db.Exec(ctx, "DELETE FROM auth.one_time_tokens WHERE token = $1", token)
-	return err
+	affected, err := s.db.Exec(ctx, "DELETE FROM auth.one_time_tokens WHERE token = $1", token)
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return domain.ErrInvalidToken
+	}
+	return nil
+}
+
+// ponytail: check-then-insert, so two simultaneous requests can both send; fine for a mail cooldown.
+func (s *Service) RecentOTPSent(ctx context.Context, userID, purpose string, within time.Duration) (bool, error) {
+	row, err := s.db.QueryRow(ctx,
+		`SELECT 1 AS hit FROM auth.one_time_tokens
+		  WHERE user_id = $1::uuid AND purpose = $2 AND created_at > NOW() - make_interval(secs => $3)
+		  LIMIT 1`,
+		userID, purpose, within.Seconds())
+	return err == nil && row != nil, err
 }
 
 // VerifyOTP consumes a one-time token for POST /verify. It handles both the
@@ -395,16 +532,13 @@ func (s *Service) VerifyOTP(ctx context.Context, token, email string, allowedPur
 	}) == -1
 
 	if isNumericCode && email != "" {
-		// Numeric codes live in a 10^6 space, so the verify endpoint must be
-		// brute-force resistant. Fetch the most recent code-bearing token for
-		// the email, enforce a per-token attempt cap, and compare the code in
-		// constant time. On too many failures the token is destroyed.
+		// Spend the attempt first so concurrent guesses can't exceed the cap.
 		cand, cerr := s.db.QueryRow(ctx,
-			`SELECT id, user_id::text, purpose, expires_at, token, code, attempts
-			   FROM auth.one_time_tokens
-			  WHERE email = $1 AND code IS NOT NULL
-			  ORDER BY created_at DESC LIMIT 1`,
-			email)
+			`UPDATE auth.one_time_tokens SET attempts = attempts + 1
+			  WHERE id = (SELECT id FROM auth.one_time_tokens WHERE email = $1 AND code IS NOT NULL ORDER BY created_at DESC LIMIT 1)
+			    AND attempts < $2
+			  RETURNING id, user_id::text, purpose, expires_at, token, code, attempts`,
+			email, maxOTPAttempts)
 		if cerr != nil || cand == nil {
 			return domain.OTPRow{}, domain.ErrInvalidToken
 		}
@@ -412,22 +546,16 @@ func (s *Service) VerifyOTP(ctx context.Context, token, email string, allowedPur
 			_, _ = s.db.Exec(ctx, "DELETE FROM auth.one_time_tokens WHERE id = $1", cand["id"])
 			return domain.OTPRow{}, domain.ErrTokenExpired
 		}
-		attempts := asInt64(cand["attempts"])
-		codeOK := constantTimeEqual(asString(cand["code"]), token)
-		if attempts >= maxOTPAttempts || !codeOK {
-			if !codeOK && attempts+1 < maxOTPAttempts {
-				_, _ = s.db.Exec(ctx, "UPDATE auth.one_time_tokens SET attempts = attempts + 1 WHERE id = $1", cand["id"])
-			} else {
-				_, _ = s.db.Exec(ctx, "DELETE FROM auth.one_time_tokens WHERE id = $1", cand["id"])
-			}
+		// A burned row stays so it keeps the resend cooldown; every lookup skips it.
+		if !constantTimeEqual(asString(cand["code"]), token) {
 			return domain.OTPRow{}, domain.ErrInvalidToken
 		}
 		row = cand
 	} else {
 		var err error
 		row, err = s.db.QueryRow(ctx,
-			"SELECT user_id::text, purpose, expires_at, token FROM auth.one_time_tokens WHERE token = $1",
-			token)
+			"SELECT user_id::text, purpose, expires_at, token FROM auth.one_time_tokens WHERE token = $1 AND attempts < $2",
+			token, maxOTPAttempts)
 		if err != nil || row == nil {
 			return domain.OTPRow{}, domain.ErrInvalidToken
 		}
@@ -447,10 +575,10 @@ func (s *Service) VerifyOTP(ctx context.Context, token, email string, allowedPur
 		return domain.OTPRow{}, domain.ErrPurposeMismatch
 	}
 
-	// Consume the token (single-use). Always delete by the canonical token
-	// column so 6-digit code flows also clear the row.
-	_, _ = s.db.Exec(ctx, "DELETE FROM auth.one_time_tokens WHERE token = $1", rowToken)
-
+	// Single-use: only the request whose DELETE hits the row wins.
+	if affected, err := s.db.Exec(ctx, "DELETE FROM auth.one_time_tokens WHERE token = $1", rowToken); err != nil || affected == 0 {
+		return domain.OTPRow{}, domain.ErrInvalidToken
+	}
 	return domain.OTPRow{UserID: asString(row["user_id"]), Purpose: purpose}, nil
 }
 
@@ -470,8 +598,8 @@ func purposeAllowed(purpose string, allowed []string) bool {
 
 func (s *Service) PeekOneTimeToken(ctx context.Context, token string) (domain.OTPRow, error) {
 	row, err := s.db.QueryRow(ctx,
-		"SELECT user_id::text, purpose, expires_at FROM auth.one_time_tokens WHERE token = $1",
-		token)
+		"SELECT user_id::text, purpose, expires_at FROM auth.one_time_tokens WHERE token = $1 AND attempts < $2",
+		token, maxOTPAttempts)
 	if err != nil || row == nil {
 		return domain.OTPRow{}, domain.ErrInvalidToken
 	}
@@ -543,12 +671,11 @@ func (s *Service) CreateOAuthFlowState(ctx context.Context, state, codeChallenge
 
 func (s *Service) ConsumeOAuthFlowState(ctx context.Context, state string) (domain.FlowState, error) {
 	row, err := s.db.QueryRow(ctx,
-		"SELECT code_challenge, code_challenge_method, redirect_to, linking_user_id FROM auth.flow_state WHERE auth_code = $1 AND provider_type = 'oauth' AND auth_code_issued_at > NOW() - INTERVAL '10 minutes'",
+		"DELETE FROM auth.flow_state WHERE auth_code = $1 AND provider_type = 'oauth' RETURNING code_challenge, code_challenge_method, redirect_to, linking_user_id, auth_code_issued_at > NOW() - INTERVAL '10 minutes' AS fresh",
 		state)
-	if err != nil || row == nil {
+	if err != nil || row == nil || row["fresh"] != true {
 		return domain.FlowState{}, domain.ErrNotFound
 	}
-	_, _ = s.db.Exec(ctx, "DELETE FROM auth.flow_state WHERE auth_code = $1 AND provider_type = 'oauth'", state)
 	return domain.FlowState{
 		CodeChallenge:       asString(row["code_challenge"]),
 		CodeChallengeMethod: asString(row["code_challenge_method"]),
@@ -559,50 +686,77 @@ func (s *Service) ConsumeOAuthFlowState(ctx context.Context, state string) (doma
 
 // ---------- OAuth / ID-token user provisioning ----------
 
-func (s *Service) UpsertOAuthUser(ctx context.Context, provider, providerUserID, email, name string) (map[string]any, error) {
-	row, _ := s.db.QueryRow(ctx,
-		"SELECT "+userSelectCols+" FROM auth.users WHERE email = $1", email)
-
-	var userID string
-	if row == nil {
-		metaJSON, _ := json.Marshal(map[string]any{
-			"provider":       provider,
-			"full_name":      name,
-			"email":          email,
-			"email_verified": true,
-		})
-		appMetaJSON, _ := json.Marshal(map[string]any{
-			"provider":  provider,
-			"providers": []string{provider},
-		})
-		newRow, err := s.db.QueryRow(ctx,
-			"INSERT INTO auth.users (email, email_verified, email_confirmed_at, raw_user_meta_data, raw_app_meta_data) VALUES ($1, true, NOW(), $2::jsonb, $3::jsonb) RETURNING "+userSelectCols,
-			email, string(metaJSON), string(appMetaJSON))
-		if err != nil {
-			// Race: another request created the user between lookup and insert.
-			row, err = s.db.QueryRow(ctx,
-				"SELECT "+userSelectCols+" FROM auth.users WHERE email = $1", email)
-			if err != nil || row == nil {
-				return nil, fmt.Errorf("create or find user: %w", err)
-			}
-			userID = asString(row["id"])
-		} else {
-			row = newRow
-			userID = asString(newRow["id"])
-		}
-	} else {
-		userID = asString(row["id"])
-		_, _ = s.db.Exec(ctx, "UPDATE auth.users SET email_verified = true, email_confirmed_at = COALESCE(email_confirmed_at, NOW()), last_sign_in_at = NOW(), updated_at = NOW() WHERE id = $1::uuid", userID)
+func (s *Service) UpsertOAuthUser(ctx context.Context, in domain.OAuthLogin) (map[string]any, error) {
+	if in.Provider == "" || in.ProviderUserID == "" {
+		return nil, fmt.Errorf("oauth login needs a provider and provider user id")
 	}
-
+	row, err := s.db.QueryRow(ctx,
+		"SELECT "+userSelectCols+" FROM auth.users WHERE id = (SELECT user_id FROM auth.identities WHERE provider = $1 AND provider_user_id = $2)",
+		in.Provider, in.ProviderUserID)
+	if err != nil {
+		return nil, err
+	}
+	if row == nil {
+		if !in.EmailVerified || in.Email == "" {
+			return nil, domain.ErrProviderEmailUnverified
+		}
+		if row, err = s.linkOrCreateOAuthUser(ctx, in); err != nil {
+			return nil, err
+		}
+	}
+	userID := asString(row["id"])
+	s.RecordSignIn(ctx, userID)
 	_, _ = s.db.Exec(ctx,
 		`INSERT INTO auth.identities (user_id, provider, provider_user_id, email, last_sign_in_at, updated_at)
 		 VALUES ($1::uuid, $2, $3, $4, NOW(), NOW())
 		 ON CONFLICT (provider, provider_user_id)
-		 DO UPDATE SET last_sign_in_at = EXCLUDED.last_sign_in_at, updated_at = EXCLUDED.updated_at`,
-		userID, provider, providerUserID, email)
-
+		 DO UPDATE SET email = EXCLUDED.email, last_sign_in_at = EXCLUDED.last_sign_in_at, updated_at = EXCLUDED.updated_at`,
+		userID, in.Provider, in.ProviderUserID, in.Email)
 	return row, nil
+}
+
+// oauthByEmail prefers a verified match; claimed means someone can already sign in to the account.
+const oauthByEmail = "SELECT " + userSelectCols + `,
+	COALESCE(password_hash, '') <> ''
+	OR EXISTS (SELECT 1 FROM auth.identities i WHERE i.user_id = users.id)
+	OR EXISTS (SELECT 1 FROM auth.refresh_tokens r WHERE r.user_id = users.id)
+	OR is_anonymous AS claimed
+	FROM auth.users WHERE lower(email) = lower($1) ORDER BY email_verified DESC, created_at LIMIT 1`
+
+func (s *Service) linkOrCreateOAuthUser(ctx context.Context, in domain.OAuthLogin) (map[string]any, error) {
+	row, err := s.db.QueryRow(ctx, oauthByEmail, in.Email)
+	if err != nil {
+		return nil, err
+	}
+	if row == nil {
+		if !in.AllowSignup {
+			return nil, domain.ErrSignupDisabled
+		}
+		userMeta, _ := json.Marshal(map[string]any{"provider": in.Provider, "full_name": in.Name, "email": in.Email, "email_verified": true})
+		appMeta, _ := json.Marshal(map[string]any{"provider": in.Provider, "providers": []string{in.Provider}})
+		created, insErr := s.db.QueryRow(ctx,
+			"INSERT INTO auth.users (email, email_verified, email_confirmed_at, raw_user_meta_data, raw_app_meta_data) VALUES ($1, true, NOW(), $2::jsonb, $3::jsonb) RETURNING "+userSelectCols,
+			in.Email, string(userMeta), string(appMeta))
+		if insErr == nil {
+			return created, nil
+		}
+		// Lost an insert race: judge the winner's row like any other match.
+		if row, err = s.db.QueryRow(ctx, oauthByEmail, in.Email); err != nil || row == nil {
+			return nil, fmt.Errorf("create or find user: %w", insErr)
+		}
+	}
+	claimed, _ := row["claimed"].(bool)
+	delete(row, "claimed")
+	if verified, _ := row["email_verified"].(bool); verified {
+		return row, nil
+	}
+	// Whoever holds an unproven account may have squatted this address.
+	if claimed {
+		return nil, domain.ErrOAuthLinkRefused
+	}
+	return s.db.QueryRow(ctx,
+		"UPDATE auth.users SET email_verified = true, email_confirmed_at = NOW(), updated_at = NOW() WHERE id = $1::uuid RETURNING "+userSelectCols,
+		row["id"])
 }
 
 func (s *Service) LinkIdentity(ctx context.Context, userID, provider, providerUserID, email string) {
@@ -651,8 +805,11 @@ func (s *Service) DeleteIdentityByID(ctx context.Context, identityID, userID str
 
 // ---------- MFA ----------
 
-// challengeTTL bounds how long an MFA challenge can be verified after creation.
+// challengeTTL is how long a challenge stays verifiable, and the maxChallengesPerFactor window.
 const challengeTTL = 5 * time.Minute
+
+// maxChallengesPerFactor stops an aal1 session from cycling challenges to brute-force TOTP.
+const maxChallengesPerFactor = 10
 
 func (s *Service) EnrollFactor(ctx context.Context, userID, friendlyName, secret string) (string, error) {
 	row, err := s.db.QueryRow(ctx,
@@ -670,25 +827,46 @@ func (s *Service) EnrollFactor(ctx context.Context, userID, friendlyName, secret
 }
 
 func (s *Service) CreateChallenge(ctx context.Context, factorID, userID string) (string, time.Time, error) {
-	// Ownership check: factor must belong to the caller.
-	owner, err := s.db.QueryRow(ctx,
-		"SELECT user_id::text FROM auth.mfa_factors WHERE id = $1::uuid", factorID)
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	if owner == nil || asString(owner["user_id"]) != userID {
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Lock the factor so concurrent count-then-insert calls serialize.
+	owner, err := tx.QueryRow(ctx,
+		"SELECT 1 FROM auth.mfa_factors WHERE id = $1::uuid AND user_id = $2::uuid FOR UPDATE", factorID, userID)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	if owner == nil {
 		return "", time.Time{}, domain.ErrNotFound
 	}
 
-	row, err := s.db.QueryRow(ctx,
-		`INSERT INTO auth.mfa_challenges (factor_id) VALUES ($1::uuid)
+	row, err := tx.QueryRow(ctx,
+		`INSERT INTO auth.mfa_challenges (factor_id)
+		 SELECT $1::uuid WHERE (
+		   SELECT count(*) FROM auth.mfa_challenges
+		    WHERE factor_id = $1::uuid AND created_at > NOW() - make_interval(secs => $2)
+		 ) < $3
 		 RETURNING id::text, created_at`,
-		factorID)
+		factorID, challengeTTL.Seconds(), maxChallengesPerFactor)
 	if err != nil {
 		return "", time.Time{}, err
 	}
 	if row == nil {
-		return "", time.Time{}, fmt.Errorf("create challenge returned no row")
+		return "", time.Time{}, domain.ErrChallengeRateLimited
+	}
+
+	// Prune challenges outside the window; they can never verify again.
+	if _, err := tx.Exec(ctx,
+		"DELETE FROM auth.mfa_challenges WHERE factor_id = $1::uuid AND created_at <= NOW() - make_interval(secs => $2)",
+		factorID, challengeTTL.Seconds()); err != nil {
+		return "", time.Time{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return "", time.Time{}, err
 	}
 	createdAt, _ := row["created_at"].(time.Time)
 	return asString(row["id"]), createdAt, nil
@@ -710,6 +888,18 @@ func (s *Service) GetFactorForVerify(ctx context.Context, factorID, userID strin
 }
 
 func (s *Service) ValidateChallenge(ctx context.Context, challengeID, factorID string) error {
+	reserved, err := s.db.QueryRow(ctx,
+		`UPDATE auth.mfa_challenges SET attempts = attempts + 1
+		  WHERE id = $1::uuid AND factor_id = $2::uuid AND verified_at IS NULL
+		    AND created_at > NOW() - make_interval(secs => $3) AND attempts < $4
+		  RETURNING id::text`,
+		challengeID, factorID, challengeTTL.Seconds(), maxMFAAttempts)
+	if err != nil {
+		return err
+	}
+	if reserved != nil {
+		return nil
+	}
 	ch, err := s.db.QueryRow(ctx,
 		"SELECT factor_id::text, verified_at, created_at, attempts FROM auth.mfa_challenges WHERE id = $1::uuid",
 		challengeID)
@@ -722,33 +912,38 @@ func (s *Service) ValidateChallenge(ctx context.Context, challengeID, factorID s
 	if _, verified := ch["verified_at"].(time.Time); verified {
 		return domain.ErrChallengeUsed
 	}
-	createdAt, _ := ch["created_at"].(time.Time)
-	if time.Since(createdAt) > challengeTTL {
+	if createdAt, _ := ch["created_at"].(time.Time); time.Since(createdAt) > challengeTTL {
 		return domain.ErrChallengeExpired
 	}
-	if asInt64(ch["attempts"]) >= maxMFAAttempts {
-		return domain.ErrChallengeTooManyAttempts
+	return domain.ErrChallengeTooManyAttempts
+}
+
+func (s *Service) MarkChallengeVerified(ctx context.Context, challengeID string) error {
+	affected, err := s.db.Exec(ctx,
+		"UPDATE auth.mfa_challenges SET verified_at = NOW() WHERE id = $1::uuid AND verified_at IS NULL", challengeID)
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return domain.ErrChallengeUsed
 	}
 	return nil
 }
 
-// IncrementChallengeAttempt records a failed TOTP guess against challengeID,
-// bounding brute-force of the 10^6 code space (see maxMFAAttempts).
-func (s *Service) IncrementChallengeAttempt(ctx context.Context, challengeID string) error {
-	_, err := s.db.Exec(ctx,
-		"UPDATE auth.mfa_challenges SET attempts = attempts + 1 WHERE id = $1::uuid", challengeID)
-	return err
-}
-
-func (s *Service) MarkChallengeVerified(ctx context.Context, challengeID string) error {
-	_, err := s.db.Exec(ctx,
-		"UPDATE auth.mfa_challenges SET verified_at = NOW() WHERE id = $1::uuid", challengeID)
-	return err
+func (s *Service) ConsumeTOTPStep(ctx context.Context, factorID string, step int64) (bool, error) {
+	affected, err := s.db.Exec(ctx,
+		`UPDATE auth.mfa_factors SET last_totp_step = $2, updated_at = NOW()
+		  WHERE id = $1::uuid AND (last_totp_step IS NULL OR last_totp_step < $2)`, factorID, step)
+	return affected == 1, err
 }
 
 func (s *Service) PromoteFactorToVerified(ctx context.Context, factorID string) error {
 	_, err := s.db.Exec(ctx,
-		"UPDATE auth.mfa_factors SET status = 'verified', updated_at = NOW() WHERE id = $1::uuid", factorID)
+		`WITH promoted AS (
+		   UPDATE auth.mfa_factors SET status = 'verified', updated_at = NOW() WHERE id = $1::uuid RETURNING user_id
+		 )
+		 DELETE FROM auth.mfa_factors f USING promoted p
+		  WHERE f.user_id = p.user_id AND f.status = 'unverified' AND f.id <> $1::uuid`, factorID)
 	return err
 }
 
@@ -766,10 +961,11 @@ func (s *Service) ListFactors(ctx context.Context, userID string) ([]map[string]
 	return rows, nil
 }
 
-func (s *Service) DeleteFactorForUser(ctx context.Context, factorID, userID string) error {
+func (s *Service) DeleteFactorForUser(ctx context.Context, factorID, userID string, allowVerified bool) error {
 	affected, err := s.db.Exec(ctx,
-		"DELETE FROM auth.mfa_factors WHERE id = $1::uuid AND user_id = $2::uuid",
-		factorID, userID)
+		`DELETE FROM auth.mfa_factors
+		  WHERE id = $1::uuid AND user_id = $2::uuid AND (status = 'unverified' OR $3::bool)`,
+		factorID, userID, allowVerified)
 	if err != nil {
 		return err
 	}

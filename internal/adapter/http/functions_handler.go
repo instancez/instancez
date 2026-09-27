@@ -90,6 +90,8 @@ func (h *FunctionsHandler) invoke(c *gin.Context) {
 			c.JSON(http.StatusGatewayTimeout, gin.H{"message": "function invocation timed out"})
 		case errors.Is(err, funcs.ErrSaturated):
 			c.JSON(http.StatusServiceUnavailable, gin.H{"message": "functions runtime saturated"})
+		case errors.Is(err, funcs.ErrResponseTooLarge):
+			c.JSON(http.StatusBadGateway, gin.H{"message": "function response exceeds 6 MB limit"})
 		default: // funcs.ErrWorkerFailed and any other invoke error
 			// Do NOT echo err to the client: it can leak internal details such
 			// as the worker's unix socket path (dial unix /tmp/inz-fn-*.sock).

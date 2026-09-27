@@ -1219,3 +1219,28 @@ func TestAdminErrShape(t *testing.T) {
 		t.Error("admin shape must not include statusCode")
 	}
 }
+
+// Regression: the migrations list must read through the owner pool.
+func TestHandleListMigrations_ReadsOwnerPool(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	owner := &stubDB{queryFn: func(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
+		return []map[string]any{{"id": int64(7), "checksum": "abc"}}, nil
+	}}
+	request := &stubDB{queryFn: func(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
+		return nil, fmt.Errorf("permission denied for table _instancez_migrations")
+	}}
+	h := &AdminHandler{
+		cfg:     &domain.Config{},
+		db:      request,
+		ownerDB: domain.OwnerDB{Database: owner},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	r := gin.New()
+	r.GET("/migrations", h.handleListMigrations)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/migrations", nil))
+
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"checksum":"abc"`) {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+}

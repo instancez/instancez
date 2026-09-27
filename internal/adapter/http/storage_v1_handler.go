@@ -6,13 +6,18 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
+	"net/url"
+	"os"
 	"path"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -21,6 +26,23 @@ import (
 )
 
 const storageUploadTokenExpiry = 2 * time.Hour
+
+const (
+	maxSignedURLExpiry = 7 * 24 * 3600 // S3 presign limit
+	maxSignPaths       = 1000
+	errNoObjectAccess  = "Either the object does not exist or you do not have access to it"
+)
+
+// signedExpiry defaults non-positive values to one hour and caps at seven days.
+func signedExpiry(sec int) time.Duration {
+	switch {
+	case sec <= 0:
+		sec = 3600
+	case sec > maxSignedURLExpiry:
+		sec = maxSignedURLExpiry
+	}
+	return time.Duration(sec) * time.Second
+}
 
 // StorageV1Handler serves supabase-js compatible /storage/v1/ endpoints.
 type StorageV1Handler struct {
@@ -57,16 +79,7 @@ func (h *StorageV1Handler) Mount(root *gin.RouterGroup) {
 	sg.POST("/object/:bucket/*path", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.uploadObject)
 	sg.PUT("/object/:bucket/*path", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.updateObject)
 
-	// GET /object/* catch-all — dispatches to public download, authenticated
-	// download, or object info based on path prefix. supabase-js sends:
-	//   GET /object/<bucket>/<path>          — authenticated download
-	//   GET /object/public/<bucket>/<path>   — public download
-	//   GET /object/authenticated/<bucket>/<path> — authenticated download (alt)
-	//   GET /object/info/authenticated/<bucket>/<path> — object info
-	// Gin can't register overlapping param routes, so one handler parses them.
-	// apikey is checked inside objectGetDispatch itself — public downloads
-	// must stay unauthenticated (real Supabase public bucket URLs need zero
-	// headers), everything else on this path requires it.
+	// One catch-all, since gin cannot overlap param routes; objectGetDispatch checks apikey except on public downloads.
 	sg.GET("/object/*all", h.objectGetDispatch)
 
 	// List
@@ -149,19 +162,24 @@ func (h *StorageV1Handler) emptyBucket(c *gin.Context) {
 		return
 	}
 
-	ctx := h.rlsCtx(c)
-	rows, err := h.db.Query(ctx, "SELECT name FROM storage.objects WHERE bucket_id = $1", id)
+	// ponytail: one unbatched DELETE; page it by ctid/LIMIT if buckets reach ~100k objects.
+	rows, err := h.db.Query(h.rlsCtx(c), "DELETE FROM storage.objects WHERE bucket_id = $1 RETURNING name", id)
 	if err != nil {
-		h.logger.Error("empty bucket query", "error", err)
-		storageErr(c, 500, "internal", "Failed to list objects")
+		h.logger.Error("empty bucket", "error", err)
+		storageErr(c, 500, "internal", "Failed to empty bucket")
 		return
 	}
-	for _, row := range rows {
-		name, _ := row["name"].(string)
-		_ = h.storage.Delete(ctx, id+"/"+name)
-	}
-	_, _ = h.db.Exec(ctx, "DELETE FROM storage.objects WHERE bucket_id = $1", id)
+	deleteBytes(c.Request.Context(), h.storage, h.logger, id, rows)
 	c.JSON(200, gin.H{"message": "Successfully emptied"})
+}
+
+// deleteBytes removes object bytes for rows whose metadata delete already committed.
+func deleteBytes(ctx context.Context, store domain.ObjectStore, logger *slog.Logger, bucket string, rows []map[string]any) {
+	for _, row := range rows {
+		if err := store.Delete(ctx, bucket+"/"+asString(row["name"])); err != nil {
+			logger.Warn("delete object bytes", "bucket", bucket, "error", err)
+		}
+	}
 }
 
 // --- File operation handlers ---
@@ -181,9 +199,11 @@ func (h *StorageV1Handler) getBucketConfig(name string) (domain.Bucket, bool) {
 // This is the authorization boundary for object access — the metadata row a
 // query can see/insert/update/delete is exactly what the bucket's policies
 // allow, and the actual S3 bytes are only reachable once the metadata row is.
-func (h *StorageV1Handler) rlsCtx(c *gin.Context) context.Context {
-	session := getSession(c)
-	ctx, err := h.db.WithRLS(c.Request.Context(), session)
+func (h *StorageV1Handler) rlsCtx(c *gin.Context) context.Context { return rlsContext(h.db, c) }
+
+// rlsContext binds the request context to the caller's role so storage.objects RLS applies.
+func rlsContext(db domain.Database, c *gin.Context) context.Context {
+	ctx, err := db.WithRLS(c.Request.Context(), getSession(c))
 	if err != nil {
 		// WithRLS only stashes the session on the context; it does not perform
 		// I/O and never errors in practice. Fall back to the raw context.
@@ -192,9 +212,44 @@ func (h *StorageV1Handler) rlsCtx(c *gin.Context) context.Context {
 	return ctx
 }
 
-func (h *StorageV1Handler) cleanPath(p string) string {
-	p = strings.TrimPrefix(p, "/")
-	return path.Clean(p)
+var errInvalidKey = errors.New("invalid object key")
+
+// cleanPath normalizes an object key and rejects empty, NUL and ".." keys.
+func cleanPath(p string) (string, error) {
+	p = strings.TrimLeft(p, "/")
+	if p == "" || strings.ContainsRune(p, 0) {
+		return "", errInvalidKey
+	}
+	for _, seg := range strings.Split(p, "/") {
+		if seg == ".." {
+			return "", errInvalidKey
+		}
+	}
+	if p = path.Clean(p); p == "." {
+		return "", errInvalidKey
+	}
+	return p, nil
+}
+
+// objectPath cleans raw and writes a 400 when it is not a valid key.
+func objectPath(c *gin.Context, raw string) (string, bool) {
+	p, err := cleanPath(raw)
+	if err != nil {
+		storageErr(c, 400, "invalid_key", "Invalid key")
+		return "", false
+	}
+	return p, true
+}
+
+// validKeys cleans ps and drops the paths that fail cleanPath.
+func validKeys(ps []string) []string {
+	keys := make([]string, 0, len(ps))
+	for _, p := range ps {
+		if k, err := cleanPath(p); err == nil {
+			keys = append(keys, k)
+		}
+	}
+	return keys
 }
 
 // objectMetadataJSON builds the exact Supabase storage ObjectMetadata blob
@@ -228,95 +283,164 @@ func (h *StorageV1Handler) updateObject(c *gin.Context) {
 	h.doUpload(c, true)
 }
 
+var errObjectNotFound = errors.New("object not found")
+
+type execer interface {
+	Exec(ctx context.Context, query string, args ...any) (int64, error)
+}
+
+type objectRow struct {
+	bucket, name, mime, metadata string
+	size                         int64
+	uploadedBy                   any
+}
+
+// writeObjectRow inserts, upserts or updates one storage.objects row under ctx's role.
+func writeObjectRow(ctx context.Context, db execer, r objectRow, isUpdate, upsert bool) error {
+	q := "INSERT INTO storage.objects (bucket_id, name, size, mime, metadata, uploaded_by) VALUES ($1, $2, $3, $4, $5::jsonb, $6)"
+	switch {
+	case isUpdate:
+		q = "UPDATE storage.objects SET size = $3, mime = $4, metadata = $5::jsonb, uploaded_at = NOW(), uploaded_by = $6 WHERE bucket_id = $1 AND name = $2"
+	case upsert:
+		q += " ON CONFLICT (bucket_id, name) DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime, metadata = EXCLUDED.metadata, uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW()"
+	}
+	n, err := db.Exec(ctx, q, r.bucket, r.name, r.size, r.mime, r.metadata, r.uploadedBy)
+	if err == nil && isUpdate && n == 0 {
+		return errObjectNotFound
+	}
+	return err
+}
+
+const defaultMaxUpload = 50 << 20
+
+func bucketMaxBytes(b domain.Bucket) int64 {
+	if n := parseSizeBytes(b.MaxSize); n > 0 {
+		return n
+	}
+	return defaultMaxUpload
+}
+
+func defaultMIME(ct string) string {
+	if ct == "" {
+		return "application/octet-stream"
+	}
+	return ct
+}
+
+// uploadBody returns the file stream and content type from a raw or multipart upload.
+func uploadBody(c *gin.Context) (io.Reader, string, error) {
+	if !strings.HasPrefix(c.ContentType(), "multipart/form-data") {
+		return c.Request.Body, defaultMIME(c.ContentType()), nil
+	}
+	mr, err := c.Request.MultipartReader()
+	if err != nil {
+		return nil, "", errors.New("failed to parse multipart form")
+	}
+	for {
+		part, err := mr.NextPart()
+		if err != nil {
+			return nil, "", errors.New("no file found in multipart upload")
+		}
+		if part.FileName() != "" {
+			return part, defaultMIME(part.Header.Get("Content-Type")), nil
+		}
+		_ = part.Close()
+	}
+}
+
+// spool copies r to a temp file so no DB connection waits on a slow client.
+func spool(r io.Reader) (*os.File, int64, error) {
+	f, err := os.CreateTemp("", "inz-upload-*")
+	if err != nil {
+		return nil, 0, err
+	}
+	n, err := io.Copy(f, r)
+	if err == nil {
+		_, err = f.Seek(0, io.SeekStart)
+	}
+	if err != nil {
+		closeSpool(f)
+		return nil, 0, err
+	}
+	return f, n, nil
+}
+
+func closeSpool(f *os.File) {
+	_ = f.Close()
+	_ = os.Remove(f.Name())
+}
+
+// readUpload spools the body; on !ok the error response is already written.
+func (h *StorageV1Handler) readUpload(c *gin.Context, bucket domain.Bucket, authorize func(contentType string) error) (f *os.File, size int64, contentType string, ok bool) {
+	body, contentType, err := uploadBody(c)
+	if err != nil {
+		storageErr(c, 400, "bad_request", err.Error())
+		return nil, 0, "", false
+	}
+	if len(bucket.Types) > 0 && !matchesMIME(contentType, bucket.Types) {
+		storageErr(c, 422, "invalid_mime_type", fmt.Sprintf("Content type %q not allowed", contentType))
+		return nil, 0, "", false
+	}
+	if authorize != nil {
+		if err := authorize(contentType); err != nil {
+			h.uploadWriteError(c, err)
+			return nil, 0, "", false
+		}
+	}
+	f, size, err = spool(http.MaxBytesReader(c.Writer, io.NopCloser(body), bucketMaxBytes(bucket)))
+	if err != nil {
+		h.spoolFailed(c, err, bucket.MaxSize)
+		return nil, 0, "", false
+	}
+	return f, size, contentType, true
+}
+
+func (h *StorageV1Handler) spoolFailed(c *gin.Context, err error, maxSize string) {
+	var tooBig *http.MaxBytesError
+	if errors.As(err, &tooBig) {
+		if maxSize == "" {
+			maxSize = fmt.Sprintf("%dMB", defaultMaxUpload>>20)
+		}
+		storageErr(c, 413, "payload_too_large", fmt.Sprintf("File exceeds maximum size of %s", maxSize))
+		return
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, context.Canceled) || errors.Is(err, syscall.ECONNRESET) {
+		h.logger.Warn("spool upload aborted by client", "error", err)
+		storageErr(c, 400, "bad_request", "Upload aborted before completion")
+		return
+	}
+	h.logger.Error("spool upload", "error", err)
+	storageErr(c, 500, "internal", "Upload failed")
+}
+
 func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 	bucketName := c.Param("bucket")
-	objPath := h.cleanPath(c.Param("path"))
-
+	objPath, ok := objectPath(c, c.Param("path"))
+	if !ok {
+		return
+	}
 	bucket, ok := h.getBucketConfig(bucketName)
 	if !ok {
 		storageErr(c, 404, "not_found", "Bucket not found")
 		return
 	}
-
-	session := getSession(c)
-
-	// Enforce bucket size limit
-	var maxBytes int64 = 50 * 1024 * 1024
-	if bucket.MaxSize != "" {
-		if mb := parseSizeBytes(bucket.MaxSize); mb > 0 {
-			maxBytes = mb
-		}
-	}
-
-	// supabase-js sends uploads as multipart/form-data with the file in a
-	// form field. Extract the actual file and its content type from the part.
-	var body io.Reader
-	var contentType string
-	var size int64
-
-	if strings.HasPrefix(c.ContentType(), "multipart/form-data") {
-		mr, err := c.Request.MultipartReader()
-		if err != nil {
-			storageErr(c, 400, "bad_request", "Failed to parse multipart form")
-			return
-		}
-		var found bool
-		for {
-			part, err := mr.NextPart()
-			if err != nil {
-				break
-			}
-			if part.FileName() == "" {
-				_ = part.Close()
-				continue
-			}
-			body = part
-			contentType = part.Header.Get("Content-Type")
-			size = -1
-			found = true
-			defer func() { _ = part.Close() }()
-			break
-		}
-		if !found {
-			storageErr(c, 400, "bad_request", "No file found in multipart upload")
-			return
-		}
-	} else {
-		body = c.Request.Body
-		contentType = c.ContentType()
-		if ct := c.GetHeader("Content-Type"); ct != "" {
-			contentType = strings.Split(ct, ";")[0]
-			contentType = strings.TrimSpace(contentType)
-		}
-		size = c.Request.ContentLength
-	}
-
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-
-	// Validate MIME
-	if len(bucket.Types) > 0 && !matchesMIME(contentType, bucket.Types) {
-		storageErr(c, 422, "invalid_mime_type", fmt.Sprintf("Content type %q not allowed", contentType))
+	uploadedBy := nullIfEmpty(getSession(c).UserID)
+	upsert := !isUpdate && c.GetHeader("x-upsert") == "true"
+	file, size, contentType, ok := h.readUpload(c, bucket, func(ct string) error {
+		probeRow := objectRow{bucket: bucketName, name: objPath, mime: ct, uploadedBy: uploadedBy,
+			metadata: objectMetadataJSON(0, ct, c.GetHeader("Cache-Control"))}
+		return h.probeUploadPermission(c, probeRow, isUpdate, upsert)
+	})
+	if !ok {
 		return
 	}
+	defer closeSpool(file)
 
-	limitedBody := http.MaxBytesReader(c.Writer, io.NopCloser(body), maxBytes)
+	row := objectRow{bucket: bucketName, name: objPath, size: size, mime: contentType,
+		uploadedBy: uploadedBy,
+		metadata:   objectMetadataJSON(size, contentType, c.GetHeader("Cache-Control"))}
 
-	var uploadedBy any
-	if session.UserID != "" {
-		uploadedBy = session.UserID
-	}
-	if size < 0 {
-		size = 0
-	}
-
-	metaJSON := objectMetadataJSON(size, contentType, c.GetHeader("Cache-Control"))
-
-	// Write the metadata row FIRST, inside a transaction bound to the caller's
-	// role, so that RLS authorizes the write before any bytes reach the object
-	// store. If the policy denies the write we roll back and never touch S3;
-	// the actual upload only happens once the metadata insert/update succeeds.
+	// The tx write below is the real gate; the pre-spool probe above only avoids spooling for a denied caller.
 	ctx := h.rlsCtx(c)
 	tx, err := h.db.Begin(ctx)
 	if err != nil {
@@ -324,66 +448,32 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 		return
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-
-	if isUpdate {
-		n, err := tx.Exec(ctx,
-			"UPDATE storage.objects SET size = $1, mime = $2, metadata = $3::jsonb, uploaded_at = NOW(), uploaded_by = $4 WHERE bucket_id = $5 AND name = $6",
-			size, contentType, metaJSON, uploadedBy, bucketName, objPath)
-		if err != nil {
-			h.uploadWriteError(c, err)
-			return
-		}
-		if n == 0 {
-			// No row the caller is permitted to update (RLS-filtered or absent).
-			storageErr(c, 404, "not_found", "Object not found")
-			return
-		}
-	} else {
-		upsert := c.GetHeader("x-upsert") == "true"
-		if upsert {
-			if _, err := tx.Exec(ctx,
-				`INSERT INTO storage.objects (bucket_id, name, size, mime, metadata, uploaded_by)
-				 VALUES ($1, $2, $3, $4, $5::jsonb, $6)
-				 ON CONFLICT (bucket_id, name)
-				 DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime, metadata = EXCLUDED.metadata, uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW()`,
-				bucketName, objPath, size, contentType, metaJSON, uploadedBy); err != nil {
-				h.uploadWriteError(c, err)
-				return
-			}
-		} else {
-			if _, err := tx.Exec(ctx,
-				"INSERT INTO storage.objects (bucket_id, name, size, mime, metadata, uploaded_by) VALUES ($1, $2, $3, $4, $5::jsonb, $6)",
-				bucketName, objPath, size, contentType, metaJSON, uploadedBy); err != nil {
-				h.uploadWriteError(c, err)
-				return
-			}
-		}
+	if err := writeObjectRow(ctx, tx, row, isUpdate, upsert); err != nil {
+		h.uploadWriteError(c, err)
+		return
 	}
 
-	// Metadata write authorized — now stream the bytes to the object store.
 	key := bucketName + "/" + objPath
-	if err := h.storage.Upload(c.Request.Context(), key, limitedBody, contentType, size); err != nil {
-		if strings.Contains(err.Error(), "http: request body too large") {
-			storageErr(c, 413, "payload_too_large", fmt.Sprintf("File exceeds maximum size of %s", bucket.MaxSize))
-			return
-		}
+	if err := h.storage.Upload(c.Request.Context(), key, file, contentType, size); err != nil {
 		h.logger.Error("upload error", "error", err)
 		storageErr(c, 500, "internal", "Upload failed")
 		return
 	}
-
 	if err := tx.Commit(ctx); err != nil {
-		// Best-effort cleanup of the now-orphaned object; the metadata never
-		// committed so it would be invisible anyway.
-		_ = h.storage.Delete(c.Request.Context(), key)
+		// An ambiguous commit may have applied, so leave storage alone (no compensating delete).
+		h.logger.Error("upload commit failed", "bucket", bucketName, "key", objPath, "error", err)
 		storageErr(c, 500, "internal", "Upload failed")
 		return
 	}
+	c.JSON(200, gin.H{"Key": key, "Id": objPath})
+}
 
-	c.JSON(200, gin.H{
-		"Key": bucketName + "/" + objPath,
-		"Id":  objPath,
-	})
+// nullIfEmpty binds "" as SQL NULL.
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // storageErr writes a storage-js compatible error body: {statusCode, error, message}.
@@ -396,19 +486,24 @@ func storageErr(c *gin.Context, status int, errSlug, message string) {
 	})
 }
 
-// uploadWriteError maps a failed metadata write to the right client response:
-// duplicate key → 409, an RLS/permission denial → 403, anything else → 500.
+// uploadWriteError maps a failed metadata write to 404, 409, 403 or 500.
 func (h *StorageV1Handler) uploadWriteError(c *gin.Context, err error) {
-	msg := err.Error()
 	switch {
-	case strings.Contains(msg, "duplicate key") || strings.Contains(msg, "23505"):
+	case errors.Is(err, errObjectNotFound):
+		storageErr(c, 404, "not_found", "Object not found")
+	case isDuplicateKeyErr(err):
 		storageErr(c, 409, "duplicate", "The resource already exists")
-	case strings.Contains(msg, "row-level security") || strings.Contains(msg, "42501") || strings.Contains(msg, "permission denied"):
+	case isPermissionDenied(err):
 		storageErr(c, 403, "forbidden", "Not authorized to write this object")
 	default:
 		h.logger.Error("record object", "error", err)
 		storageErr(c, 500, "internal", "Failed to record object")
 	}
+}
+
+func isPermissionDenied(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "row-level security") || strings.Contains(msg, "42501") || strings.Contains(msg, "permission denied")
 }
 
 func (h *StorageV1Handler) objectGetDispatch(c *gin.Context) {
@@ -449,18 +544,15 @@ func (h *StorageV1Handler) objectGetDispatch(c *gin.Context) {
 		if c.IsAborted() {
 			return
 		}
-		rest := strings.SplitN(strings.TrimPrefix(all, "info/"), "/", 3)
-		if len(rest) >= 2 && rest[0] == "authenticated" {
-			c.Set("_bucket", rest[1])
-			objPath := ""
-			if len(rest) == 3 {
-				objPath = rest[2]
-			}
-			c.Set("_path", objPath)
-			h.objectInfo(c)
+		rest := strings.TrimPrefix(strings.TrimPrefix(all, "info/"), "authenticated/")
+		bucket, objPath, ok := strings.Cut(rest, "/")
+		if !ok {
+			storageErr(c, 400, "bad_request", "Missing bucket or path")
 			return
 		}
-		storageErr(c, 404, "not_found", "Not found")
+		c.Set("_bucket", bucket)
+		c.Set("_path", objPath)
+		h.objectInfo(c)
 	default:
 		if len(segments) < 2 {
 			storageErr(c, 400, "bad_request", "Missing path")
@@ -479,7 +571,15 @@ func (h *StorageV1Handler) objectGetDispatch(c *gin.Context) {
 }
 
 func (h *StorageV1Handler) serveDownload(c *gin.Context, bucketName, objPath string, publicOnly bool) {
-	objPath = h.cleanPath(objPath)
+	var ok bool
+	if objPath, ok = objectPath(c, objPath); !ok {
+		return
+	}
+	tp, err := parseTransformParams(c)
+	if err != nil {
+		storageErr(c, 400, "invalid_transform", err.Error())
+		return
+	}
 
 	bucket, ok := h.getBucketConfig(bucketName)
 	if !ok {
@@ -507,21 +607,50 @@ func (h *StorageV1Handler) serveDownload(c *gin.Context, bucketName, objPath str
 	}
 	defer func() { _ = body.Close() }()
 
-	// Image transforms
-	if tp := parseTransformParams(c); tp != nil && strings.HasPrefix(contentType, "image/") {
+	if tp != nil && strings.HasPrefix(contentType, "image/") {
 		transformed, newCT, err := applyTransform(body, contentType, tp)
-		if err == nil {
-			body = transformed
-			contentType = newCT
+		if errors.Is(err, errImageTooLarge) {
+			storageErr(c, 413, "image_too_large", err.Error())
+			return
 		}
+		if err != nil {
+			storageErr(c, 400, "invalid_transform", err.Error())
+			return
+		}
+		body, contentType = transformed, newCT
 	}
 
-	if contentType != "" {
-		c.Header("Content-Type", contentType)
-	}
-	c.Header("Cache-Control", "public, max-age=3600")
+	setDownloadHeaders(c, contentType, publicOnly)
 	c.Status(200)
 	_, _ = io.Copy(c.Writer, body)
+}
+
+// activeContentTypes can run script when rendered inline on our origin.
+var activeContentTypes = map[string]bool{
+	"text/html": true, "text/xsl": true,
+	"text/javascript": true, "application/javascript": true, "application/x-javascript": true,
+}
+
+// isActiveContent covers HTML/JS, every XML family type, and multipart/* (e.g. x-mixed-replace).
+func isActiveContent(mt string) bool {
+	return activeContentTypes[mt] || strings.HasSuffix(mt, "+xml") || strings.HasSuffix(mt, "/xml") || strings.HasPrefix(mt, "multipart/")
+}
+
+func setDownloadHeaders(c *gin.Context, contentType string, public bool) {
+	mt, _, err := mime.ParseMediaType(contentType)
+	if err != nil || !strings.Contains(mt, "/") {
+		contentType, mt = "application/octet-stream", ""
+	}
+	c.Header("Content-Type", contentType)
+	c.Header("X-Content-Type-Options", "nosniff")
+	if isActiveContent(mt) {
+		c.Header("Content-Disposition", "attachment")
+	}
+	if public {
+		c.Header("Cache-Control", "public, max-age=3600")
+	} else {
+		c.Header("Cache-Control", "private, max-age=3600")
+	}
 }
 
 func (h *StorageV1Handler) listObjects(c *gin.Context) {
@@ -707,7 +836,10 @@ func (h *StorageV1Handler) listObjectsV2(c *gin.Context) {
 
 func (h *StorageV1Handler) objectInfo(c *gin.Context) {
 	bucketName := c.GetString("_bucket")
-	objPath := h.cleanPath(c.GetString("_path"))
+	objPath, ok := objectPath(c, c.GetString("_path"))
+	if !ok {
+		return
+	}
 
 	if _, ok := h.getBucketConfig(bucketName); !ok {
 		storageErr(c, 404, "not_found", "Bucket not found")
@@ -736,7 +868,10 @@ func (h *StorageV1Handler) objectInfo(c *gin.Context) {
 
 func (h *StorageV1Handler) objectExists(c *gin.Context) {
 	bucketName := c.Param("bucket")
-	objPath := h.cleanPath(c.Param("path"))
+	objPath, ok := objectPath(c, c.Param("path"))
+	if !ok {
+		return
+	}
 
 	if _, ok := h.getBucketConfig(bucketName); !ok {
 		c.Status(404)
@@ -767,20 +902,22 @@ func (h *StorageV1Handler) removeObjects(c *gin.Context) {
 		return
 	}
 
-	ctx := h.rlsCtx(c)
-	var deleted []gin.H
-	for _, p := range req.Prefixes {
-		p = strings.TrimPrefix(p, "/")
-		row, err := h.db.QueryRow(ctx, "SELECT id, name, bucket_id FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, p)
-		if err != nil || row == nil {
-			continue
-		}
-		_ = h.storage.Delete(ctx, bucketName+"/"+p)
-		_, _ = h.db.Exec(ctx, "DELETE FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, p)
-		deleted = append(deleted, gin.H{"name": p, "bucket_id": bucketName})
+	keys := validKeys(req.Prefixes)
+	deleted := []gin.H{}
+	if len(keys) == 0 {
+		c.JSON(200, deleted)
+		return
 	}
-	if deleted == nil {
-		deleted = []gin.H{}
+	rows, err := h.db.Query(h.rlsCtx(c),
+		"DELETE FROM storage.objects WHERE bucket_id = $1 AND name = ANY($2::text[]) RETURNING name", bucketName, keys)
+	if err != nil {
+		h.logger.Error("remove objects", "error", err)
+		storageErr(c, 500, "internal", "Failed to remove objects")
+		return
+	}
+	deleteBytes(c.Request.Context(), h.storage, h.logger, bucketName, rows)
+	for _, row := range rows {
+		deleted = append(deleted, gin.H{"name": asString(row["name"]), "bucket_id": bucketName})
 	}
 	c.JSON(200, deleted)
 }
@@ -812,24 +949,52 @@ func (h *StorageV1Handler) moveObject(c *gin.Context) {
 		return
 	}
 
-	ctx := h.rlsCtx(c)
-	srcKey := srcBucket + "/" + req.SourceKey
-	dstKey := dstBucket + "/" + req.DestinationKey
+	src, errS := cleanPath(req.SourceKey)
+	dst, errD := cleanPath(req.DestinationKey)
+	if errS != nil || errD != nil {
+		storageErr(c, 400, "invalid_key", "Invalid key")
+		return
+	}
 
-	if err := h.storage.Copy(ctx, srcKey, dstKey); err != nil {
+	if srcBucket == dstBucket && src == dst {
+		storageErr(c, 400, "invalid_key", "Source and destination are the same")
+		return
+	}
+	ctx := h.rlsCtx(c)
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		h.logger.Error("move begin", "error", err)
+		storageErr(c, 500, "internal", "Move failed")
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	n, err := tx.Exec(ctx,
+		"UPDATE storage.objects SET bucket_id = $1, name = $2 WHERE bucket_id = $3 AND name = $4",
+		dstBucket, dst, srcBucket, src)
+	if err != nil {
+		h.uploadWriteError(c, err)
+		return
+	}
+	if n == 0 {
+		storageErr(c, 404, "not_found", "Object not found")
+		return
+	}
+	srcKey, dstKey := srcBucket+"/"+src, dstBucket+"/"+dst
+	if err := h.storage.Copy(c.Request.Context(), srcKey, dstKey); err != nil {
 		h.logger.Error("move copy", "error", err)
 		storageErr(c, 500, "internal", "Move failed")
 		return
 	}
-	if err := h.storage.Delete(ctx, srcKey); err != nil {
-		h.logger.Error("move delete", "error", err)
+	if err := tx.Commit(ctx); err != nil {
+		// An ambiguous commit may have applied, so leave storage alone (no compensating delete).
+		h.logger.Error("move commit", "error", err)
+		storageErr(c, 500, "internal", "Move failed")
+		return
 	}
-
-	// Update DB
-	_, _ = h.db.Exec(ctx,
-		"UPDATE storage.objects SET bucket_id = $1, name = $2 WHERE bucket_id = $3 AND name = $4",
-		dstBucket, req.DestinationKey, srcBucket, req.SourceKey)
-
+	if err := h.storage.Delete(c.Request.Context(), srcKey); err != nil {
+		h.logger.Warn("move delete source", "key", srcKey, "error", err)
+	}
 	c.JSON(200, gin.H{"message": "Successfully moved"})
 }
 
@@ -860,31 +1025,62 @@ func (h *StorageV1Handler) copyObject(c *gin.Context) {
 		return
 	}
 
-	ctx := h.rlsCtx(c)
-	srcKey := srcBucket + "/" + req.SourceKey
-	dstKey := dstBucket + "/" + req.DestinationKey
+	src, errS := cleanPath(req.SourceKey)
+	dst, errD := cleanPath(req.DestinationKey)
+	if errS != nil || errD != nil {
+		storageErr(c, 400, "invalid_key", "Invalid key")
+		return
+	}
 
-	if err := h.storage.Copy(ctx, srcKey, dstKey); err != nil {
+	if srcBucket == dstBucket && src == dst {
+		storageErr(c, 400, "invalid_key", "Source and destination are the same")
+		return
+	}
+	ctx := h.rlsCtx(c)
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		h.logger.Error("copy begin", "error", err)
+		storageErr(c, 500, "internal", "Copy failed")
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	n, err := tx.Exec(ctx,
+		`INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by, metadata)
+		 SELECT $1, $2, size, mime, $5::uuid, metadata FROM storage.objects WHERE bucket_id = $3 AND name = $4
+		 ON CONFLICT (bucket_id, name) DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime,
+		   metadata = EXCLUDED.metadata, uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW()`,
+		dstBucket, dst, srcBucket, src, nullIfEmpty(getSession(c).UserID))
+	if err != nil {
+		h.uploadWriteError(c, err)
+		return
+	}
+	if n == 0 {
+		storageErr(c, 404, "not_found", "Object not found")
+		return
+	}
+	dstKey := dstBucket + "/" + dst
+	if err := h.storage.Copy(c.Request.Context(), srcBucket+"/"+src, dstKey); err != nil {
 		h.logger.Error("copy", "error", err)
 		storageErr(c, 500, "internal", "Copy failed")
 		return
 	}
-
-	// Copy DB row
-	_, _ = h.db.Exec(ctx,
-		`INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by, metadata)
-		 SELECT $1, $2, size, mime, uploaded_by, metadata FROM storage.objects WHERE bucket_id = $3 AND name = $4
-		 ON CONFLICT (bucket_id, name) DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime, uploaded_at = NOW()`,
-		dstBucket, req.DestinationKey, srcBucket, req.SourceKey)
-
-	c.JSON(200, gin.H{"Key": dstBucket + "/" + req.DestinationKey})
+	if err := tx.Commit(ctx); err != nil {
+		h.logger.Error("copy commit", "error", err)
+		storageErr(c, 500, "internal", "Copy failed")
+		return
+	}
+	c.JSON(200, gin.H{"Key": dstKey})
 }
 
 // --- Signed URL handlers ---
 
 func (h *StorageV1Handler) createSignedURL(c *gin.Context) {
 	bucketName := c.Param("bucket")
-	objPath := h.cleanPath(c.Param("path"))
+	objPath, ok := objectPath(c, c.Param("path"))
+	if !ok {
+		return
+	}
 
 	if _, ok := h.getBucketConfig(bucketName); !ok {
 		storageErr(c, 404, "not_found", "Bucket not found")
@@ -894,9 +1090,7 @@ func (h *StorageV1Handler) createSignedURL(c *gin.Context) {
 	var req struct {
 		ExpiresIn int `json:"expiresIn"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.ExpiresIn <= 0 {
-		req.ExpiresIn = 3600
-	}
+	_ = c.ShouldBindJSON(&req)
 
 	ctx := h.rlsCtx(c)
 	row, err := h.db.QueryRow(ctx, "SELECT id FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
@@ -905,7 +1099,7 @@ func (h *StorageV1Handler) createSignedURL(c *gin.Context) {
 		return
 	}
 
-	url, err := h.storage.SignDownload(ctx, bucketName+"/"+objPath, time.Duration(req.ExpiresIn)*time.Second)
+	url, err := h.storage.SignDownload(ctx, bucketName+"/"+objPath, signedExpiry(req.ExpiresIn))
 	if err != nil {
 		h.logger.Error("sign download", "error", err)
 		storageErr(c, 500, "internal", "Failed to create signed URL")
@@ -926,31 +1120,51 @@ func (h *StorageV1Handler) createSignedURLs(c *gin.Context) {
 		ExpiresIn int      `json:"expiresIn"`
 		Paths     []string `json:"paths"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		storageErr(c, 400, "bad_request", "Invalid request")
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.Paths) == 0 || len(req.Paths) > maxSignPaths {
+		storageErr(c, 400, "bad_request", fmt.Sprintf("Expected 1-%d paths", maxSignPaths))
 		return
-	}
-	if req.ExpiresIn <= 0 {
-		req.ExpiresIn = 3600
 	}
 
 	ctx := h.rlsCtx(c)
-	var results []gin.H
-	for _, p := range req.Paths {
-		p = strings.TrimPrefix(p, "/")
-		url, err := h.storage.SignDownload(ctx, bucketName+"/"+p, time.Duration(req.ExpiresIn)*time.Second)
+	keys := validKeys(req.Paths)
+	visible := map[string]bool{}
+	if len(keys) > 0 {
+		rows, err := h.db.Query(ctx, "SELECT name FROM storage.objects WHERE bucket_id = $1 AND name = ANY($2::text[])", bucketName, keys)
 		if err != nil {
-			results = append(results, gin.H{"path": p, "error": err.Error()})
+			h.logger.Error("sign urls lookup", "error", err)
+			storageErr(c, 500, "internal", "Failed to create signed URLs")
+			return
+		}
+		for _, row := range rows {
+			visible[asString(row["name"])] = true
+		}
+	}
+
+	expiry := signedExpiry(req.ExpiresIn)
+	results := make([]gin.H, 0, len(req.Paths))
+	for _, p := range req.Paths {
+		k, err := cleanPath(p)
+		if err != nil || !visible[k] {
+			results = append(results, gin.H{"path": p, "signedURL": nil, "error": errNoObjectAccess})
 			continue
 		}
-		results = append(results, gin.H{"path": p, "signedURL": url})
+		url, err := h.storage.SignDownload(ctx, bucketName+"/"+k, expiry)
+		if err != nil {
+			h.logger.Error("sign download", "error", err)
+			results = append(results, gin.H{"path": p, "signedURL": nil, "error": "Failed to create signed URL"})
+			continue
+		}
+		results = append(results, gin.H{"path": p, "signedURL": url, "error": nil})
 	}
 	c.JSON(200, results)
 }
 
 func (h *StorageV1Handler) createSignedUploadURL(c *gin.Context) {
 	bucketName := c.Param("bucket")
-	objPath := h.cleanPath(c.Param("path"))
+	objPath, ok := objectPath(c, c.Param("path"))
+	if !ok {
+		return
+	}
 
 	if _, ok := h.getBucketConfig(bucketName); !ok {
 		storageErr(c, 404, "not_found", "Bucket not found")
@@ -965,11 +1179,9 @@ func (h *StorageV1Handler) createSignedUploadURL(c *gin.Context) {
 	// handed out. This mirrors the download path (createSignedURL probes a
 	// SELECT) and Supabase's signUploadObjectUrl, which runs canUpload first.
 	session := getSession(c)
-	var uploadedBy any
-	if session.UserID != "" {
-		uploadedBy = session.UserID
-	}
-	if err := h.probeUploadPermission(c, bucketName, objPath, uploadedBy); err != nil {
+	uploadedBy := nullIfEmpty(session.UserID)
+	probeRow := objectRow{bucket: bucketName, name: objPath, uploadedBy: uploadedBy, metadata: objectMetadataJSON(0, "", "")}
+	if err := h.probeUploadPermission(c, probeRow, false, c.GetHeader("x-upsert") == "true"); err != nil {
 		h.uploadWriteError(c, err)
 		return
 	}
@@ -981,44 +1193,32 @@ func (h *StorageV1Handler) createSignedUploadURL(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{
-		"url":   fmt.Sprintf("/storage/v1/object/upload/sign/%s/%s", bucketName, objPath),
+		"url": (&url.URL{
+			Path:     "/object/upload/sign/" + bucketName + "/" + objPath,
+			RawQuery: url.Values{"token": {token}}.Encode(),
+		}).String(),
 		"token": token,
 		"path":  objPath,
 	})
 }
 
-// probeUploadPermission reports whether the bucket's RLS policies permit the
-// caller to write this object, without persisting anything. It runs the same
-// INSERT (or upsert, honouring x-upsert) the signed-upload redemption performs,
-// under the caller's Postgres role, inside a transaction that is always rolled
-// back, and returns the raw database error so callers can map an RLS denial to
-// 403, a duplicate to 409, etc. via uploadWriteError.
-func (h *StorageV1Handler) probeUploadPermission(c *gin.Context, bucketName, objPath string, uploadedBy any) error {
+// probeUploadPermission runs the object write under the caller's role in a rolled-back tx and returns the raw DB error.
+func (h *StorageV1Handler) probeUploadPermission(c *gin.Context, row objectRow, isUpdate, upsert bool) error {
 	ctx := h.rlsCtx(c)
 	tx, err := h.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-
-	if c.GetHeader("x-upsert") == "true" {
-		_, err = tx.Exec(ctx,
-			`INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by)
-			 VALUES ($1, $2, 0, '', $3)
-			 ON CONFLICT (bucket_id, name)
-			 DO UPDATE SET uploaded_at = NOW()`,
-			bucketName, objPath, uploadedBy)
-	} else {
-		_, err = tx.Exec(ctx,
-			"INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by) VALUES ($1, $2, 0, '', $3)",
-			bucketName, objPath, uploadedBy)
-	}
-	return err
+	return writeObjectRow(ctx, tx, row, isUpdate, upsert)
 }
 
 func (h *StorageV1Handler) uploadToSignedURL(c *gin.Context) {
 	bucketName := c.Param("bucket")
-	objPath := h.cleanPath(c.Param("path"))
+	objPath, ok := objectPath(c, c.Param("path"))
+	if !ok {
+		return
+	}
 
 	bucket, ok := h.getBucketConfig(bucketName)
 	if !ok {
@@ -1033,25 +1233,14 @@ func (h *StorageV1Handler) uploadToSignedURL(c *gin.Context) {
 		return
 	}
 
-	contentType := c.ContentType()
-	if contentType == "" {
-		contentType = "application/octet-stream"
+	file, size, contentType, ok := h.readUpload(c, bucket, nil)
+	if !ok {
+		return
 	}
-
-	var maxBytes int64 = 50 * 1024 * 1024
-	if bucket.MaxSize != "" {
-		if mb := parseSizeBytes(bucket.MaxSize); mb > 0 {
-			maxBytes = mb
-		}
-	}
-	limitedBody := http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+	defer closeSpool(file)
 
 	key := bucketName + "/" + objPath
-	if err := h.storage.Upload(c.Request.Context(), key, limitedBody, contentType, c.Request.ContentLength); err != nil {
-		if strings.Contains(err.Error(), "http: request body too large") {
-			storageErr(c, 413, "payload_too_large", "File too large")
-			return
-		}
+	if err := h.storage.Upload(c.Request.Context(), key, file, contentType, size); err != nil {
 		h.logger.Error("signed upload error", "error", err)
 		storageErr(c, 500, "internal", "Upload failed")
 		return
@@ -1067,21 +1256,13 @@ func (h *StorageV1Handler) uploadToSignedURL(c *gin.Context) {
 	if err != nil {
 		ctx = c.Request.Context()
 	}
-	size := c.Request.ContentLength
-	if size < 0 {
-		size = 0
+	row := objectRow{bucket: bucketName, name: objPath, size: size, mime: contentType, uploadedBy: nullIfEmpty(owner),
+		metadata: objectMetadataJSON(size, contentType, c.GetHeader("Cache-Control"))}
+	if err := writeObjectRow(ctx, h.db, row, false, true); err != nil {
+		h.logger.Error("signed upload record", "error", err)
+		storageErr(c, 500, "internal", "Failed to record object")
+		return
 	}
-	var uploadedBy any
-	if owner != "" {
-		uploadedBy = owner
-	}
-	metaJSON := objectMetadataJSON(size, contentType, c.GetHeader("Cache-Control"))
-	_, _ = h.db.Exec(ctx,
-		`INSERT INTO storage.objects (bucket_id, name, size, mime, metadata, uploaded_by)
-		 VALUES ($1, $2, $3, $4, $5::jsonb, $6)
-		 ON CONFLICT (bucket_id, name)
-		 DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime, metadata = EXCLUDED.metadata, uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW()`,
-		bucketName, objPath, size, contentType, metaJSON, uploadedBy)
 
 	c.JSON(200, gin.H{
 		"Key":      bucketName + "/" + objPath,

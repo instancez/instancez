@@ -3,11 +3,13 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +19,7 @@ import (
 	adapterauth "github.com/instancez/instancez/internal/adapter/auth"
 	"github.com/instancez/instancez/internal/app"
 	"github.com/instancez/instancez/internal/domain"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // ---------- helpers ----------
@@ -572,9 +575,10 @@ func TestHandleToken_UnknownGrantType(t *testing.T) {
 // and issues a new refresh_token.
 func TestHandleRefreshGrant_IgnoresDeprecatedRefreshTokensFalse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	inserted := false
+	var minted string
 	svc := &stubAuthService{
-		consumeRefreshFn: func(ctx context.Context, token string) (map[string]any, error) {
+		consumeRefreshFn: func(ctx context.Context, token string, next domain.RefreshRotation) (map[string]any, domain.SessionMeta, string, error) {
+			minted = next.Token
 			return map[string]any{
 				"id":                 "11111111-2222-3333-4444-555555555555",
 				"email":              "u@e.com",
@@ -583,11 +587,7 @@ func TestHandleRefreshGrant_IgnoresDeprecatedRefreshTokensFalse(t *testing.T) {
 				"raw_user_meta_data": `{}`,
 				"created_at":         time.Now(),
 				"updated_at":         time.Now(),
-			}, nil
-		},
-		insertRefreshTokenFn: func(ctx context.Context, userID, token string, meta domain.SessionMeta, expiresAt int64) error {
-			inserted = true
-			return nil
+			}, domain.SessionMeta{}, next.Token, nil
 		},
 	}
 	h := &AuthHandler{
@@ -614,11 +614,8 @@ func TestHandleRefreshGrant_IgnoresDeprecatedRefreshTokensFalse(t *testing.T) {
 	var body map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &body)
 	rt, _ := body["refresh_token"].(string)
-	if rt == "" {
-		t.Errorf("expected non-empty refresh_token in response, got %v", body["refresh_token"])
-	}
-	if !inserted {
-		t.Error("expected InsertRefreshToken to be called")
+	if rt == "" || rt != minted {
+		t.Errorf("expected the rotated refresh_token %q in response, got %v", minted, body["refresh_token"])
 	}
 }
 
@@ -660,6 +657,7 @@ type stubDB struct {
 	queryFn    func(ctx context.Context, q string, args ...any) ([]map[string]any, error)
 	execFn     func(ctx context.Context, q string, args ...any) (int64, error)
 	beginFn    func(ctx context.Context) (domain.Tx, error)
+	withRLSFn  func(ctx context.Context, s domain.Session) (context.Context, error)
 }
 
 func (s *stubDB) Close() error                                    { return nil }
@@ -688,6 +686,9 @@ func (s *stubDB) Exec(ctx context.Context, q string, args ...any) (int64, error)
 	return 0, nil
 }
 func (s *stubDB) WithRLS(ctx context.Context, session domain.Session) (context.Context, error) {
+	if s.withRLSFn != nil {
+		return s.withRLSFn(ctx, session)
+	}
 	return ctx, nil
 }
 func (s *stubDB) Begin(ctx context.Context) (domain.Tx, error) {
@@ -744,40 +745,47 @@ func (t *stubTx) Rollback(ctx context.Context) error {
 // Only the methods a given test exercises need non-nil functions; everything
 // else has a safe no-op default.
 type stubAuthService struct {
-	createUserFn          func(ctx context.Context, p domain.CreateUserParams) (map[string]any, error)
-	getUserByEmailFn      func(ctx context.Context, email string) (map[string]any, error)
-	getUserIDByEmailFn    func(ctx context.Context, email string) (string, error)
-	getUserByIDFn         func(ctx context.Context, id string) (map[string]any, error)
-	updateUserFn          func(ctx context.Context, id string, p domain.UpdateUserParams) (map[string]any, error)
-	deleteUserFn          func(ctx context.Context, id string) error
-	listUsersFn           func(ctx context.Context, page, perPage int) ([]map[string]any, int, error)
-	verifyPasswordFn      func(ctx context.Context, email, password string) (map[string]any, error)
-	getUserEmailFn        func(ctx context.Context, userID string) (string, error)
-	hasPasswordFn         func(ctx context.Context, userID string) (bool, error)
-	consumeRefreshFn      func(ctx context.Context, token string) (map[string]any, error)
-	createOneTimeTokenFn  func(ctx context.Context, userID, token, purpose string, expiresAt int64) error
-	createOTPCodeFn       func(ctx context.Context, userID, token, code, email, purpose string, expiresAt int64) error
-	verifyOTPFn           func(ctx context.Context, token, email string, allowedPurposes []string) (domain.OTPRow, error)
-	peekOneTimeTokenFn    func(ctx context.Context, token string) (domain.OTPRow, error)
-	deleteOneTimeTokenFn  func(ctx context.Context, token string) error
-	markEmailVerifiedFn   func(ctx context.Context, userID string)
-	insertRefreshTokenFn  func(ctx context.Context, userID, token string, meta domain.SessionMeta, expiresAt int64) error
-	getPKCEFlowStateFn    func(ctx context.Context, authCode string) (string, string, string, error)
-	countIdentitiesFn     func(ctx context.Context, userID string) (int, error)
-	deleteIdentityByIDFn  func(ctx context.Context, identityID, userID string) error
-	upsertOAuthUserFn     func(ctx context.Context, provider, providerUserID, email, name string) (map[string]any, error)
-	listIdentitiesFn      func(ctx context.Context, userID string) ([]map[string]any, error)
-	consumeOAuthFlowFn    func(ctx context.Context, state string) (domain.FlowState, error)
-	deleteFactorForUserFn func(ctx context.Context, factorID, userID string) error
+	createUserFn                func(ctx context.Context, p domain.CreateUserParams) (map[string]any, error)
+	getUserByEmailFn            func(ctx context.Context, email string) (map[string]any, error)
+	getUserIDByEmailFn          func(ctx context.Context, email string) (string, error)
+	getUserByIDFn               func(ctx context.Context, id string) (map[string]any, error)
+	updateUserFn                func(ctx context.Context, id string, p domain.UpdateUserParams) (map[string]any, error)
+	deleteUserFn                func(ctx context.Context, id string) error
+	listUsersFn                 func(ctx context.Context, page, perPage int) ([]map[string]any, int, error)
+	verifyPasswordFn            func(ctx context.Context, email, password string) (map[string]any, error)
+	getUserEmailFn              func(ctx context.Context, userID string) (string, error)
+	hasPasswordFn               func(ctx context.Context, userID string) (bool, error)
+	consumeRefreshFn            func(ctx context.Context, token string, next domain.RefreshRotation) (map[string]any, domain.SessionMeta, string, error)
+	createOneTimeTokenFn        func(ctx context.Context, userID, token, purpose string, expiresAt int64) error
+	createOTPCodeFn             func(ctx context.Context, userID, token, code, email, purpose string, expiresAt int64) error
+	verifyOTPFn                 func(ctx context.Context, token, email string, allowedPurposes []string) (domain.OTPRow, error)
+	peekOneTimeTokenFn          func(ctx context.Context, token string) (domain.OTPRow, error)
+	deleteOneTimeTokenFn        func(ctx context.Context, token string) error
+	markEmailVerifiedFn         func(ctx context.Context, userID string)
+	recentOTPSentFn             func(ctx context.Context, userID, purpose string, within time.Duration) (bool, error)
+	deleteUserTokensByPurposeFn func(ctx context.Context, userID, purpose string) error
+	insertRefreshTokenFn        func(ctx context.Context, userID, token string, meta domain.SessionMeta, expiresAt int64) error
+	getPKCEFlowStateFn          func(ctx context.Context, authCode string) (string, string, string, error)
+	countIdentitiesFn           func(ctx context.Context, userID string) (int, error)
+	deleteIdentityByIDFn        func(ctx context.Context, identityID, userID string) error
+	upsertOAuthUserFn           func(ctx context.Context, in domain.OAuthLogin) (map[string]any, error)
+	listIdentitiesFn            func(ctx context.Context, userID string) ([]map[string]any, error)
+	consumeOAuthFlowFn          func(ctx context.Context, state string) (domain.FlowState, error)
+	createOAuthFlowFn           func(ctx context.Context, state, codeChallenge, method, redirectTo, linkingUserID string) error
+	linkIdentityFn              func(ctx context.Context, userID, provider, providerUserID, email string)
+	deleteFactorForUserFn       func(ctx context.Context, factorID, userID string, allowVerified bool) error
+	revokeOtherSessionsFn       func(ctx context.Context, userID, keep string) error
+	revokeAllUserSessionsFn     func(ctx context.Context, userID string) error
 
-	enrollFactorFn              func(ctx context.Context, userID, friendlyName, secret string) (string, error)
-	createChallengeFn           func(ctx context.Context, factorID, userID string) (string, time.Time, error)
-	getFactorForVerifyFn        func(ctx context.Context, factorID, userID string) (domain.MFAFactor, error)
-	validateChallengeFn         func(ctx context.Context, challengeID, factorID string) error
-	incrementChallengeAttemptFn func(ctx context.Context, challengeID string) error
-	markChallengeVerifiedFn     func(ctx context.Context, challengeID string) error
-	promoteFactorToVerifiedFn   func(ctx context.Context, factorID string) error
-	listFactorsFn               func(ctx context.Context, userID string) ([]map[string]any, error)
+	enrollFactorFn            func(ctx context.Context, userID, friendlyName, secret string) (string, error)
+	createChallengeFn         func(ctx context.Context, factorID, userID string) (string, time.Time, error)
+	getFactorForVerifyFn      func(ctx context.Context, factorID, userID string) (domain.MFAFactor, error)
+	validateChallengeFn       func(ctx context.Context, challengeID, factorID string) error
+	consumeTOTPStepFn         func(ctx context.Context, factorID string, step int64) (bool, error)
+	revokeBelowAAL2Fn         func(ctx context.Context, userID, sessionID string, allSessions bool) error
+	markChallengeVerifiedFn   func(ctx context.Context, challengeID string) error
+	promoteFactorToVerifiedFn func(ctx context.Context, factorID string) error
+	listFactorsFn             func(ctx context.Context, userID string) ([]map[string]any, error)
 }
 
 // Compile-time check that stubAuthService satisfies the interface.
@@ -850,17 +858,25 @@ func (s *stubAuthService) InsertRefreshToken(ctx context.Context, userID, token 
 	}
 	return nil
 }
-func (s *stubAuthService) ConsumeRefreshToken(ctx context.Context, token string) (map[string]any, error) {
+func (s *stubAuthService) ConsumeRefreshToken(ctx context.Context, token string, next domain.RefreshRotation) (map[string]any, domain.SessionMeta, string, error) {
 	if s.consumeRefreshFn != nil {
-		return s.consumeRefreshFn(ctx, token)
+		return s.consumeRefreshFn(ctx, token, next)
 	}
-	return nil, domain.ErrUnauthorized
+	return nil, domain.SessionMeta{}, "", domain.ErrUnauthorized
 }
 func (s *stubAuthService) RevokeSessionByID(ctx context.Context, sessionID string) error { return nil }
 func (s *stubAuthService) RevokeOtherSessions(ctx context.Context, userID, keep string) error {
+	if s.revokeOtherSessionsFn != nil {
+		return s.revokeOtherSessionsFn(ctx, userID, keep)
+	}
 	return nil
 }
-func (s *stubAuthService) RevokeAllUserSessions(ctx context.Context, userID string) error { return nil }
+func (s *stubAuthService) RevokeAllUserSessions(ctx context.Context, userID string) error {
+	if s.revokeAllUserSessionsFn != nil {
+		return s.revokeAllUserSessionsFn(ctx, userID)
+	}
+	return nil
+}
 func (s *stubAuthService) CreateOneTimeToken(ctx context.Context, userID, token, purpose string, expiresAt int64) error {
 	if s.createOneTimeTokenFn != nil {
 		return s.createOneTimeTokenFn(ctx, userID, token, purpose, expiresAt)
@@ -873,7 +889,16 @@ func (s *stubAuthService) CreateOTPCode(ctx context.Context, userID, token, code
 	}
 	return nil
 }
+func (s *stubAuthService) RecentOTPSent(ctx context.Context, userID, purpose string, within time.Duration) (bool, error) {
+	if s.recentOTPSentFn != nil {
+		return s.recentOTPSentFn(ctx, userID, purpose, within)
+	}
+	return false, nil
+}
 func (s *stubAuthService) DeleteUserTokensByPurpose(ctx context.Context, userID, purpose string) error {
+	if s.deleteUserTokensByPurposeFn != nil {
+		return s.deleteUserTokensByPurposeFn(ctx, userID, purpose)
+	}
 	return nil
 }
 func (s *stubAuthService) DeleteOneTimeToken(ctx context.Context, token string) error {
@@ -910,6 +935,9 @@ func (s *stubAuthService) CreatePKCEFlowState(ctx context.Context, authCode, use
 	return nil
 }
 func (s *stubAuthService) CreateOAuthFlowState(ctx context.Context, state, codeChallenge, method, redirectTo, linkingUserID string) error {
+	if s.createOAuthFlowFn != nil {
+		return s.createOAuthFlowFn(ctx, state, codeChallenge, method, redirectTo, linkingUserID)
+	}
 	return nil
 }
 func (s *stubAuthService) ConsumeOAuthFlowState(ctx context.Context, state string) (domain.FlowState, error) {
@@ -918,13 +946,16 @@ func (s *stubAuthService) ConsumeOAuthFlowState(ctx context.Context, state strin
 	}
 	return domain.FlowState{}, domain.ErrNotFound
 }
-func (s *stubAuthService) UpsertOAuthUser(ctx context.Context, provider, providerUserID, email, name string) (map[string]any, error) {
+func (s *stubAuthService) UpsertOAuthUser(ctx context.Context, in domain.OAuthLogin) (map[string]any, error) {
 	if s.upsertOAuthUserFn != nil {
-		return s.upsertOAuthUserFn(ctx, provider, providerUserID, email, name)
+		return s.upsertOAuthUserFn(ctx, in)
 	}
 	return map[string]any{"id": "user-1"}, nil
 }
 func (s *stubAuthService) LinkIdentity(ctx context.Context, userID, provider, providerUserID, email string) {
+	if s.linkIdentityFn != nil {
+		s.linkIdentityFn(ctx, userID, provider, providerUserID, email)
+	}
 }
 func (s *stubAuthService) ListIdentities(ctx context.Context, userID string) ([]map[string]any, error) {
 	if s.listIdentitiesFn != nil {
@@ -944,9 +975,9 @@ func (s *stubAuthService) DeleteIdentityByID(ctx context.Context, identityID, us
 	}
 	return nil
 }
-func (s *stubAuthService) DeleteFactorForUser(ctx context.Context, factorID, userID string) error {
+func (s *stubAuthService) DeleteFactorForUser(ctx context.Context, factorID, userID string, allowVerified bool) error {
 	if s.deleteFactorForUserFn != nil {
-		return s.deleteFactorForUserFn(ctx, factorID, userID)
+		return s.deleteFactorForUserFn(ctx, factorID, userID, allowVerified)
 	}
 	return nil
 }
@@ -974,9 +1005,15 @@ func (s *stubAuthService) ValidateChallenge(ctx context.Context, challengeID, fa
 	}
 	return nil
 }
-func (s *stubAuthService) IncrementChallengeAttempt(ctx context.Context, challengeID string) error {
-	if s.incrementChallengeAttemptFn != nil {
-		return s.incrementChallengeAttemptFn(ctx, challengeID)
+func (s *stubAuthService) ConsumeTOTPStep(ctx context.Context, factorID string, step int64) (bool, error) {
+	if s.consumeTOTPStepFn != nil {
+		return s.consumeTOTPStepFn(ctx, factorID, step)
+	}
+	return true, nil
+}
+func (s *stubAuthService) RevokeBelowAAL2(ctx context.Context, userID, sessionID string, allSessions bool) error {
+	if s.revokeBelowAAL2Fn != nil {
+		return s.revokeBelowAAL2Fn(ctx, userID, sessionID, allSessions)
 	}
 	return nil
 }
@@ -1219,6 +1256,83 @@ func TestSignupGating_AdminInvite_IgnoresAllowSignup(t *testing.T) {
 	}
 	if w.Code >= 400 {
 		t.Fatalf("admin invite failed: status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleSignupDispatch_DuplicateEmail_Returns409 asserts the 409/conflict contract for a real pgconn duplicate-key error.
+func TestHandleSignupDispatch_DuplicateEmail_Returns409(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dupErr := &pgconn.PgError{Code: "23505", Message: `duplicate key value violates unique constraint "users_email_key"`}
+	h, svc := signupGatingHandler(t, nil, nil)
+	svc.createUserFn = func(ctx context.Context, p domain.CreateUserParams) (map[string]any, error) {
+		return nil, dupErr
+	}
+
+	w := postSignup(h, `{"email":"dup@example.com","password":"hunter2hunter2"}`)
+
+	if w.Code != 409 {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["code"] != "23505" || body["message"] != "Email already registered" {
+		t.Errorf("expected conflict body, got %v", body)
+	}
+}
+
+// TestHandleAdminCreateUser_DuplicateEmail_Returns422 asserts the 422/user_already_exists contract for the admin-create path.
+func TestHandleAdminCreateUser_DuplicateEmail_Returns422(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("INSTANCEZ_SECRET_KEY", "admin-key")
+	dupErr := &pgconn.PgError{Code: "23505", Message: `duplicate key value violates unique constraint "users_email_key"`}
+	svc := &stubAuthService{
+		createUserFn: func(_ context.Context, p domain.CreateUserParams) (map[string]any, error) {
+			return nil, dupErr
+		},
+	}
+	h := &AuthHandler{
+		cfg:     &domain.Config{Auth: &domain.Auth{JWTExpiry: "15m"}},
+		authSvc: svc,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		jwtKeys: stubKeys(t),
+	}
+
+	w := doAdminRequest(h, "POST", "/auth/v1/admin/users", `{"email":"dup@example.com","password":"hunter2hunter2"}`)
+
+	if w.Code != 422 {
+		t.Fatalf("expected 422, got %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["message"] != "A user with this email address has already been registered" {
+		t.Errorf("expected already-registered message, got %v", body)
+	}
+}
+
+// TestIsDuplicateKeyErr covers the shared duplicate-key classifier.
+func TestIsDuplicateKeyErr(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil error", nil, false},
+		{"pgconn 23505", &pgconn.PgError{Code: "23505"}, true},
+		{"pgconn different code", &pgconn.PgError{Code: "23503"}, false},
+		{"pgconn non-23505 code with 'unique' in message (SQLSTATE wins over substring)", &pgconn.PgError{Code: "23514", Message: "value must be a unique combination"}, false},
+		{"pgconn 23505 wrapped in DatabaseError", &domain.DatabaseError{Op: "exec", Err: &pgconn.PgError{Code: "23505"}}, true},
+		{"string duplicate key", errors.New(`duplicate key value violates unique constraint "users_pkey"`), true},
+		{"string 'unique' alone no longer matches", errors.New("violates unique constraint"), false},
+		{"string 23505", errors.New("SQLSTATE 23505"), true},
+		{"unrelated error", errors.New("connection refused"), false},
+		{"empty string error", errors.New(""), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isDuplicateKeyErr(tc.err); got != tc.want {
+				t.Errorf("isDuplicateKeyErr(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -1528,53 +1642,56 @@ func TestHandleVerify_InvalidTokenMapsTo401(t *testing.T) {
 	}
 }
 
-// TestHandleVerify_MagiclinkType asserts the magiclink verify type accepts any
-// stored purpose (nil allowed-set) and does not mark the email verified.
 func TestHandleVerify_MagiclinkType(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	marked := false
-	var gotPurposes []string
-	svc := &stubAuthService{
-		verifyOTPFn: func(ctx context.Context, token, email string, allowedPurposes []string) (domain.OTPRow, error) {
-			gotPurposes = allowedPurposes
-			return domain.OTPRow{UserID: "11111111-2222-3333-4444-555555555555", Purpose: "magiclink"}, nil
-		},
-		markEmailVerifiedFn: func(ctx context.Context, userID string) { marked = true },
-		getUserByIDFn: func(ctx context.Context, id string) (map[string]any, error) {
-			return map[string]any{
-				"id":                 id,
-				"email":              "u@e.com",
-				"email_verified":     true,
-				"raw_app_meta_data":  `{}`,
-				"raw_user_meta_data": `{}`,
-				"created_at":         time.Now(),
-				"updated_at":         time.Now(),
-			}, nil
-		},
-	}
-	h := &AuthHandler{
-		cfg:     &domain.Config{Auth: &domain.Auth{JWTExpiry: "1h", Email: &domain.AuthEmail{}}},
-		authSvc: svc,
-		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-		jwtKeys: stubKeys(t),
-	}
-	r := gin.New()
-	r.POST("/auth/v1/verify", h.handleVerify)
+	for purpose, allowed := range map[string]bool{"magiclink": true, "signup": true, "recovery": false, "email_change": false} {
+		var marked string
+		var gotPurposes []string
+		svc := &stubAuthService{
+			verifyOTPFn: func(ctx context.Context, token, email string, allowedPurposes []string) (domain.OTPRow, error) {
+				gotPurposes = allowedPurposes
+				if !slices.Contains(allowedPurposes, purpose) {
+					return domain.OTPRow{}, domain.ErrPurposeMismatch
+				}
+				return domain.OTPRow{UserID: "11111111-2222-3333-4444-555555555555", Purpose: purpose}, nil
+			},
+			markEmailVerifiedFn: func(ctx context.Context, userID string) { marked = userID },
+			getUserByIDFn: func(ctx context.Context, id string) (map[string]any, error) {
+				return map[string]any{
+					"id":                 id,
+					"email":              "u@e.com",
+					"email_verified":     true,
+					"raw_app_meta_data":  `{}`,
+					"raw_user_meta_data": `{}`,
+					"created_at":         time.Now(),
+					"updated_at":         time.Now(),
+				}, nil
+			},
+		}
+		h := &AuthHandler{
+			cfg:     &domain.Config{Auth: &domain.Auth{JWTExpiry: "1h", Email: &domain.AuthEmail{}}},
+			authSvc: svc,
+			logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+			jwtKeys: stubKeys(t),
+		}
+		r := gin.New()
+		r.POST("/auth/v1/verify", h.handleVerify)
 
-	req := httptest.NewRequest("POST", "/auth/v1/verify",
-		strings.NewReader(`{"type":"magiclink","email":"u@e.com","token":"aaaaaaaabbbbbbbbccccccccdddddddd"}`))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
+		req := httptest.NewRequest("POST", "/auth/v1/verify",
+			strings.NewReader(`{"type":"magiclink","email":"u@e.com","token":"aaaaaaaabbbbbbbbccccccccdddddddd"}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
 
-	if w.Code != 200 {
-		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
-	}
-	if gotPurposes != nil {
-		t.Errorf("magiclink type should allow any purpose (nil), got %v", gotPurposes)
-	}
-	if marked {
-		t.Error("magiclink verify must not mark the email verified")
+		if want := map[bool]int{true: 200, false: 400}[allowed]; w.Code != want {
+			t.Fatalf("%s: status = %d, want %d: %s", purpose, w.Code, want, w.Body.String())
+		}
+		if !slices.Equal(gotPurposes, []string{"signup", "magiclink"}) {
+			t.Errorf("%s: allowed purposes = %v", purpose, gotPurposes)
+		}
+		if (marked == "11111111-2222-3333-4444-555555555555") != allowed {
+			t.Errorf("%s: marked=%q want marked=%v", purpose, marked, allowed)
+		}
 	}
 }
 

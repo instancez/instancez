@@ -2,6 +2,8 @@ package postgrest
 
 import (
 	"testing"
+
+	"github.com/instancez/instancez/internal/domain"
 )
 
 func TestParseFilterValue(t *testing.T) {
@@ -268,5 +270,33 @@ func TestBuildFilterCondition_JSONB(t *testing.T) {
 				t.Errorf("args count = %d, want %d", len(args), tt.wantN)
 			}
 		})
+	}
+}
+
+func TestValidateIdentPath(t *testing.T) {
+	ok := []string{"id", "_x", "Col9", "data->a", "data->>a", "data->items->0->>name", "data->0"}
+	for _, c := range ok {
+		if err := ValidateIdentPath(c); err != nil {
+			t.Errorf("ValidateIdentPath(%q) = %v, want nil", c, err)
+		}
+	}
+	bad := []string{
+		"", " ", "9col", "a b", `a"b`, "a'b", "a;b", "a)b", "a(b", "a--b", "a.b",
+		"é", "col\x00", "data->", "data->>", "data->a'b", "data->a b", "->a", "NaN()",
+	}
+	for _, c := range bad {
+		if err := ValidateIdentPath(c); err == nil {
+			t.Errorf("ValidateIdentPath(%q) = nil, want error", c)
+		}
+	}
+}
+
+func TestValidateColumn_RejectsUnsafeJSONKeyOnKnownBase(t *testing.T) {
+	tbl := domain.Table{Fields: []domain.Field{{Name: "data", Type: "jsonb"}}}
+	if err := ValidateColumn(tbl, "data->>theme"); err != nil {
+		t.Fatalf("valid path rejected: %v", err)
+	}
+	if err := ValidateColumn(tbl, "data->>a'b"); err == nil {
+		t.Fatal("quote in JSONB key accepted")
 	}
 }

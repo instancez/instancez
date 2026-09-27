@@ -13,9 +13,10 @@ import (
 
 // OAuthUserInfo holds provider user details.
 type OAuthUserInfo struct {
-	Email      string
-	Name       string
-	ProviderID string
+	Email         string
+	Name          string
+	ProviderID    string
+	EmailVerified bool // provider asserts Email is verified
 }
 
 // exchangeOAuthCode exchanges an OAuth authorization code for an access token at
@@ -93,14 +94,22 @@ func fetchGitHubUser(g *githubProvider, accessToken string) (*OAuthUserInfo, err
 		return nil, err
 	}
 
-	if user.Email == "" && g.emailAPI != "" {
-		user.Email, _ = fetchGitHubPrimaryEmail(g.emailAPI, accessToken)
+	if user.ID == 0 {
+		return nil, fmt.Errorf("github user has no id")
+	}
+
+	email, verified := user.Email, false
+	if g.emailAPI != "" {
+		if e, err := fetchGitHubPrimaryEmail(g.emailAPI, accessToken); err == nil {
+			email, verified = e, true
+		}
 	}
 
 	return &OAuthUserInfo{
-		Email:      user.Email,
-		Name:       user.Name,
-		ProviderID: fmt.Sprintf("%d", user.ID),
+		Email:         email,
+		EmailVerified: verified,
+		Name:          user.Name,
+		ProviderID:    fmt.Sprintf("%d", user.ID),
 	}, nil
 }
 
@@ -117,6 +126,9 @@ func fetchGitHubPrimaryEmail(emailAPI, accessToken string) (string, error) {
 	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("github emails returned %d", resp.StatusCode)
+	}
 	var emails []struct {
 		Email    string `json:"email"`
 		Primary  bool   `json:"primary"`
@@ -140,8 +152,8 @@ func fetchGitHubPrimaryEmail(emailAPI, accessToken string) (string, error) {
 }
 
 // fetchGoogleUser fetches a Google user's profile using an OAuth access token.
-func fetchGoogleUser(accessToken string) (*OAuthUserInfo, error) {
-	req, _ := http.NewRequest("GET", "https://www.googleapis.com/oauth2/v2/userinfo", nil)
+func fetchGoogleUser(userAPI, accessToken string) (*OAuthUserInfo, error) {
+	req, _ := http.NewRequest("GET", userAPI, nil)
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
 	resp, err := http.DefaultClient.Do(req)
@@ -156,17 +168,19 @@ func fetchGoogleUser(accessToken string) (*OAuthUserInfo, error) {
 	}
 
 	var info struct {
-		ID    string `json:"id"`
-		Email string `json:"email"`
-		Name  string `json:"name"`
+		ID            string `json:"id"`
+		Email         string `json:"email"`
+		Name          string `json:"name"`
+		VerifiedEmail bool   `json:"verified_email"`
 	}
 	if err := json.Unmarshal(body, &info); err != nil {
 		return nil, err
 	}
 
 	return &OAuthUserInfo{
-		Email:      info.Email,
-		Name:       info.Name,
-		ProviderID: info.ID,
+		Email:         info.Email,
+		EmailVerified: info.VerifiedEmail,
+		Name:          info.Name,
+		ProviderID:    info.ID,
 	}, nil
 }

@@ -35,7 +35,7 @@ Env vars are interpolated using `${VAR}` or `${VAR:-default}`. They are resolved
 |-----|------|---------|-------------|
 | `server.port` | `integer` | `8080` | HTTP listen port. |
 | `server.max_body_size` | `string` | `1MB` | Maximum request body size for non-upload endpoints. |
-| `server.max_limit` | `integer` | `100` | **Not currently enforced.** Configuration value is defined but not validated on REST queries. Default query limit is 20. |
+| `server.max_limit` | `integer` | `1000` | Most rows one REST table read, setof RPC, or top-level has-many embed returns (PostgREST `db-max-rows`). Applies with or without `limit`/`Range`; `Content-Range` shows the capped range. `-1` disables the cap. |
 
 ### server.cors
 
@@ -50,8 +50,8 @@ defaults — origins is the only knob, matching Supabase's own gateway.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `server.timeouts.request` | `duration` | `30s` | Per-request deadline. |
-| `server.timeouts.db_query` | `duration` | `10s` | Per-query deadline. |
+| `server.timeouts.request` | `duration` | `25s` | Read/write deadline for `/rest/v1` and `/auth/v1` requests. Storage, functions, admin and dashboard routes are exempt. |
+| `server.timeouts.db_query` | `duration` | `10s` | `statement_timeout` for every API query (all roles), applied per transaction. `Prefer: statement-timeout=<ms>` can lower it for one request. `0` or empty disables it. |
 | `server.timeouts.upload` | `duration` | `5m` | Deadline for file upload requests. |
 | `server.timeouts.shutdown` | `duration` | `30s` | Graceful shutdown window. |
 
@@ -89,7 +89,7 @@ Auth is always provisioned, even if `auth:` is omitted entirely; the block only 
 |-----|------|---------|-------------|
 | `auth.jwt_expiry` | `duration` | `15m` | Access token lifetime. |
 | `auth.refresh_token_expiry` | `duration` | `7d` | Refresh token lifetime. Refresh tokens are always issued. |
-| `auth.allow_signup` | `boolean` | `true` | Allow public `POST /auth/v1/signup`. Set to `false` for invite-only. |
+| `auth.allow_signup` | `boolean` | `true` | Allow public sign-up: `POST /auth/v1/signup`, first-time `signInWithOtp`, and first-time OAuth / ID-token sign-in. Set to `false` for invite-only. |
 | `auth.allow_anonymous` | `boolean` | `true` | Allow anonymous sign-in (empty-body signup). |
 | `auth.redirect_urls` | `string[]` | `[]` | Allowlist of origins for post-auth redirects (OAuth, email verification). The server's own origin is always allowed. |
 
@@ -124,6 +124,7 @@ Tables map to Postgres tables in the `public` schema by default. The migrator di
 tables:
   posts:
     schema: public       # optional; default "public"
+    rls_enabled: true    # recommended; see RLS page
     fields:
       - name: id
         type: bigserial
@@ -157,6 +158,12 @@ tables:
 
 No columns are injected automatically. Every column, including primary keys, must be declared.
 
+### tables.\<name\>.rls_enabled
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `rls_enabled` | `boolean` | inferred: `true` if `rls` has policies, else `false` | Turn row-level security on or off for the table. `true` with no policies denies `anon`/`authenticated` everything. `false` with policies is a validation error. Leaving it unset produces a validation warning. See [RLS](/instancez/build/rls/). |
+
 ### tables.\<name\>.indexes
 
 | Key | Type | Default | Description |
@@ -167,12 +174,13 @@ No columns are injected automatically. Every column, including primary keys, mus
 
 ### tables.\<name\>.rls
 
-RLS is the only authorization layer. Declare policies here; instancez applies `ENABLE ROW LEVEL SECURITY` and creates the policies automatically.
+RLS is the only authorization layer. Declare policies here; instancez creates them automatically. Whether RLS itself is on is controlled by [`rls_enabled`](#tablesnamerls_enabled), not by whether this list is empty.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `rls[].operations` | `string[]` | required | One or more of `select`, `insert`, `update`, `delete`. |
-| `rls[].check` | `string` | required | SQL boolean expression evaluated per row. |
+| `rls[].using` | `string` | conditional | SQL boolean expression selecting which existing rows the operation can see or target. |
+| `rls[].with_check` | `string` | conditional | SQL boolean expression deciding what a written row is allowed to look like. |
 | `rls[].type` | `string` | `permissive` | `permissive` or `restrictive`. |
 
 Useful SQL helpers available in RLS expressions:
@@ -323,6 +331,7 @@ auth:
 
 tables:
   profiles:
+    rls_enabled: true
     fields:
       - name: id
         foreign_key:

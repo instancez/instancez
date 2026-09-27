@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 	"time"
 
@@ -166,10 +167,19 @@ func (s *Store) Download(ctx context.Context, key string) (io.ReadCloser, string
 	return out.Body, ct, nil
 }
 
+// copySource URL-encodes each key segment, as CopyObject requires.
+func copySource(bucket, key string) string {
+	segs := strings.Split(key, "/")
+	for i, s := range segs {
+		segs[i] = strings.ReplaceAll(url.QueryEscape(s), "+", "%20")
+	}
+	return bucket + "/" + strings.Join(segs, "/")
+}
+
 func (s *Store) Copy(ctx context.Context, srcKey, dstKey string) error {
 	_, err := s.client.CopyObject(ctx, &s3.CopyObjectInput{
 		Bucket:     aws.String(s.bucket),
-		CopySource: aws.String(s.bucket + "/" + s.fullKey(srcKey)),
+		CopySource: aws.String(copySource(s.bucket, s.fullKey(srcKey))),
 		Key:        aws.String(s.fullKey(dstKey)),
 	})
 	if err != nil {

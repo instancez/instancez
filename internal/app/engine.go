@@ -273,6 +273,9 @@ func (e *Engine) runWatcher(ctx context.Context, interval time.Duration) {
 				e.logger.Error("config reload: migration unrecoverable", "error", err)
 				continue
 			}
+			if err := e.migrator.Harden(ctx, e.Config()); err != nil {
+				e.logger.Error("config reload: harden failed", "error", err)
+			}
 			e.mu.Lock()
 			e.drift = tracker
 			e.mu.Unlock()
@@ -311,7 +314,7 @@ func (e *Engine) Start(ctx context.Context) error {
 		e.drift = tracker
 		e.lifecycle("migrations applied", "duration", time.Since(t).Round(time.Millisecond))
 	} else {
-		// migrate=false on serve: only check, never mutate the schema.
+		// migrate=false on serve: no config migration; Harden below still runs.
 		if err := e.ownerDB.EnsureMigrationsTable(ctx); err != nil {
 			return fmt.Errorf("migration check: %w", err)
 		}
@@ -340,6 +343,10 @@ func (e *Engine) Start(ctx context.Context) error {
 			}
 			e.drift = tracker
 		}
+	}
+
+	if err := e.migrator.Harden(ctx, e.Config()); err != nil {
+		return fmt.Errorf("harden database: %w", err)
 	}
 
 	// 1b. Drift heartbeat (only meaningful when in drift). Reads e.Drift() on
@@ -421,6 +428,12 @@ func (e *Engine) shutdown() error {
 	if e.otelShutdown != nil {
 		if err := e.otelShutdown(shutdownCtx); err != nil {
 			e.logger.Error("error shutting down telemetry", "error", err)
+		}
+	}
+
+	if e.authDB.Database != nil {
+		if err := e.authDB.Close(); err != nil {
+			e.logger.Error("error closing request pool", "error", err)
 		}
 	}
 

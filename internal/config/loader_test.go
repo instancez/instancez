@@ -95,8 +95,8 @@ project:
 	if cfg.Server.MaxBodySize != "1MB" {
 		t.Errorf("default max_body_size = %q, want %q", cfg.Server.MaxBodySize, "1MB")
 	}
-	if cfg.Server.MaxLimit != 100 {
-		t.Errorf("default max_limit = %d, want 100", cfg.Server.MaxLimit)
+	if cfg.Server.MaxLimit != 1000 {
+		t.Errorf("default max_limit = %d, want 1000", cfg.Server.MaxLimit)
 	}
 	if cfg.Server.Timeouts.Request != "25s" {
 		t.Errorf("default request timeout = %q, want %q", cfg.Server.Timeouts.Request, "25s")
@@ -437,5 +437,15 @@ func TestEnvRefs_ReturnsUniqueNames(t *testing.T) {
 		if !want[n] {
 			t.Errorf("unexpected name %q", n)
 		}
+	}
+}
+
+func TestLoad_MaxLimitNegativeDisablesCap(t *testing.T) {
+	cfg, err := ParseBytes([]byte("version: 1\nproject:\n  name: t\nserver:\n  max_limit: -1\n"), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Server.MaxLimit != -1 {
+		t.Fatalf("max_limit = %d, want -1 kept (cap disabled)", cfg.Server.MaxLimit)
 	}
 }

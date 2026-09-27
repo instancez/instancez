@@ -35,6 +35,7 @@ export function Tables() {
         { name: "created_at", type: "timestamptz", default: "now()" },
       ],
       indexes: [],
+      rls_enabled: true,
       rls: [],
     };
     navigate("new", { relative: "path", state: { tableName, seed } });

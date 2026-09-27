@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -96,7 +98,7 @@ func TestParseFKReference(t *testing.T) {
 	}{
 		{"posts.id", "public", "posts", "id", false},
 		{"auth.users.id", "auth", "users", "id", false},
-		{"id", "", "", "", true},                             // no column
+		{"id", "", "", "", true},                            // no column
 		{"a.b.c.d", "", "", "", true},                       // too many parts
 		{"", "", "", "", true},                              // empty
 		{"public.posts.id", "public", "posts", "id", false}, // explicit public allowed
@@ -181,5 +183,44 @@ func TestFKCompatible(t *testing.T) {
 		if FKCompatible(p.a, p.b) != p.ok {
 			t.Fatalf("FKCompatible(%q,%q) = %v, want %v", p.a, p.b, !p.ok, p.ok)
 		}
+	}
+}
+
+func TestTableEffectiveRLSEnabled(t *testing.T) {
+	on, off := true, false
+	pol := []RLSPolicy{{Operations: []string{"select"}, Using: "true"}}
+	cases := []struct {
+		name string
+		tbl  Table
+		want bool
+	}{
+		{"unset, no policies", Table{}, false},
+		{"unset, empty non-nil policies", Table{RLS: []RLSPolicy{}}, false},
+		{"unset, with policies", Table{RLS: pol}, true},
+		{"true, no policies", Table{RLSEnabled: &on}, true},
+		{"true, with policies", Table{RLSEnabled: &on, RLS: pol}, true},
+		{"false, no policies", Table{RLSEnabled: &off}, false},
+		{"false, with policies (validation rejects; helper still honors field)", Table{RLSEnabled: &off, RLS: pol}, false},
+	}
+	for _, tc := range cases {
+		if got := tc.tbl.EffectiveRLSEnabled(); got != tc.want {
+			t.Errorf("%s: EffectiveRLSEnabled() = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// An unset field must not change the stored JSON, or every app would re-migrate.
+func TestTableRLSEnabledOmittedWhenUnset(t *testing.T) {
+	b, err := json.Marshal(Table{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "rls_enabled") {
+		t.Fatalf("unset rls_enabled leaked into JSON: %s", b)
+	}
+	off := false
+	b, _ = json.Marshal(Table{RLSEnabled: &off})
+	if !strings.Contains(string(b), `"rls_enabled":false`) {
+		t.Fatalf("explicit false dropped from JSON: %s", b)
 	}
 }

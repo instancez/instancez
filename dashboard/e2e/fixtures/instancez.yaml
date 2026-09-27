@@ -15,6 +15,7 @@ auth:
     jwt_expiry: 15m
 tables:
     notes:
+        rls_enabled: true
         fields:
             - name: id
               type: bigserial

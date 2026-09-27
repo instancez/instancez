@@ -2,6 +2,7 @@ package domain
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
@@ -34,11 +35,58 @@ type UpdateUserParams struct {
 	ClearEmailVerified bool
 }
 
-// SessionMeta carries request-scoped metadata persisted on a refresh token row.
+// AMREntry is one entry of the Supabase JWT amr claim.
+type AMREntry struct {
+	Method    string `json:"method"`
+	Timestamp int64  `json:"timestamp"`
+}
+
+// SessionMeta is a session's state, persisted on each refresh-token row.
 type SessionMeta struct {
 	SessionID string
 	IP        string
 	UserAgent string
+	AAL       string
+	AMR       []AMREntry
+}
+
+// Normalize defaults AAL to aal1 and AMR to an empty slice when unset.
+func (m SessionMeta) Normalize() SessionMeta {
+	if m.AAL == "" {
+		m.AAL = "aal1"
+	}
+	if m.AMR == nil {
+		m.AMR = []AMREntry{}
+	}
+	return m
+}
+
+// RefreshRotation is the child token a refresh grant mints when it rotates.
+type RefreshRotation struct {
+	Token     string
+	ExpiresAt int64
+	IP        string
+	UserAgent string
+}
+
+// ParseAMR decodes an amr value from a JSONB column or a decoded JWT claim.
+func ParseAMR(v any) []AMREntry {
+	var b []byte
+	switch x := v.(type) {
+	case nil:
+		return nil
+	case []byte:
+		b = x
+	case string:
+		b = []byte(x)
+	default:
+		b, _ = json.Marshal(x)
+	}
+	var out []AMREntry
+	if json.Unmarshal(b, &out) != nil {
+		return nil
+	}
+	return out
 }
 
 // OTPRow is a consumed/validated one-time token; the handler inspects Purpose
@@ -46,6 +94,13 @@ type SessionMeta struct {
 type OTPRow struct {
 	UserID  string
 	Purpose string
+}
+
+// OAuthLogin is one external-provider sign-in handed to UpsertOAuthUser.
+type OAuthLogin struct {
+	Provider, ProviderUserID, Email, Name string
+	EmailVerified                         bool // provider asserts the address is verified
+	AllowSignup                           bool // create a user when nothing matches
 }
 
 // FlowState is the OAuth/PKCE flow_state row read by the OAuth callback.
@@ -94,14 +149,14 @@ type AuthService interface {
 	// ---- sessions / refresh tokens ----
 	// InsertRefreshToken persists a refresh token row carrying request meta.
 	InsertRefreshToken(ctx context.Context, userID, token string, meta SessionMeta, expiresAt int64) error
-	// ConsumeRefreshToken validates + rotates a refresh token. It returns the
-	// user row for a valid, single-use token. Errors: ErrRefreshExpired,
-	// ErrRefreshReuse (all sessions revoked), ErrUnauthorized.
-	ConsumeRefreshToken(ctx context.Context, token string) (userRow map[string]any, err error)
+	// ConsumeRefreshToken rotates the token (a replay in the reuse interval gets the current child).
+	ConsumeRefreshToken(ctx context.Context, token string, next RefreshRotation) (userRow map[string]any, meta SessionMeta, refreshToken string, err error)
 	// RevokeSessionByID deletes refresh tokens for a single session.
 	RevokeSessionByID(ctx context.Context, sessionID string) error
 	// RevokeOtherSessions deletes the user's refresh tokens except keepSessionID.
 	RevokeOtherSessions(ctx context.Context, userID, keepSessionID string) error
+	// RevokeBelowAAL2 deletes the user's sub-aal2 refresh tokens, in sessionID only unless allSessions.
+	RevokeBelowAAL2(ctx context.Context, userID, sessionID string, allSessions bool) error
 	// RevokeAllUserSessions deletes every refresh token for the user.
 	RevokeAllUserSessions(ctx context.Context, userID string) error
 
@@ -112,6 +167,8 @@ type AuthService interface {
 	CreateOTPCode(ctx context.Context, userID, token, code, email, purpose string, expiresAt int64) error
 	// DeleteUserTokensByPurpose clears outstanding tokens for a purpose (resend).
 	DeleteUserTokensByPurpose(ctx context.Context, userID, purpose string) error
+	// RecentOTPSent reports whether a token for (userID, purpose) was issued within the window.
+	RecentOTPSent(ctx context.Context, userID, purpose string, within time.Duration) (bool, error)
 
 	// VerifyOTP consumes a one-time token for POST /verify. It handles both the
 	// numeric-code (email + 6 digits) and opaque-token flows, including attempt
@@ -123,7 +180,7 @@ type AuthService interface {
 	// GET /verify link-click flow without consuming it. Returns the row;
 	// caller consumes via DeleteOneTimeToken. Errors: ErrInvalidToken, ErrTokenExpired.
 	PeekOneTimeToken(ctx context.Context, token string) (OTPRow, error)
-	// DeleteOneTimeToken removes a token by its canonical token column.
+	// DeleteOneTimeToken removes a token, or returns ErrInvalidToken when already consumed.
 	DeleteOneTimeToken(ctx context.Context, token string) error
 
 	// MarkEmailVerified sets email_verified = true and confirms the address.
@@ -139,10 +196,8 @@ type AuthService interface {
 	ConsumeOAuthFlowState(ctx context.Context, state string) (FlowState, error)
 
 	// ---- OAuth / ID-token user provisioning ----
-	// UpsertOAuthUser finds-or-creates a user by email for an OAuth/OIDC login,
-	// marks the email verified, bumps sign-in, and upserts the identity row.
-	// Returns the user row.
-	UpsertOAuthUser(ctx context.Context, provider, providerUserID, email, name string) (map[string]any, error)
+	// UpsertOAuthUser resolves an OAuth login by identity, then verified email, then signup.
+	UpsertOAuthUser(ctx context.Context, in OAuthLogin) (map[string]any, error)
 	// LinkIdentity adds an identity to an existing user (best-effort).
 	LinkIdentity(ctx context.Context, userID, provider, providerUserID, email string)
 
@@ -159,31 +214,22 @@ type AuthService interface {
 	// secret and returns the new factor id. The handler generates the secret
 	// and otpauth URI; the service only persists.
 	EnrollFactor(ctx context.Context, userID, friendlyName, secret string) (factorID string, err error)
-	// CreateChallenge verifies the factor belongs to userID, then inserts a
-	// challenge row. Returns the challenge id and its created_at (the handler
-	// derives expires_at = created_at + 5m). Errors: ErrNotFound.
+	// CreateChallenge inserts a challenge for the user's factor, rate-limited per factor.
 	CreateChallenge(ctx context.Context, factorID, userID string) (challengeID string, createdAt time.Time, err error)
 	// GetFactorForVerify returns the factor's secret + status when it belongs
 	// to userID, so the handler can validate the TOTP code. Errors: ErrNotFound.
 	GetFactorForVerify(ctx context.Context, factorID, userID string) (MFAFactor, error)
-	// ValidateChallenge checks that the challenge exists, belongs to factorID,
-	// is unverified, is within its 5-minute window, and is under the TOTP
-	// attempt cap. Called before the TOTP code is validated, mirroring
-	// GoTrue's ordering. Errors: ErrNotFound, ErrChallengeUsed,
-	// ErrChallengeExpired, ErrChallengeTooManyAttempts.
+	// ValidateChallenge atomically spends one attempt on a live, unverified challenge.
 	ValidateChallenge(ctx context.Context, challengeID, factorID string) error
-	// IncrementChallengeAttempt records a failed TOTP guess against
-	// challengeID, bounding brute-force of the 10^6 code space.
-	IncrementChallengeAttempt(ctx context.Context, challengeID string) error
-	// MarkChallengeVerified stamps verified_at on the challenge. Security-
-	// critical: the caller MUST surface an error as a 500, never swallow it.
+	// ConsumeTOTPStep marks a TOTP step used; fresh=false means a replayed code.
+	ConsumeTOTPStep(ctx context.Context, factorID string, step int64) (fresh bool, err error)
+	// MarkChallengeVerified stamps verified_at, or returns ErrChallengeUsed.
 	MarkChallengeVerified(ctx context.Context, challengeID string) error
-	// PromoteFactorToVerified flips an unverified factor to 'verified' on the
-	// first successful TOTP. Security-critical: errors must surface as 500.
+	// PromoteFactorToVerified verifies the factor and deletes the user's other unverified ones.
 	PromoteFactorToVerified(ctx context.Context, factorID string) error
 	// ListFactors returns the caller's factors (secret excluded) ordered by
 	// created_at, for the GoTrue listFactors response.
 	ListFactors(ctx context.Context, userID string) ([]map[string]any, error)
-	// DeleteFactorForUser removes a factor owned by userID. Errors: ErrNotFound.
-	DeleteFactorForUser(ctx context.Context, factorID, userID string) error
+	// DeleteFactorForUser deletes a factor, verified ones only when allowVerified.
+	DeleteFactorForUser(ctx context.Context, factorID, userID string, allowVerified bool) error
 }

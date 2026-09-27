@@ -21,9 +21,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	adapterauth "github.com/instancez/instancez/internal/adapter/auth"
 	"github.com/instancez/instancez/internal/app"
 	"github.com/instancez/instancez/internal/domain"
+	"github.com/jackc/pgx/v5/pgconn"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -38,6 +40,9 @@ const (
 // synchronously in the request path for auth emails, so a slow or hung
 // provider doesn't stall the HTTP response indefinitely.
 const emailSendTimeout = 5 * time.Second
+
+// emailResendCooldown matches GoTrue's default per-email send frequency.
+const emailResendCooldown = 60 * time.Second
 
 // Default post-auth redirect paths, used by resolveEmailRedirect when the
 // client sends no redirect_to (or sends one that isn't allowlisted).
@@ -79,7 +84,7 @@ func NewAuthHandler(deps ServerDeps) *AuthHandler {
 // here operates on the auth schema (users, sessions, MFA factors), gated by
 // application logic rather than RLS, so the whole group runs as service_role.
 func (h *AuthHandler) Mount(root *gin.RouterGroup) {
-	auth := root.Group("/auth/v1", serviceRoleSession(h.db))
+	auth := root.Group("/auth/v1", goTrueErrors, serviceRoleSession(h.db))
 	// Per-IP rate limiting for these sensitive endpoints is enforced at the
 	// edge (Traefik, configured by the deployer) rather than here: in the
 	// hosted deployment the backend runs as a Lambda behind a proxy, so it
@@ -113,6 +118,8 @@ func (h *AuthHandler) Mount(root *gin.RouterGroup) {
 
 	// Identity management
 	auth.GET("/user/identities", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.handleListIdentities)
+	// supabase-js linkIdentity() calls GET; POST stays for existing callers.
+	auth.GET("/user/identities/authorize", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.handleLinkIdentity)
 	auth.POST("/user/identities/authorize", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.handleLinkIdentity)
 	auth.DELETE("/user/identities/:id", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.handleUnlinkIdentity)
 
@@ -217,9 +224,9 @@ func (h *AuthHandler) handleSignupAnonymous(c *gin.Context, probe map[string]any
 
 	userID := asString(row["id"])
 	ctx = ctxWithRequestMeta(ctx, c)
-	session, err := h.buildSession(ctx, userID, row)
+	session, err := h.buildSession(ctx, userID, row, "anonymous")
 	if err != nil {
-		problemJSON(c, 500, "internal", "Failed to generate token")
+		sessionError(c, err)
 		return
 	}
 	c.JSON(200, session)
@@ -261,15 +268,19 @@ func (h *AuthHandler) handleSignup(c *gin.Context) {
 
 	userID := asString(row["id"])
 
-	// Send verification email if configured
-	if h.cfg.Auth.Email != nil && h.cfg.Auth.Email.VerifyEmail && h.email != nil {
-		h.sendVerificationEmail(userID, req.Email, h.resolveEmailRedirect(c, "signup"))
+	if h.cfg.Auth.Email != nil && h.cfg.Auth.Email.VerifyEmail {
+		if h.email != nil {
+			h.sendVerificationEmail(userID, req.Email, h.resolveEmailRedirect(c, "signup"))
+		}
+		// Supabase withholds the session until the address is confirmed.
+		c.JSON(200, h.buildUser(userID, row, nil))
+		return
 	}
 
 	ctx = ctxWithRequestMeta(ctx, c)
-	session, err := h.buildSession(ctx, userID, row)
+	session, err := h.buildSession(ctx, userID, row, "password")
 	if err != nil {
-		problemJSON(c, 500, "internal", "Failed to generate token")
+		sessionError(c, err)
 		return
 	}
 	c.JSON(200, session)
@@ -349,9 +360,9 @@ func (h *AuthHandler) handlePasswordGrant(c *gin.Context) {
 	row["last_sign_in_at"] = time.Now().UTC()
 
 	ctx = ctxWithRequestMeta(ctx, c)
-	session, err := h.buildSession(ctx, userID, row)
+	session, err := h.buildSession(ctx, userID, row, "password")
 	if err != nil {
-		problemJSON(c, 500, "internal", "Failed to generate token")
+		sessionError(c, err)
 		return
 	}
 	c.JSON(200, session)
@@ -366,28 +377,28 @@ func (h *AuthHandler) handleRefreshGrant(c *gin.Context) {
 		return
 	}
 
-	ctx := c.Request.Context()
-	userRow, err := h.authSvc.ConsumeRefreshToken(ctx, req.RefreshToken)
+	ctx := ctxWithRequestMeta(c.Request.Context(), c)
+	next := domain.RefreshRotation{Token: generateRandomToken(), ExpiresAt: time.Now().Add(h.refreshExpiry()).Unix()}
+	next.IP, _ = ctx.Value(ctxKeyIP).(string)
+	next.UserAgent, _ = ctx.Value(ctxKeyUA).(string)
+	userRow, meta, refreshToken, err := h.authSvc.ConsumeRefreshToken(ctx, req.RefreshToken, next)
 	if err != nil {
 		switch {
 		case errors.Is(err, domain.ErrRefreshExpired):
 			problemJSON(c, 401, "invalid_grant", "Refresh token expired")
 		case errors.Is(err, domain.ErrRefreshReuse):
-			problemJSON(c, 401, "invalid_grant", "Refresh token reuse detected. All sessions revoked.")
+			problemJSON(c, 401, "invalid_grant", "Refresh token reuse detected. Session revoked.")
 		default:
 			problemJSON(c, 401, "invalid_grant", "Invalid refresh token")
 		}
 		return
 	}
-
-	userID := asString(userRow["id"])
-
-	ctx = ctxWithRequestMeta(ctx, c)
-	session, err := h.buildSession(ctx, userID, userRow)
+	session, err := h.signSession(ctx, asString(userRow["id"]), userRow, meta)
 	if err != nil {
-		problemJSON(c, 500, "internal", "Failed to generate token")
+		sessionError(c, err)
 		return
 	}
+	session["refresh_token"] = refreshToken
 	c.JSON(200, session)
 }
 
@@ -422,12 +433,34 @@ func (h *AuthHandler) handlePKCEGrant(c *gin.Context) {
 	}
 
 	ctx = ctxWithRequestMeta(ctx, c)
-	session, err := h.buildSession(ctx, userID, userRow)
+	session, err := h.buildSession(ctx, userID, userRow, "oauth")
 	if err != nil {
-		problemJSON(c, 500, "internal", "Failed to generate token")
+		sessionError(c, err)
 		return
 	}
 	c.JSON(200, session)
+}
+
+// emailVerifiedClaim reads an OIDC email_verified claim, which some IdPs send as a string.
+func emailVerifiedClaim(v any) bool {
+	if b, ok := v.(bool); ok {
+		return b
+	}
+	s, _ := v.(string)
+	return s == "true"
+}
+
+// oauthLoginError maps an UpsertOAuthUser failure to a status, code and message.
+func oauthLoginError(err error, provider string) (int, string, string) {
+	switch {
+	case errors.Is(err, domain.ErrSignupDisabled):
+		return 403, "signup_disabled", "Signups not allowed for this instance"
+	case errors.Is(err, domain.ErrProviderEmailUnverified):
+		return 422, "provider_email_needs_verification", "Unverified email with " + provider
+	case errors.Is(err, domain.ErrOAuthLinkRefused):
+		return 422, "email_exists", "An account with this email already exists; confirm your email, or sign in to it and link " + provider
+	}
+	return 500, "internal", "Failed to create or find user"
 }
 
 func (h *AuthHandler) handleIDTokenGrant(c *gin.Context) {
@@ -468,17 +501,21 @@ func (h *AuthHandler) handleIDTokenGrant(c *gin.Context) {
 	name, _ := claims["name"].(string)
 
 	ctx := c.Request.Context()
-	row, err := h.authSvc.UpsertOAuthUser(ctx, req.Provider, sub, email, name)
+	row, err := h.authSvc.UpsertOAuthUser(ctx, domain.OAuthLogin{
+		Provider: req.Provider, ProviderUserID: sub, Email: email, Name: name,
+		EmailVerified: emailVerifiedClaim(claims["email_verified"]), AllowSignup: h.cfg.Auth.SignupAllowed(),
+	})
 	if err != nil || row == nil {
-		problemJSON(c, 500, "internal", "Failed to create or find user")
+		st, code, msg := oauthLoginError(err, req.Provider)
+		problemJSON(c, st, code, msg)
 		return
 	}
 	userID := asString(row["id"])
 
 	ctx = ctxWithRequestMeta(ctx, c)
-	session, err := h.buildSession(ctx, userID, row)
+	session, err := h.buildSession(ctx, userID, row, "oauth")
 	if err != nil {
-		problemJSON(c, 500, "internal", "Failed to generate token")
+		sessionError(c, err)
 		return
 	}
 	c.JSON(200, session)
@@ -495,7 +532,7 @@ func (h *AuthHandler) handleGetUser(c *gin.Context) {
 		problemJSON(c, 404, "not_found", "User not found")
 		return
 	}
-	c.JSON(200, h.buildUser(session.UserID, row, h.userIdentities(ctx, session.UserID)))
+	c.JSON(200, h.fullUser(ctx, session.UserID, row))
 }
 
 func (h *AuthHandler) handleUpdateUser(c *gin.Context) {
@@ -547,7 +584,20 @@ func (h *AuthHandler) handleUpdateUser(c *gin.Context) {
 		problemJSON(c, 500, "internal", "Failed to update user")
 		return
 	}
-	c.JSON(200, h.buildUser(session.UserID, row, h.userIdentities(ctx, session.UserID)))
+	if params.Password != nil {
+		// A new password signs out other sessions; detached so a disconnect can't skip it.
+		revokeCtx := context.WithoutCancel(ctx)
+		var revokeErr error
+		if sid := h.extractSessionID(session.JWT); sid != "" {
+			revokeErr = h.authSvc.RevokeOtherSessions(revokeCtx, session.UserID, sid)
+		} else {
+			revokeErr = h.authSvc.RevokeAllUserSessions(revokeCtx, session.UserID)
+		}
+		if revokeErr != nil {
+			h.logger.Error("password change: revoke other sessions failed", "user_id", session.UserID, "error", revokeErr)
+		}
+	}
+	c.JSON(200, h.fullUser(ctx, session.UserID, row))
 }
 
 // ---------- /logout ----------
@@ -597,7 +647,7 @@ func (h *AuthHandler) handleRecover(c *gin.Context) {
 
 	ctx := c.Request.Context()
 	userID, err := h.authSvc.GetUserIDByEmail(ctx, req.Email)
-	if err == nil && userID != "" {
+	if err == nil && userID != "" && !h.otpCooldown(c, userID, "recovery") {
 		token := generateRandomToken()
 		expiresAt := time.Now().Add(1 * time.Hour)
 		_ = h.authSvc.CreateOneTimeToken(ctx, userID, token, "recovery", expiresAt.Unix())
@@ -612,6 +662,12 @@ func (h *AuthHandler) handleRecover(c *gin.Context) {
 }
 
 // ---------- /verify ----------
+
+// verifyAMRMethod maps a verify type to GoTrue's amr method name.
+var verifyAMRMethod = map[string]string{
+	"signup": "email/signup", "email": "otp", "magiclink": "magiclink",
+	"recovery": "recovery", "email_change": "email_change",
+}
 
 // handleVerify implements POST /verify {type, token, email} — the
 // supabase-js verifyOtp entrypoint. On success it consumes the token and
@@ -644,8 +700,7 @@ func (h *AuthHandler) handleVerify(c *gin.Context) {
 	case "recovery":
 		allowedPurposes = []string{"recovery"}
 	case "magiclink":
-		// Treat as a login; any purpose is accepted (no state change).
-		allowedPurposes = nil
+		allowedPurposes = []string{"signup", "magiclink"}
 	default:
 		problemJSON(c, 400, "bad_request", "Unsupported verify type")
 		return
@@ -666,10 +721,9 @@ func (h *AuthHandler) handleVerify(c *gin.Context) {
 
 	userID := otp.UserID
 
-	// Side-effect based on purpose. Recovery and magiclink make no immediate
-	// change; the email-confirmation types mark the address verified.
-	switch req.Type {
-	case "signup", "email", "email_change":
+	// Signup and magic-link codes were mailed to this address, so they prove it.
+	switch otp.Purpose {
+	case "signup", "magiclink":
 		h.authSvc.MarkEmailVerified(ctx, userID)
 	}
 
@@ -680,9 +734,9 @@ func (h *AuthHandler) handleVerify(c *gin.Context) {
 	}
 
 	ctx = ctxWithRequestMeta(ctx, c)
-	session, err := h.buildSession(ctx, userID, userRow)
+	session, err := h.buildSession(ctx, userID, userRow, verifyAMRMethod[req.Type])
 	if err != nil {
-		problemJSON(c, 500, "internal", "Failed to generate token")
+		sessionError(c, err)
 		return
 	}
 	c.JSON(200, session)
@@ -715,8 +769,10 @@ func (h *AuthHandler) handleVerifyGET(c *gin.Context) {
 	userID := otp.UserID
 	purpose := otp.Purpose
 
-	// Consume the token (single-use).
-	_ = h.authSvc.DeleteOneTimeToken(ctx, token)
+	if err := h.authSvc.DeleteOneTimeToken(ctx, token); err != nil {
+		c.String(400, "Invalid verification token")
+		return
+	}
 
 	verifyType := c.DefaultQuery("type", "")
 
@@ -730,8 +786,12 @@ func (h *AuthHandler) handleVerifyGET(c *gin.Context) {
 			return
 		}
 		ctx = ctxWithRequestMeta(ctx, c)
-		session, err := h.buildSession(ctx, userID, userRow)
+		session, err := h.buildSession(ctx, userID, userRow, "recovery")
 		if err != nil {
+			if errors.Is(err, domain.ErrUserBanned) {
+				c.String(403, "User is banned")
+				return
+			}
 			c.String(500, "Failed to generate session")
 			return
 		}
@@ -793,7 +853,7 @@ func (h *AuthHandler) handleOTP(c *gin.Context) {
 	ctx := c.Request.Context()
 	userID, err := h.authSvc.GetUserIDByEmail(ctx, req.Email)
 	if err != nil || userID == "" {
-		if !createUser {
+		if !createUser || !h.cfg.Auth.SignupAllowed() {
 			c.JSON(200, gin.H{})
 			return
 		}
@@ -807,6 +867,11 @@ func (h *AuthHandler) handleOTP(c *gin.Context) {
 			return
 		}
 		userID = asString(newRow["id"])
+	}
+	// A cooldown hit stays a silent 200 so it can't reveal the account.
+	if h.otpCooldown(c, userID, "magiclink") {
+		c.JSON(200, gin.H{})
+		return
 	}
 
 	token := generateRandomToken()
@@ -1086,6 +1151,10 @@ func (h *AuthHandler) handleAdminUpdateUser(c *gin.Context) {
 		return
 	}
 
+	if banned, _ := row["is_banned"].(bool); banned {
+		_ = h.authSvc.RevokeAllUserSessions(ctx, uid)
+	}
+
 	c.JSON(200, h.buildUser(asString(row["id"]), row, nil))
 }
 
@@ -1210,8 +1279,8 @@ func (h *AuthHandler) handleAuthorize(c *gin.Context) {
 			return
 		}
 	} else {
-		c.SetCookie("oauth_state", state, 600, "/", "", false, true)
-		c.SetCookie("oauth_redirect_to", redirectTo, 600, "/", "", false, true)
+		h.setLaxCookie(c, h.oauthStateCookie(c), state, 600)
+		h.setLaxCookie(c, h.oauthRedirectCookie(c), redirectTo, 600)
 	}
 
 	c.Redirect(http.StatusTemporaryRedirect, prov.AuthorizeURL(cfg, state))
@@ -1285,15 +1354,27 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 				isPKCE = true
 			}
 			if flow.LinkingUserID != "" {
+				name := h.linkStateCookie(c)
+				bound, _ := c.Cookie(name)
+				h.setLaxCookie(c, name, "", -1)
+				if !constantTimeEqual(bound, state) {
+					const msg = "Identity linking must be finished in the browser that started it"
+					if _, ok := h.oauthLanding(redirectTo); !ok {
+						problemJSON(c, 400, "bad_oauth_state", msg)
+						return
+					}
+					h.oauthCallbackFail(c, redirectTo, isPKCE, msg)
+					return
+				}
 				linkingUserID = flow.LinkingUserID
 			}
 		} else {
-			savedState, _ := c.Cookie("oauth_state")
+			savedState, _ := c.Cookie(h.oauthStateCookie(c))
 			if state == "" || state != savedState {
 				problemJSON(c, 400, "bad_request", "Invalid OAuth state")
 				return
 			}
-			redirectTo, _ = c.Cookie("oauth_redirect_to")
+			redirectTo, _ = c.Cookie(h.oauthRedirectCookie(c))
 		}
 
 		code := c.Query("code")
@@ -1339,9 +1420,13 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 			return
 		}
 
-		row, err := h.authSvc.UpsertOAuthUser(ctx, provider, userInfo.ProviderID, userInfo.Email, userInfo.Name)
+		row, err := h.authSvc.UpsertOAuthUser(ctx, domain.OAuthLogin{
+			Provider: provider, ProviderUserID: userInfo.ProviderID, Email: userInfo.Email, Name: userInfo.Name,
+			EmailVerified: userInfo.EmailVerified, AllowSignup: h.cfg.Auth.SignupAllowed(),
+		})
 		if err != nil || row == nil {
-			problemJSON(c, 500, "internal", "Failed to create or find user")
+			_, _, msg := oauthLoginError(err, provider)
+			h.oauthCallbackFail(c, redirectTo, isPKCE, msg)
 			return
 		}
 		userID := asString(row["id"])
@@ -1370,9 +1455,9 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 		}
 
 		ctx = ctxWithRequestMeta(ctx, c)
-		session, err := h.buildSession(ctx, userID, row)
+		session, err := h.buildSession(ctx, userID, row, "oauth")
 		if err != nil {
-			problemJSON(c, 500, "internal", "Failed to generate token")
+			sessionError(c, err)
 			return
 		}
 
@@ -1401,10 +1486,47 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 
 // ---------- session / user builders ----------
 
-// buildSession issues a JWT access token (and optional refresh token) and
-// returns the GoTrue-shaped session payload: {access_token, token_type,
-// expires_in, expires_at, refresh_token, user}.
-func (h *AuthHandler) buildSession(ctx context.Context, userID string, userRow map[string]any) (gin.H, error) {
+// buildSession starts a new aal1 session authenticated by method.
+func (h *AuthHandler) buildSession(ctx context.Context, userID string, userRow map[string]any, method string) (gin.H, error) {
+	return h.issueSession(ctx, userID, userRow, domain.SessionMeta{
+		AAL: "aal1",
+		AMR: []domain.AMREntry{{Method: method, Timestamp: time.Now().Unix()}},
+	})
+}
+
+// issueSession signs an access token and stores a refresh token for meta's session.
+func (h *AuthHandler) issueSession(ctx context.Context, userID string, userRow map[string]any, meta domain.SessionMeta) (gin.H, error) {
+	if meta.SessionID == "" {
+		meta.SessionID = uuid.NewString()
+	}
+	result, err := h.signSession(ctx, userID, userRow, meta)
+	if err != nil {
+		return nil, err
+	}
+	refreshToken := generateRandomToken()
+	meta.IP, _ = ctx.Value(ctxKeyIP).(string)
+	meta.UserAgent, _ = ctx.Value(ctxKeyUA).(string)
+	if err := h.authSvc.InsertRefreshToken(context.Background(), userID, refreshToken, meta, time.Now().Add(h.refreshExpiry()).Unix()); err != nil {
+		return nil, err
+	}
+	result["refresh_token"] = refreshToken
+	return result, nil
+}
+
+func (h *AuthHandler) refreshExpiry() time.Duration {
+	d, _ := time.ParseDuration(h.cfg.Auth.RefreshTokenExpiry)
+	if d <= 0 {
+		d = 7 * 24 * time.Hour
+	}
+	return d
+}
+
+// signSession signs the access token for meta's session, without a refresh token.
+func (h *AuthHandler) signSession(ctx context.Context, userID string, userRow map[string]any, meta domain.SessionMeta) (gin.H, error) {
+	if banned, _ := userRow["is_banned"].(bool); banned {
+		return nil, domain.ErrUserBanned
+	}
+
 	key, err := h.jwtKeys.Active(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("jwt key: %w", err)
@@ -1417,7 +1539,7 @@ func (h *AuthHandler) buildSession(ctx context.Context, userID string, userRow m
 
 	now := time.Now()
 	exp := now.Add(expiry)
-	sessionID := generateRandomToken()
+	meta = meta.Normalize()
 	email, _ := userRow["email"].(string)
 
 	appMeta := decodeJSONB(userRow["raw_app_meta_data"])
@@ -1452,7 +1574,9 @@ func (h *AuthHandler) buildSession(ctx context.Context, userID string, userRow m
 		"email":         email,
 		"iat":           now.Unix(),
 		"exp":           exp.Unix(),
-		"session_id":    sessionID,
+		"session_id":    meta.SessionID,
+		"aal":           meta.AAL,
+		"amr":           meta.AMR,
 		"app_metadata":  appMeta,
 		"user_metadata": userMeta,
 		"is_anonymous":  isAnon,
@@ -1480,22 +1604,8 @@ func (h *AuthHandler) buildSession(ctx context.Context, userID string, userRow m
 		"token_type":   "bearer",
 		"expires_in":   int(expiry.Seconds()),
 		"expires_at":   exp.Unix(),
-		"user":         h.buildUser(userID, userRow, h.userIdentities(ctx, userID)),
+		"user":         h.fullUser(ctx, userID, userRow),
 	}
-
-	refreshToken := generateRandomToken()
-	refreshExpiry, _ := time.ParseDuration(h.cfg.Auth.RefreshTokenExpiry)
-	if refreshExpiry == 0 {
-		refreshExpiry = 7 * 24 * time.Hour
-	}
-	ip, _ := ctx.Value(ctxKeyIP).(string)
-	ua, _ := ctx.Value(ctxKeyUA).(string)
-	meta := domain.SessionMeta{SessionID: sessionID, IP: ip, UserAgent: ua}
-	if err := h.authSvc.InsertRefreshToken(context.Background(), userID, refreshToken, meta, time.Now().Add(refreshExpiry).Unix()); err != nil {
-		return nil, err
-	}
-	result["refresh_token"] = refreshToken
-
 	return result, nil
 }
 
@@ -1545,6 +1655,27 @@ func (h *AuthHandler) buildUser(userID string, row map[string]any, identities []
 		"created_at":         createdAt,
 		"updated_at":         updatedAt,
 	}
+}
+
+// fullUser is buildUser plus the identities and MFA factors supabase-js reads.
+func (h *AuthHandler) fullUser(ctx context.Context, userID string, row map[string]any) gin.H {
+	u := h.buildUser(userID, row, h.userIdentities(ctx, userID))
+	rows, err := h.authSvc.ListFactors(ctx, userID)
+	if err != nil {
+		h.logger.Error("list factors for user object failed", "error", err, "user_id", userID)
+	}
+	if len(rows) == 0 {
+		return u
+	}
+	factors := make([]gin.H, 0, len(rows))
+	for _, r := range rows {
+		factors = append(factors, gin.H{
+			"id": asString(r["id"]), "friendly_name": r["friendly_name"], "factor_type": r["factor_type"],
+			"status": r["status"], "created_at": asTimeString(r["created_at"]), "updated_at": asTimeString(r["updated_at"]),
+		})
+	}
+	u["factors"] = factors
+	return u
 }
 
 // userIdentities returns the user's linked identities for embedding in the
@@ -1866,8 +1997,26 @@ func generateNumericCode(n int) string {
 	return string(out)
 }
 
+// isDuplicateKeyErr reports a unique-constraint violation (SQLSTATE 23505).
 func isDuplicateKeyErr(err error) bool {
-	return err != nil && (strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "unique"))
+	if err == nil {
+		return false
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505"
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "duplicate key") || strings.Contains(msg, "23505")
+}
+
+// sessionError reports a failed issueSession/buildSession.
+func sessionError(c *gin.Context, err error) {
+	if errors.Is(err, domain.ErrUserBanned) {
+		problemJSON(c, 403, "user_banned", "User is banned")
+		return
+	}
+	problemJSON(c, 500, "internal", "Failed to generate token")
 }
 
 func hashPassword(c *gin.Context, password string) (string, bool) {
@@ -1906,6 +2055,12 @@ func bigIntBytes(i int) []byte {
 
 // ---------- /resend ----------
 
+// otpCooldown reports whether this user got a token for purpose too recently; a failed check allows the send.
+func (h *AuthHandler) otpCooldown(c *gin.Context, userID, purpose string) bool {
+	recent, err := h.authSvc.RecentOTPSent(c.Request.Context(), userID, purpose, emailResendCooldown)
+	return err == nil && recent
+}
+
 func (h *AuthHandler) handleResend(c *gin.Context) {
 	var req struct {
 		Type  string `json:"type" binding:"required"`
@@ -1927,13 +2082,30 @@ func (h *AuthHandler) handleResend(c *gin.Context) {
 		return
 	}
 
+	// Email changes apply immediately here, so there is never a pending one to resend.
+	if purpose == "email_change" {
+		c.JSON(200, gin.H{})
+		return
+	}
+
 	ctx := c.Request.Context()
 	userID, err := h.authSvc.GetUserIDByEmail(ctx, req.Email)
 	if err != nil || userID == "" {
 		c.JSON(200, gin.H{})
 		return
 	}
+	if purpose == "signup" {
+		if u, _ := h.authSvc.GetUserByID(ctx, userID); u != nil && u["email_verified"] == true {
+			c.JSON(200, gin.H{})
+			return
+		}
+	}
 
+	if h.otpCooldown(c, userID, purpose) {
+		problemJSON(c, 429, "over_email_send_rate_limit",
+			fmt.Sprintf("For security purposes, you can only request this after %d seconds.", int(emailResendCooldown.Seconds())))
+		return
+	}
 	_ = h.authSvc.DeleteUserTokensByPurpose(ctx, userID, purpose)
 
 	token := generateRandomToken()
@@ -1995,36 +2167,7 @@ func (h *AuthHandler) handleTokenVerify(c *gin.Context) {
 		return
 	}
 
-	parser := jwt.NewParser(jwt.WithoutClaimsValidation())
-	token, _, err := parser.ParseUnverified(req.Token, jwt.MapClaims{})
-	if err != nil {
-		problemJSON(c, 401, "invalid_token", "Malformed token")
-		return
-	}
-
-	kid, _ := token.Header["kid"].(string)
-	key, err := h.jwtKeys.Get(c.Request.Context(), kid)
-	if err != nil {
-		problemJSON(c, 401, "invalid_token", "Unknown signing key")
-		return
-	}
-
-	verified, err := jwt.Parse(req.Token, func(t *jwt.Token) (any, error) {
-		switch t.Method.(type) {
-		case *jwt.SigningMethodRSA:
-			if key.PublicKey == nil {
-				return nil, fmt.Errorf("no RSA public key for kid %s", kid)
-			}
-			return key.PublicKey, nil
-		case *jwt.SigningMethodHMAC:
-			if len(key.Secret) == 0 {
-				return nil, fmt.Errorf("no HMAC secret for kid %s", kid)
-			}
-			return key.Secret, nil
-		default:
-			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
-		}
-	})
+	verified, err := verifySignedJWT(c.Request.Context(), h.jwtKeys, req.Token)
 	if err != nil || !verified.Valid {
 		problemJSON(c, 401, "invalid_token", "Token verification failed")
 		return
@@ -2078,6 +2221,36 @@ func (h *AuthHandler) handleListIdentities(c *gin.Context) {
 	c.JSON(200, gin.H{"identities": rows})
 }
 
+func (h *AuthHandler) secureCookies(c *gin.Context) bool {
+	return c.Request.TLS != nil || strings.HasPrefix(h.baseURL(), "https://")
+}
+
+// hostCookieName adds the __Host- prefix on Secure cookies so sibling tenants can't toss one in.
+func (h *AuthHandler) hostCookieName(c *gin.Context, name string) string {
+	if h.secureCookies(c) {
+		return "__Host-" + name
+	}
+	return name
+}
+
+// linkStateCookie binds a link flow to its browser; __Host- stops sibling subdomains tossing it.
+func (h *AuthHandler) linkStateCookie(c *gin.Context) string {
+	return h.hostCookieName(c, "oauth_link_state")
+}
+
+func (h *AuthHandler) oauthStateCookie(c *gin.Context) string {
+	return h.hostCookieName(c, "oauth_state")
+}
+
+func (h *AuthHandler) oauthRedirectCookie(c *gin.Context) string {
+	return h.hostCookieName(c, "oauth_redirect_to")
+}
+
+func (h *AuthHandler) setLaxCookie(c *gin.Context, name, value string, maxAge int) {
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie(name, value, maxAge, "/", "", h.secureCookies(c), true)
+}
+
 func (h *AuthHandler) handleLinkIdentity(c *gin.Context) {
 	session := getSession(c)
 	provider := c.Query("provider")
@@ -2097,6 +2270,7 @@ func (h *AuthHandler) handleLinkIdentity(c *gin.Context) {
 		problemJSON(c, 500, "internal", "Failed to store OAuth state")
 		return
 	}
+	h.setLaxCookie(c, h.linkStateCookie(c), state, 600)
 
 	c.JSON(200, gin.H{"url": prov.AuthorizeURL(cfg, state)})
 }
@@ -2142,7 +2316,7 @@ func (h *AuthHandler) handleAdminDeleteFactor(c *gin.Context) {
 	uid := c.Param("uid")
 	factorID := c.Param("factor_id")
 	ctx := c.Request.Context()
-	if err := h.authSvc.DeleteFactorForUser(ctx, factorID, uid); err != nil {
+	if err := h.authSvc.DeleteFactorForUser(ctx, factorID, uid, true); err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			problemJSON(c, 404, "not_found", "Factor not found")
 			return
@@ -2153,15 +2327,20 @@ func (h *AuthHandler) handleAdminDeleteFactor(c *gin.Context) {
 	c.Status(200)
 }
 
-// extractSessionID parses the session_id claim from a raw JWT without
-// re-verifying the signature (already done by middleware).
-func (h *AuthHandler) extractSessionID(rawJWT string) string {
-	parser := jwt.NewParser(jwt.WithoutClaimsValidation())
-	token, _, err := parser.ParseUnverified(rawJWT, jwt.MapClaims{})
+// jwtClaims decodes a bearer token the middleware already verified.
+func jwtClaims(raw string) jwt.MapClaims {
+	token, _, err := jwt.NewParser(jwt.WithoutClaimsValidation()).ParseUnverified(raw, jwt.MapClaims{})
 	if err != nil {
-		return ""
+		return jwt.MapClaims{}
 	}
-	claims, _ := token.Claims.(jwt.MapClaims)
-	sid, _ := claims["session_id"].(string)
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return jwt.MapClaims{}
+	}
+	return claims
+}
+
+func (h *AuthHandler) extractSessionID(rawJWT string) string {
+	sid, _ := jwtClaims(rawJWT)["session_id"].(string)
 	return sid
 }

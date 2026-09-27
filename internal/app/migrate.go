@@ -366,6 +366,18 @@ func (m *Migrator) ProvisionIdempotent(ctx context.Context, cfg *domain.Config) 
 	return m.applyStatements(ctx, prov)
 }
 
+// Harden re-applies security fixes on every boot, since an unchanged config never re-runs a migration.
+func (m *Migrator) Harden(ctx context.Context, cfg *domain.Config) error {
+	if err := m.db.EnsureMigrationsTable(ctx); err != nil {
+		return fmt.Errorf("harden: %w", err)
+	}
+	stmts := append(generateJWTKeysTable(), generatePrivilegeRevokes(m.roles)...)
+	if cfg != nil && cfg.Auth != nil {
+		stmts = append(stmts, authHealDDL...)
+	}
+	return m.applyStatements(ctx, stmts)
+}
+
 // applyStatements runs stmts inside a single transaction without recording a
 // migration row. Used for the additive provisioning that runs when a
 // destructive change blocks the normal plan: it must not stamp _instancez_migrations
@@ -478,11 +490,12 @@ func generateSchemaGrants(schemas []string, roles domain.Roles) []string {
 	// every major we support. public always exists, so this can't miss.
 	ddl = append(ddl, "REVOKE CREATE ON SCHEMA public FROM PUBLIC;")
 	for _, s := range schemas {
+		grantees := tableGrantees(s, roles)
 		ddl = append(ddl,
 			fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s;", s),
 			fmt.Sprintf("GRANT USAGE ON SCHEMA %s TO %s;", s, rlist),
-			fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA %s GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %s;", s, rlist),
-			fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA %s GRANT USAGE, SELECT ON SEQUENCES TO %s;", s, rlist),
+			fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA %s GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %s;", s, grantees),
+			fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA %s GRANT USAGE, SELECT ON SEQUENCES TO %s;", s, grantees),
 		)
 		if roles.Seed != "" && !isReservedSchema(s) {
 			ddl = append(ddl,
@@ -500,12 +513,12 @@ func generateSchemaGrants(schemas []string, roles domain.Roles) []string {
 // ALTER DEFAULT PRIVILEGES took effect). Emitted near the end of the plan
 // so it picks up tables created in the same migration.
 func generateExistingObjectGrants(schemas []string, roles domain.Roles) []string {
-	rlist := apiRoleList(roles)
-	ddl := make([]string, 0, len(schemas)*2)
+	ddl := make([]string, 0, len(schemas)*2+6)
 	for _, s := range schemas {
+		grantees := tableGrantees(s, roles)
 		ddl = append(ddl,
-			fmt.Sprintf("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %s TO %s;", s, rlist),
-			fmt.Sprintf("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA %s TO %s;", s, rlist),
+			fmt.Sprintf("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %s TO %s;", s, grantees),
+			fmt.Sprintf("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA %s TO %s;", s, grantees),
 		)
 		if roles.Seed != "" && !isReservedSchema(s) {
 			ddl = append(ddl,
@@ -514,18 +527,37 @@ func generateExistingObjectGrants(schemas []string, roles domain.Roles) []string
 			)
 		}
 	}
-	// _instancez_migrations lives in public and is caught by the public GRANT
-	// above; revoke it so the seed role cannot touch migration history. This
-	// runs near the end of the plan, after EnsureMigrationsTable has created
-	// the table, so the REVOKE target always exists.
-	if roles.Seed != "" {
-		ddl = append(ddl, fmt.Sprintf("REVOKE ALL ON _instancez_migrations FROM %s;", roles.Seed))
-	}
-	return ddl
+	// Runs after the public backfill, which re-grants _instancez_migrations.
+	return append(ddl, generatePrivilegeRevokes(roles)...)
 }
 
 func apiRoleList(roles domain.Roles) string {
 	return fmt.Sprintf("%s, %s, %s", roles.Anon, roles.Authenticated, roles.Service)
+}
+
+// tableGrantees limits auth tables to service_role; other schemas get every API role.
+func tableGrantees(schema string, roles domain.Roles) string {
+	if schema == "auth" {
+		return roles.Service
+	}
+	return apiRoleList(roles)
+}
+
+// generatePrivilegeRevokes strips API-role access to auth.* and migration history; idempotent.
+func generatePrivilegeRevokes(roles domain.Roles) []string {
+	users := fmt.Sprintf("%s, %s", roles.Anon, roles.Authenticated)
+	history := apiRoleList(roles)
+	if roles.Seed != "" {
+		history += ", " + roles.Seed
+	}
+	return []string{
+		fmt.Sprintf("REVOKE ALL ON ALL TABLES IN SCHEMA auth FROM %s;", users),
+		fmt.Sprintf("REVOKE ALL ON ALL SEQUENCES IN SCHEMA auth FROM %s;", users),
+		fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA auth REVOKE ALL ON TABLES FROM %s;", users),
+		fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA auth REVOKE ALL ON SEQUENCES FROM %s;", users),
+		fmt.Sprintf("REVOKE ALL ON auth.jwt_keys FROM %s;", apiRoleList(roles)),
+		fmt.Sprintf("REVOKE ALL ON _instancez_migrations FROM %s;", history),
+	}
 }
 
 // orderedSchemas returns the deduped list of schemas the migrator manages,
@@ -581,6 +613,36 @@ const refreshTokensDDL = `CREATE TABLE IF NOT EXISTS auth.refresh_tokens (
   user_agent TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );`
+
+// authHealDDL adds auth columns and indexes introduced after the tables first shipped.
+var authHealDDL = []string{
+	healAuthIndex("idx_users_email_lower", "users", "lower(email)"),
+	healAuthIndex("idx_mfa_challenges_factor_created", "mfa_challenges", "factor_id, created_at"),
+	healAuthColumn("refresh_tokens", "revoked_at", "TIMESTAMPTZ"),
+	healAuthColumn("refresh_tokens", "aal", "TEXT NOT NULL DEFAULT 'aal1'"),
+	healAuthColumn("refresh_tokens", "amr", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+	healAuthIndex("idx_refresh_tokens_session", "refresh_tokens", "session_id"),
+	healAuthColumn("one_time_tokens", "attempts", "INT NOT NULL DEFAULT 0"),
+	healAuthColumn("mfa_challenges", "attempts", "INT NOT NULL DEFAULT 0"),
+	healAuthColumn("mfa_factors", "last_totp_step", "BIGINT"),
+}
+
+// healAuthColumn checks the catalog first, since ADD COLUMN IF NOT EXISTS locks the table even when it skips.
+func healAuthColumn(table, column, def string) string {
+	return fmt.Sprintf(`DO $$ BEGIN
+IF to_regclass('auth.%[1]s') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('auth.%[1]s') AND attname = '%[2]s' AND NOT attisdropped) THEN
+  ALTER TABLE auth.%[1]s ADD COLUMN %[2]s %[3]s;
+END IF;
+END $$;`, table, column, def)
+}
+
+func healAuthIndex(name, table, expr string) string {
+	return fmt.Sprintf(`DO $$ BEGIN
+IF to_regclass('auth.%[2]s') IS NOT NULL AND to_regclass('auth.%[1]s') IS NULL THEN
+  CREATE INDEX %[1]s ON auth.%[2]s (%[3]s);
+END IF;
+END $$;`, name, table, expr)
+}
 
 // generateAuthTables emits the auth.* tables. All tables live in the auth
 // schema; the underscore prefixes used pre-schema-move are dropped because
@@ -643,9 +705,6 @@ func generateAuthTables(auth *domain.Auth) []string {
   expires_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );`)
-		// Additive column for deployments whose one_time_tokens table predates
-		// OTP attempt-limiting.
-		ddl = append(ddl, `ALTER TABLE auth.one_time_tokens ADD COLUMN IF NOT EXISTS attempts INT NOT NULL DEFAULT 0;`)
 		ddl = append(ddl, `CREATE INDEX IF NOT EXISTS idx_one_time_tokens_email_code ON auth.one_time_tokens (email, code);`)
 	}
 
@@ -671,9 +730,6 @@ func generateAuthTables(auth *domain.Auth) []string {
   attempts INT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );`)
-	// Additive column for deployments whose mfa_challenges table predates
-	// TOTP attempt-limiting.
-	ddl = append(ddl, `ALTER TABLE auth.mfa_challenges ADD COLUMN IF NOT EXISTS attempts INT NOT NULL DEFAULT 0;`)
 
 	// auth.flow_state — consolidates PKCE auth codes and OAuth state into one
 	// Supabase-shaped table. provider_type distinguishes the two flows
@@ -703,7 +759,7 @@ func generateAuthTables(auth *domain.Auth) []string {
 	ddl = append(ddl, `CREATE UNIQUE INDEX IF NOT EXISTS idx_flow_state_auth_code ON auth.flow_state (auth_code) WHERE auth_code IS NOT NULL;`)
 	ddl = append(ddl, `CREATE INDEX IF NOT EXISTS idx_flow_state_user_id_auth_method ON auth.flow_state (user_id, authentication_method);`)
 
-	return ddl
+	return append(ddl, authHealDDL...)
 }
 
 func generateTable(name string, table domain.Table, allTables map[string]domain.Table) []string {
@@ -749,7 +805,7 @@ func generateTable(name string, table domain.Table, allTables map[string]domain.
 		if len(field.Enum) > 0 {
 			quoted := make([]string, len(field.Enum))
 			for i, v := range field.Enum {
-				quoted[i] = "'" + v + "'"
+				quoted[i] = sqlLiteral(v)
 			}
 			constraints = append(constraints,
 				fmt.Sprintf("CHECK (%s IN (%s))", fname, strings.Join(quoted, ", ")))
@@ -758,7 +814,7 @@ func generateTable(name string, table domain.Table, allTables map[string]domain.
 		// CHECK from pattern
 		if field.Pattern != "" {
 			constraints = append(constraints,
-				fmt.Sprintf("CHECK (%s ~ '%s')", fname, field.Pattern))
+				fmt.Sprintf("CHECK (%s ~ %s)", fname, sqlLiteral(field.Pattern)))
 		}
 
 		// CHECK from min/max
@@ -863,6 +919,10 @@ func formatColumn(name string, field domain.Field, tables map[string]domain.Tabl
 	return strings.Join(parts, " ")
 }
 
+func sqlLiteral(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
 func formatDefault(val any, colType string) string {
 	switch v := val.(type) {
 	case string:
@@ -880,7 +940,7 @@ func formatDefault(val any, colType string) string {
 			}
 		}
 		// String literal
-		return "'" + strings.ReplaceAll(v, "'", "''") + "'"
+		return sqlLiteral(v)
 	case bool:
 		if v {
 			return "TRUE"
@@ -983,7 +1043,7 @@ func rlsPolicyTypeClause(policy domain.RLSPolicy) string {
 }
 
 func generateRLSPolicies(tableName string, table domain.Table) []string {
-	if len(table.RLS) == 0 {
+	if !table.EffectiveRLSEnabled() {
 		return nil
 	}
 	qualName := qualifiedTableName(tableName, table)

@@ -226,7 +226,7 @@ func applyDefaults(cfg *domain.Config) {
 		cfg.Server.MaxBodySize = "1MB"
 	}
 	if cfg.Server.MaxLimit == 0 {
-		cfg.Server.MaxLimit = 100
+		cfg.Server.MaxLimit = 1000
 	}
 	if cfg.Server.Timeouts.Request == "" {
 		cfg.Server.Timeouts.Request = "25s"

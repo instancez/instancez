@@ -60,9 +60,10 @@ func (fakeOAuthProvider) FetchUser(accessToken string) (*adapterauth.OAuthUserIn
 	sum := sha256.Sum256([]byte(accessToken))
 	suffix := hex.EncodeToString(sum[:6])
 	return &adapterauth.OAuthUserInfo{
-		ProviderID: "fake-" + suffix,
-		Email:      fmt.Sprintf("oauth-fake-%s@example.com", suffix),
-		Name:       "Fake OAuth User",
+		ProviderID:    "fake-" + suffix,
+		Email:         fmt.Sprintf("oauth-fake-%s@example.com", suffix),
+		Name:          "Fake OAuth User",
+		EmailVerified: true,
 	}, nil
 }
 
@@ -144,7 +145,8 @@ func TestSupabaseJSCompat(t *testing.T) {
 	cfg := &domain.Config{
 		Version: 1,
 		Project: domain.Project{Name: "integration"},
-		Server:  domain.Server{Port: 0},
+		// Production defaults, so the contract covers the max-rows cap, statement_timeout and API deadlines.
+		Server: domain.Server{Port: 0, MaxLimit: 1000, Timeouts: domain.Timeouts{Request: "25s", DBQuery: "10s"}},
 		Auth: &domain.Auth{
 			JWTExpiry: "1h",
 			// The recovery/verify flow redirects to the app; the allowlist must
@@ -209,6 +211,14 @@ func TestSupabaseJSCompat(t *testing.T) {
 					{Operations: []string{"insert", "update"}, Using: "auth.uid() = id", WithCheck: "auth.uid() = id"},
 				},
 			},
+			// rls_locked has RLS on and no policies: deny-all except service_role.
+			"rls_locked": {
+				RLSEnabled: func() *bool { b := true; return &b }(),
+				Fields: []domain.Field{
+					{Name: "id", Type: "bigserial", PrimaryKey: true},
+					{Name: "body", Type: "text", Required: true},
+				},
+			},
 			// rls_secrets exercises the two-login model end-to-end:
 			//   - anon clients must be denied by RLS,
 			//   - service_role (admin key) must bypass RLS,
@@ -256,6 +266,22 @@ func TestSupabaseJSCompat(t *testing.T) {
 				Types:   []string{"text/plain", "application/octet-stream"},
 				RLS: []domain.RLSPolicy{
 					{Operations: []string{"select", "insert", "update", "delete"}, Using: "uploaded_by = auth.uid() AND name LIKE 'mine/%'", WithCheck: "uploaded_by = auth.uid() AND name LIKE 'mine/%'"},
+				},
+			},
+			// readonly can SELECT but not DELETE, so remove/emptyBucket must not wipe bytes.
+			"readonly": {
+				MaxSize: "5MB",
+				Types:   []string{"text/plain"},
+				RLS: []domain.RLSPolicy{
+					{Operations: []string{"select"}, Using: "true"},
+				},
+			},
+			// legacy_private checks the legacy routes run under the caller's RLS.
+			"legacy_private": {
+				MaxSize: "1MB",
+				Types:   []string{"text/plain"},
+				RLS: []domain.RLSPolicy{
+					{Operations: []string{"select", "insert", "update", "delete"}, Using: "uploaded_by = auth.uid()", WithCheck: "uploaded_by = auth.uid()"},
 				},
 			},
 		},
@@ -441,6 +467,7 @@ func TestSupabaseJSCompat(t *testing.T) {
 	// has no mailbox; the capturing EmailSender wired above lets us
 	// extract the code directly from the sent message body.
 	runEmailOTPFlow(t, ts.URL, publishableKey, capturedEmail)
+	runOTPBurnKeepsCooldownFlow(t, ts.URL, publishableKey, capturedEmail)
 
 	// ---- 7. Password reset flow (Go-driven) ----
 	// Like the email OTP flow, we need the capturing EmailSender to
@@ -619,6 +646,69 @@ func runEmailOTPFlow(t *testing.T, baseURL, publishableKey string, emails *captu
 }
 
 var tokenRE = regexp.MustCompile(`token=([a-f0-9]{64})`)
+
+func (c *captureEmailSender) countTo(addr string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for _, m := range c.sent {
+		for _, to := range m.To {
+			if to == addr {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+func runOTPBurnKeepsCooldownFlow(t *testing.T, baseURL, publishableKey string, emails *captureEmailSender) {
+	t.Helper()
+	email := fmt.Sprintf("burn_%d_%d@example.com", time.Now().UnixNano(), rand.Int63())
+	post := func(path, body string) int {
+		req, _ := http.NewRequest("POST", baseURL+path, bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("apikey", publishableKey)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("otp burn: %s: %v", path, err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	waitFor := func(n int) {
+		for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline) && emails.countTo(email) < n; {
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	if code := post("/auth/v1/otp", fmt.Sprintf(`{"email":%q}`, email)); code != 200 {
+		t.Fatalf("otp burn: first /otp status %d", code)
+	}
+	waitFor(1)
+	msg, ok := emails.latestTo(email)
+	if !ok {
+		t.Fatalf("otp burn: no email for %s", email)
+	}
+	realCode := otpCodeRE.FindString(msg.Text)
+	wrong := "000000"
+	if realCode == wrong {
+		wrong = "111111"
+	}
+	for i := 0; i < 5; i++ {
+		if code := post("/auth/v1/verify", fmt.Sprintf(`{"type":"email","email":%q,"token":%q}`, email, wrong)); code != 401 {
+			t.Fatalf("otp burn: wrong guess %d status %d", i, code)
+		}
+	}
+	if code := post("/auth/v1/otp", fmt.Sprintf(`{"email":%q}`, email)); code != 200 {
+		t.Fatalf("otp burn: second /otp status %d, want a silent 200", code)
+	}
+	waitFor(2)
+	if n := emails.countTo(email); n != 1 {
+		t.Fatalf("otp burn: %d emails sent, burning the code must not reset the cooldown", n)
+	}
+	if code := post("/auth/v1/verify", fmt.Sprintf(`{"type":"email","email":%q,"token":%q}`, email, realCode)); code != 401 {
+		t.Fatalf("otp burn: burned code still verifies, status %d", code)
+	}
+}
 
 func runPasswordResetFlow(t *testing.T, baseURL, publishableKey string, emails *captureEmailSender) {
 	t.Helper()

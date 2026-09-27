@@ -46,6 +46,7 @@ tables:
     # Uncomment and adjust to suit your app.
     #
     # profiles:
+    #     rls_enabled: true
     #     fields:
     #         - name: id
     #           foreign_key:
@@ -62,6 +63,7 @@ tables:
     #         - operations: [update]
     #           using: "auth.uid() = id"
     announcements:
+        rls_enabled: true
         fields:
             - name: body
               type: text
@@ -110,6 +112,7 @@ tables:
                   SELECT user_id FROM team_members WHERE role = 'owner'
                 )
     categories:
+        rls_enabled: true
         fields:
             - name: color
               type: varchar(7)
@@ -139,6 +142,7 @@ tables:
               using: team_id IN (SELECT team_id FROM team_members WHERE user_id = auth.uid())
               with_check: team_id IN (SELECT team_id FROM team_members WHERE user_id = auth.uid())
     comments:
+        rls_enabled: true
         fields:
             - name: body
               type: text
@@ -179,6 +183,7 @@ tables:
                 - delete
               using: user_id = auth.uid()
     some_table:
+        rls_enabled: true
         fields:
             - name: created_at
               type: timestamptz
@@ -189,6 +194,7 @@ tables:
         indexes: []
         rls: []
     team_members:
+        rls_enabled: true
         fields:
             - name: id
               type: bigserial
@@ -242,6 +248,7 @@ tables:
                   WHERE user_id = auth.uid() AND role = 'owner'
                 )
     teams:
+        rls_enabled: true
         fields:
             - name: created_at
               type: timestamptz
@@ -283,6 +290,7 @@ tables:
                   WHERE user_id = auth.uid() AND role = 'owner'
                 )
     todos:
+        rls_enabled: true
         fields:
             - name: body
               type: text

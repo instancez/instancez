@@ -25,7 +25,7 @@ var (
 
 func registerOAuthBuiltins() {
 	oauthOnce.Do(func() {
-		RegisterOAuth(googleProvider{})
+		RegisterOAuth(googleProvider{userAPI: "https://www.googleapis.com/oauth2/v2/userinfo"})
 		RegisterOAuth(&githubProvider{
 			userAPI:  "https://api.github.com/user",
 			emailAPI: "https://api.github.com/user/emails",
@@ -46,7 +46,7 @@ func OAuthRegistry(name string) (OAuthProvider, bool) {
 
 // ---- google ----
 
-type googleProvider struct{}
+type googleProvider struct{ userAPI string }
 
 func (googleProvider) Name() string { return "google" }
 
@@ -60,8 +60,8 @@ func (googleProvider) ExchangeCode(cfg *domain.OAuthProvider, code string) (stri
 	return exchangeOAuthCode("https://oauth2.googleapis.com/token", cfg, code)
 }
 
-func (googleProvider) FetchUser(accessToken string) (*OAuthUserInfo, error) {
-	return fetchGoogleUser(accessToken)
+func (g googleProvider) FetchUser(accessToken string) (*OAuthUserInfo, error) {
+	return fetchGoogleUser(g.userAPI, accessToken)
 }
 
 // ---- github ----

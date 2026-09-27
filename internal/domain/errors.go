@@ -15,9 +15,14 @@ var (
 	ErrOAuthOnlyAccount = errors.New("account uses oauth login")
 	ErrRefreshExpired   = errors.New("refresh token expired")
 	ErrRefreshReuse     = errors.New("refresh token reuse detected")
+	ErrUserBanned       = errors.New("user is banned")
 	ErrTokenExpired     = errors.New("token expired")
 	ErrInvalidToken     = errors.New("invalid or expired token")
 	ErrPurposeMismatch  = errors.New("token purpose mismatch")
+
+	ErrSignupDisabled          = errors.New("signups not allowed")
+	ErrProviderEmailUnverified = errors.New("provider email not verified")
+	ErrOAuthLinkRefused        = errors.New("email belongs to an unverified account")
 
 	// MFA challenge sentinels. ErrChallengeUsed is a challenge whose
 	// verified_at is already set (replay); ErrChallengeExpired is past its
@@ -27,6 +32,8 @@ var (
 	ErrChallengeUsed            = errors.New("challenge already verified")
 	ErrChallengeExpired         = errors.New("challenge expired")
 	ErrChallengeTooManyAttempts = errors.New("too many verification attempts")
+	// ErrChallengeRateLimited means a factor hit its challenge-creation cap.
+	ErrChallengeRateLimited = errors.New("too many challenges created")
 )
 
 // ValidationError represents a single schema validation error with location info.

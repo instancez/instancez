@@ -587,3 +587,141 @@ func TestEngineRunWatcher_TransientErrorIgnored(t *testing.T) {
 		t.Fatalf("runWatcher did not return after context cancel")
 	}
 }
+
+// hardenedLast reports whether the final locked tx is Harden: it revokes and records no migration.
+func hardenedLast(execs []string) bool {
+	last := -1
+	for i, s := range execs {
+		if strings.Contains(s, "pg_advisory_xact_lock") {
+			last = i
+		}
+	}
+	if last < 0 {
+		return false
+	}
+	tail := strings.Join(execs[last:], "\n")
+	return strings.Contains(tail, "REVOKE ALL ON auth.jwt_keys") &&
+		!strings.Contains(tail, "INSERT INTO _instancez_migrations")
+}
+
+func TestEngineStart_HardensAfterMigrationOnEveryBootPath(t *testing.T) {
+	tableA := &domain.Config{
+		Tables: map[string]domain.Table{"a": {Fields: []domain.Field{{Name: "id", Type: "BIGINT", PrimaryKey: true}}}},
+		Server: domain.Server{Port: 8080},
+	}
+	empty := &domain.Config{Server: domain.Server{Port: 8080}}
+	cases := []struct {
+		name    string
+		seed    *domain.Config
+		boot    *domain.Config
+		migrate bool
+	}{
+		{"first boot", nil, tableA, true},
+		{"migrate with changes", empty, tableA, true},
+		{"migrate unchanged", tableA, tableA, true},
+		{"destructive change blocked", tableA, empty, true},
+		{"serve without migrate", tableA, tableA, false},
+		{"serve without migrate, first boot", nil, tableA, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := newFakeDB(t)
+			roles := domain.DefaultRoles()
+			if tc.seed != nil {
+				if err := NewMigrator(db, roles).Apply(context.Background(), tc.seed); err != nil {
+					t.Fatalf("seed: %v", err)
+				}
+			}
+			engine := NewEngine(tc.boot, domain.OwnerDB{Database: db}, newFakeRequestDB(t), roles,
+				WithMode(ModeProd), WithMigrate(tc.migrate),
+				WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			if err := engine.Start(ctx); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			if !hardenedLast(db.execs) {
+				t.Fatalf("Harden must be the last locked tx on boot:\n%s", strings.Join(db.execs, "\n"))
+			}
+		})
+	}
+}
+
+func TestEngineStart_FailsClosedWhenHardenFails(t *testing.T) {
+	db := newFakeDB(t)
+	cfg := &domain.Config{Server: domain.Server{Port: 8080}}
+	if err := NewMigrator(db).Apply(context.Background(), cfg); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	db.failOnStatementContaining = "REVOKE ALL ON auth.jwt_keys"
+	engine := NewEngine(cfg, domain.OwnerDB{Database: db}, newFakeRequestDB(t), domain.DefaultRoles(),
+		WithMode(ModeProd), WithMigrate(false),
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := engine.Start(ctx); err == nil || !strings.Contains(err.Error(), "harden") {
+		t.Fatalf("expected harden error, got %v", err)
+	}
+}
+
+func TestEngineRunWatcher_HardensAfterReload(t *testing.T) {
+	db := newFakeDB(t)
+	roles := domain.DefaultRoles()
+	initial := &domain.Config{Server: domain.Server{Port: 8080}}
+	if err := NewMigrator(db, roles).Apply(context.Background(), initial); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	src := &fakeSource{ch: make(chan config.WatchEvent, 4)}
+	reloaded := make(chan struct{})
+	engine := NewEngine(initial, domain.OwnerDB{Database: db}, newFakeRequestDB(t), roles,
+		WithMode(ModeProd), WithMigrate(true), WithConfigSource(src),
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
+		WithFunctionReload(func(*domain.Config) { close(reloaded) }))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		engine.runWatcher(ctx, 0)
+		close(done)
+	}()
+	src.ch <- config.WatchEvent{Data: []byte(watcherGoodYAML), Version: "v1"}
+	select {
+	case <-reloaded:
+	case <-time.After(2 * time.Second):
+		t.Fatal("watcher did not reload")
+	}
+	cancel()
+	<-done
+	if !hardenedLast(db.execs) {
+		t.Fatalf("Harden must run after a hot-reload migration:\n%s", strings.Join(db.execs, "\n"))
+	}
+}
+
+type closeCountingDB struct {
+	*fakeDB
+	closes int
+}
+
+func (c *closeCountingDB) Close() error { c.closes++; return nil }
+
+func TestShutdownClosesBothPools(t *testing.T) {
+	owner := &closeCountingDB{fakeDB: newFakeDB(t)}
+	auth := &closeCountingDB{fakeDB: newFakeDB(t)}
+	e := NewEngine(&domain.Config{}, domain.OwnerDB{Database: owner}, domain.RequestDB{Database: auth}, domain.Roles{},
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	if err := e.shutdown(); err != nil {
+		t.Fatal(err)
+	}
+	if owner.closes != 1 || auth.closes != 1 {
+		t.Fatalf("closes: owner=%d auth=%d, want 1/1", owner.closes, auth.closes)
+	}
+}
+
+func TestShutdownToleratesMissingRequestDB(t *testing.T) {
+	e := NewEngine(&domain.Config{}, domain.OwnerDB{Database: newFakeDB(t)}, domain.RequestDB{}, domain.Roles{},
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	if err := e.shutdown(); err != nil {
+		t.Fatal(err)
+	}
+}

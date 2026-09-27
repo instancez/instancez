@@ -31,6 +31,9 @@ func (e Embed) OutputKey() string {
 	return e.Name
 }
 
+// NoLimit leaves the LIMIT clause off; PostgREST has no default page size.
+const NoLimit = -1
+
 // QueryParams holds parsed PostgREST query parameters.
 type QueryParams struct {
 	Select []string

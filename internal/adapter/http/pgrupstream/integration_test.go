@@ -30,6 +30,7 @@ var (
 	testClient *Client
 	testTS     *httptest.Server
 	testDB     *postgres.DB
+	testAuthDB domain.RequestDB
 )
 
 const testAdminKey = "pgrupstream-admin-key"
@@ -95,6 +96,21 @@ CREATE OR REPLACE FUNCTION public.current_request_id()
 RETURNS text LANGUAGE sql STABLE AS $$
   SELECT current_setting('request.request_id', true)
 $$;
+
+-- table() RPC used by TestConf_IdentifierHardening.
+CREATE OR REPLACE FUNCTION public.user_ages()
+RETURNS TABLE(username text, age int) LANGUAGE sql STABLE AS $$
+  SELECT username, age FROM users ORDER BY username
+$$;
+
+-- Returns rows only inside a read-only tx, so an RPC count run outside it counts 0.
+CREATE OR REPLACE FUNCTION public.users_if_read_only()
+RETURNS SETOF users LANGUAGE sql STABLE AS $$
+  SELECT * FROM users WHERE current_setting('transaction_read_only') = 'on'
+$$;
+
+CREATE OR REPLACE FUNCTION public.sleep_for(secs float8)
+RETURNS int LANGUAGE sql VOLATILE AS $$ SELECT 1 FROM pg_sleep(secs) $$;
 `
 
 const seedSQL = `
@@ -199,6 +215,22 @@ func buildConfig() *domain.Config {
 				Returns: domain.FuncReturn{Type: "text"}, ReturnCategory: "scalar",
 				Body: "SELECT current_setting('request.request_id', true)",
 			},
+			"user_ages": {
+				Language: "sql", Volatility: "stable", Security: "invoker",
+				Returns: domain.FuncReturn{Type: "table(username text, age int)"}, ReturnCategory: "setof",
+				Body: "SELECT username, age FROM users ORDER BY username",
+			},
+			"users_if_read_only": {
+				Language: "sql", Volatility: "stable", Security: "invoker",
+				Returns: domain.FuncReturn{Type: "setof users"}, ReturnCategory: "setof",
+				Body: "SELECT * FROM users WHERE current_setting('transaction_read_only') = 'on'",
+			},
+			"sleep_for": {
+				Language: "sql", Volatility: "volatile", Security: "invoker",
+				Returns: domain.FuncReturn{Type: "int"}, ReturnCategory: "scalar",
+				Args: []domain.FuncArg{{Name: "secs", Type: "float8", Required: true}},
+				Body: "SELECT 1 FROM pg_sleep(secs)",
+			},
 		},
 	}
 }
@@ -224,6 +256,7 @@ func TestMain(m *testing.M) {
 	}
 	db := ownerDB.Database.(*postgres.DB)
 	testDB = db
+	testAuthDB = authDB
 	defer ownerDB.Close()
 	defer authDB.Close()
 

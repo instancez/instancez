@@ -2,6 +2,7 @@ package http
 
 import (
 	"fmt"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -12,151 +13,97 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Metrics tracks Prometheus-style metrics.
+type metricKey struct{ method, path, status string }
+
+// Metrics tracks Prometheus-style metrics; label values are bounded by the route table.
 type Metrics struct {
-	mu               sync.RWMutex
-	requestCount     map[string]*atomic.Int64 // method:path:status -> count
-	requestDurations map[string][]float64     // method:path -> durations in seconds
-	activeRequests   atomic.Int64
+	mu             sync.Mutex
+	requests       map[metricKey]int64
+	durationSum    map[metricKey]float64
+	durationCount  map[metricKey]int64
+	activeRequests atomic.Int64
 }
 
-var globalMetrics = &Metrics{
-	requestCount:     make(map[string]*atomic.Int64),
-	requestDurations: make(map[string][]float64),
+func newMetrics() *Metrics {
+	return &Metrics{
+		requests:      map[metricKey]int64{},
+		durationSum:   map[metricKey]float64{},
+		durationCount: map[metricKey]int64{},
+	}
 }
 
-// metricsMiddleware records request metrics.
+var globalMetrics = newMetrics()
+
+func metricMethod(m string) string {
+	switch m {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut,
+		http.MethodPatch, http.MethodDelete, http.MethodOptions:
+		return m
+	}
+	return "OTHER"
+}
+
+// metricsMiddleware records request metrics, keyed by route template (not raw path).
 func metricsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		globalMetrics.activeRequests.Add(1)
+		m := globalMetrics
+		m.activeRequests.Add(1)
 		start := time.Now()
-
 		c.Next()
-
 		duration := time.Since(start).Seconds()
-		globalMetrics.activeRequests.Add(-1)
+		m.activeRequests.Add(-1)
 
-		method := c.Request.Method
-		path := normalizePath(c.Request.URL.Path)
-		status := strconv.Itoa(c.Writer.Status())
-
-		// Request count
-		key := method + ":" + path + ":" + status
-		globalMetrics.mu.Lock()
-		counter, ok := globalMetrics.requestCount[key]
-		if !ok {
-			counter = &atomic.Int64{}
-			globalMetrics.requestCount[key] = counter
+		path := c.FullPath()
+		if path == "" {
+			path = "unmatched"
 		}
+		route := metricKey{method: metricMethod(c.Request.Method), path: path}
+		hit := route
+		hit.status = strconv.Itoa(c.Writer.Status())
 
-		// Duration histogram (simplified — store recent durations)
-		durationKey := method + ":" + path
-		globalMetrics.requestDurations[durationKey] = append(
-			globalMetrics.requestDurations[durationKey], duration)
-		// Keep max 1000 recent durations per endpoint
-		if len(globalMetrics.requestDurations[durationKey]) > 1000 {
-			globalMetrics.requestDurations[durationKey] = globalMetrics.requestDurations[durationKey][500:]
-		}
-		globalMetrics.mu.Unlock()
-
-		counter.Add(1)
+		m.mu.Lock()
+		m.requests[hit]++
+		m.durationSum[route] += duration
+		m.durationCount[route]++
+		m.mu.Unlock()
 	}
+}
+
+func sortedKeys[V any](m map[metricKey]V) []metricKey {
+	keys := make([]metricKey, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		a, b := keys[i], keys[j]
+		if a.path != b.path {
+			return a.path < b.path
+		}
+		if a.method != b.method {
+			return a.method < b.method
+		}
+		return a.status < b.status
+	})
+	return keys
 }
 
 // handleMetrics serves Prometheus text format metrics.
 func handleMetrics(c *gin.Context) {
+	m := globalMetrics
 	var sb strings.Builder
-
-	sb.WriteString("# HELP instancez_http_requests_total Total HTTP requests\n")
-	sb.WriteString("# TYPE instancez_http_requests_total counter\n")
-
-	globalMetrics.mu.RLock()
-	defer globalMetrics.mu.RUnlock()
-
-	// Sort keys for stable output
-	countKeys := make([]string, 0, len(globalMetrics.requestCount))
-	for k := range globalMetrics.requestCount {
-		countKeys = append(countKeys, k)
+	m.mu.Lock()
+	sb.WriteString("# HELP instancez_http_requests_total Total HTTP requests\n# TYPE instancez_http_requests_total counter\n")
+	for _, k := range sortedKeys(m.requests) {
+		fmt.Fprintf(&sb, "instancez_http_requests_total{method=%q,path=%q,status=%q} %d\n", k.method, k.path, k.status, m.requests[k])
 	}
-	sort.Strings(countKeys)
-
-	for _, key := range countKeys {
-		parts := strings.SplitN(key, ":", 3)
-		if len(parts) != 3 {
-			continue
-		}
-		method, path, status := parts[0], parts[1], parts[2]
-		count := globalMetrics.requestCount[key].Load()
-		fmt.Fprintf(&sb,
-			"instancez_http_requests_total{method=%q,path=%q,status=%q} %d\n",
-			method, path, status, count)
+	sb.WriteString("\n# HELP instancez_http_request_duration_seconds HTTP request duration\n# TYPE instancez_http_request_duration_seconds summary\n")
+	for _, k := range sortedKeys(m.durationCount) {
+		fmt.Fprintf(&sb, "instancez_http_request_duration_seconds_count{method=%q,path=%q} %d\n", k.method, k.path, m.durationCount[k])
+		fmt.Fprintf(&sb, "instancez_http_request_duration_seconds_sum{method=%q,path=%q} %g\n", k.method, k.path, m.durationSum[k])
 	}
-
-	sb.WriteString("\n# HELP instancez_http_request_duration_seconds HTTP request duration\n")
-	sb.WriteString("# TYPE instancez_http_request_duration_seconds summary\n")
-
-	durKeys := make([]string, 0, len(globalMetrics.requestDurations))
-	for k := range globalMetrics.requestDurations {
-		durKeys = append(durKeys, k)
-	}
-	sort.Strings(durKeys)
-
-	for _, key := range durKeys {
-		parts := strings.SplitN(key, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		method, path := parts[0], parts[1]
-		durations := globalMetrics.requestDurations[key]
-		if len(durations) == 0 {
-			continue
-		}
-
-		sum := 0.0
-		for _, d := range durations {
-			sum += d
-		}
-		avg := sum / float64(len(durations))
-
-		fmt.Fprintf(&sb,
-			"instancez_http_request_duration_seconds{method=%q,path=%q,quantile=\"0.5\"} %g\n",
-			method, path, avg)
-		fmt.Fprintf(&sb,
-			"instancez_http_request_duration_seconds_count{method=%q,path=%q} %d\n",
-			method, path, len(durations))
-		fmt.Fprintf(&sb,
-			"instancez_http_request_duration_seconds_sum{method=%q,path=%q} %g\n",
-			method, path, sum)
-	}
-
-	sb.WriteString("\n# HELP instancez_http_active_requests Current active requests\n")
-	sb.WriteString("# TYPE instancez_http_active_requests gauge\n")
-	fmt.Fprintf(&sb, "instancez_http_active_requests %d\n", globalMetrics.activeRequests.Load())
-
+	m.mu.Unlock()
+	sb.WriteString("\n# HELP instancez_http_active_requests Current active requests\n# TYPE instancez_http_active_requests gauge\n")
+	fmt.Fprintf(&sb, "instancez_http_active_requests %d\n", m.activeRequests.Load())
 	c.Header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	c.String(200, sb.String())
-}
-
-func normalizePath(path string) string {
-	// Group dynamic segments for aggregation
-	parts := strings.Split(path, "/")
-	for i, p := range parts {
-		if len(p) > 0 && isLikelyID(p) {
-			parts[i] = ":id"
-		}
-	}
-	return strings.Join(parts, "/")
-}
-
-func isLikelyID(s string) bool {
-	// Heuristic: pure numeric or UUID-like
-	if len(s) > 8 {
-		for _, c := range s {
-			if (c < '0' || c > '9') && (c < 'a' || c > 'f') && c != '-' {
-				return false
-			}
-		}
-		return true
-	}
-	return false
 }
