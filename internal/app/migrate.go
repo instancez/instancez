@@ -616,15 +616,15 @@ const refreshTokensDDL = `CREATE TABLE IF NOT EXISTS auth.refresh_tokens (
 
 // authHealDDL adds auth columns and indexes introduced after the tables first shipped.
 var authHealDDL = []string{
+	healAuthIndex("idx_users_email_lower", "users", "lower(email)"),
+	healAuthIndex("idx_mfa_challenges_factor_created", "mfa_challenges", "factor_id, created_at"),
 	healAuthColumn("refresh_tokens", "revoked_at", "TIMESTAMPTZ"),
 	healAuthColumn("refresh_tokens", "aal", "TEXT NOT NULL DEFAULT 'aal1'"),
 	healAuthColumn("refresh_tokens", "amr", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
 	healAuthIndex("idx_refresh_tokens_session", "refresh_tokens", "session_id"),
 	healAuthColumn("one_time_tokens", "attempts", "INT NOT NULL DEFAULT 0"),
 	healAuthColumn("mfa_challenges", "attempts", "INT NOT NULL DEFAULT 0"),
-	healAuthIndex("idx_mfa_challenges_factor_created", "mfa_challenges", "factor_id, created_at"),
 	healAuthColumn("mfa_factors", "last_totp_step", "BIGINT"),
-	healAuthIndex("idx_users_email_lower", "users", "lower(email)"),
 }
 
 // healAuthColumn checks the catalog first, since ADD COLUMN IF NOT EXISTS locks the table even when it skips.

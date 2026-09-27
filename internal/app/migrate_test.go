@@ -899,6 +899,20 @@ func TestAuthHealDDL_ChecksCatalogBeforeTouchingTables(t *testing.T) {
 	}
 }
 
+// Index builds must not run while the refresh_tokens heal holds its table lock.
+func TestAuthHealDDL_IndexesBeforeRefreshTokenAlters(t *testing.T) {
+	firstAlter := slices.IndexFunc(authHealDDL, func(s string) bool { return strings.Contains(s, "ALTER TABLE auth.refresh_tokens") })
+	if firstAlter < 0 {
+		t.Fatal("no refresh_tokens ALTER in authHealDDL")
+	}
+	for _, idx := range []string{"idx_users_email_lower", "idx_mfa_challenges_factor_created"} {
+		i := slices.IndexFunc(authHealDDL, func(s string) bool { return strings.Contains(s, idx) })
+		if i < 0 || i > firstAlter {
+			t.Errorf("%s at %d, want before the first refresh_tokens ALTER at %d", idx, i, firstAlter)
+		}
+	}
+}
+
 func TestDiffNewAuth_OneTimeTokensHasAttempts(t *testing.T) {
 	old := &domain.Config{Auth: &domain.Auth{}}
 	nw := &domain.Config{Auth: &domain.Auth{Email: &domain.AuthEmail{}}}
