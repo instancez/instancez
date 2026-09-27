@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -18,6 +19,7 @@ import (
 	adapterauth "github.com/instancez/instancez/internal/adapter/auth"
 	"github.com/instancez/instancez/internal/app"
 	"github.com/instancez/instancez/internal/domain"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // ---------- helpers ----------
@@ -655,6 +657,7 @@ type stubDB struct {
 	queryFn    func(ctx context.Context, q string, args ...any) ([]map[string]any, error)
 	execFn     func(ctx context.Context, q string, args ...any) (int64, error)
 	beginFn    func(ctx context.Context) (domain.Tx, error)
+	withRLSFn  func(ctx context.Context, s domain.Session) (context.Context, error)
 }
 
 func (s *stubDB) Close() error                                    { return nil }
@@ -683,6 +686,9 @@ func (s *stubDB) Exec(ctx context.Context, q string, args ...any) (int64, error)
 	return 0, nil
 }
 func (s *stubDB) WithRLS(ctx context.Context, session domain.Session) (context.Context, error) {
+	if s.withRLSFn != nil {
+		return s.withRLSFn(ctx, session)
+	}
 	return ctx, nil
 }
 func (s *stubDB) Begin(ctx context.Context) (domain.Tx, error) {
@@ -1250,6 +1256,83 @@ func TestSignupGating_AdminInvite_IgnoresAllowSignup(t *testing.T) {
 	}
 	if w.Code >= 400 {
 		t.Fatalf("admin invite failed: status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleSignupDispatch_DuplicateEmail_Returns409 asserts the 409/conflict contract for a real pgconn duplicate-key error.
+func TestHandleSignupDispatch_DuplicateEmail_Returns409(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dupErr := &pgconn.PgError{Code: "23505", Message: `duplicate key value violates unique constraint "users_email_key"`}
+	h, svc := signupGatingHandler(t, nil, nil)
+	svc.createUserFn = func(ctx context.Context, p domain.CreateUserParams) (map[string]any, error) {
+		return nil, dupErr
+	}
+
+	w := postSignup(h, `{"email":"dup@example.com","password":"hunter2hunter2"}`)
+
+	if w.Code != 409 {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["code"] != "23505" || body["message"] != "Email already registered" {
+		t.Errorf("expected conflict body, got %v", body)
+	}
+}
+
+// TestHandleAdminCreateUser_DuplicateEmail_Returns422 asserts the 422/user_already_exists contract for the admin-create path.
+func TestHandleAdminCreateUser_DuplicateEmail_Returns422(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("INSTANCEZ_SECRET_KEY", "admin-key")
+	dupErr := &pgconn.PgError{Code: "23505", Message: `duplicate key value violates unique constraint "users_email_key"`}
+	svc := &stubAuthService{
+		createUserFn: func(_ context.Context, p domain.CreateUserParams) (map[string]any, error) {
+			return nil, dupErr
+		},
+	}
+	h := &AuthHandler{
+		cfg:     &domain.Config{Auth: &domain.Auth{JWTExpiry: "15m"}},
+		authSvc: svc,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		jwtKeys: stubKeys(t),
+	}
+
+	w := doAdminRequest(h, "POST", "/auth/v1/admin/users", `{"email":"dup@example.com","password":"hunter2hunter2"}`)
+
+	if w.Code != 422 {
+		t.Fatalf("expected 422, got %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["message"] != "A user with this email address has already been registered" {
+		t.Errorf("expected already-registered message, got %v", body)
+	}
+}
+
+// TestIsDuplicateKeyErr covers the shared duplicate-key classifier.
+func TestIsDuplicateKeyErr(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil error", nil, false},
+		{"pgconn 23505", &pgconn.PgError{Code: "23505"}, true},
+		{"pgconn different code", &pgconn.PgError{Code: "23503"}, false},
+		{"pgconn non-23505 code with 'unique' in message (SQLSTATE wins over substring)", &pgconn.PgError{Code: "23514", Message: "value must be a unique combination"}, false},
+		{"pgconn 23505 wrapped in DatabaseError", &domain.DatabaseError{Op: "exec", Err: &pgconn.PgError{Code: "23505"}}, true},
+		{"string duplicate key", errors.New(`duplicate key value violates unique constraint "users_pkey"`), true},
+		{"string 'unique' alone no longer matches", errors.New("violates unique constraint"), false},
+		{"string 23505", errors.New("SQLSTATE 23505"), true},
+		{"unrelated error", errors.New("connection refused"), false},
+		{"empty string error", errors.New(""), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isDuplicateKeyErr(tc.err); got != tc.want {
+				t.Errorf("isDuplicateKeyErr(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 

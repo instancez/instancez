@@ -18,6 +18,9 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - **Breaking:** session JWTs now carry Supabase's top-level `aal` and `amr` (`[{method, timestamp}]`) claims, with a `session_id` that stays the same across refreshes. `aal` is no longer written into `app_metadata`; RLS policies reading `auth.jwt()->'app_metadata'->>'aal'` must switch to `auth.jwt()->>'aal'`.
 - `GET /auth/v1/user` and session responses now include `user.factors`, so supabase-js `mfa.listFactors()` and `mfa.getAuthenticatorAssuranceLevel()` work.
 - REST reads no longer stop at 20 rows when no `limit` is given, matching PostgREST. `server.max_limit` (new default 1000, `-1` to disable) now caps table reads, setof RPCs and top-level has-many embeds, the way PostgREST's `db-max-rows` does.
+- Storage: a legacy `/api/storage` `GET` on a public bucket with a present but invalid `Authorization: Bearer` token now returns 401 instead of falling back to anonymous access.
+- Storage: `createSignedUrls` with an empty path list or more than 1000 paths now returns 400.
+- Storage: `/storage/v1/object/info/authenticated/<bucket>` with no path now returns 400 (was 404).
 
 ### Fixed
 
@@ -27,6 +30,13 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - Upgrading instancez with an unchanged `instancez.yaml` now adds new `auth.*` columns and indexes at boot. Before, they only reached a database when the config changed. This also adds the missing `attempts` column to `auth.one_time_tokens` on databases that enabled email auth after first boot.
 - A code function stuck in a CPU-bound loop no longer permanently takes out a worker. After a timeout the worker is health-checked and replaced if unresponsive. Function responses over 6 MB now return 502 instead of being buffered without limit.
 - Reloading functions (dev hot reload, `serve --watch` bundle change) no longer kills calls in flight. The old runtime drains for up to 30s before its workers stop.
+- Storage: batch signed URLs, copy, move, remove, `emptyBucket` and the legacy `/api/storage` routes now respect `storage.objects` RLS. Previously some of them signed, copied or deleted objects the caller couldn't read or delete.
+- Storage: object keys with `..` segments are rejected, and the local provider can no longer write outside its directory.
+- Storage: downloads send `nosniff`, and HTML/SVG/XML/JS are served as attachments.
+- Storage: image transforms are capped at 2500px, 25MB and 50MP. Signed URL expiry is capped at 7 days. Uploads no longer hold a database connection while the body streams. Multipart and signed uploads record real sizes, and signed uploads enforce the bucket's MIME allowlist. S3 copies of keys with special characters work.
+- Storage: `createSignedUploadUrl`'s response `url` now includes `?token=`, so `@supabase/supabase-js`'s `uploadToSignedUrl()` and `createSignedUploadUrl()` work end-to-end (storage-js reads the token from the URL).
+- Storage: `bucket.info()` now works, served at `/storage/v1/object/info/<bucket>/<path>`.
+- Storage: an upload commit failure no longer deletes the object's bytes; on update/upsert the row already pointed at the key that was just overwritten, so the old delete destroyed live data whether or not the commit actually failed.
 
 ### Security
 
@@ -49,6 +59,9 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - `server.timeouts.request` (default 25s) now bounds how long `/rest/v1` and `/auth/v1` requests may take to read or write, which stops slow-body and slow-reader clients from holding connections open. Storage and functions are exempt.
 - `/metrics` labels now use route templates (`/rest/v1/rpc/:name`), with `unmatched` for unknown paths and `OTHER` for non-standard methods. Before, every distinct URL added a series that was never freed. The mislabelled `quantile="0.5"` (it was a mean) is gone, and `_count`/`_sum` are now true cumulative totals.
 - A table with `rls_enabled: true` and no policies is deny-all for `anon`/`authenticated` (reads return zero rows, writes fail), rather than having RLS left off. Removing a table's last policy while `rls_enabled: true` stays set no longer opens the table back up. The dashboard's new-table default is `rls_enabled: true`, so new tables start deny-all until you add policies.
+- Storage uploads now check the caller's RLS policy before spooling the request body to disk, so an RLS-denied or anonymous caller can no longer force up to `max_size` bytes of disk I/O per request.
+- Storage downloads through an authenticated route (not the `public/` route) on a public bucket now get `Cache-Control: private`, not `public`, since RLS on that route can still be per-caller.
+- Storage downloads with a `multipart/*` content type (e.g. `multipart/x-mixed-replace`) now download as an attachment instead of rendering inline.
 
 ### Upgrading
 

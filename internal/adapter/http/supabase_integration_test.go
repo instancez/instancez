@@ -269,6 +269,29 @@ func TestSupabaseJSCompat(t *testing.T) {
 					{Operations: []string{"select", "insert", "update", "delete"}, Using: "uploaded_by = auth.uid() AND name LIKE 'mine/%'", WithCheck: "uploaded_by = auth.uid() AND name LIKE 'mine/%'"},
 				},
 			},
+			// readonly exercises the C4 regression directly: a caller who can
+			// SELECT storage.objects but not DELETE must not be able to wipe
+			// bytes via remove/emptyBucket. No insert/update/delete policy is
+			// declared, so those operations match no policy and are denied.
+			"readonly": {
+				MaxSize: "5MB",
+				Types:   []string{"text/plain"},
+				RLS: []domain.RLSPolicy{
+					{Operations: []string{"select"}, Using: "true"},
+				},
+			},
+			// legacy_private exercises the C6 fix end-to-end: the legacy
+			// /api/storage routes now run under the caller's RLS
+			// (uploaded_by = auth.uid()), not service_role. Unlike "owned",
+			// there's no path prefix, since the legacy sign-upload route mints
+			// its own random key rather than taking a client-supplied path.
+			"legacy_private": {
+				MaxSize: "1MB",
+				Types:   []string{"text/plain"},
+				RLS: []domain.RLSPolicy{
+					{Operations: []string{"select", "insert", "update", "delete"}, Using: "uploaded_by = auth.uid()", WithCheck: "uploaded_by = auth.uid()"},
+				},
+			},
 		},
 		// rpc functions drive the supabase-js .rpc() compat checks in
 		// run.mjs. Creation goes through the real Migrator so this path

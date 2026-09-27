@@ -2478,35 +2478,30 @@ await step('storage: createSignedUrls returns batch URLs', async () => {
 // --- Signed upload URL + uploadToSignedUrl ---
 
 await step('storage: createSignedUploadUrl + uploadToSignedUrl flow', async () => {
-  // 1. Get signed upload token
-  const signResp = await fetch(`${URL}/storage/v1/object/upload/sign/avatars/signed-upload.txt`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      apikey: PUBLISHABLE_KEY,
-      'Content-Type': 'application/json',
-    },
-    body: '{}',
-  })
-  assert(signResp.ok, `createSignedUploadUrl failed: ${signResp.status}`)
-  const signData = await signResp.json()
-  assert(signData.token, 'token present')
+  const bucket = storageClient().storage.from('avatars')
+  const { data: signed, error } = await bucket.createSignedUploadUrl('signed-upload.txt')
+  if (error) throw error
+  assert(signed.token, 'token present')
+  assertEq(signed.path, 'signed-upload.txt')
+  const u = new NodeURL(signed.signedUrl)
+  assertEq(u.pathname, new NodeURL(`${URL}/storage/v1/object/upload/sign/avatars/signed-upload.txt`).pathname, 'signedUrl points at the upload route')
+  assertEq(u.searchParams.get('token'), signed.token, 'signedUrl carries the token')
 
-  // 2. Upload to signed URL
-  const upResp = await fetch(`${URL}/storage/v1/object/upload/sign/avatars/signed-upload.txt?token=${signData.token}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'text/plain' },
-    body: 'signed upload content',
-  })
-  assert(upResp.ok, `uploadToSignedUrl failed: ${upResp.status}`)
+  const up = await bucket.uploadToSignedUrl(signed.path, signed.token, 'signed upload content', { contentType: 'text/plain' })
+  if (up.error) throw up.error
 
-  // 3. Verify the upload
-  const dl = await fetch(`${URL}/storage/v1/object/authenticated/avatars/signed-upload.txt`, {
+  const { data: file, error: dlErr } = await bucket.download('signed-upload.txt')
+  if (dlErr) throw dlErr
+  assertEq(await file.text(), 'signed upload content')
+
+  // avatars is a public bucket, but download() hits the caller-authenticated
+  // route, so the response must not be cached as public: RLS is per-caller.
+  const raw = await fetch(`${URL}/storage/v1/object/avatars/signed-upload.txt`, {
     headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY },
   })
-  assert(dl.ok, 'download signed upload')
-  const body = await dl.text()
-  assertEq(body, 'signed upload content')
+  assert(raw.ok, `authenticated download failed: ${raw.status}`)
+  assert((raw.headers.get('cache-control') || '').startsWith('private'),
+    `authenticated route on a public bucket must be private: ${raw.headers.get('cache-control')}`)
 })
 
 await step('storage: uploadToSignedUrl rejects bad token', async () => {
@@ -2516,6 +2511,42 @@ await step('storage: uploadToSignedUrl rejects bad token', async () => {
     body: 'should fail',
   })
   assertEq(resp.status, 400, 'bad token rejected')
+})
+
+const mintUploadToken = async (bucket, path) => {
+  const { data, error } = await storageClient().storage.from(bucket).createSignedUploadUrl(path)
+  if (error) throw error
+  return data.token
+}
+
+await step('storage: uploadToSignedUrl with a Blob stores the file, not the multipart framing', async () => {
+  const bucket = storageClient().storage.from('avatars')
+  const token = await mintUploadToken('avatars', 'signed-blob.txt')
+  const { error } = await bucket.uploadToSignedUrl('signed-blob.txt', token, new Blob(['blob via signed url'], { type: 'text/plain' }))
+  if (error) throw error
+  const { data: file, error: dlErr } = await bucket.download('signed-blob.txt')
+  if (dlErr) throw dlErr
+  assertEq(await file.text(), 'blob via signed url')
+  const { data: info, error: infoErr } = await bucket.info('signed-blob.txt')
+  if (infoErr) throw infoErr
+  assertEq(info.name, 'signed-blob.txt')
+  assertEq(info.contentType, 'text/plain')
+  assertEq(Number(info.size), 'blob via signed url'.length, 'real size recorded for a multipart upload')
+})
+
+await step('storage: uploadToSignedUrl enforces the bucket MIME allowlist', async () => {
+  const bucket = storageClient().storage.from('avatars')
+  const token = await mintUploadToken('avatars', 'signed-evil.html')
+  const raw = await fetch(`${URL}/storage/v1/object/upload/sign/avatars/signed-evil.html?token=${token}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'text/html' },
+    body: '<script>alert(1)</script>',
+  })
+  assertEq(raw.status, 422, 'raw text/html rejected')
+  const { error } = await bucket.uploadToSignedUrl('signed-evil.html', token, new Blob(['<script>'], { type: 'text/html' }))
+  assert(error, 'Blob text/html rejected')
+  const { data: exists } = await bucket.exists('signed-evil.html')
+  assert(!exists, 'rejected signed upload left no object behind')
 })
 
 // --- Signed upload authorization (owner-scoped RLS on the `owned` bucket) ---
@@ -2570,6 +2601,83 @@ await step('storage: signed upload threads owner so the uploader can read it bac
   })
   assert(dl.ok, `owner read-back failed (uploaded_by not threaded?): ${dl.status}`)
   assertEq(await dl.text(), 'owned content', 'owner reads back their object')
+})
+
+// --- Storage RLS on batch sign and info, traversal keys, download headers ---
+// Move/copy/remove/emptyBucket denials and the legacy routes have their own steps below.
+const adminStorage = () => createClient(URL, SECRET_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+  global: { headers: { Authorization: `Bearer ${SECRET_KEY}` } },
+})
+
+if (SECRET_KEY) {
+  await step('storage: createSignedUrls and info() withhold objects RLS hides', async () => {
+    const { error: seedErr } = await adminStorage().storage.from('owned')
+      .upload('mine/admin.txt', 'admin secret', { contentType: 'text/plain', upsert: true })
+    if (seedErr) throw seedErr
+
+    const bucket = storageClient().storage.from('owned')
+    const { data, error } = await bucket.createSignedUrls(['mine/admin.txt', 'mine/file.txt'], 60)
+    if (error) throw error
+    const hidden = data.find(d => d.path === 'mine/admin.txt')
+    const own = data.find(d => d.path === 'mine/file.txt')
+    assert(hidden && !hidden.signedUrl && hidden.error, `hidden path must not be signed: ${JSON.stringify(hidden)}`)
+    assert(own && own.signedUrl && !own.error, `own path must be signed: ${JSON.stringify(own)}`)
+
+    const { error: infoErr } = await bucket.info('mine/admin.txt')
+    assert(infoErr, 'info() of a hidden object must fail')
+    const { data: ownInfo, error: ownInfoErr } = await bucket.info('mine/file.txt')
+    if (ownInfoErr) throw ownInfoErr
+    assertEq(ownInfo.name, 'mine/file.txt')
+
+    const { error: rmErr } = await adminStorage().storage.from('owned').remove(['mine/admin.txt'])
+    if (rmErr) throw rmErr
+  })
+
+  await step('storage: emptyBucket removes only what the caller may delete', async () => {
+    const admin = adminStorage().storage.from('owned')
+    const { error: seedErr } = await admin.upload('mine/admin.txt', 'admin secret', { contentType: 'text/plain', upsert: true })
+    if (seedErr) throw seedErr
+
+    const { error } = await storageClient().storage.emptyBucket('owned')
+    if (error) throw error
+    assertEq((await admin.exists('mine/admin.txt')).data, true, 'hidden object survives emptyBucket')
+    assertEq((await admin.exists('mine/file.txt')).data, false, "caller's own object was removed")
+    const bytes = await (await admin.download('mine/admin.txt')).data.text()
+    assertEq(bytes, 'admin secret', 'hidden bytes untouched')
+
+    // Later steps read mine/file.txt, so the owner puts it back.
+    const { error: restoreErr } = await storageClient().storage.from('owned')
+      .upload('mine/file.txt', 'owned content', { contentType: 'text/plain' })
+    if (restoreErr) throw restoreErr
+    const { error: rmErr } = await admin.remove(['mine/admin.txt'])
+    if (rmErr) throw rmErr
+  })
+}
+
+// fetch normalizes %2e%2e segments away, so use one segment with encoded slashes.
+await step('storage: traversal keys are rejected', async () => {
+  const resp = await fetch(`${URL}/storage/v1/object/avatars/..%2f..%2fescape.txt`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY, 'Content-Type': 'text/plain' },
+    body: 'x',
+  })
+  assertEq(resp.status, 400, 'upload to a traversal key')
+  const { error } = await storageClient().storage.from('avatars').copy('test-file.txt', '../../escape.txt')
+  assert(error, 'copy to a traversal key must fail')
+})
+
+await step('storage: private downloads are private, nosniff, and HTML is an attachment', async () => {
+  const { error: upErr } = await storageClient().storage.from('documents')
+    .upload('page.html', '<html><script>alert(1)</script></html>', { contentType: 'text/html', upsert: true })
+  if (upErr) throw upErr
+  const dl = await fetch(`${URL}/storage/v1/object/authenticated/documents/page.html`, {
+    headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY },
+  })
+  assert(dl.ok, `download failed: ${dl.status}`)
+  assert((dl.headers.get('cache-control') || '').startsWith('private'), `cache-control: ${dl.headers.get('cache-control')}`)
+  assertEq(dl.headers.get('x-content-type-options'), 'nosniff')
+  assert((dl.headers.get('content-disposition') || '').startsWith('attachment'), 'html must download, not render')
 })
 
 // --- Remove ---
@@ -2630,6 +2738,123 @@ await step('storage: emptyBucket removes all objects', async () => {
   const items = await listResp.json()
   assertEq(items.length, 0, 'bucket is empty after emptyBucket')
 })
+
+// --- RLS-denied delete: a SELECT-only caller must not wipe bytes ---
+// (regression coverage for the emptyBucket/remove RLS-first fix; readonly's
+// policy grants select but declares no delete policy, so DELETE matches
+// nothing and must leave the bytes in place, not just the metadata row).
+if (SECRET_KEY) {
+  await step('storage: remove leaves bytes in place when RLS denies the delete', async () => {
+    const put = await fetch(`${URL}/storage/v1/object/readonly/ro-remove.txt`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY, 'Content-Type': 'text/plain' },
+      body: 'read-only bytes',
+    })
+    assert(put.ok, `admin seed upload failed: ${put.status}`)
+
+    const { data, error } = await storageClient().storage.from('readonly').remove(['ro-remove.txt'])
+    if (error) throw error
+    assertEq(data.length, 0, 'RLS denies the delete, so nothing is reported removed')
+
+    const dl = await fetch(`${URL}/storage/v1/object/authenticated/readonly/ro-remove.txt`, {
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY },
+    })
+    assert(dl.ok, `object bytes must survive a denied remove: ${dl.status}`)
+    assertEq(await dl.text(), 'read-only bytes', 'bytes are untouched')
+  })
+
+  await step('storage: emptyBucket leaves bytes in place when RLS denies the delete', async () => {
+    const put = await fetch(`${URL}/storage/v1/object/readonly/ro-empty.txt`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY, 'Content-Type': 'text/plain' },
+      body: 'read-only bytes 2',
+    })
+    assert(put.ok, `admin seed upload failed: ${put.status}`)
+
+    const resp = await fetch(`${URL}/storage/v1/bucket/readonly/empty`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY },
+    })
+    assert(resp.ok, `emptyBucket failed: ${resp.status}`)
+
+    const dl = await fetch(`${URL}/storage/v1/object/authenticated/readonly/ro-empty.txt`, {
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY },
+    })
+    assert(dl.ok, `object bytes must survive a denied emptyBucket: ${dl.status}`)
+    assertEq(await dl.text(), 'read-only bytes 2', 'bytes are untouched')
+
+    // Admin (service_role, bypasses RLS) cleans up what the user could not.
+    await fetch(`${URL}/storage/v1/bucket/readonly/empty`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY },
+    })
+  })
+
+  // Move/copy must pass RLS before any bytes move.
+  const userPost = (path, body) => fetch(`${URL}/storage/v1/object/${path}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const adminGet = (path) => fetch(`${URL}/storage/v1/object/authenticated/${path}`, {
+    headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY },
+  })
+
+  await step('storage: move and copy are denied without the matching RLS policy, bytes untouched', async () => {
+    const put = await fetch(`${URL}/storage/v1/object/readonly/ro-move.txt`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY, 'Content-Type': 'text/plain' },
+      body: 'ro move bytes',
+    })
+    assert(put.ok, `admin seed upload failed: ${put.status}`)
+
+    const mv = await userPost('move', { bucketId: 'readonly', sourceKey: 'ro-move.txt', destinationKey: 'ro-moved.txt' })
+    assertEq(mv.status, 404, 'move without an update policy matches no row')
+    const src = await adminGet('readonly/ro-move.txt')
+    assert(src.ok, `source must survive a denied move: ${src.status}`)
+    assertEq(await src.text(), 'ro move bytes', 'source bytes untouched')
+    assertEq((await adminGet('readonly/ro-moved.txt')).status, 404, 'no destination after denied move')
+
+    const cp = await userPost('copy', { bucketId: 'readonly', sourceKey: 'ro-move.txt', destinationKey: 'ro-copy.txt' })
+    assertEq(cp.status, 403, 'copy without an insert policy is forbidden')
+    assertEq((await adminGet('readonly/ro-copy.txt')).status, 404, 'no destination bytes after denied copy')
+
+    await fetch(`${URL}/storage/v1/bucket/readonly/empty`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY },
+    })
+  })
+
+  await step('storage: copy cannot read a victim object the caller cannot select', async () => {
+    const put = await fetch(`${URL}/storage/v1/object/owned/mine/victim.txt`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY, 'Content-Type': 'text/plain' },
+      body: 'victim secret',
+    })
+    assert(put.ok, `admin seed upload failed: ${put.status}`)
+
+    for (const [bucket, key] of [['avatars', 'stolen.txt'], ['owned', 'mine/stolen.txt']]) {
+      const cp = await userPost('copy', { bucketId: 'owned', sourceKey: 'mine/victim.txt', destinationKey: key, destinationBucket: bucket })
+      assertEq(cp.status, 404, `copy of hidden source into ${bucket} is not found`)
+      assertEq((await adminGet(`${bucket}/${key}`)).status, 404, `no stolen bytes in ${bucket}`)
+    }
+
+    const { error } = await createClient(URL, SECRET_KEY, { auth: { persistSession: false } })
+      .storage.from('owned').remove(['mine/victim.txt'])
+    if (error) throw error
+  })
+
+  await step('storage: move is forbidden when the destination fails WITH CHECK', async () => {
+    const mv = await userPost('move', { bucketId: 'owned', sourceKey: 'mine/file.txt', destinationKey: 'escape.txt' })
+    assertEq(mv.status, 403, 'destination outside mine/ violates the policy')
+    const dl = await fetch(`${URL}/storage/v1/object/authenticated/owned/mine/file.txt`, {
+      headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY },
+    })
+    assert(dl.ok, `owner still reads the source: ${dl.status}`)
+    assertEq(await dl.text(), 'owned content', 'source bytes untouched')
+    assertEq((await adminGet('owned/escape.txt')).status, 404, 'no escaped copy')
+  })
+}
 
 // --- Cleanup documents bucket ---
 await step('storage: cleanup documents bucket', async () => {
@@ -2828,6 +3053,59 @@ await step('storage: serverless-friendly presigned URL — sign via /api/storage
   const signData = await signResp.json()
   assert(signData.id, 'id present')
   assert(signData.upload_url, 'upload_url present')
+
+  // Sign minted a storage.objects row even before bytes are uploaded, and
+  // avatars is a public bucket, so an unauthenticated caller can sign-download
+  // it through the same legacy route.
+  const anonDl = await fetch(`${URL}/api/storage/avatars/${signData.id}`, {
+    headers: { apikey: PUBLISHABLE_KEY },
+  })
+  assertEq(anonDl.status, 200, 'anon sign-download on a public bucket via the legacy route')
+})
+
+await step('storage: legacy /api/storage routes run under the caller\'s RLS, not service_role (C6)', async () => {
+  const { data: signIn } = await anon.auth.signInWithPassword({ email, password })
+  if (!signIn?.session) throw new Error('re-login failed')
+  const ownerToken = signIn.session.access_token
+
+  // legacy_private is owner-scoped (uploaded_by = auth.uid()). The owner can
+  // sign an upload into it and read it straight back.
+  const signResp = await fetch(`${URL}/api/storage/legacy_private/sign`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${ownerToken}`, apikey: PUBLISHABLE_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content_type: 'text/plain', size: 10 }),
+  })
+  assert(signResp.ok, `owner sign failed: ${signResp.status} ${await signResp.clone().text()}`)
+  const { id } = await signResp.json()
+  assert(id, 'id present')
+
+  const ownerDl = await fetch(`${URL}/api/storage/legacy_private/${id}`, {
+    headers: { Authorization: `Bearer ${ownerToken}`, apikey: PUBLISHABLE_KEY },
+  })
+  assertEq(ownerDl.status, 200, 'owner sign-download of their own private object')
+
+  // A different authenticated user's RLS can't see the row: not a leak (200
+  // with someone else's signed URL), and not a silent wipe (204 on delete).
+  const { data: other } = await anon.auth.signInAnonymously()
+  const otherToken = other.session.access_token
+
+  const otherDl = await fetch(`${URL}/api/storage/legacy_private/${id}`, {
+    headers: { Authorization: `Bearer ${otherToken}`, apikey: PUBLISHABLE_KEY },
+  })
+  assertEq(otherDl.status, 404, 'another user cannot sign-download a private object via the legacy route')
+
+  const otherDel = await fetch(`${URL}/api/storage/legacy_private/${id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${otherToken}`, apikey: PUBLISHABLE_KEY },
+  })
+  assertEq(otherDel.status, 404, 'another user cannot delete a private object via the legacy route')
+
+  // The owner can still delete their own object.
+  const ownerDel = await fetch(`${URL}/api/storage/legacy_private/${id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${ownerToken}`, apikey: PUBLISHABLE_KEY },
+  })
+  assertEq(ownerDel.status, 204, 'owner can delete their own object via the legacy route')
 })
 
 // --- RLS / two-login enforcement ---

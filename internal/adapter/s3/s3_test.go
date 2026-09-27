@@ -56,3 +56,19 @@ func TestConfig(t *testing.T) {
 	}
 }
 
+func TestCopySource_EncodesEachSegment(t *testing.T) {
+	cases := map[string]string{
+		"avatars/plain.txt":   "b/avatars/plain.txt",
+		"avatars/a b.txt":     "b/avatars/a%20b.txt",
+		"avatars/c+d.txt":     "b/avatars/c%2Bd.txt",
+		"avatars/q?x#y%z.txt": "b/avatars/q%3Fx%23y%25z.txt",
+		"ünï/çø.png":          "b/%C3%BCn%C3%AF/%C3%A7%C3%B8.png",
+		"p/avatars/x":         "b/p/avatars/x",
+	}
+	for key, want := range cases {
+		if got := copySource("b", key); got != want {
+			t.Errorf("copySource(%q) = %q, want %q", key, got, want)
+		}
+	}
+}
+

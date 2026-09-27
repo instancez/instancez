@@ -1,14 +1,23 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
+	"net/url"
+	"os"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -275,45 +284,66 @@ func TestEmptyBucket_NotFound(t *testing.T) {
 	}
 }
 
-func TestEmptyBucket_DeletesObjects(t *testing.T) {
+// SELECT sees the row but RLS filters the DELETE: bytes must survive.
+func TestEmptyBucket_ReadOnlyCallerDeletesNothing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-
-	deleted := []string{}
-	store := &stubObjectStore{
-		deleteFn: func(ctx context.Context, key string) error {
-			deleted = append(deleted, key)
-			return nil
-		},
-	}
-
-	db := &stubDB{
-		queryFn: func(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
-			// Return one object named "photo.jpg"
+	deleted := 0
+	store := &stubObjectStore{deleteFn: func(context.Context, string) error { deleted++; return nil }}
+	db := &stubDB{queryFn: func(_ context.Context, q string, _ ...any) ([]map[string]any, error) {
+		if strings.HasPrefix(strings.TrimSpace(q), "SELECT") {
 			return []map[string]any{{"name": "photo.jpg"}}, nil
-		},
-	}
-
-	buckets := map[string]domain.Bucket{
-		"avatars": {Public: false},
-	}
-	h := newStorageHandler(db, store, buckets)
-
-	w := httptest.NewRecorder()
+		}
+		return nil, nil
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
 	r := gin.New()
-	r.POST("/storage/v1/bucket/:id/empty", func(c *gin.Context) {
-		setTestSession(c, domain.Session{Role: "service_role"})
-		h.emptyBucket(c)
-	})
+	r.POST("/storage/v1/bucket/:id/empty", h.emptyBucket)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/storage/v1/bucket/avatars/empty", nil))
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Zero(t, deleted, "S3 bytes deleted for rows RLS did not let us delete")
+}
 
-	req := httptest.NewRequest(http.MethodPost, "/storage/v1/bucket/avatars/empty", nil)
-	r.ServeHTTP(w, req)
+func TestEmptyBucket_DeletesReturnedRows(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var deleted []string
+	store := &stubObjectStore{deleteFn: func(_ context.Context, k string) error {
+		deleted = append(deleted, k)
+		if strings.HasSuffix(k, "b.jpg") {
+			return errors.New("s3 flake")
+		}
+		return nil
+	}}
+	var gotQ string
+	db := &stubDB{queryFn: func(_ context.Context, q string, args ...any) ([]map[string]any, error) {
+		gotQ = q
+		return []map[string]any{{"name": "a.jpg"}, {"name": "b.jpg"}, {"name": "ünï/c.png"}}, nil
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.POST("/storage/v1/bucket/:id/empty", h.emptyBucket)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/storage/v1/bucket/avatars/empty", nil))
+	require.Equal(t, 200, w.Code)
+	assert.Contains(t, gotQ, "DELETE FROM storage.objects")
+	assert.Contains(t, gotQ, "RETURNING name")
+	assert.Equal(t, []string{"avatars/a.jpg", "avatars/b.jpg", "avatars/ünï/c.png"}, deleted, "one S3 failure must not stop the rest")
+}
 
-	if w.Code != 200 {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	if len(deleted) != 1 || deleted[0] != "avatars/photo.jpg" {
-		t.Errorf("expected Delete called with avatars/photo.jpg, got %v", deleted)
-	}
+func TestEmptyBucket_DBErrorSkipsStore(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	deleted := 0
+	store := &stubObjectStore{deleteFn: func(context.Context, string) error { deleted++; return nil }}
+	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) {
+		return nil, errors.New("permission denied")
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.POST("/storage/v1/bucket/:id/empty", h.emptyBucket)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/storage/v1/bucket/avatars/empty", nil))
+	assert.Equal(t, 500, w.Code)
+	assert.Zero(t, deleted)
 }
 
 // --- Signed URL handler tests ---
@@ -450,6 +480,37 @@ func TestCreateSignedUploadURL_AllowedMintsTokenAndRollsBack(t *testing.T) {
 	}
 	if committed {
 		t.Errorf("the permission-probe transaction must never be committed")
+	}
+}
+
+// supabase-js parses the token out of `url` relative to its /storage/v1 base.
+func TestCreateSignedUploadURL_URLCarriesToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tx := &stubTx{execFn: func(ctx context.Context, q string, args ...any) (int64, error) { return 1, nil }}
+	db := &stubDB{beginFn: func(ctx context.Context) (domain.Tx, error) { return tx, nil }}
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
+	h.jwtKeys = stubKeys(t)
+	r := gin.New()
+	r.POST("/storage/v1/object/upload/sign/:bucket/*path", func(c *gin.Context) {
+		setTestSession(c, domain.Session{Role: "authenticated", UserID: "11111111-1111-1111-1111-111111111111", IsAuthenticated: true})
+		h.createSignedUploadURL(c)
+	})
+
+	for _, objPath := range []string{"photo.jpg", "dir/sub/a b.txt", "q?x=1#frag.txt", "caf\u00e9/\u65e5\u672c.txt", "100%.txt"} {
+		w := httptest.NewRecorder()
+		target := (&url.URL{Path: "/storage/v1/object/upload/sign/avatars/" + objPath}).EscapedPath()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, target, nil))
+		require.Equal(t, 200, w.Code, "%s: %s", objPath, w.Body.String())
+
+		var resp struct{ URL, Token, Path string }
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		require.NotEmpty(t, resp.Token, objPath)
+		u, err := url.Parse("http://host/storage/v1" + resp.URL)
+		require.NoError(t, err, objPath)
+		assert.Equal(t, resp.Token, u.Query().Get("token"), objPath)
+		assert.Equal(t, "/storage/v1/object/upload/sign/avatars/"+objPath, u.Path, objPath)
+		assert.Empty(t, u.Fragment, objPath)
+		assert.Equal(t, objPath, resp.Path, objPath)
 	}
 }
 
@@ -730,27 +791,69 @@ func TestUploadObject_RLSDenied(t *testing.T) {
 	}
 }
 
-func TestUploadObject_StoreUploadTooLarge(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	store := &stubObjectStore{
-		uploadFn: func(ctx context.Context, key string, r io.Reader, contentType string, size int64) error {
-			return errors.New("http: request body too large")
-		},
-	}
-	tx := &stubTx{execFn: func(ctx context.Context, q string, args ...any) (int64, error) { return 1, nil }}
-	db := &stubDB{beginFn: func(ctx context.Context) (domain.Tx, error) { return tx, nil }}
-	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {MaxSize: "1kb"}})
+// countingReader proves a denied upload's body was never touched.
+type countingReader struct {
+	r io.Reader
+	n *int
+}
 
-	w := httptest.NewRecorder()
+func (c *countingReader) Read(p []byte) (int, error) {
+	*c.n++
+	return c.r.Read(p)
+}
+
+func TestUploadObject_RLSDeniedNeverReadsBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dir := isolatedTempDir(t)
+	var rolledBack, committed bool
+	tx := &stubTx{
+		execFn: func(context.Context, string, ...any) (int64, error) {
+			return 0, errors.New(`new row violates row-level security policy for table "objects"`)
+		},
+		rollbackFn: func(context.Context) error { rolledBack = true; return nil },
+		commitFn:   func(context.Context) error { committed = true; return nil },
+	}
+	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { return tx, nil }}
+	store := &stubObjectStore{uploadFn: func(context.Context, string, io.Reader, string, int64) error {
+		t.Fatal("store.Upload must not run for a denied caller")
+		return nil
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
 	r := gin.New()
 	r.POST("/storage/v1/object/:bucket/*path", h.uploadObject)
 
-	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/photo.jpg", strings.NewReader("data"))
+	var reads int
+	body := &countingReader{r: strings.NewReader(strings.Repeat("x", 1<<20)), n: &reads}
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/photo.jpg", body)
 	r.ServeHTTP(w, req)
 
-	if w.Code != 413 {
-		t.Fatalf("expected 413, got %d: %s", w.Code, w.Body.String())
-	}
+	assert.Equal(t, 403, w.Code, w.Body.String())
+	assert.Zero(t, reads, "a denied caller's body must never be read/spooled")
+	assert.True(t, rolledBack, "the permission-probe transaction must be rolled back")
+	assert.False(t, committed, "the permission-probe transaction must never be committed")
+	assertNoSpoolLeft(t, dir)
+}
+
+func TestUpdateObject_ProbeUsesUpdateNotInsert(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var queries []string
+	tx := &stubTx{execFn: func(_ context.Context, q string, _ ...any) (int64, error) {
+		queries = append(queries, q)
+		return 1, nil
+	}}
+	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { return tx, nil }}
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.PUT("/storage/v1/object/:bucket/*path", h.updateObject)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/storage/v1/object/avatars/photo.jpg", strings.NewReader("data")))
+
+	require.Equal(t, 200, w.Code, w.Body.String())
+	require.NotEmpty(t, queries)
+	assert.True(t, strings.HasPrefix(strings.TrimSpace(queries[0]), "UPDATE"),
+		"the pre-spool probe on an update must UPDATE the existing row, not INSERT a new one: %q", queries[0])
 }
 
 func TestUploadObject_StoreUploadInternalError(t *testing.T) {
@@ -776,31 +879,53 @@ func TestUploadObject_StoreUploadInternalError(t *testing.T) {
 	}
 }
 
-func TestUploadObject_CommitFailureCleansUpStore(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	var deletedKey string
-	store := &stubObjectStore{
-		deleteFn: func(ctx context.Context, key string) error { deletedKey = key; return nil },
-	}
+// uploadHarness wires a stubDB/stubObjectStore that record ops in order, mirroring moveCopyHarness.
+func uploadHarness(execErr, uploadErr, commitErr error) (*StorageV1Handler, *opLog) {
+	log := &opLog{}
 	tx := &stubTx{
-		execFn:   func(ctx context.Context, q string, args ...any) (int64, error) { return 1, nil },
-		commitFn: func(ctx context.Context) error { return errors.New("commit failed") },
+		execFn:     func(context.Context, string, ...any) (int64, error) { log.add("exec"); return 1, execErr },
+		commitFn:   func(context.Context) error { log.add("commit"); return commitErr },
+		rollbackFn: func(context.Context) error { log.add("rollback"); return nil },
 	}
-	db := &stubDB{beginFn: func(ctx context.Context) (domain.Tx, error) { return tx, nil }}
-	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
-
-	w := httptest.NewRecorder()
-	r := gin.New()
-	r.POST("/storage/v1/object/:bucket/*path", h.uploadObject)
-
-	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/photo.jpg", strings.NewReader("data"))
-	r.ServeHTTP(w, req)
-
-	if w.Code != 500 {
-		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	store := &stubObjectStore{
+		uploadFn: func(_ context.Context, key string, _ io.Reader, _ string, _ int64) error {
+			log.add("upload:" + key)
+			return uploadErr
+		},
+		deleteFn: func(_ context.Context, key string) error { log.add("delete:" + key); return nil },
 	}
-	if deletedKey != "avatars/photo.jpg" {
-		t.Errorf("expected orphaned object cleanup, deletedKey = %q", deletedKey)
+	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { return tx, nil }}
+	return newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}}), log
+}
+
+// wantOps' leading exec/rollback pair is the pre-spool probe.
+func TestUploadObject_CommitFailureNoCompensatingDelete(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		name    string
+		method  string
+		upsert  bool
+		wantOps []string
+	}{
+		{"insert", http.MethodPost, false, []string{"exec", "rollback", "exec", "upload:avatars/photo.jpg", "commit", "rollback"}},
+		{"update", http.MethodPut, false, []string{"exec", "rollback", "exec", "upload:avatars/photo.jpg", "commit", "rollback"}},
+		{"upsert", http.MethodPost, true, []string{"exec", "rollback", "exec", "upload:avatars/photo.jpg", "commit", "rollback"}},
+	}
+	for _, tc := range cases {
+		h, log := uploadHarness(nil, nil, errors.New("commit failed"))
+		r := gin.New()
+		r.POST("/storage/v1/object/:bucket/*path", h.uploadObject)
+		r.PUT("/storage/v1/object/:bucket/*path", h.updateObject)
+
+		req := httptest.NewRequest(tc.method, "/storage/v1/object/avatars/photo.jpg", strings.NewReader("data"))
+		if tc.upsert {
+			req.Header.Set("x-upsert", "true")
+		}
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		require.Equal(t, 500, w.Code, tc.name)
+		assert.Equal(t, tc.wantOps, log.ops, "%s: an ambiguous commit must not touch storage", tc.name)
 	}
 }
 
@@ -884,6 +1009,8 @@ func TestObjectGetDispatch_Public_Success(t *testing.T) {
 	if ct := w.Header().Get("Content-Type"); ct != "image/jpeg" {
 		t.Errorf("Content-Type = %q", ct)
 	}
+	assert.Equal(t, "public, max-age=3600", w.Header().Get("Cache-Control"))
+	assert.Equal(t, "", w.Header().Get("Content-Disposition"))
 }
 
 func TestObjectGetDispatch_Public_BucketNotPublic(t *testing.T) {
@@ -1037,6 +1164,57 @@ func TestObjectGetDispatch_Authenticated_SecretKeySucceeds(t *testing.T) {
 	}
 	if w.Body.String() != "private-bytes" {
 		t.Errorf("body = %q", w.Body.String())
+	}
+}
+
+// supabase-js info() calls /object/info/<bucket>/<path>, without "authenticated/".
+func TestObjectGetDispatch_InfoRoutes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("INSTANCEZ_SECRET_KEY", "test-secret-key")
+
+	var gotArgs []any
+	var rlsCalls int
+	db := &stubDB{
+		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+			gotArgs = args
+			return map[string]any{"id": "obj1", "name": args[1], "size": int64(3), "mime": "text/plain"}, nil
+		},
+		withRLSFn: func(ctx context.Context, s domain.Session) (context.Context, error) { rlsCalls++; return ctx, nil },
+	}
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"docs": {}})
+	r := gin.New()
+	r.GET("/storage/v1/object/*all", h.objectGetDispatch)
+
+	cases := []struct {
+		target string
+		code   int
+		path   string
+	}{
+		{"/storage/v1/object/info/authenticated/docs/a/b.txt", 200, "a/b.txt"},
+		{"/storage/v1/object/info/docs/a/b.txt", 200, "a/b.txt"},
+		{"/storage/v1/object/info/docs/f.txt", 200, "f.txt"},
+		{"/storage/v1/object/info/docs/caf%C3%A9%20x.txt", 200, "caf\u00e9 x.txt"},
+		{"/storage/v1/object/info/docs", 400, ""},
+		{"/storage/v1/object/info/docs/", 400, ""},
+		{"/storage/v1/object/info/authenticated/docs", 400, ""},
+		{"/storage/v1/object/info/missing/f.txt", 404, ""},
+	}
+	for _, tc := range cases {
+		gotArgs, rlsCalls = nil, 0
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, tc.target, nil)
+		req.Header.Set("apikey", "test-secret-key")
+		r.ServeHTTP(w, req)
+		require.Equal(t, tc.code, w.Code, "%s: %s", tc.target, w.Body.String())
+		if tc.code != 200 {
+			assert.Nil(t, gotArgs, tc.target)
+			continue
+		}
+		assert.Equal(t, []any{"docs", tc.path}, gotArgs, tc.target)
+		assert.Equal(t, 1, rlsCalls, "%s must query under the caller's RLS", tc.target)
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+		assert.Equal(t, tc.path, body["name"], tc.target)
 	}
 }
 
@@ -1241,47 +1419,72 @@ func TestObjectExists_NotFound(t *testing.T) {
 
 // --- removeObjects tests ---
 
-func TestRemoveObjects_DeletesMatchingPrefixes(t *testing.T) {
+func TestRemoveObjects_OnlyDeletesRowsRLSReturned(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	var deletedKeys []string
-	store := &stubObjectStore{
-		deleteFn: func(ctx context.Context, key string) error {
-			deletedKeys = append(deletedKeys, key)
-			return nil
+	var deleted []string
+	store := &stubObjectStore{deleteFn: func(_ context.Context, k string) error { deleted = append(deleted, k); return nil }}
+	var gotArgs []any
+	db := &stubDB{
+		// Old code probed with QueryRow SELECT: prove that path no longer authorizes deletes.
+		queryRowFn: func(_ context.Context, _ string, args ...any) (map[string]any, error) {
+			return map[string]any{"id": "x", "name": args[1]}, nil
+		},
+		queryFn: func(_ context.Context, q string, args ...any) ([]map[string]any, error) {
+			require.Contains(t, q, "RETURNING name")
+			gotArgs = args
+			return []map[string]any{{"name": "photo.jpg"}}, nil
 		},
 	}
-	db := &stubDB{queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-		name, _ := args[1].(string)
-		if name == "missing.jpg" {
-			return nil, nil
-		}
-		return map[string]any{"id": "x", "name": name, "bucket_id": "avatars"}, nil
-	}}
-	buckets := map[string]domain.Bucket{"avatars": {}}
-	h := newStorageHandler(db, store, buckets)
-
-	w := httptest.NewRecorder()
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
 	r := gin.New()
 	r.DELETE("/storage/v1/object/:bucket", h.removeObjects)
-
+	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodDelete, "/storage/v1/object/avatars",
-		strings.NewReader(`{"prefixes":["photo.jpg","missing.jpg"]}`))
+		strings.NewReader(`{"prefixes":["photo.jpg","/hidden.jpg","../escape","","ünï.png"]}`))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
-	if w.Code != 200 {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	if len(deletedKeys) != 1 || deletedKeys[0] != "avatars/photo.jpg" {
-		t.Errorf("expected only the found object deleted, got %v", deletedKeys)
-	}
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Equal(t, []string{"photo.jpg", "hidden.jpg", "ünï.png"}, gotArgs[1])
+	assert.Equal(t, []string{"avatars/photo.jpg"}, deleted)
 	var body []map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Len(t, body, 1)
+	assert.Equal(t, "photo.jpg", body[0]["name"])
+}
+
+func TestRemoveObjects_EmptyOrAllInvalidSkipsDB(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	queried := false
+	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) { queried = true; return nil, nil }}
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.DELETE("/storage/v1/object/:bucket", h.removeObjects)
+	for _, body := range []string{`{"prefixes":[]}`, `{"prefixes":["..", ""]}`} {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodDelete, "/storage/v1/object/avatars", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		assert.Equal(t, 200, w.Code)
+		assert.JSONEq(t, `[]`, w.Body.String())
 	}
-	if len(body) != 1 {
-		t.Fatalf("expected 1 deleted entry in response, got %d: %v", len(body), body)
-	}
+	assert.False(t, queried)
+}
+
+func TestRemoveObjects_DBErrorSkipsStore(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	deleted := 0
+	store := &stubObjectStore{deleteFn: func(context.Context, string) error { deleted++; return nil }}
+	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) { return nil, errors.New("db down") }}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.DELETE("/storage/v1/object/:bucket", h.removeObjects)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/storage/v1/object/avatars", strings.NewReader(`{"prefixes":["a"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	assert.Equal(t, 500, w.Code)
+	assert.Zero(t, deleted)
 }
 
 func TestRemoveObjects_BadRequestBody(t *testing.T) {
@@ -1304,40 +1507,6 @@ func TestRemoveObjects_BadRequestBody(t *testing.T) {
 
 // --- Move / Copy tests ---
 
-func TestMoveObject_Success(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	var gotSrc, gotDst string
-	store := &stubObjectStore{
-		copyFn: func(ctx context.Context, srcKey, dstKey string) error {
-			gotSrc, gotDst = srcKey, dstKey
-			return nil
-		},
-	}
-	var deletedKey string
-	store.deleteFn = func(ctx context.Context, key string) error { deletedKey = key; return nil }
-	buckets := map[string]domain.Bucket{"avatars": {}}
-	h := newStorageHandler(&stubDB{}, store, buckets)
-
-	w := httptest.NewRecorder()
-	r := gin.New()
-	r.POST("/storage/v1/object/move", h.moveObject)
-
-	body := `{"bucketId":"avatars","sourceKey":"old.jpg","destinationKey":"new.jpg"}`
-	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/move", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	r.ServeHTTP(w, req)
-
-	if w.Code != 200 {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	if gotSrc != "avatars/old.jpg" || gotDst != "avatars/new.jpg" {
-		t.Errorf("Copy(src, dst) = (%q, %q)", gotSrc, gotDst)
-	}
-	if deletedKey != "avatars/old.jpg" {
-		t.Errorf("expected source deleted after move, got %q", deletedKey)
-	}
-}
-
 func TestMoveObject_SourceBucketNotFound(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := newStorageHandler(&stubDB{}, &stubObjectStore{}, nil)
@@ -1353,66 +1522,6 @@ func TestMoveObject_SourceBucketNotFound(t *testing.T) {
 
 	if w.Code != 404 {
 		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestMoveObject_CopyFailurePropagates(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	store := &stubObjectStore{
-		copyFn: func(ctx context.Context, srcKey, dstKey string) error {
-			return errors.New("store unavailable")
-		},
-	}
-	buckets := map[string]domain.Bucket{"avatars": {}}
-	h := newStorageHandler(&stubDB{}, store, buckets)
-
-	w := httptest.NewRecorder()
-	r := gin.New()
-	r.POST("/storage/v1/object/move", h.moveObject)
-
-	body := `{"bucketId":"avatars","sourceKey":"old.jpg","destinationKey":"new.jpg"}`
-	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/move", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	r.ServeHTTP(w, req)
-
-	if w.Code != 500 {
-		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestCopyObject_Success(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	var gotSrc, gotDst string
-	store := &stubObjectStore{
-		copyFn: func(ctx context.Context, srcKey, dstKey string) error {
-			gotSrc, gotDst = srcKey, dstKey
-			return nil
-		},
-	}
-	buckets := map[string]domain.Bucket{"avatars": {}, "backups": {}}
-	h := newStorageHandler(&stubDB{}, store, buckets)
-
-	w := httptest.NewRecorder()
-	r := gin.New()
-	r.POST("/storage/v1/object/copy", h.copyObject)
-
-	body := `{"bucketId":"avatars","sourceKey":"old.jpg","destinationKey":"copy.jpg","destinationBucket":"backups"}`
-	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/copy", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	r.ServeHTTP(w, req)
-
-	if w.Code != 200 {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	if gotSrc != "avatars/old.jpg" || gotDst != "backups/copy.jpg" {
-		t.Errorf("Copy(src, dst) = (%q, %q)", gotSrc, gotDst)
-	}
-	var resp map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatal(err)
-	}
-	if resp["Key"] != "backups/copy.jpg" {
-		t.Errorf("response Key = %v", resp["Key"])
 	}
 }
 
@@ -1435,45 +1544,383 @@ func TestCopyObject_DestinationBucketNotFound(t *testing.T) {
 	}
 }
 
+type opLog struct{ ops []string }
+
+func (l *opLog) add(s string) { l.ops = append(l.ops, s) }
+
+func moveCopyHarness(t *testing.T, execN int64, execErr, copyErr, commitErr error) (*StorageV1Handler, *opLog, *[]any) {
+	t.Helper()
+	log := &opLog{}
+	var args []any
+	tx := &stubTx{
+		execFn: func(_ context.Context, _ string, a ...any) (int64, error) {
+			log.add("exec")
+			args = a
+			return execN, execErr
+		},
+		commitFn:   func(context.Context) error { log.add("commit"); return commitErr },
+		rollbackFn: func(context.Context) error { log.add("rollback"); return nil },
+	}
+	store := &stubObjectStore{
+		copyFn:   func(_ context.Context, s, d string) error { log.add("copy:" + s + ">" + d); return copyErr },
+		deleteFn: func(_ context.Context, k string) error { log.add("delete:" + k); return nil },
+	}
+	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { return tx, nil }}
+	return newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}, "backups": {}}), log, &args
+}
+
+func runMoveCopyAs(h *StorageV1Handler, s domain.Session, route, body string) *httptest.ResponseRecorder {
+	r := gin.New()
+	auth := func(c *gin.Context) { setTestSession(c, s) }
+	r.POST("/storage/v1/object/move", auth, h.moveObject)
+	r.POST("/storage/v1/object/copy", auth, h.copyObject)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, route, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	return w
+}
+
+func runMoveCopy(h *StorageV1Handler, route, body string) *httptest.ResponseRecorder {
+	return runMoveCopyAs(h, domain.Session{Role: "authenticated", UserID: "11111111-1111-1111-1111-111111111111", IsAuthenticated: true}, route, body)
+}
+
+const moveBody = `{"bucketId":"avatars","sourceKey":"old.jpg","destinationKey":"new.jpg"}`
+const copyBody = `{"bucketId":"avatars","sourceKey":"old.jpg","destinationKey":"copy.jpg","destinationBucket":"backups"}`
+
+func TestMoveObject_OrderDBThenCopyThenCommitThenDelete(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, log, args := moveCopyHarness(t, 1, nil, nil, nil)
+	w := runMoveCopy(h, "/storage/v1/object/move", moveBody)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Equal(t, []string{"exec", "copy:avatars/old.jpg>avatars/new.jpg", "commit", "delete:avatars/old.jpg", "rollback"}, log.ops)
+	assert.Equal(t, []any{"avatars", "new.jpg", "avatars", "old.jpg"}, *args)
+}
+
+func TestMoveObject_Denials(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		name string
+		n    int64
+		err  error
+		want int
+	}{
+		{"hidden by RLS", 0, nil, 404},
+		{"dest violates policy", 0, errors.New(`new row violates row-level security policy for table "objects"`), 403},
+		{"dest exists", 0, errors.New(`duplicate key value violates unique constraint (SQLSTATE 23505)`), 409},
+		{"db down", 0, errors.New("conn reset"), 500},
+	}
+	for _, tc := range cases {
+		h, log, _ := moveCopyHarness(t, tc.n, tc.err, nil, nil)
+		w := runMoveCopy(h, "/storage/v1/object/move", moveBody)
+		assert.Equal(t, tc.want, w.Code, tc.name)
+		assert.Equal(t, []string{"exec", "rollback"}, log.ops, "%s: store touched before authorization", tc.name)
+	}
+}
+
+func TestMoveObject_CopyFailureRollsBack(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, log, _ := moveCopyHarness(t, 1, nil, errors.New("s3 down"), nil)
+	w := runMoveCopy(h, "/storage/v1/object/move", moveBody)
+	assert.Equal(t, 500, w.Code)
+	assert.Equal(t, []string{"exec", "copy:avatars/old.jpg>avatars/new.jpg", "rollback"}, log.ops)
+}
+
+// An ambiguous commit must leave the orphaned copy alone (no compensating delete).
+func TestMoveObject_CommitFailureLeavesCopyOrphaned(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, log, _ := moveCopyHarness(t, 1, nil, nil, errors.New("commit failed"))
+	w := runMoveCopy(h, "/storage/v1/object/move", moveBody)
+	assert.Equal(t, 500, w.Code)
+	assert.Equal(t, []string{"exec", "copy:avatars/old.jpg>avatars/new.jpg", "commit", "rollback"}, log.ops,
+		"no compensating delete: an ambiguous commit must not touch storage")
+}
+
+func TestMoveCopy_BeginFailureNoStore(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, route := range []string{"/storage/v1/object/move", "/storage/v1/object/copy"} {
+		var touched bool
+		store := &stubObjectStore{
+			copyFn:   func(context.Context, string, string) error { touched = true; return nil },
+			deleteFn: func(context.Context, string) error { touched = true; return nil },
+		}
+		db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { return nil, errors.New("pool exhausted") }}
+		h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}, "backups": {}})
+		w := runMoveCopy(h, route, moveBody)
+		assert.Equal(t, 500, w.Code, route)
+		assert.False(t, touched, route)
+	}
+}
+
+func TestMoveCopy_SameSourceAndDestRejected(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, route := range []string{"/storage/v1/object/move", "/storage/v1/object/copy"} {
+		for _, body := range []string{
+			`{"bucketId":"avatars","sourceKey":"a.jpg","destinationKey":"/a.jpg"}`,
+			`{"bucketId":"avatars","sourceKey":"a.jpg","destinationKey":"a.jpg","destinationBucket":"avatars"}`,
+			`{"bucketId":"avatars","sourceKey":"dir//a.jpg","destinationKey":"dir/./a.jpg"}`,
+		} {
+			h, log, _ := moveCopyHarness(t, 1, nil, nil, nil)
+			w := runMoveCopy(h, route, body)
+			assert.Equal(t, 400, w.Code, route+" "+body)
+			assert.Empty(t, log.ops, route+" "+body)
+		}
+	}
+}
+
+func TestMoveCopy_SameKeyAcrossBucketsAllowed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	want := map[string][]string{
+		"/storage/v1/object/move": {"exec", "copy:avatars/a.jpg>backups/a.jpg", "commit", "delete:avatars/a.jpg", "rollback"},
+		"/storage/v1/object/copy": {"exec", "copy:avatars/a.jpg>backups/a.jpg", "commit", "rollback"},
+	}
+	for route, ops := range want {
+		h, log, _ := moveCopyHarness(t, 1, nil, nil, nil)
+		w := runMoveCopy(h, route, `{"bucketId":"avatars","sourceKey":"a.jpg","destinationKey":"a.jpg","destinationBucket":"backups"}`)
+		assert.Equal(t, 200, w.Code, route)
+		assert.Equal(t, ops, log.ops, route)
+	}
+}
+
+func TestCopyObject_OrderAndOwner(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, log, args := moveCopyHarness(t, 1, nil, nil, nil)
+	w := runMoveCopy(h, "/storage/v1/object/copy", copyBody)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Equal(t, []string{"exec", "copy:avatars/old.jpg>backups/copy.jpg", "commit", "rollback"}, log.ops)
+	assert.Equal(t, "11111111-1111-1111-1111-111111111111", (*args)[4], "copy must be owned by the caller")
+	assert.JSONEq(t, `{"Key":"backups/copy.jpg"}`, w.Body.String())
+}
+
+func TestCopyObject_AnonOwnerIsNull(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, _, args := moveCopyHarness(t, 1, nil, nil, nil)
+	w := runMoveCopyAs(h, domain.Session{Role: "anon"}, "/storage/v1/object/copy", copyBody)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Nil(t, (*args)[4], "empty user id must bind as NULL, not ''")
+}
+
+func TestCopyObject_Denials(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		name string
+		n    int64
+		err  error
+		want int
+	}{
+		{"source hidden by RLS", 0, nil, 404},
+		{"dest insert denied", 0, errors.New(`new row violates row-level security policy for table "objects" (SQLSTATE 42501)`), 403},
+		{"db down", 0, errors.New("conn reset"), 500},
+	}
+	for _, tc := range cases {
+		h, log, _ := moveCopyHarness(t, tc.n, tc.err, nil, nil)
+		w := runMoveCopy(h, "/storage/v1/object/copy", copyBody)
+		assert.Equal(t, tc.want, w.Code, tc.name)
+		assert.Equal(t, []string{"exec", "rollback"}, log.ops, "%s: store touched before authorization", tc.name)
+	}
+}
+
+func TestCopyObject_CopyFailureNoCommit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, log, _ := moveCopyHarness(t, 1, nil, errors.New("s3 down"), nil)
+	w := runMoveCopy(h, "/storage/v1/object/copy", copyBody)
+	assert.Equal(t, 500, w.Code)
+	assert.Equal(t, []string{"exec", "copy:avatars/old.jpg>backups/copy.jpg", "rollback"}, log.ops)
+}
+
+func TestCopyObject_CommitFailureIs500(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, _, _ := moveCopyHarness(t, 1, nil, nil, errors.New("commit failed"))
+	w := runMoveCopy(h, "/storage/v1/object/copy", copyBody)
+	assert.Equal(t, 500, w.Code)
+}
+
+func TestNullIfEmpty(t *testing.T) {
+	assert.Nil(t, nullIfEmpty(""))
+	assert.Equal(t, "u", nullIfEmpty("u"))
+	assert.Equal(t, " ", nullIfEmpty(" "))
+}
+
 // --- createSignedURLs (batch) tests ---
 
-func TestCreateSignedURLs_MixedResults(t *testing.T) {
+func TestCreateSignedURLs_EnforcesRLSPerPath(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	var signed []string
 	store := &stubObjectStore{
-		signDownloadFn: func(ctx context.Context, key string, expiry time.Duration) (string, error) {
-			if strings.Contains(key, "bad") {
-				return "", errors.New("sign failed")
+		signDownloadFn: func(_ context.Context, key string, _ time.Duration) (string, error) {
+			signed = append(signed, key)
+			if strings.Contains(key, "broken") {
+				return "", errors.New("presign failed: secret detail")
 			}
 			return "https://example.com/" + key, nil
 		},
 	}
-	buckets := map[string]domain.Bucket{"avatars": {}}
-	h := newStorageHandler(&stubDB{}, store, buckets)
-
-	w := httptest.NewRecorder()
+	var gotArgs []any
+	db := &stubDB{queryFn: func(_ context.Context, q string, args ...any) ([]map[string]any, error) {
+		require.Contains(t, q, "SELECT name FROM storage.objects")
+		gotArgs = args
+		// RLS hides "secret.jpg"; everything else in the ANY list is visible.
+		return []map[string]any{{"name": "good.jpg"}, {"name": "ünï.png"}, {"name": "broken.jpg"}}, nil
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
 	r := gin.New()
 	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
 
-	body := `{"expiresIn":60,"paths":["good.jpg","bad.jpg"]}`
+	body := `{"expiresIn":60,"paths":["good.jpg","secret.jpg","../x","ünï.png","broken.jpg"]}`
+	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
-	if w.Code != 200 {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
+	require.Equal(t, 200, w.Code, w.Body.String())
+	require.Len(t, gotArgs, 2)
+	assert.Equal(t, []string{"good.jpg", "secret.jpg", "ünï.png", "broken.jpg"}, gotArgs[1], "traversal key must not reach SQL")
+	assert.Equal(t, []string{"avatars/good.jpg", "avatars/ünï.png", "avatars/broken.jpg"}, signed, "hidden path must never be signed")
 	var resp []map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatal(err)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp, 5)
+	assert.NotNil(t, resp[0]["signedURL"])
+	assert.Nil(t, resp[0]["error"])
+	for _, i := range []int{1, 2} {
+		assert.Nil(t, resp[i]["signedURL"], resp[i])
+		assert.Equal(t, "Either the object does not exist or you do not have access to it", resp[i]["error"])
 	}
-	if len(resp) != 2 {
-		t.Fatalf("expected 2 results, got %d: %v", len(resp), resp)
+	assert.NotNil(t, resp[3]["signedURL"])
+	assert.Nil(t, resp[4]["signedURL"])
+	assert.NotContains(t, w.Body.String(), "secret detail", "backend error must not leak")
+}
+
+func TestCreateSignedURLs_BadInput(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	queried := false
+	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) { queried = true; return nil, nil }}
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
+	tooMany, _ := json.Marshal(map[string]any{"paths": make([]string, maxSignPaths+1)})
+	for _, body := range []string{`{"paths":[]}`, `{}`, `not json`, string(tooMany), `{"expiresIn":"abc","paths":["a"]}`} {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		assert.Equal(t, 400, w.Code, body)
 	}
-	if resp[0]["signedURL"] == nil {
-		t.Errorf("expected signedURL for good.jpg, got %v", resp[0])
+	assert.False(t, queried)
+}
+
+func TestCreateSignedURLs_DBErrorIs500(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) { return nil, errors.New("db down") }}
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars", strings.NewReader(`{"paths":["a"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	assert.Equal(t, 500, w.Code)
+}
+
+func TestCreateSignedURLs_ExactCapAndDuplicates(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	queries := 0
+	db := &stubDB{queryFn: func(_ context.Context, _ string, args ...any) ([]map[string]any, error) {
+		queries++
+		keys := args[1].([]string)
+		rows := make([]map[string]any, len(keys))
+		for i, k := range keys {
+			rows[i] = map[string]any{"name": k}
+		}
+		return rows, nil
+	}}
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
+
+	// Exactly maxSignPaths valid paths must pass (not >=).
+	paths := make([]string, maxSignPaths)
+	for i := range paths {
+		paths[i] = fmt.Sprintf("f%d.jpg", i)
 	}
-	if resp[1]["error"] == nil {
-		t.Errorf("expected error for bad.jpg, got %v", resp[1])
+	body, _ := json.Marshal(map[string]any{"paths": paths})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	require.Equal(t, 200, w.Code, w.Body.String())
+
+	// Duplicate paths each get their own result, deduped into one SQL call.
+	queries = 0
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars", strings.NewReader(`{"paths":["a","a","/a"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	var resp []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp, 3)
+	for _, item := range resp {
+		assert.NotNil(t, item["signedURL"], item)
+	}
+	assert.Equal(t, 1, queries, "one SQL lookup regardless of duplicate paths")
+}
+
+func TestCreateSignedURLs_ExpiryClamped(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var got time.Duration
+	store := &stubObjectStore{signDownloadFn: func(_ context.Context, _ string, e time.Duration) (string, error) { got = e; return "u", nil }}
+	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) {
+		return []map[string]any{{"name": "a"}}, nil
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
+	cases := map[string]time.Duration{
+		`{"expiresIn":60,"paths":["a"]}`:       time.Minute,
+		`{"paths":["a"]}`:                      time.Hour,
+		`{"expiresIn":31536000,"paths":["a"]}`: 7 * 24 * time.Hour,
+	}
+	for body, want := range cases {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		require.Equal(t, 200, w.Code, body)
+		assert.Equal(t, want, got, body)
+	}
+}
+
+func TestSignedExpiry(t *testing.T) {
+	week := 7 * 24 * time.Hour
+	cases := map[int]time.Duration{
+		60: time.Minute, 0: time.Hour, -5: time.Hour, maxSignedURLExpiry: week,
+		maxSignedURLExpiry + 1: week, 1 << 62: week,
+	}
+	for in, want := range cases {
+		assert.Equal(t, want, signedExpiry(in), in)
+	}
+}
+
+func TestCreateSignedURL_ExpiryClamped(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var got time.Duration
+	store := &stubObjectStore{signDownloadFn: func(_ context.Context, _ string, e time.Duration) (string, error) { got = e; return "u", nil }}
+	db := &stubDB{queryRowFn: func(context.Context, string, ...any) (map[string]any, error) { return map[string]any{"id": "x"}, nil }}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.POST("/storage/v1/object/sign/:bucket/*path", h.createSignedURL)
+	cases := map[string]time.Duration{
+		`{"expiresIn":60}`: time.Minute, `{}`: time.Hour, `{"expiresIn":-5}`: time.Hour,
+		`{"expiresIn":31536000}`: 7 * 24 * time.Hour, `{"expiresIn":9223372036854775807}`: 7 * 24 * time.Hour,
+		`{"expiresIn":"abc"}`: time.Hour,
+	}
+	for body, want := range cases {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars/a.txt", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		require.Equal(t, 200, w.Code, body)
+		assert.Equal(t, want, got, body)
 	}
 }
 
@@ -1500,4 +1947,587 @@ func TestStorageErrShape(t *testing.T) {
 	if body["message"] != `Bucket "x" not found` {
 		t.Errorf("message = %#v", body["message"])
 	}
+}
+
+// --- Object key validation (C1) ---
+
+func TestCleanPath(t *testing.T) {
+	ok := map[string]string{
+		"a.txt":          "a.txt",
+		"/a.txt":         "a.txt",
+		"//etc/passwd":   "etc/passwd",
+		"dir/./file":     "dir/file",
+		"dir//file":      "dir/file",
+		"dir/":           "dir",
+		"ünï/çødé 😀.png": "ünï/çødé 😀.png",
+		"a..b/c...":      "a..b/c...",
+	}
+	for in, want := range ok {
+		got, err := cleanPath(in)
+		if err != nil || got != want {
+			t.Errorf("cleanPath(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"", "/", ".", "..", "../x", "a/../../x", "a/..", "/../etc", "a\x00b"} {
+		if got, err := cleanPath(in); err == nil {
+			t.Errorf("cleanPath(%q) = %q, want error", in, got)
+		}
+	}
+
+	longSeg := strings.Repeat("a", 5000)
+	if got, err := cleanPath(longSeg); err != nil || got != longSeg {
+		t.Errorf("cleanPath(long segment) = %q, %v; want unchanged", got, err)
+	}
+	deep := strings.Repeat("a/", 1000) + "file"
+	if got, err := cleanPath(deep); err != nil || got != deep {
+		t.Errorf("cleanPath(deep path) = %q, %v; want unchanged", got, err)
+	}
+}
+
+func TestStorageRoutes_RejectTraversalKeys(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("INSTANCEZ_SECRET_KEY", "test-secret-key")
+	touched := false
+	store := &stubObjectStore{
+		uploadFn: func(context.Context, string, io.Reader, string, int64) error { touched = true; return nil },
+		downloadFn: func(context.Context, string) (io.ReadCloser, string, error) {
+			touched = true
+			return io.NopCloser(strings.NewReader("")), "", nil
+		},
+		copyFn: func(context.Context, string, string) error { touched = true; return nil },
+	}
+	db := &stubDB{
+		beginFn: func(context.Context) (domain.Tx, error) { touched = true; return &stubTx{}, nil },
+		queryRowFn: func(context.Context, string, ...any) (map[string]any, error) {
+			touched = true
+			return map[string]any{"id": "x"}, nil
+		},
+	}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {Public: true}})
+	h.jwtKeys = stubKeys(t)
+	// Bound to the raw (uncleaned) wildcard param gin hands the handler, so the
+	// case below tests the objectPath check itself, not token/path mismatch.
+	forgedTraversalToken := h.signUploadToken("avatars", "/../secret", "")
+	auth := func(c *gin.Context) {
+		setTestSession(c, domain.Session{Role: "authenticated", UserID: "u1", IsAuthenticated: true})
+	}
+	r := gin.New()
+	r.POST("/storage/v1/object/move", auth, h.moveObject)
+	r.POST("/storage/v1/object/copy", auth, h.copyObject)
+	r.POST("/storage/v1/object/sign/:bucket/*path", auth, h.createSignedURL)
+	r.POST("/storage/v1/object/:bucket/*path", auth, h.uploadObject)
+	r.HEAD("/storage/v1/object/:bucket/*path", auth, h.objectExists)
+	r.POST("/storage/v1/object/upload/sign/:bucket/*path", auth, h.createSignedUploadURL)
+	r.PUT("/storage/v1/object/upload/sign/:bucket/*path", h.uploadToSignedURL)
+	r.GET("/storage/v1/object/*all", h.objectGetDispatch)
+
+	cases := []struct {
+		method, target, body string
+		apikey               string
+	}{
+		{http.MethodPost, "/storage/v1/object/avatars/%2e%2e/%2e%2e/etc/passwd", "x", ""},
+		{http.MethodPost, "/storage/v1/object/avatars/..%2f..%2fetc", "x", ""},
+		{http.MethodGet, "/storage/v1/object/public/avatars/%2e%2e/secret", "", ""},
+		{http.MethodPost, "/storage/v1/object/sign/avatars/a/../../b", "{}", ""},
+		{http.MethodPost, "/storage/v1/object/move", `{"bucketId":"avatars","sourceKey":"a.txt","destinationKey":"../../x"}`, ""},
+		{http.MethodPost, "/storage/v1/object/copy", `{"bucketId":"avatars","sourceKey":"../a","destinationKey":"b"}`, ""},
+		{http.MethodPost, "/storage/v1/object/copy", `{"bucketId":"avatars","sourceKey":"","destinationKey":"b"}`, ""},
+		{http.MethodHead, "/storage/v1/object/avatars/%2e%2e/secret", "", ""},
+		{http.MethodGet, "/storage/v1/object/info/authenticated/avatars/%2e%2e/secret", "", "test-secret-key"},
+		{http.MethodGet, "/storage/v1/object/info/avatars/%2e%2e/secret", "", "test-secret-key"},
+		{http.MethodPost, "/storage/v1/object/upload/sign/avatars/%2e%2e/secret", "", ""},
+		{http.MethodPut, "/storage/v1/object/upload/sign/avatars/%2e%2e/secret?token=" + forgedTraversalToken, "", ""},
+	}
+	for _, tc := range cases {
+		touched = false
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(tc.method, tc.target, strings.NewReader(tc.body))
+		req.Header.Set("Content-Type", "application/json")
+		if tc.apikey != "" {
+			req.Header.Set("apikey", tc.apikey)
+		}
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s %s: got %d, want 400: %s", tc.method, tc.target, w.Code, w.Body.String())
+		}
+		if touched {
+			t.Errorf("%s %s: reached DB or object store", tc.method, tc.target)
+		}
+	}
+}
+
+// --- C7: spooled uploads ---
+
+func multipartBody(t *testing.T, filename, ct, content string) (*bytes.Buffer, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	require.NoError(t, mw.WriteField("cacheControl", "3600"))
+	hdr := textproto.MIMEHeader{}
+	hdr.Set("Content-Disposition", fmt.Sprintf(`form-data; name=""; filename=%q`, filename))
+	hdr.Set("Content-Type", ct)
+	pw, err := mw.CreatePart(hdr)
+	require.NoError(t, err)
+	_, _ = pw.Write([]byte(content))
+	require.NoError(t, mw.Close())
+	return &buf, mw.FormDataContentType()
+}
+
+// isolatedTempDir points os.CreateTemp at a fresh dir so a test can check for leaked spool files.
+func isolatedTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", dir)
+	return dir
+}
+
+func assertNoSpoolLeft(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "spool file leaked")
+}
+
+func TestUploadObject_TxOpensOnlyAfterBodyFinishes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dir := isolatedTempDir(t)
+	var txOpen atomic.Bool
+	var opened atomic.Int32
+	tx := &stubTx{
+		execFn:     func(context.Context, string, ...any) (int64, error) { return 1, nil },
+		commitFn:   func(context.Context) error { txOpen.Store(false); return nil },
+		rollbackFn: func(context.Context) error { txOpen.Store(false); return nil },
+	}
+	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) {
+		txOpen.Store(true)
+		opened.Add(1)
+		return tx, nil
+	}}
+	var stored string
+	var storedSize int64
+	store := &stubObjectStore{uploadFn: func(_ context.Context, _ string, r io.Reader, _ string, size int64) error {
+		_, ok := r.(*os.File)
+		assert.True(t, ok, "store should receive the spooled file")
+		b, _ := io.ReadAll(r)
+		stored, storedSize = string(b), size
+		return nil
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.POST("/storage/v1/object/:bucket/*path", h.uploadObject)
+
+	pr, pw := io.Pipe()
+	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/a.txt", pr)
+	req.Header.Set("Content-Type", "text/plain")
+	w := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() { r.ServeHTTP(w, req); close(done) }()
+
+	// Each Write returns only once the handler has read it, so the pre-spool probe has already run and closed.
+	_, _ = pw.Write([]byte("slow "))
+	assert.False(t, txOpen.Load(), "a tx stayed open while the client body was still streaming")
+	_, _ = pw.Write([]byte("client "))
+	assert.False(t, txOpen.Load(), "a tx stayed open while the client body was still streaming")
+	_, _ = pw.Write([]byte("body"))
+	_ = pw.Close()
+	<-done
+
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Equal(t, int32(2), opened.Load(), "expected the permission probe and the real write tx")
+	assert.Equal(t, "slow client body", stored)
+	assert.Equal(t, int64(len(stored)), storedSize)
+	assertNoSpoolLeft(t, dir)
+}
+
+func TestSpoolFailed_ClassifiesAbortsAsClientError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		name      string
+		err       error
+		wantCode  int
+		wantLevel string
+	}{
+		{"unexpected eof", io.ErrUnexpectedEOF, 400, "WARN"},
+		{"context canceled", context.Canceled, 400, "WARN"},
+		{"connection reset (wrapped)", &net.OpError{Op: "read", Err: syscall.ECONNRESET}, 400, "WARN"},
+		{"connection reset (bare)", syscall.ECONNRESET, 400, "WARN"},
+		{"other io error", errors.New("disk full"), 500, "ERROR"},
+	}
+	for _, tc := range cases {
+		var buf bytes.Buffer
+		h := &StorageV1Handler{logger: slog.New(slog.NewTextHandler(&buf, nil))}
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		h.spoolFailed(c, tc.err, "")
+		assert.Equal(t, tc.wantCode, w.Code, tc.name)
+		assert.Contains(t, buf.String(), "level="+tc.wantLevel, tc.name)
+	}
+}
+
+func TestUploadObject_ClientAbortNeverOpensTx(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dir := isolatedTempDir(t)
+	var begins int
+	var committed bool
+	tx := &stubTx{commitFn: func(context.Context) error { committed = true; return nil }}
+	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { begins++; return tx, nil }}
+	store := &stubObjectStore{uploadFn: func(context.Context, string, io.Reader, string, int64) error {
+		t.Fatal("store must not receive an aborted upload")
+		return nil
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.POST("/storage/v1/object/:bucket/*path", h.uploadObject)
+
+	pr, pw := io.Pipe()
+	go func() {
+		_, _ = pw.Write([]byte("partial"))
+		_ = pw.CloseWithError(io.ErrUnexpectedEOF)
+	}()
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/a.txt", pr))
+
+	assert.Equal(t, 400, w.Code, w.Body.String())
+	assert.Equal(t, 1, begins, "only the permission probe should open a tx for an aborted body")
+	assert.False(t, committed, "no tx may be committed for an aborted body")
+	assertNoSpoolLeft(t, dir)
+}
+
+func TestUploadObject_SpoolRemovedOnPanic(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dir := isolatedTempDir(t)
+	tx := &stubTx{execFn: func(context.Context, string, ...any) (int64, error) { return 1, nil }}
+	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { return tx, nil }}
+	store := &stubObjectStore{uploadFn: func(context.Context, string, io.Reader, string, int64) error { panic("boom") }}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.POST("/storage/v1/object/:bucket/*path", h.uploadObject)
+
+	assert.Panics(t, func() {
+		r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/a.txt", strings.NewReader("x")))
+	})
+	assertNoSpoolLeft(t, dir)
+}
+
+func TestUploadObject_TooLargeRejectedBeforeTx(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dir := isolatedTempDir(t)
+	var begins int
+	var streamed bool
+	tx := &stubTx{execFn: func(context.Context, string, ...any) (int64, error) { return 1, nil }}
+	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { begins++; return tx, nil }}
+	store := &stubObjectStore{uploadFn: func(context.Context, string, io.Reader, string, int64) error { streamed = true; return nil }}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {MaxSize: "1KB"}})
+	r := gin.New()
+	r.POST("/storage/v1/object/:bucket/*path", h.uploadObject)
+	send := func(n int, multi bool) *httptest.ResponseRecorder {
+		begins, streamed = 0, false
+		var req *http.Request
+		if multi {
+			body, ct := multipartBody(t, "blob", "text/plain", strings.Repeat("x", n))
+			req = httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/a.bin", body)
+			req.Header.Set("Content-Type", ct)
+		} else {
+			req = httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/a.bin", strings.NewReader(strings.Repeat("x", n)))
+		}
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+	for _, multi := range []bool{false, true} {
+		for _, n := range []int{1025, 4096} {
+			w := send(n, multi)
+			assert.Equal(t, 413, w.Code, "%d bytes multipart=%v", n, multi)
+			assert.Contains(t, w.Body.String(), "1KB")
+			assert.Equal(t, 1, begins, "%d bytes: only the permission probe should open a tx for an oversized body", n)
+			assert.False(t, streamed, "%d bytes: oversized body reached the store", n)
+		}
+		w := send(1024, multi)
+		assert.Equal(t, 200, w.Code, "exactly max_size must be accepted (multipart=%v)", multi)
+		assert.Equal(t, 2, begins, "expected the permission probe and the real write tx")
+		assert.True(t, streamed)
+	}
+	assertNoSpoolLeft(t, dir)
+}
+
+func TestUploadObject_TooLargeDefaultLimitNamesIt(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dir := isolatedTempDir(t)
+	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { return &stubTx{}, nil }}
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.POST("/storage/v1/object/:bucket/*path", h.uploadObject)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/a.bin", io.LimitReader(zeroes{}, 50<<20+1)))
+	assert.Equal(t, 413, w.Code)
+	assert.Contains(t, w.Body.String(), "50MB")
+	assertNoSpoolLeft(t, dir)
+}
+
+type zeroes struct{}
+
+func (zeroes) Read(p []byte) (int, error) { clear(p); return len(p), nil }
+
+func TestUploadObject_RecordsRealSize(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		name, content string
+		multipart     bool
+	}{
+		{"multipart", "hello world", true},
+		{"raw", "hello world", false},
+		{"raw empty", "", false},
+		{"multipart empty", "", true},
+		{"multipart unicode", "ünïcødé 😀", true},
+	}
+	for _, tc := range cases {
+		var args []any
+		stored := "<not called>"
+		tx := &stubTx{execFn: func(_ context.Context, _ string, a ...any) (int64, error) { args = a; return 1, nil }}
+		db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { return tx, nil }}
+		store := &stubObjectStore{uploadFn: func(_ context.Context, _ string, r io.Reader, _ string, _ int64) error {
+			b, _ := io.ReadAll(r)
+			stored = string(b)
+			return nil
+		}}
+		h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
+		r := gin.New()
+		r.POST("/storage/v1/object/:bucket/*path", h.uploadObject)
+		var req *http.Request
+		if tc.multipart {
+			body, ct := multipartBody(t, "blob", "text/plain", tc.content)
+			req = httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/f.txt", body)
+			req.Header.Set("Content-Type", ct)
+		} else {
+			req = httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/f.txt", strings.NewReader(tc.content))
+			req.Header.Set("Content-Type", "text/plain")
+		}
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		require.Equal(t, 200, w.Code, tc.name+": "+w.Body.String())
+		assert.Equal(t, tc.content, stored, tc.name)
+		require.Len(t, args, 6, tc.name)
+		assert.Equal(t, int64(len(tc.content)), args[2], tc.name)
+		assert.Equal(t, "text/plain", args[3], tc.name)
+		assert.Contains(t, args[4], fmt.Sprintf(`"size":%d`, len(tc.content)), tc.name)
+	}
+}
+
+func TestUploadObject_ConflictSemantics(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		name, method, upsert string
+		want, notWant        string
+	}{
+		{"insert", http.MethodPost, "", "INSERT", "ON CONFLICT"},
+		{"insert x-upsert false", http.MethodPost, "false", "INSERT", "ON CONFLICT"},
+		{"upsert", http.MethodPost, "true", "DO UPDATE", "UPDATE storage.objects"},
+		{"update ignores x-upsert", http.MethodPut, "true", "UPDATE storage.objects", "INSERT"},
+	}
+	for _, tc := range cases {
+		var q string
+		tx := &stubTx{execFn: func(_ context.Context, query string, _ ...any) (int64, error) { q = query; return 1, nil }}
+		db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) { return tx, nil }}
+		h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
+		r := gin.New()
+		r.POST("/storage/v1/object/:bucket/*path", h.uploadObject)
+		r.PUT("/storage/v1/object/:bucket/*path", h.updateObject)
+		req := httptest.NewRequest(tc.method, "/storage/v1/object/avatars/f.txt", strings.NewReader("x"))
+		if tc.upsert != "" {
+			req.Header.Set("x-upsert", tc.upsert)
+		}
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		require.Equal(t, 200, w.Code, tc.name)
+		assert.Contains(t, q, tc.want, tc.name)
+		assert.NotContains(t, q, tc.notWant, tc.name)
+	}
+}
+
+func TestWriteObjectRow(t *testing.T) {
+	row := objectRow{bucket: "b", name: "n", size: 3, mime: "text/plain", metadata: "{}", uploadedBy: nil}
+	cases := []struct {
+		name             string
+		isUpdate, upsert bool
+		rows             int64
+		execErr, want    error
+	}{
+		{"update hits a row", true, false, 1, nil, nil},
+		{"update hits nothing", true, false, 0, nil, errObjectNotFound},
+		{"update error wins over zero rows", true, false, 0, errors.New("rls"), errors.New("rls")},
+		{"insert zero rows is fine", false, false, 0, nil, nil},
+		{"upsert zero rows is fine", false, true, 0, nil, nil},
+	}
+	for _, tc := range cases {
+		var args []any
+		db := &stubDB{execFn: func(_ context.Context, _ string, a ...any) (int64, error) { args = a; return tc.rows, tc.execErr }}
+		err := writeObjectRow(context.Background(), db, row, tc.isUpdate, tc.upsert)
+		if tc.want == nil {
+			assert.NoError(t, err, tc.name)
+		} else {
+			assert.EqualError(t, err, tc.want.Error(), tc.name)
+		}
+		assert.Equal(t, []any{"b", "n", int64(3), "text/plain", "{}", nil}, args, tc.name)
+	}
+}
+
+func TestUploadToSignedURL_Hardening(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	newH := func(b domain.Bucket, execErr error) (*StorageV1Handler, *string, *[]any) {
+		stored := "<not called>"
+		var args []any
+		db := &stubDB{execFn: func(_ context.Context, _ string, a ...any) (int64, error) { args = a; return 1, execErr }}
+		store := &stubObjectStore{uploadFn: func(_ context.Context, _ string, r io.Reader, _ string, _ int64) error {
+			b, _ := io.ReadAll(r)
+			stored = string(b)
+			return nil
+		}}
+		h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": b})
+		h.jwtKeys = stubKeys(t)
+		return h, &stored, &args
+	}
+	do := func(h *StorageV1Handler, body io.Reader, ct string) *httptest.ResponseRecorder {
+		token := h.signUploadToken("avatars", "f.txt", "")
+		r := gin.New()
+		r.PUT("/storage/v1/object/upload/sign/:bucket/*path", h.uploadToSignedURL)
+		req := httptest.NewRequest(http.MethodPut, "/storage/v1/object/upload/sign/avatars/f.txt?token="+token, body)
+		req.Header.Set("Content-Type", ct)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+
+	t.Run("raw MIME outside allowlist", func(t *testing.T) {
+		h, stored, args := newH(domain.Bucket{Types: []string{"image/*"}}, nil)
+		w := do(h, strings.NewReader("<script>"), "text/html")
+		assert.Equal(t, 422, w.Code, "MIME allowlist bypassed on signed upload")
+		assert.Equal(t, "<not called>", *stored)
+		assert.Nil(t, *args)
+	})
+	t.Run("multipart MIME outside allowlist", func(t *testing.T) {
+		h, stored, _ := newH(domain.Bucket{Types: []string{"image/*"}}, nil)
+		body, ct := multipartBody(t, "x.html", "text/html", "<script>")
+		w := do(h, body, ct)
+		assert.Equal(t, 422, w.Code)
+		assert.Equal(t, "<not called>", *stored)
+	})
+	t.Run("multipart stores the file part and its size", func(t *testing.T) {
+		h, stored, args := newH(domain.Bucket{Types: []string{"text/plain"}}, nil)
+		body, ct := multipartBody(t, "blob", "text/plain", "blob body")
+		w := do(h, body, ct)
+		require.Equal(t, 200, w.Code, w.Body.String())
+		assert.Equal(t, "blob body", *stored, "multipart framing stored as file content")
+		require.Len(t, *args, 6)
+		assert.Equal(t, int64(len("blob body")), (*args)[2])
+		assert.Nil(t, (*args)[5], "anonymous token must record NULL uploaded_by")
+	})
+	t.Run("over max_size", func(t *testing.T) {
+		h, stored, _ := newH(domain.Bucket{MaxSize: "1KB"}, nil)
+		w := do(h, strings.NewReader(strings.Repeat("x", 1025)), "text/plain")
+		assert.Equal(t, 413, w.Code)
+		assert.Equal(t, "<not called>", *stored)
+	})
+	t.Run("failed metadata insert", func(t *testing.T) {
+		h, _, _ := newH(domain.Bucket{}, errors.New("db down"))
+		w := do(h, strings.NewReader("x"), "text/plain")
+		assert.Equal(t, 500, w.Code, "failed metadata insert reported as success")
+	})
+}
+
+// --- Download headers (C8) ---
+
+func TestSetDownloadHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const pub, priv = "public, max-age=3600", "private, max-age=3600"
+	cases := []struct {
+		ct             string
+		public         bool
+		wantCT, wantCC string
+		attach         bool
+	}{
+		{"image/png", true, "image/png", pub, false},
+		{"image/png", false, "image/png", priv, false},
+		{"text/plain", false, "text/plain", priv, false},
+		{"text/html; charset=utf-8", false, "text/html; charset=utf-8", priv, true},
+		{"TEXT/HTML", true, "TEXT/HTML", pub, true},
+		{"image/svg+xml", true, "image/svg+xml", pub, true},
+		{"application/xhtml+xml", true, "application/xhtml+xml", pub, true},
+		{"text/xml", true, "text/xml", pub, true},
+		{"application/javascript", true, "application/javascript", pub, true},
+		{"application/rss+xml", true, "application/rss+xml", pub, true},
+		{"application/mathml+xml", true, "application/mathml+xml", pub, true},
+		{"multipart/x-mixed-replace", true, "multipart/x-mixed-replace", pub, true},
+		{"multipart/form-data; boundary=x", false, "multipart/form-data; boundary=x", priv, true},
+		{"html", false, "application/octet-stream", priv, false},
+		{"", false, "application/octet-stream", priv, false},
+		{"not a mime", false, "application/octet-stream", priv, false},
+	}
+	for _, tc := range cases {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		setDownloadHeaders(c, tc.ct, tc.public)
+		hd := w.Header()
+		assert.Equal(t, tc.wantCT, hd.Get("Content-Type"), tc.ct)
+		assert.Equal(t, tc.wantCC, hd.Get("Cache-Control"), tc.ct)
+		assert.Equal(t, "nosniff", hd.Get("X-Content-Type-Options"), tc.ct)
+		assert.Equal(t, tc.attach, strings.HasPrefix(hd.Get("Content-Disposition"), "attachment"), tc.ct)
+	}
+}
+
+func TestServeDownload_PrivateHTMLIsAttachmentAndPrivate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := &stubDB{queryRowFn: func(context.Context, string, ...any) (map[string]any, error) { return map[string]any{"id": "x"}, nil }}
+	store := &stubObjectStore{downloadFn: func(context.Context, string) (io.ReadCloser, string, error) {
+		return io.NopCloser(strings.NewReader("<script>alert(1)</script>")), "text/html", nil
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"docs": {Public: false}})
+	r := gin.New()
+	r.GET("/dl/:bucket/*path", func(c *gin.Context) { h.serveDownload(c, c.Param("bucket"), c.Param("path"), false) })
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/dl/docs/x.html", nil))
+	require.Equal(t, 200, w.Code)
+	assert.Equal(t, "private, max-age=3600", w.Header().Get("Cache-Control"))
+	assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
+	assert.True(t, strings.HasPrefix(w.Header().Get("Content-Disposition"), "attachment"))
+}
+
+func TestServeDownload_AuthenticatedRouteOnPublicBucketIsPrivate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := &stubDB{queryRowFn: func(context.Context, string, ...any) (map[string]any, error) { return map[string]any{"id": "x"}, nil }}
+	store := &stubObjectStore{downloadFn: func(context.Context, string) (io.ReadCloser, string, error) {
+		return io.NopCloser(strings.NewReader("bytes")), "image/png", nil
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {Public: true}})
+	r := gin.New()
+	r.GET("/dl/:bucket/*path", func(c *gin.Context) { h.serveDownload(c, c.Param("bucket"), c.Param("path"), false) })
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/dl/avatars/a.png", nil))
+	require.Equal(t, 200, w.Code)
+	assert.Equal(t, "private, max-age=3600", w.Header().Get("Cache-Control"),
+		"an authenticated-route download on a public bucket must not be cached publicly; RLS may be per-caller")
+}
+
+func TestServeDownload_TransformErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	huge := pngWithDims(t, 20000, 20000)
+	queried := false
+	db := &stubDB{queryRowFn: func(context.Context, string, ...any) (map[string]any, error) {
+		queried = true
+		return map[string]any{"id": "x"}, nil
+	}}
+	store := &stubObjectStore{downloadFn: func(context.Context, string) (io.ReadCloser, string, error) {
+		return io.NopCloser(bytes.NewReader(huge)), "image/png", nil
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {Public: true}})
+	r := gin.New()
+	r.GET("/storage/v1/object/*all", h.objectGetDispatch)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/storage/v1/object/public/avatars/a.png?width=-5", nil))
+	assert.Equal(t, 400, w.Code)
+	assert.False(t, queried, "invalid params must fail before DB work")
+
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/storage/v1/object/public/avatars/a.png?width=100", nil))
+	assert.Equal(t, 413, w.Code, "oversized image must not return an empty 200")
 }
