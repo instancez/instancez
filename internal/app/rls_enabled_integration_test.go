@@ -51,16 +51,6 @@ func visibleRows(t *testing.T, req domain.RequestDB, role string) int {
 	return n
 }
 
-func rlsFlags(t *testing.T, owner domain.OwnerDB) (enabled, forced bool) {
-	t.Helper()
-	row, err := owner.QueryRow(context.Background(),
-		`SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE oid = 'public.secrets'::regclass`)
-	if err != nil {
-		t.Fatalf("pg_class: %v", err)
-	}
-	return row["relrowsecurity"] == true, row["relforcerowsecurity"] == true
-}
-
 func TestIntegration_RLSEnabledZeroPoliciesDeniesAndSurvivesPolicyRemoval(t *testing.T) {
 	owner, req := dbboot.StartContainer(t)
 	ctx := context.Background()
@@ -82,7 +72,7 @@ func TestIntegration_RLSEnabledZeroPoliciesDeniesAndSurvivesPolicyRemoval(t *tes
 	if err := m.Apply(ctx, rlsCfg(&on)); err != nil {
 		t.Fatalf("v2: %v", err)
 	}
-	if en, forced := rlsFlags(t, owner); !en || !forced {
+	if en, forced := rlsEnabled(t, owner, "secrets"); !en || !forced {
 		t.Fatalf("v2 relrowsecurity=%v relforcerowsecurity=%v, want both true", en, forced)
 	}
 	for _, role := range []string{"anon", "authenticated"} {
@@ -132,7 +122,7 @@ func TestIntegration_RLSEnabledTrueToFalseDisables(t *testing.T) {
 	if err := m.Apply(ctx, rlsCfg(&off)); err != nil {
 		t.Fatalf("v2: %v", err)
 	}
-	if en, _ := rlsFlags(t, owner); en {
+	if en, _ := rlsEnabled(t, owner, "secrets"); en {
 		t.Fatal("rls_enabled false must DISABLE row level security")
 	}
 	if n := visibleRows(t, req, "anon"); n != 1 {
@@ -148,7 +138,7 @@ func TestIntegration_RLSEnabledTrueToFalseDisables(t *testing.T) {
 	if err := m.Apply(ctx, rlsCfg(&on)); err != nil {
 		t.Fatalf("v3: %v", err)
 	}
-	if en, forced := rlsFlags(t, owner); !en || !forced {
+	if en, forced := rlsEnabled(t, owner, "secrets"); !en || !forced {
 		t.Fatalf("v3 relrowsecurity=%v relforcerowsecurity=%v, want both true", en, forced)
 	}
 }
@@ -166,7 +156,7 @@ func TestIntegration_LegacyAppAddsRLSEnabledKeepsDeny(t *testing.T) {
 	if err := m.Apply(ctx, rlsCfg(&on)); err != nil {
 		t.Fatalf("v2: %v", err)
 	}
-	if en, _ := rlsFlags(t, owner); !en {
+	if en, _ := rlsEnabled(t, owner, "secrets"); !en {
 		t.Fatal("RLS disabled after legacy -> rls_enabled: true")
 	}
 	if _, err := owner.Exec(ctx, "INSERT INTO secrets (body) VALUES ('x')"); err != nil {
