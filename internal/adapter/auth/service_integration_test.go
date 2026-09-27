@@ -757,3 +757,25 @@ func TestOAuthFlowStateIntegration(t *testing.T) {
 		}
 	})
 }
+
+func TestVerifyOTPReturnsPurposeIntegration(t *testing.T) {
+	s, _ := newIntegrationService(t, &domain.Auth{Email: &domain.AuthEmail{}})
+	ctx := context.Background()
+	exp := time.Now().Add(time.Hour).Unix()
+	for _, purpose := range []string{"magiclink", "signup"} {
+		email := purpose + "-purpose@example.com"
+		uid := mustUser(t, s, email)
+		if err := s.CreateOneTimeToken(ctx, uid, "tok-"+purpose, purpose, exp); err != nil {
+			t.Fatal(err)
+		}
+		if otp, err := s.VerifyOTP(ctx, "tok-"+purpose, "", nil); err != nil || otp.Purpose != purpose || otp.UserID != uid {
+			t.Fatalf("opaque %s: otp=%+v err=%v", purpose, otp, err)
+		}
+		if err := s.CreateOTPCode(ctx, uid, "codetok-"+purpose, "123456", email, purpose, exp); err != nil {
+			t.Fatal(err)
+		}
+		if otp, err := s.VerifyOTP(ctx, "123456", email, nil); err != nil || otp.Purpose != purpose || otp.UserID != uid {
+			t.Fatalf("code %s: otp=%+v err=%v", purpose, otp, err)
+		}
+	}
+}

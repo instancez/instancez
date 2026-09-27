@@ -199,11 +199,7 @@ func TestLinkIdentity_SetsBindingCookie(t *testing.T) {
 			t.Fatalf("%s: cookie %+v", tc.name, ck)
 		}
 	}
-}
 
-func TestLinkIdentity_StoreFailureSetsNoCookie(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	adapterauth.RegisterOAuth(unitOAuthProvider{})
 	h := linkHandler(t, &stubAuthService{createOAuthFlowFn: func(context.Context, string, string, string, string, string) error {
 		return errors.New("db down")
 	}})
@@ -212,7 +208,7 @@ func TestLinkIdentity_StoreFailureSetsNoCookie(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest("GET", "/link?provider=unitfake", nil))
 	if w.Code != 500 || responseCookie(w, linkStateCookie) != nil {
-		t.Fatalf("status %d cookie %v", w.Code, responseCookie(w, linkStateCookie))
+		t.Fatalf("store failure: status %d cookie %v", w.Code, responseCookie(w, linkStateCookie))
 	}
 }
 
