@@ -167,19 +167,24 @@ func (h *StorageV1Handler) emptyBucket(c *gin.Context) {
 		return
 	}
 
-	ctx := h.rlsCtx(c)
-	rows, err := h.db.Query(ctx, "SELECT name FROM storage.objects WHERE bucket_id = $1", id)
+	// ponytail: one unbatched DELETE; page it by ctid/LIMIT if buckets reach ~100k objects.
+	rows, err := h.db.Query(h.rlsCtx(c), "DELETE FROM storage.objects WHERE bucket_id = $1 RETURNING name", id)
 	if err != nil {
-		h.logger.Error("empty bucket query", "error", err)
-		storageErr(c, 500, "internal", "Failed to list objects")
+		h.logger.Error("empty bucket", "error", err)
+		storageErr(c, 500, "internal", "Failed to empty bucket")
 		return
 	}
-	for _, row := range rows {
-		name, _ := row["name"].(string)
-		_ = h.storage.Delete(ctx, id+"/"+name)
-	}
-	_, _ = h.db.Exec(ctx, "DELETE FROM storage.objects WHERE bucket_id = $1", id)
+	deleteBytes(c.Request.Context(), h.storage, h.logger, id, rows)
 	c.JSON(200, gin.H{"message": "Successfully emptied"})
+}
+
+// deleteBytes removes object bytes for rows whose metadata delete already committed.
+func deleteBytes(ctx context.Context, store domain.ObjectStore, logger *slog.Logger, bucket string, rows []map[string]any) {
+	for _, row := range rows {
+		if err := store.Delete(ctx, bucket+"/"+asString(row["name"])); err != nil {
+			logger.Warn("delete object bytes", "bucket", bucket, "error", err)
+		}
+	}
 }
 
 // --- File operation handlers ---
@@ -832,20 +837,22 @@ func (h *StorageV1Handler) removeObjects(c *gin.Context) {
 		return
 	}
 
-	ctx := h.rlsCtx(c)
-	var deleted []gin.H
-	for _, p := range req.Prefixes {
-		p = strings.TrimPrefix(p, "/")
-		row, err := h.db.QueryRow(ctx, "SELECT id, name, bucket_id FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, p)
-		if err != nil || row == nil {
-			continue
-		}
-		_ = h.storage.Delete(ctx, bucketName+"/"+p)
-		_, _ = h.db.Exec(ctx, "DELETE FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, p)
-		deleted = append(deleted, gin.H{"name": p, "bucket_id": bucketName})
+	keys := validKeys(req.Prefixes)
+	deleted := []gin.H{}
+	if len(keys) == 0 {
+		c.JSON(200, deleted)
+		return
 	}
-	if deleted == nil {
-		deleted = []gin.H{}
+	rows, err := h.db.Query(h.rlsCtx(c),
+		"DELETE FROM storage.objects WHERE bucket_id = $1 AND name = ANY($2::text[]) RETURNING name", bucketName, keys)
+	if err != nil {
+		h.logger.Error("remove objects", "error", err)
+		storageErr(c, 500, "internal", "Failed to remove objects")
+		return
+	}
+	deleteBytes(c.Request.Context(), h.storage, h.logger, bucketName, rows)
+	for _, row := range rows {
+		deleted = append(deleted, gin.H{"name": asString(row["name"]), "bucket_id": bucketName})
 	}
 	c.JSON(200, deleted)
 }

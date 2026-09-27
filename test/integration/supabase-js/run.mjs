@@ -2392,6 +2392,58 @@ await step('storage: emptyBucket removes all objects', async () => {
   assertEq(items.length, 0, 'bucket is empty after emptyBucket')
 })
 
+// --- RLS-denied delete: a SELECT-only caller must not wipe bytes ---
+// (regression coverage for the emptyBucket/remove RLS-first fix; readonly's
+// policy grants select but declares no delete policy, so DELETE matches
+// nothing and must leave the bytes in place, not just the metadata row).
+if (SECRET_KEY) {
+  await step('storage: remove leaves bytes in place when RLS denies the delete', async () => {
+    const put = await fetch(`${URL}/storage/v1/object/readonly/ro-remove.txt`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY, 'Content-Type': 'text/plain' },
+      body: 'read-only bytes',
+    })
+    assert(put.ok, `admin seed upload failed: ${put.status}`)
+
+    const { data, error } = await storageClient().storage.from('readonly').remove(['ro-remove.txt'])
+    if (error) throw error
+    assertEq(data.length, 0, 'RLS denies the delete, so nothing is reported removed')
+
+    const dl = await fetch(`${URL}/storage/v1/object/authenticated/readonly/ro-remove.txt`, {
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY },
+    })
+    assert(dl.ok, `object bytes must survive a denied remove: ${dl.status}`)
+    assertEq(await dl.text(), 'read-only bytes', 'bytes are untouched')
+  })
+
+  await step('storage: emptyBucket leaves bytes in place when RLS denies the delete', async () => {
+    const put = await fetch(`${URL}/storage/v1/object/readonly/ro-empty.txt`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY, 'Content-Type': 'text/plain' },
+      body: 'read-only bytes 2',
+    })
+    assert(put.ok, `admin seed upload failed: ${put.status}`)
+
+    const resp = await fetch(`${URL}/storage/v1/bucket/readonly/empty`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY },
+    })
+    assert(resp.ok, `emptyBucket failed: ${resp.status}`)
+
+    const dl = await fetch(`${URL}/storage/v1/object/authenticated/readonly/ro-empty.txt`, {
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY },
+    })
+    assert(dl.ok, `object bytes must survive a denied emptyBucket: ${dl.status}`)
+    assertEq(await dl.text(), 'read-only bytes 2', 'bytes are untouched')
+
+    // Admin (service_role, bypasses RLS) cleans up what the user could not.
+    await fetch(`${URL}/storage/v1/bucket/readonly/empty`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY },
+    })
+  })
+}
+
 // --- Cleanup documents bucket ---
 await step('storage: cleanup documents bucket', async () => {
   await fetch(`${URL}/storage/v1/bucket/documents/empty`, {

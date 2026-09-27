@@ -258,6 +258,17 @@ func TestSupabaseJSCompat(t *testing.T) {
 					{Operations: []string{"select", "insert", "update", "delete"}, Using: "uploaded_by = auth.uid() AND name LIKE 'mine/%'", WithCheck: "uploaded_by = auth.uid() AND name LIKE 'mine/%'"},
 				},
 			},
+			// readonly exercises the C4 regression directly: a caller who can
+			// SELECT storage.objects but not DELETE must not be able to wipe
+			// bytes via remove/emptyBucket. No insert/update/delete policy is
+			// declared, so those operations match no policy and are denied.
+			"readonly": {
+				MaxSize: "5MB",
+				Types:   []string{"text/plain"},
+				RLS: []domain.RLSPolicy{
+					{Operations: []string{"select"}, Using: "true"},
+				},
+			},
 		},
 		// rpc functions drive the supabase-js .rpc() compat checks in
 		// run.mjs. Creation goes through the real Migrator so this path

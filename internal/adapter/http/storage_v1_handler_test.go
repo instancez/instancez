@@ -277,45 +277,66 @@ func TestEmptyBucket_NotFound(t *testing.T) {
 	}
 }
 
-func TestEmptyBucket_DeletesObjects(t *testing.T) {
+// SELECT sees the row but RLS filters the DELETE: bytes must survive.
+func TestEmptyBucket_ReadOnlyCallerDeletesNothing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-
-	deleted := []string{}
-	store := &stubObjectStore{
-		deleteFn: func(ctx context.Context, key string) error {
-			deleted = append(deleted, key)
-			return nil
-		},
-	}
-
-	db := &stubDB{
-		queryFn: func(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
-			// Return one object named "photo.jpg"
+	deleted := 0
+	store := &stubObjectStore{deleteFn: func(context.Context, string) error { deleted++; return nil }}
+	db := &stubDB{queryFn: func(_ context.Context, q string, _ ...any) ([]map[string]any, error) {
+		if strings.HasPrefix(strings.TrimSpace(q), "SELECT") {
 			return []map[string]any{{"name": "photo.jpg"}}, nil
-		},
-	}
-
-	buckets := map[string]domain.Bucket{
-		"avatars": {Public: false},
-	}
-	h := newStorageHandler(db, store, buckets)
-
-	w := httptest.NewRecorder()
+		}
+		return nil, nil
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
 	r := gin.New()
-	r.POST("/storage/v1/bucket/:id/empty", func(c *gin.Context) {
-		setTestSession(c, domain.Session{Role: "service_role"})
-		h.emptyBucket(c)
-	})
+	r.POST("/storage/v1/bucket/:id/empty", h.emptyBucket)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/storage/v1/bucket/avatars/empty", nil))
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Zero(t, deleted, "S3 bytes deleted for rows RLS did not let us delete")
+}
 
-	req := httptest.NewRequest(http.MethodPost, "/storage/v1/bucket/avatars/empty", nil)
-	r.ServeHTTP(w, req)
+func TestEmptyBucket_DeletesReturnedRows(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var deleted []string
+	store := &stubObjectStore{deleteFn: func(_ context.Context, k string) error {
+		deleted = append(deleted, k)
+		if strings.HasSuffix(k, "b.jpg") {
+			return errors.New("s3 flake")
+		}
+		return nil
+	}}
+	var gotQ string
+	db := &stubDB{queryFn: func(_ context.Context, q string, args ...any) ([]map[string]any, error) {
+		gotQ = q
+		return []map[string]any{{"name": "a.jpg"}, {"name": "b.jpg"}, {"name": "ünï/c.png"}}, nil
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.POST("/storage/v1/bucket/:id/empty", h.emptyBucket)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/storage/v1/bucket/avatars/empty", nil))
+	require.Equal(t, 200, w.Code)
+	assert.Contains(t, gotQ, "DELETE FROM storage.objects")
+	assert.Contains(t, gotQ, "RETURNING name")
+	assert.Equal(t, []string{"avatars/a.jpg", "avatars/b.jpg", "avatars/ünï/c.png"}, deleted, "one S3 failure must not stop the rest")
+}
 
-	if w.Code != 200 {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	if len(deleted) != 1 || deleted[0] != "avatars/photo.jpg" {
-		t.Errorf("expected Delete called with avatars/photo.jpg, got %v", deleted)
-	}
+func TestEmptyBucket_DBErrorSkipsStore(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	deleted := 0
+	store := &stubObjectStore{deleteFn: func(context.Context, string) error { deleted++; return nil }}
+	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) {
+		return nil, errors.New("permission denied")
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.POST("/storage/v1/bucket/:id/empty", h.emptyBucket)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/storage/v1/bucket/avatars/empty", nil))
+	assert.Equal(t, 500, w.Code)
+	assert.Zero(t, deleted)
 }
 
 // --- Signed URL handler tests ---
@@ -1243,47 +1264,72 @@ func TestObjectExists_NotFound(t *testing.T) {
 
 // --- removeObjects tests ---
 
-func TestRemoveObjects_DeletesMatchingPrefixes(t *testing.T) {
+func TestRemoveObjects_OnlyDeletesRowsRLSReturned(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	var deletedKeys []string
-	store := &stubObjectStore{
-		deleteFn: func(ctx context.Context, key string) error {
-			deletedKeys = append(deletedKeys, key)
-			return nil
+	var deleted []string
+	store := &stubObjectStore{deleteFn: func(_ context.Context, k string) error { deleted = append(deleted, k); return nil }}
+	var gotArgs []any
+	db := &stubDB{
+		// Old code probed with QueryRow SELECT: prove that path no longer authorizes deletes.
+		queryRowFn: func(_ context.Context, _ string, args ...any) (map[string]any, error) {
+			return map[string]any{"id": "x", "name": args[1]}, nil
+		},
+		queryFn: func(_ context.Context, q string, args ...any) ([]map[string]any, error) {
+			require.Contains(t, q, "RETURNING name")
+			gotArgs = args
+			return []map[string]any{{"name": "photo.jpg"}}, nil
 		},
 	}
-	db := &stubDB{queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
-		name, _ := args[1].(string)
-		if name == "missing.jpg" {
-			return nil, nil
-		}
-		return map[string]any{"id": "x", "name": name, "bucket_id": "avatars"}, nil
-	}}
-	buckets := map[string]domain.Bucket{"avatars": {}}
-	h := newStorageHandler(db, store, buckets)
-
-	w := httptest.NewRecorder()
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
 	r := gin.New()
 	r.DELETE("/storage/v1/object/:bucket", h.removeObjects)
-
+	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodDelete, "/storage/v1/object/avatars",
-		strings.NewReader(`{"prefixes":["photo.jpg","missing.jpg"]}`))
+		strings.NewReader(`{"prefixes":["photo.jpg","/hidden.jpg","../escape","","ünï.png"]}`))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
-	if w.Code != 200 {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	if len(deletedKeys) != 1 || deletedKeys[0] != "avatars/photo.jpg" {
-		t.Errorf("expected only the found object deleted, got %v", deletedKeys)
-	}
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Equal(t, []string{"photo.jpg", "hidden.jpg", "ünï.png"}, gotArgs[1])
+	assert.Equal(t, []string{"avatars/photo.jpg"}, deleted)
 	var body []map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Len(t, body, 1)
+	assert.Equal(t, "photo.jpg", body[0]["name"])
+}
+
+func TestRemoveObjects_EmptyOrAllInvalidSkipsDB(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	queried := false
+	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) { queried = true; return nil, nil }}
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.DELETE("/storage/v1/object/:bucket", h.removeObjects)
+	for _, body := range []string{`{"prefixes":[]}`, `{"prefixes":["..", ""]}`} {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodDelete, "/storage/v1/object/avatars", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		assert.Equal(t, 200, w.Code)
+		assert.JSONEq(t, `[]`, w.Body.String())
 	}
-	if len(body) != 1 {
-		t.Fatalf("expected 1 deleted entry in response, got %d: %v", len(body), body)
-	}
+	assert.False(t, queried)
+}
+
+func TestRemoveObjects_DBErrorSkipsStore(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	deleted := 0
+	store := &stubObjectStore{deleteFn: func(context.Context, string) error { deleted++; return nil }}
+	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) { return nil, errors.New("db down") }}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.DELETE("/storage/v1/object/:bucket", h.removeObjects)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/storage/v1/object/avatars", strings.NewReader(`{"prefixes":["a"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	assert.Equal(t, 500, w.Code)
+	assert.Zero(t, deleted)
 }
 
 func TestRemoveObjects_BadRequestBody(t *testing.T) {
