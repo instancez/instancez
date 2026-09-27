@@ -172,6 +172,33 @@ func TestHandleSignDownload_ObjectNotFound(t *testing.T) {
 	}
 }
 
+func TestHandleSignDownload_PassesSafeHeaderOptions(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, public := range []bool{false, true} {
+		var got domain.DownloadOptions
+		db := &stubDB{queryRowFn: func(context.Context, string, ...any) (map[string]any, error) {
+			return map[string]any{"mime": "text/html"}, nil
+		}}
+		store := &stubObjectStore{signDownloadFn: func(_ context.Context, _ string, _ time.Duration, o domain.DownloadOptions) (string, error) {
+			got = o
+			return "https://example.com/download", nil
+		}}
+		h := newLegacyStorageHandler(db, store)
+
+		w := httptest.NewRecorder()
+		r := gin.New()
+		r.GET("/storage/avatars/:id", h.handleSignDownload("avatars", domain.Bucket{Public: public}))
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/storage/avatars/page.html", nil))
+
+		require.Equal(t, 200, w.Code, w.Body.String())
+		cache := "private, max-age=3600"
+		if public {
+			cache = "public, max-age=3600"
+		}
+		assert.Equal(t, domain.DownloadOptions{ContentType: "text/html", ContentDisposition: "attachment", CacheControl: cache}, got)
+	}
+}
+
 func TestHandleDelete_Success(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	var deletedKey string
