@@ -574,6 +574,11 @@ func (h *StorageV1Handler) serveDownload(c *gin.Context, bucketName, objPath str
 	if objPath, ok = objectPath(c, objPath); !ok {
 		return
 	}
+	tp, err := parseTransformParams(c)
+	if err != nil {
+		storageErr(c, 400, "invalid_transform", err.Error())
+		return
+	}
 
 	bucket, ok := h.getBucketConfig(bucketName)
 	if !ok {
@@ -601,13 +606,17 @@ func (h *StorageV1Handler) serveDownload(c *gin.Context, bucketName, objPath str
 	}
 	defer func() { _ = body.Close() }()
 
-	// Image transforms
-	if tp := parseTransformParams(c); tp != nil && strings.HasPrefix(contentType, "image/") {
+	if tp != nil && strings.HasPrefix(contentType, "image/") {
 		transformed, newCT, err := applyTransform(body, contentType, tp)
-		if err == nil {
-			body = transformed
-			contentType = newCT
+		if errors.Is(err, errImageTooLarge) {
+			storageErr(c, 413, "image_too_large", err.Error())
+			return
 		}
+		if err != nil {
+			storageErr(c, 400, "invalid_transform", err.Error())
+			return
+		}
+		body, contentType = transformed, newCT
 	}
 
 	setDownloadHeaders(c, contentType, bucket.Public)

@@ -2272,3 +2272,28 @@ func TestServeDownload_PrivateHTMLIsAttachmentAndPrivate(t *testing.T) {
 	assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
 	assert.True(t, strings.HasPrefix(w.Header().Get("Content-Disposition"), "attachment"))
 }
+
+func TestServeDownload_TransformErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	huge := pngWithDims(t, 20000, 20000)
+	queried := false
+	db := &stubDB{queryRowFn: func(context.Context, string, ...any) (map[string]any, error) {
+		queried = true
+		return map[string]any{"id": "x"}, nil
+	}}
+	store := &stubObjectStore{downloadFn: func(context.Context, string) (io.ReadCloser, string, error) {
+		return io.NopCloser(bytes.NewReader(huge)), "image/png", nil
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {Public: true}})
+	r := gin.New()
+	r.GET("/storage/v1/object/*all", h.objectGetDispatch)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/storage/v1/object/public/avatars/a.png?width=-5", nil))
+	assert.Equal(t, 400, w.Code)
+	assert.False(t, queried, "invalid params must fail before DB work")
+
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/storage/v1/object/public/avatars/a.png?width=100", nil))
+	assert.Equal(t, 413, w.Code, "oversized image must not return an empty 200")
+}
