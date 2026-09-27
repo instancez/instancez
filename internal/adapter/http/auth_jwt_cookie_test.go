@@ -6,11 +6,13 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/pquerna/otp/totp"
 
 	adapterauth "github.com/instancez/instancez/internal/adapter/auth"
 	"github.com/instancez/instancez/internal/app"
@@ -152,5 +154,98 @@ func TestOAuthCallback_StateCookieRejectsTossedBareName(t *testing.T) {
 		if w.Code != tc.wantStatus {
 			t.Fatalf("%s: status %d want %d body %s", tc.name, w.Code, tc.wantStatus, w.Body.String())
 		}
+	}
+}
+
+// TestUpdateUser_PasswordChangeRevokeSurvivesCancel proves the post-commit
+// session revoke runs even if the client disconnects (request ctx canceled)
+// right after the password update commits.
+func TestUpdateUser_PasswordChangeRevokeSurvivesCancel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	km := stubKeys(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	revokeCalled := false
+	var revokeCtxErr error
+	h := &AuthHandler{cfg: &domain.Config{Auth: &domain.Auth{}}, jwtKeys: km, logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		authSvc: &stubAuthService{
+			updateUserFn: func(ctx context.Context, id string, p domain.UpdateUserParams) (map[string]any, error) {
+				cancel() // client disconnects right after the update commits
+				return testUserRow(id), nil
+			},
+			revokeOtherSessionsFn: func(ctx context.Context, uid, keep string) error {
+				revokeCalled = true
+				revokeCtxErr = ctx.Err()
+				return nil
+			},
+		}}
+	r := gin.New()
+	r.PUT("/auth/v1/user", jwtAuth(km, true), h.handleUpdateUser)
+	claims := jwt.MapClaims{"sub": "u1", "role": "authenticated", "aud": "authenticated", "session_id": "sess-1", "exp": time.Now().Add(time.Hour).Unix()}
+	req := httptest.NewRequest("PUT", "/auth/v1/user", strings.NewReader(`{"password":"new-long-password"}`)).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+signToken(t, km, claims))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	if !revokeCalled {
+		t.Fatal("revoke not called")
+	}
+	if revokeCtxErr != nil {
+		t.Fatalf("revoke ctx must survive client disconnect, got err=%v", revokeCtxErr)
+	}
+}
+
+// TestMFAVerify_RevokeBelowAAL2SurvivesCancel is the same regression for
+// mfa_handler's post-verify RevokeBelowAAL2 call: a client disconnect right
+// after the new AAL2 session is issued must not stop the aal1 revoke.
+func TestMFAVerify_RevokeBelowAAL2SurvivesCancel(t *testing.T) {
+	secret := "JBSWY3DPEHPK3PXP"
+	factorID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	uid := "11111111-2222-3333-4444-555555555555"
+
+	reqCtx, cancel := context.WithCancel(context.Background())
+	revokeCalled := false
+	var revokeCtxErr error
+	svc := &stubAuthService{
+		getFactorForVerifyFn: func(ctx context.Context, fID, userID string) (domain.MFAFactor, error) {
+			return domain.MFAFactor{Secret: secret, Status: "unverified"}, nil
+		},
+		getUserByIDFn: func(ctx context.Context, id string) (map[string]any, error) {
+			return map[string]any{
+				"id": uid, "email": "u@e.com", "email_verified": true,
+				"raw_app_meta_data": `{}`, "raw_user_meta_data": `{}`,
+				"created_at": time.Now(), "updated_at": time.Now(),
+			}, nil
+		},
+		revokeBelowAAL2Fn: func(ctx context.Context, userID, sessionID string, allSessions bool) error {
+			cancel() // request context is canceled the moment the handler would return
+			revokeCalled = true
+			revokeCtxErr = ctx.Err()
+			return nil
+		},
+	}
+	m := newMFAHarness(t, svc)
+
+	code, err := totp.GenerateCode(secret, time.Now())
+	if err != nil {
+		t.Fatalf("generate code: %v", err)
+	}
+	req := httptest.NewRequest("POST", "/auth/v1/factors/"+factorID+"/verify",
+		strings.NewReader(`{"challenge_id":"c1","code":"`+code+`"}`)).WithContext(reqCtx)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+m.token)
+	req.Header.Set("apikey", "inz_publishable_mfatest")
+	w := httptest.NewRecorder()
+	m.r.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	if !revokeCalled {
+		t.Fatal("revoke not called")
+	}
+	if revokeCtxErr != nil {
+		t.Fatalf("revoke ctx must survive client disconnect, got err=%v", revokeCtxErr)
 	}
 }

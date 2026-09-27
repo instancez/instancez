@@ -589,12 +589,14 @@ func (h *AuthHandler) handleUpdateUser(c *gin.Context) {
 		return
 	}
 	if params.Password != nil {
-		// Like GoTrue, a new password signs out every other session.
+		// Like GoTrue, a new password signs out every other session. Detach from
+		// the request context so a client disconnect can't skip the revoke.
+		revokeCtx := context.WithoutCancel(ctx)
 		var revokeErr error
 		if sid := h.extractSessionID(session.JWT); sid != "" {
-			revokeErr = h.authSvc.RevokeOtherSessions(ctx, session.UserID, sid)
+			revokeErr = h.authSvc.RevokeOtherSessions(revokeCtx, session.UserID, sid)
 		} else {
-			revokeErr = h.authSvc.RevokeAllUserSessions(ctx, session.UserID)
+			revokeErr = h.authSvc.RevokeAllUserSessions(revokeCtx, session.UserID)
 		}
 		if revokeErr != nil {
 			h.logger.Error("password change: revoke other sessions failed", "user_id", session.UserID, "error", revokeErr)

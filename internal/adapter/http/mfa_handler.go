@@ -223,8 +223,9 @@ func (h *AuthHandler) handleVerifyFactor(c *gin.Context) {
 		sessionError(c, err)
 		return
 	}
-	// A new factor drops every aal1 session, like GoTrue; a step-up drops this session's aal1 token.
-	if err := h.authSvc.RevokeBelowAAL2(ctx, session.UserID, sid, firstVerify); err != nil {
+	// A new factor drops every aal1 session, like GoTrue; a step-up drops this
+	// session's aal1 token. Detach so a client disconnect can't skip it.
+	if err := h.authSvc.RevokeBelowAAL2(context.WithoutCancel(ctx), session.UserID, sid, firstVerify); err != nil {
 		h.logger.Error("revoke aal1 sessions after mfa verify failed", "error", err)
 	}
 	c.JSON(200, sess)
