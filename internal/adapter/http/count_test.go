@@ -11,6 +11,7 @@ import (
 
 type recordingTx struct {
 	queries []string
+	args    [][]any
 	row     map[string]any
 	err     error
 }
@@ -19,8 +20,9 @@ func (r *recordingTx) Query(_ context.Context, q string, _ ...any) ([]map[string
 	r.queries = append(r.queries, q)
 	return []map[string]any{{"QUERY PLAN": "Aggregate  (cost=1.00..2.00 rows=7 width=8)"}}, r.err
 }
-func (r *recordingTx) QueryRow(_ context.Context, q string, _ ...any) (map[string]any, error) {
+func (r *recordingTx) QueryRow(_ context.Context, q string, args ...any) (map[string]any, error) {
 	r.queries = append(r.queries, q)
+	r.args = append(r.args, args)
 	return r.row, r.err
 }
 func (r *recordingTx) Exec(context.Context, string, ...any) (int64, error) { return 0, nil }
@@ -91,6 +93,19 @@ func TestExecuteCount_PlannedAndEstimated(t *testing.T) {
 		tx = &recordingTx{}
 		if _, err := countFor(t, "authors", raw, "estimated", tx); err != nil || !strings.HasPrefix(tx.queries[0], "EXPLAIN ") {
 			t.Fatalf("estimated %q must plan: err=%v q=%v", raw, err, tx.queries)
+		}
+	}
+}
+
+func TestExecuteCount_EstimatedQualifiesSchema(t *testing.T) {
+	for schema, want := range map[string]string{"": "public.authors", "public": "public.authors", "billing": "billing.authors"} {
+		tables := postsAuthorTables()
+		tbl := tables["authors"]
+		tbl.Schema = schema
+		tx := &recordingTx{row: map[string]any{"count": int64(9)}}
+		n, err := executeCount(context.Background(), tx, "authors", tbl, &QueryParams{}, tables, "estimated")
+		if err != nil || n != 9 || len(tx.args) != 1 || tx.args[0][0] != want {
+			t.Errorf("schema %q: n=%d err=%v args=%v, want %s", schema, n, err, tx.args, want)
 		}
 	}
 }

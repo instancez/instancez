@@ -658,7 +658,7 @@ func (h *CRUDHandler) handleDelete(tableName string, table domain.Table) gin.Han
 // executeCount counts the rows the list query would return, using its joins and filters in the caller's tx.
 func executeCount(ctx context.Context, tx domain.Tx, tableName string, table domain.Table, qp *QueryParams, allTbls map[string]domain.Table, mode string) (int, error) {
 	if mode == "estimated" && plainScan(qp) {
-		return queryCount(ctx, tx, "SELECT reltuples::bigint AS count FROM pg_class WHERE oid = to_regclass($1)", tableName)
+		return queryCount(ctx, tx, "SELECT reltuples::bigint AS count FROM pg_class WHERE oid = to_regclass($1)", table.EffectiveSchema()+"."+tableName)
 	}
 	unpaged := *qp
 	unpaged.Limit, unpaged.Offset, unpaged.Order = postgrest.NoLimit, 0, nil
