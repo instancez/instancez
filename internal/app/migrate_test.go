@@ -976,6 +976,41 @@ func TestHarden_HealsAuthColumnsOnlyWhenAuthConfigured(t *testing.T) {
 	}
 }
 
+// T6 heal: Harden must re-emit a bucket's storage RLS when it has a restrictive policy, so an existing DB upgrades off the old AND-scoping without a config change.
+func TestHarden_RestrictiveBucketPolicy_ReemitsStorageRLS(t *testing.T) {
+	cfg := &domain.Config{Storage: map[string]domain.Bucket{
+		"secrets": {RLS: []domain.RLSPolicy{
+			{Operations: []string{"select"}, Using: "name LIKE 'ok/%'", Type: "restrictive"},
+		}},
+	}}
+	db := newFakeDB(t)
+	if err := NewMigrator(db).Harden(context.Background(), cfg); err != nil {
+		t.Fatalf("Harden: %v", err)
+	}
+	joined := strings.Join(db.execs, "\n")
+	mustContain(t, joined, "DROP POLICY IF EXISTS storage_secrets_select_0 ON storage.objects;")
+	mustContain(t, joined, "bucket_id <> 'secrets' OR (name LIKE 'ok/%')")
+}
+
+// No restrictive bucket policies: Harden must emit no storage.objects DDL, taking no lock on it.
+func TestHarden_NoRestrictiveBucketPolicy_EmitsNoStorageDDL(t *testing.T) {
+	cfg := &domain.Config{Storage: map[string]domain.Bucket{
+		"avatars": {Public: true},
+		"docs": {RLS: []domain.RLSPolicy{
+			{Operations: []string{"select"}, Using: "auth.uid() IS NOT NULL"},
+		}},
+	}}
+	db := newFakeDB(t)
+	if err := NewMigrator(db).Harden(context.Background(), cfg); err != nil {
+		t.Fatalf("Harden: %v", err)
+	}
+	for _, stmt := range db.execs {
+		if strings.Contains(stmt, "storage.objects") {
+			t.Fatalf("Harden with no restrictive bucket policy must not touch storage.objects, got: %s", stmt)
+		}
+	}
+}
+
 func TestGenerateRLSPolicies_EnabledWithZeroPoliciesIsDenyAll(t *testing.T) {
 	on := true
 	ddl := generateRLSPolicies("todos", domain.Table{RLSEnabled: &on})

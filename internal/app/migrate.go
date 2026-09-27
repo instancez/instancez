@@ -375,7 +375,25 @@ func (m *Migrator) Harden(ctx context.Context, cfg *domain.Config) error {
 	if cfg != nil && cfg.Auth != nil {
 		stmts = append(stmts, authHealDDL...)
 	}
+	if cfg != nil {
+		stmts = append(stmts, healRestrictiveStorageRLS(cfg.Storage)...)
+	}
 	return m.applyStatements(ctx, stmts)
+}
+
+// healRestrictiveStorageRLS re-emits storage RLS for buckets with a restrictive policy, healing existing DBs still on the old AND-scoping without a config change.
+func healRestrictiveStorageRLS(storage map[string]domain.Bucket) []string {
+	var ddl []string
+	for _, name := range sortedKeys(storage) {
+		bucket := storage[name]
+		for _, p := range bucket.RLS {
+			if p.Type == "restrictive" {
+				ddl = append(ddl, generateStorageRLS(name, bucket)...)
+				break
+			}
+		}
+	}
+	return ddl
 }
 
 // applyStatements runs stmts inside a single transaction without recording a

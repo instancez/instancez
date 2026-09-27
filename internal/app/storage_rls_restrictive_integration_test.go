@@ -107,3 +107,46 @@ func TestIntegration_RestrictiveStorageWithCheck_DoesNotBlockOtherBucketInserts(
 		t.Fatalf("bucket_a non-matching insert = %v, want a row-level security violation", err)
 	}
 }
+
+// T6 heal: a DB stuck with the pre-fix AND-scoped restrictive policy gets the
+// fixed OR-scoping from Harden alone, with no config change.
+func TestIntegration_Harden_HealsRestrictiveBucketPolicyOnUnchangedConfig(t *testing.T) {
+	owner, req := dbboot.StartContainer(t)
+	ctx := context.Background()
+	cfg := storageRestrictiveCfg()
+
+	if err := app.NewMigrator(owner).Apply(ctx, cfg); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	// Overwrite bucket_a's restrictive policies with the pre-fix AND-scoping,
+	// simulating a DB migrated before the T6 fix shipped.
+	for _, stmt := range []string{
+		`DROP POLICY IF EXISTS storage_bucket_a_select_1 ON storage.objects;`,
+		`CREATE POLICY storage_bucket_a_select_1 ON storage.objects AS RESTRICTIVE FOR SELECT USING (bucket_id = 'bucket_a' AND (name LIKE 'ok/%'));`,
+		`DROP POLICY IF EXISTS storage_bucket_a_select_2 ON storage.objects;`,
+		`CREATE POLICY storage_bucket_a_select_2 ON storage.objects AS RESTRICTIVE FOR SELECT USING (bucket_id = 'bucket_a' AND (name NOT LIKE '%secret%'));`,
+	} {
+		if _, err := owner.Exec(ctx, stmt); err != nil {
+			t.Fatalf("simulate pre-fix DDL %q: %v", stmt, err)
+		}
+	}
+
+	if _, err := owner.Exec(ctx, `INSERT INTO storage.objects (bucket_id, name) VALUES ('bucket_b', 'any/1')`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if got := selectObjectKeys(t, req, "authenticated"); len(got) != 0 {
+		t.Fatalf("bug not reproduced pre-heal: bucket_b visible = %v, want none (AND-scoped restrictive should hide it)", got)
+	}
+
+	if err := app.NewMigrator(owner).Harden(ctx, cfg); err != nil {
+		t.Fatalf("harden: %v", err)
+	}
+
+	got := selectObjectKeys(t, req, "authenticated")
+	want := []string{"bucket_b/any/1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("post-heal visible = %v, want %v", got, want)
+	}
+}
