@@ -149,7 +149,7 @@ describe("TableDetail", () => {
 
   it("persists a new table only on save", async () => {
     const save = vi.fn().mockResolvedValue(true);
-    renderTableDetailNew({ tableName: "orders", seed: SEED, save });
+    renderTableDetailNew({ tableName: "orders", seed: { ...SEED, rls_enabled: true }, save });
     // The seed fields should be visible in the editor
     expect(screen.getAllByText("id").length).toBeGreaterThan(0);
     // Nothing is persisted before the user explicitly clicks Save
@@ -161,6 +161,24 @@ describe("TableDetail", () => {
     expect(save).toHaveBeenCalledTimes(1);
     const arg = save.mock.calls[0]![0] as Config;
     expect(arg.tables["orders"]).toBeDefined();
+    expect(arg.tables["orders"]!.rls_enabled).toBe(true);
+  });
+
+  it("keeps rls_enabled when a policy is added before saving", async () => {
+    const save = vi.fn().mockResolvedValue(true);
+    renderTableDetailNew({ tableName: "orders", seed: { ...SEED, rls_enabled: true }, save });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: /rls/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /add rls policy/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    });
+    const saved = (save.mock.calls[0]![0] as Config).tables["orders"]!;
+    expect(saved.rls_enabled).toBe(true);
+    expect(saved.rls).toHaveLength(1);
   });
 
   it("discards in-memory table when leaving new mode without saving", () => {

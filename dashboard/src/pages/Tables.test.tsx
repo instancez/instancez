@@ -207,7 +207,10 @@ describe("Tables", () => {
     expect(mockNavigate).toHaveBeenCalledWith(
       "new",
       expect.objectContaining({
-        state: expect.objectContaining({ tableName: "orders" }),
+        state: expect.objectContaining({
+          tableName: "orders",
+          seed: expect.objectContaining({ rls_enabled: true, rls: [] }),
+        }),
       }),
     );
   });
