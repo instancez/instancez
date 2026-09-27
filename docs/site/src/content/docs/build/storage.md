@@ -67,32 +67,32 @@ Uploading to an existing path without `upsert: true` returns a 409 error.
 
 Signed URLs are authorized when they are created, not when they are redeemed. `createSignedUrl` checks the bucket's `select` policy before returning a download URL, and `createSignedUploadUrl` checks the `insert` policy before returning an upload token. If you cannot read or write an object directly, you cannot get a signed URL for it either. Redeeming the token needs no further auth (the token is the grant), so the check happens when the URL is minted.
 
-`createSignedUrls` runs the same `select` check for each path, up to 1000 paths per call — an empty list or more than 1000 returns 400. Paths you can't read come back with an `error` and a null `signedURL`. Expiry is capped at 7 days (604800 seconds), which is the S3 presign limit. Larger values are clamped, and zero or negative values default to one hour.
+`createSignedUrls` runs the same `select` check for each path, up to 1000 paths per call: an empty list or more than 1000 returns 400. Paths you can't read come back with an `error` and a null `signedURL`. Expiry is capped at 7 days (604800 seconds), which is the S3 presign limit. Larger values are clamped, and zero or negative values default to one hour.
 
-`createSignedUploadUrl`'s response `url` includes `?token=`, which is where supabase-js reads it from. `bucket.info(path)` is served at `/object/info/<bucket>/<path>` (also reachable as `/object/info/authenticated/<bucket>/<path>`); `info/authenticated/<bucket>` with no path returns 400. A bucket literally named `public`, `authenticated` or `info` can't be reached through `.download()` or `.exists()` (the bare `/object/<bucket>/<path>` route reads the name as a route marker instead) — `.getPublicUrl()` and `.info()` are unaffected. Pick a different name to avoid the ambiguity.
+`createSignedUploadUrl`'s response `url` includes `?token=`, which is where supabase-js reads it from. `bucket.info(path)` is served at `/object/info/<bucket>/<path>` (also reachable as `/object/info/authenticated/<bucket>/<path>`); `info/authenticated/<bucket>` with no path returns 400. A bucket literally named `public`, `authenticated` or `info` can't be reached through `.download()` or `.exists()` (the bare `/object/<bucket>/<path>` route reads the name as a route marker instead). A bucket literally named `authenticated` also breaks `.info()`, since the info route strips a leading `authenticated/` segment unconditionally. `.getPublicUrl()` is unaffected. Pick a different name to avoid the ambiguity.
 
 ### What each operation checks
 
-Postgres requires a `select` policy to find a row at all — an `update` or `delete` policy alone can grant the write but still match zero rows, because the `WHERE` clause that locates the row has nothing to read it with. So most operations below need `select` plus the operation-specific policy, not the specific policy alone.
+A row must be visible under a `select` policy before `update` or `delete` can find it: Postgres checks the `WHERE` clause that locates a row against `select`, separately from the write's own policy. So most operations below need `select` plus the listed policy, not the listed policy alone. A `public: true` bucket gets an implicit unconditional `select` policy, so this is only a concern for a non-public bucket that declares `insert`/`update`/`delete` without `select`.
 
 | Operation | Policy that must allow it |
 |---|---|
-| `remove`, `emptyBucket` | `select` (to find the row) and `delete` on each object. Objects you can't delete are skipped and their bytes are kept. `emptyBucket` isn't admin-only: it removes what your `select`+`delete` policies allow, as in Supabase. |
-| `move` | `select` and `update` on the source row, with the destination passing `with_check`. **A policy that grants `update` but not `delete` still lets a caller move an object — which removes the source, same as a delete.** Moving onto an existing object returns 409. |
-| `copy` | `select` on the source and `insert` on the destination. Copying onto an existing destination object also needs `update` on that row (copy always upserts). The caller owns the copy. |
-| `update` (PUT) | `select` and `update` on the existing object. |
+| `remove`, `emptyBucket` | `select` and `delete` on each object. An object you can't see or delete is dropped from the batch silently, with no error and no count; its bytes are kept. `emptyBucket` isn't admin-only: it removes what your `select`+`delete` policies allow, as in Supabase. The legacy `DELETE /api/storage/<bucket>/<id>` route needs the same two policies, for the same reason. |
+| `move` | `select` and `update` on the source row, with the destination passing `with_check`. **A policy that grants `update` but not `delete` still lets a caller move an object, which removes the source, same as a delete.** A hidden or missing source returns 404 (unlike `remove`, this fails loudly). Moving onto an existing object returns 409. |
+| `copy` | `select` on the source and `insert` on the destination. Copying onto an existing destination object also needs `update` on that row, since copy always upserts. The caller owns the copy. |
+| `update` (PUT) | `select` and `update` on the existing object. A hidden or missing object returns 404, like `move`. |
 
-A `public: true` bucket gets an implicit unconditional `select` policy, so the operations above work there even without declaring `select` explicitly in `rls:`. A bucket that is not public and declares only `insert`/`update`/`delete` (no `select`) will see remove/move/update silently match nothing.
+A project that declares no `rls:` on any bucket leaves `storage.objects` RLS off entirely: every operation runs on route-level auth alone (a JWT for a non-public bucket), with no per-row check.
 
-Uploads check RLS twice: once before the body is written to disk, then again when the metadata row is written. The first check runs your `insert`/`update` policy with `size = 0`, since the real size isn't known until the body is spooled — a `with_check` policy that requires `size > 0` rejects every upload with 403.
+Object keys with a `..` segment, a NUL byte, or nothing at all return 400 on the single-object routes (upload, download, sign, info, move, copy). `remove` drops bad keys from its batch silently instead; `createSignedUrls` reports a per-path `error` instead of failing the whole call.
 
-Object keys containing a `..` segment, a NUL byte, or nothing at all are rejected with 400.
+A direct upload (`upload`/`update`) checks RLS twice, in this order: the MIME check runs first, then an early probe (a short, always-rolled-back transaction) runs your `insert`/`update` policy with `size = 0` (the real size isn't known until the body is read), so a `with_check` policy that requires `size > 0` rejects every upload with 403. Only after the probe passes does the body spool to a temporary file, and the real write transaction runs last, re-checking RLS when it writes the metadata row. A signed upload (`uploadToSignedUrl`) checks RLS only once, when `createSignedUploadUrl` mints the token; redemption runs as `service_role` and does not check again, since the token itself is the grant.
 
-Uploads spool to a temporary file before touching the database, so the server needs a writable temp directory sized for concurrent uploads × `max_size` (on Lambda, that's `/tmp`). `uploadToSignedUrl` enforces the same bucket MIME allowlist (422) and `max_size` (413) as a normal upload, and returns 500 if the metadata write fails after the bytes are stored.
+The server needs a writable temp directory sized for concurrent uploads × `max_size` (on Lambda, that's `/tmp`). `uploadToSignedUrl` enforces the same bucket MIME allowlist (422) and `max_size` (413) as a normal upload, and returns 500 if the metadata write fails after the bytes are stored.
 
 ### Downloads
 
-Every download sends `X-Content-Type-Options: nosniff`. Only the `public/` route sends `Cache-Control: public, max-age=3600`; every other route — including an authenticated download of a public bucket — sends `Cache-Control: private, max-age=3600`, since RLS on that route can still be per-caller. HTML, SVG, XML, JavaScript and `multipart/*` responses are sent with `Content-Disposition: attachment`, so an uploaded page can't run script on your API's origin.
+For an object served by instancez (every `/object/...` route except a presigned URL from `createSignedUrl(s)`), the response sends `X-Content-Type-Options: nosniff`. Only the `public/` route sends `Cache-Control: public, max-age=3600`; every other route, including an authenticated download of a public bucket, sends `Cache-Control: private, max-age=3600`, since RLS on that route can still be per-caller. HTML, SVG, XML, JavaScript and `multipart/*` responses are sent with `Content-Disposition: attachment`, so an uploaded page can't run script on your API's origin. A presigned S3 URL is fetched directly from S3, so none of these headers apply to it; S3 serves its own.
 
 ### Image transformations
 
@@ -140,7 +140,7 @@ await fetch(upload_url, { method: 'PUT', headers: { 'Content-Type': file.type },
 
 Use `GET /api/storage/<bucket>/<id>` to get a presigned download URL later.
 
-These endpoints run as the calling user, so the bucket's RLS policies apply: `insert` to sign an upload, `select` to sign a download, `delete` to delete. An object you can't see returns 404. A request with a present but invalid `Authorization: Bearer` token gets 401, even against a public bucket's download route — a bad token is always an error, not a silent fall-back to anonymous access.
+These endpoints run as the calling user, so the bucket's RLS policies apply: `insert` to sign an upload, `select` to sign a download, and `select` plus `delete` to delete (the `DELETE ... RETURNING` under RLS needs `select` to find the row, the same as `remove`). An object you can't see returns 404. A request with a present but invalid `Authorization: Bearer` token gets 401, even against a public bucket's download route: a bad token is always an error, not a silent fall-back to anonymous access.
 
 ## What's next
 
