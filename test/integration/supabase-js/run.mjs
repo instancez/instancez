@@ -152,7 +152,10 @@ await step('auth: two concurrent refreshes of one token both succeed (reuse grac
     tab().auth.refreshSession({ refresh_token: rt }),
   ])
   assert(!a.error && !b.error, `both tabs must refresh: ${a.error?.message} / ${b.error?.message}`)
-  assertEq(decodeJWT(a.data.session.access_token).session_id, decodeJWT(b.data.session.access_token).session_id, 'same session family')
+  const sessionId = decodeJWT(a.data.session.access_token).session_id
+  assertEq(sessionId, decodeJWT(b.data.session.access_token).session_id, 'same session family')
+  assertEq(a.data.session.refresh_token, b.data.session.refresh_token, 'replay gets the legit rotation refresh_token')
+  assert(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId), 'session_id is a uuid')
 })
 
 // --- Resend OTP ---
