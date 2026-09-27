@@ -379,10 +379,7 @@ func closeSpool(f *os.File) {
 	_ = os.Remove(f.Name())
 }
 
-// readUpload spools a validated body; on !ok the error response is already
-// written. authorize, when set, runs after the MIME check but before the
-// body is spooled to disk (with the now-known content type), so a denied or
-// anonymous caller never gets bytes onto TMPDIR.
+// readUpload spools a validated body; authorize, if set, runs before spooling so a denied caller never gets bytes onto disk.
 func (h *StorageV1Handler) readUpload(c *gin.Context, bucket domain.Bucket, authorize func(contentType string) error) (f *os.File, size int64, contentType string, ok bool) {
 	body, contentType, err := uploadBody(c)
 	if err != nil {
@@ -648,9 +645,7 @@ var activeContentTypes = map[string]bool{
 	"text/javascript": true, "application/javascript": true, "application/x-javascript": true,
 }
 
-// isActiveContent covers HTML/JS, every XML family type (svg, xhtml, rss,
-// atom, mathml), and multipart/* (e.g. x-mixed-replace can push new content
-// into the same response, so it's active like the rest).
+// isActiveContent covers HTML/JS, every XML family type, and multipart/* (e.g. x-mixed-replace).
 func isActiveContent(mt string) bool {
 	return activeContentTypes[mt] || strings.HasSuffix(mt, "+xml") || strings.HasSuffix(mt, "/xml") || strings.HasPrefix(mt, "multipart/")
 }
@@ -1006,9 +1001,7 @@ func (h *StorageV1Handler) moveObject(c *gin.Context) {
 		return
 	}
 	if err := tx.Commit(ctx); err != nil {
-		// A failed commit is ambiguous (it may have applied with the reply
-		// lost), so don't touch storage here: the orphaned copy is unreachable
-		// either way since the metadata row never committed.
+		// An ambiguous commit may have applied, so leave storage alone (no compensating delete).
 		h.logger.Error("move commit", "error", err)
 		storageErr(c, 500, "internal", "Move failed")
 		return

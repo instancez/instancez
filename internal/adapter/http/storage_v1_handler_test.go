@@ -791,8 +791,7 @@ func TestUploadObject_RLSDenied(t *testing.T) {
 	}
 }
 
-// countingReader records how many times its body was read, so a test can
-// prove a denied upload's body was never touched.
+// countingReader proves a denied upload's body was never touched.
 type countingReader struct {
 	r io.Reader
 	n *int
@@ -1605,10 +1604,7 @@ func TestMoveObject_CopyFailureRollsBack(t *testing.T) {
 	assert.Equal(t, []string{"exec", "copy:avatars/old.jpg>avatars/new.jpg", "rollback"}, log.ops)
 }
 
-// A failed commit is ambiguous: it may have applied with the reply lost, so
-// deleting the copied destination bytes could delete data a concurrent
-// reader now depends on. Leave the orphaned copy alone; it's unreachable
-// either way since the metadata row never committed.
+// An ambiguous commit must leave the orphaned copy alone (no compensating delete).
 func TestMoveObject_CommitFailureLeavesCopyOrphaned(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h, log, _ := moveCopyHarness(t, 1, nil, nil, errors.New("commit failed"))
@@ -2105,9 +2101,7 @@ func TestUploadObject_TxOpensOnlyAfterBodyFinishes(t *testing.T) {
 	done := make(chan struct{})
 	go func() { r.ServeHTTP(w, req); close(done) }()
 
-	// Each Write returns only once the handler has read it. By then the
-	// pre-spool permission probe (begin+exec+rollback, no body IO) has
-	// already run and closed, so no tx should be open mid-body.
+	// Each Write returns only once the handler has read it, so the pre-spool probe has already run and closed.
 	_, _ = pw.Write([]byte("slow "))
 	assert.False(t, txOpen.Load(), "a tx stayed open while the client body was still streaming")
 	_, _ = pw.Write([]byte("client "))
