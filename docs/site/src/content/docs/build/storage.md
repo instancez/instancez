@@ -67,6 +67,30 @@ Uploading to an existing path without `upsert: true` returns a 409 error.
 
 Signed URLs are authorized when they are created, not when they are redeemed. `createSignedUrl` checks the bucket's `select` policy before returning a download URL, and `createSignedUploadUrl` checks the `insert` policy before returning an upload token. If you cannot read or write an object directly, you cannot get a signed URL for it either. Redeeming the token needs no further auth (the token is the grant), so the check happens when the URL is minted.
 
+`createSignedUrls` runs the same `select` check for each path. Paths you can't read come back with an `error` and a null `signedURL`. Expiry is capped at 7 days (604800 seconds), which is the S3 presign limit. Larger values are clamped, and zero or negative values default to one hour.
+
+`createSignedUploadUrl`'s response `url` includes `?token=`, which is where supabase-js reads it from. `bucket.info(path)` is served at `/object/info/<bucket>/<path>` (also reachable as `/object/info/authenticated/<bucket>/<path>`); `info/authenticated/<bucket>` with no path returns 400. A bucket literally named `public`, `authenticated` or `info` is shadowed on `GET` by these routes and can't be downloaded from directly — pick a different name.
+
+### What each operation checks
+
+| Operation | Policy that must allow it |
+|---|---|
+| `remove`, `emptyBucket` | `delete` on each object. Objects you can't delete are skipped and their bytes are kept. `emptyBucket` isn't admin-only: it removes what your `delete` policy allows, as in Supabase. |
+| `move` | `update` on the source row, with the destination passing `with_check`. Moving onto an existing object returns 409. |
+| `copy` | `select` on the source and `insert` on the destination. The caller owns the copy. |
+| `update` (PUT) | `update` on the existing object. |
+
+Uploads check RLS twice: once before the body is written to disk, then again when the metadata row is written. The first check runs your `insert`/`update` policy with `size = 0`, since the real size isn't known until the body is spooled — a `with_check` policy that requires `size > 0` rejects every upload with 403.
+
+Object keys containing a `..` segment, a NUL byte, or nothing at all are rejected with 400.
+
+### Downloads
+
+Every download sends `X-Content-Type-Options: nosniff`. Objects in private buckets are served with `Cache-Control: private, max-age=3600`, so shared caches and CDNs don't keep them. HTML, SVG, XML and JavaScript files are sent with `Content-Disposition: attachment`, so an uploaded page can't run script on your API's origin.
+
+### Image transformations
+
+`width` and `height` accept 1-2500. Larger values are clamped, and negative values return 400. The source image must be 25MB or smaller and 50 megapixels or fewer, or the request returns 413.
 
 ## Storage providers
 
@@ -109,6 +133,8 @@ await fetch(upload_url, { method: 'PUT', headers: { 'Content-Type': file.type },
 ```
 
 Use `GET /api/storage/<bucket>/<id>` to get a presigned download URL later.
+
+These endpoints run as the calling user, so the bucket's RLS policies apply: `insert` to sign an upload, `select` to sign a download, `delete` to delete. An object you can't see returns 404.
 
 ## What's next
 

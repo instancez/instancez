@@ -16,6 +16,10 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 ### Fixed
 
 - Upgrading instancez with an unchanged `instancez.yaml` now adds new `auth.*` columns and indexes at boot. Before, they only reached a database when the config changed. This also adds the missing `attempts` column to `auth.one_time_tokens` on databases that enabled email auth after first boot.
+- Storage: batch signed URLs, copy, move, remove, `emptyBucket` and the legacy `/api/storage` routes now respect `storage.objects` RLS. Previously some of them signed, copied or deleted objects the caller couldn't read or delete.
+- Storage: object keys with `..` segments are rejected, and the local provider can no longer write outside its directory.
+- Storage: downloads send `nosniff`, private buckets are no longer publicly cacheable, and HTML/SVG/XML/JS are served as attachments.
+- Storage: image transforms are capped at 2500px, 25MB and 50MP. Signed URL expiry is capped at 7 days. Uploads no longer hold a database connection while the body streams. Multipart and signed uploads record real sizes, and signed uploads enforce the bucket's MIME allowlist. S3 copies of keys with special characters work.
 
 ### Security
 
