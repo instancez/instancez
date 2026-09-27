@@ -827,6 +827,21 @@ func TestOTPIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("spent budget rejects the correct code", func(t *testing.T) {
+		uid := mustUser(t, s, "spent@example.com")
+		mustCode(t, uid, "tok-spent", "333333", "spent@example.com")
+		if _, err := db.Exec(ctx, `UPDATE auth.one_time_tokens SET attempts = $1 WHERE token = 'tok-spent'`, maxOTPAttempts); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.VerifyOTP(ctx, "333333", "spent@example.com", nil); !errors.Is(err, domain.ErrInvalidToken) {
+			t.Fatalf("correct code past the cap: %v", err)
+		}
+		row, _ := db.QueryRow(ctx, `SELECT attempts FROM auth.one_time_tokens WHERE token = 'tok-spent'`)
+		if row == nil || asInt64(row["attempts"]) != maxOTPAttempts {
+			t.Fatalf("a rejected call must not spend past the cap: %v", row)
+		}
+	})
+
 	t.Run("correct code consumed exactly once", func(t *testing.T) {
 		uid := mustUser(t, s, "once@example.com")
 		mustCode(t, uid, "tok-once", "654321", "once@example.com")
