@@ -50,6 +50,17 @@ type SessionMeta struct {
 	AMR       []AMREntry
 }
 
+// Normalize defaults AAL to aal1 and AMR to an empty slice when unset.
+func (m SessionMeta) Normalize() SessionMeta {
+	if m.AAL == "" {
+		m.AAL = "aal1"
+	}
+	if m.AMR == nil {
+		m.AMR = []AMREntry{}
+	}
+	return m
+}
+
 // RefreshRotation is the child token a refresh grant mints when it rotates.
 type RefreshRotation struct {
 	Token     string

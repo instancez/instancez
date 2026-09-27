@@ -1540,12 +1540,7 @@ func (h *AuthHandler) signSession(ctx context.Context, userID string, userRow ma
 
 	now := time.Now()
 	exp := now.Add(expiry)
-	if meta.AAL == "" {
-		meta.AAL = "aal1"
-	}
-	if meta.AMR == nil {
-		meta.AMR = []domain.AMREntry{}
-	}
+	meta = meta.Normalize()
 	email, _ := userRow["email"].(string)
 
 	appMeta := decodeJSONB(userRow["raw_app_meta_data"])

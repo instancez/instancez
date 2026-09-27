@@ -354,21 +354,14 @@ type execer interface {
 }
 
 func insertRefreshToken(ctx context.Context, ex execer, userID, token string, meta domain.SessionMeta, expiresAt int64) error {
-	aal := meta.AAL
-	if aal == "" {
-		aal = "aal1"
-	}
-	amr := meta.AMR
-	if amr == nil {
-		amr = []domain.AMREntry{}
-	}
-	amrJSON, err := json.Marshal(amr)
+	meta = meta.Normalize()
+	amrJSON, err := json.Marshal(meta.AMR)
 	if err != nil {
 		return err
 	}
 	_, err = ex.Exec(ctx,
 		"INSERT INTO auth.refresh_tokens (user_id, token, session_id, ip, user_agent, expires_at, aal, amr) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8::jsonb)",
-		userID, token, meta.SessionID, meta.IP, meta.UserAgent, time.Unix(expiresAt, 0), aal, string(amrJSON))
+		userID, token, meta.SessionID, meta.IP, meta.UserAgent, time.Unix(expiresAt, 0), meta.AAL, string(amrJSON))
 	return err
 }
 
@@ -461,13 +454,7 @@ func (s *Service) ConsumeRefreshToken(ctx context.Context, token string, next do
 
 func sessionMetaFromRow(row map[string]any) domain.SessionMeta {
 	meta := domain.SessionMeta{SessionID: asString(row["session_id"]), AAL: asString(row["aal"]), AMR: domain.ParseAMR(row["amr"])}
-	if meta.AAL == "" {
-		meta.AAL = "aal1"
-	}
-	if meta.AMR == nil {
-		meta.AMR = []domain.AMREntry{}
-	}
-	return meta
+	return meta.Normalize()
 }
 
 func (s *Service) RevokeSessionByID(ctx context.Context, sessionID string) error {
