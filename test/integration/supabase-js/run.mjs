@@ -1053,6 +1053,7 @@ await step('rest: .explain() is refused without the secret key', async () => {
   const { error, status } = await client.from('todos').select('id').explain()
   assert(error, 'explain must fail for an authenticated user')
   assertEq(status, 406, 'PGRST107 status')
+  assertEq(error.code, 'PGRST107', 'PGRST107 code')
 })
 
 await step('rest: .csv() returns text/csv body', async () => {
