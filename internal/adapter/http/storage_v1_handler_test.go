@@ -2432,6 +2432,8 @@ func TestSetDownloadHeaders(t *testing.T) {
 		{"application/javascript", true, "application/javascript", pub, true},
 		{"application/rss+xml", true, "application/rss+xml", pub, true},
 		{"application/mathml+xml", true, "application/mathml+xml", pub, true},
+		{"multipart/x-mixed-replace", true, "multipart/x-mixed-replace", pub, true},
+		{"multipart/form-data; boundary=x", false, "multipart/form-data; boundary=x", priv, true},
 		{"html", false, "application/octet-stream", priv, false},
 		{"", false, "application/octet-stream", priv, false},
 		{"not a mime", false, "application/octet-stream", priv, false},
@@ -2446,6 +2448,13 @@ func TestSetDownloadHeaders(t *testing.T) {
 		assert.Equal(t, "nosniff", hd.Get("X-Content-Type-Options"), tc.ct)
 		assert.Equal(t, tc.attach, strings.HasPrefix(hd.Get("Content-Disposition"), "attachment"), tc.ct)
 	}
+}
+
+func TestIsActiveContent_Multipart(t *testing.T) {
+	assert.True(t, isActiveContent("multipart/x-mixed-replace"), "multipart/x-mixed-replace can run script when rendered inline")
+	assert.True(t, isActiveContent("multipart/form-data"))
+	assert.False(t, isActiveContent("multipart"), "no subtype must not match")
+	assert.False(t, isActiveContent("application/json"))
 }
 
 func TestServeDownload_PrivateHTMLIsAttachmentAndPrivate(t *testing.T) {

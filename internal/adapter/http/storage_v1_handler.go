@@ -647,9 +647,11 @@ var activeContentTypes = map[string]bool{
 	"text/javascript": true, "application/javascript": true, "application/x-javascript": true,
 }
 
-// isActiveContent covers HTML/JS plus every XML family type (svg, xhtml, rss, atom, mathml).
+// isActiveContent covers HTML/JS, every XML family type (svg, xhtml, rss,
+// atom, mathml), and multipart/* (e.g. x-mixed-replace can push new content
+// into the same response, so it's active like the rest).
 func isActiveContent(mt string) bool {
-	return activeContentTypes[mt] || strings.HasSuffix(mt, "+xml") || strings.HasSuffix(mt, "/xml")
+	return activeContentTypes[mt] || strings.HasSuffix(mt, "+xml") || strings.HasSuffix(mt, "/xml") || strings.HasPrefix(mt, "multipart/")
 }
 
 func setDownloadHeaders(c *gin.Context, contentType string, public bool) {
