@@ -888,6 +888,8 @@ func TestObjectGetDispatch_Public_Success(t *testing.T) {
 	if ct := w.Header().Get("Content-Type"); ct != "image/jpeg" {
 		t.Errorf("Content-Type = %q", ct)
 	}
+	assert.Equal(t, "public, max-age=3600", w.Header().Get("Cache-Control"))
+	assert.Equal(t, "", w.Header().Get("Content-Disposition"))
 }
 
 func TestObjectGetDispatch_Public_BucketNotPublic(t *testing.T) {
