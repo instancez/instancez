@@ -392,11 +392,6 @@ func (h *AuthHandler) handleRefreshGrant(c *gin.Context) {
 		}
 		return
 	}
-	if banned, _ := userRow["is_banned"].(bool); banned {
-		sessionError(c, domain.ErrUserBanned)
-		return
-	}
-
 	session, err := h.signSession(ctx, asString(userRow["id"]), userRow, meta)
 	if err != nil {
 		sessionError(c, err)
@@ -1502,9 +1497,6 @@ func (h *AuthHandler) buildSession(ctx context.Context, userID string, userRow m
 // issueSession signs an access token and stores a new refresh token for the
 // session in meta, returning the GoTrue-shaped session payload.
 func (h *AuthHandler) issueSession(ctx context.Context, userID string, userRow map[string]any, meta domain.SessionMeta) (gin.H, error) {
-	if banned, _ := userRow["is_banned"].(bool); banned {
-		return nil, domain.ErrUserBanned
-	}
 	if meta.SessionID == "" {
 		meta.SessionID = uuid.NewString()
 	}
@@ -1532,6 +1524,10 @@ func (h *AuthHandler) refreshExpiry() time.Duration {
 
 // signSession signs the access token for meta's session, without a refresh token.
 func (h *AuthHandler) signSession(ctx context.Context, userID string, userRow map[string]any, meta domain.SessionMeta) (gin.H, error) {
+	if banned, _ := userRow["is_banned"].(bool); banned {
+		return nil, domain.ErrUserBanned
+	}
+
 	key, err := h.jwtKeys.Active(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("jwt key: %w", err)
