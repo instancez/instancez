@@ -502,6 +502,9 @@ func (r *Runtime) spawnWorker(fnSpec string) (*worker, error) {
 	return w, nil
 }
 
+// drainTimeout bounds how long Close waits for in-flight calls; any call ends within maxTimeout.
+var drainTimeout = maxTimeout + 5*time.Second
+
 const (
 	healthProbeTimeout = 3 * time.Second
 	// maxResponseBytes matches the AWS Lambda sync response ceiling.
@@ -830,6 +833,20 @@ func (r *Runtime) fnSpec() string {
 	return strings.Join(spec, ",")
 }
 
+// drain holds every in-flight slot, so no call is running once it returns.
+func (r *Runtime) drain() {
+	timer := time.NewTimer(drainTimeout)
+	defer timer.Stop()
+	for i := 0; i < cap(r.sem); i++ {
+		select {
+		case r.sem <- struct{}{}:
+		case <-timer.C:
+			r.logger.Warn("funcs: drain timed out; stopping workers with calls in flight")
+			return
+		}
+	}
+}
+
 func (r *Runtime) isClosed() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -850,6 +867,8 @@ func (r *Runtime) Close() error {
 	// pending restart backoff so restartWG.Wait() below cannot deadlock.
 	close(r.done)
 	r.mu.Unlock()
+
+	r.drain()
 
 	// Wait for any in-flight restart goroutines to finish (they'll either have
 	// installed a worker before we set closed, or will tear down and bail).

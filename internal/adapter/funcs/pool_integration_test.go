@@ -603,3 +603,41 @@ func TestPoolRejectsOversizeResponse(t *testing.T) {
 		t.Fatalf("worker replaced after oversize reply: pid %d -> %d", before, after)
 	}
 }
+
+// A reload swaps runtimes and closes the old one; calls already running on it must still complete.
+func TestCloseLetsInFlightInvokeFinish(t *testing.T) {
+	dir := t.TempDir()
+	writeFn(t, dir, "slow.js",
+		`export default async () => { await new Promise(r => setTimeout(r, 500)); return { status: 200, body: { ok: true } }; };`)
+	opts := funcs.Options{Dir: dir, PoolSize: 1, Functions: map[string]domain.CodeFunction{"slow": {Runtime: "node", File: "slow.js"}}}
+	old, err := funcs.New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	swap := funcs.NewSwapRuntime(old)
+	defer func() { _ = swap.Close() }()
+	type result struct {
+		resp *domain.FunctionResponse
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		resp, err := swap.Invoke(context.Background(), domain.FunctionRequest{Name: "slow", Method: "POST"})
+		done <- result{resp, err}
+	}()
+	time.Sleep(100 * time.Millisecond)
+	next, err := funcs.New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := swap.Swap(next).Close(); err != nil {
+		t.Fatal(err)
+	}
+	res := <-done
+	if res.err != nil || res.resp.Status != 200 {
+		t.Fatalf("in-flight call killed by Close: resp=%v err=%v", res.resp, res.err)
+	}
+	if resp, err := swap.Invoke(context.Background(), domain.FunctionRequest{Name: "slow", Method: "POST"}); err != nil || resp.Status != 200 {
+		t.Fatalf("call after swap: resp=%v err=%v", resp, err)
+	}
+}

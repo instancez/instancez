@@ -19,6 +19,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - `count=exact` / `planned` / `estimated` now count what the query actually returns. They include `!inner` and belongs-to embed filters, work on non-public schemas, run in the same transaction as the rows, and return an error instead of silently dropping the count.
 - Upgrading instancez with an unchanged `instancez.yaml` now adds new `auth.*` columns and indexes at boot. Before, they only reached a database when the config changed. This also adds the missing `attempts` column to `auth.one_time_tokens` on databases that enabled email auth after first boot.
 - A code function stuck in a CPU-bound loop no longer permanently takes out a worker. After a timeout the worker is health-checked and replaced if unresponsive. Function responses over 6 MB now return 502 instead of being buffered without limit.
+- Reloading functions (dev hot reload, `serve --watch` bundle change) no longer kills calls in flight. The old runtime drains for up to 30s before its workers stop.
 
 ### Security
 

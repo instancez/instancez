@@ -224,10 +224,10 @@ Unlike `/rest/v1`, `/auth/v1`, and `/storage/v1`, functions do **not** require t
 
 | Command | npm | Hot reload |
 |---------|-----|------------|
-| `inz dev` | Runs `npm ci` on startup. Falls back to `npm install` when no lockfile exists yet (first run). Restart required only when adding or removing npm dependencies. | JS code changes and `functions:` YAML changes are picked up automatically without a restart. |
+| `inz dev` | Runs `npm ci` on startup. Falls back to `npm install` when no lockfile exists yet (first run). Restart required only when adding or removing npm dependencies. | JS code changes and `functions:` YAML changes are picked up automatically without a restart. Calls already running finish on the old workers (up to 30s) before those stop. |
 | `inz cloud deploy` | Uploads function sources; the cloud installs dependencies and builds the bundle. A committed `package-lock.json` is required. | N/A |
 | `inz bundle` | Runs `npm ci` (requires a committed `package-lock.json`) and produces a tar archive. Use `--output s3://…` for self-hosted deploys. | N/A |
-| `inz serve` | Never runs npm. Consumes the pre-built bundle produced by `inz bundle --output s3://…`. | N/A |
+| `inz serve` | Never runs npm. Consumes the pre-built bundle produced by `inz bundle --output s3://…`. | With `--watch`, a new bundle version is loaded without a restart. Calls already running finish on the old workers (up to 30s) before those stop. |
 
 ## Runtime limits
 
