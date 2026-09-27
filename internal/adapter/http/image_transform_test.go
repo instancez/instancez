@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -112,6 +113,43 @@ func TestApplyTransform_UndecodableReturnsOriginal(t *testing.T) {
 	b, _ := io.ReadAll(out)
 	assert.Equal(t, "not an image", string(b))
 	assert.Equal(t, "image/webp", ct)
+}
+
+// assertCoverBounded runs a default-cover transform and checks it stays within a sane
+// allocation budget and produces an exact target-sized output.
+func assertCoverBounded(t *testing.T, src []byte, params *transformParams) {
+	t.Helper()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	out, _, err := applyTransform(io.NopCloser(bytes.NewReader(src)), "image/png", params)
+	require.NoError(t, err)
+	runtime.ReadMemStats(&after)
+	assert.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(100<<20),
+		"cover transform allocated too much for an extreme-aspect source")
+	img, err := png.Decode(out)
+	require.NoError(t, err)
+	assert.Equal(t, maxTransformDim, img.Bounds().Dx())
+	assert.Equal(t, maxTransformDim, img.Bounds().Dy())
+}
+
+func TestApplyTransform_CoverNarrowTallSourceStaysBounded(t *testing.T) {
+	assertCoverBounded(t, realPNG(t, 1, 200_000),
+		&transformParams{Width: 2500, Resize: "cover", Quality: 80, Format: "png"})
+}
+
+func TestApplyTransform_CoverWideShortSourceStaysBounded(t *testing.T) {
+	assertCoverBounded(t, realPNG(t, 200_000, 1),
+		&transformParams{Height: 2500, Resize: "cover", Quality: 80, Format: "png"})
+}
+
+func TestApplyTransform_CoverNormalOutputDimensionsUnchanged(t *testing.T) {
+	out, _, err := applyTransform(io.NopCloser(bytes.NewReader(realPNG(t, 400, 300))), "image/png",
+		&transformParams{Width: 150, Height: 150, Resize: "cover", Quality: 80, Format: "png"})
+	require.NoError(t, err)
+	img, err := png.Decode(out)
+	require.NoError(t, err)
+	assert.Equal(t, 150, img.Bounds().Dx())
+	assert.Equal(t, 150, img.Bounds().Dy())
 }
 
 func TestApplyTransform_UnsupportedFormatErrors(t *testing.T) {
