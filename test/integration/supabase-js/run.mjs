@@ -2547,14 +2547,21 @@ if (SECRET_KEY) {
     assert(!infoErr && info?.name === 'guest-list.txt', `anon info(): ${infoErr?.message}`)
     const { data: signed, error: signErr } = await guest.storage.from('readonly').createSignedUrl('guest-list.txt', 60)
     assert(!signErr && signed?.signedUrl, `anon sign under a select policy: ${signErr?.message}`)
+    const redeemed = await fetch(signed.signedUrl)
+    assertEq(redeemed.status, 200, 'guest signed URL redeems')
+    assertEq(await redeemed.text(), 'guest visible')
     const { error: upErr } = await guest.storage.from('readonly').upload('guest-new.txt', 'x', { contentType: 'text/plain' })
     assert(upErr, 'readonly has no insert policy, so anon upload is denied by RLS')
+    assertEq(upErr.statusCode, '403', 'RLS-denied anon upload status')
 
     const { data: openList, error: openErr } = await guest.storage.from('avatars').list()
     assert(!openErr, `guest list of a bucket without rls must not 401: ${openErr?.message}`)
     assertEq(openList.length, 0, 'no policy authorizes anon on a bucket without rls')
     const { error: openUp } = await guest.storage.from('avatars').upload('guest.txt', 'x', { contentType: 'text/plain' })
     assert(openUp, 'anon upload to a bucket without rls stays denied')
+    assertEq(openUp.statusCode, '403', 'no-rls anon upload has the same status as an RLS denial')
+    const { error: openMv } = await guest.storage.from('avatars').move('a.txt', 'b.txt')
+    assert(openMv, 'anon move on a bucket without rls is denied')
 
     await fetch(`${URL}/storage/v1/object/readonly`, {
       method: 'DELETE',

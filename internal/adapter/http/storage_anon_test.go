@@ -54,12 +54,20 @@ var noRLSAnonCases = []anonCase{
 	{"HEAD", "/storage/v1/object/open/a.txt", "", 404, ""},
 	{"POST", "/storage/v1/object/sign/open/a.txt", `{"expiresIn":60}`, 404, "not_found"},
 	{"POST", "/storage/v1/object/sign/open", `{"expiresIn":60,"paths":["a.txt"]}`, 200, errNoObjectAccess},
-	{"POST", "/storage/v1/object/open/a.txt", "x", 401, "Missing or invalid Authorization header"},
-	{"PUT", "/storage/v1/object/open/a.txt", "x", 401, "Missing or invalid Authorization header"},
-	{"POST", "/storage/v1/object/upload/sign/open/a.txt", "", 401, "Missing or invalid Authorization header"},
+	{"POST", "/storage/v1/object/open/a.txt", "x", 403, "Not authorized to write this object"},
+	{"PUT", "/storage/v1/object/open/a.txt", "x", 403, "Not authorized to write this object"},
+	{"POST", "/storage/v1/object/upload/sign/open/a.txt", "", 403, "Not authorized to write this object"},
 	{"DELETE", "/storage/v1/object/open", `{"prefixes":["a.txt"]}`, 200, "[]"},
-	{"POST", "/storage/v1/object/move", `{"bucketId":"open","sourceKey":"a","destinationKey":"b"}`, 401, ""},
-	{"POST", "/storage/v1/object/copy", `{"bucketId":"open","sourceKey":"a","destinationKey":"b"}`, 401, ""},
+	{"POST", "/storage/v1/object/move", `{"bucketId":"open","sourceKey":"a","destinationKey":"b"}`, 404, "not_found"},
+	{"POST", "/storage/v1/object/copy", `{"bucketId":"open","sourceKey":"a","destinationKey":"b"}`, 404, "not_found"},
+	{"POST", "/storage/v1/object/move", `{"bucketId":"gated","destinationBucket":"open","sourceKey":"a","destinationKey":"b"}`, 404, "not_found"},
+	{"POST", "/storage/v1/object/copy", `{"bucketId":"gated","destinationBucket":"open","sourceKey":"a","destinationKey":"b"}`, 404, "not_found"},
+	{"DELETE", "/storage/v1/object/open", `not json`, 400, "bad_request"},
+	{"POST", "/storage/v1/object/move", `not json`, 400, "bad_request"},
+	{"POST", "/storage/v1/object/copy", `{"bucketId":"open","sourceKey":"../x","destinationKey":"b"}`, 400, "invalid_key"},
+	{"POST", "/storage/v1/object/sign/open", `not json`, 400, "bad_request"},
+	{"POST", "/storage/v1/object/open/a%00b", "x", 400, "invalid_key"},
+	{"POST", "/storage/v1/object/sign/open/a%00b", `{}`, 400, "invalid_key"},
 }
 
 func serve(r *gin.Engine, method, path, body string, headers map[string]string) *httptest.ResponseRecorder {
@@ -138,5 +146,66 @@ func TestStorageAnon_RLSBucketRunsAsAnon(t *testing.T) {
 	require.NotEmpty(t, roles)
 	for _, role := range roles {
 		assert.Equal(t, "anon", role)
+	}
+}
+
+func TestStorageAnon_RLSUploadStoresNullOwner(t *testing.T) {
+	var owner []any
+	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) {
+		return &stubTx{execFn: func(_ context.Context, _ string, args ...any) (int64, error) {
+			owner = append(owner, args[5])
+			return 1, nil
+		}}, nil
+	}}
+	r := mountedStorage(t, db, map[string]domain.Bucket{"drop": {RLS: []domain.RLSPolicy{{Operations: []string{"insert"}, WithCheck: "true"}}}})
+	w := serve(r, "POST", "/storage/v1/object/drop/a.txt", "x", map[string]string{"apikey": anonTestPK, "Authorization": "Bearer " + anonTestPK, "Content-Type": "text/plain"})
+	require.Equal(t, 200, w.Code, w.Body.String())
+	require.Len(t, owner, 2, "probe and real write")
+	for _, o := range owner {
+		assert.Nil(t, o, "anon upload binds uploaded_by as NULL")
+	}
+}
+
+func TestStorageAnon_RLSMoveCopyRunAsAnon(t *testing.T) {
+	var roles []string
+	db := &stubDB{
+		withRLSFn: func(ctx context.Context, s domain.Session) (context.Context, error) {
+			roles = append(roles, s.Role)
+			return ctx, nil
+		},
+		beginFn: func(context.Context) (domain.Tx, error) {
+			return &stubTx{execFn: func(context.Context, string, ...any) (int64, error) { return 1, nil }}, nil
+		},
+	}
+	r := mountedStorage(t, db, map[string]domain.Bucket{"gated": {RLS: []domain.RLSPolicy{{Operations: []string{"select", "update", "insert"}, Using: "true", WithCheck: "true"}}}})
+	creds := map[string]string{"apikey": anonTestPK, "Authorization": "Bearer " + anonTestPK}
+	for _, op := range []string{"move", "copy"} {
+		w := serve(r, "POST", "/storage/v1/object/"+op, `{"bucketId":"gated","sourceKey":"a","destinationKey":"b"}`, creds)
+		require.Equal(t, 200, w.Code, "%s: %s", op, w.Body.String())
+	}
+	require.NotEmpty(t, roles)
+	for _, role := range roles {
+		assert.Equal(t, "anon", role)
+	}
+}
+
+func TestStorageAnon_LegacyAnonJWTGated(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("INSTANCEZ_PUBLISHABLE_KEY", anonTestPK)
+	store := &stubObjectStore{}
+	h := &StorageHandler{cfg: &domain.Config{Storage: map[string]domain.Bucket{"open": {}}}, db: touchlessDB(t), storage: store, jwtKeys: stubKeys(t)}
+	r := gin.New()
+	h.Mount(r.Group("/api"))
+	tok := signToken(t, h.jwtKeys, jwt.MapClaims{"sub": "00000000-0000-0000-0000-000000000001", "role": "anon", "exp": 4102444800})
+	auth := map[string]string{"Authorization": "Bearer " + tok}
+	for _, c := range []anonCase{
+		{"POST", "/api/storage/open/sign", `{"content_type":"text/plain"}`, 403, "42501"},
+		{"POST", "/api/storage/open/sign", `not json`, 400, ""},
+		{"GET", "/api/storage/open/a.txt", "", 404, "Object not found"},
+		{"DELETE", "/api/storage/open/a.txt", "", 404, "Object not found"},
+	} {
+		w := serve(r, c.method, c.path, c.body, auth)
+		require.Equal(t, c.status, w.Code, "%s %s: %s", c.method, c.path, w.Body.String())
+		assert.Contains(t, w.Body.String(), c.bodyHas, c.path)
 	}
 }

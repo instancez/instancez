@@ -77,8 +77,8 @@ func (h *StorageV1Handler) Mount(root *gin.RouterGroup) {
 
 	// --- File operations ---
 	// Upload (POST) and update (PUT)
-	sg.POST("/object/:bucket/*path", key, opt, h.anonGate(denyUnauthorized), h.uploadObject)
-	sg.PUT("/object/:bucket/*path", key, opt, h.anonGate(denyUnauthorized), h.updateObject)
+	sg.POST("/object/:bucket/*path", key, opt, h.anonGate(denyForbidden), h.uploadObject)
+	sg.PUT("/object/:bucket/*path", key, opt, h.anonGate(denyForbidden), h.updateObject)
 
 	// One catch-all, since gin cannot overlap param routes; objectGetDispatch checks apikey except on public downloads.
 	sg.GET("/object/*all", h.objectGetDispatch)
@@ -91,34 +91,44 @@ func (h *StorageV1Handler) Mount(root *gin.RouterGroup) {
 	sg.HEAD("/object/:bucket/*path", key, opt, h.anonGate(func(c *gin.Context) { c.Status(404) }), h.objectExists)
 
 	// Remove (DELETE with paths in body)
-	sg.DELETE("/object/:bucket", key, opt, h.anonGate(denyEmptyList), h.removeObjects)
+	sg.DELETE("/object/:bucket", key, opt, h.removeObjects)
 
 	// Move & Copy
-	sg.POST("/object/move", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.moveObject)
-	sg.POST("/object/copy", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.copyObject)
+	sg.POST("/object/move", key, opt, h.moveObject)
+	sg.POST("/object/copy", key, opt, h.copyObject)
 
 	// Signed URLs
 	sg.POST("/object/sign/:bucket/*path", key, opt, h.anonGate(denyNotFound), h.createSignedURL)
 	sg.POST("/object/sign/:bucket", key, opt, h.createSignedURLs)
 
 	// Signed upload
-	sg.POST("/object/upload/sign/:bucket/*path", key, opt, h.anonGate(denyUnauthorized), h.createSignedUploadURL)
+	sg.POST("/object/upload/sign/:bucket/*path", key, opt, h.anonGate(denyForbidden), h.createSignedUploadURL)
 	// Authorized purely by the HMAC-signed token in the query string,
 	// matching real Supabase's signed-upload redemption — no apikey.
 	sg.PUT("/object/upload/sign/:bucket/*path", h.uploadToSignedURL)
 }
 
-// anonAllowed lets anon reach only buckets whose own rls policies decide, since nothing else would authorize it in Supabase.
 func (h *StorageV1Handler) anonAllowed(c *gin.Context, bucket string) bool {
+	return anonMayReach(c, h.cfg, bucket)
+}
+
+// anonMayReach lets anon reach only buckets whose own rls policies decide, since nothing else would authorize it in Supabase.
+func anonMayReach(c *gin.Context, cfg *domain.Config, bucket string) bool {
 	if r := getSession(c).Role; r == domain.JWTRoleAuthenticated || r == domain.JWTRoleService {
 		return true
 	}
-	b, ok := h.cfg.Storage[bucket]
+	b, ok := cfg.Storage[bucket]
 	return ok && len(b.RLS) > 0
 }
 
 func (h *StorageV1Handler) anonGate(deny gin.HandlerFunc) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if raw, hasPath := c.Params.Get("path"); hasPath {
+			if _, ok := objectPath(c, raw); !ok {
+				c.Abort()
+				return
+			}
+		}
 		if !h.anonAllowed(c, c.Param("bucket")) {
 			deny(c)
 			c.Abort()
@@ -142,8 +152,8 @@ func (h *StorageV1Handler) callerMayReach(c *gin.Context, bucket string, deny gi
 }
 
 func denyNotFound(c *gin.Context) { storageErr(c, 404, "not_found", "Object not found") }
-func denyUnauthorized(c *gin.Context) {
-	problemJSON(c, 401, "unauthorized", "Missing or invalid Authorization header")
+func denyForbidden(c *gin.Context) {
+	storageErr(c, 403, "forbidden", "Not authorized to write this object")
 }
 func denyEmptyList(c *gin.Context) { c.JSON(200, []gin.H{}) }
 func denyEmptyListV2(c *gin.Context) {
@@ -1063,7 +1073,7 @@ func (h *StorageV1Handler) removeObjects(c *gin.Context) {
 
 	keys := validKeys(req.Prefixes)
 	deleted := []gin.H{}
-	if len(keys) == 0 {
+	if len(keys) == 0 || !h.anonAllowed(c, bucketName) {
 		c.JSON(200, deleted)
 		return
 	}
@@ -1117,6 +1127,10 @@ func (h *StorageV1Handler) moveObject(c *gin.Context) {
 
 	if srcBucket == dstBucket && src == dst {
 		storageErr(c, 400, "invalid_key", "Source and destination are the same")
+		return
+	}
+	if !h.anonAllowed(c, srcBucket) || !h.anonAllowed(c, dstBucket) {
+		denyNotFound(c)
 		return
 	}
 	ctx := h.rlsCtx(c)
@@ -1193,6 +1207,10 @@ func (h *StorageV1Handler) copyObject(c *gin.Context) {
 
 	if srcBucket == dstBucket && src == dst {
 		storageErr(c, 400, "invalid_key", "Source and destination are the same")
+		return
+	}
+	if !h.anonAllowed(c, srcBucket) || !h.anonAllowed(c, dstBucket) {
+		denyNotFound(c)
 		return
 	}
 	ctx := h.rlsCtx(c)

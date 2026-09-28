@@ -1481,7 +1481,7 @@ func TestRemoveObjects_OnlyDeletesRowsRLSReturned(t *testing.T) {
 	}
 	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
 	r := gin.New()
-	r.DELETE("/storage/v1/object/:bucket", h.removeObjects)
+	r.DELETE("/storage/v1/object/:bucket", asAuthenticated, h.removeObjects)
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodDelete, "/storage/v1/object/avatars",
 		strings.NewReader(`{"prefixes":["photo.jpg","/hidden.jpg","../escape","","ünï.png"]}`))
@@ -1522,7 +1522,7 @@ func TestRemoveObjects_DBErrorSkipsStore(t *testing.T) {
 	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) { return nil, errors.New("db down") }}
 	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
 	r := gin.New()
-	r.DELETE("/storage/v1/object/:bucket", h.removeObjects)
+	r.DELETE("/storage/v1/object/:bucket", asAuthenticated, h.removeObjects)
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodDelete, "/storage/v1/object/avatars", strings.NewReader(`{"prefixes":["a"]}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -1739,6 +1739,9 @@ func TestCopyObject_OrderAndOwner(t *testing.T) {
 func TestCopyObject_AnonOwnerIsNull(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h, _, args := moveCopyHarness(t, 1, nil, nil, nil)
+	for name := range h.cfg.Storage {
+		h.cfg.Storage[name] = domain.Bucket{RLS: []domain.RLSPolicy{{Operations: []string{"select", "insert"}, Using: "true", WithCheck: "true"}}}
+	}
 	w := runMoveCopyAs(h, domain.Session{Role: "anon"}, "/storage/v1/object/copy", copyBody)
 	require.Equal(t, 200, w.Code, w.Body.String())
 	assert.Nil(t, (*args)[4], "empty user id must bind as NULL, not ''")

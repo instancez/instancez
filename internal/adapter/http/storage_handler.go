@@ -70,6 +70,10 @@ func (h *StorageHandler) handleSignUpload(bucketName string, bucket domain.Bucke
 				return
 			}
 		}
+		if !anonMayReach(c, h.cfg, bucketName) {
+			problemJSON(c, 403, "forbidden", "Not authorized to upload to this bucket")
+			return
+		}
 
 		// Generate object key (UUID)
 		key := generateRandomToken()
@@ -112,6 +116,10 @@ func (h *StorageHandler) handleSignDownload(bucketName string, bucket domain.Buc
 			problemJSON(c, 400, "bad_request", "Invalid key")
 			return
 		}
+		if !bucket.Public && !anonMayReach(c, h.cfg, bucketName) {
+			problemJSON(c, 404, "not_found", "Object not found")
+			return
+		}
 
 		ctx := rlsContext(h.db, c)
 		if bucket.Public {
@@ -145,6 +153,10 @@ func (h *StorageHandler) handleDelete(bucketName string, bucket domain.Bucket) g
 		name, err := cleanPath(c.Param("id"))
 		if err != nil {
 			problemJSON(c, 400, "bad_request", "Invalid key")
+			return
+		}
+		if !anonMayReach(c, h.cfg, bucketName) {
+			problemJSON(c, 404, "not_found", "Object not found")
 			return
 		}
 
