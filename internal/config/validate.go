@@ -113,7 +113,7 @@ var rpcSetRules = map[string]struct {
 	"search_path":       {re: regexp.MustCompile(`^\s*$|^\s*` + pgIdentOrUser + `(?:\s*,\s*` + pgIdentOrUser + `)*\s*$`), hint: `Comma-separated lowercase schema names or "$user", or "" for an empty path`},
 	"statement_timeout": {re: rpcTimeoutRE, hint: "0 to 2147483647 milliseconds, optionally with ms, s, min, h or d (at most 24d)", units: rpcTimeoutUnits},
 	"lock_timeout":      {re: rpcTimeoutRE, hint: "0 to 2147483647 milliseconds, optionally with ms, s, min, h or d (at most 24d)", units: rpcTimeoutUnits},
-	"work_mem":          {re: regexp.MustCompile(`^[0-9]{1,10}(kB|MB|GB|TB)?$`), hint: "64 to 2147483647 kB, optionally with kB, MB, GB or TB (at most 1TB)", units: rpcMemUnits, min: 64},
+	"work_mem":          {re: regexp.MustCompile(`^[0-9]{1,10}(kB|MB|GB|TB)?$`), hint: "64 to 2147483647 kB, optionally with kB, MB, GB or TB (under 2TB)", units: rpcMemUnits, min: 64},
 }
 
 // rpcSetInRange converts a regexp-checked value to base units and range-checks it.
