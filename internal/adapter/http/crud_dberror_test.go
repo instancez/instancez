@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -53,4 +54,10 @@ func TestHandleDBError_UnknownErrorStays500(t *testing.T) {
 	status, body := callHandleDBError(t, errors.New("something exploded"))
 	assert.Equal(t, 500, status)
 	assert.Equal(t, "XX000", body["code"])
+}
+
+func TestHandleDBError_GroupingErrorIs400(t *testing.T) {
+	status, body := callHandleDBError(t, &pgconn.PgError{Code: "42803", Message: `column "x" must appear in the GROUP BY clause`})
+	assert.Equal(t, 400, status)
+	assert.Equal(t, "42803", body["code"])
 }

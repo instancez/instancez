@@ -378,7 +378,9 @@ func buildRPCCall(name string, fn domain.Function, callArgs map[string]any) (str
 // structured for the same reason even though order never carries params.
 type rpcChainSQL struct {
 	where       *postgrest.WhereNode
-	having      *postgrest.WhereNode   // HAVING clause for aggregate filtering
+	having      *postgrest.WhereNode // HAVING clause for aggregate filtering
+	groupBy     []string             // non-aggregate select items when an aggregate is present
+	aggregated  bool
 	selectItems []postgrest.SelectItem // non-empty → project these instead of SELECT *
 	embeds      []postgrest.Embed      // resolved embeds when RPC returns SETOF <known table>
 	order       []postgrest.OrderClause
@@ -426,8 +428,12 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 	}
 
 	if sel := c.Query("select"); sel != "" {
+		entries := postgrest.ParseSelectParam(sel)
+		if err := postgrest.CheckStarWithAggregate(entries); err != nil {
+			return nil, nil, err
+		}
 		var embedParams []string
-		for _, raw := range postgrest.ParseSelectParam(sel) {
+		for _, raw := range entries {
 			if raw == "" {
 				continue
 			}
@@ -474,8 +480,14 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 			}
 			chain.embeds = resolved
 		}
-		if len(chain.embeds) > 0 && slices.ContainsFunc(chain.selectItems, func(it postgrest.SelectItem) bool { return it.Agg != "" }) {
+		chain.aggregated = slices.ContainsFunc(chain.selectItems, func(it postgrest.SelectItem) bool { return it.Agg != "" })
+		if chain.aggregated && len(chain.embeds) > 0 {
 			return nil, nil, fmt.Errorf("aggregates on RPC results can't be combined with embeds")
+		}
+		for _, it := range chain.selectItems {
+			if chain.aggregated && it.Agg == "" {
+				chain.groupBy = append(chain.groupBy, postgrest.RenderSelectItemGroupByExpr("_rpc", it))
+			}
 		}
 	}
 
@@ -568,6 +580,10 @@ func renderRPCChain(chain *rpcChainSQL, argIdx int) (string, []any) {
 			args = append(args, whereArgs...)
 			argIdx = next
 		}
+	}
+	if len(chain.groupBy) > 0 {
+		b.WriteString(" GROUP BY ")
+		b.WriteString(strings.Join(chain.groupBy, ", "))
 	}
 	if chain.having != nil {
 		sql, havingArgs, next := chain.having.BuildSQL(argIdx)
@@ -774,10 +790,26 @@ func buildRPCCountedQuery(callSQL string, chain *rpcChainSQL, baseArgIdx int) st
 	paged := *chain
 	paged.extraCols = "true AS __inz_row, " + win + " AS __inz_rn"
 	data, _ := wrapRPCCallForChain("SELECT * FROM __inz_src", &paged, baseArgIdx)
-	where, _ := renderRPCChain(&rpcChainSQL{where: chain.where}, baseArgIdx)
+	where, _ := renderRPCChain(countChain(chain), baseArgIdx)
+	counted := "__inz_src AS _rpc" + where
+	if chain.aggregated {
+		counted = "(SELECT 1 FROM __inz_src AS _rpc" + where + ") _g"
+	}
 	return "WITH __inz_src AS MATERIALIZED (" + callSQL + ") " +
-		"SELECT _p.*, _t.__inz_total FROM (SELECT count(*) AS __inz_total FROM __inz_src AS _rpc" + where + ") _t " +
+		"SELECT _p.*, _t.__inz_total FROM (SELECT count(*) AS __inz_total FROM " + counted + ") _t " +
 		"LEFT JOIN (" + data + ") _p ON true ORDER BY _p.__inz_rn"
+}
+
+// countChain keeps what decides the row count: filters, plus groups and HAVING for aggregates.
+func countChain(chain *rpcChainSQL) *rpcChainSQL {
+	if !chain.aggregated {
+		return &rpcChainSQL{where: chain.where}
+	}
+	groupBy := chain.groupBy
+	if len(groupBy) == 0 {
+		groupBy = []string{"()"} // a bare aggregate is one group
+	}
+	return &rpcChainSQL{where: chain.where, groupBy: groupBy, having: chain.having}
 }
 
 // splitRPCTotal strips the count helper columns and the padding row an empty page yields.
@@ -801,7 +833,7 @@ func splitRPCTotal(rows []map[string]any) ([]map[string]any, int) {
 
 // executeRPCPlannedCount estimates with plain EXPLAIN, which never executes the function.
 func executeRPCPlannedCount(ctx context.Context, tx domain.Tx, callSQL string, callArgs []any, chain *rpcChainSQL) (int, error) {
-	where, whereArgs := renderRPCChain(&rpcChainSQL{where: chain.where}, len(callArgs)+1)
+	where, whereArgs := renderRPCChain(countChain(chain), len(callArgs)+1)
 	// nosemgrep -- callSQL uses validated identifiers; values are bound args
 	rows, err := tx.Query(ctx, "EXPLAIN SELECT 1 FROM ("+callSQL+") AS _rpc"+where, append(callArgs, whereArgs...)...)
 	if err != nil {

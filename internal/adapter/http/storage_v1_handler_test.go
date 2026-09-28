@@ -2889,7 +2889,9 @@ func TestRedeemSignedURL_PathCaseAndTrailingSlash(t *testing.T) {
 
 	// The local provider streams the same cleaned object.
 	var streamed []string
-	store.signDownloadFn = func(context.Context, string, time.Duration, domain.DownloadOptions) (string, error) { return "file:///x", nil }
+	store.signDownloadFn = func(context.Context, string, time.Duration, domain.DownloadOptions) (string, error) {
+		return "file:///x", nil
+	}
 	store.downloadFn = func(_ context.Context, key string) (io.ReadCloser, string, error) {
 		streamed = append(streamed, key)
 		return io.NopCloser(strings.NewReader("B")), "image/png", nil

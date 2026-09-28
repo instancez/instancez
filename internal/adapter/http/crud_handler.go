@@ -913,7 +913,8 @@ func handleDBError(c *gin.Context, err error) {
 			status = 409
 		case "25006": // read_only_sql_transaction
 			status = 405
-		case "42601": // syntax_error
+		case "42601", // syntax_error
+			"42803": // grouping_error
 			status = 400
 		case "42602": // invalid_name
 			status = 400
@@ -1023,6 +1024,9 @@ func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allT
 	// Parse select
 	if sel := c.Query("select"); sel != "" {
 		qp.Select = postgrest.ParseSelectParam(sel)
+		if err := postgrest.CheckStarWithAggregate(qp.Select); err != nil {
+			return nil, err
+		}
 		for _, s := range qp.Select {
 			if strings.Contains(s, "(") && !postgrest.IsAggSelectEntry(s) {
 				continue // embed — validated in ResolveEmbeds

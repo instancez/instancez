@@ -1805,6 +1805,35 @@ await step('rpc: setof function with .order().limit()', async () => {
   }
 })
 
+await step('rpc: setof aggregate groups by plain columns and counts groups', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const ids = []
+  for (const [title, priority] of [['agg-a', 7], ['agg-b', 7], ['agg-c', 9]]) {
+    const { data: ins, error } = await client
+      .from('todos').insert({ title, priority, user_id: userId }).select('id').single()
+    if (error) throw error
+    ids.push(ins.id)
+  }
+  try {
+    const { data, count, error } = await client
+      .rpc('list_todos', undefined, { count: 'exact' })
+      .select('priority, n:id.count()')
+      .in('title', ['agg-a', 'agg-b', 'agg-c'])
+      .order('priority')
+    if (error) throw error
+    assertEq(data.map((r) => `${r.priority}:${r.n}`).join(','), '7:2,9:1', 'grouped by priority')
+    assertEq(count, 2, 'count=exact counts groups')
+
+    const star = await client.rpc('list_todos').select('*, id.count()')
+    assert(star.error && star.status === 400, `* with an aggregate is a 400: ${JSON.stringify(star.error)}`)
+  } finally {
+    for (const id of ids) await client.from('todos').delete().eq('id', id)
+  }
+})
+
 await step('rest: cleanup comments', async () => {
   const client = createClient(URL, PUBLISHABLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },

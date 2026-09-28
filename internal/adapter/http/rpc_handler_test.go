@@ -366,8 +366,8 @@ func TestWrapRPCCallForChain_HavingNonAggregateQualifiedToRPCAlias(t *testing.T)
 	call := `SELECT * FROM public."users_by_status"()`
 	got, _ := wrapRPCCallForChain(call, chain, 1)
 
-	if !strings.Contains(got, "_rpc.status = $") {
-		t.Errorf("expected _rpc.status in HAVING, got: %s", got)
+	if !strings.Contains(got, " GROUP BY _rpc.status HAVING _rpc.status = $") {
+		t.Errorf("expected GROUP BY _rpc.status before HAVING, got: %s", got)
 	}
 	if strings.Contains(got, "users.status =") {
 		t.Errorf("HAVING should not reference table name, got: %s", got)
@@ -799,5 +799,33 @@ func TestSplitRPCTotal(t *testing.T) {
 	got, total = splitRPCTotal(nil)
 	if total != -1 || len(got) != 0 {
 		t.Fatalf("nil: got %v total %d", got, total)
+	}
+}
+
+func TestBuildRPCCountedQuery_AggregateCountsGroups(t *testing.T) {
+	chain := &rpcChainSQL{
+		selectItems: []postgrest.SelectItem{{Col: "status"}, {Agg: "count"}},
+		groupBy:     []string{"_rpc.status"},
+		aggregated:  true,
+		where:       postgrest.AndLeaves(postgrest.Filter{Column: "age", Operator: "gt", Value: "1"}),
+		having:      postgrest.AndLeaves(postgrest.Filter{Column: "count", Operator: "gt", Value: "2"}),
+		hasLimit:    true, limit: 5,
+	}
+	sql := buildRPCCountedQuery(`SELECT * FROM public."f"()`, chain, 1)
+	for _, want := range []string{
+		`(SELECT count(*) AS __inz_total FROM (SELECT 1 FROM __inz_src AS _rpc WHERE age > $1 GROUP BY _rpc.status HAVING count > $2) _g) _t`,
+		`FROM (SELECT * FROM __inz_src) AS _rpc WHERE age > $1 GROUP BY _rpc.status HAVING count > $2 LIMIT $3`,
+	} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("missing %q in %s", want, sql)
+		}
+	}
+}
+
+func TestBuildRPCCountedQuery_BareAggregateIsOneGroup(t *testing.T) {
+	chain := &rpcChainSQL{selectItems: []postgrest.SelectItem{{Agg: "count"}}, aggregated: true}
+	sql := buildRPCCountedQuery(`SELECT * FROM public."f"()`, chain, 1)
+	if !strings.Contains(sql, `(SELECT 1 FROM __inz_src AS _rpc GROUP BY ()) _g`) {
+		t.Errorf("bare aggregate must count one group: %s", sql)
 	}
 }

@@ -174,3 +174,97 @@ func TestConf_RPCAggregateGrouping(t *testing.T) {
 		}
 	}
 }
+
+func TestConf_RPCAggregateGroupBy(t *testing.T) {
+	if testTS == nil {
+		t.Skip("no upstream")
+	}
+	rpc := func(q, body string, headers map[string]string) (int, []byte, http.Header) {
+		t.Helper()
+		req, err := http.NewRequest("POST", testTS.URL+"/rest/v1/rpc/users_by_status?"+q, strings.NewReader(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+testAdminKey)
+		req.Header.Set("apikey", testAdminKey)
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, raw, resp.Header
+	}
+	rows := func(raw []byte) []map[string]any {
+		t.Helper()
+		var out []map[string]any
+		require.NoError(t, json.Unmarshal(raw, &out), string(raw))
+		return out
+	}
+	exact := map[string]string{"Prefer": "count=exact"}
+
+	status, raw, _ := rpc("select=status,count()", `{"target":"OFFLINE"}`, nil)
+	require.Equal(t, 200, status, string(raw))
+	assert.Equal(t, []map[string]any{{"status": "OFFLINE", "count": float64(2)}}, rows(raw))
+
+	status, raw, hdr := rpc("select=nick:nickname,total:username.count()&order=nickname.asc", `{"target":"OFFLINE"}`, exact)
+	require.Equal(t, 200, status, string(raw))
+	assert.Equal(t, []map[string]any{{"nick": "jose", "total": float64(1)}, {"nick": "kiwi", "total": float64(1)}}, rows(raw))
+	assert.Equal(t, "0-1/2", hdr.Get("Content-Range"), "count=exact counts groups")
+
+	status, raw, hdr = rpc("select=nickname,count()&limit=1&order=nickname.desc", `{"target":"OFFLINE"}`, exact)
+	require.Equal(t, 200, status, string(raw))
+	assert.Equal(t, []map[string]any{{"nickname": "kiwi", "count": float64(1)}}, rows(raw))
+	assert.Equal(t, "0-0/2", hdr.Get("Content-Range"))
+
+	status, raw, hdr = rpc("select=status,count()&having=count.gt.2", `{"target":"ONLINE"}`, exact)
+	require.Equal(t, 200, status, string(raw))
+	assert.Equal(t, []map[string]any{{"status": "ONLINE", "count": float64(3)}}, rows(raw))
+	assert.Equal(t, "0-0/1", hdr.Get("Content-Range"))
+
+	status, raw, hdr = rpc("select=status,count()&having=count.gt.5", `{"target":"ONLINE"}`, exact)
+	require.Equal(t, 200, status, string(raw))
+	assert.Empty(t, rows(raw))
+	assert.True(t, strings.HasSuffix(hdr.Get("Content-Range"), "/0"), "HAVING drops the group from the count: %s", hdr.Get("Content-Range"))
+
+	status, raw, hdr = rpc("select=count()", `{"target":"ONLINE"}`, exact)
+	require.Equal(t, 200, status, string(raw))
+	assert.Equal(t, []map[string]any{{"count": float64(3)}}, rows(raw))
+	assert.Equal(t, "0-0/1", hdr.Get("Content-Range"), "a bare aggregate is one row")
+
+	status, raw, _ = rpc("select=status,count()&username=eq.supabot", `{"target":"ONLINE"}`, nil)
+	require.Equal(t, 200, status, string(raw))
+	assert.Equal(t, []map[string]any{{"status": "ONLINE", "count": float64(1)}}, rows(raw))
+}
+
+func TestConf_StarWithAggregateRejected(t *testing.T) {
+	if testTS == nil {
+		t.Skip("no upstream")
+	}
+	for _, path := range []string{"/rest/v1/users?select=*,count()", "/rest/v1/users?select=count(),*", "/rest/v1/messages?select=*,count(),users(username)"} {
+		req, err := http.NewRequest("GET", testTS.URL+path, nil)
+		require.NoError(t, err)
+		status, body := errorBody(t, req)
+		assert.Equal(t, 400, status, path)
+		assert.Contains(t, body["message"], "*", path)
+	}
+	for _, q := range []string{"select=*,count()", "select=count(),*"} {
+		status, raw, _ := rpcPOST(t, "users_by_status?"+q, `{"target":"ONLINE"}`, nil)
+		assert.Equal(t, 400, status, q+": "+string(raw))
+	}
+}
+
+func TestConf_GroupingErrorIs400(t *testing.T) {
+	if testTS == nil {
+		t.Skip("no upstream")
+	}
+	req, err := http.NewRequest("GET", testTS.URL+"/rest/v1/users?select=status,count()&order=age.asc", nil)
+	require.NoError(t, err)
+	status, body := errorBody(t, req)
+	assert.Equal(t, 400, status)
+	assert.Equal(t, "42803", body["code"])
+
+	status, raw, parsed := rpcPOST(t, "users_by_status?select=status,count()&order=age.asc", `{"target":"ONLINE"}`, nil)
+	assert.Equal(t, 400, status, string(raw))
+	assert.Equal(t, "42803", parsed.(map[string]any)["code"])
+}

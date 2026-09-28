@@ -358,7 +358,9 @@ GET /rest/v1/orders?select=amount.sum(),customers(name)
 
 Embeds in an aggregate query are returned as `jsonb`, so their object keys may come back in a different order.
 
-On RPC results, an aggregate can't be combined with an embed yet; that returns 400.
+Aggregates also work on setof RPC results (`rpc/fn?select=status,count()`), grouped by the plain columns. On RPC results an aggregate can't be combined with an embed yet; that returns 400.
+
+`*` can't be combined with an aggregate (`select=*,count()`), since it gives no columns to group by. That returns 400; list the columns instead. `count=exact` on an aggregate query counts the groups returned (after `having`). PostgREST counts the ungrouped rows instead.
 
 ### HAVING
 
