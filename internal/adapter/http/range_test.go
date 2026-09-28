@@ -35,3 +35,23 @@ func TestParseRangeHeader(t *testing.T) {
 		})
 	}
 }
+
+func TestContentRange(t *testing.T) {
+	for _, c := range []struct {
+		offset, n, total int
+		want             string
+	}{
+		{0, 5, 5, "0-4/5"},
+		{1, 2, 5, "1-2/5"},
+		{0, 3, -1, "0-2/*"},
+		{0, 0, -1, "*/*"},
+		{0, 0, 0, "*/0"},
+		{10, 0, 5, "*/5"},
+		{0, 0, 5, "*/5"},
+		{7, 1, 8, "7-7/8"},
+	} {
+		if got := contentRange(c.offset, c.n, c.total); got != c.want {
+			t.Errorf("contentRange(%d, %d, %d) = %q, want %q", c.offset, c.n, c.total, got, c.want)
+		}
+	}
+}

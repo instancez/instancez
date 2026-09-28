@@ -1805,7 +1805,7 @@ await step('rpc: setof function with .order().limit()', async () => {
   }
 })
 
-await step('rpc: setof aggregate groups by plain columns and counts groups', async () => {
+await step('rpc: setof aggregate groups by plain columns; count ignores grouping', async () => {
   const client = createClient(URL, PUBLISHABLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
     global: { headers: { Authorization: `Bearer ${accessToken}` } },
@@ -1825,7 +1825,7 @@ await step('rpc: setof aggregate groups by plain columns and counts groups', asy
       .order('priority')
     if (error) throw error
     assertEq(data.map((r) => `${r.priority}:${r.n}`).join(','), '7:2,9:1', 'grouped by priority')
-    assertEq(count, 2, 'count=exact counts groups')
+    assertEq(count, 3, 'count=exact counts ungrouped rows, as in PostgREST')
 
     const star = await client.rpc('list_todos').select('*, id.count()')
     assert(star.error && star.status === 400, `* with an aggregate is a 400: ${JSON.stringify(star.error)}`)

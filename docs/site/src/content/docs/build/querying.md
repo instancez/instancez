@@ -207,7 +207,7 @@ The client can request a slice with an HTTP `Range` header (`Range-Unit: items`)
 const { data } = await supabase.from('todos').select('*').order('priority').range(2, 3)
 ```
 
-The response includes a `Content-Range` header: `2-3/*` (or `2-3/N` when a count is requested).
+The response includes a `Content-Range` header: `2-3/*` (or `2-3/N` when a count is requested). An empty page sends `*/*`, or `*/N` with a count, as PostgREST does.
 
 ### Count
 
@@ -360,7 +360,7 @@ Embeds in an aggregate query are returned as `jsonb`, so their object keys may c
 
 Aggregates also work on setof RPC results (`rpc/fn?select=status,count()`), grouped by the plain columns. On RPC results an aggregate can't be combined with an embed yet; that returns 400.
 
-`*` can't be combined with an aggregate (`select=*,count()`), since it gives no columns to group by. That returns 400; list the columns instead. `count=exact` on an aggregate query counts the groups returned (after `having`). PostgREST counts the ungrouped rows instead.
+`*` can't be combined with an aggregate (`select=*,count()`), since it gives no columns to group by. That returns 400; list the columns instead. As in PostgREST, `count=exact`, `planned` and `estimated` on an aggregate query count the rows matching the filters, not the groups: `GROUP BY` and `having` don't change the total.
 
 ### HAVING
 

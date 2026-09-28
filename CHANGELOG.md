@@ -40,9 +40,10 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - Storage: object keys with `..` segments are rejected, and the local provider can no longer write outside its directory.
 - An aggregate next to an embed (`select=count(),users(username)`, `select=amount.sum(),...customers(name)`) returned 500. The embed is now a group key, as in PostgREST, for belongs-to, has-many, and spread embeds.
 - An aggregate next to an embed on an RPC result (`rpc/fn?select=count(),messages(id)`) now returns 400 instead of 500.
-- Aggregates with plain columns on setof RPC results (`rpc/fn?select=status,count()`) now group by those columns instead of returning 500, and `count=exact` counts the groups (after `having`).
+- Aggregates with plain columns on setof RPC results (`rpc/fn?select=status,count()`) now group by those columns instead of returning 500. As in PostgREST, `count` on an aggregate query (table or RPC) counts the rows matching the filters and ignores `GROUP BY` and `having`; table aggregates used to count the groups.
 - `select=*` with an aggregate (`select=*,count()`) returns 400 on tables and RPCs. Before, it returned 500 on tables and dropped the aggregate on RPCs.
 - A Postgres grouping error (`42803`) now returns 400 instead of 500.
+- An empty page now sends `Content-Range: */*` (or `*/N` with a count) on tables and RPCs, as PostgREST does, instead of `0-0/*` or `0-0/N`. An `offset` past the end sends `*/N` instead of `10-10/N`.
 - A filter on a spread embed (`select=id,...users(username)&users.status=eq.x`) keeps every parent row; unmatched spread columns are `null`.
 - Storage: downloading an object whose row exists but whose file is gone from the local provider (including a path under a file) now returns 404 `not_found` instead of 500.
 - Storage: downloads send `nosniff`, and HTML/SVG/XML/JS are served as attachments.

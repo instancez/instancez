@@ -138,7 +138,7 @@ func TestHardening_CountMatchesRows(t *testing.T) {
 		wantRows        int
 	}{
 		{"/rest/v1/users?select=username,messages!inner(id)", "0-0/1", 1},
-		{"/rest/v1/messages?select=id,users!inner(username)&users.status=eq.OFFLINE", "0-0/0", 0},
+		{"/rest/v1/messages?select=id,users!inner(username)&users.status=eq.OFFLINE", "*/0", 0},
 		{"/rest/v1/users?select=username&limit=2", "0-1/5", 2},
 	}
 	for _, c := range cases {
@@ -197,12 +197,14 @@ func TestHardening_RPCCountRunsFunctionOnce(t *testing.T) {
 	}{
 		{"", "count=exact", "0-4/5", 5},
 		{"?username=neq.supabot&order=username.desc&limit=2", "count=exact", "0-1/4", 2},
-		{"?offset=10", "count=exact", "10-10/5", 0},
-		{"?limit=0", "count=exact", "0-0/5", 0},
-		{"?username=eq.nobody", "count=exact", "0-0/0", 0},
+		{"?offset=10", "count=exact", "*/5", 0},
+		{"?limit=0", "count=exact", "*/5", 0},
+		{"?username=eq.nobody", "count=exact", "*/0", 0},
 		{"?select=username,messages(id)&username=eq.supabot", "count=exact", "0-0/1", 1},
-		{"?select=count()", "count=exact", "0-0/1", 1},
-		{"?select=status,count()", "count=exact", "0-1/2", 2},
+		{"?select=count()", "count=exact", "0-0/5", 1},
+		{"?select=status,count()", "count=exact", "0-1/5", 2},
+		{"?select=status,count()&having=count.gt.100", "count=exact", "*/5", 0},
+		{"?username=eq.nobody", "", "*/*", 0},
 		{"?select=status,count()", "count=planned", `^0-1/\d+$`, 2},
 		{"", "count=planned", `^0-4/\d+$`, 5},
 		{"", "count=estimated", `^0-4/\d+$`, 5},

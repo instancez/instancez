@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -239,17 +240,8 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 			return
 		}
 
-		// Content-Range header
-		offset := qp.Offset
-		end := offset + len(rows) - 1
-		if len(rows) == 0 {
-			end = offset
-		}
-		if total >= 0 {
-			c.Header("Content-Range", fmt.Sprintf("%d-%d/%d", offset, end, total))
-		} else {
-			c.Header("Content-Range", fmt.Sprintf("%d-%d/*", offset, end))
-		}
+		c.Header("Content-Range", contentRange(qp.Offset, len(rows), total))
+		end := max(qp.Offset, qp.Offset+len(rows)-1)
 
 		// GeoJSON response
 		if accept == "application/geo+json" {
@@ -661,13 +653,28 @@ func (h *CRUDHandler) handleDelete(tableName string, table domain.Table) gin.Han
 	}
 }
 
-// executeCount counts the rows the list query would return, using its joins and filters in the caller's tx.
+// contentRange mirrors PostgREST: "*" for an empty page, "*" total when uncounted (total < 0).
+func contentRange(offset, n, total int) string {
+	rng, tot := "*", "*"
+	if n > 0 && total != 0 {
+		rng = fmt.Sprintf("%d-%d", offset, offset+n-1)
+	}
+	if total >= 0 {
+		tot = strconv.Itoa(total)
+	}
+	return rng + "/" + tot
+}
+
+// executeCount counts the rows the list query matches, ignoring GROUP BY and HAVING as PostgREST does.
 func executeCount(ctx context.Context, tx domain.Tx, tableName string, table domain.Table, qp *QueryParams, allTbls map[string]domain.Table, mode string) (int, error) {
 	if mode == "estimated" && plainScan(qp) {
 		return queryCount(ctx, tx, "SELECT reltuples::bigint AS count FROM pg_class WHERE oid = to_regclass($1)", table.EffectiveSchema()+"."+tableName)
 	}
 	unpaged := *qp
 	unpaged.Limit, unpaged.Offset, unpaged.Order = postgrest.NoLimit, 0, nil
+	if slices.ContainsFunc(qp.Select, postgrest.IsAggSelectEntry) {
+		unpaged.Select, unpaged.Having = nil, nil
+	}
 	inner, args := postgrest.BuildSelectQueryFull(tableName, &unpaged, table, allTbls)
 	switch mode {
 	case "exact":

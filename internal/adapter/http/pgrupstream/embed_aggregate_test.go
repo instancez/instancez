@@ -65,7 +65,7 @@ func TestConf_AggregateWithEmbeds(t *testing.T) {
 		assert.Equal(t, map[string]any{"count": float64(2), "status": "ONLINE"}, rows[0])
 	})
 
-	t.Run("count=exact counts groups", func(t *testing.T) {
+	t.Run("count=exact counts ungrouped rows", func(t *testing.T) {
 		req, err := http.NewRequest("GET", testTS.URL+"/rest/v1/users?select=count(),messages(id)", nil)
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAdminKey)
@@ -76,7 +76,7 @@ func TestConf_AggregateWithEmbeds(t *testing.T) {
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
 		require.Equal(t, 200, resp.StatusCode, string(body))
-		assert.Equal(t, "0-1/2", resp.Header.Get("Content-Range"))
+		assert.Equal(t, "0-1/5", resp.Header.Get("Content-Range"), "count ignores GROUP BY, as in PostgREST")
 	})
 }
 
@@ -210,7 +210,7 @@ func TestConf_RPCAggregateGroupBy(t *testing.T) {
 	status, raw, hdr := rpc("select=nick:nickname,total:username.count()&order=nickname.asc", `{"target":"OFFLINE"}`, exact)
 	require.Equal(t, 200, status, string(raw))
 	assert.Equal(t, []map[string]any{{"nick": "jose", "total": float64(1)}, {"nick": "kiwi", "total": float64(1)}}, rows(raw))
-	assert.Equal(t, "0-1/2", hdr.Get("Content-Range"), "count=exact counts groups")
+	assert.Equal(t, "0-1/2", hdr.Get("Content-Range"), "count=exact counts the two OFFLINE rows")
 
 	status, raw, hdr = rpc("select=nickname,count()&limit=1&order=nickname.desc", `{"target":"OFFLINE"}`, exact)
 	require.Equal(t, 200, status, string(raw))
@@ -220,17 +220,25 @@ func TestConf_RPCAggregateGroupBy(t *testing.T) {
 	status, raw, hdr = rpc("select=status,count()&having=count.gt.2", `{"target":"ONLINE"}`, exact)
 	require.Equal(t, 200, status, string(raw))
 	assert.Equal(t, []map[string]any{{"status": "ONLINE", "count": float64(3)}}, rows(raw))
-	assert.Equal(t, "0-0/1", hdr.Get("Content-Range"))
+	assert.Equal(t, "0-0/3", hdr.Get("Content-Range"), "count ignores HAVING")
 
 	status, raw, hdr = rpc("select=status,count()&having=count.gt.5", `{"target":"ONLINE"}`, exact)
 	require.Equal(t, 200, status, string(raw))
 	assert.Empty(t, rows(raw))
-	assert.True(t, strings.HasSuffix(hdr.Get("Content-Range"), "/0"), "HAVING drops the group from the count: %s", hdr.Get("Content-Range"))
+	assert.Equal(t, "*/3", hdr.Get("Content-Range"), "empty page, ungrouped total")
 
 	status, raw, hdr = rpc("select=count()", `{"target":"ONLINE"}`, exact)
 	require.Equal(t, 200, status, string(raw))
 	assert.Equal(t, []map[string]any{{"count": float64(3)}}, rows(raw))
-	assert.Equal(t, "0-0/1", hdr.Get("Content-Range"), "a bare aggregate is one row")
+	assert.Equal(t, "0-0/3", hdr.Get("Content-Range"), "a bare aggregate counts the source rows")
+
+	status, raw, hdr = rpc("select=status,count()", `{"target":"NOBODY"}`, exact)
+	require.Equal(t, 200, status, string(raw))
+	assert.Empty(t, rows(raw))
+	assert.Equal(t, "*/0", hdr.Get("Content-Range"))
+
+	_, _, hdr = rpc("", `{"target":"NOBODY"}`, nil)
+	assert.Equal(t, "*/*", hdr.Get("Content-Range"))
 
 	status, raw, _ = rpc("select=status,count()&username=eq.supabot", `{"target":"ONLINE"}`, nil)
 	require.Equal(t, 200, status, string(raw))
@@ -267,4 +275,39 @@ func TestConf_GroupingErrorIs400(t *testing.T) {
 	status, raw, parsed := rpcPOST(t, "users_by_status?select=status,count()&order=age.asc", `{"target":"ONLINE"}`, nil)
 	assert.Equal(t, 400, status, string(raw))
 	assert.Equal(t, "42803", parsed.(map[string]any)["code"])
+}
+
+func TestConf_TableCountAndRangeParity(t *testing.T) {
+	if testTS == nil {
+		t.Skip("no upstream")
+	}
+	for _, c := range []struct{ path, prefer, want string }{
+		{"/rest/v1/users?select=status,count()", "count=exact", "0-1/5"},
+		{"/rest/v1/users?select=status,count()&having=count.gt.100", "count=exact", "*/5"},
+		{"/rest/v1/users?select=count()&status=eq.ONLINE", "count=exact", "0-0/3"},
+		{"/rest/v1/users?select=status,count()", "count=planned", ""},
+		{"/rest/v1/users?username=eq.nobody", "count=exact", "*/0"},
+		{"/rest/v1/users?username=eq.nobody", "", "*/*"},
+		{"/rest/v1/users?offset=10", "count=exact", "*/5"},
+		{"/rest/v1/users?limit=0", "count=exact", "*/5"},
+		{"/rest/v1/users?order=username&limit=2&offset=1", "count=exact", "1-2/5"},
+	} {
+		req, err := http.NewRequest("GET", testTS.URL+c.path, nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+testAdminKey)
+		req.Header.Set("apikey", testAdminKey)
+		if c.prefer != "" {
+			req.Header.Set("Prefer", c.prefer)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		require.Less(t, resp.StatusCode, 300, c.path+": "+string(body))
+		if c.want == "" {
+			assert.Regexp(t, `^0-1/\d+$`, resp.Header.Get("Content-Range"), c.path)
+			continue
+		}
+		assert.Equal(t, c.want, resp.Header.Get("Content-Range"), c.path+" "+c.prefer)
+	}
 }
