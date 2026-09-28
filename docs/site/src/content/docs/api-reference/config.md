@@ -142,7 +142,7 @@ tables:
 |-----|------|---------|-------------|
 | `fields[].name` | `string` | required | Column name. |
 | `fields[].type` | `string` | required | Postgres type (e.g. `text`, `bigint`, `uuid`, `timestamptz`, `text[]`). |
-| `fields[].primary_key` | `boolean` | `false` | Mark as primary key. Mark several fields for a composite key. The key's columns can't change once the table exists. |
+| `fields[].primary_key` | `boolean` | `false` | Mark as primary key. Mark several fields for a composite key. The key's columns can't change once the table exists, except for dropping a single key column and adding one new key column in the same change. |
 | `fields[].required` | `boolean` | `false` | Add `NOT NULL` constraint. |
 | `fields[].unique` | `boolean` | `false` | Add `UNIQUE` constraint. |
 | `fields[].default` | `any` | — | Column default. Supported: literal values, `now()`, `current_date`, `current_time`. The shorthand `uuid_v7()` and `uuid_v4()` are normalized to `gen_random_uuid()`. |
@@ -172,6 +172,8 @@ tables:
         type: uuid
         primary_key: true
 ```
+
+To reference one column of a composite key from another table's `foreign_key`, add a unique index on it (`indexes: [{columns: [team_id], unique: true}]`).
 
 ### tables.\<name\>.rls_enabled
 

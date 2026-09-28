@@ -63,7 +63,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - supabase-js `createSignedUrl` and `createSignedUrls` now return URLs that work. Before, storage-js glued the absolute S3 URL onto the API URL, which broke them. The `download` option (`true` or a filename) now sets `Content-Disposition`, safely encoded.
 - Storage: `?download=` on public and authenticated downloads now sets `Content-Disposition`, so `getPublicUrl(path, { download })` and `download=` links work.
 - A setof RPC with `Prefer: count=exact` runs the function once instead of twice, so VOLATILE functions no longer apply their side effects twice. `count=planned` and `count=estimated` on RPCs now return an estimate instead of `*`.
-- A table with more than one `primary_key: true` field no longer fails to deploy with "multiple primary keys". A migration that would change which columns form a live table's primary key now fails with a clear error (422 from the config API) instead of silently leaving the old key, and an FK to one column of a composite key is a validation error unless that column is `unique`.
+- A table with more than one `primary_key: true` field no longer fails to deploy with "multiple primary keys". A migration that would change which columns form a live table's primary key now fails with a clear error (422 from the config API) instead of silently leaving the old key, unless the live table already has the new key. A default upsert now targets the key Postgres actually has. `inz validate` warns about an FK to one column of a composite key without a unique index on it.
 
 ### Security
 

@@ -48,7 +48,15 @@ tables:
         type: text
 ```
 
-Which columns form the primary key is fixed once the table exists. A change to the `primary_key` flags of a live table fails the migration. An FK can't reference a single column of a composite key unless that column also has `unique: true`.
+Which columns form the primary key is fixed once the table exists, and changing the `primary_key` flags of a live table fails the migration. One swap is allowed: drop the old key column and add one new `primary_key: true` column in the same change (a destructive change, so it needs `--allow-destructive`).
+
+An FK to a single column of a composite key needs a unique index on that column, or Postgres rejects it. `inz validate` warns about this case:
+
+```yaml
+    indexes:
+      - columns: [team_id]
+        unique: true
+```
 
 ## Field types
 
