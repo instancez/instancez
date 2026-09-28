@@ -1,6 +1,7 @@
 package http
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -580,14 +581,23 @@ func renderRPCChain(chain *rpcChainSQL, argIdx int) (string, []any) {
 	}
 	var b strings.Builder
 	var args []any
+	var conds []string
 	if chain.where != nil {
 		sql, whereArgs, next := chain.where.BuildSQL(argIdx)
 		if sql != "" {
-			b.WriteString(" WHERE ")
-			b.WriteString(sql)
+			conds = append(conds, sql)
 			args = append(args, whereArgs...)
 			argIdx = next
 		}
+	}
+	for _, emb := range chain.embeds {
+		if emb.IsReverse && emb.Inner {
+			conds = append(conds, fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s.%s = _rpc.%s)",
+				emb.RefTable, emb.RefTable, emb.FKColumn, cmp.Or(emb.RefColumn, "id")))
+		}
+	}
+	if len(conds) > 0 {
+		b.WriteString(" WHERE " + strings.Join(conds, " AND "))
 	}
 	if len(chain.groupBy) > 0 {
 		b.WriteString(" GROUP BY ")
@@ -711,7 +721,8 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 	}
 
 	for _, emb := range chain.embeds {
-		alias := "_emb_" + emb.Name
+		key := emb.OutputKey()
+		alias := "_emb_" + key
 		if emb.IsReverse {
 			// Has-many: correlated scalar subselect with json_agg.
 			rowExpr, rowArgs, nextIdx := postgrest.BuildEmbedRowExpr(emb, emb.RefTable, nil, argIdx)
@@ -743,9 +754,9 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 				sub += fmt.Sprintf(" OFFSET %d", *emb.Offset)
 			}
 			if aggregated {
-				embedSelectParts = append(embedSelectParts, fmt.Sprintf("((%s))::jsonb AS %s", sub, emb.Name))
+				embedSelectParts = append(embedSelectParts, fmt.Sprintf("((%s))::jsonb AS %s", sub, key))
 			} else {
-				embedSelectParts = append(embedSelectParts, fmt.Sprintf("(%s) AS %s", sub, emb.Name))
+				embedSelectParts = append(embedSelectParts, fmt.Sprintf("(%s) AS %s", sub, key))
 			}
 		} else {
 			// Belongs-to: LEFT/INNER JOIN.
@@ -761,7 +772,7 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 				if aggregated {
 					expr = "(" + expr + ")::jsonb"
 				}
-				embedSelectParts = append(embedSelectParts, expr+" AS "+emb.Name)
+				embedSelectParts = append(embedSelectParts, expr+" AS "+key)
 			} else {
 				var embCols []string
 				for _, c := range emb.Columns {
@@ -771,7 +782,7 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 				if aggregated {
 					obj = "(" + obj + ")::jsonb"
 				}
-				embedSelectParts = append(embedSelectParts, obj+" AS "+emb.Name)
+				embedSelectParts = append(embedSelectParts, obj+" AS "+key)
 			}
 		}
 	}
@@ -820,7 +831,7 @@ func rpcCountFrom(src string, chain *rpcChainSQL, argIdx int) (string, []any) {
 	var joins strings.Builder
 	for _, emb := range chain.embeds {
 		if !emb.IsReverse && emb.Inner {
-			alias := "_emb_" + emb.Name
+			alias := "_emb_" + emb.OutputKey()
 			fmt.Fprintf(&joins, " INNER JOIN %s AS %s ON _rpc.%s = %s.%s", emb.RefTable, alias, emb.FKColumn, alias, emb.RefColumn)
 		}
 	}
@@ -828,7 +839,7 @@ func rpcCountFrom(src string, chain *rpcChainSQL, argIdx int) (string, []any) {
 	if joins.Len() > 0 && where != nil {
 		where = postgrest.AliasWhereColumns(where, "_rpc")
 	}
-	suffix, args := renderRPCChain(&rpcChainSQL{where: where}, argIdx)
+	suffix, args := renderRPCChain(&rpcChainSQL{where: where, embeds: chain.embeds}, argIdx)
 	return " FROM " + src + " AS _rpc" + joins.String() + suffix, args
 }
 

@@ -1967,6 +1967,28 @@ await step('rpc: setof aggregate groups by an embed; count stays ungrouped', asy
   assert(!Object.keys(data[0]).some((k) => k.startsWith('__inz_')), 'no helper columns leak')
 })
 
+await step('rpc: has-many !inner drops childless parents and the count; embed alias names the key', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { data: bare, error: insErr } = await client
+    .from('todos').insert({ title: 'no-comments', user_id: userId }).select('id').single()
+  if (insErr) throw insErr
+  try {
+    const { data, count, error } = await client
+      .rpc('list_todos', undefined, { count: 'exact' })
+      .select('id, c:comments!inner(body)')
+      .in('id', [todoId, bare.id])
+    if (error) throw error
+    assertEq(data.map((r) => r.id).join(','), String(todoId), `childless todo dropped: ${JSON.stringify(data)}`)
+    assertEq(count, 1, 'count drops it too')
+    assert(Array.isArray(data[0].c) && !('comments' in data[0]), `alias is the key: ${JSON.stringify(data)}`)
+  } finally {
+    await client.from('todos').delete().eq('id', bare.id)
+  }
+})
+
 await step('rest: cleanup comments', async () => {
   const client = createClient(URL, PUBLISHABLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },

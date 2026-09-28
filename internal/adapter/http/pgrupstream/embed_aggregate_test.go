@@ -371,13 +371,26 @@ func TestConf_RPCInnerEmbedCountMatchesRows(t *testing.T) {
 		t.Skip("no upstream")
 	}
 	exact := map[string]string{"Prefer": "count=exact"}
+	total := func(hdr http.Header) string {
+		t.Helper()
+		cr := hdr.Get("Content-Range")
+		i := strings.Index(cr, "/")
+		require.GreaterOrEqual(t, i, 0, "Content-Range %q has no total", cr)
+		return cr[i+1:]
+	}
+	row, err := testDB.QueryRow(context.Background(), "SELECT count(*)::int AS n FROM messages")
+	require.NoError(t, err)
+	all := int(row["n"].(int32))
+	require.Greater(t, all, 1, "needs the ghost row plus at least one real row")
+
 	status, raw, parsed, hdr := rpcPOST(t, "messages_with_ghost?select=id,users!inner(username)", `{}`, exact)
 	require.Contains(t, []int{200, 206}, status, string(raw))
 	rows := parsed.([]any)
+	require.Len(t, rows, all-1, "inner embed drops exactly the ghost row: %s", raw)
 	for _, r := range rows {
 		require.NotNil(t, r.(map[string]any)["users"], "inner embed drops the ghost row: %s", raw)
 	}
-	assert.Equal(t, fmt.Sprintf("0-%d/%d", len(rows)-1, len(rows)), hdr.Get("Content-Range"), "count drops what the page drops")
+	assert.Equal(t, fmt.Sprintf("0-%d/%d", all-2, all-1), hdr.Get("Content-Range"), "count drops what the page drops")
 
 	status, raw, parsed, hdr = rpcPOST(t, "messages_with_ghost?select=n:id.count(),users!inner(status)", `{}`, exact)
 	require.Contains(t, []int{200, 206}, status, string(raw))
@@ -385,7 +398,8 @@ func TestConf_RPCInnerEmbedCountMatchesRows(t *testing.T) {
 	for _, r := range parsed.([]any) {
 		sum += r.(map[string]any)["n"].(float64)
 	}
-	assert.Equal(t, fmt.Sprintf("/%d", int(sum)), hdr.Get("Content-Range")[strings.Index(hdr.Get("Content-Range"), "/"):], "ungrouped count = sum of group counts")
+	assert.Equal(t, float64(all-1), sum, "groups drop the ghost row")
+	assert.Equal(t, fmt.Sprint(all-1), total(hdr), "ungrouped count = sum of group counts")
 
 	status, raw, parsed, _ = rpcPOST(t, "messages_with_ghost?select=n:id.count(),users(status)", `{}`, nil)
 	require.Equal(t, 200, status, string(raw))
@@ -394,4 +408,41 @@ func TestConf_RPCInnerEmbedCountMatchesRows(t *testing.T) {
 		sawNull = sawNull || r.(map[string]any)["users"] == nil
 	}
 	assert.True(t, sawNull, "left embed keeps the ghost row in a null group: %s", raw)
+}
+
+func TestConf_RPCHasManyInnerAndAliases(t *testing.T) {
+	if testTS == nil {
+		t.Skip("no upstream")
+	}
+	exact := map[string]string{"Prefer": "count=exact"}
+	status, raw, parsed, hdr := rpcPOST(t, "users_by_status?select=username,messages!inner(id)", `{"target":"ONLINE"}`, exact)
+	require.Equal(t, 200, status, string(raw))
+	rows := parsed.([]any)
+	require.Len(t, rows, 1, "only supabot has messages: %s", raw)
+	assert.Equal(t, "supabot", rows[0].(map[string]any)["username"])
+	assert.Equal(t, "0-0/1", hdr.Get("Content-Range"), "count drops parents with no children")
+
+	status, raw, parsed, _ = rpcPOST(t, "users_by_status?select=n:username.count(),messages!inner(id)", `{"target":"ONLINE"}`, nil)
+	require.Equal(t, 200, status, string(raw))
+	require.Len(t, parsed.([]any), 1, string(raw))
+	assert.Equal(t, float64(1), parsed.([]any)[0].(map[string]any)["n"], "aggregate skips dropped parents")
+
+	status, raw, parsed, _ = rpcPOST(t, "users_by_status?select=username,m:messages(id)&username=eq.supabot", `{"target":"ONLINE"}`, nil)
+	require.Equal(t, 200, status, string(raw))
+	row := parsed.([]any)[0].(map[string]any)
+	assert.Len(t, row["m"], 2, string(raw))
+	assert.NotContains(t, row, "messages")
+
+	status, raw, parsed, _ = rpcPOST(t, "messages_with_ghost?select=id,author:users(username),who:users(status)&order=id", `{}`, nil)
+	require.Equal(t, 200, status, string(raw))
+	for i, r := range parsed.([]any) {
+		m := r.(map[string]any)
+		assert.NotContains(t, m, "users")
+		if i == 0 {
+			assert.Nil(t, m["author"], "ghost row has no author: %s", raw)
+			continue
+		}
+		assert.Equal(t, map[string]any{"username": "supabot"}, m["author"], string(raw))
+		assert.Equal(t, map[string]any{"status": "ONLINE"}, m["who"], string(raw))
+	}
 }
