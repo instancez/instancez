@@ -304,6 +304,14 @@ func TestResolveEmbeds_SchemaQualifiedReferences(t *testing.T) {
 
 	_, err = ResolveEmbeds("posts", tables["posts"], []string{"user(*)"}, tables)
 	require.Error(t, err, "a table outside the config is not embeddable")
+
+	tables["notes"] = domain.Table{Schema: "app", Fields: []domain.Field{{Name: "id", PrimaryKey: true}}}
+	tables["posts"] = domain.Table{Fields: []domain.Field{
+		{Name: "id", PrimaryKey: true}, {Name: "note_id", ForeignKey: fk("app.notes.id")}, {Name: "old_note_id", ForeignKey: fk("notes.id")},
+	}}
+	embeds, err = ResolveEmbeds("posts", tables["posts"], []string{"notes(*)"}, tables)
+	require.NoError(t, err, "notes.id means public.notes, so only app.notes.id matches app.notes")
+	assert.Equal(t, "note_id", embeds[0].FKColumn)
 }
 
 func TestToManyScope_QualifiesOnlyJunctionEmbeds(t *testing.T) {

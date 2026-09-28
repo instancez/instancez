@@ -942,8 +942,31 @@ func TestWrapRPCCallForChain_ManyToManyQualifiesTargetColumns(t *testing.T) {
 		Where:    &postgrest.WhereNode{Leaf: &postgrest.Filter{Column: "name", Operator: "eq", Value: "go"}},
 		Order:    []postgrest.OrderClause{{Column: "name"}},
 	}}}
+	exists := "EXISTS (SELECT 1 FROM tags, post_tags WHERE tags.id = post_tags.tag_id AND post_tags.post_id = _rpc.id AND tags.name = $1)"
 	got, args := wrapRPCCallForChain(`SELECT * FROM public."f"()`, chain, 1)
-	assert.Contains(t, got, "json_agg(row_to_json(tags.*) ORDER BY tags.name ASC), '[]'::json) FROM tags, post_tags WHERE tags.id = post_tags.tag_id AND post_tags.post_id = _rpc.id AND tags.name = $1")
-	assert.Contains(t, got, "WHERE EXISTS (SELECT 1 FROM tags, post_tags WHERE tags.id = post_tags.tag_id AND post_tags.post_id = _rpc.id)")
-	assert.Equal(t, []any{"go"}, args)
+	assert.Contains(t, got, "json_agg(row_to_json(tags.*) ORDER BY tags.name ASC), '[]'::json) FROM tags, post_tags WHERE tags.id = post_tags.tag_id AND post_tags.post_id = _rpc.id AND tags.name = $2")
+	assert.Contains(t, got, "WHERE "+exists)
+	assert.Equal(t, []any{"go"}, args, "embed args follow the chain args")
+
+	suffix, chainArgs := renderRPCChain(chain, 1)
+	assert.Equal(t, " WHERE "+exists, suffix)
+	assert.Equal(t, []any{"go"}, chainArgs)
+
+	from, countArgs := rpcCountFrom("__inz_src", chain, 1)
+	assert.Equal(t, " FROM __inz_src AS _rpc WHERE "+exists, from, "the count drops the same parents")
+	assert.Equal(t, []any{"go"}, countArgs)
+}
+
+func TestRenderRPCChain_InnerEmbedWhereFollowsParentArgs(t *testing.T) {
+	chain := &rpcChainSQL{
+		where: &postgrest.WhereNode{Leaf: &postgrest.Filter{Column: "status", Operator: "eq", Value: "open"}},
+		embeds: []Embed{{
+			Name: "comments", IsReverse: true, RefTable: "comments", FKColumn: "todo_id", RefColumn: "id", Inner: true,
+			Where: &postgrest.WhereNode{Leaf: &postgrest.Filter{Column: "body", Operator: "eq", Value: "hi"}},
+		}},
+		having: &postgrest.WhereNode{Leaf: &postgrest.Filter{Column: "count", Operator: "gt", Value: "1"}},
+	}
+	suffix, args := renderRPCChain(chain, 3)
+	assert.Equal(t, " WHERE status = $3 AND EXISTS (SELECT 1 FROM comments WHERE comments.todo_id = _rpc.id AND body = $4) HAVING count > $5", suffix)
+	assert.Equal(t, []any{"open", "hi", "1"}, args)
 }

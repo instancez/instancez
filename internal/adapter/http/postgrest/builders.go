@@ -260,19 +260,16 @@ func matchesFKHint(hint, table, col, refCol string) bool {
 	return hint == col || hint == refCol || strings.TrimSuffix(col, "_id") == hint || hint == fkConstraintName(table, col)
 }
 
-// fkTarget splits an FK reference; a schema-qualified one must name a configured table in that schema.
+// fkTarget splits an FK reference; its schema must match the configured table, or be public when unconfigured.
 func fkTarget(ref string, allTables map[string]domain.Table) (table, col string, ok bool) {
 	schema, table, col, err := domain.ParseFKReference(ref)
 	if err != nil {
 		return "", "", false
 	}
-	if strings.Count(ref, ".") == 2 {
-		t, found := allTables[table]
-		if !found || t.EffectiveSchema() != schema {
-			return "", "", false
-		}
+	if t, found := allTables[table]; found {
+		return table, col, t.EffectiveSchema() == schema
 	}
-	return table, col, true
+	return table, col, schema == "public"
 }
 
 // isOneToOne mirrors PostgREST: the FK columns are exactly a primary or unique key.
@@ -397,7 +394,6 @@ func ambiguousEmbed(parent, target string, cands []relCandidate) *AmbiguousEmbed
 	slices.SortStableFunc(cands, func(a, b relCandidate) int {
 		return cmp.Or(
 			cmp.Compare(a.emb.RefTable, b.emb.RefTable),
-			cmp.Compare(boolRank(a.emb.RefTable == parent), boolRank(b.emb.RefTable == parent)),
 			cmp.Compare(cardinalityRank[a.cardinality], cardinalityRank[b.cardinality]),
 			cmp.Compare(a.constraint, b.constraint),
 			cmp.Compare(a.relationship, b.relationship))
@@ -412,13 +408,6 @@ func ambiguousEmbed(parent, target string, cands []relCandidate) *AmbiguousEmbed
 		e.Hints = append(e.Hints, "'"+target+"!"+c.constraint+"'")
 	}
 	return e
-}
-
-func boolRank(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
 }
 
 // ToManyFrom is the FROM list and correlation of a to-many embed under parent.

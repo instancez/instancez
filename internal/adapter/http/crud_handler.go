@@ -38,9 +38,7 @@ func NewCRUDHandler(deps ServerDeps) *CRUDHandler {
 	}
 }
 
-// allTables returns a map that includes both user-defined tables from cfg.Tables
-// and a synthetic entry for the auth "users" table. This allows embed resolution
-// to traverse FKs that reference the users table (e.g., comments → users).
+// allTables adds a public "users" stand-in when auth is on, so users.id references resolve; auth.users.id ones don't.
 func (h *CRUDHandler) allTables() map[string]domain.Table {
 	merged := make(map[string]domain.Table, len(h.cfg.Tables)+1)
 	for k, v := range h.cfg.Tables {

@@ -590,9 +590,18 @@ func renderRPCChain(chain *rpcChainSQL, argIdx int) (string, []any) {
 		}
 	}
 	for _, emb := range chain.embeds {
-		if emb.IsReverse && emb.Inner {
-			conds = append(conds, "EXISTS (SELECT 1 FROM "+postgrest.ToManyFrom(emb, "_rpc")+")")
+		if !emb.IsReverse || !emb.Inner {
+			continue
 		}
+		exists := "EXISTS (SELECT 1 FROM " + postgrest.ToManyFrom(emb, "_rpc")
+		if where, _ := postgrest.ToManyScope(emb); where != nil {
+			if sql, whereArgs, next := where.BuildSQL(argIdx); sql != "" {
+				exists += " AND " + sql
+				args = append(args, whereArgs...)
+				argIdx = next
+			}
+		}
+		conds = append(conds, exists+")")
 	}
 	if len(conds) > 0 {
 		b.WriteString(" WHERE " + strings.Join(conds, " AND "))
