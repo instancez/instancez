@@ -3426,6 +3426,41 @@ await step('storage: image transform quality affects jpeg output size', async ()
   assert(low.length < high.length, `low quality (${low.length}b) should be smaller than high quality (${high.length}b)`)
 })
 
+await step('storage: render/image routes serve storage-js transforms', async () => {
+  const pub = storageClient().storage.from('avatars')
+  const { data: urlData } = pub.getPublicUrl('transform-test.png', { transform: { width: 3, height: 5, resize: 'fill' } })
+  assert(urlData.publicUrl.includes('/render/image/public/avatars/transform-test.png'), urlData.publicUrl)
+  const pr = await fetch(urlData.publicUrl)
+  assertEq(pr.status, 200, 'public render')
+  const pd = pngDimensions(Buffer.from(await pr.arrayBuffer()))
+  assertEq(`${pd.width}x${pd.height}`, '3x5')
+
+  const { data: blob, error: dlErr } = await pub.download('transform-test.png', { transform: { width: 2, height: 2, resize: 'fill' } })
+  if (dlErr) throw dlErr
+  const dd = pngDimensions(Buffer.from(await blob.arrayBuffer()))
+  assertEq(`${dd.width}x${dd.height}`, '2x2', 'authenticated render via download({transform})')
+
+  const { data: signed, error: signErr } = await pub.createSignedUrl('transform-test.png', 60, { transform: { width: 4, height: 6, resize: 'fill' } })
+  if (signErr) throw signErr
+  assert(signed.signedUrl.includes('/render/image/sign/avatars/transform-test.png'), signed.signedUrl)
+  const sr = await fetch(signed.signedUrl + '&width=999')
+  assertEq(sr.status, 200, 'signed render')
+  const sd = pngDimensions(Buffer.from(await sr.arrayBuffer()))
+  assertEq(`${sd.width}x${sd.height}`, '4x6', 'the token transform wins')
+
+  const head = await fetch(`${URL}/storage/v1/object/public/avatars/transform-test.png`, { method: 'HEAD' })
+  assertEq(head.status, 200, 'HEAD public')
+  assertEq(head.headers.get('content-type'), 'image/png')
+  assert(Number(head.headers.get('content-length')) > 0, 'HEAD carries Content-Length')
+  const infoPub = await fetch(`${URL}/storage/v1/object/info/public/avatars/transform-test.png`)
+  assertEq(infoPub.status, 200, 'info/public')
+  assertEq((await infoPub.json()).name, 'transform-test.png')
+  const privHead = await fetch(`${URL}/storage/v1/object/public/documents/secret.txt`, { method: 'HEAD' })
+  assertEq(privHead.status, 404, 'HEAD public on a private bucket')
+  const privInfo = await fetch(`${URL}/storage/v1/object/info/public/documents/secret.txt`)
+  assertEq(privInfo.status, 404, 'info/public on a private bucket')
+})
+
 // --- Serverless-friendly endpoints (raw fetch, not supabase-js) ---
 
 await step('storage: serverless-friendly presigned URL — sign via /api/storage', async () => {
