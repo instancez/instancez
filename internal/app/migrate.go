@@ -186,18 +186,12 @@ func planFromScratchStatements(cfg *domain.Config, roles domain.Roles) []string 
 		ddl = append(ddl, generateAuthTables(cfg.Auth)...)
 	}
 
-	// Tables in dependency order (FKs reference other tables).
-	// Pass 1: CREATE TABLE (must complete before indexes
-	// so that ADD COLUMN IF NOT EXISTS runs before CREATE INDEX references the column).
+	// Tables in dependency order, each followed by its indexes, so a unique
+	// index exists before a later table's FK needs it.
 	ordered := orderTables(cfg.Tables)
 	for _, name := range ordered {
 		table := cfg.Tables[name]
 		ddl = append(ddl, generateTable(name, table, cfg.Tables)...)
-	}
-
-	// Pass 2: Indexes (after all tables/columns exist).
-	for _, name := range ordered {
-		table := cfg.Tables[name]
 		ddl = append(ddl, generateIndexes(name, table)...)
 	}
 

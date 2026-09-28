@@ -177,3 +177,58 @@ func TestIntegration_CompositePKDriftKeepsBooting(t *testing.T) {
 		t.Fatalf("a key the live table doesn't have must still be rejected, got %v", err)
 	}
 }
+
+func devicesTable(withIndex bool) domain.Table {
+	t := domain.Table{Fields: []domain.Field{
+		{Name: "tenant_id", Type: "uuid", PrimaryKey: true},
+		{Name: "serial", Type: "text", PrimaryKey: true},
+	}}
+	if withIndex {
+		t.Indexes = []domain.Index{{Columns: []string{"serial"}, Unique: true}}
+	}
+	return t
+}
+
+func readingsTable(withFK bool) domain.Table {
+	t := domain.Table{Fields: []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}}}
+	if withFK {
+		t.Fields = append(t.Fields, domain.Field{Name: "device_serial", ForeignKey: &domain.ForeignKey{References: "devices.serial"}})
+	}
+	return t
+}
+
+// The unique index that inz validate suggests must exist before the FK that needs it.
+func TestIntegration_CompositePKMemberFKWithUniqueIndex(t *testing.T) {
+	cfg := func(tables map[string]domain.Table) *domain.Config {
+		return &domain.Config{Version: 1, Tables: tables}
+	}
+	t.Run("fresh deploy", func(t *testing.T) {
+		db := startPostgres(t)
+		if err := app.NewMigrator(db).Apply(context.Background(), cfg(map[string]domain.Table{
+			"devices": devicesTable(true), "readings": readingsTable(true)})); err != nil {
+			t.Fatalf("fresh: %v", err)
+		}
+	})
+	t.Run("index and new table in one change", func(t *testing.T) {
+		db := startPostgres(t)
+		m := app.NewMigrator(db)
+		ctx := context.Background()
+		if err := m.Apply(ctx, cfg(map[string]domain.Table{"devices": devicesTable(false)})); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Apply(ctx, cfg(map[string]domain.Table{"devices": devicesTable(true), "readings": readingsTable(true)})); err != nil {
+			t.Fatalf("update: %v", err)
+		}
+	})
+	t.Run("index and new FK column in one change", func(t *testing.T) {
+		db := startPostgres(t)
+		m := app.NewMigrator(db)
+		ctx := context.Background()
+		if err := m.Apply(ctx, cfg(map[string]domain.Table{"devices": devicesTable(false), "readings": readingsTable(false)})); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Apply(ctx, cfg(map[string]domain.Table{"devices": devicesTable(true), "readings": readingsTable(true)})); err != nil {
+			t.Fatalf("update: %v", err)
+		}
+	})
+}

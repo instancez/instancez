@@ -99,3 +99,31 @@ func TestPlanStatements_PrimaryKeyChange(t *testing.T) {
 		})
 	}
 }
+
+func TestDiffConfigs_UniqueIndexOnLiveColumnPrecedesNewFK(t *testing.T) {
+	devices := func(idx ...domain.Index) domain.Table {
+		return domain.Table{Fields: []domain.Field{
+			{Name: "tenant_id", Type: "uuid", PrimaryKey: true},
+			{Name: "serial", Type: "text", PrimaryKey: true},
+		}, Indexes: idx}
+	}
+	old := &domain.Config{Version: 1, Tables: map[string]domain.Table{"devices": devices()}}
+	next := devices(
+		domain.Index{Columns: []string{"serial"}, Unique: true},
+		domain.Index{Columns: []string{"tenant_id"}},
+		domain.Index{Columns: []string{"tenant_id"}, Unique: true, Where: "serial <> ''"},
+		domain.Index{Columns: []string{"model"}, Unique: true},
+	)
+	next.Fields = append(next.Fields, domain.Field{Name: "model", Type: "text"})
+	add := strings.Join(diffConfigs(old, &domain.Config{Version: 1, Tables: map[string]domain.Table{
+		"devices":  next,
+		"readings": {Fields: []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}, {Name: "device_serial", ForeignKey: &domain.ForeignKey{References: "devices.serial"}}}},
+	}}).Additions, "\n")
+	idx, table := strings.Index(add, "idx_devices_serial"), strings.Index(add, "CREATE TABLE IF NOT EXISTS readings")
+	if idx < 0 || table < 0 || idx > table {
+		t.Fatalf("unique index must precede the new FK table:\n%s", add)
+	}
+	if strings.Count(add, "idx_devices_tenant_id") != 0 || strings.Contains(add, "idx_devices_model") {
+		t.Fatalf("only plain unique indexes on live columns go early:\n%s", add)
+	}
+}

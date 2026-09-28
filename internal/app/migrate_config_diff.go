@@ -60,6 +60,7 @@ func diffConfigs(old, new *domain.Config) configDiff {
 
 	// Additions (order: auth → tables → columns → storage → events)
 	diff.Additions = append(diff.Additions, diffNewAuth(old, new)...)
+	diff.Additions = append(diff.Additions, diffIndexesOnLiveColumns(old, new)...)
 	diff.Additions = append(diff.Additions, diffNewTables(old, new)...)
 	diff.Additions = append(diff.Additions, diffNewColumns(old, new)...)
 	diff.Additions = append(diff.Additions, diffNewStorage(old, new)...)
@@ -534,6 +535,25 @@ func diffNewAuth(old, new *domain.Config) []string {
 		ddl = append(ddl, `CREATE INDEX IF NOT EXISTS idx_one_time_tokens_email_code ON auth.one_time_tokens (email, code);`)
 	}
 	return append(ddl, authHealDDL...)
+}
+
+// diffIndexesOnLiveColumns emits plain unique indexes on columns that already
+// exist, so a new FK can rely on them; every index is re-emitted later anyway.
+func diffIndexesOnLiveColumns(old, new *domain.Config) []string {
+	var ddl []string
+	for _, name := range orderTables(new.Tables) {
+		oldTable, exists := old.Tables[name]
+		if !exists {
+			continue
+		}
+		table := new.Tables[name]
+		table.Indexes = slices.DeleteFunc(slices.Clone(table.Indexes), func(idx domain.Index) bool {
+			return !idx.Unique || idx.Where != "" ||
+				slices.ContainsFunc(idx.Columns, func(c string) bool { _, ok := oldTable.GetField(c); return !ok })
+		})
+		ddl = append(ddl, generateIndexes(name, table)...)
+	}
+	return ddl
 }
 
 // diffNewTables returns CREATE TABLE + CREATE INDEX statements for tables in
