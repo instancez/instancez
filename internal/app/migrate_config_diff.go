@@ -308,15 +308,55 @@ func storageRLSPolicyNames(bucketName string, policies []domain.RLSPolicy) []str
 // signature first and rebuilt by the idempotent re-emit in planUpdate.
 func diffRemovedRPCFunctions(old, new *domain.Config) []string {
 	var ddl []string
+	managed := managedPolicyNames(new)
 	for _, name := range sortedKeys(old.RPC) {
 		oldFn := old.RPC[name]
 		newFn, exists := new.RPC[name]
 		if exists && !rpcSignatureChanged(oldFn, newFn) {
 			continue
 		}
+		ddl = append(ddl, dropPoliciesUsing(name, oldFn, managed))
 		ddl = append(ddl, fmt.Sprintf("DROP FUNCTION IF EXISTS public.\"%s\"(%s);", name, rpcFunctionDropSig(oldFn)))
 	}
 	return ddl
+}
+
+// managedPolicyNames lists the policies cfg recreates, truncated the way Postgres stores them.
+func managedPolicyNames(cfg *domain.Config) []string {
+	var names []string
+	for _, t := range sortedKeys(cfg.Tables) {
+		if cfg.Tables[t].EffectiveRLSEnabled() {
+			names = append(names, rlsPolicyNames(t, cfg.Tables[t].RLS)...)
+		}
+	}
+	for _, b := range sortedKeys(cfg.Storage) {
+		names = append(names, storageRLSPolicyNames(b, cfg.Storage[b].RLS)...)
+	}
+	return names
+}
+
+// dropPoliciesUsing drops managed policies that call fn so DROP FUNCTION needs no CASCADE; any other dependent aborts.
+func dropPoliciesUsing(name string, fn domain.Function, managed []string) string {
+	trunc := make([]string, len(managed))
+	for i, m := range managed {
+		trunc[i] = m[:min(len(m), 63)]
+	}
+	return fmt.Sprintf(`DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT DISTINCT p.polname, p.polrelid::regclass AS tbl
+    FROM pg_depend d JOIN pg_policy p ON p.oid = d.objid
+    WHERE d.classid = 'pg_policy'::regclass AND d.refclassid = 'pg_proc'::regclass
+      AND d.refobjid = to_regprocedure('public."%[1]s"(%[2]s)')
+  LOOP
+    IF r.polname = ANY ('{%[3]s}'::name[]) THEN
+      EXECUTE format('DROP POLICY %%I ON %%s', r.polname, r.tbl);
+    ELSE
+      RAISE EXCEPTION 'rpc %[1]s is still used by policy %% on %%', r.polname, r.tbl
+        USING HINT = 'Remove that policy or its call to %[1]s first.';
+    END IF;
+  END LOOP;
+END $$;`, name, rpcFunctionDropSig(fn), strings.Join(trunc, ","))
 }
 
 // rpcSignatureChanged reports whether a change breaks CREATE OR REPLACE: arg

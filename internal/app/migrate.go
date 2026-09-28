@@ -160,23 +160,17 @@ func planFromScratchStatements(cfg *domain.Config, roles domain.Roles) []string 
 	// Storage metadata table
 	ddl = append(ddl, generateStorageTables(cfg)...)
 
-	// RLS policies
 	if cfg.Auth != nil {
 		ddl = append(ddl, generateRLSFunctions()...)
 	}
+	// Policies may call user RPCs, and SQL RPC bodies need the tables above.
+	for _, n := range sortedKeys(cfg.RPC) {
+		ddl = append(ddl, generateRPCFunction(n, cfg.RPC[n]))
+	}
 	for _, name := range ordered {
-		table := cfg.Tables[name]
-		ddl = append(ddl, generateRLSPolicies(name, table)...)
+		ddl = append(ddl, generateRLSPolicies(name, cfg.Tables[name])...)
 	}
 	ddl = append(ddl, generateStorageRLSAll(cfg.Storage)...)
-
-	// RPC functions (Postgres stored functions)
-	if len(cfg.RPC) > 0 {
-		fnNames := sortedKeys(cfg.RPC)
-		for _, n := range fnNames {
-			ddl = append(ddl, generateRPCFunction(n, cfg.RPC[n]))
-		}
-	}
 
 	// Backfill grants on tables created earlier in this same migration —
 	// ALTER DEFAULT PRIVILEGES applies to objects created after the ALTER,
@@ -244,12 +238,6 @@ func planUpdateStatements(oldCfg, newCfg *domain.Config, roles domain.Roles) []s
 		ddl = append(ddl, generateRLSFunctions()...)
 	}
 
-	// RLS policies (DROP IF EXISTS + CREATE POLICY — idempotent)
-	for _, name := range ordered {
-		ddl = append(ddl, generateRLSPolicies(name, newCfg.Tables[name])...)
-	}
-	ddl = append(ddl, generateStorageRLSAll(newCfg.Storage)...)
-
 	// Heal storage.objects on existing DBs. diffNewStorage only emits the
 	// table (and its columns) when storage is *newly* added, so a DB that
 	// already had storage.objects before user_metadata existed would never
@@ -258,13 +246,16 @@ func planUpdateStatements(oldCfg, newCfg *domain.Config, roles domain.Roles) []s
 		ddl = append(ddl, `ALTER TABLE storage.objects ADD COLUMN IF NOT EXISTS user_metadata JSONB;`)
 	}
 
-	// RPC functions (CREATE OR REPLACE FUNCTION)
-	if len(newCfg.RPC) > 0 {
-		fnNames := sortedKeys(newCfg.RPC)
-		for _, n := range fnNames {
-			ddl = append(ddl, generateRPCFunction(n, newCfg.RPC[n]))
-		}
+	// RPCs come before the policies that may call them.
+	for _, n := range sortedKeys(newCfg.RPC) {
+		ddl = append(ddl, generateRPCFunction(n, newCfg.RPC[n]))
 	}
+
+	// RLS policies (DROP IF EXISTS + CREATE POLICY — idempotent)
+	for _, name := range ordered {
+		ddl = append(ddl, generateRLSPolicies(name, newCfg.Tables[name])...)
+	}
+	ddl = append(ddl, generateStorageRLSAll(newCfg.Storage)...)
 
 	// Catch-up grants on any newly-added tables.
 	ddl = append(ddl, generateExistingObjectGrants(schemas, roles)...)
