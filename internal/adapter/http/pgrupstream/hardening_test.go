@@ -486,3 +486,14 @@ func TestHardening_RangeGuardOnEveryRequest(t *testing.T) {
 	_, _, raw := call(t, "GET", base+"/users?select=username&username=eq.range_guard", "", nil, false)
 	require.Empty(t, rowsOf(t, raw), "416 must not insert")
 }
+
+// Without PostGIS, PostgREST's ST_AsGeoJSON call fails with 42883 (404).
+func TestHardening_GeoJSONWithoutPostGIS(t *testing.T) {
+	if testTS == nil {
+		t.Skip("no upstream")
+	}
+	status, _, raw := call(t, "GET", testTS.URL+"/rest/v1/users", "", map[string]string{"Accept": "application/geo+json"}, false)
+	require.Equal(t, 404, status, "%s", raw)
+	require.Contains(t, string(raw), `"code":"42883"`)
+	require.Contains(t, string(raw), "st_asgeojson(record) does not exist")
+}

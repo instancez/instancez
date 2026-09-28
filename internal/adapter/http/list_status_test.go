@@ -174,19 +174,23 @@ func TestHandleList_RangeHeaderIntersectsLimitOffset(t *testing.T) {
 	require.Equal(t, 200, w.Code, "HEAD ignores even an offside Range")
 }
 
+// PostgREST renders GeoJSON with ST_AsGeoJSON: without PostGIS that's 42883
+// (404), and PostGIS raises 22023 (400) for rows without a geometry column.
 func TestHandleList_GeoJSONRangeOrder(t *testing.T) {
+	const noFunc = `{"code":"42883","message":"function st_asgeojson(record) does not exist","details":"","hint":"No function matches the given name and argument types. You might need to add explicit type casts."}`
+	const noGeom = `{"code":"22023","message":"geometry column is missing","details":"","hint":""}`
 	geo := map[string]string{"Prefer": "count=exact", "Accept": "application/geo+json"}
 	w := listStatus(t, "GET", "offset=10", geo, 0, 5)
-	require.Equal(t, 406, w.Code, "without PostGIS the query fails before rangeStatus")
-	assert.Contains(t, w.Body.String(), "PGRST118")
+	require.Equal(t, 404, w.Code, "without PostGIS the query fails before rangeStatus")
+	assert.JSONEq(t, noFunc, w.Body.String())
 
 	w = listStatus(t, "GET", "offset=10", geo, 1, 5)
-	require.Equal(t, 406, w.Code, "rows without geometry fail in the query, before rangeStatus")
-	assert.Contains(t, w.Body.String(), "PGRST118")
+	require.Equal(t, 404, w.Code, "without PostGIS the missing function wins over the rows")
+	assert.JSONEq(t, noFunc, w.Body.String())
 
 	w = listStatus(t, "GET", "", map[string]string{"Accept": "application/geo+json"}, 0, 0)
-	require.Equal(t, 406, w.Code, "no PostGIS: ST_AsGeoJSON is missing even for zero rows")
-	assert.Contains(t, w.Body.String(), "PGRST118")
+	require.Equal(t, 404, w.Code, "no PostGIS: ST_AsGeoJSON is missing even for zero rows")
+	assert.JSONEq(t, noFunc, w.Body.String())
 
 	var probed string
 	postgis := func(db *stubDB) {
@@ -200,11 +204,15 @@ func TestHandleList_GeoJSONRangeOrder(t *testing.T) {
 	assert.JSONEq(t, `{"type":"FeatureCollection","features":[]}`, w.Body.String())
 	assert.Contains(t, probed, "pg_extension")
 
+	w, _ = listStatusSQL(t, "GET", "offset=10", geo, 1, 5, postgis)
+	require.Equal(t, 400, w.Code, "PostGIS raises on the first row without geometry, before rangeStatus")
+	assert.JSONEq(t, noGeom, w.Body.String())
+
 	probeErr := func(db *stubDB) {
 		db.queryRowFn = func(context.Context, string, ...any) (map[string]any, error) { return nil, errors.New("boom") }
 	}
 	w, _ = listStatusSQL(t, "GET", "", map[string]string{"Accept": "application/geo+json"}, 0, 0, probeErr)
-	require.Equal(t, 406, w.Code, "a failed probe counts as no PostGIS")
+	require.Equal(t, 404, w.Code, "a failed probe counts as no PostGIS")
 
 	w, _ = listStatusSQL(t, "GET", "offset=10", geo, 0, 5, postgis)
 	require.Equal(t, 416, w.Code, "PostGIS present, zero rows: 416 still wins")

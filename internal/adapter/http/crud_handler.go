@@ -236,10 +236,17 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 			return
 		}
 		geomCol := findGeometryColumn(table)
-		if accept == "application/geo+json" && geomCol == "" && (len(rows) > 0 || !h.hasPostGIS(ctx)) {
-			// PostgREST's ST_AsGeoJSON fails inside the query, so this beats rangeStatus.
-			pgJSON(c, 406, "PGRST118", "No geometry column found for GeoJSON output", "", "")
-			return
+		if accept == "application/geo+json" && geomCol == "" {
+			// PostgREST's ST_AsGeoJSON fails inside the query, so these beat rangeStatus.
+			if !h.hasPostGIS(ctx) {
+				pgJSON(c, 404, "42883", "function st_asgeojson(record) does not exist", "",
+					"No function matches the given name and argument types. You might need to add explicit type casts.")
+				return
+			}
+			if len(rows) > 0 {
+				pgJSON(c, 400, "22023", "geometry column is missing", "", "")
+				return
+			}
 		}
 		status := rangeStatus(qp.Offset, len(rows), total)
 		if status == 416 {
