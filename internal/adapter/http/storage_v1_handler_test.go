@@ -105,6 +105,10 @@ func setTestSession(c *gin.Context, s domain.Session) {
 	c.Set(contextKeySession, s)
 }
 
+func asAuthenticated(c *gin.Context) {
+	setTestSession(c, domain.Session{UserID: "u-1", Role: domain.JWTRoleAuthenticated, IsAuthenticated: true})
+}
+
 // --- Bucket handler tests ---
 
 func TestListBuckets_Empty(t *testing.T) {
@@ -1159,7 +1163,7 @@ func TestObjectGetDispatch_Default_MissingSegments(t *testing.T) {
 	}
 }
 
-func TestObjectGetDispatch_Authenticated_MissingAuth(t *testing.T) {
+func TestObjectGetDispatch_Authenticated_AnonNoRLSIs404(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	buckets := map[string]domain.Bucket{"avatars": {Public: false}}
 	h := newStorageHandler(&stubDB{}, &stubObjectStore{}, buckets)
@@ -1171,8 +1175,8 @@ func TestObjectGetDispatch_Authenticated_MissingAuth(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/storage/v1/object/authenticated/avatars/photo.jpg", nil)
 	r.ServeHTTP(w, req)
 
-	if w.Code != 401 {
-		t.Fatalf("expected 401, got %d: %s", w.Code, w.Body.String())
+	if w.Code != 404 {
+		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -1795,7 +1799,7 @@ func TestCreateSignedURLs_EnforcesRLSPerPath(t *testing.T) {
 	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
 	h.jwtKeys = stubKeys(t)
 	r := gin.New()
-	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
+	r.POST("/storage/v1/object/sign/:bucket", asAuthenticated, h.createSignedURLs)
 
 	body := `{"expiresIn":60,"paths":["good.jpg","secret.jpg","../x","ünï.png",""]}`
 	w := httptest.NewRecorder()
@@ -1824,7 +1828,7 @@ func TestCreateSignedURLs_BadInput(t *testing.T) {
 	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) { queried = true; return nil, nil }}
 	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
 	r := gin.New()
-	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
+	r.POST("/storage/v1/object/sign/:bucket", asAuthenticated, h.createSignedURLs)
 	tooMany, _ := json.Marshal(map[string]any{"paths": make([]string, maxSignPaths+1)})
 	for _, body := range []string{`{"paths":[]}`, `{}`, `not json`, string(tooMany), `{"expiresIn":"abc","paths":["a"]}`} {
 		w := httptest.NewRecorder()
@@ -1841,7 +1845,7 @@ func TestCreateSignedURLs_DBErrorIs500(t *testing.T) {
 	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) { return nil, errors.New("db down") }}
 	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
 	r := gin.New()
-	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
+	r.POST("/storage/v1/object/sign/:bucket", asAuthenticated, h.createSignedURLs)
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars", strings.NewReader(`{"paths":["a"]}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -1864,7 +1868,7 @@ func TestCreateSignedURLs_ExactCapAndDuplicates(t *testing.T) {
 	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
 	h.jwtKeys = stubKeys(t)
 	r := gin.New()
-	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
+	r.POST("/storage/v1/object/sign/:bucket", asAuthenticated, h.createSignedURLs)
 
 	// Exactly maxSignPaths valid paths must pass (not >=).
 	paths := make([]string, maxSignPaths)
@@ -1902,7 +1906,7 @@ func TestCreateSignedURLs_ExpiryClamped(t *testing.T) {
 	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
 	h.jwtKeys = stubKeys(t)
 	r := gin.New()
-	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
+	r.POST("/storage/v1/object/sign/:bucket", asAuthenticated, h.createSignedURLs)
 	cases := map[string]time.Duration{
 		`{"expiresIn":60,"paths":["a"]}`:       time.Minute,
 		`{"paths":["a"]}`:                      time.Hour,
@@ -2809,7 +2813,7 @@ func TestCreateSignedURL_NoSigningKeyFails(t *testing.T) {
 	h.jwtKeys = app.NewJWTKeyManager(db)
 	r := gin.New()
 	r.POST("/storage/v1/object/sign/:bucket/*path", h.createSignedURL)
-	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
+	r.POST("/storage/v1/object/sign/:bucket", asAuthenticated, h.createSignedURLs)
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars/a", strings.NewReader(`{}`)))

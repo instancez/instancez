@@ -2506,6 +2506,42 @@ await step('storage: public bucket downloads for anyone but lists only per RLS',
   assert(ownerList.some(o => o.name === 'gated.txt'), `owner list missing gated.txt: ${JSON.stringify(ownerList)}`)
 })
 
+if (SECRET_KEY) {
+  await step('storage: a guest runs as anon under RLS; buckets without rls stay closed', async () => {
+    const put = await fetch(`${URL}/storage/v1/object/readonly/guest-list.txt`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY, 'Content-Type': 'text/plain', 'x-upsert': 'true' },
+      body: 'guest visible',
+    })
+    assert(put.ok, `admin seed upload failed: ${put.status}`)
+    const guest = createClient(URL, PUBLISHABLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+
+    const { data: list, error: listErr } = await guest.storage.from('readonly').list()
+    assert(!listErr, `guest list errored: ${listErr?.message}`)
+    assert(list.some((o) => o.name === 'guest-list.txt'), `select policy lets anon list: ${JSON.stringify(list)}`)
+    const { data: exists } = await guest.storage.from('readonly').exists('guest-list.txt')
+    assertEq(exists, true, 'anon exists() under a select policy')
+    const { data: info, error: infoErr } = await guest.storage.from('readonly').info('guest-list.txt')
+    assert(!infoErr && info?.name === 'guest-list.txt', `anon info(): ${infoErr?.message}`)
+    const { data: signed, error: signErr } = await guest.storage.from('readonly').createSignedUrl('guest-list.txt', 60)
+    assert(!signErr && signed?.signedUrl, `anon sign under a select policy: ${signErr?.message}`)
+    const { error: upErr } = await guest.storage.from('readonly').upload('guest-new.txt', 'x', { contentType: 'text/plain' })
+    assert(upErr, 'readonly has no insert policy, so anon upload is denied by RLS')
+
+    const { data: openList, error: openErr } = await guest.storage.from('avatars').list()
+    assert(!openErr, `guest list of a bucket without rls must not 401: ${openErr?.message}`)
+    assertEq(openList.length, 0, 'no policy authorizes anon on a bucket without rls')
+    const { error: openUp } = await guest.storage.from('avatars').upload('guest.txt', 'x', { contentType: 'text/plain' })
+    assert(openUp, 'anon upload to a bucket without rls stays denied')
+
+    await fetch(`${URL}/storage/v1/object/readonly`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prefixes: ['guest-list.txt'] }),
+    })
+  })
+}
+
 await step('storage: download from non-public bucket fails', async () => {
   // First upload to documents (private bucket)
   const up = await fetch(`${URL}/storage/v1/object/documents/secret.txt`, {

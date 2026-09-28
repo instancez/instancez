@@ -65,6 +65,7 @@ func NewStorageV1Handler(deps ServerDeps) *StorageV1Handler {
 
 func (h *StorageV1Handler) Mount(root *gin.RouterGroup) {
 	sg := root.Group("/storage/v1")
+	key, opt := apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, false)
 
 	// --- Bucket admin ---
 	sg.GET("/bucket", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.listBuckets)
@@ -76,35 +77,77 @@ func (h *StorageV1Handler) Mount(root *gin.RouterGroup) {
 
 	// --- File operations ---
 	// Upload (POST) and update (PUT)
-	sg.POST("/object/:bucket/*path", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.uploadObject)
-	sg.PUT("/object/:bucket/*path", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.updateObject)
+	sg.POST("/object/:bucket/*path", key, opt, h.anonGate(denyUnauthorized), h.uploadObject)
+	sg.PUT("/object/:bucket/*path", key, opt, h.anonGate(denyUnauthorized), h.updateObject)
 
 	// One catch-all, since gin cannot overlap param routes; objectGetDispatch checks apikey except on public downloads.
 	sg.GET("/object/*all", h.objectGetDispatch)
 
 	// List
-	sg.POST("/object/list/:bucket", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.listObjects)
-	sg.POST("/object/list-v2/:bucket", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.listObjectsV2)
+	sg.POST("/object/list/:bucket", key, opt, h.anonGate(denyEmptyList), h.listObjects)
+	sg.POST("/object/list-v2/:bucket", key, opt, h.anonGate(denyEmptyListV2), h.listObjectsV2)
 
 	// Exists (HEAD)
-	sg.HEAD("/object/:bucket/*path", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, false), h.objectExists)
+	sg.HEAD("/object/:bucket/*path", key, opt, h.anonGate(func(c *gin.Context) { c.Status(404) }), h.objectExists)
 
 	// Remove (DELETE with paths in body)
-	sg.DELETE("/object/:bucket", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.removeObjects)
+	sg.DELETE("/object/:bucket", key, opt, h.anonGate(denyEmptyList), h.removeObjects)
 
 	// Move & Copy
 	sg.POST("/object/move", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.moveObject)
 	sg.POST("/object/copy", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.copyObject)
 
 	// Signed URLs
-	sg.POST("/object/sign/:bucket/*path", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.createSignedURL)
-	sg.POST("/object/sign/:bucket", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.createSignedURLs)
+	sg.POST("/object/sign/:bucket/*path", key, opt, h.anonGate(denyNotFound), h.createSignedURL)
+	sg.POST("/object/sign/:bucket", key, opt, h.createSignedURLs)
 
 	// Signed upload
-	sg.POST("/object/upload/sign/:bucket/*path", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.createSignedUploadURL)
+	sg.POST("/object/upload/sign/:bucket/*path", key, opt, h.anonGate(denyUnauthorized), h.createSignedUploadURL)
 	// Authorized purely by the HMAC-signed token in the query string,
 	// matching real Supabase's signed-upload redemption — no apikey.
 	sg.PUT("/object/upload/sign/:bucket/*path", h.uploadToSignedURL)
+}
+
+// anonAllowed lets anon reach only buckets whose own rls policies decide, since nothing else would authorize it in Supabase.
+func (h *StorageV1Handler) anonAllowed(c *gin.Context, bucket string) bool {
+	if r := getSession(c).Role; r == domain.JWTRoleAuthenticated || r == domain.JWTRoleService {
+		return true
+	}
+	b, ok := h.cfg.Storage[bucket]
+	return ok && len(b.RLS) > 0
+}
+
+func (h *StorageV1Handler) anonGate(deny gin.HandlerFunc) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !h.anonAllowed(c, c.Param("bucket")) {
+			deny(c)
+			c.Abort()
+		}
+	}
+}
+
+// callerMayReach runs apikey, optional JWT and the anon gate inline; false means a response was written.
+func (h *StorageV1Handler) callerMayReach(c *gin.Context, bucket string, deny gin.HandlerFunc) bool {
+	if apiKeyGuard(h.jwtKeys)(c); c.IsAborted() {
+		return false
+	}
+	if jwtAuth(h.jwtKeys, false)(c); c.IsAborted() {
+		return false
+	}
+	if !h.anonAllowed(c, bucket) {
+		deny(c)
+		return false
+	}
+	return true
+}
+
+func denyNotFound(c *gin.Context) { storageErr(c, 404, "not_found", "Object not found") }
+func denyUnauthorized(c *gin.Context) {
+	problemJSON(c, 401, "unauthorized", "Missing or invalid Authorization header")
+}
+func denyEmptyList(c *gin.Context) { c.JSON(200, []gin.H{}) }
+func denyEmptyListV2(c *gin.Context) {
+	c.JSON(200, gin.H{"has_next": false, "folders": []gin.H{}, "objects": []gin.H{}})
 }
 
 // --- Bucket admin handlers ---
@@ -534,12 +577,7 @@ func (h *StorageV1Handler) objectGetDispatch(c *gin.Context) {
 			storageErr(c, 400, "bad_request", "Missing bucket or path")
 			return
 		}
-		apiKeyGuard(h.jwtKeys)(c)
-		if c.IsAborted() {
-			return
-		}
-		jwtAuth(h.jwtKeys, true)(c)
-		if c.IsAborted() {
+		if !h.callerMayReach(c, segments[1], denyNotFound) {
 			return
 		}
 		h.serveDownload(c, segments[1], segments[2], false)
@@ -548,18 +586,13 @@ func (h *StorageV1Handler) objectGetDispatch(c *gin.Context) {
 			storageErr(c, 400, "bad_request", "Missing path")
 			return
 		}
-		apiKeyGuard(h.jwtKeys)(c)
-		if c.IsAborted() {
-			return
-		}
-		jwtAuth(h.jwtKeys, true)(c)
-		if c.IsAborted() {
-			return
-		}
 		rest := strings.TrimPrefix(strings.TrimPrefix(all, "info/"), "authenticated/")
 		bucket, objPath, ok := strings.Cut(rest, "/")
 		if !ok {
 			storageErr(c, 400, "bad_request", "Missing bucket or path")
+			return
+		}
+		if !h.callerMayReach(c, bucket, denyNotFound) {
 			return
 		}
 		c.Set("_bucket", bucket)
@@ -570,12 +603,7 @@ func (h *StorageV1Handler) objectGetDispatch(c *gin.Context) {
 			storageErr(c, 400, "bad_request", "Missing path")
 			return
 		}
-		apiKeyGuard(h.jwtKeys)(c)
-		if c.IsAborted() {
-			return
-		}
-		jwtAuth(h.jwtKeys, true)(c)
-		if c.IsAborted() {
+		if !h.callerMayReach(c, segments[0], denyNotFound) {
 			return
 		}
 		h.serveDownload(c, segments[0], strings.Join(segments[1:], "/"), false)
@@ -1262,7 +1290,7 @@ func (h *StorageV1Handler) createSignedURLs(c *gin.Context) {
 	ctx := h.rlsCtx(c)
 	keys := validKeys(req.Paths)
 	visible := map[string]bool{}
-	if len(keys) > 0 {
+	if len(keys) > 0 && h.anonAllowed(c, bucketName) {
 		rows, err := h.db.Query(ctx, "SELECT name FROM storage.objects WHERE bucket_id = $1 AND name = ANY($2::text[])", bucketName, keys)
 		if err != nil {
 			h.logger.Error("sign urls lookup", "error", err)
