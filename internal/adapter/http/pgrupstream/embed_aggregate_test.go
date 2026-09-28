@@ -315,18 +315,13 @@ func TestConf_TableCountAndRangeParity(t *testing.T) {
 	}
 }
 
-// count=exact on an aggregate query with an !inner embed filter must count
-// the ungrouped rows passing the filter, not the number of groups and not
-// the table's unfiltered row count.
 func TestConf_AggregateInnerEmbedCountsFilteredUngroupedRows(t *testing.T) {
 	if testTS == nil {
 		t.Skip("no upstream")
 	}
 	ctx := context.Background()
 
-	// Seed one OFFLINE user with a message, so an !inner filter on
-	// users.status=eq.ONLINE has something real to exclude: 3 messages
-	// total, 2 pass the filter (both supabot's, grouped into 1 row).
+	// 3 messages, 2 pass the !inner filter, grouped into 1 row.
 	marker := fmt.Sprintf("innagg_%d", time.Now().UnixNano())
 	_, err := testClient.From("users").Insert([]map[string]interface{}{
 		{"username": marker, "status": "OFFLINE"},
