@@ -21,6 +21,9 @@ import (
 // column and the caller has not opted in via AllowDestructive.
 var ErrDestructive = errors.New("destructive migration")
 
+// ErrPrimaryKeyChange is returned when a plan would change which columns form a live table's primary key.
+var ErrPrimaryKeyChange = errors.New("primary key change not supported")
+
 // Migrator generates and applies DDL migrations from config.
 type Migrator struct {
 	db               domain.Database
@@ -82,7 +85,13 @@ func (m *Migrator) PlanStatements(ctx context.Context, oldCfg, newCfg *domain.Co
 	if oldCfg == nil {
 		return planFromScratchStatements(newCfg, m.roles), nil
 	}
-	if destroys := diffConfigs(oldCfg, newCfg).Destroys; len(destroys) > 0 {
+	diff := diffConfigs(oldCfg, newCfg)
+	if len(diff.PKChanges) > 0 {
+		return nil, fmt.Errorf("%w: %s. Changing which columns form a live table's primary key is not supported; "+
+			"revert the primary_key flags, or create a new table and copy the data",
+			ErrPrimaryKeyChange, strings.Join(diff.PKChanges, "; "))
+	}
+	if destroys := diff.Destroys; len(destroys) > 0 {
 		if !m.allowDestructive {
 			return nil, destructiveError(destroys)
 		}
@@ -848,9 +857,21 @@ func generateTable(name string, table domain.Table, allTables map[string]domain.
 		return false
 	})
 
+	var pkCols []string
+	for _, f := range fields {
+		if f.PrimaryKey {
+			pkCols = append(pkCols, f.Name)
+		}
+	}
+	composite := len(pkCols) > 1
+
 	for _, field := range fields {
 		fname := field.Name
-		cols = append(cols, formatColumn(fname, field, allTables))
+		colField := field
+		if composite {
+			colField.PrimaryKey = false
+		}
+		cols = append(cols, formatColumn(fname, colField, allTables))
 
 		// FK constraint
 		if field.ForeignKey != nil {
@@ -909,6 +930,9 @@ func generateTable(name string, table domain.Table, allTables map[string]domain.
 		}
 	}
 
+	if composite {
+		constraints = append(constraints, fmt.Sprintf("PRIMARY KEY (%s)", strings.Join(pkCols, ", ")))
+	}
 	allParts := append(cols, constraints...)
 	qualName := qualifiedTableName(name, table)
 	ddl = append(ddl, fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (\n  %s\n);",

@@ -192,6 +192,14 @@ func TestSupabaseJSCompat(t *testing.T) {
 					{Name: "user_id", ForeignKey: &domain.ForeignKey{References: "auth.users.id", OnDelete: "cascade"}},
 				},
 			},
+			// todo_tags has a composite primary key for the onConflict: 'a,b' upsert and embed checks.
+			"todo_tags": {
+				Fields: []domain.Field{
+					{Name: "todo_id", ForeignKey: &domain.ForeignKey{References: "todos.id", OnDelete: "cascade"}, PrimaryKey: true},
+					{Name: "tag", Type: "text", PrimaryKey: true},
+					{Name: "note", Type: "text"},
+				},
+			},
 			// profiles exercises cross-schema FK + RLS using auth.uid().
 			// FK targets auth.users.id (auto-emitted whenever cfg.Auth != nil),
 			// the RLS policies reference auth.uid() to gate writes to the row's

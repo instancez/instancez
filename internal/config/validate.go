@@ -1102,11 +1102,41 @@ func validateForeignKeys(tables map[string]domain.Table) domain.ValidationErrors
 						Suggestion: fmt.Sprintf("declare \"type: %s\" on %q, or change the reference", refType, fieldName),
 					})
 				}
+				if isBareCompositePKMember(tables[refTable], targetField) {
+					errs = append(errs, &domain.ValidationError{
+						Path:       fkPath + ".references",
+						Message:    fmt.Sprintf("references %s.%s, which is only part of a composite primary key and not unique on its own", refTable, refCol),
+						Suggestion: fmt.Sprintf("add unique: true to %s.%s, or reference a unique column", refTable, refCol),
+					})
+				}
 			}
 		}
 	}
 
 	return errs
+}
+
+// isBareCompositePKMember reports whether f belongs to a 2+ column primary key
+// without a single-column unique constraint Postgres can use as an FK target.
+func isBareCompositePKMember(t domain.Table, f domain.Field) bool {
+	if !f.PrimaryKey || f.Unique {
+		return false
+	}
+	pks := 0
+	for _, tf := range t.Fields {
+		if tf.PrimaryKey {
+			pks++
+		}
+	}
+	if pks < 2 {
+		return false
+	}
+	for _, idx := range t.Indexes {
+		if idx.Unique && idx.Where == "" && len(idx.Columns) == 1 && idx.Columns[0] == f.Name {
+			return false
+		}
+	}
+	return true
 }
 
 // validateFieldType checks if a type string looks like a valid Postgres type.

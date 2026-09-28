@@ -1417,6 +1417,61 @@ await step('rest: upsert onConflict targets a named unique column, not just the 
   await client.from('todos').delete().eq('id', first.id)
 })
 
+// --- Composite primary key: CRUD, onConflict on both columns, embeds ---
+
+await step('rest: composite primary key insert, upsert onConflict a,b, embed and delete', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { data: todo, error: todoErr } = await client
+    .from('todos').insert({ title: 'composite-parent', user_id: userId }).select().single()
+  if (todoErr) throw todoErr
+  try {
+    const { data: rows, error: insErr } = await client
+      .from('todo_tags').insert([{ todo_id: todo.id, tag: 'a', note: 'n1' }, { todo_id: todo.id, tag: 'b' }]).select()
+    if (insErr) throw insErr
+    assertEq(rows.length, 2, 'inserted two rows sharing todo_id')
+
+    const { error: dupErr } = await client.from('todo_tags').insert({ todo_id: todo.id, tag: 'a' })
+    assertEq(dupErr?.code, '23505', 'duplicate composite key is a unique violation')
+
+    const { data: up, error: upErr } = await client
+      .from('todo_tags').upsert({ todo_id: todo.id, tag: 'a', note: 'n2' }, { onConflict: 'todo_id,tag' }).select().single()
+    if (upErr) throw upErr
+    assertEq(up.note, 'n2', "onConflict: 'todo_id,tag' updated the existing row")
+
+    const { data: upPK, error: upPKErr } = await client
+      .from('todo_tags').upsert({ todo_id: todo.id, tag: 'b', note: 'n3' }).select().single()
+    if (upPKErr) throw upPKErr
+    assertEq(upPK.note, 'n3', 'upsert without onConflict targets the whole composite key')
+
+    const { count, error: countErr } = await client
+      .from('todo_tags').select('*', { count: 'exact', head: true }).eq('todo_id', todo.id)
+    if (countErr) throw countErr
+    assertEq(count, 2, 'upserts updated in place instead of inserting')
+
+    const { data: m2o, error: m2oErr } = await client
+      .from('todo_tags').select('tag, todos(title)').eq('todo_id', todo.id).eq('tag', 'a').single()
+    if (m2oErr) throw m2oErr
+    assertEq(m2o.todos.title, 'composite-parent', 'embed from the composite-key table to its parent')
+
+    const { data: o2m, error: o2mErr } = await client
+      .from('todos').select('id, todo_tags(tag)').eq('id', todo.id).single()
+    if (o2mErr) throw o2mErr
+    assertEq(o2m.todo_tags.map((r) => r.tag).sort().join(','), 'a,b', 'embed from the parent to the composite-key table')
+
+    const { data: deleted, error: delErr } = await client
+      .from('todo_tags').delete().eq('todo_id', todo.id).eq('tag', 'a').select()
+    if (delErr) throw delErr
+    assertEq(deleted.length, 1, 'delete filtered by both key columns removes one row')
+    const { data: left } = await client.from('todo_tags').select('tag').eq('todo_id', todo.id)
+    assertEq(left.map((r) => r.tag).join(','), 'b', 'the other row survives')
+  } finally {
+    await client.from('todos').delete().eq('id', todo.id)
+  }
+})
+
 // --- Range header → 206 + Content-Range ---
 
 await step('rest: Range header yields 206 + Content-Range on a partial result', async () => {

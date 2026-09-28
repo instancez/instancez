@@ -1503,3 +1503,50 @@ func TestWarnings_DefinerWithoutSearchPath(t *testing.T) {
 		t.Fatalf("invoker: want no warning, got %v", ws)
 	}
 }
+
+func TestValidate_CompositePrimaryKey(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Tables["memberships"] = domain.Table{Fields: []domain.Field{
+		{Name: "user_id", Type: "uuid", PrimaryKey: true},
+		{Name: "todo_id", ForeignKey: &domain.ForeignKey{References: "todos.id"}, PrimaryKey: true},
+		{Name: "role", Type: "text"},
+	}}
+	if errs := Validate(cfg); errs != nil {
+		t.Fatalf("composite primary key must validate, got %v", errs)
+	}
+}
+
+func TestValidateForeignKeys_CompositePKTarget(t *testing.T) {
+	a := domain.Field{Name: "a", Type: "int", PrimaryKey: true}
+	b := domain.Field{Name: "b", Type: "int", PrimaryKey: true}
+	cases := []struct {
+		name    string
+		target  domain.Table
+		wantErr bool
+	}{
+		{"bare composite member", domain.Table{Fields: []domain.Field{a, b}}, true},
+		{"member marked unique", domain.Table{Fields: []domain.Field{{Name: "a", Type: "int", PrimaryKey: true, Unique: true}, b}}, false},
+		{"member with single-column unique index", domain.Table{Fields: []domain.Field{a, b}, Indexes: []domain.Index{{Columns: []string{"a"}, Unique: true}}}, false},
+		{"member with multi-column unique index", domain.Table{Fields: []domain.Field{a, b}, Indexes: []domain.Index{{Columns: []string{"a", "b"}, Unique: true}}}, true},
+		{"member with partial unique index", domain.Table{Fields: []domain.Field{a, b}, Indexes: []domain.Index{{Columns: []string{"a"}, Unique: true, Where: "b > 0"}}}, true},
+		{"member with non-unique index", domain.Table{Fields: []domain.Field{a, b}, Indexes: []domain.Index{{Columns: []string{"a"}}}}, true},
+		{"single primary key", domain.Table{Fields: []domain.Field{a, {Name: "b", Type: "int"}}}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			errs := validateForeignKeys(map[string]domain.Table{
+				"pairs": c.target,
+				"refs":  {Fields: []domain.Field{{Name: "id", Type: "int", PrimaryKey: true}, {Name: "pair_a", ForeignKey: &domain.ForeignKey{References: "pairs.a"}}}},
+			})
+			if !c.wantErr {
+				if len(errs) != 0 {
+					t.Fatalf("want no error, got %v", errs)
+				}
+				return
+			}
+			if len(errs) != 1 || !strings.Contains(errs[0].Message, "composite primary key") || errs[0].Path != "tables.refs.fields.pair_a.foreign_key.references" {
+				t.Fatalf("want one composite primary key error on the FK, got %v", errs)
+			}
+		})
+	}
+}

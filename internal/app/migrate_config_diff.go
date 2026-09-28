@@ -23,6 +23,9 @@ type configDiff struct {
 	// functions are excluded: they are rebuilt idempotently on every migration.
 	// Recorded by the same loops that emit the DROP DDL so the two can't drift.
 	Destroys []string
+
+	// PKChanges names live tables whose primary key columns would change, as "t: (a) -> (a, b)".
+	PKChanges []string
 }
 
 // diffConfigs compares an old config (from the last migration) against the new
@@ -37,6 +40,8 @@ func diffConfigs(old, new *domain.Config) configDiff {
 	// Resolve declared renames first and diff against the post-rename names, so
 	// everything below sees a matching name and emits no drop/add for them.
 	old, diff.Renames = applyRenames(old, new)
+
+	diff.PKChanges = diffPrimaryKeys(old, new)
 
 	// Removals (order: policies → indexes → columns → tables → storage → functions)
 	diff.Removals = append(diff.Removals, diffRemovedRLSPolicies(old, new)...)
@@ -433,6 +438,56 @@ func rpcFunctionDropSig(fn domain.Function) string {
 }
 
 // --- Addition functions ---
+
+// diffPrimaryKeys reports tables in both configs whose primary key columns differ.
+// Replacing the PK by dropping its column and adding one new PK column is allowed:
+// the drop removes the old constraint and ADD COLUMN ... PRIMARY KEY creates the new one.
+func diffPrimaryKeys(old, new *domain.Config) []string {
+	var changes []string
+	for _, name := range sortedKeys(new.Tables) {
+		oldTable, ok := old.Tables[name]
+		if !ok {
+			continue
+		}
+		newTable := new.Tables[name]
+		oldPK, newPK := pkNames(oldTable), pkNames(newTable)
+		if slices.Equal(sortedCopy(oldPK), sortedCopy(newPK)) {
+			continue
+		}
+		newFields := newTable.FieldMap()
+		oldFields := oldTable.FieldMap()
+		oldPKDropped := slices.ContainsFunc(oldPK, func(c string) bool { _, ok := newFields[c]; return !ok })
+		_, newPKExisted := oldFields[firstOr(newPK)]
+		if oldPKDropped && len(newPK) == 1 && !newPKExisted {
+			continue
+		}
+		changes = append(changes, fmt.Sprintf("%s: (%s) -> (%s)", name, strings.Join(oldPK, ", "), strings.Join(newPK, ", ")))
+	}
+	return changes
+}
+
+func pkNames(t domain.Table) []string {
+	var names []string
+	for _, f := range t.Fields {
+		if f.PrimaryKey {
+			names = append(names, f.Name)
+		}
+	}
+	return names
+}
+
+func sortedCopy(s []string) []string {
+	c := slices.Clone(s)
+	slices.Sort(c)
+	return c
+}
+
+func firstOr(s []string) string {
+	if len(s) == 0 {
+		return ""
+	}
+	return s[0]
+}
 
 // diffNewAuth returns DDL for auth table additions. If auth is newly added,
 // generates the full auth schema. If auth already existed, handles additive
