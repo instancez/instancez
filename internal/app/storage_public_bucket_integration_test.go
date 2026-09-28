@@ -5,6 +5,7 @@ package app_test
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/instancez/instancez/internal/app"
@@ -86,5 +87,37 @@ func TestIntegration_Harden_PublicBucket_NoStorageSchema(t *testing.T) {
 	cfg := &domain.Config{Storage: map[string]domain.Bucket{"pub": {Public: true}}}
 	if err := app.NewMigrator(owner).Harden(context.Background(), cfg); err != nil {
 		t.Fatalf("Harden without storage.objects must not fail: %v", err)
+	}
+}
+
+// Postgres truncates "<60-char bucket>_public_select" to 63 bytes, so the heal must match the truncated name.
+func TestIntegration_Harden_DropsLegacyPublicSelect_LongBucketName(t *testing.T) {
+	owner, req := dbboot.StartContainer(t)
+	ctx := context.Background()
+	long := strings.Repeat("b", 60)
+	cfg := &domain.Config{Version: 1, Auth: &domain.Auth{}, Storage: map[string]domain.Bucket{
+		long: {Public: true, RLS: []domain.RLSPolicy{{Operations: []string{"select"}, Using: "auth.role() = 'authenticated'"}}},
+	}}
+	if err := app.NewMigrator(owner).Apply(ctx, cfg); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	for _, stmt := range []string{
+		`INSERT INTO storage.objects (bucket_id, name) VALUES ('` + long + `', 'a.txt')`,
+		`CREATE POLICY ` + long + `_public_select ON storage.objects FOR SELECT USING (bucket_id = '` + long + `')`,
+	} {
+		if _, err := owner.Exec(ctx, stmt); err != nil {
+			t.Fatalf("seed %q: %v", stmt, err)
+		}
+	}
+	if got := selectObjectKeys(t, req, "anon"); len(got) != 1 {
+		t.Fatalf("legacy leak not reproduced: anon visible = %v", got)
+	}
+
+	if err := app.NewMigrator(owner).Harden(ctx, cfg); err != nil {
+		t.Fatalf("harden: %v", err)
+	}
+
+	if got := selectObjectKeys(t, req, "anon"); len(got) != 0 {
+		t.Fatalf("post-heal anon visible = %v, want none", got)
 	}
 }

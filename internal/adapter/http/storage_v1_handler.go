@@ -594,12 +594,8 @@ func (h *StorageV1Handler) serveDownload(c *gin.Context, bucketName, objPath str
 	}
 
 	bucket, ok := h.getBucketConfig(bucketName)
-	if !ok {
+	if !ok || (publicOnly && !bucket.Public) {
 		storageErr(c, 404, "not_found", "Bucket not found")
-		return
-	}
-	if publicOnly && !bucket.Public {
-		storageErr(c, 400, "not_public", "Bucket is not public")
 		return
 	}
 

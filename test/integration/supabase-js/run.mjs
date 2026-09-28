@@ -2387,7 +2387,10 @@ await step('storage: download from non-public bucket fails', async () => {
   assert(up.ok, `documents upload failed: ${up.status}`)
 
   const resp = await fetch(`${URL}/storage/v1/object/public/documents/secret.txt`)
-  assertEq(resp.status, 400, 'private bucket returns 400 on public download')
+  assertEq(resp.status, 404, 'private bucket answers like a missing one on public download')
+  const missing = await fetch(`${URL}/storage/v1/object/public/no_such_bucket/secret.txt`)
+  assertEq(missing.status, 404)
+  assertEq(await resp.text(), await missing.text(), 'private and missing buckets must be indistinguishable')
 })
 
 // --- List ---

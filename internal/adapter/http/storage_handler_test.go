@@ -258,7 +258,7 @@ func TestLegacyMount_PublicReadBypassesRLSOtherRoutesNeedAuth(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/storage/pub/a.txt", nil))
 	require.Equal(t, 200, w.Code, w.Body.String())
-	assert.Equal(t, []string{"service_role"}, queried, "a public download is a scoped lookup that bypasses RLS, like /object/public")
+	assert.Equal(t, []string{"service_role[a.txt pub]"}, queried, "a public download is a scoped lookup that bypasses RLS, like /object/public")
 
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/storage/priv/a.txt", nil))

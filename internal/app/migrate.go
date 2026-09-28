@@ -400,7 +400,7 @@ func healStorageRLS(storage map[string]domain.Bucket) []string {
 	return append(stmts, fmt.Sprintf("DO $$ BEGIN\nIF to_regclass('storage.objects') IS NOT NULL THEN\n%s\nEND IF;\nEND $$;", strings.Join(ddl, "\n")))
 }
 
-// healLegacyPublicSelect checks pg_policies first, so a healed DB takes no storage.objects lock on boot.
+// healLegacyPublicSelect checks pg_policies first so a healed DB takes no lock; the literal coerces to name, truncating to 63 bytes like the policy.
 func healLegacyPublicSelect(storage map[string]domain.Bucket) []string {
 	var body []string
 	for _, name := range sortedKeys(storage) {

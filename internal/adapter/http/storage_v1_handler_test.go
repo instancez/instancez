@@ -1066,14 +1066,13 @@ func TestObjectGetDispatch_Public_BucketNotPublic(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/storage/v1/object/public/avatars/photo.jpg", nil)
 	r.ServeHTTP(w, req)
 
-	if w.Code != 400 {
-		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
-	}
-	var body map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &body)
-	if body["error"] != "not_public" {
-		t.Errorf("expected error=not_public, got %v", body["error"])
-	}
+	missing := httptest.NewRecorder()
+	r.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/storage/v1/object/public/nope/photo.jpg", nil))
+
+	// Same answer as a missing bucket, so private bucket names can't be enumerated.
+	assert.Equal(t, 404, w.Code, w.Body.String())
+	assert.Equal(t, missing.Code, w.Code)
+	assert.JSONEq(t, missing.Body.String(), w.Body.String())
 }
 
 func TestObjectGetDispatch_Public_BucketNotFound(t *testing.T) {
@@ -2906,7 +2905,7 @@ func TestRedeemSignedURL_PathCaseAndTrailingSlash(t *testing.T) {
 
 type roleCtxKey struct{}
 
-// roleTrackingDB tags the context with the WithRLS role and records the role each QueryRow ran under.
+// roleTrackingDB tags the context with the WithRLS role and records each QueryRow's role and args.
 func roleTrackingDB(queried *[]string) *stubDB {
 	return &stubDB{
 		withRLSFn: func(ctx context.Context, s domain.Session) (context.Context, error) {
@@ -2914,7 +2913,7 @@ func roleTrackingDB(queried *[]string) *stubDB {
 		},
 		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
 			role, _ := ctx.Value(roleCtxKey{}).(string)
-			*queried = append(*queried, role)
+			*queried = append(*queried, fmt.Sprint(role, args))
 			return map[string]any{"id": "x", "mime": "text/plain"}, nil
 		},
 	}
@@ -2938,12 +2937,12 @@ func TestServeDownload_PublicRouteBypassesRLS(t *testing.T) {
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/storage/v1/object/public/pub/a%20%C3%A9.txt", nil))
 	require.Equal(t, 200, w.Code, w.Body.String())
 	assert.Equal(t, "bytes", w.Body.String())
-	assert.Equal(t, []string{"service_role"}, queried)
+	assert.Equal(t, []string{"service_role[pub a é.txt]"}, queried, "the RLS-free lookup must be scoped to exactly this bucket and key")
 
 	queried = nil
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/storage/v1/object/public/priv/a.txt", nil))
-	assert.Equal(t, 400, w.Code)
+	assert.Equal(t, 404, w.Code)
 	assert.Empty(t, queried, "a non-public bucket must be rejected before any lookup")
 }
 
@@ -2962,5 +2961,5 @@ func TestServeDownload_NonPublicRouteKeepsCallerRLS(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/dl/pub/a.txt", nil))
 	require.Equal(t, 200, w.Code, w.Body.String())
-	assert.Equal(t, []string{"authenticated"}, queried, "only the public route may bypass RLS")
+	assert.Equal(t, []string{"authenticated[pub a.txt]"}, queried, "only the public route may bypass RLS")
 }
