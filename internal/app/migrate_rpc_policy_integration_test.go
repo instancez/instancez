@@ -248,4 +248,20 @@ func TestIntegration_ProvisionIdempotentDeniesPoliciesCallingMissingRPC(t *testi
 	if functionExists(t, db, "can_see") {
 		t.Fatal("the rpc belongs to the blocked plan")
 	}
+
+	// Once the blocked plan is allowed, the real policy replaces the false one.
+	if err := app.NewMigrator(db).AllowDestructive(true).Apply(ctx, pending); err != nil {
+		t.Fatalf("unblocked apply: %v", err)
+	}
+	row, err = db.QueryRow(ctx, `SELECT qual, (SELECT count(*) FROM pg_policies WHERE schemaname='storage' AND tablename='objects') AS n
+		FROM pg_policies WHERE schemaname='storage' AND tablename='objects' AND policyname='storage_docs_select_0'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if qual := fmt.Sprint(row["qual"]); !strings.Contains(qual, "can_see") || fmt.Sprint(row["n"]) != "1" {
+		t.Fatalf("real policy must replace the false one: %v", row)
+	}
+	if !functionExists(t, db, "can_see") {
+		t.Fatal("the unblocked plan creates the rpc")
+	}
 }
