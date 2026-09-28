@@ -717,6 +717,31 @@ await step('rest: non-inner embed filters keep parent rows', async () => {
   assertEq(c2, toMany.length, 'count matches kept rows')
 })
 
+await step('rest: aggregates group by embeds; referenced or and spread filters keep parents', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { data: todo, error: te } = await client.from('todos').select('title').eq('id', todoId).single()
+  if (te) throw te
+  const { data: grouped, error: ge } = await client
+    .from('comments').select('count(), todos(title)').eq('todo_id', todoId)
+  if (ge) throw ge
+  assertEq(grouped.length, 1, `one group: ${JSON.stringify(grouped)}`)
+  assert(grouped[0].count >= 1 && grouped[0].todos?.title === todo.title, `grouped by embed: ${JSON.stringify(grouped)}`)
+
+  const { data: ored, error: oe } = await client
+    .from('comments').select('body, todos(title)').eq('todo_id', todoId)
+    .or('title.eq.__nope_a__,title.eq.__nope_b__', { referencedTable: 'todos' })
+  if (oe) throw oe
+  assert(ored.length >= 1 && ored.every((r) => r.todos === null), `referenced or nulls the embed: ${JSON.stringify(ored)}`)
+
+  const { data: spread, error: se } = await client
+    .from('comments').select('body, ...todos(title)').eq('todo_id', todoId).eq('todos.title', '__no_such_title__')
+  if (se) throw se
+  assert(spread.length >= 1 && spread.every((r) => 'title' in r && r.title === null), `spread columns null: ${JSON.stringify(spread)}`)
+})
+
 await step('rest: nested embed — has-many with nested belongs-to', async () => {
   // todos → comments(body, todos(title))
   // The nested belongs-to back to todos exercises the parent-of-child embed
