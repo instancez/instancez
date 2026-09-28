@@ -156,6 +156,7 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 			if countMode == "exact" {
 				query = buildRPCCountedQuery(callSQL, rpcChain, callArgCount+1)
 			}
+			// nosemgrep -- query uses validated identifiers; values are bound args
 			rows, err := tx.Query(ctx, query, placeholders...)
 			if err != nil {
 				h.logger.Error("rpc setof error", "fn", name, "error", err)

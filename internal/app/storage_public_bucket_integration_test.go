@@ -171,13 +171,12 @@ func TestIntegration_Harden_DropsLegacyPublicSelect_LongBucketName(t *testing.T)
 	if err := app.NewMigrator(owner).Apply(ctx, cfg); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	for _, stmt := range []string{
-		`INSERT INTO storage.objects (bucket_id, name) VALUES ('` + long + `', 'a.txt')`,
-		`CREATE POLICY ` + long + `_public_select ON storage.objects FOR SELECT USING (bucket_id = '` + long + `')`,
-	} {
-		if _, err := owner.Exec(ctx, stmt); err != nil {
-			t.Fatalf("seed %q: %v", stmt, err)
-		}
+	if _, err := owner.Exec(ctx, `INSERT INTO storage.objects (bucket_id, name) VALUES ($1, 'a.txt')`, long); err != nil {
+		t.Fatalf("seed object: %v", err)
+	}
+	// nosemgrep -- test DDL; long is a constant bucket name and DDL can't take bind params
+	if _, err := owner.Exec(ctx, `CREATE POLICY `+long+`_public_select ON storage.objects FOR SELECT USING (bucket_id = '`+long+`')`); err != nil {
+		t.Fatalf("seed policy: %v", err)
 	}
 	if got := selectObjectKeys(t, req, "anon"); len(got) != 1 {
 		t.Fatalf("legacy leak not reproduced: anon visible = %v", got)
