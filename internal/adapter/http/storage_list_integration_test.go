@@ -328,3 +328,48 @@ func TestStorageList_V2ClampsForeignCursorToPrefix(t *testing.T) {
 	resp = v2List(t, r, `{"prefix":"p/","sortBy":{"order":"desc"},"cursor":"`+below+`"}`)
 	assert.Empty(t, resp.Objects, "desc: a cursor below the prefix is the end")
 }
+
+// The fallback must return exactly what the name_lower path returns.
+func TestStorageList_FallbackMatchesTheColumnPath(t *testing.T) {
+	owner, _ := listDB(t, plainBuckets)
+	seedObjects(t, owner, "b", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		"top.txt", "a-b.txt", "a/x.txt", "a/y/z.txt", "B.txt", "b/c.txt", "p/a.txt", "p/A.txt", "p/z/1.txt", "p/Z/2.txt", "p/b.txt",
+		"dir/file.txt", "dir/sub/deep.txt", "dir/Sub2/q.txt", "dir/zz.txt", "we_ird%/p.txt", "ünï/c.txt", "ÜNÏ/d.txt",
+		"kelvin/a.txt", "Kelvin/b.txt", "Dir/Other.txt", "p/", "quote'/it.txt")
+	r := routerFor(owner)
+	bodies := []string{
+		`{}`, `{"prefix":"p"}`, `{"prefix":"p/"}`, `{"prefix":"P/"}`, `{"prefix":"dir/"}`, `{"prefix":"DIR/"}`, `{"prefix":"dir/","search":"S"}`,
+		`{"prefix":"a"}`, `{"prefix":"we_"}`, `{"prefix":"ünï/"}`, `{"prefix":"ÜNÏ/"}`, `{"prefix":"kelvin/"}`, `{"prefix":"k"}`, `{"search":"quote'"}`,
+		`{"prefix":"nope/"}`, `{"prefix":"p/","limit":2}`, `{"prefix":"p/","limit":2,"offset":2}`, `{"prefix":"p/","limit":1,"offset":99}`,
+		`{"prefix":"p/","sortBy":{"column":"name","order":"desc"}}`, `{"prefix":"","sortBy":{"column":"name","order":"desc"},"limit":3,"offset":1}`,
+		`{"prefix":"dir/","sortBy":{"column":"name","order":"desc"}}`,
+	}
+	want := make([][]map[string]any, len(bodies))
+	for i, b := range bodies {
+		_, want[i] = v1Names(t, r, b)
+	}
+
+	_, err := owner.Exec(context.Background(), `ALTER TABLE storage.objects DROP COLUMN name_lower`)
+	require.NoError(t, err)
+	for i, b := range bodies {
+		_, got := v1Names(t, r, b)
+		assert.Equal(t, want[i], got, b)
+	}
+}
+
+func TestStorageList_FallbackReadsOnlyThePrefix(t *testing.T) {
+	owner, _ := listDB(t, plainBuckets)
+	seedBig(t, owner)
+	_, err := owner.Exec(context.Background(), `ALTER TABLE storage.objects DROP COLUMN name_lower`)
+	require.NoError(t, err)
+
+	for _, match := range []string{"p/f399/", "P/F399/", "p/f399/x0"} {
+		q := listQuery{bucket: "big", match: match, fold: true, foldFrom: len(match), caseFold: true, v1: true, limit: 10}
+		sql, args := q.sql()
+		root := explainPlan(t, owner, context.Background(), match, sql, args)
+		raw, _ := json.Marshal(root)
+		assert.False(t, strings.Contains(string(raw), "Seq Scan"), "%s seq scans", match)
+		assert.True(t, strings.Contains(string(raw), "objects_bucket_name_c_idx"), "%s skips the name index", match)
+		assert.Less(t, scannedRows(root), float64(500), "%s reads its prefix, not the 50k rows in the bucket", match)
+	}
+}

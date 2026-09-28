@@ -915,8 +915,10 @@ func TestHarden_LocksThenRevokesInOneTx(t *testing.T) {
 		if err := NewMigrator(db).Harden(context.Background(), cfg); err != nil {
 			t.Fatalf("Harden(%+v): %v", cfg, err)
 		}
-		if len(db.execs) == 0 || !strings.Contains(db.execs[0], "pg_advisory_xact_lock") {
-			t.Fatalf("advisory lock must be the first statement: %v", db.execs)
+		revoke := slices.IndexFunc(db.execs, func(q string) bool { return strings.Contains(q, "REVOKE ALL ON ALL TABLES IN SCHEMA auth") })
+		if revoke < 0 || !slices.ContainsFunc(db.execs[:revoke], func(q string) bool { return strings.Contains(q, "pg_advisory_xact_lock") }) ||
+			strings.Contains(strings.Join(db.execs[revoke-3:revoke], ""), "DO $$") {
+			t.Fatalf("advisory lock must open the revoke tx: %v", db.execs)
 		}
 		if !db.migrationsTableEnsured {
 			t.Fatal("Harden must ensure _instancez_migrations exists before revoking on it")
@@ -948,7 +950,7 @@ func TestHarden_RollsBackOnFailure(t *testing.T) {
 	if err := NewMigrator(db).Harden(context.Background(), nil); err == nil {
 		t.Fatal("expected error")
 	}
-	const storageHealTx = 3 // advisory lock, lock_timeout, heal
+	const storageHealTx = 3 + 4 // name index tx, column tx (each: lock_timeout, advisory lock, heal; column adds statement_timeout)
 	if db.committedStatements != storageHealTx {
 		t.Fatalf("partial harden committed %d statements, want only the separate storage heal tx (%d)", db.committedStatements, storageHealTx)
 	}

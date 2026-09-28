@@ -79,6 +79,13 @@ await supabase.storage.from('avatars').remove(['photo.png'])
 
 Uploading to an existing path without `upsert: true` returns a 409 error.
 
+`list()` is index-bounded through a generated `name_lower` column that boot adds to `storage.objects`. The rewrite takes an exclusive lock, so boot runs it with a 20s statement timeout and skips it when the table has more than 500,000 rows (a warning names the SQL). Without the column, `list()` still returns the same results but reads every object under the prefix. On a large table, run this in a quiet window:
+
+```sql
+ALTER TABLE storage.objects ADD COLUMN name_lower TEXT COLLATE "C" GENERATED ALWAYS AS (lower(name)) STORED;
+CREATE INDEX CONCURRENTLY objects_bucket_name_lower_c_idx ON storage.objects (bucket_id, name_lower, (name COLLATE "C"));
+```
+
 Signed URLs are authorized when they are created, not when they are redeemed. `createSignedUrl` checks the bucket's `select` policy before returning a download URL, and `createSignedUploadUrl` checks the `insert` policy before returning an upload token. If you cannot read or write an object directly, you cannot get a signed URL for it either. Redeeming the token needs no further auth (the token is the grant), so the check happens when the URL is minted.
 
 `createSignedUrls` runs the same `select` check for each path, up to 1000 paths per call: an empty list or more than 1000 returns 400. Paths you can't read come back with an `error` and a null `signedURL`. Expiry is capped at 7 days (604800 seconds), matching the S3 presign limit. Larger values are clamped, and zero or negative values default to one hour.

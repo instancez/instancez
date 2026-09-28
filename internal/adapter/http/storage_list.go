@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
@@ -44,12 +45,12 @@ func (q listQuery) sql() (string, []any) {
 
 // walkSQL is the storage.search skip-scan: one index probe per emitted row, and a folder's subtree is jumped over.
 func (q listQuery) walkSQL() (string, []any) {
+	if q.caseFold && !q.lowerCol {
+		return q.scanSQL()
+	}
 	key, prefix := `o.name COLLATE "C"`, "$2"
 	if q.caseFold {
 		key, prefix = `o.name_lower`, "lower($2)"
-		if !q.lowerCol {
-			key = `lower(o.name) COLLATE "C"`
-		}
 	}
 	p := "0"
 	if q.fold {
@@ -97,6 +98,67 @@ SELECT CASE WHEN p > 0 THEN left(name, $3 + p) ELSE name END AS name, CASE WHEN 
   CASE WHEN p > 0 THEN NULL ELSE uploaded_at END AS uploaded_at, CASE WHEN p > 0 THEN NULL ELSE metadata END AS metadata, p > 0 AS folder
 FROM walk WHERE starts_with(k, %s) LIMIT $5 OFFSET $6`, fmt.Sprintf(peek, first), fmt.Sprintf(peek, step), prefix, prefix)
 	return sql, []any{q.bucket, q.match, q.foldFrom, start, q.limit, q.offset}
+}
+
+// scanSQL is the walk's answer without name_lower: it seeks each case variant of the prefix's leading runes on the name index, then filters, folds and sorts in one pass.
+func (q listQuery) scanSQL() (string, []any) {
+	dir, pick := "ASC", "k, n"
+	if q.desc {
+		dir, pick = "DESC", "k DESC, n DESC"
+	}
+	p := "0"
+	if q.fold {
+		p = "strpos(substr(k, $3 + 1), '/')"
+	}
+	args := []any{q.bucket, q.match, q.foldFrom, q.limit, q.offset}
+	var seekTerms []string
+	for _, lo := range caseVariantRanges(q.match) {
+		args = append(args, lo)
+		seekTerms = append(seekTerms, fmt.Sprintf(`(o.name COLLATE "C" >= $%d AND o.name COLLATE "C" < $%d || chr(1114111))`, len(args), len(args)))
+	}
+	seeks := strings.Join(seekTerms, " OR ")
+	sql := fmt.Sprintf(`WITH m AS (
+  SELECT id, name, uploaded_at, metadata, k, n, %s AS p FROM (
+    SELECT o.id, o.name, o.uploaded_at, o.metadata, lower(o.name) COLLATE "C" AS k, o.name COLLATE "C" AS n
+    FROM storage.objects o WHERE o.bucket_id = $1 AND (%s) AND starts_with(lower(o.name) COLLATE "C", lower($2))
+  ) s
+), e AS (
+  (SELECT DISTINCT ON (left(k, $3 + p)) left(k, $3 + p) AS sk, left(name, $3 + p) AS name, NULL::text AS id, NULL::timestamptz AS uploaded_at, NULL::jsonb AS metadata, true AS folder, NULL::text AS n
+  FROM m WHERE p > 0 ORDER BY left(k, $3 + p), %s)
+  UNION ALL
+  SELECT k, name, id::text, uploaded_at, metadata, false, n FROM m WHERE p = 0
+)
+SELECT name, id, uploaded_at, metadata, folder FROM e ORDER BY sk %s, n %s LIMIT $4 OFFSET $5`, p, seeks, pick, dir, dir)
+	return sql, args
+}
+
+// maxVariantRanges caps the index seeks per query; runes past the cap are only filtered.
+const maxVariantRanges = 64
+
+// caseVariantRanges expands the leading runes of s into every case variant lower() could map onto them.
+func caseVariantRanges(s string) []string {
+	ranges, rest := []string{""}, s
+	for rest != "" {
+		r, size := utf8.DecodeRuneInString(rest)
+		var folds []rune
+		for f := unicode.SimpleFold(r); ; f = unicode.SimpleFold(f) {
+			folds = append(folds, f)
+			if f == r {
+				break
+			}
+		}
+		if len(ranges)*len(folds) > maxVariantRanges {
+			break
+		}
+		next := make([]string, 0, len(ranges)*len(folds))
+		for _, pre := range ranges {
+			for _, f := range folds {
+				next = append(next, pre+string(f))
+			}
+		}
+		ranges, rest = next, rest[size:]
+	}
+	return ranges
 }
 
 // orderBy applies dir to each comma-separated sort term.

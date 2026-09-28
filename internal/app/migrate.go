@@ -30,12 +30,20 @@ type Migrator struct {
 	roles            domain.Roles
 	allowDestructive bool
 	lockTimeout      time.Duration
+	healTimeout      time.Duration
+	healMaxRows      int64
 	logger           *slog.Logger
 }
 
 // DefaultMigrateLockTimeout bounds how long one migration DDL statement waits
 // for a table lock before the migration fails.
 const DefaultMigrateLockTimeout = 5 * time.Second
+
+// DefaultStorageHealTimeout stays under the platform's 30s init budget.
+const DefaultStorageHealTimeout = 20 * time.Second
+
+// DefaultStorageHealMaxRows is the estimated row count above which boot skips the column rewrite.
+const DefaultStorageHealMaxRows = 500_000
 
 // AllowDestructive permits DROP TABLE / DROP COLUMN in generated plans. It
 // returns the receiver so it can be chained onto NewMigrator.
@@ -50,6 +58,12 @@ func (m *Migrator) LockTimeout(d time.Duration) *Migrator {
 	return m
 }
 
+// StorageHealLimits bounds the storage.objects column rewrite by statement timeout and estimated row count.
+func (m *Migrator) StorageHealLimits(timeout time.Duration, maxRows int64) *Migrator {
+	m.healTimeout, m.healMaxRows = timeout, maxRows
+	return m
+}
+
 // NewMigrator builds a Migrator. Pass an explicit Roles value, or
 // domain.DefaultRoles() to keep Supabase-compatible defaults.
 func NewMigrator(db domain.Database, roles ...domain.Roles) *Migrator {
@@ -57,7 +71,7 @@ func NewMigrator(db domain.Database, roles ...domain.Roles) *Migrator {
 	if len(roles) > 0 {
 		r = roles[0]
 	}
-	return &Migrator{db: db, roles: r, lockTimeout: DefaultMigrateLockTimeout, logger: slog.Default()}
+	return &Migrator{db: db, roles: r, lockTimeout: DefaultMigrateLockTimeout, healTimeout: DefaultStorageHealTimeout, healMaxRows: DefaultStorageHealMaxRows, logger: slog.Default()}
 }
 
 // Plan generates DDL statements to bring the DB in sync with the config.
@@ -431,9 +445,7 @@ func (m *Migrator) Harden(ctx context.Context, cfg *domain.Config) error {
 		return fmt.Errorf("harden: %w", err)
 	}
 	// Best effort, so a busy table cannot crash-loop boot.
-	if err := m.applyStatements(ctx, []string{storageListHeal}); err != nil {
-		m.logger.Warn("harden: storage list heal skipped, retrying next boot", "error", err)
-	}
+	m.healStorageList(ctx)
 	stmts := append(generateJWTKeysTable(), generatePrivilegeRevokes(m.roles)...)
 	if cfg != nil && cfg.Auth != nil {
 		stmts = append(stmts, authHealDDL...)
@@ -444,6 +456,51 @@ func (m *Migrator) Harden(ctx context.Context, cfg *domain.Config) error {
 	}
 	stmts = append(stmts, healStorageRLS(applied)...)
 	return m.applyStatements(ctx, stmts)
+}
+
+// healStorageList never fails boot: the name index goes first in its own tx, then the bounded column rewrite.
+func (m *Migrator) healStorageList(ctx context.Context) {
+	if err := m.healTx(ctx, 0, storageNameIndexHeal); err != nil {
+		m.logger.Warn("harden: storage name index skipped, retrying next boot", "error", err)
+	}
+	row, err := m.db.QueryRow(ctx, `SELECT to_regclass('storage.objects') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('storage.objects') AND attname = 'name_lower' AND NOT attisdropped) AS missing,
+  COALESCE((SELECT reltuples::bigint FROM pg_class WHERE oid = to_regclass('storage.objects')), 0) AS approx_rows`)
+	if err != nil {
+		m.logger.Warn("harden: storage list heal skipped, retrying next boot", "error", err)
+		return
+	}
+	if rows, _ := row["approx_rows"].(int64); row != nil && row["missing"] == true && rows > m.healMaxRows {
+		m.logger.Warn("harden: storage.objects is too large to rewrite at boot, list stays on the slower query until you run the SQL by hand",
+			"approx_rows", rows, "max_rows", m.healMaxRows, "sql", storageListManualSQL)
+		return
+	}
+	if err := m.healTx(ctx, m.healTimeout, storageListColumnHeal); err != nil {
+		m.logger.Warn("harden: storage list column heal skipped, retrying next boot", "error", err)
+	}
+}
+
+// healTx runs one statement under the migration lock, waiting at most lock_timeout for it; timeout 0 leaves statement_timeout alone.
+func (m *Migrator) healTx(ctx context.Context, timeout time.Duration, stmt string) error {
+	tx, err := m.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SELECT set_config('lock_timeout', $1, true)", strconv.FormatInt(m.lockTimeout.Milliseconds(), 10)+"ms"); err != nil {
+		return err
+	}
+	if timeout > 0 {
+		if _, err := tx.Exec(ctx, "SELECT set_config('statement_timeout', $1, true)", strconv.FormatInt(timeout.Milliseconds(), 10)+"ms"); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", domain.MigrationLockKey); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, stmt); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // appliedStorage returns the last migrated buckets, since a pending config may reference objects that don't exist yet.
@@ -1156,19 +1213,28 @@ func generateStorageTables(cfg *domain.Config) []string {
 		// user_metadata. supabase-js's .list() carries user_metadata separately
 		// from the storage-managed metadata blob.
 		`ALTER TABLE storage.objects ADD COLUMN IF NOT EXISTS user_metadata JSONB;`,
-		storageListHeal,
+		storageNameIndexHeal,
+		storageListColumnHeal,
 	}
 }
 
-// storageListHeal adds the lowered-name column and the COLLATE "C" indexes the list skip-scans need, checking the catalog first so a healed DB takes no lock.
-// The stored column is leakproof to compare, so v1 list stays index-bounded under RLS; lower(name) is not.
-const storageListHeal = `DO $$ BEGIN
+// storageListManualSQL is the by-hand equivalent of storageListColumnHeal for tables too large to rewrite at boot.
+const storageListManualSQL = `ALTER TABLE storage.objects ADD COLUMN name_lower TEXT COLLATE "C" GENERATED ALWAYS AS (lower(name)) STORED; ` +
+	`CREATE INDEX CONCURRENTLY objects_bucket_name_lower_c_idx ON storage.objects (bucket_id, name_lower, (name COLLATE "C"));`
+
+// storageNameIndexHeal builds the v2 list index; the catalog check keeps a healed DB lock-free.
+const storageNameIndexHeal = `DO $$ BEGIN
+IF to_regclass('storage.objects') IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'storage' AND tablename = 'objects' AND indexname = 'objects_bucket_name_c_idx') THEN
+  CREATE INDEX objects_bucket_name_c_idx ON storage.objects (bucket_id, name COLLATE "C");
+END IF;
+END $$;`
+
+// storageListColumnHeal adds the lowered-name column and its index; the stored column keeps v1 list index-bounded under RLS, where lower(name) is not leakproof.
+const storageListColumnHeal = `DO $$ BEGIN
 IF to_regclass('storage.objects') IS NOT NULL THEN
   IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'storage.objects'::regclass AND attname = 'name_lower' AND NOT attisdropped) THEN
     ALTER TABLE storage.objects ADD COLUMN name_lower TEXT COLLATE "C" GENERATED ALWAYS AS (lower(name)) STORED;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'storage' AND tablename = 'objects' AND indexname = 'objects_bucket_name_c_idx') THEN
-    CREATE INDEX objects_bucket_name_c_idx ON storage.objects (bucket_id, name COLLATE "C");
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'storage' AND tablename = 'objects' AND indexname = 'objects_bucket_name_lower_c_idx') THEN
     CREATE INDEX objects_bucket_name_lower_c_idx ON storage.objects (bucket_id, name_lower, (name COLLATE "C"));
