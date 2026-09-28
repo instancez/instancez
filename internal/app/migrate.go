@@ -375,45 +375,55 @@ func (m *Migrator) Harden(ctx context.Context, cfg *domain.Config) error {
 	if cfg != nil && cfg.Auth != nil {
 		stmts = append(stmts, authHealDDL...)
 	}
-	if cfg != nil {
-		stmts = append(stmts, healStorageRLS(cfg.Storage)...)
+	applied, err := m.appliedStorage(ctx)
+	if err != nil {
+		return fmt.Errorf("harden: %w", err)
 	}
+	stmts = append(stmts, healStorageRLS(applied)...)
 	return m.applyStatements(ctx, stmts)
 }
 
-// healStorageRLS drops legacy public-select policies and re-emits restrictive bucket RLS, so live DBs heal without a config change.
-func healStorageRLS(storage map[string]domain.Bucket) []string {
-	stmts := healLegacyPublicSelect(storage)
-	var ddl []string
-	for _, name := range sortedKeys(storage) {
-		bucket := storage[name]
-		for _, p := range bucket.RLS {
-			if p.Type == "restrictive" {
-				ddl = append(ddl, generateStorageRLS(name, bucket)...)
-				break
-			}
-		}
+// appliedStorage returns the last migrated buckets, since a pending config may reference objects that don't exist yet.
+func (m *Migrator) appliedStorage(ctx context.Context) (map[string]domain.Bucket, error) {
+	last, err := m.db.GetLastMigration(ctx)
+	if err != nil || last == nil || last.ConfigJSON == "" || last.ConfigJSON == "{}" {
+		return nil, err
 	}
-	if len(ddl) == 0 {
-		return stmts
+	var cfg domain.Config
+	if json.Unmarshal([]byte(last.ConfigJSON), &cfg) != nil {
+		return nil, nil
 	}
-	return append(stmts, fmt.Sprintf("DO $$ BEGIN\nIF to_regclass('storage.objects') IS NOT NULL THEN\n%s\nEND IF;\nEND $$;", strings.Join(ddl, "\n")))
+	return cfg.Storage, nil
 }
 
-// healLegacyPublicSelect checks pg_policies first so a healed DB takes no lock; the literal coerces to name, truncating to 63 bytes like the policy.
-func healLegacyPublicSelect(storage map[string]domain.Bucket) []string {
+// healStorageRLS drops legacy public-select policies and re-emits restrictive bucket RLS still on the old AND-scoping, checking pg_policies first so a healed DB takes no lock.
+func healStorageRLS(storage map[string]domain.Bucket) []string {
+	stmts := dropPublicSelect(storage, true)
 	var body []string
 	for _, name := range sortedKeys(storage) {
-		if storage[name].Public {
-			body = append(body, fmt.Sprintf(
-				"IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = '%s_public_select') THEN\nDROP POLICY %s_public_select ON storage.objects;\nEND IF;",
-				name, name))
+		bucket := storage[name]
+		var restrictive []string
+		for i, p := range bucket.RLS {
+			if p.Type != "restrictive" {
+				continue
+			}
+			for _, op := range p.Operations {
+				restrictive = append(restrictive, fmt.Sprintf("'storage_%s_%s_%d'", name, op, i))
+			}
 		}
+		if len(restrictive) == 0 {
+			continue
+		}
+		scoped := fmt.Sprintf("position('bucket_id <> ''%s''' IN %%[1]s) = 0", name)
+		body = append(body, fmt.Sprintf(
+			"IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname IN (%s) AND ((qual IS NOT NULL AND %s) OR (with_check IS NOT NULL AND %s))) THEN\n%s\nEND IF;",
+			strings.Join(restrictive, ", "), fmt.Sprintf(scoped, "qual"), fmt.Sprintf(scoped, "with_check"),
+			strings.Join(generateStorageRLS(name, bucket), "\n")))
 	}
 	if len(body) == 0 {
-		return nil
+		return stmts
 	}
-	return []string{fmt.Sprintf("DO $$ BEGIN\n%s\nEND $$;", strings.Join(body, "\n"))}
+	return append(stmts, fmt.Sprintf("DO $$ BEGIN\nIF to_regclass('storage.objects') IS NOT NULL THEN\n%s\nEND IF;\nEND $$;", strings.Join(body, "\n")))
 }
 
 // applyStatements runs stmts inside a single transaction without recording a
@@ -1149,7 +1159,7 @@ func generateStorageRLSAll(storage map[string]domain.Bucket) []string {
 		}
 	}
 
-	ddl := dropLegacyPublicSelect(storage)
+	ddl := dropPublicSelect(storage, false)
 	if anyRLS {
 		ddl = append(ddl,
 			`ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;`,
@@ -1176,15 +1186,22 @@ func generateStorageRLSAll(storage map[string]domain.Bucket) []string {
 	return ddl
 }
 
-// dropLegacyPublicSelect removes the pre-parity <bucket>_public_select; like Supabase, public only opens /object/public downloads.
-func dropLegacyPublicSelect(storage map[string]domain.Bucket) []string {
+// dropPublicSelect drops every bucket's pre-parity <bucket>_public_select; guarded checks pg_policies first, whose name literal truncates to 63 bytes like the policy.
+func dropPublicSelect(storage map[string]domain.Bucket, guarded bool) []string {
 	var ddl []string
 	for _, name := range sortedKeys(storage) {
-		if storage[name].Public {
+		if guarded {
+			ddl = append(ddl, fmt.Sprintf(
+				"IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = '%s_public_select') THEN\nDROP POLICY %s_public_select ON storage.objects;\nEND IF;",
+				name, name))
+		} else {
 			ddl = append(ddl, fmt.Sprintf("DROP POLICY IF EXISTS %s_public_select ON storage.objects;", name))
 		}
 	}
-	return ddl
+	if !guarded || len(ddl) == 0 {
+		return ddl
+	}
+	return []string{fmt.Sprintf("DO $$ BEGIN\n%s\nEND $$;", strings.Join(ddl, "\n"))}
 }
 
 func generateStorageRLS(bucketName string, bucket domain.Bucket) []string {

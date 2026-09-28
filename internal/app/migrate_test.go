@@ -315,7 +315,7 @@ func TestGenerateStorageRLS_Public(t *testing.T) {
 	mustContain(t, joined, "FOR INSERT WITH CHECK")
 }
 
-// Public buckets grant no SELECT; the legacy policy is only ever dropped (Supabase parity).
+// No bucket grants a public SELECT; the legacy policy is dropped for every bucket, public or not.
 func TestGenerateStorageRLSAll_PublicBucketDropsLegacySelect(t *testing.T) {
 	cases := map[string]map[string]domain.Bucket{
 		"no rls anywhere": {"avatars": {Public: true}, "documents": {}},
@@ -327,7 +327,7 @@ func TestGenerateStorageRLSAll_PublicBucketDropsLegacySelect(t *testing.T) {
 			joined := strings.Join(generateStorageRLSAll(storage), "\n")
 			mustContain(t, joined, "DROP POLICY IF EXISTS avatars_public_select ON storage.objects;")
 			mustNotContain(t, joined, "CREATE POLICY avatars_public_select")
-			mustNotContain(t, joined, "documents_public_select")
+			mustContain(t, joined, "DROP POLICY IF EXISTS documents_public_select ON storage.objects;")
 		})
 	}
 }
@@ -336,28 +336,30 @@ func TestHealStorageRLS(t *testing.T) {
 	if got := healStorageRLS(nil); got != nil {
 		t.Fatalf("nil storage: %v", got)
 	}
-	if got := healStorageRLS(map[string]domain.Bucket{"docs": {}}); got != nil {
-		t.Fatalf("private bucket without restrictive policy must emit nothing: %v", got)
-	}
-	got := healStorageRLS(map[string]domain.Bucket{"b_pub": {Public: true}, "a_pub": {Public: true}, "docs": {}})
+	got := healStorageRLS(map[string]domain.Bucket{"b_pub": {Public: true}, "a_priv": {}})
 	if len(got) != 1 {
 		t.Fatalf("want one guarded statement, got %d: %v", len(got), got)
 	}
-	mustContain(t, got[0], "policyname = 'a_pub_public_select') THEN\nDROP POLICY a_pub_public_select ON storage.objects;\nEND IF;")
+	mustContain(t, got[0], "policyname = 'a_priv_public_select') THEN\nDROP POLICY a_priv_public_select ON storage.objects;\nEND IF;")
 	mustContain(t, got[0], "policyname = 'b_pub_public_select') THEN\nDROP POLICY b_pub_public_select ON storage.objects;\nEND IF;")
-	if strings.Index(got[0], "a_pub_public_select") > strings.Index(got[0], "b_pub_public_select") {
+	if strings.Index(got[0], "a_priv_public_select") > strings.Index(got[0], "b_pub_public_select") {
 		t.Fatalf("heal must iterate buckets in sorted order: %s", got[0])
 	}
 	mustNotContain(t, got[0], "CREATE POLICY")
-	mustNotContain(t, got[0], "docs_public_select")
 
 	both := healStorageRLS(map[string]domain.Bucket{
-		"pub": {Public: true, RLS: []domain.RLSPolicy{{Operations: []string{"select"}, Using: "true", Type: "restrictive"}}},
+		"pub": {Public: true, RLS: []domain.RLSPolicy{
+			{Operations: []string{"select"}, Using: "true"},
+			{Operations: []string{"select", "update"}, Using: "name <> ''", Type: "restrictive"},
+		}},
 	})
 	if len(both) != 2 {
 		t.Fatalf("public+restrictive: want drop and re-emit statements, got %d: %v", len(both), both)
 	}
 	mustContain(t, both[1], "IF to_regclass('storage.objects') IS NOT NULL THEN")
+	mustContain(t, both[1], "policyname IN ('storage_pub_select_1', 'storage_pub_update_1')")
+	mustContain(t, both[1], "position('bucket_id <> ''pub''' IN qual) = 0")
+	mustNotContain(t, both[1], "'storage_pub_select_0'")
 	mustNotContain(t, both[1], "pub_public_select")
 }
 
@@ -1028,8 +1030,8 @@ func TestHarden_RestrictiveBucketPolicy_ReemitsStorageRLS(t *testing.T) {
 			{Operations: []string{"select"}, Using: "name LIKE 'ok/%'", Type: "restrictive"},
 		}},
 	}}
-	db := newFakeDB(t)
-	if err := NewMigrator(db).Harden(context.Background(), cfg); err != nil {
+	db := dbAppliedWith(t, cfg)
+	if err := NewMigrator(db).Harden(context.Background(), &domain.Config{}); err != nil {
 		t.Fatalf("Harden: %v", err)
 	}
 	joined := strings.Join(db.execs, "\n")
@@ -1046,7 +1048,7 @@ func TestHarden_NoRestrictiveBucketPolicy_TakesNoStorageLock(t *testing.T) {
 			{Operations: []string{"select"}, Using: "auth.uid() IS NOT NULL"},
 		}},
 	}}
-	db := newFakeDB(t)
+	db := dbAppliedWith(t, cfg)
 	if err := NewMigrator(db).Harden(context.Background(), cfg); err != nil {
 		t.Fatalf("Harden: %v", err)
 	}
@@ -1054,6 +1056,37 @@ func TestHarden_NoRestrictiveBucketPolicy_TakesNoStorageLock(t *testing.T) {
 		if strings.Contains(stmt, "storage.objects") && !strings.Contains(stmt, "FROM pg_policies") {
 			t.Fatalf("Harden with no restrictive bucket policy must only touch storage.objects behind a pg_policies check, got: %s", stmt)
 		}
+	}
+}
+
+func dbAppliedWith(t *testing.T, cfg *domain.Config) *fakeDB {
+	t.Helper()
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := newFakeDB(t)
+	db.lastMigration = &domain.Migration{ConfigJSON: string(raw)}
+	return db
+}
+
+// Storage heals come from the applied config; a pending one can reference objects that don't exist yet.
+func TestHarden_StorageHealUsesAppliedConfigOnly(t *testing.T) {
+	pending := &domain.Config{Storage: map[string]domain.Bucket{
+		"new": {RLS: []domain.RLSPolicy{{Operations: []string{"select"}, Using: "missing_fn()", Type: "restrictive"}}},
+	}}
+	for name, db := range map[string]*fakeDB{
+		"no migration":  newFakeDB(t),
+		"empty config":  {lastMigration: &domain.Migration{ConfigJSON: "{}"}},
+		"unparseable":   {lastMigration: &domain.Migration{ConfigJSON: "not json"}},
+		"other buckets": dbAppliedWith(t, &domain.Config{Storage: map[string]domain.Bucket{"old": {}}}),
+	} {
+		if err := NewMigrator(db).Harden(context.Background(), pending); err != nil {
+			t.Fatalf("%s: Harden: %v", name, err)
+		}
+		joined := strings.Join(db.execs, "\n")
+		mustNotContain(t, joined, "missing_fn")
+		mustNotContain(t, joined, "new_public_select")
 	}
 }
 
