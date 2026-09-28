@@ -200,6 +200,19 @@ func TestSupabaseJSCompat(t *testing.T) {
 					{Name: "note", Type: "text"},
 				},
 			},
+			// todo_labels is a junction, so todos and labels embed each other many-to-many.
+			"labels": {
+				Fields: []domain.Field{
+					{Name: "id", Type: "bigserial", PrimaryKey: true},
+					{Name: "name", Type: "text", Required: true},
+				},
+			},
+			"todo_labels": {
+				Fields: []domain.Field{
+					{Name: "todo_id", ForeignKey: &domain.ForeignKey{References: "todos.id", OnDelete: "cascade"}, PrimaryKey: true},
+					{Name: "label_id", ForeignKey: &domain.ForeignKey{References: "labels.id", OnDelete: "cascade"}, PrimaryKey: true},
+				},
+			},
 			// profiles exercises cross-schema FK + RLS using auth.uid().
 			// FK targets auth.users.id (auto-emitted whenever cfg.Auth != nil),
 			// the RLS policies reference auth.uid() to gate writes to the row's

@@ -1,7 +1,10 @@
 package postgrest
 
 import (
+	"cmp"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -204,119 +207,204 @@ func ResolveEmbeds(tableName string, table domain.Table, embedNames []string, al
 			return nil, fmt.Errorf("alias not allowed on spread embed %q", alias+":"+name)
 		}
 
-		found := false
-		for _, field := range table.Fields {
-			if field.ForeignKey == nil {
-				continue
-			}
-			fieldName := field.Name
-			ref := field.ForeignKey.References
-			parts := strings.SplitN(ref, ".", 2)
-			if len(parts) != 2 {
-				continue
-			}
-			refTable, refCol := parts[0], parts[1]
-
-			if fkHint != "" {
-				if fieldName != fkHint && strings.TrimSuffix(fieldName, "_id") != fkHint {
-					continue
-				}
-				if refTable != name {
-					continue
-				}
-			} else if refTable != name && strings.TrimSuffix(fieldName, "_id") != name {
-				continue
-			}
-			emb := Embed{
-				Name:      name,
-				Alias:     alias,
-				Columns:   cols,
-				FKColumn:  fieldName,
-				RefTable:  refTable,
-				RefColumn: refCol,
-				Inner:     inner,
-				Spread:    spread,
-			}
-			if err := validateEmbedSpec(raw, alias, cols, allTables[refTable]); err != nil {
-				return nil, err
-			}
-			if len(nested) > 0 {
-				refTbl, ok := allTables[refTable]
-				if !ok {
-					return nil, fmt.Errorf("embed %q references unknown table %q", name, refTable)
-				}
-				children, err := ResolveEmbeds(refTable, refTbl, nested, allTables)
-				if err != nil {
-					return nil, fmt.Errorf("nested embed in %q: %w", name, err)
-				}
-				emb.Children = children
-			}
-			embeds = append(embeds, emb)
-			found = true
-			break
+		toOne := belongsToRels(tableName, table, name, fkHint)
+		toMany := hasManyRels(tableName, name, fkHint, allTables)
+		m2m := junctionRels(tableName, name, fkHint, allTables)
+		// ponytail: direct-only ambiguity keeps first-match-wins; PostgREST would return PGRST201.
+		if len(m2m) > 0 && len(toOne)+len(toMany)+len(m2m) > 1 {
+			return nil, ambiguousEmbed(tableName, name, slices.Concat(toOne, m2m, toMany))
 		}
-
-		if found {
-			continue
-		}
-
-		for otherName, otherTable := range allTables {
-			if otherName == tableName {
-				continue
-			}
-			if otherName != name {
-				continue
-			}
-			if spread {
-				return nil, fmt.Errorf("spread (...) not allowed on has-many embed %q", name)
-			}
-			for _, field := range otherTable.Fields {
-				if field.ForeignKey == nil {
-					continue
-				}
-				fieldName := field.Name
-				ref := field.ForeignKey.References
-				parts := strings.SplitN(ref, ".", 2)
-				if len(parts) != 2 {
-					continue
-				}
-				if parts[0] == tableName {
-					if fkHint != "" && fieldName != fkHint && strings.TrimSuffix(fieldName, "_id") != fkHint {
-						continue
-					}
-					emb := Embed{
-						Name:      name,
-						Alias:     alias,
-						Columns:   cols,
-						FKColumn:  fieldName,
-						RefTable:  otherName,
-						RefColumn: parts[1],
-						IsReverse: true,
-						Inner:     inner,
-					}
-					if err := validateEmbedSpec(raw, alias, cols, otherTable); err != nil {
-						return nil, err
-					}
-					if len(nested) > 0 {
-						children, err := ResolveEmbeds(otherName, otherTable, nested, allTables)
-						if err != nil {
-							return nil, fmt.Errorf("nested embed in %q: %w", name, err)
-						}
-						emb.Children = children
-					}
-					embeds = append(embeds, emb)
-					found = true
-					break
-				}
-			}
-		}
-
-		if !found {
+		cands := slices.Concat(toOne, toMany, m2m)
+		if len(cands) == 0 {
 			return nil, fmt.Errorf("could not find a relationship between %q and %q in the schema", tableName, name)
 		}
+		emb := cands[0].emb
+		if spread && emb.IsReverse {
+			return nil, fmt.Errorf("spread (...) not allowed on has-many embed %q", name)
+		}
+		emb.Name, emb.Alias, emb.Columns, emb.Inner, emb.Spread = name, alias, cols, inner, spread
+		refTbl, ok := allTables[emb.RefTable]
+		if err := validateEmbedSpec(raw, alias, cols, refTbl); err != nil {
+			return nil, err
+		}
+		if len(nested) > 0 {
+			if !ok {
+				return nil, fmt.Errorf("embed %q references unknown table %q", name, emb.RefTable)
+			}
+			children, err := ResolveEmbeds(emb.RefTable, refTbl, nested, allTables)
+			if err != nil {
+				return nil, fmt.Errorf("nested embed in %q: %w", name, err)
+			}
+			emb.Children = children
+		}
+		embeds = append(embeds, emb)
 	}
 
 	return embeds, nil
+}
+
+// relCandidate is one relationship an embed name matched, with its PGRST201 description.
+type relCandidate struct {
+	emb          Embed
+	cardinality  string
+	relationship string
+	constraint   string
+}
+
+func fkConstraintName(table, col string) string {
+	// ponytail: PG truncates names past 63 bytes differently; long names won't match as hints.
+	return table + "_" + col + "_fkey"
+}
+
+func matchesFKHint(hint, table, col string) bool {
+	return hint == col || strings.TrimSuffix(col, "_id") == hint || hint == fkConstraintName(table, col)
+}
+
+// isOneToOne mirrors PostgREST: the FK columns are exactly a primary or unique key.
+func isOneToOne(t domain.Table, f domain.Field) bool {
+	return f.Unique || (f.PrimaryKey && len(PrimaryKeyColumns(t)) == 1)
+}
+
+func belongsToRels(tableName string, table domain.Table, name, fkHint string) []relCandidate {
+	var out []relCandidate
+	for _, field := range table.Fields {
+		if field.ForeignKey == nil {
+			continue
+		}
+		parts := strings.SplitN(field.ForeignKey.References, ".", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		refTable, refCol := parts[0], parts[1]
+		if fkHint != "" {
+			if !matchesFKHint(fkHint, tableName, field.Name) || refTable != name {
+				continue
+			}
+		} else if refTable != name && strings.TrimSuffix(field.Name, "_id") != name {
+			continue
+		}
+		card := "many-to-one"
+		if isOneToOne(table, field) {
+			card = "one-to-one"
+		}
+		cons := fkConstraintName(tableName, field.Name)
+		out = append(out, relCandidate{
+			emb:          Embed{FKColumn: field.Name, RefTable: refTable, RefColumn: refCol},
+			cardinality:  card,
+			relationship: fmt.Sprintf("%s using %s(%s) and %s(%s)", cons, tableName, field.Name, refTable, refCol),
+			constraint:   cons,
+		})
+	}
+	return out
+}
+
+func hasManyRels(tableName, name, fkHint string, allTables map[string]domain.Table) []relCandidate {
+	other, ok := allTables[name]
+	if !ok || name == tableName {
+		return nil
+	}
+	var out []relCandidate
+	for _, field := range other.Fields {
+		if field.ForeignKey == nil {
+			continue
+		}
+		parts := strings.SplitN(field.ForeignKey.References, ".", 2)
+		if len(parts) != 2 || parts[0] != tableName {
+			continue
+		}
+		if fkHint != "" && !matchesFKHint(fkHint, name, field.Name) {
+			continue
+		}
+		card := "one-to-many"
+		if isOneToOne(other, field) {
+			card = "one-to-one"
+		}
+		cons := fkConstraintName(name, field.Name)
+		out = append(out, relCandidate{
+			emb:          Embed{FKColumn: field.Name, RefTable: name, RefColumn: parts[1], IsReverse: true},
+			cardinality:  card,
+			relationship: fmt.Sprintf("%s using %s(%s) and %s(%s)", cons, tableName, parts[1], name, field.Name),
+			constraint:   cons,
+		})
+	}
+	return out
+}
+
+// junctionRels finds many-to-many paths: a table whose PK holds a non-unique FK to each side (PostgREST addM2MRels).
+func junctionRels(tableName, name, fkHint string, allTables map[string]domain.Table) []relCandidate {
+	if tableName == name {
+		return nil
+	}
+	if _, ok := allTables[name]; !ok {
+		return nil
+	}
+	var out []relCandidate
+	for _, jt := range slices.Sorted(maps.Keys(allTables)) {
+		if fkHint != "" && fkHint != jt {
+			continue
+		}
+		fields := allTables[jt].Fields
+		for _, src := range fields {
+			srcTable, srcRef, ok := junctionLeg(src)
+			if !ok || srcTable != tableName {
+				continue
+			}
+			for _, tgt := range fields {
+				tgtTable, tgtRef, ok := junctionLeg(tgt)
+				if !ok || tgt.Name == src.Name || tgtTable != name {
+					continue
+				}
+				out = append(out, relCandidate{
+					emb: Embed{RefTable: name, IsReverse: true, Junction: &Junction{
+						Table: jt, SourceColumn: src.Name, SourceRef: srcRef, TargetColumn: tgt.Name, TargetRef: tgtRef,
+					}},
+					cardinality: "many-to-many",
+					relationship: fmt.Sprintf("%s using %s(%s) and %s(%s)",
+						jt, fkConstraintName(jt, src.Name), src.Name, fkConstraintName(jt, tgt.Name), tgt.Name),
+					constraint: jt,
+				})
+			}
+		}
+	}
+	return out
+}
+
+func junctionLeg(f domain.Field) (table, col string, ok bool) {
+	if f.ForeignKey == nil || !f.PrimaryKey || f.Unique {
+		return "", "", false
+	}
+	_, table, col, err := domain.ParseFKReference(f.ForeignKey.References)
+	return table, col, err == nil
+}
+
+func ambiguousEmbed(parent, target string, cands []relCandidate) *AmbiguousEmbedError {
+	e := &AmbiguousEmbedError{Parent: parent, Target: target}
+	for _, c := range cands {
+		e.Details = append(e.Details, map[string]string{
+			"cardinality":  c.cardinality,
+			"embedding":    parent + " with " + target,
+			"relationship": c.relationship,
+		})
+		e.Hints = append(e.Hints, "'"+target+"!"+c.constraint+"'")
+	}
+	return e
+}
+
+// ToManyFrom is the FROM list and correlation of a to-many embed under parent.
+func ToManyFrom(emb Embed, parent string) string {
+	if j := emb.Junction; j != nil {
+		return fmt.Sprintf("%s, %s WHERE %s.%s = %s.%s AND %s.%s = %s.%s",
+			emb.RefTable, j.Table, emb.RefTable, j.TargetRef, j.Table, j.TargetColumn, j.Table, j.SourceColumn, parent, j.SourceRef)
+	}
+	return fmt.Sprintf("%s WHERE %s.%s = %s.%s", emb.RefTable, emb.RefTable, emb.FKColumn, parent, cmp.Or(emb.RefColumn, "id"))
+}
+
+// toManyScope qualifies embed filters and order when a junction shares the FROM.
+func toManyScope(emb Embed) (*WhereNode, []OrderClause) {
+	if emb.Junction == nil {
+		return emb.Where, emb.Order
+	}
+	return AliasWhereColumns(emb.Where, emb.RefTable), QualifyOrderColumns(emb.Order, emb.RefTable)
 }
 
 // BuildEmbedRowExpr returns the JSON expression representing a single row of an embed.
@@ -365,18 +453,14 @@ func BuildChildEmbedSubselect(child Embed, parentAlias string, allTables map[str
 		allArgs = append(allArgs, rowArgs...)
 		argIdx = nextIdx
 
-		refPK := child.RefColumn
-		if refPK == "" {
-			refPK = "id"
-		}
+		where, order := toManyScope(child)
 		sub := fmt.Sprintf("SELECT coalesce(json_agg(%s", rowExpr)
-		if len(child.Order) > 0 {
-			sub += " ORDER BY " + RenderOrderBy(child.Order)
+		if len(order) > 0 {
+			sub += " ORDER BY " + RenderOrderBy(order)
 		}
-		sub += fmt.Sprintf("), '[]'::json) FROM %s WHERE %s.%s = %s.%s",
-			child.RefTable, child.RefTable, child.FKColumn, parentAlias, refPK)
-		if child.Where != nil {
-			clauseSQL, clauseArgs, next := child.Where.BuildSQL(argIdx)
+		sub += "), '[]'::json) FROM " + ToManyFrom(child, parentAlias)
+		if where != nil {
+			clauseSQL, clauseArgs, next := where.BuildSQL(argIdx)
 			if clauseSQL != "" {
 				sub += " AND " + clauseSQL
 				allArgs = append(allArgs, clauseArgs...)
@@ -461,26 +545,25 @@ func BuildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 			allArgs = append(allArgs, rowArgs...)
 			argIdx = nextIdx
 
-			refPK := emb.RefColumn
-			if refPK == "" {
-				refPK = "id"
-			}
-
+			where, order := toManyScope(emb)
 			needsInnerSubquery := emb.Limit != nil || emb.Offset != nil
 
 			if needsInnerSubquery {
-				inner := fmt.Sprintf("SELECT * FROM %s WHERE %s.%s = %s.%s",
-					emb.RefTable, emb.RefTable, emb.FKColumn, tableName, refPK)
-				if emb.Where != nil {
-					clauseSQL, clauseArgs, next := emb.Where.BuildSQL(argIdx)
+				cols := "*"
+				if emb.Junction != nil {
+					cols = emb.RefTable + ".*"
+				}
+				inner := "SELECT " + cols + " FROM " + ToManyFrom(emb, tableName)
+				if where != nil {
+					clauseSQL, clauseArgs, next := where.BuildSQL(argIdx)
 					if clauseSQL != "" {
 						inner += " AND " + clauseSQL
 						allArgs = append(allArgs, clauseArgs...)
 						argIdx = next
 					}
 				}
-				if len(emb.Order) > 0 {
-					inner += " ORDER BY " + RenderOrderBy(emb.Order)
+				if len(order) > 0 {
+					inner += " ORDER BY " + RenderOrderBy(order)
 				}
 				if emb.Limit != nil {
 					inner += fmt.Sprintf(" LIMIT %d", *emb.Limit)
@@ -495,13 +578,12 @@ func BuildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 			} else {
 				sub := fmt.Sprintf(
 					"SELECT coalesce(json_agg(%s", rowExpr)
-				if len(emb.Order) > 0 {
-					sub += " ORDER BY " + RenderOrderBy(emb.Order)
+				if len(order) > 0 {
+					sub += " ORDER BY " + RenderOrderBy(order)
 				}
-				sub += fmt.Sprintf("), '[]'::json) FROM %s WHERE %s.%s = %s.%s",
-					emb.RefTable, emb.RefTable, emb.FKColumn, tableName, refPK)
-				if emb.Where != nil {
-					clauseSQL, clauseArgs, next := emb.Where.BuildSQL(argIdx)
+				sub += "), '[]'::json) FROM " + ToManyFrom(emb, tableName)
+				if where != nil {
+					clauseSQL, clauseArgs, next := where.BuildSQL(argIdx)
 					if clauseSQL != "" {
 						sub += " AND " + clauseSQL
 						allArgs = append(allArgs, clauseArgs...)
@@ -587,14 +669,10 @@ func BuildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 		if !emb.IsReverse || !emb.Inner {
 			continue
 		}
-		refPK := emb.RefColumn
-		if refPK == "" {
-			refPK = "id"
-		}
-		existsSQL := fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s.%s = %s.%s",
-			emb.RefTable, emb.RefTable, emb.FKColumn, tableName, refPK)
-		if emb.Where != nil {
-			clauseSQL, clauseArgs, next := emb.Where.BuildSQL(argIdx)
+		where, _ := toManyScope(emb)
+		existsSQL := "EXISTS (SELECT 1 FROM " + ToManyFrom(emb, tableName)
+		if where != nil {
+			clauseSQL, clauseArgs, next := where.BuildSQL(argIdx)
 			if clauseSQL != "" {
 				existsSQL += " AND " + clauseSQL
 				allArgs = append(allArgs, clauseArgs...)

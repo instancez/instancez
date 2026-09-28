@@ -1,7 +1,6 @@
 package http
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -592,8 +591,7 @@ func renderRPCChain(chain *rpcChainSQL, argIdx int) (string, []any) {
 	}
 	for _, emb := range chain.embeds {
 		if emb.IsReverse && emb.Inner {
-			conds = append(conds, fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s.%s = _rpc.%s)",
-				emb.RefTable, emb.RefTable, emb.FKColumn, cmp.Or(emb.RefColumn, "id")))
+			conds = append(conds, "EXISTS (SELECT 1 FROM "+postgrest.ToManyFrom(emb, "_rpc")+")")
 		}
 	}
 	if len(conds) > 0 {
@@ -729,16 +727,11 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 			embedArgs = append(embedArgs, rowArgs...)
 			argIdx = nextIdx
 
-			refPK := emb.RefColumn
-			if refPK == "" {
-				refPK = "id"
-			}
 			sub := fmt.Sprintf("SELECT coalesce(json_agg(%s", rowExpr)
 			if len(emb.Order) > 0 {
 				sub += " ORDER BY " + postgrest.RenderOrderBy(emb.Order)
 			}
-			sub += fmt.Sprintf("), '[]'::json) FROM %s WHERE %s.%s = _rpc.%s",
-				emb.RefTable, emb.RefTable, emb.FKColumn, refPK)
+			sub += "), '[]'::json) FROM " + postgrest.ToManyFrom(emb, "_rpc")
 			if emb.Where != nil {
 				clauseSQL, clauseArgs, next := emb.Where.BuildSQL(argIdx)
 				if clauseSQL != "" {

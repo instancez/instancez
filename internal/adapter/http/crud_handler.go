@@ -134,7 +134,7 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 		// Parse query params
 		qp, err := parseQueryParams(c, tableName, table, allTbls)
 		if err != nil {
-			problemJSON(c, 400, "bad_request", err.Error())
+			writeRangeError(c, err)
 			return
 		}
 
@@ -724,6 +724,11 @@ func addSat(a, b int) int {
 }
 
 func writeRangeError(c *gin.Context, err error) {
+	var amb *postgrest.AmbiguousEmbedError
+	if errors.As(err, &amb) {
+		c.JSON(300, gin.H{"code": "PGRST201", "message": amb.Error(), "details": amb.Details, "hint": amb.Hint()})
+		return
+	}
 	if errors.Is(err, errNegativeLimit) || errors.Is(err, errLowerGTUpper) {
 		pgJSON(c, 416, "PGRST103", "Requested range not satisfiable", err.Error(), "")
 		return

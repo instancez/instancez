@@ -768,6 +768,41 @@ await step('rest: nested embed — has-many with nested belongs-to', async () =>
   assertEq(comment.todos.title, todo.title, 'nested todo title should match parent title')
 })
 
+await step("rest: many-to-many embed through a junction — select('*, labels(*)')", async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { data: todos, error: tErr } = await client
+    .from('todos').insert([{ title: 'm2m', user_id: userId }, { title: 'm2m bare', user_id: userId }]).select('id').order('id')
+  if (tErr) throw tErr
+  const ids = todos.map((t) => t.id)
+  let labelIds = []
+  try {
+    const { data: labels, error: lErr } = await client.from('labels').insert([{ name: 'red' }, { name: 'blue' }]).select('id')
+    if (lErr) throw lErr
+    labelIds = labels.map((l) => l.id)
+    const { error: jErr } = await client.from('todo_labels').insert(labelIds.map((id) => ({ todo_id: ids[0], label_id: id })))
+    if (jErr) throw jErr
+
+    const { data, error } = await client.from('todos').select('*, labels(*)').in('id', ids).order('id')
+    if (error) throw error
+    assertEq(data.length, 2, 'both todos')
+    assertEq(data[0].labels.map((l) => l.name).sort().join(','), 'blue,red', 'labels via todo_labels')
+    assert(!('todo_id' in data[0].labels[0]), 'junction columns stay out of the target rows')
+    assertEq(JSON.stringify(data[1].labels), '[]', 'no links embed as []')
+
+    const { data: inner, count, error: iErr } = await client
+      .from('todos').select('id, labels!inner(name)', { count: 'exact' }).in('id', ids).eq('labels.name', 'red')
+    if (iErr) throw iErr
+    assertEq(count, 1, '!inner count')
+    assertEq(JSON.stringify(inner), JSON.stringify([{ id: ids[0], labels: [{ name: 'red' }] }]), '!inner rows')
+  } finally {
+    await client.from('todos').delete().in('id', ids)
+    if (labelIds.length) await client.from('labels').delete().in('id', labelIds)
+  }
+})
+
 await step('rest: aliased belongs-to embed — parent:todos(title) on comments', async () => {
   // Regression for the docs/examples/gearstore bug where
   // `category:categories!left(...)` was rejected with "could not find a
