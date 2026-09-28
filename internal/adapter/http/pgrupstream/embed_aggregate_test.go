@@ -3,11 +3,14 @@
 package pgrupstream
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -310,4 +313,50 @@ func TestConf_TableCountAndRangeParity(t *testing.T) {
 		}
 		assert.Equal(t, c.want, resp.Header.Get("Content-Range"), c.path+" "+c.prefer)
 	}
+}
+
+// count=exact on an aggregate query with an !inner embed filter must count
+// the ungrouped rows passing the filter, not the number of groups and not
+// the table's unfiltered row count.
+func TestConf_AggregateInnerEmbedCountsFilteredUngroupedRows(t *testing.T) {
+	if testTS == nil {
+		t.Skip("no upstream")
+	}
+	ctx := context.Background()
+
+	// Seed one OFFLINE user with a message, so an !inner filter on
+	// users.status=eq.ONLINE has something real to exclude: 3 messages
+	// total, 2 pass the filter (both supabot's, grouped into 1 row).
+	marker := fmt.Sprintf("innagg_%d", time.Now().UnixNano())
+	_, err := testClient.From("users").Insert([]map[string]interface{}{
+		{"username": marker, "status": "OFFLINE"},
+	}, nil).Execute(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = testClient.From("users").Delete(nil).Eq("username", marker).Execute(context.Background())
+	})
+	_, err = testClient.From("messages").Insert([]map[string]interface{}{
+		{"message": "offline probe", "username": marker, "channel_id": 1},
+	}, nil).Execute(ctx)
+	require.NoError(t, err)
+
+	req, err := http.NewRequest("GET", testTS.URL+
+		"/rest/v1/messages?select=count(),users!inner(status)&users.status=eq.ONLINE", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+testAdminKey)
+	req.Header.Set("apikey", testAdminKey)
+	req.Header.Set("Prefer", "count=exact")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	require.Equal(t, 200, resp.StatusCode, string(body))
+
+	var rows []map[string]any
+	require.NoError(t, json.Unmarshal(body, &rows), string(body))
+	require.Len(t, rows, 1, string(body))
+	assert.EqualValues(t, 2, rows[0]["count"], "one group, 2 rows in it")
+	assert.Equal(t, map[string]any{"status": "ONLINE"}, rows[0]["users"])
+	assert.Equal(t, "0-0/2", resp.Header.Get("Content-Range"),
+		"count is the 2 filtered rows, not the 1 group and not the 3 unfiltered rows")
 }
