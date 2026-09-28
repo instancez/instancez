@@ -237,19 +237,19 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 				fmt.Sprintf("The result contains %d rows", len(rows)), "")
 			return
 		}
+		geomCol := findGeometryColumn(table)
+		if accept == "application/geo+json" && geomCol == "" && len(rows) > 0 {
+			// PostgREST's ST_AsGeoJSON fails per row, so this beats rangeStatus.
+			pgJSON(c, 406, "PGRST118", "No geometry column found for GeoJSON output", "", "")
+			return
+		}
 		status := rangeStatus(qp.Offset, len(rows), total)
 		if status == 416 {
 			rangeNotSatisfiable(c, qp.Offset, total)
 			return
 		}
 
-		// GeoJSON response
 		if accept == "application/geo+json" {
-			geomCol := findGeometryColumn(table)
-			if geomCol == "" {
-				pgJSON(c, 406, "PGRST118", "No geometry column found for GeoJSON output", "", "")
-				return
-			}
 			features := make([]map[string]any, 0, len(rows))
 			for _, r := range rows {
 				geom := r[geomCol]
@@ -651,34 +651,39 @@ func rangeStatus(offset, n, total int) int {
 	return 200
 }
 
-var errRangeEmpty = errors.New("range header and limit/offset do not overlap")
+// PostgREST's exact wording, capitalized and punctuated.
+var (
+	errNegativeLimit = errors.New("Limit should be greater than or equal to zero.")                                            //nolint:staticcheck
+	errLowerGTUpper  = errors.New("The lower boundary must be lower than or equal to the upper boundary in the Range header.") //nolint:staticcheck
+)
 
 // intersectRange narrows offset/limit (limit < 0 means none) by a GET Range header, like PostgREST's getRanges.
 func intersectRange(c *gin.Context, offset, limit int) (int, int, error) {
-	rh := c.GetHeader("Range")
-	if rh == "" || c.Request.Method != "GET" || limit == 0 {
-		return offset, limit, nil
+	if limit == 0 && offset == 0 {
+		return 0, 0, nil
 	}
-	start, end, ok := parseRangeHeader(rh)
-	if !ok {
-		return 0, 0, errors.New("invalid Range header")
+	lo, hi := offset, math.MaxInt
+	if limit >= 0 && offset <= math.MaxInt-limit {
+		hi = offset + limit - 1
 	}
-	lo, hi := max(start, offset), end
-	if limit > 0 && offset <= math.MaxInt-limit {
-		hi = min(end, offset+limit-1)
+	if start, end, ok := parseRangeHeader(c.GetHeader("Range")); ok && c.Request.Method == "GET" {
+		if start > end {
+			return 0, 0, errLowerGTUpper
+		}
+		lo, hi = max(lo, start), min(hi, end)
 	}
 	if lo > hi {
-		return 0, 0, errRangeEmpty
+		return 0, 0, errNegativeLimit
 	}
-	if hi-lo == math.MaxInt {
+	if hi == math.MaxInt {
 		return lo, postgrest.NoLimit, nil
 	}
 	return lo, hi - lo + 1, nil
 }
 
 func writeRangeError(c *gin.Context, err error) {
-	if errors.Is(err, errRangeEmpty) {
-		pgJSON(c, 416, "PGRST103", "Requested range not satisfiable", "Limit should be greater than or equal to zero.", "")
+	if errors.Is(err, errNegativeLimit) || errors.Is(err, errLowerGTUpper) {
+		pgJSON(c, 416, "PGRST103", "Requested range not satisfiable", err.Error(), "")
 		return
 	}
 	problemJSON(c, 400, "bad_request", err.Error())
@@ -1183,24 +1188,30 @@ func capEmbeds(embeds []postgrest.Embed, maxRows int) {
 	}
 }
 
-// parseRangeHeader parses a simple "start-end" Range value (as PostgREST
-// expects with Range-Unit: items). Both bounds are inclusive and 0-based.
+// parseRangeHeader matches PostgREST's ^([0-9]+)-([0-9]*)$; an empty end is unbounded.
 func parseRangeHeader(h string) (start, end int, ok bool) {
-	h = strings.TrimSpace(h)
-	h = strings.TrimPrefix(h, "items=")
-	parts := strings.SplitN(h, "-", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+	lo, hi, found := strings.Cut(strings.TrimSpace(h), "-")
+	if !found || !isDigits(lo) || (hi != "" && !isDigits(hi)) {
 		return 0, 0, false
 	}
-	s, err := strconv.Atoi(parts[0])
-	if err != nil || s < 0 {
-		return 0, 0, false
+	start, end = clampAtoi(lo), math.MaxInt
+	if hi != "" {
+		end = clampAtoi(hi)
 	}
-	e, err := strconv.Atoi(parts[1])
-	if err != nil || e < s {
-		return 0, 0, false
+	return start, end, true
+}
+
+func isDigits(s string) bool {
+	return s != "" && strings.Trim(s, "0123456789") == ""
+}
+
+// clampAtoi parses a digit string, saturating at math.MaxInt like PostgREST's unbounded Integer.
+func clampAtoi(s string) int {
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return math.MaxInt
 	}
-	return s, e, true
+	return n
 }
 
 // parseResolutionPrefer extracts "merge" or "ignore" from a Prefer header.

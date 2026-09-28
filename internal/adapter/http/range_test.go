@@ -1,6 +1,9 @@
 package http
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestParseRangeHeader(t *testing.T) {
 	cases := []struct {
@@ -11,17 +14,22 @@ func TestParseRangeHeader(t *testing.T) {
 	}{
 		{"0-9", 0, 9, true},
 		{"10-19", 10, 19, true},
-		{"items=0-24", 0, 24, true},
 		{" 5-10 ", 5, 10, true},
 		{"0-0", 0, 0, true},
+		{"0-", 0, math.MaxInt, true},
+		{"9-0", 9, 0, true},
+		{"0-99999999999999999999", 0, math.MaxInt, true},
+		{"99999999999999999999-", math.MaxInt, math.MaxInt, true},
 
 		{"", 0, 0, false},
-		{"0-", 0, 0, false},
+		{"items=0-24", 0, 0, false},
 		{"-9", 0, 0, false},
-		{"9-0", 0, 0, false},
 		{"abc-9", 0, 0, false},
 		{"0-abc", 0, 0, false},
 		{"-1-9", 0, 0, false},
+		{"+1-9", 0, 0, false},
+		{"0-9,20-29", 0, 0, false},
+		{"１-9", 0, 0, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {

@@ -121,8 +121,14 @@ func TestHandleList_RangeHeaderIntersectsLimitOffset(t *testing.T) {
 		{"header inside offset+limit", "GET", "offset=1&limit=10", "5-6", " LIMIT 2 OFFSET 5"},
 		{"limit=0 bypasses header", "GET", "limit=0", "0-9", " LIMIT 0 OFFSET 0"},
 		{"huge end", "GET", "", "0-9223372036854775807", ""},
-		{"huge offset+limit", "GET", "offset=9223372036854775807&limit=9223372036854775807", "0-9223372036854775807", " LIMIT 1 OFFSET 9223372036854775807"},
+		{"huge offset+limit", "GET", "offset=9223372036854775807&limit=9223372036854775807", "0-9223372036854775807", " todos OFFSET 9223372036854775807"},
 		{"HEAD ignores header", "HEAD", "limit=5", "0-1", " LIMIT 5 OFFSET 0"},
+		{"open-ended", "GET", "", "3-", " OFFSET 3"},
+		{"open-ended with limit", "GET", "limit=4", "2-", " LIMIT 2 OFFSET 2"},
+		{"malformed ignored", "GET", "limit=2", "abc", " LIMIT 2 OFFSET 0"},
+		{"items= prefix ignored", "GET", "", "items=0-1", ""},
+		{"limit=0 bypasses offside header", "GET", "limit=0", "9-0", " LIMIT 0 OFFSET 0"},
+		{"limit=0&offset=0 is the limit-zero range", "GET", "limit=0&offset=0", "", " LIMIT 0 OFFSET 0"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			w, sql := listStatusSQL(t, c.method, c.query, map[string]string{"Range": c.rng}, 0, 0)
@@ -134,9 +140,41 @@ func TestHandleList_RangeHeaderIntersectsLimitOffset(t *testing.T) {
 			assert.True(t, strings.HasSuffix(sql, c.wantSQL), sql)
 		})
 	}
-	w := listStatus(t, "GET", "offset=5", map[string]string{"Range": "0-1"}, 0, 0)
-	require.Equal(t, 416, w.Code, w.Body.String())
-	assert.JSONEq(t, `{"code":"PGRST103","message":"Requested range not satisfiable","details":"Limit should be greater than or equal to zero.","hint":""}`, w.Body.String())
+	negLimit := `{"code":"PGRST103","message":"Requested range not satisfiable","details":"Limit should be greater than or equal to zero.","hint":""}`
+	for _, c := range []struct {
+		name, method, query, rng, body string
+	}{
+		{"disjoint header and offset", "GET", "offset=5", "0-1", negLimit},
+		{"limit=0 with offset", "GET", "limit=0&offset=5", "", negLimit},
+		{"limit=0 with offset on HEAD", "HEAD", "limit=0&offset=1", "", ""},
+		{"offside header", "GET", "", "9-0", `{"code":"PGRST103","message":"Requested range not satisfiable","details":"The lower boundary must be lower than or equal to the upper boundary in the Range header.","hint":""}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w, sql := listStatusSQL(t, c.method, c.query, map[string]string{"Range": c.rng}, 0, 0)
+			require.Equal(t, 416, w.Code, w.Body.String())
+			assert.Empty(t, sql, "rejected before querying")
+			if c.body != "" {
+				assert.JSONEq(t, c.body, w.Body.String())
+			}
+		})
+	}
+	w, _ := listStatusSQL(t, "HEAD", "", map[string]string{"Range": "9-0"}, 0, 0)
+	require.Equal(t, 200, w.Code, "HEAD ignores even an offside Range")
+}
+
+func TestHandleList_GeoJSONRangeOrder(t *testing.T) {
+	geo := map[string]string{"Prefer": "count=exact", "Accept": "application/geo+json"}
+	w := listStatus(t, "GET", "offset=10", geo, 0, 5)
+	require.Equal(t, 416, w.Code, "no rows means ST_AsGeoJSON never fails, so 416 wins")
+	assert.Contains(t, w.Body.String(), "PGRST103")
+
+	w = listStatus(t, "GET", "offset=10", geo, 1, 5)
+	require.Equal(t, 406, w.Code, "rows without geometry fail in the query, before rangeStatus")
+	assert.Contains(t, w.Body.String(), "PGRST118")
+
+	w = listStatus(t, "GET", "", map[string]string{"Accept": "application/geo+json"}, 0, 0)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.JSONEq(t, `{"type":"FeatureCollection","features":[]}`, w.Body.String())
 }
 
 func rpcStatus(t *testing.T, method, rawQuery string, headers map[string]string, rows []map[string]any) (*httptest.ResponseRecorder, []any) {
@@ -234,6 +272,16 @@ func TestHandleRPC_RangeHeader(t *testing.T) {
 	w, _ := rpcStatus(t, "GET", "offset=5", map[string]string{"Range": "0-1"}, nil)
 	require.Equal(t, 416, w.Code, w.Body.String())
 	assert.Contains(t, w.Body.String(), "Limit should be greater than or equal to zero.")
-	w, _ = rpcStatus(t, "GET", "", map[string]string{"Range": "x"}, nil)
-	require.Equal(t, 400, w.Code, w.Body.String())
+	w, args := rpcStatus(t, "GET", "", map[string]string{"Range": "x"}, nil)
+	require.Equal(t, 200, w.Code, "malformed Range is ignored, as in PostgREST")
+	assert.Empty(t, args)
+	w, _ = rpcStatus(t, "GET", "", map[string]string{"Range": "9-0"}, nil)
+	require.Equal(t, 416, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "The lower boundary must be lower than or equal to the upper boundary in the Range header.")
+	w, _ = rpcStatus(t, "POST", "limit=0&offset=5", nil, nil)
+	require.Equal(t, 416, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "Limit should be greater than or equal to zero.")
+	w, args = rpcStatus(t, "GET", "", map[string]string{"Range": "3-"}, nil)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Equal(t, []any{3}, args, "open-ended Range is offset only")
 }

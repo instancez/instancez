@@ -415,4 +415,25 @@ func TestHardening_RangeHeaderIntersectsLimitOffset(t *testing.T) {
 	status, hdr, _ = call(t, "POST", testTS.URL+"/rest/v1/rpc/users_by_status", `{"target":"ONLINE"}`, exact, false)
 	require.Equal(t, 200, status, "POST ignores Range")
 	require.Equal(t, "0-2/3", hdr.Get("Content-Range"))
+
+	for _, c := range []struct {
+		query, rng, wantRange, wantBody string
+		wantStatus                      int
+	}{
+		{"", "x", "0-4/5", "", 200},
+		{"", "items=0-1", "0-4/5", "", 200},
+		{"", "3-", "3-4/5", "", 206},
+		{"", "9-0", "", "lower boundary must be lower", 416},
+		{"?limit=0&offset=2", "", "", "Limit should be greater than or equal to zero.", 416},
+		{"?limit=0", "9-0", "*/5", "", 206},
+	} {
+		hdrs := map[string]string{"Prefer": "count=exact"}
+		if c.rng != "" {
+			hdrs["Range"] = c.rng
+		}
+		status, hdr, raw := call(t, "GET", testTS.URL+"/rest/v1/users"+c.query, "", hdrs, false)
+		require.Equal(t, c.wantStatus, status, "%s %s: %s", c.query, c.rng, raw)
+		require.Equal(t, c.wantRange, hdr.Get("Content-Range"), "%s %s", c.query, c.rng)
+		require.Contains(t, string(raw), c.wantBody)
+	}
 }
