@@ -1431,3 +1431,75 @@ func TestValidate_StorageBucketNameCollidesWithObjectRoute(t *testing.T) {
 		}
 	}
 }
+
+func TestValidate_RPCSet(t *testing.T) {
+	cases := []struct {
+		key, val string
+		ok       bool
+	}{
+		{"search_path", "", true},
+		{"search_path", "public", true},
+		{"search_path", "public, extensions", true},
+		{"search_path", `"$user", public, pg_temp`, true},
+		{"search_path", "Public", false},
+		{"search_path", "public; drop table x", false},
+		{"search_path", "public,", false},
+		{"search_path", "pub'lic", false},
+		{"search_path", "public\nextensions", false},
+		{"search_path", strings.Repeat("a", 64), false},
+		{"statement_timeout", "5000", true},
+		{"statement_timeout", "5s", true},
+		{"statement_timeout", "2min", true},
+		{"statement_timeout", "5s'; --", false},
+		{"statement_timeout", "-1", false},
+		{"lock_timeout", "100ms", true},
+		{"lock_timeout", "", false},
+		{"work_mem", "64MB", true},
+		{"work_mem", "64mb", false},
+		{"role", "postgres", false},
+		{"Search_Path", "public", false},
+	}
+	for _, c := range cases {
+		cfg := validBaseConfig()
+		fn := validRPCFunction()
+		fn.Set = map[string]string{c.key: c.val}
+		cfg.RPC = map[string]domain.Function{"f": fn}
+		errs := Validate(cfg)
+		if c.ok && errs != nil {
+			t.Errorf("%s=%q: unexpected %v", c.key, c.val, errs)
+		}
+		if !c.ok {
+			assertHasErrorAt(t, errs, "rpc.f.set."+c.key)
+		}
+	}
+}
+
+func TestParseBytes_RPCSetScalarsDecodeAsStrings(t *testing.T) {
+	cfg, err := ParseBytes([]byte("version: 1\nrpc:\n  f:\n    body: SELECT 1\n    returns: {type: int}\n    set:\n      statement_timeout: 5000\n      search_path: \"\"\n"), "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.RPC["f"].Set; got["statement_timeout"] != "5000" || got["search_path"] != "" || len(got) != 2 {
+		t.Fatalf("set = %#v", got)
+	}
+}
+
+func TestWarnings_DefinerWithoutSearchPath(t *testing.T) {
+	fn := validRPCFunction()
+	fn.Security = "definer"
+	cfg := &domain.Config{Version: 1, RPC: map[string]domain.Function{"f": fn}}
+	ws := Warnings(cfg)
+	if len(ws) != 1 || ws[0].Path != "rpc.f.set.search_path" {
+		t.Fatalf("want one search_path warning, got %v", ws)
+	}
+	fn.Set = map[string]string{"search_path": ""}
+	cfg.RPC["f"] = fn
+	if ws := Warnings(cfg); ws != nil {
+		t.Fatalf("pinned search_path: want no warning, got %v", ws)
+	}
+	fn.Security, fn.Set = "invoker", nil
+	cfg.RPC["f"] = fn
+	if ws := Warnings(cfg); ws != nil {
+		t.Fatalf("invoker: want no warning, got %v", ws)
+	}
+}

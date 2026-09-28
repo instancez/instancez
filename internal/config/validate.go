@@ -91,6 +91,21 @@ var rpcTypeTokenRE = regexp.MustCompile(`^[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)?(
 // rpcColumnNameRE matches a table(...) column name.
 var rpcColumnNameRE = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
+const pgIdentOrUser = `(?:"\$user"|[a-z_][a-z0-9_]{0,62})`
+
+var rpcTimeoutRE = regexp.MustCompile(`^[0-9]{1,9}(ms|s|min|h|d)?$`)
+
+// rpcSetRules allowlists rpc set: keys; each value must match fully.
+var rpcSetRules = map[string]struct {
+	re   *regexp.Regexp
+	hint string
+}{
+	"search_path":       {regexp.MustCompile(`^\s*$|^\s*` + pgIdentOrUser + `(?:\s*,\s*` + pgIdentOrUser + `)*\s*$`), `Comma-separated lowercase schema names or "$user", or "" for an empty path`},
+	"statement_timeout": {rpcTimeoutRE, "A number of milliseconds or a value with ms, s, min, h or d"},
+	"lock_timeout":      {rpcTimeoutRE, "A number of milliseconds or a value with ms, s, min, h or d"},
+	"work_mem":          {regexp.MustCompile(`^[0-9]{1,9}(kB|MB|GB|TB)?$`), "A number of kB or a value with kB, MB, GB or TB"},
+}
+
 // multiwordScalarTypes are the standard multiword Postgres type names, which
 // rpcTypeTokenRE (single-token) can't match. A migration (pg_dump, Supabase)
 // can carry any of these, so they must validate as scalar return/arg types.
@@ -264,6 +279,16 @@ func Warnings(cfg *domain.Config) domain.ValidationErrors {
 			Message:    "100 was the old unenforced default and now caps every read at 100 rows",
 			Suggestion: "Remove max_limit to use the 1000 default, or set the cap you want (-1 disables it)",
 		})
+	}
+	for _, name := range slices.Sorted(maps.Keys(cfg.RPC)) {
+		fn := cfg.RPC[name]
+		if _, pinned := fn.Set["search_path"]; strings.EqualFold(fn.Security, "definer") && !pinned {
+			ws = append(ws, &domain.ValidationError{
+				Path:       "rpc." + name + ".set.search_path",
+				Message:    "security: definer without a pinned search_path lets callers shadow the objects the body uses",
+				Suggestion: `Add set: { search_path: "" } and schema-qualify names, or list the schemas the body needs`,
+			})
+		}
 	}
 	return ws
 }
@@ -832,6 +857,16 @@ func validateRPCFunction(path, name string, fn domain.Function) domain.Validatio
 				Path:    argPath + ".type",
 				Message: fmt.Sprintf("invalid type %q", arg.Type),
 			})
+		}
+	}
+	for _, k := range slices.Sorted(maps.Keys(fn.Set)) {
+		rule, ok := rpcSetRules[k]
+		switch {
+		case !ok:
+			errs = append(errs, &domain.ValidationError{Path: path + ".set." + k, Message: fmt.Sprintf("unsupported setting %q", k),
+				Suggestion: "Supported: lock_timeout, search_path, statement_timeout, work_mem"})
+		case !rule.re.MatchString(fn.Set[k]):
+			errs = append(errs, &domain.ValidationError{Path: path + ".set." + k, Message: fmt.Sprintf("invalid %s %q", k, fn.Set[k]), Suggestion: rule.hint})
 		}
 	}
 	return errs

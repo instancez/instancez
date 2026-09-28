@@ -1336,15 +1336,38 @@ func generateRPCFunction(name string, fn domain.Function) string {
 	}
 
 	return fmt.Sprintf(
-		"CREATE OR REPLACE FUNCTION public.\"%s\"(%s)\nRETURNS %s\nLANGUAGE %s\n%s\n%s\nAS $ub$%s$ub$;",
+		"CREATE OR REPLACE FUNCTION public.\"%s\"(%s)\nRETURNS %s\nLANGUAGE %s\n%s\n%s%s\nAS $ub$%s$ub$;",
 		name,
 		strings.Join(sig, ", "),
 		fn.Returns.Type,
 		language,
 		volatility,
 		security,
+		rpcSetClauses(fn.Set),
 		fn.Body,
 	)
+}
+
+// rpcSetClauses renders validated set: entries as SET lines in key order.
+func rpcSetClauses(set map[string]string) string {
+	var b strings.Builder
+	for _, k := range sortedKeys(set) {
+		v := strings.TrimSpace(set[k])
+		switch {
+		case k == "search_path" && v == "":
+			v = "''"
+		case k == "search_path":
+			parts := strings.Split(v, ",")
+			for i := range parts {
+				parts[i] = strings.TrimSpace(parts[i])
+			}
+			v = strings.Join(parts, ", ")
+		default:
+			v = "'" + v + "'"
+		}
+		fmt.Fprintf(&b, "\nSET %s = %s", k, v)
+	}
+	return b.String()
 }
 
 func sortedKeys[V any](m map[string]V) []string {

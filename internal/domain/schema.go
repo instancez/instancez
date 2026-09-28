@@ -371,14 +371,15 @@ type Bucket struct {
 // Postgres stored procedure (CREATE OR REPLACE FUNCTION), exposed at
 // /rest/v1/rpc/<name> for supabase-js .rpc() compatibility.
 type Function struct {
-	Description  string     `yaml:"description" json:"description"`
-	AuthRequired bool       `yaml:"auth_required" json:"auth_required"`
-	Language     string     `yaml:"language,omitempty" json:"language,omitempty"`
-	Volatility   string     `yaml:"volatility,omitempty" json:"volatility,omitempty"`
-	Security     string     `yaml:"security,omitempty" json:"security,omitempty"`
-	Args         []FuncArg  `yaml:"args,omitempty" json:"args,omitempty"`
-	Body         string     `yaml:"body,omitempty" json:"body,omitempty"`
-	Returns      FuncReturn `yaml:"returns" json:"returns"`
+	Description  string            `yaml:"description" json:"description"`
+	AuthRequired bool              `yaml:"auth_required" json:"auth_required"`
+	Language     string            `yaml:"language,omitempty" json:"language,omitempty"`
+	Volatility   string            `yaml:"volatility,omitempty" json:"volatility,omitempty"`
+	Security     string            `yaml:"security,omitempty" json:"security,omitempty"`
+	Set          map[string]string `yaml:"set,omitempty" json:"set,omitempty"`
+	Args         []FuncArg         `yaml:"args,omitempty" json:"args,omitempty"`
+	Body         string            `yaml:"body,omitempty" json:"body,omitempty"`
+	Returns      FuncReturn        `yaml:"returns" json:"returns"`
 
 	// ReturnCategory is derived from Returns.Type at config load.
 	// Values: "void" | "setof" | "scalar".
