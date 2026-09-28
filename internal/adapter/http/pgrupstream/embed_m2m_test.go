@@ -15,7 +15,11 @@ import (
 // Post 2's link to sql is hidden from non-bypass roles by RLS on the junction.
 const m2mSQL = `
 DROP FUNCTION IF EXISTS all_posts();
-DROP TABLE IF EXISTS post_labels, post_tags, posts, tags;
+DROP TABLE IF EXISTS post_labels, post_tags, posts, tags, tasks, people;
+CREATE TABLE people (id int PRIMARY KEY, name text);
+CREATE TABLE tasks (id int PRIMARY KEY, created_by int REFERENCES people(id), assigned_to int REFERENCES people(id));
+INSERT INTO people VALUES (1, 'ann'), (2, 'bob');
+INSERT INTO tasks VALUES (1, 1, 2);
 CREATE TABLE posts (id int PRIMARY KEY, title text);
 CREATE TABLE tags (id int PRIMARY KEY, name text);
 CREATE TABLE post_tags (
@@ -54,6 +58,12 @@ func m2mServer(t *testing.T, labels bool) string {
 				{Name: "label_id", Type: "int", PrimaryKey: true, ForeignKey: &domain.ForeignKey{References: "tags.id"}},
 			}}
 		}
+		c.Tables["people"] = domain.Table{Fields: []domain.Field{{Name: "id", Type: "int", PrimaryKey: true}, {Name: "name", Type: "text"}}}
+		c.Tables["tasks"] = domain.Table{Fields: []domain.Field{
+			{Name: "id", Type: "int", PrimaryKey: true},
+			{Name: "created_by", Type: "int", ForeignKey: &domain.ForeignKey{References: "people.id"}},
+			{Name: "assigned_to", Type: "int", ForeignKey: &domain.ForeignKey{References: "people.id"}},
+		}}
 		c.RPC["all_posts"] = domain.Function{
 			Language: "sql", Volatility: "stable", Security: "invoker",
 			Returns: domain.FuncReturn{Type: "setof posts"}, ReturnCategory: "setof",
@@ -184,4 +194,34 @@ func TestConf_ManyToManyAmbiguity(t *testing.T) {
 	status, _, raw = call(t, "GET", base+"/rest/v1/posts?select=id,tags!post_tags(name)&id=eq.1&tags.order=name", "", nil, false)
 	require.Equal(t, 200, status, "%s", raw)
 	assert.Equal(t, map[float64][]string{1: {"go", "sql"}}, tagNames(t, raw, "tags"))
+}
+
+func TestConf_DirectEmbedAmbiguity(t *testing.T) {
+	if testTS == nil {
+		t.Skip("no upstream")
+	}
+	require.NoError(t, testDB.ExecDDL(context.Background(), m2mSQL))
+	base := m2mServer(t, false)
+
+	status, _, raw := call(t, "GET", base+"/rest/v1/tasks?select=id,people(name)", "", nil, false)
+	require.Equal(t, 300, status, "%s", raw)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(raw, &body))
+	assert.Equal(t, "PGRST201", body["code"])
+	assert.Equal(t, "Try changing 'people' to one of the following: 'people!tasks_assigned_to_fkey', 'people!tasks_created_by_fkey'. Find the desired relationship in the 'details' key.", body["hint"])
+	assert.Equal(t, []any{
+		map[string]any{"cardinality": "many-to-one", "embedding": "tasks with people", "relationship": "tasks_assigned_to_fkey using tasks(assigned_to) and people(id)"},
+		map[string]any{"cardinality": "many-to-one", "embedding": "tasks with people", "relationship": "tasks_created_by_fkey using tasks(created_by) and people(id)"},
+	}, body["details"])
+
+	for path, want := range map[string]string{
+		"/rest/v1/tasks?select=id,people!tasks_assigned_to_fkey(name)": `[{"id":1,"people":{"name":"bob"}}]`,
+		"/rest/v1/tasks?select=id,people!tasks_created_by_fkey(name)":  `[{"id":1,"people":{"name":"ann"}}]`,
+		"/rest/v1/tasks?select=id,people!created_by(name)":             `[{"id":1,"people":{"name":"ann"}}]`,
+		"/rest/v1/people?select=name,tasks!assigned_to(id)&order=id":   `[{"name":"ann","tasks":[]},{"name":"bob","tasks":[{"id":1}]}]`,
+	} {
+		status, _, raw := call(t, "GET", base+path, "", nil, false)
+		require.Equal(t, 200, status, "%s: %s", path, raw)
+		assert.JSONEq(t, want, string(raw), path)
+	}
 }

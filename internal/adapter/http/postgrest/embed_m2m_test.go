@@ -181,10 +181,10 @@ func TestResolveEmbeds_ManyToManyAmbiguity(t *testing.T) {
 func TestResolveEmbeds_DirectAndManyToManyAmbiguity(t *testing.T) {
 	tables := m2mTables()
 	tables["posts"] = domain.Table{Fields: []domain.Field{
-		{Name: "id", PrimaryKey: true}, {Name: "main_tag_id", ForeignKey: fk("tags.id")},
+		{Name: "id", PrimaryKey: true}, {Name: "main_tag_id", ForeignKey: fk("public.tags.id")},
 	}}
 	tables["tags"] = domain.Table{Fields: []domain.Field{
-		{Name: "id", PrimaryKey: true}, {Name: "name"}, {Name: "origin_id", Unique: true, ForeignKey: fk("posts.id")},
+		{Name: "id", PrimaryKey: true}, {Name: "name"}, {Name: "origin_id", Unique: true, ForeignKey: fk("public.posts.id")},
 	}}
 
 	_, err := ResolveEmbeds("posts", tables["posts"], []string{"tags(*)"}, tables)
@@ -192,10 +192,10 @@ func TestResolveEmbeds_DirectAndManyToManyAmbiguity(t *testing.T) {
 	require.True(t, errors.As(err, &amb), "got %v", err)
 	assert.Equal(t, []map[string]string{
 		{"cardinality": "many-to-one", "embedding": "posts with tags", "relationship": "posts_main_tag_id_fkey using posts(main_tag_id) and tags(id)"},
-		{"cardinality": "many-to-many", "embedding": "posts with tags", "relationship": "post_tags using post_tags_post_id_fkey(post_id) and post_tags_tag_id_fkey(tag_id)"},
 		{"cardinality": "one-to-one", "embedding": "posts with tags", "relationship": "tags_origin_id_fkey using posts(id) and tags(origin_id)"},
-	}, amb.Details)
-	assert.Equal(t, "Try changing 'tags' to one of the following: 'tags!posts_main_tag_id_fkey', 'tags!post_tags', 'tags!tags_origin_id_fkey'. Find the desired relationship in the 'details' key.", amb.Hint())
+		{"cardinality": "many-to-many", "embedding": "posts with tags", "relationship": "post_tags using post_tags_post_id_fkey(post_id) and post_tags_tag_id_fkey(tag_id)"},
+	}, amb.Details, "PostgREST orders by cardinality (O2M, M2O, O2O, M2M), then name")
+	assert.Equal(t, "Try changing 'tags' to one of the following: 'tags!posts_main_tag_id_fkey', 'tags!tags_origin_id_fkey', 'tags!post_tags'. Find the desired relationship in the 'details' key.", amb.Hint())
 
 	embeds, err := ResolveEmbeds("posts", tables["posts"], []string{"tags!posts_main_tag_id_fkey(*)"}, tables)
 	require.NoError(t, err, "each hint the error suggests must resolve")
@@ -218,4 +218,101 @@ func TestResolveEmbeds_ManyToManyRejectsSpreadAndBadColumns(t *testing.T) {
 	require.ErrorContains(t, err, "spread")
 	_, err = ResolveEmbeds("posts", tables["posts"], []string{"tags(post_id)"}, tables)
 	require.ErrorContains(t, err, "unknown column", "junction columns are not target columns")
+}
+
+// tasksTables has two FKs from tasks to users and none to anything else.
+func tasksTables() map[string]domain.Table {
+	return map[string]domain.Table{
+		"users": {Fields: []domain.Field{{Name: "id", PrimaryKey: true}, {Name: "name"}}},
+		"tasks": {Fields: []domain.Field{
+			{Name: "id", PrimaryKey: true},
+			{Name: "created_by", ForeignKey: fk("users.id")},
+			{Name: "assigned_to", ForeignKey: fk("users.id")},
+		}},
+	}
+}
+
+func TestResolveEmbeds_DirectAmbiguity(t *testing.T) {
+	tables := tasksTables()
+	var amb *AmbiguousEmbedError
+
+	_, err := ResolveEmbeds("tasks", tables["tasks"], []string{"users(*)"}, tables)
+	require.True(t, errors.As(err, &amb), "got %v", err)
+	assert.Equal(t, []map[string]string{
+		{"cardinality": "many-to-one", "embedding": "tasks with users", "relationship": "tasks_assigned_to_fkey using tasks(assigned_to) and users(id)"},
+		{"cardinality": "many-to-one", "embedding": "tasks with users", "relationship": "tasks_created_by_fkey using tasks(created_by) and users(id)"},
+	}, amb.Details)
+	assert.Equal(t, []string{"'users!tasks_assigned_to_fkey'", "'users!tasks_created_by_fkey'"}, amb.Hints)
+
+	_, err = ResolveEmbeds("users", tables["users"], []string{"tasks(*)"}, tables)
+	require.True(t, errors.As(err, &amb), "got %v", err)
+	assert.Equal(t, []map[string]string{
+		{"cardinality": "one-to-many", "embedding": "users with tasks", "relationship": "tasks_assigned_to_fkey using users(id) and tasks(assigned_to)"},
+		{"cardinality": "one-to-many", "embedding": "users with tasks", "relationship": "tasks_created_by_fkey using users(id) and tasks(created_by)"},
+	}, amb.Details)
+
+	for hint, col := range map[string]string{
+		"tasks_assigned_to_fkey": "assigned_to", "tasks_created_by_fkey": "created_by", "assigned_to": "assigned_to", "created_by": "created_by",
+	} {
+		embeds, err := ResolveEmbeds("tasks", tables["tasks"], []string{"users!" + hint + "(*)"}, tables)
+		require.NoError(t, err, hint)
+		assert.Equal(t, col, embeds[0].FKColumn, hint)
+		embeds, err = ResolveEmbeds("users", tables["users"], []string{"tasks!" + hint + "(*)"}, tables)
+		require.NoError(t, err, hint)
+		assert.Equal(t, col, embeds[0].FKColumn, hint)
+	}
+
+	_, err = ResolveEmbeds("tasks", tables["tasks"], []string{"users!id(*)"}, tables)
+	require.True(t, errors.As(err, &amb), "both FKs reference users.id")
+}
+
+func TestResolveEmbeds_ReferencedColumnHint(t *testing.T) {
+	tables := map[string]domain.Table{
+		"authors": {Fields: []domain.Field{{Name: "id", PrimaryKey: true}, {Name: "code", Unique: true}}},
+		"posts": {Fields: []domain.Field{
+			{Name: "id", PrimaryKey: true},
+			{Name: "author_id", ForeignKey: fk("authors.id")},
+			{Name: "author_code", ForeignKey: fk("authors.code")},
+		}},
+	}
+	embeds, err := ResolveEmbeds("posts", tables["posts"], []string{"authors!code(*)"}, tables)
+	require.NoError(t, err)
+	assert.Equal(t, "author_code", embeds[0].FKColumn)
+
+	embeds, err = ResolveEmbeds("authors", tables["authors"], []string{"posts!code(*)"}, tables)
+	require.NoError(t, err, "on to-many the parent's referenced column is a hint too")
+	assert.Equal(t, "author_code", embeds[0].FKColumn)
+	assert.True(t, embeds[0].IsReverse)
+
+	_, err = ResolveEmbeds("posts", tables["posts"], []string{"authors!nope(*)"}, tables)
+	require.Error(t, err)
+}
+
+func TestResolveEmbeds_SchemaQualifiedReferences(t *testing.T) {
+	tables := map[string]domain.Table{
+		"tags":  {Fields: []domain.Field{{Name: "id", PrimaryKey: true}}},
+		"posts": {Fields: []domain.Field{{Name: "id", PrimaryKey: true}, {Name: "tag_id", ForeignKey: fk("public.tags.id")}, {Name: "user_id", ForeignKey: fk("auth.users.id")}}},
+	}
+	embeds, err := ResolveEmbeds("posts", tables["posts"], []string{"tags(*)"}, tables)
+	require.NoError(t, err)
+	assert.Equal(t, Embed{Name: "tags", FKColumn: "tag_id", RefTable: "tags", RefColumn: "id"}, embeds[0])
+
+	embeds, err = ResolveEmbeds("tags", tables["tags"], []string{"posts(*)"}, tables)
+	require.NoError(t, err)
+	assert.Equal(t, "tag_id", embeds[0].FKColumn)
+	assert.True(t, embeds[0].IsReverse)
+
+	_, err = ResolveEmbeds("posts", tables["posts"], []string{"user(*)"}, tables)
+	require.Error(t, err, "a table outside the config is not embeddable")
+}
+
+func TestToManyScope_QualifiesOnlyJunctionEmbeds(t *testing.T) {
+	where := &WhereNode{Leaf: &Filter{Column: "name", Operator: "eq", Value: "x"}}
+	order := []OrderClause{{Column: "name"}}
+	w, o := ToManyScope(Embed{RefTable: "tags", Where: where, Order: order})
+	assert.Same(t, where, w)
+	assert.Equal(t, order, o)
+	w, o = ToManyScope(Embed{RefTable: "tags", Junction: &Junction{Table: "post_tags"}, Where: where, Order: order})
+	assert.Equal(t, "tags.name", w.Leaf.Column)
+	assert.Equal(t, "tags.name", o[0].Column)
 }

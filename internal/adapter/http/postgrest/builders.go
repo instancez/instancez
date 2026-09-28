@@ -207,14 +207,13 @@ func ResolveEmbeds(tableName string, table domain.Table, embedNames []string, al
 			return nil, fmt.Errorf("alias not allowed on spread embed %q", alias+":"+name)
 		}
 
-		toOne := belongsToRels(tableName, table, name, fkHint)
-		toMany := hasManyRels(tableName, name, fkHint, allTables)
-		m2m := junctionRels(tableName, name, fkHint, allTables)
-		// ponytail: direct-only ambiguity keeps first-match-wins; PostgREST would return PGRST201.
-		if len(m2m) > 0 && len(toOne)+len(toMany)+len(m2m) > 1 {
-			return nil, ambiguousEmbed(tableName, name, slices.Concat(toOne, m2m, toMany))
+		cands := slices.Concat(
+			belongsToRels(tableName, table, name, fkHint, allTables),
+			hasManyRels(tableName, name, fkHint, allTables),
+			junctionRels(tableName, name, fkHint, allTables))
+		if len(cands) > 1 {
+			return nil, ambiguousEmbed(tableName, name, cands)
 		}
-		cands := slices.Concat(toOne, toMany, m2m)
 		if len(cands) == 0 {
 			return nil, fmt.Errorf("could not find a relationship between %q and %q in the schema", tableName, name)
 		}
@@ -256,8 +255,24 @@ func fkConstraintName(table, col string) string {
 	return table + "_" + col + "_fkey"
 }
 
-func matchesFKHint(hint, table, col string) bool {
-	return hint == col || strings.TrimSuffix(col, "_id") == hint || hint == fkConstraintName(table, col)
+// matchesFKHint accepts the constraint name or either column of the FK, as PostgREST does.
+func matchesFKHint(hint, table, col, refCol string) bool {
+	return hint == col || hint == refCol || strings.TrimSuffix(col, "_id") == hint || hint == fkConstraintName(table, col)
+}
+
+// fkTarget splits an FK reference; a schema-qualified one must name a configured table in that schema.
+func fkTarget(ref string, allTables map[string]domain.Table) (table, col string, ok bool) {
+	schema, table, col, err := domain.ParseFKReference(ref)
+	if err != nil {
+		return "", "", false
+	}
+	if strings.Count(ref, ".") == 2 {
+		t, found := allTables[table]
+		if !found || t.EffectiveSchema() != schema {
+			return "", "", false
+		}
+	}
+	return table, col, true
 }
 
 // isOneToOne mirrors PostgREST: the FK columns are exactly a primary or unique key.
@@ -265,19 +280,18 @@ func isOneToOne(t domain.Table, f domain.Field) bool {
 	return f.Unique || (f.PrimaryKey && len(PrimaryKeyColumns(t)) == 1)
 }
 
-func belongsToRels(tableName string, table domain.Table, name, fkHint string) []relCandidate {
+func belongsToRels(tableName string, table domain.Table, name, fkHint string, allTables map[string]domain.Table) []relCandidate {
 	var out []relCandidate
 	for _, field := range table.Fields {
 		if field.ForeignKey == nil {
 			continue
 		}
-		parts := strings.SplitN(field.ForeignKey.References, ".", 2)
-		if len(parts) != 2 {
+		refTable, refCol, ok := fkTarget(field.ForeignKey.References, allTables)
+		if !ok {
 			continue
 		}
-		refTable, refCol := parts[0], parts[1]
 		if fkHint != "" {
-			if !matchesFKHint(fkHint, tableName, field.Name) || refTable != name {
+			if !matchesFKHint(fkHint, tableName, field.Name, refCol) || refTable != name {
 				continue
 			}
 		} else if refTable != name && strings.TrimSuffix(field.Name, "_id") != name {
@@ -308,11 +322,11 @@ func hasManyRels(tableName, name, fkHint string, allTables map[string]domain.Tab
 		if field.ForeignKey == nil {
 			continue
 		}
-		parts := strings.SplitN(field.ForeignKey.References, ".", 2)
-		if len(parts) != 2 || parts[0] != tableName {
+		refTable, refCol, ok := fkTarget(field.ForeignKey.References, allTables)
+		if !ok || refTable != tableName {
 			continue
 		}
-		if fkHint != "" && !matchesFKHint(fkHint, name, field.Name) {
+		if fkHint != "" && !matchesFKHint(fkHint, name, field.Name, refCol) {
 			continue
 		}
 		card := "one-to-many"
@@ -321,9 +335,9 @@ func hasManyRels(tableName, name, fkHint string, allTables map[string]domain.Tab
 		}
 		cons := fkConstraintName(name, field.Name)
 		out = append(out, relCandidate{
-			emb:          Embed{FKColumn: field.Name, RefTable: name, RefColumn: parts[1], IsReverse: true},
+			emb:          Embed{FKColumn: field.Name, RefTable: name, RefColumn: refCol, IsReverse: true},
 			cardinality:  card,
-			relationship: fmt.Sprintf("%s using %s(%s) and %s(%s)", cons, tableName, parts[1], name, field.Name),
+			relationship: fmt.Sprintf("%s using %s(%s) and %s(%s)", cons, tableName, refCol, name, field.Name),
 			constraint:   cons,
 		})
 	}
@@ -345,12 +359,12 @@ func junctionRels(tableName, name, fkHint string, allTables map[string]domain.Ta
 		}
 		fields := allTables[jt].Fields
 		for _, src := range fields {
-			srcTable, srcRef, ok := junctionLeg(src)
+			srcTable, srcRef, ok := junctionLeg(src, allTables)
 			if !ok || srcTable != tableName {
 				continue
 			}
 			for _, tgt := range fields {
-				tgtTable, tgtRef, ok := junctionLeg(tgt)
+				tgtTable, tgtRef, ok := junctionLeg(tgt, allTables)
 				if !ok || tgt.Name == src.Name || tgtTable != name {
 					continue
 				}
@@ -369,15 +383,25 @@ func junctionRels(tableName, name, fkHint string, allTables map[string]domain.Ta
 	return out
 }
 
-func junctionLeg(f domain.Field) (table, col string, ok bool) {
+func junctionLeg(f domain.Field, allTables map[string]domain.Table) (table, col string, ok bool) {
 	if f.ForeignKey == nil || !f.PrimaryKey || f.Unique {
 		return "", "", false
 	}
-	_, table, col, err := domain.ParseFKReference(f.ForeignKey.References)
-	return table, col, err == nil
+	return fkTarget(f.ForeignKey.References, allTables)
 }
 
+var cardinalityRank = map[string]int{"one-to-many": 0, "many-to-one": 1, "one-to-one": 2, "many-to-many": 3}
+
+// ambiguousEmbed lists candidates in PostgREST's derived Relationship order.
 func ambiguousEmbed(parent, target string, cands []relCandidate) *AmbiguousEmbedError {
+	slices.SortStableFunc(cands, func(a, b relCandidate) int {
+		return cmp.Or(
+			cmp.Compare(a.emb.RefTable, b.emb.RefTable),
+			cmp.Compare(boolRank(a.emb.RefTable == parent), boolRank(b.emb.RefTable == parent)),
+			cmp.Compare(cardinalityRank[a.cardinality], cardinalityRank[b.cardinality]),
+			cmp.Compare(a.constraint, b.constraint),
+			cmp.Compare(a.relationship, b.relationship))
+	})
 	e := &AmbiguousEmbedError{Parent: parent, Target: target}
 	for _, c := range cands {
 		e.Details = append(e.Details, map[string]string{
@@ -390,6 +414,13 @@ func ambiguousEmbed(parent, target string, cands []relCandidate) *AmbiguousEmbed
 	return e
 }
 
+func boolRank(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 // ToManyFrom is the FROM list and correlation of a to-many embed under parent.
 func ToManyFrom(emb Embed, parent string) string {
 	if j := emb.Junction; j != nil {
@@ -399,8 +430,8 @@ func ToManyFrom(emb Embed, parent string) string {
 	return fmt.Sprintf("%s WHERE %s.%s = %s.%s", emb.RefTable, emb.RefTable, emb.FKColumn, parent, cmp.Or(emb.RefColumn, "id"))
 }
 
-// toManyScope qualifies embed filters and order when a junction shares the FROM.
-func toManyScope(emb Embed) (*WhereNode, []OrderClause) {
+// ToManyScope qualifies embed filters and order when a junction shares the FROM.
+func ToManyScope(emb Embed) (*WhereNode, []OrderClause) {
 	if emb.Junction == nil {
 		return emb.Where, emb.Order
 	}
@@ -453,7 +484,7 @@ func BuildChildEmbedSubselect(child Embed, parentAlias string, allTables map[str
 		allArgs = append(allArgs, rowArgs...)
 		argIdx = nextIdx
 
-		where, order := toManyScope(child)
+		where, order := ToManyScope(child)
 		sub := fmt.Sprintf("SELECT coalesce(json_agg(%s", rowExpr)
 		if len(order) > 0 {
 			sub += " ORDER BY " + RenderOrderBy(order)
@@ -545,7 +576,7 @@ func BuildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 			allArgs = append(allArgs, rowArgs...)
 			argIdx = nextIdx
 
-			where, order := toManyScope(emb)
+			where, order := ToManyScope(emb)
 			needsInnerSubquery := emb.Limit != nil || emb.Offset != nil
 
 			if needsInnerSubquery {
@@ -669,7 +700,7 @@ func BuildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 		if !emb.IsReverse || !emb.Inner {
 			continue
 		}
-		where, _ := toManyScope(emb)
+		where, _ := ToManyScope(emb)
 		existsSQL := "EXISTS (SELECT 1 FROM " + ToManyFrom(emb, tableName)
 		if where != nil {
 			clauseSQL, clauseArgs, next := where.BuildSQL(argIdx)

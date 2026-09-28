@@ -727,13 +727,14 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 			embedArgs = append(embedArgs, rowArgs...)
 			argIdx = nextIdx
 
+			where, order := postgrest.ToManyScope(emb)
 			sub := fmt.Sprintf("SELECT coalesce(json_agg(%s", rowExpr)
-			if len(emb.Order) > 0 {
-				sub += " ORDER BY " + postgrest.RenderOrderBy(emb.Order)
+			if len(order) > 0 {
+				sub += " ORDER BY " + postgrest.RenderOrderBy(order)
 			}
 			sub += "), '[]'::json) FROM " + postgrest.ToManyFrom(emb, "_rpc")
-			if emb.Where != nil {
-				clauseSQL, clauseArgs, next := emb.Where.BuildSQL(argIdx)
+			if where != nil {
+				clauseSQL, clauseArgs, next := where.BuildSQL(argIdx)
 				if clauseSQL != "" {
 					sub += " AND " + clauseSQL
 					embedArgs = append(embedArgs, clauseArgs...)

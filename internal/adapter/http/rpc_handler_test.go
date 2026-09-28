@@ -934,3 +934,16 @@ func TestWrapRPCCallForChain_EmbedAliasesNameTheKey(t *testing.T) {
 	from, _ := rpcCountFrom("__inz_src", chain, 1)
 	assert.Equal(t, " FROM __inz_src AS _rpc INNER JOIN authors AS _emb_writer ON _rpc.author_id = _emb_writer.id", from)
 }
+
+func TestWrapRPCCallForChain_ManyToManyQualifiesTargetColumns(t *testing.T) {
+	chain := &rpcChainSQL{embeds: []Embed{{
+		Name: "tags", IsReverse: true, RefTable: "tags", Inner: true,
+		Junction: &postgrest.Junction{Table: "post_tags", SourceColumn: "post_id", SourceRef: "id", TargetColumn: "tag_id", TargetRef: "id"},
+		Where:    &postgrest.WhereNode{Leaf: &postgrest.Filter{Column: "name", Operator: "eq", Value: "go"}},
+		Order:    []postgrest.OrderClause{{Column: "name"}},
+	}}}
+	got, args := wrapRPCCallForChain(`SELECT * FROM public."f"()`, chain, 1)
+	assert.Contains(t, got, "json_agg(row_to_json(tags.*) ORDER BY tags.name ASC), '[]'::json) FROM tags, post_tags WHERE tags.id = post_tags.tag_id AND post_tags.post_id = _rpc.id AND tags.name = $1")
+	assert.Contains(t, got, "WHERE EXISTS (SELECT 1 FROM tags, post_tags WHERE tags.id = post_tags.tag_id AND post_tags.post_id = _rpc.id)")
+	assert.Equal(t, []any{"go"}, args)
+}
