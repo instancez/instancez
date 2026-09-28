@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"mime/multipart"
 	"net"
@@ -2495,7 +2496,7 @@ func TestSetDownloadHeaders(t *testing.T) {
 	for _, tc := range cases {
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
-		setDownloadHeaders(c, tc.ct, tc.public)
+		writeDownloadHeaders(c, downloadOptions(tc.ct, tc.public, "", false))
 		hd := w.Header()
 		assert.Equal(t, tc.wantCT, hd.Get("Content-Type"), tc.ct)
 		assert.Equal(t, tc.wantCC, hd.Get("Cache-Control"), tc.ct)
@@ -2819,4 +2820,70 @@ func TestCreateSignedURL_NoSigningKeyFails(t *testing.T) {
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars", strings.NewReader(`{"paths":["a"]}`)))
 	require.Equal(t, 200, w.Code)
 	assert.JSONEq(t, `[{"path":"a","signedURL":null,"error":"Failed to create signed URL"}]`, w.Body.String())
+}
+
+func TestDownload_MissingBackingFileIs404(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var dlErr error
+	store := &stubObjectStore{
+		downloadFn: func(context.Context, string) (io.ReadCloser, string, error) { return nil, "", dlErr },
+		signDownloadFn: func(context.Context, string, time.Duration, domain.DownloadOptions) (string, error) {
+			return "file:///x", nil
+		},
+	}
+	db := &stubDB{queryRowFn: func(context.Context, string, ...any) (map[string]any, error) {
+		return map[string]any{"id": "1", "mime": "image/png"}, nil
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"pub": {Public: true}})
+	h.jwtKeys = stubKeys(t)
+	r := gin.New()
+	h.Mount(&r.RouterGroup)
+	tok := h.signDownloadToken(context.Background(), "pub", "a.png", time.Hour)
+	for name, target := range map[string]string{
+		"public": "/storage/v1/object/public/pub/a.png",
+		"redeem": "/storage/v1/object/sign/pub/a.png?token=" + tok,
+	} {
+		dlErr = fmt.Errorf("open file: %w: %w", domain.ErrNotFound, fs.ErrNotExist)
+		w := getRaw(r, target)
+		assert.Equal(t, 404, w.Code, name+": "+w.Body.String())
+		assert.Contains(t, w.Body.String(), "not_found", name)
+
+		dlErr = errors.New("disk on fire")
+		w = getRaw(r, target)
+		assert.Equal(t, 500, w.Code, name)
+		assert.NotContains(t, w.Body.String(), "disk on fire", name)
+	}
+}
+
+func TestRedeemSignedURL_PathCaseAndTrailingSlash(t *testing.T) {
+	var signedKeys, rowArgs []string
+	store := &stubObjectStore{signDownloadFn: func(_ context.Context, key string, _ time.Duration, _ domain.DownloadOptions) (string, error) {
+		signedKeys = append(signedKeys, key)
+		return "https://s3.example/" + key, nil
+	}}
+	db := &stubDB{queryRowFn: func(_ context.Context, _ string, args ...any) (map[string]any, error) {
+		rowArgs = append(rowArgs, args[1].(string))
+		return map[string]any{"mime": "image/png"}, nil
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"docs": {}})
+	h.jwtKeys = stubKeys(t)
+	r := gin.New()
+	h.Mount(&r.RouterGroup)
+	tok := h.signDownloadToken(context.Background(), "docs", "a/B.png", time.Hour)
+
+	for _, p := range []string{"a/b.png", "A/B.png", "a/B.PNG", "a/B.png.", "a/B.png/x"} {
+		w := getRaw(r, "/storage/v1/object/sign/docs/"+p+"?token="+tok)
+		assert.Equal(t, 400, w.Code, p)
+		assert.Contains(t, w.Body.String(), "invalid_token", p)
+	}
+	assert.Empty(t, signedKeys, "a rejected path never reaches storage")
+
+	// A trailing slash cleans to the signed object, so it redeems that object and no other.
+	for _, p := range []string{"a/B.png/", "a/B.png//", "a//B.png"} {
+		w := getRaw(r, "/storage/v1/object/sign/docs/"+p+"?token="+tok)
+		require.Equal(t, 302, w.Code, p+": "+w.Body.String())
+		assert.Equal(t, "https://s3.example/docs/a/B.png", w.Header().Get("Location"), p)
+	}
+	assert.Equal(t, []string{"docs/a/B.png", "docs/a/B.png", "docs/a/B.png"}, signedKeys)
+	assert.Equal(t, []string{"a/B.png", "a/B.png", "a/B.png"}, rowArgs)
 }

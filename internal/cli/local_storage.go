@@ -2,8 +2,10 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -98,6 +100,9 @@ func (s *LocalStore) Download(_ context.Context, key string) (io.ReadCloser, str
 		return nil, "", err
 	}
 	f, err := os.Open(fullPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, "", fmt.Errorf("open file: %w: %w", domain.ErrNotFound, err)
+	}
 	if err != nil {
 		return nil, "", fmt.Errorf("open file: %w", err)
 	}

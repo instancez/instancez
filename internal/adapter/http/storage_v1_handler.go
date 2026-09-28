@@ -608,8 +608,7 @@ func (h *StorageV1Handler) serveDownload(c *gin.Context, bucketName, objPath str
 	key := bucketName + "/" + objPath
 	body, contentType, err := h.storage.Download(ctx, key)
 	if err != nil {
-		h.logger.Error("download error", "error", err)
-		storageErr(c, 500, "internal", "Download failed")
+		h.downloadErr(c, err)
 		return
 	}
 	defer func() { _ = body.Close() }()
@@ -681,8 +680,14 @@ func writeDownloadHeaders(c *gin.Context, o domain.DownloadOptions) {
 	}
 }
 
-func setDownloadHeaders(c *gin.Context, contentType string, public bool) {
-	writeDownloadHeaders(c, downloadOptions(contentType, public, "", false))
+// downloadErr maps a registered object whose bytes are gone to 404.
+func (h *StorageV1Handler) downloadErr(c *gin.Context, err error) {
+	if errors.Is(err, domain.ErrNotFound) {
+		storageErr(c, 404, "not_found", "Object not found")
+		return
+	}
+	h.logger.Error("download error", "error", err)
+	storageErr(c, 500, "internal", "Download failed")
 }
 
 // downloadMAC signs with a key derived for downloads, so upload and download tokens can't be swapped.
@@ -766,8 +771,7 @@ func (h *StorageV1Handler) redeemSignedURL(c *gin.Context, bucketName, rawPath s
 	}
 	body, _, err := h.storage.Download(ctx, key)
 	if err != nil {
-		h.logger.Error("redeem signed url", "error", err)
-		storageErr(c, 500, "internal", "Download failed")
+		h.downloadErr(c, err)
 		return
 	}
 	defer func() { _ = body.Close() }()

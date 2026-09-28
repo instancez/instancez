@@ -40,6 +40,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - Storage: object keys with `..` segments are rejected, and the local provider can no longer write outside its directory.
 - An aggregate next to an embed (`select=count(),users(username)`, `select=amount.sum(),...customers(name)`) returned 500. The embed is now a group key, as in PostgREST, for belongs-to, has-many, and spread embeds.
 - A filter on a spread embed (`select=id,...users(username)&users.status=eq.x`) keeps every parent row; unmatched spread columns are `null`.
+- Storage: downloading an object whose row exists but whose file is gone from the local provider now returns 404 `not_found` instead of 500.
 - Storage: downloads send `nosniff`, and HTML/SVG/XML/JS are served as attachments.
 - Storage: image transforms are capped at 2500px, 25MB and 50MP. Signed URL expiry is capped at 7 days. Uploads no longer hold a database connection while the body streams. Multipart and signed uploads record real sizes, and signed uploads enforce the bucket's MIME allowlist. S3 copies of keys with special characters work.
 - Storage: `createSignedUploadUrl`'s response `url` now includes `?token=`, so `@supabase/supabase-js`'s `uploadToSignedUrl()` and `createSignedUploadUrl()` work end-to-end (storage-js reads the token from the URL).

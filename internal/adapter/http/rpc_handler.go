@@ -763,6 +763,7 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 
 // buildRPCCountedQuery runs the call once in a CTE and joins the unpaged count to the page.
 func buildRPCCountedQuery(callSQL string, chain *rpcChainSQL, baseArgIdx int) string {
+	// ponytail: count=exact loses alias ordering if RPC order gains alias support.
 	win := "row_number() OVER ()"
 	if len(chain.order) > 0 && !slices.ContainsFunc(chain.order, func(o postgrest.OrderClause) bool { return o.IsAlias }) {
 		win = "row_number() OVER (ORDER BY " + postgrest.RenderOrderBy(postgrest.QualifyOrderColumns(chain.order, "_rpc")) + ")"

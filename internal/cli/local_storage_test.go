@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -216,5 +217,30 @@ func TestLocalStore_UnicodeAndDotKeysStayInside(t *testing.T) {
 	items, err := s.List(ctx, "")
 	if err != nil || len(items) != 3 {
 		t.Fatalf("List(\"\") = %v, %v; want 3 items", items, err)
+	}
+}
+
+func TestLocalStore_DownloadMissingIsNotFound(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := NewLocalStore(dir, "")
+	ctx := context.Background()
+	if _, _, err := s.Download(ctx, "avatars/missing.png"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("missing file: got %v, want ErrNotFound", err)
+	}
+	if _, _, err := s.Download(ctx, "../escape"); err == nil || errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("invalid key must not be ErrNotFound: %v", err)
+	}
+	if err := s.Upload(ctx, "avatars/locked", strings.NewReader("x"), "text/plain", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(dir, "avatars", "locked"), 0); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := s.Download(ctx, "avatars/locked")
+	if err == nil {
+		t.Skip("permission error not observable (root?)")
+	}
+	if errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("permission error must not be ErrNotFound: %v", err)
 	}
 }
