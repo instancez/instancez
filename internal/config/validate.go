@@ -3,10 +3,12 @@ package config
 import (
 	"fmt"
 	"maps"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -93,17 +95,39 @@ var rpcColumnNameRE = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 const pgIdentOrUser = `(?:"\$user"|[a-z_][a-z0-9_]{0,62})`
 
-var rpcTimeoutRE = regexp.MustCompile(`^[0-9]{1,9}(ms|s|min|h|d)?$`)
+var rpcTimeoutRE = regexp.MustCompile(`^[0-9]{1,10}(ms|s|min|h|d)?$`)
 
-// rpcSetRules allowlists rpc set: keys; each value must match fully.
+var (
+	rpcTimeoutUnits = map[string]int64{"": 1, "ms": 1, "s": 1000, "min": 60_000, "h": 3_600_000, "d": 86_400_000}
+	rpcMemUnits     = map[string]int64{"": 1, "kB": 1, "MB": 1 << 10, "GB": 1 << 20, "TB": 1 << 30}
+)
+
+// rpcSetRules allowlists rpc set: keys; each value must match fully and, when
+// units is set, fall in [min, MaxInt32] base units like Postgres checks.
 var rpcSetRules = map[string]struct {
-	re   *regexp.Regexp
-	hint string
+	re    *regexp.Regexp
+	hint  string
+	units map[string]int64
+	min   int64
 }{
-	"search_path":       {regexp.MustCompile(`^\s*$|^\s*` + pgIdentOrUser + `(?:\s*,\s*` + pgIdentOrUser + `)*\s*$`), `Comma-separated lowercase schema names or "$user", or "" for an empty path`},
-	"statement_timeout": {rpcTimeoutRE, "A number of milliseconds or a value with ms, s, min, h or d"},
-	"lock_timeout":      {rpcTimeoutRE, "A number of milliseconds or a value with ms, s, min, h or d"},
-	"work_mem":          {regexp.MustCompile(`^[0-9]{1,9}(kB|MB|GB|TB)?$`), "A number of kB or a value with kB, MB, GB or TB"},
+	"search_path":       {re: regexp.MustCompile(`^\s*$|^\s*` + pgIdentOrUser + `(?:\s*,\s*` + pgIdentOrUser + `)*\s*$`), hint: `Comma-separated lowercase schema names or "$user", or "" for an empty path`},
+	"statement_timeout": {re: rpcTimeoutRE, hint: "0 to 2147483647 milliseconds, optionally with ms, s, min, h or d (at most 24d)", units: rpcTimeoutUnits},
+	"lock_timeout":      {re: rpcTimeoutRE, hint: "0 to 2147483647 milliseconds, optionally with ms, s, min, h or d (at most 24d)", units: rpcTimeoutUnits},
+	"work_mem":          {re: regexp.MustCompile(`^[0-9]{1,10}(kB|MB|GB|TB)?$`), hint: "64 to 2147483647 kB, optionally with kB, MB, GB or TB (at most 1TB)", units: rpcMemUnits, min: 64},
+}
+
+// rpcSetInRange converts a regexp-checked value to base units and range-checks it.
+func rpcSetInRange(v string, units map[string]int64, lo int64) bool {
+	i := strings.IndexFunc(v, func(r rune) bool { return r < '0' || r > '9' })
+	if i < 0 {
+		i = len(v)
+	}
+	n, err := strconv.ParseInt(v[:i], 10, 64)
+	if err != nil || n > math.MaxInt32 {
+		return false
+	}
+	n *= units[v[i:]]
+	return n >= lo && n <= math.MaxInt32
 }
 
 // multiwordScalarTypes are the standard multiword Postgres type names, which
@@ -866,7 +890,7 @@ func validateRPCFunction(path, name string, fn domain.Function) domain.Validatio
 		case !ok:
 			errs = append(errs, &domain.ValidationError{Path: path + ".set." + k, Message: fmt.Sprintf("unsupported setting %q", k),
 				Suggestion: "Supported: lock_timeout, search_path, statement_timeout, work_mem"})
-		case !rule.re.MatchString(fn.Set[k]):
+		case !rule.re.MatchString(fn.Set[k]) || (rule.units != nil && !rpcSetInRange(fn.Set[k], rule.units, rule.min)):
 			errs = append(errs, &domain.ValidationError{Path: path + ".set." + k, Message: fmt.Sprintf("invalid %s %q", k, fn.Set[k]), Suggestion: rule.hint})
 		}
 	}

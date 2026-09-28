@@ -19,6 +19,10 @@ func TestGenerateRPCFunction_SetClauses(t *testing.T) {
 	if !strings.Contains(generateRPCFunction("f", fn), "SET search_path = ''\nAS") {
 		t.Fatal("empty search_path must render ''")
 	}
+	fn.Set = map[string]string{"search_path": `"$user", public`}
+	if !strings.Contains(generateRPCFunction("f", fn), "SET search_path = \"$user\", public\nAS") {
+		t.Fatal(`"$user" must render as a quoted identifier`)
+	}
 	fn.Set = nil
 	if strings.Contains(generateRPCFunction("f", fn), "SET ") {
 		t.Fatal("no set: must emit no SET")

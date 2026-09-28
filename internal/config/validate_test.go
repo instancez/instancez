@@ -1456,6 +1456,25 @@ func TestValidate_RPCSet(t *testing.T) {
 		{"lock_timeout", "", false},
 		{"work_mem", "64MB", true},
 		{"work_mem", "64mb", false},
+		{"work_mem", "64", true},
+		{"work_mem", "64kB", true},
+		{"work_mem", "63kB", false},
+		{"work_mem", "0", false},
+		{"work_mem", "2147483647", true},
+		{"work_mem", "1TB", true},
+		{"work_mem", "2TB", false},
+		{"work_mem", "999999999TB", false},
+		{"work_mem", "9999999999TB", false},
+		{"work_mem", "99999999999", false},
+		{"statement_timeout", "0", true},
+		{"statement_timeout", "2147483647", true},
+		{"statement_timeout", "2147483648", false},
+		{"statement_timeout", "24d", true},
+		{"statement_timeout", "25d", false},
+		{"statement_timeout", "999999999d", false},
+		{"lock_timeout", "596h", true},
+		{"lock_timeout", "597h", false},
+		{"lock_timeout", "35792min", false},
 		{"role", "postgres", false},
 		{"Search_Path", "public", false},
 	}
@@ -1481,6 +1500,16 @@ func TestParseBytes_RPCSetScalarsDecodeAsStrings(t *testing.T) {
 	}
 	if got := cfg.RPC["f"].Set; got["statement_timeout"] != "5000" || got["search_path"] != "" || len(got) != 2 {
 		t.Fatalf("set = %#v", got)
+	}
+}
+
+func TestParseBytes_RPCSetBareSearchPathIsEmpty(t *testing.T) {
+	cfg, err := ParseBytes([]byte("version: 1\nrpc:\n  f:\n    body: SELECT 1\n    returns: {type: int}\n    set:\n      search_path:\n"), "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := cfg.RPC["f"].Set["search_path"]; !ok || v != "" {
+		t.Fatalf("set = %#v", cfg.RPC["f"].Set)
 	}
 }
 
