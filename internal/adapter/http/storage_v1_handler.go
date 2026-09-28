@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -16,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -272,6 +274,31 @@ func rlsContext(db domain.Database, c *gin.Context) context.Context {
 // serviceContext bypasses RLS, so callers must gate on the bucket and scope the query to one object.
 func serviceContext(db domain.Database, ctx context.Context) (context.Context, error) {
 	return db.WithRLS(ctx, domain.Session{Role: "service_role", IsAuthenticated: true})
+}
+
+// queryCtx is service_role for callers already authorized by bucket.Public or a token, else the caller's RLS.
+func (h *StorageV1Handler) queryCtx(c *gin.Context, bypassRLS bool) (context.Context, error) {
+	if bypassRLS {
+		return serviceContext(h.db, c.Request.Context())
+	}
+	return h.rlsCtx(c), nil
+}
+
+// splitScope strips one public/ or authenticated/ prefix and splits the bucket from the object path.
+func splitScope(p string) (public bool, bucket, objPath string, ok bool) {
+	if public = strings.HasPrefix(p, "public/"); public {
+		p = strings.TrimPrefix(p, "public/")
+	} else {
+		p = strings.TrimPrefix(p, "authenticated/")
+	}
+	bucket, objPath, ok = strings.Cut(p, "/")
+	return public, bucket, objPath, ok
+}
+
+// storedETag is the eTag kept in storage.objects.metadata, or "" when none was recorded.
+func storedETag(metadata any) string {
+	s, _ := decodeJSONB(metadata)["eTag"].(string)
+	return s
 }
 
 var errInvalidKey = errors.New("invalid object key")
@@ -600,10 +627,7 @@ func (h *StorageV1Handler) objectGetDispatch(c *gin.Context) {
 			storageErr(c, 400, "bad_request", "Missing path")
 			return
 		}
-		rest := strings.TrimPrefix(all, "info/")
-		public := strings.HasPrefix(rest, "public/")
-		rest = strings.TrimPrefix(strings.TrimPrefix(rest, "public/"), "authenticated/")
-		bucket, objPath, ok := strings.Cut(rest, "/")
+		public, bucket, objPath, ok := splitScope(strings.TrimPrefix(all, "info/"))
 		if !ok {
 			storageErr(c, 400, "bad_request", "Missing bucket or path")
 			return
@@ -625,11 +649,11 @@ func (h *StorageV1Handler) objectGetDispatch(c *gin.Context) {
 }
 
 func (h *StorageV1Handler) serveDownload(c *gin.Context, bucketName, objPath string, publicOnly bool) {
-	h.serveObject(c, bucketName, objPath, publicOnly, publicOnly, c.Request.URL.Query())
+	h.serveObject(c, bucketName, objPath, publicOnly, publicOnly, c.Request.URL.Query(), time.Time{})
 }
 
-// serveObject streams an object, transformed per tq; bypassRLS is for callers already authorized by bucket.Public or a token.
-func (h *StorageV1Handler) serveObject(c *gin.Context, bucketName, objPath string, publicCache, bypassRLS bool, tq url.Values) {
+// serveObject streams an object, transformed per tq; a non-zero expires replaces Cache-Control with Expires.
+func (h *StorageV1Handler) serveObject(c *gin.Context, bucketName, objPath string, publicCache, bypassRLS bool, tq url.Values, expires time.Time) {
 	var ok bool
 	if objPath, ok = objectPath(c, objPath); !ok {
 		return
@@ -646,14 +670,12 @@ func (h *StorageV1Handler) serveObject(c *gin.Context, bucketName, objPath strin
 		return
 	}
 
-	ctx := h.rlsCtx(c)
-	if bypassRLS {
-		if ctx, err = serviceContext(h.db, c.Request.Context()); err != nil {
-			storageErr(c, 500, "internal", "Download failed")
-			return
-		}
+	ctx, err := h.queryCtx(c, bypassRLS)
+	if err != nil {
+		storageErr(c, 500, "internal", "Download failed")
+		return
 	}
-	row, err := h.db.QueryRow(ctx, "SELECT id FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
+	row, err := h.db.QueryRow(ctx, "SELECT size, metadata FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
 	if err != nil || row == nil {
 		storageErr(c, 404, "not_found", "Object not found")
 		return
@@ -667,6 +689,11 @@ func (h *StorageV1Handler) serveObject(c *gin.Context, bucketName, objPath strin
 	}
 	defer func() { _ = body.Close() }()
 
+	length := int64(-1)
+	if size, ok := row["size"].(int64); ok && c.Request.Method == http.MethodHead {
+		length = size
+	}
+	var out io.Reader = body
 	if tp != nil && strings.HasPrefix(contentType, "image/") {
 		transformed, newCT, err := applyTransform(body, contentType, tp)
 		if errors.Is(err, errImageTooLarge) {
@@ -677,13 +704,27 @@ func (h *StorageV1Handler) serveObject(c *gin.Context, bucketName, objPath strin
 			storageErr(c, 400, "invalid_transform", err.Error())
 			return
 		}
-		body, contentType = transformed, newCT
+		b, _ := io.ReadAll(transformed)
+		out, contentType, length = bytes.NewReader(b), newCT, int64(len(b))
 	}
 
 	download, hasDownload := c.GetQuery("download")
-	writeDownloadHeaders(c, downloadOptions(contentType, publicCache, download, hasDownload))
+	opts := downloadOptions(contentType, publicCache, download, hasDownload)
+	if !expires.IsZero() {
+		opts.CacheControl = ""
+		c.Header("Expires", expires.UTC().Format(http.TimeFormat))
+	}
+	writeDownloadHeaders(c, opts)
+	if etag := storedETag(row["metadata"]); etag != "" {
+		c.Header("ETag", etag)
+	}
+	if length >= 0 {
+		c.Header("Content-Length", strconv.FormatInt(length, 10))
+	}
 	c.Status(200)
-	_, _ = io.Copy(c.Writer, body)
+	if c.Request.Method != http.MethodHead {
+		_, _ = io.Copy(c.Writer, out)
+	}
 }
 
 // activeContentTypes can run script when rendered inline on our origin.
@@ -725,7 +766,9 @@ func downloadOptions(contentType string, public bool, download string, hasDownlo
 func writeDownloadHeaders(c *gin.Context, o domain.DownloadOptions) {
 	c.Header("Content-Type", o.ContentType)
 	c.Header("X-Content-Type-Options", "nosniff")
-	c.Header("Cache-Control", o.CacheControl)
+	if o.CacheControl != "" {
+		c.Header("Cache-Control", o.CacheControl)
+	}
 	if o.ContentDisposition != "" {
 		c.Header("Content-Disposition", o.ContentDisposition)
 	}
@@ -794,26 +837,26 @@ func (h *StorageV1Handler) signRenderToken(ctx context.Context, bucket, objPath 
 	return strconv.FormatInt(exp, 10) + "." + hex.EncodeToString(sig) + "." + base64.RawURLEncoding.EncodeToString([]byte(transform))
 }
 
-func (h *StorageV1Handler) verifyRenderToken(ctx context.Context, token, bucket, objPath string) (string, bool) {
+func (h *StorageV1Handler) verifyRenderToken(ctx context.Context, token, bucket, objPath string) (string, time.Time, bool) {
 	parts := strings.Split(token, ".")
 	if len(parts) == 2 {
-		_, ok := h.verifyDownloadToken(ctx, token, bucket, objPath)
-		return "", ok
+		exp, ok := h.verifyDownloadToken(ctx, token, bucket, objPath)
+		return "", exp, ok
 	}
 	if len(parts) != 3 {
-		return "", false
+		return "", time.Time{}, false
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(parts[2])
 	exp, perr := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil || len(raw) == 0 || perr != nil || strconv.FormatInt(exp, 10) != parts[0] || time.Now().Unix() > exp {
-		return "", false
+		return "", time.Time{}, false
 	}
 	sig, err := hex.DecodeString(parts[1])
 	want := h.downloadMAC(ctx, bucket, objPath, exp, string(raw))
 	if err != nil || want == nil || !hmac.Equal(sig, want) {
-		return "", false
+		return "", time.Time{}, false
 	}
-	return string(raw), true
+	return string(raw), time.Unix(exp, 0), true
 }
 
 func (h *StorageV1Handler) renderDispatch(c *gin.Context) {
@@ -842,13 +885,13 @@ func (h *StorageV1Handler) redeemRenderURL(c *gin.Context, bucketName, rawPath s
 	if !ok {
 		return
 	}
-	transform, ok := h.verifyRenderToken(c.Request.Context(), c.Query("token"), bucketName, objPath)
+	transform, exp, ok := h.verifyRenderToken(c.Request.Context(), c.Query("token"), bucketName, objPath)
 	if !ok {
 		storageErr(c, 400, "invalid_token", "Invalid or expired signed URL")
 		return
 	}
 	tq, _ := url.ParseQuery(transform)
-	h.serveObject(c, bucketName, objPath, false, true, tq)
+	h.serveObject(c, bucketName, objPath, false, true, tq, exp)
 }
 
 // redeemSignedURL serves a createSignedUrl(s) URL: S3 gets a 302 to a short presign, the local provider streams.
@@ -1096,13 +1139,10 @@ func (h *StorageV1Handler) objectInfo(c *gin.Context, bucketName, rawPath string
 		return
 	}
 
-	ctx := h.rlsCtx(c)
-	if public {
-		var err error
-		if ctx, err = serviceContext(h.db, c.Request.Context()); err != nil {
-			storageErr(c, 500, "internal", "Info failed")
-			return
-		}
+	ctx, err := h.queryCtx(c, public)
+	if err != nil {
+		storageErr(c, 500, "internal", "Info failed")
+		return
 	}
 	row, err := h.db.QueryRow(ctx,
 		"SELECT id, name, size, mime, uploaded_at, uploaded_by, metadata FROM storage.objects WHERE bucket_id = $1 AND name = $2",
@@ -1112,14 +1152,20 @@ func (h *StorageV1Handler) objectInfo(c *gin.Context, bucketName, rawPath string
 		return
 	}
 
+	meta := decodeJSONB(row["metadata"])
+	cacheControl, _ := meta["cacheControl"].(string)
 	c.JSON(200, gin.H{
-		"id":           asString(row["id"]),
-		"name":         asString(row["name"]),
-		"size":         row["size"],
-		"content_type": asString(row["mime"]),
-		"created_at":   asString(row["uploaded_at"]),
-		"updated_at":   asString(row["uploaded_at"]),
-		"metadata":     row["metadata"],
+		"id":            asString(row["id"]),
+		"name":          asString(row["name"]),
+		"bucket_id":     bucketName,
+		"size":          row["size"],
+		"content_type":  asString(row["mime"]),
+		"cache_control": nullIfEmpty(cacheControl),
+		"etag":          nullIfEmpty(storedETag(row["metadata"])),
+		"created_at":    asString(row["uploaded_at"]),
+		"updated_at":    asString(row["uploaded_at"]),
+		"last_modified": asTimeString(row["uploaded_at"]),
+		"metadata":      row["metadata"],
 	})
 }
 
@@ -1129,13 +1175,15 @@ func (h *StorageV1Handler) objectExists(c *gin.Context) {
 
 func (h *StorageV1Handler) objectHeadDispatch(c *gin.Context) {
 	all := strings.TrimPrefix(c.Param("all"), "/")
+	if strings.HasPrefix(all, "info/public/") {
+		c.Status(404)
+		return
+	}
 	if strings.HasPrefix(all, "info/") {
 		h.objectGetDispatch(c)
 		return
 	}
-	public := strings.HasPrefix(all, "public/")
-	rest := strings.TrimPrefix(strings.TrimPrefix(all, "public/"), "authenticated/")
-	bucket, objPath, ok := strings.Cut(rest, "/")
+	public, bucket, objPath, ok := splitScope(all)
 	if !ok {
 		c.Status(400)
 		return
@@ -1155,20 +1203,20 @@ func (h *StorageV1Handler) headObject(c *gin.Context, bucketName, rawPath string
 		c.Status(404)
 		return
 	}
-	ctx := h.rlsCtx(c)
-	if publicOnly {
-		var err error
-		if ctx, err = serviceContext(h.db, c.Request.Context()); err != nil {
-			c.Status(500)
-			return
-		}
+	ctx, err := h.queryCtx(c, publicOnly)
+	if err != nil {
+		c.Status(500)
+		return
 	}
-	row, err := h.db.QueryRow(ctx, "SELECT size, mime, uploaded_at FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
+	row, err := h.db.QueryRow(ctx, "SELECT size, mime, uploaded_at, metadata FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
 	if err != nil || row == nil {
 		c.Status(404)
 		return
 	}
 	writeDownloadHeaders(c, downloadOptions(asString(row["mime"]), publicOnly, "", false))
+	if etag := storedETag(row["metadata"]); etag != "" {
+		c.Header("ETag", etag)
+	}
 	if size, ok := row["size"].(int64); ok {
 		c.Header("Content-Length", strconv.FormatInt(size, 10))
 	}
@@ -1398,12 +1446,19 @@ func (h *StorageV1Handler) createSignedURL(c *gin.Context) {
 			storageErr(c, 400, "invalid_transform", "Invalid transform")
 			return
 		}
-		q := t.query()
-		if _, err := parseTransform(q); err != nil {
+		if err := t.validate(); err != nil {
 			storageErr(c, 400, "invalid_transform", err.Error())
 			return
 		}
-		transform = q.Encode()
+		q := t.query()
+		tp, err := parseTransform(q)
+		if err != nil {
+			storageErr(c, 400, "invalid_transform", err.Error())
+			return
+		}
+		if tp != nil {
+			transform = q.Encode()
+		}
 	}
 
 	ctx := h.rlsCtx(c)
@@ -1431,6 +1486,19 @@ type signTransform struct {
 	Resize  string `json:"resize"`
 	Format  string `json:"format"`
 	Quality int    `json:"quality"`
+}
+
+// validate rejects what redemption can't render, so a signed URL never mints a broken image.
+func (t signTransform) validate() error {
+	switch {
+	case t.Quality != 0 && (t.Quality < 20 || t.Quality > 100):
+		return errors.New("quality must be between 20 and 100")
+	case !slices.Contains([]string{"", "origin", "png", "jpg", "jpeg"}, t.Format):
+		return fmt.Errorf("unsupported format: %s", t.Format)
+	case !slices.Contains([]string{"", "cover", "contain", "fill"}, t.Resize):
+		return fmt.Errorf("unsupported resize: %s", t.Resize)
+	}
+	return nil
 }
 
 // query renders the transform canonically so one token binds exactly one rendering.

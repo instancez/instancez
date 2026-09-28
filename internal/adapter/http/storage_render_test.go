@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"image/png"
 	"io"
+	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/instancez/instancez/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,9 +21,13 @@ import (
 
 func renderHandler(t *testing.T, row map[string]any, buckets map[string]domain.Bucket) (*StorageV1Handler, *gin.Engine) {
 	t.Helper()
+	return renderHandlerDB(t, &stubDB{queryRowFn: func(context.Context, string, ...any) (map[string]any, error) { return row, nil }}, buckets)
+}
+
+func renderHandlerDB(t *testing.T, db *stubDB, buckets map[string]domain.Bucket) (*StorageV1Handler, *gin.Engine) {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	t.Setenv("INSTANCEZ_PUBLISHABLE_KEY", anonTestPK)
-	db := &stubDB{queryRowFn: func(context.Context, string, ...any) (map[string]any, error) { return row, nil }}
 	store := &stubObjectStore{downloadFn: func(context.Context, string) (io.ReadCloser, string, error) {
 		return io.NopCloser(bytes.NewReader(realPNG(t, 8, 8))), "image/png", nil
 	}}
@@ -62,16 +69,12 @@ func TestHeadPublicObject_Missing(t *testing.T) {
 
 func TestObjectInfoPublic(t *testing.T) {
 	_, r := renderHandler(t, pubRow, map[string]domain.Bucket{"pub": {Public: true}, "priv": {}})
-	for _, m := range []string{"GET", "HEAD"} {
-		w := serve(r, m, "/storage/v1/object/info/public/pub/a.png", "", nil)
-		require.Equal(t, 200, w.Code, m)
-		if m == "GET" {
-			var body map[string]any
-			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
-			assert.Equal(t, "a.png", body["name"])
-			assert.Equal(t, "image/png", body["content_type"])
-		}
-	}
+	w := serve(r, "GET", "/storage/v1/object/info/public/pub/a.png", "", nil)
+	require.Equal(t, 200, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, "a.png", body["name"])
+	assert.Equal(t, "image/png", body["content_type"])
 	assert.Equal(t, 404, serve(r, "GET", "/storage/v1/object/info/public/priv/a.png", "", nil).Code)
 }
 
@@ -145,7 +148,7 @@ func TestCreateSignedURL_WithTransform(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	prefix := "/render/image/sign/docs/a.png?token="
 	require.True(t, strings.HasPrefix(body["signedURL"], prefix), body["signedURL"])
-	tf, ok := h.verifyRenderToken(context.Background(), strings.TrimPrefix(body["signedURL"], prefix), "docs", "a.png")
+	tf, _, ok := h.verifyRenderToken(context.Background(), strings.TrimPrefix(body["signedURL"], prefix), "docs", "a.png")
 	require.True(t, ok)
 	assert.Equal(t, "height=5&resize=fill&width=3", tf)
 
@@ -180,4 +183,126 @@ func TestRenderToken_UploadDownloadNeverSwap(t *testing.T) {
 		assert.Equal(t, 400, w.Code, name)
 		assert.Contains(t, w.Body.String(), "invalid_token", name)
 	}
+}
+
+func TestRenderPublic_PrivateBucketNeverQueries(t *testing.T) {
+	db := &stubDB{
+		queryRowFn: func(context.Context, string, ...any) (map[string]any, error) {
+			t.Error("render/public on a private bucket must not query")
+			return pubRow, nil
+		},
+		withRLSFn: func(ctx context.Context, s domain.Session) (context.Context, error) {
+			t.Errorf("render/public on a private bucket must not take a %q context", s.Role)
+			return ctx, nil
+		},
+	}
+	_, r := renderHandlerDB(t, db, map[string]domain.Bucket{"priv": {}})
+	for _, m := range []string{"GET", "HEAD"} {
+		w := serve(r, m, "/storage/v1/render/image/public/priv/a.png?width=3", "", nil)
+		assert.Equal(t, 404, w.Code, m)
+	}
+}
+
+func TestRenderAuthenticated_RunsUnderCallerRLS(t *testing.T) {
+	var roles []string
+	db := &stubDB{
+		queryRowFn: func(context.Context, string, ...any) (map[string]any, error) { return pubRow, nil },
+		withRLSFn: func(ctx context.Context, s domain.Session) (context.Context, error) {
+			roles = append(roles, s.Role)
+			return ctx, nil
+		},
+	}
+	h, r := renderHandlerDB(t, db, map[string]domain.Bucket{"open": {}})
+	tok := signToken(t, h.jwtKeys, jwt.MapClaims{"sub": "00000000-0000-0000-0000-000000000001", "role": "authenticated", "exp": 4102444800})
+	w := serve(r, "GET", "/storage/v1/render/image/authenticated/open/a.png?width=2&height=2&resize=fill", "", map[string]string{"apikey": anonTestPK, "Authorization": "Bearer " + tok})
+	require.Equal(t, 200, w.Code, w.Body.String())
+	wd, ht := pngSize(t, w.Body.Bytes())
+	assert.Equal(t, [2]int{2, 2}, [2]int{wd, ht})
+	assert.Equal(t, []string{"authenticated"}, roles, "the lookup runs as the caller, never service_role")
+}
+
+func TestCreateSignedURL_RejectsUnservableTransform(t *testing.T) {
+	_, r := renderHandler(t, map[string]any{"id": "1"}, map[string]domain.Bucket{"docs": {}})
+	t.Setenv("INSTANCEZ_SECRET_KEY", "test-secret-key")
+	svc := map[string]string{"apikey": "test-secret-key"}
+	for _, tf := range []string{
+		`{"width":3,"format":"webp"}`, `{"width":3,"format":"avif"}`, `{"width":3,"format":"gif"}`,
+		`{"width":3,"quality":19}`, `{"width":3,"quality":101}`, `{"width":3,"quality":-1}`, `{"width":3,"resize":"stretch"}`,
+	} {
+		w := serve(r, "POST", "/storage/v1/object/sign/docs/a.png", `{"expiresIn":60,"transform":`+tf+`}`, svc)
+		assert.Equal(t, 400, w.Code, tf)
+		assert.Contains(t, w.Body.String(), "invalid_transform", tf)
+	}
+	for _, tf := range []string{`{"width":3,"quality":20}`, `{"width":3,"quality":100,"format":"origin","resize":"contain"}`, `{"width":3,"format":"png"}`} {
+		w := serve(r, "POST", "/storage/v1/object/sign/docs/a.png", `{"expiresIn":60,"transform":`+tf+`}`, svc)
+		require.Equal(t, 200, w.Code, tf)
+		assert.Contains(t, w.Body.String(), "/render/image/sign/", tf)
+	}
+	w := serve(r, "POST", "/storage/v1/object/sign/docs/a.png", `{"expiresIn":60,"transform":{"resize":"fill"}}`, svc)
+	require.Equal(t, 200, w.Code)
+	assert.Contains(t, w.Body.String(), `"/object/sign/docs/a.png?token=`, "a transform without dimensions renders nothing, so it signs a plain URL")
+}
+
+func TestRenderSigned_ExpiresHeader(t *testing.T) {
+	h, r := renderHandler(t, pubRow, map[string]domain.Bucket{"docs": {}, "pub": {Public: true}})
+	ctx := context.Background()
+	for name, tok := range map[string]string{
+		"transform": h.signRenderToken(ctx, "docs", "a.png", time.Hour, "width=3"),
+		"plain":     h.signDownloadToken(ctx, "docs", "a.png", time.Hour),
+	} {
+		exp, err := strconv.ParseInt(strings.Split(tok, ".")[0], 10, 64)
+		require.NoError(t, err)
+		w := serve(r, "GET", "/storage/v1/render/image/sign/docs/a.png?token="+tok, "", nil)
+		require.Equal(t, 200, w.Code, name)
+		assert.Equal(t, time.Unix(exp, 0).UTC().Format(http.TimeFormat), w.Header().Get("Expires"), name)
+		assert.Empty(t, w.Header().Get("Cache-Control"), name)
+	}
+	w := serve(r, "GET", "/storage/v1/render/image/public/pub/a.png?width=3", "", nil)
+	assert.Empty(t, w.Header().Get("Expires"), "only signed renders expire")
+	assert.Equal(t, "public, max-age=3600", w.Header().Get("Cache-Control"))
+}
+
+var taggedRow = map[string]any{
+	"id": "1", "name": "a.png", "size": int64(123), "mime": "image/png",
+	"uploaded_at": time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+	"metadata":    map[string]any{"eTag": `"abc"`, "cacheControl": "max-age=60"},
+}
+
+func TestObjectInfo_SupabaseShape(t *testing.T) {
+	_, r := renderHandler(t, taggedRow, map[string]domain.Bucket{"pub": {Public: true}})
+	var body map[string]any
+	w := serve(r, "GET", "/storage/v1/object/info/public/pub/a.png", "", nil)
+	require.Equal(t, 200, w.Code)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, "pub", body["bucket_id"])
+	assert.Equal(t, `"abc"`, body["etag"])
+	assert.Equal(t, "max-age=60", body["cache_control"])
+	assert.Equal(t, "2026-01-02T03:04:05Z", body["last_modified"])
+	assert.NotContains(t, body, "version", "no object versions, so no version field")
+
+	_, r = renderHandler(t, pubRow, map[string]domain.Bucket{"pub": {Public: true}})
+	body = nil
+	require.NoError(t, json.Unmarshal(serve(r, "GET", "/storage/v1/object/info/public/pub/a.png", "", nil).Body.Bytes(), &body))
+	assert.Contains(t, body, "etag")
+	assert.Nil(t, body["etag"], "no stored eTag answers null")
+	assert.Nil(t, body["cache_control"])
+}
+
+func TestHeadHeaders_ETagAndRenderLength(t *testing.T) {
+	_, r := renderHandler(t, taggedRow, map[string]domain.Bucket{"pub": {Public: true}})
+	assert.Equal(t, 404, serve(r, "HEAD", "/storage/v1/object/info/public/pub/a.png", "", nil).Code, "Supabase has no HEAD info/public")
+	w := serve(r, "HEAD", "/storage/v1/object/public/pub/a.png", "", nil)
+	require.Equal(t, 200, w.Code)
+	assert.Equal(t, `"abc"`, w.Header().Get("ETag"))
+
+	get := serve(r, "GET", "/storage/v1/render/image/public/pub/a.png?width=3&height=5&resize=fill", "", nil)
+	require.Equal(t, 200, get.Code)
+	head := serve(r, "HEAD", "/storage/v1/render/image/public/pub/a.png?width=3&height=5&resize=fill", "", nil)
+	require.Equal(t, 200, head.Code)
+	assert.Equal(t, strconv.Itoa(get.Body.Len()), head.Header().Get("Content-Length"))
+	assert.Equal(t, `"abc"`, head.Header().Get("ETag"))
+	assert.Equal(t, "123", serve(r, "HEAD", "/storage/v1/render/image/public/pub/a.png", "", nil).Header().Get("Content-Length"), "untransformed HEAD uses the stored size")
+
+	_, r = renderHandler(t, pubRow, map[string]domain.Bucket{"pub": {Public: true}})
+	assert.Empty(t, serve(r, "HEAD", "/storage/v1/object/public/pub/a.png", "", nil).Header().Get("ETag"), "no stored eTag, no header")
 }

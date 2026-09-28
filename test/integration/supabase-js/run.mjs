@@ -3447,6 +3447,7 @@ await step('storage: render/image routes serve storage-js transforms', async () 
   assertEq(sr.status, 200, 'signed render')
   const sd = pngDimensions(Buffer.from(await sr.arrayBuffer()))
   assertEq(`${sd.width}x${sd.height}`, '4x6', 'the token transform wins')
+  assert(sr.headers.get('expires'), 'signed render carries Expires')
 
   const head = await fetch(`${URL}/storage/v1/object/public/avatars/transform-test.png`, { method: 'HEAD' })
   assertEq(head.status, 200, 'HEAD public')
@@ -3459,6 +3460,10 @@ await step('storage: render/image routes serve storage-js transforms', async () 
   assertEq(privHead.status, 404, 'HEAD public on a private bucket')
   const privInfo = await fetch(`${URL}/storage/v1/object/info/public/documents/secret.txt`)
   assertEq(privInfo.status, 404, 'info/public on a private bucket')
+  const privRender = await fetch(`${URL}/storage/v1/render/image/public/documents/secret.txt?width=2`)
+  assertEq(privRender.status, 404, 'render/public on a private bucket')
+  const headInfo = await fetch(`${URL}/storage/v1/object/info/public/avatars/transform-test.png`, { method: 'HEAD' })
+  assertEq(headInfo.status, 404, 'no HEAD on info/public, as in Supabase')
 })
 
 // --- Serverless-friendly endpoints (raw fetch, not supabase-js) ---
