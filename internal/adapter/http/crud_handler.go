@@ -138,13 +138,8 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 			return
 		}
 
-		// Range header pagination. When the client sets Range: 0-9 (with
-		// Range-Unit: items) and did not pass limit/offset explicitly, we
-		// translate the byte-range-style bounds into limit/offset. A Range
-		// header always yields a 206 response when any rows are returned
-		// and the partial result does not cover the whole set.
-		rangeUsed := false
-		if rh := c.GetHeader("Range"); rh != "" && c.Query("limit") == "" && c.Query("offset") == "" {
+		// Range header pagination when limit/offset are absent.
+		if rh := c.GetHeader("Range"); rh != "" && c.Request.Method == "GET" && c.Query("limit") == "" && c.Query("offset") == "" {
 			start, end, ok := parseRangeHeader(rh)
 			if !ok {
 				problemJSON(c, 400, "bad_request", "Invalid Range header")
@@ -152,7 +147,6 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 			}
 			qp.Offset = start
 			qp.Limit = end - start + 1
-			rangeUsed = true
 		}
 		qp.Limit = capLimit(qp.Limit, h.cfg.Server.MaxLimit)
 		capEmbeds(qp.Embeds, h.cfg.Server.MaxLimit)
@@ -241,7 +235,11 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 		}
 
 		c.Header("Content-Range", contentRange(qp.Offset, len(rows), total))
-		end := max(qp.Offset, qp.Offset+len(rows)-1)
+		status := rangeStatus(qp.Offset, len(rows), total)
+		if status == 416 && accept != "application/vnd.pgrst.object+json" {
+			rangeNotSatisfiable(c, qp.Offset, total)
+			return
+		}
 
 		// GeoJSON response
 		if accept == "application/geo+json" {
@@ -265,7 +263,7 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 					"properties": props,
 				})
 			}
-			c.JSON(200, gin.H{
+			c.JSON(status, gin.H{
 				"type":     "FeatureCollection",
 				"features": features,
 			})
@@ -284,7 +282,7 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 					fmt.Sprintf("The result contains %d rows", len(rows)), "")
 				return
 			}
-			c.JSON(200, rows[0])
+			c.JSON(status, rows[0])
 			return
 		}
 
@@ -299,26 +297,10 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 				problemJSON(c, 500, "internal", "CSV render failed")
 				return
 			}
-			status := 200
-			if rangeUsed {
-				if total < 0 || total > end+1 {
-					status = 206
-				}
-			}
 			c.Data(status, "text/csv; charset=utf-8", out)
 			return
 		}
 
-		// Return 206 Partial Content when the client used Range and the
-		// response is a strict subset of the available rows. We treat an
-		// unknown total (no count prefer) as "might be partial" whenever
-		// Range was used.
-		status := 200
-		if rangeUsed {
-			if total < 0 || total > end+1 {
-				status = 206
-			}
-		}
 		c.JSON(status, rows)
 	}
 }
@@ -663,6 +645,24 @@ func contentRange(offset, n, total int) string {
 		tot = strconv.Itoa(total)
 	}
 	return rng + "/" + tot
+}
+
+// rangeStatus mirrors PostgREST's RangeQuery.rangeStatus; total < 0 means no count was requested.
+func rangeStatus(offset, n, total int) int {
+	switch {
+	case total < 0:
+		return 200
+	case offset > total:
+		return 416
+	case n < total:
+		return 206
+	}
+	return 200
+}
+
+func rangeNotSatisfiable(c *gin.Context, offset, total int) {
+	pgJSON(c, 416, "PGRST103", "Requested range not satisfiable",
+		fmt.Sprintf("An offset of %d was requested, but there are only %d rows.", offset, total), "")
 }
 
 // executeCount counts the rows the list query matches, ignoring GROUP BY and HAVING as PostgREST does.

@@ -187,6 +187,7 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 				offset = rpcChain.offset
 			}
 			c.Header("Content-Range", contentRange(offset, len(rows), total))
+			status := rangeStatus(offset, len(rows), total)
 			if c.GetHeader("Accept") == "application/vnd.pgrst.object+json" {
 				if len(rows) == 0 {
 					pgJSON(c, http.StatusNotAcceptable, "PGRST116",
@@ -200,10 +201,14 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 						fmt.Sprintf("The result contains %d rows", len(rows)), "")
 					return
 				}
-				c.JSON(http.StatusOK, rows[0])
+				c.JSON(status, rows[0])
 				return
 			}
-			c.JSON(http.StatusOK, rows)
+			if status == 416 {
+				rangeNotSatisfiable(c, offset, total)
+				return
+			}
+			c.JSON(status, rows)
 			return
 
 		default: // "scalar"

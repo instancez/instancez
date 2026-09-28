@@ -55,3 +55,23 @@ func TestContentRange(t *testing.T) {
 		}
 	}
 }
+
+func TestRangeStatus(t *testing.T) {
+	for _, c := range []struct{ offset, n, total, want int }{
+		{0, 3, -1, 200},
+		{10, 0, -1, 200},
+		{0, 5, 5, 200},
+		{0, 2, 5, 206},
+		{3, 2, 5, 206},
+		{5, 0, 5, 206},
+		{6, 0, 5, 416},
+		{0, 0, 0, 200},
+		{1, 0, 0, 416},
+		{0, 0, 5, 206},
+		{0, 1, 1, 200},
+	} {
+		if got := rangeStatus(c.offset, c.n, c.total); got != c.want {
+			t.Errorf("rangeStatus(%d,%d,%d) = %d, want %d", c.offset, c.n, c.total, got, c.want)
+		}
+	}
+}

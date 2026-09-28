@@ -1067,6 +1067,28 @@ await step('rest: .limit() and .range() pagination', async () => {
   assertEq(page2[1].title, 'delta')
 })
 
+await step('rest: 206 for a partial counted page, 416 past the end, 200 without a count', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const part = await client.from('todos').select('id', { count: 'exact' }).in('id', filterIds).range(0, 1)
+  if (part.error) throw part.error
+  assertEq(part.status, 206)
+  assertEq(part.count, 5)
+  const full = await client.from('todos').select('id', { count: 'exact' }).in('id', filterIds)
+  assertEq(full.status, 200)
+  const past = await client.from('todos').select('id', { count: 'exact' }).in('id', filterIds).range(100, 101)
+  assertEq(past.status, 416)
+  assertEq(past.error?.code, 'PGRST103')
+  const uncounted = await client.from('todos').select('id').in('id', filterIds).range(100, 101)
+  assertEq(uncounted.status, 200)
+  assertEq(uncounted.data.length, 0)
+  const head = await client.from('todos').select('*', { count: 'exact', head: true }).in('id', filterIds).range(0, 1)
+  assertEq(head.status, 206)
+  assertEq(head.count, 5)
+})
+
 await step('rest: .or() logical disjunction', async () => {
   const client = createClient(URL, PUBLISHABLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -1413,13 +1435,25 @@ await step('rest: Range header yields 206 + Content-Range on a partial result', 
       apikey: PUBLISHABLE_KEY,
       Range: '0-1',
       'Range-Unit': 'items',
+      Prefer: 'count=exact',
     },
   })
-  assertEq(resp.status, 206, 'partial range returns 206')
+  assertEq(resp.status, 206, 'partial counted range returns 206')
   const contentRange = resp.headers.get('content-range')
-  assert(contentRange && contentRange.startsWith('0-1/'), `Content-Range shape: ${contentRange}`)
+  assertEq(contentRange, '0-1/3')
   const body = await resp.json()
   assertEq(body.length, 2, 'range 0-1 returns 2 rows')
+
+  const uncounted = await fetch(`${URL}/rest/v1/todos?${params}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      apikey: PUBLISHABLE_KEY,
+      Range: '0-1',
+      'Range-Unit': 'items',
+    },
+  })
+  assertEq(uncounted.status, 200, 'Range without a count is 200, as in PostgREST')
+  assertEq(uncounted.headers.get('content-range'), '0-1/*')
 
   for (const r of ins) await client.from('todos').delete().eq('id', r.id)
 })
@@ -1796,9 +1830,16 @@ await step('rpc: setof function with .order().limit()', async () => {
     .rpc('list_todos', undefined, { count: 'exact' })
     .in('title', ['z-last', 'a-first', 'm-middle'])
     .range(10, 11)
-  if (empty.error) throw empty.error
-  assertEq(empty.data.length, 0, 'page past end is empty')
-  assertEq(empty.count, 3, 'page past end still counts')
+  assertEq(empty.status, 416, 'page past the end is 416, as in PostgREST')
+  assertEq(empty.error?.code, 'PGRST103')
+  assertEq(empty.data, null)
+  const partial = await client
+    .rpc('list_todos', undefined, { count: 'exact' })
+    .in('title', ['z-last', 'a-first', 'm-middle'])
+    .range(0, 0)
+  if (partial.error) throw partial.error
+  assertEq(partial.status, 206, 'partial page with a count is 206')
+  assertEq(partial.count, 3)
 
   for (const id of setofIds) {
     await client.from('todos').delete().eq('id', id)

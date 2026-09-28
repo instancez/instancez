@@ -78,7 +78,7 @@ func TestConf_AggregateWithEmbeds(t *testing.T) {
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
-		require.Equal(t, 200, resp.StatusCode, string(body))
+		require.Equal(t, 206, resp.StatusCode, string(body))
 		assert.Equal(t, "0-1/5", resp.Header.Get("Content-Range"), "count ignores GROUP BY, as in PostgREST")
 	})
 }
@@ -205,22 +205,22 @@ func TestConf_RPCAggregateGroupBy(t *testing.T) {
 	assert.Equal(t, "0-1/2", hdr.Get("Content-Range"), "count=exact counts the two OFFLINE rows")
 
 	status, raw, hdr = rpc("select=nickname,count()&limit=1&order=nickname.desc", `{"target":"OFFLINE"}`, exact)
-	require.Equal(t, 200, status, string(raw))
+	require.Equal(t, 206, status, string(raw))
 	assert.Equal(t, []map[string]any{{"nickname": "kiwi", "count": float64(1)}}, rows(raw))
 	assert.Equal(t, "0-0/2", hdr.Get("Content-Range"))
 
 	status, raw, hdr = rpc("select=status,count()&having=count.gt.2", `{"target":"ONLINE"}`, exact)
-	require.Equal(t, 200, status, string(raw))
+	require.Equal(t, 206, status, string(raw))
 	assert.Equal(t, []map[string]any{{"status": "ONLINE", "count": float64(3)}}, rows(raw))
 	assert.Equal(t, "0-0/3", hdr.Get("Content-Range"), "count ignores HAVING")
 
 	status, raw, hdr = rpc("select=status,count()&having=count.gt.5", `{"target":"ONLINE"}`, exact)
-	require.Equal(t, 200, status, string(raw))
+	require.Equal(t, 206, status, string(raw))
 	assert.Empty(t, rows(raw))
 	assert.Equal(t, "*/3", hdr.Get("Content-Range"), "empty page, ungrouped total")
 
 	status, raw, hdr = rpc("select=count()", `{"target":"ONLINE"}`, exact)
-	require.Equal(t, 200, status, string(raw))
+	require.Equal(t, 206, status, string(raw))
 	assert.Equal(t, []map[string]any{{"count": float64(3)}}, rows(raw))
 	assert.Equal(t, "0-0/3", hdr.Get("Content-Range"), "a bare aggregate counts the source rows")
 
@@ -273,16 +273,19 @@ func TestConf_TableCountAndRangeParity(t *testing.T) {
 	if testTS == nil {
 		t.Skip("no upstream")
 	}
-	for _, c := range []struct{ path, prefer, want string }{
-		{"/rest/v1/users?select=status,count()", "count=exact", "0-1/5"},
-		{"/rest/v1/users?select=status,count()&having=count.gt.100", "count=exact", "*/5"},
-		{"/rest/v1/users?select=count()&status=eq.ONLINE", "count=exact", "0-0/3"},
-		{"/rest/v1/users?select=status,count()", "count=planned", ""},
-		{"/rest/v1/users?username=eq.nobody", "count=exact", "*/0"},
-		{"/rest/v1/users?username=eq.nobody", "", "*/*"},
-		{"/rest/v1/users?offset=10", "count=exact", "*/5"},
-		{"/rest/v1/users?limit=0", "count=exact", "*/5"},
-		{"/rest/v1/users?order=username&limit=2&offset=1", "count=exact", "1-2/5"},
+	for _, c := range []struct {
+		path, prefer, want string
+		status             int
+	}{
+		{"/rest/v1/users?select=status,count()", "count=exact", "0-1/5", 206},
+		{"/rest/v1/users?select=status,count()&having=count.gt.100", "count=exact", "*/5", 206},
+		{"/rest/v1/users?select=count()&status=eq.ONLINE", "count=exact", "0-0/3", 206},
+		{"/rest/v1/users?select=status,count()", "count=planned", "", 0},
+		{"/rest/v1/users?username=eq.nobody", "count=exact", "*/0", 200},
+		{"/rest/v1/users?username=eq.nobody", "", "*/*", 200},
+		{"/rest/v1/users?offset=10", "count=exact", "*/5", 416},
+		{"/rest/v1/users?limit=0", "count=exact", "*/5", 206},
+		{"/rest/v1/users?order=username&limit=2&offset=1", "count=exact", "1-2/5", 206},
 	} {
 		req, err := http.NewRequest("GET", testTS.URL+c.path, nil)
 		require.NoError(t, err)
@@ -295,7 +298,11 @@ func TestConf_TableCountAndRangeParity(t *testing.T) {
 		require.NoError(t, err)
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		require.Less(t, resp.StatusCode, 300, c.path+": "+string(body))
+		if c.status == 0 {
+			require.Contains(t, []int{200, 206}, resp.StatusCode, c.path+": "+string(body))
+		} else {
+			require.Equal(t, c.status, resp.StatusCode, c.path+": "+string(body))
+		}
 		if c.want == "" {
 			assert.Regexp(t, `^0-1/\d+$`, resp.Header.Get("Content-Range"), c.path)
 			continue
@@ -334,7 +341,7 @@ func TestConf_AggregateInnerEmbedCountsFilteredUngroupedRows(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	require.Equal(t, 200, resp.StatusCode, string(body))
+	require.Equal(t, 206, resp.StatusCode, string(body))
 
 	var rows []map[string]any
 	require.NoError(t, json.Unmarshal(body, &rows), string(body))

@@ -87,7 +87,7 @@ func TestHardening_MaxRows(t *testing.T) {
 	exact := map[string]string{"Prefer": "count=exact"}
 
 	status, hdr, raw := call(t, "GET", base+"/rest/v1/users?select=username&order=username", "", exact, false)
-	require.Contains(t, []int{200, 206}, status, "%s", raw)
+	require.Equal(t, 206, status, "%s", raw)
 	require.Len(t, rowsOf(t, raw), 2)
 	require.Equal(t, "0-1/5", hdr.Get("Content-Range"))
 
@@ -115,7 +115,7 @@ func TestHardening_MaxRows(t *testing.T) {
 	require.Len(t, rowsOf(t, raw), 2)
 
 	status, hdr, raw = call(t, "POST", base+"/rest/v1/rpc/users_by_status", `{"target":"ONLINE"}`, exact, false)
-	require.Equal(t, 200, status, "%s", raw)
+	require.Equal(t, 206, status, "%s", raw)
 	require.Len(t, rowsOf(t, raw), 2, "setof RPC capped (3 ONLINE users)")
 	require.Equal(t, "0-1/3", hdr.Get("Content-Range"))
 	_, _, raw = call(t, "POST", base+"/rest/v1/rpc/users_by_status?limit=1", `{"target":"ONLINE"}`, nil, false)
@@ -134,16 +134,16 @@ func TestHardening_CountMatchesRows(t *testing.T) {
 	}
 	exact := map[string]string{"Prefer": "count=exact"}
 	cases := []struct {
-		path, wantRange string
-		wantRows        int
+		path, wantRange      string
+		wantRows, wantStatus int
 	}{
-		{"/rest/v1/users?select=username,messages!inner(id)", "0-0/1", 1},
-		{"/rest/v1/messages?select=id,users!inner(username)&users.status=eq.OFFLINE", "*/0", 0},
-		{"/rest/v1/users?select=username&limit=2", "0-1/5", 2},
+		{"/rest/v1/users?select=username,messages!inner(id)", "0-0/1", 1, 200},
+		{"/rest/v1/messages?select=id,users!inner(username)&users.status=eq.OFFLINE", "*/0", 0, 200},
+		{"/rest/v1/users?select=username&limit=2", "0-1/5", 2, 206},
 	}
 	for _, c := range cases {
 		status, hdr, raw := call(t, "GET", testTS.URL+c.path, "", exact, false)
-		require.Equal(t, 200, status, "%s: %s", c.path, raw)
+		require.Equal(t, c.wantStatus, status, "%s: %s", c.path, raw)
 		require.Len(t, rowsOf(t, raw), c.wantRows, c.path)
 		require.Equal(t, c.wantRange, hdr.Get("Content-Range"), c.path)
 	}
@@ -194,22 +194,23 @@ func TestHardening_RPCCountRunsFunctionOnce(t *testing.T) {
 	cases := []struct {
 		query, prefer, wantRange string
 		wantRows                 int
+		wantStatus               int
 	}{
-		{"", "count=exact", "0-4/5", 5},
-		{"?username=neq.supabot&order=username.desc&limit=2", "count=exact", "0-1/4", 2},
-		{"?offset=10", "count=exact", "*/5", 0},
-		{"?limit=0", "count=exact", "*/5", 0},
-		{"?username=eq.nobody", "count=exact", "*/0", 0},
-		{"?select=username,messages(id)&username=eq.supabot", "count=exact", "0-0/1", 1},
-		{"?select=count()", "count=exact", "0-0/5", 1},
-		{"?select=status,count()", "count=exact", "0-1/5", 2},
-		{"?select=status,count()&having=count.gt.100", "count=exact", "*/5", 0},
-		{"?username=eq.nobody", "", "*/*", 0},
-		{"?select=status,count()", "count=planned", `^0-1/\d+$`, 2},
-		{"", "count=planned", `^0-4/\d+$`, 5},
-		{"", "count=estimated", `^0-4/\d+$`, 5},
-		{"?username=neq.supabot", "count=planned", `^0-3/\d+$`, 4},
-		{"", "", "0-4/*", 5},
+		{"", "count=exact", "0-4/5", 5, 200},
+		{"?username=neq.supabot&order=username.desc&limit=2", "count=exact", "0-1/4", 2, 206},
+		{"?offset=10", "count=exact", "*/5", 0, 416},
+		{"?limit=0", "count=exact", "*/5", 0, 206},
+		{"?username=eq.nobody", "count=exact", "*/0", 0, 200},
+		{"?select=username,messages(id)&username=eq.supabot", "count=exact", "0-0/1", 1, 200},
+		{"?select=count()", "count=exact", "0-0/5", 1, 206},
+		{"?select=status,count()", "count=exact", "0-1/5", 2, 206},
+		{"?select=status,count()&having=count.gt.100", "count=exact", "*/5", 0, 206},
+		{"?username=eq.nobody", "", "*/*", 0, 200},
+		{"?select=status,count()", "count=planned", `^0-1/\d+$`, 2, 0},
+		{"", "count=planned", `^0-4/\d+$`, 5, 0},
+		{"", "count=estimated", `^0-4/\d+$`, 5, 0},
+		{"?username=neq.supabot", "count=planned", `^0-3/\d+$`, 4, 0},
+		{"", "", "0-4/*", 5, 200},
 	}
 	for _, c := range cases {
 		before := calls()
@@ -218,9 +219,16 @@ func TestHardening_RPCCountRunsFunctionOnce(t *testing.T) {
 			hdrs["Prefer"] = c.prefer
 		}
 		status, hdr, raw := call(t, "POST", testTS.URL+"/rest/v1/rpc/counted_users"+c.query, `{}`, hdrs, false)
-		require.Equal(t, 200, status, "%s: %s", c.query, raw)
-		rows := rowsOf(t, raw)
-		require.Len(t, rows, c.wantRows, c.query)
+		if c.wantStatus == 0 {
+			require.Contains(t, []int{200, 206}, status, "%s: %s", c.query, raw)
+		} else {
+			require.Equal(t, c.wantStatus, status, "%s: %s", c.query, raw)
+		}
+		if status == 416 {
+			require.Contains(t, string(raw), "PGRST103")
+		} else {
+			require.Len(t, rowsOf(t, raw), c.wantRows, c.query)
+		}
 		require.NotContains(t, string(raw), "__inz_")
 		if strings.HasPrefix(c.wantRange, "^") {
 			require.Regexp(t, c.wantRange, hdr.Get("Content-Range"), c.query)
