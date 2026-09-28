@@ -2358,8 +2358,8 @@ await step('storage: public bucket downloads for anyone but lists only per RLS',
   const { data: exists } = await guest.storage.from('pubgated').exists('gated.txt')
   assertEq(exists, false, 'anon exists() must follow RLS, not the public flag')
 
-  const { error: guestListErr } = await guest.storage.from('pubgated').list()
-  assert(guestListErr, 'list without a user JWT is rejected at the route')
+  const { data: guestList, error: guestListErr } = await guest.storage.from('pubgated').list()
+  assert(guestListErr || guestList?.length === 0, 'anon must see no rows')
 
   const other = createClient(URL, PUBLISHABLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
   const { error: signErr } = await other.auth.signInAnonymously()

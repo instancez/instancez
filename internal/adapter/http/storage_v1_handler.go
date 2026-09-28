@@ -193,8 +193,8 @@ func (h *StorageV1Handler) getBucketConfig(name string) (domain.Bucket, bool) {
 // role so that RLS policies on storage.objects are enforced for the query that
 // runs under it. Without this, storage queries fall through to the system
 // service_role default (BYPASSRLS) and any caller could read or modify any
-// object. An unauthenticated request resolves to the `anon` role (only public
-// buckets are visible); an admin-key request keeps service_role.
+// object. An unauthenticated request resolves to the `anon` role; an admin-key
+// request keeps service_role.
 //
 // This is the authorization boundary for object access — the metadata row a
 // query can see/insert/update/delete is exactly what the bucket's policies

@@ -1038,8 +1038,8 @@ func TestHarden_RestrictiveBucketPolicy_ReemitsStorageRLS(t *testing.T) {
 	mustContain(t, joined, "bucket_id <> 'secrets' OR (name LIKE 'ok/%')")
 }
 
-// No restrictive bucket policies: Harden must emit no storage.objects DDL, taking no lock on it.
-func TestHarden_NoRestrictiveBucketPolicy_EmitsNoStorageDDL(t *testing.T) {
+// No restrictive bucket policies: Harden only touches storage.objects behind a pg_policies check, taking no lock on it.
+func TestHarden_NoRestrictiveBucketPolicy_TakesNoStorageLock(t *testing.T) {
 	cfg := &domain.Config{Storage: map[string]domain.Bucket{
 		"avatars": {Public: true},
 		"docs": {RLS: []domain.RLSPolicy{
