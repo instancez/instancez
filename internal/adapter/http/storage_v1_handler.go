@@ -651,10 +651,7 @@ func isActiveContent(mt string) bool {
 }
 
 func contentDisposition(name string) string {
-	if name == "" {
-		return "attachment"
-	}
-	if v := mime.FormatMediaType("attachment", map[string]string{"filename": name}); v != "" {
+	if v := mime.FormatMediaType("attachment", map[string]string{"filename": name}); name != "" && v != "" {
 		return v
 	}
 	return "attachment"

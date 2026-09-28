@@ -127,7 +127,7 @@ func TestConf_RPCCountSingleObjectZeroRows(t *testing.T) {
 	if testTS == nil {
 		t.Skip("no upstream")
 	}
-	status, raw, parsed := rpcPOST(t, "users_by_status", `{"target":"NOBODY"}`, map[string]string{
+	status, raw, parsed, _ := rpcPOST(t, "users_by_status", `{"target":"NOBODY"}`, map[string]string{
 		"Accept": "application/vnd.pgrst.object+json",
 		"Prefer": "count=exact",
 	})
@@ -138,14 +138,14 @@ func TestConf_RPCCountSingleObjectZeroRows(t *testing.T) {
 	assert.Contains(t, m["details"], "0 rows")
 	assert.False(t, strings.Contains(string(raw), "__inz"), "helper columns leaked: %s", raw)
 
-	status, raw, parsed = rpcPOST(t, "users_by_status", `{"target":"ONLINE"}`, map[string]string{
+	status, raw, parsed, _ = rpcPOST(t, "users_by_status", `{"target":"ONLINE"}`, map[string]string{
 		"Accept": "application/vnd.pgrst.object+json",
 		"Prefer": "count=exact",
 	})
 	require.Equal(t, 406, status, string(raw))
 	assert.Equal(t, "PGRST116", parsed.(map[string]any)["code"])
 
-	status, raw, _ = rpcPOST(t, "users_by_status?username=eq.supabot", `{"target":"ONLINE"}`, map[string]string{
+	status, raw, _, _ = rpcPOST(t, "users_by_status?username=eq.supabot", `{"target":"ONLINE"}`, map[string]string{
 		"Accept": "application/vnd.pgrst.object+json",
 		"Prefer": "count=exact",
 	})
@@ -163,12 +163,12 @@ func TestConf_RPCAggregateGrouping(t *testing.T) {
 		t.Skip("no upstream")
 	}
 	for _, q := range []string{"select=count(),messages(id)", "select=username.count(),messages(id)", "select=messages(id),total:username.count()"} {
-		status, raw, parsed := rpcPOST(t, "users_by_status?"+q, `{"target":"ONLINE"}`, nil)
+		status, raw, parsed, _ := rpcPOST(t, "users_by_status?"+q, `{"target":"ONLINE"}`, nil)
 		require.Equal(t, 400, status, q+": "+string(raw))
 		assert.Contains(t, parsed.(map[string]any)["message"], "aggregate", q)
 	}
 	for q, want := range map[string]any{"select=count()": float64(3), "select=total:username.count()": float64(3)} {
-		status, raw, parsed := rpcPOST(t, "users_by_status?"+q, `{"target":"ONLINE"}`, nil)
+		status, raw, parsed, _ := rpcPOST(t, "users_by_status?"+q, `{"target":"ONLINE"}`, nil)
 		require.Equal(t, 200, status, q+": "+string(raw))
 		rows := parsed.([]any)
 		require.Len(t, rows, 1, q)
@@ -184,19 +184,8 @@ func TestConf_RPCAggregateGroupBy(t *testing.T) {
 	}
 	rpc := func(q, body string, headers map[string]string) (int, []byte, http.Header) {
 		t.Helper()
-		req, err := http.NewRequest("POST", testTS.URL+"/rest/v1/rpc/users_by_status?"+q, strings.NewReader(body))
-		require.NoError(t, err)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+testAdminKey)
-		req.Header.Set("apikey", testAdminKey)
-		for k, v := range headers {
-			req.Header.Set(k, v)
-		}
-		resp, err := http.DefaultClient.Do(req)
-		require.NoError(t, err)
-		defer resp.Body.Close()
-		raw, _ := io.ReadAll(resp.Body)
-		return resp.StatusCode, raw, resp.Header
+		status, raw, _, hdr := rpcPOST(t, "users_by_status?"+q, body, headers)
+		return status, raw, hdr
 	}
 	rows := func(raw []byte) []map[string]any {
 		t.Helper()
@@ -260,7 +249,7 @@ func TestConf_StarWithAggregateRejected(t *testing.T) {
 		assert.Contains(t, body["message"], "*", path)
 	}
 	for _, q := range []string{"select=*,count()", "select=count(),*"} {
-		status, raw, _ := rpcPOST(t, "users_by_status?"+q, `{"target":"ONLINE"}`, nil)
+		status, raw, _, _ := rpcPOST(t, "users_by_status?"+q, `{"target":"ONLINE"}`, nil)
 		assert.Equal(t, 400, status, q+": "+string(raw))
 	}
 }
@@ -275,7 +264,7 @@ func TestConf_GroupingErrorIs400(t *testing.T) {
 	assert.Equal(t, 400, status)
 	assert.Equal(t, "42803", body["code"])
 
-	status, raw, parsed := rpcPOST(t, "users_by_status?select=status,count()&order=age.asc", `{"target":"ONLINE"}`, nil)
+	status, raw, parsed, _ := rpcPOST(t, "users_by_status?select=status,count()&order=age.asc", `{"target":"ONLINE"}`, nil)
 	assert.Equal(t, 400, status, string(raw))
 	assert.Equal(t, "42803", parsed.(map[string]any)["code"])
 }
