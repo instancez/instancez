@@ -290,8 +290,14 @@ func TestHardening_PlanOnlyForServiceRole(t *testing.T) {
 	require.Equal(t, 400, status, "%s", raw)
 	require.Contains(t, string(raw), "22023")
 
+	status, hdr, raw = call(t, "GET", testTS.URL+"/rest/v1/users", "", map[string]string{"Accept": `application/vnd.pgrst.plan; for="text/xml", application/json`}, false)
+	require.Equal(t, 200, status, "%s", raw)
+	require.Contains(t, hdr.Get("Content-Type"), "application/json")
+	require.NotContains(t, string(raw), "Plan")
 	status, _, _ = call(t, "GET", testTS.URL+"/rest/v1/users", "", map[string]string{"Accept": `application/vnd.pgrst.plan; for="text/xml"`}, false)
 	require.Equal(t, 406, status)
+	status, _, _ = call(t, "GET", testTS.URL+"/rest/v1/users", "", map[string]string{"Accept": `application/vnd.pgrst.plan; for="text/xml", application/vnd.pgrst.plan+json`}, true)
+	require.Equal(t, 406, status, "anon never gets a plan")
 	status, _, _ = call(t, "GET", testTS.URL+"/rest/v1/users", "", map[string]string{"Accept": "Application/Vnd.Pgrst.Plan"}, true)
 	require.Equal(t, 406, status)
 }

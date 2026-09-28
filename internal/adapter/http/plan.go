@@ -111,7 +111,7 @@ func rejectPlan(c *gin.Context) {
 	}
 }
 
-// negotiatePlan picks the Accept entry PostgREST would: wai-extra's stable q-then-specificity order, first servable type wins.
+// negotiatePlan picks the Accept entry PostgREST would; an unservable plan entry is skipped, and 406s only when nothing else is servable.
 func negotiatePlan(accept string) (planRequest, bool, error) {
 	type ranked struct {
 		mr   string
@@ -137,13 +137,22 @@ func negotiatePlan(accept string) (planRequest, bool, error) {
 		}
 		return cmp.Compare(b.spec, a.spec)
 	})
+	var skipped error
 	for _, r := range rs {
-		if p, isPlan, err := parsePlanAccept(r.mr); isPlan {
-			return p, true, err
+		p, isPlan, err := parsePlanAccept(r.mr)
+		if isPlan && err == nil {
+			return p, true, nil
+		}
+		if isPlan {
+			skipped = err
+			continue
 		}
 		if base, _, _ := strings.Cut(r.mr, ";"); planForTypes[strings.ToLower(base)] {
 			return planRequest{}, false, nil
 		}
+	}
+	if skipped != nil {
+		return planRequest{}, true, skipped
 	}
 	return planRequest{}, false, nil
 }
