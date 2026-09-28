@@ -2657,7 +2657,8 @@ await step('storage: listV2 returns cursor-based results', async () => {
   })
   assert(resp.ok, `listV2 failed: ${resp.status}`)
   const result = await resp.json()
-  assert(typeof result.has_next === 'boolean', 'has_next is boolean')
+  assert(typeof result.hasNext === 'boolean', 'hasNext is boolean')
+  assert(!('has_next' in result), 'no snake_case paging keys')
   assert(Array.isArray(result.folders), 'folders is array')
   assert(Array.isArray(result.objects), 'objects is array')
   assert(result.objects.length >= 1, 'at least one object')
@@ -2705,8 +2706,8 @@ await step('storage: listV2 cursor pagination', async () => {
   })
   assert(resp1.ok, `listV2 page1 failed: ${resp1.status}`)
   const page1 = await resp1.json()
-  assert(page1.has_next === true, 'has_next should be true with limit=1')
-  assert(typeof page1.next_cursor === 'string', 'next_cursor present')
+  assert(page1.hasNext === true, 'hasNext should be true with limit=1')
+  assert(typeof page1.nextCursor === 'string', 'nextCursor present')
 
   const resp2 = await fetch(`${URL}/storage/v1/object/list-v2/avatars`, {
     method: 'POST',
@@ -2715,11 +2716,50 @@ await step('storage: listV2 cursor pagination', async () => {
       apikey: PUBLISHABLE_KEY,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ prefix: '', limit: 100, cursor: page1.next_cursor }),
+    body: JSON.stringify({ prefix: '', limit: 100, cursor: page1.nextCursor }),
   })
   assert(resp2.ok, `listV2 page2 failed: ${resp2.status}`)
   const page2 = await resp2.json()
   assert(page2.objects.length >= 1, 'page2 has objects')
+})
+
+await step('storage: list() and listV2() fold nested folders like Supabase', async () => {
+  const bucket = storageClient().storage.from('avatars')
+  const keys = ['tree/a.txt', 'tree/b/one.txt', 'tree/b/deep/two.txt', 'tree/C/three.txt', 'tree/z.txt']
+  for (const k of keys) {
+    const { error } = await bucket.upload(k, 'x', { contentType: 'text/plain', upsert: true })
+    if (error) throw error
+  }
+  try {
+    const { data: v1, error: v1Err } = await bucket.list('tree')
+    if (v1Err) throw v1Err
+    assertEq(v1.map((i) => i.name).join(','), 'a.txt,b,C,z.txt', 'v1 names are relative, folders once, case-insensitive order')
+    const folder = v1.find((i) => i.name === 'b')
+    assertEq(folder.id, null, 'folder id')
+    assertEq(folder.metadata, null, 'folder metadata')
+    assert(/^[0-9a-f-]{36}$/.test(v1.find((i) => i.name === 'a.txt').id), 'file id is a uuid')
+
+    const { data: paged } = await bucket.list('tree', { limit: 2, offset: 1, sortBy: { column: 'name', order: 'desc' } })
+    assertEq(paged.map((i) => i.name).join(','), 'C,b', 'limit/offset/sortBy')
+    const { data: searched } = await bucket.list('tree', { search: 'b' })
+    assertEq(searched.map((i) => i.name).join(','), 'b', 'search is a prefix under the folder')
+
+    const seen = []
+    let cursor
+    for (let i = 0; i < 10; i++) {
+      const { data, error } = await bucket.listV2({ prefix: 'tree/', with_delimiter: true, limit: 2, cursor })
+      if (error) throw error
+      seen.push(...data.folders.map((f) => f.name), ...data.objects.map((o) => o.name))
+      if (!data.hasNext) break
+      assert(data.nextCursor, 'nextCursor with hasNext')
+      cursor = data.nextCursor
+    }
+    assertEq(seen.join(','), 'tree/C/,tree/a.txt,tree/b/,tree/z.txt', 'listV2 pages through full keys in byte order')
+    const { data: flat } = await bucket.listV2({ prefix: 'tree/' })
+    assertEq(flat.objects.length, keys.length, 'without a delimiter every key is listed')
+  } finally {
+    await bucket.remove(keys)
+  }
 })
 
 // --- Update (PUT) ---

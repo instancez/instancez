@@ -3,6 +3,7 @@ package http
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1310,112 +1311,127 @@ func TestListObjects_Empty(t *testing.T) {
 
 func TestListObjects_PrefixStrippedFromNames(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	var gotQuery string
 	var gotArgs []any
-	db := &stubDB{queryFn: func(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
-		gotQuery = q
+	db := &stubDB{queryFn: func(_ context.Context, _ string, args ...any) ([]map[string]any, error) {
 		gotArgs = args
-		return []map[string]any{{"name": "folder/photo.jpg", "uploaded_at": "2024-01-01T00:00:00Z"}}, nil
+		return []map[string]any{
+			{"name": "folder/sub/", "folder": true},
+			{"name": "folder/photo.jpg", "id": "u1", "folder": false},
+		}, nil
 	}}
-	buckets := map[string]domain.Bucket{"avatars": {}}
-	h := newStorageHandler(db, &stubObjectStore{}, buckets)
-
-	w := httptest.NewRecorder()
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
 	r := gin.New()
 	r.POST("/storage/v1/object/list/:bucket", h.listObjects)
 
-	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/list/avatars", strings.NewReader(`{"prefix":"folder/"}`))
-	req.Header.Set("Content-Type", "application/json")
-	r.ServeHTTP(w, req)
-
-	if w.Code != 200 {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	if !strings.Contains(gotQuery, "LIKE") {
-		t.Errorf("expected prefix filter in query, got %q", gotQuery)
-	}
-	if len(gotArgs) < 2 || gotArgs[1] != "folder/%" {
-		t.Errorf("expected prefix arg 'folder/%%', got %v", gotArgs)
-	}
+	w := serve(r, "POST", "/storage/v1/object/list/avatars", `{"prefix":"folder","search":"ph"}`, nil)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Equal(t, "folder/ph", gotArgs[1], "a folder prefix gains a trailing slash and search extends it")
+	assert.Equal(t, 9, gotArgs[2], "folders split after prefix+search")
 	var body []map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
-	}
-	if len(body) != 1 || body[0]["name"] != "photo.jpg" {
-		t.Fatalf("expected relative name 'photo.jpg', got %v", body)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Len(t, body, 2)
+	assert.Equal(t, map[string]any{"name": "sub", "id": nil, "updated_at": nil, "created_at": nil, "last_accessed_at": nil, "metadata": nil}, body[0])
+	assert.Equal(t, "photo.jpg", body[1]["name"])
+	assert.Equal(t, "u1", body[1]["id"])
+}
+
+func TestListObjects_LimitsAndOptions(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var q string
+	var args []any
+	db := &stubDB{queryFn: func(_ context.Context, query string, a ...any) ([]map[string]any, error) {
+		q, args = query, a
+		return nil, nil
+	}}
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"b": {}})
+	r := gin.New()
+	r.POST("/storage/v1/object/list/:bucket", h.listObjects)
+	r.POST("/storage/v1/object/list-v2/:bucket", h.listObjectsV2)
+
+	w := serve(r, "POST", "/storage/v1/object/list/b", `{"limit":99999,"offset":-3,"sortBy":{"column":"created_at","order":"desc"}}`, nil)
+	require.Equal(t, 200, w.Code)
+	assert.Equal(t, "[]", strings.TrimSpace(w.Body.String()))
+	assert.Equal(t, []any{1500, 0}, args[len(args)-2:], "limit caps at 1500 like storage.search, offset floors at 0")
+	assert.Contains(t, q, "ORDER BY folder DESC")
+	assert.Contains(t, q, "starts_with(lower(name), lower($2))", "v1 matches case-insensitively without LIKE wildcards")
+
+	serve(r, "POST", "/storage/v1/object/list-v2/b", `{"prefix":"a_%"}`, nil)
+	assert.Equal(t, []any{1001, 0}, args[len(args)-2:], "v2 defaults to 1000 and fetches one extra")
+	assert.Contains(t, q, "starts_with(name, $2)")
+	assert.Equal(t, "a_%", args[1], "wildcards are literal")
+
+	for _, cur := range []string{"%%%", encodeListCursor(listCursor{}), base64.RawURLEncoding.EncodeToString([]byte(`{"n":"a","t":"yesterday"}`))} {
+		w = serve(r, "POST", "/storage/v1/object/list-v2/b", `{"cursor":"`+cur+`"}`, nil)
+		assert.Equal(t, 400, w.Code, cur)
 	}
 }
 
 func TestListObjectsV2_Pagination(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := &stubDB{queryFn: func(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
-		// Limit=2 requested; fetchLimit=3 rows returned to signal hasNext.
-		return []map[string]any{
-			{"name": "a.jpg"}, {"name": "b.jpg"}, {"name": "c.jpg"},
-		}, nil
+	var args []any
+	db := &stubDB{queryFn: func(_ context.Context, _ string, a ...any) ([]map[string]any, error) {
+		args = a
+		return []map[string]any{{"name": "a.jpg", "id": "1"}, {"name": "b.jpg", "id": "2"}, {"name": "c.jpg", "id": "3"}}, nil
 	}}
-	buckets := map[string]domain.Bucket{"avatars": {}}
-	h := newStorageHandler(db, &stubObjectStore{}, buckets)
-
-	w := httptest.NewRecorder()
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
 	r := gin.New()
 	r.POST("/storage/v1/object/list-v2/:bucket", h.listObjectsV2)
 
-	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/list-v2/avatars", strings.NewReader(`{"limit":2}`))
-	req.Header.Set("Content-Type", "application/json")
-	r.ServeHTTP(w, req)
-
-	if w.Code != 200 {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
+	w := serve(r, "POST", "/storage/v1/object/list-v2/avatars", `{"limit":2}`, nil)
+	require.Equal(t, 200, w.Code, w.Body.String())
 	var resp map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatal(err)
-	}
-	if resp["has_next"] != true {
-		t.Errorf("expected has_next=true, got %v", resp["has_next"])
-	}
-	objects, _ := resp["objects"].([]any)
-	if len(objects) != 2 {
-		t.Fatalf("expected 2 objects (limit applied), got %d: %v", len(objects), objects)
-	}
-	if resp["next_cursor"] != "b.jpg" {
-		t.Errorf("expected next_cursor='b.jpg' (last of the truncated page), got %v", resp["next_cursor"])
-	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, true, resp["hasNext"])
+	assert.NotContains(t, resp, "has_next")
+	require.Len(t, resp["objects"], 2)
+	assert.Equal(t, "b.jpg", resp["nextCursorKey"])
+	cur, ok := decodeListCursor(resp["nextCursor"].(string))
+	require.True(t, ok)
+	assert.Equal(t, "b.jpg", cur.Name)
+
+	serve(r, "POST", "/storage/v1/object/list-v2/avatars", `{"limit":2,"cursor":"`+resp["nextCursor"].(string)+`"}`, nil)
+	assert.Contains(t, args, "b.jpg", "the cursor resumes after the last name")
 }
 
-func TestListObjectsV2_WithDelimiterGroupsFolders(t *testing.T) {
+func TestListObjectsV2_WithDelimiterShapes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := &stubDB{queryFn: func(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
+	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) {
 		return []map[string]any{
-			{"name": "folder/a.jpg"}, {"name": "folder/b.jpg"}, {"name": "top.jpg"},
+			{"name": "dir/sub/", "folder": true},
+			{"name": "dir/top.jpg", "id": "7", "folder": false},
 		}, nil
 	}}
-	buckets := map[string]domain.Bucket{"avatars": {}}
-	h := newStorageHandler(db, &stubObjectStore{}, buckets)
-
-	w := httptest.NewRecorder()
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
 	r := gin.New()
 	r.POST("/storage/v1/object/list-v2/:bucket", h.listObjectsV2)
 
-	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/list-v2/avatars", strings.NewReader(`{"with_delimiter":true}`))
-	req.Header.Set("Content-Type", "application/json")
-	r.ServeHTTP(w, req)
+	w := serve(r, "POST", "/storage/v1/object/list-v2/avatars", `{"prefix":"dir/","with_delimiter":true}`, nil)
+	require.Equal(t, 200, w.Code)
+	var resp struct {
+		HasNext bool             `json:"hasNext"`
+		Folders []map[string]any `json:"folders"`
+		Objects []map[string]any `json:"objects"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.False(t, resp.HasNext)
+	assert.Equal(t, []map[string]any{{"id": nil, "name": "dir/sub/", "bucket_id": "avatars", "updated_at": nil, "created_at": nil, "last_accessed_at": nil}}, resp.Folders)
+	require.Len(t, resp.Objects, 1)
+	assert.Equal(t, "dir/top.jpg", resp.Objects[0]["name"], "v2 names are full keys")
+	assert.Equal(t, "top.jpg", resp.Objects[0]["key"])
 
-	if w.Code != 200 {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	var resp map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatal(err)
-	}
-	folders, _ := resp["folders"].([]any)
-	objects, _ := resp["objects"].([]any)
-	if len(folders) != 1 {
-		t.Fatalf("expected 1 deduped folder, got %d: %v", len(folders), folders)
-	}
-	if len(objects) != 1 {
-		t.Fatalf("expected 1 top-level object, got %d: %v", len(objects), objects)
+	w = serve(r, "POST", "/storage/v1/object/list-v2/avatars", `{"prefix":"dir/"}`, nil)
+	resp.Objects = nil
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.NotContains(t, resp.Objects[0], "key", "no key without a delimiter")
+}
+
+func TestSplitPart(t *testing.T) {
+	for _, tc := range []struct {
+		s    string
+		n    int
+		want string
+	}{{"a/b/c", 1, "a"}, {"a/b/c", 3, "c"}, {"a/b/c", 4, ""}, {"a/b/", 3, ""}, {"", 1, ""}, {"a", 0, ""}} {
+		assert.Equal(t, tc.want, splitPart(tc.s, tc.n), "%s %d", tc.s, tc.n)
 	}
 }
 
