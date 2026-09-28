@@ -358,6 +358,8 @@ GET /rest/v1/orders?select=amount.sum(),customers(name)
 
 Embeds in an aggregate query are returned as `jsonb`, so their object keys may come back in a different order.
 
+On RPC results, an aggregate can't be combined with an embed yet; that returns 400.
+
 ### HAVING
 
 Filter on aggregate results with the `having` parameter:

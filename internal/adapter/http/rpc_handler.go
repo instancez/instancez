@@ -474,6 +474,9 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 			}
 			chain.embeds = resolved
 		}
+		if len(chain.embeds) > 0 && slices.ContainsFunc(chain.selectItems, func(it postgrest.SelectItem) bool { return it.Agg != "" }) {
+			return nil, nil, fmt.Errorf("aggregates on RPC results can't be combined with embeds")
+		}
 	}
 
 	// WHERE tree.

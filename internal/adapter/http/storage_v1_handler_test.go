@@ -2886,4 +2886,18 @@ func TestRedeemSignedURL_PathCaseAndTrailingSlash(t *testing.T) {
 	}
 	assert.Equal(t, []string{"docs/a/B.png", "docs/a/B.png", "docs/a/B.png"}, signedKeys)
 	assert.Equal(t, []string{"a/B.png", "a/B.png", "a/B.png"}, rowArgs)
+
+	// The local provider streams the same cleaned object.
+	var streamed []string
+	store.signDownloadFn = func(context.Context, string, time.Duration, domain.DownloadOptions) (string, error) { return "file:///x", nil }
+	store.downloadFn = func(_ context.Context, key string) (io.ReadCloser, string, error) {
+		streamed = append(streamed, key)
+		return io.NopCloser(strings.NewReader("B")), "image/png", nil
+	}
+	w := getRaw(r, "/storage/v1/object/sign/docs/a/B.png/?token="+tok)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Equal(t, "B", w.Body.String())
+	assert.Equal(t, []string{"docs/a/B.png"}, streamed)
+	assert.Equal(t, 400, getRaw(r, "/storage/v1/object/sign/docs/a/b.png?token="+tok).Code)
+	assert.Len(t, streamed, 1, "a case-changed path never streams")
 }

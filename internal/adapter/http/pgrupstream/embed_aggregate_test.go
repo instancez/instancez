@@ -154,3 +154,23 @@ func TestConf_RPCCountSingleObjectZeroRows(t *testing.T) {
 		assert.False(t, strings.HasPrefix(k, "__inz"), "helper column %q leaked", k)
 	}
 }
+
+func TestConf_RPCAggregateGrouping(t *testing.T) {
+	if testTS == nil {
+		t.Skip("no upstream")
+	}
+	for _, q := range []string{"select=count(),messages(id)", "select=username.count(),messages(id)", "select=messages(id),total:username.count()"} {
+		status, raw, parsed := rpcPOST(t, "users_by_status?"+q, `{"target":"ONLINE"}`, nil)
+		require.Equal(t, 400, status, q+": "+string(raw))
+		assert.Contains(t, parsed.(map[string]any)["message"], "aggregate", q)
+	}
+	for q, want := range map[string]any{"select=count()": float64(3), "select=total:username.count()": float64(3)} {
+		status, raw, parsed := rpcPOST(t, "users_by_status?"+q, `{"target":"ONLINE"}`, nil)
+		require.Equal(t, 200, status, q+": "+string(raw))
+		rows := parsed.([]any)
+		require.Len(t, rows, 1, q)
+		for _, v := range rows[0].(map[string]any) {
+			assert.Equal(t, want, v, q)
+		}
+	}
+}

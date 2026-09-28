@@ -39,6 +39,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - Storage: batch signed URLs, copy, move, remove, `emptyBucket` and the legacy `/api/storage` routes now respect `storage.objects` RLS. Previously some of them signed, copied or deleted objects the caller couldn't read or delete.
 - Storage: object keys with `..` segments are rejected, and the local provider can no longer write outside its directory.
 - An aggregate next to an embed (`select=count(),users(username)`, `select=amount.sum(),...customers(name)`) returned 500. The embed is now a group key, as in PostgREST, for belongs-to, has-many, and spread embeds.
+- An aggregate next to an embed on an RPC result (`rpc/fn?select=count(),messages(id)`) now returns 400 instead of 500.
 - A filter on a spread embed (`select=id,...users(username)&users.status=eq.x`) keeps every parent row; unmatched spread columns are `null`.
 - Storage: downloading an object whose row exists but whose file is gone from the local provider now returns 404 `not_found` instead of 500.
 - Storage: downloads send `nosniff`, and HTML/SVG/XML/JS are served as attachments.
