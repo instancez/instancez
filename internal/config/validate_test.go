@@ -1516,13 +1516,13 @@ func TestValidate_CompositePrimaryKey(t *testing.T) {
 	}
 }
 
-func TestValidateForeignKeys_CompositePKTarget(t *testing.T) {
+func TestWarnings_CompositePKFKTarget(t *testing.T) {
 	a := domain.Field{Name: "a", Type: "int", PrimaryKey: true}
 	b := domain.Field{Name: "b", Type: "int", PrimaryKey: true}
 	cases := []struct {
-		name    string
-		target  domain.Table
-		wantErr bool
+		name     string
+		target   domain.Table
+		wantWarn bool
 	}{
 		{"bare composite member", domain.Table{Fields: []domain.Field{a, b}}, true},
 		{"member marked unique", domain.Table{Fields: []domain.Field{{Name: "a", Type: "int", PrimaryKey: true, Unique: true}, b}}, false},
@@ -1534,18 +1534,28 @@ func TestValidateForeignKeys_CompositePKTarget(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			errs := validateForeignKeys(map[string]domain.Table{
+			yes := true
+			c.target.RLSEnabled = &yes
+			cfg := validBaseConfig()
+			cfg.Tables = map[string]domain.Table{
 				"pairs": c.target,
-				"refs":  {Fields: []domain.Field{{Name: "id", Type: "int", PrimaryKey: true}, {Name: "pair_a", ForeignKey: &domain.ForeignKey{References: "pairs.a"}}}},
-			})
-			if !c.wantErr {
-				if len(errs) != 0 {
-					t.Fatalf("want no error, got %v", errs)
+				"refs":  {RLSEnabled: &yes, Fields: []domain.Field{{Name: "id", Type: "int", PrimaryKey: true}, {Name: "pair_a", ForeignKey: &domain.ForeignKey{References: "pairs.a"}}}},
+			}
+			// An app deployed before composite keys existed must still boot.
+			if errs := Validate(cfg); errs != nil {
+				t.Fatalf("must not be a validation error, got %v", errs)
+			}
+			ws := Warnings(cfg)
+			if !c.wantWarn {
+				if len(ws) != 0 {
+					t.Fatalf("want no warning, got %v", ws)
 				}
 				return
 			}
-			if len(errs) != 1 || !strings.Contains(errs[0].Message, "composite primary key") || errs[0].Path != "tables.refs.fields.pair_a.foreign_key.references" {
-				t.Fatalf("want one composite primary key error on the FK, got %v", errs)
+			if len(ws) != 1 || ws[0].Path != "tables.refs.fields.pair_a.foreign_key.references" ||
+				!strings.Contains(ws[0].Message, "composite primary key") ||
+				!strings.Contains(ws[0].Suggestion, "unique index on pairs(a)") {
+				t.Fatalf("want one composite primary key warning suggesting a unique index, got %v", ws)
 			}
 		})
 	}

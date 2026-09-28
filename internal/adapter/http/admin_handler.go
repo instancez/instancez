@@ -418,6 +418,9 @@ func (h *AdminHandler) handlePutConfig(c *gin.Context) {
 			return
 		}
 		if errors.Is(err, app.ErrPrimaryKeyChange) {
+			h.logger.Warn("rejected primary key change",
+				"source", h.sourceDescribe(),
+				"error", err.Error())
 			problemJSON(c, 422, "primary_key_change", err.Error())
 			return
 		}

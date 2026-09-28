@@ -341,6 +341,7 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 		var results []map[string]any
 
 		var pkCols []string
+		defaultTarget := false
 		if resolution != "" {
 			customCols, err := postgrest.ParseOnConflictParam(c.Query("on_conflict"), table)
 			if err != nil {
@@ -351,11 +352,15 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 				pkCols = customCols
 			} else {
 				pkCols = postgrest.PrimaryKeyColumns(table)
+				defaultTarget = true
 			}
 			if len(pkCols) == 0 {
 				problemJSON(c, 400, "bad_request", "Cannot upsert: table has no primary key and no on_conflict")
 				return
 			}
+		}
+		if defaultTarget {
+			pkCols = livePrimaryKeyOr(ctx, tx, tableName, pkCols)
 		}
 
 		var query string
@@ -439,7 +444,7 @@ func (h *CRUDHandler) handleUpsert(tableName string, table domain.Table) gin.Han
 		returnMode := parseReturnPrefer(prefer)
 		var results []map[string]any
 
-		query, args := postgrest.BuildBulkUpsertQuery(tableName, records, pkCols, "merge", returnMode == "representation")
+		query, args := postgrest.BuildBulkUpsertQuery(tableName, records, livePrimaryKeyOr(ctx, tx, tableName, pkCols), "merge", returnMode == "representation")
 		if returnMode == "representation" {
 			rows, err := tx.Query(ctx, query, args...)
 			if err != nil {
@@ -1301,6 +1306,16 @@ func findGeometryColumn(table domain.Table) string {
 		}
 	}
 	return ""
+}
+
+// livePrimaryKeyOr returns the table's primary key as Postgres has it, which can
+// lag a config recorded by older migrators, or fallback when it can't be read.
+func livePrimaryKeyOr(ctx context.Context, tx domain.Tx, tableName string, fallback []string) []string {
+	live, err := app.LivePrimaryKey(ctx, tx, tableName)
+	if err != nil || len(live) == 0 {
+		return fallback
+	}
+	return live
 }
 
 // setupMutationTx creates an RLS context and begins a transaction.

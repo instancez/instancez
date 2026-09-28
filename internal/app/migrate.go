@@ -82,14 +82,33 @@ func (m *Migrator) Plan(ctx context.Context, oldCfg, newCfg *domain.Config) (str
 // drop a table or column and AllowDestructive is unset. Use Plan to preview
 // such a change without tripping the gate.
 func (m *Migrator) PlanStatements(ctx context.Context, oldCfg, newCfg *domain.Config) ([]string, error) {
+	return m.planStatements(ctx, nil, oldCfg, newCfg)
+}
+
+// planStatements is PlanStatements; with a tx it also accepts a primary key
+// change the live table already has, so a config that drifted can be reverted.
+func (m *Migrator) planStatements(ctx context.Context, tx domain.Tx, oldCfg, newCfg *domain.Config) ([]string, error) {
 	if oldCfg == nil {
 		return planFromScratchStatements(newCfg, m.roles), nil
 	}
 	diff := diffConfigs(oldCfg, newCfg)
-	if len(diff.PKChanges) > 0 {
+	var rejected []string
+	for _, c := range diff.PKChanges {
+		if tx != nil {
+			live, err := LivePrimaryKey(ctx, tx, c.Qual)
+			if err != nil {
+				return nil, err
+			}
+			if sameColumns(live, c.New) {
+				continue
+			}
+		}
+		rejected = append(rejected, c.String())
+	}
+	if len(rejected) > 0 {
 		return nil, fmt.Errorf("%w: %s. Changing which columns form a live table's primary key is not supported; "+
 			"revert the primary_key flags, or create a new table and copy the data",
-			ErrPrimaryKeyChange, strings.Join(diff.PKChanges, "; "))
+			ErrPrimaryKeyChange, strings.Join(rejected, "; "))
 	}
 	if destroys := diff.Destroys; len(destroys) > 0 {
 		if !m.allowDestructive {
@@ -101,6 +120,21 @@ func (m *Migrator) PlanStatements(ctx context.Context, oldCfg, newCfg *domain.Co
 			"drops", strings.Join(destroys, ", "))
 	}
 	return planUpdateStatements(oldCfg, newCfg, m.roles), nil
+}
+
+// LivePrimaryKey returns the primary key columns Postgres has for rel, sorted.
+func LivePrimaryKey(ctx context.Context, tx domain.Tx, rel string) ([]string, error) {
+	row, err := tx.QueryRow(ctx, `SELECT coalesce(string_agg(a.attname, ',' ORDER BY a.attname), '') AS cols
+		FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+		WHERE i.indisprimary AND i.indrelid = to_regclass($1)`, rel)
+	if err != nil {
+		return nil, fmt.Errorf("read primary key of %s: %w", rel, err)
+	}
+	cols, _ := row["cols"].(string)
+	if cols == "" {
+		return nil, nil
+	}
+	return strings.Split(cols, ","), nil
 }
 
 // destructiveError explains what the plan would destroy and how to proceed.
@@ -317,7 +351,7 @@ func (m *Migrator) Apply(ctx context.Context, cfg *domain.Config) error {
 		}
 	}
 
-	stmts, err := m.PlanStatements(ctx, oldCfg, cfg)
+	stmts, err := m.planStatements(ctx, tx, oldCfg, cfg)
 	if err != nil {
 		// Apply stays pure: a rejected plan (e.g. ErrDestructive) runs no DDL, so
 		// the interactive config editor can reject a bad edit without side

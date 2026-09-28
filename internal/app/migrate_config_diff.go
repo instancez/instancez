@@ -24,8 +24,8 @@ type configDiff struct {
 	// Recorded by the same loops that emit the DROP DDL so the two can't drift.
 	Destroys []string
 
-	// PKChanges names live tables whose primary key columns would change, as "t: (a) -> (a, b)".
-	PKChanges []string
+	// PKChanges lists live tables whose primary key columns would change.
+	PKChanges []pkChange
 }
 
 // diffConfigs compares an old config (from the last migration) against the new
@@ -439,11 +439,21 @@ func rpcFunctionDropSig(fn domain.Function) string {
 
 // --- Addition functions ---
 
+// pkChange is a table whose config primary key columns differ between two configs.
+type pkChange struct {
+	Table, Qual string
+	Old, New    []string
+}
+
+func (c pkChange) String() string {
+	return fmt.Sprintf("%s: (%s) -> (%s)", c.Table, strings.Join(c.Old, ", "), strings.Join(c.New, ", "))
+}
+
 // diffPrimaryKeys reports tables in both configs whose primary key columns differ.
 // Replacing the PK by dropping its column and adding one new PK column is allowed:
 // the drop removes the old constraint and ADD COLUMN ... PRIMARY KEY creates the new one.
-func diffPrimaryKeys(old, new *domain.Config) []string {
-	var changes []string
+func diffPrimaryKeys(old, new *domain.Config) []pkChange {
+	var changes []pkChange
 	for _, name := range sortedKeys(new.Tables) {
 		oldTable, ok := old.Tables[name]
 		if !ok {
@@ -451,7 +461,7 @@ func diffPrimaryKeys(old, new *domain.Config) []string {
 		}
 		newTable := new.Tables[name]
 		oldPK, newPK := pkNames(oldTable), pkNames(newTable)
-		if slices.Equal(sortedCopy(oldPK), sortedCopy(newPK)) {
+		if sameColumns(oldPK, newPK) {
 			continue
 		}
 		newFields := newTable.FieldMap()
@@ -461,9 +471,13 @@ func diffPrimaryKeys(old, new *domain.Config) []string {
 		if oldPKDropped && len(newPK) == 1 && !newPKExisted {
 			continue
 		}
-		changes = append(changes, fmt.Sprintf("%s: (%s) -> (%s)", name, strings.Join(oldPK, ", "), strings.Join(newPK, ", ")))
+		changes = append(changes, pkChange{Table: name, Qual: qualifiedTableName(name, newTable), Old: oldPK, New: newPK})
 	}
 	return changes
+}
+
+func sameColumns(a, b []string) bool {
+	return slices.Equal(sortedCopy(a), sortedCopy(b))
 }
 
 func pkNames(t domain.Table) []string {

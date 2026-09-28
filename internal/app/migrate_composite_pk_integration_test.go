@@ -4,8 +4,10 @@ package app_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -105,5 +107,73 @@ func TestIntegration_CompositePrimaryKeyChangeRejected(t *testing.T) {
 	}
 	if got := pkColumns(t, ctx, db, "grid"); got != "x,y,z" {
 		t.Fatalf("pk must be untouched, got %q", got)
+	}
+}
+
+// driftTo applies live, then records claimed as the applied config, like the old
+// migrator did when a second primary_key flag was added to a live table.
+func driftTo(t *testing.T, ctx context.Context, db interface {
+	Exec(context.Context, string, ...any) (int64, error)
+}, m *app.Migrator, live, claimed *domain.Config) {
+	t.Helper()
+	if err := m.Apply(ctx, live); err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(claimed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE _instancez_migrations SET config_json = $1, checksum = 'drifted'
+		WHERE id = (SELECT max(id) FROM _instancez_migrations)`, string(b)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func driftPairs(pk ...string) *domain.Config {
+	fields := []domain.Field{{Name: "a", Type: "int"}, {Name: "b", Type: "int"}, {Name: "note", Type: "text"}}
+	for i := range fields {
+		fields[i].PrimaryKey = slices.Contains(pk, fields[i].Name)
+	}
+	return &domain.Config{Version: 1, Tables: map[string]domain.Table{
+		"pairs": {Fields: fields},
+		"refs": {Fields: []domain.Field{
+			{Name: "id", Type: "int", PrimaryKey: true},
+			{Name: "pair_a", ForeignKey: &domain.ForeignKey{References: "pairs.a"}},
+		}},
+	}}
+}
+
+func TestIntegration_CompositePKDriftCanBeReverted(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+	m := app.NewMigrator(db)
+	driftTo(t, ctx, db, m, driftPairs("a"), driftPairs("a", "b"))
+
+	if err := m.Apply(ctx, driftPairs("a")); err != nil {
+		t.Fatalf("reverting the config to the live key must apply, got %v", err)
+	}
+	if got := pkColumns(t, ctx, db, "pairs"); got != "a" {
+		t.Fatalf("pk = %q", got)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO pairs (a, b) VALUES (1, NULL)`); err != nil {
+		t.Fatalf("b left the key in config, so it must be nullable again: %v", err)
+	}
+}
+
+func TestIntegration_CompositePKDriftKeepsBooting(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+	m := app.NewMigrator(db)
+	driftTo(t, ctx, db, m, driftPairs("a"), driftPairs("a", "b"))
+
+	withNote := driftPairs("a", "b")
+	withNote.Tables["pairs"] = domain.Table{Fields: append(withNote.Tables["pairs"].Fields, domain.Field{Name: "extra", Type: "text"})}
+	if err := m.Apply(ctx, withNote); err != nil {
+		t.Fatalf("an unrelated change on a drifted app must apply, got %v", err)
+	}
+	moved := driftPairs("b")
+	err := m.Apply(ctx, moved)
+	if !errors.Is(err, app.ErrPrimaryKeyChange) || !strings.Contains(err.Error(), "pairs: (a, b) -> (b)") {
+		t.Fatalf("a key the live table doesn't have must still be rejected, got %v", err)
 	}
 }

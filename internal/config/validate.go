@@ -273,6 +273,7 @@ func Warnings(cfg *domain.Config) domain.ValidationErrors {
 			})
 		}
 	}
+	ws = append(ws, compositePKFKWarnings(cfg.Tables)...)
 	if cfg.Server.MaxLimit == 100 {
 		ws = append(ws, &domain.ValidationError{
 			Path:       "server.max_limit",
@@ -1102,18 +1103,39 @@ func validateForeignKeys(tables map[string]domain.Table) domain.ValidationErrors
 						Suggestion: fmt.Sprintf("declare \"type: %s\" on %q, or change the reference", refType, fieldName),
 					})
 				}
-				if isBareCompositePKMember(tables[refTable], targetField) {
-					errs = append(errs, &domain.ValidationError{
-						Path:       fkPath + ".references",
-						Message:    fmt.Sprintf("references %s.%s, which is only part of a composite primary key and not unique on its own", refTable, refCol),
-						Suggestion: fmt.Sprintf("add unique: true to %s.%s, or reference a unique column", refTable, refCol),
-					})
-				}
 			}
 		}
 	}
 
 	return errs
+}
+
+// compositePKFKWarnings flags FKs to one column of a composite primary key. A new
+// such FK fails at deploy, but one created before the key became composite still works.
+func compositePKFKWarnings(tables map[string]domain.Table) domain.ValidationErrors {
+	var ws domain.ValidationErrors
+	for _, tableName := range slices.Sorted(maps.Keys(tables)) {
+		for _, field := range tables[tableName].Fields {
+			if field.ForeignKey == nil {
+				continue
+			}
+			schema, refTable, refCol, err := domain.ParseFKReference(field.ForeignKey.References)
+			if err != nil || schema != "public" {
+				continue
+			}
+			target, ok := tables[refTable].GetField(refCol)
+			if !ok || !isBareCompositePKMember(tables[refTable], target) {
+				continue
+			}
+			ws = append(ws, &domain.ValidationError{
+				Path: fmt.Sprintf("tables.%s.fields.%s.foreign_key.references", tableName, field.Name),
+				Message: fmt.Sprintf("references %s.%s, which is only part of a composite primary key; "+
+					"Postgres rejects a new foreign key to it (no unique constraint matching given keys)", refTable, refCol),
+				Suggestion: fmt.Sprintf("Add a unique index on %s(%s): indexes: [{columns: [%s], unique: true}]", refTable, refCol, refCol),
+			})
+		}
+	}
+	return ws
 }
 
 // isBareCompositePKMember reports whether f belongs to a 2+ column primary key
