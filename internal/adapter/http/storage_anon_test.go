@@ -3,9 +3,12 @@ package http
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -207,5 +210,44 @@ func TestStorageAnon_LegacyAnonJWTGated(t *testing.T) {
 		w := serve(r, c.method, c.path, c.body, auth)
 		require.Equal(t, c.status, w.Code, "%s %s: %s", c.method, c.path, w.Body.String())
 		assert.Contains(t, w.Body.String(), c.bodyHas, c.path)
+	}
+}
+
+func TestLegacySignUpload_RunsInsertUnderCallerRole(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	type roleKey struct{}
+	for _, tc := range []struct {
+		name         string
+		insertPolicy bool
+		status       int
+	}{
+		{"no insert policy", false, 403},
+		{"insert policy", true, 200},
+	} {
+		var roles []string
+		db := &stubDB{
+			withRLSFn: func(ctx context.Context, s domain.Session) (context.Context, error) {
+				return context.WithValue(ctx, roleKey{}, s.Role), nil
+			},
+			execFn: func(ctx context.Context, q string, _ ...any) (int64, error) {
+				role, _ := ctx.Value(roleKey{}).(string)
+				roles = append(roles, role)
+				if role != domain.JWTRoleService && !tc.insertPolicy {
+					return 0, errors.New(`new row violates row-level security policy for table "objects" (SQLSTATE 42501)`)
+				}
+				return 1, nil
+			},
+		}
+		store := &stubObjectStore{signUploadFn: func(context.Context, string, string, time.Duration) (string, error) {
+			return "https://s3.example/put", nil
+		}}
+		h := &StorageHandler{cfg: &domain.Config{Storage: map[string]domain.Bucket{"docs": {RLS: []domain.RLSPolicy{{Operations: []string{"select"}, Using: "true"}}}}},
+			db: db, storage: store, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+		r := gin.New()
+		r.POST("/sign", asAuthenticated, h.handleSignUpload("docs", h.cfg.Storage["docs"]))
+		w := serve(r, "POST", "/sign", `{"content_type":"text/plain"}`, nil)
+		require.Equal(t, tc.status, w.Code, "%s: %s", tc.name, w.Body.String())
+		assert.Equal(t, tc.status == 200, strings.Contains(w.Body.String(), "upload_url"), tc.name)
+		assert.Equal(t, []string{domain.JWTRoleAuthenticated}, roles, "%s: insert must run as the caller", tc.name)
 	}
 }

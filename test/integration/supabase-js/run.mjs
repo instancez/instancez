@@ -3436,6 +3436,14 @@ await step('storage: legacy /api/storage routes run under the caller\'s RLS, not
   const { id } = await signResp.json()
   assert(id, 'id present')
 
+  const noInsert = await fetch(`${URL}/api/storage/readonly/sign`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${ownerToken}`, apikey: PUBLISHABLE_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content_type: 'text/plain', size: 10 }),
+  })
+  assertEq(noInsert.status, 403, 'legacy sign without an insert policy is denied by RLS')
+  assert(!(await noInsert.json()).upload_url, 'no presigned URL on an RLS denial')
+
   const ownerDl = await fetch(`${URL}/api/storage/legacy_private/${id}`, {
     headers: { Authorization: `Bearer ${ownerToken}`, apikey: PUBLISHABLE_KEY },
   })
