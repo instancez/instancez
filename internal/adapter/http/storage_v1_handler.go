@@ -143,12 +143,15 @@ func (h *StorageV1Handler) anonGate(deny gin.HandlerFunc) gin.HandlerFunc {
 	}
 }
 
-// callerMayReach runs apikey, optional JWT and the anon gate inline; false means a response was written.
-func (h *StorageV1Handler) callerMayReach(c *gin.Context, bucket string, deny gin.HandlerFunc) bool {
+// callerMayReach runs apikey, optional JWT, key validation and the anon gate inline; false means a response was written.
+func (h *StorageV1Handler) callerMayReach(c *gin.Context, bucket, rawPath string, deny gin.HandlerFunc) bool {
 	if apiKeyGuard(h.jwtKeys)(c); c.IsAborted() {
 		return false
 	}
 	if jwtAuth(h.jwtKeys, false)(c); c.IsAborted() {
+		return false
+	}
+	if _, ok := objectPath(c, rawPath); !ok {
 		return false
 	}
 	if !h.anonAllowed(c, bucket) {
@@ -674,7 +677,7 @@ func (h *StorageV1Handler) objectGetDispatch(c *gin.Context) {
 			storageErr(c, 400, "bad_request", "Missing bucket or path")
 			return
 		}
-		if !h.callerMayReach(c, segments[1], denyNotFound) {
+		if !h.callerMayReach(c, segments[1], segments[2], denyNotFound) {
 			return
 		}
 		h.serveDownload(c, segments[1], segments[2], false)
@@ -688,7 +691,7 @@ func (h *StorageV1Handler) objectGetDispatch(c *gin.Context) {
 			storageErr(c, 400, "bad_request", "Missing bucket or path")
 			return
 		}
-		if !public && !h.callerMayReach(c, bucket, denyNotFound) {
+		if !public && !h.callerMayReach(c, bucket, objPath, denyNotFound) {
 			return
 		}
 		h.objectInfo(c, bucket, objPath, public)
@@ -697,7 +700,7 @@ func (h *StorageV1Handler) objectGetDispatch(c *gin.Context) {
 			storageErr(c, 400, "bad_request", "Missing path")
 			return
 		}
-		if !h.callerMayReach(c, segments[0], denyNotFound) {
+		if !h.callerMayReach(c, segments[0], strings.Join(segments[1:], "/"), denyNotFound) {
 			return
 		}
 		h.serveDownload(c, segments[0], strings.Join(segments[1:], "/"), false)
@@ -925,7 +928,7 @@ func (h *StorageV1Handler) renderDispatch(c *gin.Context) {
 	case "public":
 		h.serveDownload(c, seg[1], seg[2], true)
 	case "authenticated":
-		if h.callerMayReach(c, seg[1], denyNotFound) {
+		if h.callerMayReach(c, seg[1], seg[2], denyNotFound) {
 			h.serveDownload(c, seg[1], seg[2], false)
 		}
 	case "sign":
@@ -998,6 +1001,8 @@ func (h *StorageV1Handler) redeemSignedURL(c *gin.Context, bucketName, rawPath s
 		return
 	}
 	defer func() { _ = body.Close() }()
+	opts.CacheControl = ""
+	c.Header("Expires", exp.UTC().Format(http.TimeFormat))
 	writeDownloadHeaders(c, opts)
 	c.Status(200)
 	_, _ = io.Copy(c.Writer, body)
@@ -1081,7 +1086,7 @@ func (h *StorageV1Handler) objectHeadDispatch(c *gin.Context) {
 		c.Status(400)
 		return
 	}
-	if !public && !h.callerMayReach(c, bucket, func(c *gin.Context) { c.Status(404) }) {
+	if !public && !h.callerMayReach(c, bucket, objPath, func(c *gin.Context) { c.Status(404) }) {
 		return
 	}
 	h.headObject(c, bucket, objPath, public)

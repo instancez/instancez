@@ -17,6 +17,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -2723,7 +2724,10 @@ func TestRedeemSignedURL_LocalProviderStreams(t *testing.T) {
 	assert.Equal(t, "meow", w.Body.String())
 	assert.Equal(t, "image/png", w.Header().Get("Content-Type"))
 	assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
-	assert.Equal(t, "private, max-age=3600", w.Header().Get("Cache-Control"))
+	exp, err := strconv.ParseInt(strings.Split(tok, ".")[0], 10, 64)
+	require.NoError(t, err)
+	assert.Equal(t, time.Unix(exp, 0).UTC().Format(http.TimeFormat), w.Header().Get("Expires"), "the cache dies with the token")
+	assert.Empty(t, w.Header().Get("Cache-Control"), "a max-age would outlive a short token")
 	assert.Equal(t, "attachment; filename*=utf-8''%C3%BC.png", w.Header().Get("Content-Disposition"))
 	assert.Empty(t, w.Header().Get("Location"))
 	assert.Equal(t, 1, calls.download)
