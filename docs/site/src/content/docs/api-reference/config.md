@@ -190,7 +190,7 @@ Useful SQL helpers available in RLS expressions:
 
 ## storage
 
-Bucket definitions. Buckets cannot be created, modified, or deleted at runtime; only `instancez.yaml` changes take effect.
+Bucket definitions. Buckets cannot be created, modified, or deleted at runtime; only `instancez.yaml` changes take effect. Bucket names follow the identifier rules, and `public`, `sign`, `authenticated`, `info`, `upload`, `list`, `move` and `copy` are reserved because they're storage route segments.
 
 ```yaml
 storage:
@@ -207,7 +207,7 @@ storage:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `storage.<name>.public` | `boolean` | `false` | Allow unauthenticated downloads via `/storage/v1/object/public/...`. |
+| `storage.<name>.public` | `boolean` | `false` | Allow anyone to download via `/storage/v1/object/public/...`, which skips RLS. Grants no `select`; listing and writes still follow `rls`. |
 | `storage.<name>.max_size` | `string` | `50MB` | Maximum file size per upload (e.g. `5MB`, `1GB`). |
 | `storage.<name>.types` | `string[]` | `[]` | Allowed MIME types. Wildcards like `image/*` are accepted. Empty means all types allowed. |
 | `storage.<name>.rls` | `RLSPolicy[]` | `[]` | Same policy shape as table RLS, applied to `storage.objects`. |
