@@ -481,12 +481,14 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 			chain.embeds = resolved
 		}
 		aggregated := slices.ContainsFunc(chain.selectItems, func(it postgrest.SelectItem) bool { return it.Agg != "" })
-		if aggregated && len(chain.embeds) > 0 {
-			return nil, nil, fmt.Errorf("aggregates on RPC results can't be combined with embeds")
-		}
 		for _, it := range chain.selectItems {
 			if aggregated && it.Agg == "" {
 				chain.groupBy = append(chain.groupBy, postgrest.RenderSelectItemGroupByExpr("_rpc", it))
+			}
+		}
+		if aggregated {
+			for k := range chain.embeds {
+				chain.groupBy = append(chain.groupBy, strconv.Itoa(len(chain.selectItems)+k+1))
 			}
 		}
 	}
@@ -673,6 +675,7 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 		return callSQL, nil
 	}
 	hasEmbeds := len(chain.embeds) > 0
+	aggregated := slices.ContainsFunc(chain.selectItems, func(it postgrest.SelectItem) bool { return it.Agg != "" })
 	// When belongs-to embeds will JOIN onto _rpc below, qualify outer WHERE
 	// columns with the _rpc alias so a filter like `id=eq.1` doesn't go
 	// ambiguous against the joined table's `id`. Mirrors the same fix in
@@ -692,14 +695,8 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 		}
 		projection = strings.Join(parts, ", ")
 	}
-	if chain.extraCols != "" {
-		if projection == "*" {
-			projection = "_rpc.*"
-		}
-		projection += ", " + chain.extraCols
-	}
 
-	if suffix == "" && projection == "*" && !hasEmbeds {
+	if suffix == "" && projection == "*" && !hasEmbeds && chain.extraCols == "" {
 		return callSQL, nil
 	}
 
@@ -745,7 +742,11 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 			if emb.Offset != nil {
 				sub += fmt.Sprintf(" OFFSET %d", *emb.Offset)
 			}
-			embedSelectParts = append(embedSelectParts, fmt.Sprintf("(%s) AS %s", sub, emb.Name))
+			if aggregated {
+				embedSelectParts = append(embedSelectParts, fmt.Sprintf("((%s))::jsonb AS %s", sub, emb.Name))
+			} else {
+				embedSelectParts = append(embedSelectParts, fmt.Sprintf("(%s) AS %s", sub, emb.Name))
+			}
 		} else {
 			// Belongs-to: LEFT/INNER JOIN.
 			joinKind := "LEFT JOIN"
@@ -756,14 +757,20 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 				joinKind, emb.RefTable, alias, emb.FKColumn, alias, emb.RefColumn))
 
 			if len(emb.Columns) == 0 {
-				embedSelectParts = append(embedSelectParts,
-					fmt.Sprintf("row_to_json(%s.*) AS %s", alias, emb.Name))
+				expr := "row_to_json(" + alias + ".*)"
+				if aggregated {
+					expr = "(" + expr + ")::jsonb"
+				}
+				embedSelectParts = append(embedSelectParts, expr+" AS "+emb.Name)
 			} else {
 				var embCols []string
 				for _, c := range emb.Columns {
 					embCols = append(embCols, fmt.Sprintf("'%s', %s.%s", c, alias, c))
 				}
 				obj := postgrest.NullIfNoMatch(alias, emb.RefColumn, fmt.Sprintf("json_build_object(%s)", strings.Join(embCols, ", ")))
+				if aggregated {
+					obj = "(" + obj + ")::jsonb"
+				}
 				embedSelectParts = append(embedSelectParts, obj+" AS "+emb.Name)
 			}
 		}
@@ -775,6 +782,12 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 			projection = "_rpc.*"
 		}
 		projection += ", " + strings.Join(embedSelectParts, ", ")
+	}
+	if chain.extraCols != "" {
+		if projection == "*" {
+			projection = "_rpc.*"
+		}
+		projection += ", " + chain.extraCols
 	}
 
 	sql := "SELECT " + projection + " FROM (" + callSQL + ") AS _rpc"
@@ -796,10 +809,27 @@ func buildRPCCountedQuery(callSQL string, chain *rpcChainSQL, baseArgIdx int) st
 	paged := *chain
 	paged.extraCols = "true AS __inz_row, " + win + " AS __inz_rn"
 	data, _ := wrapRPCCallForChain("SELECT * FROM __inz_src", &paged, baseArgIdx)
-	where, _ := renderRPCChain(&rpcChainSQL{where: chain.where}, baseArgIdx)
+	from, _ := rpcCountFrom("__inz_src", chain, baseArgIdx)
 	return "WITH __inz_src AS MATERIALIZED (" + callSQL + ") " +
-		"SELECT _p.*, _t.__inz_total FROM (SELECT count(*) AS __inz_total FROM __inz_src AS _rpc" + where + ") _t " +
+		"SELECT _p.*, _t.__inz_total FROM (SELECT count(*) AS __inz_total" + from + ") _t " +
 		"LEFT JOIN (" + data + ") _p ON true ORDER BY _p.__inz_rn"
+}
+
+// rpcCountFrom is the ungrouped source the RPC count runs over, with the !inner to-one joins the page applies.
+func rpcCountFrom(src string, chain *rpcChainSQL, argIdx int) (string, []any) {
+	var joins strings.Builder
+	for _, emb := range chain.embeds {
+		if !emb.IsReverse && emb.Inner {
+			alias := "_emb_" + emb.Name
+			fmt.Fprintf(&joins, " INNER JOIN %s AS %s ON _rpc.%s = %s.%s", emb.RefTable, alias, emb.FKColumn, alias, emb.RefColumn)
+		}
+	}
+	where := chain.where
+	if joins.Len() > 0 && where != nil {
+		where = postgrest.AliasWhereColumns(where, "_rpc")
+	}
+	suffix, args := renderRPCChain(&rpcChainSQL{where: where}, argIdx)
+	return " FROM " + src + " AS _rpc" + joins.String() + suffix, args
 }
 
 // splitRPCTotal strips the count helper columns and the padding row an empty page yields.
@@ -823,9 +853,9 @@ func splitRPCTotal(rows []map[string]any) ([]map[string]any, int) {
 
 // executeRPCPlannedCount estimates with plain EXPLAIN, which never executes the function.
 func executeRPCPlannedCount(ctx context.Context, tx domain.Tx, callSQL string, callArgs []any, chain *rpcChainSQL) (int, error) {
-	where, whereArgs := renderRPCChain(&rpcChainSQL{where: chain.where}, len(callArgs)+1)
+	from, whereArgs := rpcCountFrom("("+callSQL+")", chain, len(callArgs)+1)
 	// nosemgrep -- callSQL uses validated identifiers; values are bound args
-	rows, err := tx.Query(ctx, "EXPLAIN SELECT 1 FROM ("+callSQL+") AS _rpc"+where, append(callArgs, whereArgs...)...)
+	rows, err := tx.Query(ctx, "EXPLAIN SELECT 1"+from, append(callArgs, whereArgs...)...)
 	if err != nil {
 		return -1, err
 	}

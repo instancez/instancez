@@ -1949,6 +1949,24 @@ await step('rpc: setof aggregate groups by plain columns; count ignores grouping
   }
 })
 
+await step('rpc: setof aggregate groups by an embed; count stays ungrouped', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { data, count, status, error } = await client
+    .rpc('list_todos', undefined, { count: 'exact' })
+    .select('id, n:id.count(), comments(body)')
+    .eq('id', todoId)
+  if (error) throw error
+  assertEq(status, 200)
+  assertEq(data.length, 1, `one group: ${JSON.stringify(data)}`)
+  assertEq(data[0].n, 1)
+  assert(Array.isArray(data[0].comments) && data[0].comments.some((c) => c.body === 'test comment'), JSON.stringify(data))
+  assertEq(count, 1)
+  assert(!Object.keys(data[0]).some((k) => k.startsWith('__inz_')), 'no helper columns leak')
+})
+
 await step('rest: cleanup comments', async () => {
   const client = createClient(URL, PUBLISHABLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },

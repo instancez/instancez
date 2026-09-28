@@ -11,6 +11,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/instancez/instancez/internal/adapter/http/postgrest"
 	"github.com/instancez/instancez/internal/domain"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestBuildRPCCall_OrdersByDeclaration ensures that callArgs provided in
@@ -819,4 +821,78 @@ func TestBuildRPCCountedQuery_AggregateCountsUngroupedRows(t *testing.T) {
 			t.Errorf("missing %q in %s", want, sql)
 		}
 	}
+}
+
+func aggEmbedChain() *rpcChainSQL {
+	return &rpcChainSQL{
+		selectItems: []postgrest.SelectItem{{Col: "status"}, {Agg: "count"}},
+		groupBy:     []string{"_rpc.status", "3"},
+		embeds: []Embed{
+			{Name: "authors", FKColumn: "author_id", RefTable: "authors", RefColumn: "id", Inner: true},
+		},
+	}
+}
+
+func TestWrapRPCCallForChain_AggregateGroupsByEmbedOrdinal(t *testing.T) {
+	got, _ := wrapRPCCallForChain(`SELECT * FROM public."f"()`, aggEmbedChain(), 1)
+	for _, want := range []string{
+		"SELECT _rpc.status, COUNT(*) AS count, (row_to_json(_emb_authors.*))::jsonb AS authors FROM",
+		"INNER JOIN authors AS _emb_authors ON _rpc.author_id = _emb_authors.id",
+		"GROUP BY _rpc.status, 3",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in %s", want, got)
+		}
+	}
+}
+
+func TestBuildRPCCountedQuery_HelperColumnsAfterEmbeds(t *testing.T) {
+	sql := buildRPCCountedQuery(`SELECT * FROM public."f"()`, aggEmbedChain(), 1)
+	emb := strings.Index(sql, "AS authors")
+	row := strings.Index(sql, "true AS __inz_row")
+	if emb < 0 || row < 0 || row < emb {
+		t.Fatalf("helper columns must follow embeds (ordinal 3 = authors): %s", sql)
+	}
+	want := "(SELECT count(*) AS __inz_total FROM __inz_src AS _rpc INNER JOIN authors AS _emb_authors ON _rpc.author_id = _emb_authors.id) _t"
+	if !strings.Contains(sql, want) {
+		t.Fatalf("count must apply !inner to-one joins, ungrouped: %s", sql)
+	}
+}
+
+func TestRPCCountFrom(t *testing.T) {
+	chain := &rpcChainSQL{
+		where:  postgrest.AndLeaves(postgrest.Filter{Column: "id", Operator: "eq", Value: "1"}),
+		embeds: []Embed{{Name: "authors", FKColumn: "author_id", RefTable: "authors", RefColumn: "id", Inner: true}, {Name: "tags", IsReverse: true, Inner: true}, {Name: "editor", FKColumn: "editor_id", RefTable: "authors", RefColumn: "id"}},
+	}
+	from, args := rpcCountFrom("__inz_src", chain, 3)
+	assert.Equal(t, " FROM __inz_src AS _rpc INNER JOIN authors AS _emb_authors ON _rpc.author_id = _emb_authors.id WHERE _rpc.id = $3", from)
+	assert.Equal(t, []any{"1"}, args)
+	from, args = rpcCountFrom("__inz_src", &rpcChainSQL{}, 1)
+	assert.Equal(t, " FROM __inz_src AS _rpc", from)
+	assert.Empty(t, args)
+}
+
+func TestParseRPCChain_AggregateWithEmbedGroupsByOrdinal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &CRUDHandler{cfg: &domain.Config{Tables: map[string]domain.Table{
+		"posts":   {Fields: []domain.Field{{Name: "id", Type: "int", PrimaryKey: true}, {Name: "status", Type: "text"}, {Name: "author_id", Type: "int", ForeignKey: &domain.ForeignKey{References: "authors.id"}}}},
+		"authors": {Fields: []domain.Field{{Name: "id", Type: "int", PrimaryKey: true}, {Name: "name", Type: "text"}}},
+	}}}
+	fn := domain.Function{ReturnCategory: "setof", Returns: domain.FuncReturn{Type: "setof posts"}}
+	for q, want := range map[string][]string{
+		"select=status,count(),authors(name)": {"_rpc.status", "3"},
+		"select=count(),authors(name)":        {"2"},
+		"select=authors(name),n:id.count()":   {"2"},
+	} {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest("GET", "/rpc/f?"+q, nil)
+		chain, _, err := h.parseRPCChain(c, fn, map[string]bool{}, 1)
+		require.NoError(t, err, q)
+		assert.Equal(t, want, chain.groupBy, q)
+	}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET", "/rpc/f?select=id,authors(name)", nil)
+	chain, _, err := h.parseRPCChain(c, fn, map[string]bool{}, 1)
+	require.NoError(t, err)
+	assert.Empty(t, chain.groupBy, "no aggregate, no GROUP BY")
 }
