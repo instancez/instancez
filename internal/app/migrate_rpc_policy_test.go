@@ -69,9 +69,10 @@ func TestDiffRemovedRPC_DropsDependentManagedPoliciesFirst(t *testing.T) {
 	do, drop := stmts[0], stmts[1]
 	for _, want := range []string{
 		`to_regprocedure('public."can_see"(bigint)')`,
-		`'{members_select_0}'::name[]`,
+		`'{public.members.members_select_0}'::text[]`,
+		"format('%s.%s.%s', r.nspname, r.relname, r.polname) = ANY",
 		"SELECT DISTINCT p.polname",
-		"RAISE EXCEPTION 'rpc can_see is still used by policy % on %'",
+		"RAISE EXCEPTION 'rpc can_see is still used by policy % on %.%'",
 	} {
 		if !strings.Contains(do, want) {
 			t.Errorf("DO block missing %q:\n%s", want, do)
@@ -91,8 +92,13 @@ func TestDiffRemovedRPC_UnchangedFunctionEmitsNothing(t *testing.T) {
 func TestManagedPolicyNames(t *testing.T) {
 	cfg := rpcPolicyConfig()
 	cfg.Tables["open"] = domain.Table{Fields: []domain.Field{{Name: "id", Type: "int"}}}
+	off := false
+	inert := cfg.Tables["members"]
+	inert.Schema = "app"
+	inert.RLSEnabled = &off
+	cfg.Tables["inert"] = inert
 	got := strings.Join(managedPolicyNames(cfg), ",")
-	if got != "members_select_0,storage_docs_select_0" {
+	if got != "app.inert.inert_select_0,public.members.members_select_0,storage.objects.storage_docs_select_0" {
 		t.Fatalf("got %q", got)
 	}
 	if n := managedPolicyNames(&domain.Config{}); len(n) != 0 {
@@ -100,13 +106,46 @@ func TestManagedPolicyNames(t *testing.T) {
 	}
 }
 
-func TestDropPoliciesUsing_TruncatesManagedNames(t *testing.T) {
-	long := strings.Repeat("t", 60) + "_select_0"
-	sql := dropPoliciesUsing("f", domain.Function{}, []string{long})
-	if !strings.Contains(sql, "'{"+long[:63]+"}'::name[]") {
-		t.Fatalf("managed name not truncated to 63 bytes:\n%s", sql)
+func TestManagedPolicyNames_TruncatesLongNames(t *testing.T) {
+	table := strings.Repeat("t", 60)
+	cfg := &domain.Config{Tables: map[string]domain.Table{table: {RLS: []domain.RLSPolicy{{Operations: []string{"select"}, Using: "true"}}}}}
+	want := "public." + table + "." + (table + "_select_0")[:63]
+	if got := managedPolicyNames(cfg); len(got) != 1 || got[0] != want {
+		t.Fatalf("got %v, want %s", got, want)
 	}
-	if !strings.Contains(dropPoliciesUsing("f", domain.Function{}, nil), "'{}'::name[]") {
+}
+
+func TestDropPoliciesUsing_EmptyManaged(t *testing.T) {
+	if !strings.Contains(dropPoliciesUsing("f", domain.Function{}, nil), "'{}'::text[]") {
 		t.Fatal("no managed policies must render an empty array")
+	}
+}
+
+func TestDenyPoliciesCalling(t *testing.T) {
+	storage := map[string]domain.Bucket{
+		"docs": {RLS: []domain.RLSPolicy{
+			{Operations: []string{"select"}, Using: "public.can_see(1)"},
+			{Operations: []string{"insert"}, WithCheck: `"Can_See" (2)`},
+			{Operations: []string{"delete"}, Using: "auth.uid() IS NOT NULL"},
+			{Operations: []string{"update"}, Using: "can_seen(1)"},
+		}},
+		"open": {Public: true},
+	}
+	if called := rpcsCalledByStorage(storage, []string{"can_see", "unused"}); strings.Join(called, ",") != "can_see" {
+		t.Fatalf("called = %v", called)
+	}
+	got := denyPoliciesCalling(storage, []string{"can_see"})
+	rls := got["docs"].RLS
+	if rls[0].Using != "false" || rls[1].WithCheck != "false" || rls[1].Using != "" {
+		t.Fatalf("calls to can_see must become deny: %+v", rls)
+	}
+	if rls[2].Using != "auth.uid() IS NOT NULL" || rls[3].Using != "can_seen(1)" {
+		t.Fatalf("unrelated policies must be kept: %+v", rls)
+	}
+	if storage["docs"].RLS[0].Using != "public.can_see(1)" {
+		t.Fatal("input must not be mutated")
+	}
+	if len(denyPoliciesCalling(storage, nil)["docs"].RLS) != 4 || rpcsCalledByStorage(nil, []string{"can_see"}) != nil {
+		t.Fatal("nil inputs")
 	}
 }

@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -321,42 +322,82 @@ func diffRemovedRPCFunctions(old, new *domain.Config) []string {
 	return ddl
 }
 
-// managedPolicyNames lists the policies cfg recreates, truncated the way Postgres stores them.
+// managedPolicyNames lists every policy cfg owns as schema.table.policy, truncated the way Postgres stores names; inert ones on RLS-off tables count too.
 func managedPolicyNames(cfg *domain.Config) []string {
 	var names []string
 	for _, t := range sortedKeys(cfg.Tables) {
-		if cfg.Tables[t].EffectiveRLSEnabled() {
-			names = append(names, rlsPolicyNames(t, cfg.Tables[t].RLS)...)
+		prefix := cfg.Tables[t].EffectiveSchema() + "." + t + "."
+		for _, p := range rlsPolicyNames(t, cfg.Tables[t].RLS) {
+			names = append(names, prefix+p[:min(len(p), 63)])
 		}
 	}
 	for _, b := range sortedKeys(cfg.Storage) {
-		names = append(names, storageRLSPolicyNames(b, cfg.Storage[b].RLS)...)
+		for _, p := range storageRLSPolicyNames(b, cfg.Storage[b].RLS) {
+			names = append(names, "storage.objects."+p[:min(len(p), 63)])
+		}
 	}
 	return names
 }
 
 // dropPoliciesUsing drops managed policies that call fn so DROP FUNCTION needs no CASCADE; any other dependent aborts.
 func dropPoliciesUsing(name string, fn domain.Function, managed []string) string {
-	trunc := make([]string, len(managed))
-	for i, m := range managed {
-		trunc[i] = m[:min(len(m), 63)]
-	}
 	return fmt.Sprintf(`DO $$
 DECLARE r record;
 BEGIN
-  FOR r IN SELECT DISTINCT p.polname, p.polrelid::regclass AS tbl
+  FOR r IN SELECT DISTINCT p.polname, n.nspname, c.relname
     FROM pg_depend d JOIN pg_policy p ON p.oid = d.objid
+    JOIN pg_class c ON c.oid = p.polrelid JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE d.classid = 'pg_policy'::regclass AND d.refclassid = 'pg_proc'::regclass
       AND d.refobjid = to_regprocedure('public."%[1]s"(%[2]s)')
   LOOP
-    IF r.polname = ANY ('{%[3]s}'::name[]) THEN
-      EXECUTE format('DROP POLICY %%I ON %%s', r.polname, r.tbl);
+    IF format('%%s.%%s.%%s', r.nspname, r.relname, r.polname) = ANY ('{%[3]s}'::text[]) THEN
+      EXECUTE format('DROP POLICY %%I ON %%I.%%I', r.polname, r.nspname, r.relname);
     ELSE
-      RAISE EXCEPTION 'rpc %[1]s is still used by policy %% on %%', r.polname, r.tbl
+      RAISE EXCEPTION 'rpc %[1]s is still used by policy %% on %%.%%', r.polname, r.nspname, r.relname
         USING HINT = 'Remove that policy or its call to %[1]s first.';
     END IF;
   END LOOP;
-END $$;`, name, rpcFunctionDropSig(fn), strings.Join(trunc, ","))
+END $$;`, name, rpcFunctionDropSig(fn), strings.Join(managed, ","))
+}
+
+// rpcsCalledByStorage returns the rpcs that some bucket policy expression calls.
+func rpcsCalledByStorage(storage map[string]domain.Bucket, rpcs []string) []string {
+	var called []string
+	for _, fn := range rpcs {
+		for _, b := range storage {
+			if slices.ContainsFunc(b.RLS, func(p domain.RLSPolicy) bool { return callsRPC(p, fn) }) {
+				called = append(called, fn)
+				break
+			}
+		}
+	}
+	return called
+}
+
+// denyPoliciesCalling returns a copy of storage where policies calling a missing rpc deny everything.
+func denyPoliciesCalling(storage map[string]domain.Bucket, missing []string) map[string]domain.Bucket {
+	out := make(map[string]domain.Bucket, len(storage))
+	for name, b := range storage {
+		b.RLS = slices.Clone(b.RLS)
+		for i, p := range b.RLS {
+			if !slices.ContainsFunc(missing, func(fn string) bool { return callsRPC(p, fn) }) {
+				continue
+			}
+			if p.Using != "" {
+				b.RLS[i].Using = "false"
+			}
+			if p.WithCheck != "" {
+				b.RLS[i].WithCheck = "false"
+			}
+		}
+		out[name] = b
+	}
+	return out
+}
+
+func callsRPC(p domain.RLSPolicy, fn string) bool {
+	re := regexp.MustCompile(`(?i)(^|[^a-z0-9_$])"?` + regexp.QuoteMeta(fn) + `"?\s*\(`)
+	return re.MatchString(p.Using) || re.MatchString(p.WithCheck)
 }
 
 // rpcSignatureChanged reports whether a change breaks CREATE OR REPLACE: arg

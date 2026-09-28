@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -350,11 +351,40 @@ func (m *Migrator) Apply(ctx context.Context, cfg *domain.Config) error {
 // engine reports drift. Safe to re-run: every statement is CREATE ... IF NOT
 // EXISTS / CREATE OR REPLACE / DROP POLICY IF EXISTS + CREATE POLICY.
 func (m *Migrator) ProvisionIdempotent(ctx context.Context, cfg *domain.Config) error {
+	missing, err := m.missingStorageRPCs(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("provision: %w", err)
+	}
+	if len(missing) > 0 {
+		m.logger.Warn("provision: storage policies calling rpcs not yet created deny all access until the blocked migration applies", "rpcs", missing)
+		c := *cfg
+		c.Storage = denyPoliciesCalling(cfg.Storage, missing)
+		cfg = &c
+	}
 	prov := idempotentProvisioning(cfg, m.roles)
 	if len(prov) == 0 {
 		return nil
 	}
 	return m.applyStatements(ctx, prov)
+}
+
+// missingStorageRPCs returns config rpcs that storage policies call but the database lacks.
+func (m *Migrator) missingStorageRPCs(ctx context.Context, cfg *domain.Config) ([]string, error) {
+	called := rpcsCalledByStorage(cfg.Storage, sortedKeys(cfg.RPC))
+	if len(called) == 0 {
+		return nil, nil
+	}
+	rows, err := m.db.Query(ctx, `SELECT proname::text AS name FROM pg_proc WHERE pronamespace = 'public'::regnamespace AND proname = ANY($1)`, called)
+	if err != nil {
+		return nil, err
+	}
+	var missing []string
+	for _, fn := range called {
+		if !slices.ContainsFunc(rows, func(r map[string]any) bool { return r["name"] == fn }) {
+			missing = append(missing, fn)
+		}
+	}
+	return missing, nil
 }
 
 // Harden re-applies security fixes on every boot, since an unchanged config never re-runs a migration.

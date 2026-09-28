@@ -4,6 +4,7 @@ package app_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -128,11 +129,123 @@ func TestIntegration_RPCDropWithManagedPolicyStillCalling(t *testing.T) {
 	if err := m.Apply(ctx, rpCfg("public.can_see(id)", map[string]domain.Function{"can_see": rpCanSee()})); err != nil {
 		t.Fatal(err)
 	}
+	// The managed policy is dropped first, so the failure comes from recreating it, not from DROP FUNCTION.
 	err := m.Apply(ctx, rpCfg("public.can_see(id)", nil))
-	if err == nil || !strings.Contains(err.Error(), "can_see") {
-		t.Fatalf("want an error naming can_see, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "public.can_see(bigint) does not exist") || strings.Contains(err.Error(), "depend on it") {
+		t.Fatalf("want the recreate to fail on the missing function, got %v", err)
 	}
-	if !functionExists(t, db, "can_see") {
-		t.Fatal("rolled back: function must still exist")
+	if !functionExists(t, db, "can_see") || !policyExists(t, db, "members", "members_select_0") {
+		t.Fatal("rolled back: function and policy must still exist")
+	}
+}
+
+func TestIntegration_RPCDropWithInertManagedPolicy(t *testing.T) {
+	for name, next := range map[string]map[string]domain.Function{
+		"drop":      nil,
+		"signature": {"can_see": rpCanSee(domain.FuncArg{Name: "strict", Type: "boolean", Default: true})},
+	} {
+		t.Run(name, func(t *testing.T) {
+			db := startPostgres(t)
+			ctx := context.Background()
+			m := app.NewMigrator(db).AllowDestructive(true)
+			if err := m.Apply(ctx, rpCfg("public.can_see(id)", map[string]domain.Function{"can_see": rpCanSee()})); err != nil {
+				t.Fatal(err)
+			}
+			off := false
+			inert := rpCfg("public.can_see(id)", map[string]domain.Function{"can_see": rpCanSee()})
+			members := inert.Tables["members"]
+			members.RLSEnabled = &off
+			inert.Tables["members"] = members
+			if err := m.Apply(ctx, inert); err != nil {
+				t.Fatalf("v2 rls off: %v", err)
+			}
+			if !policyExists(t, db, "members", "members_select_0") {
+				t.Fatal("v2: the inert policy must stay in the DB for this case")
+			}
+			inert.RPC = next
+			if err := m.Apply(ctx, inert); err != nil {
+				t.Fatalf("v3: %v", err)
+			}
+			if policyExists(t, db, "members", "members_select_0") {
+				t.Fatal("v3: inert managed policy must be dropped")
+			}
+		})
+	}
+}
+
+func TestIntegration_RPCDropRefusesSameNamedPolicyOnOtherTable(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+	m := app.NewMigrator(db).AllowDestructive(true)
+	if err := m.Apply(ctx, rpCfg("public.can_see(id)", map[string]domain.Function{"can_see": rpCanSee()})); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ExecDDL(ctx, `CREATE POLICY members_select_0 ON public.allow_list FOR SELECT USING (public.can_see(member_id))`); err != nil {
+		t.Fatal(err)
+	}
+	// members_select_0 stays managed on members, so only the table tells the two apart.
+	err := m.Apply(ctx, rpCfg("true", nil))
+	if err == nil || !strings.Contains(err.Error(), "still used by policy members_select_0 on public.allow_list") {
+		t.Fatalf("want a refusal naming allow_list, got %v", err)
+	}
+	if !functionExists(t, db, "can_see") || !policyExists(t, db, "allow_list", "members_select_0") {
+		t.Fatal("failed migration must roll back")
+	}
+}
+
+func rpStorage(using string) map[string]domain.Bucket {
+	return map[string]domain.Bucket{"docs": {RLS: []domain.RLSPolicy{{Operations: []string{"select"}, Using: using}}}}
+}
+
+func TestIntegration_StoragePolicyRPCSignatureChange(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+	m := app.NewMigrator(db).AllowDestructive(true)
+	cfg := rpCfg("", map[string]domain.Function{"can_see": rpCanSee()})
+	cfg.Auth, cfg.Storage = &domain.Auth{}, rpStorage("public.can_see(1)")
+	if err := m.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg.RPC = map[string]domain.Function{"can_see": rpCanSee(domain.FuncArg{Name: "strict", Type: "boolean", Default: true})}
+	if err := m.Apply(ctx, cfg); err != nil {
+		t.Fatalf("signature change: %v", err)
+	}
+	if pronargs(t, db) != "2" || !policyExists(t, db, "storage.objects", "storage_docs_select_0") {
+		t.Fatal("storage policy must be recreated on the new signature")
+	}
+}
+
+func TestIntegration_ProvisionIdempotentDeniesPoliciesCallingMissingRPC(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+	m := app.NewMigrator(db)
+	v1 := rpCfg("", nil)
+	members := v1.Tables["members"]
+	members.Fields = append(members.Fields, domain.Field{Name: "note", Type: "text"})
+	v1.Tables["members"] = members
+	v1.Auth = &domain.Auth{}
+	if err := m.Apply(ctx, v1); err != nil {
+		t.Fatal(err)
+	}
+	pending := rpCfg("", map[string]domain.Function{"can_see": rpCanSee()})
+	pending.Auth, pending.Storage = &domain.Auth{}, rpStorage("public.can_see(1)")
+	if err := m.Apply(ctx, pending); !errors.Is(err, app.ErrDestructive) {
+		t.Fatalf("want ErrDestructive, got %v", err)
+	}
+	if err := m.ProvisionIdempotent(ctx, pending); err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+	row, err := db.QueryRow(ctx, `SELECT c.relrowsecurity AS rls,
+		(SELECT qual FROM pg_policies WHERE schemaname='storage' AND tablename='objects' AND policyname='storage_docs_select_0') AS qual,
+		(SELECT count(*) FROM pg_policies WHERE schemaname='storage' AND tablename='objects') AS n
+		FROM pg_class c WHERE c.oid = 'storage.objects'::regclass`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row["rls"] != true || fmt.Sprint(row["n"]) != "1" || !strings.Contains(fmt.Sprint(row["qual"]), "false") {
+		t.Fatalf("bucket must stay closed: %v", row)
+	}
+	if functionExists(t, db, "can_see") {
+		t.Fatal("the rpc belongs to the blocked plan")
 	}
 }
