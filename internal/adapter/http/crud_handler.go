@@ -138,15 +138,9 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 			return
 		}
 
-		// Range header pagination when limit/offset are absent.
-		if rh := c.GetHeader("Range"); rh != "" && c.Request.Method == "GET" && c.Query("limit") == "" && c.Query("offset") == "" {
-			start, end, ok := parseRangeHeader(rh)
-			if !ok {
-				problemJSON(c, 400, "bad_request", "Invalid Range header")
-				return
-			}
-			qp.Offset = start
-			qp.Limit = end - start + 1
+		if qp.Offset, qp.Limit, err = intersectRange(c, qp.Offset, qp.Limit); err != nil {
+			writeRangeError(c, err)
+			return
 		}
 		qp.Limit = capLimit(qp.Limit, h.cfg.Server.MaxLimit)
 		capEmbeds(qp.Embeds, h.cfg.Server.MaxLimit)
@@ -235,8 +229,16 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 		}
 
 		c.Header("Content-Range", contentRange(qp.Offset, len(rows), total))
+		singular := accept == "application/vnd.pgrst.object+json"
+		if singular && len(rows) != 1 {
+			// supabase-js .maybeSingle() reads "0 rows" in details as data === null.
+			pgJSON(c, 406, "PGRST116",
+				"JSON object requested, multiple (or no) rows returned",
+				fmt.Sprintf("The result contains %d rows", len(rows)), "")
+			return
+		}
 		status := rangeStatus(qp.Offset, len(rows), total)
-		if status == 416 && accept != "application/vnd.pgrst.object+json" {
+		if status == 416 {
 			rangeNotSatisfiable(c, qp.Offset, total)
 			return
 		}
@@ -270,18 +272,7 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 			return
 		}
 
-		// Check for singular response
-		if accept == "application/vnd.pgrst.object+json" {
-			if len(rows) != 1 {
-				// supabase-js .maybeSingle() distinguishes zero-row from
-				// multi-row errors by parsing the details string ("0 rows"
-				// → return null, otherwise surface error). Emit PGRST116
-				// for both branches so that contract holds.
-				pgJSON(c, 406, "PGRST116",
-					"JSON object requested, multiple (or no) rows returned",
-					fmt.Sprintf("The result contains %d rows", len(rows)), "")
-				return
-			}
+		if singular {
 			c.JSON(status, rows[0])
 			return
 		}
@@ -658,6 +649,39 @@ func rangeStatus(offset, n, total int) int {
 		return 206
 	}
 	return 200
+}
+
+var errRangeEmpty = errors.New("range header and limit/offset do not overlap")
+
+// intersectRange narrows offset/limit (limit < 0 means none) by a GET Range header, like PostgREST's getRanges.
+func intersectRange(c *gin.Context, offset, limit int) (int, int, error) {
+	rh := c.GetHeader("Range")
+	if rh == "" || c.Request.Method != "GET" || limit == 0 {
+		return offset, limit, nil
+	}
+	start, end, ok := parseRangeHeader(rh)
+	if !ok {
+		return 0, 0, errors.New("invalid Range header")
+	}
+	lo, hi := max(start, offset), end
+	if limit > 0 && offset <= math.MaxInt-limit {
+		hi = min(end, offset+limit-1)
+	}
+	if lo > hi {
+		return 0, 0, errRangeEmpty
+	}
+	if hi-lo == math.MaxInt {
+		return lo, postgrest.NoLimit, nil
+	}
+	return lo, hi - lo + 1, nil
+}
+
+func writeRangeError(c *gin.Context, err error) {
+	if errors.Is(err, errRangeEmpty) {
+		pgJSON(c, 416, "PGRST103", "Requested range not satisfiable", "Limit should be greater than or equal to zero.", "")
+		return
+	}
+	problemJSON(c, 400, "bad_request", err.Error())
 }
 
 func rangeNotSatisfiable(c *gin.Context, offset, total int) {

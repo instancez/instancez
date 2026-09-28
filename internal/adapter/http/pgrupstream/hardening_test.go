@@ -393,3 +393,26 @@ func TestHardening_StatementTimeout(t *testing.T) {
 	status, _, _ = call(t, "POST", slow+"/rest/v1/rpc/sleep_for", `{"secs":0.05}`, nil, false)
 	require.Equal(t, 200, status)
 }
+
+func TestHardening_RangeHeaderIntersectsLimitOffset(t *testing.T) {
+	if testTS == nil {
+		t.Skip("no upstream")
+	}
+	exact := map[string]string{"Prefer": "count=exact", "Range": "1-3"}
+	status, hdr, raw := call(t, "GET", testTS.URL+"/rest/v1/users?select=username&order=username&limit=2", "", exact, false)
+	require.Equal(t, 206, status, "%s", raw)
+	require.Equal(t, "1-1/5", hdr.Get("Content-Range"))
+	require.Len(t, rowsOf(t, raw), 1)
+
+	status, hdr, raw = call(t, "GET", testTS.URL+"/rest/v1/rpc/users_by_status?target=ONLINE&offset=2", "", exact, false)
+	require.Equal(t, 206, status, "%s", raw)
+	require.Equal(t, "2-2/3", hdr.Get("Content-Range"))
+
+	status, _, raw = call(t, "GET", testTS.URL+"/rest/v1/users?offset=4", "", exact, false)
+	require.Equal(t, 416, status, "%s", raw)
+	require.Contains(t, string(raw), "PGRST103")
+
+	status, hdr, _ = call(t, "POST", testTS.URL+"/rest/v1/rpc/users_by_status", `{"target":"ONLINE"}`, exact, false)
+	require.Equal(t, 200, status, "POST ignores Range")
+	require.Equal(t, "0-2/3", hdr.Get("Content-Range"))
+}

@@ -91,7 +91,7 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 			baseIdx := len(placeholders) + 1
 			chain, chainArgs, err := h.parseRPCChain(c, fn, argNames, baseIdx)
 			if err != nil {
-				problemJSON(c, http.StatusBadRequest, "bad_request", err.Error())
+				writeRangeError(c, err)
 				return
 			}
 			rpcChain = chain
@@ -188,7 +188,8 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 			}
 			c.Header("Content-Range", contentRange(offset, len(rows), total))
 			status := rangeStatus(offset, len(rows), total)
-			if c.GetHeader("Accept") == "application/vnd.pgrst.object+json" {
+			singular := c.GetHeader("Accept") == "application/vnd.pgrst.object+json"
+			if singular {
 				if len(rows) == 0 {
 					pgJSON(c, http.StatusNotAcceptable, "PGRST116",
 						"JSON object requested, multiple (or no) rows returned",
@@ -201,11 +202,13 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 						fmt.Sprintf("The result contains %d rows", len(rows)), "")
 					return
 				}
-				c.JSON(status, rows[0])
-				return
 			}
 			if status == 416 {
 				rangeNotSatisfiable(c, offset, total)
+				return
+			}
+			if singular {
+				c.JSON(status, rows[0])
 				return
 			}
 			c.JSON(status, rows)
@@ -539,9 +542,6 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 		chain.hasLimit = true
 		chain.limit = n
 	}
-	if maxRows := h.cfg.Server.MaxLimit; maxRows > 0 && (!chain.hasLimit || chain.limit > maxRows) {
-		chain.hasLimit, chain.limit = true, maxRows
-	}
 
 	// OFFSET.
 	if o := c.Query("offset"); o != "" {
@@ -551,6 +551,19 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 		}
 		chain.hasOffset = true
 		chain.offset = n
+	}
+	limit := postgrest.NoLimit
+	if chain.hasLimit {
+		limit = chain.limit
+	}
+	offset, limit, err := intersectRange(c, chain.offset, limit)
+	if err != nil {
+		return nil, nil, err
+	}
+	chain.hasOffset, chain.offset = chain.hasOffset || offset > 0, offset
+	chain.hasLimit, chain.limit = limit >= 0, limit
+	if maxRows := h.cfg.Server.MaxLimit; maxRows > 0 && (!chain.hasLimit || chain.limit > maxRows) {
+		chain.hasLimit, chain.limit = true, maxRows
 	}
 
 	// Render the chain with placeholder numbering starting at argIdx.
