@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -379,21 +380,22 @@ type execer interface {
 }
 
 type objectRow struct {
-	bucket, name, mime, metadata string
-	size                         int64
-	uploadedBy                   any
+	bucket, name, mime, metadata, userMetadata string
+	size                                       int64
+	uploadedBy                                 any
 }
 
 // writeObjectRow inserts, upserts or updates one storage.objects row under ctx's role.
 func writeObjectRow(ctx context.Context, db execer, r objectRow, isUpdate, upsert bool) error {
-	q := "INSERT INTO storage.objects (bucket_id, name, size, mime, metadata, uploaded_by) VALUES ($1, $2, $3, $4, $5::jsonb, $6)"
+	q := "INSERT INTO storage.objects (bucket_id, name, size, mime, metadata, uploaded_by, user_metadata) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7::jsonb)"
 	switch {
 	case isUpdate:
-		q = "UPDATE storage.objects SET size = $3, mime = $4, metadata = $5::jsonb, uploaded_at = NOW(), uploaded_by = $6 WHERE bucket_id = $1 AND name = $2"
+		q = "UPDATE storage.objects SET size = $3, mime = $4, metadata = $5::jsonb, uploaded_at = NOW(), uploaded_by = $6, user_metadata = $7::jsonb WHERE bucket_id = $1 AND name = $2"
 	case upsert:
-		q += " ON CONFLICT (bucket_id, name) DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime, metadata = EXCLUDED.metadata, uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW()"
+		q += " ON CONFLICT (bucket_id, name) DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime, metadata = EXCLUDED.metadata, uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW(), user_metadata = EXCLUDED.user_metadata"
 	}
-	n, err := db.Exec(ctx, q, r.bucket, r.name, r.size, r.mime, r.metadata, r.uploadedBy)
+	// Like Supabase, every write replaces user_metadata, with {} when the request sent none.
+	n, err := db.Exec(ctx, q, r.bucket, r.name, r.size, r.mime, r.metadata, r.uploadedBy, cmp.Or(r.userMetadata, "{}"))
 	if err == nil && isUpdate && n == 0 {
 		return errObjectNotFound
 	}
@@ -417,21 +419,68 @@ func defaultMIME(ct string) string {
 }
 
 // uploadBody returns the file stream and content type from a raw or multipart upload.
-func uploadBody(c *gin.Context) (io.Reader, string, error) {
+const maxUserMetadataBytes = 1 << 20 // Supabase MAX_CUSTOM_METADATA_SIZE
+
+var (
+	errUserMetadataTooLarge = errors.New("user metadata exceeds 1MB")
+	errInvalidUserMetadata  = errors.New("user metadata must be a JSON object")
+)
+
+// parseUserMetadata validates upload metadata and returns it as JSON, "{}" when absent or null.
+func parseUserMetadata(raw []byte) (string, error) {
+	if len(raw) > maxUserMetadataBytes {
+		return "", errUserMetadataTooLarge
+	}
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return "{}", nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil || m == nil {
+		return "", errInvalidUserMetadata
+	}
+	return string(raw), nil
+}
+
+// uploadBody returns the file stream, its content type and the user metadata sent with it.
+func uploadBody(c *gin.Context) (io.Reader, string, string, error) {
 	if !strings.HasPrefix(c.ContentType(), "multipart/form-data") {
-		return c.Request.Body, defaultMIME(c.ContentType()), nil
+		meta := "{}"
+		if h := c.GetHeader("x-metadata"); h != "" {
+			raw, err := base64.StdEncoding.DecodeString(h)
+			if err != nil {
+				return nil, "", "", errInvalidUserMetadata
+			}
+			if meta, err = parseUserMetadata(raw); err != nil {
+				return nil, "", "", err
+			}
+		}
+		return c.Request.Body, defaultMIME(c.ContentType()), meta, nil
 	}
 	mr, err := c.Request.MultipartReader()
 	if err != nil {
-		return nil, "", errors.New("failed to parse multipart form")
+		return nil, "", "", errors.New("failed to parse multipart form")
 	}
+	fields := map[string]string{}
 	for {
 		part, err := mr.NextPart()
 		if err != nil {
-			return nil, "", errors.New("no file found in multipart upload")
+			return nil, "", "", errors.New("no file found in multipart upload")
 		}
 		if part.FileName() != "" {
-			return part, defaultMIME(part.Header.Get("Content-Type")), nil
+			meta, err := parseUserMetadata([]byte(cmp.Or(fields["metadata"], fields["userMetadata"])))
+			if err != nil {
+				return nil, "", "", err
+			}
+			return part, defaultMIME(part.Header.Get("Content-Type")), meta, nil
+		}
+		if name := part.FormName(); name == "metadata" || name == "userMetadata" {
+			// One byte past the cap is enough for parseUserMetadata to reject it.
+			raw, err := io.ReadAll(io.LimitReader(part, maxUserMetadataBytes+1))
+			if err != nil {
+				return nil, "", "", errors.New("failed to parse multipart form")
+			}
+			fields[name] = string(raw)
 		}
 		_ = part.Close()
 	}
@@ -460,28 +509,35 @@ func closeSpool(f *os.File) {
 }
 
 // readUpload spools the body; on !ok the error response is already written.
-func (h *StorageV1Handler) readUpload(c *gin.Context, bucket domain.Bucket, authorize func(contentType string) error) (f *os.File, size int64, contentType string, ok bool) {
-	body, contentType, err := uploadBody(c)
-	if err != nil {
+func (h *StorageV1Handler) readUpload(c *gin.Context, bucket domain.Bucket, authorize func(contentType string) error) (f *os.File, size int64, contentType, userMetadata string, ok bool) {
+	body, contentType, userMetadata, err := uploadBody(c)
+	switch {
+	case errors.Is(err, errUserMetadataTooLarge):
+		storageErr(c, 413, "payload_too_large", err.Error())
+		return nil, 0, "", "", false
+	case errors.Is(err, errInvalidUserMetadata):
+		storageErr(c, 400, "invalid_metadata", err.Error())
+		return nil, 0, "", "", false
+	case err != nil:
 		storageErr(c, 400, "bad_request", err.Error())
-		return nil, 0, "", false
+		return nil, 0, "", "", false
 	}
 	if len(bucket.Types) > 0 && !matchesMIME(contentType, bucket.Types) {
 		storageErr(c, 422, "invalid_mime_type", fmt.Sprintf("Content type %q not allowed", contentType))
-		return nil, 0, "", false
+		return nil, 0, "", "", false
 	}
 	if authorize != nil {
 		if err := authorize(contentType); err != nil {
 			h.uploadWriteError(c, err)
-			return nil, 0, "", false
+			return nil, 0, "", "", false
 		}
 	}
 	f, size, err = spool(http.MaxBytesReader(c.Writer, io.NopCloser(body), bucketMaxBytes(bucket)))
 	if err != nil {
 		h.spoolFailed(c, err, bucket.MaxSize)
-		return nil, 0, "", false
+		return nil, 0, "", "", false
 	}
-	return f, size, contentType, true
+	return f, size, contentType, userMetadata, true
 }
 
 func (h *StorageV1Handler) spoolFailed(c *gin.Context, err error, maxSize string) {
@@ -515,7 +571,7 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 	}
 	uploadedBy := nullIfEmpty(getSession(c).UserID)
 	upsert := !isUpdate && c.GetHeader("x-upsert") == "true"
-	file, size, contentType, ok := h.readUpload(c, bucket, func(ct string) error {
+	file, size, contentType, userMetadata, ok := h.readUpload(c, bucket, func(ct string) error {
 		probeRow := objectRow{bucket: bucketName, name: objPath, mime: ct, uploadedBy: uploadedBy,
 			metadata: objectMetadataJSON(0, ct, c.GetHeader("Cache-Control"))}
 		return h.probeUploadPermission(c, probeRow, isUpdate, upsert)
@@ -526,8 +582,8 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 	defer closeSpool(file)
 
 	row := objectRow{bucket: bucketName, name: objPath, size: size, mime: contentType,
-		uploadedBy: uploadedBy,
-		metadata:   objectMetadataJSON(size, contentType, c.GetHeader("Cache-Control"))}
+		uploadedBy: uploadedBy, userMetadata: userMetadata,
+		metadata: objectMetadataJSON(size, contentType, c.GetHeader("Cache-Control"))}
 
 	// The tx write below is the real gate; the pre-spool probe above only avoids spooling for a denied caller.
 	ctx := h.rlsCtx(c)
@@ -969,7 +1025,7 @@ func (h *StorageV1Handler) listObjects(c *gin.Context) {
 
 	ctx := h.rlsCtx(c)
 
-	query := "SELECT name, size, mime, uploaded_at, metadata FROM storage.objects WHERE bucket_id = $1"
+	query := "SELECT id, name, uploaded_at, metadata FROM storage.objects WHERE bucket_id = $1"
 	args := []any{bucketName}
 	argIdx := 2
 
@@ -1000,11 +1056,12 @@ func (h *StorageV1Handler) listObjects(c *gin.Context) {
 		// Strip prefix to return relative names (supabase convention)
 		relName := strings.TrimPrefix(name, prefix)
 		items = append(items, gin.H{
-			"name":       relName,
-			"id":         name,
-			"created_at": asString(row["uploaded_at"]),
-			"updated_at": asString(row["uploaded_at"]),
-			"metadata":   row["metadata"],
+			"name":             relName,
+			"id":               asString(row["id"]),
+			"created_at":       isoTime(row["uploaded_at"]),
+			"updated_at":       isoTime(row["uploaded_at"]),
+			"last_accessed_at": isoTime(row["uploaded_at"]),
+			"metadata":         row["metadata"],
 		})
 	}
 	if items == nil {
@@ -1042,7 +1099,7 @@ func (h *StorageV1Handler) listObjectsV2(c *gin.Context) {
 	// Fetch one extra row to determine hasNext.
 	fetchLimit := req.Limit + 1
 
-	query := "SELECT name, size, mime, uploaded_at, metadata FROM storage.objects WHERE bucket_id = $1"
+	query := "SELECT id, name, uploaded_at, metadata FROM storage.objects WHERE bucket_id = $1"
 	args := []any{bucketName}
 	argIdx := 2
 
@@ -1101,11 +1158,12 @@ func (h *StorageV1Handler) listObjectsV2(c *gin.Context) {
 		}
 
 		objects = append(objects, gin.H{
-			"name":       relName,
-			"id":         name,
-			"created_at": asString(row["uploaded_at"]),
-			"updated_at": asString(row["uploaded_at"]),
-			"metadata":   row["metadata"],
+			"name":             relName,
+			"id":               asString(row["id"]),
+			"created_at":       isoTime(row["uploaded_at"]),
+			"updated_at":       isoTime(row["uploaded_at"]),
+			"last_accessed_at": isoTime(row["uploaded_at"]),
+			"metadata":         row["metadata"],
 		})
 	}
 
@@ -1411,10 +1469,10 @@ func (h *StorageV1Handler) copyObject(c *gin.Context) {
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	n, err := tx.Exec(ctx,
-		`INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by, metadata)
-		 SELECT $1, $2, size, mime, $5::uuid, metadata FROM storage.objects WHERE bucket_id = $3 AND name = $4
+		`INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by, metadata, user_metadata)
+		 SELECT $1, $2, size, mime, $5::uuid, metadata, user_metadata FROM storage.objects WHERE bucket_id = $3 AND name = $4
 		 ON CONFLICT (bucket_id, name) DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime,
-		   metadata = EXCLUDED.metadata, uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW()`,
+		   metadata = EXCLUDED.metadata, uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW(), user_metadata = EXCLUDED.user_metadata`,
 		dstBucket, dst, srcBucket, src, nullIfEmpty(getSession(c).UserID))
 	if err != nil {
 		h.uploadWriteError(c, err)
@@ -1663,7 +1721,7 @@ func (h *StorageV1Handler) uploadToSignedURL(c *gin.Context) {
 		return
 	}
 
-	file, size, contentType, ok := h.readUpload(c, bucket, nil)
+	file, size, contentType, userMetadata, ok := h.readUpload(c, bucket, nil)
 	if !ok {
 		return
 	}
@@ -1687,7 +1745,7 @@ func (h *StorageV1Handler) uploadToSignedURL(c *gin.Context) {
 		ctx = c.Request.Context()
 	}
 	row := objectRow{bucket: bucketName, name: objPath, size: size, mime: contentType, uploadedBy: nullIfEmpty(owner),
-		metadata: objectMetadataJSON(size, contentType, c.GetHeader("Cache-Control"))}
+		userMetadata: userMetadata, metadata: objectMetadataJSON(size, contentType, c.GetHeader("Cache-Control"))}
 	if err := writeObjectRow(ctx, h.db, row, false, true); err != nil {
 		h.logger.Error("signed upload record", "error", err)
 		storageErr(c, 500, "internal", "Failed to record object")

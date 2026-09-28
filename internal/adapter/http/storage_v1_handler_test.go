@@ -2343,7 +2343,7 @@ func TestUploadObject_RecordsRealSize(t *testing.T) {
 		r.ServeHTTP(w, req)
 		require.Equal(t, 200, w.Code, tc.name+": "+w.Body.String())
 		assert.Equal(t, tc.content, stored, tc.name)
-		require.Len(t, args, 6, tc.name)
+		require.Len(t, args, 7, tc.name)
 		assert.Equal(t, int64(len(tc.content)), args[2], tc.name)
 		assert.Equal(t, "text/plain", args[3], tc.name)
 		assert.Contains(t, args[4], fmt.Sprintf(`"size":%d`, len(tc.content)), tc.name)
@@ -2404,7 +2404,7 @@ func TestWriteObjectRow(t *testing.T) {
 		} else {
 			assert.EqualError(t, err, tc.want.Error(), tc.name)
 		}
-		assert.Equal(t, []any{"b", "n", int64(3), "text/plain", "{}", nil}, args, tc.name)
+		assert.Equal(t, []any{"b", "n", int64(3), "text/plain", "{}", nil, "{}"}, args, tc.name)
 	}
 }
 
@@ -2454,7 +2454,7 @@ func TestUploadToSignedURL_Hardening(t *testing.T) {
 		w := do(h, body, ct)
 		require.Equal(t, 200, w.Code, w.Body.String())
 		assert.Equal(t, "blob body", *stored, "multipart framing stored as file content")
-		require.Len(t, *args, 6)
+		require.Len(t, *args, 7)
 		assert.Equal(t, int64(len("blob body")), (*args)[2])
 		assert.Nil(t, (*args)[5], "anonymous token must record NULL uploaded_by")
 	})

@@ -2912,8 +2912,40 @@ await step('storage: uploadToSignedUrl with a Blob stores the file, not the mult
   const iso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
   for (const k of ['createdAt', 'updatedAt', 'lastModified']) assert(iso.test(info[k]), `${k} is ISO 8601: ${info[k]}`)
   assertEq(info.bucketId, 'avatars')
-  assertEq(info.metadata, null, 'metadata is user metadata, and this upload set none')
+  assertEq(JSON.stringify(info.metadata), '{}', 'metadata is user metadata, {} when the upload sent none')
   assertEq(info.cacheControl, 'max-age=3600')
+})
+
+await step('storage: upload({ metadata }) round-trips through info() and resets on upsert', async () => {
+  const bucket = storageClient().storage.from('avatars')
+  const meta = { owner: 'ana', emoji: '✓', nested: { n: 1 } }
+  for (const [path, body] of [['meta-header.txt', 'string body'], ['meta-form.txt', new Blob(['blob body'], { type: 'text/plain' })]]) {
+    const { error } = await bucket.upload(path, body, { contentType: 'text/plain', metadata: meta, upsert: true })
+    if (error) throw error
+    const { data: info, error: infoErr } = await bucket.info(path)
+    if (infoErr) throw infoErr
+    const { isDeepStrictEqual } = await import('node:util')
+    assert(isDeepStrictEqual(info.metadata, meta), `${path} metadata: ${JSON.stringify(info.metadata)}`)
+  }
+  const { data: listed, error: listErr } = await bucket.list('', { search: 'meta-header' })
+  if (listErr) throw listErr
+  const item = listed.find((o) => o.name === 'meta-header.txt')
+  assert(item && /^[0-9a-f-]{36}$/.test(item.id), `list id is the object uuid: ${JSON.stringify(item)}`)
+  assertEq(item.metadata.mimetype, 'text/plain', 'list metadata is the system metadata')
+  assert(/\.\d{3}Z$/.test(item.created_at), `list created_at is ISO: ${item.created_at}`)
+
+  const { error: upErr } = await bucket.upload('meta-header.txt', 'replaced', { contentType: 'text/plain', upsert: true })
+  if (upErr) throw upErr
+  const { data: after } = await bucket.info('meta-header.txt')
+  assertEq(JSON.stringify(after.metadata), '{}', 'an upsert without metadata resets it, as in Supabase')
+
+  const bad = await fetch(`${URL}/storage/v1/object/avatars/meta-bad.txt`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY, 'Content-Type': 'text/plain', 'x-metadata': Buffer.from('[1]').toString('base64') },
+    body: 'x',
+  })
+  assertEq(bad.status, 400, 'non-object metadata is rejected')
+  await bucket.remove(['meta-header.txt', 'meta-form.txt'])
 })
 
 await step('storage: uploadToSignedUrl enforces the bucket MIME allowlist', async () => {
