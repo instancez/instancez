@@ -155,7 +155,7 @@ All keys are optional. Clients use the normal Supabase auth API: `supabase.auth.
 ```yaml
 storage:
   avatars:
-    public: true            # public buckets serve GET without a JWT
+    public: true            # anyone can download via /object/public; list/sign/update/delete still need rls
     max_size: 5MB
     types: [image/*]
     rls:
@@ -163,7 +163,7 @@ storage:
         with_check: "auth.is_authenticated()"
 ```
 
-Declaring any bucket requires a `providers.storage` block (`type: local` for dev, `type: s3` for production). Bucket `rls` uses the same policy syntax as tables, applied to `storage.objects`. Clients use `supabase.storage.from('avatars').upload(...)` as usual. Signed URLs are authorized at creation time against the bucket's policies.
+Declaring any bucket requires a `providers.storage` block (`type: local` for dev, `type: s3` for production). Bucket `rls` uses the same policy syntax as tables, applied to `storage.objects`. Clients use `supabase.storage.from('avatars').upload(...)` as usual. Signed URLs are authorized at creation time against the bucket's policies. As in Supabase, `public: true` only opens `/object/public/<bucket>/<path>` downloads; it grants no `select`, so add a `select` policy for anyone who should list, sign, update or delete.
 
 ## RPC (SQL functions)
 

@@ -5,13 +5,16 @@ package s3
 import (
 	"context"
 	"io"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/instancez/instancez/internal/domain"
 	"github.com/instancez/instancez/internal/testutil/minioboot"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -57,4 +60,35 @@ func TestStoreCopy_SpecialCharacterKeys(t *testing.T) {
 	t.Run("missing source", func(t *testing.T) {
 		assert.Error(t, st.Copy(ctx, "avatars/nope.txt", "backups/nope.txt"))
 	})
+}
+
+func TestStoreSignDownload_ResponseOverrides(t *testing.T) {
+	st := newMinIOStore(t)
+	ctx := context.Background()
+	body := "<script>alert(1)</script>"
+	require.NoError(t, st.Upload(ctx, "b/page.html", strings.NewReader(body), "application/octet-stream", int64(len(body))))
+
+	get := func(u string) *http.Response {
+		resp, err := http.Get(u)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = resp.Body.Close() })
+		return resp
+	}
+
+	u, err := st.SignDownload(ctx, "b/page.html", time.Minute, domain.DownloadOptions{
+		ContentType: "text/html", ContentDisposition: `attachment; filename="page.html"`, CacheControl: "private, max-age=3600",
+	})
+	require.NoError(t, err)
+	resp := get(u)
+	require.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, "text/html", resp.Header.Get("Content-Type"))
+	assert.Equal(t, `attachment; filename="page.html"`, resp.Header.Get("Content-Disposition"))
+	assert.Equal(t, "private, max-age=3600", resp.Header.Get("Cache-Control"))
+
+	plain, err := st.SignDownload(ctx, "b/page.html", time.Minute, domain.DownloadOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, get(plain).Header.Get("Content-Disposition"))
+
+	// Appending params (what storage-js does for download) breaks the signature.
+	assert.Equal(t, 403, get(u+"&download=").StatusCode)
 }

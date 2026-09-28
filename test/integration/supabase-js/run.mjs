@@ -2,7 +2,6 @@
 // assertion failure. Output is streamed to the Go test log.
 import { createClient } from '@supabase/supabase-js'
 import crypto from 'node:crypto'
-import fs from 'node:fs'
 // Aliased: this file's own `URL` const (the server base URL, below) shadows
 // the global URL constructor for the rest of the module.
 import { URL as NodeURL } from 'node:url'
@@ -687,6 +686,60 @@ await step('rest: count exact honors !inner embeds', async () => {
   } finally {
     await client.from('todos').delete().eq('id', lonely.id)
   }
+})
+
+await step('rest: non-inner embed filters keep parent rows', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { data: toOne, count: c1, error: e1 } = await client
+    .from('comments').select('body, todos(title)', { count: 'exact' })
+    .eq('user_id', userId).eq('todos.title', '__no_such_title__')
+  if (e1) throw e1
+  assert(toOne.length >= 1, 'comments kept despite the embed filter')
+  assert(toOne.every((r) => r.todos === null), `unmatched to-one embed must be null: ${JSON.stringify(toOne)}`)
+  assertEq(c1, toOne.length, 'count matches kept rows')
+
+  const { data: todo, error: te } = await client.from('todos').select('title').eq('id', todoId).single()
+  if (te) throw te
+  const { data: hit, error: e3 } = await client
+    .from('comments').select('body, todos(title)').eq('todo_id', todoId).eq('todos.title', todo.title)
+  if (e3) throw e3
+  assert(hit.length >= 1 && hit.every((r) => r.todos?.title === todo.title), `matched to-one embed kept: ${JSON.stringify(hit)}`)
+
+  const { data: toMany, count: c2, error: e2 } = await client
+    .from('todos').select('id, comments(body)', { count: 'exact' })
+    .eq('user_id', userId).eq('comments.body', '__no_such_body__')
+  if (e2) throw e2
+  assert(toMany.length >= 1, 'todos kept despite the embed filter')
+  assert(toMany.every((t) => Array.isArray(t.comments) && t.comments.length === 0), 'to-many embed filtered to []')
+  assertEq(c2, toMany.length, 'count matches kept rows')
+})
+
+await step('rest: aggregates group by embeds; referenced or and spread filters keep parents', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { data: todo, error: te } = await client.from('todos').select('title').eq('id', todoId).single()
+  if (te) throw te
+  const { data: grouped, error: ge } = await client
+    .from('comments').select('count(), todos(title)').eq('todo_id', todoId)
+  if (ge) throw ge
+  assertEq(grouped.length, 1, `one group: ${JSON.stringify(grouped)}`)
+  assert(grouped[0].count >= 1 && grouped[0].todos?.title === todo.title, `grouped by embed: ${JSON.stringify(grouped)}`)
+
+  const { data: ored, error: oe } = await client
+    .from('comments').select('body, todos(title)').eq('todo_id', todoId)
+    .or('title.eq.__nope_a__,title.eq.__nope_b__', { referencedTable: 'todos' })
+  if (oe) throw oe
+  assert(ored.length >= 1 && ored.every((r) => r.todos === null), `referenced or nulls the embed: ${JSON.stringify(ored)}`)
+
+  const { data: spread, error: se } = await client
+    .from('comments').select('body, ...todos(title)').eq('todo_id', todoId).eq('todos.title', '__no_such_title__')
+  if (se) throw se
+  assert(spread.length >= 1 && spread.every((r) => 'title' in r && r.title === null), `spread columns null: ${JSON.stringify(spread)}`)
 })
 
 await step('rest: nested embed — has-many with nested belongs-to', async () => {
@@ -1729,8 +1782,55 @@ await step('rpc: setof function with .order().limit()', async () => {
   assertEq(data[0].title, 'a-first', 'ordered first')
   assertEq(data[1].title, 'm-middle', 'ordered second')
 
+  const counted = await client
+    .rpc('list_todos', undefined, { count: 'exact' })
+    .in('title', ['z-last', 'a-first', 'm-middle'])
+    .order('title')
+    .limit(2)
+  if (counted.error) throw counted.error
+  assertEq(counted.count, 3, 'count ignores limit on setof')
+  assertEq(counted.data.map((r) => r.title).join(','), 'a-first,m-middle', 'counted page keeps order')
+  assert(!Object.keys(counted.data[0]).some((k) => k.startsWith('__inz_')), 'no helper columns leak')
+
+  const empty = await client
+    .rpc('list_todos', undefined, { count: 'exact' })
+    .in('title', ['z-last', 'a-first', 'm-middle'])
+    .range(10, 11)
+  if (empty.error) throw empty.error
+  assertEq(empty.data.length, 0, 'page past end is empty')
+  assertEq(empty.count, 3, 'page past end still counts')
+
   for (const id of setofIds) {
     await client.from('todos').delete().eq('id', id)
+  }
+})
+
+await step('rpc: setof aggregate groups by plain columns; count ignores grouping', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const ids = []
+  for (const [title, priority] of [['agg-a', 7], ['agg-b', 7], ['agg-c', 9]]) {
+    const { data: ins, error } = await client
+      .from('todos').insert({ title, priority, user_id: userId }).select('id').single()
+    if (error) throw error
+    ids.push(ins.id)
+  }
+  try {
+    const { data, count, error } = await client
+      .rpc('list_todos', undefined, { count: 'exact' })
+      .select('priority, n:id.count()')
+      .in('title', ['agg-a', 'agg-b', 'agg-c'])
+      .order('priority')
+    if (error) throw error
+    assertEq(data.map((r) => `${r.priority}:${r.n}`).join(','), '7:2,9:1', 'grouped by priority')
+    assertEq(count, 3, 'count=exact counts ungrouped rows, as in PostgREST')
+
+    const star = await client.rpc('list_todos').select('*, id.count()')
+    assert(star.error && star.status === 400, `* with an aggregate is a 400: ${JSON.stringify(star.error)}`)
+  } finally {
+    for (const id of ids) await client.from('todos').delete().eq('id', id)
   }
 })
 
@@ -2241,6 +2341,38 @@ await step('storage: download public object without auth', async () => {
   assertEq(body, 'updated content')
 })
 
+// Supabase parity: public opens /object/public downloads only; listing and exists still follow RLS.
+await step('storage: public bucket downloads for anyone but lists only per RLS', async () => {
+  const { error: upErr } = await storageClient().storage.from('pubgated').upload('gated.txt', 'gated body', { contentType: 'text/plain', upsert: true })
+  assert(!upErr, `owner upload failed: ${upErr?.message}`)
+
+  const guest = createClient(URL, PUBLISHABLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  const { data: pub } = guest.storage.from('pubgated').getPublicUrl('gated.txt')
+  const resp = await fetch(pub.publicUrl)
+  assertEq(resp.status, 200, 'anon getPublicUrl fetch')
+  assertEq(await resp.text(), 'gated body')
+
+  const legacy = await fetch(`${URL}/api/storage/pubgated/gated.txt`, { headers: { apikey: PUBLISHABLE_KEY } })
+  assertEq(legacy.status, 200, 'anon legacy sign-download on a public bucket')
+
+  const { data: exists } = await guest.storage.from('pubgated').exists('gated.txt')
+  assertEq(exists, false, 'anon exists() must follow RLS, not the public flag')
+
+  const { data: guestList, error: guestListErr } = await guest.storage.from('pubgated').list()
+  assert(guestListErr || guestList?.length === 0, 'anon must see no rows')
+
+  const other = createClient(URL, PUBLISHABLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  const { error: signErr } = await other.auth.signInAnonymously()
+  assert(!signErr, `anonymous sign-in failed: ${signErr?.message}`)
+  const { data: otherList, error: otherErr } = await other.storage.from('pubgated').list()
+  assert(!otherErr, `non-owner list errored: ${otherErr?.message}`)
+  assertEq(otherList.length, 0, 'a non-owner must not list a public bucket whose select policy excludes them')
+
+  const { data: ownerList, error: ownerErr } = await storageClient().storage.from('pubgated').list()
+  assert(!ownerErr, `owner list errored: ${ownerErr?.message}`)
+  assert(ownerList.some(o => o.name === 'gated.txt'), `owner list missing gated.txt: ${JSON.stringify(ownerList)}`)
+})
+
 await step('storage: download from non-public bucket fails', async () => {
   // First upload to documents (private bucket)
   const up = await fetch(`${URL}/storage/v1/object/documents/secret.txt`, {
@@ -2255,7 +2387,10 @@ await step('storage: download from non-public bucket fails', async () => {
   assert(up.ok, `documents upload failed: ${up.status}`)
 
   const resp = await fetch(`${URL}/storage/v1/object/public/documents/secret.txt`)
-  assertEq(resp.status, 400, 'private bucket returns 400 on public download')
+  assertEq(resp.status, 404, 'private bucket answers like a missing one on public download')
+  const missing = await fetch(`${URL}/storage/v1/object/public/no_such_bucket/secret.txt`)
+  assertEq(missing.status, 404)
+  assertEq(await resp.text(), await missing.text(), 'private and missing buckets must be indistinguishable')
 })
 
 // --- List ---
@@ -2435,47 +2570,54 @@ await step('storage: move object', async () => {
 })
 
 // --- Signed download URL ---
+// This harness runs LocalStore, so redemption streams; the S3 302 path is covered by Go unit + MinIO tests.
 
-await step('storage: createSignedUrl returns a URL', async () => {
-  const resp = await fetch(`${URL}/storage/v1/object/sign/avatars/test-file.txt`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      apikey: PUBLISHABLE_KEY,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ expiresIn: 3600 }),
-  })
-  assert(resp.ok, `createSignedUrl failed: ${resp.status}`)
-  const data = await resp.json()
-  assert(data.signedURL, 'signedURL present')
-  // The signed URL must actually resolve to the real object content, not
-  // just exist as a string. This harness always runs against LocalStore,
-  // whose SignDownload returns a file:// path on the same host (a real S3
-  // backend would instead presign a remote URL) — read it directly.
-  const content = fs.readFileSync(new NodeURL(data.signedURL), 'utf8')
-  assertEq(content, 'final content', 'signed URL resolves to the real object content')
+await step('storage: createSignedUrl works through supabase-js, with download', async () => {
+  const bucket = storageClient().storage.from('avatars')
+  const { data, error } = await bucket.createSignedUrl('test-file.txt', 3600)
+  if (error) throw error
+  assert(data.signedUrl.startsWith(`${URL}/storage/v1/object/sign/avatars/test-file.txt?token=`), data.signedUrl)
+  const plain = await fetch(data.signedUrl)
+  assertEq(plain.status, 200, 'signed URL redeems without apikey')
+  assertEq(await plain.text(), 'final content', 'signed URL body')
+  assertEq(plain.headers.get('x-content-type-options'), 'nosniff')
+  assertEq(plain.headers.get('content-disposition'), null, 'inline by default for text/plain')
+
+  const { data: named } = await bucket.createSignedUrl('test-file.txt', 3600, { download: 'report.txt' })
+  assertEq((await fetch(named.signedUrl)).headers.get('content-disposition'), 'attachment; filename=report.txt')
+  const { data: bare } = await bucket.createSignedUrl('test-file.txt', 3600, { download: true })
+  assertEq((await fetch(bare.signedUrl)).headers.get('content-disposition'), 'attachment')
+
+  const u = new NodeURL(data.signedUrl)
+  const tok = u.searchParams.get('token')
+  const last = tok.at(-1) === '0' ? '1' : '0'
+  const flipped = await fetch(data.signedUrl.replace(tok, tok.slice(0, -1) + last))
+  assertEq(flipped.status, 400, 'tampered signature rejected')
+  assertEq((await flipped.json()).error, 'invalid_token')
+  const elsewhere = await fetch(`${URL}/storage/v1/object/sign/avatars/test-file-moved.txt?token=${tok}`)
+  assertEq(elsewhere.status, 400, 'token cannot read another object')
+  const { data: up } = await bucket.createSignedUploadUrl('never-written.txt')
+  const swapped = await fetch(`${URL}/storage/v1/object/sign/avatars/never-written.txt?token=${up.token}`)
+  assertEq(swapped.status, 400, 'upload token cannot redeem a download')
 })
 
-// --- Batch signed URLs ---
+await step('storage: createSignedUrls batch URLs redeem, with download', async () => {
+  const bucket = storageClient().storage.from('avatars')
+  const { data, error } = await bucket.createSignedUrls(['test-file.txt', 'no-such-file.txt'], 3600, { download: true })
+  if (error) throw error
+  const resp = await fetch(data[0].signedUrl)
+  assertEq(resp.status, 200)
+  assertEq(await resp.text(), 'final content')
+  assertEq(resp.headers.get('content-disposition'), 'attachment')
+  assertEq(data[1].signedUrl, null, 'missing object is not signed')
+  assert(data[1].error, 'missing object carries an error')
+})
 
-await step('storage: createSignedUrls returns batch URLs', async () => {
-  const resp = await fetch(`${URL}/storage/v1/object/sign/avatars`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      apikey: PUBLISHABLE_KEY,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ expiresIn: 3600, paths: ['test-file.txt'] }),
-  })
-  assert(resp.ok, `createSignedUrls failed: ${resp.status}`)
-  const data = await resp.json()
-  assert(Array.isArray(data), 'batch returns array')
-  assert(data.length >= 1, 'at least one URL')
-  assert(data[0].signedURL, 'signedURL in batch item')
-  const content = fs.readFileSync(new NodeURL(data[0].signedURL), 'utf8')
-  assertEq(content, 'final content', 'batch signed URL resolves to the real object content')
+await step('storage: getPublicUrl honors download', async () => {
+  const { data } = storageClient().storage.from('avatars').getPublicUrl('test-file.txt', { download: 'pub.txt' })
+  const resp = await fetch(data.publicUrl)
+  assertEq(resp.status, 200)
+  assertEq(resp.headers.get('content-disposition'), 'attachment; filename=pub.txt')
 })
 
 // --- Signed upload URL + uploadToSignedUrl ---
@@ -2625,6 +2767,9 @@ if (SECRET_KEY) {
     const own = data.find(d => d.path === 'mine/file.txt')
     assert(hidden && !hidden.signedUrl && hidden.error, `hidden path must not be signed: ${JSON.stringify(hidden)}`)
     assert(own && own.signedUrl && !own.error, `own path must be signed: ${JSON.stringify(own)}`)
+    const ownResp = await fetch(own.signedUrl)
+    assertEq(ownResp.status, 200, 'own signed URL redeems')
+    assertEq(await ownResp.text(), 'owned content')
 
     const { error: infoErr } = await bucket.info('mine/admin.txt')
     assert(infoErr, 'info() of a hidden object must fail')
@@ -2878,16 +3023,33 @@ await step('rest: explain returns query plan only to the secret key', async () =
   assertEq(err.code, 'PGRST107', 'plan refusal code')
 
   if (!SECRET_KEY) return
-  const adminResp = await fetch(`${URL}/rest/v1/todos?select=*`, {
-    headers: {
-      Authorization: `Bearer ${SECRET_KEY}`,
-      apikey: SECRET_KEY,
-      Accept: 'application/vnd.pgrst.plan+json',
-    },
+  const admin = createClient(URL, SECRET_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${SECRET_KEY}` } },
   })
-  assertEq(adminResp.status, 200)
-  const plan = await adminResp.json()
-  assert(Array.isArray(plan) || (typeof plan === 'object'), 'plan returned')
+  const { data: text, error: e1 } = await admin.from('todos').select('id').explain()
+  if (e1) throw e1
+  assert(typeof text === 'string' && text.includes('cost='), `text plan expected: ${text}`)
+  const { data: json, error: e2 } = await admin.from('todos').select('id').explain({ format: 'json', analyze: true })
+  if (e2) throw e2
+  assert(Array.isArray(json) && json[0].Plan && json[0]['Execution Time'] !== undefined, `json analyze plan expected: ${JSON.stringify(json)}`)
+  const { data: single, error: e3 } = await admin.from('todos').select('id').limit(1).single().explain()
+  if (e3) throw e3
+  assert(typeof single === 'string' && single.includes('cost='), `plan for object media type: ${single}`)
+
+  const { data: row, error: e4 } = await admin
+    .from('todos').insert({ title: 'explain must not delete', user_id: userId }).select('id').single()
+  if (e4) throw e4
+  const { error: e5, status: s5 } = await admin.from('todos').delete().eq('id', row.id).explain({ analyze: true })
+  assertEq(s5, 406, 'delete explain refused')
+  assertEq(e5?.code, 'PGRST107', 'delete explain code')
+  const { error: e6, status: s6 } = await admin.rpc('add_two', { a: 1, b: 2 }).explain()
+  assertEq(s6, 406, 'rpc explain refused')
+  assertEq(e6?.code, 'PGRST107', 'rpc explain code')
+  const { data: still, error: e7 } = await admin.from('todos').select('id').eq('id', row.id)
+  if (e7) throw e7
+  assertEq(still.length, 1, 'row survives delete explain')
+  await admin.from('todos').delete().eq('id', row.id)
 })
 
 // --- signOut scope=local ---

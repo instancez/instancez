@@ -207,7 +207,7 @@ The client can request a slice with an HTTP `Range` header (`Range-Unit: items`)
 const { data } = await supabase.from('todos').select('*').order('priority').range(2, 3)
 ```
 
-The response includes a `Content-Range` header: `2-3/*` (or `2-3/N` when a count is requested).
+The response includes a `Content-Range` header: `2-3/*` (or `2-3/N` when a count is requested). An empty page sends `*/*`, or `*/N` with a count, as PostgREST does.
 
 ### Count
 
@@ -231,9 +231,11 @@ Count modes:
 
 | Mode | Behavior |
 |------|----------|
-| `exact` | `COUNT(*)` over the same joins and filters as the rows (`!inner` embeds, embed filters, `Accept-Profile` schema), in the same transaction. |
+| `exact` | `COUNT(*)` over the same joins and filters as the rows (`!inner` embeds, `!inner` embed filters, `Accept-Profile` schema), in the same transaction. |
 | `planned` | Uses the Postgres query planner estimate |
 | `estimated` | `pg_class.reltuples` for an unfiltered read of a plain table; the planner estimate otherwise. |
+
+On a setof RPC, `exact` counts the function's result after filters in the same statement as the rows, so the function runs once. `planned` and `estimated` use the planner estimate and don't run the function again.
 
 ## Embeds (joins)
 
@@ -268,6 +270,8 @@ By default, embeds use a LEFT join — rows with no matching related record are 
 // GET /rest/v1/todos?select=title,comments!inner(body)
 ```
 
+A filter on a non-`!inner` embed (`?select=*,author(name)&author.name=eq.bob`) only filters the embedded rows. A to-one embed that doesn't match becomes `null` and a to-many embed becomes `[]`, and every parent row is still returned. Add `!inner` to filter the parents.
+
 ### Alias
 
 Rename the embed key in the response:
@@ -298,11 +302,15 @@ GET /rest/v1/comments?select=body,...todos(title)
 
 ### Embed-scoped filters, order, and limit
 
-Filter, order, or paginate within a has-many embed using `<embed>.` prefixes:
+Filter, order, or paginate within an embed using `<embed>.` prefixes:
 
 ```
 GET /rest/v1/todos?select=title,comments(body)&comments.body=like.%important%&comments.order=created_at.desc&comments.limit=5
 ```
+
+Filters (including `<embed>.or=(...)` and `<embed>.and=(...)`) apply to any embed, spreads included. `order`, `limit`, and `offset` apply to has-many embeds only; on a belongs-to embed they return 400.
+
+A filter on a spread embed doesn't drop the parent either: when the embed doesn't match, its spread columns come back `null`.
 
 ### Nested embeds
 
@@ -338,6 +346,21 @@ Supported aggregates: `count`, `sum`, `avg`, `min`, `max`.
 // average with cast
 // GET /rest/v1/todos?select=avg_priority:priority.avg()::numeric
 ```
+
+### Grouping by an embed
+
+An embed next to an aggregate is a group key, as in PostgREST. This works for belongs-to, has-many, and spread embeds:
+
+```
+GET /rest/v1/orders?select=amount.sum(),customers(name)
+// response: [{ sum: 100, customers: { name: "Customer A" } }, ...]
+```
+
+Embeds in an aggregate query are returned as `jsonb`, so their object keys may come back in a different order.
+
+Aggregates also work on setof RPC results (`rpc/fn?select=status,count()`), grouped by the plain columns. On RPC results an aggregate can't be combined with an embed yet; that returns 400.
+
+`*` can't be combined with an aggregate (`select=*,count()`), since it gives no columns to group by. That returns 400; list the columns instead. As in PostgREST, `count=exact`, `planned` and `estimated` on an aggregate query count the rows matching the filters, not the groups: `GROUP BY` and `having` don't change the total.
 
 ### HAVING
 

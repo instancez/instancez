@@ -1,0 +1,114 @@
+package http
+
+import (
+	"reflect"
+	"testing"
+)
+
+func TestParsePlanAccept(t *testing.T) {
+	cases := []struct {
+		accept  string
+		isPlan  bool
+		wantErr bool
+		want    planRequest
+	}{
+		{`application/vnd.pgrst.plan+text; for="application/json"; options=;`, true, false, planRequest{"text", "application/json", nil}},
+		{`application/vnd.pgrst.plan+json; for="application/json"; options=analyze|verbose|settings|buffers|wal;`, true, false,
+			planRequest{"json", "application/json", []string{"ANALYZE", "VERBOSE", "SETTINGS", "BUFFERS", "WAL"}}},
+		{`application/vnd.pgrst.plan+text; for="application/vnd.pgrst.object+json"; options=analyze;`, true, false,
+			planRequest{"text", "application/vnd.pgrst.object+json", []string{"ANALYZE"}}},
+		{`application/vnd.pgrst.plan`, true, false, planRequest{"text", "application/json", nil}},
+		{`  Application/Vnd.Pgrst.Plan+JSON  `, true, false, planRequest{"json", "application/json", nil}},
+		{`application/vnd.pgrst.plan+json; for="text/csv; charset=utf-8"`, true, false, planRequest{"json", "text/csv", nil}},
+		{`application/vnd.pgrst.plan; FOR=Application/JSON; OPTIONS=Analyze`, true, false, planRequest{"text", "application/json", []string{"ANALYZE"}}},
+		{`application/vnd.pgrst.plan; for=""; options=`, true, false, planRequest{"text", "application/json", nil}},
+		{`application/vnd.pgrst.plan; options=analyze|analyze|bogus||`, true, false, planRequest{"text", "application/json", []string{"ANALYZE"}}},
+		{`application/vnd.pgrst.plan; for="text/xml"`, true, true, planRequest{}},
+		{`application/vnd.pgrst.plan+yaml`, false, false, planRequest{}},
+		{`application/vnd.pgrst.plan; options=analyze); DROP TABLE x`, true, false, planRequest{"text", "application/json", nil}},
+		{`application/vnd.pgrst.plan; for="application/json`, true, false, planRequest{"text", "application/json", nil}},
+		{`application/json`, false, false, planRequest{}},
+		{`;`, false, false, planRequest{}},
+		{``, false, false, planRequest{}},
+	}
+	for _, c := range cases {
+		got, isPlan, err := parsePlanAccept(c.accept)
+		if isPlan != c.isPlan || (err != nil) != c.wantErr {
+			t.Fatalf("%q: isPlan=%v err=%v", c.accept, isPlan, err)
+		}
+		if c.isPlan && !c.wantErr && !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%q: got %+v want %+v", c.accept, got, c.want)
+		}
+	}
+}
+
+func TestPlanRequestExplainSQL(t *testing.T) {
+	p := planRequest{"json", "application/json", []string{"ANALYZE", "BUFFERS"}}
+	if got := p.explainSQL("SELECT 1"); got != "EXPLAIN (FORMAT JSON, ANALYZE, BUFFERS) SELECT 1" {
+		t.Errorf("got %q", got)
+	}
+	if got := p.contentType(); got != `application/vnd.pgrst.plan+json; for="application/json"; charset=utf-8` {
+		t.Errorf("got %q", got)
+	}
+	if got := (planRequest{format: "text", forType: "application/json"}).explainSQL("SELECT 1"); got != "EXPLAIN (FORMAT TEXT) SELECT 1" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestPlanRequestValidate(t *testing.T) {
+	for opts, ok := range map[string]bool{"": true, "analyze|wal": true, "wal|analyze": true, "buffers": true, "wal": false, "wal|buffers|verbose": false} {
+		p, _, _ := parsePlanAccept("application/vnd.pgrst.plan; options=" + opts)
+		if err := p.validate(); (err == nil) != ok {
+			t.Errorf("options=%q: err=%v", opts, err)
+		}
+	}
+}
+
+func TestHasPlanMediaType(t *testing.T) {
+	for accept, want := range map[string]bool{
+		"application/vnd.pgrst.plan+json, application/json":                                     true,
+		"application/json,Application/Vnd.Pgrst.Plan":                                           true,
+		`application/json;q=0.9, application/vnd.pgrst.plan; for="application/json"; options=;`: true,
+		"application/json, text/csv":                                                            false,
+		`text/plain; x="a, application/vnd.pgrst.plan"`:                                         false,
+		",,": false,
+		"":   false,
+	} {
+		if got := hasPlanMediaType(accept); got != want {
+			t.Errorf("%q: got %v", accept, got)
+		}
+	}
+}
+
+// Mirrors PostgREST: wai-extra orders by q then specificity (params minus stars), stably, and the first servable entry wins.
+func TestNegotiatePlan(t *testing.T) {
+	cases := []struct {
+		accept  string
+		isPlan  bool
+		wantErr bool
+		format  string
+	}{
+		{"application/vnd.pgrst.plan+json, application/json", true, false, "json"},
+		{"application/json, application/vnd.pgrst.plan+json", false, false, ""},
+		{`application/json, application/vnd.pgrst.plan+text; for="application/json"`, true, false, "text"},
+		{"application/json;q=0.5, application/vnd.pgrst.plan", true, false, "text"},
+		{"application/vnd.pgrst.plan;q=0.1, text/csv", false, false, ""},
+		{"text/html, application/vnd.pgrst.plan+json", true, false, "json"},
+		{"*/*, application/vnd.pgrst.plan+json", true, false, "json"},
+		{"application/vnd.pgrst.plan+yaml, application/json", false, false, ""},
+		{`application/vnd.pgrst.plan; for="text/xml", application/json`, true, true, ""},
+		{"application/vnd.pgrst.plan;q=abc, application/json;q=NaN", true, false, "text"},
+		{"text/html", false, false, ""},
+		{",,", false, false, ""},
+		{"", false, false, ""},
+	}
+	for _, c := range cases {
+		got, isPlan, err := negotiatePlan(c.accept)
+		if isPlan != c.isPlan || (err != nil) != c.wantErr {
+			t.Fatalf("%q: isPlan=%v err=%v", c.accept, isPlan, err)
+		}
+		if c.isPlan && !c.wantErr && got.format != c.format {
+			t.Errorf("%q: format %q, want %q", c.accept, got.format, c.format)
+		}
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -77,12 +78,12 @@ func (h *CRUDHandler) Mount(root *gin.RouterGroup) {
 	// anon calls still parse a token if present; per-function
 	// auth_required enforcement happens inside handleRPC.
 	rpc := h.handleRPC()
-	rest.POST("/rpc/:name", jwtAuth(h.jwtKeys, false), rpc)
-	rest.GET("/rpc/:name", jwtAuth(h.jwtKeys, false), rpc)
+	rest.POST("/rpc/:name", rejectPlan, jwtAuth(h.jwtKeys, false), rpc)
+	rest.GET("/rpc/:name", rejectPlan, jwtAuth(h.jwtKeys, false), rpc)
 	// HEAD reuses the same handler so supabase-js .rpc('fn', {}, { head: true })
 	// picks up Content-Range without streaming the row body. As with the CRUD
 	// list path, net/http strips the body after the status + headers fly.
-	rest.HEAD("/rpc/:name", jwtAuth(h.jwtKeys, false), rpc)
+	rest.HEAD("/rpc/:name", rejectPlan, jwtAuth(h.jwtKeys, false), rpc)
 
 	for tableName, table := range h.cfg.Tables {
 		name := tableName
@@ -90,19 +91,19 @@ func (h *CRUDHandler) Mount(root *gin.RouterGroup) {
 		group := rest.Group("/" + name)
 		// JWT not required at HTTP level — anon falls through with
 		// session.Role="anon" and SQL-layer grants + RLS gate access.
-		// Matches Supabase's PostgREST behavior.
-		group.Use(jwtAuth(h.jwtKeys, false))
+		// Matches Supabase's PostgREST behavior. Writes refuse plans before auth.
+		auth := jwtAuth(h.jwtKeys, false)
 
 		list := h.handleList(name, t)
-		group.GET("", list)
+		group.GET("", auth, list)
 		// HEAD reuses the list handler: Gin/net/http will write the status
 		// line and headers (Content-Range, Content-Type) but strip the body
 		// so clients can fetch counts and pagination metadata cheaply.
-		group.HEAD("", list)
-		group.POST("", h.handleCreate(name, t))
-		group.PUT("", h.handleUpsert(name, t))
-		group.PATCH("", h.handleUpdate(name, t))
-		group.DELETE("", h.handleDelete(name, t))
+		group.HEAD("", auth, list)
+		group.POST("", rejectPlan, auth, h.handleCreate(name, t))
+		group.PUT("", rejectPlan, auth, h.handleUpsert(name, t))
+		group.PATCH("", rejectPlan, auth, h.handleUpdate(name, t))
+		group.DELETE("", rejectPlan, auth, h.handleDelete(name, t))
 	}
 }
 
@@ -118,9 +119,16 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 		}
 
 		accept := c.GetHeader("Accept")
-		if strings.HasPrefix(accept, "application/vnd.pgrst.plan") && !isAdmin(c) {
+		plan, isPlan, planErr := negotiatePlan(accept)
+		if isPlan && (!isAdmin(c) || planErr != nil) {
 			pgJSON(c, 406, "PGRST107", "None of these media types are available: "+accept, "", "")
 			return
+		}
+		if isPlan {
+			if err := plan.validate(); err != nil {
+				pgJSON(c, 400, "22023", err.Error(), "", "")
+				return
+			}
 		}
 
 		// Parse query params
@@ -164,39 +172,38 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 			return
 		}
 
-		// EXPLAIN plan response
-		if accept == "application/vnd.pgrst.plan+json" || accept == "application/vnd.pgrst.plan+text" {
-			explainOpts := "FORMAT JSON"
-			if strings.Contains(accept, "+text") {
-				explainOpts = "FORMAT TEXT"
-			}
-			explainQuery := fmt.Sprintf("EXPLAIN (%s) %s", explainOpts, query)
+		if isPlan {
 			tx, err := h.db.Begin(ctx)
 			if err != nil {
 				problemJSON(c, 500, "internal", "Failed to start transaction")
 				return
 			}
+			// ANALYZE runs the query, so never commit.
 			defer func() { _ = tx.Rollback(ctx) }()
-			rows, err := tx.Query(ctx, explainQuery, args...)
+			applySchemaSearchPath(c, ctx, tx)
+			rows, err := tx.Query(ctx, plan.explainSQL(query), args...)
 			if err != nil {
 				handleDBError(c, err)
 				return
 			}
-			if err := tx.Commit(ctx); err != nil {
-				problemJSON(c, 500, "internal", "Failed to commit explain transaction")
+			if plan.format == "text" {
+				lines := make([]string, 0, len(rows))
+				for _, r := range rows {
+					lines = append(lines, fmt.Sprintf("%v", r["QUERY PLAN"]))
+				}
+				c.Data(200, plan.contentType(), []byte(strings.Join(lines, "\n")))
 				return
 			}
-			if strings.Contains(accept, "+text") {
-				var lines []string
-				for _, r := range rows {
-					for _, v := range r {
-						lines = append(lines, fmt.Sprintf("%v", v))
-					}
-				}
-				c.Data(200, "application/vnd.pgrst.plan+text", []byte(strings.Join(lines, "\n")))
-			} else {
-				c.JSON(200, rows)
+			var body any = []any{}
+			if len(rows) > 0 {
+				body = rows[0]["QUERY PLAN"]
 			}
+			out, err := json.Marshal(body)
+			if err != nil {
+				problemJSON(c, 500, "internal", "Failed to encode plan")
+				return
+			}
+			c.Data(200, plan.contentType(), out)
 			return
 		}
 
@@ -233,17 +240,8 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 			return
 		}
 
-		// Content-Range header
-		offset := qp.Offset
-		end := offset + len(rows) - 1
-		if len(rows) == 0 {
-			end = offset
-		}
-		if total >= 0 {
-			c.Header("Content-Range", fmt.Sprintf("%d-%d/%d", offset, end, total))
-		} else {
-			c.Header("Content-Range", fmt.Sprintf("%d-%d/*", offset, end))
-		}
+		c.Header("Content-Range", contentRange(qp.Offset, len(rows), total))
+		end := max(qp.Offset, qp.Offset+len(rows)-1)
 
 		// GeoJSON response
 		if accept == "application/geo+json" {
@@ -655,13 +653,28 @@ func (h *CRUDHandler) handleDelete(tableName string, table domain.Table) gin.Han
 	}
 }
 
-// executeCount counts the rows the list query would return, using its joins and filters in the caller's tx.
+// contentRange mirrors PostgREST: "*" for an empty page, "*" total when uncounted (total < 0).
+func contentRange(offset, n, total int) string {
+	rng, tot := "*", "*"
+	if n > 0 && total != 0 {
+		rng = fmt.Sprintf("%d-%d", offset, offset+n-1)
+	}
+	if total >= 0 {
+		tot = strconv.Itoa(total)
+	}
+	return rng + "/" + tot
+}
+
+// executeCount counts the rows the list query matches, ignoring GROUP BY and HAVING as PostgREST does.
 func executeCount(ctx context.Context, tx domain.Tx, tableName string, table domain.Table, qp *QueryParams, allTbls map[string]domain.Table, mode string) (int, error) {
 	if mode == "estimated" && plainScan(qp) {
 		return queryCount(ctx, tx, "SELECT reltuples::bigint AS count FROM pg_class WHERE oid = to_regclass($1)", table.EffectiveSchema()+"."+tableName)
 	}
 	unpaged := *qp
 	unpaged.Limit, unpaged.Offset, unpaged.Order = postgrest.NoLimit, 0, nil
+	if slices.ContainsFunc(qp.Select, postgrest.IsAggSelectEntry) {
+		unpaged.Select, unpaged.Having = nil, nil
+	}
 	inner, args := postgrest.BuildSelectQueryFull(tableName, &unpaged, table, allTbls)
 	switch mode {
 	case "exact":
@@ -907,7 +920,8 @@ func handleDBError(c *gin.Context, err error) {
 			status = 409
 		case "25006": // read_only_sql_transaction
 			status = 405
-		case "42601": // syntax_error
+		case "42601", // syntax_error
+			"42803": // grouping_error
 			status = 400
 		case "42602": // invalid_name
 			status = 400
@@ -1017,6 +1031,9 @@ func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allT
 	// Parse select
 	if sel := c.Query("select"); sel != "" {
 		qp.Select = postgrest.ParseSelectParam(sel)
+		if err := postgrest.CheckStarWithAggregate(qp.Select); err != nil {
+			return nil, err
+		}
 		for _, s := range qp.Select {
 			if strings.Contains(s, "(") && !postgrest.IsAggSelectEntry(s) {
 				continue // embed — validated in ResolveEmbeds

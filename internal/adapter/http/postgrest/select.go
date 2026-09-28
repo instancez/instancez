@@ -293,3 +293,20 @@ func ParseOrderValueWith(val string, validate ColValidator) ([]OrderClause, erro
 	}
 	return out, nil
 }
+
+// CheckStarWithAggregate rejects `*` next to an aggregate, since `*` gives no group key.
+func CheckStarWithAggregate(entries []string) error {
+	var star, agg bool
+	for _, e := range entries {
+		if strings.Contains(e, "(") && !IsAggSelectEntry(e) {
+			continue
+		}
+		item := ParseSelectItem(e)
+		star = star || item.Col == "*"
+		agg = agg || item.Agg != ""
+	}
+	if star && agg {
+		return fmt.Errorf("select can't combine * with an aggregate; list the columns to group by")
+	}
+	return nil
+}

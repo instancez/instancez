@@ -3,12 +3,12 @@
 package pgrupstream
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -138,7 +138,7 @@ func TestHardening_CountMatchesRows(t *testing.T) {
 		wantRows        int
 	}{
 		{"/rest/v1/users?select=username,messages!inner(id)", "0-0/1", 1},
-		{"/rest/v1/messages?select=id,users!inner(username)&users.status=eq.OFFLINE", "0-0/0", 0},
+		{"/rest/v1/messages?select=id,users!inner(username)&users.status=eq.OFFLINE", "*/0", 0},
 		{"/rest/v1/users?select=username&limit=2", "0-1/5", 2},
 	}
 	for _, c := range cases {
@@ -147,11 +147,26 @@ func TestHardening_CountMatchesRows(t *testing.T) {
 		require.Len(t, rowsOf(t, raw), c.wantRows, c.path)
 		require.Equal(t, c.wantRange, hdr.Get("Content-Range"), c.path)
 	}
-	// Known builder bug: a non-inner to-one embed filter drops parent rows, so only check count == rows.
+	// Non-inner to-one filter nulls the embed and keeps every parent row.
 	status, hdr, raw := call(t, "GET", testTS.URL+"/rest/v1/messages?select=id,users(username)&users.username=eq.kiwicopple", "", exact, false)
 	require.Equal(t, 200, status, "%s", raw)
-	cr := hdr.Get("Content-Range")
-	require.Equal(t, strconv.Itoa(len(rowsOf(t, raw))), cr[strings.LastIndex(cr, "/")+1:], cr)
+	rows := rowsOf(t, raw)
+	require.Len(t, rows, 2)
+	require.Equal(t, "0-1/2", hdr.Get("Content-Range"))
+	for _, r := range rows {
+		require.Contains(t, r, "users")
+		require.Nil(t, r["users"], "unmatched to-one embed must be null: %v", r)
+	}
+	_, _, raw = call(t, "GET", testTS.URL+"/rest/v1/messages?select=id,users(username)&users.username=eq.supabot", "", exact, false)
+	for _, r := range rowsOf(t, raw) {
+		require.Equal(t, map[string]any{"username": "supabot"}, r["users"])
+	}
+	status, hdr, raw = call(t, "GET", testTS.URL+"/rest/v1/users?select=username,messages(id)&messages.id=eq.-1&username=eq.supabot", "", exact, false)
+	require.Equal(t, 200, status, "%s", raw)
+	rows = rowsOf(t, raw)
+	require.Len(t, rows, 1)
+	require.Equal(t, []any{}, rows[0]["messages"])
+	require.Equal(t, "0-0/1", hdr.Get("Content-Range"))
 
 	_, hdr, _ = call(t, "GET", testTS.URL+"/rest/v1/users?select=username,messages!inner(id)", "", map[string]string{"Prefer": "count=planned"}, false)
 	require.Regexp(t, `^0-0/\d+$`, hdr.Get("Content-Range"))
@@ -167,6 +182,69 @@ func TestHardening_RPCCountRunsInReadOnlyTx(t *testing.T) {
 	require.Equal(t, "0-4/5", hdr.Get("Content-Range"))
 }
 
+func TestHardening_RPCCountRunsFunctionOnce(t *testing.T) {
+	if testTS == nil {
+		t.Skip("no upstream")
+	}
+	calls := func() int64 {
+		row, err := testDB.QueryRow(context.Background(), "SELECT n FROM rpc_calls")
+		require.NoError(t, err)
+		return row["n"].(int64)
+	}
+	cases := []struct {
+		query, prefer, wantRange string
+		wantRows                 int
+	}{
+		{"", "count=exact", "0-4/5", 5},
+		{"?username=neq.supabot&order=username.desc&limit=2", "count=exact", "0-1/4", 2},
+		{"?offset=10", "count=exact", "*/5", 0},
+		{"?limit=0", "count=exact", "*/5", 0},
+		{"?username=eq.nobody", "count=exact", "*/0", 0},
+		{"?select=username,messages(id)&username=eq.supabot", "count=exact", "0-0/1", 1},
+		{"?select=count()", "count=exact", "0-0/5", 1},
+		{"?select=status,count()", "count=exact", "0-1/5", 2},
+		{"?select=status,count()&having=count.gt.100", "count=exact", "*/5", 0},
+		{"?username=eq.nobody", "", "*/*", 0},
+		{"?select=status,count()", "count=planned", `^0-1/\d+$`, 2},
+		{"", "count=planned", `^0-4/\d+$`, 5},
+		{"", "count=estimated", `^0-4/\d+$`, 5},
+		{"?username=neq.supabot", "count=planned", `^0-3/\d+$`, 4},
+		{"", "", "0-4/*", 5},
+	}
+	for _, c := range cases {
+		before := calls()
+		hdrs := map[string]string{}
+		if c.prefer != "" {
+			hdrs["Prefer"] = c.prefer
+		}
+		status, hdr, raw := call(t, "POST", testTS.URL+"/rest/v1/rpc/counted_users"+c.query, `{}`, hdrs, false)
+		require.Equal(t, 200, status, "%s: %s", c.query, raw)
+		rows := rowsOf(t, raw)
+		require.Len(t, rows, c.wantRows, c.query)
+		require.NotContains(t, string(raw), "__inz_")
+		if strings.HasPrefix(c.wantRange, "^") {
+			require.Regexp(t, c.wantRange, hdr.Get("Content-Range"), c.query)
+		} else {
+			require.Equal(t, c.wantRange, hdr.Get("Content-Range"), c.query)
+		}
+		require.Equal(t, before+1, calls(), "%s %s: function must run exactly once", c.query, c.prefer)
+	}
+
+	_, _, raw := call(t, "POST", testTS.URL+"/rest/v1/rpc/counted_users?order=username.desc&select=username", `{}`, map[string]string{"Prefer": "count=exact"}, false)
+	got := rowsOf(t, raw)
+	require.Len(t, got, 5)
+	require.Equal(t, "supabot", got[0]["username"])
+	require.Equal(t, "acupofjose", got[4]["username"])
+
+	status, _, raw := call(t, "POST", testTS.URL+"/rest/v1/rpc/counted_users?username=eq.supabot", `{}`,
+		map[string]string{"Prefer": "count=exact", "Accept": "application/vnd.pgrst.object+json"}, false)
+	require.Equal(t, 200, status, "%s", raw)
+	var obj map[string]any
+	require.NoError(t, json.Unmarshal(raw, &obj), "%s", raw)
+	require.Equal(t, "supabot", obj["username"])
+	require.NotContains(t, string(raw), "__inz_")
+}
+
 func TestHardening_PlanOnlyForServiceRole(t *testing.T) {
 	if testTS == nil {
 		t.Skip("no upstream")
@@ -178,6 +256,101 @@ func TestHardening_PlanOnlyForServiceRole(t *testing.T) {
 	status, _, raw = call(t, "GET", testTS.URL+"/rest/v1/users", "", plan, false)
 	require.Equal(t, 200, status, "%s", raw)
 	require.Contains(t, string(raw), "Plan")
+
+	// supabase-js .explain() default header; the JSON body is the bare EXPLAIN document.
+	status, hdr, raw := call(t, "GET", testTS.URL+"/rest/v1/users", "", map[string]string{
+		"Accept": `application/vnd.pgrst.plan+json; for="application/json"; options=;`}, false)
+	require.Equal(t, 200, status, "%s", raw)
+	require.Contains(t, hdr.Get("Content-Type"), "application/vnd.pgrst.plan+json")
+	var doc []map[string]any
+	require.NoError(t, json.Unmarshal(raw, &doc), "%s", raw)
+	require.Contains(t, doc[0], "Plan")
+	require.NotContains(t, doc[0], "Execution Time")
+
+	status, hdr, raw = call(t, "GET", testTS.URL+"/rest/v1/users", "", map[string]string{
+		"Accept": `application/vnd.pgrst.plan+text; for="application/json"; options=analyze|buffers;`}, false)
+	require.Equal(t, 200, status, "%s", raw)
+	require.Contains(t, hdr.Get("Content-Type"), "application/vnd.pgrst.plan+text")
+	require.Contains(t, string(raw), "Execution Time")
+	require.Contains(t, string(raw), "Buffers")
+
+	// A comma list is negotiated like PostgREST: the first entry after q and specificity ordering wins.
+	for accept, wantCT := range map[string]string{
+		"application/vnd.pgrst.plan+json, application/json":                         "application/vnd.pgrst.plan+json",
+		"application/json, application/vnd.pgrst.plan+json":                         "application/json",
+		`application/json, application/vnd.pgrst.plan+text; for="application/json"`: "application/vnd.pgrst.plan+text",
+	} {
+		status, hdr, raw = call(t, "GET", testTS.URL+"/rest/v1/users", "", map[string]string{"Accept": accept}, false)
+		require.Equal(t, 200, status, "%s: %s", accept, raw)
+		require.Contains(t, hdr.Get("Content-Type"), wantCT, accept)
+	}
+
+	status, _, raw = call(t, "GET", testTS.URL+"/rest/v1/users", "", map[string]string{
+		"Accept": `application/vnd.pgrst.plan+text; for="application/json"; options=wal;`}, false)
+	require.Equal(t, 400, status, "%s", raw)
+	require.Contains(t, string(raw), "22023")
+
+	status, _, _ = call(t, "GET", testTS.URL+"/rest/v1/users", "", map[string]string{"Accept": `application/vnd.pgrst.plan; for="text/xml"`}, false)
+	require.Equal(t, 406, status)
+	status, _, _ = call(t, "GET", testTS.URL+"/rest/v1/users", "", map[string]string{"Accept": "Application/Vnd.Pgrst.Plan"}, true)
+	require.Equal(t, 406, status)
+}
+
+func TestHardening_PlanRefusedOnWritesAndRPC(t *testing.T) {
+	if testTS == nil {
+		t.Skip("no upstream")
+	}
+	channels := func() []map[string]any {
+		status, _, raw := call(t, "GET", testTS.URL+"/rest/v1/channels?select=id,slug&order=id", "", nil, false)
+		require.Equal(t, 200, status, "%s", raw)
+		return rowsOf(t, raw)
+	}
+	before := channels()
+	require.NotEmpty(t, before)
+	for _, accept := range []string{`application/vnd.pgrst.plan+text; for="application/json"; options=analyze;`, "Application/Vnd.Pgrst.Plan+Json"} {
+		for _, anon := range []bool{false, true} {
+			plan := map[string]string{"Accept": accept, "Prefer": "return=representation,resolution=merge-duplicates"}
+			for _, r := range []struct{ method, path, body string }{
+				{"POST", "/rest/v1/channels", `{"slug":"planned"}`},
+				{"PUT", "/rest/v1/channels?id=eq.1", `{"id":1,"slug":"planned"}`},
+				{"PATCH", "/rest/v1/channels?id=eq.1", `{"slug":"planned"}`},
+				{"DELETE", "/rest/v1/channels?id=eq.1", ""},
+				{"GET", "/rest/v1/rpc/greet", ""},
+				{"HEAD", "/rest/v1/rpc/greet", ""},
+			} {
+				status, _, raw := call(t, r.method, testTS.URL+r.path, r.body, plan, anon)
+				require.Equal(t, 406, status, "%s %s anon=%v: %s", r.method, r.path, anon, raw)
+				if r.method != "HEAD" {
+					require.Contains(t, string(raw), "PGRST107")
+				}
+			}
+			// A volatile RPC that ran would take 2s.
+			start := time.Now()
+			status, _, raw := call(t, "POST", testTS.URL+"/rest/v1/rpc/sleep_for", `{"secs":2}`, plan, anon)
+			require.Equal(t, 406, status, "%s", raw)
+			require.Less(t, time.Since(start), time.Second)
+		}
+	}
+	// A malformed token or an Accept list that only mentions a plan must still be refused before auth or SQL.
+	for _, h := range []map[string]string{
+		{"Accept": "application/vnd.pgrst.plan+json", "Authorization": "Bearer not.a.jwt"},
+		{"Accept": "application/vnd.pgrst.plan+json, application/json", "Prefer": "return=representation"},
+		{"Accept": "application/json, Application/Vnd.Pgrst.Plan", "Prefer": "return=representation"},
+	} {
+		anon := h["Authorization"] != "" // the secret apikey would skip token checks
+		for _, r := range []struct{ method, path, body string }{
+			{"POST", "/rest/v1/channels", `{"slug":"planned"}`},
+			{"PUT", "/rest/v1/channels?id=eq.1", `{"id":1,"slug":"planned"}`},
+			{"PATCH", "/rest/v1/channels?id=eq.1", `{"slug":"planned"}`},
+			{"DELETE", "/rest/v1/channels?id=eq.1", ""},
+			{"POST", "/rest/v1/rpc/greet", `{}`},
+		} {
+			status, _, raw := call(t, r.method, testTS.URL+r.path, r.body, h, anon)
+			require.Equal(t, 406, status, "%s %s %v: %s", r.method, r.path, h, raw)
+			require.Contains(t, string(raw), "PGRST107")
+		}
+	}
+	require.Equal(t, before, channels())
 }
 
 func TestHardening_StatementTimeout(t *testing.T) {

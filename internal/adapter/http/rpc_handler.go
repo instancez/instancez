@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -73,7 +74,8 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 		// Arg names were already checked against fn.Args so the quoted
 		// identifiers cannot carry anything unexpected, but we double-
 		// quote them anyway as defense-in-depth.
-		sql, placeholders := buildRPCCall(name, fn, callArgs)
+		callSQL, placeholders := buildRPCCall(name, fn, callArgs)
+		sql, callArgCount := callSQL, len(placeholders)
 
 		// For setof RPC, supabase-js may chain .eq/.order/.limit/.offset
 		// on top of the call; PostgREST runs these against the function
@@ -149,16 +151,24 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 			return
 
 		case "setof":
-			rows, err := tx.Query(ctx, sql, placeholders...)
+			countMode := parseCountPrefer(joinPrefer(c))
+			query := sql
+			if countMode == "exact" {
+				query = buildRPCCountedQuery(callSQL, rpcChain, callArgCount+1)
+			}
+			// nosemgrep -- query uses validated identifiers; values are bound args
+			rows, err := tx.Query(ctx, query, placeholders...)
 			if err != nil {
 				h.logger.Error("rpc setof error", "fn", name, "error", err)
 				handleDBError(c, err)
 				return
 			}
 			total := -1
-			if parseCountPrefer(joinPrefer(c)) == "exact" {
-				total, err = executeRPCCount(ctx, tx, name, fn, callArgs, rpcChain)
-				if err != nil {
+			switch countMode {
+			case "exact":
+				rows, total = splitRPCTotal(rows)
+			case "planned", "estimated":
+				if total, err = executeRPCPlannedCount(ctx, tx, callSQL, placeholders[:callArgCount:callArgCount], rpcChain); err != nil {
 					h.logger.Error("rpc count error", "fn", name, "error", err)
 					handleDBError(c, err)
 					return
@@ -176,15 +186,7 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 			if rpcChain != nil {
 				offset = rpcChain.offset
 			}
-			end := offset + len(rows) - 1
-			if len(rows) == 0 {
-				end = offset
-			}
-			if total >= 0 {
-				c.Header("Content-Range", fmt.Sprintf("%d-%d/%d", offset, end, total))
-			} else {
-				c.Header("Content-Range", fmt.Sprintf("%d-%d/*", offset, end))
-			}
+			c.Header("Content-Range", contentRange(offset, len(rows), total))
 			if c.GetHeader("Accept") == "application/vnd.pgrst.object+json" {
 				if len(rows) == 0 {
 					pgJSON(c, http.StatusNotAcceptable, "PGRST116",
@@ -364,19 +366,21 @@ func buildRPCCall(name string, fn domain.Function, callArgs map[string]any) (str
 }
 
 // rpcChainSQL carries the parsed pieces of a chained setof RPC call. We
-// keep the WhereNode tree (not just its rendered SQL) so executeRPCCount
+// keep the WhereNode tree (not just its rendered SQL) so the count query
 // can replay it with a fresh placeholder numbering. orderClauses is kept
 // structured for the same reason even though order never carries params.
 type rpcChainSQL struct {
 	where       *postgrest.WhereNode
 	having      *postgrest.WhereNode   // HAVING clause for aggregate filtering
+	groupBy     []string               // non-aggregate select items when an aggregate is present
 	selectItems []postgrest.SelectItem // non-empty → project these instead of SELECT *
 	embeds      []postgrest.Embed      // resolved embeds when RPC returns SETOF <known table>
 	order       []postgrest.OrderClause
 	hasLimit    bool
 	limit       int
 	hasOffset   bool
-	offset      int // echoed into Content-Range as "start-end/total"
+	offset      int    // echoed into Content-Range as "start-end/total"
+	extraCols   string // appended to the projection; forces the _rpc wrapper
 }
 
 // resolveRPCTargetTable resolves the table behind a SETOF <table> return type.
@@ -416,8 +420,12 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 	}
 
 	if sel := c.Query("select"); sel != "" {
+		entries := postgrest.ParseSelectParam(sel)
+		if err := postgrest.CheckStarWithAggregate(entries); err != nil {
+			return nil, nil, err
+		}
 		var embedParams []string
-		for _, raw := range postgrest.ParseSelectParam(sel) {
+		for _, raw := range entries {
 			if raw == "" {
 				continue
 			}
@@ -463,6 +471,15 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 				return nil, nil, fmt.Errorf("invalid embed: %w", err)
 			}
 			chain.embeds = resolved
+		}
+		aggregated := slices.ContainsFunc(chain.selectItems, func(it postgrest.SelectItem) bool { return it.Agg != "" })
+		if aggregated && len(chain.embeds) > 0 {
+			return nil, nil, fmt.Errorf("aggregates on RPC results can't be combined with embeds")
+		}
+		for _, it := range chain.selectItems {
+			if aggregated && it.Agg == "" {
+				chain.groupBy = append(chain.groupBy, postgrest.RenderSelectItemGroupByExpr("_rpc", it))
+			}
 		}
 	}
 
@@ -555,6 +572,10 @@ func renderRPCChain(chain *rpcChainSQL, argIdx int) (string, []any) {
 			args = append(args, whereArgs...)
 			argIdx = next
 		}
+	}
+	if len(chain.groupBy) > 0 {
+		b.WriteString(" GROUP BY ")
+		b.WriteString(strings.Join(chain.groupBy, ", "))
 	}
 	if chain.having != nil {
 		sql, havingArgs, next := chain.having.BuildSQL(argIdx)
@@ -657,6 +678,12 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 		}
 		projection = strings.Join(parts, ", ")
 	}
+	if chain.extraCols != "" {
+		if projection == "*" {
+			projection = "_rpc.*"
+		}
+		projection += ", " + chain.extraCols
+	}
 
 	if suffix == "" && projection == "*" && !hasEmbeds {
 		return callSQL, nil
@@ -722,8 +749,8 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 				for _, c := range emb.Columns {
 					embCols = append(embCols, fmt.Sprintf("'%s', %s.%s", c, alias, c))
 				}
-				embedSelectParts = append(embedSelectParts,
-					fmt.Sprintf("json_build_object(%s) AS %s", strings.Join(embCols, ", "), emb.Name))
+				obj := postgrest.NullIfNoMatch(alias, emb.RefColumn, fmt.Sprintf("json_build_object(%s)", strings.Join(embCols, ", ")))
+				embedSelectParts = append(embedSelectParts, obj+" AS "+emb.Name)
 			}
 		}
 	}
@@ -745,13 +772,48 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 	return sql, embedArgs
 }
 
-// executeRPCCount counts the filtered, unpaged RPC result inside the data tx.
-func executeRPCCount(ctx context.Context, tx domain.Tx, name string, fn domain.Function, callArgs map[string]any, chain *rpcChainSQL) (int, error) {
-	callSQL, args := buildRPCCall(name, fn, callArgs)
-	countChain := &rpcChainSQL{}
-	if chain != nil {
-		countChain.where = chain.where
+// buildRPCCountedQuery runs the call once in a CTE and joins the unpaged count to the page.
+func buildRPCCountedQuery(callSQL string, chain *rpcChainSQL, baseArgIdx int) string {
+	// ponytail: count=exact loses alias ordering if RPC order gains alias support.
+	win := "row_number() OVER ()"
+	if len(chain.order) > 0 && !slices.ContainsFunc(chain.order, func(o postgrest.OrderClause) bool { return o.IsAlias }) {
+		win = "row_number() OVER (ORDER BY " + postgrest.RenderOrderBy(postgrest.QualifyOrderColumns(chain.order, "_rpc")) + ")"
 	}
-	suffix, whereArgs := renderRPCChain(countChain, len(args)+1)
-	return queryCount(ctx, tx, fmt.Sprintf("SELECT COUNT(*) AS count FROM (%s) AS _rpc%s", callSQL, suffix), append(args, whereArgs...)...)
+	paged := *chain
+	paged.extraCols = "true AS __inz_row, " + win + " AS __inz_rn"
+	data, _ := wrapRPCCallForChain("SELECT * FROM __inz_src", &paged, baseArgIdx)
+	where, _ := renderRPCChain(&rpcChainSQL{where: chain.where}, baseArgIdx)
+	return "WITH __inz_src AS MATERIALIZED (" + callSQL + ") " +
+		"SELECT _p.*, _t.__inz_total FROM (SELECT count(*) AS __inz_total FROM __inz_src AS _rpc" + where + ") _t " +
+		"LEFT JOIN (" + data + ") _p ON true ORDER BY _p.__inz_rn"
+}
+
+// splitRPCTotal strips the count helper columns and the padding row an empty page yields.
+func splitRPCTotal(rows []map[string]any) ([]map[string]any, int) {
+	total := -1
+	out := make([]map[string]any, 0, len(rows))
+	for _, r := range rows {
+		if n, ok := r["__inz_total"].(int64); ok {
+			total = int(n)
+		}
+		present := r["__inz_row"] != nil
+		delete(r, "__inz_total")
+		delete(r, "__inz_row")
+		delete(r, "__inz_rn")
+		if present {
+			out = append(out, r)
+		}
+	}
+	return out, total
+}
+
+// executeRPCPlannedCount estimates with plain EXPLAIN, which never executes the function.
+func executeRPCPlannedCount(ctx context.Context, tx domain.Tx, callSQL string, callArgs []any, chain *rpcChainSQL) (int, error) {
+	where, whereArgs := renderRPCChain(&rpcChainSQL{where: chain.where}, len(callArgs)+1)
+	// nosemgrep -- callSQL uses validated identifiers; values are bound args
+	rows, err := tx.Query(ctx, "EXPLAIN SELECT 1 FROM ("+callSQL+") AS _rpc"+where, append(callArgs, whereArgs...)...)
+	if err != nil {
+		return -1, err
+	}
+	return planRows(rows), nil
 }

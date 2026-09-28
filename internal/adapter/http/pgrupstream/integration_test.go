@@ -36,6 +36,7 @@ var (
 const testAdminKey = "pgrupstream-admin-key"
 
 const schemaSQL = `
+DROP TABLE IF EXISTS rpc_calls;
 DROP TABLE IF EXISTS messages CASCADE;
 DROP TABLE IF EXISTS channels CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
@@ -109,11 +110,22 @@ RETURNS SETOF users LANGUAGE sql STABLE AS $$
   SELECT * FROM users WHERE current_setting('transaction_read_only') = 'on'
 $$;
 
+CREATE TABLE rpc_calls (n bigint NOT NULL);
+
+-- Counts its own executions so tests can prove a counted RPC runs once.
+CREATE OR REPLACE FUNCTION public.counted_users()
+RETURNS SETOF users LANGUAGE plpgsql VOLATILE AS $$
+BEGIN
+  UPDATE rpc_calls SET n = n + 1;
+  RETURN QUERY SELECT * FROM users ORDER BY username;
+END $$;
+
 CREATE OR REPLACE FUNCTION public.sleep_for(secs float8)
 RETURNS int LANGUAGE sql VOLATILE AS $$ SELECT 1 FROM pg_sleep(secs) $$;
 `
 
 const seedSQL = `
+INSERT INTO rpc_calls VALUES (0);
 INSERT INTO users (username, status, age, nickname, tags) VALUES
   ('supabot',    'ONLINE',  1,    NULL,   '{bot}'),
   ('kiwicopple', 'OFFLINE', 30,   'kiwi', '{admin,founder}'),
@@ -224,6 +236,11 @@ func buildConfig() *domain.Config {
 				Language: "sql", Volatility: "stable", Security: "invoker",
 				Returns: domain.FuncReturn{Type: "setof users"}, ReturnCategory: "setof",
 				Body: "SELECT * FROM users WHERE current_setting('transaction_read_only') = 'on'",
+			},
+			"counted_users": {
+				Language: "plpgsql", Volatility: "volatile", Security: "invoker",
+				Returns: domain.FuncReturn{Type: "setof users"}, ReturnCategory: "setof",
+				Body: "BEGIN UPDATE rpc_calls SET n = n + 1; RETURN QUERY SELECT * FROM users ORDER BY username; END",
 			},
 			"sleep_for": {
 				Language: "sql", Volatility: "volatile", Security: "invoker",

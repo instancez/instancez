@@ -1307,10 +1307,10 @@ func TestConf_MaxAffected(t *testing.T) {
 }
 
 // rpcPOST issues a POST /rest/v1/rpc/:name with the given JSON body and
-// returns status, raw body, and parsed JSON (or nil if the body isn't
-// an object). Admin auth is attached so RLS never rejects the call —
+// returns status, raw body, parsed JSON (or nil if the body isn't
+// an object) and headers. Admin auth is attached so RLS never rejects the call —
 // these tests target dispatch semantics, not authorization.
-func rpcPOST(t *testing.T, name, body string, headers map[string]string) (int, []byte, any) {
+func rpcPOST(t *testing.T, name, body string, headers map[string]string) (int, []byte, any, http.Header) {
 	t.Helper()
 	req, err := http.NewRequest("POST", testTS.URL+"/rest/v1/rpc/"+name, strings.NewReader(body))
 	require.NoError(t, err)
@@ -1329,7 +1329,7 @@ func rpcPOST(t *testing.T, name, body string, headers map[string]string) (int, [
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &parsed)
 	}
-	return resp.StatusCode, raw, parsed
+	return resp.StatusCode, raw, parsed, resp.Header
 }
 
 // TestConf_RPC exercises the /rest/v1/rpc/:name dispatcher against a
@@ -1343,7 +1343,7 @@ func TestConf_RPC(t *testing.T) {
 	}
 
 	t.Run("scalar returns bare value", func(t *testing.T) {
-		status, _, parsed := rpcPOST(t, "add_numbers", `{"a":2,"b":3}`, nil)
+		status, _, parsed, _ := rpcPOST(t, "add_numbers", `{"a":2,"b":3}`, nil)
 		assert.Equal(t, 200, status)
 		// Scalar RPCs should return the naked number, not a wrapping object.
 		switch v := parsed.(type) {
@@ -1357,13 +1357,13 @@ func TestConf_RPC(t *testing.T) {
 	t.Run("scalar uses arg default when omitted", func(t *testing.T) {
 		// greet() has a default of 'world'; an empty body must fall
 		// through to the Postgres default rather than erroring.
-		status, _, parsed := rpcPOST(t, "greet", `{}`, nil)
+		status, _, parsed, _ := rpcPOST(t, "greet", `{}`, nil)
 		assert.Equal(t, 200, status)
 		assert.Equal(t, "hello world", parsed)
 	})
 
 	t.Run("setof returns array of rows", func(t *testing.T) {
-		status, _, parsed := rpcPOST(t, "users_by_status", `{"target":"ONLINE"}`, nil)
+		status, _, parsed, _ := rpcPOST(t, "users_by_status", `{"target":"ONLINE"}`, nil)
 		assert.Equal(t, 200, status)
 		arr, ok := parsed.([]any)
 		require.True(t, ok, "expected array, got %T", parsed)
@@ -1371,7 +1371,7 @@ func TestConf_RPC(t *testing.T) {
 	})
 
 	t.Run("setof with singular Accept → object", func(t *testing.T) {
-		status, _, parsed := rpcPOST(t, "users_by_status", `{"target":"ONLINE"}`,
+		status, _, parsed, _ := rpcPOST(t, "users_by_status", `{"target":"ONLINE"}`,
 			map[string]string{"Accept": "application/vnd.pgrst.object+json"})
 		// Multiple rows match ONLINE → 406 PGRST116, same as table-level.
 		assert.Equal(t, 406, status)
@@ -1381,7 +1381,7 @@ func TestConf_RPC(t *testing.T) {
 	})
 
 	t.Run("void returns 204 with empty body", func(t *testing.T) {
-		status, raw, _ := rpcPOST(t, "touch_nothing", `{}`, nil)
+		status, raw, _, _ := rpcPOST(t, "touch_nothing", `{}`, nil)
 		assert.Equal(t, 204, status)
 		assert.Empty(t, raw)
 	})
@@ -1391,7 +1391,7 @@ func TestConf_RPC(t *testing.T) {
 		// handler pins non-volatile transactions to read-only, so
 		// Postgres rejects the write with SQLSTATE 25006 (read_only_sql_
 		// transaction). Error is surfaced through handleDBError.
-		status, _, parsed := rpcPOST(t, "sneaky_insert", `{}`, nil)
+		status, _, parsed, _ := rpcPOST(t, "sneaky_insert", `{}`, nil)
 		assert.GreaterOrEqual(t, status, 400)
 		m, ok := parsed.(map[string]any)
 		require.True(t, ok, "expected error body, got %T", parsed)
@@ -1414,12 +1414,12 @@ func TestConf_RPC(t *testing.T) {
 	t.Run("volatile function can still write", func(t *testing.T) {
 		// touch_nothing is VOLATILE, so the read-only guard is off. It
 		// doesn't actually write but verifies the code path is unaffected.
-		status, _, _ := rpcPOST(t, "touch_nothing", `{}`, nil)
+		status, _, _, _ := rpcPOST(t, "touch_nothing", `{}`, nil)
 		assert.Equal(t, 204, status)
 	})
 
 	t.Run("unknown function → PGRST202", func(t *testing.T) {
-		status, _, parsed := rpcPOST(t, "does_not_exist", `{}`, nil)
+		status, _, parsed, _ := rpcPOST(t, "does_not_exist", `{}`, nil)
 		assert.Equal(t, 404, status)
 		m, ok := parsed.(map[string]any)
 		require.True(t, ok)
@@ -1431,7 +1431,7 @@ func TestConf_RPC(t *testing.T) {
 		// return a PGRST202-style error. We return a 400 bad_request
 		// with a descriptive message; locking that shape in here lets
 		// supabase-js surface it as error.message.
-		status, _, parsed := rpcPOST(t, "add_numbers", `{"a":1,"b":2,"wrong":9}`, nil)
+		status, _, parsed, _ := rpcPOST(t, "add_numbers", `{"a":1,"b":2,"wrong":9}`, nil)
 		assert.Equal(t, 400, status)
 		m, ok := parsed.(map[string]any)
 		require.True(t, ok)

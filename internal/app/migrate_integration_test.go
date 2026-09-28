@@ -1490,8 +1490,8 @@ func TestIntegration_StorageTable(t *testing.T) {
 		t.Fatal("bucket_id column should exist")
 	}
 
-	if !policyExists(t, db, "storage.objects", "avatars_public_select") {
-		t.Fatal("public select policy should exist for avatars bucket")
+	if policyExists(t, db, "storage.objects", "avatars_public_select") {
+		t.Fatal("public buckets must not get a select policy")
 	}
 }
 

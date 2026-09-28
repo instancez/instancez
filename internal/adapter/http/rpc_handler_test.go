@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -365,8 +366,8 @@ func TestWrapRPCCallForChain_HavingNonAggregateQualifiedToRPCAlias(t *testing.T)
 	call := `SELECT * FROM public."users_by_status"()`
 	got, _ := wrapRPCCallForChain(call, chain, 1)
 
-	if !strings.Contains(got, "_rpc.status = $") {
-		t.Errorf("expected _rpc.status in HAVING, got: %s", got)
+	if !strings.Contains(got, " GROUP BY _rpc.status HAVING _rpc.status = $") {
+		t.Errorf("expected GROUP BY _rpc.status before HAVING, got: %s", got)
 	}
 	if strings.Contains(got, "users.status =") {
 		t.Errorf("HAVING should not reference table name, got: %s", got)
@@ -583,6 +584,9 @@ func TestWrapRPCCallForChain_BelongsToWithColumns(t *testing.T) {
 	if !strings.Contains(got, "'id', _emb_author.id") {
 		t.Errorf("missing column projection: %s", got)
 	}
+	if !strings.Contains(got, "CASE WHEN _emb_author.id IS NULL THEN NULL ELSE json_build_object(") {
+		t.Errorf("unmatched to-one embed must be null, not an object of nulls: %s", got)
+	}
 }
 
 func TestParseRPCChain_UnknownSetofRejectsUnsafeIdentifiers(t *testing.T) {
@@ -728,5 +732,91 @@ func TestRenderRPCChain_EmptyOrderNoEmission(t *testing.T) {
 	}
 	if len(args) != 0 {
 		t.Errorf("empty order should have no args, got %v", args)
+	}
+}
+
+func TestBuildRPCCountedQuery_CallsOnce(t *testing.T) {
+	call := `SELECT * FROM public."f"("a" => $1)`
+	chain := &rpcChainSQL{
+		where:    postgrest.AndLeaves(postgrest.Filter{Column: "age", Operator: "gt", Value: "1"}),
+		order:    []postgrest.OrderClause{{Column: "age", Desc: true}},
+		hasLimit: true, limit: 2, hasOffset: true, offset: 1,
+	}
+	sql := buildRPCCountedQuery(call, chain, 2)
+	if n := strings.Count(sql, `public."f"(`); n != 1 {
+		t.Fatalf("function referenced %d times: %s", n, sql)
+	}
+	for _, want := range []string{
+		`WITH __inz_src AS MATERIALIZED (SELECT * FROM public."f"("a" => $1))`,
+		`(SELECT count(*) AS __inz_total FROM __inz_src AS _rpc WHERE age > $2) _t`,
+		`row_number() OVER (ORDER BY _rpc.age DESC) AS __inz_rn`,
+		`LIMIT $3 OFFSET $4`,
+		`) _p ON true ORDER BY _p.__inz_rn`,
+	} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("missing %q in %s", want, sql)
+		}
+	}
+}
+
+func TestBuildRPCCountedQuery_NoChainStillWrapsAndCounts(t *testing.T) {
+	sql := buildRPCCountedQuery(`SELECT * FROM public."f"()`, &rpcChainSQL{}, 1)
+	for _, want := range []string{
+		`(SELECT count(*) AS __inz_total FROM __inz_src AS _rpc) _t`,
+		`SELECT _rpc.*, true AS __inz_row, row_number() OVER () AS __inz_rn FROM (SELECT * FROM __inz_src) AS _rpc`,
+	} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("missing %q in %s", want, sql)
+		}
+	}
+}
+
+func TestBuildRPCCountedQuery_AliasOrderFallsBackToPlainWindow(t *testing.T) {
+	chain := &rpcChainSQL{order: []postgrest.OrderClause{{Column: "total", IsAlias: true}}}
+	sql := buildRPCCountedQuery(`SELECT * FROM public."f"()`, chain, 1)
+	if !strings.Contains(sql, "row_number() OVER () AS __inz_rn") {
+		t.Errorf("alias order must not reach the window: %s", sql)
+	}
+}
+
+func TestSplitRPCTotal(t *testing.T) {
+	rows := []map[string]any{
+		{"id": int64(1), "__inz_row": true, "__inz_rn": int64(1), "__inz_total": int64(7)},
+		{"id": int64(2), "__inz_row": true, "__inz_rn": int64(2), "__inz_total": int64(7)},
+	}
+	got, total := splitRPCTotal(rows)
+	if total != 7 || len(got) != 2 || !reflect.DeepEqual(got[0], map[string]any{"id": int64(1)}) {
+		t.Fatalf("got %v total %d", got, total)
+	}
+	got, total = splitRPCTotal([]map[string]any{{"id": nil, "__inz_row": nil, "__inz_rn": nil, "__inz_total": int64(5)}})
+	if total != 5 || len(got) != 0 {
+		t.Fatalf("empty page: got %v total %d", got, total)
+	}
+	got, total = splitRPCTotal([]map[string]any{{"id": nil, "__inz_row": nil, "__inz_rn": nil, "__inz_total": int64(0)}})
+	if total != 0 || len(got) != 0 {
+		t.Fatalf("zero total: got %v total %d", got, total)
+	}
+	got, total = splitRPCTotal(nil)
+	if total != -1 || len(got) != 0 {
+		t.Fatalf("nil: got %v total %d", got, total)
+	}
+}
+
+func TestBuildRPCCountedQuery_AggregateCountsUngroupedRows(t *testing.T) {
+	chain := &rpcChainSQL{
+		selectItems: []postgrest.SelectItem{{Col: "status"}, {Agg: "count"}},
+		groupBy:     []string{"_rpc.status"},
+		where:       postgrest.AndLeaves(postgrest.Filter{Column: "age", Operator: "gt", Value: "1"}),
+		having:      postgrest.AndLeaves(postgrest.Filter{Column: "count", Operator: "gt", Value: "2"}),
+		hasLimit:    true, limit: 5,
+	}
+	sql := buildRPCCountedQuery(`SELECT * FROM public."f"()`, chain, 1)
+	for _, want := range []string{
+		`(SELECT count(*) AS __inz_total FROM __inz_src AS _rpc WHERE age > $1) _t`,
+		`FROM (SELECT * FROM __inz_src) AS _rpc WHERE age > $1 GROUP BY _rpc.status HAVING count > $2 LIMIT $3`,
+	} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("missing %q in %s", want, sql)
+		}
 	}
 }

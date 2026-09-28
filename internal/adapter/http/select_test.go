@@ -552,3 +552,22 @@ func TestResolveEmbeds_InnerHint(t *testing.T) {
 		t.Errorf("expected inner embed, got %+v", embeds)
 	}
 }
+
+func TestCheckStarWithAggregate(t *testing.T) {
+	for sel, bad := range map[string]bool{
+		"*,count()":            true,
+		"count(),*":            true,
+		"*,id.sum(),author(*)": true,
+		"*":                    false,
+		"*,author(*)":          false,
+		"status,count()":       false,
+		"count(),author(*)":    false,
+		"":                     false,
+		"author(count()),*":    false,
+	} {
+		err := postgrest.CheckStarWithAggregate(postgrest.ParseSelectParam(sel))
+		if (err != nil) != bad {
+			t.Errorf("%q: err = %v, want error %v", sel, err, bad)
+		}
+	}
+}

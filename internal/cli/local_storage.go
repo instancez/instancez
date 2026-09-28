@@ -2,12 +2,15 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/instancez/instancez/internal/domain"
@@ -46,7 +49,7 @@ func (s *LocalStore) SignUpload(_ context.Context, key string, _ string, _ time.
 	return "file://" + fullPath, nil
 }
 
-func (s *LocalStore) SignDownload(_ context.Context, key string, _ time.Duration) (string, error) {
+func (s *LocalStore) SignDownload(_ context.Context, key string, _ time.Duration, _ domain.DownloadOptions) (string, error) {
 	fullPath, err := s.fullPath(key)
 	if err != nil {
 		return "", err
@@ -98,6 +101,9 @@ func (s *LocalStore) Download(_ context.Context, key string) (io.ReadCloser, str
 		return nil, "", err
 	}
 	f, err := os.Open(fullPath)
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+		return nil, "", fmt.Errorf("open file: %w: %w", domain.ErrNotFound, err)
+	}
 	if err != nil {
 		return nil, "", fmt.Errorf("open file: %w", err)
 	}

@@ -21,23 +21,47 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - Storage: a legacy `/api/storage` `GET` on a public bucket with a present but invalid `Authorization: Bearer` token now returns 401 instead of falling back to anonymous access.
 - Storage: `createSignedUrls` with an empty path list or more than 1000 paths now returns 400.
 - Storage: `/storage/v1/object/info/authenticated/<bucket>` with no path now returns 400 (was 404).
+- **Breaking:** a filter on a non-`!inner` embed (`users.username=eq.x`) no longer drops parent rows. Like PostgREST, it only filters the embed: an unmatched to-one embed is `null`, a to-many embed is `[]`, and `count` follows. Use `!inner` to filter the parents.
+- **Breaking:** the JSON query plan (`Accept: application/vnd.pgrst.plan+json`) is now returned bare, as in PostgREST: `[{"Plan": ...}]`, not `[{"QUERY PLAN": [{"Plan": ...}]}]`. See Upgrading.
+- **Breaking:** `POST /storage/v1/object/sign/...` now returns a relative `signedURL` (`/object/sign/<bucket>/<path>?token=...`), as Supabase does, instead of an absolute S3 or `file://` URL. It is redeemed at `GET /storage/v1/object/sign/...` with no apikey: on S3 that 302s to a presigned URL valid for at most 60 seconds, and on the local provider instancez streams the object. Rotating the JWT signing key invalidates every outstanding signed download URL. See Upgrading.
+- **Breaking:** a `public: true` bucket no longer gets an implicit `select` policy, which matches Supabase. `public` now only means anyone can download through `/storage/v1/object/public/<bucket>/<path>` (and the legacy `GET /api/storage/<bucket>/<id>`), which looks the one object up without RLS. Listing, `exists`, `info`, signing, `update`, `move` and `delete` follow the bucket's `rls:` policies only. Existing `<bucket>_public_select` policies are dropped on the next boot. See Upgrading.
+- Storage: `GET /storage/v1/object/public/<bucket>/...` on a private bucket now returns the same 404 `Bucket not found` as a missing bucket (was 400 `not_public`), as in Supabase, so private bucket names can't be discovered.
+- **Breaking:** `Prefer: count=exact` on an aggregate query (table or RPC, e.g. `select=status,count()`) now counts the rows matching the filters and ignores `GROUP BY` and `having`, as PostgREST does. Table aggregates used to count the groups. See Upgrading.
+- **Breaking:** bucket names `public`, `sign`, `authenticated`, `info`, `upload`, `list`, `move` and `copy` now fail validation. The storage router reads them as `/storage/v1/object/<segment>` routes, so a bucket with one of those names couldn't be reached (a bucket named `sign`, for example, couldn't be read with `.download()`). See Upgrading.
+- `GET /rest/v1/<table>` with a comma-separated `Accept` now picks the media type PostgREST would: highest `q` first, then the entry with more parameters, then list order. `application/vnd.pgrst.plan+json, application/json` now returns the plan (406 without the secret key) instead of ignoring it.
 
 ### Fixed
 
+- supabase-js `.explain()` now returns the query plan for the secret key. The `for` and `options` Accept parameters are honored, media types match case-insensitively, and plan transactions are always rolled back. `options=wal` without `analyze` returns 400 `22023` instead of 500.
+- `.explain()` on insert, upsert, update, delete and rpc now returns 406 `PGRST107` before auth or any SQL runs, even when the Accept list also offers another type. Before, a secret-key `.delete().explain()` ran the delete and returned rows.
 - supabase-js `linkIdentity()` works: `/user/identities/authorize` now accepts GET, which supabase-js sends, as well as POST.
 - supabase-js `error.code` now returns the auth error code (`user_banned`, `insufficient_aal`, …). `/auth/v1` error bodies carry GoTrue's `error_code` field next to `code`; REST errors are unchanged.
 - `verifyOtp({ type: 'magiclink' })` now marks the email confirmed, as GoTrue does, so magic-link users can later link a Google login by email.
-- `count=exact` / `planned` / `estimated` now count what the query actually returns. They include `!inner` and belongs-to embed filters, work on non-public schemas, run in the same transaction as the rows, and return an error instead of silently dropping the count.
+- `count=exact` / `planned` / `estimated` now count what the query actually returns. They include `!inner` embeds and `!inner` embed filters, work on non-public schemas, run in the same transaction as the rows, and return an error instead of silently dropping the count.
 - Upgrading instancez with an unchanged `instancez.yaml` now adds new `auth.*` columns and indexes at boot. Before, they only reached a database when the config changed. This also adds the missing `attempts` column to `auth.one_time_tokens` on databases that enabled email auth after first boot.
 - A code function stuck in a CPU-bound loop no longer permanently takes out a worker. After a timeout the worker is health-checked and replaced if unresponsive. Function responses over 6 MB now return 502 instead of being buffered without limit.
 - Reloading functions (dev hot reload, `serve --watch` bundle change) no longer kills calls in flight. The old runtime drains for up to 30s before its workers stop.
 - Storage: batch signed URLs, copy, move, remove, `emptyBucket` and the legacy `/api/storage` routes now respect `storage.objects` RLS. Previously some of them signed, copied or deleted objects the caller couldn't read or delete.
 - Storage: object keys with `..` segments are rejected, and the local provider can no longer write outside its directory.
+- An aggregate next to an embed (`select=count(),users(username)`, `select=amount.sum(),...customers(name)`) returned 500. The embed is now a group key, as in PostgREST, for belongs-to, has-many, and spread embeds.
+- An aggregate next to an embed on an RPC result (`rpc/fn?select=count(),messages(id)`) now returns 400 instead of 500.
+- Aggregates with plain columns on setof RPC results (`rpc/fn?select=status,count()`) now group by those columns instead of returning 500.
+- `select=*` with an aggregate (`select=*,count()`) returns 400 on tables and RPCs. Before, it returned 500 on tables and dropped the aggregate on RPCs.
+- A Postgres grouping error (`42803`) now returns 400 instead of 500.
+- An empty page now sends `Content-Range: */*` (or `*/N` with a count) on tables and RPCs, as PostgREST does, instead of `0-0/*` or `0-0/N`. An `offset` past the end sends `*/N` instead of `10-10/N`.
+- A filter on a spread embed (`select=id,...users(username)&users.status=eq.x`) keeps every parent row; unmatched spread columns are `null`.
+- Storage: downloading an object whose row exists but whose file is gone from the local provider (including a path under a file) now returns 404 `not_found` instead of 500.
 - Storage: downloads send `nosniff`, and HTML/SVG/XML/JS are served as attachments.
 - Storage: image transforms are capped at 2500px, 25MB and 50MP. Signed URL expiry is capped at 7 days. Uploads no longer hold a database connection while the body streams. Multipart and signed uploads record real sizes, and signed uploads enforce the bucket's MIME allowlist. S3 copies of keys with special characters work.
 - Storage: `createSignedUploadUrl`'s response `url` now includes `?token=`, so `@supabase/supabase-js`'s `uploadToSignedUrl()` and `createSignedUploadUrl()` work end-to-end (storage-js reads the token from the URL).
 - Storage: `bucket.info()` now works, served at `/storage/v1/object/info/<bucket>/<path>`.
 - Storage: an upload commit failure no longer deletes the object's bytes; on update/upsert the row already pointed at the key that was just overwritten, so the old delete destroyed live data whether or not the commit actually failed.
+- A column-list to-one embed (`author(name)`) with no matching row is now `null` instead of `{"name": null}`.
+- Storage: a restrictive RLS policy on one bucket no longer denies every other bucket. `storage.objects` is shared across buckets, so a restrictive policy scoped with `bucket_id = X AND (...)` ANDs against every other bucket's rows too; it's now scoped with `bucket_id <> X OR (...)` so the restriction applies only to its own bucket. Existing databases get the fixed policy on the next boot, without a config change.
+- Storage: signed-URL redirects and the legacy `GET /api/storage/<bucket>/<id>` download route request S3 response overrides for `Content-Type`, `Content-Disposition` (attachment for active content) and `Cache-Control`.
+- supabase-js `createSignedUrl` and `createSignedUrls` now return URLs that work. Before, storage-js glued the absolute S3 URL onto the API URL, which broke them. The `download` option (`true` or a filename) now sets `Content-Disposition`, safely encoded.
+- Storage: `?download=` on public and authenticated downloads now sets `Content-Disposition`, so `getPublicUrl(path, { download })` and `download=` links work.
+- A setof RPC with `Prefer: count=exact` runs the function once instead of twice, so VOLATILE functions no longer apply their side effects twice. `count=planned` and `count=estimated` on RPCs now return an estimate instead of `*`.
 
 ### Security
 
@@ -73,6 +97,14 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - Sessions that were aal2 before the upgrade come back as `aal1` on their first refresh, because existing refresh tokens get the new `aal` column with default `aal1`. MFA-gated RLS denies them until the user verifies a factor again.
 - With `email.verify_email: true`, `signUp` now returns the user with `session: null`. Frontends that signed users straight in must show a "check your email" step and sign in after confirmation.
 - Over HTTPS, an OAuth login that starts on one version and finishes on the other fails (during a rolling deploy, or across the upgrade). The state cookie is now `__Host-oauth_state`, so the callback can't find the cookie it expects. Users just retry the login.
+- A filter on a non-`!inner` embed no longer hides parents that don't match: their embed is `null` (to-one) or `[]` (to-many), and `count` includes them. Add `!inner` to keep filtering parents.
+- Code that reads JSON plans from raw HTTP must drop the `QUERY PLAN` wrapper: read `body[0].Plan` instead of `body[0]["QUERY PLAN"][0].Plan`. supabase-js `.explain({ format: 'json' })` needed no wrapper and now just works.
+- Raw HTTP clients of `POST /storage/v1/object/sign/...` must prefix the returned `signedURL` with `<api url>/storage/v1`, the same as for Supabase. supabase-js does this already. Signed download URLs minted before the upgrade are absolute presigned S3 URLs and keep working until they expire. Rotating the JWT signing key now invalidates signed download URLs, as it already did for signed upload tokens. Anyone holding one gets 400 `invalid_token` and must request a new URL.
+- During a rolling deploy, a signed download URL minted on an upgraded instance fails if an older instance redeems it (the old router reads `sign` as a bucket name and asks for an apikey). Keep the window short.
+- Rename any bucket called `public`, `sign`, `authenticated`, `info`, `upload`, `list`, `move` or `copy` before upgrading, or the config fails validation and boot stops. A rename is a new bucket: copy the objects across and move the policies with it.
+- Clients that read the total from `Content-Range` on an aggregate query with `count=exact` now get the number of matching rows, not the number of groups. Count the returned rows instead if you need the group count.
+- Public buckets no longer let anon or other users list or select object rows. If you relied on that, add an explicit `select` policy to the bucket (`- operations: [select]` with `using: "true"` restores the old behavior). A public bucket that declares `update` or `delete` also needs a `select` policy, since Postgres must see a row before it can update or delete it. A public bucket in a project where no bucket declares `rls:` is unaffected, since `storage.objects` RLS is off there.
+- The first upgraded boot drops `<bucket>_public_select` for every configured bucket, public or not. instancez owns that name, so a policy you wrote by hand under that name is dropped too; rename it first. The drop takes a brief lock on `storage.objects`, bounded by the migration `lock_timeout`; later boots see no such policy and take no lock.
 
 ## [0.0.3]
 

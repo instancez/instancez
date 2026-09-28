@@ -692,6 +692,12 @@ func validateRLSExpr(path, expr string) domain.ValidationErrors {
 	return errs
 }
 
+// reservedBucketNames are /storage/v1/object/<segment> routes that would shadow a bucket of the same name.
+var reservedBucketNames = map[string]bool{
+	"public": true, "sign": true, "authenticated": true, "info": true,
+	"upload": true, "list": true, "move": true, "copy": true,
+}
+
 func validateStorage(storage map[string]domain.Bucket) domain.ValidationErrors {
 	var errs domain.ValidationErrors
 	for name, bucket := range storage {
@@ -699,6 +705,12 @@ func validateStorage(storage map[string]domain.Bucket) domain.ValidationErrors {
 
 		if err := validateIdent(path, name); err != nil {
 			errs = append(errs, err)
+		} else if reservedBucketNames[name] {
+			errs = append(errs, &domain.ValidationError{
+				Path:       path,
+				Message:    fmt.Sprintf("bucket name %q is reserved: /storage/v1/object/%s/... is a storage route", name, name),
+				Suggestion: "Pick a different bucket name (e.g. add a prefix or suffix)",
+			})
 		}
 
 		errs = append(errs, validateRLS(path, bucket.RLS)...)

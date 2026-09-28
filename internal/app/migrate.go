@@ -375,7 +375,56 @@ func (m *Migrator) Harden(ctx context.Context, cfg *domain.Config) error {
 	if cfg != nil && cfg.Auth != nil {
 		stmts = append(stmts, authHealDDL...)
 	}
+	applied, err := m.appliedStorage(ctx)
+	if err != nil {
+		return fmt.Errorf("harden: %w", err)
+	}
+	stmts = append(stmts, healStorageRLS(applied)...)
 	return m.applyStatements(ctx, stmts)
+}
+
+// appliedStorage returns the last migrated buckets, since a pending config may reference objects that don't exist yet.
+func (m *Migrator) appliedStorage(ctx context.Context) (map[string]domain.Bucket, error) {
+	last, err := m.db.GetLastMigration(ctx)
+	if err != nil || last == nil || last.ConfigJSON == "" || last.ConfigJSON == "{}" {
+		return nil, err
+	}
+	var cfg domain.Config
+	if err := json.Unmarshal([]byte(last.ConfigJSON), &cfg); err != nil {
+		m.logger.Warn("harden: skipping storage heal, applied config is unreadable", "error", err)
+		return nil, nil
+	}
+	return cfg.Storage, nil
+}
+
+// healStorageRLS drops legacy public-select policies and re-emits restrictive bucket RLS still on the old AND-scoping, checking pg_policies first so a healed DB takes no lock.
+func healStorageRLS(storage map[string]domain.Bucket) []string {
+	stmts := dropPublicSelect(storage, true)
+	var body []string
+	for _, name := range sortedKeys(storage) {
+		bucket := storage[name]
+		var restrictive []string
+		for i, p := range bucket.RLS {
+			if p.Type != "restrictive" {
+				continue
+			}
+			for _, op := range p.Operations {
+				restrictive = append(restrictive, fmt.Sprintf("'storage_%s_%s_%d'", name, op, i))
+			}
+		}
+		if len(restrictive) == 0 {
+			continue
+		}
+		scoped := fmt.Sprintf("position('bucket_id <> ''%s''' IN %%[1]s) = 0", name)
+		body = append(body, fmt.Sprintf(
+			"IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname IN (%s) AND ((qual IS NOT NULL AND %s) OR (with_check IS NOT NULL AND %s))) THEN\n%s\nEND IF;",
+			strings.Join(restrictive, ", "), fmt.Sprintf(scoped, "qual"), fmt.Sprintf(scoped, "with_check"),
+			strings.Join(generateStorageRLS(name, bucket), "\n")))
+	}
+	if len(body) == 0 {
+		return stmts
+	}
+	return append(stmts, fmt.Sprintf("DO $$ BEGIN\nIF to_regclass('storage.objects') IS NOT NULL THEN\n%s\nEND IF;\nEND $$;", strings.Join(body, "\n")))
 }
 
 // applyStatements runs stmts inside a single transaction without recording a
@@ -1111,7 +1160,7 @@ func generateStorageRLSAll(storage map[string]domain.Bucket) []string {
 		}
 	}
 
-	var ddl []string
+	ddl := dropPublicSelect(storage, false)
 	if anyRLS {
 		ddl = append(ddl,
 			`ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;`,
@@ -1133,35 +1182,36 @@ func generateStorageRLSAll(storage map[string]domain.Bucket) []string {
 			ddl = append(ddl, fmt.Sprintf(
 				"CREATE POLICY %s ON storage.objects FOR ALL USING (bucket_id = '%s') WITH CHECK (bucket_id = '%s');",
 				policyName, name, name))
-		case bucket.Public:
-			// No RLS anywhere — the public-select policy is inert without RLS
-			// but kept for parity and in case RLS is enabled later.
-			ddl = append(ddl, generateStorageRLS(name, bucket)...)
 		}
 	}
 	return ddl
 }
 
-func generateStorageRLS(bucketName string, bucket domain.Bucket) []string {
-	if len(bucket.RLS) == 0 && !bucket.Public {
-		return nil
-	}
-
+// dropPublicSelect drops every bucket's pre-parity <bucket>_public_select; guarded checks pg_policies first, whose name literal truncates to 63 bytes like the policy.
+func dropPublicSelect(storage map[string]domain.Bucket, guarded bool) []string {
 	var ddl []string
-
-	// Public bucket: allow SELECT without auth
-	if bucket.Public {
-		policyName := fmt.Sprintf("%s_public_select", bucketName)
-		ddl = append(ddl, fmt.Sprintf("DROP POLICY IF EXISTS %s ON storage.objects;", policyName))
-		ddl = append(ddl, fmt.Sprintf(
-			"CREATE POLICY %s ON storage.objects FOR SELECT USING (bucket_id = '%s');",
-			policyName, bucketName))
+	for _, name := range sortedKeys(storage) {
+		if guarded {
+			ddl = append(ddl, fmt.Sprintf(
+				"IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = '%s_public_select') THEN\nDROP POLICY %s_public_select ON storage.objects;\nEND IF;",
+				name, name))
+		} else {
+			ddl = append(ddl, fmt.Sprintf("DROP POLICY IF EXISTS %s_public_select ON storage.objects;", name))
+		}
 	}
+	if !guarded || len(ddl) == 0 {
+		return ddl
+	}
+	return []string{fmt.Sprintf("DO $$ BEGIN\n%s\nEND $$;", strings.Join(ddl, "\n"))}
+}
 
+func generateStorageRLS(bucketName string, bucket domain.Bucket) []string {
+	var ddl []string
 	for i, policy := range bucket.RLS {
 		typeClause := rlsPolicyTypeClause(policy)
-		scopedUsing := scopeToBucket(bucketName, policy.Using)
-		scopedWithCheck := scopeToBucket(bucketName, policy.WithCheck)
+		restrictive := policy.Type == "restrictive"
+		scopedUsing := scopeToBucket(bucketName, policy.Using, restrictive)
+		scopedWithCheck := scopeToBucket(bucketName, policy.WithCheck, restrictive)
 		for _, op := range policy.Operations {
 			policyName := fmt.Sprintf("storage_%s_%s_%d", bucketName, op, i)
 			pgOp := strings.ToUpper(op)
@@ -1175,12 +1225,13 @@ func generateStorageRLS(bucketName string, bucket domain.Bucket) []string {
 	return ddl
 }
 
-// scopeToBucket ANDs the bucket_id predicate onto a possibly-empty RLS
-// expression. Empty stays empty so rlsClauses can still tell "not set" from
-// "set to a scoped expression".
-func scopeToBucket(bucketName, expr string) string {
+// scopeToBucket confines a possibly-empty RLS expression to bucketName, using OR-negation for restrictive policies so they don't AND-deny other buckets.
+func scopeToBucket(bucketName, expr string, restrictive bool) string {
 	if expr == "" {
 		return ""
+	}
+	if restrictive {
+		return fmt.Sprintf("bucket_id <> '%s' OR (%s)", bucketName, expr)
 	}
 	return fmt.Sprintf("bucket_id = '%s' AND (%s)", bucketName, expr)
 }

@@ -118,6 +118,8 @@ storage:
     max_size: 5MB
     types: [image/*]
     rls:
+      - operations: [select]
+        using: "auth.is_authenticated()"
       - operations: [insert]
         with_check: "auth.is_authenticated()"
       - operations: [update]

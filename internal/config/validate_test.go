@@ -1414,3 +1414,20 @@ func TestValidateForeignKeys_MissingColumn_NoSpuriousTypeError(t *testing.T) {
 		t.Fatalf("missing referenced column should yield exactly one (existence) error, got %d: %v", len(errs), errs)
 	}
 }
+
+// Names the storage router reads as a route segment would make the bucket unreachable.
+func TestValidate_StorageBucketNameCollidesWithObjectRoute(t *testing.T) {
+	for _, name := range []string{"public", "sign", "authenticated", "info", "upload", "list", "move", "copy"} {
+		cfg := validBaseConfig()
+		cfg.Providers.Storage = &domain.StorageProvider{Type: "local"}
+		cfg.Storage = map[string]domain.Bucket{name: {}, "signs": {}, "public_files": {}}
+		errs := Validate(cfg)
+		assertHasErrorAt(t, errs, "storage."+name)
+		if len(errs) != 1 {
+			t.Fatalf("%s: want only the reserved-name error, got %v", name, errs)
+		}
+		if !strings.Contains(errs[0].Message, "reserved") || !strings.Contains(errs[0].Message, "/storage/v1/object/") {
+			t.Errorf("%s: unclear message %q", name, errs[0].Message)
+		}
+	}
+}

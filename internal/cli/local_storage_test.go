@@ -2,10 +2,13 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/instancez/instancez/internal/domain"
 )
 
 func TestLocalStore_KeyPrefix(t *testing.T) {
@@ -54,7 +57,7 @@ func TestLocalStore_SignDownload(t *testing.T) {
 	}
 
 	// Returns path regardless of file existence (consumer handles missing files)
-	url, err := store.SignDownload(context.Background(), "bucket/file.txt", 0)
+	url, err := store.SignDownload(context.Background(), "bucket/file.txt", 0, domain.DownloadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +174,7 @@ func TestLocalStore_RejectsEscapingKeys(t *testing.T) {
 		if err := s.Copy(ctx, k, "avatars/dst.txt"); err == nil {
 			t.Errorf("Copy(src=%q) succeeded, want error", k)
 		}
-		if _, err := s.SignDownload(ctx, k, 0); err == nil {
+		if _, err := s.SignDownload(ctx, k, 0, domain.DownloadOptions{}); err == nil {
 			t.Errorf("SignDownload(%q) succeeded, want error", k)
 		}
 		if _, err := s.Head(ctx, k); err == nil {
@@ -214,5 +217,36 @@ func TestLocalStore_UnicodeAndDotKeysStayInside(t *testing.T) {
 	items, err := s.List(ctx, "")
 	if err != nil || len(items) != 3 {
 		t.Fatalf("List(\"\") = %v, %v; want 3 items", items, err)
+	}
+}
+
+func TestLocalStore_DownloadMissingIsNotFound(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := NewLocalStore(dir, "")
+	ctx := context.Background()
+	if _, _, err := s.Download(ctx, "avatars/missing.png"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("missing file: got %v, want ErrNotFound", err)
+	}
+	if err := s.Upload(ctx, "avatars/file", strings.NewReader("x"), "text/plain", 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.Download(ctx, "avatars/file/child.png"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("path under a file (ENOTDIR): got %v, want ErrNotFound", err)
+	}
+	if _, _, err := s.Download(ctx, "../escape"); err == nil || errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("invalid key must not be ErrNotFound: %v", err)
+	}
+	if err := s.Upload(ctx, "avatars/locked", strings.NewReader("x"), "text/plain", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(dir, "avatars", "locked"), 0); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := s.Download(ctx, "avatars/locked")
+	if err == nil {
+		t.Skip("permission error not observable (root?)")
+	}
+	if errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("permission error must not be ErrNotFound: %v", err)
 	}
 }
