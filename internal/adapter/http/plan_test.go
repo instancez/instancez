@@ -79,3 +79,36 @@ func TestHasPlanMediaType(t *testing.T) {
 		}
 	}
 }
+
+// Mirrors PostgREST: wai-extra orders by q then specificity (params minus stars), stably, and the first servable entry wins.
+func TestNegotiatePlan(t *testing.T) {
+	cases := []struct {
+		accept  string
+		isPlan  bool
+		wantErr bool
+		format  string
+	}{
+		{"application/vnd.pgrst.plan+json, application/json", true, false, "json"},
+		{"application/json, application/vnd.pgrst.plan+json", false, false, ""},
+		{`application/json, application/vnd.pgrst.plan+text; for="application/json"`, true, false, "text"},
+		{"application/json;q=0.5, application/vnd.pgrst.plan", true, false, "text"},
+		{"application/vnd.pgrst.plan;q=0.1, text/csv", false, false, ""},
+		{"text/html, application/vnd.pgrst.plan+json", true, false, "json"},
+		{"*/*, application/vnd.pgrst.plan+json", true, false, "json"},
+		{"application/vnd.pgrst.plan+yaml, application/json", false, false, ""},
+		{`application/vnd.pgrst.plan; for="text/xml", application/json`, true, true, ""},
+		{"application/vnd.pgrst.plan;q=abc, application/json;q=NaN", true, false, "text"},
+		{"text/html", false, false, ""},
+		{",,", false, false, ""},
+		{"", false, false, ""},
+	}
+	for _, c := range cases {
+		got, isPlan, err := negotiatePlan(c.accept)
+		if isPlan != c.isPlan || (err != nil) != c.wantErr {
+			t.Fatalf("%q: isPlan=%v err=%v", c.accept, isPlan, err)
+		}
+		if c.isPlan && !c.wantErr && got.format != c.format {
+			t.Errorf("%q: format %q, want %q", c.accept, got.format, c.format)
+		}
+	}
+}

@@ -119,7 +119,7 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 		}
 
 		accept := c.GetHeader("Accept")
-		plan, isPlan, planErr := parsePlanAccept(accept)
+		plan, isPlan, planErr := negotiatePlan(accept)
 		if isPlan && (!isAdmin(c) || planErr != nil) {
 			pgJSON(c, 406, "PGRST107", "None of these media types are available: "+accept, "", "")
 			return

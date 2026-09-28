@@ -274,6 +274,17 @@ func TestHardening_PlanOnlyForServiceRole(t *testing.T) {
 	require.Contains(t, string(raw), "Execution Time")
 	require.Contains(t, string(raw), "Buffers")
 
+	// A comma list is negotiated like PostgREST: the first entry after q and specificity ordering wins.
+	for accept, wantCT := range map[string]string{
+		"application/vnd.pgrst.plan+json, application/json":                         "application/vnd.pgrst.plan+json",
+		"application/json, application/vnd.pgrst.plan+json":                         "application/json",
+		`application/json, application/vnd.pgrst.plan+text; for="application/json"`: "application/vnd.pgrst.plan+text",
+	} {
+		status, hdr, raw = call(t, "GET", testTS.URL+"/rest/v1/users", "", map[string]string{"Accept": accept}, false)
+		require.Equal(t, 200, status, "%s: %s", accept, raw)
+		require.Contains(t, hdr.Get("Content-Type"), wantCT, accept)
+	}
+
 	status, _, raw = call(t, "GET", testTS.URL+"/rest/v1/users", "", map[string]string{
 		"Accept": `application/vnd.pgrst.plan+text; for="application/json"; options=wal;`}, false)
 	require.Equal(t, 400, status, "%s", raw)

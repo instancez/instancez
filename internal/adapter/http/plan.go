@@ -1,9 +1,11 @@
 package http
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -52,7 +54,6 @@ func parsePlanAccept(accept string) (planRequest, bool, error) {
 		return p, false, nil
 	}
 	p.forType = "application/json"
-	seen := map[string]bool{}
 	for _, kv := range parts[1:] {
 		k, v, _ := strings.Cut(kv, "=")
 		v = strings.Trim(strings.TrimSpace(v), `"`)
@@ -63,8 +64,7 @@ func parsePlanAccept(accept string) (planRequest, bool, error) {
 			}
 		case "options":
 			for _, o := range strings.Split(v, "|") {
-				if kw, ok := planOptions[strings.ToLower(strings.TrimSpace(o))]; ok && !seen[kw] {
-					seen[kw] = true
+				if kw, ok := planOptions[strings.ToLower(strings.TrimSpace(o))]; ok && !slices.Contains(p.options, kw) {
 					p.options = append(p.options, kw)
 				}
 			}
@@ -109,4 +109,41 @@ func rejectPlan(c *gin.Context) {
 		pgJSON(c, 406, "PGRST107", "None of these media types are available: "+accept, "", "")
 		c.Abort()
 	}
+}
+
+// negotiatePlan picks the Accept entry PostgREST would: wai-extra's stable q-then-specificity order, first servable type wins.
+func negotiatePlan(accept string) (planRequest, bool, error) {
+	type ranked struct {
+		mr   string
+		q    float64
+		spec int
+	}
+	var rs []ranked
+	for _, mr := range strings.Split(accept, ",") {
+		mr = strings.ReplaceAll(mr, " ", "")
+		q := 1.0
+		if i := strings.Index(mr, ";q="); i >= 0 {
+			qs, _, _ := strings.Cut(mr[i+3:], ";")
+			if v, err := strconv.ParseFloat(qs, 64); err == nil {
+				q = v
+			}
+			mr = mr[:i]
+		}
+		rs = append(rs, ranked{mr, q, strings.Count(mr, ";") - strings.Count(mr, "*")})
+	}
+	slices.SortStableFunc(rs, func(a, b ranked) int {
+		if c := cmp.Compare(b.q, a.q); c != 0 {
+			return c
+		}
+		return cmp.Compare(b.spec, a.spec)
+	})
+	for _, r := range rs {
+		if p, isPlan, err := parsePlanAccept(r.mr); isPlan {
+			return p, true, err
+		}
+		if base, _, _ := strings.Cut(r.mr, ";"); planForTypes[strings.ToLower(base)] {
+			return planRequest{}, false, nil
+		}
+	}
+	return planRequest{}, false, nil
 }
