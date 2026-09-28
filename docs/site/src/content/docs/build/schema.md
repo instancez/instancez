@@ -48,14 +48,31 @@ tables:
         type: text
 ```
 
-Which columns form the primary key is fixed once the table exists, and changing the `primary_key` flags of a live table fails the migration. One swap is allowed: drop the old key column and add one new `primary_key: true` column in the same change (a destructive change, so it needs `--allow-destructive`).
+Which columns form the primary key is fixed once the table exists. Adding or removing a `primary_key` flag on a live column fails the migration, and the config API returns 422 `primary_key_change`. One swap is allowed: drop the old key column and add one new `primary_key: true` column in the same change (a destructive change, so it needs `--allow-destructive`). Reordering the key fields is not a change.
 
-An FK to a single column of a composite key needs a unique index on that column, or Postgres rejects it. `inz validate` warns about this case:
+Foreign keys are single-column, so an FK can only point at one column of a composite key, and only if that column is unique on its own. Give it a unique index, or Postgres rejects the FK. `unique: true` on an existing column adds no constraint, so use an index. `inz validate` warns about this case:
 
 ```yaml
+tables:
+  devices:
+    fields:
+      - name: tenant_id
+        type: uuid
+        primary_key: true
+      - name: serial
+        type: text
+        primary_key: true
     indexes:
-      - columns: [team_id]
+      - columns: [serial]   # serials are globally unique
         unique: true
+  readings:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: device_serial
+        foreign_key:
+          references: devices.serial
 ```
 
 ## Field types

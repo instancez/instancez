@@ -173,7 +173,7 @@ tables:
         primary_key: true
 ```
 
-To reference one column of a composite key from another table's `foreign_key`, add a unique index on it (`indexes: [{columns: [team_id], unique: true}]`).
+To reference one column of a composite key from another table's `foreign_key`, that column must be unique on its own: add a unique index on it (`indexes: [{columns: [serial], unique: true}]`). `unique: true` on an existing column adds no constraint. See [Schema](/instancez/build/schema/).
 
 ### tables.\<name\>.rls_enabled
 
@@ -263,6 +263,7 @@ rpc:
 | `rpc.<name>.args[].required` | `boolean` | `false` | Return 400 if argument is absent. |
 | `rpc.<name>.args[].default` | `any` | — | Postgres DEFAULT value for optional args. |
 | `rpc.<name>.returns.type` | `string` | — | Return type: `void`, `record`, a scalar or composite type, `setof <type>`, or `table(col type, …)`. |
+| `rpc.<name>.set` | `map` | — | Map of `search_path`, `statement_timeout`, `lock_timeout`, `work_mem`, emitted as `SET` on the function. |
 | `rpc.<name>.body` | `string` | required | Function body (PL/pgSQL or SQL). |
 
 ## functions

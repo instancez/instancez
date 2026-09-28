@@ -170,6 +170,10 @@ rls:
     with_check: "status != 'locked'"
 ```
 
+### Calling an RPC from a policy
+
+A policy can call an RPC declared under `rpc:` (`using: "public.can_see(id)"`). instancez creates RPCs before policies, and removing an RPC first drops the managed policies that call it; a policy created outside `instancez.yaml` that calls it blocks the drop.
+
 ### Admin bypass via service role
 
 The `service_role` has `BYPASSRLS` in Postgres — it skips all policies. Requests made with the secret key are automatically assigned `service_role`, so they see every row regardless of any `using`/`with_check` expression. This applies both to the REST API (when the caller passes the secret key in the `apikey` header) and to code functions that use the backend client.

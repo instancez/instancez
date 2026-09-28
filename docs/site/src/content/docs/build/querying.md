@@ -207,7 +207,15 @@ The client can request a slice with an HTTP `Range` header (`Range-Unit: items`)
 const { data } = await supabase.from('todos').select('*').order('priority').range(2, 3)
 ```
 
-The response includes a `Content-Range` header: `2-3/*` (or `2-3/N` when a count is requested). An empty page sends `*/*`, or `*/N` with a count, as PostgREST does.
+The response includes `Content-Range` (`2-3/*`, or `2-3/N` with a count). With a count, a partial page returns 206 and an offset past the total returns 416 `PGRST103` with `Content-Range: */N`, as in PostgREST; without a count it's always 200. The `Range` header is read on GET only. An empty page sends `*/*`, or `*/N` with a count.
+
+supabase-js reports that 416 as an error with `data: null` and `count: null` (on a `head: true` request, `error.message` is `''`). Stop paging when `offset >= count`.
+
+Range handling follows PostgREST:
+
+- A `Range` header is intersected with `limit`/`offset`. A malformed header is ignored, `3-` is open-ended, and `9-0` returns 416.
+- A negative `offset` is ignored. A negative `limit` returns 416, and so does an empty range such as `.range(5, 4)` (`offset=5&limit=0`), with or without a count. `.range(0, -1)` returns `[]`.
+- Writes and RPCs check `limit`/`offset` the same way and return 416 before touching any row. `PUT` with `limit` or `offset` returns 400 `PGRST114`.
 
 ### Count
 
@@ -234,6 +242,8 @@ Count modes:
 | `exact` | `COUNT(*)` over the same joins and filters as the rows (`!inner` embeds, `!inner` embed filters, `Accept-Profile` schema), in the same transaction. |
 | `planned` | Uses the Postgres query planner estimate |
 | `estimated` | `pg_class.reltuples` for an unfiltered read of a plain table; the planner estimate otherwise. |
+
+`count=exact` on an aggregate counts ungrouped rows, so a grouped result is usually 206.
 
 On a setof RPC, `exact` counts the function's result after filters in the same statement as the rows, so the function runs once. `planned` and `estimated` use the planner estimate and don't run the function again.
 
@@ -283,13 +293,28 @@ const { data } = await supabase.from('comments').select('body, parent:todos(id, 
 
 The `!left` modifier is accepted (explicit left join, the default) and can be combined with an alias: `parent:todos!left(id,title)`.
 
+### Many-to-many
+
+A junction table whose primary key includes a foreign key to each side links the two tables, as in PostgREST. With `post_tags` keyed on `(post_id, tag_id)`, `posts` embeds `tags` directly:
+
+```js
+const { data } = await supabase.from('posts').select('title, tags(name)')
+// response: [{ title: "...", tags: [{ name: "go" }] }, { title: "...", tags: [] }]
+```
+
+The junction's own columns aren't returned. Embed filters, `order`, `limit`, `offset` and `!inner` work as on a has-many embed, and RLS on both the junction and the target applies. A self many-to-many (both FKs to the same table) doesn't resolve, same as PostgREST.
+
 ### FK disambiguation
 
-When two FKs exist between the same tables, use `!fk_column` to pick the right one:
+When more than one relationship links the same tables (two FKs, two junctions, or a FK and a junction), an embed without a hint returns HTTP 300 `PGRST201`, as in PostgREST. The `details` list each candidate and the `hint` names the embeds that resolve it. Pick one with a hint: the FK column, the referenced column, the constraint name (`<table>_<column>_fkey`), or the junction table for a many-to-many:
 
 ```
 select=title,assignee:users!assignee_id(name)
+select=title,creator:users!tasks_created_by_fkey(name)
+select=title,tags!post_tags(name)
 ```
+
+A FK written with a schema (`auth.users.id`, or any table outside `instancez.yaml`) can't be embedded. A two-part reference (`notes.id`) always means `public.notes`.
 
 ### Spread embed
 
@@ -358,7 +383,7 @@ GET /rest/v1/orders?select=amount.sum(),customers(name)
 
 Embeds in an aggregate query are returned as `jsonb`, so their object keys may come back in a different order.
 
-Aggregates also work on setof RPC results (`rpc/fn?select=status,count()`), grouped by the plain columns. On RPC results an aggregate can't be combined with an embed yet; that returns 400.
+Aggregates also work on setof RPC results (`rpc/fn?select=status,count()`), grouped by the plain columns, and next to embeds (`rpc/fn?select=status,count(),messages(id)`), grouped by the embed as on tables.
 
 `*` can't be combined with an aggregate (`select=*,count()`), since it gives no columns to group by. That returns 400; list the columns instead. As in PostgREST, `count=exact`, `planned` and `estimated` on an aggregate query count the rows matching the filters, not the groups: `GROUP BY` and `having` don't change the total.
 
