@@ -1067,6 +1067,25 @@ await step('rest: .limit() and .range() pagination', async () => {
   assertEq(page2[1].title, 'delta')
 })
 
+await step('rest: uncounted .range(5,4) and .limit(-1) are 416, .range(0,-1) is 200 []', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const offside = await client.from('todos').select('id').in('id', filterIds).range(5, 4)
+  assertEq(offside.status, 416, 'offset=5&limit=0 is an empty range, as in PostgREST')
+  assertEq(offside.error?.code, 'PGRST103')
+  assertEq(offside.data, null)
+  const negative = await client.from('todos').select('id').in('id', filterIds).limit(-1)
+  assertEq(negative.status, 416)
+  assertEq(negative.error?.code, 'PGRST103')
+  assertEq(negative.error?.details, 'Limit should be greater than or equal to zero.')
+  const zero = await client.from('todos').select('id').in('id', filterIds).range(0, -1)
+  if (zero.error) throw zero.error
+  assertEq(zero.status, 200)
+  assertEq(zero.data.length, 0)
+})
+
 await step('rest: 206 for a partial counted page, 416 past the end, 200 without a count', async () => {
   const client = createClient(URL, PUBLISHABLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },

@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http/httptest"
@@ -20,7 +21,7 @@ func listStatus(t *testing.T, method, rawQuery string, headers map[string]string
 	return w
 }
 
-func listStatusSQL(t *testing.T, method, rawQuery string, headers map[string]string, n int, total int64) (*httptest.ResponseRecorder, string) {
+func listStatusSQL(t *testing.T, method, rawQuery string, headers map[string]string, n int, total int64, opts ...func(*stubDB)) (*httptest.ResponseRecorder, string) {
 	t.Helper()
 	var sql string
 	gin.SetMode(gin.TestMode)
@@ -39,6 +40,9 @@ func listStatusSQL(t *testing.T, method, rawQuery string, headers map[string]str
 			},
 		}, nil
 	}}
+	for _, o := range opts {
+		o(db)
+	}
 	h := &CRUDHandler{cfg: &domain.Config{}, db: db, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -173,16 +177,37 @@ func TestHandleList_RangeHeaderIntersectsLimitOffset(t *testing.T) {
 func TestHandleList_GeoJSONRangeOrder(t *testing.T) {
 	geo := map[string]string{"Prefer": "count=exact", "Accept": "application/geo+json"}
 	w := listStatus(t, "GET", "offset=10", geo, 0, 5)
-	require.Equal(t, 416, w.Code, "no rows means ST_AsGeoJSON never fails, so 416 wins")
-	assert.Contains(t, w.Body.String(), "PGRST103")
+	require.Equal(t, 406, w.Code, "without PostGIS the query fails before rangeStatus")
+	assert.Contains(t, w.Body.String(), "PGRST118")
 
 	w = listStatus(t, "GET", "offset=10", geo, 1, 5)
 	require.Equal(t, 406, w.Code, "rows without geometry fail in the query, before rangeStatus")
 	assert.Contains(t, w.Body.String(), "PGRST118")
 
 	w = listStatus(t, "GET", "", map[string]string{"Accept": "application/geo+json"}, 0, 0)
+	require.Equal(t, 406, w.Code, "no PostGIS: ST_AsGeoJSON is missing even for zero rows")
+	assert.Contains(t, w.Body.String(), "PGRST118")
+
+	var probed string
+	postgis := func(db *stubDB) {
+		db.queryRowFn = func(_ context.Context, q string, _ ...any) (map[string]any, error) {
+			probed = q
+			return map[string]any{"?column?": int32(1)}, nil
+		}
+	}
+	w, _ = listStatusSQL(t, "GET", "", map[string]string{"Accept": "application/geo+json"}, 0, 0, postgis)
 	require.Equal(t, 200, w.Code, w.Body.String())
 	assert.JSONEq(t, `{"type":"FeatureCollection","features":[]}`, w.Body.String())
+	assert.Contains(t, probed, "pg_extension")
+
+	probeErr := func(db *stubDB) {
+		db.queryRowFn = func(context.Context, string, ...any) (map[string]any, error) { return nil, errors.New("boom") }
+	}
+	w, _ = listStatusSQL(t, "GET", "", map[string]string{"Accept": "application/geo+json"}, 0, 0, probeErr)
+	require.Equal(t, 406, w.Code, "a failed probe counts as no PostGIS")
+
+	w, _ = listStatusSQL(t, "GET", "offset=10", geo, 0, 5, postgis)
+	require.Equal(t, 416, w.Code, "PostGIS present, zero rows: 416 still wins")
 }
 
 func rpcStatus(t *testing.T, method, rawQuery string, headers map[string]string, rows []map[string]any) (*httptest.ResponseRecorder, []any) {
@@ -298,4 +323,43 @@ func TestHandleRPC_RangeHeader(t *testing.T) {
 	w, args = rpcStatus(t, "POST", "offset=-4", nil, nil)
 	require.Equal(t, 200, w.Code, w.Body.String())
 	assert.Equal(t, []any{0}, args, "negative offset is clamped to 0")
+}
+
+func TestRangeGuard(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	reached := false
+	r.Any("/x", rangeGuard, func(c *gin.Context) { reached = true; c.Status(204) })
+	for _, c := range []struct {
+		name, method, query, rng string
+		status                   int
+		body                     string
+	}{
+		{"PATCH negative limit", "PATCH", "limit=-1", "", 416, "Limit should be greater than or equal to zero."},
+		{"DELETE limit=0 with offset", "DELETE", "limit=0&offset=5", "", 416, "Limit should be greater than or equal to zero."},
+		{"POST negative limit", "POST", "limit=-1", "", 416, "PGRST103"},
+		{"GET offside header", "GET", "", "9-0", 416, "lower boundary"},
+		{"PUT negative limit", "PUT", "limit=-1", "", 416, "PGRST103"},
+		{"PUT with offset", "PUT", "offset=1", "", 400, "PGRST114"},
+		{"PUT with limit", "PUT", "limit=5", "", 400, "limit/offset querystring parameters are not allowed for PUT"},
+		{"PUT negative offset is allRange", "PUT", "offset=-4", "", 204, ""},
+		{"PATCH valid page", "PATCH", "limit=2&offset=1", "", 204, ""},
+		{"PATCH ignores Range", "PATCH", "", "9-0", 204, ""},
+		{"DELETE limit=0", "DELETE", "limit=0", "", 204, ""},
+		{"GET non-numeric ignored", "GET", "limit=NaN&offset=x", "", 204, ""},
+		{"no params", "POST", "", "", 204, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			reached = false
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(c.method, "/x?"+c.query, nil)
+			if c.rng != "" {
+				req.Header.Set("Range", c.rng)
+			}
+			r.ServeHTTP(w, req)
+			require.Equal(t, c.status, w.Code, w.Body.String())
+			assert.Equal(t, c.status == 204, reached)
+			assert.Contains(t, w.Body.String(), c.body)
+		})
+	}
 }

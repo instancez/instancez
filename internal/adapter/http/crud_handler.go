@@ -78,12 +78,12 @@ func (h *CRUDHandler) Mount(root *gin.RouterGroup) {
 	// anon calls still parse a token if present; per-function
 	// auth_required enforcement happens inside handleRPC.
 	rpc := h.handleRPC()
-	rest.POST("/rpc/:name", rejectPlan, jwtAuth(h.jwtKeys, false), rpc)
-	rest.GET("/rpc/:name", rejectPlan, jwtAuth(h.jwtKeys, false), rpc)
+	rest.POST("/rpc/:name", rejectPlan, jwtAuth(h.jwtKeys, false), rangeGuard, rpc)
+	rest.GET("/rpc/:name", rejectPlan, jwtAuth(h.jwtKeys, false), rangeGuard, rpc)
 	// HEAD reuses the same handler so supabase-js .rpc('fn', {}, { head: true })
 	// picks up Content-Range without streaming the row body. As with the CRUD
 	// list path, net/http strips the body after the status + headers fly.
-	rest.HEAD("/rpc/:name", rejectPlan, jwtAuth(h.jwtKeys, false), rpc)
+	rest.HEAD("/rpc/:name", rejectPlan, jwtAuth(h.jwtKeys, false), rangeGuard, rpc)
 
 	for tableName, table := range h.cfg.Tables {
 		name := tableName
@@ -100,10 +100,10 @@ func (h *CRUDHandler) Mount(root *gin.RouterGroup) {
 		// line and headers (Content-Range, Content-Type) but strip the body
 		// so clients can fetch counts and pagination metadata cheaply.
 		group.HEAD("", auth, list)
-		group.POST("", rejectPlan, auth, h.handleCreate(name, t))
-		group.PUT("", rejectPlan, auth, h.handleUpsert(name, t))
-		group.PATCH("", rejectPlan, auth, h.handleUpdate(name, t))
-		group.DELETE("", rejectPlan, auth, h.handleDelete(name, t))
+		group.POST("", rejectPlan, auth, rangeGuard, h.handleCreate(name, t))
+		group.PUT("", rejectPlan, auth, rangeGuard, h.handleUpsert(name, t))
+		group.PATCH("", rejectPlan, auth, rangeGuard, h.handleUpdate(name, t))
+		group.DELETE("", rejectPlan, auth, rangeGuard, h.handleDelete(name, t))
 	}
 }
 
@@ -238,8 +238,8 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 			return
 		}
 		geomCol := findGeometryColumn(table)
-		if accept == "application/geo+json" && geomCol == "" && len(rows) > 0 {
-			// PostgREST's ST_AsGeoJSON fails per row, so this beats rangeStatus.
+		if accept == "application/geo+json" && geomCol == "" && (len(rows) > 0 || !h.hasPostGIS(ctx)) {
+			// PostgREST's ST_AsGeoJSON fails inside the query, so this beats rangeStatus.
 			pgJSON(c, 406, "PGRST118", "No geometry column found for GeoJSON output", "", "")
 			return
 		}
@@ -683,6 +683,28 @@ func intersectRange(c *gin.Context, offset, limit int, hasLimit bool) (int, int,
 		return lo, postgrest.NoLimit, nil
 	}
 	return lo, hi - lo + 1, nil
+}
+
+// rangeGuard runs PostgREST's getRanges checks, which apply to every request, before the handler.
+func rangeGuard(c *gin.Context) {
+	limit, limitErr := strconv.Atoi(c.Query("limit"))
+	offset, _ := strconv.Atoi(c.Query("offset"))
+	lo, n, err := intersectRange(c, offset, limit, limitErr == nil)
+	switch {
+	case err != nil:
+		writeRangeError(c, err)
+	case c.Request.Method == "PUT" && (lo != 0 || n != postgrest.NoLimit):
+		pgJSON(c, 400, "PGRST114", "limit/offset querystring parameters are not allowed for PUT", "", "")
+	default:
+		return
+	}
+	c.Abort()
+}
+
+// hasPostGIS reports whether ST_AsGeoJSON exists; a failed probe counts as absent.
+func (h *CRUDHandler) hasPostGIS(ctx context.Context) bool {
+	row, err := h.db.QueryRow(ctx, "SELECT 1 FROM pg_extension WHERE extname = 'postgis'")
+	return err == nil && row != nil
 }
 
 func addSat(a, b int) int {

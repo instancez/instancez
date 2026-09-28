@@ -450,3 +450,39 @@ func TestHardening_RangeHeaderIntersectsLimitOffset(t *testing.T) {
 		require.Contains(t, string(raw), c.wantBody)
 	}
 }
+
+func TestHardening_RangeGuardOnEveryRequest(t *testing.T) {
+	if testTS == nil {
+		t.Skip("no upstream")
+	}
+	base := testTS.URL + "/rest/v1"
+	supabotAge := func() any {
+		_, _, raw := call(t, "GET", base+"/users?select=age&username=eq.supabot", "", nil, false)
+		return rowsOf(t, raw)[0]["age"]
+	}
+	before := supabotAge()
+	for _, c := range []struct {
+		method, path, body, rng, want string
+		status                        int
+	}{
+		{"PATCH", "/users?username=eq.supabot&limit=-1", `{"age":999}`, "", "Limit should be greater than or equal to zero.", 416},
+		{"PATCH", "/users?username=eq.supabot&limit=0&offset=5", `{"age":999}`, "", "PGRST103", 416},
+		{"DELETE", "/users?username=eq.supabot&limit=0&offset=5", "", "", "PGRST103", 416},
+		{"POST", "/users?limit=-1", `{"username":"range_guard"}`, "", "PGRST103", 416},
+		{"PUT", "/users?username=eq.supabot&offset=1", `{"username":"supabot"}`, "", "PGRST114", 400},
+		{"GET", "/rpc/greet", "", "9-0", "lower boundary must be lower", 416},
+		{"POST", "/rpc/add_numbers?limit=-1", `{"a":1,"b":2}`, "", "PGRST103", 416},
+		{"GET", "/rpc/greet", "", "0-1", "hello world", 200},
+	} {
+		hdrs := map[string]string{}
+		if c.rng != "" {
+			hdrs["Range"] = c.rng
+		}
+		status, _, raw := call(t, c.method, base+c.path, c.body, hdrs, false)
+		require.Equal(t, c.status, status, "%s %s: %s", c.method, c.path, raw)
+		require.Contains(t, string(raw), c.want)
+	}
+	require.Equal(t, before, supabotAge(), "416 must not mutate")
+	_, _, raw := call(t, "GET", base+"/users?select=username&username=eq.range_guard", "", nil, false)
+	require.Empty(t, rowsOf(t, raw), "416 must not insert")
+}
