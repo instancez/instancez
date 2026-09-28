@@ -138,7 +138,7 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 			return
 		}
 
-		if qp.Offset, qp.Limit, err = intersectRange(c, qp.Offset, qp.Limit); err != nil {
+		if qp.Offset, qp.Limit, err = intersectRange(c, qp.Offset, qp.Limit, c.Query("limit") != ""); err != nil {
 			writeRangeError(c, err)
 			return
 		}
@@ -657,15 +657,19 @@ var (
 	errLowerGTUpper  = errors.New("The lower boundary must be lower than or equal to the upper boundary in the Range header.") //nolint:staticcheck
 )
 
-// intersectRange narrows offset/limit (limit < 0 means none) by a GET Range header, like PostgREST's getRanges.
-func intersectRange(c *gin.Context, offset, limit int) (int, int, error) {
-	if limit == 0 && offset == 0 {
-		return 0, 0, nil
-	}
+// intersectRange turns offset/limit and a GET Range header into a non-negative page, like PostgREST's getRanges.
+func intersectRange(c *gin.Context, offset, limit int, hasLimit bool) (int, int, error) {
 	lo, hi := offset, math.MaxInt
-	if limit >= 0 && offset <= math.MaxInt-limit {
-		hi = offset + limit - 1
+	if hasLimit {
+		end := addSat(offset, limit)
+		if end == 0 {
+			return 0, 0, nil
+		}
+		if end < math.MaxInt {
+			hi = max(end, math.MinInt+1) - 1
+		}
 	}
+	lo = max(lo, 0)
 	if start, end, ok := parseRangeHeader(c.GetHeader("Range")); ok && c.Request.Method == "GET" {
 		if start > end {
 			return 0, 0, errLowerGTUpper
@@ -679,6 +683,17 @@ func intersectRange(c *gin.Context, offset, limit int) (int, int, error) {
 		return lo, postgrest.NoLimit, nil
 	}
 	return lo, hi - lo + 1, nil
+}
+
+func addSat(a, b int) int {
+	s := a + b
+	switch {
+	case b > 0 && s < a:
+		return math.MaxInt
+	case b < 0 && s > a:
+		return math.MinInt
+	}
+	return s
 }
 
 func writeRangeError(c *gin.Context, err error) {
@@ -1110,7 +1125,7 @@ func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allT
 	// Parse limit
 	if l := c.Query("limit"); l != "" {
 		n, err := strconv.Atoi(l)
-		if err != nil || n < 0 {
+		if err != nil {
 			return nil, fmt.Errorf("invalid limit: %s", l)
 		}
 		qp.Limit = n
@@ -1119,7 +1134,7 @@ func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allT
 	// Parse offset
 	if o := c.Query("offset"); o != "" {
 		n, err := strconv.Atoi(o)
-		if err != nil || n < 0 {
+		if err != nil {
 			return nil, fmt.Errorf("invalid offset: %s", o)
 		}
 		qp.Offset = n

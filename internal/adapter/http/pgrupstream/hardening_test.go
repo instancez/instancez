@@ -102,7 +102,10 @@ func TestHardening_MaxRows(t *testing.T) {
 		require.Equal(t, 200, status, "%s: %s", path, raw)
 		require.Len(t, rowsOf(t, raw), want, path)
 	}
-	for _, path := range []string{"limit=-1", "limit=NaN", "limit=99999999999999999999"} {
+	status, _, raw = call(t, "GET", base+"/rest/v1/users?select=username&limit=-1", "", nil, false)
+	require.Equal(t, 416, status, "negative limit is PGRST103, as in PostgREST: %s", raw)
+	require.Contains(t, string(raw), "Limit should be greater than or equal to zero.")
+	for _, path := range []string{"limit=NaN", "limit=99999999999999999999"} {
 		status, _, raw := call(t, "GET", base+"/rest/v1/users?select=username&"+path, "", nil, false)
 		require.Equal(t, 400, status, "%s: %s", path, raw)
 	}
@@ -412,6 +415,12 @@ func TestHardening_RangeHeaderIntersectsLimitOffset(t *testing.T) {
 	require.Equal(t, 416, status, "%s", raw)
 	require.Contains(t, string(raw), "PGRST103")
 
+	status, _, raw = call(t, "POST", testTS.URL+"/rest/v1/rpc/users_by_status?limit=-1", `{"target":"ONLINE"}`, nil, false)
+	require.Equal(t, 416, status, "%s", raw)
+	status, hdr, _ = call(t, "POST", testTS.URL+"/rest/v1/rpc/users_by_status?offset=-4", `{"target":"ONLINE"}`, map[string]string{"Prefer": "count=exact"}, false)
+	require.Equal(t, 200, status)
+	require.Equal(t, "0-2/3", hdr.Get("Content-Range"))
+
 	status, hdr, _ = call(t, "POST", testTS.URL+"/rest/v1/rpc/users_by_status", `{"target":"ONLINE"}`, exact, false)
 	require.Equal(t, 200, status, "POST ignores Range")
 	require.Equal(t, "0-2/3", hdr.Get("Content-Range"))
@@ -426,6 +435,10 @@ func TestHardening_RangeHeaderIntersectsLimitOffset(t *testing.T) {
 		{"", "9-0", "", "lower boundary must be lower", 416},
 		{"?limit=0&offset=2", "", "", "Limit should be greater than or equal to zero.", 416},
 		{"?limit=0", "9-0", "*/5", "", 206},
+		{"?offset=-4", "", "0-4/5", "", 200},
+		{"?offset=-4&limit=6", "", "0-1/5", "", 206},
+		{"?limit=-1", "", "", "Limit should be greater than or equal to zero.", 416},
+		{"?limit=-1&offset=1", "", "*/5", "", 206},
 	} {
 		hdrs := map[string]string{"Prefer": "count=exact"}
 		if c.rng != "" {

@@ -129,6 +129,10 @@ func TestHandleList_RangeHeaderIntersectsLimitOffset(t *testing.T) {
 		{"items= prefix ignored", "GET", "", "items=0-1", ""},
 		{"limit=0 bypasses offside header", "GET", "limit=0", "9-0", " LIMIT 0 OFFSET 0"},
 		{"limit=0&offset=0 is the limit-zero range", "GET", "limit=0&offset=0", "", " LIMIT 0 OFFSET 0"},
+		{"negative offset is a no-op", "GET", "offset=-4", "", ""},
+		{"negative offset shrinks the limit", "GET", "offset=-4&limit=10", "", " LIMIT 6 OFFSET 0"},
+		{"offset+limit == 0 is the limit-zero range", "GET", "offset=-4&limit=4", "", " LIMIT 0 OFFSET 0"},
+		{"limit=-1&offset=1 is the limit-zero range", "GET", "limit=-1&offset=1", "", " LIMIT 0 OFFSET 0"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			w, sql := listStatusSQL(t, c.method, c.query, map[string]string{"Range": c.rng}, 0, 0)
@@ -147,6 +151,10 @@ func TestHandleList_RangeHeaderIntersectsLimitOffset(t *testing.T) {
 		{"disjoint header and offset", "GET", "offset=5", "0-1", negLimit},
 		{"limit=0 with offset", "GET", "limit=0&offset=5", "", negLimit},
 		{"limit=0 with offset on HEAD", "HEAD", "limit=0&offset=1", "", ""},
+		{"negative limit", "GET", "limit=-1", "", negLimit},
+		{"negative limit on HEAD", "HEAD", "limit=-5", "", ""},
+		{"negative offset past the limit", "GET", "offset=-4&limit=2", "", negLimit},
+		{"extreme negatives", "GET", "offset=-9223372036854775808&limit=-9223372036854775808", "", negLimit},
 		{"offside header", "GET", "", "9-0", `{"code":"PGRST103","message":"Requested range not satisfiable","details":"The lower boundary must be lower than or equal to the upper boundary in the Range header.","hint":""}`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -284,4 +292,10 @@ func TestHandleRPC_RangeHeader(t *testing.T) {
 	w, args = rpcStatus(t, "GET", "", map[string]string{"Range": "3-"}, nil)
 	require.Equal(t, 200, w.Code, w.Body.String())
 	assert.Equal(t, []any{3}, args, "open-ended Range is offset only")
+	w, _ = rpcStatus(t, "POST", "limit=-1", nil, nil)
+	require.Equal(t, 416, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "Limit should be greater than or equal to zero.")
+	w, args = rpcStatus(t, "POST", "offset=-4", nil, nil)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Equal(t, []any{0}, args, "negative offset is clamped to 0")
 }

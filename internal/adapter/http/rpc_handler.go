@@ -536,7 +536,7 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 	// LIMIT.
 	if l := c.Query("limit"); l != "" {
 		n, err := strconv.Atoi(l)
-		if err != nil || n < 0 {
+		if err != nil {
 			return nil, nil, fmt.Errorf("invalid limit: %s", l)
 		}
 		chain.hasLimit = true
@@ -546,17 +546,13 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 	// OFFSET.
 	if o := c.Query("offset"); o != "" {
 		n, err := strconv.Atoi(o)
-		if err != nil || n < 0 {
+		if err != nil {
 			return nil, nil, fmt.Errorf("invalid offset: %s", o)
 		}
 		chain.hasOffset = true
 		chain.offset = n
 	}
-	limit := postgrest.NoLimit
-	if chain.hasLimit {
-		limit = chain.limit
-	}
-	offset, limit, err := intersectRange(c, chain.offset, limit)
+	offset, limit, err := intersectRange(c, chain.offset, chain.limit, chain.hasLimit)
 	if err != nil {
 		return nil, nil, err
 	}
