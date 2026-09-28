@@ -142,7 +142,7 @@ tables:
 |-----|------|---------|-------------|
 | `fields[].name` | `string` | required | Column name. |
 | `fields[].type` | `string` | required | Postgres type (e.g. `text`, `bigint`, `uuid`, `timestamptz`, `text[]`). |
-| `fields[].primary_key` | `boolean` | `false` | Mark as primary key. |
+| `fields[].primary_key` | `boolean` | `false` | Mark as primary key. Mark several fields for a composite key. The key's columns can't change once the table exists. |
 | `fields[].required` | `boolean` | `false` | Add `NOT NULL` constraint. |
 | `fields[].unique` | `boolean` | `false` | Add `UNIQUE` constraint. |
 | `fields[].default` | `any` | — | Column default. Supported: literal values, `now()`, `current_date`, `current_time`. The shorthand `uuid_v7()` and `uuid_v4()` are normalized to `gen_random_uuid()`. |
@@ -157,6 +157,21 @@ tables:
 | `fields[].on_delete` | `string` | — | (`ref` only) `cascade` or `keep` — whether to delete the object on row deletion. |
 
 No columns are injected automatically. Every column, including primary keys, must be declared.
+
+A composite primary key marks each of its fields:
+
+```yaml
+tables:
+  memberships:
+    fields:
+      - name: team_id
+        primary_key: true
+        foreign_key:
+          references: teams.id
+      - name: user_id
+        type: uuid
+        primary_key: true
+```
 
 ### tables.\<name\>.rls_enabled
 

@@ -31,6 +31,25 @@ tables:
 
 Every table must have at least one field marked `primary_key: true`. The migrator will not inject one for you.
 
+Mark two or more fields to get a composite primary key, one `PRIMARY KEY (a, b)` constraint over the marked columns in field order. Upserts default to the whole key, and `onConflict: 'team_id,user_id'` targets it explicitly:
+
+```yaml
+tables:
+  memberships:
+    fields:
+      - name: team_id
+        primary_key: true
+        foreign_key:
+          references: teams.id
+      - name: user_id
+        type: uuid
+        primary_key: true
+      - name: role
+        type: text
+```
+
+Which columns form the primary key is fixed once the table exists. A change to the `primary_key` flags of a live table fails the migration. An FK can't reference a single column of a composite key unless that column also has `unique: true`.
+
 ## Field types
 
 The `type` field accepts standard Postgres type names. The most commonly used ones:

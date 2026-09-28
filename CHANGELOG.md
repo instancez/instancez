@@ -10,6 +10,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 - Per-table `rls_enabled` in `instancez.yaml`. `true` enables and forces RLS even with no policies (deny-all for `anon`/`authenticated`), and with `true` set, removing the last policy no longer turns RLS off. `false` disables RLS and is rejected when the table declares policies. Leaving it unset keeps the old behavior (on only if the table has policies, off the moment the last policy is removed), so existing projects migrate with no DDL change. `inz init`, the examples, and the dashboard's new-table flow now write it explicitly, defaulting to `true`.
 - `inz validate` and `inz dev` print non-blocking warnings: a table without `rls_enabled`, a table with RLS disabled, and `server.max_limit: 100` (the old default).
+- Composite primary keys: mark two or more fields `primary_key: true`. The REST API and supabase-js upserts (`onConflict: 'a,b'`) work on them.
 
 ### Changed
 
@@ -62,6 +63,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - supabase-js `createSignedUrl` and `createSignedUrls` now return URLs that work. Before, storage-js glued the absolute S3 URL onto the API URL, which broke them. The `download` option (`true` or a filename) now sets `Content-Disposition`, safely encoded.
 - Storage: `?download=` on public and authenticated downloads now sets `Content-Disposition`, so `getPublicUrl(path, { download })` and `download=` links work.
 - A setof RPC with `Prefer: count=exact` runs the function once instead of twice, so VOLATILE functions no longer apply their side effects twice. `count=planned` and `count=estimated` on RPCs now return an estimate instead of `*`.
+- A table with more than one `primary_key: true` field no longer fails to deploy with "multiple primary keys". A migration that would change which columns form a live table's primary key now fails with a clear error (422 from the config API) instead of silently leaving the old key, and an FK to one column of a composite key is a validation error unless that column is `unique`.
 
 ### Security
 
