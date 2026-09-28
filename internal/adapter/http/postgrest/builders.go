@@ -3,6 +3,7 @@ package postgrest
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/instancez/instancez/internal/domain"
@@ -438,6 +439,20 @@ func BuildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 	var allArgs []any
 	argIdx := 1
 
+	// With aggregates each embed output is a group key, as in PostgREST; jsonb makes it comparable.
+	addGroupKey := func(part string) {
+		selectParts = append(selectParts, part)
+		if hasAgg {
+			groupByExprs = append(groupByExprs, strconv.Itoa(len(selectParts)))
+		}
+	}
+	addEmbedPart := func(expr, key string) {
+		if hasAgg {
+			expr = "(" + expr + ")::jsonb"
+		}
+		addGroupKey(expr + " AS " + key)
+	}
+
 	for _, emb := range qp.Embeds {
 		alias := "_emb_" + emb.OutputKey()
 		hasChildren := len(emb.Children) > 0
@@ -476,7 +491,7 @@ func BuildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 				sub := fmt.Sprintf(
 					"SELECT coalesce(json_agg(%s), '[]'::json) FROM (%s) %s",
 					rowExpr, inner, emb.RefTable)
-				selectParts = append(selectParts, fmt.Sprintf("(%s) AS %s", sub, emb.OutputKey()))
+				addEmbedPart("("+sub+")", emb.OutputKey())
 			} else {
 				sub := fmt.Sprintf(
 					"SELECT coalesce(json_agg(%s", rowExpr)
@@ -493,7 +508,7 @@ func BuildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 						argIdx = next
 					}
 				}
-				selectParts = append(selectParts, fmt.Sprintf("(%s) AS %s", sub, emb.OutputKey()))
+				addEmbedPart("("+sub+")", emb.OutputKey())
 			}
 		} else if emb.Spread {
 			spreadCols := emb.Columns
@@ -505,11 +520,11 @@ func BuildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 				sort.Strings(spreadCols)
 			}
 			for _, c := range spreadCols {
-				selectParts = append(selectParts, fmt.Sprintf("%s.%s", alias, c))
+				addGroupKey(alias + "." + c)
 			}
 			for _, child := range emb.Children {
 				childExpr, childArgs, nextIdx := BuildChildEmbedSubselect(child, alias, allTables, argIdx)
-				selectParts = append(selectParts, fmt.Sprintf("%s AS %s", childExpr, child.OutputKey()))
+				addEmbedPart(childExpr, child.OutputKey())
 				allArgs = append(allArgs, childArgs...)
 				argIdx = nextIdx
 			}
@@ -517,18 +532,17 @@ func BuildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 			rowExpr, rowArgs, nextIdx := BuildEmbedRowExpr(emb, alias, allTables, argIdx)
 			allArgs = append(allArgs, rowArgs...)
 			argIdx = nextIdx
-			selectParts = append(selectParts, fmt.Sprintf("%s AS %s", NullIfNoMatch(alias, emb.RefColumn, rowExpr), emb.OutputKey()))
+			addEmbedPart(NullIfNoMatch(alias, emb.RefColumn, rowExpr), emb.OutputKey())
 		} else {
 			if len(emb.Columns) == 0 {
-				selectParts = append(selectParts,
-					fmt.Sprintf("row_to_json(%s.*) AS %s", alias, emb.OutputKey()))
+				addEmbedPart(fmt.Sprintf("row_to_json(%s.*)", alias), emb.OutputKey())
 			} else {
 				var embCols []string
 				for _, c := range emb.Columns {
 					embCols = append(embCols, fmt.Sprintf("'%s', %s.%s", c, alias, c))
 				}
 				obj := NullIfNoMatch(alias, emb.RefColumn, fmt.Sprintf("json_build_object(%s)", strings.Join(embCols, ", ")))
-				selectParts = append(selectParts, obj+" AS "+emb.OutputKey())
+				addEmbedPart(obj, emb.OutputKey())
 			}
 		}
 	}

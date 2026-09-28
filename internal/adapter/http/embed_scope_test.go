@@ -991,3 +991,90 @@ func TestParseQueryParams_EmbedUnbalancedParens(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildSelectQuery_AggregateGroupsByEmbeds(t *testing.T) {
+	tables := threeTableFixture()
+	qp := &QueryParams{
+		Select: []string{"title", "count()", "author(name)", "...author(id)"},
+		Embeds: []Embed{
+			{Name: "author", FKColumn: "author_id", RefTable: "authors", RefColumn: "id", Columns: []string{"name"}},
+			{Name: "writer", FKColumn: "author_id", RefTable: "authors", RefColumn: "id", Columns: []string{"id"}, Spread: true},
+		},
+		Limit: 20,
+	}
+	sql, _ := buildSelectQueryFull("posts", qp, tables["posts"], tables)
+	if !strings.Contains(sql, "(CASE WHEN _emb_author.id IS NULL THEN NULL ELSE json_build_object('name', _emb_author.name) END)::jsonb AS author") {
+		t.Errorf("to-one embed must be jsonb to be groupable: %s", sql)
+	}
+	if !strings.Contains(sql, " GROUP BY posts.title, 3, 4") {
+		t.Errorf("embed outputs must be group keys: %s", sql)
+	}
+}
+
+func TestBuildSelectQuery_AggregateGroupsByHasManyEmbed(t *testing.T) {
+	tables := postsAuthorTables()
+	qp := &QueryParams{
+		Select: []string{"count()", "posts(title)"},
+		Embeds: []Embed{{
+			Name: "posts", IsReverse: true, FKColumn: "author_id", RefTable: "posts", RefColumn: "id",
+			Columns: []string{"title"},
+			Where:   postgrest.AndLeaves(postgrest.Filter{Column: "status", Operator: "eq", Value: "x"}),
+		}},
+		Limit: 20,
+	}
+	sql, args := buildSelectQuery("authors", qp, tables["authors"])
+	if !strings.Contains(sql, "'[]'::json) FROM posts WHERE posts.author_id = authors.id AND status = $1))::jsonb AS posts") {
+		t.Errorf("has-many embed must be jsonb: %s", sql)
+	}
+	if !strings.HasSuffix(strings.SplitN(sql, " LIMIT", 2)[0], " GROUP BY 2") || len(args) != 1 {
+		t.Errorf("has-many embed must group by ordinal without re-binding args: %s %v", sql, args)
+	}
+}
+
+func TestBuildSelectQuery_NoAggregateKeepsJSONEmbeds(t *testing.T) {
+	tables := postsAuthorTables()
+	qp := &QueryParams{
+		Select: []string{"title", "author(name)"},
+		Embeds: []Embed{{Name: "author", FKColumn: "author_id", RefTable: "authors", RefColumn: "id", Columns: []string{"name"}}},
+		Limit:  20,
+	}
+	sql, _ := buildSelectQuery("posts", qp, tables["posts"])
+	if strings.Contains(sql, "jsonb") || strings.Contains(sql, "GROUP BY") {
+		t.Errorf("non-aggregate query must not change: %s", sql)
+	}
+}
+
+func TestBuildSelectQuery_ToOneEmbedOrStaysInJoinOn(t *testing.T) {
+	tables := postsAuthorTables()
+	c := testContext("select=*,author(name)&author.or=(name.eq.bob,active.is.true)")
+	qp, err := parseQueryParams(c, "posts", tables["posts"], tables)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	sql, args := buildSelectQueryFull("posts", qp, tables["posts"], tables)
+	if !strings.Contains(sql, "ON posts.author_id = _emb_author.id AND (_emb_author.name = $1 OR _emb_author.active IS TRUE)") {
+		t.Errorf("embed or must be in the LEFT JOIN ON clause: %s", sql)
+	}
+	if strings.Contains(sql, " WHERE ") {
+		t.Errorf("embed or must not filter parents: %s", sql)
+	}
+	if len(args) != 1 || args[0] != "bob" {
+		t.Errorf("args = %v", args)
+	}
+}
+
+func TestBuildSelectQuery_SpreadEmbedFilterStaysInJoinOn(t *testing.T) {
+	tables := postsAuthorTables()
+	c := testContext("select=title,...author(name)&author.name=eq.bob")
+	qp, err := parseQueryParams(c, "posts", tables["posts"], tables)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	sql, _ := buildSelectQueryFull("posts", qp, tables["posts"], tables)
+	if !strings.Contains(sql, "LEFT JOIN authors AS _emb_author ON posts.author_id = _emb_author.id AND _emb_author.name = $1") {
+		t.Errorf("spread filter must be in the LEFT JOIN ON clause: %s", sql)
+	}
+	if strings.Contains(sql, " WHERE ") {
+		t.Errorf("spread filter must not filter parents: %s", sql)
+	}
+}

@@ -38,6 +38,8 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - Reloading functions (dev hot reload, `serve --watch` bundle change) no longer kills calls in flight. The old runtime drains for up to 30s before its workers stop.
 - Storage: batch signed URLs, copy, move, remove, `emptyBucket` and the legacy `/api/storage` routes now respect `storage.objects` RLS. Previously some of them signed, copied or deleted objects the caller couldn't read or delete.
 - Storage: object keys with `..` segments are rejected, and the local provider can no longer write outside its directory.
+- An aggregate next to an embed (`select=count(),users(username)`, `select=amount.sum(),...customers(name)`) returned 500. The embed is now a group key, as in PostgREST, for belongs-to, has-many, and spread embeds.
+- A filter on a spread embed (`select=id,...users(username)&users.status=eq.x`) keeps every parent row; unmatched spread columns are `null`.
 - Storage: downloads send `nosniff`, and HTML/SVG/XML/JS are served as attachments.
 - Storage: image transforms are capped at 2500px, 25MB and 50MP. Signed URL expiry is capped at 7 days. Uploads no longer hold a database connection while the body streams. Multipart and signed uploads record real sizes, and signed uploads enforce the bucket's MIME allowlist. S3 copies of keys with special characters work.
 - Storage: `createSignedUploadUrl`'s response `url` now includes `?token=`, so `@supabase/supabase-js`'s `uploadToSignedUrl()` and `createSignedUploadUrl()` work end-to-end (storage-js reads the token from the URL).

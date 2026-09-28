@@ -308,6 +308,10 @@ Filter, order, or paginate within an embed using `<embed>.` prefixes:
 GET /rest/v1/todos?select=title,comments(body)&comments.body=like.%important%&comments.order=created_at.desc&comments.limit=5
 ```
 
+Filters (including `<embed>.or=(...)` and `<embed>.and=(...)`) apply to any embed, spreads included. `order`, `limit`, and `offset` apply to has-many embeds only; on a belongs-to embed they return 400.
+
+A filter on a spread embed doesn't drop the parent either: when the embed doesn't match, its spread columns come back `null`.
+
 ### Nested embeds
 
 ```js
@@ -342,6 +346,17 @@ Supported aggregates: `count`, `sum`, `avg`, `min`, `max`.
 // average with cast
 // GET /rest/v1/todos?select=avg_priority:priority.avg()::numeric
 ```
+
+### Grouping by an embed
+
+An embed next to an aggregate is a group key, as in PostgREST. This works for belongs-to, has-many, and spread embeds:
+
+```
+GET /rest/v1/orders?select=amount.sum(),customers(name)
+// response: [{ sum: 100, customers: { name: "Customer A" } }, ...]
+```
+
+Embeds in an aggregate query are returned as `jsonb`, so their object keys may come back in a different order.
 
 ### HAVING
 
