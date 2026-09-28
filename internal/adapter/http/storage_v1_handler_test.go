@@ -2903,3 +2903,64 @@ func TestRedeemSignedURL_PathCaseAndTrailingSlash(t *testing.T) {
 	assert.Equal(t, 400, getRaw(r, "/storage/v1/object/sign/docs/a/b.png?token="+tok).Code)
 	assert.Len(t, streamed, 1, "a case-changed path never streams")
 }
+
+type roleCtxKey struct{}
+
+// roleTrackingDB tags the context with the WithRLS role and records the role each QueryRow ran under.
+func roleTrackingDB(queried *[]string) *stubDB {
+	return &stubDB{
+		withRLSFn: func(ctx context.Context, s domain.Session) (context.Context, error) {
+			return context.WithValue(ctx, roleCtxKey{}, s.Role), nil
+		},
+		queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+			role, _ := ctx.Value(roleCtxKey{}).(string)
+			*queried = append(*queried, role)
+			return map[string]any{"id": "x", "mime": "text/plain"}, nil
+		},
+	}
+}
+
+// Supabase parity: /object/public bypasses RLS, so a public bucket needs no anon select policy.
+func TestServeDownload_PublicRouteBypassesRLS(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var queried []string
+	store := &stubObjectStore{downloadFn: func(context.Context, string) (io.ReadCloser, string, error) {
+		return io.NopCloser(strings.NewReader("bytes")), "text/plain", nil
+	}}
+	h := newStorageHandler(roleTrackingDB(&queried), store, map[string]domain.Bucket{"pub": {Public: true}, "priv": {}})
+	r := gin.New()
+	r.GET("/storage/v1/object/*all", func(c *gin.Context) {
+		setTestSession(c, domain.Session{Role: "anon"})
+		h.objectGetDispatch(c)
+	})
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/storage/v1/object/public/pub/a%20%C3%A9.txt", nil))
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Equal(t, "bytes", w.Body.String())
+	assert.Equal(t, []string{"service_role"}, queried)
+
+	queried = nil
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/storage/v1/object/public/priv/a.txt", nil))
+	assert.Equal(t, 400, w.Code)
+	assert.Empty(t, queried, "a non-public bucket must be rejected before any lookup")
+}
+
+func TestServeDownload_NonPublicRouteKeepsCallerRLS(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var queried []string
+	store := &stubObjectStore{downloadFn: func(context.Context, string) (io.ReadCloser, string, error) {
+		return io.NopCloser(strings.NewReader("bytes")), "text/plain", nil
+	}}
+	h := newStorageHandler(roleTrackingDB(&queried), store, map[string]domain.Bucket{"pub": {Public: true}})
+	r := gin.New()
+	r.GET("/dl/:bucket/*path", func(c *gin.Context) {
+		setTestSession(c, domain.Session{Role: "authenticated", UserID: "u1", IsAuthenticated: true})
+		h.serveDownload(c, c.Param("bucket"), c.Param("path"), false)
+	})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/dl/pub/a.txt", nil))
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Equal(t, []string{"authenticated"}, queried, "only the public route may bypass RLS")
+}

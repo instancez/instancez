@@ -212,6 +212,11 @@ func rlsContext(db domain.Database, c *gin.Context) context.Context {
 	return ctx
 }
 
+// serviceContext bypasses RLS, so callers must gate on the bucket and scope the query to one object.
+func serviceContext(db domain.Database, ctx context.Context) (context.Context, error) {
+	return db.WithRLS(ctx, domain.Session{Role: "service_role", IsAuthenticated: true})
+}
+
 var errInvalidKey = errors.New("invalid object key")
 
 // cleanPath normalizes an object key and rejects empty, NUL and ".." keys.
@@ -599,6 +604,12 @@ func (h *StorageV1Handler) serveDownload(c *gin.Context, bucketName, objPath str
 	}
 
 	ctx := h.rlsCtx(c)
+	if publicOnly {
+		if ctx, err = serviceContext(h.db, c.Request.Context()); err != nil {
+			storageErr(c, 500, "internal", "Download failed")
+			return
+		}
+	}
 	row, err := h.db.QueryRow(ctx, "SELECT id FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
 	if err != nil || row == nil {
 		storageErr(c, 404, "not_found", "Object not found")
@@ -744,7 +755,7 @@ func (h *StorageV1Handler) redeemSignedURL(c *gin.Context, bucketName, rawPath s
 		storageErr(c, 404, "not_found", "Bucket not found")
 		return
 	}
-	ctx, err := h.db.WithRLS(ctx, domain.Session{Role: "service_role", IsAuthenticated: true})
+	ctx, err := serviceContext(h.db, ctx)
 	if err != nil {
 		storageErr(c, 500, "internal", "Download failed")
 		return

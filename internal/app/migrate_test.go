@@ -309,11 +309,56 @@ func TestGenerateStorageRLS_Public(t *testing.T) {
 	ddl := generateStorageRLS("avatars", bucket)
 	joined := strings.Join(ddl, "\n")
 
-	mustContain(t, joined, "DROP POLICY IF EXISTS avatars_public_select ON storage.objects")
-	mustContain(t, joined, "avatars_public_select")
+	mustNotContain(t, joined, "avatars_public_select")
 	mustContain(t, joined, "bucket_id = 'avatars'")
 	mustContain(t, joined, "DROP POLICY IF EXISTS storage_avatars_insert_0 ON storage.objects")
 	mustContain(t, joined, "FOR INSERT WITH CHECK")
+}
+
+// Public buckets grant no SELECT; the legacy policy is only ever dropped (Supabase parity).
+func TestGenerateStorageRLSAll_PublicBucketDropsLegacySelect(t *testing.T) {
+	cases := map[string]map[string]domain.Bucket{
+		"no rls anywhere": {"avatars": {Public: true}, "documents": {}},
+		"rls elsewhere":   {"avatars": {Public: true}, "documents": {RLS: []domain.RLSPolicy{{Operations: []string{"select"}, Using: "true"}}}},
+		"rls on public":   {"avatars": {Public: true, RLS: []domain.RLSPolicy{{Operations: []string{"select"}, Using: "auth.role() = 'authenticated'"}}}, "documents": {}},
+	}
+	for name, storage := range cases {
+		t.Run(name, func(t *testing.T) {
+			joined := strings.Join(generateStorageRLSAll(storage), "\n")
+			mustContain(t, joined, "DROP POLICY IF EXISTS avatars_public_select ON storage.objects;")
+			mustNotContain(t, joined, "CREATE POLICY avatars_public_select")
+			mustNotContain(t, joined, "documents_public_select")
+		})
+	}
+}
+
+func TestHealStorageRLS(t *testing.T) {
+	if got := healStorageRLS(nil); got != nil {
+		t.Fatalf("nil storage: %v", got)
+	}
+	if got := healStorageRLS(map[string]domain.Bucket{"docs": {}}); got != nil {
+		t.Fatalf("private bucket without restrictive policy must emit nothing: %v", got)
+	}
+	got := healStorageRLS(map[string]domain.Bucket{"b_pub": {Public: true}, "a_pub": {Public: true}, "docs": {}})
+	if len(got) != 1 {
+		t.Fatalf("want one guarded statement, got %d: %v", len(got), got)
+	}
+	mustContain(t, got[0], "policyname = 'a_pub_public_select') THEN\nDROP POLICY a_pub_public_select ON storage.objects;\nEND IF;")
+	mustContain(t, got[0], "policyname = 'b_pub_public_select') THEN\nDROP POLICY b_pub_public_select ON storage.objects;\nEND IF;")
+	if strings.Index(got[0], "a_pub_public_select") > strings.Index(got[0], "b_pub_public_select") {
+		t.Fatalf("heal must iterate buckets in sorted order: %s", got[0])
+	}
+	mustNotContain(t, got[0], "CREATE POLICY")
+	mustNotContain(t, got[0], "docs_public_select")
+
+	both := healStorageRLS(map[string]domain.Bucket{
+		"pub": {Public: true, RLS: []domain.RLSPolicy{{Operations: []string{"select"}, Using: "true", Type: "restrictive"}}},
+	})
+	if len(both) != 2 {
+		t.Fatalf("public+restrictive: want drop and re-emit statements, got %d: %v", len(both), both)
+	}
+	mustContain(t, both[1], "IF to_regclass('storage.objects') IS NOT NULL THEN")
+	mustNotContain(t, both[1], "pub_public_select")
 }
 
 // TestGenerateStorageRLS_UpdateDivergentUsingWithCheck mirrors the table-path
@@ -1006,8 +1051,8 @@ func TestHarden_NoRestrictiveBucketPolicy_EmitsNoStorageDDL(t *testing.T) {
 		t.Fatalf("Harden: %v", err)
 	}
 	for _, stmt := range db.execs {
-		if strings.Contains(stmt, "storage.objects") {
-			t.Fatalf("Harden with no restrictive bucket policy must not touch storage.objects, got: %s", stmt)
+		if strings.Contains(stmt, "storage.objects") && !strings.Contains(stmt, "FROM pg_policies") {
+			t.Fatalf("Harden with no restrictive bucket policy must only touch storage.objects behind a pg_policies check, got: %s", stmt)
 		}
 	}
 }

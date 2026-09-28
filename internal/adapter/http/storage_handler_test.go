@@ -247,17 +247,10 @@ func TestHandleDelete_StoreError(t *testing.T) {
 	}
 }
 
-func TestLegacyMount_RunsAsCallerNotServiceRole(t *testing.T) {
+func TestLegacyMount_PublicReadBypassesRLSOtherRoutesNeedAuth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	var roles []string
-	db := &stubDB{
-		withRLSFn: func(ctx context.Context, s domain.Session) (context.Context, error) {
-			roles = append(roles, s.Role)
-			return ctx, nil
-		},
-		queryRowFn: func(context.Context, string, ...any) (map[string]any, error) { return map[string]any{"id": "x"}, nil },
-	}
-	h := newLegacyStorageHandler(db, &stubObjectStore{})
+	var queried []string
+	h := newLegacyStorageHandler(roleTrackingDB(&queried), &stubObjectStore{})
 	h.cfg.Storage = map[string]domain.Bucket{"pub": {Public: true}, "priv": {}}
 	r := gin.New()
 	h.Mount(r.Group("/api"))
@@ -265,7 +258,7 @@ func TestLegacyMount_RunsAsCallerNotServiceRole(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/storage/pub/a.txt", nil))
 	require.Equal(t, 200, w.Code, w.Body.String())
-	assert.Equal(t, []string{"anon"}, roles, "public download must run as anon, never service_role")
+	assert.Equal(t, []string{"service_role"}, queried, "a public download is a scoped lookup that bypasses RLS, like /object/public")
 
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/storage/priv/a.txt", nil))

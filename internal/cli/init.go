@@ -234,11 +234,13 @@ tables:
 # Access is governed by RLS, exactly like tables.
 storage:
   avatars:
-    public: true          # objects are world-readable by URL
+    public: true          # anyone can download via /object/public; listing follows rls
     max_size: 5MB
     types: [image/*]
     rls:
-      # Only signed-in users may upload, replace, or remove avatars.
+      # Only signed-in users may list, upload, replace, or remove avatars.
+      - operations: [select]
+        using: "auth.is_authenticated()"
       - operations: [insert]
         with_check: "auth.is_authenticated()"
       - operations: [update]

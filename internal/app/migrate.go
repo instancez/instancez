@@ -376,13 +376,14 @@ func (m *Migrator) Harden(ctx context.Context, cfg *domain.Config) error {
 		stmts = append(stmts, authHealDDL...)
 	}
 	if cfg != nil {
-		stmts = append(stmts, healRestrictiveStorageRLS(cfg.Storage)...)
+		stmts = append(stmts, healStorageRLS(cfg.Storage)...)
 	}
 	return m.applyStatements(ctx, stmts)
 }
 
-// healRestrictiveStorageRLS re-emits storage RLS for buckets with a restrictive policy, healing existing DBs still on the old AND-scoping without a config change. Guarded like healAuthColumn: to_regclass first, since storage.objects may not exist yet.
-func healRestrictiveStorageRLS(storage map[string]domain.Bucket) []string {
+// healStorageRLS drops legacy public-select policies and re-emits restrictive bucket RLS, so live DBs heal without a config change.
+func healStorageRLS(storage map[string]domain.Bucket) []string {
+	stmts := healLegacyPublicSelect(storage)
 	var ddl []string
 	for _, name := range sortedKeys(storage) {
 		bucket := storage[name]
@@ -394,9 +395,25 @@ func healRestrictiveStorageRLS(storage map[string]domain.Bucket) []string {
 		}
 	}
 	if len(ddl) == 0 {
+		return stmts
+	}
+	return append(stmts, fmt.Sprintf("DO $$ BEGIN\nIF to_regclass('storage.objects') IS NOT NULL THEN\n%s\nEND IF;\nEND $$;", strings.Join(ddl, "\n")))
+}
+
+// healLegacyPublicSelect checks pg_policies first, so a healed DB takes no storage.objects lock on boot.
+func healLegacyPublicSelect(storage map[string]domain.Bucket) []string {
+	var body []string
+	for _, name := range sortedKeys(storage) {
+		if storage[name].Public {
+			body = append(body, fmt.Sprintf(
+				"IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = '%s_public_select') THEN\nDROP POLICY %s_public_select ON storage.objects;\nEND IF;",
+				name, name))
+		}
+	}
+	if len(body) == 0 {
 		return nil
 	}
-	return []string{fmt.Sprintf("DO $$ BEGIN\nIF to_regclass('storage.objects') IS NOT NULL THEN\n%s\nEND IF;\nEND $$;", strings.Join(ddl, "\n"))}
+	return []string{fmt.Sprintf("DO $$ BEGIN\n%s\nEND $$;", strings.Join(body, "\n"))}
 }
 
 // applyStatements runs stmts inside a single transaction without recording a
@@ -1132,7 +1149,7 @@ func generateStorageRLSAll(storage map[string]domain.Bucket) []string {
 		}
 	}
 
-	var ddl []string
+	ddl := dropLegacyPublicSelect(storage)
 	if anyRLS {
 		ddl = append(ddl,
 			`ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;`,
@@ -1154,31 +1171,24 @@ func generateStorageRLSAll(storage map[string]domain.Bucket) []string {
 			ddl = append(ddl, fmt.Sprintf(
 				"CREATE POLICY %s ON storage.objects FOR ALL USING (bucket_id = '%s') WITH CHECK (bucket_id = '%s');",
 				policyName, name, name))
-		case bucket.Public:
-			// No RLS anywhere — the public-select policy is inert without RLS
-			// but kept for parity and in case RLS is enabled later.
-			ddl = append(ddl, generateStorageRLS(name, bucket)...)
+		}
+	}
+	return ddl
+}
+
+// dropLegacyPublicSelect removes the pre-parity <bucket>_public_select; like Supabase, public only opens /object/public downloads.
+func dropLegacyPublicSelect(storage map[string]domain.Bucket) []string {
+	var ddl []string
+	for _, name := range sortedKeys(storage) {
+		if storage[name].Public {
+			ddl = append(ddl, fmt.Sprintf("DROP POLICY IF EXISTS %s_public_select ON storage.objects;", name))
 		}
 	}
 	return ddl
 }
 
 func generateStorageRLS(bucketName string, bucket domain.Bucket) []string {
-	if len(bucket.RLS) == 0 && !bucket.Public {
-		return nil
-	}
-
 	var ddl []string
-
-	// Public bucket: allow SELECT without auth
-	if bucket.Public {
-		policyName := fmt.Sprintf("%s_public_select", bucketName)
-		ddl = append(ddl, fmt.Sprintf("DROP POLICY IF EXISTS %s ON storage.objects;", policyName))
-		ddl = append(ddl, fmt.Sprintf(
-			"CREATE POLICY %s ON storage.objects FOR SELECT USING (bucket_id = '%s');",
-			policyName, bucketName))
-	}
-
 	for i, policy := range bucket.RLS {
 		typeClause := rlsPolicyTypeClause(policy)
 		restrictive := policy.Type == "restrictive"

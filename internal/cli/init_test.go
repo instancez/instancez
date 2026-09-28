@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -118,6 +119,12 @@ func TestRunInitScaffoldsFunctions(t *testing.T) {
 	require.True(t, ok, "scaffold should declare the avatars storage bucket")
 	assert.True(t, bucket.Public, "avatars bucket should be public")
 	assert.Equal(t, "5MB", bucket.MaxSize)
+	// public grants no select, and update/delete need one to find the row.
+	hasSelect := false
+	for _, p := range bucket.RLS {
+		hasSelect = hasSelect || slices.Contains(p.Operations, "select")
+	}
+	assert.True(t, hasSelect, "avatars needs a select policy so update/delete work")
 
 	// node_modules ignored.
 	gi, err := os.ReadFile(filepath.Join(dir, ".gitignore"))

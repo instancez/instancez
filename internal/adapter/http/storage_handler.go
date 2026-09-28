@@ -114,6 +114,12 @@ func (h *StorageHandler) handleSignDownload(bucketName string, bucket domain.Buc
 		}
 
 		ctx := rlsContext(h.db, c)
+		if bucket.Public {
+			if ctx, err = serviceContext(h.db, c.Request.Context()); err != nil {
+				problemJSON(c, 500, "internal", "Failed to generate download URL")
+				return
+			}
+		}
 		row, err := h.db.QueryRow(ctx,
 			"SELECT mime FROM storage.objects WHERE name = $1 AND bucket_id = $2", name, bucketName)
 		if err != nil || row == nil {

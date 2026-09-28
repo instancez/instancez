@@ -276,6 +276,14 @@ func TestSupabaseJSCompat(t *testing.T) {
 					{Operations: []string{"select"}, Using: "true"},
 				},
 			},
+			// pubgated is public but owner-only under RLS: anyone can download, only the owner can list.
+			"pubgated": {
+				MaxSize: "1MB",
+				Public:  true,
+				RLS: []domain.RLSPolicy{
+					{Operations: []string{"select", "insert", "update"}, Using: "uploaded_by = auth.uid()", WithCheck: "uploaded_by = auth.uid()"},
+				},
+			},
 			// legacy_private checks the legacy routes run under the caller's RLS.
 			"legacy_private": {
 				MaxSize: "1MB",

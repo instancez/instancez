@@ -359,6 +359,8 @@ storage:
     max_size: 2MB
     types: [image/png, image/jpeg, image/webp]
     rls:
+      - operations: [select]
+        using: "auth.uid() IS NOT NULL"
       - operations: [insert]
         with_check: "auth.uid() IS NOT NULL"
       - operations: [delete]

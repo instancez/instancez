@@ -2341,6 +2341,38 @@ await step('storage: download public object without auth', async () => {
   assertEq(body, 'updated content')
 })
 
+// Supabase parity: public opens /object/public downloads only; listing and exists still follow RLS.
+await step('storage: public bucket downloads for anyone but lists only per RLS', async () => {
+  const { error: upErr } = await storageClient().storage.from('pubgated').upload('gated.txt', 'gated body', { contentType: 'text/plain', upsert: true })
+  assert(!upErr, `owner upload failed: ${upErr?.message}`)
+
+  const guest = createClient(URL, PUBLISHABLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  const { data: pub } = guest.storage.from('pubgated').getPublicUrl('gated.txt')
+  const resp = await fetch(pub.publicUrl)
+  assertEq(resp.status, 200, 'anon getPublicUrl fetch')
+  assertEq(await resp.text(), 'gated body')
+
+  const legacy = await fetch(`${URL}/api/storage/pubgated/gated.txt`, { headers: { apikey: PUBLISHABLE_KEY } })
+  assertEq(legacy.status, 200, 'anon legacy sign-download on a public bucket')
+
+  const { data: exists } = await guest.storage.from('pubgated').exists('gated.txt')
+  assertEq(exists, false, 'anon exists() must follow RLS, not the public flag')
+
+  const { error: guestListErr } = await guest.storage.from('pubgated').list()
+  assert(guestListErr, 'list without a user JWT is rejected at the route')
+
+  const other = createClient(URL, PUBLISHABLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  const { error: signErr } = await other.auth.signInAnonymously()
+  assert(!signErr, `anonymous sign-in failed: ${signErr?.message}`)
+  const { data: otherList, error: otherErr } = await other.storage.from('pubgated').list()
+  assert(!otherErr, `non-owner list errored: ${otherErr?.message}`)
+  assertEq(otherList.length, 0, 'a non-owner must not list a public bucket whose select policy excludes them')
+
+  const { data: ownerList, error: ownerErr } = await storageClient().storage.from('pubgated').list()
+  assert(!ownerErr, `owner list errored: ${ownerErr?.message}`)
+  assert(ownerList.some(o => o.name === 'gated.txt'), `owner list missing gated.txt: ${JSON.stringify(ownerList)}`)
+})
+
 await step('storage: download from non-public bucket fails', async () => {
   // First upload to documents (private bucket)
   const up = await fetch(`${URL}/storage/v1/object/documents/secret.txt`, {

@@ -15,6 +15,8 @@ storage:
     types:
       - image/*
     rls:
+      - operations: [select]
+        using: "auth.uid() IS NOT NULL"
       - operations: [insert]
         with_check: "auth.uid() IS NOT NULL"
       - operations: [update]
@@ -34,7 +36,7 @@ storage:
 
 | Key | Type | Description |
 |---|---|---|
-| `public` | bool | When `true`, objects are downloadable without a JWT via `/storage/v1/object/public/<bucket>/<path>`. |
+| `public` | bool | When `true`, anyone can download an object via `/storage/v1/object/public/<bucket>/<path>`; that route skips RLS, as in Supabase. It grants no `select`: listing, `exists`, `info`, signing, update and delete still follow `rls`. |
 | `max_size` | string | Maximum object size. Accepts `KB`, `MB`, `GB` suffixes. Omit to use the default 50MB limit. |
 | `types` | list | Allowed MIME types. Wildcards supported (`image/*`). Omit to allow all types. |
 | `rls` | list | RLS policies on `storage.objects`. Same syntax as table RLS. |
@@ -79,7 +81,7 @@ A signed download URL looks like Supabase's: the API returns a relative `signedU
 
 ### What each operation checks
 
-A row must be visible under a `select` policy before `update` or `delete` can find it: Postgres checks the `WHERE` clause that locates a row against `select`, separately from the write's own policy. So most operations below need `select` plus the listed policy, not the listed policy alone. A `public: true` bucket gets an implicit unconditional `select` policy, so this is only a concern for a non-public bucket that declares `insert`/`update`/`delete` without `select`.
+A row must be visible under a `select` policy before `update` or `delete` can find it: Postgres checks the `WHERE` clause that locates a row against `select`, separately from the write's own policy. So most operations below need `select` plus the listed policy, not the listed policy alone. This applies to public buckets too: as in Supabase, `public: true` grants no `select` policy.
 
 | Operation | Policy that must allow it |
 |---|---|
@@ -148,7 +150,7 @@ await fetch(upload_url, { method: 'PUT', headers: { 'Content-Type': file.type },
 
 Use `GET /api/storage/<bucket>/<id>` to get a presigned download URL later.
 
-These endpoints run as the calling user, so the bucket's RLS policies apply: `insert` to sign an upload, `select` to sign a download, and `select` plus `delete` to delete (the `DELETE ... RETURNING` under RLS needs `select` to find the row, the same as `remove`). An object you can't see returns 404. A request with a present but invalid `Authorization: Bearer` token gets 401, even against a public bucket's download route: a bad token is always an error, not a silent fall-back to anonymous access.
+These endpoints run as the calling user, so the bucket's RLS policies apply: `insert` to sign an upload, `select` to sign a download (except on a public bucket, where anyone can sign a download, like `/object/public`), and `select` plus `delete` to delete (the `DELETE ... RETURNING` under RLS needs `select` to find the row, the same as `remove`). An object you can't see returns 404. A request with a present but invalid `Authorization: Bearer` token gets 401, even against a public bucket's download route: a bad token is always an error, not a silent fall-back to anonymous access.
 
 ## What's next
 
