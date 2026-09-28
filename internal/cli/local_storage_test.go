@@ -227,6 +227,12 @@ func TestLocalStore_DownloadMissingIsNotFound(t *testing.T) {
 	if _, _, err := s.Download(ctx, "avatars/missing.png"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("missing file: got %v, want ErrNotFound", err)
 	}
+	if err := s.Upload(ctx, "avatars/file", strings.NewReader("x"), "text/plain", 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.Download(ctx, "avatars/file/child.png"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("path under a file (ENOTDIR): got %v, want ErrNotFound", err)
+	}
 	if _, _, err := s.Download(ctx, "../escape"); err == nil || errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("invalid key must not be ErrNotFound: %v", err)
 	}

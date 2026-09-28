@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/instancez/instancez/internal/domain"
@@ -100,7 +101,7 @@ func (s *LocalStore) Download(_ context.Context, key string) (io.ReadCloser, str
 		return nil, "", err
 	}
 	f, err := os.Open(fullPath)
-	if errors.Is(err, fs.ErrNotExist) {
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
 		return nil, "", fmt.Errorf("open file: %w: %w", domain.ErrNotFound, err)
 	}
 	if err != nil {
