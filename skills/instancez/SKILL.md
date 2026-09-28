@@ -181,7 +181,7 @@ rpc:
     returns:
       type: bigint           # a concrete Postgres type, or record, setof <table>, void
     body: |
-      SELECT count(*) AS total FROM todos WHERE team_id = team_stats.team_id
+      SELECT count(*) AS total FROM public.todos WHERE team_id = team_stats.team_id
 ```
 
 Called with `supabase.rpc('team_stats', { team_id: 42 })` or `POST /rest/v1/rpc/team_stats`. Args bind as typed parameters, never string-concatenated. The body runs under the caller's role, so RLS applies inside it unless `security: definer`. A definer function should pin `set: { search_path: "" }` and schema-qualify names; `inz validate` warns otherwise.

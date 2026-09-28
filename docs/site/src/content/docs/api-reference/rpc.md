@@ -26,7 +26,7 @@ rpc:
     returns:
       type: record           # scalar type, record, setof <table>, void, etc.
     body: |
-      SELECT count(*) AS total FROM todos WHERE team_id = team_stats.team_id
+      SELECT count(*) AS total FROM public.todos WHERE team_id = team_stats.team_id
 ```
 
 | Field | Required | Description |
