@@ -264,8 +264,9 @@ func TestRenderSigned_ExpiresHeader(t *testing.T) {
 
 var taggedRow = map[string]any{
 	"id": "1", "name": "a.png", "size": int64(123), "mime": "image/png",
-	"uploaded_at": time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
-	"metadata":    map[string]any{"eTag": `"abc"`, "cacheControl": "max-age=60"},
+	"uploaded_at":   time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+	"metadata":      map[string]any{"eTag": `"abc"`, "cacheControl": "max-age=60"},
+	"user_metadata": `{"owner":"ana","tags":["x"]}`,
 }
 
 func TestObjectInfo_SupabaseShape(t *testing.T) {
@@ -277,7 +278,10 @@ func TestObjectInfo_SupabaseShape(t *testing.T) {
 	assert.Equal(t, "pub", body["bucket_id"])
 	assert.Equal(t, `"abc"`, body["etag"])
 	assert.Equal(t, "max-age=60", body["cache_control"])
-	assert.Equal(t, "2026-01-02T03:04:05Z", body["last_modified"])
+	for _, k := range []string{"created_at", "updated_at", "last_modified"} {
+		assert.Equal(t, "2026-01-02T03:04:05.000Z", body[k], k)
+	}
+	assert.Equal(t, map[string]any{"owner": "ana", "tags": []any{"x"}}, body["metadata"], "metadata is user_metadata, as in Supabase")
 	assert.NotContains(t, body, "version", "no object versions, so no version field")
 
 	_, r = renderHandler(t, pubRow, map[string]domain.Bucket{"pub": {Public: true}})
@@ -286,6 +290,8 @@ func TestObjectInfo_SupabaseShape(t *testing.T) {
 	assert.Contains(t, body, "etag")
 	assert.Nil(t, body["etag"], "no stored eTag answers null")
 	assert.Nil(t, body["cache_control"])
+	assert.Contains(t, body, "metadata")
+	assert.Nil(t, body["metadata"], "the storage blob never leaks as metadata")
 }
 
 func TestHeadHeaders_ETagAndRenderLength(t *testing.T) {
@@ -305,4 +311,19 @@ func TestHeadHeaders_ETagAndRenderLength(t *testing.T) {
 
 	_, r = renderHandler(t, pubRow, map[string]domain.Bucket{"pub": {Public: true}})
 	assert.Empty(t, serve(r, "HEAD", "/storage/v1/object/public/pub/a.png", "", nil).Header().Get("ETag"), "no stored eTag, no header")
+}
+
+func TestIsoTime(t *testing.T) {
+	ny, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	for in, want := range map[any]any{
+		time.Date(2026, 1, 2, 3, 4, 5, 999_999_999, time.UTC): "2026-01-02T03:04:05.999Z",
+		time.Date(2026, 1, 1, 22, 0, 0, 0, ny):                "2026-01-02T03:00:00.000Z",
+		time.Time{}:                                           nil,
+		"2026-01-02T03:04:05Z":                                "2026-01-02T03:04:05Z",
+		"":                                                    nil,
+	} {
+		assert.Equal(t, want, isoTime(in), in)
+	}
+	assert.Nil(t, isoTime(nil))
 }

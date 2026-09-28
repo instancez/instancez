@@ -1145,7 +1145,7 @@ func (h *StorageV1Handler) objectInfo(c *gin.Context, bucketName, rawPath string
 		return
 	}
 	row, err := h.db.QueryRow(ctx,
-		"SELECT id, name, size, mime, uploaded_at, uploaded_by, metadata FROM storage.objects WHERE bucket_id = $1 AND name = $2",
+		"SELECT id, name, size, mime, uploaded_at, metadata, user_metadata FROM storage.objects WHERE bucket_id = $1 AND name = $2",
 		bucketName, objPath)
 	if err != nil || row == nil {
 		storageErr(c, 404, "not_found", "Object not found")
@@ -1154,6 +1154,11 @@ func (h *StorageV1Handler) objectInfo(c *gin.Context, bucketName, rawPath string
 
 	meta := decodeJSONB(row["metadata"])
 	cacheControl, _ := meta["cacheControl"].(string)
+	var userMeta any
+	if m := decodeJSONB(row["user_metadata"]); m != nil {
+		userMeta = m
+	}
+	uploaded := isoTime(row["uploaded_at"])
 	c.JSON(200, gin.H{
 		"id":            asString(row["id"]),
 		"name":          asString(row["name"]),
@@ -1162,11 +1167,24 @@ func (h *StorageV1Handler) objectInfo(c *gin.Context, bucketName, rawPath string
 		"content_type":  asString(row["mime"]),
 		"cache_control": nullIfEmpty(cacheControl),
 		"etag":          nullIfEmpty(storedETag(row["metadata"])),
-		"created_at":    asString(row["uploaded_at"]),
-		"updated_at":    asString(row["uploaded_at"]),
-		"last_modified": asTimeString(row["uploaded_at"]),
-		"metadata":      row["metadata"],
+		"created_at":    uploaded,
+		"updated_at":    uploaded,
+		"last_modified": uploaded,
+		"metadata":      userMeta,
 	})
+}
+
+// isoTime formats like JavaScript's toISOString, which Supabase emits for timestamps.
+func isoTime(v any) any {
+	switch x := v.(type) {
+	case time.Time:
+		if !x.IsZero() {
+			return x.UTC().Format("2006-01-02T15:04:05.000Z")
+		}
+	case string:
+		return nullIfEmpty(x)
+	}
+	return nil
 }
 
 func (h *StorageV1Handler) objectExists(c *gin.Context) {

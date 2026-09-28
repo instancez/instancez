@@ -2909,6 +2909,11 @@ await step('storage: uploadToSignedUrl with a Blob stores the file, not the mult
   assertEq(info.name, 'signed-blob.txt')
   assertEq(info.contentType, 'text/plain')
   assertEq(Number(info.size), 'blob via signed url'.length, 'real size recorded for a multipart upload')
+  const iso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+  for (const k of ['createdAt', 'updatedAt', 'lastModified']) assert(iso.test(info[k]), `${k} is ISO 8601: ${info[k]}`)
+  assertEq(info.bucketId, 'avatars')
+  assertEq(info.metadata, null, 'metadata is user metadata, and this upload set none')
+  assertEq(info.cacheControl, 'max-age=3600')
 })
 
 await step('storage: uploadToSignedUrl enforces the bucket MIME allowlist', async () => {
