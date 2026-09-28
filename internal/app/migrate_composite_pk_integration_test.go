@@ -232,3 +232,66 @@ func TestIntegration_CompositePKMemberFKWithUniqueIndex(t *testing.T) {
 		}
 	})
 }
+
+func deviceTable(idx ...domain.Index) domain.Table {
+	return domain.Table{Fields: []domain.Field{
+		{Name: "tenant_id", Type: "uuid", PrimaryKey: true},
+		{Name: "serial", Type: "text", PrimaryKey: true},
+		{Name: "parent_serial", Type: "text", ForeignKey: &domain.ForeignKey{References: "devices.serial", OnDelete: "set null"}},
+	}, Indexes: idx}
+}
+
+func TestIntegration_SelfReferencingFKToUniqueColumnOfCompositeKey(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+	m := app.NewMigrator(db)
+	cfg := &domain.Config{Version: 1, Tables: map[string]domain.Table{
+		"devices": deviceTable(domain.Index{Columns: []string{"serial"}, Unique: true}),
+	}}
+	if err := m.Apply(ctx, cfg); err != nil {
+		t.Fatalf("fresh deploy: %v", err)
+	}
+	row, err := db.QueryRow(ctx, `SELECT count(*) AS n, min(conname) AS name FROM pg_constraint WHERE contype = 'f' AND conrelid = 'devices'::regclass`)
+	if err != nil || fmt.Sprint(row["n"]) != "1" || row["name"] != "devices_parent_serial_fkey" {
+		t.Fatalf("fk = %v, err %v", row, err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO devices (tenant_id, serial, parent_serial) VALUES (gen_random_uuid(), 'a', NULL), (gen_random_uuid(), 'b', 'a')`); err != nil {
+		t.Fatalf("valid self reference: %v", err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO devices (tenant_id, serial, parent_serial) VALUES (gen_random_uuid(), 'c', 'missing')`); err == nil {
+		t.Fatal("dangling self reference must be rejected")
+	}
+	cfg.Tables["devices"] = func() domain.Table {
+		tb := deviceTable(domain.Index{Columns: []string{"serial"}, Unique: true})
+		tb.Fields = append(tb.Fields, domain.Field{Name: "note", Type: "text"})
+		return tb
+	}()
+	if err := m.Apply(ctx, cfg); err != nil {
+		t.Fatalf("second migration: %v", err)
+	}
+	row, err = db.QueryRow(ctx, `SELECT count(*) AS n FROM pg_constraint WHERE contype = 'f' AND conrelid = 'devices'::regclass`)
+	if err != nil || fmt.Sprint(row["n"]) != "1" {
+		t.Fatalf("fk duplicated after migration: %v, err %v", row, err)
+	}
+}
+
+func TestIntegration_RetypedColumnCanGainUniqueIndexInOneMigration(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+	m := app.NewMigrator(db)
+	docs := func(typ string, idx ...domain.Index) *domain.Config {
+		return &domain.Config{Version: 1, Tables: map[string]domain.Table{"docs": {
+			Fields:  []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}, {Name: "payload", Type: typ}},
+			Indexes: idx,
+		}}}
+	}
+	if err := m.Apply(ctx, docs("json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Apply(ctx, docs("text", domain.Index{Columns: []string{"payload"}, Unique: true})); err != nil {
+		t.Fatalf("json->text plus unique index: %v", err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO docs (payload) VALUES ('x'), ('x')`); err == nil {
+		t.Fatal("unique index must be enforced")
+	}
+}

@@ -537,8 +537,14 @@ func diffNewAuth(old, new *domain.Config) []string {
 	return append(ddl, authHealDDL...)
 }
 
-// diffIndexesOnLiveColumns emits plain unique indexes on columns that already
-// exist, so a new FK can rely on them; every index is re-emitted later anyway.
+// sameLiveType reports a column present in both tables whose type is unchanged.
+func sameLiveType(col string, oldTable, newTable domain.Table, old, new *domain.Config) bool {
+	of, ok := oldTable.GetField(col)
+	nf, ok2 := newTable.GetField(col)
+	return ok && ok2 && domain.Normalize(effectiveType(of, old.Tables)) == domain.Normalize(effectiveType(nf, new.Tables))
+}
+
+// diffIndexesOnLiveColumns emits new plain unique indexes on live, unretyped columns, so a new FK can rely on them.
 func diffIndexesOnLiveColumns(old, new *domain.Config) []string {
 	var ddl []string
 	for _, name := range orderTables(new.Tables) {
@@ -548,8 +554,8 @@ func diffIndexesOnLiveColumns(old, new *domain.Config) []string {
 		}
 		table := new.Tables[name]
 		table.Indexes = slices.DeleteFunc(slices.Clone(table.Indexes), func(idx domain.Index) bool {
-			return !idx.Unique || idx.Where != "" ||
-				slices.ContainsFunc(idx.Columns, func(c string) bool { _, ok := oldTable.GetField(c); return !ok })
+			return !idx.Unique || idx.Where != "" || slices.ContainsFunc(oldTable.Indexes, idx.Same) ||
+				slices.ContainsFunc(idx.Columns, func(c string) bool { return !sameLiveType(c, oldTable, table, old, new) })
 		})
 		ddl = append(ddl, generateIndexes(name, table)...)
 	}
@@ -566,6 +572,7 @@ func diffNewTables(old, new *domain.Config) []string {
 			table := new.Tables[name]
 			ddl = append(ddl, generateTable(name, table, new.Tables)...)
 			ddl = append(ddl, generateIndexes(name, table)...)
+			ddl = append(ddl, generateDeferredFKs(name, table)...)
 		}
 	}
 	return ddl

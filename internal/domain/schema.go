@@ -5,6 +5,7 @@ package domain
 import (
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -340,6 +341,11 @@ type Index struct {
 	Columns []string `yaml:"columns" json:"columns"`
 	Unique  bool     `yaml:"unique" json:"unique"`
 	Where   string   `yaml:"where" json:"where"` // partial index condition
+}
+
+// Same reports whether two indexes are declared identically.
+func (i Index) Same(o Index) bool {
+	return i.Unique == o.Unique && i.Where == o.Where && slices.Equal(i.Columns, o.Columns)
 }
 
 // RLSPolicy defines a row-level security policy. Using governs which rows

@@ -193,6 +193,7 @@ func planFromScratchStatements(cfg *domain.Config, roles domain.Roles) []string 
 		table := cfg.Tables[name]
 		ddl = append(ddl, generateTable(name, table, cfg.Tables)...)
 		ddl = append(ddl, generateIndexes(name, table)...)
+		ddl = append(ddl, generateDeferredFKs(name, table)...)
 	}
 
 	// Storage metadata table
@@ -913,14 +914,10 @@ func generateTable(name string, table domain.Table, allTables map[string]domain.
 				// emitted DDL, which the migrator will fail on with a clear
 				// message. (Validation runs before this in normal flow.)
 				constraints = append(constraints, fmt.Sprintf("/* invalid FK: %s */", err.Error()))
-			} else {
-				onDelete := "RESTRICT"
-				if field.ForeignKey.OnDelete != "" {
-					onDelete = strings.ToUpper(strings.ReplaceAll(field.ForeignKey.OnDelete, "_", " "))
-				}
+			} else if !deferSelfFK(name, table, field) {
 				constraints = append(constraints,
 					fmt.Sprintf("FOREIGN KEY (%s) REFERENCES %s.%s(%s) ON DELETE %s",
-						fname, schema, refTable, refCol, onDelete))
+						fname, schema, refTable, refCol, fkOnDelete(field.ForeignKey)))
 			}
 		}
 
@@ -970,6 +967,57 @@ func generateTable(name string, table domain.Table, allTables map[string]domain.
 	ddl = append(ddl, fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (\n  %s\n);",
 		qualName, strings.Join(allParts, ",\n  ")))
 
+	return ddl
+}
+
+func fkOnDelete(fk *domain.ForeignKey) string {
+	if fk.OnDelete == "" {
+		return "RESTRICT"
+	}
+	return strings.ToUpper(strings.ReplaceAll(fk.OnDelete, "_", " "))
+}
+
+// deferSelfFK reports an FK to a column of its own table that only a later unique index can back.
+func deferSelfFK(name string, table domain.Table, f domain.Field) bool {
+	if f.ForeignKey == nil {
+		return false
+	}
+	schema, refTable, refCol, err := domain.ParseFKReference(f.ForeignKey.References)
+	if err != nil || refTable != name || schema != table.EffectiveSchema() {
+		return false
+	}
+	ref, ok := table.GetField(refCol)
+	if !ok {
+		return false
+	}
+	pkCount := 0
+	for _, x := range table.Fields {
+		if x.PrimaryKey {
+			pkCount++
+		}
+	}
+	return !ref.Unique && (!ref.PrimaryKey || pkCount != 1)
+}
+
+// generateDeferredFKs adds the self-referencing FKs generateTable left out; call it after the table's indexes.
+func generateDeferredFKs(name string, table domain.Table) []string {
+	var ddl []string
+	qual := qualifiedTableName(name, table)
+	for _, f := range table.Fields {
+		if !deferSelfFK(name, table, f) {
+			continue
+		}
+		schema, refTable, refCol, _ := domain.ParseFKReference(f.ForeignKey.References)
+		con := name + "_" + f.Name + "_fkey"
+		if len(con) > 63 {
+			con = con[:63]
+		}
+		ddl = append(ddl, fmt.Sprintf(`DO $$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = '%s'::regclass AND conname = '%s') THEN
+  ALTER TABLE %s ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s.%s(%s) ON DELETE %s;
+END IF;
+END $$;`, qual, con, qual, con, f.Name, schema, refTable, refCol, fkOnDelete(f.ForeignKey)))
+	}
 	return ddl
 }
 

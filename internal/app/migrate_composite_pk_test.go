@@ -127,3 +127,65 @@ func TestDiffConfigs_UniqueIndexOnLiveColumnPrecedesNewFK(t *testing.T) {
 		t.Fatalf("only plain unique indexes on live columns go early:\n%s", add)
 	}
 }
+
+func TestDiffConfigs_EarlyIndexSkipsExistingIndexesAndTypeChanges(t *testing.T) {
+	tbl := func(dataType string, idx ...domain.Index) domain.Config {
+		return domain.Config{Version: 1, Tables: map[string]domain.Table{"docs": {
+			Fields:  []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}, {Name: "slug", Type: "text"}, {Name: "payload", Type: dataType}},
+			Indexes: idx,
+		}}}
+	}
+	slug := domain.Index{Columns: []string{"slug"}, Unique: true}
+	payload := domain.Index{Columns: []string{"payload"}, Unique: true}
+
+	t.Run("existing unique index is not re-emitted", func(t *testing.T) {
+		old, next := tbl("text", slug), tbl("text", slug)
+		if got := diffIndexesOnLiveColumns(&old, &next); len(got) != 0 {
+			t.Fatalf("unchanged index re-emitted: %v", got)
+		}
+	})
+	t.Run("new index on an unchanged column goes early", func(t *testing.T) {
+		old, next := tbl("text"), tbl("text", slug)
+		if got := diffIndexesOnLiveColumns(&old, &next); len(got) != 1 || !strings.Contains(got[0], "idx_docs_slug") {
+			t.Fatalf("got %v", got)
+		}
+	})
+	t.Run("column whose type changes keeps the late order", func(t *testing.T) {
+		old, next := tbl("json"), tbl("text", payload)
+		if got := diffIndexesOnLiveColumns(&old, &next); len(got) != 0 {
+			t.Fatalf("index on a retyped column went early: %v", got)
+		}
+	})
+}
+
+func TestGenerateTable_SelfReferencingFKToUniqueColumnIsDeferred(t *testing.T) {
+	table := domain.Table{Fields: []domain.Field{
+		{Name: "tenant_id", Type: "uuid", PrimaryKey: true},
+		{Name: "serial", Type: "text", PrimaryKey: true},
+		{Name: "parent_serial", Type: "text", ForeignKey: &domain.ForeignKey{References: "devices.serial", OnDelete: "set null"}},
+	}, Indexes: []domain.Index{{Columns: []string{"serial"}, Unique: true}}}
+
+	create := strings.Join(generateTable("devices", table, nil), "\n")
+	if strings.Contains(create, "FOREIGN KEY") {
+		t.Fatalf("self-referencing FK must not be inline:\n%s", create)
+	}
+	got := strings.Join(generateDeferredFKs("devices", table), "\n")
+	for _, want := range []string{"devices_parent_serial_fkey", "FOREIGN KEY (parent_serial) REFERENCES public.devices(serial) ON DELETE SET NULL"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+func TestGenerateTable_SelfReferencingFKToSinglePKStaysInline(t *testing.T) {
+	table := domain.Table{Fields: []domain.Field{
+		{Name: "id", Type: "bigserial", PrimaryKey: true},
+		{Name: "parent_id", ForeignKey: &domain.ForeignKey{References: "nodes.id"}},
+	}}
+	if !strings.Contains(strings.Join(generateTable("nodes", table, nil), "\n"), "FOREIGN KEY (parent_id)") {
+		t.Fatal("FK to a single-column key must stay inline")
+	}
+	if got := generateDeferredFKs("nodes", table); len(got) != 0 {
+		t.Fatalf("unexpected deferred FK: %v", got)
+	}
+}
