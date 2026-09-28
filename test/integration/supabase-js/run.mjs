@@ -2762,6 +2762,24 @@ await step('storage: list() and listV2() fold nested folders like Supabase', asy
   }
 })
 
+await step('storage: list() keeps names that differ only by case', async () => {
+  const bucket = storageClient().storage.from('avatars')
+  const keys = ['case/a.txt', 'case/A.txt']
+  for (const k of keys) {
+    const { error } = await bucket.upload(k, 'x', { contentType: 'text/plain', upsert: true })
+    if (error) throw error
+  }
+  try {
+    const { data: asc, error } = await bucket.list('case')
+    if (error) throw error
+    assertEq(asc.map((i) => i.name).join(','), 'A.txt,a.txt', 'both case variants, ascending')
+    const { data: desc } = await bucket.list('case', { sortBy: { column: 'name', order: 'desc' } })
+    assertEq(desc.map((i) => i.name).join(','), 'a.txt,A.txt', 'both case variants, descending')
+  } finally {
+    await bucket.remove(keys)
+  }
+})
+
 // --- Update (PUT) ---
 
 await step('storage: update existing object via PUT', async () => {

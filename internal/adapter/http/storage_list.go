@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // listQuery mirrors storage.search (v1) and storage.search_v2 / list_objects_with_delimiter (v2).
@@ -19,6 +21,7 @@ type listQuery struct {
 	fold     bool   // group keys past the next "/" into one folder row
 	foldFrom int    // rune offset after which "/" starts a folder
 	caseFold bool   // v1 matches, groups and orders case-insensitively
+	lowerCol bool   // name_lower column exists
 	byTime   bool
 	v1       bool
 	desc     bool
@@ -43,7 +46,10 @@ func (q listQuery) sql() (string, []any) {
 func (q listQuery) walkSQL() (string, []any) {
 	key, prefix := `o.name COLLATE "C"`, "$2"
 	if q.caseFold {
-		key, prefix = `lower(o.name) COLLATE "C"`, "lower($2)"
+		key, prefix = `o.name_lower`, "lower($2)"
+		if !q.lowerCol {
+			key = `lower(o.name) COLLATE "C"`
+		}
 	}
 	p := "0"
 	if q.fold {
@@ -62,15 +68,26 @@ func (q listQuery) walkSQL() (string, []any) {
 	if q.caseFold {
 		startExpr = "lower($4)"
 	}
-	first, step, dir := key+" >= "+startExpr, key+` >= CASE WHEN w.p > 0 THEN left(w.k, $3 + w.p - 1) || '0' ELSE w.k || chr(1) END`, "ASC"
+	first, order := key+" >= "+startExpr, []string{key}
+	skip := `CASE WHEN w.p > 0 THEN left(w.k, $3 + w.p - 1) || '0' ELSE %s END`
+	below := `CASE WHEN w.p > 0 THEN left(w.k, $3 + w.p) ELSE %s END`
+	stepAsc, stepDesc := key+" >= "+fmt.Sprintf(skip, "w.k || chr(1)"), key+" < "+fmt.Sprintf(below, "w.k")
+	if q.caseFold {
+		// Case variants share a key, so the walk breaks ties on the exact name and steps by (key, name).
+		order = append(order, `o.name COLLATE "C"`)
+		row := `ROW(` + key + `, o.name COLLATE "C") `
+		stepAsc = row + ">= ROW(" + fmt.Sprintf(skip, "w.k") + ", CASE WHEN w.p > 0 THEN '' ELSE w.name || chr(1) END)"
+		stepDesc = row + "< ROW(" + fmt.Sprintf(below, "w.k") + ", CASE WHEN w.p > 0 THEN '' ELSE w.name END)"
+	}
+	step, dir := stepAsc, "ASC"
 	if q.desc {
 		if q.after == nil {
 			// ponytail: U+10FFFF caps the prefix range, so keys continuing with that code point are missed in desc order.
 			startExpr += " || chr(1114111)"
 		}
-		first, step, dir = key+" < "+startExpr, key+` < CASE WHEN w.p > 0 THEN left(w.k, $3 + w.p) ELSE w.k END`, "DESC"
+		first, step, dir = key+" < "+startExpr, stepDesc, "DESC"
 	}
-	peek := fmt.Sprintf(`SELECT o.id, o.name, o.uploaded_at, o.metadata, %s AS k, %s AS p FROM storage.objects o WHERE o.bucket_id = $1 AND %%s ORDER BY %s %s LIMIT 1`, key, p, key, dir)
+	peek := fmt.Sprintf(`SELECT o.id, o.name, o.uploaded_at, o.metadata, %s AS k, %s AS p FROM storage.objects o WHERE o.bucket_id = $1 AND %%s ORDER BY %s LIMIT 1`, key, p, orderBy(order, dir))
 	sql := fmt.Sprintf(`WITH RECURSIVE walk AS (
   (%s)
   UNION ALL
@@ -80,6 +97,15 @@ SELECT CASE WHEN p > 0 THEN left(name, $3 + p) ELSE name END AS name, CASE WHEN 
   CASE WHEN p > 0 THEN NULL ELSE uploaded_at END AS uploaded_at, CASE WHEN p > 0 THEN NULL ELSE metadata END AS metadata, p > 0 AS folder
 FROM walk WHERE starts_with(k, %s) LIMIT $5 OFFSET $6`, fmt.Sprintf(peek, first), fmt.Sprintf(peek, step), prefix, prefix)
 	return sql, []any{q.bucket, q.match, q.foldFrom, start, q.limit, q.offset}
+}
+
+// orderBy applies dir to each comma-separated sort term.
+func orderBy(terms []string, dir string) string {
+	out := make([]string, len(terms))
+	for i, t := range terms {
+		out[i] = t + " " + dir
+	}
+	return strings.Join(out, ", ")
 }
 
 // timeSQL matches search_by_timestamp and storage.search's path-token branch, which aggregate the whole prefix as Supabase does.
@@ -133,8 +159,17 @@ SELECT name, id, uploaded_at, metadata, folder FROM e`, p, matchExpr, strings.Re
 }
 
 func (h *StorageV1Handler) runList(ctx context.Context, q listQuery) ([]map[string]any, error) {
+	q.lowerCol = true
 	sql, args := q.sql()
-	return h.db.Query(ctx, sql, args...)
+	rows, err := h.db.Query(ctx, sql, args...)
+	var pgErr *pgconn.PgError
+	if q.caseFold && errors.As(err, &pgErr) && pgErr.Code == "42703" {
+		// The name_lower heal is best effort at boot, so fall back to lower(name) until it lands.
+		q.lowerCol = false
+		sql, args = q.sql()
+		return h.db.Query(ctx, sql, args...)
+	}
+	return rows, err
 }
 
 func listOrderDesc(order string) bool { return strings.EqualFold(order, "desc") }
@@ -218,7 +253,7 @@ func (h *StorageV1Handler) listObjectsV2(c *gin.Context) {
 	}
 	q := listQuery{
 		bucket: bucketName, match: req.Prefix, fold: req.WithDelimiter, foldFrom: utf8.RuneCountInString(req.Prefix),
-		byTime: req.WithDelimiter && (req.SortBy.Column == "updated_at" || req.SortBy.Column == "created_at"),
+		byTime: req.SortBy.Column == "updated_at" || req.SortBy.Column == "created_at",
 		desc:   listOrderDesc(req.SortBy.Order), limit: limit + 1,
 	}
 	if req.Cursor != "" {

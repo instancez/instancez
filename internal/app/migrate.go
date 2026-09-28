@@ -282,7 +282,6 @@ func planUpdateStatements(oldCfg, newCfg *domain.Config, roles domain.Roles) []s
 	// gain the column. This idempotent ALTER runs on every migration.
 	if len(newCfg.Storage) > 0 {
 		ddl = append(ddl, `ALTER TABLE storage.objects ADD COLUMN IF NOT EXISTS user_metadata JSONB;`)
-		ddl = append(ddl, storageListIndexes...)
 	}
 
 	// RPCs come before the policies that may call them.
@@ -429,6 +428,10 @@ func (m *Migrator) missingStorageRPCs(ctx context.Context, cfg *domain.Config) (
 func (m *Migrator) Harden(ctx context.Context, cfg *domain.Config) error {
 	if err := m.db.EnsureMigrationsTable(ctx); err != nil {
 		return fmt.Errorf("harden: %w", err)
+	}
+	// Best effort, so a busy table cannot crash-loop boot.
+	if err := m.applyStatements(ctx, []string{storageListHeal}); err != nil {
+		m.logger.Warn("harden: storage list heal skipped, retrying next boot", "error", err)
 	}
 	stmts := append(generateJWTKeysTable(), generatePrivilegeRevokes(m.roles)...)
 	if cfg != nil && cfg.Auth != nil {
@@ -1087,7 +1090,7 @@ func generateStorageTables(cfg *domain.Config) []string {
 	if len(cfg.Storage) == 0 {
 		return nil
 	}
-	return append([]string{
+	return []string{
 		`CREATE SCHEMA IF NOT EXISTS storage;`,
 		`CREATE TABLE IF NOT EXISTS storage.objects (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1105,14 +1108,25 @@ func generateStorageTables(cfg *domain.Config) []string {
 		// user_metadata. supabase-js's .list() carries user_metadata separately
 		// from the storage-managed metadata blob.
 		`ALTER TABLE storage.objects ADD COLUMN IF NOT EXISTS user_metadata JSONB;`,
-	}, storageListIndexes...)
+		storageListHeal,
+	}
 }
 
-// storageListIndexes back the byte-order skip-scans that storage list and list-v2 run, like Supabase's COLLATE "C" indexes.
-var storageListIndexes = []string{
-	`CREATE INDEX IF NOT EXISTS objects_bucket_name_c_idx ON storage.objects (bucket_id, name COLLATE "C");`,
-	`CREATE INDEX IF NOT EXISTS objects_bucket_lower_name_c_idx ON storage.objects (bucket_id, lower(name) COLLATE "C");`,
-}
+// storageListHeal adds the lowered-name column and the COLLATE "C" indexes the list skip-scans need, checking the catalog first so a healed DB takes no lock.
+// The stored column is leakproof to compare, so v1 list stays index-bounded under RLS; lower(name) is not.
+const storageListHeal = `DO $$ BEGIN
+IF to_regclass('storage.objects') IS NOT NULL THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'storage.objects'::regclass AND attname = 'name_lower' AND NOT attisdropped) THEN
+    ALTER TABLE storage.objects ADD COLUMN name_lower TEXT COLLATE "C" GENERATED ALWAYS AS (lower(name)) STORED;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'storage' AND tablename = 'objects' AND indexname = 'objects_bucket_name_c_idx') THEN
+    CREATE INDEX objects_bucket_name_c_idx ON storage.objects (bucket_id, name COLLATE "C");
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'storage' AND tablename = 'objects' AND indexname = 'objects_bucket_name_lower_c_idx') THEN
+    CREATE INDEX objects_bucket_name_lower_c_idx ON storage.objects (bucket_id, name_lower, (name COLLATE "C"));
+  END IF;
+END IF;
+END $$;`
 
 func generateRLSFunctions() []string {
 	return []string{

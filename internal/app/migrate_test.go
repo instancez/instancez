@@ -948,8 +948,9 @@ func TestHarden_RollsBackOnFailure(t *testing.T) {
 	if err := NewMigrator(db).Harden(context.Background(), nil); err == nil {
 		t.Fatal("expected error")
 	}
-	if db.committedStatements != 0 {
-		t.Fatalf("partial harden committed %d statements", db.committedStatements)
+	const storageHealTx = 3 // advisory lock, lock_timeout, heal
+	if db.committedStatements != storageHealTx {
+		t.Fatalf("partial harden committed %d statements, want only the separate storage heal tx (%d)", db.committedStatements, storageHealTx)
 	}
 }
 
@@ -1055,7 +1056,7 @@ func TestHarden_NoRestrictiveBucketPolicy_TakesNoStorageLock(t *testing.T) {
 		t.Fatalf("Harden: %v", err)
 	}
 	for _, stmt := range db.execs {
-		if strings.Contains(stmt, "storage.objects") && !strings.Contains(stmt, "FROM pg_policies") {
+		if strings.Contains(stmt, "storage.objects") && !strings.Contains(stmt, "FROM pg_policies") && !strings.Contains(stmt, "FROM pg_indexes") {
 			t.Fatalf("Harden with no restrictive bucket policy must only touch storage.objects behind a pg_policies check, got: %s", stmt)
 		}
 	}
