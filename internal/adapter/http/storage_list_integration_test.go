@@ -335,12 +335,12 @@ func TestStorageList_FallbackMatchesTheColumnPath(t *testing.T) {
 	seedObjects(t, owner, "b", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 		"top.txt", "a-b.txt", "a/x.txt", "a/y/z.txt", "B.txt", "b/c.txt", "p/a.txt", "p/A.txt", "p/z/1.txt", "p/Z/2.txt", "p/b.txt",
 		"dir/file.txt", "dir/sub/deep.txt", "dir/Sub2/q.txt", "dir/zz.txt", "we_ird%/p.txt", "ünï/c.txt", "ÜNÏ/d.txt",
-		"kelvin/a.txt", "Kelvin/b.txt", "Dir/Other.txt", "p/", "quote'/it.txt")
+		"kelvin/a.txt", "Kelvin/b.txt", "Dir/Other.txt", "p/", "quote'/it.txt", "İnbox/a.txt", "inbox/b.txt", "Inbox/c.txt")
 	r := routerFor(owner)
 	bodies := []string{
 		`{}`, `{"prefix":"p"}`, `{"prefix":"p/"}`, `{"prefix":"P/"}`, `{"prefix":"dir/"}`, `{"prefix":"DIR/"}`, `{"prefix":"dir/","search":"S"}`,
 		`{"prefix":"a"}`, `{"prefix":"we_"}`, `{"prefix":"ünï/"}`, `{"prefix":"ÜNÏ/"}`, `{"prefix":"kelvin/"}`, `{"prefix":"k"}`, `{"search":"quote'"}`,
-		`{"prefix":"nope/"}`, `{"prefix":"p/","limit":2}`, `{"prefix":"p/","limit":2,"offset":2}`, `{"prefix":"p/","limit":1,"offset":99}`,
+		`{"prefix":"nope/"}`, `{"prefix":"inbox/"}`, `{"prefix":"İnbox/"}`, `{"prefix":"i"}`, `{"prefix":"p/","limit":2}`, `{"prefix":"p/","limit":2,"offset":2}`, `{"prefix":"p/","limit":1,"offset":99}`,
 		`{"prefix":"p/","sortBy":{"column":"name","order":"desc"}}`, `{"prefix":"","sortBy":{"column":"name","order":"desc"},"limit":3,"offset":1}`,
 		`{"prefix":"dir/","sortBy":{"column":"name","order":"desc"}}`,
 	}
@@ -371,5 +371,27 @@ func TestStorageList_FallbackReadsOnlyThePrefix(t *testing.T) {
 		assert.False(t, strings.Contains(string(raw), "Seq Scan"), "%s seq scans", match)
 		assert.True(t, strings.Contains(string(raw), "objects_bucket_name_c_idx"), "%s skips the name index", match)
 		assert.Less(t, scannedRows(root), float64(500), "%s reads its prefix, not the 50k rows in the bucket", match)
+	}
+}
+
+// A long letter prefix must seek on its leading letters, not scan the bucket.
+func TestStorageList_FallbackSeeksALongLetterPrefix(t *testing.T) {
+	owner, _ := listDB(t, plainBuckets)
+	seedBig(t, owner)
+	_, err := owner.Exec(context.Background(), `INSERT INTO storage.objects (bucket_id, name) SELECT 'big', format('users/abcdef/f%s.txt', i) FROM generate_series(1, 20) i;
+INSERT INTO storage.objects (bucket_id, name) SELECT 'big', format('users/abczzz/f%s.txt', i) FROM generate_series(1, 20) i;
+INSERT INTO storage.objects (bucket_id, name) SELECT 'big', format('userz/f%s.txt', i) FROM generate_series(1, 5000) i;
+ANALYZE storage.objects;
+ALTER TABLE storage.objects DROP COLUMN name_lower`)
+	require.NoError(t, err)
+
+	for _, match := range []string{"users/abcdef/", "USERS/ABCDEF/"} {
+		q := listQuery{bucket: "big", match: match, fold: true, foldFrom: len(match), caseFold: true, v1: true, limit: 10}
+		sql, args := q.sql()
+		root := explainPlan(t, owner, context.Background(), match, sql, args)
+		raw, _ := json.Marshal(root)
+		assert.NotContains(t, string(raw), "Seq Scan", match)
+		assert.Contains(t, string(raw), "objects_bucket_name_c_idx", match)
+		assert.Less(t, scannedRows(root), float64(500), "%s reads users/a*, not the 5k userz/ rows a 4-rune seek would read", match)
 	}
 }

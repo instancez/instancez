@@ -133,20 +133,32 @@ SELECT name, id, uploaded_at, metadata, folder FROM e ORDER BY sk %s, n %s LIMIT
 }
 
 // maxVariantRanges caps the index seeks per query; runes past the cap are only filtered.
-const maxVariantRanges = 64
+const maxVariantRanges = 256
+
+// lowerVariants is r's simple-fold orbit plus U+0130, which glibc lower() maps to i (ICU and tr_TR differ, so this can only over-seek).
+func lowerVariants(r rune) []rune {
+	if r == 'İ' {
+		return []rune{'İ', 'i', 'I'}
+	}
+	var folds []rune
+	for f := unicode.SimpleFold(r); ; f = unicode.SimpleFold(f) {
+		folds = append(folds, f)
+		if f == r {
+			break
+		}
+	}
+	if r == 'i' || r == 'I' {
+		folds = append(folds, 'İ')
+	}
+	return folds
+}
 
 // caseVariantRanges expands the leading runes of s into every case variant lower() could map onto them.
 func caseVariantRanges(s string) []string {
 	ranges, rest := []string{""}, s
 	for rest != "" {
 		r, size := utf8.DecodeRuneInString(rest)
-		var folds []rune
-		for f := unicode.SimpleFold(r); ; f = unicode.SimpleFold(f) {
-			folds = append(folds, f)
-			if f == r {
-				break
-			}
-		}
+		folds := lowerVariants(r)
 		if len(ranges)*len(folds) > maxVariantRanges {
 			break
 		}
