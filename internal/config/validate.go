@@ -1151,10 +1151,14 @@ func compositePKFKWarnings(tables map[string]domain.Table) domain.ValidationErro
 			if !ok || !isBareCompositePKMember(tables[refTable], target) {
 				continue
 			}
+			msg := fmt.Sprintf("references %s.%s, which is only part of a composite primary key; "+
+				"Postgres rejects a new foreign key to it (no unique constraint matching given keys)", refTable, refCol)
+			if target.Unique {
+				msg += "; unique: true adds no constraint to an existing column"
+			}
 			ws = append(ws, &domain.ValidationError{
-				Path: fmt.Sprintf("tables.%s.fields.%s.foreign_key.references", tableName, field.Name),
-				Message: fmt.Sprintf("references %s.%s, which is only part of a composite primary key; "+
-					"Postgres rejects a new foreign key to it (no unique constraint matching given keys)", refTable, refCol),
+				Path:       fmt.Sprintf("tables.%s.fields.%s.foreign_key.references", tableName, field.Name),
+				Message:    msg,
 				Suggestion: fmt.Sprintf("Add a unique index on %s(%s): indexes: [{columns: [%s], unique: true}]", refTable, refCol, refCol),
 			})
 		}
@@ -1163,9 +1167,9 @@ func compositePKFKWarnings(tables map[string]domain.Table) domain.ValidationErro
 }
 
 // isBareCompositePKMember reports whether f belongs to a 2+ column primary key
-// without a single-column unique constraint Postgres can use as an FK target.
+// without a single-column unique index; unique: true only applies on CREATE TABLE.
 func isBareCompositePKMember(t domain.Table, f domain.Field) bool {
-	if !f.PrimaryKey || f.Unique {
+	if !f.PrimaryKey {
 		return false
 	}
 	pks := 0

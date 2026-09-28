@@ -1554,7 +1554,7 @@ func TestWarnings_CompositePKFKTarget(t *testing.T) {
 		wantWarn bool
 	}{
 		{"bare composite member", domain.Table{Fields: []domain.Field{a, b}}, true},
-		{"member marked unique", domain.Table{Fields: []domain.Field{{Name: "a", Type: "int", PrimaryKey: true, Unique: true}, b}}, false},
+		{"member marked unique", domain.Table{Fields: []domain.Field{{Name: "a", Type: "int", PrimaryKey: true, Unique: true}, b}}, true},
 		{"member with single-column unique index", domain.Table{Fields: []domain.Field{a, b}, Indexes: []domain.Index{{Columns: []string{"a"}, Unique: true}}}, false},
 		{"member with multi-column unique index", domain.Table{Fields: []domain.Field{a, b}, Indexes: []domain.Index{{Columns: []string{"a", "b"}, Unique: true}}}, true},
 		{"member with partial unique index", domain.Table{Fields: []domain.Field{a, b}, Indexes: []domain.Index{{Columns: []string{"a"}, Unique: true, Where: "b > 0"}}}, true},
@@ -1585,6 +1585,9 @@ func TestWarnings_CompositePKFKTarget(t *testing.T) {
 				!strings.Contains(ws[0].Message, "composite primary key") ||
 				!strings.Contains(ws[0].Suggestion, "unique index on pairs(a)") {
 				t.Fatalf("want one composite primary key warning suggesting a unique index, got %v", ws)
+			}
+			if c.target.Fields[0].Unique && !strings.Contains(ws[0].Message, "unique: true adds no constraint to an existing column") {
+				t.Fatalf("a unique member must be told why unique: true isn't enough, got %v", ws[0].Message)
 			}
 		})
 	}
