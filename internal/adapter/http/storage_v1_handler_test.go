@@ -1357,7 +1357,7 @@ func TestListObjects_LimitsAndOptions(t *testing.T) {
 
 	serve(r, "POST", "/storage/v1/object/list-v2/b", `{"prefix":"a_%"}`, nil)
 	assert.Equal(t, []any{1001, 0}, args[len(args)-2:], "v2 defaults to 1000 and fetches one extra")
-	assert.Contains(t, q, "starts_with(name, $2)")
+	assert.Contains(t, q, "starts_with(n.k, $2)", "v2 walks the prefix range byte-wise")
 	assert.Equal(t, "a_%", args[1], "wildcards are literal")
 
 	for _, cur := range []string{"%%%", encodeListCursor(listCursor{}), base64.RawURLEncoding.EncodeToString([]byte(`{"n":"a","t":"yesterday"}`))} {
@@ -1390,7 +1390,7 @@ func TestListObjectsV2_Pagination(t *testing.T) {
 	assert.Equal(t, "b.jpg", cur.Name)
 
 	serve(r, "POST", "/storage/v1/object/list-v2/avatars", `{"limit":2,"cursor":"`+resp["nextCursor"].(string)+`"}`, nil)
-	assert.Contains(t, args, "b.jpg", "the cursor resumes after the last name")
+	assert.Contains(t, args, "b.jpg\x01", "the cursor resumes at the smallest key after the last name")
 }
 
 func TestListObjectsV2_WithDelimiterShapes(t *testing.T) {

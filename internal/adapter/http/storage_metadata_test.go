@@ -201,7 +201,7 @@ func TestListItems_SupabaseShape(t *testing.T) {
 		"metadata": map[string]any{"size": 3, "mimetype": "text/plain"},
 	}}
 	db := &stubDB{queryFn: func(_ context.Context, q string, _ ...any) ([]map[string]any, error) {
-		assert.Contains(t, q, "SELECT id, ")
+		assert.Contains(t, q, "SELECT o.id, ")
 		return rows, nil
 	}}
 	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"b": {}})

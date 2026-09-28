@@ -5,6 +5,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,17 +18,44 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// listRouter runs the list handlers against a real storage.objects table.
-func listRouter(t *testing.T) *gin.Engine {
+func listPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, dbboot.StartRawContainer(t))
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
+	// Mirrors internal/app generateStorageTables, including storageListIndexes.
 	_, err = pool.Exec(ctx, `CREATE SCHEMA storage;
 CREATE TABLE storage.objects (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), bucket_id text NOT NULL, name text NOT NULL,
-  size bigint NOT NULL DEFAULT 0, mime text NOT NULL DEFAULT '', uploaded_at timestamptz NOT NULL, metadata jsonb, UNIQUE (bucket_id, name))`)
+  size bigint NOT NULL DEFAULT 0, mime text NOT NULL DEFAULT '', uploaded_at timestamptz NOT NULL, metadata jsonb, UNIQUE (bucket_id, name));
+CREATE INDEX objects_bucket_name_c_idx ON storage.objects (bucket_id, name COLLATE "C");
+CREATE INDEX objects_bucket_lower_name_c_idx ON storage.objects (bucket_id, lower(name) COLLATE "C");`)
 	require.NoError(t, err)
+	return pool
+}
+
+func routerFor(pool *pgxpool.Pool) *gin.Engine {
+	db := &stubDB{queryFn: func(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
+		rows, err := pool.Query(ctx, q, args...)
+		if err != nil {
+			return nil, err
+		}
+		return pgx.CollectRows(rows, pgx.RowToMap)
+	}}
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"b": {}, "big": {}})
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/storage/v1/object/list/:bucket", h.listObjects)
+	r.POST("/storage/v1/object/list-v2/:bucket", h.listObjectsV2)
+	return r
+}
+
+// listRouter runs the list handlers against a real storage.objects table.
+func listRouter(t *testing.T) *gin.Engine {
+	t.Helper()
+	ctx := context.Background()
+	pool := listPool(t)
+	var err error
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	for i, name := range []string{
 		"top.txt", "a-b.txt", "a/x.txt", "a/y/z.txt", "B.txt", "b/c.txt",
@@ -39,19 +67,7 @@ CREATE TABLE storage.objects (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), buc
 	_, err = pool.Exec(ctx, `INSERT INTO storage.objects (bucket_id, name, uploaded_at) VALUES ('other', 'top.txt', now())`)
 	require.NoError(t, err)
 
-	db := &stubDB{queryFn: func(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
-		rows, err := pool.Query(ctx, q, args...)
-		if err != nil {
-			return nil, err
-		}
-		return pgx.CollectRows(rows, pgx.RowToMap)
-	}}
-	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"b": {}})
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.POST("/storage/v1/object/list/:bucket", h.listObjects)
-	r.POST("/storage/v1/object/list-v2/:bucket", h.listObjectsV2)
-	return r
+	return routerFor(pool)
 }
 
 func v1Names(t *testing.T, r *gin.Engine, body string) ([]string, []map[string]any) {
@@ -169,4 +185,59 @@ func TestStorageList_V2MatchesListObjectsWithDelimiter(t *testing.T) {
 
 	resp = v2List(t, r, `{"prefix":"we_","with_delimiter":true}`)
 	assert.Equal(t, []string{"we_ird%/"}, names(resp.Folders), "prefix wildcards are literal")
+}
+
+// scannedRows sums the rows every scan node read, across loops.
+func scannedRows(node map[string]any) float64 {
+	var n float64
+	if strings.HasSuffix(asString(node["Node Type"]), "Scan") && node["Node Type"] != "CTE Scan" && node["Node Type"] != "WorkTable Scan" {
+		n += node["Actual Rows"].(float64) * node["Actual Loops"].(float64)
+		if f, ok := node["Rows Removed by Filter"].(float64); ok {
+			n += f * node["Actual Loops"].(float64)
+		}
+	}
+	for _, c := range asSlice(node["Plans"]) {
+		n += scannedRows(c.(map[string]any))
+	}
+	return n
+}
+
+func asSlice(v any) []any { s, _ := v.([]any); return s }
+
+func TestStorageList_SkipScanIsBoundedOn50kObjects(t *testing.T) {
+	ctx := context.Background()
+	pool := listPool(t)
+	_, err := pool.Exec(ctx, `INSERT INTO storage.objects (bucket_id, name, uploaded_at)
+SELECT 'big', format('p/f%s/x%s.txt', lpad(f::text, 3, '0'), x), now() FROM generate_series(1, 400) f, generate_series(1, 100) x;
+INSERT INTO storage.objects (bucket_id, name, uploaded_at)
+SELECT 'big', format('q/%s.txt', i), now() FROM generate_series(1, 10000) i;
+INSERT INTO storage.objects (bucket_id, name, uploaded_at) SELECT 'big', format('p/top%s.txt', i), now() FROM generate_series(1, 5) i;
+ANALYZE storage.objects`)
+	require.NoError(t, err)
+
+	for name, q := range map[string]listQuery{
+		"v1 page":             {bucket: "big", match: "p/", fold: true, foldFrom: 2, caseFold: true, v1: true, limit: 10, offset: 50},
+		"v1 desc":             {bucket: "big", match: "p/", fold: true, foldFrom: 2, caseFold: true, v1: true, desc: true, limit: 10},
+		"v2 folder cursor":    {bucket: "big", match: "p/", fold: true, foldFrom: 2, limit: 11, after: &listCursor{Name: "p/f100/"}},
+		"v2 desc file cursor": {bucket: "big", match: "p/", fold: true, foldFrom: 2, desc: true, limit: 11, after: &listCursor{Name: "p/top3.txt"}},
+		"v2 no delimiter":     {bucket: "big", match: "p/f2", limit: 11},
+		"v1 empty prefix":     {bucket: "big", match: "", fold: true, caseFold: true, v1: true, limit: 100},
+	} {
+		sql, args := q.sql()
+		var plan []map[string]any
+		require.NoError(t, pool.QueryRow(ctx, "EXPLAIN (ANALYZE, FORMAT JSON) "+sql, args...).Scan(&plan), name)
+		root := plan[0]["Plan"].(map[string]any)
+		raw, _ := json.Marshal(root)
+		assert.NotContains(t, string(raw), "Seq Scan", name)
+		assert.Contains(t, string(raw), "_c_idx", "%s uses a COLLATE \"C\" index", name)
+		t.Logf("%s: %v rows read", name, scannedRows(root))
+		assert.Less(t, scannedRows(root), float64(200), "%s reads only the rows it emits, not the 50k under the prefix", name)
+	}
+
+	r := routerFor(pool)
+	w := serve(r, "POST", "/storage/v1/object/list/big", `{"prefix":"p","limit":3,"offset":398}`, nil)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	var items []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &items))
+	assert.Equal(t, []string{"f399", "f400", "top1.txt"}, names(items))
 }

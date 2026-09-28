@@ -32,8 +32,58 @@ type listCursor struct {
 	At   string `json:"t,omitempty"`
 }
 
-// ponytail: groups every row under the prefix before LIMIT; add a skip-scan if prefixes get huge.
 func (q listQuery) sql() (string, []any) {
+	if q.byTime {
+		return q.timeSQL()
+	}
+	return q.walkSQL()
+}
+
+// walkSQL is the storage.search skip-scan: one index probe per emitted row, and a folder's subtree is jumped over.
+func (q listQuery) walkSQL() (string, []any) {
+	key, prefix := `o.name COLLATE "C"`, "$2"
+	if q.caseFold {
+		key, prefix = `lower(o.name) COLLATE "C"`, "lower($2)"
+	}
+	p := "0"
+	if q.fold {
+		p = "strpos(substr(" + key + ", $3 + 1), '/')"
+	}
+	start := q.match
+	switch {
+	case q.after != nil && !q.desc && strings.HasSuffix(q.after.Name, "/"):
+		start = strings.TrimSuffix(q.after.Name, "/") + "0" // '0' follows '/', so this skips the folder's subtree
+	case q.after != nil && !q.desc:
+		start = q.after.Name + "\x01" // the smallest key after Name
+	case q.after != nil:
+		start = q.after.Name
+	}
+	startExpr := "$4"
+	if q.caseFold {
+		startExpr = "lower($4)"
+	}
+	first, step, dir := key+" >= "+startExpr, key+` >= CASE WHEN w.p > 0 THEN left(w.k, $3 + w.p - 1) || '0' ELSE w.k || chr(1) END`, "ASC"
+	if q.desc {
+		if q.after == nil {
+			// ponytail: U+10FFFF caps the prefix range, so keys continuing with that code point are missed in desc order.
+			startExpr += " || chr(1114111)"
+		}
+		first, step, dir = key+" < "+startExpr, key+` < CASE WHEN w.p > 0 THEN left(w.k, $3 + w.p) ELSE w.k END`, "DESC"
+	}
+	peek := fmt.Sprintf(`SELECT o.id, o.name, o.uploaded_at, o.metadata, %s AS k, %s AS p FROM storage.objects o WHERE o.bucket_id = $1 AND %%s ORDER BY %s %s LIMIT 1`, key, p, key, dir)
+	sql := fmt.Sprintf(`WITH RECURSIVE walk AS (
+  (%s)
+  UNION ALL
+  (SELECT n.* FROM walk w CROSS JOIN LATERAL (%s) n WHERE starts_with(n.k, %s))
+)
+SELECT CASE WHEN p > 0 THEN left(name, $3 + p) ELSE name END AS name, CASE WHEN p > 0 THEN NULL ELSE id::text END AS id,
+  CASE WHEN p > 0 THEN NULL ELSE uploaded_at END AS uploaded_at, CASE WHEN p > 0 THEN NULL ELSE metadata END AS metadata, p > 0 AS folder
+FROM walk WHERE starts_with(k, %s) LIMIT $5 OFFSET $6`, fmt.Sprintf(peek, first), fmt.Sprintf(peek, step), prefix, prefix)
+	return sql, []any{q.bucket, q.match, q.foldFrom, start, q.limit, q.offset}
+}
+
+// timeSQL matches search_by_timestamp and storage.search's path-token branch, which aggregate the whole prefix as Supabase does.
+func (q listQuery) timeSQL() (string, []any) {
 	nameExpr, matchExpr := "name", "starts_with(name, $2)"
 	if q.caseFold {
 		nameExpr, matchExpr = "lower(name)", "starts_with(lower(name), lower($2))"

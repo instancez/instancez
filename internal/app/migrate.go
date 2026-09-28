@@ -288,6 +288,7 @@ func planUpdateStatements(oldCfg, newCfg *domain.Config, roles domain.Roles) []s
 	// gain the column. This idempotent ALTER runs on every migration.
 	if len(newCfg.Storage) > 0 {
 		ddl = append(ddl, `ALTER TABLE storage.objects ADD COLUMN IF NOT EXISTS user_metadata JSONB;`)
+		ddl = append(ddl, storageListIndexes...)
 	}
 
 	// RPCs come before the policies that may call them.
@@ -1092,7 +1093,7 @@ func generateStorageTables(cfg *domain.Config) []string {
 	if len(cfg.Storage) == 0 {
 		return nil
 	}
-	return []string{
+	return append([]string{
 		`CREATE SCHEMA IF NOT EXISTS storage;`,
 		`CREATE TABLE IF NOT EXISTS storage.objects (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1110,7 +1111,13 @@ func generateStorageTables(cfg *domain.Config) []string {
 		// user_metadata. supabase-js's .list() carries user_metadata separately
 		// from the storage-managed metadata blob.
 		`ALTER TABLE storage.objects ADD COLUMN IF NOT EXISTS user_metadata JSONB;`,
-	}
+	}, storageListIndexes...)
+}
+
+// storageListIndexes back the byte-order skip-scans that storage list and list-v2 run, like Supabase's COLLATE "C" indexes.
+var storageListIndexes = []string{
+	`CREATE INDEX IF NOT EXISTS objects_bucket_name_c_idx ON storage.objects (bucket_id, name COLLATE "C");`,
+	`CREATE INDEX IF NOT EXISTS objects_bucket_lower_name_c_idx ON storage.objects (bucket_id, lower(name) COLLATE "C");`,
 }
 
 func generateRLSFunctions() []string {
