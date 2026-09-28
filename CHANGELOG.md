@@ -131,6 +131,10 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - Code that reads storage `list()`, `listV2()` or `info()` must move to the Supabase shapes above: `hasNext`/`nextCursor` on list-v2, the UUID `id` and folder entries on `list()`, and `info().metadata` holding user metadata. Pass the returned `nextCursor` back as `cursor` instead of an object name.
 - The first boot after upgrading builds two indexes on `storage.objects` (`bucket_id, name COLLATE "C"` and `bucket_id, lower(name) COLLATE "C"`) without `CONCURRENTLY`, which blocks writes to that table until they finish. On a large table, plan for a short storage write pause. Later boots skip it.
 - Embeds that now return 300 `PGRST201` need a hint: `users!created_by(*)`, `users!tasks_created_by_fkey(*)`, or `tags!post_tags(*)` for a junction. The error's `hint` lists the options.
+- Storage writes now replace user metadata: send `metadata` on every upload, upsert and update that should keep it, since a write without it stores `{}`.
+- Embeds through a FK to a table outside `instancez.yaml` (`auth.users.id`) no longer resolve. Embed a public table that holds that data (such as `profiles`) or declare the table in the config. A two-part reference (`notes.id`) now means `public.notes`.
+- GeoJSON clients that matched 406 `PGRST118` must handle 404 `42883` (no PostGIS) and 400 `22023` (no geometry column).
+- Raw HTTP clients that relied on 400 for a malformed `Range` header now get it ignored, and `PUT` with `limit` or `offset` returns 400 `PGRST114`.
 - Adding or removing `primary_key: true` on a live column used to change nothing; it now fails the migration (422 `primary_key_change` from the config API). Revert the flag, or drop the column and add a new key column in one change with `--allow-destructive`.
 - `security: definer` RPCs without `set: { search_path: ... }` now print a warning on `inz validate` and `inz dev`. It doesn't block boot.
 
