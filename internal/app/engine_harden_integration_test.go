@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -168,10 +169,22 @@ func TestEngineStart_DriftBootHealsFromAppliedConfig(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	applied := &domain.Config{Version: 1, Auth: &domain.Auth{}, Storage: map[string]domain.Bucket{
-		"sec": {RLS: []domain.RLSPolicy{{Operations: []string{"select"}, Using: "true"}}},
+		"sec": {RLS: []domain.RLSPolicy{
+			{Operations: []string{"select"}, Using: "true"},
+			{Operations: []string{"select"}, Using: "name LIKE 'ok/%'", Type: "restrictive"},
+		}},
 	}}
 	if err := app.NewMigrator(owner).Apply(ctx, applied); err != nil {
 		t.Fatalf("migrate: %v", err)
+	}
+	// Pre-T6 AND-scoping, so the heal fires for storage_sec_select_1, a name the pending config reuses.
+	for _, stmt := range []string{
+		`DROP POLICY storage_sec_select_1 ON storage.objects`,
+		`CREATE POLICY storage_sec_select_1 ON storage.objects AS RESTRICTIVE FOR SELECT USING (bucket_id = 'sec' AND (name LIKE 'ok/%'))`,
+	} {
+		if _, err := owner.Exec(ctx, stmt); err != nil {
+			t.Fatalf("simulate pre-fix policy %q: %v", stmt, err)
+		}
 	}
 	before := storagePolicyNames(t, owner)
 
@@ -208,6 +221,13 @@ func TestEngineStart_DriftBootHealsFromAppliedConfig(t *testing.T) {
 	}
 	if got := storagePolicyNames(t, owner); !reflect.DeepEqual(got, before) {
 		t.Fatalf("drift boot changed storage policies: got %v, want %v", got, before)
+	}
+	row, err := owner.QueryRow(ctx, `SELECT qual FROM pg_policies WHERE schemaname = 'storage' AND policyname = 'storage_sec_select_1'`)
+	if err != nil {
+		t.Fatalf("read healed policy: %v", err)
+	}
+	if qual, _ := row["qual"].(string); !strings.Contains(qual, "bucket_id <> 'sec'") || !strings.Contains(qual, "ok/%") {
+		t.Fatalf("heal must re-emit the applied expression OR-scoped, got %q", qual)
 	}
 	stop()
 	<-done

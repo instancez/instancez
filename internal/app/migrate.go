@@ -390,7 +390,8 @@ func (m *Migrator) appliedStorage(ctx context.Context) (map[string]domain.Bucket
 		return nil, err
 	}
 	var cfg domain.Config
-	if json.Unmarshal([]byte(last.ConfigJSON), &cfg) != nil {
+	if err := json.Unmarshal([]byte(last.ConfigJSON), &cfg); err != nil {
+		m.logger.Warn("harden: skipping storage heal, applied config is unreadable", "error", err)
 		return nil, nil
 	}
 	return cfg.Storage, nil

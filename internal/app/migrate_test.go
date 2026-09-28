@@ -1,9 +1,11 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"slices"
 	"strings"
@@ -1114,4 +1116,15 @@ func TestGenerateRLSPolicies_EnabledSchemaQualified(t *testing.T) {
 	joined := strings.Join(generateRLSPolicies("notes", domain.Table{Schema: "reporting", RLSEnabled: &on}), "\n")
 	mustContain(t, joined, "ALTER TABLE reporting.notes ENABLE ROW LEVEL SECURITY;")
 	mustContain(t, joined, "ALTER TABLE reporting.notes FORCE ROW LEVEL SECURITY;")
+}
+
+func TestHarden_CorruptAppliedConfigWarns(t *testing.T) {
+	var logs bytes.Buffer
+	m := NewMigrator(&fakeDB{lastMigration: &domain.Migration{ConfigJSON: "not json"}})
+	m.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	if err := m.Harden(context.Background(), nil); err != nil {
+		t.Fatalf("Harden: %v", err)
+	}
+	mustContain(t, logs.String(), "level=WARN")
+	mustContain(t, logs.String(), "invalid character")
 }
