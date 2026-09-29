@@ -19,7 +19,7 @@ if (!docsVersion) {
 }
 
 export default defineConfig({
-  site: 'https://instancez.github.io',
+  site: 'https://docs.instancez.ai',
   base: '/',
   integrations: [
     starlight({
