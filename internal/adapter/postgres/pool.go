@@ -84,6 +84,20 @@ func parsePoolConfig(databaseURL string, poolCfg domain.PoolConfig) (*pgxpool.Co
 	// DescribeExec uses an unnamed Parse + Describe per query (no statement
 	// names to collide), and the Describe round-trip preserves parameter OID
 	// inference so types like map[string]any encode correctly into jsonb.
+	//
+	// DescribeExec still sends Parse+Describe and Bind+Execute as two separate
+	// round trips (pgx's own docs warn it "may cause problems with connection
+	// poolers that switch the underlying connection between round trips").
+	// Under transaction-pooling, a query issued outside an explicit BEGIN can
+	// have its Bind land on a different backend than its Describe, binding
+	// against that backend's unrelated unnamed statement — surfaced as
+	// SQLSTATE 08P01 "bind message has N result formats but query has M
+	// columns". Every *parameterized* query on this package's DB/Tx types
+	// must run inside an explicit transaction (see
+	// Query/QueryRow/Exec/GetLastMigration below) so the pooler pins one
+	// backend for the whole exchange. ExecDDL is the one exception: a
+	// zero-arg Exec forces pgx onto the simple protocol (one round trip),
+	// so it's immune by construction and doesn't need the wrap.
 	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeDescribeExec
 
 	// Query spans when telemetry is on. parsePoolConfig is shared by NewOwner
@@ -160,22 +174,37 @@ func (db *DB) EnsureMigrationsTable(ctx context.Context) error {
 }
 
 // GetLastMigration returns the most recently applied migration, or nil if none.
+// Runs on an explicit transaction (see Query/QueryRow/Exec) so a
+// transaction-pooling proxy can't split the query's Describe and Bind across
+// two different backend connections.
 func (db *DB) GetLastMigration(ctx context.Context) (*domain.Migration, error) {
-	row := db.pool.QueryRow(ctx,
+	tx, err := db.pool.Begin(ctx)
+	if err != nil {
+		return nil, &domain.DatabaseError{Op: "begin", Err: err}
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	row := tx.QueryRow(ctx,
 		`SELECT id, checksum, sql, config_json, applied_at FROM _instancez_migrations ORDER BY id DESC LIMIT 1`)
 
 	var m domain.Migration
-	err := row.Scan(&m.ID, &m.Checksum, &m.SQL, &m.ConfigJSON, &m.AppliedAt)
+	err = row.Scan(&m.ID, &m.Checksum, &m.SQL, &m.ConfigJSON, &m.AppliedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, &domain.DatabaseError{Op: "get_last_migration", Err: err}
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, &domain.DatabaseError{Op: "commit", Err: err}
+	}
 	return &m, nil
 }
 
-// ExecDDL executes raw DDL (migration SQL).
+// ExecDDL executes raw DDL (migration SQL) with no bound parameters. pgx
+// forces the simple protocol for zero-arg Exec calls (one round trip), so
+// unlike Query/QueryRow/Exec below it needs no explicit-transaction wrap to
+// be safe under a transaction-pooling proxy.
 func (db *DB) ExecDDL(ctx context.Context, sql string) error {
 	_, err := db.pool.Exec(ctx, sql)
 	if err != nil {
@@ -184,91 +213,49 @@ func (db *DB) ExecDDL(ctx context.Context, sql string) error {
 	return nil
 }
 
-// Query executes a query and returns all rows as maps. On the request
-// pool (roles != nil) the query runs inside a short-lived tx that issues
-// SET LOCAL ROLE — authenticator is NOINHERIT in production, so a bare
-// pool query would otherwise have no table privileges.
+// withTx runs fn inside a short-lived transaction and commits on success. On
+// the request pool (roles != nil) that transaction also issues SET LOCAL
+// ROLE — authenticator is NOINHERIT in production, so a bare pool query
+// would otherwise have no table privileges. On every pool, the explicit
+// transaction also pins the query's Parse/Describe/Bind/Execute to one
+// backend connection under a transaction-pooling proxy (PgBouncer/RDS
+// Proxy/Supabase pooler) — see the DescribeExec comment in parsePoolConfig.
+func withTx[T any](ctx context.Context, db *DB, fn func(domain.Tx) (T, error)) (T, error) {
+	var zero T
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		return zero, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	result, err := fn(tx)
+	if err != nil {
+		return zero, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return zero, &domain.DatabaseError{Op: "commit", Err: err}
+	}
+	return result, nil
+}
+
+// Query executes a query and returns all rows as maps — see withTx.
 func (db *DB) Query(ctx context.Context, query string, args ...any) ([]map[string]any, error) {
-	if db.roles != nil {
-		tx, err := db.Begin(ctx)
-		if err != nil {
-			return nil, err
-		}
-		defer func() { _ = tx.Rollback(ctx) }()
-		rows, err := tx.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return nil, &domain.DatabaseError{Op: "commit", Err: err}
-		}
-		return rows, nil
-	}
-	rows, err := db.pool.Query(ctx, query, args...)
-	if err != nil {
-		return nil, &domain.DatabaseError{Op: "query", Err: err}
-	}
-	defer rows.Close()
-	return collectRows(rows)
+	return withTx(ctx, db, func(tx domain.Tx) ([]map[string]any, error) {
+		return tx.Query(ctx, query, args...)
+	})
 }
 
-// QueryRow executes a query and returns a single row as a map, or nil.
-// Auto-wraps in a role-switching tx on the request pool — see Query.
+// QueryRow executes a query and returns a single row as a map, or nil — see withTx.
 func (db *DB) QueryRow(ctx context.Context, query string, args ...any) (map[string]any, error) {
-	if db.roles != nil {
-		tx, err := db.Begin(ctx)
-		if err != nil {
-			return nil, err
-		}
-		defer func() { _ = tx.Rollback(ctx) }()
-		row, err := tx.QueryRow(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return nil, &domain.DatabaseError{Op: "commit", Err: err}
-		}
-		return row, nil
-	}
-	rows, err := db.pool.Query(ctx, query, args...)
-	if err != nil {
-		return nil, &domain.DatabaseError{Op: "query_row", Err: err}
-	}
-	defer rows.Close()
-
-	results, err := collectRows(rows)
-	if err != nil {
-		return nil, err
-	}
-	if len(results) == 0 {
-		return nil, nil
-	}
-	return results[0], nil
+	return withTx(ctx, db, func(tx domain.Tx) (map[string]any, error) {
+		return tx.QueryRow(ctx, query, args...)
+	})
 }
 
-// Exec executes a statement and returns affected row count.
-// Auto-wraps in a role-switching tx on the request pool — see Query.
+// Exec executes a statement and returns affected row count — see withTx.
 func (db *DB) Exec(ctx context.Context, query string, args ...any) (int64, error) {
-	if db.roles != nil {
-		tx, err := db.Begin(ctx)
-		if err != nil {
-			return 0, err
-		}
-		defer func() { _ = tx.Rollback(ctx) }()
-		n, err := tx.Exec(ctx, query, args...)
-		if err != nil {
-			return 0, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return 0, &domain.DatabaseError{Op: "commit", Err: err}
-		}
-		return n, nil
-	}
-	tag, err := db.pool.Exec(ctx, query, args...)
-	if err != nil {
-		return 0, &domain.DatabaseError{Op: "exec", Err: err}
-	}
-	return tag.RowsAffected(), nil
+	return withTx(ctx, db, func(tx domain.Tx) (int64, error) {
+		return tx.Exec(ctx, query, args...)
+	})
 }
 
 // sqlEditorStatementTimeout bounds a single editor query. A package var (not a
