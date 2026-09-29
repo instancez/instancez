@@ -119,6 +119,7 @@ func drainToReady(fe *pgproto3.Frontend) ([]pgproto3.BackendMessage, error) {
 
 func mustExec(t *testing.T, pc *pgconn.PgConn, sql string) {
 	t.Helper()
+	// nosemgrep -- test-only setup DDL/DML; callers only pass constant query text
 	if _, err := pc.Exec(context.Background(), sql).ReadAll(); err != nil {
 		t.Fatalf("exec %q: %v", sql, err)
 	}
@@ -233,6 +234,7 @@ func TestDBMethods_SurviveTransactionPoolingUnderContention(t *testing.T) {
 			t.Fatalf("GetLastMigration iteration %d: unexpected result %+v", i, last)
 		}
 
+		// nosemgrep -- selectSQL is a package-level constant; no user input
 		row, err := db.QueryRow(ctx, selectSQL)
 		if err != nil {
 			t.Fatalf("QueryRow iteration %d: %v", i, err)
@@ -241,6 +243,7 @@ func TestDBMethods_SurviveTransactionPoolingUnderContention(t *testing.T) {
 			t.Fatalf("QueryRow iteration %d: unexpected result %+v", i, row)
 		}
 
+		// nosemgrep -- selectSQL is a package-level constant; no user input
 		rows, err := db.Query(ctx, selectSQL)
 		if err != nil {
 			t.Fatalf("Query iteration %d: %v", i, err)
@@ -251,6 +254,7 @@ func TestDBMethods_SurviveTransactionPoolingUnderContention(t *testing.T) {
 
 		// Exec with a bound parameter exercises the same DescribeExec path as
 		// Query/QueryRow (a zero-arg Exec would be immune; see ExecDDL).
+		// nosemgrep -- constant query text; values are bound parameters
 		n, err := db.Exec(ctx, `UPDATE _instancez_migrations SET config_json = $1 WHERE id = $2`, "{}", last.ID)
 		if err != nil {
 			t.Fatalf("Exec iteration %d: %v", i, err)
