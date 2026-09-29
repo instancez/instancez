@@ -96,6 +96,14 @@ func TestBuildBulkUpsertQuery_Merge(t *testing.T) {
 	}
 }
 
+func TestBuildBulkUpsertQuery_KeyOnlyUpdatesKeys(t *testing.T) {
+	records := []map[string]any{{"id": 1}, {"id": 2}}
+	sql, _ := buildBulkUpsertQuery("todos", records, []string{"id"}, "merge", true)
+	if !strings.Contains(sql, "DO UPDATE SET id = EXCLUDED.id") {
+		t.Errorf("key-only bulk merge must DO UPDATE: %s", sql)
+	}
+}
+
 func TestBuildBulkUpsertQuery_Ignore(t *testing.T) {
 	records := []map[string]any{{"id": 1, "title": "a"}, {"id": 2, "title": "b"}}
 	sql, _ := buildBulkUpsertQuery("todos", records, []string{"id"}, "ignore", false)

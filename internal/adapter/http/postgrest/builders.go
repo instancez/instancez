@@ -821,26 +821,7 @@ func BuildBulkUpsertQuery(tableName string, records []map[string]any, conflictCo
 		strings.Join(rowSQLs, ", "),
 		strings.Join(conflictCols, ", "))
 
-	if resolution == "ignore" {
-		sql += "DO NOTHING"
-	} else {
-		conflictSet := make(map[string]bool, len(conflictCols))
-		for _, c := range conflictCols {
-			conflictSet[c] = true
-		}
-		var setParts []string
-		for _, col := range cols {
-			if conflictSet[col] {
-				continue
-			}
-			setParts = append(setParts, fmt.Sprintf("%s = EXCLUDED.%s", col, col))
-		}
-		if len(setParts) == 0 {
-			sql += "DO NOTHING"
-		} else {
-			sql += "DO UPDATE SET " + strings.Join(setParts, ", ")
-		}
-	}
+	sql += conflictAction(cols, conflictCols, resolution)
 	if returning {
 		sql += " RETURNING *"
 	}
@@ -961,26 +942,7 @@ func BuildUpsertQuery(tableName string, record map[string]any, conflictCols []st
 		strings.Join(placeholders, ", "),
 		strings.Join(conflictCols, ", "))
 
-	if resolution == "ignore" {
-		sql += "DO NOTHING"
-	} else {
-		conflictSet := make(map[string]bool, len(conflictCols))
-		for _, c := range conflictCols {
-			conflictSet[c] = true
-		}
-		var setParts []string
-		for _, col := range cols {
-			if conflictSet[col] {
-				continue
-			}
-			setParts = append(setParts, fmt.Sprintf("%s = EXCLUDED.%s", col, col))
-		}
-		if len(setParts) == 0 {
-			sql += "DO NOTHING"
-		} else {
-			sql += "DO UPDATE SET " + strings.Join(setParts, ", ")
-		}
-	}
+	sql += conflictAction(cols, conflictCols, resolution)
 
 	if returning {
 		sql += " RETURNING *"
@@ -1033,4 +995,30 @@ func BuildDeleteQuery(tableName string, where *WhereNode, returning bool) (strin
 func (c *QueryParams) String() string {
 	return fmt.Sprintf("select=%v where=%v order=%v limit=%d offset=%d",
 		c.Select, c.Where != nil, c.Order, c.Limit, c.Offset)
+}
+
+// conflictAction returns DO NOTHING for ignore, else DO UPDATE SET over the non-key columns (keys too when nothing else remains).
+func conflictAction(cols, conflictCols []string, resolution string) string {
+	if resolution == "ignore" {
+		return "DO NOTHING"
+	}
+	isKey := make(map[string]bool, len(conflictCols))
+	for _, c := range conflictCols {
+		isKey[c] = true
+	}
+	var set []string
+	for _, c := range cols {
+		if !isKey[c] {
+			set = append(set, c+" = EXCLUDED."+c)
+		}
+	}
+	if len(set) == 0 {
+		for _, c := range cols {
+			set = append(set, c+" = EXCLUDED."+c)
+		}
+	}
+	if len(set) == 0 {
+		return "DO NOTHING"
+	}
+	return "DO UPDATE SET " + strings.Join(set, ", ")
 }

@@ -68,3 +68,50 @@ func TestConf_UpsertUsesLivePrimaryKeyWhenConfigDrifted(t *testing.T) {
 	require.EqualValues(t, 1, row["n"])
 	require.EqualValues(t, 3, row["b"])
 }
+
+func TestConf_KeyOnlyUpsertReturnsRow(t *testing.T) {
+	if testClient == nil {
+		t.Skip("no client")
+	}
+	ctx := context.Background()
+	require.NoError(t, testDB.ExecDDL(ctx, `DROP TABLE IF EXISTS key_only;
+		CREATE TABLE key_only (a int, b int, PRIMARY KEY (a, b));`))
+	t.Cleanup(func() { _ = testDB.ExecDDL(context.Background(), `DROP TABLE IF EXISTS key_only`) })
+
+	cfg := buildConfig()
+	cfg.Tables = map[string]domain.Table{"key_only": {Fields: []domain.Field{
+		{Name: "a", Type: "int", PrimaryKey: true},
+		{Name: "b", Type: "int", PrimaryKey: true},
+	}}}
+	cfg.RPC = nil
+	ts := httptest.NewServer(instancezhttp.NewServer(instancezhttp.ServerDeps{
+		Config: cfg, DB: testAuthDB, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), DevMode: true,
+	}).Handler())
+	defer ts.Close()
+
+	send := func(method, prefer, body string) (int, string) {
+		req, err := http.NewRequest(method, ts.URL+"/rest/v1/key_only", strings.NewReader(body))
+		require.NoError(t, err)
+		req.Header.Set("apikey", testAdminKey)
+		req.Header.Set("Authorization", "Bearer "+testAdminKey)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Prefer", prefer)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(raw)
+	}
+	merge := "resolution=merge-duplicates,return=representation"
+	for i := 0; i < 2; i++ {
+		status, body := send("POST", merge, `{"a":1,"b":2}`)
+		require.Equal(t, 201, status, body)
+		require.JSONEq(t, `[{"a":1,"b":2}]`, body, "existing row must still be returned")
+	}
+	status, body := send("POST", merge, `[{"a":1,"b":2},{"a":3,"b":4}]`)
+	require.Equal(t, 201, status, body)
+	require.JSONEq(t, `[{"a":1,"b":2},{"a":3,"b":4}]`, body)
+	status, body = send("POST", "resolution=ignore-duplicates,return=representation", `{"a":1,"b":2}`)
+	require.Equal(t, 201, status, body)
+	require.JSONEq(t, `[]`, body)
+}

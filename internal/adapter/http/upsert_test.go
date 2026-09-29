@@ -95,12 +95,28 @@ func TestBuildUpsertQuery_Ignore(t *testing.T) {
 	}
 }
 
-func TestBuildUpsertQuery_PKOnlyBodyFallsBackToDoNothing(t *testing.T) {
-	// Record contains only the conflict column — nothing to update.
-	record := map[string]any{"id": 1}
-	sql, _ := buildUpsertQuery("todos", record, []string{"id"}, "merge", false)
+func TestBuildUpsertQuery_KeyOnlyBodyUpdatesKeysToReturnRow(t *testing.T) {
+	sql, _ := buildUpsertQuery("todos", map[string]any{"id": 1}, []string{"id"}, "merge", true)
+	if !strings.Contains(sql, "DO UPDATE SET id = EXCLUDED.id") || !strings.HasSuffix(sql, " RETURNING *") {
+		t.Errorf("key-only merge must DO UPDATE so RETURNING yields the row: %s", sql)
+	}
+	sql, _ = buildUpsertQuery("j", map[string]any{"a": 1, "b": 2}, []string{"a", "b"}, "merge", true)
+	if !strings.Contains(sql, "DO UPDATE SET a = EXCLUDED.a, b = EXCLUDED.b") {
+		t.Errorf("composite key-only merge: %s", sql)
+	}
+}
+
+func TestBuildUpsertQuery_KeyOnlyIgnoreStaysDoNothing(t *testing.T) {
+	sql, _ := buildUpsertQuery("todos", map[string]any{"id": 1}, []string{"id"}, "ignore", true)
 	if !strings.Contains(sql, "DO NOTHING") {
-		t.Errorf("expected DO NOTHING fallback, got: %s", sql)
+		t.Errorf("ignore must stay DO NOTHING: %s", sql)
+	}
+}
+
+func TestBuildUpsertQuery_EmptyRecordDoesNotEmitEmptySet(t *testing.T) {
+	sql, _ := buildUpsertQuery("todos", map[string]any{}, []string{"id"}, "merge", false)
+	if strings.Contains(sql, "DO UPDATE SET ") {
+		t.Errorf("empty SET list: %s", sql)
 	}
 }
 

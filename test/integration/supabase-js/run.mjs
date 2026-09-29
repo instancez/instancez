@@ -785,6 +785,11 @@ await step("rest: many-to-many embed through a junction — select('*, labels(*)
     const { error: jErr } = await client.from('todo_labels').insert(labelIds.map((id) => ({ todo_id: ids[0], label_id: id })))
     if (jErr) throw jErr
 
+    const { data: up, error: upErr } = await client
+      .from('todo_labels').upsert({ todo_id: ids[0], label_id: labelIds[0] }).select().single()
+    if (upErr) throw upErr
+    assert(up.todo_id === ids[0] && up.label_id === labelIds[0], 'key-only upsert returns the existing row')
+
     const { data, error } = await client.from('todos').select('*, labels(*)').in('id', ids).order('id')
     if (error) throw error
     assertEq(data.length, 2, 'both todos')
@@ -801,6 +806,19 @@ await step("rest: many-to-many embed through a junction — select('*, labels(*)
     await client.from('todos').delete().in('id', ids)
     if (labelIds.length) await client.from('labels').delete().in('id', labelIds)
   }
+})
+
+await step('rest: ambiguous embed — two FKs to one table is PGRST201 / 300', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { data, error, status } = await client.from('label_links').select('*, labels(*)')
+  assertEq(status, 300, 'ambiguous embed status')
+  assertEq(data, null, 'no data')
+  assertEq(error.code, 'PGRST201', 'error code')
+  const { error: okErr } = await client.from('label_links').select('*, labels!label_links_from_id_fkey(*)')
+  assert(!okErr, 'disambiguated embed works')
 })
 
 await step('rest: aliased belongs-to embed — parent:todos(title) on comments', async () => {

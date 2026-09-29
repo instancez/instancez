@@ -213,6 +213,14 @@ func TestSupabaseJSCompat(t *testing.T) {
 					{Name: "label_id", ForeignKey: &domain.ForeignKey{References: "labels.id", OnDelete: "cascade"}, PrimaryKey: true},
 				},
 			},
+			// Two FKs to labels make an embed of labels from label_links ambiguous.
+			"label_links": {
+				Fields: []domain.Field{
+					{Name: "id", Type: "bigserial", PrimaryKey: true},
+					{Name: "from_id", ForeignKey: &domain.ForeignKey{References: "labels.id", OnDelete: "cascade"}},
+					{Name: "to_id", ForeignKey: &domain.ForeignKey{References: "labels.id", OnDelete: "cascade"}},
+				},
+			},
 			// profiles exercises cross-schema FK + RLS using auth.uid().
 			// FK targets auth.users.id (auto-emitted whenever cfg.Auth != nil),
 			// the RLS policies reference auth.uid() to gate writes to the row's
