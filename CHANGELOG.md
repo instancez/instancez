@@ -6,6 +6,8 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 <!-- Add entries here as you merge changes. Move them under a version heading when you cut a release. -->
 
+## [0.0.4] - 2026-09-29
+
 ### Added
 
 - Per-table `rls_enabled` in `instancez.yaml`. `true` enables and forces RLS even with no policies (deny-all for `anon`/`authenticated`), and with `true` set, removing the last policy no longer turns RLS off. `false` disables RLS and is rejected when the table declares policies. Leaving it unset keeps the old behavior (on only if the table has policies, off the moment the last policy is removed), so existing projects migrate with no DDL change. `inz init`, the examples, and the dashboard's new-table flow now write it explicitly, defaulting to `true`.
@@ -92,6 +94,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - The legacy `/api/storage` routes with an anon-role JWT on a bucket without `rls:` now return 403 on sign and 404 on private download and delete.
 - A default upsert whose live primary key lookup fails now returns that database error instead of 25P02 `current transaction is aborted`.
 - A unique index on one column of a composite key is now created before a new foreign key that references it, on a fresh deploy and when both arrive in the same change. Before, the deploy failed with `there is no unique constraint matching given keys`. A foreign key to one column of the table's own composite key is added after that index too, as `<table>_<column>_fkey`.
+- A query behind a transaction-pooling proxy (PgBouncer, RDS Proxy, the Supabase pooler) could intermittently fail with `SQLSTATE 08P01` ("bind message has N result formats but query has M columns"), most visibly as a boot-time `harden ... get_last_migration` error. The pooler could hand a query's Bind a different backend connection than its Describe, binding against that backend's unrelated statement. Every owner-pool query now runs inside an explicit transaction, which pins the connection to one backend for the whole exchange.
 
 ### Security
 
@@ -191,7 +194,8 @@ First tagged release.
 - Deployment targets: Docker, Docker Compose, Kubernetes (Helm chart), AWS Lambda
 - A `@supabase/supabase-js` wire-compatibility test suite that runs on every commit
 
-[Unreleased]: https://github.com/instancez/instancez/compare/v0.0.3...HEAD
+[Unreleased]: https://github.com/instancez/instancez/compare/v0.0.4...HEAD
+[0.0.4]: https://github.com/instancez/instancez/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/instancez/instancez/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/instancez/instancez/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/instancez/instancez/releases/tag/v0.0.1
