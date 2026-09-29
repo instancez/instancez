@@ -458,9 +458,9 @@ func (m *Migrator) Harden(ctx context.Context, cfg *domain.Config) error {
 	return m.applyStatements(ctx, stmts)
 }
 
-// healStorageList never fails boot: a size gate first, then the name index and the column each in their own bounded tx.
+// healStorageList never fails boot: a lock-free catalog check, a bounded size gate only when a step is missing, then each step in its own bounded tx.
 func (m *Migrator) healStorageList(ctx context.Context) {
-	row, err := m.db.QueryRow(ctx, storageHealGate)
+	row, err := m.db.QueryRow(ctx, storageHealMissing)
 	if err != nil {
 		m.logger.Warn("harden: storage list heal skipped, retrying next boot", "error", err)
 		return
@@ -469,12 +469,22 @@ func (m *Migrator) healStorageList(ctx context.Context) {
 	if !needName && !needColumn {
 		return
 	}
-	if size, _ := row["bytes"].(int64); size > m.healMaxBytes {
+	lockLeft := m.lockTimeout
+	start := time.Now()
+	size, err := m.storageSize(ctx, lockLeft)
+	if m.lockTimeout > 0 {
+		lockLeft = max(lockLeft-time.Since(start), time.Millisecond)
+	}
+	if err != nil {
+		m.logger.Warn("harden: storage list heal skipped, storage.objects is locked; run the SQL by hand when the warning persists",
+			"error", err, "sql", storageListManualSQL)
+		return
+	}
+	if size > m.healMaxBytes {
 		m.logger.Warn("harden: storage.objects is too large to change at boot, list stays on the slower query until you run the SQL by hand",
 			"bytes", size, "max_bytes", m.healMaxBytes, "sql", storageListManualSQL)
 		return
 	}
-	lockLeft := m.lockTimeout
 	for _, step := range []struct {
 		name string
 		need bool
@@ -491,6 +501,24 @@ func (m *Migrator) healStorageList(ctx context.Context) {
 			lockLeft = max(lockLeft-waited, time.Millisecond)
 		}
 	}
+}
+
+// storageSize reads the heap size in its own tx, since pg_relation_size waits behind an ACCESS EXCLUSIVE lock.
+func (m *Migrator) storageSize(ctx context.Context, lockWait time.Duration) (int64, error) {
+	tx, err := m.db.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SELECT set_config('lock_timeout', $1, true)", strconv.FormatInt(lockWait.Milliseconds(), 10)+"ms"); err != nil {
+		return 0, err
+	}
+	row, err := tx.QueryRow(ctx, storageHeapSize)
+	if err != nil {
+		return 0, err
+	}
+	size, _ := row["bytes"].(int64)
+	return size, nil
 }
 
 // healTx runs one statement under the migration lock and returns how long the lock wait took.
@@ -1238,13 +1266,15 @@ const storageListManualSQL = `ALTER TABLE storage.objects ADD COLUMN name_lower 
 	`CREATE INDEX CONCURRENTLY IF NOT EXISTS objects_bucket_name_c_idx ON storage.objects (bucket_id, name COLLATE "C"); ` +
 	`CREATE INDEX CONCURRENTLY IF NOT EXISTS objects_bucket_name_lower_c_idx ON storage.objects (bucket_id, name_lower, (name COLLATE "C"));`
 
-// storageHealGate reports which list heal steps are missing and the table's heap size; an INVALID index counts as missing.
-const storageHealGate = `SELECT
+// storageHealMissing reports which list heal steps are missing from the catalog alone, so it takes no table lock; an INVALID index counts as missing.
+const storageHealMissing = `SELECT
   t.oid IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pg_index i WHERE i.indexrelid = to_regclass('storage.objects_bucket_name_c_idx') AND i.indisvalid) AS need_name_index,
   t.oid IS NOT NULL AND (NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = t.oid AND attname = 'name_lower' AND NOT attisdropped)
-    OR NOT EXISTS (SELECT 1 FROM pg_index i WHERE i.indexrelid = to_regclass('storage.objects_bucket_name_lower_c_idx') AND i.indisvalid)) AS need_column,
-  COALESCE(pg_relation_size(t.oid), 0)::bigint AS bytes
+    OR NOT EXISTS (SELECT 1 FROM pg_index i WHERE i.indexrelid = to_regclass('storage.objects_bucket_name_lower_c_idx') AND i.indisvalid)) AS need_column
 FROM (SELECT to_regclass('storage.objects') AS oid) t`
+
+// storageHeapSize takes ACCESS SHARE on the table, so it must run under a lock_timeout.
+const storageHeapSize = `SELECT COALESCE(pg_relation_size(to_regclass('storage.objects')), 0)::bigint AS bytes`
 
 // ensureStorageIndex builds a list index unless a valid one exists, dropping an INVALID leftover first.
 func ensureStorageIndex(name, def string) string {

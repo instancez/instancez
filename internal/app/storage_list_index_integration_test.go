@@ -3,7 +3,10 @@
 package app_test
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -345,7 +348,8 @@ func TestIntegration_HardenStorageListHealConcurrentBootsStayBounded(t *testing.
 	tx := holdTableLock(t, owner, "ROW EXCLUSIVE")
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	const stmt, lockWait, boots = 400 * time.Millisecond, 300 * time.Millisecond, 4
+	// With no lock_timeout each blocked step runs the full statement timeout, so T is the bound under test.
+	const stmt, boots = 400 * time.Millisecond, 4
 	var wg sync.WaitGroup
 	elapsed := make([]time.Duration, boots)
 	errs := make([]error, boots)
@@ -354,7 +358,7 @@ func TestIntegration_HardenStorageListHealConcurrentBootsStayBounded(t *testing.
 		go func() {
 			defer wg.Done()
 			start := time.Now()
-			errs[i] = app.NewMigrator(owner).LockTimeout(lockWait).StorageHealLimits(stmt, 1<<30).Harden(ctx, cfg)
+			errs[i] = app.NewMigrator(owner).LockTimeout(0).StorageHealLimits(stmt, 1<<30).Harden(ctx, cfg)
 			elapsed[i] = time.Since(start)
 		}()
 	}
@@ -367,8 +371,58 @@ func TestIntegration_HardenStorageListHealConcurrentBootsStayBounded(t *testing.
 		}
 		slowest = max(slowest, elapsed[i])
 	}
-	t.Logf("slowest boot %v (2T + lock wait = %v)", slowest, 2*stmt+lockWait)
-	if limit := 2*stmt + lockWait + time.Second; slowest > limit {
-		t.Fatalf("slowest boot %v exceeds 2T + lock wait + margin = %v", slowest, limit)
+	t.Logf("slowest boot %v (2T = %v)", slowest, 2*stmt)
+	if slowest < stmt {
+		t.Fatalf("slowest boot %v: steps never reached the statement timeout, the test proves nothing", slowest)
+	}
+	if limit := boots*2*stmt + time.Second; slowest > limit {
+		t.Fatalf("slowest boot %v exceeds the serialized heal bound %v", slowest, limit)
+	}
+}
+
+// ACCESS EXCLUSIVE (the manual ALTER, or another boot's rewrite) must not stall boot beyond the lock budget, healed or not.
+func TestIntegration_HardenSizeGateIsBoundedByTheLockBudget(t *testing.T) {
+	cases := []struct {
+		name       string
+		dropHeal   bool
+		wantWarn   bool
+		maxElapsed time.Duration
+	}{
+		{"healed database", false, false, time.Second},
+		{"column missing", true, true, app.DefaultMigrateLockTimeout + 3*time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			owner, _ := dbboot.StartContainer(t)
+			ctx := context.Background()
+			cfg := &domain.Config{Version: 1, Auth: &domain.Auth{}, Storage: map[string]domain.Bucket{"b": {}}}
+			var logs bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(prev) })
+			m := app.NewMigrator(owner)
+			if err := m.Apply(ctx, cfg); err != nil {
+				t.Fatal(err)
+			}
+			if tc.dropHeal {
+				dropListHeal(t, owner)
+			}
+			tx := holdTableLock(t, owner, "ACCESS EXCLUSIVE")
+			defer func() { _ = tx.Rollback(ctx) }()
+
+			hctx, cancel := context.WithTimeout(ctx, tc.maxElapsed+5*time.Second)
+			defer cancel()
+			start := time.Now()
+			if err := m.Harden(hctx, cfg); err != nil {
+				t.Fatalf("Harden must not fail or hang on a locked table: %v", err)
+			}
+			if d := time.Since(start); d > tc.maxElapsed {
+				t.Fatalf("Harden took %v behind the lock, want <= %v", d, tc.maxElapsed)
+			}
+			warned := strings.Contains(logs.String(), "CREATE INDEX CONCURRENTLY")
+			if warned != tc.wantWarn {
+				t.Fatalf("warning with manual SQL = %v, want %v: %s", warned, tc.wantWarn, logs.String())
+			}
+		})
 	}
 }

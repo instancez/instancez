@@ -79,7 +79,7 @@ await supabase.storage.from('avatars').remove(['photo.png'])
 
 Uploading to an existing path without `upsert: true` returns a 409 error.
 
-`list()` is index-bounded through a generated `name_lower` column that boot adds to `storage.objects`, with two indexes. The rewrite takes an exclusive lock, so each boot step runs with an 8s statement timeout and boot skips both when the table is over 128 MB (a warning names the SQL). Without the column, `list()` still returns the same results. It seeks the index on the first letters of the prefix and reads every object under those letters, so cost follows the seeked letters, not the whole prefix; an empty or very short prefix on a large bucket is slow. On a large table, run this in a quiet window (drop an `INVALID` index first):
+`list()` is index-bounded through a generated `name_lower` column that boot adds to `storage.objects`, with two indexes. The rewrite takes an exclusive lock, so each boot step runs with an 8s statement timeout and boot skips both when the table is over 128 MB or locked while boot reads its size (a warning includes the SQL). Tables under 128 MB can still time out on slow disks, so run the SQL when the warning appears. A concurrent first boot may wait for another instance's heal, bounded by the heal timeout. Without the column, `list()` still returns the same results. It seeks the index on the first letters of the prefix and reads every object under those letters, so cost follows the seeked letters, not the whole prefix; an empty or very short prefix on a large bucket is slow. On a large table, run this in a quiet window (drop an `INVALID` index first):
 
 ```sql
 ALTER TABLE storage.objects ADD COLUMN name_lower TEXT COLLATE "C" GENERATED ALWAYS AS (lower(name)) STORED;
