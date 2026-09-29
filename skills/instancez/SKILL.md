@@ -94,7 +94,7 @@ tables:
 
 Rules the migrator enforces:
 
-- Every table needs a field with `primary_key: true`. Nothing is auto-added, not `id`, not `created_at`.
+- Every table needs a field with `primary_key: true`. Nothing is auto-added, not `id`, not `created_at`. Mark two or more fields for a composite key (a junction table keyed on both FKs also enables many-to-many embeds like `posts?select=*,tags(*)`). Key columns can't change once the table exists.
 - `type` comes from a fixed allowlist of standard Postgres types (serials, integers, text/varchar/char, boolean, numeric, date/time, uuid, jsonb, bytea, inet, and similar). Custom types like `citext` or `hstore` fail validation. `[]` array suffixes work.
 - Names are lowercase snake_case, starting with a letter, no SQL keywords.
 - The `auth` and `storage` schemas are reserved. User profile data goes in a regular table with a FK to `auth.users.id`, never in `schema: auth`.
@@ -163,7 +163,7 @@ storage:
         with_check: "auth.is_authenticated()"
 ```
 
-Declaring any bucket requires a `providers.storage` block (`type: local` for dev, `type: s3` for production). Bucket `rls` uses the same policy syntax as tables, applied to `storage.objects`. Clients use `supabase.storage.from('avatars').upload(...)` as usual. Signed URLs are authorized at creation time against the bucket's policies. As in Supabase, `public: true` only opens `/object/public/<bucket>/<path>` downloads; it grants no `select`, so add a `select` policy for anyone who should list, sign, update or delete.
+Declaring any bucket requires a `providers.storage` block (`type: local` for dev, `type: s3` for production). Bucket `rls` uses the same policy syntax as tables, applied to `storage.objects`. Clients use `supabase.storage.from('avatars').upload(...)` as usual. Signed URLs are authorized at creation time against the bucket's policies. As in Supabase, `public: true` only opens `/object/public/<bucket>/<path>` downloads; it grants no `select`, so add a `select` policy for anyone who should list, sign, update or delete. Publishable-key (guest) calls run as `anon` under those policies, so `using: "true"` admits guests; a bucket with no `rls:` gives guests nothing.
 
 ## RPC (SQL functions)
 
@@ -173,6 +173,7 @@ rpc:
     auth_required: true
     language: sql            # sql | plpgsql (default)
     volatility: stable       # stable/immutable also allow GET; volatile is POST-only
+    set: { search_path: "" } # also statement_timeout, lock_timeout, work_mem
     args:
       - name: team_id
         type: bigint
@@ -180,10 +181,10 @@ rpc:
     returns:
       type: bigint           # a concrete Postgres type, or record, setof <table>, void
     body: |
-      SELECT count(*) AS total FROM todos WHERE team_id = team_stats.team_id
+      SELECT count(*) AS total FROM public.todos WHERE team_id = team_stats.team_id
 ```
 
-Called with `supabase.rpc('team_stats', { team_id: 42 })` or `POST /rest/v1/rpc/team_stats`. Args bind as typed parameters, never string-concatenated. The body runs under the caller's role, so RLS applies inside it unless `security: definer`.
+Called with `supabase.rpc('team_stats', { team_id: 42 })` or `POST /rest/v1/rpc/team_stats`. Args bind as typed parameters, never string-concatenated. The body runs under the caller's role, so RLS applies inside it unless `security: definer`. A definer function should pin `set: { search_path: "" }` and schema-qualify names; `inz validate` warns otherwise.
 
 ## Code functions (Node.js)
 

@@ -31,6 +31,50 @@ tables:
 
 Every table must have at least one field marked `primary_key: true`. The migrator will not inject one for you.
 
+Mark two or more fields to get a composite primary key, one `PRIMARY KEY (a, b)` constraint over the marked columns in field order. Upserts default to the whole key, and `onConflict: 'team_id,user_id'` targets it explicitly:
+
+```yaml
+tables:
+  memberships:
+    fields:
+      - name: team_id
+        primary_key: true
+        foreign_key:
+          references: teams.id
+      - name: user_id
+        type: uuid
+        primary_key: true
+      - name: role
+        type: text
+```
+
+Which columns form the primary key is fixed once the table exists. Adding or removing a `primary_key` flag on a live column fails the migration, and the config API returns 422 `primary_key_change`. One swap is allowed: drop the old key column and add one new `primary_key: true` column in the same change (a destructive change, so it needs `--allow-destructive`). Reordering the key fields is not a change.
+
+Foreign keys are single-column, so an FK can only point at one column of a composite key, and only if that column is unique on its own. Give it a unique index, or Postgres rejects the FK. `unique: true` on an existing column adds no constraint, so use an index. `inz validate` warns about this case:
+
+```yaml
+tables:
+  devices:
+    fields:
+      - name: tenant_id
+        type: uuid
+        primary_key: true
+      - name: serial
+        type: text
+        primary_key: true
+    indexes:
+      - columns: [serial]   # serials are globally unique
+        unique: true
+  readings:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: device_serial
+        foreign_key:
+          references: devices.serial
+```
+
 ## Field types
 
 The `type` field accepts standard Postgres type names. The most commonly used ones:

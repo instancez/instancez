@@ -1,0 +1,414 @@
+package http
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+	"unicode"
+	"unicode/utf8"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
+)
+
+// listQuery mirrors storage.search (v1) and storage.search_v2 / list_objects_with_delimiter (v2).
+type listQuery struct {
+	bucket   string
+	match    string // objects whose name starts with this
+	fold     bool   // group keys past the next "/" into one folder row
+	foldFrom int    // rune offset after which "/" starts a folder
+	caseFold bool   // v1 matches, groups and orders case-insensitively
+	lowerCol bool   // name_lower column exists
+	byTime   bool
+	desc     bool
+	limit    int
+	offset   int
+	after    *listCursor
+}
+
+type listCursor struct {
+	Name string `json:"n"`
+	At   string `json:"t,omitempty"`
+}
+
+func (q listQuery) sql() (string, []any) {
+	if q.byTime {
+		return q.timeSQL()
+	}
+	return q.walkSQL()
+}
+
+// walkSQL is the storage.search skip-scan: one index probe per emitted row, and a folder's subtree is jumped over.
+func (q listQuery) walkSQL() (string, []any) {
+	if q.caseFold && !q.lowerCol {
+		return q.scanSQL()
+	}
+	key, prefix := `o.name COLLATE "C"`, "$2"
+	if q.caseFold {
+		key, prefix = `o.name_lower`, "lower($2)"
+	}
+	p := "0"
+	if q.fold {
+		p = "strpos(substr(" + key + ", $3 + 1), '/')"
+	}
+	start := q.match
+	switch {
+	case q.after != nil && !q.desc && strings.HasSuffix(q.after.Name, "/"):
+		start = strings.TrimSuffix(q.after.Name, "/") + "0" // '0' follows '/', so this skips the folder's subtree
+	case q.after != nil && !q.desc:
+		start = q.after.Name + "\x01" // the smallest key after Name
+	case q.after != nil:
+		start = q.after.Name
+	}
+	startExpr := "$4"
+	if q.caseFold {
+		startExpr = "lower($4)"
+	}
+	first, order := key+" >= "+startExpr, []string{key}
+	skip := `CASE WHEN w.p > 0 THEN left(w.k, $3 + w.p - 1) || '0' ELSE %s END`
+	below := `CASE WHEN w.p > 0 THEN left(w.k, $3 + w.p) ELSE %s END`
+	stepAsc, stepDesc := key+" >= "+fmt.Sprintf(skip, "w.k || chr(1)"), key+" < "+fmt.Sprintf(below, "w.k")
+	if q.caseFold {
+		// Case variants share a key, so the walk breaks ties on the exact name and steps by (key, name).
+		order = append(order, `o.name COLLATE "C"`)
+		row := `ROW(` + key + `, o.name COLLATE "C") `
+		stepAsc = row + ">= ROW(" + fmt.Sprintf(skip, "w.k") + ", CASE WHEN w.p > 0 THEN '' ELSE w.name || chr(1) END)"
+		stepDesc = row + "< ROW(" + fmt.Sprintf(below, "w.k") + ", CASE WHEN w.p > 0 THEN '' ELSE w.name END)"
+	}
+	step, dir := stepAsc, "ASC"
+	if q.desc {
+		if q.after == nil {
+			// ponytail: U+10FFFF caps the prefix range, so keys continuing with that code point are missed in desc order.
+			startExpr += " || chr(1114111)"
+		}
+		first, step, dir = key+" < "+startExpr, stepDesc, "DESC"
+	}
+	peek := fmt.Sprintf(`SELECT o.id, o.name, o.uploaded_at, o.metadata, %s AS k, %s AS p FROM storage.objects o WHERE o.bucket_id = $1 AND %%s ORDER BY %s LIMIT 1`, key, p, strings.Join(order, " "+dir+", ")+" "+dir)
+	sql := fmt.Sprintf(`WITH RECURSIVE walk AS (
+  (%s)
+  UNION ALL
+  (SELECT n.* FROM walk w CROSS JOIN LATERAL (%s) n WHERE starts_with(n.k, %s))
+)
+SELECT CASE WHEN p > 0 THEN left(name, $3 + p) ELSE name END AS name, CASE WHEN p > 0 THEN NULL ELSE id::text END AS id,
+  CASE WHEN p > 0 THEN NULL ELSE uploaded_at END AS uploaded_at, CASE WHEN p > 0 THEN NULL ELSE metadata END AS metadata, p > 0 AS folder
+FROM walk WHERE starts_with(k, %s) LIMIT $5 OFFSET $6`, fmt.Sprintf(peek, first), fmt.Sprintf(peek, step), prefix, prefix)
+	return sql, []any{q.bucket, q.match, q.foldFrom, start, q.limit, q.offset}
+}
+
+// scanSQL is the walk without name_lower: it seeks each case variant of the prefix on the name index.
+func (q listQuery) scanSQL() (string, []any) {
+	dir, pick := "ASC", "k, n"
+	if q.desc {
+		dir, pick = "DESC", "k DESC, n DESC"
+	}
+	p := "0"
+	if q.fold {
+		p = "strpos(substr(k, $3 + 1), '/')"
+	}
+	args := []any{q.bucket, q.match, q.foldFrom, q.limit, q.offset}
+	var seekTerms []string
+	for _, lo := range caseVariantRanges(q.match) {
+		args = append(args, lo)
+		seekTerms = append(seekTerms, fmt.Sprintf(`(o.name COLLATE "C" >= $%d AND o.name COLLATE "C" < $%d || chr(1114111))`, len(args), len(args)))
+	}
+	seeks := strings.Join(seekTerms, " OR ")
+	sql := fmt.Sprintf(`WITH m AS (
+  SELECT id, name, uploaded_at, metadata, k, n, %s AS p FROM (
+    SELECT o.id, o.name, o.uploaded_at, o.metadata, lower(o.name) COLLATE "C" AS k, o.name COLLATE "C" AS n
+    FROM storage.objects o WHERE o.bucket_id = $1 AND (%s) AND starts_with(lower(o.name) COLLATE "C", lower($2))
+  ) s
+), e AS (
+  (SELECT DISTINCT ON (left(k, $3 + p)) left(k, $3 + p) AS sk, left(name, $3 + p) AS name, NULL::text AS id, NULL::timestamptz AS uploaded_at, NULL::jsonb AS metadata, true AS folder, NULL::text AS n
+  FROM m WHERE p > 0 ORDER BY left(k, $3 + p), %s)
+  UNION ALL
+  SELECT k, name, id::text, uploaded_at, metadata, false, n FROM m WHERE p = 0
+)
+SELECT name, id, uploaded_at, metadata, folder FROM e ORDER BY sk %s, n %s LIMIT $4 OFFSET $5`, p, seeks, pick, dir, dir)
+	return sql, args
+}
+
+// maxVariantRanges caps the index seeks per query; runes past the cap are only filtered.
+const maxVariantRanges = 256
+
+// lowerVariants is r's simple-fold orbit plus U+0130.
+func lowerVariants(r rune) []rune {
+	if r == 'İ' {
+		return []rune{'İ', 'i', 'I'}
+	}
+	var folds []rune
+	for f := unicode.SimpleFold(r); ; f = unicode.SimpleFold(f) {
+		folds = append(folds, f)
+		if f == r {
+			break
+		}
+	}
+	if r == 'i' || r == 'I' {
+		folds = append(folds, 'İ')
+	}
+	return folds
+}
+
+// caseVariantRanges expands the leading runes of s into every case variant lower() could map onto them.
+func caseVariantRanges(s string) []string {
+	ranges, rest := []string{""}, s
+	for rest != "" {
+		r, size := utf8.DecodeRuneInString(rest)
+		folds := lowerVariants(r)
+		if len(ranges)*len(folds) > maxVariantRanges {
+			break
+		}
+		next := make([]string, 0, len(ranges)*len(folds))
+		for _, pre := range ranges {
+			for _, f := range folds {
+				next = append(next, pre+string(f))
+			}
+		}
+		ranges, rest = next, rest[size:]
+	}
+	return ranges
+}
+
+// timeSQL matches search_by_timestamp and storage.search's path-token branch, which aggregate the whole prefix as Supabase does.
+func (q listQuery) timeSQL() (string, []any) {
+	nameExpr, matchExpr := "name", "starts_with(name, $2)"
+	if q.caseFold {
+		nameExpr, matchExpr = "lower(name)", "starts_with(lower(name), lower($2))"
+	}
+	p := "0"
+	if q.fold {
+		p = "strpos(substr(name, $3 + 1), '/')"
+	}
+	args := []any{q.bucket, q.match, q.foldFrom}
+	sql := fmt.Sprintf(`WITH m AS (
+  SELECT id, name, uploaded_at, metadata, %s AS p FROM storage.objects WHERE bucket_id = $1 AND %s
+), e AS (
+  SELECT min(left(name, $3 + p)) AS name, NULL::text AS id, min(uploaded_at) AS uploaded_at, NULL::jsonb AS metadata, true AS folder
+  FROM m WHERE p > 0 GROUP BY %s
+  UNION ALL
+  SELECT name, id::text, uploaded_at, metadata, false FROM m WHERE p = 0
+)
+SELECT name, id, uploaded_at, metadata, folder FROM e`, p, matchExpr, strings.Replace(nameExpr, "name", "left(name, $3 + p)", 1))
+
+	dir, op := "ASC", ">"
+	if q.desc {
+		dir, op = "DESC", "<"
+	}
+	sortName := nameExpr + ` COLLATE "C"`
+	ts := `COALESCE(date_trunc('milliseconds', uploaded_at), 'epoch'::timestamptz)`
+	if q.after != nil {
+		at, _ := time.Parse(time.RFC3339Nano, q.after.At)
+		args = append(args, at, q.after.Name)
+		sql += fmt.Sprintf(` WHERE ROW(%s, name COLLATE "C") %s ROW(date_trunc('milliseconds', $4::timestamptz), $5::text)`, ts, op)
+	}
+	if q.caseFold {
+		// v1 lists folders first, then files by time.
+		sql += fmt.Sprintf(` ORDER BY folder DESC, CASE WHEN folder THEN %s END %s, uploaded_at %s, %s %s`, sortName, dir, dir, sortName, dir)
+	} else {
+		sql += fmt.Sprintf(` ORDER BY %s %s, name COLLATE "C" %s`, ts, dir, dir)
+	}
+	args = append(args, q.limit, q.offset)
+	sql += fmt.Sprintf(` LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
+	return sql, args
+}
+
+func (h *StorageV1Handler) runList(ctx context.Context, q listQuery) ([]map[string]any, error) {
+	q.lowerCol = true
+	sql, args := q.sql()
+	// nosemgrep -- q.sql() emits constant text and validated columns; values are bound args
+	rows, err := h.db.Query(ctx, sql, args...)
+	var pgErr *pgconn.PgError
+	if q.caseFold && errors.As(err, &pgErr) && pgErr.Code == "42703" {
+		// The name_lower heal is best effort at boot, so fall back to lower(name) until it lands.
+		q.lowerCol = false
+		sql, args = q.sql()
+		// nosemgrep -- q.sql() emits constant text and validated columns; values are bound args
+		return h.db.Query(ctx, sql, args...)
+	}
+	return rows, err
+}
+
+func badListText(ss ...string) bool {
+	for _, s := range ss {
+		if strings.ContainsRune(s, 0) || !utf8.ValidString(s) {
+			return true
+		}
+	}
+	return false
+}
+
+func listOrderDesc(order string) bool { return strings.EqualFold(order, "desc") }
+
+func (h *StorageV1Handler) listObjects(c *gin.Context) {
+	bucketName := c.Param("bucket")
+	if _, ok := h.getBucketConfig(bucketName); !ok {
+		storageErr(c, 404, "not_found", "Bucket not found")
+		return
+	}
+	var req struct {
+		Prefix string `json:"prefix"`
+		Limit  int    `json:"limit"`
+		Offset int    `json:"offset"`
+		Search string `json:"search"`
+		SortBy struct {
+			Column string `json:"column"`
+			Order  string `json:"order"`
+		} `json:"sortBy"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	if badListText(req.Prefix, req.Search) {
+		storageErr(c, 400, "invalid_parameter", "Invalid prefix or search")
+		return
+	}
+
+	prefix := strings.TrimPrefix(req.Prefix, "/")
+	if prefix != "" && !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+	if req.Limit <= 0 {
+		req.Limit = 100
+	}
+	match := prefix + req.Search
+	q := listQuery{
+		bucket: bucketName, match: match, fold: true, foldFrom: utf8.RuneCountInString(match), caseFold: true,
+		byTime: req.SortBy.Column == "updated_at" || req.SortBy.Column == "created_at" || req.SortBy.Column == "last_accessed_at",
+		desc:   listOrderDesc(req.SortBy.Order), limit: min(req.Limit, 1500), offset: max(req.Offset, 0),
+	}
+	rows, err := h.runList(h.rlsCtx(c), q)
+	if err != nil {
+		h.logger.Error("list objects", "error", err)
+		storageErr(c, 500, "internal", "Failed to list")
+		return
+	}
+	items := make([]gin.H, 0, len(rows))
+	for _, row := range rows {
+		name := []rune(asString(row["name"]))
+		rel := string(name[min(utf8.RuneCountInString(prefix), len(name)):])
+		if row["folder"] == true {
+			items = append(items, gin.H{"name": strings.TrimSuffix(rel, "/"), "id": nil, "updated_at": nil, "created_at": nil, "last_accessed_at": nil, "metadata": nil})
+			continue
+		}
+		items = append(items, objectListItem(row, rel))
+	}
+	c.JSON(200, items)
+}
+
+func objectListItem(row map[string]any, name string) gin.H {
+	at := isoTime(row["uploaded_at"])
+	return gin.H{"name": name, "id": asString(row["id"]), "updated_at": at, "created_at": at, "last_accessed_at": at, "metadata": row["metadata"]}
+}
+
+func (h *StorageV1Handler) listObjectsV2(c *gin.Context) {
+	bucketName := c.Param("bucket")
+	if _, ok := h.getBucketConfig(bucketName); !ok {
+		storageErr(c, 404, "not_found", "Bucket not found")
+		return
+	}
+	var req struct {
+		Prefix        string `json:"prefix"`
+		Limit         int    `json:"limit"`
+		Cursor        string `json:"cursor"`
+		WithDelimiter bool   `json:"with_delimiter"`
+		SortBy        struct {
+			Column string `json:"column"`
+			Order  string `json:"order"`
+		} `json:"sortBy"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	if badListText(req.Prefix) {
+		storageErr(c, 400, "invalid_parameter", "Invalid prefix")
+		return
+	}
+
+	limit := req.Limit
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	q := listQuery{
+		bucket: bucketName, match: req.Prefix, fold: req.WithDelimiter, foldFrom: utf8.RuneCountInString(req.Prefix),
+		byTime: req.SortBy.Column == "updated_at" || req.SortBy.Column == "created_at",
+		desc:   listOrderDesc(req.SortBy.Order), limit: limit + 1,
+	}
+	if req.Cursor != "" {
+		cur, ok := decodeListCursor(req.Cursor)
+		if !ok {
+			storageErr(c, 400, "invalid_parameter", "Invalid cursor")
+			return
+		}
+		q.after = &cur
+	}
+	rows, err := h.runList(h.rlsCtx(c), q)
+	if err != nil {
+		h.logger.Error("list objects v2", "error", err)
+		storageErr(c, 500, "internal", "Failed to list")
+		return
+	}
+
+	hasNext := len(rows) > limit
+	if hasNext {
+		rows = rows[:limit]
+	}
+	levels := 1
+	if req.Prefix != "" {
+		levels = len(strings.Split(req.Prefix, "/"))
+	}
+	folders, objects := []gin.H{}, []gin.H{}
+	for _, row := range rows {
+		name := asString(row["name"])
+		if row["folder"] == true {
+			var at any
+			if q.byTime {
+				at = isoTime(row["uploaded_at"])
+			}
+			folders = append(folders, gin.H{"id": nil, "name": name, "bucket_id": bucketName, "updated_at": at, "created_at": at, "last_accessed_at": nil})
+			continue
+		}
+		item := objectListItem(row, name)
+		if req.WithDelimiter {
+			item["key"] = splitPart(name, levels)
+		}
+		objects = append(objects, item)
+	}
+	result := gin.H{"hasNext": hasNext, "folders": folders, "objects": objects}
+	if hasNext {
+		last := rows[len(rows)-1]
+		cur := listCursor{Name: asString(last["name"])}
+		if t, ok := last["uploaded_at"].(time.Time); ok && q.byTime {
+			cur.At = t.UTC().Format(time.RFC3339Nano)
+		}
+		result["nextCursor"] = encodeListCursor(cur)
+		result["nextCursorKey"] = cur.Name
+	}
+	c.JSON(200, result)
+}
+
+// splitPart is Postgres split_part(s, '/', n), 1-based.
+func splitPart(s string, n int) string {
+	parts := strings.Split(s, "/")
+	if n < 1 || n > len(parts) {
+		return ""
+	}
+	return parts[n-1]
+}
+
+func encodeListCursor(c listCursor) string {
+	b, _ := json.Marshal(c)
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func decodeListCursor(s string) (listCursor, bool) {
+	var c listCursor
+	b, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil || json.Unmarshal(b, &c) != nil || c.Name == "" || badListText(c.Name) {
+		return listCursor{}, false
+	}
+	if c.At != "" {
+		if _, err := time.Parse(time.RFC3339Nano, c.At); err != nil {
+			return listCursor{}, false
+		}
+	}
+	return c, true
+}

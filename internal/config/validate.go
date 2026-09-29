@@ -3,10 +3,12 @@ package config
 import (
 	"fmt"
 	"maps"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -90,6 +92,42 @@ var rpcTypeTokenRE = regexp.MustCompile(`^[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)?(
 
 // rpcColumnNameRE matches a table(...) column name.
 var rpcColumnNameRE = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+
+const pgIdentOrUser = `(?:"\$user"|[a-z_][a-z0-9_]{0,62})`
+
+var rpcTimeoutRE = regexp.MustCompile(`^[0-9]{1,10}(ms|s|min|h|d)?$`)
+
+var (
+	rpcTimeoutUnits = map[string]int64{"": 1, "ms": 1, "s": 1000, "min": 60_000, "h": 3_600_000, "d": 86_400_000}
+	rpcMemUnits     = map[string]int64{"": 1, "kB": 1, "MB": 1 << 10, "GB": 1 << 20, "TB": 1 << 30}
+)
+
+// rpcSetRules allowlists rpc set: keys and their value ranges.
+var rpcSetRules = map[string]struct {
+	re    *regexp.Regexp
+	hint  string
+	units map[string]int64
+	min   int64
+}{
+	"search_path":       {re: regexp.MustCompile(`^\s*$|^\s*` + pgIdentOrUser + `(?:\s*,\s*` + pgIdentOrUser + `)*\s*$`), hint: `Comma-separated lowercase schema names or "$user", or "" for an empty path`},
+	"statement_timeout": {re: rpcTimeoutRE, hint: "0 to 2147483647 milliseconds, optionally with ms, s, min, h or d (at most 24d)", units: rpcTimeoutUnits},
+	"lock_timeout":      {re: rpcTimeoutRE, hint: "0 to 2147483647 milliseconds, optionally with ms, s, min, h or d (at most 24d)", units: rpcTimeoutUnits},
+	"work_mem":          {re: regexp.MustCompile(`^[0-9]{1,10}(kB|MB|GB|TB)?$`), hint: "64 to 2147483647 kB, optionally with kB, MB, GB or TB (under 2TB)", units: rpcMemUnits, min: 64},
+}
+
+// rpcSetInRange converts a regexp-checked value to base units and range-checks it.
+func rpcSetInRange(v string, units map[string]int64, lo int64) bool {
+	i := strings.IndexFunc(v, func(r rune) bool { return r < '0' || r > '9' })
+	if i < 0 {
+		i = len(v)
+	}
+	n, err := strconv.ParseInt(v[:i], 10, 64)
+	if err != nil || n > math.MaxInt32 {
+		return false
+	}
+	n *= units[v[i:]]
+	return n >= lo && n <= math.MaxInt32
+}
 
 // multiwordScalarTypes are the standard multiword Postgres type names, which
 // rpcTypeTokenRE (single-token) can't match. A migration (pg_dump, Supabase)
@@ -258,12 +296,23 @@ func Warnings(cfg *domain.Config) domain.ValidationErrors {
 			})
 		}
 	}
+	ws = append(ws, compositePKFKWarnings(cfg.Tables)...)
 	if cfg.Server.MaxLimit == 100 {
 		ws = append(ws, &domain.ValidationError{
 			Path:       "server.max_limit",
 			Message:    "100 was the old unenforced default and now caps every read at 100 rows",
 			Suggestion: "Remove max_limit to use the 1000 default, or set the cap you want (-1 disables it)",
 		})
+	}
+	for _, name := range slices.Sorted(maps.Keys(cfg.RPC)) {
+		fn := cfg.RPC[name]
+		if _, pinned := fn.Set["search_path"]; strings.EqualFold(fn.Security, "definer") && !pinned {
+			ws = append(ws, &domain.ValidationError{
+				Path:       "rpc." + name + ".set.search_path",
+				Message:    "security: definer without a pinned search_path lets callers shadow the objects the body uses",
+				Suggestion: `Add set: { search_path: "" } and schema-qualify names, or list the schemas the body needs`,
+			})
+		}
 	}
 	return ws
 }
@@ -834,6 +883,16 @@ func validateRPCFunction(path, name string, fn domain.Function) domain.Validatio
 			})
 		}
 	}
+	for _, k := range slices.Sorted(maps.Keys(fn.Set)) {
+		rule, ok := rpcSetRules[k]
+		switch {
+		case !ok:
+			errs = append(errs, &domain.ValidationError{Path: path + ".set." + k, Message: fmt.Sprintf("unsupported setting %q", k),
+				Suggestion: "Supported: lock_timeout, search_path, statement_timeout, work_mem"})
+		case !rule.re.MatchString(fn.Set[k]) || (rule.units != nil && !rpcSetInRange(fn.Set[k], rule.units, rule.min)):
+			errs = append(errs, &domain.ValidationError{Path: path + ".set." + k, Message: fmt.Sprintf("invalid %s %q", k, fn.Set[k]), Suggestion: rule.hint})
+		}
+	}
 	return errs
 }
 
@@ -1072,6 +1131,53 @@ func validateForeignKeys(tables map[string]domain.Table) domain.ValidationErrors
 	}
 
 	return errs
+}
+
+// compositePKFKWarnings flags FKs to one column of a composite primary key.
+func compositePKFKWarnings(tables map[string]domain.Table) domain.ValidationErrors {
+	var ws domain.ValidationErrors
+	for _, tableName := range slices.Sorted(maps.Keys(tables)) {
+		for _, field := range tables[tableName].Fields {
+			if field.ForeignKey == nil {
+				continue
+			}
+			schema, refTable, refCol, err := domain.ParseFKReference(field.ForeignKey.References)
+			if err != nil || schema != "public" {
+				continue
+			}
+			target, ok := tables[refTable].GetField(refCol)
+			if !ok || !isBareCompositePKMember(tables[refTable], target) {
+				continue
+			}
+			msg := fmt.Sprintf("references %s.%s, which is only part of a composite primary key; "+
+				"Postgres rejects a new foreign key to it (no unique constraint matching given keys)", refTable, refCol)
+			if target.Unique {
+				msg += "; unique: true adds no constraint to an existing column"
+			}
+			ws = append(ws, &domain.ValidationError{
+				Path:       fmt.Sprintf("tables.%s.fields.%s.foreign_key.references", tableName, field.Name),
+				Message:    msg,
+				Suggestion: fmt.Sprintf("Add a unique index on %s(%s): indexes: [{columns: [%s], unique: true}]", refTable, refCol, refCol),
+			})
+		}
+	}
+	return ws
+}
+
+// isBareCompositePKMember reports whether f is in a 2+ column primary key with no single-column unique index.
+func isBareCompositePKMember(t domain.Table, f domain.Field) bool {
+	if !f.PrimaryKey {
+		return false
+	}
+	if len(t.PrimaryKeyColumns()) < 2 {
+		return false
+	}
+	for _, idx := range t.Indexes {
+		if idx.Unique && idx.Where == "" && len(idx.Columns) == 1 && idx.Columns[0] == f.Name {
+			return false
+		}
+	}
+	return true
 }
 
 // validateFieldType checks if a type string looks like a valid Postgres type.

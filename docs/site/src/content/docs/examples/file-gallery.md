@@ -103,7 +103,7 @@ const { data: files } = await supabase
   .list('', { limit: 50 })
 ```
 
-Results are ordered by name; `sortBy` isn't honored server-side yet, so sort client-side if you need a different order.
+Results are ordered by name, case-insensitively, with nested keys folded into one folder entry each (`id: null`), as in Supabase. Pass `sortBy: { column: 'created_at', order: 'desc' }` for another order.
 
 ## Download with a signed URL
 

@@ -22,6 +22,8 @@ func TestHandleList_PlanRefusedWithoutSecretKey(t *testing.T) {
 		"Application/Vnd.Pgrst.Plan+Json",
 		`application/vnd.pgrst.plan+text; for="application/json"; options=;`,
 		"application/vnd.pgrst.plan+json, application/json",
+		`application/vnd.pgrst.plan; for="text/xml", application/vnd.pgrst.plan+json`,
+		"application/*, application/vnd.pgrst.plan;q=0.5",
 	}
 	for _, role := range []string{"anon", "authenticated"} {
 		for _, accept := range accepts {

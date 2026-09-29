@@ -91,7 +91,7 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 			baseIdx := len(placeholders) + 1
 			chain, chainArgs, err := h.parseRPCChain(c, fn, argNames, baseIdx)
 			if err != nil {
-				problemJSON(c, http.StatusBadRequest, "bad_request", err.Error())
+				writeRangeError(c, err)
 				return
 			}
 			rpcChain = chain
@@ -187,7 +187,9 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 				offset = rpcChain.offset
 			}
 			c.Header("Content-Range", contentRange(offset, len(rows), total))
-			if c.GetHeader("Accept") == "application/vnd.pgrst.object+json" {
+			status := rangeStatus(offset, len(rows), total)
+			singular := c.GetHeader("Accept") == "application/vnd.pgrst.object+json"
+			if singular {
 				if len(rows) == 0 {
 					pgJSON(c, http.StatusNotAcceptable, "PGRST116",
 						"JSON object requested, multiple (or no) rows returned",
@@ -200,10 +202,16 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 						fmt.Sprintf("The result contains %d rows", len(rows)), "")
 					return
 				}
-				c.JSON(http.StatusOK, rows[0])
+			}
+			if status == 416 {
+				rangeNotSatisfiable(c, offset, total)
 				return
 			}
-			c.JSON(http.StatusOK, rows)
+			if singular {
+				c.JSON(status, rows[0])
+				return
+			}
+			c.JSON(status, rows)
 			return
 
 		default: // "scalar"
@@ -473,12 +481,14 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 			chain.embeds = resolved
 		}
 		aggregated := slices.ContainsFunc(chain.selectItems, func(it postgrest.SelectItem) bool { return it.Agg != "" })
-		if aggregated && len(chain.embeds) > 0 {
-			return nil, nil, fmt.Errorf("aggregates on RPC results can't be combined with embeds")
-		}
 		for _, it := range chain.selectItems {
 			if aggregated && it.Agg == "" {
 				chain.groupBy = append(chain.groupBy, postgrest.RenderSelectItemGroupByExpr("_rpc", it))
+			}
+		}
+		if aggregated {
+			for k := range chain.embeds {
+				chain.groupBy = append(chain.groupBy, strconv.Itoa(len(chain.selectItems)+k+1))
 			}
 		}
 	}
@@ -528,24 +538,30 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 	// LIMIT.
 	if l := c.Query("limit"); l != "" {
 		n, err := strconv.Atoi(l)
-		if err != nil || n < 0 {
+		if err != nil {
 			return nil, nil, fmt.Errorf("invalid limit: %s", l)
 		}
 		chain.hasLimit = true
 		chain.limit = n
 	}
-	if maxRows := h.cfg.Server.MaxLimit; maxRows > 0 && (!chain.hasLimit || chain.limit > maxRows) {
-		chain.hasLimit, chain.limit = true, maxRows
-	}
 
 	// OFFSET.
 	if o := c.Query("offset"); o != "" {
 		n, err := strconv.Atoi(o)
-		if err != nil || n < 0 {
+		if err != nil {
 			return nil, nil, fmt.Errorf("invalid offset: %s", o)
 		}
 		chain.hasOffset = true
 		chain.offset = n
+	}
+	offset, limit, err := intersectRange(c, chain.offset, chain.limit, chain.hasLimit)
+	if err != nil {
+		return nil, nil, err
+	}
+	chain.hasOffset, chain.offset = chain.hasOffset || offset > 0, offset
+	chain.hasLimit, chain.limit = limit >= 0, limit
+	if maxRows := h.cfg.Server.MaxLimit; maxRows > 0 && (!chain.hasLimit || chain.limit > maxRows) {
+		chain.hasLimit, chain.limit = true, maxRows
 	}
 
 	// Render the chain with placeholder numbering starting at argIdx.
@@ -564,14 +580,21 @@ func renderRPCChain(chain *rpcChainSQL, argIdx int) (string, []any) {
 	}
 	var b strings.Builder
 	var args []any
+	var conds []string
 	if chain.where != nil {
 		sql, whereArgs, next := chain.where.BuildSQL(argIdx)
 		if sql != "" {
-			b.WriteString(" WHERE ")
-			b.WriteString(sql)
+			conds = append(conds, sql)
 			args = append(args, whereArgs...)
 			argIdx = next
 		}
+	}
+	existsParts, existsArgs, next := postgrest.InnerExistsClauses(chain.embeds, "_rpc", argIdx)
+	conds = append(conds, existsParts...)
+	args = append(args, existsArgs...)
+	argIdx = next
+	if len(conds) > 0 {
+		b.WriteString(" WHERE " + strings.Join(conds, " AND "))
 	}
 	if len(chain.groupBy) > 0 {
 		b.WriteString(" GROUP BY ")
@@ -659,6 +682,13 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 		return callSQL, nil
 	}
 	hasEmbeds := len(chain.embeds) > 0
+	aggregated := slices.ContainsFunc(chain.selectItems, func(it postgrest.SelectItem) bool { return it.Agg != "" })
+	jsonbIfAgg := func(expr string) string {
+		if aggregated {
+			return "(" + expr + ")::jsonb"
+		}
+		return expr
+	}
 	// When belongs-to embeds will JOIN onto _rpc below, qualify outer WHERE
 	// columns with the _rpc alias so a filter like `id=eq.1` doesn't go
 	// ambiguous against the joined table's `id`. Mirrors the same fix in
@@ -678,14 +708,8 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 		}
 		projection = strings.Join(parts, ", ")
 	}
-	if chain.extraCols != "" {
-		if projection == "*" {
-			projection = "_rpc.*"
-		}
-		projection += ", " + chain.extraCols
-	}
 
-	if suffix == "" && projection == "*" && !hasEmbeds {
+	if suffix == "" && projection == "*" && !hasEmbeds && chain.extraCols == "" {
 		return callSQL, nil
 	}
 
@@ -700,25 +724,22 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 	}
 
 	for _, emb := range chain.embeds {
-		alias := "_emb_" + emb.Name
+		key := emb.OutputKey()
+		alias := "_emb_" + key
 		if emb.IsReverse {
 			// Has-many: correlated scalar subselect with json_agg.
 			rowExpr, rowArgs, nextIdx := postgrest.BuildEmbedRowExpr(emb, emb.RefTable, nil, argIdx)
 			embedArgs = append(embedArgs, rowArgs...)
 			argIdx = nextIdx
 
-			refPK := emb.RefColumn
-			if refPK == "" {
-				refPK = "id"
-			}
+			where, order := postgrest.ToManyScope(emb)
 			sub := fmt.Sprintf("SELECT coalesce(json_agg(%s", rowExpr)
-			if len(emb.Order) > 0 {
-				sub += " ORDER BY " + postgrest.RenderOrderBy(emb.Order)
+			if len(order) > 0 {
+				sub += " ORDER BY " + postgrest.RenderOrderBy(order)
 			}
-			sub += fmt.Sprintf("), '[]'::json) FROM %s WHERE %s.%s = _rpc.%s",
-				emb.RefTable, emb.RefTable, emb.FKColumn, refPK)
-			if emb.Where != nil {
-				clauseSQL, clauseArgs, next := emb.Where.BuildSQL(argIdx)
+			sub += "), '[]'::json) FROM " + postgrest.ToManyFrom(emb, "_rpc")
+			if where != nil {
+				clauseSQL, clauseArgs, next := where.BuildSQL(argIdx)
 				if clauseSQL != "" {
 					sub += " AND " + clauseSQL
 					embedArgs = append(embedArgs, clauseArgs...)
@@ -731,7 +752,7 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 			if emb.Offset != nil {
 				sub += fmt.Sprintf(" OFFSET %d", *emb.Offset)
 			}
-			embedSelectParts = append(embedSelectParts, fmt.Sprintf("(%s) AS %s", sub, emb.Name))
+			embedSelectParts = append(embedSelectParts, jsonbIfAgg("("+sub+")")+" AS "+key)
 		} else {
 			// Belongs-to: LEFT/INNER JOIN.
 			joinKind := "LEFT JOIN"
@@ -742,15 +763,14 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 				joinKind, emb.RefTable, alias, emb.FKColumn, alias, emb.RefColumn))
 
 			if len(emb.Columns) == 0 {
-				embedSelectParts = append(embedSelectParts,
-					fmt.Sprintf("row_to_json(%s.*) AS %s", alias, emb.Name))
+				embedSelectParts = append(embedSelectParts, jsonbIfAgg("row_to_json("+alias+".*)")+" AS "+key)
 			} else {
 				var embCols []string
 				for _, c := range emb.Columns {
 					embCols = append(embCols, fmt.Sprintf("'%s', %s.%s", c, alias, c))
 				}
 				obj := postgrest.NullIfNoMatch(alias, emb.RefColumn, fmt.Sprintf("json_build_object(%s)", strings.Join(embCols, ", ")))
-				embedSelectParts = append(embedSelectParts, obj+" AS "+emb.Name)
+				embedSelectParts = append(embedSelectParts, jsonbIfAgg(obj)+" AS "+key)
 			}
 		}
 	}
@@ -761,6 +781,12 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 			projection = "_rpc.*"
 		}
 		projection += ", " + strings.Join(embedSelectParts, ", ")
+	}
+	if chain.extraCols != "" {
+		if projection == "*" {
+			projection = "_rpc.*"
+		}
+		projection += ", " + chain.extraCols
 	}
 
 	sql := "SELECT " + projection + " FROM (" + callSQL + ") AS _rpc"
@@ -782,10 +808,27 @@ func buildRPCCountedQuery(callSQL string, chain *rpcChainSQL, baseArgIdx int) st
 	paged := *chain
 	paged.extraCols = "true AS __inz_row, " + win + " AS __inz_rn"
 	data, _ := wrapRPCCallForChain("SELECT * FROM __inz_src", &paged, baseArgIdx)
-	where, _ := renderRPCChain(&rpcChainSQL{where: chain.where}, baseArgIdx)
+	from, _ := rpcCountFrom("__inz_src", chain, baseArgIdx)
 	return "WITH __inz_src AS MATERIALIZED (" + callSQL + ") " +
-		"SELECT _p.*, _t.__inz_total FROM (SELECT count(*) AS __inz_total FROM __inz_src AS _rpc" + where + ") _t " +
+		"SELECT _p.*, _t.__inz_total FROM (SELECT count(*) AS __inz_total" + from + ") _t " +
 		"LEFT JOIN (" + data + ") _p ON true ORDER BY _p.__inz_rn"
+}
+
+// rpcCountFrom is the ungrouped source the RPC count runs over, with the !inner to-one joins the page applies.
+func rpcCountFrom(src string, chain *rpcChainSQL, argIdx int) (string, []any) {
+	var joins strings.Builder
+	for _, emb := range chain.embeds {
+		if !emb.IsReverse && emb.Inner {
+			alias := "_emb_" + emb.OutputKey()
+			fmt.Fprintf(&joins, " INNER JOIN %s AS %s ON _rpc.%s = %s.%s", emb.RefTable, alias, emb.FKColumn, alias, emb.RefColumn)
+		}
+	}
+	where := chain.where
+	if joins.Len() > 0 && where != nil {
+		where = postgrest.AliasWhereColumns(where, "_rpc")
+	}
+	suffix, args := renderRPCChain(&rpcChainSQL{where: where, embeds: chain.embeds}, argIdx)
+	return " FROM " + src + " AS _rpc" + joins.String() + suffix, args
 }
 
 // splitRPCTotal strips the count helper columns and the padding row an empty page yields.
@@ -809,9 +852,9 @@ func splitRPCTotal(rows []map[string]any) ([]map[string]any, int) {
 
 // executeRPCPlannedCount estimates with plain EXPLAIN, which never executes the function.
 func executeRPCPlannedCount(ctx context.Context, tx domain.Tx, callSQL string, callArgs []any, chain *rpcChainSQL) (int, error) {
-	where, whereArgs := renderRPCChain(&rpcChainSQL{where: chain.where}, len(callArgs)+1)
+	from, whereArgs := rpcCountFrom("("+callSQL+")", chain, len(callArgs)+1)
 	// nosemgrep -- callSQL uses validated identifiers; values are bound args
-	rows, err := tx.Query(ctx, "EXPLAIN SELECT 1 FROM ("+callSQL+") AS _rpc"+where, append(callArgs, whereArgs...)...)
+	rows, err := tx.Query(ctx, "EXPLAIN SELECT 1"+from, append(callArgs, whereArgs...)...)
 	if err != nil {
 		return -1, err
 	}

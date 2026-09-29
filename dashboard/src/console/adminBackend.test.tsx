@@ -101,6 +101,29 @@ describe("storage requests", () => {
     );
   });
 
+  it("maps the Supabase list-v2 shape to names relative to the prefix", async () => {
+    sessionStorage.setItem("instancez_secret_key", "k");
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        hasNext: true,
+        nextCursor: "tok",
+        folders: [{ id: null, name: "dir/sub/", bucket_id: "b" }],
+        objects: [{ id: "u1", key: "a.png", name: "dir/a.png", updated_at: "t", metadata: { size: 1 } }],
+      }),
+    });
+
+    const res = await adminBackend.listObjects("b", "dir/", "prev");
+
+    expect(JSON.parse(mockFetch.mock.calls[0]?.[1].body)).toEqual({ prefix: "dir/", cursor: "prev", with_delimiter: true, limit: 100 });
+    expect(res).toEqual({
+      has_next: true,
+      next_cursor: "tok",
+      folders: [{ name: "sub", key: "dir/sub/" }],
+      objects: [{ id: "u1", key: "a.png", name: "a.png", updated_at: "t", metadata: { size: 1 } }],
+    });
+  });
+
   it("rejects with no secret key configured when none is set", async () => {
     await expect(
       adminBackend.uploadObject("b", "p.txt", new File(["x"], "p.txt"))

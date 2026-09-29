@@ -417,6 +417,13 @@ func (h *AdminHandler) handlePutConfig(c *gin.Context) {
 			problemJSON(c, 422, "destructive_change", err.Error())
 			return
 		}
+		if errors.Is(err, app.ErrPrimaryKeyChange) {
+			h.logger.Warn("rejected primary key change",
+				"source", h.sourceDescribe(),
+				"error", err.Error())
+			problemJSON(c, 422, "primary_key_change", err.Error())
+			return
+		}
 		h.logger.Error("migration failed",
 			"source", h.sourceDescribe(),
 			"error", err.Error())

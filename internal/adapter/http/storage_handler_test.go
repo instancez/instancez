@@ -136,7 +136,7 @@ func TestHandleSignDownload_Success(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := gin.New()
-	r.GET("/storage/avatars/:id", h.handleSignDownload("avatars", domain.Bucket{}))
+	r.GET("/storage/avatars/:id", asAuthenticated, h.handleSignDownload("avatars", domain.Bucket{}))
 
 	req := httptest.NewRequest(http.MethodGet, "/storage/avatars/photo.jpg", nil)
 	r.ServeHTTP(w, req)
@@ -162,7 +162,7 @@ func TestHandleSignDownload_ObjectNotFound(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := gin.New()
-	r.GET("/storage/avatars/:id", h.handleSignDownload("avatars", domain.Bucket{}))
+	r.GET("/storage/avatars/:id", asAuthenticated, h.handleSignDownload("avatars", domain.Bucket{}))
 
 	req := httptest.NewRequest(http.MethodGet, "/storage/avatars/missing.jpg", nil)
 	r.ServeHTTP(w, req)
@@ -187,7 +187,7 @@ func TestHandleSignDownload_PassesSafeHeaderOptions(t *testing.T) {
 
 		w := httptest.NewRecorder()
 		r := gin.New()
-		r.GET("/storage/avatars/:id", h.handleSignDownload("avatars", domain.Bucket{Public: public}))
+		r.GET("/storage/avatars/:id", asAuthenticated, h.handleSignDownload("avatars", domain.Bucket{Public: public}))
 		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/storage/avatars/page.html", nil))
 
 		require.Equal(t, 200, w.Code, w.Body.String())
@@ -212,7 +212,7 @@ func TestHandleDelete_Success(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := gin.New()
-	r.DELETE("/storage/avatars/:id", h.handleDelete("avatars", domain.Bucket{}))
+	r.DELETE("/storage/avatars/:id", asAuthenticated, h.handleDelete("avatars", domain.Bucket{}))
 
 	req := httptest.NewRequest(http.MethodDelete, "/storage/avatars/photo.jpg", nil)
 	r.ServeHTTP(w, req)
@@ -237,7 +237,7 @@ func TestHandleDelete_StoreError(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := gin.New()
-	r.DELETE("/storage/avatars/:id", h.handleDelete("avatars", domain.Bucket{}))
+	r.DELETE("/storage/avatars/:id", asAuthenticated, h.handleDelete("avatars", domain.Bucket{}))
 
 	req := httptest.NewRequest(http.MethodDelete, "/storage/avatars/photo.jpg", nil)
 	r.ServeHTTP(w, req)

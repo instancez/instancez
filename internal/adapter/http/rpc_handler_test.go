@@ -11,6 +11,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/instancez/instancez/internal/adapter/http/postgrest"
 	"github.com/instancez/instancez/internal/domain"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestBuildRPCCall_OrdersByDeclaration ensures that callArgs provided in
@@ -819,4 +821,152 @@ func TestBuildRPCCountedQuery_AggregateCountsUngroupedRows(t *testing.T) {
 			t.Errorf("missing %q in %s", want, sql)
 		}
 	}
+}
+
+func aggEmbedChain() *rpcChainSQL {
+	return &rpcChainSQL{
+		selectItems: []postgrest.SelectItem{{Col: "status"}, {Agg: "count"}},
+		groupBy:     []string{"_rpc.status", "3"},
+		embeds: []Embed{
+			{Name: "authors", FKColumn: "author_id", RefTable: "authors", RefColumn: "id", Inner: true},
+		},
+	}
+}
+
+func TestWrapRPCCallForChain_AggregateGroupsByEmbedOrdinal(t *testing.T) {
+	got, _ := wrapRPCCallForChain(`SELECT * FROM public."f"()`, aggEmbedChain(), 1)
+	for _, want := range []string{
+		"SELECT _rpc.status, COUNT(*) AS count, (row_to_json(_emb_authors.*))::jsonb AS authors FROM",
+		"INNER JOIN authors AS _emb_authors ON _rpc.author_id = _emb_authors.id",
+		"GROUP BY _rpc.status, 3",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in %s", want, got)
+		}
+	}
+}
+
+func TestBuildRPCCountedQuery_HelperColumnsAfterEmbeds(t *testing.T) {
+	sql := buildRPCCountedQuery(`SELECT * FROM public."f"()`, aggEmbedChain(), 1)
+	emb := strings.Index(sql, "AS authors")
+	row := strings.Index(sql, "true AS __inz_row")
+	if emb < 0 || row < 0 || row < emb {
+		t.Fatalf("helper columns must follow embeds (ordinal 3 = authors): %s", sql)
+	}
+	want := "(SELECT count(*) AS __inz_total FROM __inz_src AS _rpc INNER JOIN authors AS _emb_authors ON _rpc.author_id = _emb_authors.id) _t"
+	if !strings.Contains(sql, want) {
+		t.Fatalf("count must apply !inner to-one joins, ungrouped: %s", sql)
+	}
+}
+
+func TestRPCCountFrom(t *testing.T) {
+	chain := &rpcChainSQL{
+		where: postgrest.AndLeaves(postgrest.Filter{Column: "id", Operator: "eq", Value: "1"}),
+		embeds: []Embed{
+			{Name: "authors", FKColumn: "author_id", RefTable: "authors", RefColumn: "id", Inner: true},
+			{Name: "tags", IsReverse: true, Inner: true, RefTable: "tags", FKColumn: "post_id"},
+			{Name: "notes", IsReverse: true, RefTable: "notes", FKColumn: "post_id"},
+			{Name: "editor", FKColumn: "editor_id", RefTable: "authors", RefColumn: "id"},
+		},
+	}
+	from, args := rpcCountFrom("__inz_src", chain, 3)
+	assert.Equal(t, " FROM __inz_src AS _rpc INNER JOIN authors AS _emb_authors ON _rpc.author_id = _emb_authors.id WHERE _rpc.id = $3 AND EXISTS (SELECT 1 FROM tags WHERE tags.post_id = _rpc.id)", from)
+	assert.Equal(t, []any{"1"}, args)
+	from, args = rpcCountFrom("__inz_src", &rpcChainSQL{}, 1)
+	assert.Equal(t, " FROM __inz_src AS _rpc", from)
+	assert.Empty(t, args)
+}
+
+func TestParseRPCChain_AggregateWithEmbedGroupsByOrdinal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &CRUDHandler{cfg: &domain.Config{Tables: map[string]domain.Table{
+		"posts":   {Fields: []domain.Field{{Name: "id", Type: "int", PrimaryKey: true}, {Name: "status", Type: "text"}, {Name: "author_id", Type: "int", ForeignKey: &domain.ForeignKey{References: "authors.id"}}}},
+		"authors": {Fields: []domain.Field{{Name: "id", Type: "int", PrimaryKey: true}, {Name: "name", Type: "text"}}},
+	}}}
+	fn := domain.Function{ReturnCategory: "setof", Returns: domain.FuncReturn{Type: "setof posts"}}
+	for q, want := range map[string][]string{
+		"select=status,count(),authors(name)": {"_rpc.status", "3"},
+		"select=count(),authors(name)":        {"2"},
+		"select=authors(name),n:id.count()":   {"2"},
+	} {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest("GET", "/rpc/f?"+q, nil)
+		chain, _, err := h.parseRPCChain(c, fn, map[string]bool{}, 1)
+		require.NoError(t, err, q)
+		assert.Equal(t, want, chain.groupBy, q)
+	}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET", "/rpc/f?select=id,authors(name)", nil)
+	chain, _, err := h.parseRPCChain(c, fn, map[string]bool{}, 1)
+	require.NoError(t, err)
+	assert.Empty(t, chain.groupBy, "no aggregate, no GROUP BY")
+}
+
+func TestWrapRPCCallForChain_HasManyInnerFiltersParents(t *testing.T) {
+	chain := &rpcChainSQL{embeds: []Embed{
+		{Name: "tags", IsReverse: true, Inner: true, RefTable: "tags", FKColumn: "post_id", RefColumn: "uid"},
+		{Name: "notes", IsReverse: true, RefTable: "notes", FKColumn: "post_id"},
+	}}
+	got, _ := wrapRPCCallForChain(`SELECT * FROM public."f"()`, chain, 1)
+	assert.True(t, strings.HasSuffix(got, " AS _rpc WHERE EXISTS (SELECT 1 FROM tags WHERE tags.post_id = _rpc.uid)"), got)
+	assert.NotContains(t, got, "EXISTS (SELECT 1 FROM notes", "a plain has-many keeps every parent")
+
+	from, _ := rpcCountFrom("__inz_src", &rpcChainSQL{embeds: chain.embeds[1:]}, 1)
+	assert.Equal(t, " FROM __inz_src AS _rpc", from)
+}
+
+func TestWrapRPCCallForChain_EmbedAliasesNameTheKey(t *testing.T) {
+	chain := &rpcChainSQL{embeds: []Embed{
+		{Name: "authors", Alias: "writer", FKColumn: "author_id", RefTable: "authors", RefColumn: "id", Inner: true},
+		{Name: "authors", Alias: "editor", FKColumn: "editor_id", RefTable: "authors", RefColumn: "id", Columns: []string{"name"}},
+		{Name: "tags", Alias: "t", IsReverse: true, RefTable: "tags", FKColumn: "post_id"},
+	}}
+	got, _ := wrapRPCCallForChain(`SELECT * FROM public."f"()`, chain, 1)
+	for _, want := range []string{
+		"row_to_json(_emb_writer.*) AS writer",
+		"INNER JOIN authors AS _emb_writer ON _rpc.author_id = _emb_writer.id",
+		"LEFT JOIN authors AS _emb_editor ON _rpc.editor_id = _emb_editor.id",
+		"'name', _emb_editor.name",
+		") AS t",
+	} {
+		assert.Contains(t, got, want)
+	}
+	from, _ := rpcCountFrom("__inz_src", chain, 1)
+	assert.Equal(t, " FROM __inz_src AS _rpc INNER JOIN authors AS _emb_writer ON _rpc.author_id = _emb_writer.id", from)
+}
+
+func TestWrapRPCCallForChain_ManyToManyQualifiesTargetColumns(t *testing.T) {
+	chain := &rpcChainSQL{embeds: []Embed{{
+		Name: "tags", IsReverse: true, RefTable: "tags", Inner: true,
+		Junction: &postgrest.Junction{Table: "post_tags", SourceColumn: "post_id", SourceRef: "id", TargetColumn: "tag_id", TargetRef: "id"},
+		Where:    &postgrest.WhereNode{Leaf: &postgrest.Filter{Column: "name", Operator: "eq", Value: "go"}},
+		Order:    []postgrest.OrderClause{{Column: "name"}},
+	}}}
+	exists := "EXISTS (SELECT 1 FROM tags, post_tags WHERE tags.id = post_tags.tag_id AND post_tags.post_id = _rpc.id AND tags.name = $1)"
+	got, args := wrapRPCCallForChain(`SELECT * FROM public."f"()`, chain, 1)
+	assert.Contains(t, got, "json_agg(row_to_json(tags.*) ORDER BY tags.name ASC), '[]'::json) FROM tags, post_tags WHERE tags.id = post_tags.tag_id AND post_tags.post_id = _rpc.id AND tags.name = $2")
+	assert.Contains(t, got, "WHERE "+exists)
+	assert.Equal(t, []any{"go"}, args, "embed args follow the chain args")
+
+	suffix, chainArgs := renderRPCChain(chain, 1)
+	assert.Equal(t, " WHERE "+exists, suffix)
+	assert.Equal(t, []any{"go"}, chainArgs)
+
+	from, countArgs := rpcCountFrom("__inz_src", chain, 1)
+	assert.Equal(t, " FROM __inz_src AS _rpc WHERE "+exists, from, "the count drops the same parents")
+	assert.Equal(t, []any{"go"}, countArgs)
+}
+
+func TestRenderRPCChain_InnerEmbedWhereFollowsParentArgs(t *testing.T) {
+	chain := &rpcChainSQL{
+		where: &postgrest.WhereNode{Leaf: &postgrest.Filter{Column: "status", Operator: "eq", Value: "open"}},
+		embeds: []Embed{{
+			Name: "comments", IsReverse: true, RefTable: "comments", FKColumn: "todo_id", RefColumn: "id", Inner: true,
+			Where: &postgrest.WhereNode{Leaf: &postgrest.Filter{Column: "body", Operator: "eq", Value: "hi"}},
+		}},
+		having: &postgrest.WhereNode{Leaf: &postgrest.Filter{Column: "count", Operator: "gt", Value: "1"}},
+	}
+	suffix, args := renderRPCChain(chain, 3)
+	assert.Equal(t, " WHERE status = $3 AND EXISTS (SELECT 1 FROM comments WHERE comments.todo_id = _rpc.id AND body = $4) HAVING count > $5", suffix)
+	assert.Equal(t, []any{"open", "hi", "1"}, args)
 }

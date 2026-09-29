@@ -122,6 +122,12 @@ END $$;
 
 CREATE OR REPLACE FUNCTION public.sleep_for(secs float8)
 RETURNS int LANGUAGE sql VOLATILE AS $$ SELECT 1 FROM pg_sleep(secs) $$;
+
+-- One row's FK points at no user, so an !inner embed must drop it from rows and count.
+CREATE OR REPLACE FUNCTION public.messages_with_ghost()
+RETURNS SETOF messages LANGUAGE sql STABLE AS $$
+  SELECT id, message, CASE WHEN id = (SELECT min(id) FROM messages) THEN 'ghost' ELSE username END, channel_id FROM messages
+$$;
 `
 
 const seedSQL = `
@@ -200,6 +206,11 @@ func buildConfig() *domain.Config {
 					{Name: "name", Type: "text", Default: "world"},
 				},
 				Body: "SELECT 'hello ' || name",
+			},
+			"messages_with_ghost": {
+				Language: "sql", Volatility: "stable", Security: "invoker",
+				Returns: domain.FuncReturn{Type: "setof messages"}, ReturnCategory: "setof",
+				Body: "SELECT 1",
 			},
 			"users_by_status": {
 				Language: "sql", Volatility: "stable", Security: "invoker",

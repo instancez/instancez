@@ -38,9 +38,7 @@ func NewCRUDHandler(deps ServerDeps) *CRUDHandler {
 	}
 }
 
-// allTables returns a map that includes both user-defined tables from cfg.Tables
-// and a synthetic entry for the auth "users" table. This allows embed resolution
-// to traverse FKs that reference the users table (e.g., comments → users).
+// allTables adds a public "users" stand-in when auth is on, so users.id references resolve; auth.users.id ones don't.
 func (h *CRUDHandler) allTables() map[string]domain.Table {
 	merged := make(map[string]domain.Table, len(h.cfg.Tables)+1)
 	for k, v := range h.cfg.Tables {
@@ -78,12 +76,12 @@ func (h *CRUDHandler) Mount(root *gin.RouterGroup) {
 	// anon calls still parse a token if present; per-function
 	// auth_required enforcement happens inside handleRPC.
 	rpc := h.handleRPC()
-	rest.POST("/rpc/:name", rejectPlan, jwtAuth(h.jwtKeys, false), rpc)
-	rest.GET("/rpc/:name", rejectPlan, jwtAuth(h.jwtKeys, false), rpc)
+	rest.POST("/rpc/:name", rejectPlan, jwtAuth(h.jwtKeys, false), rangeGuard, rpc)
+	rest.GET("/rpc/:name", rejectPlan, jwtAuth(h.jwtKeys, false), rangeGuard, rpc)
 	// HEAD reuses the same handler so supabase-js .rpc('fn', {}, { head: true })
 	// picks up Content-Range without streaming the row body. As with the CRUD
 	// list path, net/http strips the body after the status + headers fly.
-	rest.HEAD("/rpc/:name", rejectPlan, jwtAuth(h.jwtKeys, false), rpc)
+	rest.HEAD("/rpc/:name", rejectPlan, jwtAuth(h.jwtKeys, false), rangeGuard, rpc)
 
 	for tableName, table := range h.cfg.Tables {
 		name := tableName
@@ -91,7 +89,7 @@ func (h *CRUDHandler) Mount(root *gin.RouterGroup) {
 		group := rest.Group("/" + name)
 		// JWT not required at HTTP level — anon falls through with
 		// session.Role="anon" and SQL-layer grants + RLS gate access.
-		// Matches Supabase's PostgREST behavior. Writes refuse plans before auth.
+		// Writes refuse plans before auth.
 		auth := jwtAuth(h.jwtKeys, false)
 
 		list := h.handleList(name, t)
@@ -100,10 +98,10 @@ func (h *CRUDHandler) Mount(root *gin.RouterGroup) {
 		// line and headers (Content-Range, Content-Type) but strip the body
 		// so clients can fetch counts and pagination metadata cheaply.
 		group.HEAD("", auth, list)
-		group.POST("", rejectPlan, auth, h.handleCreate(name, t))
-		group.PUT("", rejectPlan, auth, h.handleUpsert(name, t))
-		group.PATCH("", rejectPlan, auth, h.handleUpdate(name, t))
-		group.DELETE("", rejectPlan, auth, h.handleDelete(name, t))
+		group.POST("", rejectPlan, auth, rangeGuard, h.handleCreate(name, t))
+		group.PUT("", rejectPlan, auth, rangeGuard, h.handleUpsert(name, t))
+		group.PATCH("", rejectPlan, auth, rangeGuard, h.handleUpdate(name, t))
+		group.DELETE("", rejectPlan, auth, rangeGuard, h.handleDelete(name, t))
 	}
 }
 
@@ -134,25 +132,13 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 		// Parse query params
 		qp, err := parseQueryParams(c, tableName, table, allTbls)
 		if err != nil {
-			problemJSON(c, 400, "bad_request", err.Error())
+			writeRangeError(c, err)
 			return
 		}
 
-		// Range header pagination. When the client sets Range: 0-9 (with
-		// Range-Unit: items) and did not pass limit/offset explicitly, we
-		// translate the byte-range-style bounds into limit/offset. A Range
-		// header always yields a 206 response when any rows are returned
-		// and the partial result does not cover the whole set.
-		rangeUsed := false
-		if rh := c.GetHeader("Range"); rh != "" && c.Query("limit") == "" && c.Query("offset") == "" {
-			start, end, ok := parseRangeHeader(rh)
-			if !ok {
-				problemJSON(c, 400, "bad_request", "Invalid Range header")
-				return
-			}
-			qp.Offset = start
-			qp.Limit = end - start + 1
-			rangeUsed = true
+		if qp.Offset, qp.Limit, err = intersectRange(c, qp.Offset, qp.Limit, c.Query("limit") != ""); err != nil {
+			writeRangeError(c, err)
+			return
 		}
 		qp.Limit = capLimit(qp.Limit, h.cfg.Server.MaxLimit)
 		capEmbeds(qp.Embeds, h.cfg.Server.MaxLimit)
@@ -241,15 +227,34 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 		}
 
 		c.Header("Content-Range", contentRange(qp.Offset, len(rows), total))
-		end := max(qp.Offset, qp.Offset+len(rows)-1)
-
-		// GeoJSON response
-		if accept == "application/geo+json" {
-			geomCol := findGeometryColumn(table)
-			if geomCol == "" {
-				pgJSON(c, 406, "PGRST118", "No geometry column found for GeoJSON output", "", "")
+		singular := accept == "application/vnd.pgrst.object+json"
+		if singular && len(rows) != 1 {
+			// supabase-js .maybeSingle() reads "0 rows" in details as data === null.
+			pgJSON(c, 406, "PGRST116",
+				"JSON object requested, multiple (or no) rows returned",
+				fmt.Sprintf("The result contains %d rows", len(rows)), "")
+			return
+		}
+		geomCol := findGeometryColumn(table)
+		if accept == "application/geo+json" && geomCol == "" {
+			// PostgREST's ST_AsGeoJSON fails inside the query, so these beat rangeStatus.
+			if !h.hasPostGIS(ctx) {
+				pgJSON(c, 404, "42883", "function st_asgeojson(record) does not exist", "",
+					"No function matches the given name and argument types. You might need to add explicit type casts.")
 				return
 			}
+			if len(rows) > 0 {
+				pgJSON(c, 400, "22023", "geometry column is missing", "", "")
+				return
+			}
+		}
+		status := rangeStatus(qp.Offset, len(rows), total)
+		if status == 416 {
+			rangeNotSatisfiable(c, qp.Offset, total)
+			return
+		}
+
+		if accept == "application/geo+json" {
 			features := make([]map[string]any, 0, len(rows))
 			for _, r := range rows {
 				geom := r[geomCol]
@@ -265,26 +270,15 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 					"properties": props,
 				})
 			}
-			c.JSON(200, gin.H{
+			c.JSON(status, gin.H{
 				"type":     "FeatureCollection",
 				"features": features,
 			})
 			return
 		}
 
-		// Check for singular response
-		if accept == "application/vnd.pgrst.object+json" {
-			if len(rows) != 1 {
-				// supabase-js .maybeSingle() distinguishes zero-row from
-				// multi-row errors by parsing the details string ("0 rows"
-				// → return null, otherwise surface error). Emit PGRST116
-				// for both branches so that contract holds.
-				pgJSON(c, 406, "PGRST116",
-					"JSON object requested, multiple (or no) rows returned",
-					fmt.Sprintf("The result contains %d rows", len(rows)), "")
-				return
-			}
-			c.JSON(200, rows[0])
+		if singular {
+			c.JSON(status, rows[0])
 			return
 		}
 
@@ -299,26 +293,10 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 				problemJSON(c, 500, "internal", "CSV render failed")
 				return
 			}
-			status := 200
-			if rangeUsed {
-				if total < 0 || total > end+1 {
-					status = 206
-				}
-			}
 			c.Data(status, "text/csv; charset=utf-8", out)
 			return
 		}
 
-		// Return 206 Partial Content when the client used Range and the
-		// response is a strict subset of the available rows. We treat an
-		// unknown total (no count prefer) as "might be partial" whenever
-		// Range was used.
-		status := 200
-		if rangeUsed {
-			if total < 0 || total > end+1 {
-				status = 206
-			}
-		}
 		c.JSON(status, rows)
 	}
 }
@@ -368,6 +346,7 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 		var results []map[string]any
 
 		var pkCols []string
+		defaultTarget := false
 		if resolution != "" {
 			customCols, err := postgrest.ParseOnConflictParam(c.Query("on_conflict"), table)
 			if err != nil {
@@ -377,10 +356,17 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 			if len(customCols) > 0 {
 				pkCols = customCols
 			} else {
-				pkCols = postgrest.PrimaryKeyColumns(table)
+				pkCols = table.PrimaryKeyColumns()
+				defaultTarget = true
 			}
 			if len(pkCols) == 0 {
 				problemJSON(c, 400, "bad_request", "Cannot upsert: table has no primary key and no on_conflict")
+				return
+			}
+		}
+		if defaultTarget {
+			if pkCols, err = livePrimaryKeyOr(ctx, tx, tableName, pkCols); err != nil {
+				handleDBError(c, err)
 				return
 			}
 		}
@@ -433,7 +419,7 @@ func (h *CRUDHandler) handleUpsert(tableName string, table domain.Table) gin.Han
 			return
 		}
 
-		pkCols := postgrest.PrimaryKeyColumns(table)
+		pkCols := table.PrimaryKeyColumns()
 		if len(pkCols) == 0 {
 			problemJSON(c, 400, "bad_request", "Cannot upsert: table has no primary key")
 			return
@@ -466,6 +452,10 @@ func (h *CRUDHandler) handleUpsert(tableName string, table domain.Table) gin.Han
 		returnMode := parseReturnPrefer(prefer)
 		var results []map[string]any
 
+		if pkCols, err = livePrimaryKeyOr(ctx, tx, tableName, pkCols); err != nil {
+			handleDBError(c, err)
+			return
+		}
 		query, args := postgrest.BuildBulkUpsertQuery(tableName, records, pkCols, "merge", returnMode == "representation")
 		if returnMode == "representation" {
 			rows, err := tx.Query(ctx, query, args...)
@@ -663,6 +653,104 @@ func contentRange(offset, n, total int) string {
 		tot = strconv.Itoa(total)
 	}
 	return rng + "/" + tot
+}
+
+// rangeStatus mirrors PostgREST's RangeQuery.rangeStatus; total < 0 means no count was requested.
+func rangeStatus(offset, n, total int) int {
+	switch {
+	case total < 0:
+		return 200
+	case offset > total:
+		return 416
+	case n < total:
+		return 206
+	}
+	return 200
+}
+
+// PostgREST's exact wording, capitalized and punctuated.
+var (
+	errNegativeLimit = errors.New("Limit should be greater than or equal to zero.")                                            //nolint:staticcheck
+	errLowerGTUpper  = errors.New("The lower boundary must be lower than or equal to the upper boundary in the Range header.") //nolint:staticcheck
+)
+
+// intersectRange turns offset/limit and a GET Range header into a non-negative page, like PostgREST's getRanges.
+func intersectRange(c *gin.Context, offset, limit int, hasLimit bool) (int, int, error) {
+	lo, hi := offset, math.MaxInt
+	if hasLimit {
+		end := addSat(offset, limit)
+		if end == 0 {
+			return 0, 0, nil
+		}
+		if end < math.MaxInt {
+			hi = max(end, math.MinInt+1) - 1
+		}
+	}
+	lo = max(lo, 0)
+	if start, end, ok := parseRangeHeader(c.GetHeader("Range")); ok && c.Request.Method == "GET" {
+		if start > end {
+			return 0, 0, errLowerGTUpper
+		}
+		lo, hi = max(lo, start), min(hi, end)
+	}
+	if lo > hi {
+		return 0, 0, errNegativeLimit
+	}
+	if hi == math.MaxInt {
+		return lo, postgrest.NoLimit, nil
+	}
+	return lo, hi - lo + 1, nil
+}
+
+// rangeGuard runs PostgREST's getRanges checks, which apply to every request, before the handler.
+func rangeGuard(c *gin.Context) {
+	limit, limitErr := strconv.Atoi(c.Query("limit"))
+	offset, _ := strconv.Atoi(c.Query("offset"))
+	lo, n, err := intersectRange(c, offset, limit, limitErr == nil)
+	switch {
+	case err != nil:
+		writeRangeError(c, err)
+	case c.Request.Method == "PUT" && (lo != 0 || n != postgrest.NoLimit):
+		pgJSON(c, 400, "PGRST114", "limit/offset querystring parameters are not allowed for PUT", "", "")
+	default:
+		return
+	}
+	c.Abort()
+}
+
+// hasPostGIS reports whether ST_AsGeoJSON exists; a failed probe counts as absent.
+func (h *CRUDHandler) hasPostGIS(ctx context.Context) bool {
+	row, err := h.db.QueryRow(ctx, "SELECT 1 FROM pg_extension WHERE extname = 'postgis'")
+	return err == nil && row != nil
+}
+
+func addSat(a, b int) int {
+	s := a + b
+	switch {
+	case b > 0 && s < a:
+		return math.MaxInt
+	case b < 0 && s > a:
+		return math.MinInt
+	}
+	return s
+}
+
+func writeRangeError(c *gin.Context, err error) {
+	var amb *postgrest.AmbiguousEmbedError
+	if errors.As(err, &amb) {
+		c.JSON(300, gin.H{"code": "PGRST201", "message": amb.Error(), "details": amb.Details, "hint": amb.Hint()})
+		return
+	}
+	if errors.Is(err, errNegativeLimit) || errors.Is(err, errLowerGTUpper) {
+		pgJSON(c, 416, "PGRST103", "Requested range not satisfiable", err.Error(), "")
+		return
+	}
+	problemJSON(c, 400, "bad_request", err.Error())
+}
+
+func rangeNotSatisfiable(c *gin.Context, offset, total int) {
+	pgJSON(c, 416, "PGRST103", "Requested range not satisfiable",
+		fmt.Sprintf("An offset of %d was requested, but there are only %d rows.", offset, total), "")
 }
 
 // executeCount counts the rows the list query matches, ignoring GROUP BY and HAVING as PostgREST does.
@@ -1081,7 +1169,7 @@ func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allT
 	// Parse limit
 	if l := c.Query("limit"); l != "" {
 		n, err := strconv.Atoi(l)
-		if err != nil || n < 0 {
+		if err != nil {
 			return nil, fmt.Errorf("invalid limit: %s", l)
 		}
 		qp.Limit = n
@@ -1090,7 +1178,7 @@ func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allT
 	// Parse offset
 	if o := c.Query("offset"); o != "" {
 		n, err := strconv.Atoi(o)
-		if err != nil || n < 0 {
+		if err != nil {
 			return nil, fmt.Errorf("invalid offset: %s", o)
 		}
 		qp.Offset = n
@@ -1159,24 +1247,30 @@ func capEmbeds(embeds []postgrest.Embed, maxRows int) {
 	}
 }
 
-// parseRangeHeader parses a simple "start-end" Range value (as PostgREST
-// expects with Range-Unit: items). Both bounds are inclusive and 0-based.
+// parseRangeHeader matches PostgREST's ^([0-9]+)-([0-9]*)$; an empty end is unbounded.
 func parseRangeHeader(h string) (start, end int, ok bool) {
-	h = strings.TrimSpace(h)
-	h = strings.TrimPrefix(h, "items=")
-	parts := strings.SplitN(h, "-", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+	lo, hi, found := strings.Cut(strings.TrimSpace(h), "-")
+	if !found || !isDigits(lo) || (hi != "" && !isDigits(hi)) {
 		return 0, 0, false
 	}
-	s, err := strconv.Atoi(parts[0])
-	if err != nil || s < 0 {
-		return 0, 0, false
+	start, end = clampAtoi(lo), math.MaxInt
+	if hi != "" {
+		end = clampAtoi(hi)
 	}
-	e, err := strconv.Atoi(parts[1])
-	if err != nil || e < s {
-		return 0, 0, false
+	return start, end, true
+}
+
+func isDigits(s string) bool {
+	return s != "" && strings.Trim(s, "0123456789") == ""
+}
+
+// clampAtoi parses a digit string, saturating at math.MaxInt like PostgREST's unbounded Integer.
+func clampAtoi(s string) int {
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return math.MaxInt
 	}
-	return s, e, true
+	return n
 }
 
 // parseResolutionPrefer extracts "merge" or "ignore" from a Prefer header.
@@ -1229,6 +1323,18 @@ func findGeometryColumn(table domain.Table) string {
 		}
 	}
 	return ""
+}
+
+// livePrimaryKeyOr returns the primary key Postgres has, or fallback when the table has none.
+func livePrimaryKeyOr(ctx context.Context, tx domain.Tx, tableName string, fallback []string) ([]string, error) {
+	live, err := app.LivePrimaryKey(ctx, tx, tableName)
+	if err != nil {
+		return nil, err
+	}
+	if len(live) == 0 {
+		return fallback, nil
+	}
+	return live, nil
 }
 
 // setupMutationTx creates an RLS context and begins a transaction.

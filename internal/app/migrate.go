@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,18 +21,28 @@ import (
 // column and the caller has not opted in via AllowDestructive.
 var ErrDestructive = errors.New("destructive migration")
 
+// ErrPrimaryKeyChange is returned when a plan would change which columns form a live table's primary key.
+var ErrPrimaryKeyChange = errors.New("primary key change not supported")
+
 // Migrator generates and applies DDL migrations from config.
 type Migrator struct {
 	db               domain.Database
 	roles            domain.Roles
 	allowDestructive bool
 	lockTimeout      time.Duration
+	healTimeout      time.Duration
+	healMaxBytes     int64
 	logger           *slog.Logger
 }
 
-// DefaultMigrateLockTimeout bounds how long one migration DDL statement waits
-// for a table lock before the migration fails.
+// DefaultMigrateLockTimeout bounds one DDL statement's table lock wait.
 const DefaultMigrateLockTimeout = 5 * time.Second
+
+// DefaultStorageHealTimeout is per heal step; two steps plus one shared lock wait stay under the platform's 30s init budget.
+const DefaultStorageHealTimeout = 8 * time.Second
+
+// DefaultStorageHealMaxBytes is the storage.objects heap size above which boot skips the list heal.
+const DefaultStorageHealMaxBytes = 128 << 20
 
 // AllowDestructive permits DROP TABLE / DROP COLUMN in generated plans. It
 // returns the receiver so it can be chained onto NewMigrator.
@@ -46,6 +57,12 @@ func (m *Migrator) LockTimeout(d time.Duration) *Migrator {
 	return m
 }
 
+// StorageHealLimits bounds each storage list heal step by statement timeout and the table's heap size in bytes.
+func (m *Migrator) StorageHealLimits(timeout time.Duration, maxBytes int64) *Migrator {
+	m.healTimeout, m.healMaxBytes = timeout, maxBytes
+	return m
+}
+
 // NewMigrator builds a Migrator. Pass an explicit Roles value, or
 // domain.DefaultRoles() to keep Supabase-compatible defaults.
 func NewMigrator(db domain.Database, roles ...domain.Roles) *Migrator {
@@ -53,7 +70,7 @@ func NewMigrator(db domain.Database, roles ...domain.Roles) *Migrator {
 	if len(roles) > 0 {
 		r = roles[0]
 	}
-	return &Migrator{db: db, roles: r, lockTimeout: DefaultMigrateLockTimeout, logger: slog.Default()}
+	return &Migrator{db: db, roles: r, lockTimeout: DefaultMigrateLockTimeout, healTimeout: DefaultStorageHealTimeout, healMaxBytes: DefaultStorageHealMaxBytes, logger: slog.Default()}
 }
 
 // Plan generates DDL statements to bring the DB in sync with the config.
@@ -78,10 +95,34 @@ func (m *Migrator) Plan(ctx context.Context, oldCfg, newCfg *domain.Config) (str
 // drop a table or column and AllowDestructive is unset. Use Plan to preview
 // such a change without tripping the gate.
 func (m *Migrator) PlanStatements(ctx context.Context, oldCfg, newCfg *domain.Config) ([]string, error) {
+	return m.planStatements(ctx, nil, oldCfg, newCfg)
+}
+
+// planStatements is PlanStatements, but with a tx it accepts a primary key change the live table already has.
+func (m *Migrator) planStatements(ctx context.Context, tx domain.Tx, oldCfg, newCfg *domain.Config) ([]string, error) {
 	if oldCfg == nil {
 		return planFromScratchStatements(newCfg, m.roles), nil
 	}
-	if destroys := diffConfigs(oldCfg, newCfg).Destroys; len(destroys) > 0 {
+	diff := diffConfigs(oldCfg, newCfg)
+	var rejected []string
+	for _, c := range diff.PKChanges {
+		if tx != nil {
+			live, err := LivePrimaryKey(ctx, tx, c.Qual)
+			if err != nil {
+				return nil, err
+			}
+			if sameColumns(live, c.New) {
+				continue
+			}
+		}
+		rejected = append(rejected, c.String())
+	}
+	if len(rejected) > 0 {
+		return nil, fmt.Errorf("%w: %s. Changing which columns form a live table's primary key is not supported; "+
+			"revert the primary_key flags, or create a new table and copy the data",
+			ErrPrimaryKeyChange, strings.Join(rejected, "; "))
+	}
+	if destroys := diff.Destroys; len(destroys) > 0 {
 		if !m.allowDestructive {
 			return nil, destructiveError(destroys)
 		}
@@ -91,6 +132,21 @@ func (m *Migrator) PlanStatements(ctx context.Context, oldCfg, newCfg *domain.Co
 			"drops", strings.Join(destroys, ", "))
 	}
 	return planUpdateStatements(oldCfg, newCfg, m.roles), nil
+}
+
+// LivePrimaryKey returns the primary key columns Postgres has for rel, sorted.
+func LivePrimaryKey(ctx context.Context, tx domain.Tx, rel string) ([]string, error) {
+	row, err := tx.QueryRow(ctx, `SELECT coalesce(string_agg(a.attname, ',' ORDER BY a.attname), '') AS cols
+		FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+		WHERE i.indisprimary AND i.indrelid = to_regclass($1)`, rel)
+	if err != nil {
+		return nil, fmt.Errorf("read primary key of %s: %w", rel, err)
+	}
+	cols, _ := row["cols"].(string)
+	if cols == "" {
+		return nil, nil
+	}
+	return strings.Split(cols, ","), nil
 }
 
 // destructiveError explains what the plan would destroy and how to proceed.
@@ -142,41 +198,29 @@ func planFromScratchStatements(cfg *domain.Config, roles domain.Roles) []string 
 		ddl = append(ddl, generateAuthTables(cfg.Auth)...)
 	}
 
-	// Tables in dependency order (FKs reference other tables).
-	// Pass 1: CREATE TABLE (must complete before indexes
-	// so that ADD COLUMN IF NOT EXISTS runs before CREATE INDEX references the column).
+	// Each table is followed by its indexes so later FKs find their unique index.
 	ordered := orderTables(cfg.Tables)
 	for _, name := range ordered {
 		table := cfg.Tables[name]
 		ddl = append(ddl, generateTable(name, table, cfg.Tables)...)
-	}
-
-	// Pass 2: Indexes (after all tables/columns exist).
-	for _, name := range ordered {
-		table := cfg.Tables[name]
 		ddl = append(ddl, generateIndexes(name, table)...)
+		ddl = append(ddl, generateDeferredFKs(name, table)...)
 	}
 
 	// Storage metadata table
 	ddl = append(ddl, generateStorageTables(cfg)...)
 
-	// RLS policies
 	if cfg.Auth != nil {
 		ddl = append(ddl, generateRLSFunctions()...)
 	}
+	// Policies may call user RPCs, and SQL RPC bodies need the tables above.
+	for _, n := range sortedKeys(cfg.RPC) {
+		ddl = append(ddl, generateRPCFunction(n, cfg.RPC[n]))
+	}
 	for _, name := range ordered {
-		table := cfg.Tables[name]
-		ddl = append(ddl, generateRLSPolicies(name, table)...)
+		ddl = append(ddl, generateRLSPolicies(name, cfg.Tables[name])...)
 	}
 	ddl = append(ddl, generateStorageRLSAll(cfg.Storage)...)
-
-	// RPC functions (Postgres stored functions)
-	if len(cfg.RPC) > 0 {
-		fnNames := sortedKeys(cfg.RPC)
-		for _, n := range fnNames {
-			ddl = append(ddl, generateRPCFunction(n, cfg.RPC[n]))
-		}
-	}
 
 	// Backfill grants on tables created earlier in this same migration —
 	// ALTER DEFAULT PRIVILEGES applies to objects created after the ALTER,
@@ -244,12 +288,6 @@ func planUpdateStatements(oldCfg, newCfg *domain.Config, roles domain.Roles) []s
 		ddl = append(ddl, generateRLSFunctions()...)
 	}
 
-	// RLS policies (DROP IF EXISTS + CREATE POLICY — idempotent)
-	for _, name := range ordered {
-		ddl = append(ddl, generateRLSPolicies(name, newCfg.Tables[name])...)
-	}
-	ddl = append(ddl, generateStorageRLSAll(newCfg.Storage)...)
-
 	// Heal storage.objects on existing DBs. diffNewStorage only emits the
 	// table (and its columns) when storage is *newly* added, so a DB that
 	// already had storage.objects before user_metadata existed would never
@@ -258,13 +296,16 @@ func planUpdateStatements(oldCfg, newCfg *domain.Config, roles domain.Roles) []s
 		ddl = append(ddl, `ALTER TABLE storage.objects ADD COLUMN IF NOT EXISTS user_metadata JSONB;`)
 	}
 
-	// RPC functions (CREATE OR REPLACE FUNCTION)
-	if len(newCfg.RPC) > 0 {
-		fnNames := sortedKeys(newCfg.RPC)
-		for _, n := range fnNames {
-			ddl = append(ddl, generateRPCFunction(n, newCfg.RPC[n]))
-		}
+	// RPCs come before the policies that may call them.
+	for _, n := range sortedKeys(newCfg.RPC) {
+		ddl = append(ddl, generateRPCFunction(n, newCfg.RPC[n]))
 	}
+
+	// RLS policies (DROP IF EXISTS + CREATE POLICY — idempotent)
+	for _, name := range ordered {
+		ddl = append(ddl, generateRLSPolicies(name, newCfg.Tables[name])...)
+	}
+	ddl = append(ddl, generateStorageRLSAll(newCfg.Storage)...)
 
 	// Catch-up grants on any newly-added tables.
 	ddl = append(ddl, generateExistingObjectGrants(schemas, roles)...)
@@ -294,8 +335,7 @@ func (m *Migrator) Apply(ctx context.Context, cfg *domain.Config) error {
 	if err != nil {
 		return fmt.Errorf("migrate begin: %w", err)
 	}
-	// Safe to defer: tx.Rollback after a successful Commit is a no-op error
-	// we ignore. Calling Rollback before return guarantees no leak on panic.
+	// Rollback after Commit is a no-op.
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Read under the lock so an instance that waited sees the winner's row.
@@ -316,7 +356,7 @@ func (m *Migrator) Apply(ctx context.Context, cfg *domain.Config) error {
 		}
 	}
 
-	stmts, err := m.PlanStatements(ctx, oldCfg, cfg)
+	stmts, err := m.planStatements(ctx, tx, oldCfg, cfg)
 	if err != nil {
 		// Apply stays pure: a rejected plan (e.g. ErrDestructive) runs no DDL, so
 		// the interactive config editor can reject a bad edit without side
@@ -359,6 +399,16 @@ func (m *Migrator) Apply(ctx context.Context, cfg *domain.Config) error {
 // engine reports drift. Safe to re-run: every statement is CREATE ... IF NOT
 // EXISTS / CREATE OR REPLACE / DROP POLICY IF EXISTS + CREATE POLICY.
 func (m *Migrator) ProvisionIdempotent(ctx context.Context, cfg *domain.Config) error {
+	missing, err := m.missingStorageRPCs(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("provision: %w", err)
+	}
+	if len(missing) > 0 {
+		m.logger.Warn("provision: storage policies calling rpcs not yet created deny all access until the blocked migration applies", "rpcs", missing)
+		c := *cfg
+		c.Storage = denyPoliciesCalling(cfg.Storage, missing)
+		cfg = &c
+	}
 	prov := idempotentProvisioning(cfg, m.roles)
 	if len(prov) == 0 {
 		return nil
@@ -366,11 +416,32 @@ func (m *Migrator) ProvisionIdempotent(ctx context.Context, cfg *domain.Config) 
 	return m.applyStatements(ctx, prov)
 }
 
+// missingStorageRPCs returns config rpcs that storage policies call but the database lacks.
+func (m *Migrator) missingStorageRPCs(ctx context.Context, cfg *domain.Config) ([]string, error) {
+	called := rpcsCalledByStorage(cfg.Storage, sortedKeys(cfg.RPC))
+	if len(called) == 0 {
+		return nil, nil
+	}
+	rows, err := m.db.Query(ctx, `SELECT proname::text AS name FROM pg_proc WHERE pronamespace = 'public'::regnamespace AND proname = ANY($1)`, called)
+	if err != nil {
+		return nil, err
+	}
+	var missing []string
+	for _, fn := range called {
+		if !slices.ContainsFunc(rows, func(r map[string]any) bool { return r["name"] == fn }) {
+			missing = append(missing, fn)
+		}
+	}
+	return missing, nil
+}
+
 // Harden re-applies security fixes on every boot, since an unchanged config never re-runs a migration.
 func (m *Migrator) Harden(ctx context.Context, cfg *domain.Config) error {
 	if err := m.db.EnsureMigrationsTable(ctx); err != nil {
 		return fmt.Errorf("harden: %w", err)
 	}
+	// Best effort, so a busy table cannot crash-loop boot.
+	m.healStorageList(ctx)
 	stmts := append(generateJWTKeysTable(), generatePrivilegeRevokes(m.roles)...)
 	if cfg != nil && cfg.Auth != nil {
 		stmts = append(stmts, authHealDDL...)
@@ -381,6 +452,94 @@ func (m *Migrator) Harden(ctx context.Context, cfg *domain.Config) error {
 	}
 	stmts = append(stmts, healStorageRLS(applied)...)
 	return m.applyStatements(ctx, stmts)
+}
+
+// healStorageList never fails boot.
+func (m *Migrator) healStorageList(ctx context.Context) {
+	row, err := m.db.QueryRow(ctx, storageHealMissing)
+	if err != nil {
+		m.logger.Warn("harden: storage list heal skipped, retrying next boot", "error", err)
+		return
+	}
+	needName, needColumn := row["need_name_index"] == true, row["need_column"] == true
+	if !needName && !needColumn {
+		return
+	}
+	lockLeft := m.lockTimeout
+	start := time.Now()
+	size, err := m.storageSize(ctx, lockLeft)
+	if m.lockTimeout > 0 {
+		lockLeft = max(lockLeft-time.Since(start), time.Millisecond)
+	}
+	if err != nil {
+		m.logger.Warn("harden: storage list heal skipped, storage.objects is locked; run the SQL by hand when the warning persists",
+			"error", err, "sql", storageListManualSQL)
+		return
+	}
+	if size > m.healMaxBytes {
+		m.logger.Warn("harden: storage.objects is too large to change at boot, list stays on the slower query until you run the SQL by hand",
+			"bytes", size, "max_bytes", m.healMaxBytes, "sql", storageListManualSQL)
+		return
+	}
+	for _, step := range []struct {
+		name string
+		need bool
+		sql  string
+	}{{"name index", needName, storageNameIndexHeal}, {"column", needColumn, storageListColumnHeal}} {
+		if !step.need {
+			continue
+		}
+		waited, err := m.healTx(ctx, lockLeft, m.healTimeout, step.sql)
+		if err != nil {
+			m.logger.Warn("harden: storage list "+step.name+" heal skipped, retrying next boot", "error", err)
+		}
+		if m.lockTimeout > 0 {
+			lockLeft = max(lockLeft-waited, time.Millisecond)
+		}
+	}
+}
+
+// storageSize reads the heap size in its own tx, since pg_relation_size waits behind an ACCESS EXCLUSIVE lock.
+func (m *Migrator) storageSize(ctx context.Context, lockWait time.Duration) (int64, error) {
+	tx, err := m.db.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SELECT set_config('lock_timeout', $1, true)", strconv.FormatInt(lockWait.Milliseconds(), 10)+"ms"); err != nil {
+		return 0, err
+	}
+	row, err := tx.QueryRow(ctx, storageHeapSize)
+	if err != nil {
+		return 0, err
+	}
+	size, _ := row["bytes"].(int64)
+	return size, nil
+}
+
+// healTx runs one statement under the migration lock and returns how long the lock wait took.
+func (m *Migrator) healTx(ctx context.Context, lockWait, timeout time.Duration, stmt string) (time.Duration, error) {
+	tx, err := m.db.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SELECT set_config('statement_timeout', $1, true)", strconv.FormatInt(timeout.Milliseconds(), 10)+"ms"); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(ctx, "SELECT set_config('lock_timeout', $1, true)", strconv.FormatInt(lockWait.Milliseconds(), 10)+"ms"); err != nil {
+		return 0, err
+	}
+	start := time.Now()
+	_, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", domain.MigrationLockKey)
+	waited := time.Since(start)
+	if err != nil {
+		return waited, err
+	}
+	if _, err := tx.Exec(ctx, stmt); err != nil {
+		return waited, err
+	}
+	return waited, tx.Commit(ctx)
 }
 
 // appliedStorage returns the last migrated buckets, since a pending config may reference objects that don't exist yet.
@@ -397,7 +556,7 @@ func (m *Migrator) appliedStorage(ctx context.Context) (map[string]domain.Bucket
 	return cfg.Storage, nil
 }
 
-// healStorageRLS drops legacy public-select policies and re-emits restrictive bucket RLS still on the old AND-scoping, checking pg_policies first so a healed DB takes no lock.
+// healStorageRLS re-emits legacy storage policies, checking pg_policies first so a healed DB takes no lock.
 func healStorageRLS(storage map[string]domain.Bucket) []string {
 	stmts := dropPublicSelect(storage, true)
 	var body []string
@@ -827,9 +986,16 @@ func generateTable(name string, table domain.Table, allTables map[string]domain.
 		return false
 	})
 
+	pkCols := table.PrimaryKeyColumns()
+	composite := len(pkCols) > 1
+
 	for _, field := range fields {
 		fname := field.Name
-		cols = append(cols, formatColumn(fname, field, allTables))
+		colField := field
+		if composite {
+			colField.PrimaryKey = false
+		}
+		cols = append(cols, formatColumn(fname, colField, allTables))
 
 		// FK constraint
 		if field.ForeignKey != nil {
@@ -839,14 +1005,10 @@ func generateTable(name string, table domain.Table, allTables map[string]domain.
 				// emitted DDL, which the migrator will fail on with a clear
 				// message. (Validation runs before this in normal flow.)
 				constraints = append(constraints, fmt.Sprintf("/* invalid FK: %s */", err.Error()))
-			} else {
-				onDelete := "RESTRICT"
-				if field.ForeignKey.OnDelete != "" {
-					onDelete = strings.ToUpper(strings.ReplaceAll(field.ForeignKey.OnDelete, "_", " "))
-				}
+			} else if !deferSelfFK(name, table, field) {
 				constraints = append(constraints,
 					fmt.Sprintf("FOREIGN KEY (%s) REFERENCES %s.%s(%s) ON DELETE %s",
-						fname, schema, refTable, refCol, onDelete))
+						fname, schema, refTable, refCol, fkOnDelete(field.ForeignKey)))
 			}
 		}
 
@@ -888,11 +1050,59 @@ func generateTable(name string, table domain.Table, allTables map[string]domain.
 		}
 	}
 
+	if composite {
+		constraints = append(constraints, fmt.Sprintf("PRIMARY KEY (%s)", strings.Join(pkCols, ", ")))
+	}
 	allParts := append(cols, constraints...)
 	qualName := qualifiedTableName(name, table)
 	ddl = append(ddl, fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (\n  %s\n);",
 		qualName, strings.Join(allParts, ",\n  ")))
 
+	return ddl
+}
+
+func fkOnDelete(fk *domain.ForeignKey) string {
+	if fk.OnDelete == "" {
+		return "RESTRICT"
+	}
+	return strings.ToUpper(strings.ReplaceAll(fk.OnDelete, "_", " "))
+}
+
+// deferSelfFK reports an FK to a column of its own table that only a later unique index can back.
+func deferSelfFK(name string, table domain.Table, f domain.Field) bool {
+	if f.ForeignKey == nil {
+		return false
+	}
+	schema, refTable, refCol, err := domain.ParseFKReference(f.ForeignKey.References)
+	if err != nil || refTable != name || schema != table.EffectiveSchema() {
+		return false
+	}
+	ref, ok := table.GetField(refCol)
+	if !ok {
+		return false
+	}
+	return !ref.Unique && (!ref.PrimaryKey || len(table.PrimaryKeyColumns()) != 1)
+}
+
+// generateDeferredFKs adds the self-referencing FKs generateTable left out; call it after the table's indexes.
+func generateDeferredFKs(name string, table domain.Table) []string {
+	var ddl []string
+	qual := qualifiedTableName(name, table)
+	for _, f := range table.Fields {
+		if !deferSelfFK(name, table, f) {
+			continue
+		}
+		schema, refTable, refCol, _ := domain.ParseFKReference(f.ForeignKey.References)
+		con := name + "_" + f.Name + "_fkey"
+		if len(con) > 63 {
+			con = con[:63]
+		}
+		ddl = append(ddl, fmt.Sprintf(`DO $$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = '%s'::regclass AND conname = '%s') THEN
+  ALTER TABLE %s ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s.%s(%s) ON DELETE %s;
+END IF;
+END $$;`, qual, con, qual, con, f.Name, schema, refTable, refCol, fkOnDelete(f.ForeignKey)))
+	}
 	return ddl
 }
 
@@ -1025,14 +1235,73 @@ func generateStorageTables(cfg *domain.Config) []string {
   uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   metadata JSONB,
   user_metadata JSONB,
+  name_lower TEXT COLLATE "C" GENERATED ALWAYS AS (lower(name)) STORED,
   UNIQUE (bucket_id, name)
 );`,
 		// Additive column for deployments whose storage.objects table predates
 		// user_metadata. supabase-js's .list() carries user_metadata separately
 		// from the storage-managed metadata blob.
 		`ALTER TABLE storage.objects ADD COLUMN IF NOT EXISTS user_metadata JSONB;`,
+		storageIndexesWhenEmpty,
 	}
 }
+
+// storageListManualSQL is the by-hand equivalent of the boot heal for tables too large to change at boot; drop an INVALID index first.
+const storageListManualSQL = `ALTER TABLE storage.objects ADD COLUMN name_lower TEXT COLLATE "C" GENERATED ALWAYS AS (lower(name)) STORED; ` +
+	`CREATE INDEX CONCURRENTLY IF NOT EXISTS objects_bucket_name_c_idx ON storage.objects ` + nameIndexDef + `; ` +
+	`CREATE INDEX CONCURRENTLY IF NOT EXISTS objects_bucket_name_lower_c_idx ON storage.objects ` + nameLowerIndexDef + `;`
+
+// storageHealMissing reads the catalog only, so it takes no table lock; an INVALID index counts as missing.
+const storageHealMissing = `SELECT
+  t.oid IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pg_index i WHERE i.indexrelid = to_regclass('storage.objects_bucket_name_c_idx') AND i.indisvalid) AS need_name_index,
+  t.oid IS NOT NULL AND (NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = t.oid AND attname = 'name_lower' AND NOT attisdropped)
+    OR NOT EXISTS (SELECT 1 FROM pg_index i WHERE i.indexrelid = to_regclass('storage.objects_bucket_name_lower_c_idx') AND i.indisvalid)) AS need_column
+FROM (SELECT to_regclass('storage.objects') AS oid) t`
+
+// storageHeapSize takes ACCESS SHARE on the table, so it must run under a lock_timeout.
+const storageHeapSize = `SELECT COALESCE(pg_relation_size(to_regclass('storage.objects')), 0)::bigint AS bytes`
+
+// ensureStorageIndex builds a list index unless a valid one exists, dropping an INVALID leftover first.
+func ensureStorageIndex(name, def string) string {
+	return fmt.Sprintf(`IF NOT EXISTS (SELECT 1 FROM pg_index i WHERE i.indexrelid = to_regclass('storage.%[1]s') AND i.indisvalid) THEN
+    DROP INDEX IF EXISTS storage.%[1]s;
+    CREATE INDEX %[1]s ON storage.objects %[2]s;
+  END IF;`, name, def)
+}
+
+const (
+	nameIndexDef      = `(bucket_id, name COLLATE "C")`
+	nameLowerIndexDef = `(bucket_id, name_lower, (name COLLATE "C"))`
+)
+
+var (
+	// storageNameIndexHeal builds the v2 list index.
+	storageNameIndexHeal = `DO $$ BEGIN
+IF to_regclass('storage.objects') IS NOT NULL THEN
+  ` + ensureStorageIndex("objects_bucket_name_c_idx", nameIndexDef) + `
+END IF;
+END $$;`
+
+	// storageListColumnHeal adds name_lower and its index.
+	storageListColumnHeal = `DO $$ BEGIN
+IF to_regclass('storage.objects') IS NOT NULL THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'storage.objects'::regclass AND attname = 'name_lower' AND NOT attisdropped) THEN
+    ALTER TABLE storage.objects ADD COLUMN name_lower TEXT COLLATE "C" GENERATED ALWAYS AS (lower(name)) STORED;
+  END IF;
+  ` + ensureStorageIndex("objects_bucket_name_lower_c_idx", nameLowerIndexDef) + `
+END IF;
+END $$;`
+
+	// storageIndexesWhenEmpty indexes a fresh table for free; a populated one is left to the bounded Harden heal.
+	storageIndexesWhenEmpty = `DO $$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM storage.objects LIMIT 1) THEN
+  ` + ensureStorageIndex("objects_bucket_name_c_idx", nameIndexDef) + `
+  IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'storage.objects'::regclass AND attname = 'name_lower' AND NOT attisdropped) THEN
+    ` + ensureStorageIndex("objects_bucket_name_lower_c_idx", nameLowerIndexDef) + `
+  END IF;
+END IF;
+END $$;`
+)
 
 func generateRLSFunctions() []string {
 	return []string{
@@ -1315,15 +1584,38 @@ func generateRPCFunction(name string, fn domain.Function) string {
 	}
 
 	return fmt.Sprintf(
-		"CREATE OR REPLACE FUNCTION public.\"%s\"(%s)\nRETURNS %s\nLANGUAGE %s\n%s\n%s\nAS $ub$%s$ub$;",
+		"CREATE OR REPLACE FUNCTION public.\"%s\"(%s)\nRETURNS %s\nLANGUAGE %s\n%s\n%s%s\nAS $ub$%s$ub$;",
 		name,
 		strings.Join(sig, ", "),
 		fn.Returns.Type,
 		language,
 		volatility,
 		security,
+		rpcSetClauses(fn.Set),
 		fn.Body,
 	)
+}
+
+// rpcSetClauses renders validated set: entries as SET lines in key order.
+func rpcSetClauses(set map[string]string) string {
+	var b strings.Builder
+	for _, k := range sortedKeys(set) {
+		v := strings.TrimSpace(set[k])
+		switch {
+		case k == "search_path" && v == "":
+			v = "''"
+		case k == "search_path":
+			parts := strings.Split(v, ",")
+			for i := range parts {
+				parts[i] = strings.TrimSpace(parts[i])
+			}
+			v = strings.Join(parts, ", ")
+		default:
+			v = "'" + v + "'"
+		}
+		fmt.Fprintf(&b, "\nSET %s = %s", k, v)
+	}
+	return b.String()
 }
 
 func sortedKeys[V any](m map[string]V) []string {

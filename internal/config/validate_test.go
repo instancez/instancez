@@ -1431,3 +1431,164 @@ func TestValidate_StorageBucketNameCollidesWithObjectRoute(t *testing.T) {
 		}
 	}
 }
+
+func TestValidate_RPCSet(t *testing.T) {
+	cases := []struct {
+		key, val string
+		ok       bool
+	}{
+		{"search_path", "", true},
+		{"search_path", "public", true},
+		{"search_path", "public, extensions", true},
+		{"search_path", `"$user", public, pg_temp`, true},
+		{"search_path", "Public", false},
+		{"search_path", "public; drop table x", false},
+		{"search_path", "public,", false},
+		{"search_path", "pub'lic", false},
+		{"search_path", "public\nextensions", false},
+		{"search_path", strings.Repeat("a", 64), false},
+		{"statement_timeout", "5000", true},
+		{"statement_timeout", "5s", true},
+		{"statement_timeout", "2min", true},
+		{"statement_timeout", "5s'; --", false},
+		{"statement_timeout", "-1", false},
+		{"lock_timeout", "100ms", true},
+		{"lock_timeout", "", false},
+		{"work_mem", "64MB", true},
+		{"work_mem", "64mb", false},
+		{"work_mem", "64", true},
+		{"work_mem", "64kB", true},
+		{"work_mem", "63kB", false},
+		{"work_mem", "0", false},
+		{"work_mem", "2147483647", true},
+		{"work_mem", "1TB", true},
+		{"work_mem", "2TB", false},
+		{"work_mem", "999999999TB", false},
+		{"work_mem", "9999999999TB", false},
+		{"work_mem", "99999999999", false},
+		{"statement_timeout", "0", true},
+		{"statement_timeout", "2147483647", true},
+		{"statement_timeout", "2147483648", false},
+		{"statement_timeout", "24d", true},
+		{"statement_timeout", "25d", false},
+		{"statement_timeout", "999999999d", false},
+		{"lock_timeout", "596h", true},
+		{"lock_timeout", "597h", false},
+		{"lock_timeout", "35792min", false},
+		{"role", "postgres", false},
+		{"Search_Path", "public", false},
+	}
+	for _, c := range cases {
+		cfg := validBaseConfig()
+		fn := validRPCFunction()
+		fn.Set = map[string]string{c.key: c.val}
+		cfg.RPC = map[string]domain.Function{"f": fn}
+		errs := Validate(cfg)
+		if c.ok && errs != nil {
+			t.Errorf("%s=%q: unexpected %v", c.key, c.val, errs)
+		}
+		if !c.ok {
+			assertHasErrorAt(t, errs, "rpc.f.set."+c.key)
+		}
+	}
+}
+
+func TestParseBytes_RPCSetScalarsDecodeAsStrings(t *testing.T) {
+	cfg, err := ParseBytes([]byte("version: 1\nrpc:\n  f:\n    body: SELECT 1\n    returns: {type: int}\n    set:\n      statement_timeout: 5000\n      search_path: \"\"\n"), "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.RPC["f"].Set; got["statement_timeout"] != "5000" || got["search_path"] != "" || len(got) != 2 {
+		t.Fatalf("set = %#v", got)
+	}
+}
+
+func TestParseBytes_RPCSetBareSearchPathIsEmpty(t *testing.T) {
+	cfg, err := ParseBytes([]byte("version: 1\nrpc:\n  f:\n    body: SELECT 1\n    returns: {type: int}\n    set:\n      search_path:\n"), "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := cfg.RPC["f"].Set["search_path"]; !ok || v != "" {
+		t.Fatalf("set = %#v", cfg.RPC["f"].Set)
+	}
+}
+
+func TestWarnings_DefinerWithoutSearchPath(t *testing.T) {
+	fn := validRPCFunction()
+	fn.Security = "definer"
+	cfg := &domain.Config{Version: 1, RPC: map[string]domain.Function{"f": fn}}
+	ws := Warnings(cfg)
+	if len(ws) != 1 || ws[0].Path != "rpc.f.set.search_path" {
+		t.Fatalf("want one search_path warning, got %v", ws)
+	}
+	fn.Set = map[string]string{"search_path": ""}
+	cfg.RPC["f"] = fn
+	if ws := Warnings(cfg); ws != nil {
+		t.Fatalf("pinned search_path: want no warning, got %v", ws)
+	}
+	fn.Security, fn.Set = "invoker", nil
+	cfg.RPC["f"] = fn
+	if ws := Warnings(cfg); ws != nil {
+		t.Fatalf("invoker: want no warning, got %v", ws)
+	}
+}
+
+func TestValidate_CompositePrimaryKey(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Tables["memberships"] = domain.Table{Fields: []domain.Field{
+		{Name: "user_id", Type: "uuid", PrimaryKey: true},
+		{Name: "todo_id", ForeignKey: &domain.ForeignKey{References: "todos.id"}, PrimaryKey: true},
+		{Name: "role", Type: "text"},
+	}}
+	if errs := Validate(cfg); errs != nil {
+		t.Fatalf("composite primary key must validate, got %v", errs)
+	}
+}
+
+func TestWarnings_CompositePKFKTarget(t *testing.T) {
+	a := domain.Field{Name: "a", Type: "int", PrimaryKey: true}
+	b := domain.Field{Name: "b", Type: "int", PrimaryKey: true}
+	cases := []struct {
+		name     string
+		target   domain.Table
+		wantWarn bool
+	}{
+		{"bare composite member", domain.Table{Fields: []domain.Field{a, b}}, true},
+		{"member marked unique", domain.Table{Fields: []domain.Field{{Name: "a", Type: "int", PrimaryKey: true, Unique: true}, b}}, true},
+		{"member with single-column unique index", domain.Table{Fields: []domain.Field{a, b}, Indexes: []domain.Index{{Columns: []string{"a"}, Unique: true}}}, false},
+		{"member with multi-column unique index", domain.Table{Fields: []domain.Field{a, b}, Indexes: []domain.Index{{Columns: []string{"a", "b"}, Unique: true}}}, true},
+		{"member with partial unique index", domain.Table{Fields: []domain.Field{a, b}, Indexes: []domain.Index{{Columns: []string{"a"}, Unique: true, Where: "b > 0"}}}, true},
+		{"member with non-unique index", domain.Table{Fields: []domain.Field{a, b}, Indexes: []domain.Index{{Columns: []string{"a"}}}}, true},
+		{"single primary key", domain.Table{Fields: []domain.Field{a, {Name: "b", Type: "int"}}}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			yes := true
+			c.target.RLSEnabled = &yes
+			cfg := validBaseConfig()
+			cfg.Tables = map[string]domain.Table{
+				"pairs": c.target,
+				"refs":  {RLSEnabled: &yes, Fields: []domain.Field{{Name: "id", Type: "int", PrimaryKey: true}, {Name: "pair_a", ForeignKey: &domain.ForeignKey{References: "pairs.a"}}}},
+			}
+			// An app deployed before composite keys existed must still boot.
+			if errs := Validate(cfg); errs != nil {
+				t.Fatalf("must not be a validation error, got %v", errs)
+			}
+			ws := Warnings(cfg)
+			if !c.wantWarn {
+				if len(ws) != 0 {
+					t.Fatalf("want no warning, got %v", ws)
+				}
+				return
+			}
+			if len(ws) != 1 || ws[0].Path != "tables.refs.fields.pair_a.foreign_key.references" ||
+				!strings.Contains(ws[0].Message, "composite primary key") ||
+				!strings.Contains(ws[0].Suggestion, "unique index on pairs(a)") {
+				t.Fatalf("want one composite primary key warning suggesting a unique index, got %v", ws)
+			}
+			if c.target.Fields[0].Unique && !strings.Contains(ws[0].Message, "unique: true adds no constraint to an existing column") {
+				t.Fatalf("a unique member must be told why unique: true isn't enough, got %v", ws[0].Message)
+			}
+		})
+	}
+}

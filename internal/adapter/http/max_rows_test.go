@@ -26,7 +26,7 @@ func TestParseQueryParams_NoDefaultLimit(t *testing.T) {
 }
 
 func TestParseQueryParams_LimitValidation(t *testing.T) {
-	for _, raw := range []string{"limit=-1", "limit=NaN", "limit=1.5", "limit=99999999999999999999", "limit=", "offset=-1", "offset=NaN"} {
+	for _, raw := range []string{"limit=NaN", "limit=1.5", "limit=99999999999999999999", "limit=", "offset=NaN"} {
 		_, err := parseQueryParams(testContext(raw), "todos", testTable(), nil)
 		if raw == "limit=" {
 			if err != nil {
@@ -38,7 +38,11 @@ func TestParseQueryParams_LimitValidation(t *testing.T) {
 			t.Errorf("%s: expected error", raw)
 		}
 	}
-	qp, err := parseQueryParams(testContext("limit=0"), "todos", testTable(), nil)
+	qp, err := parseQueryParams(testContext("limit=-3&offset=-4"), "todos", testTable(), nil)
+	if err != nil || qp.Limit != -3 || qp.Offset != -4 {
+		t.Fatalf("negatives are left to intersectRange, as PostgREST reads them: Limit=%d Offset=%d err=%v", qp.Limit, qp.Offset, err)
+	}
+	qp, err = parseQueryParams(testContext("limit=0"), "todos", testTable(), nil)
 	if err != nil || qp.Limit != 0 {
 		t.Fatalf("limit=0: Limit=%d err=%v", qp.Limit, err)
 	}

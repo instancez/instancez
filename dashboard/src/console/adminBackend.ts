@@ -65,7 +65,18 @@ export const adminBackend: ConsoleBackend = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ prefix, cursor, with_delimiter: true, limit: 100 }),
     });
-    return res.json();
+    // list-v2 answers in Supabase's shape: full keys and camelCase paging.
+    const body = await res.json() as {
+      hasNext: boolean; nextCursor?: string;
+      folders: { name: string }[]; objects: StorageListResult["objects"];
+    };
+    const rel = (name: string) => name.slice(prefix.length);
+    return {
+      has_next: body.hasNext,
+      next_cursor: body.nextCursor,
+      folders: body.folders.map((f) => ({ name: rel(f.name).replace(/\/$/, ""), key: f.name })),
+      objects: body.objects.map((o) => ({ ...o, name: rel(o.name) })),
+    };
   },
   async uploadObject(bucket, path, file): Promise<void> {
     await storageFetch(`/object/${bucket}/${path}`, {

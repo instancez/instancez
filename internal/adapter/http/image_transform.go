@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
 	"image"
@@ -9,6 +10,7 @@ import (
 	"image/png"
 	"io"
 	"math"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -36,24 +38,28 @@ type transformParams struct {
 }
 
 func parseTransformParams(c *gin.Context) (*transformParams, error) {
-	w, _ := strconv.Atoi(c.Query("width"))
-	h, _ := strconv.Atoi(c.Query("height"))
+	return parseTransform(c.Request.URL.Query())
+}
+
+func parseTransform(q url.Values) (*transformParams, error) {
+	w, _ := strconv.Atoi(q.Get("width"))
+	h, _ := strconv.Atoi(q.Get("height"))
 	if w < 0 || h < 0 {
 		return nil, errInvalidTransform
 	}
 	if w == 0 && h == 0 {
 		return nil, nil
 	}
-	q, _ := strconv.Atoi(c.Query("quality"))
-	if q <= 0 || q > 100 {
-		q = 80
+	quality, _ := strconv.Atoi(q.Get("quality"))
+	if quality <= 0 || quality > 100 {
+		quality = 80
 	}
 	return &transformParams{
 		Width:   min(w, maxTransformDim),
 		Height:  min(h, maxTransformDim),
-		Resize:  c.DefaultQuery("resize", "cover"),
-		Quality: q,
-		Format:  c.DefaultQuery("format", "origin"),
+		Resize:  cmp.Or(q.Get("resize"), "cover"),
+		Quality: quality,
+		Format:  cmp.Or(q.Get("format"), "origin"),
 	}, nil
 }
 

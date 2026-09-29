@@ -1,9 +1,12 @@
 package http
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -65,6 +69,7 @@ func NewStorageV1Handler(deps ServerDeps) *StorageV1Handler {
 
 func (h *StorageV1Handler) Mount(root *gin.RouterGroup) {
 	sg := root.Group("/storage/v1")
+	key, opt := apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, false)
 
 	// --- Bucket admin ---
 	sg.GET("/bucket", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.listBuckets)
@@ -76,35 +81,89 @@ func (h *StorageV1Handler) Mount(root *gin.RouterGroup) {
 
 	// --- File operations ---
 	// Upload (POST) and update (PUT)
-	sg.POST("/object/:bucket/*path", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.uploadObject)
-	sg.PUT("/object/:bucket/*path", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.updateObject)
+	sg.POST("/object/:bucket/*path", key, opt, h.anonGate(denyForbidden), h.uploadObject)
+	sg.PUT("/object/:bucket/*path", key, opt, h.anonGate(denyForbidden), h.updateObject)
 
 	// One catch-all, since gin cannot overlap param routes; objectGetDispatch checks apikey except on public downloads.
 	sg.GET("/object/*all", h.objectGetDispatch)
 
 	// List
-	sg.POST("/object/list/:bucket", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.listObjects)
-	sg.POST("/object/list-v2/:bucket", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.listObjectsV2)
+	sg.POST("/object/list/:bucket", key, opt, h.anonGate(denyEmptyList), h.listObjects)
+	sg.POST("/object/list-v2/:bucket", key, opt, h.anonGate(denyEmptyListV2), h.listObjectsV2)
 
-	// Exists (HEAD)
-	sg.HEAD("/object/:bucket/*path", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, false), h.objectExists)
+	// Exists (HEAD), public HEAD and HEAD info
+	sg.HEAD("/object/*all", h.objectHeadDispatch)
+
+	sg.GET("/render/image/*all", h.renderDispatch)
+	sg.HEAD("/render/image/*all", h.renderDispatch)
 
 	// Remove (DELETE with paths in body)
-	sg.DELETE("/object/:bucket", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.removeObjects)
+	sg.DELETE("/object/:bucket", key, opt, h.removeObjects)
 
 	// Move & Copy
-	sg.POST("/object/move", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.moveObject)
-	sg.POST("/object/copy", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.copyObject)
+	sg.POST("/object/move", key, opt, h.moveObject)
+	sg.POST("/object/copy", key, opt, h.copyObject)
 
 	// Signed URLs
-	sg.POST("/object/sign/:bucket/*path", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.createSignedURL)
-	sg.POST("/object/sign/:bucket", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.createSignedURLs)
+	sg.POST("/object/sign/:bucket/*path", key, opt, h.anonGate(denyNotFound), h.createSignedURL)
+	sg.POST("/object/sign/:bucket", key, opt, h.createSignedURLs)
 
 	// Signed upload
-	sg.POST("/object/upload/sign/:bucket/*path", apiKeyGuard(h.jwtKeys), jwtAuth(h.jwtKeys, true), h.createSignedUploadURL)
+	sg.POST("/object/upload/sign/:bucket/*path", key, opt, h.anonGate(denyForbidden), h.createSignedUploadURL)
 	// Authorized purely by the HMAC-signed token in the query string,
 	// matching real Supabase's signed-upload redemption — no apikey.
 	sg.PUT("/object/upload/sign/:bucket/*path", h.uploadToSignedURL)
+}
+
+// anonMayReach lets anon reach only buckets whose own rls policies decide, since nothing else would authorize it in Supabase.
+func anonMayReach(c *gin.Context, cfg *domain.Config, bucket string) bool {
+	if r := getSession(c).Role; r == domain.JWTRoleAuthenticated || r == domain.JWTRoleService {
+		return true
+	}
+	b, ok := cfg.Storage[bucket]
+	return ok && len(b.RLS) > 0
+}
+
+func (h *StorageV1Handler) anonGate(deny gin.HandlerFunc) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if raw, hasPath := c.Params.Get("path"); hasPath {
+			if _, ok := objectPath(c, raw); !ok {
+				c.Abort()
+				return
+			}
+		}
+		if !anonMayReach(c, h.cfg, c.Param("bucket")) {
+			deny(c)
+			c.Abort()
+		}
+	}
+}
+
+// callerMayReach runs apikey, optional JWT, key validation and the anon gate inline; false means a response was written.
+func (h *StorageV1Handler) callerMayReach(c *gin.Context, bucket, rawPath string, deny gin.HandlerFunc) bool {
+	if apiKeyGuard(h.jwtKeys)(c); c.IsAborted() {
+		return false
+	}
+	if jwtAuth(h.jwtKeys, false)(c); c.IsAborted() {
+		return false
+	}
+	if _, ok := objectPath(c, rawPath); !ok {
+		return false
+	}
+	if !anonMayReach(c, h.cfg, bucket) {
+		deny(c)
+		return false
+	}
+	return true
+}
+
+func denyNotFound(c *gin.Context) { storageErr(c, 404, "not_found", "Object not found") }
+func denyForbidden(c *gin.Context) {
+	storageErr(c, 403, "forbidden", "Not authorized to write this object")
+}
+func denyEmptyList(c *gin.Context) { c.JSON(200, []gin.H{}) }
+func denyEmptyListV2(c *gin.Context) {
+	c.JSON(200, gin.H{"hasNext": false, "folders": []gin.H{}, "objects": []gin.H{}})
 }
 
 // --- Bucket admin handlers ---
@@ -217,6 +276,31 @@ func serviceContext(db domain.Database, ctx context.Context) (context.Context, e
 	return db.WithRLS(ctx, domain.Session{Role: "service_role", IsAuthenticated: true})
 }
 
+// queryCtx is service_role for callers already authorized by bucket.Public or a token, else the caller's RLS.
+func (h *StorageV1Handler) queryCtx(c *gin.Context, bypassRLS bool) (context.Context, error) {
+	if bypassRLS {
+		return serviceContext(h.db, c.Request.Context())
+	}
+	return h.rlsCtx(c), nil
+}
+
+// splitScope strips one public/ or authenticated/ prefix and splits the bucket from the object path.
+func splitScope(p string) (public bool, bucket, objPath string, ok bool) {
+	if public = strings.HasPrefix(p, "public/"); public {
+		p = strings.TrimPrefix(p, "public/")
+	} else {
+		p = strings.TrimPrefix(p, "authenticated/")
+	}
+	bucket, objPath, ok = strings.Cut(p, "/")
+	return public, bucket, objPath, ok
+}
+
+// storedETag is the eTag kept in storage.objects.metadata, or "" when none was recorded.
+func storedETag(metadata any) string {
+	s, _ := decodeJSONB(metadata)["eTag"].(string)
+	return s
+}
+
 var errInvalidKey = errors.New("invalid object key")
 
 // cleanPath normalizes an object key and rejects empty, NUL and ".." keys.
@@ -295,21 +379,22 @@ type execer interface {
 }
 
 type objectRow struct {
-	bucket, name, mime, metadata string
-	size                         int64
-	uploadedBy                   any
+	bucket, name, mime, metadata, userMetadata string
+	size                                       int64
+	uploadedBy                                 any
 }
 
 // writeObjectRow inserts, upserts or updates one storage.objects row under ctx's role.
 func writeObjectRow(ctx context.Context, db execer, r objectRow, isUpdate, upsert bool) error {
-	q := "INSERT INTO storage.objects (bucket_id, name, size, mime, metadata, uploaded_by) VALUES ($1, $2, $3, $4, $5::jsonb, $6)"
+	q := "INSERT INTO storage.objects (bucket_id, name, size, mime, metadata, uploaded_by, user_metadata) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7::jsonb)"
 	switch {
 	case isUpdate:
-		q = "UPDATE storage.objects SET size = $3, mime = $4, metadata = $5::jsonb, uploaded_at = NOW(), uploaded_by = $6 WHERE bucket_id = $1 AND name = $2"
+		q = "UPDATE storage.objects SET size = $3, mime = $4, metadata = $5::jsonb, uploaded_at = NOW(), uploaded_by = $6, user_metadata = $7::jsonb WHERE bucket_id = $1 AND name = $2"
 	case upsert:
-		q += " ON CONFLICT (bucket_id, name) DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime, metadata = EXCLUDED.metadata, uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW()"
+		q += " ON CONFLICT (bucket_id, name) DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime, metadata = EXCLUDED.metadata, uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW(), user_metadata = EXCLUDED.user_metadata"
 	}
-	n, err := db.Exec(ctx, q, r.bucket, r.name, r.size, r.mime, r.metadata, r.uploadedBy)
+	// Like Supabase, every write replaces user_metadata, with {} when the request sent none.
+	n, err := db.Exec(ctx, q, r.bucket, r.name, r.size, r.mime, r.metadata, r.uploadedBy, cmp.Or(r.userMetadata, "{}"))
 	if err == nil && isUpdate && n == 0 {
 		return errObjectNotFound
 	}
@@ -333,21 +418,68 @@ func defaultMIME(ct string) string {
 }
 
 // uploadBody returns the file stream and content type from a raw or multipart upload.
-func uploadBody(c *gin.Context) (io.Reader, string, error) {
+const maxUserMetadataBytes = 1 << 20 // Supabase MAX_CUSTOM_METADATA_SIZE
+
+var (
+	errUserMetadataTooLarge = errors.New("user metadata exceeds 1MB")
+	errInvalidUserMetadata  = errors.New("user metadata must be a JSON object")
+)
+
+// parseUserMetadata validates upload metadata and returns it as JSON, "{}" when absent or null.
+func parseUserMetadata(raw []byte) (string, error) {
+	if len(raw) > maxUserMetadataBytes {
+		return "", errUserMetadataTooLarge
+	}
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return "{}", nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil || m == nil {
+		return "", errInvalidUserMetadata
+	}
+	return string(raw), nil
+}
+
+// uploadBody returns the file stream, its content type and the user metadata sent with it.
+func uploadBody(c *gin.Context) (io.Reader, string, string, error) {
 	if !strings.HasPrefix(c.ContentType(), "multipart/form-data") {
-		return c.Request.Body, defaultMIME(c.ContentType()), nil
+		meta := "{}"
+		if h := c.GetHeader("x-metadata"); h != "" {
+			raw, err := base64.StdEncoding.DecodeString(h)
+			if err != nil {
+				return nil, "", "", errInvalidUserMetadata
+			}
+			if meta, err = parseUserMetadata(raw); err != nil {
+				return nil, "", "", err
+			}
+		}
+		return c.Request.Body, defaultMIME(c.ContentType()), meta, nil
 	}
 	mr, err := c.Request.MultipartReader()
 	if err != nil {
-		return nil, "", errors.New("failed to parse multipart form")
+		return nil, "", "", errors.New("failed to parse multipart form")
 	}
+	fields := map[string]string{}
 	for {
 		part, err := mr.NextPart()
 		if err != nil {
-			return nil, "", errors.New("no file found in multipart upload")
+			return nil, "", "", errors.New("no file found in multipart upload")
 		}
 		if part.FileName() != "" {
-			return part, defaultMIME(part.Header.Get("Content-Type")), nil
+			meta, err := parseUserMetadata([]byte(cmp.Or(fields["metadata"], fields["userMetadata"])))
+			if err != nil {
+				return nil, "", "", err
+			}
+			return part, defaultMIME(part.Header.Get("Content-Type")), meta, nil
+		}
+		if name := part.FormName(); name == "metadata" || name == "userMetadata" {
+			// One byte past the cap is enough for parseUserMetadata to reject it.
+			raw, err := io.ReadAll(io.LimitReader(part, maxUserMetadataBytes+1))
+			if err != nil {
+				return nil, "", "", errors.New("failed to parse multipart form")
+			}
+			fields[name] = string(raw)
 		}
 		_ = part.Close()
 	}
@@ -376,28 +508,35 @@ func closeSpool(f *os.File) {
 }
 
 // readUpload spools the body; on !ok the error response is already written.
-func (h *StorageV1Handler) readUpload(c *gin.Context, bucket domain.Bucket, authorize func(contentType string) error) (f *os.File, size int64, contentType string, ok bool) {
-	body, contentType, err := uploadBody(c)
-	if err != nil {
+func (h *StorageV1Handler) readUpload(c *gin.Context, bucket domain.Bucket, authorize func(contentType string) error) (f *os.File, size int64, contentType, userMetadata string, ok bool) {
+	body, contentType, userMetadata, err := uploadBody(c)
+	switch {
+	case errors.Is(err, errUserMetadataTooLarge):
+		storageErr(c, 413, "payload_too_large", err.Error())
+		return nil, 0, "", "", false
+	case errors.Is(err, errInvalidUserMetadata):
+		storageErr(c, 400, "invalid_metadata", err.Error())
+		return nil, 0, "", "", false
+	case err != nil:
 		storageErr(c, 400, "bad_request", err.Error())
-		return nil, 0, "", false
+		return nil, 0, "", "", false
 	}
 	if len(bucket.Types) > 0 && !matchesMIME(contentType, bucket.Types) {
 		storageErr(c, 422, "invalid_mime_type", fmt.Sprintf("Content type %q not allowed", contentType))
-		return nil, 0, "", false
+		return nil, 0, "", "", false
 	}
 	if authorize != nil {
 		if err := authorize(contentType); err != nil {
 			h.uploadWriteError(c, err)
-			return nil, 0, "", false
+			return nil, 0, "", "", false
 		}
 	}
 	f, size, err = spool(http.MaxBytesReader(c.Writer, io.NopCloser(body), bucketMaxBytes(bucket)))
 	if err != nil {
 		h.spoolFailed(c, err, bucket.MaxSize)
-		return nil, 0, "", false
+		return nil, 0, "", "", false
 	}
-	return f, size, contentType, true
+	return f, size, contentType, userMetadata, true
 }
 
 func (h *StorageV1Handler) spoolFailed(c *gin.Context, err error, maxSize string) {
@@ -431,7 +570,7 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 	}
 	uploadedBy := nullIfEmpty(getSession(c).UserID)
 	upsert := !isUpdate && c.GetHeader("x-upsert") == "true"
-	file, size, contentType, ok := h.readUpload(c, bucket, func(ct string) error {
+	file, size, contentType, userMetadata, ok := h.readUpload(c, bucket, func(ct string) error {
 		probeRow := objectRow{bucket: bucketName, name: objPath, mime: ct, uploadedBy: uploadedBy,
 			metadata: objectMetadataJSON(0, ct, c.GetHeader("Cache-Control"))}
 		return h.probeUploadPermission(c, probeRow, isUpdate, upsert)
@@ -442,8 +581,8 @@ func (h *StorageV1Handler) doUpload(c *gin.Context, isUpdate bool) {
 	defer closeSpool(file)
 
 	row := objectRow{bucket: bucketName, name: objPath, size: size, mime: contentType,
-		uploadedBy: uploadedBy,
-		metadata:   objectMetadataJSON(size, contentType, c.GetHeader("Cache-Control"))}
+		uploadedBy: uploadedBy, userMetadata: userMetadata,
+		metadata: objectMetadataJSON(size, contentType, c.GetHeader("Cache-Control"))}
 
 	// The tx write below is the real gate; the pre-spool probe above only avoids spooling for a denied caller.
 	ctx := h.rlsCtx(c)
@@ -534,12 +673,7 @@ func (h *StorageV1Handler) objectGetDispatch(c *gin.Context) {
 			storageErr(c, 400, "bad_request", "Missing bucket or path")
 			return
 		}
-		apiKeyGuard(h.jwtKeys)(c)
-		if c.IsAborted() {
-			return
-		}
-		jwtAuth(h.jwtKeys, true)(c)
-		if c.IsAborted() {
+		if !h.callerMayReach(c, segments[1], segments[2], denyNotFound) {
 			return
 		}
 		h.serveDownload(c, segments[1], segments[2], false)
@@ -548,34 +682,21 @@ func (h *StorageV1Handler) objectGetDispatch(c *gin.Context) {
 			storageErr(c, 400, "bad_request", "Missing path")
 			return
 		}
-		apiKeyGuard(h.jwtKeys)(c)
-		if c.IsAborted() {
-			return
-		}
-		jwtAuth(h.jwtKeys, true)(c)
-		if c.IsAborted() {
-			return
-		}
-		rest := strings.TrimPrefix(strings.TrimPrefix(all, "info/"), "authenticated/")
-		bucket, objPath, ok := strings.Cut(rest, "/")
+		public, bucket, objPath, ok := splitScope(strings.TrimPrefix(all, "info/"))
 		if !ok {
 			storageErr(c, 400, "bad_request", "Missing bucket or path")
 			return
 		}
-		c.Set("_bucket", bucket)
-		c.Set("_path", objPath)
-		h.objectInfo(c)
+		if !public && !h.callerMayReach(c, bucket, objPath, denyNotFound) {
+			return
+		}
+		h.objectInfo(c, bucket, objPath, public)
 	default:
 		if len(segments) < 2 {
 			storageErr(c, 400, "bad_request", "Missing path")
 			return
 		}
-		apiKeyGuard(h.jwtKeys)(c)
-		if c.IsAborted() {
-			return
-		}
-		jwtAuth(h.jwtKeys, true)(c)
-		if c.IsAborted() {
+		if !h.callerMayReach(c, segments[0], strings.Join(segments[1:], "/"), denyNotFound) {
 			return
 		}
 		h.serveDownload(c, segments[0], strings.Join(segments[1:], "/"), false)
@@ -583,30 +704,33 @@ func (h *StorageV1Handler) objectGetDispatch(c *gin.Context) {
 }
 
 func (h *StorageV1Handler) serveDownload(c *gin.Context, bucketName, objPath string, publicOnly bool) {
+	h.serveObject(c, bucketName, objPath, publicOnly, publicOnly, c.Request.URL.Query(), time.Time{})
+}
+
+// serveObject streams an object, transformed per tq; a non-zero expires replaces Cache-Control with Expires.
+func (h *StorageV1Handler) serveObject(c *gin.Context, bucketName, objPath string, publicCache, bypassRLS bool, tq url.Values, expires time.Time) {
 	var ok bool
 	if objPath, ok = objectPath(c, objPath); !ok {
 		return
 	}
-	tp, err := parseTransformParams(c)
+	tp, err := parseTransform(tq)
 	if err != nil {
 		storageErr(c, 400, "invalid_transform", err.Error())
 		return
 	}
 
 	bucket, ok := h.getBucketConfig(bucketName)
-	if !ok || (publicOnly && !bucket.Public) {
+	if !ok || (publicCache && !bucket.Public) {
 		storageErr(c, 404, "not_found", "Bucket not found")
 		return
 	}
 
-	ctx := h.rlsCtx(c)
-	if publicOnly {
-		if ctx, err = serviceContext(h.db, c.Request.Context()); err != nil {
-			storageErr(c, 500, "internal", "Download failed")
-			return
-		}
+	ctx, err := h.queryCtx(c, bypassRLS)
+	if err != nil {
+		storageErr(c, 500, "internal", "Download failed")
+		return
 	}
-	row, err := h.db.QueryRow(ctx, "SELECT id FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
+	row, err := h.db.QueryRow(ctx, "SELECT size, metadata FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
 	if err != nil || row == nil {
 		storageErr(c, 404, "not_found", "Object not found")
 		return
@@ -620,6 +744,11 @@ func (h *StorageV1Handler) serveDownload(c *gin.Context, bucketName, objPath str
 	}
 	defer func() { _ = body.Close() }()
 
+	length := int64(-1)
+	if size, ok := row["size"].(int64); ok && c.Request.Method == http.MethodHead {
+		length = size
+	}
+	var out io.Reader = body
 	if tp != nil && strings.HasPrefix(contentType, "image/") {
 		transformed, newCT, err := applyTransform(body, contentType, tp)
 		if errors.Is(err, errImageTooLarge) {
@@ -630,13 +759,23 @@ func (h *StorageV1Handler) serveDownload(c *gin.Context, bucketName, objPath str
 			storageErr(c, 400, "invalid_transform", err.Error())
 			return
 		}
-		body, contentType = transformed, newCT
+		b, _ := io.ReadAll(transformed)
+		out, contentType, length = bytes.NewReader(b), newCT, int64(len(b))
 	}
 
 	download, hasDownload := c.GetQuery("download")
-	writeDownloadHeaders(c, downloadOptions(contentType, publicOnly, download, hasDownload))
+	opts := downloadOptions(contentType, publicCache, download, hasDownload)
+	writeSignedDownloadHeaders(c, opts, expires)
+	if etag := storedETag(row["metadata"]); etag != "" {
+		c.Header("ETag", etag)
+	}
+	if length >= 0 {
+		c.Header("Content-Length", strconv.FormatInt(length, 10))
+	}
 	c.Status(200)
-	_, _ = io.Copy(c.Writer, body)
+	if c.Request.Method != http.MethodHead {
+		_, _ = io.Copy(c.Writer, out)
+	}
 }
 
 // activeContentTypes can run script when rendered inline on our origin.
@@ -678,10 +817,21 @@ func downloadOptions(contentType string, public bool, download string, hasDownlo
 func writeDownloadHeaders(c *gin.Context, o domain.DownloadOptions) {
 	c.Header("Content-Type", o.ContentType)
 	c.Header("X-Content-Type-Options", "nosniff")
-	c.Header("Cache-Control", o.CacheControl)
+	if o.CacheControl != "" {
+		c.Header("Cache-Control", o.CacheControl)
+	}
 	if o.ContentDisposition != "" {
 		c.Header("Content-Disposition", o.ContentDisposition)
 	}
+}
+
+// writeSignedDownloadHeaders swaps Cache-Control for Expires when the URL has an expiry.
+func writeSignedDownloadHeaders(c *gin.Context, o domain.DownloadOptions, expires time.Time) {
+	if !expires.IsZero() {
+		o.CacheControl = ""
+		c.Header("Expires", expires.UTC().Format(http.TimeFormat))
+	}
+	writeDownloadHeaders(c, o)
 }
 
 // downloadErr maps a registered object whose bytes are gone to 404.
@@ -695,7 +845,7 @@ func (h *StorageV1Handler) downloadErr(c *gin.Context, err error) {
 }
 
 // downloadMAC signs with a key derived for downloads, so upload and download tokens can't be swapped.
-func (h *StorageV1Handler) downloadMAC(ctx context.Context, bucket, objPath string, exp int64) []byte {
+func (h *StorageV1Handler) downloadMAC(ctx context.Context, bucket, objPath string, exp int64, transform string) []byte {
 	active, err := h.jwtKeys.Active(ctx)
 	if err != nil || len(active.SymmetricSecret()) == 0 {
 		return nil
@@ -704,13 +854,16 @@ func (h *StorageV1Handler) downloadMAC(ctx context.Context, bucket, objPath stri
 	derived.Write([]byte("storage-download"))
 	m := hmac.New(sha256.New, derived.Sum(nil))
 	_, _ = fmt.Fprintf(m, "%s\x00%s\x00%d", bucket, objPath, exp)
+	if transform != "" {
+		_, _ = fmt.Fprintf(m, "\x00%s", transform)
+	}
 	return m.Sum(nil)
 }
 
 // signDownloadToken returns "<unix exp>.<hex hmac>", or "" when no signing key is available.
 func (h *StorageV1Handler) signDownloadToken(ctx context.Context, bucket, objPath string, expiry time.Duration) string {
 	exp := time.Now().Add(expiry).Unix()
-	sig := h.downloadMAC(ctx, bucket, objPath, exp)
+	sig := h.downloadMAC(ctx, bucket, objPath, exp, "")
 	if sig == nil {
 		return ""
 	}
@@ -724,11 +877,81 @@ func (h *StorageV1Handler) verifyDownloadToken(ctx context.Context, token, bucke
 		return time.Time{}, false
 	}
 	sig, err := hex.DecodeString(sigHex)
-	want := h.downloadMAC(ctx, bucket, objPath, exp)
+	want := h.downloadMAC(ctx, bucket, objPath, exp, "")
 	if err != nil || want == nil || !hmac.Equal(sig, want) {
 		return time.Time{}, false
 	}
 	return time.Unix(exp, 0), true
+}
+
+// signRenderToken binds a transform into a download token; an empty transform yields a plain token.
+func (h *StorageV1Handler) signRenderToken(ctx context.Context, bucket, objPath string, expiry time.Duration, transform string) string {
+	if transform == "" {
+		return h.signDownloadToken(ctx, bucket, objPath, expiry)
+	}
+	exp := time.Now().Add(expiry).Unix()
+	sig := h.downloadMAC(ctx, bucket, objPath, exp, transform)
+	if sig == nil {
+		return ""
+	}
+	return strconv.FormatInt(exp, 10) + "." + hex.EncodeToString(sig) + "." + base64.RawURLEncoding.EncodeToString([]byte(transform))
+}
+
+func (h *StorageV1Handler) verifyRenderToken(ctx context.Context, token, bucket, objPath string) (string, time.Time, bool) {
+	parts := strings.Split(token, ".")
+	if len(parts) == 2 {
+		exp, ok := h.verifyDownloadToken(ctx, token, bucket, objPath)
+		return "", exp, ok
+	}
+	if len(parts) != 3 {
+		return "", time.Time{}, false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[2])
+	exp, perr := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || len(raw) == 0 || perr != nil || strconv.FormatInt(exp, 10) != parts[0] || time.Now().Unix() > exp {
+		return "", time.Time{}, false
+	}
+	sig, err := hex.DecodeString(parts[1])
+	want := h.downloadMAC(ctx, bucket, objPath, exp, string(raw))
+	if err != nil || want == nil || !hmac.Equal(sig, want) {
+		return "", time.Time{}, false
+	}
+	return string(raw), time.Unix(exp, 0), true
+}
+
+func (h *StorageV1Handler) renderDispatch(c *gin.Context) {
+	seg := strings.SplitN(strings.TrimPrefix(c.Param("all"), "/"), "/", 3)
+	if len(seg) < 3 || seg[2] == "" {
+		storageErr(c, 400, "bad_request", "Missing bucket or path")
+		return
+	}
+	switch seg[0] {
+	case "public":
+		h.serveDownload(c, seg[1], seg[2], true)
+	case "authenticated":
+		if h.callerMayReach(c, seg[1], seg[2], denyNotFound) {
+			h.serveDownload(c, seg[1], seg[2], false)
+		}
+	case "sign":
+		h.redeemRenderURL(c, seg[1], seg[2])
+	default:
+		storageErr(c, 404, "not_found", "Route not found")
+	}
+}
+
+// redeemRenderURL serves a signed render URL; the token's transform overrides the query.
+func (h *StorageV1Handler) redeemRenderURL(c *gin.Context, bucketName, rawPath string) {
+	objPath, ok := objectPath(c, rawPath)
+	if !ok {
+		return
+	}
+	transform, exp, ok := h.verifyRenderToken(c.Request.Context(), c.Query("token"), bucketName, objPath)
+	if !ok {
+		storageErr(c, 400, "invalid_token", "Invalid or expired signed URL")
+		return
+	}
+	tq, _ := url.ParseQuery(transform)
+	h.serveObject(c, bucketName, objPath, false, true, tq, exp)
 }
 
 // redeemSignedURL serves a createSignedUrl(s) URL: S3 gets a 302 to a short presign, the local provider streams.
@@ -779,241 +1002,123 @@ func (h *StorageV1Handler) redeemSignedURL(c *gin.Context, bucketName, rawPath s
 		return
 	}
 	defer func() { _ = body.Close() }()
-	writeDownloadHeaders(c, opts)
+	writeSignedDownloadHeaders(c, opts, exp)
 	c.Status(200)
 	_, _ = io.Copy(c.Writer, body)
 }
 
-func (h *StorageV1Handler) listObjects(c *gin.Context) {
-	bucketName := c.Param("bucket")
-	if _, ok := h.getBucketConfig(bucketName); !ok {
-		storageErr(c, 404, "not_found", "Bucket not found")
-		return
-	}
-
-	var req struct {
-		Prefix string `json:"prefix"`
-		Limit  int    `json:"limit"`
-		Offset int    `json:"offset"`
-		Search string `json:"search"`
-	}
-	_ = c.ShouldBindJSON(&req)
-
-	prefix := strings.TrimPrefix(req.Prefix, "/")
-	if req.Limit <= 0 {
-		req.Limit = 100
-	}
-
-	ctx := h.rlsCtx(c)
-
-	query := "SELECT name, size, mime, uploaded_at, metadata FROM storage.objects WHERE bucket_id = $1"
-	args := []any{bucketName}
-	argIdx := 2
-
-	if prefix != "" {
-		query += fmt.Sprintf(" AND name LIKE $%d", argIdx)
-		args = append(args, prefix+"%")
-		argIdx++
-	}
-	if req.Search != "" {
-		query += fmt.Sprintf(" AND name LIKE $%d", argIdx)
-		args = append(args, "%"+req.Search+"%")
-		argIdx++
-	}
-	query += " ORDER BY name"
-	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argIdx, argIdx+1)
-	args = append(args, req.Limit, req.Offset)
-
-	rows, err := h.db.Query(ctx, query, args...)
-	if err != nil {
-		h.logger.Error("list objects", "error", err)
-		storageErr(c, 500, "internal", "Failed to list")
-		return
-	}
-
-	var items []gin.H
-	for _, row := range rows {
-		name, _ := row["name"].(string)
-		// Strip prefix to return relative names (supabase convention)
-		relName := strings.TrimPrefix(name, prefix)
-		items = append(items, gin.H{
-			"name":       relName,
-			"id":         name,
-			"created_at": asString(row["uploaded_at"]),
-			"updated_at": asString(row["uploaded_at"]),
-			"metadata":   row["metadata"],
-		})
-	}
-	if items == nil {
-		items = []gin.H{}
-	}
-	c.JSON(200, items)
-}
-
-func (h *StorageV1Handler) listObjectsV2(c *gin.Context) {
-	bucketName := c.Param("bucket")
-	if _, ok := h.getBucketConfig(bucketName); !ok {
-		storageErr(c, 404, "not_found", "Bucket not found")
-		return
-	}
-
-	var req struct {
-		Prefix        string `json:"prefix"`
-		Limit         int    `json:"limit"`
-		Cursor        string `json:"cursor"`
-		WithDelimiter bool   `json:"with_delimiter"`
-		SortBy        struct {
-			Column string `json:"column"`
-			Order  string `json:"order"`
-		} `json:"sortBy"`
-	}
-	_ = c.ShouldBindJSON(&req)
-
-	prefix := strings.TrimPrefix(req.Prefix, "/")
-	if req.Limit <= 0 {
-		req.Limit = 100
-	}
-
-	ctx := h.rlsCtx(c)
-
-	// Fetch one extra row to determine hasNext.
-	fetchLimit := req.Limit + 1
-
-	query := "SELECT name, size, mime, uploaded_at, metadata FROM storage.objects WHERE bucket_id = $1"
-	args := []any{bucketName}
-	argIdx := 2
-
-	if prefix != "" {
-		query += fmt.Sprintf(" AND name LIKE $%d", argIdx)
-		args = append(args, prefix+"%")
-		argIdx++
-	}
-	if req.Cursor != "" {
-		query += fmt.Sprintf(" AND name > $%d", argIdx)
-		args = append(args, req.Cursor)
-		argIdx++
-	}
-
-	sortCol := "name"
-	sortOrder := "ASC"
-	if req.SortBy.Column == "updated_at" || req.SortBy.Column == "created_at" {
-		sortCol = "uploaded_at"
-	}
-	if strings.EqualFold(req.SortBy.Order, "desc") {
-		sortOrder = "DESC"
-	}
-	query += fmt.Sprintf(" ORDER BY %s %s", sortCol, sortOrder)
-	query += fmt.Sprintf(" LIMIT $%d", argIdx)
-	args = append(args, fetchLimit)
-
-	rows, err := h.db.Query(ctx, query, args...)
-	if err != nil {
-		h.logger.Error("list objects v2", "error", err)
-		storageErr(c, 500, "internal", "Failed to list")
-		return
-	}
-
-	hasNext := len(rows) > req.Limit
-	if hasNext {
-		rows = rows[:req.Limit]
-	}
-
-	var folders []gin.H
-	var objects []gin.H
-	seenFolders := map[string]bool{}
-
-	for _, row := range rows {
-		name, _ := row["name"].(string)
-		relName := strings.TrimPrefix(name, prefix)
-
-		if req.WithDelimiter {
-			if idx := strings.Index(relName, "/"); idx >= 0 {
-				folderName := relName[:idx+1]
-				if !seenFolders[folderName] {
-					seenFolders[folderName] = true
-					folders = append(folders, gin.H{"name": folderName, "key": prefix + folderName})
-				}
-				continue
-			}
-		}
-
-		objects = append(objects, gin.H{
-			"name":       relName,
-			"id":         name,
-			"created_at": asString(row["uploaded_at"]),
-			"updated_at": asString(row["uploaded_at"]),
-			"metadata":   row["metadata"],
-		})
-	}
-
-	if folders == nil {
-		folders = []gin.H{}
-	}
-	if objects == nil {
-		objects = []gin.H{}
-	}
-
-	result := gin.H{
-		"has_next": hasNext,
-		"folders":  folders,
-		"objects":  objects,
-	}
-	if hasNext && len(rows) > 0 {
-		lastRow := rows[len(rows)-1]
-		result["next_cursor"], _ = lastRow["name"].(string)
-	}
-	c.JSON(200, result)
-}
-
-func (h *StorageV1Handler) objectInfo(c *gin.Context) {
-	bucketName := c.GetString("_bucket")
-	objPath, ok := objectPath(c, c.GetString("_path"))
+func (h *StorageV1Handler) objectInfo(c *gin.Context, bucketName, rawPath string, public bool) {
+	objPath, ok := objectPath(c, rawPath)
 	if !ok {
 		return
 	}
 
-	if _, ok := h.getBucketConfig(bucketName); !ok {
+	if b, ok := h.getBucketConfig(bucketName); !ok || (public && !b.Public) {
 		storageErr(c, 404, "not_found", "Bucket not found")
 		return
 	}
 
-	ctx := h.rlsCtx(c)
+	ctx, err := h.queryCtx(c, public)
+	if err != nil {
+		storageErr(c, 500, "internal", "Info failed")
+		return
+	}
 	row, err := h.db.QueryRow(ctx,
-		"SELECT id, name, size, mime, uploaded_at, uploaded_by, metadata FROM storage.objects WHERE bucket_id = $1 AND name = $2",
+		"SELECT id, name, size, mime, uploaded_at, metadata, user_metadata FROM storage.objects WHERE bucket_id = $1 AND name = $2",
 		bucketName, objPath)
 	if err != nil || row == nil {
 		storageErr(c, 404, "not_found", "Object not found")
 		return
 	}
 
+	meta := decodeJSONB(row["metadata"])
+	cacheControl, _ := meta["cacheControl"].(string)
+	var userMeta any
+	if m := decodeJSONB(row["user_metadata"]); m != nil {
+		userMeta = m
+	}
+	uploaded := isoTime(row["uploaded_at"])
 	c.JSON(200, gin.H{
-		"id":           asString(row["id"]),
-		"name":         asString(row["name"]),
-		"size":         row["size"],
-		"content_type": asString(row["mime"]),
-		"created_at":   asString(row["uploaded_at"]),
-		"updated_at":   asString(row["uploaded_at"]),
-		"metadata":     row["metadata"],
+		"id":            asString(row["id"]),
+		"name":          asString(row["name"]),
+		"bucket_id":     bucketName,
+		"size":          row["size"],
+		"content_type":  asString(row["mime"]),
+		"cache_control": nullIfEmpty(cacheControl),
+		"etag":          nullIfEmpty(storedETag(row["metadata"])),
+		"created_at":    uploaded,
+		"updated_at":    uploaded,
+		"last_modified": uploaded,
+		"metadata":      userMeta,
 	})
 }
 
+// isoTime formats like JavaScript's toISOString, which Supabase emits for timestamps.
+func isoTime(v any) any {
+	switch x := v.(type) {
+	case time.Time:
+		if !x.IsZero() {
+			return x.UTC().Format("2006-01-02T15:04:05.000Z")
+		}
+	case string:
+		return nullIfEmpty(x)
+	}
+	return nil
+}
+
 func (h *StorageV1Handler) objectExists(c *gin.Context) {
-	bucketName := c.Param("bucket")
-	objPath, ok := objectPath(c, c.Param("path"))
+	h.headObject(c, c.Param("bucket"), c.Param("path"), false)
+}
+
+func (h *StorageV1Handler) objectHeadDispatch(c *gin.Context) {
+	all := strings.TrimPrefix(c.Param("all"), "/")
+	if strings.HasPrefix(all, "info/public/") {
+		c.Status(404)
+		return
+	}
+	if strings.HasPrefix(all, "info/") {
+		h.objectGetDispatch(c)
+		return
+	}
+	public, bucket, objPath, ok := splitScope(all)
+	if !ok {
+		c.Status(400)
+		return
+	}
+	if !public && !h.callerMayReach(c, bucket, objPath, func(c *gin.Context) { c.Status(404) }) {
+		return
+	}
+	h.headObject(c, bucket, objPath, public)
+}
+
+func (h *StorageV1Handler) headObject(c *gin.Context, bucketName, rawPath string, publicOnly bool) {
+	objPath, ok := objectPath(c, rawPath)
 	if !ok {
 		return
 	}
-
-	if _, ok := h.getBucketConfig(bucketName); !ok {
+	if b, ok := h.getBucketConfig(bucketName); !ok || (publicOnly && !b.Public) {
 		c.Status(404)
 		return
 	}
-
-	ctx := h.rlsCtx(c)
-	row, err := h.db.QueryRow(ctx, "SELECT id FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
+	ctx, err := h.queryCtx(c, publicOnly)
+	if err != nil {
+		c.Status(500)
+		return
+	}
+	row, err := h.db.QueryRow(ctx, "SELECT size, mime, uploaded_at, metadata FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
 	if err != nil || row == nil {
 		c.Status(404)
 		return
+	}
+	writeDownloadHeaders(c, downloadOptions(asString(row["mime"]), publicOnly, "", false))
+	if etag := storedETag(row["metadata"]); etag != "" {
+		c.Header("ETag", etag)
+	}
+	if size, ok := row["size"].(int64); ok {
+		c.Header("Content-Length", strconv.FormatInt(size, 10))
+	}
+	if t, ok := row["uploaded_at"].(time.Time); ok {
+		c.Header("Last-Modified", t.UTC().Format(http.TimeFormat))
 	}
 	c.Status(200)
 }
@@ -1035,7 +1140,7 @@ func (h *StorageV1Handler) removeObjects(c *gin.Context) {
 
 	keys := validKeys(req.Prefixes)
 	deleted := []gin.H{}
-	if len(keys) == 0 {
+	if len(keys) == 0 || !anonMayReach(c, h.cfg, bucketName) {
 		c.JSON(200, deleted)
 		return
 	}
@@ -1089,6 +1194,10 @@ func (h *StorageV1Handler) moveObject(c *gin.Context) {
 
 	if srcBucket == dstBucket && src == dst {
 		storageErr(c, 400, "invalid_key", "Source and destination are the same")
+		return
+	}
+	if !anonMayReach(c, h.cfg, srcBucket) || !anonMayReach(c, h.cfg, dstBucket) {
+		denyNotFound(c)
 		return
 	}
 	ctx := h.rlsCtx(c)
@@ -1167,6 +1276,10 @@ func (h *StorageV1Handler) copyObject(c *gin.Context) {
 		storageErr(c, 400, "invalid_key", "Source and destination are the same")
 		return
 	}
+	if !anonMayReach(c, h.cfg, srcBucket) || !anonMayReach(c, h.cfg, dstBucket) {
+		denyNotFound(c)
+		return
+	}
 	ctx := h.rlsCtx(c)
 	tx, err := h.db.Begin(ctx)
 	if err != nil {
@@ -1177,10 +1290,10 @@ func (h *StorageV1Handler) copyObject(c *gin.Context) {
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	n, err := tx.Exec(ctx,
-		`INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by, metadata)
-		 SELECT $1, $2, size, mime, $5::uuid, metadata FROM storage.objects WHERE bucket_id = $3 AND name = $4
+		`INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by, metadata, user_metadata)
+		 SELECT $1, $2, size, mime, $5::uuid, metadata, user_metadata FROM storage.objects WHERE bucket_id = $3 AND name = $4
 		 ON CONFLICT (bucket_id, name) DO UPDATE SET size = EXCLUDED.size, mime = EXCLUDED.mime,
-		   metadata = EXCLUDED.metadata, uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW()`,
+		   metadata = EXCLUDED.metadata, uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW(), user_metadata = EXCLUDED.user_metadata`,
 		dstBucket, dst, srcBucket, src, nullIfEmpty(getSession(c).UserID))
 	if err != nil {
 		h.uploadWriteError(c, err)
@@ -1219,9 +1332,31 @@ func (h *StorageV1Handler) createSignedURL(c *gin.Context) {
 	}
 
 	var req struct {
-		ExpiresIn int `json:"expiresIn"`
+		ExpiresIn int             `json:"expiresIn"`
+		Transform json.RawMessage `json:"transform"`
 	}
 	_ = c.ShouldBindJSON(&req)
+	transform := ""
+	if len(req.Transform) > 0 && string(req.Transform) != "null" {
+		var t signTransform
+		if err := json.Unmarshal(req.Transform, &t); err != nil {
+			storageErr(c, 400, "invalid_transform", "Invalid transform")
+			return
+		}
+		if err := t.validate(); err != nil {
+			storageErr(c, 400, "invalid_transform", err.Error())
+			return
+		}
+		q := t.query()
+		tp, err := parseTransform(q)
+		if err != nil {
+			storageErr(c, 400, "invalid_transform", err.Error())
+			return
+		}
+		if tp != nil {
+			transform = q.Encode()
+		}
+	}
 
 	ctx := h.rlsCtx(c)
 	row, err := h.db.QueryRow(ctx, "SELECT id FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
@@ -1230,12 +1365,53 @@ func (h *StorageV1Handler) createSignedURL(c *gin.Context) {
 		return
 	}
 
-	tok := h.signDownloadToken(c.Request.Context(), bucketName, objPath, signedExpiry(req.ExpiresIn))
+	tok := h.signRenderToken(c.Request.Context(), bucketName, objPath, signedExpiry(req.ExpiresIn), transform)
 	if tok == "" {
 		storageErr(c, 500, "internal", "Failed to create signed URL")
 		return
 	}
-	c.JSON(200, gin.H{"signedURL": signedDownloadURL(bucketName, objPath, tok)})
+	u := signedDownloadURL(bucketName, objPath, tok)
+	if transform != "" {
+		u = "/render/image" + strings.TrimPrefix(u, "/object")
+	}
+	c.JSON(200, gin.H{"signedURL": u})
+}
+
+type signTransform struct {
+	Width   int    `json:"width"`
+	Height  int    `json:"height"`
+	Resize  string `json:"resize"`
+	Format  string `json:"format"`
+	Quality int    `json:"quality"`
+}
+
+// validate rejects what redemption can't render, so a signed URL never mints a broken image.
+func (t signTransform) validate() error {
+	switch {
+	case t.Quality != 0 && (t.Quality < 20 || t.Quality > 100):
+		return errors.New("quality must be between 20 and 100")
+	case !slices.Contains([]string{"", "origin", "png", "jpg", "jpeg"}, t.Format):
+		return fmt.Errorf("unsupported format: %s", t.Format)
+	case !slices.Contains([]string{"", "cover", "contain", "fill"}, t.Resize):
+		return fmt.Errorf("unsupported resize: %s", t.Resize)
+	}
+	return nil
+}
+
+// query renders the transform canonically so one token binds exactly one rendering.
+func (t signTransform) query() url.Values {
+	q := url.Values{}
+	for k, v := range map[string]string{"resize": t.Resize, "format": t.Format} {
+		if v != "" {
+			q.Set(k, v)
+		}
+	}
+	for k, v := range map[string]int{"width": t.Width, "height": t.Height, "quality": t.Quality} {
+		if v != 0 {
+			q.Set(k, strconv.Itoa(v))
+		}
+	}
+	return q
 }
 
 // signedDownloadURL is relative and unescaped, like Supabase, since storage-js encodeURIs it.
@@ -1262,7 +1438,7 @@ func (h *StorageV1Handler) createSignedURLs(c *gin.Context) {
 	ctx := h.rlsCtx(c)
 	keys := validKeys(req.Paths)
 	visible := map[string]bool{}
-	if len(keys) > 0 {
+	if len(keys) > 0 && anonMayReach(c, h.cfg, bucketName) {
 		rows, err := h.db.Query(ctx, "SELECT name FROM storage.objects WHERE bucket_id = $1 AND name = ANY($2::text[])", bucketName, keys)
 		if err != nil {
 			h.logger.Error("sign urls lookup", "error", err)
@@ -1366,7 +1542,7 @@ func (h *StorageV1Handler) uploadToSignedURL(c *gin.Context) {
 		return
 	}
 
-	file, size, contentType, ok := h.readUpload(c, bucket, nil)
+	file, size, contentType, userMetadata, ok := h.readUpload(c, bucket, nil)
 	if !ok {
 		return
 	}
@@ -1390,7 +1566,7 @@ func (h *StorageV1Handler) uploadToSignedURL(c *gin.Context) {
 		ctx = c.Request.Context()
 	}
 	row := objectRow{bucket: bucketName, name: objPath, size: size, mime: contentType, uploadedBy: nullIfEmpty(owner),
-		metadata: objectMetadataJSON(size, contentType, c.GetHeader("Cache-Control"))}
+		userMetadata: userMetadata, metadata: objectMetadataJSON(size, contentType, c.GetHeader("Cache-Control"))}
 	if err := writeObjectRow(ctx, h.db, row, false, true); err != nil {
 		h.logger.Error("signed upload record", "error", err)
 		storageErr(c, 500, "internal", "Failed to record object")

@@ -5,6 +5,7 @@ package domain
 import (
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -272,6 +273,17 @@ func (t Table) EffectiveRLSEnabled() bool {
 	return len(t.RLS) > 0
 }
 
+// PrimaryKeyColumns returns the primary key field names in declared order.
+func (t Table) PrimaryKeyColumns() []string {
+	var pks []string
+	for _, f := range t.Fields {
+		if f.PrimaryKey {
+			pks = append(pks, f.Name)
+		}
+	}
+	return pks
+}
+
 // GetField returns the named field and true, or zero value and false.
 func (t Table) GetField(name string) (Field, bool) {
 	for _, f := range t.Fields {
@@ -342,6 +354,11 @@ type Index struct {
 	Where   string   `yaml:"where" json:"where"` // partial index condition
 }
 
+// Same reports whether two indexes are declared identically.
+func (i Index) Same(o Index) bool {
+	return i.Unique == o.Unique && i.Where == o.Where && slices.Equal(i.Columns, o.Columns)
+}
+
 // RLSPolicy defines a row-level security policy. Using governs which rows
 // select/update/delete can see or target; WithCheck governs what insert/update
 // is allowed to write. For an update policy, Postgres's auto-fill between the
@@ -371,14 +388,15 @@ type Bucket struct {
 // Postgres stored procedure (CREATE OR REPLACE FUNCTION), exposed at
 // /rest/v1/rpc/<name> for supabase-js .rpc() compatibility.
 type Function struct {
-	Description  string     `yaml:"description" json:"description"`
-	AuthRequired bool       `yaml:"auth_required" json:"auth_required"`
-	Language     string     `yaml:"language,omitempty" json:"language,omitempty"`
-	Volatility   string     `yaml:"volatility,omitempty" json:"volatility,omitempty"`
-	Security     string     `yaml:"security,omitempty" json:"security,omitempty"`
-	Args         []FuncArg  `yaml:"args,omitempty" json:"args,omitempty"`
-	Body         string     `yaml:"body,omitempty" json:"body,omitempty"`
-	Returns      FuncReturn `yaml:"returns" json:"returns"`
+	Description  string            `yaml:"description" json:"description"`
+	AuthRequired bool              `yaml:"auth_required" json:"auth_required"`
+	Language     string            `yaml:"language,omitempty" json:"language,omitempty"`
+	Volatility   string            `yaml:"volatility,omitempty" json:"volatility,omitempty"`
+	Security     string            `yaml:"security,omitempty" json:"security,omitempty"`
+	Set          map[string]string `yaml:"set,omitempty" json:"set,omitempty"`
+	Args         []FuncArg         `yaml:"args,omitempty" json:"args,omitempty"`
+	Body         string            `yaml:"body,omitempty" json:"body,omitempty"`
+	Returns      FuncReturn        `yaml:"returns" json:"returns"`
 
 	// ReturnCategory is derived from Returns.Type at config load.
 	// Values: "void" | "setof" | "scalar".

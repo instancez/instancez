@@ -2,7 +2,11 @@
 // All functions in this package are pure (no *gin.Context dependency).
 package postgrest
 
-import "github.com/instancez/instancez/internal/domain"
+import (
+	"strings"
+
+	"github.com/instancez/instancez/internal/domain"
+)
 
 // Embed represents a relation embed in a select parameter.
 type Embed struct {
@@ -15,12 +19,39 @@ type Embed struct {
 	IsReverse bool
 	Inner     bool
 	Spread    bool
+	Junction  *Junction
 	Children  []Embed
 
 	Where  *WhereNode
 	Order  []OrderClause
 	Limit  *int
 	Offset *int
+}
+
+// Junction is the link table of a many-to-many embed.
+type Junction struct {
+	Table        string
+	SourceColumn string
+	SourceRef    string
+	TargetColumn string
+	TargetRef    string
+}
+
+// AmbiguousEmbedError is PostgREST's PGRST201.
+type AmbiguousEmbedError struct {
+	Parent  string
+	Target  string
+	Details []map[string]string
+	Hints   []string
+}
+
+func (e *AmbiguousEmbedError) Error() string {
+	return "Could not embed because more than one relationship was found for '" + e.Parent + "' and '" + e.Target + "'"
+}
+
+// Hint lists the disambiguated embed names, as PostgREST does.
+func (e *AmbiguousEmbedError) Hint() string {
+	return "Try changing '" + e.Target + "' to one of the following: " + strings.Join(e.Hints, ", ") + ". Find the desired relationship in the 'details' key."
 }
 
 // OutputKey returns the JSON key for this embed in responses.

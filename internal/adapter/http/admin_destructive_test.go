@@ -69,3 +69,35 @@ func TestHandlePutConfig_DestructiveChangeIsUnprocessable(t *testing.T) {
 		t.Errorf("a rejected migration must not write config; got %d writes", src.writeCalls)
 	}
 }
+
+func TestHandlePutConfig_PrimaryKeyChangeIsUnprocessable(t *testing.T) {
+	prior := `{"version":1,"tables":{"members":{"fields":[
+		{"name":"a","type":"int","primary_key":true},
+		{"name":"b","type":"int"}
+	]}}}`
+	src := &stubSource{readBytes: []byte("version: 1\n"), readVersion: "v1"}
+	h := &AdminHandler{
+		db:            &priorConfigDB{stubDB: &stubDB{}, configJSON: prior},
+		configSource:  src,
+		dashboardMode: DashboardReadwrite,
+		logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	r := gin.New()
+	r.PUT("/config", h.handlePutConfig)
+
+	body := bytes.NewReader([]byte(`{"version":1,"tables":{"members":{"fields":[
+		{"name":"a","type":"int","primary_key":true},
+		{"name":"b","type":"int","primary_key":true}
+	]}}}`))
+	req := httptest.NewRequest(http.MethodPut, "/config", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 422 || !strings.Contains(w.Body.String(), `members: (a) -\u003e (a, b)`) {
+		t.Fatalf("status = %d, want 422 naming the table: %s", w.Code, w.Body.String())
+	}
+	if src.writeCalls != 0 {
+		t.Errorf("a rejected migration must not write config; got %d writes", src.writeCalls)
+	}
+}

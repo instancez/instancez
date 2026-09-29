@@ -15,18 +15,18 @@ func TestPrimaryKeyColumns(t *testing.T) {
 			{Name: "sub", Type: "uuid", PrimaryKey: true},
 		},
 	}
-	pks := primaryKeyColumns(table)
+	pks := table.PrimaryKeyColumns()
 	if len(pks) != 2 {
 		t.Fatalf("got %v, want 2 pks", pks)
 	}
 	if pks[0] != "id" || pks[1] != "sub" {
-		t.Errorf("pks = %v", pks) // must be sorted
+		t.Errorf("pks = %v", pks)
 	}
 }
 
 func TestPrimaryKeyColumns_Empty(t *testing.T) {
 	table := domain.Table{Fields: []domain.Field{{Name: "title", Type: "text"}}}
-	if len(primaryKeyColumns(table)) != 0 {
+	if len(table.PrimaryKeyColumns()) != 0 {
 		t.Error("expected no pks")
 	}
 }
@@ -95,12 +95,28 @@ func TestBuildUpsertQuery_Ignore(t *testing.T) {
 	}
 }
 
-func TestBuildUpsertQuery_PKOnlyBodyFallsBackToDoNothing(t *testing.T) {
-	// Record contains only the conflict column — nothing to update.
-	record := map[string]any{"id": 1}
-	sql, _ := buildUpsertQuery("todos", record, []string{"id"}, "merge", false)
+func TestBuildUpsertQuery_KeyOnlyBodyUpdatesKeysToReturnRow(t *testing.T) {
+	sql, _ := buildUpsertQuery("todos", map[string]any{"id": 1}, []string{"id"}, "merge", true)
+	if !strings.Contains(sql, "DO UPDATE SET id = EXCLUDED.id") || !strings.HasSuffix(sql, " RETURNING *") {
+		t.Errorf("key-only merge must DO UPDATE so RETURNING yields the row: %s", sql)
+	}
+	sql, _ = buildUpsertQuery("j", map[string]any{"a": 1, "b": 2}, []string{"a", "b"}, "merge", true)
+	if !strings.Contains(sql, "DO UPDATE SET a = EXCLUDED.a, b = EXCLUDED.b") {
+		t.Errorf("composite key-only merge: %s", sql)
+	}
+}
+
+func TestBuildUpsertQuery_KeyOnlyIgnoreStaysDoNothing(t *testing.T) {
+	sql, _ := buildUpsertQuery("todos", map[string]any{"id": 1}, []string{"id"}, "ignore", true)
 	if !strings.Contains(sql, "DO NOTHING") {
-		t.Errorf("expected DO NOTHING fallback, got: %s", sql)
+		t.Errorf("ignore must stay DO NOTHING: %s", sql)
+	}
+}
+
+func TestBuildUpsertQuery_EmptyRecordDoesNotEmitEmptySet(t *testing.T) {
+	sql, _ := buildUpsertQuery("todos", map[string]any{}, []string{"id"}, "merge", false)
+	if strings.Contains(sql, "DO UPDATE SET ") {
+		t.Errorf("empty SET list: %s", sql)
 	}
 }
 

@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -915,8 +917,10 @@ func TestHarden_LocksThenRevokesInOneTx(t *testing.T) {
 		if err := NewMigrator(db).Harden(context.Background(), cfg); err != nil {
 			t.Fatalf("Harden(%+v): %v", cfg, err)
 		}
-		if len(db.execs) == 0 || !strings.Contains(db.execs[0], "pg_advisory_xact_lock") {
-			t.Fatalf("advisory lock must be the first statement: %v", db.execs)
+		revoke := slices.IndexFunc(db.execs, func(q string) bool { return strings.Contains(q, "REVOKE ALL ON ALL TABLES IN SCHEMA auth") })
+		if revoke < 3 || !slices.ContainsFunc(db.execs[:revoke], func(q string) bool { return strings.Contains(q, "pg_advisory_xact_lock") }) ||
+			strings.Contains(strings.Join(db.execs[revoke-3:revoke], ""), "DO $$") {
+			t.Fatalf("advisory lock must open the revoke tx: %v", db.execs)
 		}
 		if !db.migrationsTableEnsured {
 			t.Fatal("Harden must ensure _instancez_migrations exists before revoking on it")
@@ -949,7 +953,7 @@ func TestHarden_RollsBackOnFailure(t *testing.T) {
 		t.Fatal("expected error")
 	}
 	if db.committedStatements != 0 {
-		t.Fatalf("partial harden committed %d statements", db.committedStatements)
+		t.Fatalf("partial harden committed %d statements, want none", db.committedStatements)
 	}
 }
 
@@ -1055,7 +1059,7 @@ func TestHarden_NoRestrictiveBucketPolicy_TakesNoStorageLock(t *testing.T) {
 		t.Fatalf("Harden: %v", err)
 	}
 	for _, stmt := range db.execs {
-		if strings.Contains(stmt, "storage.objects") && !strings.Contains(stmt, "FROM pg_policies") {
+		if strings.Contains(stmt, "storage.objects") && !strings.Contains(stmt, "FROM pg_policies") && !strings.Contains(stmt, "FROM pg_indexes") {
 			t.Fatalf("Harden with no restrictive bucket policy must only touch storage.objects behind a pg_policies check, got: %s", stmt)
 		}
 	}
@@ -1127,4 +1131,147 @@ func TestHarden_CorruptAppliedConfigWarns(t *testing.T) {
 	}
 	mustContain(t, logs.String(), "level=WARN")
 	mustContain(t, logs.String(), "invalid character")
+}
+
+type gateDB struct {
+	*fakeDB
+	row   map[string]any
+	delay time.Duration
+}
+
+func (g gateDB) QueryRow(ctx context.Context, query string, args ...any) (map[string]any, error) {
+	return g.row, nil
+}
+
+func (g gateDB) Begin(ctx context.Context) (domain.Tx, error) {
+	tx, err := g.fakeDB.Begin(ctx)
+	return sizeTx{tx, g.row, g.delay}, err
+}
+
+// sizeTx answers the heap-size query from the gate row and records it in the fake's execs.
+type sizeTx struct {
+	domain.Tx
+	row   map[string]any
+	delay time.Duration
+}
+
+func (s sizeTx) QueryRow(ctx context.Context, query string, args ...any) (map[string]any, error) {
+	if strings.Contains(query, "pg_relation_size") {
+		_, _ = s.Exec(ctx, query)
+		time.Sleep(s.delay)
+		return map[string]any{"bytes": s.row["bytes"]}, nil
+	}
+	return s.Tx.QueryRow(ctx, query, args...)
+}
+
+func healExecs(db *fakeDB) (n int, joined string) {
+	for _, q := range db.execs {
+		if strings.Contains(q, "objects_bucket_name") {
+			n++
+		}
+	}
+	return n, strings.Join(db.execs, "\n")
+}
+
+func TestHarden_StorageListHealGate(t *testing.T) {
+	const limit = 1 << 20
+	cases := []struct {
+		name      string
+		row       map[string]any
+		wantSteps int
+		wantWarn  bool
+		wantSized bool
+	}{
+		{"nothing missing", map[string]any{"need_name_index": false, "need_column": false, "bytes": int64(limit + 1)}, 0, false, false},
+		{"no storage table", nil, 0, false, false},
+		{"both missing under the gate", map[string]any{"need_name_index": true, "need_column": true, "bytes": int64(limit)}, 2, false, true},
+		{"only the column missing", map[string]any{"need_name_index": false, "need_column": true, "bytes": int64(0)}, 1, false, true},
+		{"oversize skips the index too", map[string]any{"need_name_index": true, "need_column": true, "bytes": int64(limit + 1)}, 0, true, true},
+		{"oversize with only the index missing", map[string]any{"need_name_index": true, "need_column": false, "bytes": int64(limit + 1)}, 0, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			fake := newFakeDB(t)
+			m := NewMigrator(gateDB{fake, tc.row, 0}).StorageHealLimits(3*time.Second, limit)
+			m.logger = slog.New(slog.NewTextHandler(&logs, nil))
+			if err := m.Harden(context.Background(), nil); err != nil {
+				t.Fatal(err)
+			}
+			steps, joined := healExecs(fake)
+			if sized := strings.Contains(joined, "pg_relation_size"); sized != tc.wantSized {
+				t.Fatalf("size query ran = %v, want %v", sized, tc.wantSized)
+			}
+			if steps != tc.wantSteps {
+				t.Fatalf("ran %d heal steps, want %d", steps, tc.wantSteps)
+			}
+			if tc.wantSteps > 0 {
+				mustContain(t, joined, "statement_timeout")
+			}
+			if got := strings.Contains(logs.String(), "CREATE INDEX CONCURRENTLY"); got != tc.wantWarn {
+				t.Fatalf("manual SQL in warning = %v, want %v: %s", got, tc.wantWarn, logs.String())
+			}
+		})
+	}
+}
+
+// Heal DDL leaks into the fresh plan, ProvisionIdempotent and diffNewStorage, so none of them may alter or index a table that has rows.
+func TestGenerateStorageTables_HasNoUnboundedHeal(t *testing.T) {
+	stmts := generateStorageTables(&domain.Config{Storage: map[string]domain.Bucket{"b": {}}})
+	joined := strings.Join(stmts, "\n")
+	mustContain(t, joined, `name_lower TEXT COLLATE "C" GENERATED ALWAYS AS (lower(name)) STORED,`)
+	mustNotContain(t, joined, "ADD COLUMN name_lower")
+	for _, stmt := range stmts {
+		if strings.Contains(stmt, "CREATE INDEX") && !strings.Contains(stmt, "IF NOT EXISTS (SELECT 1 FROM storage.objects LIMIT 1)") {
+			t.Errorf("index build must be guarded by an empty-table check: %s", stmt)
+		}
+	}
+	mustContain(t, strings.Join(diffNewStorage(&domain.Config{}, &domain.Config{Storage: map[string]domain.Bucket{"b": {}}}), "\n"), "name_lower")
+}
+
+// budgetTx makes every heal tx (the ones that set statement_timeout) lose its lock wait after a pause.
+type budgetTx struct {
+	domain.Tx
+	rec     *[]string
+	healing bool
+}
+
+func (b *budgetTx) Exec(ctx context.Context, query string, args ...any) (int64, error) {
+	if strings.Contains(query, "set_config('statement_timeout'") {
+		b.healing = true
+	}
+	if strings.Contains(query, "set_config('lock_timeout'") && b.healing {
+		*b.rec = append(*b.rec, args[0].(string))
+	}
+	if b.healing && strings.Contains(query, "pg_advisory_xact_lock") {
+		time.Sleep(60 * time.Millisecond)
+		return 0, errors.New("lock timeout")
+	}
+	return b.Tx.Exec(ctx, query, args...)
+}
+
+type budgetDB struct {
+	gateDB
+	rec *[]string
+}
+
+func (b budgetDB) Begin(ctx context.Context) (domain.Tx, error) {
+	tx, err := b.gateDB.Begin(ctx)
+	return &budgetTx{Tx: tx, rec: b.rec}, err
+}
+
+// Both heal txs share one lock-wait budget, so a boot never waits it twice.
+func TestHarden_StorageListHealStepsShareTheLockBudget(t *testing.T) {
+	var rec []string
+	row := map[string]any{"need_name_index": true, "need_column": true, "bytes": int64(0)}
+	db := budgetDB{gateDB{newFakeDB(t), row, 80 * time.Millisecond}, &rec}
+	if err := NewMigrator(db).LockTimeout(500*time.Millisecond).Harden(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if first, err := strconv.Atoi(strings.TrimSuffix(rec[0], "ms")); len(rec) != 2 || err != nil || first > 420 || first < 300 {
+		t.Fatalf("lock_timeout per heal tx = %v, want the budget less the gate's wait first", rec)
+	}
+	if got, err := strconv.Atoi(strings.TrimSuffix(rec[1], "ms")); err != nil || got > 360 || got < 1 {
+		t.Fatalf("second heal tx must only get what the first left (<=360ms), got %q", rec[1])
+	}
 }

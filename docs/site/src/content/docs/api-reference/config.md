@@ -142,7 +142,7 @@ tables:
 |-----|------|---------|-------------|
 | `fields[].name` | `string` | required | Column name. |
 | `fields[].type` | `string` | required | Postgres type (e.g. `text`, `bigint`, `uuid`, `timestamptz`, `text[]`). |
-| `fields[].primary_key` | `boolean` | `false` | Mark as primary key. |
+| `fields[].primary_key` | `boolean` | `false` | Mark as primary key. Mark several fields for a composite key. The key's columns can't change once the table exists, except for dropping a single key column and adding one new key column in the same change. |
 | `fields[].required` | `boolean` | `false` | Add `NOT NULL` constraint. |
 | `fields[].unique` | `boolean` | `false` | Add `UNIQUE` constraint. |
 | `fields[].default` | `any` | — | Column default. Supported: literal values, `now()`, `current_date`, `current_time`. The shorthand `uuid_v7()` and `uuid_v4()` are normalized to `gen_random_uuid()`. |
@@ -157,6 +157,23 @@ tables:
 | `fields[].on_delete` | `string` | — | (`ref` only) `cascade` or `keep` — whether to delete the object on row deletion. |
 
 No columns are injected automatically. Every column, including primary keys, must be declared.
+
+A composite primary key marks each of its fields:
+
+```yaml
+tables:
+  memberships:
+    fields:
+      - name: team_id
+        primary_key: true
+        foreign_key:
+          references: teams.id
+      - name: user_id
+        type: uuid
+        primary_key: true
+```
+
+To reference one column of a composite key from another table's `foreign_key`, that column must be unique on its own: add a unique index on it (`indexes: [{columns: [serial], unique: true}]`). `unique: true` on an existing column adds no constraint. See [Schema](/instancez/build/schema/).
 
 ### tables.\<name\>.rls_enabled
 
@@ -246,6 +263,7 @@ rpc:
 | `rpc.<name>.args[].required` | `boolean` | `false` | Return 400 if argument is absent. |
 | `rpc.<name>.args[].default` | `any` | — | Postgres DEFAULT value for optional args. |
 | `rpc.<name>.returns.type` | `string` | — | Return type: `void`, `record`, a scalar or composite type, `setof <type>`, or `table(col type, …)`. |
+| `rpc.<name>.set` | `map` | — | Map of `search_path`, `statement_timeout`, `lock_timeout`, `work_mem`, emitted as `SET` on the function. |
 | `rpc.<name>.body` | `string` | required | Function body (PL/pgSQL or SQL). |
 
 ## functions

@@ -3,6 +3,7 @@ package http
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -103,6 +105,10 @@ func newStorageHandler(db domain.Database, store domain.ObjectStore, storage map
 // getSession() returns it, bypassing the jwtAuth middleware.
 func setTestSession(c *gin.Context, s domain.Session) {
 	c.Set(contextKeySession, s)
+}
+
+func asAuthenticated(c *gin.Context) {
+	setTestSession(c, domain.Session{UserID: "u-1", Role: domain.JWTRoleAuthenticated, IsAuthenticated: true})
 }
 
 // --- Bucket handler tests ---
@@ -1159,7 +1165,7 @@ func TestObjectGetDispatch_Default_MissingSegments(t *testing.T) {
 	}
 }
 
-func TestObjectGetDispatch_Authenticated_MissingAuth(t *testing.T) {
+func TestObjectGetDispatch_Authenticated_AnonNoRLSIs404(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	buckets := map[string]domain.Bucket{"avatars": {Public: false}}
 	h := newStorageHandler(&stubDB{}, &stubObjectStore{}, buckets)
@@ -1171,8 +1177,8 @@ func TestObjectGetDispatch_Authenticated_MissingAuth(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/storage/v1/object/authenticated/avatars/photo.jpg", nil)
 	r.ServeHTTP(w, req)
 
-	if w.Code != 401 {
-		t.Fatalf("expected 401, got %d: %s", w.Code, w.Body.String())
+	if w.Code != 404 {
+		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -1306,112 +1312,127 @@ func TestListObjects_Empty(t *testing.T) {
 
 func TestListObjects_PrefixStrippedFromNames(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	var gotQuery string
 	var gotArgs []any
-	db := &stubDB{queryFn: func(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
-		gotQuery = q
+	db := &stubDB{queryFn: func(_ context.Context, _ string, args ...any) ([]map[string]any, error) {
 		gotArgs = args
-		return []map[string]any{{"name": "folder/photo.jpg", "uploaded_at": "2024-01-01T00:00:00Z"}}, nil
+		return []map[string]any{
+			{"name": "folder/sub/", "folder": true},
+			{"name": "folder/photo.jpg", "id": "u1", "folder": false},
+		}, nil
 	}}
-	buckets := map[string]domain.Bucket{"avatars": {}}
-	h := newStorageHandler(db, &stubObjectStore{}, buckets)
-
-	w := httptest.NewRecorder()
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
 	r := gin.New()
 	r.POST("/storage/v1/object/list/:bucket", h.listObjects)
 
-	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/list/avatars", strings.NewReader(`{"prefix":"folder/"}`))
-	req.Header.Set("Content-Type", "application/json")
-	r.ServeHTTP(w, req)
-
-	if w.Code != 200 {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	if !strings.Contains(gotQuery, "LIKE") {
-		t.Errorf("expected prefix filter in query, got %q", gotQuery)
-	}
-	if len(gotArgs) < 2 || gotArgs[1] != "folder/%" {
-		t.Errorf("expected prefix arg 'folder/%%', got %v", gotArgs)
-	}
+	w := serve(r, "POST", "/storage/v1/object/list/avatars", `{"prefix":"folder","search":"ph"}`, nil)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Equal(t, "folder/ph", gotArgs[1], "a folder prefix gains a trailing slash and search extends it")
+	assert.Equal(t, 9, gotArgs[2], "folders split after prefix+search")
 	var body []map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
-	}
-	if len(body) != 1 || body[0]["name"] != "photo.jpg" {
-		t.Fatalf("expected relative name 'photo.jpg', got %v", body)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Len(t, body, 2)
+	assert.Equal(t, map[string]any{"name": "sub", "id": nil, "updated_at": nil, "created_at": nil, "last_accessed_at": nil, "metadata": nil}, body[0])
+	assert.Equal(t, "photo.jpg", body[1]["name"])
+	assert.Equal(t, "u1", body[1]["id"])
+}
+
+func TestListObjects_LimitsAndOptions(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var q string
+	var args []any
+	db := &stubDB{queryFn: func(_ context.Context, query string, a ...any) ([]map[string]any, error) {
+		q, args = query, a
+		return nil, nil
+	}}
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"b": {}})
+	r := gin.New()
+	r.POST("/storage/v1/object/list/:bucket", h.listObjects)
+	r.POST("/storage/v1/object/list-v2/:bucket", h.listObjectsV2)
+
+	w := serve(r, "POST", "/storage/v1/object/list/b", `{"limit":99999,"offset":-3,"sortBy":{"column":"created_at","order":"desc"}}`, nil)
+	require.Equal(t, 200, w.Code)
+	assert.Equal(t, "[]", strings.TrimSpace(w.Body.String()))
+	assert.Equal(t, []any{1500, 0}, args[len(args)-2:], "limit caps at 1500 like storage.search, offset floors at 0")
+	assert.Contains(t, q, "ORDER BY folder DESC")
+	assert.Contains(t, q, "starts_with(lower(name), lower($2))", "v1 matches case-insensitively without LIKE wildcards")
+
+	serve(r, "POST", "/storage/v1/object/list-v2/b", `{"prefix":"a_%"}`, nil)
+	assert.Equal(t, []any{1001, 0}, args[len(args)-2:], "v2 defaults to 1000 and fetches one extra")
+	assert.Contains(t, q, "starts_with(n.k, $2)", "v2 walks the prefix range byte-wise")
+	assert.Equal(t, "a_%", args[1], "wildcards are literal")
+
+	for _, cur := range []string{"%%%", encodeListCursor(listCursor{}), base64.RawURLEncoding.EncodeToString([]byte(`{"n":"a","t":"yesterday"}`))} {
+		w = serve(r, "POST", "/storage/v1/object/list-v2/b", `{"cursor":"`+cur+`"}`, nil)
+		assert.Equal(t, 400, w.Code, cur)
 	}
 }
 
 func TestListObjectsV2_Pagination(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := &stubDB{queryFn: func(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
-		// Limit=2 requested; fetchLimit=3 rows returned to signal hasNext.
-		return []map[string]any{
-			{"name": "a.jpg"}, {"name": "b.jpg"}, {"name": "c.jpg"},
-		}, nil
+	var args []any
+	db := &stubDB{queryFn: func(_ context.Context, _ string, a ...any) ([]map[string]any, error) {
+		args = a
+		return []map[string]any{{"name": "a.jpg", "id": "1"}, {"name": "b.jpg", "id": "2"}, {"name": "c.jpg", "id": "3"}}, nil
 	}}
-	buckets := map[string]domain.Bucket{"avatars": {}}
-	h := newStorageHandler(db, &stubObjectStore{}, buckets)
-
-	w := httptest.NewRecorder()
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
 	r := gin.New()
 	r.POST("/storage/v1/object/list-v2/:bucket", h.listObjectsV2)
 
-	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/list-v2/avatars", strings.NewReader(`{"limit":2}`))
-	req.Header.Set("Content-Type", "application/json")
-	r.ServeHTTP(w, req)
-
-	if w.Code != 200 {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
+	w := serve(r, "POST", "/storage/v1/object/list-v2/avatars", `{"limit":2}`, nil)
+	require.Equal(t, 200, w.Code, w.Body.String())
 	var resp map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatal(err)
-	}
-	if resp["has_next"] != true {
-		t.Errorf("expected has_next=true, got %v", resp["has_next"])
-	}
-	objects, _ := resp["objects"].([]any)
-	if len(objects) != 2 {
-		t.Fatalf("expected 2 objects (limit applied), got %d: %v", len(objects), objects)
-	}
-	if resp["next_cursor"] != "b.jpg" {
-		t.Errorf("expected next_cursor='b.jpg' (last of the truncated page), got %v", resp["next_cursor"])
-	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, true, resp["hasNext"])
+	assert.NotContains(t, resp, "has_next")
+	require.Len(t, resp["objects"], 2)
+	assert.Equal(t, "b.jpg", resp["nextCursorKey"])
+	cur, ok := decodeListCursor(resp["nextCursor"].(string))
+	require.True(t, ok)
+	assert.Equal(t, "b.jpg", cur.Name)
+
+	serve(r, "POST", "/storage/v1/object/list-v2/avatars", `{"limit":2,"cursor":"`+resp["nextCursor"].(string)+`"}`, nil)
+	assert.Contains(t, args, "b.jpg\x01", "the cursor resumes at the smallest key after the last name")
 }
 
-func TestListObjectsV2_WithDelimiterGroupsFolders(t *testing.T) {
+func TestListObjectsV2_WithDelimiterShapes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := &stubDB{queryFn: func(ctx context.Context, q string, args ...any) ([]map[string]any, error) {
+	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) {
 		return []map[string]any{
-			{"name": "folder/a.jpg"}, {"name": "folder/b.jpg"}, {"name": "top.jpg"},
+			{"name": "dir/sub/", "folder": true},
+			{"name": "dir/top.jpg", "id": "7", "folder": false},
 		}, nil
 	}}
-	buckets := map[string]domain.Bucket{"avatars": {}}
-	h := newStorageHandler(db, &stubObjectStore{}, buckets)
-
-	w := httptest.NewRecorder()
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
 	r := gin.New()
 	r.POST("/storage/v1/object/list-v2/:bucket", h.listObjectsV2)
 
-	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/list-v2/avatars", strings.NewReader(`{"with_delimiter":true}`))
-	req.Header.Set("Content-Type", "application/json")
-	r.ServeHTTP(w, req)
+	w := serve(r, "POST", "/storage/v1/object/list-v2/avatars", `{"prefix":"dir/","with_delimiter":true}`, nil)
+	require.Equal(t, 200, w.Code)
+	var resp struct {
+		HasNext bool             `json:"hasNext"`
+		Folders []map[string]any `json:"folders"`
+		Objects []map[string]any `json:"objects"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.False(t, resp.HasNext)
+	assert.Equal(t, []map[string]any{{"id": nil, "name": "dir/sub/", "bucket_id": "avatars", "updated_at": nil, "created_at": nil, "last_accessed_at": nil}}, resp.Folders)
+	require.Len(t, resp.Objects, 1)
+	assert.Equal(t, "dir/top.jpg", resp.Objects[0]["name"], "v2 names are full keys")
+	assert.Equal(t, "top.jpg", resp.Objects[0]["key"])
 
-	if w.Code != 200 {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	var resp map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatal(err)
-	}
-	folders, _ := resp["folders"].([]any)
-	objects, _ := resp["objects"].([]any)
-	if len(folders) != 1 {
-		t.Fatalf("expected 1 deduped folder, got %d: %v", len(folders), folders)
-	}
-	if len(objects) != 1 {
-		t.Fatalf("expected 1 top-level object, got %d: %v", len(objects), objects)
+	w = serve(r, "POST", "/storage/v1/object/list-v2/avatars", `{"prefix":"dir/"}`, nil)
+	resp.Objects = nil
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.NotContains(t, resp.Objects[0], "key", "no key without a delimiter")
+}
+
+func TestSplitPart(t *testing.T) {
+	for _, tc := range []struct {
+		s    string
+		n    int
+		want string
+	}{{"a/b/c", 1, "a"}, {"a/b/c", 3, "c"}, {"a/b/c", 4, ""}, {"a/b/", 3, ""}, {"", 1, ""}, {"a", 0, ""}} {
+		assert.Equal(t, tc.want, splitPart(tc.s, tc.n), "%s %d", tc.s, tc.n)
 	}
 }
 
@@ -1477,7 +1498,7 @@ func TestRemoveObjects_OnlyDeletesRowsRLSReturned(t *testing.T) {
 	}
 	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
 	r := gin.New()
-	r.DELETE("/storage/v1/object/:bucket", h.removeObjects)
+	r.DELETE("/storage/v1/object/:bucket", asAuthenticated, h.removeObjects)
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodDelete, "/storage/v1/object/avatars",
 		strings.NewReader(`{"prefixes":["photo.jpg","/hidden.jpg","../escape","","ünï.png"]}`))
@@ -1518,7 +1539,7 @@ func TestRemoveObjects_DBErrorSkipsStore(t *testing.T) {
 	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) { return nil, errors.New("db down") }}
 	h := newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}})
 	r := gin.New()
-	r.DELETE("/storage/v1/object/:bucket", h.removeObjects)
+	r.DELETE("/storage/v1/object/:bucket", asAuthenticated, h.removeObjects)
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodDelete, "/storage/v1/object/avatars", strings.NewReader(`{"prefixes":["a"]}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -1735,6 +1756,9 @@ func TestCopyObject_OrderAndOwner(t *testing.T) {
 func TestCopyObject_AnonOwnerIsNull(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h, _, args := moveCopyHarness(t, 1, nil, nil, nil)
+	for name := range h.cfg.Storage {
+		h.cfg.Storage[name] = domain.Bucket{RLS: []domain.RLSPolicy{{Operations: []string{"select", "insert"}, Using: "true", WithCheck: "true"}}}
+	}
 	w := runMoveCopyAs(h, domain.Session{Role: "anon"}, "/storage/v1/object/copy", copyBody)
 	require.Equal(t, 200, w.Code, w.Body.String())
 	assert.Nil(t, (*args)[4], "empty user id must bind as NULL, not ''")
@@ -1795,7 +1819,7 @@ func TestCreateSignedURLs_EnforcesRLSPerPath(t *testing.T) {
 	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
 	h.jwtKeys = stubKeys(t)
 	r := gin.New()
-	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
+	r.POST("/storage/v1/object/sign/:bucket", asAuthenticated, h.createSignedURLs)
 
 	body := `{"expiresIn":60,"paths":["good.jpg","secret.jpg","../x","ünï.png",""]}`
 	w := httptest.NewRecorder()
@@ -1824,7 +1848,7 @@ func TestCreateSignedURLs_BadInput(t *testing.T) {
 	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) { queried = true; return nil, nil }}
 	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
 	r := gin.New()
-	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
+	r.POST("/storage/v1/object/sign/:bucket", asAuthenticated, h.createSignedURLs)
 	tooMany, _ := json.Marshal(map[string]any{"paths": make([]string, maxSignPaths+1)})
 	for _, body := range []string{`{"paths":[]}`, `{}`, `not json`, string(tooMany), `{"expiresIn":"abc","paths":["a"]}`} {
 		w := httptest.NewRecorder()
@@ -1841,7 +1865,7 @@ func TestCreateSignedURLs_DBErrorIs500(t *testing.T) {
 	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) { return nil, errors.New("db down") }}
 	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
 	r := gin.New()
-	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
+	r.POST("/storage/v1/object/sign/:bucket", asAuthenticated, h.createSignedURLs)
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars", strings.NewReader(`{"paths":["a"]}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -1864,7 +1888,7 @@ func TestCreateSignedURLs_ExactCapAndDuplicates(t *testing.T) {
 	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
 	h.jwtKeys = stubKeys(t)
 	r := gin.New()
-	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
+	r.POST("/storage/v1/object/sign/:bucket", asAuthenticated, h.createSignedURLs)
 
 	// Exactly maxSignPaths valid paths must pass (not >=).
 	paths := make([]string, maxSignPaths)
@@ -1902,7 +1926,7 @@ func TestCreateSignedURLs_ExpiryClamped(t *testing.T) {
 	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
 	h.jwtKeys = stubKeys(t)
 	r := gin.New()
-	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
+	r.POST("/storage/v1/object/sign/:bucket", asAuthenticated, h.createSignedURLs)
 	cases := map[string]time.Duration{
 		`{"expiresIn":60,"paths":["a"]}`:       time.Minute,
 		`{"paths":["a"]}`:                      time.Hour,
@@ -2336,7 +2360,7 @@ func TestUploadObject_RecordsRealSize(t *testing.T) {
 		r.ServeHTTP(w, req)
 		require.Equal(t, 200, w.Code, tc.name+": "+w.Body.String())
 		assert.Equal(t, tc.content, stored, tc.name)
-		require.Len(t, args, 6, tc.name)
+		require.Len(t, args, 7, tc.name)
 		assert.Equal(t, int64(len(tc.content)), args[2], tc.name)
 		assert.Equal(t, "text/plain", args[3], tc.name)
 		assert.Contains(t, args[4], fmt.Sprintf(`"size":%d`, len(tc.content)), tc.name)
@@ -2397,7 +2421,7 @@ func TestWriteObjectRow(t *testing.T) {
 		} else {
 			assert.EqualError(t, err, tc.want.Error(), tc.name)
 		}
-		assert.Equal(t, []any{"b", "n", int64(3), "text/plain", "{}", nil}, args, tc.name)
+		assert.Equal(t, []any{"b", "n", int64(3), "text/plain", "{}", nil, "{}"}, args, tc.name)
 	}
 }
 
@@ -2447,7 +2471,7 @@ func TestUploadToSignedURL_Hardening(t *testing.T) {
 		w := do(h, body, ct)
 		require.Equal(t, 200, w.Code, w.Body.String())
 		assert.Equal(t, "blob body", *stored, "multipart framing stored as file content")
-		require.Len(t, *args, 6)
+		require.Len(t, *args, 7)
 		assert.Equal(t, int64(len("blob body")), (*args)[2])
 		assert.Nil(t, (*args)[5], "anonymous token must record NULL uploaded_by")
 	})
@@ -2700,7 +2724,10 @@ func TestRedeemSignedURL_LocalProviderStreams(t *testing.T) {
 	assert.Equal(t, "meow", w.Body.String())
 	assert.Equal(t, "image/png", w.Header().Get("Content-Type"))
 	assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
-	assert.Equal(t, "private, max-age=3600", w.Header().Get("Cache-Control"))
+	exp, err := strconv.ParseInt(strings.Split(tok, ".")[0], 10, 64)
+	require.NoError(t, err)
+	assert.Equal(t, time.Unix(exp, 0).UTC().Format(http.TimeFormat), w.Header().Get("Expires"), "the cache dies with the token")
+	assert.Empty(t, w.Header().Get("Cache-Control"), "a max-age would outlive a short token")
 	assert.Equal(t, "attachment; filename*=utf-8''%C3%BC.png", w.Header().Get("Content-Disposition"))
 	assert.Empty(t, w.Header().Get("Location"))
 	assert.Equal(t, 1, calls.download)
@@ -2809,7 +2836,7 @@ func TestCreateSignedURL_NoSigningKeyFails(t *testing.T) {
 	h.jwtKeys = app.NewJWTKeyManager(db)
 	r := gin.New()
 	r.POST("/storage/v1/object/sign/:bucket/*path", h.createSignedURL)
-	r.POST("/storage/v1/object/sign/:bucket", h.createSignedURLs)
+	r.POST("/storage/v1/object/sign/:bucket", asAuthenticated, h.createSignedURLs)
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/storage/v1/object/sign/avatars/a", strings.NewReader(`{}`)))
@@ -2962,4 +2989,26 @@ func TestServeDownload_NonPublicRouteKeepsCallerRLS(t *testing.T) {
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/dl/pub/a.txt", nil))
 	require.Equal(t, 200, w.Code, w.Body.String())
 	assert.Equal(t, []string{"authenticated[pub a.txt]"}, queried, "only the public route may bypass RLS")
+}
+
+func TestList_NULInTextIs400NotDBError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) {
+		return nil, errors.New("invalid byte sequence for encoding UTF8: 0x00")
+	}}
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.POST("/storage/v1/object/list/:bucket", h.listObjects)
+	r.POST("/storage/v1/object/list-v2/:bucket", h.listObjectsV2)
+	nulCursor := encodeListCursor(listCursor{Name: "a\x00b"})
+
+	for _, tc := range []struct{ path, body string }{
+		{"list", `{"prefix":"a\u0000b"}`},
+		{"list", `{"search":"a\u0000b"}`},
+		{"list-v2", `{"prefix":"a\u0000b"}`},
+		{"list-v2", `{"cursor":"` + nulCursor + `"}`},
+	} {
+		w := serve(r, "POST", "/storage/v1/object/"+tc.path+"/avatars", tc.body, nil)
+		assert.Equal(t, 400, w.Code, "%s %s: %s", tc.path, tc.body, w.Body.String())
+	}
 }

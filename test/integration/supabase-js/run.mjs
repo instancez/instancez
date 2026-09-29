@@ -768,6 +768,59 @@ await step('rest: nested embed — has-many with nested belongs-to', async () =>
   assertEq(comment.todos.title, todo.title, 'nested todo title should match parent title')
 })
 
+await step("rest: many-to-many embed through a junction — select('*, labels(*)')", async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { data: todos, error: tErr } = await client
+    .from('todos').insert([{ title: 'm2m', user_id: userId }, { title: 'm2m bare', user_id: userId }]).select('id').order('id')
+  if (tErr) throw tErr
+  const ids = todos.map((t) => t.id)
+  let labelIds = []
+  try {
+    const { data: labels, error: lErr } = await client.from('labels').insert([{ name: 'red' }, { name: 'blue' }]).select('id')
+    if (lErr) throw lErr
+    labelIds = labels.map((l) => l.id)
+    const { error: jErr } = await client.from('todo_labels').insert(labelIds.map((id) => ({ todo_id: ids[0], label_id: id })))
+    if (jErr) throw jErr
+
+    const { data: up, error: upErr } = await client
+      .from('todo_labels').upsert({ todo_id: ids[0], label_id: labelIds[0] }).select().single()
+    if (upErr) throw upErr
+    assert(up.todo_id === ids[0] && up.label_id === labelIds[0], 'key-only upsert returns the existing row')
+
+    const { data, error } = await client.from('todos').select('*, labels(*)').in('id', ids).order('id')
+    if (error) throw error
+    assertEq(data.length, 2, 'both todos')
+    assertEq(data[0].labels.map((l) => l.name).sort().join(','), 'blue,red', 'labels via todo_labels')
+    assert(!('todo_id' in data[0].labels[0]), 'junction columns stay out of the target rows')
+    assertEq(JSON.stringify(data[1].labels), '[]', 'no links embed as []')
+
+    const { data: inner, count, error: iErr } = await client
+      .from('todos').select('id, labels!inner(name)', { count: 'exact' }).in('id', ids).eq('labels.name', 'red')
+    if (iErr) throw iErr
+    assertEq(count, 1, '!inner count')
+    assertEq(JSON.stringify(inner), JSON.stringify([{ id: ids[0], labels: [{ name: 'red' }] }]), '!inner rows')
+  } finally {
+    await client.from('todos').delete().in('id', ids)
+    if (labelIds.length) await client.from('labels').delete().in('id', labelIds)
+  }
+})
+
+await step('rest: ambiguous embed — two FKs to one table is PGRST201 / 300', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { data, error, status } = await client.from('label_links').select('*, labels(*)')
+  assertEq(status, 300, 'ambiguous embed status')
+  assertEq(data, null, 'no data')
+  assertEq(error.code, 'PGRST201', 'error code')
+  const { error: okErr } = await client.from('label_links').select('*, labels!label_links_from_id_fkey(*)')
+  assert(!okErr, 'disambiguated embed works')
+})
+
 await step('rest: aliased belongs-to embed — parent:todos(title) on comments', async () => {
   // Regression for the docs/examples/gearstore bug where
   // `category:categories!left(...)` was rejected with "could not find a
@@ -1065,6 +1118,47 @@ await step('rest: .limit() and .range() pagination', async () => {
   assertEq(page2.length, 2, 'range(2,3)')
   assertEq(page2[0].title, 'gamma')
   assertEq(page2[1].title, 'delta')
+})
+
+await step('rest: uncounted .range(5,4) and .limit(-1) are 416, .range(0,-1) is 200 []', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const offside = await client.from('todos').select('id').in('id', filterIds).range(5, 4)
+  assertEq(offside.status, 416, 'offset=5&limit=0 is an empty range, as in PostgREST')
+  assertEq(offside.error?.code, 'PGRST103')
+  assertEq(offside.data, null)
+  const negative = await client.from('todos').select('id').in('id', filterIds).limit(-1)
+  assertEq(negative.status, 416)
+  assertEq(negative.error?.code, 'PGRST103')
+  assertEq(negative.error?.details, 'Limit should be greater than or equal to zero.')
+  const zero = await client.from('todos').select('id').in('id', filterIds).range(0, -1)
+  if (zero.error) throw zero.error
+  assertEq(zero.status, 200)
+  assertEq(zero.data.length, 0)
+})
+
+await step('rest: 206 for a partial counted page, 416 past the end, 200 without a count', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const part = await client.from('todos').select('id', { count: 'exact' }).in('id', filterIds).range(0, 1)
+  if (part.error) throw part.error
+  assertEq(part.status, 206)
+  assertEq(part.count, 5)
+  const full = await client.from('todos').select('id', { count: 'exact' }).in('id', filterIds)
+  assertEq(full.status, 200)
+  const past = await client.from('todos').select('id', { count: 'exact' }).in('id', filterIds).range(100, 101)
+  assertEq(past.status, 416)
+  assertEq(past.error?.code, 'PGRST103')
+  const uncounted = await client.from('todos').select('id').in('id', filterIds).range(100, 101)
+  assertEq(uncounted.status, 200)
+  assertEq(uncounted.data.length, 0)
+  const head = await client.from('todos').select('*', { count: 'exact', head: true }).in('id', filterIds).range(0, 1)
+  assertEq(head.status, 206)
+  assertEq(head.count, 5)
 })
 
 await step('rest: .or() logical disjunction', async () => {
@@ -1395,6 +1489,61 @@ await step('rest: upsert onConflict targets a named unique column, not just the 
   await client.from('todos').delete().eq('id', first.id)
 })
 
+// --- Composite primary key: CRUD, onConflict on both columns, embeds ---
+
+await step('rest: composite primary key insert, upsert onConflict a,b, embed and delete', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { data: todo, error: todoErr } = await client
+    .from('todos').insert({ title: 'composite-parent', user_id: userId }).select().single()
+  if (todoErr) throw todoErr
+  try {
+    const { data: rows, error: insErr } = await client
+      .from('todo_tags').insert([{ todo_id: todo.id, tag: 'a', note: 'n1' }, { todo_id: todo.id, tag: 'b' }]).select()
+    if (insErr) throw insErr
+    assertEq(rows.length, 2, 'inserted two rows sharing todo_id')
+
+    const { error: dupErr } = await client.from('todo_tags').insert({ todo_id: todo.id, tag: 'a' })
+    assertEq(dupErr?.code, '23505', 'duplicate composite key is a unique violation')
+
+    const { data: up, error: upErr } = await client
+      .from('todo_tags').upsert({ todo_id: todo.id, tag: 'a', note: 'n2' }, { onConflict: 'todo_id,tag' }).select().single()
+    if (upErr) throw upErr
+    assertEq(up.note, 'n2', "onConflict: 'todo_id,tag' updated the existing row")
+
+    const { data: upPK, error: upPKErr } = await client
+      .from('todo_tags').upsert({ todo_id: todo.id, tag: 'b', note: 'n3' }).select().single()
+    if (upPKErr) throw upPKErr
+    assertEq(upPK.note, 'n3', 'upsert without onConflict targets the whole composite key')
+
+    const { count, error: countErr } = await client
+      .from('todo_tags').select('*', { count: 'exact', head: true }).eq('todo_id', todo.id)
+    if (countErr) throw countErr
+    assertEq(count, 2, 'upserts updated in place instead of inserting')
+
+    const { data: m2o, error: m2oErr } = await client
+      .from('todo_tags').select('tag, todos(title)').eq('todo_id', todo.id).eq('tag', 'a').single()
+    if (m2oErr) throw m2oErr
+    assertEq(m2o.todos.title, 'composite-parent', 'embed from the composite-key table to its parent')
+
+    const { data: o2m, error: o2mErr } = await client
+      .from('todos').select('id, todo_tags(tag)').eq('id', todo.id).single()
+    if (o2mErr) throw o2mErr
+    assertEq(o2m.todo_tags.map((r) => r.tag).sort().join(','), 'a,b', 'embed from the parent to the composite-key table')
+
+    const { data: deleted, error: delErr } = await client
+      .from('todo_tags').delete().eq('todo_id', todo.id).eq('tag', 'a').select()
+    if (delErr) throw delErr
+    assertEq(deleted.length, 1, 'delete filtered by both key columns removes one row')
+    const { data: left } = await client.from('todo_tags').select('tag').eq('todo_id', todo.id)
+    assertEq(left.map((r) => r.tag).join(','), 'b', 'the other row survives')
+  } finally {
+    await client.from('todos').delete().eq('id', todo.id)
+  }
+})
+
 // --- Range header → 206 + Content-Range ---
 
 await step('rest: Range header yields 206 + Content-Range on a partial result', async () => {
@@ -1413,13 +1562,25 @@ await step('rest: Range header yields 206 + Content-Range on a partial result', 
       apikey: PUBLISHABLE_KEY,
       Range: '0-1',
       'Range-Unit': 'items',
+      Prefer: 'count=exact',
     },
   })
-  assertEq(resp.status, 206, 'partial range returns 206')
+  assertEq(resp.status, 206, 'partial counted range returns 206')
   const contentRange = resp.headers.get('content-range')
-  assert(contentRange && contentRange.startsWith('0-1/'), `Content-Range shape: ${contentRange}`)
+  assertEq(contentRange, '0-1/3')
   const body = await resp.json()
   assertEq(body.length, 2, 'range 0-1 returns 2 rows')
+
+  const uncounted = await fetch(`${URL}/rest/v1/todos?${params}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      apikey: PUBLISHABLE_KEY,
+      Range: '0-1',
+      'Range-Unit': 'items',
+    },
+  })
+  assertEq(uncounted.status, 200, 'Range without a count is 200, as in PostgREST')
+  assertEq(uncounted.headers.get('content-range'), '0-1/*')
 
   for (const r of ins) await client.from('todos').delete().eq('id', r.id)
 })
@@ -1796,9 +1957,16 @@ await step('rpc: setof function with .order().limit()', async () => {
     .rpc('list_todos', undefined, { count: 'exact' })
     .in('title', ['z-last', 'a-first', 'm-middle'])
     .range(10, 11)
-  if (empty.error) throw empty.error
-  assertEq(empty.data.length, 0, 'page past end is empty')
-  assertEq(empty.count, 3, 'page past end still counts')
+  assertEq(empty.status, 416, 'page past the end is 416, as in PostgREST')
+  assertEq(empty.error?.code, 'PGRST103')
+  assertEq(empty.data, null)
+  const partial = await client
+    .rpc('list_todos', undefined, { count: 'exact' })
+    .in('title', ['z-last', 'a-first', 'm-middle'])
+    .range(0, 0)
+  if (partial.error) throw partial.error
+  assertEq(partial.status, 206, 'partial page with a count is 206')
+  assertEq(partial.count, 3)
 
   for (const id of setofIds) {
     await client.from('todos').delete().eq('id', id)
@@ -1831,6 +1999,46 @@ await step('rpc: setof aggregate groups by plain columns; count ignores grouping
     assert(star.error && star.status === 400, `* with an aggregate is a 400: ${JSON.stringify(star.error)}`)
   } finally {
     for (const id of ids) await client.from('todos').delete().eq('id', id)
+  }
+})
+
+await step('rpc: setof aggregate groups by an embed; count stays ungrouped', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { data, count, status, error } = await client
+    .rpc('list_todos', undefined, { count: 'exact' })
+    .select('id, n:id.count(), comments(body)')
+    .eq('id', todoId)
+  if (error) throw error
+  assertEq(status, 200)
+  assertEq(data.length, 1, `one group: ${JSON.stringify(data)}`)
+  assertEq(data[0].n, 1)
+  assert(Array.isArray(data[0].comments) && data[0].comments.some((c) => c.body === 'test comment'), JSON.stringify(data))
+  assertEq(count, 1)
+  assert(!Object.keys(data[0]).some((k) => k.startsWith('__inz_')), 'no helper columns leak')
+})
+
+await step('rpc: has-many !inner drops childless parents and the count; embed alias names the key', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const { data: bare, error: insErr } = await client
+    .from('todos').insert({ title: 'no-comments', user_id: userId }).select('id').single()
+  if (insErr) throw insErr
+  try {
+    const { data, count, error } = await client
+      .rpc('list_todos', undefined, { count: 'exact' })
+      .select('id, c:comments!inner(body)')
+      .in('id', [todoId, bare.id])
+    if (error) throw error
+    assertEq(data.map((r) => r.id).join(','), String(todoId), `childless todo dropped: ${JSON.stringify(data)}`)
+    assertEq(count, 1, 'count drops it too')
+    assert(Array.isArray(data[0].c) && !('comments' in data[0]), `alias is the key: ${JSON.stringify(data)}`)
+  } finally {
+    await client.from('todos').delete().eq('id', bare.id)
   }
 })
 
@@ -2373,6 +2581,49 @@ await step('storage: public bucket downloads for anyone but lists only per RLS',
   assert(ownerList.some(o => o.name === 'gated.txt'), `owner list missing gated.txt: ${JSON.stringify(ownerList)}`)
 })
 
+if (SECRET_KEY) {
+  await step('storage: a guest runs as anon under RLS; buckets without rls stay closed', async () => {
+    const put = await fetch(`${URL}/storage/v1/object/readonly/guest-list.txt`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY, 'Content-Type': 'text/plain', 'x-upsert': 'true' },
+      body: 'guest visible',
+    })
+    assert(put.ok, `admin seed upload failed: ${put.status}`)
+    const guest = createClient(URL, PUBLISHABLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+
+    const { data: list, error: listErr } = await guest.storage.from('readonly').list()
+    assert(!listErr, `guest list errored: ${listErr?.message}`)
+    assert(list.some((o) => o.name === 'guest-list.txt'), `select policy lets anon list: ${JSON.stringify(list)}`)
+    const { data: exists } = await guest.storage.from('readonly').exists('guest-list.txt')
+    assertEq(exists, true, 'anon exists() under a select policy')
+    const { data: info, error: infoErr } = await guest.storage.from('readonly').info('guest-list.txt')
+    assert(!infoErr && info?.name === 'guest-list.txt', `anon info(): ${infoErr?.message}`)
+    const { data: signed, error: signErr } = await guest.storage.from('readonly').createSignedUrl('guest-list.txt', 60)
+    assert(!signErr && signed?.signedUrl, `anon sign under a select policy: ${signErr?.message}`)
+    const redeemed = await fetch(signed.signedUrl)
+    assertEq(redeemed.status, 200, 'guest signed URL redeems')
+    assertEq(await redeemed.text(), 'guest visible')
+    const { error: upErr } = await guest.storage.from('readonly').upload('guest-new.txt', 'x', { contentType: 'text/plain' })
+    assert(upErr, 'readonly has no insert policy, so anon upload is denied by RLS')
+    assertEq(upErr.statusCode, '403', 'RLS-denied anon upload status')
+
+    const { data: openList, error: openErr } = await guest.storage.from('avatars').list()
+    assert(!openErr, `guest list of a bucket without rls must not 401: ${openErr?.message}`)
+    assertEq(openList.length, 0, 'no policy authorizes anon on a bucket without rls')
+    const { error: openUp } = await guest.storage.from('avatars').upload('guest.txt', 'x', { contentType: 'text/plain' })
+    assert(openUp, 'anon upload to a bucket without rls stays denied')
+    assertEq(openUp.statusCode, '403', 'no-rls anon upload has the same status as an RLS denial')
+    const { error: openMv } = await guest.storage.from('avatars').move('a.txt', 'b.txt')
+    assert(openMv, 'anon move on a bucket without rls is denied')
+
+    await fetch(`${URL}/storage/v1/object/readonly`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${SECRET_KEY}`, apikey: SECRET_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prefixes: ['guest-list.txt'] }),
+    })
+  })
+}
+
 await step('storage: download from non-public bucket fails', async () => {
   // First upload to documents (private bucket)
   const up = await fetch(`${URL}/storage/v1/object/documents/secret.txt`, {
@@ -2424,7 +2675,8 @@ await step('storage: listV2 returns cursor-based results', async () => {
   })
   assert(resp.ok, `listV2 failed: ${resp.status}`)
   const result = await resp.json()
-  assert(typeof result.has_next === 'boolean', 'has_next is boolean')
+  assert(typeof result.hasNext === 'boolean', 'hasNext is boolean')
+  assert(!('has_next' in result), 'no snake_case paging keys')
   assert(Array.isArray(result.folders), 'folders is array')
   assert(Array.isArray(result.objects), 'objects is array')
   assert(result.objects.length >= 1, 'at least one object')
@@ -2472,8 +2724,8 @@ await step('storage: listV2 cursor pagination', async () => {
   })
   assert(resp1.ok, `listV2 page1 failed: ${resp1.status}`)
   const page1 = await resp1.json()
-  assert(page1.has_next === true, 'has_next should be true with limit=1')
-  assert(typeof page1.next_cursor === 'string', 'next_cursor present')
+  assert(page1.hasNext === true, 'hasNext should be true with limit=1')
+  assert(typeof page1.nextCursor === 'string', 'nextCursor present')
 
   const resp2 = await fetch(`${URL}/storage/v1/object/list-v2/avatars`, {
     method: 'POST',
@@ -2482,11 +2734,68 @@ await step('storage: listV2 cursor pagination', async () => {
       apikey: PUBLISHABLE_KEY,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ prefix: '', limit: 100, cursor: page1.next_cursor }),
+    body: JSON.stringify({ prefix: '', limit: 100, cursor: page1.nextCursor }),
   })
   assert(resp2.ok, `listV2 page2 failed: ${resp2.status}`)
   const page2 = await resp2.json()
   assert(page2.objects.length >= 1, 'page2 has objects')
+})
+
+await step('storage: list() and listV2() fold nested folders like Supabase', async () => {
+  const bucket = storageClient().storage.from('avatars')
+  const keys = ['tree/a.txt', 'tree/b/one.txt', 'tree/b/deep/two.txt', 'tree/C/three.txt', 'tree/z.txt']
+  for (const k of keys) {
+    const { error } = await bucket.upload(k, 'x', { contentType: 'text/plain', upsert: true })
+    if (error) throw error
+  }
+  try {
+    const { data: v1, error: v1Err } = await bucket.list('tree')
+    if (v1Err) throw v1Err
+    assertEq(v1.map((i) => i.name).join(','), 'a.txt,b,C,z.txt', 'v1 names are relative, folders once, case-insensitive order')
+    const folder = v1.find((i) => i.name === 'b')
+    assertEq(folder.id, null, 'folder id')
+    assertEq(folder.metadata, null, 'folder metadata')
+    assert(/^[0-9a-f-]{36}$/.test(v1.find((i) => i.name === 'a.txt').id), 'file id is a uuid')
+
+    const { data: paged } = await bucket.list('tree', { limit: 2, offset: 1, sortBy: { column: 'name', order: 'desc' } })
+    assertEq(paged.map((i) => i.name).join(','), 'C,b', 'limit/offset/sortBy')
+    const { data: searched } = await bucket.list('tree', { search: 'b' })
+    assertEq(searched.map((i) => i.name).join(','), 'b', 'search is a prefix under the folder')
+
+    const seen = []
+    let cursor
+    for (let i = 0; i < 10; i++) {
+      const { data, error } = await bucket.listV2({ prefix: 'tree/', with_delimiter: true, limit: 2, cursor })
+      if (error) throw error
+      seen.push(...data.folders.map((f) => f.name), ...data.objects.map((o) => o.name))
+      if (!data.hasNext) break
+      assert(data.nextCursor, 'nextCursor with hasNext')
+      cursor = data.nextCursor
+    }
+    assertEq(seen.join(','), 'tree/C/,tree/a.txt,tree/b/,tree/z.txt', 'listV2 pages through full keys in byte order')
+    const { data: flat } = await bucket.listV2({ prefix: 'tree/' })
+    assertEq(flat.objects.length, keys.length, 'without a delimiter every key is listed')
+  } finally {
+    await bucket.remove(keys)
+  }
+})
+
+await step('storage: list() keeps names that differ only by case', async () => {
+  const bucket = storageClient().storage.from('avatars')
+  const keys = ['case/a.txt', 'case/A.txt']
+  for (const k of keys) {
+    const { error } = await bucket.upload(k, 'x', { contentType: 'text/plain', upsert: true })
+    if (error) throw error
+  }
+  try {
+    const { data: asc, error } = await bucket.list('case')
+    if (error) throw error
+    assertEq(asc.map((i) => i.name).join(','), 'A.txt,a.txt', 'both case variants, ascending')
+    const { data: desc } = await bucket.list('case', { sortBy: { column: 'name', order: 'desc' } })
+    assertEq(desc.map((i) => i.name).join(','), 'a.txt,A.txt', 'both case variants, descending')
+  } finally {
+    await bucket.remove(keys)
+  }
 })
 
 // --- Update (PUT) ---
@@ -2676,6 +2985,43 @@ await step('storage: uploadToSignedUrl with a Blob stores the file, not the mult
   assertEq(info.name, 'signed-blob.txt')
   assertEq(info.contentType, 'text/plain')
   assertEq(Number(info.size), 'blob via signed url'.length, 'real size recorded for a multipart upload')
+  const iso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+  for (const k of ['createdAt', 'updatedAt', 'lastModified']) assert(iso.test(info[k]), `${k} is ISO 8601: ${info[k]}`)
+  assertEq(info.bucketId, 'avatars')
+  assertEq(JSON.stringify(info.metadata), '{}', 'metadata is user metadata, {} when the upload sent none')
+  assertEq(info.cacheControl, 'max-age=3600')
+})
+
+await step('storage: upload({ metadata }) round-trips through info() and resets on upsert', async () => {
+  const bucket = storageClient().storage.from('avatars')
+  const meta = { owner: 'ana', emoji: '✓', nested: { n: 1 } }
+  for (const [path, body] of [['meta-header.txt', 'string body'], ['meta-form.txt', new Blob(['blob body'], { type: 'text/plain' })]]) {
+    const { error } = await bucket.upload(path, body, { contentType: 'text/plain', metadata: meta, upsert: true })
+    if (error) throw error
+    const { data: info, error: infoErr } = await bucket.info(path)
+    if (infoErr) throw infoErr
+    const { isDeepStrictEqual } = await import('node:util')
+    assert(isDeepStrictEqual(info.metadata, meta), `${path} metadata: ${JSON.stringify(info.metadata)}`)
+  }
+  const { data: listed, error: listErr } = await bucket.list('', { search: 'meta-header' })
+  if (listErr) throw listErr
+  const item = listed.find((o) => o.name === 'meta-header.txt')
+  assert(item && /^[0-9a-f-]{36}$/.test(item.id), `list id is the object uuid: ${JSON.stringify(item)}`)
+  assertEq(item.metadata.mimetype, 'text/plain', 'list metadata is the system metadata')
+  assert(/\.\d{3}Z$/.test(item.created_at), `list created_at is ISO: ${item.created_at}`)
+
+  const { error: upErr } = await bucket.upload('meta-header.txt', 'replaced', { contentType: 'text/plain', upsert: true })
+  if (upErr) throw upErr
+  const { data: after } = await bucket.info('meta-header.txt')
+  assertEq(JSON.stringify(after.metadata), '{}', 'an upsert without metadata resets it, as in Supabase')
+
+  const bad = await fetch(`${URL}/storage/v1/object/avatars/meta-bad.txt`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY, 'Content-Type': 'text/plain', 'x-metadata': Buffer.from('[1]').toString('base64') },
+    body: 'x',
+  })
+  assertEq(bad.status, 400, 'non-object metadata is rejected')
+  await bucket.remove(['meta-header.txt', 'meta-form.txt'])
 })
 
 await step('storage: uploadToSignedUrl enforces the bucket MIME allowlist', async () => {
@@ -3193,6 +3539,46 @@ await step('storage: image transform quality affects jpeg output size', async ()
   assert(low.length < high.length, `low quality (${low.length}b) should be smaller than high quality (${high.length}b)`)
 })
 
+await step('storage: render/image routes serve storage-js transforms', async () => {
+  const pub = storageClient().storage.from('avatars')
+  const { data: urlData } = pub.getPublicUrl('transform-test.png', { transform: { width: 3, height: 5, resize: 'fill' } })
+  assert(urlData.publicUrl.includes('/render/image/public/avatars/transform-test.png'), urlData.publicUrl)
+  const pr = await fetch(urlData.publicUrl)
+  assertEq(pr.status, 200, 'public render')
+  const pd = pngDimensions(Buffer.from(await pr.arrayBuffer()))
+  assertEq(`${pd.width}x${pd.height}`, '3x5')
+
+  const { data: blob, error: dlErr } = await pub.download('transform-test.png', { transform: { width: 2, height: 2, resize: 'fill' } })
+  if (dlErr) throw dlErr
+  const dd = pngDimensions(Buffer.from(await blob.arrayBuffer()))
+  assertEq(`${dd.width}x${dd.height}`, '2x2', 'authenticated render via download({transform})')
+
+  const { data: signed, error: signErr } = await pub.createSignedUrl('transform-test.png', 60, { transform: { width: 4, height: 6, resize: 'fill' } })
+  if (signErr) throw signErr
+  assert(signed.signedUrl.includes('/render/image/sign/avatars/transform-test.png'), signed.signedUrl)
+  const sr = await fetch(signed.signedUrl + '&width=999')
+  assertEq(sr.status, 200, 'signed render')
+  const sd = pngDimensions(Buffer.from(await sr.arrayBuffer()))
+  assertEq(`${sd.width}x${sd.height}`, '4x6', 'the token transform wins')
+  assert(sr.headers.get('expires'), 'signed render carries Expires')
+
+  const head = await fetch(`${URL}/storage/v1/object/public/avatars/transform-test.png`, { method: 'HEAD' })
+  assertEq(head.status, 200, 'HEAD public')
+  assertEq(head.headers.get('content-type'), 'image/png')
+  assert(Number(head.headers.get('content-length')) > 0, 'HEAD carries Content-Length')
+  const infoPub = await fetch(`${URL}/storage/v1/object/info/public/avatars/transform-test.png`)
+  assertEq(infoPub.status, 200, 'info/public')
+  assertEq((await infoPub.json()).name, 'transform-test.png')
+  const privHead = await fetch(`${URL}/storage/v1/object/public/documents/secret.txt`, { method: 'HEAD' })
+  assertEq(privHead.status, 404, 'HEAD public on a private bucket')
+  const privInfo = await fetch(`${URL}/storage/v1/object/info/public/documents/secret.txt`)
+  assertEq(privInfo.status, 404, 'info/public on a private bucket')
+  const privRender = await fetch(`${URL}/storage/v1/render/image/public/documents/secret.txt?width=2`)
+  assertEq(privRender.status, 404, 'render/public on a private bucket')
+  const headInfo = await fetch(`${URL}/storage/v1/object/info/public/avatars/transform-test.png`, { method: 'HEAD' })
+  assertEq(headInfo.status, 404, 'no HEAD on info/public, as in Supabase')
+})
+
 // --- Serverless-friendly endpoints (raw fetch, not supabase-js) ---
 
 await step('storage: serverless-friendly presigned URL — sign via /api/storage', async () => {
@@ -3237,6 +3623,14 @@ await step('storage: legacy /api/storage routes run under the caller\'s RLS, not
   assert(signResp.ok, `owner sign failed: ${signResp.status} ${await signResp.clone().text()}`)
   const { id } = await signResp.json()
   assert(id, 'id present')
+
+  const noInsert = await fetch(`${URL}/api/storage/readonly/sign`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${ownerToken}`, apikey: PUBLISHABLE_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content_type: 'text/plain', size: 10 }),
+  })
+  assertEq(noInsert.status, 403, 'legacy sign without an insert policy is denied by RLS')
+  assert(!(await noInsert.json()).upload_url, 'no presigned URL on an RLS denial')
 
   const ownerDl = await fetch(`${URL}/api/storage/legacy_private/${id}`, {
     headers: { Authorization: `Bearer ${ownerToken}`, apikey: PUBLISHABLE_KEY },
