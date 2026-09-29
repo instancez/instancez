@@ -218,12 +218,14 @@ SELECT name, id, uploaded_at, metadata, folder FROM e`, p, matchExpr, strings.Re
 func (h *StorageV1Handler) runList(ctx context.Context, q listQuery) ([]map[string]any, error) {
 	q.lowerCol = true
 	sql, args := q.sql()
+	// nosemgrep -- q.sql() emits constant text and validated columns; values are bound args
 	rows, err := h.db.Query(ctx, sql, args...)
 	var pgErr *pgconn.PgError
 	if q.caseFold && errors.As(err, &pgErr) && pgErr.Code == "42703" {
 		// The name_lower heal is best effort at boot, so fall back to lower(name) until it lands.
 		q.lowerCol = false
 		sql, args = q.sql()
+		// nosemgrep -- q.sql() emits constant text and validated columns; values are bound args
 		return h.db.Query(ctx, sql, args...)
 	}
 	return rows, err

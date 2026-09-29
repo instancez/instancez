@@ -128,6 +128,7 @@ func holdTableLock(t *testing.T, db domain.Database, mode string) domain.Tx {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// nosemgrep -- test-only lock mode from a constant list
 	if _, err := tx.Exec(context.Background(), `LOCK TABLE storage.objects IN `+mode+` MODE`); err != nil {
 		t.Fatal(err)
 	}
@@ -289,10 +290,12 @@ func TestIntegration_HardenRebuildsAnInvalidListIndex(t *testing.T) {
 			if _, err := owner.Exec(ctx, seedObjects); err != nil {
 				t.Fatal(err)
 			}
+			// nosemgrep -- test-only DDL from a constant index name
 			if _, err := owner.Exec(ctx, `DROP INDEX storage.`+idx); err != nil {
 				t.Fatal(err)
 			}
 			cols := map[string]string{"objects_bucket_name_c_idx": `name COLLATE "C"`, "objects_bucket_name_lower_c_idx": `name_lower`}[idx]
+			// nosemgrep -- test-only DDL built from a constant index name and column list
 			_, err := owner.Exec(ctx, `CREATE UNIQUE INDEX CONCURRENTLY `+idx+` ON storage.objects (bucket_id, `+cols+`, (1 / (length(name) - 1)))`)
 			if err == nil {
 				t.Fatal("setup: the build should fail and leave an INVALID index")
@@ -300,6 +303,7 @@ func TestIntegration_HardenRebuildsAnInvalidListIndex(t *testing.T) {
 			if err := m.Harden(ctx, cfg); err != nil {
 				t.Fatal(err)
 			}
+			// nosemgrep -- test-only regclass name from a constant list; no user input
 			row, err := owner.QueryRow(ctx, `SELECT count(*) AS n, bool_and(indisvalid) AS ok FROM pg_index WHERE indexrelid = 'storage.`+idx+`'::regclass`)
 			if err != nil || row["n"].(int64) != 1 || row["ok"] != true {
 				t.Fatalf("invalid index not rebuilt: %v (%v)", row, err)

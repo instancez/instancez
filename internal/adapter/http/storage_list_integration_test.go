@@ -196,6 +196,7 @@ func asSlice(v any) []any { s, _ := v.([]any); return s }
 // explainPlan returns the root plan node of EXPLAIN (ANALYZE, FORMAT JSON).
 func explainPlan(t *testing.T, db queryer, ctx context.Context, name, sql string, args []any) map[string]any {
 	t.Helper()
+	// nosemgrep -- test-only EXPLAIN of a query built by q.sql(); values are bound args
 	rows, err := db.Query(ctx, "EXPLAIN (ANALYZE, FORMAT JSON) "+sql, args...)
 	require.NoError(t, err, name)
 	plan := rows[0]["QUERY PLAN"]
