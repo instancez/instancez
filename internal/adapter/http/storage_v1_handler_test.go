@@ -2990,3 +2990,25 @@ func TestServeDownload_NonPublicRouteKeepsCallerRLS(t *testing.T) {
 	require.Equal(t, 200, w.Code, w.Body.String())
 	assert.Equal(t, []string{"authenticated[pub a.txt]"}, queried, "only the public route may bypass RLS")
 }
+
+func TestList_NULInTextIs400NotDBError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) {
+		return nil, errors.New("invalid byte sequence for encoding UTF8: 0x00")
+	}}
+	h := newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}})
+	r := gin.New()
+	r.POST("/storage/v1/object/list/:bucket", h.listObjects)
+	r.POST("/storage/v1/object/list-v2/:bucket", h.listObjectsV2)
+	nulCursor := encodeListCursor(listCursor{Name: "a\x00b"})
+
+	for _, tc := range []struct{ path, body string }{
+		{"list", `{"prefix":"a\u0000b"}`},
+		{"list", `{"search":"a\u0000b"}`},
+		{"list-v2", `{"prefix":"a\u0000b"}`},
+		{"list-v2", `{"cursor":"` + nulCursor + `"}`},
+	} {
+		w := serve(r, "POST", "/storage/v1/object/"+tc.path+"/avatars", tc.body, nil)
+		assert.Equal(t, 400, w.Code, "%s %s: %s", tc.path, tc.body, w.Body.String())
+	}
+}

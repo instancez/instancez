@@ -246,6 +246,15 @@ func (h *StorageV1Handler) runList(ctx context.Context, q listQuery) ([]map[stri
 	return rows, err
 }
 
+func badListText(ss ...string) bool {
+	for _, s := range ss {
+		if strings.ContainsRune(s, 0) || !utf8.ValidString(s) {
+			return true
+		}
+	}
+	return false
+}
+
 func listOrderDesc(order string) bool { return strings.EqualFold(order, "desc") }
 
 func (h *StorageV1Handler) listObjects(c *gin.Context) {
@@ -265,6 +274,10 @@ func (h *StorageV1Handler) listObjects(c *gin.Context) {
 		} `json:"sortBy"`
 	}
 	_ = c.ShouldBindJSON(&req)
+	if badListText(req.Prefix, req.Search) {
+		storageErr(c, 400, "invalid_parameter", "Invalid prefix or search")
+		return
+	}
 
 	prefix := strings.TrimPrefix(req.Prefix, "/")
 	if prefix != "" && !strings.HasSuffix(prefix, "/") {
@@ -320,6 +333,10 @@ func (h *StorageV1Handler) listObjectsV2(c *gin.Context) {
 		} `json:"sortBy"`
 	}
 	_ = c.ShouldBindJSON(&req)
+	if badListText(req.Prefix) {
+		storageErr(c, 400, "invalid_parameter", "Invalid prefix")
+		return
+	}
 
 	limit := req.Limit
 	if limit <= 0 || limit > 1000 {
@@ -400,7 +417,7 @@ func encodeListCursor(c listCursor) string {
 func decodeListCursor(s string) (listCursor, bool) {
 	var c listCursor
 	b, err := base64.RawURLEncoding.DecodeString(s)
-	if err != nil || json.Unmarshal(b, &c) != nil || c.Name == "" {
+	if err != nil || json.Unmarshal(b, &c) != nil || c.Name == "" || badListText(c.Name) {
 		return listCursor{}, false
 	}
 	if c.At != "" {
