@@ -1,10 +1,12 @@
 name: Deploy docs
 
+# No paths filter: also rebuilds on every main push (cheap, idempotent) and on
+# every release tag, so the version badge (git describe, see astro.config.mjs)
+# never goes stale just because a release didn't touch docs/site itself.
 on:
   push:
     branches: [main]
-    paths:
-      - 'docs/site/**'
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
