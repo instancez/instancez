@@ -102,8 +102,7 @@ var (
 	rpcMemUnits     = map[string]int64{"": 1, "kB": 1, "MB": 1 << 10, "GB": 1 << 20, "TB": 1 << 30}
 )
 
-// rpcSetRules allowlists rpc set: keys; each value must match fully and, when
-// units is set, fall in [min, MaxInt32] base units like Postgres checks.
+// rpcSetRules allowlists rpc set: keys and their value ranges.
 var rpcSetRules = map[string]struct {
 	re    *regexp.Regexp
 	hint  string
@@ -1134,8 +1133,7 @@ func validateForeignKeys(tables map[string]domain.Table) domain.ValidationErrors
 	return errs
 }
 
-// compositePKFKWarnings flags FKs to one column of a composite primary key. A new
-// such FK fails at deploy, but one created before the key became composite still works.
+// compositePKFKWarnings flags FKs to one column of a composite primary key.
 func compositePKFKWarnings(tables map[string]domain.Table) domain.ValidationErrors {
 	var ws domain.ValidationErrors
 	for _, tableName := range slices.Sorted(maps.Keys(tables)) {
@@ -1166,19 +1164,12 @@ func compositePKFKWarnings(tables map[string]domain.Table) domain.ValidationErro
 	return ws
 }
 
-// isBareCompositePKMember reports whether f belongs to a 2+ column primary key
-// without a single-column unique index; unique: true only applies on CREATE TABLE.
+// isBareCompositePKMember reports whether f is in a 2+ column primary key with no single-column unique index.
 func isBareCompositePKMember(t domain.Table, f domain.Field) bool {
 	if !f.PrimaryKey {
 		return false
 	}
-	pks := 0
-	for _, tf := range t.Fields {
-		if tf.PrimaryKey {
-			pks++
-		}
-	}
-	if pks < 2 {
+	if len(t.PrimaryKeyColumns()) < 2 {
 		return false
 	}
 	for _, idx := range t.Indexes {

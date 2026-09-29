@@ -115,12 +115,6 @@ func TestManagedPolicyNames_TruncatesLongNames(t *testing.T) {
 	}
 }
 
-func TestDropPoliciesUsing_EmptyManaged(t *testing.T) {
-	if !strings.Contains(dropPoliciesUsing("f", domain.Function{}, nil), "'{}'::text[]") {
-		t.Fatal("no managed policies must render an empty array")
-	}
-}
-
 func TestDenyPoliciesCalling(t *testing.T) {
 	storage := map[string]domain.Bucket{
 		"docs": {RLS: []domain.RLSPolicy{

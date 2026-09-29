@@ -35,8 +35,7 @@ type Migrator struct {
 	logger           *slog.Logger
 }
 
-// DefaultMigrateLockTimeout bounds how long one migration DDL statement waits
-// for a table lock before the migration fails.
+// DefaultMigrateLockTimeout bounds one DDL statement's table lock wait.
 const DefaultMigrateLockTimeout = 5 * time.Second
 
 // DefaultStorageHealTimeout is per heal step; two steps plus one shared lock wait stay under the platform's 30s init budget.
@@ -99,8 +98,7 @@ func (m *Migrator) PlanStatements(ctx context.Context, oldCfg, newCfg *domain.Co
 	return m.planStatements(ctx, nil, oldCfg, newCfg)
 }
 
-// planStatements is PlanStatements; with a tx it also accepts a primary key
-// change the live table already has, so a config that drifted can be reverted.
+// planStatements is PlanStatements, but with a tx it accepts a primary key change the live table already has.
 func (m *Migrator) planStatements(ctx context.Context, tx domain.Tx, oldCfg, newCfg *domain.Config) ([]string, error) {
 	if oldCfg == nil {
 		return planFromScratchStatements(newCfg, m.roles), nil
@@ -200,8 +198,7 @@ func planFromScratchStatements(cfg *domain.Config, roles domain.Roles) []string 
 		ddl = append(ddl, generateAuthTables(cfg.Auth)...)
 	}
 
-	// Tables in dependency order, each followed by its indexes, so a unique
-	// index exists before a later table's FK needs it.
+	// Each table is followed by its indexes so later FKs find their unique index.
 	ordered := orderTables(cfg.Tables)
 	for _, name := range ordered {
 		table := cfg.Tables[name]
@@ -338,8 +335,7 @@ func (m *Migrator) Apply(ctx context.Context, cfg *domain.Config) error {
 	if err != nil {
 		return fmt.Errorf("migrate begin: %w", err)
 	}
-	// Safe to defer: tx.Rollback after a successful Commit is a no-op error
-	// we ignore. Calling Rollback before return guarantees no leak on panic.
+	// Rollback after Commit is a no-op.
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Read under the lock so an instance that waited sees the winner's row.
@@ -458,7 +454,7 @@ func (m *Migrator) Harden(ctx context.Context, cfg *domain.Config) error {
 	return m.applyStatements(ctx, stmts)
 }
 
-// healStorageList never fails boot: a lock-free catalog check, a bounded size gate only when a step is missing, then each step in its own bounded tx.
+// healStorageList never fails boot.
 func (m *Migrator) healStorageList(ctx context.Context) {
 	row, err := m.db.QueryRow(ctx, storageHealMissing)
 	if err != nil {
@@ -560,7 +556,7 @@ func (m *Migrator) appliedStorage(ctx context.Context) (map[string]domain.Bucket
 	return cfg.Storage, nil
 }
 
-// healStorageRLS drops legacy public-select policies and re-emits restrictive bucket RLS still on the old AND-scoping, checking pg_policies first so a healed DB takes no lock.
+// healStorageRLS re-emits legacy storage policies, checking pg_policies first so a healed DB takes no lock.
 func healStorageRLS(storage map[string]domain.Bucket) []string {
 	stmts := dropPublicSelect(storage, true)
 	var body []string
@@ -990,12 +986,7 @@ func generateTable(name string, table domain.Table, allTables map[string]domain.
 		return false
 	})
 
-	var pkCols []string
-	for _, f := range fields {
-		if f.PrimaryKey {
-			pkCols = append(pkCols, f.Name)
-		}
-	}
+	pkCols := table.PrimaryKeyColumns()
 	composite := len(pkCols) > 1
 
 	for _, field := range fields {
@@ -1090,13 +1081,7 @@ func deferSelfFK(name string, table domain.Table, f domain.Field) bool {
 	if !ok {
 		return false
 	}
-	pkCount := 0
-	for _, x := range table.Fields {
-		if x.PrimaryKey {
-			pkCount++
-		}
-	}
-	return !ref.Unique && (!ref.PrimaryKey || pkCount != 1)
+	return !ref.Unique && (!ref.PrimaryKey || len(table.PrimaryKeyColumns()) != 1)
 }
 
 // generateDeferredFKs adds the self-referencing FKs generateTable left out; call it after the table's indexes.
@@ -1263,10 +1248,10 @@ func generateStorageTables(cfg *domain.Config) []string {
 
 // storageListManualSQL is the by-hand equivalent of the boot heal for tables too large to change at boot; drop an INVALID index first.
 const storageListManualSQL = `ALTER TABLE storage.objects ADD COLUMN name_lower TEXT COLLATE "C" GENERATED ALWAYS AS (lower(name)) STORED; ` +
-	`CREATE INDEX CONCURRENTLY IF NOT EXISTS objects_bucket_name_c_idx ON storage.objects (bucket_id, name COLLATE "C"); ` +
-	`CREATE INDEX CONCURRENTLY IF NOT EXISTS objects_bucket_name_lower_c_idx ON storage.objects (bucket_id, name_lower, (name COLLATE "C"));`
+	`CREATE INDEX CONCURRENTLY IF NOT EXISTS objects_bucket_name_c_idx ON storage.objects ` + nameIndexDef + `; ` +
+	`CREATE INDEX CONCURRENTLY IF NOT EXISTS objects_bucket_name_lower_c_idx ON storage.objects ` + nameLowerIndexDef + `;`
 
-// storageHealMissing reports which list heal steps are missing from the catalog alone, so it takes no table lock; an INVALID index counts as missing.
+// storageHealMissing reads the catalog only, so it takes no table lock; an INVALID index counts as missing.
 const storageHealMissing = `SELECT
   t.oid IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pg_index i WHERE i.indexrelid = to_regclass('storage.objects_bucket_name_c_idx') AND i.indisvalid) AS need_name_index,
   t.oid IS NOT NULL AND (NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = t.oid AND attname = 'name_lower' AND NOT attisdropped)
@@ -1297,7 +1282,7 @@ IF to_regclass('storage.objects') IS NOT NULL THEN
 END IF;
 END $$;`
 
-	// storageListColumnHeal adds the lowered-name column and its index; the stored column keeps v1 list index-bounded under RLS, where lower(name) is not leakproof.
+	// storageListColumnHeal adds name_lower and its index.
 	storageListColumnHeal = `DO $$ BEGIN
 IF to_regclass('storage.objects') IS NOT NULL THEN
   IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'storage.objects'::regclass AND attname = 'name_lower' AND NOT attisdropped) THEN

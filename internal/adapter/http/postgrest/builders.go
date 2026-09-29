@@ -274,7 +274,7 @@ func fkTarget(ref string, allTables map[string]domain.Table) (table, col string,
 
 // isOneToOne mirrors PostgREST: the FK columns are exactly a primary or unique key.
 func isOneToOne(t domain.Table, f domain.Field) bool {
-	return f.Unique || (f.PrimaryKey && len(PrimaryKeyColumns(t)) == 1)
+	return f.Unique || (f.PrimaryKey && len(t.PrimaryKeyColumns()) == 1)
 }
 
 func belongsToRels(tableName string, table domain.Table, name, fkHint string, allTables map[string]domain.Table) []relCandidate {
@@ -685,23 +685,10 @@ func BuildSelectQueryFull(tableName string, qp *QueryParams, table domain.Table,
 		whereParts = append(whereParts, whereSQL)
 	}
 
-	for _, emb := range qp.Embeds {
-		if !emb.IsReverse || !emb.Inner {
-			continue
-		}
-		where, _ := ToManyScope(emb)
-		existsSQL := "EXISTS (SELECT 1 FROM " + ToManyFrom(emb, tableName)
-		if where != nil {
-			clauseSQL, clauseArgs, next := where.BuildSQL(argIdx)
-			if clauseSQL != "" {
-				existsSQL += " AND " + clauseSQL
-				allArgs = append(allArgs, clauseArgs...)
-				argIdx = next
-			}
-		}
-		existsSQL += ")"
-		whereParts = append(whereParts, existsSQL)
-	}
+	existsParts, existsArgs, next := InnerExistsClauses(qp.Embeds, tableName, argIdx)
+	whereParts = append(whereParts, existsParts...)
+	allArgs = append(allArgs, existsArgs...)
+	argIdx = next
 
 	if len(whereParts) > 0 {
 		sql += " WHERE " + strings.Join(whereParts, " AND ")
@@ -913,18 +900,6 @@ func ParseOnConflictParam(val string, table domain.Table) ([]string, error) {
 	return cols, nil
 }
 
-// PrimaryKeyColumns returns the PK field names for a table, sorted.
-func PrimaryKeyColumns(table domain.Table) []string {
-	var pks []string
-	for _, f := range table.Fields {
-		if f.PrimaryKey {
-			pks = append(pks, f.Name)
-		}
-	}
-	sort.Strings(pks)
-	return pks
-}
-
 // BuildUpsertQuery emits INSERT ... ON CONFLICT (pk) DO {UPDATE|NOTHING}.
 func BuildUpsertQuery(tableName string, record map[string]any, conflictCols []string, resolution string, returning bool) (string, []any) {
 	cols := sortedMapKeys(record)
@@ -1021,4 +996,25 @@ func conflictAction(cols, conflictCols []string, resolution string) string {
 		return "DO NOTHING"
 	}
 	return "DO UPDATE SET " + strings.Join(set, ", ")
+}
+
+// InnerExistsClauses renders one EXISTS filter per to-many !inner embed of parent.
+func InnerExistsClauses(embeds []Embed, parent string, argIdx int) ([]string, []any, int) {
+	var parts []string
+	var args []any
+	for _, emb := range embeds {
+		if !emb.IsReverse || !emb.Inner {
+			continue
+		}
+		exists := "EXISTS (SELECT 1 FROM " + ToManyFrom(emb, parent)
+		if where, _ := ToManyScope(emb); where != nil {
+			if sql, whereArgs, next := where.BuildSQL(argIdx); sql != "" {
+				exists += " AND " + sql
+				args = append(args, whereArgs...)
+				argIdx = next
+			}
+		}
+		parts = append(parts, exists+")")
+	}
+	return parts, args, argIdx
 }

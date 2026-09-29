@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"fmt"
 	"regexp"
 	"slices"
@@ -328,7 +329,7 @@ func diffRemovedRPCFunctions(old, new *domain.Config) []string {
 	return ddl
 }
 
-// managedPolicyNames lists every policy cfg owns as schema.table.policy, truncated the way Postgres stores names; inert ones on RLS-off tables count too.
+// managedPolicyNames lists cfg's policies as schema.table.policy, truncated like Postgres.
 func managedPolicyNames(cfg *domain.Config) []string {
 	var names []string
 	for _, t := range sortedKeys(cfg.Tables) {
@@ -451,8 +452,7 @@ func (c pkChange) String() string {
 }
 
 // diffPrimaryKeys reports tables in both configs whose primary key columns differ.
-// Replacing the PK by dropping its column and adding one new PK column is allowed:
-// the drop removes the old constraint and ADD COLUMN ... PRIMARY KEY creates the new one.
+// Swapping the PK by dropping its column and adding one new PK column is allowed.
 func diffPrimaryKeys(old, new *domain.Config) []pkChange {
 	var changes []pkChange
 	for _, name := range sortedKeys(new.Tables) {
@@ -461,14 +461,14 @@ func diffPrimaryKeys(old, new *domain.Config) []pkChange {
 			continue
 		}
 		newTable := new.Tables[name]
-		oldPK, newPK := pkNames(oldTable), pkNames(newTable)
+		oldPK, newPK := oldTable.PrimaryKeyColumns(), newTable.PrimaryKeyColumns()
 		if sameColumns(oldPK, newPK) {
 			continue
 		}
 		newFields := newTable.FieldMap()
 		oldFields := oldTable.FieldMap()
 		oldPKDropped := slices.ContainsFunc(oldPK, func(c string) bool { _, ok := newFields[c]; return !ok })
-		_, newPKExisted := oldFields[firstOr(newPK)]
+		_, newPKExisted := oldFields[cmp.Or(newPK...)]
 		if oldPKDropped && len(newPK) == 1 && !newPKExisted {
 			continue
 		}
@@ -478,30 +478,7 @@ func diffPrimaryKeys(old, new *domain.Config) []pkChange {
 }
 
 func sameColumns(a, b []string) bool {
-	return slices.Equal(sortedCopy(a), sortedCopy(b))
-}
-
-func pkNames(t domain.Table) []string {
-	var names []string
-	for _, f := range t.Fields {
-		if f.PrimaryKey {
-			names = append(names, f.Name)
-		}
-	}
-	return names
-}
-
-func sortedCopy(s []string) []string {
-	c := slices.Clone(s)
-	slices.Sort(c)
-	return c
-}
-
-func firstOr(s []string) string {
-	if len(s) == 0 {
-		return ""
-	}
-	return s[0]
+	return slices.Equal(slices.Sorted(slices.Values(a)), slices.Sorted(slices.Values(b)))
 }
 
 // diffNewAuth returns DDL for auth table additions. If auth is newly added,

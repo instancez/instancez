@@ -589,20 +589,10 @@ func renderRPCChain(chain *rpcChainSQL, argIdx int) (string, []any) {
 			argIdx = next
 		}
 	}
-	for _, emb := range chain.embeds {
-		if !emb.IsReverse || !emb.Inner {
-			continue
-		}
-		exists := "EXISTS (SELECT 1 FROM " + postgrest.ToManyFrom(emb, "_rpc")
-		if where, _ := postgrest.ToManyScope(emb); where != nil {
-			if sql, whereArgs, next := where.BuildSQL(argIdx); sql != "" {
-				exists += " AND " + sql
-				args = append(args, whereArgs...)
-				argIdx = next
-			}
-		}
-		conds = append(conds, exists+")")
-	}
+	existsParts, existsArgs, next := postgrest.InnerExistsClauses(chain.embeds, "_rpc", argIdx)
+	conds = append(conds, existsParts...)
+	args = append(args, existsArgs...)
+	argIdx = next
 	if len(conds) > 0 {
 		b.WriteString(" WHERE " + strings.Join(conds, " AND "))
 	}
@@ -693,6 +683,12 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 	}
 	hasEmbeds := len(chain.embeds) > 0
 	aggregated := slices.ContainsFunc(chain.selectItems, func(it postgrest.SelectItem) bool { return it.Agg != "" })
+	jsonbIfAgg := func(expr string) string {
+		if aggregated {
+			return "(" + expr + ")::jsonb"
+		}
+		return expr
+	}
 	// When belongs-to embeds will JOIN onto _rpc below, qualify outer WHERE
 	// columns with the _rpc alias so a filter like `id=eq.1` doesn't go
 	// ambiguous against the joined table's `id`. Mirrors the same fix in
@@ -756,11 +752,7 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 			if emb.Offset != nil {
 				sub += fmt.Sprintf(" OFFSET %d", *emb.Offset)
 			}
-			if aggregated {
-				embedSelectParts = append(embedSelectParts, fmt.Sprintf("((%s))::jsonb AS %s", sub, key))
-			} else {
-				embedSelectParts = append(embedSelectParts, fmt.Sprintf("(%s) AS %s", sub, key))
-			}
+			embedSelectParts = append(embedSelectParts, jsonbIfAgg("("+sub+")")+" AS "+key)
 		} else {
 			// Belongs-to: LEFT/INNER JOIN.
 			joinKind := "LEFT JOIN"
@@ -771,21 +763,14 @@ func wrapRPCCallForChain(callSQL string, chain *rpcChainSQL, baseArgIdx int) (st
 				joinKind, emb.RefTable, alias, emb.FKColumn, alias, emb.RefColumn))
 
 			if len(emb.Columns) == 0 {
-				expr := "row_to_json(" + alias + ".*)"
-				if aggregated {
-					expr = "(" + expr + ")::jsonb"
-				}
-				embedSelectParts = append(embedSelectParts, expr+" AS "+key)
+				embedSelectParts = append(embedSelectParts, jsonbIfAgg("row_to_json("+alias+".*)")+" AS "+key)
 			} else {
 				var embCols []string
 				for _, c := range emb.Columns {
 					embCols = append(embCols, fmt.Sprintf("'%s', %s.%s", c, alias, c))
 				}
 				obj := postgrest.NullIfNoMatch(alias, emb.RefColumn, fmt.Sprintf("json_build_object(%s)", strings.Join(embCols, ", ")))
-				if aggregated {
-					obj = "(" + obj + ")::jsonb"
-				}
-				embedSelectParts = append(embedSelectParts, obj+" AS "+key)
+				embedSelectParts = append(embedSelectParts, jsonbIfAgg(obj)+" AS "+key)
 			}
 		}
 	}

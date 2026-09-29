@@ -89,7 +89,7 @@ func (h *CRUDHandler) Mount(root *gin.RouterGroup) {
 		group := rest.Group("/" + name)
 		// JWT not required at HTTP level — anon falls through with
 		// session.Role="anon" and SQL-layer grants + RLS gate access.
-		// Matches Supabase's PostgREST behavior. Writes refuse plans before auth.
+		// Writes refuse plans before auth.
 		auth := jwtAuth(h.jwtKeys, false)
 
 		list := h.handleList(name, t)
@@ -356,7 +356,7 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 			if len(customCols) > 0 {
 				pkCols = customCols
 			} else {
-				pkCols = postgrest.PrimaryKeyColumns(table)
+				pkCols = table.PrimaryKeyColumns()
 				defaultTarget = true
 			}
 			if len(pkCols) == 0 {
@@ -419,7 +419,7 @@ func (h *CRUDHandler) handleUpsert(tableName string, table domain.Table) gin.Han
 			return
 		}
 
-		pkCols := postgrest.PrimaryKeyColumns(table)
+		pkCols := table.PrimaryKeyColumns()
 		if len(pkCols) == 0 {
 			problemJSON(c, 400, "bad_request", "Cannot upsert: table has no primary key")
 			return
@@ -1325,8 +1325,7 @@ func findGeometryColumn(table domain.Table) string {
 	return ""
 }
 
-// livePrimaryKeyOr returns the table's primary key as Postgres has it, which can
-// lag a config recorded by older migrators, or fallback when the table has none.
+// livePrimaryKeyOr returns the primary key Postgres has, or fallback when the table has none.
 func livePrimaryKeyOr(ctx context.Context, tx domain.Tx, tableName string, fallback []string) ([]string, error) {
 	live, err := app.LivePrimaryKey(ctx, tx, tableName)
 	if err != nil {

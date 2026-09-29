@@ -220,12 +220,12 @@ ANALYZE storage.objects`)
 
 func boundedShapes() map[string]listQuery {
 	return map[string]listQuery{
-		"v1 page":             {bucket: "big", match: "p/", fold: true, foldFrom: 2, caseFold: true, v1: true, limit: 10, offset: 50},
-		"v1 desc":             {bucket: "big", match: "p/", fold: true, foldFrom: 2, caseFold: true, v1: true, desc: true, limit: 10},
+		"v1 page":             {bucket: "big", match: "p/", fold: true, foldFrom: 2, caseFold: true, limit: 10, offset: 50},
+		"v1 desc":             {bucket: "big", match: "p/", fold: true, foldFrom: 2, caseFold: true, desc: true, limit: 10},
 		"v2 folder cursor":    {bucket: "big", match: "p/", fold: true, foldFrom: 2, limit: 11, after: &listCursor{Name: "p/f100/"}},
 		"v2 desc file cursor": {bucket: "big", match: "p/", fold: true, foldFrom: 2, desc: true, limit: 11, after: &listCursor{Name: "p/top3.txt"}},
 		"v2 no delimiter":     {bucket: "big", match: "p/f2", limit: 11},
-		"v1 empty prefix":     {bucket: "big", match: "", fold: true, caseFold: true, v1: true, limit: 100},
+		"v1 empty prefix":     {bucket: "big", match: "", fold: true, caseFold: true, limit: 100},
 	}
 }
 
@@ -364,7 +364,7 @@ func TestStorageList_FallbackReadsOnlyThePrefix(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, match := range []string{"p/f399/", "P/F399/", "p/f399/x0"} {
-		q := listQuery{bucket: "big", match: match, fold: true, foldFrom: len(match), caseFold: true, v1: true, limit: 10}
+		q := listQuery{bucket: "big", match: match, fold: true, foldFrom: len(match), caseFold: true, limit: 10}
 		sql, args := q.sql()
 		root := explainPlan(t, owner, context.Background(), match, sql, args)
 		raw, _ := json.Marshal(root)
@@ -386,7 +386,7 @@ ALTER TABLE storage.objects DROP COLUMN name_lower`)
 	require.NoError(t, err)
 
 	for _, match := range []string{"users/abcdef/", "USERS/ABCDEF/"} {
-		q := listQuery{bucket: "big", match: match, fold: true, foldFrom: len(match), caseFold: true, v1: true, limit: 10}
+		q := listQuery{bucket: "big", match: match, fold: true, foldFrom: len(match), caseFold: true, limit: 10}
 		sql, args := q.sql()
 		root := explainPlan(t, owner, context.Background(), match, sql, args)
 		raw, _ := json.Marshal(root)

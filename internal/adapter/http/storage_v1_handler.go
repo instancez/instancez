@@ -115,10 +115,6 @@ func (h *StorageV1Handler) Mount(root *gin.RouterGroup) {
 	sg.PUT("/object/upload/sign/:bucket/*path", h.uploadToSignedURL)
 }
 
-func (h *StorageV1Handler) anonAllowed(c *gin.Context, bucket string) bool {
-	return anonMayReach(c, h.cfg, bucket)
-}
-
 // anonMayReach lets anon reach only buckets whose own rls policies decide, since nothing else would authorize it in Supabase.
 func anonMayReach(c *gin.Context, cfg *domain.Config, bucket string) bool {
 	if r := getSession(c).Role; r == domain.JWTRoleAuthenticated || r == domain.JWTRoleService {
@@ -136,7 +132,7 @@ func (h *StorageV1Handler) anonGate(deny gin.HandlerFunc) gin.HandlerFunc {
 				return
 			}
 		}
-		if !h.anonAllowed(c, c.Param("bucket")) {
+		if !anonMayReach(c, h.cfg, c.Param("bucket")) {
 			deny(c)
 			c.Abort()
 		}
@@ -154,7 +150,7 @@ func (h *StorageV1Handler) callerMayReach(c *gin.Context, bucket, rawPath string
 	if _, ok := objectPath(c, rawPath); !ok {
 		return false
 	}
-	if !h.anonAllowed(c, bucket) {
+	if !anonMayReach(c, h.cfg, bucket) {
 		deny(c)
 		return false
 	}
@@ -769,11 +765,7 @@ func (h *StorageV1Handler) serveObject(c *gin.Context, bucketName, objPath strin
 
 	download, hasDownload := c.GetQuery("download")
 	opts := downloadOptions(contentType, publicCache, download, hasDownload)
-	if !expires.IsZero() {
-		opts.CacheControl = ""
-		c.Header("Expires", expires.UTC().Format(http.TimeFormat))
-	}
-	writeDownloadHeaders(c, opts)
+	writeSignedDownloadHeaders(c, opts, expires)
 	if etag := storedETag(row["metadata"]); etag != "" {
 		c.Header("ETag", etag)
 	}
@@ -831,6 +823,15 @@ func writeDownloadHeaders(c *gin.Context, o domain.DownloadOptions) {
 	if o.ContentDisposition != "" {
 		c.Header("Content-Disposition", o.ContentDisposition)
 	}
+}
+
+// writeSignedDownloadHeaders swaps Cache-Control for Expires when the URL has an expiry.
+func writeSignedDownloadHeaders(c *gin.Context, o domain.DownloadOptions, expires time.Time) {
+	if !expires.IsZero() {
+		o.CacheControl = ""
+		c.Header("Expires", expires.UTC().Format(http.TimeFormat))
+	}
+	writeDownloadHeaders(c, o)
 }
 
 // downloadErr maps a registered object whose bytes are gone to 404.
@@ -1001,9 +1002,7 @@ func (h *StorageV1Handler) redeemSignedURL(c *gin.Context, bucketName, rawPath s
 		return
 	}
 	defer func() { _ = body.Close() }()
-	opts.CacheControl = ""
-	c.Header("Expires", exp.UTC().Format(http.TimeFormat))
-	writeDownloadHeaders(c, opts)
+	writeSignedDownloadHeaders(c, opts, exp)
 	c.Status(200)
 	_, _ = io.Copy(c.Writer, body)
 }
@@ -1141,7 +1140,7 @@ func (h *StorageV1Handler) removeObjects(c *gin.Context) {
 
 	keys := validKeys(req.Prefixes)
 	deleted := []gin.H{}
-	if len(keys) == 0 || !h.anonAllowed(c, bucketName) {
+	if len(keys) == 0 || !anonMayReach(c, h.cfg, bucketName) {
 		c.JSON(200, deleted)
 		return
 	}
@@ -1197,7 +1196,7 @@ func (h *StorageV1Handler) moveObject(c *gin.Context) {
 		storageErr(c, 400, "invalid_key", "Source and destination are the same")
 		return
 	}
-	if !h.anonAllowed(c, srcBucket) || !h.anonAllowed(c, dstBucket) {
+	if !anonMayReach(c, h.cfg, srcBucket) || !anonMayReach(c, h.cfg, dstBucket) {
 		denyNotFound(c)
 		return
 	}
@@ -1277,7 +1276,7 @@ func (h *StorageV1Handler) copyObject(c *gin.Context) {
 		storageErr(c, 400, "invalid_key", "Source and destination are the same")
 		return
 	}
-	if !h.anonAllowed(c, srcBucket) || !h.anonAllowed(c, dstBucket) {
+	if !anonMayReach(c, h.cfg, srcBucket) || !anonMayReach(c, h.cfg, dstBucket) {
 		denyNotFound(c)
 		return
 	}
@@ -1439,7 +1438,7 @@ func (h *StorageV1Handler) createSignedURLs(c *gin.Context) {
 	ctx := h.rlsCtx(c)
 	keys := validKeys(req.Paths)
 	visible := map[string]bool{}
-	if len(keys) > 0 && h.anonAllowed(c, bucketName) {
+	if len(keys) > 0 && anonMayReach(c, h.cfg, bucketName) {
 		rows, err := h.db.Query(ctx, "SELECT name FROM storage.objects WHERE bucket_id = $1 AND name = ANY($2::text[])", bucketName, keys)
 		if err != nil {
 			h.logger.Error("sign urls lookup", "error", err)

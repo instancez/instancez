@@ -15,18 +15,18 @@ func TestPrimaryKeyColumns(t *testing.T) {
 			{Name: "sub", Type: "uuid", PrimaryKey: true},
 		},
 	}
-	pks := primaryKeyColumns(table)
+	pks := table.PrimaryKeyColumns()
 	if len(pks) != 2 {
 		t.Fatalf("got %v, want 2 pks", pks)
 	}
 	if pks[0] != "id" || pks[1] != "sub" {
-		t.Errorf("pks = %v", pks) // must be sorted
+		t.Errorf("pks = %v", pks)
 	}
 }
 
 func TestPrimaryKeyColumns_Empty(t *testing.T) {
 	table := domain.Table{Fields: []domain.Field{{Name: "title", Type: "text"}}}
-	if len(primaryKeyColumns(table)) != 0 {
+	if len(table.PrimaryKeyColumns()) != 0 {
 		t.Error("expected no pks")
 	}
 }

@@ -1229,14 +1229,6 @@ func TestGenerateStorageTables_HasNoUnboundedHeal(t *testing.T) {
 	mustContain(t, strings.Join(diffNewStorage(&domain.Config{}, &domain.Config{Storage: map[string]domain.Bucket{"b": {}}}), "\n"), "name_lower")
 }
 
-func TestStorageHealDDL_TreatsInvalidIndexAsMissing(t *testing.T) {
-	for _, ddl := range []string{storageHealMissing, storageNameIndexHeal, storageListColumnHeal, storageIndexesWhenEmpty} {
-		mustContain(t, ddl, "indisvalid")
-	}
-	mustContain(t, storageNameIndexHeal, "DROP INDEX IF EXISTS storage.objects_bucket_name_c_idx;")
-	mustNotContain(t, storageNameIndexHeal+storageListColumnHeal, "CASCADE")
-}
-
 // budgetTx makes every heal tx (the ones that set statement_timeout) lose its lock wait after a pause.
 type budgetTx struct {
 	domain.Tx

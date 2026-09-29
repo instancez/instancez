@@ -93,10 +93,6 @@ func parseOnConflictParam(val string, table domain.Table) ([]string, error) {
 	return postgrest.ParseOnConflictParam(val, table)
 }
 
-func primaryKeyColumns(table domain.Table) []string {
-	return postgrest.PrimaryKeyColumns(table)
-}
-
 func buildUpsertQuery(tableName string, record map[string]any, conflictCols []string, resolution string, returning bool) (string, []any) {
 	return postgrest.BuildUpsertQuery(tableName, record, conflictCols, resolution, returning)
 }

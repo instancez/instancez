@@ -24,7 +24,6 @@ type listQuery struct {
 	caseFold bool   // v1 matches, groups and orders case-insensitively
 	lowerCol bool   // name_lower column exists
 	byTime   bool
-	v1       bool
 	desc     bool
 	limit    int
 	offset   int
@@ -88,7 +87,7 @@ func (q listQuery) walkSQL() (string, []any) {
 		}
 		first, step, dir = key+" < "+startExpr, stepDesc, "DESC"
 	}
-	peek := fmt.Sprintf(`SELECT o.id, o.name, o.uploaded_at, o.metadata, %s AS k, %s AS p FROM storage.objects o WHERE o.bucket_id = $1 AND %%s ORDER BY %s LIMIT 1`, key, p, orderBy(order, dir))
+	peek := fmt.Sprintf(`SELECT o.id, o.name, o.uploaded_at, o.metadata, %s AS k, %s AS p FROM storage.objects o WHERE o.bucket_id = $1 AND %%s ORDER BY %s LIMIT 1`, key, p, strings.Join(order, " "+dir+", ")+" "+dir)
 	sql := fmt.Sprintf(`WITH RECURSIVE walk AS (
   (%s)
   UNION ALL
@@ -100,7 +99,7 @@ FROM walk WHERE starts_with(k, %s) LIMIT $5 OFFSET $6`, fmt.Sprintf(peek, first)
 	return sql, []any{q.bucket, q.match, q.foldFrom, start, q.limit, q.offset}
 }
 
-// scanSQL is the walk's answer without name_lower: it seeks each case variant of the prefix's leading runes on the name index, then filters, folds and sorts in one pass.
+// scanSQL is the walk without name_lower: it seeks each case variant of the prefix on the name index.
 func (q listQuery) scanSQL() (string, []any) {
 	dir, pick := "ASC", "k, n"
 	if q.desc {
@@ -135,7 +134,7 @@ SELECT name, id, uploaded_at, metadata, folder FROM e ORDER BY sk %s, n %s LIMIT
 // maxVariantRanges caps the index seeks per query; runes past the cap are only filtered.
 const maxVariantRanges = 256
 
-// lowerVariants is r's simple-fold orbit plus U+0130, which glibc lower() maps to i (ICU and tr_TR differ, so this can only over-seek).
+// lowerVariants is r's simple-fold orbit plus U+0130.
 func lowerVariants(r rune) []rune {
 	if r == 'İ' {
 		return []rune{'İ', 'i', 'I'}
@@ -173,15 +172,6 @@ func caseVariantRanges(s string) []string {
 	return ranges
 }
 
-// orderBy applies dir to each comma-separated sort term.
-func orderBy(terms []string, dir string) string {
-	out := make([]string, len(terms))
-	for i, t := range terms {
-		out[i] = t + " " + dir
-	}
-	return strings.Join(out, ", ")
-}
-
 // timeSQL matches search_by_timestamp and storage.search's path-token branch, which aggregate the whole prefix as Supabase does.
 func (q listQuery) timeSQL() (string, []any) {
 	nameExpr, matchExpr := "name", "starts_with(name, $2)"
@@ -209,23 +199,16 @@ SELECT name, id, uploaded_at, metadata, folder FROM e`, p, matchExpr, strings.Re
 	}
 	sortName := nameExpr + ` COLLATE "C"`
 	ts := `COALESCE(date_trunc('milliseconds', uploaded_at), 'epoch'::timestamptz)`
-	switch {
-	case q.after != nil && q.byTime:
+	if q.after != nil {
 		at, _ := time.Parse(time.RFC3339Nano, q.after.At)
 		args = append(args, at, q.after.Name)
 		sql += fmt.Sprintf(` WHERE ROW(%s, name COLLATE "C") %s ROW(date_trunc('milliseconds', $4::timestamptz), $5::text)`, ts, op)
-	case q.after != nil:
-		args = append(args, q.after.Name)
-		sql += fmt.Sprintf(` WHERE name COLLATE "C" %s $4`, op)
 	}
-	switch {
-	case q.byTime && q.v1:
+	if q.caseFold {
 		// v1 lists folders first, then files by time.
 		sql += fmt.Sprintf(` ORDER BY folder DESC, CASE WHEN folder THEN %s END %s, uploaded_at %s, %s %s`, sortName, dir, dir, sortName, dir)
-	case q.byTime:
+	} else {
 		sql += fmt.Sprintf(` ORDER BY %s %s, name COLLATE "C" %s`, ts, dir, dir)
-	default:
-		sql += fmt.Sprintf(` ORDER BY %s %s`, sortName, dir)
 	}
 	args = append(args, q.limit, q.offset)
 	sql += fmt.Sprintf(` LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
@@ -288,7 +271,7 @@ func (h *StorageV1Handler) listObjects(c *gin.Context) {
 	}
 	match := prefix + req.Search
 	q := listQuery{
-		bucket: bucketName, match: match, fold: true, foldFrom: utf8.RuneCountInString(match), caseFold: true, v1: true,
+		bucket: bucketName, match: match, fold: true, foldFrom: utf8.RuneCountInString(match), caseFold: true,
 		byTime: req.SortBy.Column == "updated_at" || req.SortBy.Column == "created_at" || req.SortBy.Column == "last_accessed_at",
 		desc:   listOrderDesc(req.SortBy.Order), limit: min(req.Limit, 1500), offset: max(req.Offset, 0),
 	}
