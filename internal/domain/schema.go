@@ -273,7 +273,6 @@ func (t Table) EffectiveRLSEnabled() bool {
 	return len(t.RLS) > 0
 }
 
-// GetField returns the named field and true, or zero value and false.
 // PrimaryKeyColumns returns the primary key field names in declared order.
 func (t Table) PrimaryKeyColumns() []string {
 	var pks []string
@@ -285,6 +284,7 @@ func (t Table) PrimaryKeyColumns() []string {
 	return pks
 }
 
+// GetField returns the named field and true, or zero value and false.
 func (t Table) GetField(name string) (Field, bool) {
 	for _, f := range t.Fields {
 		if f.Name == name {

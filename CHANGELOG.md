@@ -49,7 +49,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Fixed
 
-- An upsert whose payload has only key columns (a junction row, `.upsert({post_id, tag_id}).select()`) now returns the row instead of `[]`. `resolution=ignore-duplicates` still returns nothing for existing rows.
+- An upsert whose payload has only key columns (a junction row, `.upsert({post_id, tag_id}).select()`) now returns the row instead of `[]`. `resolution=ignore-duplicates` still returns nothing for existing rows. Like PostgREST, this is a real UPDATE: UPDATE triggers fire, it needs UPDATE privilege and an UPDATE policy, and a batch with a duplicate key errors.
 - Storage: a NUL byte in a list `prefix`, `search` or `cursor` now returns 400 instead of 500.
 - While a destructive migration is blocked, storage policies that call an RPC the migration hasn't created yet are set to `false` (deny all) until the migration applies.
 - Storage `list()` keeps objects whose names differ only by case (`a.txt` and `A.txt`); the skip-scan used to return only one of them. It also stays index-bounded when the caller runs under RLS, where the `lower(name)` filter used to force a scan of the whole prefix.
