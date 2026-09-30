@@ -242,6 +242,35 @@ await step('auth: signInWithOAuth (PKCE) completes via /authorize + /callback + 
   assertEq(sessionData.user.app_metadata.provider, 'fake', 'oauth user provider metadata')
 })
 
+await step('auth: signInWithOAuth (implicit) needs no cookie, is single use, and rejects forged state', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  const { data, error } = await client.auth.signInWithOAuth({ provider: 'fake', options: { skipBrowserRedirect: true } })
+  if (error) throw error
+  assert(!data.url.includes('code_challenge='), 'implicit authorize url has no code_challenge')
+
+  // Node fetch keeps no cookies, so success proves the state lives server-side.
+  const authorize = await fetch(data.url, { redirect: 'manual' })
+  const callbackUrl = authorize.headers.get('location')
+  assert(callbackUrl, `authorize should redirect, got ${authorize.status}`)
+  const first = await fetch(callbackUrl, { redirect: 'manual' })
+  assertEq(first.status, 302, 'implicit callback redirects to the app')
+  const landing = first.headers.get('location')
+  assert(landing.startsWith('http://app.local#'), `unexpected landing ${landing}`)
+  const tokens = Object.fromEntries(new URLSearchParams(landing.split('#')[1]))
+  assert(tokens.access_token && tokens.refresh_token, 'implicit callback should return tokens in the fragment')
+  const { data: userData, error: userError } = await client.auth.getUser(tokens.access_token)
+  if (userError) throw userError
+  assertEq(userData.user.app_metadata.provider, 'fake', 'oauth user provider metadata')
+
+  assertEq((await fetch(callbackUrl, { redirect: 'manual' })).status, 400, 'replayed state')
+
+  const forged = new NodeURL(callbackUrl)
+  forged.searchParams.set('state', 'forged-state')
+  const forgedResp = await fetch(String(forged))
+  assertEq(forgedResp.status, 400, 'forged state')
+  assert((await forgedResp.text()).includes('Invalid OAuth state'), 'forged state message')
+})
+
 await step('auth: linkIdentity binds the link to the initiating browser', async () => {
   // Node has no cookie jar, so capture the binding cookie a browser would store.
   let bindingCookie = ''
