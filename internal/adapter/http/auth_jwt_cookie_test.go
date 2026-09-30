@@ -2,9 +2,9 @@ package http
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -67,84 +67,45 @@ func TestTokenVerify_SharesMiddlewareVerifier(t *testing.T) {
 	}
 }
 
-func TestAuthorize_OAuthCookiesSecureOnHTTPS(t *testing.T) {
+func TestAuthorize_StateStoreFailureIs500(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	adapterauth.RegisterOAuth(unitOAuthProvider{})
+	h := linkHandler(t, &stubAuthService{createOAuthFlowFn: func(context.Context, string, string, string, string, string) error {
+		return errors.New("db down")
+	}})
+	r := gin.New()
+	r.GET("/authorize", h.handleAuthorize)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "http://api/authorize?provider=unitfake", nil))
+	if w.Code != 500 || w.Header().Get("Location") != "" {
+		t.Fatalf("status %d loc %q", w.Code, w.Header().Get("Location"))
+	}
+}
+
+// Regression: callback on a different host than authorize, with no cookies, must succeed.
+func TestOAuthCallback_StateFromDBNeedsNoCookie(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	adapterauth.RegisterOAuth(unitOAuthProvider{})
 	cases := []struct {
-		name, base, target string
-		secure             bool
+		name, state string
+		known       bool
+		wantStatus  int
 	}{
-		{"https base url", "https://app.example.com", "http://api/authorize?provider=unitfake", true},
-		{"tls request", "http://localhost:8080", "https://api/authorize?provider=unitfake", true},
-		{"plain http dev", "http://localhost:8080", "http://api/authorize?provider=unitfake", false},
+		{"known state, no cookie", "good", true, 302},
+		{"unknown state", "forged", false, 400},
+		{"empty state", "", false, 400},
 	}
 	for _, tc := range cases {
-		t.Setenv("INSTANCEZ_BASE_URL", tc.base)
-		h := &AuthHandler{cfg: &domain.Config{Auth: &domain.Auth{
-			OAuth: map[string]*domain.OAuthProvider{"unitfake": {ClientID: "c", RedirectURL: "http://api/cb"}}}},
-			authSvc: &stubAuthService{}, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-		r := gin.New()
-		r.GET("/authorize", h.handleAuthorize)
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, httptest.NewRequest("GET", tc.target, nil))
-		cookies := (&http.Response{Header: w.Header()}).Cookies()
-		if len(cookies) != 2 {
-			t.Fatalf("%s: want 2 cookies, got %v", tc.name, cookies)
-		}
-		for _, ck := range cookies {
-			if ck.Secure != tc.secure || !ck.HttpOnly || ck.SameSite != http.SameSiteLaxMode {
-				t.Errorf("%s: cookie %s secure=%v httponly=%v samesite=%v", tc.name, ck.Name, ck.Secure, ck.HttpOnly, ck.SameSite)
+		h := linkHandler(t, &stubAuthService{consumeOAuthFlowFn: func(_ context.Context, state string) (domain.FlowState, error) {
+			if tc.known && state == "good" {
+				return domain.FlowState{RedirectTo: "http://app.local"}, nil
 			}
-		}
-	}
-}
-
-func TestAuthorize_OAuthStateCookieHostPrefix(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	adapterauth.RegisterOAuth(unitOAuthProvider{})
-	cases := []struct {
-		name, base string
-		want       string
-	}{
-		{"https", "https://app.example.com", "__Host-oauth_state"},
-		{"http", "http://localhost:8080", "oauth_state"},
-	}
-	for _, tc := range cases {
-		t.Setenv("INSTANCEZ_BASE_URL", tc.base)
-		h := &AuthHandler{cfg: &domain.Config{Auth: &domain.Auth{
-			OAuth: map[string]*domain.OAuthProvider{"unitfake": {ClientID: "c", RedirectURL: "http://api/cb"}}}},
-			authSvc: &stubAuthService{}, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-		r := gin.New()
-		r.GET("/authorize", h.handleAuthorize)
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, httptest.NewRequest("GET", "http://api/authorize?provider=unitfake", nil))
-		if ck := responseCookie(w, tc.want); ck == nil {
-			t.Fatalf("%s: want cookie %s, got %v", tc.name, tc.want, w.Header().Values("Set-Cookie"))
-		}
-	}
-}
-
-// Over https only the __Host- state cookie counts, so a tossed bare cookie is ignored.
-func TestOAuthCallback_StateCookieRejectsTossedBareName(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	adapterauth.RegisterOAuth(unitOAuthProvider{})
-	cases := []struct {
-		name, base, cookieName string
-		wantStatus             int
-	}{
-		{"https matching __Host- cookie", "https://app.instancez.app", "__Host-oauth_state", 302},
-		{"https tossed bare cookie rejected", "https://app.instancez.app", "oauth_state", 400},
-		{"http matching bare cookie", "http://localhost:8080", "oauth_state", 302},
-		{"http ignores __Host- cookie", "http://localhost:8080", "__Host-oauth_state", 400},
-	}
-	for _, tc := range cases {
-		t.Setenv("INSTANCEZ_BASE_URL", tc.base)
-		h := linkHandler(t, &stubAuthService{})
+			return domain.FlowState{}, domain.ErrNotFound
+		}})
 		r := gin.New()
 		r.GET("/cb", h.handleOAuthCallback("unitfake"))
-		req := httptest.NewRequest("GET", "/cb?state=login-state&code=c", nil)
-		req.AddCookie(&http.Cookie{Name: tc.cookieName, Value: "login-state", HttpOnly: true, Secure: true})
 		w := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "https://www.schedule-match.com/cb?state="+tc.state+"&code=c", nil)
 		r.ServeHTTP(w, req)
 		if w.Code != tc.wantStatus {
 			t.Fatalf("%s: status %d want %d body %s", tc.name, w.Code, tc.wantStatus, w.Body.String())

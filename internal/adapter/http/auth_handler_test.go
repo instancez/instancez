@@ -2366,7 +2366,8 @@ func TestHandleAuthorize_MapConfig(t *testing.T) {
 				"google": {ClientID: "cid", ClientSecret: "sec", RedirectURL: "https://app/cb"},
 			},
 		}},
-		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		authSvc: &stubAuthService{},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 
 	// Configured provider → 307 redirect to Google with the client id.
@@ -2413,13 +2414,16 @@ func TestHandleOAuthCallback_ExchangeFailure(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	adapterauth.RegisterOAuth(failingOAuthProvider{})
 
+	flowRedirect := "https://app.example.com/cb"
 	h := &AuthHandler{
 		cfg: &domain.Config{Auth: &domain.Auth{
 			OAuth:        map[string]*domain.OAuthProvider{"failcb": {ClientID: "cid", ClientSecret: "sec"}},
 			RedirectURLs: []string{"https://app.example.com"},
 		}},
-		authSvc: &stubAuthService{},
-		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		authSvc: &stubAuthService{consumeOAuthFlowFn: func(_ context.Context, state string) (domain.FlowState, error) {
+			return domain.FlowState{RedirectTo: flowRedirect}, nil
+		}},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	handler := h.handleOAuthCallback("failcb")
 
@@ -2427,8 +2431,6 @@ func TestHandleOAuthCallback_ExchangeFailure(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("GET", "/auth/v1/callback/failcb?state=s1&code=abc", nil)
-	c.Request.AddCookie(&http.Cookie{Name: "oauth_state", Value: "s1"})
-	c.Request.AddCookie(&http.Cookie{Name: "oauth_redirect_to", Value: "https://app.example.com/cb"})
 	handler(c)
 	if w.Code != http.StatusFound {
 		t.Fatalf("with redirect_to: status = %d, want 302: %s", w.Code, w.Body.String())
@@ -2445,7 +2447,7 @@ func TestHandleOAuthCallback_ExchangeFailure(t *testing.T) {
 	w = httptest.NewRecorder()
 	c, _ = gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("GET", "/auth/v1/callback/failcb?state=s1&code=abc", nil)
-	c.Request.AddCookie(&http.Cookie{Name: "oauth_state", Value: "s1"})
+	flowRedirect = ""
 	handler(c)
 	if w.Code != http.StatusFound {
 		t.Fatalf("no redirect_to (with redirect_urls): status = %d, want 302: %s", w.Code, w.Body.String())
@@ -2459,7 +2461,6 @@ func TestHandleOAuthCallback_ExchangeFailure(t *testing.T) {
 	w = httptest.NewRecorder()
 	c, _ = gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("GET", "/auth/v1/callback/failcb?state=s1&code=abc", nil)
-	c.Request.AddCookie(&http.Cookie{Name: "oauth_state", Value: "s1"})
 	handler(c)
 	if w.Code != 500 {
 		t.Errorf("no redirect config: status = %d, want 500: %s", w.Code, w.Body.String())
