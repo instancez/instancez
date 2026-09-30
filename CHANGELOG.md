@@ -8,7 +8,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Fixed
 
-- OAuth login without PKCE no longer fails with `Invalid OAuth state` when the API is reached on a different host than the provider callback (for example `<app>.instancez.app` vs a custom domain). The state now lives in the database, like PKCE and identity linking, and the `oauth_state`/`oauth_redirect_to` cookies are gone. A login in flight during the upgrade fails once; users retry.
+- OAuth login without PKCE no longer fails with `Invalid OAuth state` when the API is reached on a different host than the provider callback (for example `<app>.instancez.app` vs a custom domain). The state now lives in the database, like PKCE and identity linking, and the `oauth_state`/`oauth_redirect_to` cookies are gone. Like Supabase, plain flows are not bound to the browser that started them; use `flowType: 'pkce'` for that. Stale `auth.flow_state` rows are trimmed on each new login. A login in flight during the upgrade fails once; users retry.
 
 ## [0.0.4] - 2026-09-29
 

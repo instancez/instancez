@@ -666,7 +666,12 @@ func (s *Service) CreateOAuthFlowState(ctx context.Context, state, codeChallenge
 	_, err := s.db.Exec(ctx,
 		"INSERT INTO auth.flow_state (auth_code, code_challenge, code_challenge_method, redirect_to, provider_type, authentication_method, linking_user_id, auth_code_issued_at) VALUES ($1, $2, $3, $4, 'oauth', 'oauth', $5, NOW())",
 		state, cc, ccm, redirectTo, linking)
-	return err
+	if err != nil {
+		return err
+	}
+	// Abandoned logins would pile up, so each new flow trims a batch of day-old rows.
+	_, _ = s.db.Exec(ctx, "DELETE FROM auth.flow_state WHERE auth_code IN (SELECT auth_code FROM auth.flow_state WHERE auth_code_issued_at < NOW() - INTERVAL '24 hours' LIMIT 100)")
+	return nil
 }
 
 func (s *Service) ConsumeOAuthFlowState(ctx context.Context, state string) (domain.FlowState, error) {

@@ -745,6 +745,24 @@ func TestOAuthFlowStateIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("creating a flow trims day-old rows only", func(t *testing.T) {
+		for _, st := range []string{"st-old", "st-recent"} {
+			if err := s.CreateOAuthFlowState(ctx, st, "", "", "", ""); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := s.db.Exec(ctx, "UPDATE auth.flow_state SET auth_code_issued_at = NOW() - INTERVAL '25 hours' WHERE auth_code = 'st-old'"); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.CreateOAuthFlowState(ctx, "st-new", "", "", "", ""); err != nil {
+			t.Fatal(err)
+		}
+		row, err := s.db.QueryRow(ctx, "SELECT count(*) FILTER (WHERE auth_code = 'st-old') AS old, count(*) FILTER (WHERE auth_code IN ('st-recent','st-new')) AS kept FROM auth.flow_state")
+		if err != nil || asString(row["old"]) != "0" || asString(row["kept"]) != "2" {
+			t.Fatalf("row=%v err=%v", row, err)
+		}
+	})
+
 	t.Run("concurrent consumers get the state once", func(t *testing.T) {
 		if err := s.CreateOAuthFlowState(ctx, "st-race", "", "", "", uid); err != nil {
 			t.Fatal(err)
