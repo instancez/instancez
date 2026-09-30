@@ -6,6 +6,10 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 <!-- Add entries here as you merge changes. Move them under a version heading when you cut a release. -->
 
+### Fixed
+
+- OAuth login without PKCE no longer fails with `Invalid OAuth state` when the API is reached on a different host than the provider callback (for example `<app>.instancez.app` vs a custom domain). The state now lives in the database, like PKCE and identity linking, and the `oauth_state`/`oauth_redirect_to` cookies are gone. A login in flight during the upgrade fails once; users retry.
+
 ## [0.0.4] - 2026-09-29
 
 ### Added

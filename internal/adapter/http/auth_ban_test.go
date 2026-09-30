@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"io"
 	"log/slog"
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -183,6 +182,7 @@ func TestBannedUser_OAuthCallbackRefused(t *testing.T) {
 			OAuth:     map[string]*domain.OAuthProvider{"banoauth": {ClientID: "cid", ClientSecret: "sec"}},
 		}},
 		authSvc: &stubAuthService{
+			consumeOAuthFlowFn: func(context.Context, string) (domain.FlowState, error) { return domain.FlowState{}, nil },
 			upsertOAuthUserFn: func(context.Context, domain.OAuthLogin) (map[string]any, error) {
 				return bannedRow(true), nil
 			},
@@ -192,7 +192,6 @@ func TestBannedUser_OAuthCallbackRefused(t *testing.T) {
 	}
 	handler := h.handleOAuthCallback("banoauth")
 	req := httptest.NewRequest("GET", "/auth/v1/callback/banoauth?state=s1&code=abc", nil)
-	req.AddCookie(&http.Cookie{Name: "oauth_state", Value: "s1", HttpOnly: true, Secure: true})
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = req

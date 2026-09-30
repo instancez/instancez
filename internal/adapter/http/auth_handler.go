@@ -1269,18 +1269,12 @@ func (h *AuthHandler) handleAuthorize(c *gin.Context) {
 
 	state := generateRandomToken()
 
-	if codeChallenge != "" {
-		if codeChallengeMethod == "" {
-			codeChallengeMethod = "S256"
-		}
-		ctx := c.Request.Context()
-		if err := h.authSvc.CreateOAuthFlowState(ctx, state, codeChallenge, codeChallengeMethod, redirectTo, ""); err != nil {
-			problemJSON(c, 500, "internal", "Failed to store OAuth state")
-			return
-		}
-	} else {
-		h.setLaxCookie(c, h.oauthStateCookie(c), state, 600)
-		h.setLaxCookie(c, h.oauthRedirectCookie(c), redirectTo, 600)
+	if codeChallenge != "" && codeChallengeMethod == "" {
+		codeChallengeMethod = "S256"
+	}
+	if err := h.authSvc.CreateOAuthFlowState(c.Request.Context(), state, codeChallenge, codeChallengeMethod, redirectTo, ""); err != nil {
+		problemJSON(c, 500, "internal", "Failed to store OAuth state")
+		return
 	}
 
 	c.Redirect(http.StatusTemporaryRedirect, prov.AuthorizeURL(cfg, state))
@@ -1339,7 +1333,7 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 		state := c.Query("state")
 		ctx := c.Request.Context()
 
-		// Try DB-stored state first (PKCE / identity linking), fall back to cookie.
+		// State lives in the DB so the callback host need not match the authorize host.
 		var redirectTo string
 		var isPKCE bool
 		var linkingUserID string
@@ -1369,12 +1363,8 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 				linkingUserID = flow.LinkingUserID
 			}
 		} else {
-			savedState, _ := c.Cookie(h.oauthStateCookie(c))
-			if state == "" || state != savedState {
-				problemJSON(c, 400, "bad_request", "Invalid OAuth state")
-				return
-			}
-			redirectTo, _ = c.Cookie(h.oauthRedirectCookie(c))
+			problemJSON(c, 400, "bad_request", "Invalid OAuth state")
+			return
 		}
 
 		code := c.Query("code")
@@ -2236,14 +2226,6 @@ func (h *AuthHandler) hostCookieName(c *gin.Context, name string) string {
 // linkStateCookie binds a link flow to its browser; __Host- stops sibling subdomains tossing it.
 func (h *AuthHandler) linkStateCookie(c *gin.Context) string {
 	return h.hostCookieName(c, "oauth_link_state")
-}
-
-func (h *AuthHandler) oauthStateCookie(c *gin.Context) string {
-	return h.hostCookieName(c, "oauth_state")
-}
-
-func (h *AuthHandler) oauthRedirectCookie(c *gin.Context) string {
-	return h.hostCookieName(c, "oauth_redirect_to")
 }
 
 func (h *AuthHandler) setLaxCookie(c *gin.Context, name, value string, maxAge int) {
