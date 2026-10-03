@@ -53,13 +53,13 @@ func newQueryTestHandler(runner *queryStubDB, mode DashboardMode) *AdminHandler 
 func newQueryTestRouter(h *AdminHandler) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.POST("/api/_admin/query", h.handleQuery)
+	r.POST("/_admin/query", h.handleQuery)
 	return r
 }
 
 func doQuery(h *AdminHandler, body string) *httptest.ResponseRecorder {
 	r := newQueryTestRouter(h)
-	req := httptest.NewRequest(http.MethodPost, "/api/_admin/query", bytes.NewReader([]byte(body)))
+	req := httptest.NewRequest(http.MethodPost, "/_admin/query", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

@@ -23,10 +23,10 @@ func TestHandleJWTKey_ReturnsPublicOnly(t *testing.T) {
 	h := &AdminHandler{jwtKeys: km}
 
 	r := gin.New()
-	r.GET("/api/_admin/jwt-keys", h.handleJWTKey)
+	r.GET("/_admin/jwt-keys", h.handleJWTKey)
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/_admin/jwt-keys", nil))
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/_admin/jwt-keys", nil))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
@@ -49,9 +49,9 @@ func TestHandleJWTKey_NoManager(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := &AdminHandler{}
 	r := gin.New()
-	r.GET("/api/_admin/jwt-keys", h.handleJWTKey)
+	r.GET("/_admin/jwt-keys", h.handleJWTKey)
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/_admin/jwt-keys", nil))
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/_admin/jwt-keys", nil))
 	if w.Code != http.StatusNotImplemented {
 		t.Fatalf("status = %d, want 501", w.Code)
 	}
@@ -63,10 +63,10 @@ func TestHandleRotateJWTKey(t *testing.T) {
 	h := &AdminHandler{jwtKeys: km, logger: slog.Default()}
 
 	r := gin.New()
-	r.POST("/api/_admin/jwt-keys/rotate", h.handleRotateJWTKey)
+	r.POST("/_admin/jwt-keys/rotate", h.handleRotateJWTKey)
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/_admin/jwt-keys/rotate", nil))
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/_admin/jwt-keys/rotate", nil))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())

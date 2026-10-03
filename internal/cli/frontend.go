@@ -35,8 +35,7 @@ func newFrontendDeployCmd() *cobra.Command {
 		Short: "Upload a prebuilt static bundle (dist/) as the project's frontend",
 		Long: `Upload an externally-built static frontend bundle to an instancez Cloud project.
 
-The bundle is served at the project's domain while /api still routes to the
-backend. <dist-dir> must contain an index.html at its root (a Vite/SPA build).
+The bundle is served as the project's static site. <dist-dir> must contain index.html (a Vite/SPA build).
 
 --branch selects which version to deploy to (validated server-side against the
 app's versions). The project id is read from project.cloud.project_id in

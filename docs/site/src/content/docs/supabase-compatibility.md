@@ -37,7 +37,7 @@ When using the S3 provider, you can bypass the SDK entirely and upload files str
 
 ```js
 // Get a presigned upload URL
-const { id, upload_url } = await fetch('/api/storage/avatars/sign', {
+const { id, upload_url } = await fetch('/storage/avatars/sign', {
   method: 'POST',
   headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
   body: JSON.stringify({ content_type: file.type, size: file.size }),

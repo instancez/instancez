@@ -370,7 +370,7 @@ INSTANCEZ_AUTH_DATABASE_URL=postgres://authenticator:CHANGE_ME@host:5432/dbname?
 
 # API keys. The publishable key is client-safe and maps to the anon role; ship
 # it in client apps. The secret key is server-side only, maps to service_role,
-# and gates the dashboard and /api/_admin endpoints (leave it unset to disable
+# and gates the dashboard and /_admin endpoints (leave it unset to disable
 # them — they return 404). Set strong, unique values before deploying.
 INSTANCEZ_PUBLISHABLE_KEY=inz_publishable_CHANGE_ME
 INSTANCEZ_SECRET_KEY=inz_secret_CHANGE_ME

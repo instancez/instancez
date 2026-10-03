@@ -20,7 +20,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -808,16 +807,10 @@ func runPasswordResetFlow(t *testing.T, baseURL, publishableKey string, emails *
 	if !regexp.MustCompile(`redirect_to=`).MatchString(verifyURL) {
 		t.Fatalf("password reset: emailed link missing redirect_to: %s", verifyURL)
 	}
-	// The emailed link carries the /api prefix a real deployment sits behind
-	// (see publicAuthBaseURL); Traefik strips that prefix before forwarding
-	// to this process, and this harness has no Traefik in front of it, so
-	// strip it here to reproduce what the process actually receives. The
-	// assertions above already proved the *emailed* link is correct.
-	followURL := strings.Replace(verifyURL, "/api/auth/v1/verify", "/auth/v1/verify", 1)
 	client := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		return http.ErrUseLastResponse // don't follow redirects
 	}}
-	verifyResp, err := client.Get(followURL)
+	verifyResp, err := client.Get(verifyURL)
 	if err != nil {
 		t.Fatalf("password reset: GET /verify failed: %v", err)
 	}

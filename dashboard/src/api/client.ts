@@ -7,7 +7,7 @@ import type {
   SqlResult,
 } from "../lib/types";
 
-const BASE = "/api/_admin";
+const BASE = "/_admin";
 
 export function getSecretKey(): string {
   return sessionStorage.getItem("instancez_secret_key") || "";

@@ -2,7 +2,7 @@ import { createClient } from '@supabase/supabase-js'
 
 // Instancez speaks the same HTTP shape as Supabase, so we can create a
 // standard supabase-js client against it. `VITE_INSTANCEZ_URL` must be the
-// server root (no /api or /rest/v1 suffix) — supabase-js adds the /auth/v1
+// server root — supabase-js adds the /auth/v1
 // and /rest/v1 prefixes itself.
 const URL = import.meta.env.VITE_INSTANCEZ_URL || window.location.origin
 

@@ -209,14 +209,14 @@ func TestStorageAnon_LegacyAnonJWTGated(t *testing.T) {
 	store := &stubObjectStore{}
 	h := &StorageHandler{cfg: &domain.Config{Storage: map[string]domain.Bucket{"open": {}}}, db: touchlessDB(t), storage: store, jwtKeys: stubKeys(t)}
 	r := gin.New()
-	h.Mount(r.Group("/api"))
+	h.Mount(r.Group(""))
 	tok := signToken(t, h.jwtKeys, jwt.MapClaims{"sub": "00000000-0000-0000-0000-000000000001", "role": "anon", "exp": 4102444800})
 	auth := map[string]string{"Authorization": "Bearer " + tok}
 	for _, c := range []anonCase{
-		{"POST", "/api/storage/open/sign", `{"content_type":"text/plain"}`, 403, "42501"},
-		{"POST", "/api/storage/open/sign", `not json`, 400, ""},
-		{"GET", "/api/storage/open/a.txt", "", 404, "Object not found"},
-		{"DELETE", "/api/storage/open/a.txt", "", 404, "Object not found"},
+		{"POST", "/storage/open/sign", `{"content_type":"text/plain"}`, 403, "42501"},
+		{"POST", "/storage/open/sign", `not json`, 400, ""},
+		{"GET", "/storage/open/a.txt", "", 404, "Object not found"},
+		{"DELETE", "/storage/open/a.txt", "", 404, "Object not found"},
 	} {
 		w := serve(r, c.method, c.path, c.body, auth)
 		require.Equal(t, c.status, w.Code, "%s %s: %s", c.method, c.path, w.Body.String())

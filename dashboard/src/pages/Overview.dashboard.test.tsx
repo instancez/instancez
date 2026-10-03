@@ -16,7 +16,7 @@ function renderOverview(config: any, stats: any = null, keys: { publishable_key:
   } as any;
   return renderWithChakra(
     <MemoryRouter>
-      <ConsoleProvider backend={backend} initialConfig={config} apiBaseUrl="https://x.instancez.app/api">
+      <ConsoleProvider backend={backend} initialConfig={config} apiBaseUrl="https://x.instancez.app">
         <Overview />
       </ConsoleProvider>
     </MemoryRouter>
@@ -62,7 +62,7 @@ test("Storage usage hidden without stats capability", async () => {
 test("publishable key shows creating hint while the backend has no key yet", async () => {
   const config = { project:{name:"B",description:""}, tables:{}, storage:{}, rpc:{}, functions:{}, auth:null };
   renderOverview(config, null, { publishable_key: "" });
-  expect(await screen.findByText("https://x.instancez.app/api")).toBeInTheDocument();
+  expect(await screen.findByText("https://x.instancez.app")).toBeInTheDocument();
   expect(screen.getByText(/creating/i)).toBeInTheDocument();
 });
 
@@ -91,7 +91,7 @@ test("platform mount depth: Database card click navigates absolutely to /tables 
       {
         path: "overview",
         element: (
-          <ConsoleProvider backend={backend} initialConfig={config} apiBaseUrl="https://x.instancez.app/api">
+          <ConsoleProvider backend={backend} initialConfig={config} apiBaseUrl="https://x.instancez.app">
             <Overview />
           </ConsoleProvider>
         ),

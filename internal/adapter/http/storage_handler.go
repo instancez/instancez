@@ -30,12 +30,12 @@ func NewStorageHandler(deps ServerDeps) *StorageHandler {
 	}
 }
 
-func (h *StorageHandler) Mount(api *gin.RouterGroup) {
+func (h *StorageHandler) Mount(root *gin.RouterGroup) {
 	for bucketName, bucket := range h.cfg.Storage {
 		name := bucketName
 		b := bucket
 
-		group := api.Group("/storage/" + name)
+		group := root.Group("/storage/" + name)
 		group.POST("/sign", jwtAuth(h.jwtKeys, true), h.handleSignUpload(name, b))
 		group.GET("/:id", jwtAuth(h.jwtKeys, !b.Public), h.handleSignDownload(name, b))
 		group.DELETE("/:id", jwtAuth(h.jwtKeys, true), h.handleDelete(name, b))

@@ -45,7 +45,7 @@ const makeConfig = (): Config => ({
   database: { pool: { max: 25, min: 5, idle_timeout: "5m" } },
 });
 
-const CALLBACK_BASE = "https://app.test/api/auth/v1/callback/";
+const CALLBACK_BASE = "https://app.test/auth/v1/callback/";
 
 function renderAuth(config: Config, dotenvWritable = false, oauthCallbackBase = CALLBACK_BASE) {
   const save = vi.fn().mockResolvedValue(true);

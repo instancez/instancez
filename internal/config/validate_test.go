@@ -410,6 +410,23 @@ func TestValidate_StorageValidSize(t *testing.T) {
 	}
 }
 
+func TestValidate_StorageBucketNameV1Reserved(t *testing.T) {
+	for name, wantErr := range map[string]bool{"v1": true, "v10": false, "v1x": false, "avatars": false} {
+		cfg := validBaseConfig()
+		cfg.Providers.Storage = &domain.StorageProvider{Type: "local"}
+		cfg.Storage = map[string]domain.Bucket{name: {}}
+		errs := Validate(cfg)
+		if wantErr {
+			assertHasErrorAt(t, errs, "storage."+name)
+			if !strings.Contains(errs[0].Message, "reserved") {
+				t.Errorf("want reserved-name message, got %q", errs[0].Message)
+			}
+		} else if errs != nil {
+			t.Errorf("bucket %q: expected no errors, got %v", name, errs)
+		}
+	}
+}
+
 // TestValidate_StorageBucketsRequireProvider pins that declaring storage
 // buckets without a providers.storage backend is rejected. Without this guard,
 // `dev` and `validate` would accept the config and only `serve` would fail at

@@ -253,18 +253,18 @@ func TestLegacyMount_PublicReadBypassesRLSOtherRoutesNeedAuth(t *testing.T) {
 	h := newLegacyStorageHandler(roleTrackingDB(&queried), &stubObjectStore{})
 	h.cfg.Storage = map[string]domain.Bucket{"pub": {Public: true}, "priv": {}}
 	r := gin.New()
-	h.Mount(r.Group("/api"))
+	h.Mount(r.Group(""))
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/storage/pub/a.txt", nil))
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/storage/pub/a.txt", nil))
 	require.Equal(t, 200, w.Code, w.Body.String())
 	assert.Equal(t, []string{"service_role[a.txt pub]"}, queried, "a public download is a scoped lookup that bypasses RLS, like /object/public")
 
 	w = httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/storage/priv/a.txt", nil))
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/storage/priv/a.txt", nil))
 	assert.Equal(t, 401, w.Code)
 	w = httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/api/storage/pub/a.txt", nil))
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/storage/pub/a.txt", nil))
 	assert.Equal(t, 401, w.Code)
 }
 
@@ -409,4 +409,54 @@ func TestHandleSignDownload_AnotherUsersPrivateObjectDenied(t *testing.T) {
 	assert.Equal(t, 404, w.Code)
 	assert.False(t, signed, "no signed URL must be issued for a row the caller's RLS can't see")
 	assert.Equal(t, "authenticated", capturedRole, "sign-download must run under the caller's role, not service_role")
+}
+
+func TestStorageHandler_MountsAtRootOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("INSTANCEZ_SECRET_KEY", "test-key")
+	db := &stubDB{queryRowFn: func(ctx context.Context, q string, args ...any) (map[string]any, error) {
+		return map[string]any{"id": "obj1"}, nil
+	}}
+	store := &stubObjectStore{
+		signDownloadFn: func(ctx context.Context, key string, expiry time.Duration, _ domain.DownloadOptions) (string, error) {
+			return "https://example.com/download?sig=xyz", nil
+		},
+	}
+	r := NewServer(ServerDeps{
+		Config: &domain.Config{
+			Project: domain.Project{Name: "test"},
+			Storage: map[string]domain.Bucket{"pub": {Public: true}, "priv": {}},
+		},
+		DB:            domain.RequestDB{Database: db},
+		Storage:       store,
+		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DashboardMode: DashboardDisabled,
+	}).Handler()
+
+	cases := []struct {
+		name, method, path string
+		wantStatus         int
+	}{
+		{"storage sign wired at root", http.MethodPost, "/storage/priv/sign", 401},
+		{"admin at root requires key", http.MethodGet, "/_admin/config/env-vars", 401},
+		{"api admin removed", http.MethodGet, "/api/_admin/config/env-vars", 404},
+		{"api storage sign removed", http.MethodPost, "/api/storage/priv/sign", 404},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
+			if w.Code != tc.wantStatus {
+				t.Fatalf("%s %s: status = %d, want %d: %s", tc.method, tc.path, w.Code, tc.wantStatus, w.Body.String())
+			}
+			if tc.wantStatus == 404 {
+				if loc := w.Header().Get("Location"); loc != "" {
+					t.Fatalf("unexpected redirect to %q", loc)
+				}
+				if strings.Contains(strings.ToLower(w.Body.String()), "<html") {
+					t.Fatalf("404 served HTML: %s", w.Body.String())
+				}
+			}
+		})
+	}
 }

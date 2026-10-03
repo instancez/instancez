@@ -72,7 +72,7 @@ Bypass the instancez server entirely for the file bytes — only the sign reques
 ```js
 async function uploadPhoto(file, jwt) {
   // Step 1: get a presigned upload URL
-  const { id, upload_url } = await fetch('/api/storage/photos/sign', {
+  const { id, upload_url } = await fetch('/storage/photos/sign', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${jwt}`,
