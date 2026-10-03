@@ -36,7 +36,7 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
   );
 }
 
-/** The publishable key from /api/_admin/keys (null until loaded or when unavailable). */
+/** The publishable key from /_admin/keys (null until loaded or when unavailable). */
 export function usePublishableKey(): string | null {
   const backend = useBackend();
   const [publishableKey, setPublishableKey] = useState<string | null>(null);

@@ -22,9 +22,9 @@ func TestConfigStatusOK(t *testing.T) {
 		dashboardMode: DashboardReadwrite,
 		driftFn:       func() *app.DriftTracker { return tracker },
 	}
-	r.GET("/api/_admin/config/status", h.handleConfigStatus)
+	r.GET("/_admin/config/status", h.handleConfigStatus)
 
-	req := httptest.NewRequest("GET", "/api/_admin/config/status", nil)
+	req := httptest.NewRequest("GET", "/_admin/config/status", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -45,7 +45,7 @@ func TestConfigStatusOK(t *testing.T) {
 	if got["dashboard_mode"] != "readwrite" {
 		t.Fatalf("dashboard_mode = %v", got["dashboard_mode"])
 	}
-	if got["oauth_callback_base"] != "https://app.example.com/api/auth/v1/callback/" {
+	if got["oauth_callback_base"] != "https://app.example.com/auth/v1/callback/" {
 		t.Fatalf("oauth_callback_base = %v", got["oauth_callback_base"])
 	}
 }
@@ -61,9 +61,9 @@ func TestConfigStatusDrift(t *testing.T) {
 		dashboardMode: DashboardReadonly,
 		driftFn:       func() *app.DriftTracker { return tracker },
 	}
-	r.GET("/api/_admin/config/status", h.handleConfigStatus)
+	r.GET("/_admin/config/status", h.handleConfigStatus)
 
-	req := httptest.NewRequest("GET", "/api/_admin/config/status", nil)
+	req := httptest.NewRequest("GET", "/_admin/config/status", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -92,9 +92,9 @@ func TestConfigStatusUnknownWhenTrackerNil(t *testing.T) {
 		dashboardMode: DashboardDisabled,
 		driftFn:       func() *app.DriftTracker { return nil },
 	}
-	r.GET("/api/_admin/config/status", h.handleConfigStatus)
+	r.GET("/_admin/config/status", h.handleConfigStatus)
 
-	req := httptest.NewRequest("GET", "/api/_admin/config/status", nil)
+	req := httptest.NewRequest("GET", "/_admin/config/status", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 

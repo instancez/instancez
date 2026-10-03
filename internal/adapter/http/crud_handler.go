@@ -105,7 +105,7 @@ func (h *CRUDHandler) Mount(root *gin.RouterGroup) {
 	}
 }
 
-// handleList handles GET /api/<table> with PostgREST query params.
+// handleList handles GET /rest/v1/<table> with PostgREST query params.
 func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.HandlerFunc {
 	allTbls := h.allTables()
 	return func(c *gin.Context) {
@@ -301,7 +301,7 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 	}
 }
 
-// handleCreate handles POST /api/<table>.
+// handleCreate handles POST /rest/v1/<table>.
 func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		session := getSession(c)
@@ -403,7 +403,7 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 	}
 }
 
-// handleUpsert handles PUT /api/<table> as an upsert on the primary key.
+// handleUpsert handles PUT /rest/v1/<table> as an upsert on the primary key.
 // Body may be a single object or an array. Always uses merge semantics:
 // matching rows are updated, others are inserted.
 func (h *CRUDHandler) handleUpsert(tableName string, table domain.Table) gin.HandlerFunc {
@@ -481,7 +481,7 @@ func (h *CRUDHandler) handleUpsert(tableName string, table domain.Table) gin.Han
 	}
 }
 
-// handleUpdate handles PATCH /api/<table>.
+// handleUpdate handles PATCH /rest/v1/<table>.
 func (h *CRUDHandler) handleUpdate(tableName string, table domain.Table) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		session := getSession(c)
@@ -562,7 +562,7 @@ func (h *CRUDHandler) handleUpdate(tableName string, table domain.Table) gin.Han
 	}
 }
 
-// handleDelete handles DELETE /api/<table>.
+// handleDelete handles DELETE /rest/v1/<table>.
 func (h *CRUDHandler) handleDelete(tableName string, table domain.Table) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		session := getSession(c)

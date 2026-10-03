@@ -26,7 +26,7 @@ func adminErr(c *gin.Context, status int, errSlug, message string) {
 	c.JSON(status, gin.H{"error": errSlug, "message": message})
 }
 
-// AdminHandler serves /api/_admin/* endpoints.
+// AdminHandler serves /_admin/* endpoints.
 type AdminHandler struct {
 	cfg            *domain.Config
 	configFn       func() *domain.Config // returns the LIVE engine config (lastGood when drifted)
@@ -88,8 +88,8 @@ func (h *AdminHandler) sourceDescribe() string {
 	return h.configSource.Describe()
 }
 
-func (h *AdminHandler) Mount(api *gin.RouterGroup) {
-	admin := api.Group("/_admin")
+func (h *AdminHandler) Mount(root *gin.RouterGroup) {
+	admin := root.Group("/_admin")
 	admin.Use(adminKeyAuth())
 	admin.Use(serviceRoleSession(h.db))
 

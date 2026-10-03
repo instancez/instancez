@@ -26,14 +26,14 @@ import (
 
 // TestEffectiveOAuthConfig covers the redirect_url default: a blank one (what
 // the dashboard always saves now) is filled with this server's own callback
-// through the /api ingress prefix, while a value set by hand in the YAML is
+// at <base>/auth/v1/callback, while a value set by hand in the YAML is
 // left alone so self-hosted setups keep control.
 func TestEffectiveOAuthConfig(t *testing.T) {
 	t.Setenv("INSTANCEZ_BASE_URL", "https://app.example.com")
 	h := &AuthHandler{}
 
 	got := h.effectiveOAuthConfig("google", &domain.OAuthProvider{ClientID: "id", ClientSecret: "s"})
-	want := "https://app.example.com/api/auth/v1/callback/google"
+	want := "https://app.example.com/auth/v1/callback/google"
 	if got.RedirectURL != want {
 		t.Fatalf("blank redirect_url: got %q, want %q", got.RedirectURL, want)
 	}
@@ -201,16 +201,15 @@ func TestBuildUser_BannedUntilRendered(t *testing.T) {
 func TestBuildVerifyLink(t *testing.T) {
 	t.Setenv("INSTANCEZ_BASE_URL", "https://app.example.com")
 	h := &AuthHandler{cfg: &domain.Config{Auth: &domain.Auth{}}}
-	// publicAuthBaseURL() = baseURL() + "/api".
 	got := h.buildVerifyLink("tok123", "recovery", "http://app.local/reset")
-	want := "https://app.example.com/api/auth/v1/verify?token=tok123&type=recovery&redirect_to=http%3A%2F%2Fapp.local%2Freset"
+	want := "https://app.example.com/auth/v1/verify?token=tok123&type=recovery&redirect_to=http%3A%2F%2Fapp.local%2Freset"
 	if got != want {
 		t.Fatalf("buildVerifyLink = %q, want %q", got, want)
 	}
 
 	// No redirect_to: omit the param entirely.
 	got = h.buildVerifyLink("tok123", "magiclink", "")
-	want = "https://app.example.com/api/auth/v1/verify?token=tok123&type=magiclink"
+	want = "https://app.example.com/auth/v1/verify?token=tok123&type=magiclink"
 	if got != want {
 		t.Fatalf("buildVerifyLink (no redirect) = %q, want %q", got, want)
 	}

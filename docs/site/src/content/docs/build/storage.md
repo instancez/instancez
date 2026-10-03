@@ -158,10 +158,10 @@ providers:
 
 ## Direct upload (serverless)
 
-When using the S3 provider, you can upload files directly to S3 without routing bytes through instancez. Call `POST /api/storage/<bucket>/sign` to get a presigned upload URL, then `PUT` the file straight to S3:
+When using the S3 provider, you can upload files directly to S3 without routing bytes through instancez. Call `POST /storage/<bucket>/sign` to get a presigned upload URL, then `PUT` the file straight to S3:
 
 ```js
-const { id, upload_url } = await fetch('/api/storage/avatars/sign', {
+const { id, upload_url } = await fetch('/storage/avatars/sign', {
   method: 'POST',
   headers: { 'Authorization': `Bearer ${jwt}`, 'Content-Type': 'application/json' },
   body: JSON.stringify({ content_type: file.type, size: file.size }),
@@ -170,7 +170,7 @@ const { id, upload_url } = await fetch('/api/storage/avatars/sign', {
 await fetch(upload_url, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file })
 ```
 
-Use `GET /api/storage/<bucket>/<id>` to get a presigned download URL later.
+Use `GET /storage/<bucket>/<id>` to get a presigned download URL later.
 
 These endpoints run as the calling user, so the bucket's RLS policies apply: `insert` to sign an upload, `select` to sign a download (except on a public bucket, where anyone can sign a download, like `/object/public`), and `select` plus `delete` to delete (the `DELETE ... RETURNING` under RLS needs `select` to find the row, the same as `remove`). An object you can't see returns 404. A request with a present but invalid `Authorization: Bearer` token gets 401, even against a public bucket's download route: a bad token is always an error, not a silent fall-back to anonymous access.
 

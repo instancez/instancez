@@ -55,14 +55,14 @@ func (s *stubSource) Watch(ctx context.Context, _ time.Duration) (<-chan config.
 	return ch, nil
 }
 
-// newAdminTestRouter wires a minimal gin engine with PUT /api/_admin/config
+// newAdminTestRouter wires a minimal gin engine with PUT /_admin/config
 // directly to the handler. It deliberately skips adminKeyAuth so the tests
 // can exercise the gating logic without needing INSTANCEZ_ADMIN_KEY plumbing.
 func newAdminTestRouter(h *AdminHandler) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.PUT("/api/_admin/config", h.handlePutConfig)
-	r.GET("/api/_admin/config", h.handleGetConfig)
+	r.PUT("/_admin/config", h.handlePutConfig)
+	r.GET("/_admin/config", h.handleGetConfig)
 	return r
 }
 
@@ -76,7 +76,7 @@ func TestPutConfigForbidWhenDisabled(t *testing.T) {
 	r := newAdminTestRouter(h)
 
 	body := bytes.NewReader([]byte(`{"version":1}`))
-	req := httptest.NewRequest(http.MethodPut, "/api/_admin/config", body)
+	req := httptest.NewRequest(http.MethodPut, "/_admin/config", body)
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -103,7 +103,7 @@ func TestPutConfigForbidWhenReadonly(t *testing.T) {
 	r := newAdminTestRouter(h)
 
 	body := bytes.NewReader([]byte(`{"version":1}`))
-	req := httptest.NewRequest(http.MethodPut, "/api/_admin/config", body)
+	req := httptest.NewRequest(http.MethodPut, "/_admin/config", body)
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -134,7 +134,7 @@ func TestPutConfigReadwriteWithoutSourceReturns501(t *testing.T) {
 	r := newAdminTestRouter(h)
 
 	body := bytes.NewReader([]byte(`{"version":1}`))
-	req := httptest.NewRequest(http.MethodPut, "/api/_admin/config", body)
+	req := httptest.NewRequest(http.MethodPut, "/_admin/config", body)
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -156,7 +156,7 @@ func TestGetConfigUsesLiveConfig(t *testing.T) {
 	}
 	r := newAdminTestRouter(h)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/_admin/config", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_admin/config", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -192,7 +192,7 @@ func TestPutConfigConflictBodyOmitsChecksum(t *testing.T) {
 	r := newAdminTestRouter(h)
 
 	body := bytes.NewReader([]byte(`{"version":1}`))
-	req := httptest.NewRequest(http.MethodPut, "/api/_admin/config", body)
+	req := httptest.NewRequest(http.MethodPut, "/_admin/config", body)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("If-Match", "stale-token")
 	w := httptest.NewRecorder()
@@ -258,7 +258,7 @@ func TestPutConfigSourceVersionMismatchReturns409(t *testing.T) {
 	// last-migration record, so Apply returns nil quickly without exercising
 	// the (unstubbed) tx Begin/Exec path.
 	body := bytes.NewReader([]byte(`{"version":1}`))
-	req := httptest.NewRequest(http.MethodPut, "/api/_admin/config", body)
+	req := httptest.NewRequest(http.MethodPut, "/_admin/config", body)
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -284,7 +284,7 @@ func TestPutConfigSourceVersionMismatchReturns409(t *testing.T) {
 	}
 }
 
-// TestGetKeysReturnsConfiguredKeys asserts GET /api/_admin/keys returns the
+// TestGetKeysReturnsConfiguredKeys asserts GET /_admin/keys returns the
 // publishable and secret keys from the environment — the values the dashboard
 // presents for copying, Supabase-style.
 func TestGetKeysReturnsConfiguredKeys(t *testing.T) {
@@ -297,9 +297,9 @@ func TestGetKeysReturnsConfiguredKeys(t *testing.T) {
 	}
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.GET("/api/_admin/keys", h.handleKeys)
+	r.GET("/_admin/keys", h.handleKeys)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/_admin/keys", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_admin/keys", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -629,9 +629,9 @@ func TestHandleListMigrations_Empty(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := gin.New()
-	r.GET("/api/_admin/migrations", h.handleListMigrations)
+	r.GET("/_admin/migrations", h.handleListMigrations)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/_admin/migrations", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_admin/migrations", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != 200 {
@@ -658,9 +658,9 @@ func TestHandleListMigrations_Populated(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := gin.New()
-	r.GET("/api/_admin/migrations", h.handleListMigrations)
+	r.GET("/_admin/migrations", h.handleListMigrations)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/_admin/migrations", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_admin/migrations", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != 200 {
@@ -684,9 +684,9 @@ func TestHandleListMigrations_QueryError(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := gin.New()
-	r.GET("/api/_admin/migrations", h.handleListMigrations)
+	r.GET("/_admin/migrations", h.handleListMigrations)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/_admin/migrations", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_admin/migrations", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != 500 {
@@ -705,9 +705,9 @@ func TestHandleListUsers_Empty(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := gin.New()
-	r.GET("/api/_admin/users", h.handleListUsers)
+	r.GET("/_admin/users", h.handleListUsers)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/_admin/users", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_admin/users", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != 200 {
@@ -733,9 +733,9 @@ func TestHandleListUsers_Populated(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := gin.New()
-	r.GET("/api/_admin/users", h.handleListUsers)
+	r.GET("/_admin/users", h.handleListUsers)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/_admin/users", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_admin/users", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != 200 {
@@ -765,9 +765,9 @@ func TestHandleDisableUser_Success(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := gin.New()
-	r.POST("/api/_admin/users/:id/disable", h.handleDisableUser)
+	r.POST("/_admin/users/:id/disable", h.handleDisableUser)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/_admin/users/u1/disable", nil)
+	req := httptest.NewRequest(http.MethodPost, "/_admin/users/u1/disable", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != 200 {
@@ -794,9 +794,9 @@ func TestHandleDisableUser_DBError(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := gin.New()
-	r.POST("/api/_admin/users/:id/disable", h.handleDisableUser)
+	r.POST("/_admin/users/:id/disable", h.handleDisableUser)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/_admin/users/u1/disable", nil)
+	req := httptest.NewRequest(http.MethodPost, "/_admin/users/u1/disable", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != 500 {
@@ -813,9 +813,9 @@ func TestHandleAdminResetPassword_Success(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := gin.New()
-	r.POST("/api/_admin/users/:id/reset-password", h.handleAdminResetPassword)
+	r.POST("/_admin/users/:id/reset-password", h.handleAdminResetPassword)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/_admin/users/u1/reset-password", nil)
+	req := httptest.NewRequest(http.MethodPost, "/_admin/users/u1/reset-password", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != 200 {
@@ -839,9 +839,9 @@ func TestHandleAdminResetPassword_DBError(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := gin.New()
-	r.POST("/api/_admin/users/:id/reset-password", h.handleAdminResetPassword)
+	r.POST("/_admin/users/:id/reset-password", h.handleAdminResetPassword)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/_admin/users/u1/reset-password", nil)
+	req := httptest.NewRequest(http.MethodPost, "/_admin/users/u1/reset-password", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != 500 {
@@ -865,9 +865,9 @@ func TestHandleSchema_ReflectsLiveConfig(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := gin.New()
-	r.GET("/api/_admin/schema", h.handleSchema)
+	r.GET("/_admin/schema", h.handleSchema)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/_admin/schema", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_admin/schema", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != 200 {
@@ -904,9 +904,9 @@ func TestHandleStats_ReturnsStorageCounts(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := gin.New()
-	r.GET("/api/_admin/stats", h.handleStats)
+	r.GET("/_admin/stats", h.handleStats)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/_admin/stats", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_admin/stats", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != 200 {
@@ -936,9 +936,9 @@ func TestHandleStats_StorageQueryErrorFallsBackToZero(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := gin.New()
-	r.GET("/api/_admin/stats", h.handleStats)
+	r.GET("/_admin/stats", h.handleStats)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/_admin/stats", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_admin/stats", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != 200 {
@@ -968,9 +968,9 @@ func TestHandleConfigDiff_NoTablesIsNotDestructive(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := gin.New()
-	r.GET("/api/_admin/config/diff", h.handleConfigDiff)
+	r.GET("/_admin/config/diff", h.handleConfigDiff)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/_admin/config/diff", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_admin/config/diff", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != 200 {
@@ -1034,9 +1034,9 @@ func TestHandleConfigDiff_TableProducesStatements(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := gin.New()
-	r.GET("/api/_admin/config/diff", h.handleConfigDiff)
+	r.GET("/_admin/config/diff", h.handleConfigDiff)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/_admin/config/diff", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_admin/config/diff", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != 200 {
@@ -1060,9 +1060,9 @@ func TestHandleGetFunctionDeps_NoConfigPath(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := gin.New()
-	r.GET("/api/_admin/functions/deps", h.handleGetFunctionDeps)
+	r.GET("/_admin/functions/deps", h.handleGetFunctionDeps)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/_admin/functions/deps", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_admin/functions/deps", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != 501 {
@@ -1077,9 +1077,9 @@ func TestHandleGetFunctionDeps_NoPackageJSON(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := gin.New()
-	r.GET("/api/_admin/functions/deps", h.handleGetFunctionDeps)
+	r.GET("/_admin/functions/deps", h.handleGetFunctionDeps)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/_admin/functions/deps", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_admin/functions/deps", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != 200 {
@@ -1119,9 +1119,9 @@ func TestHandleGetFunctionDeps_WithPackageJSONAndLock(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := gin.New()
-	r.GET("/api/_admin/functions/deps", h.handleGetFunctionDeps)
+	r.GET("/_admin/functions/deps", h.handleGetFunctionDeps)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/_admin/functions/deps", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_admin/functions/deps", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != 200 {
@@ -1149,9 +1149,9 @@ func TestHandlePostFunctionDeps_ForbiddenWhenReadonly(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := gin.New()
-	r.POST("/api/_admin/functions/deps", h.handlePostFunctionDeps)
+	r.POST("/_admin/functions/deps", h.handlePostFunctionDeps)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/_admin/functions/deps", strings.NewReader(`{"add":["lodash"]}`))
+	req := httptest.NewRequest(http.MethodPost, "/_admin/functions/deps", strings.NewReader(`{"add":["lodash"]}`))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
@@ -1171,9 +1171,9 @@ func TestHandlePostFunctionDeps_EmptyBodyRejected(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := gin.New()
-	r.POST("/api/_admin/functions/deps", h.handlePostFunctionDeps)
+	r.POST("/_admin/functions/deps", h.handlePostFunctionDeps)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/_admin/functions/deps", strings.NewReader(`{}`))
+	req := httptest.NewRequest(http.MethodPost, "/_admin/functions/deps", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
@@ -1188,9 +1188,9 @@ func TestHandlePostFunctionDeps_NoConfigPath(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := gin.New()
-	r.POST("/api/_admin/functions/deps", h.handlePostFunctionDeps)
+	r.POST("/_admin/functions/deps", h.handlePostFunctionDeps)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/_admin/functions/deps", strings.NewReader(`{"add":["lodash"]}`))
+	req := httptest.NewRequest(http.MethodPost, "/_admin/functions/deps", strings.NewReader(`{"add":["lodash"]}`))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 

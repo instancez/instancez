@@ -98,13 +98,9 @@ func NewServer(deps ServerDeps) *Server {
 	r.GET("/ready", s.handleReady)
 	r.GET("/metrics", adminKeyAuth(), handleMetrics)
 
-	// Root router group — used by Supabase-compatible handlers that mount
-	// on absolute paths like /auth/v1 and /rest/v1.
+	// Root router group — all handlers mount on absolute paths like /auth/v1
+	// and /rest/v1.
 	root := r.Group("")
-
-	// API group — retained for internal-only endpoints that don't need
-	// supabase-js compatibility (admin dashboard, functions).
-	api := r.Group("/api")
 
 	// Auth endpoints at /auth/v1/* (GoTrue-compatible, consumed by supabase-js)
 	if deps.Config.Auth != nil {
@@ -125,23 +121,17 @@ func NewServer(deps ServerDeps) *Server {
 	NewFunctionsHandler(deps.FunctionRuntime).Mount(functionsV1)
 
 	// Storage endpoints — supabase-js compatible at /storage/v1/*,
-	// plus serverless-friendly presigned URL endpoints at /api/storage/*.
+	// plus serverless-friendly presigned URL endpoints at /storage/<bucket>/*.
 	if len(deps.Config.Storage) > 0 && deps.Storage != nil {
 		storageV1 := NewStorageV1Handler(deps)
 		storageV1.Mount(root)
 
 		storageHandler := NewStorageHandler(deps)
-		storageHandler.Mount(api)
+		storageHandler.Mount(root)
 	}
 
-	// Admin endpoints — mounted on both /api and root so that the /_admin/*
-	// paths survive the platform's Traefik middleware that strips the /api
-	// prefix before forwarding to Lambda (Host && PathPrefix(`/api`) → strip).
-	// The same handler set (including adminKeyAuth) is registered on both
-	// groups; no handler logic is duplicated.
-	adminHandler := NewAdminHandler(deps)
-	adminHandler.Mount(api)  // /api/_admin/* — direct (non-proxied) access
-	adminHandler.Mount(root) // /_admin/*    — proxy-stripped access
+	// Admin endpoints at /_admin/*, gated by adminKeyAuth.
+	NewAdminHandler(deps).Mount(root)
 
 	// Dashboard SPA
 	MountDashboard(r, deps.DashboardAssets, deps.DevMode, deps.DashboardMode)

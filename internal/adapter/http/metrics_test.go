@@ -2,6 +2,8 @@ package http
 
 import (
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,7 +11,19 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/instancez/instancez/internal/domain"
 )
+
+func newMetricsTestServer(t *testing.T) http.Handler {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	return NewServer(ServerDeps{
+		Config:        &domain.Config{Project: domain.Project{Name: "test"}},
+		DB:            domain.RequestDB{Database: &stubDB{}},
+		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DashboardMode: DashboardDisabled,
+	}).Handler()
+}
 
 // TestMetricsRequiresAdminKey asserts /metrics — which exposes
 // request/latency internals — is gated behind the same admin key as
@@ -17,7 +31,7 @@ import (
 func TestMetricsRequiresAdminKey(t *testing.T) {
 	t.Setenv("INSTANCEZ_SECRET_KEY", "test-key-metrics")
 
-	handler := newServerForAdminAliasTest(t)
+	handler := newMetricsTestServer(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	// No Authorization header — must be rejected.
@@ -37,7 +51,7 @@ func TestMetricsRequiresAdminKey(t *testing.T) {
 func TestMetricsServesWithAdminKey(t *testing.T) {
 	t.Setenv("INSTANCEZ_SECRET_KEY", "test-key-metrics")
 
-	handler := newServerForAdminAliasTest(t)
+	handler := newMetricsTestServer(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	req.Header.Set("Authorization", "Bearer test-key-metrics")

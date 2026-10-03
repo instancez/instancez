@@ -1853,35 +1853,17 @@ func serverBaseURL(cfg *domain.Config) string {
 	return fmt.Sprintf("http://localhost:%d", port)
 }
 
-// oauthCallbackBase is the fixed prefix of every provider's OAuth callback;
-// append the provider name for the full redirect_uri. It carries the /api
-// prefix Traefik strips in front of the Lambda, so it matches exactly what
-// effectiveOAuthConfig hands to the provider. The dashboard shows this value
-// verbatim for the user to paste into the provider console.
+// oauthCallbackBase is the prefix of every provider's OAuth callback; append the provider name.
 func oauthCallbackBase(cfg *domain.Config) string {
-	return serverBaseURL(cfg) + "/api/auth/v1/callback/"
+	return serverBaseURL(cfg) + "/auth/v1/callback/"
 }
 
 func (h *AuthHandler) baseURL() string {
 	return serverBaseURL(h.cfg)
 }
 
-// publicAuthBaseURL returns the externally reachable base for links that a
-// user's browser must follow to hit this handler (email verification, magic
-// link, password recovery). baseURL() is the app's own frontend origin; the
-// Traefik IngressRoute in front of the Lambda only forwards paths under
-// /api (stripping that prefix before the request reaches this process), so
-// a bare "<baseURL>/auth/v1/..." link 404s at the frontend instead of
-// reaching the auth handler. Do not use this for post-auth redirect_to
-// targets — those must stay unprefixed since they land on the frontend
-// itself, not this API.
-func (h *AuthHandler) publicAuthBaseURL() string {
-	return h.baseURL() + "/api"
-}
-
 // effectiveOAuthConfig returns cfg with a blank RedirectURL filled in with this
-// server's own callback for the provider (oauthCallbackBase, which carries the
-// /api prefix Traefik strips in front of the Lambda). The dashboard no longer
+// server's own callback for the provider. The dashboard no longer
 // lets users set redirect_url; it always saves it blank, so this is the
 // derived, forced value in practice. A redirect_url set by hand in the YAML is
 // still left as-is, keeping self-hosted setups in control. Returns a copy so
@@ -1899,7 +1881,7 @@ func (h *AuthHandler) effectiveOAuthConfig(provider string, cfg *domain.OAuthPro
 // email links point at. verifyType and redirect_to are appended when set. This
 // is the single construction point for every auth email and the admin link.
 func (h *AuthHandler) buildVerifyLink(token, verifyType, redirectTo string) string {
-	link := fmt.Sprintf("%s/auth/v1/verify?token=%s", h.publicAuthBaseURL(), token)
+	link := fmt.Sprintf("%s/auth/v1/verify?token=%s", h.baseURL(), token)
 	if verifyType != "" {
 		link += "&type=" + verifyType
 	}

@@ -2589,7 +2589,7 @@ await step('storage: public bucket downloads for anyone but lists only per RLS',
   assertEq(resp.status, 200, 'anon getPublicUrl fetch')
   assertEq(await resp.text(), 'gated body')
 
-  const legacy = await fetch(`${URL}/api/storage/pubgated/gated.txt`, { headers: { apikey: PUBLISHABLE_KEY } })
+  const legacy = await fetch(`${URL}/storage/pubgated/gated.txt`, { headers: { apikey: PUBLISHABLE_KEY } })
   assertEq(legacy.status, 200, 'anon legacy sign-download on a public bucket')
 
   const { data: exists } = await guest.storage.from('pubgated').exists('gated.txt')
@@ -3610,14 +3610,14 @@ await step('storage: render/image routes serve storage-js transforms', async () 
 
 // --- Serverless-friendly endpoints (raw fetch, not supabase-js) ---
 
-await step('storage: serverless-friendly presigned URL — sign via /api/storage', async () => {
+await step('storage: serverless-friendly presigned URL — sign via /storage', async () => {
   // Re-login to get a fresh token (signOut may have been called in earlier tests,
   // or session may need refreshing). Use the original anon client to sign in.
   const { data: signIn } = await anon.auth.signInWithPassword({ email, password })
   if (!signIn?.session) throw new Error('re-login failed')
   const freshToken = signIn.session.access_token
 
-  const signResp = await fetch(`${URL}/api/storage/avatars/sign`, {
+  const signResp = await fetch(`${URL}/storage/avatars/sign`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${freshToken}`,
@@ -3632,19 +3632,19 @@ await step('storage: serverless-friendly presigned URL — sign via /api/storage
   assert(signData.upload_url, 'upload_url present')
 
   // Sign already minted a row in the public avatars bucket, so anon can sign-download it.
-  const anonDl = await fetch(`${URL}/api/storage/avatars/${signData.id}`, {
+  const anonDl = await fetch(`${URL}/storage/avatars/${signData.id}`, {
     headers: { apikey: PUBLISHABLE_KEY },
   })
   assertEq(anonDl.status, 200, 'anon sign-download on a public bucket via the legacy route')
 })
 
-await step('storage: legacy /api/storage routes run under the caller\'s RLS, not service_role (C6)', async () => {
+await step('storage: legacy /storage routes run under the caller\'s RLS, not service_role (C6)', async () => {
   const { data: signIn } = await anon.auth.signInWithPassword({ email, password })
   if (!signIn?.session) throw new Error('re-login failed')
   const ownerToken = signIn.session.access_token
 
   // The owner can sign an upload into legacy_private and read it back.
-  const signResp = await fetch(`${URL}/api/storage/legacy_private/sign`, {
+  const signResp = await fetch(`${URL}/storage/legacy_private/sign`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${ownerToken}`, apikey: PUBLISHABLE_KEY, 'Content-Type': 'application/json' },
     body: JSON.stringify({ content_type: 'text/plain', size: 10 }),
@@ -3653,7 +3653,7 @@ await step('storage: legacy /api/storage routes run under the caller\'s RLS, not
   const { id } = await signResp.json()
   assert(id, 'id present')
 
-  const noInsert = await fetch(`${URL}/api/storage/readonly/sign`, {
+  const noInsert = await fetch(`${URL}/storage/readonly/sign`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${ownerToken}`, apikey: PUBLISHABLE_KEY, 'Content-Type': 'application/json' },
     body: JSON.stringify({ content_type: 'text/plain', size: 10 }),
@@ -3661,7 +3661,7 @@ await step('storage: legacy /api/storage routes run under the caller\'s RLS, not
   assertEq(noInsert.status, 403, 'legacy sign without an insert policy is denied by RLS')
   assert(!(await noInsert.json()).upload_url, 'no presigned URL on an RLS denial')
 
-  const ownerDl = await fetch(`${URL}/api/storage/legacy_private/${id}`, {
+  const ownerDl = await fetch(`${URL}/storage/legacy_private/${id}`, {
     headers: { Authorization: `Bearer ${ownerToken}`, apikey: PUBLISHABLE_KEY },
   })
   assertEq(ownerDl.status, 200, 'owner sign-download of their own private object')
@@ -3670,19 +3670,19 @@ await step('storage: legacy /api/storage routes run under the caller\'s RLS, not
   const { data: other } = await anon.auth.signInAnonymously()
   const otherToken = other.session.access_token
 
-  const otherDl = await fetch(`${URL}/api/storage/legacy_private/${id}`, {
+  const otherDl = await fetch(`${URL}/storage/legacy_private/${id}`, {
     headers: { Authorization: `Bearer ${otherToken}`, apikey: PUBLISHABLE_KEY },
   })
   assertEq(otherDl.status, 404, 'another user cannot sign-download a private object via the legacy route')
 
-  const otherDel = await fetch(`${URL}/api/storage/legacy_private/${id}`, {
+  const otherDel = await fetch(`${URL}/storage/legacy_private/${id}`, {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${otherToken}`, apikey: PUBLISHABLE_KEY },
   })
   assertEq(otherDel.status, 404, 'another user cannot delete a private object via the legacy route')
 
   // The owner can still delete their own object.
-  const ownerDel = await fetch(`${URL}/api/storage/legacy_private/${id}`, {
+  const ownerDel = await fetch(`${URL}/storage/legacy_private/${id}`, {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${ownerToken}`, apikey: PUBLISHABLE_KEY },
   })

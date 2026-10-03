@@ -33,10 +33,10 @@ The image includes `inz serve`, Node.js (for code functions), and the Lambda Web
 
 ## Storage on Lambda
 
-Lambda functions are stateless and ephemeral — use the S3 storage provider, not local. With S3 configured, instancez exposes a direct upload API at `/api/storage/<bucket>/sign` that returns a presigned S3 URL. The file bytes go straight to S3 without passing through the Lambda function:
+Lambda functions are stateless and ephemeral — use the S3 storage provider, not local. With S3 configured, instancez exposes a direct upload API at `/storage/<bucket>/sign` that returns a presigned S3 URL. The file bytes go straight to S3 without passing through the Lambda function:
 
 ```js
-const { id, upload_url } = await fetch('/api/storage/avatars/sign', {
+const { id, upload_url } = await fetch('/storage/avatars/sign', {
   method: 'POST',
   headers: { 'Authorization': `Bearer ${jwt}`, 'Content-Type': 'application/json' },
   body: JSON.stringify({ content_type: file.type, size: file.size }),

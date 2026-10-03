@@ -8,11 +8,11 @@ function Probe() { return <span>{useApiBaseUrl()}</span>; }
 
 test("useApiBaseUrl returns the provided apiBaseUrl", () => {
   render(
-    <ConsoleProvider backend={stubBackend} apiBaseUrl="https://beacon-7x2.instancez.app/api">
+    <ConsoleProvider backend={stubBackend} apiBaseUrl="https://beacon-7x2.instancez.app">
       <Probe />
     </ConsoleProvider>
   );
-  expect(screen.getByText("https://beacon-7x2.instancez.app/api")).toBeInTheDocument();
+  expect(screen.getByText("https://beacon-7x2.instancez.app")).toBeInTheDocument();
 });
 
 test("useApiBaseUrl defaults to window.location.origin", () => {

@@ -32,14 +32,14 @@ function jsonResponse(data: unknown, status = 200) {
 }
 
 describe("getConfig", () => {
-  it("calls /api/_admin/config with auth header", async () => {
+  it("calls /_admin/config with auth header", async () => {
     const config = { version: 1, project: { name: "Test" }, _checksum: "sha256:abc" };
     mockFetch.mockReturnValueOnce(jsonResponse(config));
 
     const result = await getConfig();
 
     expect(mockFetch).toHaveBeenCalledWith(
-      "/api/_admin/config",
+      "/_admin/config",
       expect.objectContaining({
         headers: expect.objectContaining({
           Authorization: "Bearer test-key",
@@ -63,7 +63,7 @@ describe("putConfig", () => {
     await putConfig(config, "sha256:abc123");
 
     expect(mockFetch).toHaveBeenCalledWith(
-      "/api/_admin/config",
+      "/_admin/config",
       expect.objectContaining({
         method: "PUT",
         headers: expect.objectContaining({
@@ -103,7 +103,7 @@ describe("validateSecretKey", () => {
     const result = await validateSecretKey("valid-key");
     expect(result).toBe(true);
     expect(mockFetch).toHaveBeenCalledWith(
-      "/api/_admin/status",
+      "/_admin/status",
       expect.objectContaining({
         headers: { Authorization: "Bearer valid-key", apikey: "valid-key" },
       })
@@ -152,7 +152,7 @@ describe("getConfigStatus", () => {
     expect(got.status).toBe("drift");
     expect(got.last_error).toBe("boom");
     expect(mockFetch).toHaveBeenCalledWith(
-      "/api/_admin/config/status",
+      "/_admin/config/status",
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: "Bearer test-key" }),
       }),
@@ -173,7 +173,7 @@ describe("getEnvVars", () => {
     const result = await getEnvVars();
 
     expect(mockFetch).toHaveBeenCalledWith(
-      "/api/_admin/config/env-vars",
+      "/_admin/config/env-vars",
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: "Bearer test-key" }),
       })
@@ -189,7 +189,7 @@ describe("putDotenv", () => {
     await putDotenv({ INSTANCEZ_RESEND_API_KEY: "re_test" });
 
     expect(mockFetch).toHaveBeenCalledWith(
-      "/api/_admin/config/dotenv",
+      "/_admin/config/dotenv",
       expect.objectContaining({
         method: "PUT",
         body: JSON.stringify({ INSTANCEZ_RESEND_API_KEY: "re_test" }),

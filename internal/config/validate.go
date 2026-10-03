@@ -761,6 +761,13 @@ func validateStorage(storage map[string]domain.Bucket) domain.ValidationErrors {
 				Suggestion: "Pick a different bucket name (e.g. add a prefix or suffix)",
 			})
 		}
+		if name == "v1" {
+			errs = append(errs, &domain.ValidationError{
+				Path:       path,
+				Message:    `bucket name "v1" is reserved: /storage/v1 is the Supabase-compatible namespace`,
+				Suggestion: "Pick a different bucket name",
+			})
+		}
 
 		errs = append(errs, validateRLS(path, bucket.RLS)...)
 
