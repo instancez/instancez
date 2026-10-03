@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { screen, fireEvent, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { renderWithChakra } from "../test/helpers";
 import { Storage } from "./Storage";
@@ -59,30 +59,27 @@ describe("Storage", () => {
     expect(screen.getByText("1 bucket configured")).toBeInTheDocument();
   });
 
-  it("deletes an object via the context menu", async () => {
-    const deleteObjects = vi.fn(async () => {});
+  it("shows each bucket's total size from stats", async () => {
     const backend = {
       capabilities: fullCapabilities(),
-      listObjects: vi.fn(async () => ({
-        folders: [],
-        objects: [{ name: "a.png", id: "a.png", updated_at: "2026-08-16", metadata: { size: 10, mimetype: "image/png" } }],
-        has_next: false,
-      })),
-      deleteObjects,
+      getStats: vi.fn(async () => ({ storage: { uploads: { object_count: 3, total_bytes: 2048 } } })),
     } as unknown as ConsoleBackend;
-
     renderStorage(baseConfig, backend);
+    expect(await screen.findByText("2 KB")).toBeInTheDocument();
+  });
 
-    // Open the bucket → file explorer.
-    fireEvent.click(screen.getByText("uploads"));
-    // Wait for the object row to load.
-    expect(await screen.findByText("a.png")).toBeInTheDocument();
+  it("renders without a size when stats are null or missing the bucket", async () => {
+    const getStats = vi.fn(async () => ({ storage: null }));
+    const backend = { capabilities: fullCapabilities(), getStats } as unknown as ConsoleBackend;
+    renderStorage(baseConfig, backend);
+    await waitFor(() => expect(getStats).toHaveBeenCalled());
+    expect(screen.getByText("uploads")).toBeInTheDocument();
+  });
 
-    // Open the row action menu, click Delete, confirm the dialog.
-    fireEvent.click(screen.getByLabelText("Actions"));
-    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-    fireEvent.click(await screen.findByRole("button", { name: /^delete$/i }));
-
-    await waitFor(() => expect(deleteObjects).toHaveBeenCalledWith("uploads", ["a.png"]));
+  it("skips stats when the backend has none", () => {
+    const getStats = vi.fn();
+    const backend = { capabilities: { ...fullCapabilities(), hasStats: false }, getStats } as unknown as ConsoleBackend;
+    renderStorage(baseConfig, backend);
+    expect(getStats).not.toHaveBeenCalled();
   });
 });

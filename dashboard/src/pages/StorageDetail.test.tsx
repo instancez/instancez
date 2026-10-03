@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { renderWithChakra } from "../test/helpers";
 import { StorageDetail } from "./StorageDetail";
@@ -67,9 +67,10 @@ describe("StorageDetail", () => {
     expect(screen.getByRole("link", { name: /Storage/ })).toBeInTheDocument();
   });
 
-  it("renders max file size value", () => {
+  it("renders max file size value on the Settings tab", async () => {
     renderStorageDetail(baseConfig, "avatars");
-    expect(screen.getByDisplayValue("5MB")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
+    expect(await screen.findByDisplayValue("5MB")).toBeInTheDocument();
   });
 
   it("shows not-found message for missing bucket", () => {

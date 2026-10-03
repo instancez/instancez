@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { screen, fireEvent, act } from "@testing-library/react";
+import { screen, fireEvent, act, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { TableDetail } from "./TableDetail";
 import { DialogProvider } from "../components/Dialog";
@@ -122,8 +122,10 @@ const SEED: Table = {
 };
 
 describe("TableDetail", () => {
-  it("renders column names for a table with fields", () => {
+  it("renders column names on the Fields tab", async () => {
     renderTableDetail(baseConfig, "todos");
+    fireEvent.click(screen.getByRole("tab", { name: "Fields" }));
+    await screen.findAllByText("title");
     expect(screen.getAllByText("id").length).toBeGreaterThan(0);
     expect(screen.getAllByText("title").length).toBeGreaterThan(0);
   });
@@ -131,6 +133,18 @@ describe("TableDetail", () => {
   it("shows not-found message when table does not exist", () => {
     renderTableDetail(baseConfig, "nonexistent");
     expect(screen.getByText("Table not found.")).toBeInTheDocument();
+  });
+
+  it("opens on the Data tab and queries the table ordered by primary key", async () => {
+    const runQuery = vi.fn(async () => ({ columns: ["id", "title"], rows: [["1", "buy milk"]], row_count: 1 }));
+    renderTableDetail(baseConfig, "todos", { ...adminBackend, runQuery });
+    expect(await screen.findByText("buy milk")).toBeInTheDocument();
+    expect(runQuery).toHaveBeenCalledWith('SELECT * FROM "todos" ORDER BY "id" LIMIT 51 OFFSET 0');
+  });
+
+  it("has no Data tab for a table that is not saved yet", () => {
+    renderTableDetailNew({ tableName: "orders", seed: SEED, save: vi.fn() });
+    expect(screen.queryByRole("tab", { name: "Data" })).not.toBeInTheDocument();
   });
 
   it("hides Add Index button when canWriteConfig is false", async () => {

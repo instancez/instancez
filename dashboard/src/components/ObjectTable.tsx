@@ -1,16 +1,12 @@
-import { useState } from "react";
-import { Box, HStack, Text } from "@chakra-ui/react";
+import { Box, HStack, Menu, Portal, Text } from "@chakra-ui/react";
 import { Folder, FileImage, MoreHorizontal, Download, Link2, Pencil, Trash2 } from "lucide-react";
+import { formatBytes } from "../lib/utils";
 import type { StorageObject, StorageFolder } from "../lib/types";
 
-type Action = "download" | "copyUrl" | "rename" | "delete";
+export type Action = "download" | "copyUrl" | "rename" | "delete";
 
 function humanSize(md: StorageObject["metadata"]): string {
-  const n = md && typeof md.size === "number" ? md.size : null;
-  if (n == null) return "—";
-  if (n < 1024) return `${n} B`;
-  if (n < 1048576) return `${(n / 1024).toFixed(0)} KB`;
-  return `${(n / 1048576).toFixed(1)} MB`;
+  return md && typeof md.size === "number" ? formatBytes(md.size) : "—";
 }
 
 const MENU: { key: Action; label: string; icon: typeof Download; danger?: boolean }[] = [
@@ -29,7 +25,6 @@ export function ObjectTable(props: {
   onAction: (a: Action, o: StorageObject) => void;
 }) {
   const { folders, objects, onOpenFolder, onAction } = props;
-  const [open, setOpen] = useState<string | null>(null);
 
   return (
     <Box overflow="auto">
@@ -60,40 +55,27 @@ export function ObjectTable(props: {
               </Box>
               <Box as="td" {...cell} color="fg.muted" fontFamily="mono">{humanSize(o.metadata)}</Box>
               <Box as="td" {...cell} color="fg.muted" fontFamily="mono">{o.metadata?.mimetype ?? "—"}</Box>
-              <Box as="td" {...cell} position="relative">
-                <Box
-                  as="button"
-                  aria-label="Actions"
-                  p="1"
-                  borderRadius="md"
-                  color="fg.muted"
-                  _hover={{ bg: "bg.muted", color: "fg" }}
-                  cursor="pointer"
-                  onClick={() => { setOpen((k) => (k === (o.id || o.name) ? null : o.id || o.name)); }}
-                >
-                  <MoreHorizontal size={16} />
-                </Box>
-                {open === (o.id || o.name) && (
-                  <>
-                    <Box position="fixed" inset="0" zIndex="1" onClick={() => { setOpen(null); }} />
-                    <Box
-                      position="absolute" right="2" top="100%" zIndex="2" minW="150px"
-                      bg="bg.panel" borderWidth="1px" borderColor="border" borderRadius="lg" boxShadow="lg" py="1"
-                    >
-                      {MENU.map((m) => (
-                        <HStack
-                          as="button" key={m.key} w="full" gap="2" px="3" py="1.5"
-                          fontSize="sm" cursor="pointer"
-                          color={m.danger ? "fg.error" : "fg"}
-                          _hover={{ bg: "bg.subtle" }}
-                          onClick={() => { setOpen(null); onAction(m.key, o); }}
-                        >
-                          <Box as={m.icon} boxSize="3.5" /><Text>{m.label}</Text>
-                        </HStack>
-                      ))}
+              <Box as="td" {...cell}>
+                <Menu.Root positioning={{ placement: "bottom-end" }}>
+                  <Menu.Trigger asChild>
+                    <Box as="button" aria-label="Actions" p="1" borderRadius="md" color="fg.muted"
+                      _hover={{ bg: "bg.muted", color: "fg" }} cursor="pointer">
+                      <MoreHorizontal size={16} />
                     </Box>
-                  </>
-                )}
+                  </Menu.Trigger>
+                  <Portal>
+                    <Menu.Positioner>
+                      <Menu.Content minW="150px">
+                        {MENU.map((m) => (
+                          <Menu.Item key={m.key} value={m.key} color={m.danger ? "fg.error" : "fg"} cursor="pointer"
+                            onClick={() => { onAction(m.key, o); }}>
+                            <Box as={m.icon} boxSize="3.5" /><Text>{m.label}</Text>
+                          </Menu.Item>
+                        ))}
+                      </Menu.Content>
+                    </Menu.Positioner>
+                  </Portal>
+                </Menu.Root>
               </Box>
             </Box>
           ))}

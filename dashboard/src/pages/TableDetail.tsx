@@ -21,6 +21,7 @@ import {
 } from "../components/ui";
 import { useBackend } from "../console/BackendContext";
 import { POSTGRES_TYPES, SQL_DEFAULTS } from "../lib/utils";
+import { TableData } from "../components/TableData";
 import type { Table, Field, DiffResponse } from "../lib/types";
 
 export function TableDetail() {
@@ -113,9 +114,9 @@ export function TableDetail() {
     <Box pb="20">
       <DetailToolbar backLabel="Tables" onDelete={canWriteConfig && !isNew ? deleteTable : undefined} />
       <Box pb="8">
-        <Tabs.Root defaultValue="fields" lazyMount unmountOnExit>
+        <Tabs.Root defaultValue={isNew ? "fields" : "data"} lazyMount unmountOnExit>
           <Tabs.List borderBottomWidth="1px" mb="6" gap="1">
-            {["Fields", "Indexes", "RLS"].map((tab) => (
+            {(isNew ? ["Fields", "Indexes", "RLS"] : ["Data", "Fields", "Indexes", "RLS"]).map((tab) => (
               <Tabs.Trigger
                 key={tab}
                 value={tab.toLowerCase()}
@@ -133,6 +134,13 @@ export function TableDetail() {
               </Tabs.Trigger>
             ))}
           </Tabs.List>
+
+          {/* Data Tab */}
+          {!isNew && name && (
+            <Tabs.Content value="data">
+              <TableData key={name} name={name} primaryKey={config.tables[name]?.fields.find((f) => f.primary_key)?.name} />
+            </Tabs.Content>
+          )}
 
           {/* Fields Tab */}
           <Tabs.Content value="fields">
