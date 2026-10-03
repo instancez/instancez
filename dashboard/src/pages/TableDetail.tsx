@@ -138,7 +138,7 @@ export function TableDetail() {
           {/* Data Tab */}
           {!isNew && name && (
             <Tabs.Content value="data">
-              <TableData key={name} name={name} primaryKey={config.tables[name]?.fields.find((f) => f.primary_key)?.name} />
+              <TableData key={name} name={name} primaryKey={new Map(Object.entries(config.tables)).get(name)?.fields.find((f) => f.primary_key)?.name} />
             </Tabs.Content>
           )}
 

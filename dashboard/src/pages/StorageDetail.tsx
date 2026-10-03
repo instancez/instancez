@@ -67,7 +67,7 @@ export function StorageDetail() {
 
   return (
     <Box pb="20">
-      <DetailToolbar backLabel="Storage" onDelete={canWriteConfig ? deleteBucket : undefined} />
+      <DetailToolbar backLabel="Storage" onDelete={canWriteConfig ? () => void deleteBucket() : undefined} />
       <Box pb="8">
         <Tabs.Root defaultValue="objects" lazyMount unmountOnExit>
           <Tabs.List borderBottomWidth="1px" mb="6" gap="1">
@@ -81,7 +81,7 @@ export function StorageDetail() {
                 px="4"
                 py="2"
                 cursor="pointer"
-                _selected={{ color: "accent", borderBottomWidth: "2px", borderColor: "accent" } as any}
+                _selected={{ color: "accent", borderBottomWidth: "2px", borderColor: "accent" }}
                 _hover={{ color: "fg" }}
                 mb="-1px"
               >

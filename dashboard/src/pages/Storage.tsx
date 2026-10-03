@@ -27,7 +27,9 @@ export function Storage() {
 
   if (!config) return null;
 
-  const buckets = Object.keys(config.storage ?? {}).sort((a, b) => a.localeCompare(b));
+  const usageByBucket = new Map(Object.entries(stats?.storage ?? {}));
+
+  const buckets = Object.keys(config.storage).sort((a, b) => a.localeCompare(b));
 
   const addBucket = async () => {
     const name = await dialog.prompt("Bucket name:");
@@ -60,13 +62,13 @@ export function Storage() {
       ) : (
         <VStack gap="2" align="stretch">
           {buckets.map((name) => {
-            const usage = stats?.storage?.[name];
+            const usage = usageByBucket.get(name);
             return (
               <ListRow
                 key={name}
                 icon={HardDrive}
                 title={name}
-                onClick={() => { void navigate(name, { relative: "path" }); }}
+                onClick={() => navigate(name, { relative: "path" })}
                 badges={usage && <StatusBadge variant="muted">{formatBytes(usage.total_bytes)}</StatusBadge>}
               />
             );

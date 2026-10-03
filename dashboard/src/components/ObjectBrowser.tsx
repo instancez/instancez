@@ -27,7 +27,7 @@ export function ObjectBrowser({ bucket }: { bucket: string }) {
     setLoading(true);
     setData(null);
     setError(null);
-    backend.listObjects(bucket, prefix, cursors[page])
+    backend.listObjects(bucket, prefix, cursors.at(-1))
       .then((d) => {
         if (!active) return;
         // Last item on a later page was removed: step back.
