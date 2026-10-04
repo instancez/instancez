@@ -68,7 +68,7 @@ export function Storage() {
                 key={name}
                 icon={HardDrive}
                 title={name}
-                onClick={() => navigate(name, { relative: "path" })}
+                onClick={() => { navigate(name, { relative: "path" }); }}
                 badges={usage && <StatusBadge variant="muted">{formatBytes(usage.total_bytes)}</StatusBadge>}
               />
             );
