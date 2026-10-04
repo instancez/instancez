@@ -9,11 +9,9 @@ import { DetailToolbar } from "../components/DetailToolbar";
 import { SaveBar } from "../components/SaveBar";
 import { TagInput } from "../components/TagInput";
 import { Toggle } from "../components/Toggle";
-import { DiffViewer } from "../components/DiffViewer";
 import { RlsPolicyCard } from "../components/RlsPolicyCard";
 import {
   Button,
-  Disclosure,
   Field as UiField,
   Input,
   Panel,
@@ -22,7 +20,7 @@ import {
 import { useBackend } from "../console/BackendContext";
 import { POSTGRES_TYPES, SQL_DEFAULTS } from "../lib/utils";
 import { TableData } from "../components/TableData";
-import type { Table, Field, DiffResponse } from "../lib/types";
+import type { Table, Field } from "../lib/types";
 
 export function TableDetail() {
   const backend = useBackend();
@@ -33,7 +31,6 @@ export function TableDetail() {
   const dialog = useDialog();
   const canWriteConfig = backend.capabilities.canWriteConfig;
   const [table, setTable] = useState<Table | null>(null);
-  const [diff, setDiff] = useState<DiffResponse | null>(null);
 
   const isNew = !name;
   const newState = location.state as { tableName?: string; seed?: Table } | null;
@@ -64,15 +61,6 @@ export function TableDetail() {
     };
     const ok = await save(updated);
     if (ok && isNew) navigate(`../${effectiveName}`, { relative: "path", replace: true });
-  }
-
-  async function loadDiff() {
-    try {
-      const d = await backend.getConfigDiff();
-      setDiff(d);
-    } catch {
-      // ignore
-    }
   }
 
   async function deleteTable() {
@@ -342,13 +330,6 @@ export function TableDetail() {
           </Tabs.Content>
 
         </Tabs.Root>
-
-        {/* Preview Pane */}
-        <Box mt="8">
-          <Disclosure label="Migration Preview">
-            <MigrationPreview diff={diff} onOpen={loadDiff} />
-          </Disclosure>
-        </Box>
       </Box>
 
       {canWriteConfig && (
@@ -360,25 +341,6 @@ export function TableDetail() {
         />
       )}
     </Box>
-  );
-}
-
-function MigrationPreview({
-  diff,
-  onOpen,
-}: {
-  diff: DiffResponse | null;
-  onOpen: () => void;
-}) {
-  // Fetch the diff when the pane is first revealed.
-  useEffect(() => {
-    onOpen();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  if (!diff) return null;
-  return (
-    <DiffViewer statements={diff.statements} isDestructive={diff.is_destructive} />
   );
 }
 
