@@ -139,7 +139,7 @@ describe("TableDetail", () => {
     const runQuery = vi.fn(async () => ({ columns: ["id", "title"], rows: [["1", "buy milk"]], row_count: 1 }));
     renderTableDetail(baseConfig, "todos", { ...adminBackend, runQuery });
     expect(await screen.findByText("buy milk")).toBeInTheDocument();
-    expect(runQuery).toHaveBeenCalledWith('SELECT * FROM "todos" ORDER BY "id" LIMIT 51 OFFSET 0');
+    expect(runQuery).toHaveBeenCalledWith('SELECT * FROM "todos" ORDER BY "id" LIMIT 21 OFFSET 0');
   });
 
   it("does not render or fetch a migration preview", () => {

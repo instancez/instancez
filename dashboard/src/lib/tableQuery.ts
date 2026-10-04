@@ -1,4 +1,4 @@
-export const DATA_PAGE_SIZE = 50;
+export const DATA_PAGE_SIZE = 20;
 
 const quoteIdent = (id: string) => `"${id.replace(/"/g, '""')}"`;
 

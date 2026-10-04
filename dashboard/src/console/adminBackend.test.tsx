@@ -115,7 +115,7 @@ describe("storage requests", () => {
 
     const res = await adminBackend.listObjects("b", "dir/", "prev");
 
-    expect(JSON.parse(mockFetch.mock.calls[0]?.[1].body)).toEqual({ prefix: "dir/", cursor: "prev", with_delimiter: true, limit: 100 });
+    expect(JSON.parse(mockFetch.mock.calls[0]?.[1].body)).toEqual({ prefix: "dir/", cursor: "prev", with_delimiter: true, limit: 20 });
     expect(res).toEqual({
       has_next: true,
       next_cursor: "tok",
