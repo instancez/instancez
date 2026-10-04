@@ -443,6 +443,7 @@ func (m *Migrator) Harden(ctx context.Context, cfg *domain.Config) error {
 	// Best effort, so a busy table cannot crash-loop boot.
 	m.healStorageList(ctx)
 	stmts := append(generateJWTKeysTable(), generatePrivilegeRevokes(m.roles)...)
+	stmts = append(stmts, generateSeedReadGrants(m.roles)...)
 	if cfg != nil && cfg.Auth != nil {
 		stmts = append(stmts, authHealDDL...)
 	}
@@ -680,7 +681,8 @@ func recordMigration(ctx context.Context, tx domain.Tx, checksum, planSQL, confi
 }
 
 // isReservedSchema reports whether a schema is engine-owned (auth, storage).
-// The seed role used by run_sql is never granted on these.
+// The seed role used by run_sql gets no write access to these, only the
+// read grants in generateSeedReadGrants.
 func isReservedSchema(s string) bool {
 	return s == "auth" || s == "storage"
 }
@@ -735,8 +737,38 @@ func generateExistingObjectGrants(schemas []string, roles domain.Roles) []string
 			)
 		}
 	}
+	ddl = append(ddl, generateSeedReadGrants(roles)...)
 	// Runs after the public backfill, which re-grants _instancez_migrations.
 	return append(ddl, generatePrivilegeRevokes(roles)...)
+}
+
+// generateSeedReadGrants lets the run_sql seed role read auth.users (minus
+// password_hash) and storage.objects. Guarded so it is a no-op until the tables exist.
+func generateSeedReadGrants(roles domain.Roles) []string {
+	if roles.Seed == "" {
+		return nil
+	}
+	seed := strings.ReplaceAll(roles.Seed, "'", "''")
+	return []string{
+		fmt.Sprintf(`DO $$
+DECLARE cols text;
+BEGIN
+  IF to_regclass('auth.users') IS NOT NULL THEN
+    SELECT string_agg(quote_ident(column_name), ', ') INTO cols
+      FROM information_schema.columns
+     WHERE table_schema = 'auth' AND table_name = 'users' AND column_name <> 'password_hash';
+    EXECUTE format('GRANT USAGE ON SCHEMA auth TO %%I', '%[1]s');
+    EXECUTE format('GRANT SELECT (%%s) ON auth.users TO %%I', cols, '%[1]s');
+  END IF;
+END $$;`, seed),
+		fmt.Sprintf(`DO $$
+BEGIN
+  IF to_regclass('storage.objects') IS NOT NULL THEN
+    EXECUTE format('GRANT USAGE ON SCHEMA storage TO %%I', '%[1]s');
+    EXECUTE format('GRANT SELECT ON storage.objects TO %%I', '%[1]s');
+  END IF;
+END $$;`, seed),
+	}
 }
 
 func apiRoleList(roles domain.Roles) string {

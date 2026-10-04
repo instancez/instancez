@@ -63,7 +63,7 @@ export const adminBackend: ConsoleBackend = {
     const res = await storageFetch(`/object/list-v2/${bucket}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prefix, cursor, with_delimiter: true, limit: 100 }),
+      body: JSON.stringify({ prefix, cursor, with_delimiter: true, limit: 20 }),
     });
     // list-v2 answers in Supabase's shape: full keys and camelCase paging.
     const body = await res.json() as {

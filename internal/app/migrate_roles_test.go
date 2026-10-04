@@ -142,3 +142,32 @@ func TestGeneratePrivilegeRevokes_UsesConfiguredRoleNames(t *testing.T) {
 	assert.NotContains(t, ddl, "FROM anon")
 	assert.NotContains(t, ddl, "_seed")
 }
+
+func TestGenerateSeedReadGrants(t *testing.T) {
+	t.Run("empty seed emits nothing", func(t *testing.T) {
+		assert.Empty(t, generateSeedReadGrants(domain.DefaultRoles()))
+	})
+
+	t.Run("read-only on auth.users minus password_hash and storage.objects", func(t *testing.T) {
+		roles := domain.Roles{Anon: "anon", Authenticated: "authenticated", Service: "service_role", Seed: "app_x_seed"}
+		ddl := strings.Join(generateSeedReadGrants(roles), "\n")
+		assert.Contains(t, ddl, "column_name <> 'password_hash'")
+		assert.Contains(t, ddl, "GRANT SELECT (%s) ON auth.users")
+		assert.Contains(t, ddl, "GRANT SELECT ON storage.objects")
+		assert.Contains(t, ddl, "'app_x_seed'")
+		assert.Contains(t, ddl, "to_regclass('auth.users') IS NOT NULL", "no-op until the table exists")
+		for _, bad := range []string{"INSERT", "UPDATE", "DELETE", "jwt_keys"} {
+			assert.NotContains(t, ddl, bad)
+		}
+	})
+
+	t.Run("seed name quotes are escaped", func(t *testing.T) {
+		roles := domain.Roles{Seed: "a'b"}
+		assert.Contains(t, strings.Join(generateSeedReadGrants(roles), "\n"), "'a''b'")
+	})
+
+	t.Run("existing-object grants include them", func(t *testing.T) {
+		roles := domain.Roles{Anon: "anon", Authenticated: "authenticated", Service: "service_role", Seed: "app_x_seed"}
+		assert.Contains(t, strings.Join(generateExistingObjectGrants([]string{"public"}, roles), "\n"), "GRANT SELECT ON storage.objects")
+	})
+}

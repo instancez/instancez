@@ -136,6 +136,8 @@ func TestSeedRoleEnforcement(t *testing.T) {
 		{"delete public.todos", "DELETE FROM public.todos WHERE title = 'nope'"},
 		{"select shop.items (custom schema)", "SELECT count(*) FROM shop.items"},
 		{"insert shop.items (custom schema)", "INSERT INTO shop.items (label) VALUES ('seed-wrote')"},
+		{"select auth.users (non-secret columns)", "SELECT id, email, raw_user_meta_data FROM auth.users"},
+		{"select storage.objects", "SELECT count(*) FROM storage.objects"},
 	}
 	for _, tc := range allowed {
 		t.Run("ALLOW "+tc.name, func(t *testing.T) {
@@ -150,9 +152,10 @@ func TestSeedRoleEnforcement(t *testing.T) {
 	denied := []struct {
 		name, sql, wantSubstr string
 	}{
-		{"select auth.users", "SELECT count(*) FROM auth.users", "permission denied"},
+		{"select auth.users password_hash", "SELECT password_hash FROM auth.users", "permission denied"},
+		{"select * auth.users (includes password_hash)", "SELECT * FROM auth.users", "permission denied"},
+		{"select auth.jwt_keys", "SELECT count(*) FROM auth.jwt_keys", "permission denied"},
 		{"insert auth.users", "INSERT INTO auth.users (id) VALUES (gen_random_uuid())", "permission denied"},
-		{"select storage.objects", "SELECT count(*) FROM storage.objects", "permission denied"},
 		{"insert storage.objects", "INSERT INTO storage.objects (id) VALUES (gen_random_uuid())", "permission denied"},
 		{"select _instancez_migrations", "SELECT count(*) FROM _instancez_migrations", "permission denied"},
 		{"delete _instancez_migrations", "DELETE FROM _instancez_migrations", "permission denied"},

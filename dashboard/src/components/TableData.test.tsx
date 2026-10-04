@@ -22,14 +22,14 @@ describe("TableData", () => {
   });
 
   it("renders null and object cells and pages forward using the extra row", async () => {
-    const full = Array.from({ length: 51 }, (_, i) => [i, i === 0 ? null : { a: 1 }]);
+    const full = Array.from({ length: 21 }, (_, i) => [i, i === 0 ? null : { a: 1 }]);
     const runQuery = vi.fn(async (sql: string) =>
-      sql.includes("OFFSET 50")
+      sql.includes("OFFSET 20")
         ? { columns: ["id", "v"], rows: [[99, "last"]], row_count: 1 }
-        : { columns: ["id", "v"], rows: full, row_count: 51 });
+        : { columns: ["id", "v"], rows: full, row_count: 21 });
     view(mk(runQuery));
-    expect((await screen.findAllByText('{"a":1}')).length).toBe(49);
-    expect(screen.queryByText("50")).not.toBeInTheDocument();
+    expect((await screen.findAllByText('{"a":1}')).length).toBe(19);
+    expect(screen.queryByText("20")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
     expect(await screen.findByText("last")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /next/i })).toBeDisabled();
