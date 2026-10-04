@@ -142,6 +142,13 @@ describe("TableDetail", () => {
     expect(runQuery).toHaveBeenCalledWith('SELECT * FROM "todos" ORDER BY "id" LIMIT 51 OFFSET 0');
   });
 
+  it("does not render or fetch a migration preview", () => {
+    const getConfigDiff = vi.fn();
+    renderTableDetail(baseConfig, "todos", { ...adminBackend, getConfigDiff });
+    expect(screen.queryByText("Migration Preview")).not.toBeInTheDocument();
+    expect(getConfigDiff).not.toHaveBeenCalled();
+  });
+
   it("has no Data tab for a table that is not saved yet", () => {
     renderTableDetailNew({ tableName: "orders", seed: SEED, save: vi.fn() });
     expect(screen.queryByRole("tab", { name: "Data" })).not.toBeInTheDocument();
