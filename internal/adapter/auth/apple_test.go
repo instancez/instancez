@@ -3,6 +3,8 @@ package auth
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -29,6 +31,30 @@ func seedAppleKeys(t *testing.T) {
 	t.Helper()
 	oidc.SeedKeys("apple", map[string]*rsa.PublicKey{"k1": &appleKey.PublicKey})
 	t.Cleanup(func() { oidc.SeedKeys("apple", nil) })
+}
+
+func randomBytes(t *testing.T) []byte {
+	t.Helper()
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// unsignedToken builds a JWT with an empty signature segment.
+func unsignedToken(t *testing.T, kid string, claims jwt.MapClaims) string {
+	t.Helper()
+	hdr, err := json.Marshal(map[string]string{"alg": "none", "typ": "JWT", "kid": kid})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enc := base64.RawURLEncoding
+	return enc.EncodeToString(hdr) + "." + enc.EncodeToString(body) + "."
 }
 
 func signApple(t *testing.T, method jwt.SigningMethod, key any, kid string, claims jwt.MapClaims) string {
@@ -154,16 +180,11 @@ func TestAppleRejectsBadSignature(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	none := jwt.NewWithClaims(jwt.SigningMethodNone, validClaims())
-	none.Header["kid"] = "k1"
-	noneTok, err := none.SignedString(jwt.UnsafeAllowNoneSignatureType)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noneTok := unsignedToken(t, "k1", validClaims())
 	toks := map[string]string{
 		"different key": signApple(t, jwt.SigningMethodRS256, other, "k1", validClaims()),
 		"alg none":      noneTok,
-		"hs256":         signApple(t, jwt.SigningMethodHS256, []byte("k"), "k1", validClaims()),
+		"hs256":         signApple(t, jwt.SigningMethodHS256, randomBytes(t), "k1", validClaims()),
 		"unknown kid":   signApple(t, jwt.SigningMethodRS256, appleKey, "ghost", validClaims()),
 		"nonce present": signApple(t, jwt.SigningMethodRS256, appleKey, "k1", func() jwt.MapClaims { c := validClaims(); c["nonce"] = "n"; return c }()),
 	}

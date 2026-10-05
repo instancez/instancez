@@ -17,6 +17,30 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+func hmacSecret(t *testing.T) []byte {
+	t.Helper()
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// unsignedToken builds a JWT with an empty signature segment.
+func unsignedToken(t *testing.T, kid string, claims jwt.MapClaims) string {
+	t.Helper()
+	hdr, err := json.Marshal(map[string]string{"alg": "none", "typ": "JWT", "kid": kid})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enc := base64.RawURLEncoding
+	return enc.EncodeToString(hdr) + "." + enc.EncodeToString(body) + "."
+}
+
 func newKey(t *testing.T) *rsa.PrivateKey {
 	t.Helper()
 	k, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -101,16 +125,11 @@ func TestVerify_RejectsForgedAlgAndWrongKey(t *testing.T) {
 
 	hs := jwt.NewWithClaims(jwt.SigningMethodHS256, goodClaims())
 	hs.Header["kid"] = "k1"
-	hsTok, err := hs.SignedString([]byte("secret"))
+	hsTok, err := hs.SignedString(hmacSecret(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	none := jwt.NewWithClaims(jwt.SigningMethodNone, goodClaims())
-	none.Header["kid"] = "k1"
-	noneTok, err := none.SignedString(jwt.UnsafeAllowNoneSignatureType)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noneTok := unsignedToken(t, "k1", goodClaims())
 	other := sign(t, newKey(t), "k1", goodClaims())
 
 	for name, tok := range map[string]string{"hs256": hsTok, "none": noneTok, "wrong key": other, "garbage": "x.y.z", "empty": ""} {
