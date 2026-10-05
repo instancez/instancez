@@ -17,7 +17,7 @@ func writeFakeBody(w http.ResponseWriter, body string) {
 }
 
 func TestOAuthRegistryBuiltins(t *testing.T) {
-	for _, name := range []string{"google", "github"} {
+	for _, name := range []string{"google", "github", "apple"} {
 		if _, ok := OAuthRegistry(name); !ok {
 			t.Errorf("provider %q not registered", name)
 		}

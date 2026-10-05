@@ -29,6 +29,7 @@ var (
 func registerOAuthBuiltins() {
 	oauthOnce.Do(func() {
 		RegisterOAuth(googleProvider{userAPI: "https://www.googleapis.com/oauth2/v2/userinfo"})
+		RegisterOAuth(appleProvider{tokenURL: appleTokenURL})
 		RegisterOAuth(&githubProvider{
 			userAPI:  "https://api.github.com/user",
 			emailAPI: "https://api.github.com/user/emails",

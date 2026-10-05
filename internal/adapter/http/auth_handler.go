@@ -441,15 +441,6 @@ func (h *AuthHandler) handlePKCEGrant(c *gin.Context) {
 	c.JSON(200, session)
 }
 
-// emailVerifiedClaim reads an OIDC email_verified claim, which some IdPs send as a string.
-func emailVerifiedClaim(v any) bool {
-	if b, ok := v.(bool); ok {
-		return b
-	}
-	s, _ := v.(string)
-	return s == "true"
-}
-
 // oauthLoginError maps an UpsertOAuthUser failure to a status, code and message.
 func oauthLoginError(err error, provider string) (int, string, string) {
 	switch {
@@ -503,7 +494,7 @@ func (h *AuthHandler) handleIDTokenGrant(c *gin.Context) {
 	ctx := c.Request.Context()
 	row, err := h.authSvc.UpsertOAuthUser(ctx, domain.OAuthLogin{
 		Provider: req.Provider, ProviderUserID: sub, Email: email, Name: name,
-		EmailVerified: emailVerifiedClaim(claims["email_verified"]), AllowSignup: h.cfg.Auth.SignupAllowed(),
+		EmailVerified: adapterauth.EmailVerifiedClaim(claims["email_verified"]), AllowSignup: h.cfg.Auth.SignupAllowed(),
 	})
 	if err != nil || row == nil {
 		st, code, msg := oauthLoginError(err, req.Provider)

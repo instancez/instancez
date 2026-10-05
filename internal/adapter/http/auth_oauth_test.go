@@ -32,17 +32,6 @@ func (unitOAuthProvider) FetchUser(_ *adapterauth.OAuthToken, _ url.Values) (*ad
 	return &adapterauth.OAuthUserInfo{ProviderID: "p1", Email: "v@e.com", Name: "V", EmailVerified: false}, nil
 }
 
-func TestEmailVerifiedClaim(t *testing.T) {
-	for in, want := range map[any]bool{true: true, "true": true, false: false, "false": false, "TRUE": false, "": false, 1: false} {
-		if got := emailVerifiedClaim(in); got != want {
-			t.Errorf("%v: got %v", in, got)
-		}
-	}
-	if emailVerifiedClaim(nil) {
-		t.Error("missing claim must be unverified")
-	}
-}
-
 func TestOAuthLoginError(t *testing.T) {
 	cases := []struct {
 		err        error
