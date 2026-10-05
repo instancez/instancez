@@ -23,6 +23,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	adapterauth "github.com/instancez/instancez/internal/adapter/auth"
+	"github.com/instancez/instancez/internal/adapter/oidc"
 	"github.com/instancez/instancez/internal/app"
 	"github.com/instancez/instancez/internal/domain"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -466,7 +467,7 @@ func (h *AuthHandler) handleIDTokenGrant(c *gin.Context) {
 		return
 	}
 
-	if _, ok := oidcJWKSURLs[req.Provider]; !ok {
+	if ok := oidc.Supported(req.Provider); !ok {
 		problemJSON(c, 400, "bad_request", "Unsupported provider for ID token: "+req.Provider)
 		return
 	}
@@ -476,7 +477,7 @@ func (h *AuthHandler) handleIDTokenGrant(c *gin.Context) {
 		return
 	}
 
-	claims, err := verifyIDToken(req.Provider, req.Token, adapterauth.ClientIDs(pc.ClientID), req.Nonce)
+	claims, err := oidc.Verify(req.Provider, req.Token, adapterauth.ClientIDs(pc.ClientID), req.Nonce)
 	if err != nil {
 		h.logger.Error("id token verification failed", "provider", req.Provider, "error", err)
 		problemJSON(c, 401, "invalid_token", "ID token verification failed: "+err.Error())

@@ -3,13 +3,14 @@ package auth
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/instancez/instancez/internal/adapter/oidc"
 	"github.com/instancez/instancez/internal/domain"
 )
 
@@ -67,19 +68,17 @@ func (a appleProvider) ExchangeCode(cfg *domain.OAuthProvider, code string) (*OA
 	if err != nil {
 		return nil, err
 	}
-	claims, err := parseAppleIDToken(tok.IDToken)
-	if err != nil {
+	if _, err := parseAppleIDToken(tok.IDToken); err != nil {
 		return nil, err
 	}
-	aud, err := claims.GetAudience()
-	if err != nil || !slices.Contains(aud, c.ClientID) {
-		return nil, errors.New("apple id_token audience mismatch")
+	if _, err := oidc.Verify("apple", tok.IDToken, []string{c.ClientID}, ""); err != nil {
+		return nil, fmt.Errorf("apple id_token: %w", err)
 	}
 	return tok, nil
 }
 
 func (appleProvider) FetchUser(tok *OAuthToken, callback url.Values) (*OAuthUserInfo, error) {
-	// ExchangeCode already validated iss, aud and exp.
+	// ExchangeCode already verified the signature, iss, aud and exp.
 	claims, err := parseAppleIDToken(tok.IDToken)
 	if err != nil {
 		return nil, err
@@ -98,7 +97,6 @@ func parseAppleIDToken(raw string) (jwt.MapClaims, error) {
 		return nil, errors.New("apple response has no id_token")
 	}
 	claims := jwt.MapClaims{}
-	// Token came straight from Apple over TLS, so the signature check is skipped (OIDC Core 3.1.3.7).
 	if _, _, err := jwt.NewParser().ParseUnverified(raw, claims); err != nil {
 		return nil, err
 	}

@@ -18,6 +18,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	adapterauth "github.com/instancez/instancez/internal/adapter/auth"
+	"github.com/instancez/instancez/internal/adapter/oidc"
 	"github.com/instancez/instancez/internal/domain"
 )
 
@@ -100,14 +101,8 @@ func TestIDTokenGrant_PassesEmailVerifiedClaim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	providerJWKS.mu.Lock()
-	providerJWKS.cache["google"] = &jwksCache{keys: map[string]*rsa.PublicKey{"k1": &key.PublicKey}, fetchedAt: time.Now()}
-	providerJWKS.mu.Unlock()
-	t.Cleanup(func() {
-		providerJWKS.mu.Lock()
-		delete(providerJWKS.cache, "google")
-		providerJWKS.mu.Unlock()
-	})
+	oidc.SeedKeys("google", map[string]*rsa.PublicKey{"k1": &key.PublicKey})
+	t.Cleanup(func() { oidc.SeedKeys("google", nil) })
 
 	for _, verified := range []any{false, true, "true", nil} {
 		claims := jwt.MapClaims{"iss": "https://accounts.google.com", "aud": "cid", "sub": "g-1", "email": "v@e.com", "exp": time.Now().Add(time.Minute).Unix()}

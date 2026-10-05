@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,16 +13,38 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/instancez/instancez/internal/adapter/oidc"
 	"github.com/instancez/instancez/internal/domain"
 )
 
-func appleIDToken(t *testing.T, claims jwt.MapClaims) string {
+var appleKey = func() *rsa.PrivateKey {
+	k, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		panic(err)
+	}
+	return k
+}()
+
+func seedAppleKeys(t *testing.T) {
 	t.Helper()
-	s, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte("k"))
+	oidc.SeedKeys("apple", map[string]*rsa.PublicKey{"k1": &appleKey.PublicKey})
+	t.Cleanup(func() { oidc.SeedKeys("apple", nil) })
+}
+
+func signApple(t *testing.T, method jwt.SigningMethod, key any, kid string, claims jwt.MapClaims) string {
+	t.Helper()
+	tok := jwt.NewWithClaims(method, claims)
+	tok.Header["kid"] = kid
+	s, err := tok.SignedString(key)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return s
+}
+
+func appleIDToken(t *testing.T, claims jwt.MapClaims) string {
+	t.Helper()
+	return signApple(t, jwt.SigningMethodRS256, appleKey, "k1", claims)
 }
 
 func appleServer(t *testing.T, idToken string, status int) appleProvider {
@@ -42,6 +66,7 @@ var appleCfg = &domain.OAuthProvider{ClientID: "svc.id, com.app.ios", ClientSecr
 
 func appleLogin(t *testing.T, claims jwt.MapClaims, callback url.Values) (*OAuthUserInfo, error) {
 	t.Helper()
+	seedAppleKeys(t)
 	p := appleServer(t, appleIDToken(t, claims), 200)
 	tok, err := p.ExchangeCode(appleCfg, "code")
 	if err != nil {
@@ -121,6 +146,44 @@ func TestAppleRejects(t *testing.T) {
 			t.Error("expected error")
 		}
 	})
+}
+
+func TestAppleRejectsBadSignature(t *testing.T) {
+	seedAppleKeys(t)
+	other, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	none := jwt.NewWithClaims(jwt.SigningMethodNone, validClaims())
+	none.Header["kid"] = "k1"
+	noneTok, err := none.SignedString(jwt.UnsafeAllowNoneSignatureType)
+	if err != nil {
+		t.Fatal(err)
+	}
+	toks := map[string]string{
+		"different key": signApple(t, jwt.SigningMethodRS256, other, "k1", validClaims()),
+		"alg none":      noneTok,
+		"hs256":         signApple(t, jwt.SigningMethodHS256, []byte("k"), "k1", validClaims()),
+		"unknown kid":   signApple(t, jwt.SigningMethodRS256, appleKey, "ghost", validClaims()),
+		"nonce present": signApple(t, jwt.SigningMethodRS256, appleKey, "k1", func() jwt.MapClaims { c := validClaims(); c["nonce"] = "n"; return c }()),
+	}
+	for name, tok := range toks {
+		t.Run(name, func(t *testing.T) {
+			if _, err := appleServer(t, tok, 200).ExchangeCode(appleCfg, "c"); err == nil {
+				t.Error("expected error")
+			}
+		})
+	}
+}
+
+func TestAppleJWKSFetchFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(503) }))
+	defer srv.Close()
+	t.Cleanup(oidc.SetJWKSURL("apple", srv.URL))
+	oidc.SeedKeys("apple", nil)
+	if _, err := appleServer(t, appleIDToken(t, validClaims()), 200).ExchangeCode(appleCfg, "c"); err == nil {
+		t.Error("expected error when JWKS is unreachable")
+	}
 }
 
 func TestAppleName(t *testing.T) {

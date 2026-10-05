@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/instancez/instancez/internal/adapter/oidc"
 	"github.com/instancez/instancez/internal/domain"
 )
 
@@ -33,14 +34,8 @@ func runIDToken(t *testing.T, provider, clientID string, configured bool, claims
 	if err != nil {
 		t.Fatal(err)
 	}
-	providerJWKS.mu.Lock()
-	providerJWKS.cache[provider] = &jwksCache{keys: map[string]*rsa.PublicKey{"k1": &key.PublicKey}, fetchedAt: time.Now()}
-	providerJWKS.mu.Unlock()
-	t.Cleanup(func() {
-		providerJWKS.mu.Lock()
-		delete(providerJWKS.cache, provider)
-		providerJWKS.mu.Unlock()
-	})
+	oidc.SeedKeys(provider, map[string]*rsa.PublicKey{"k1": &key.PublicKey})
+	t.Cleanup(func() { oidc.SeedKeys(provider, nil) })
 	claims["exp"] = time.Now().Add(time.Minute).Unix()
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	tok.Header["kid"] = "k1"
@@ -195,34 +190,5 @@ func TestIDTokenGrant_GoogleNonce(t *testing.T) {
 	c["nonce"] = hashedNonce("raw")
 	if r := runIDToken(t, "google", "cid", true, c, "raw"); r.code != 401 {
 		t.Fatalf("google must not accept the hashed claim: %d %s", r.code, r.body)
-	}
-}
-
-func TestVerifyIDToken_RejectsForgedAlg(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-	providerJWKS.mu.Lock()
-	providerJWKS.cache["google"] = &jwksCache{keys: map[string]*rsa.PublicKey{"k1": &key.PublicKey}, fetchedAt: time.Now()}
-	providerJWKS.mu.Unlock()
-	t.Cleanup(func() {
-		providerJWKS.mu.Lock()
-		delete(providerJWKS.cache, "google")
-		providerJWKS.mu.Unlock()
-	})
-	claims := jwt.MapClaims{"iss": "https://accounts.google.com", "aud": "cid", "exp": time.Now().Add(time.Minute).Unix()}
-
-	hs := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	hs.Header["kid"] = "k1"
-	hsTok, _ := hs.SignedString([]byte("secret"))
-	none := jwt.NewWithClaims(jwt.SigningMethodNone, claims)
-	none.Header["kid"] = "k1"
-	noneTok, _ := none.SignedString(jwt.UnsafeAllowNoneSignatureType)
-
-	for name, tok := range map[string]string{"hs256": hsTok, "none": noneTok} {
-		if _, err := verifyIDToken("google", tok, []string{"cid"}, ""); err == nil {
-			t.Fatalf("%s token accepted", name)
-		}
 	}
 }
