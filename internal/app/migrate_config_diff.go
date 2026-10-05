@@ -56,6 +56,7 @@ func diffConfigs(old, new *domain.Config) configDiff {
 	diff.Removals = append(diff.Removals, droppedTables...)
 	diff.Destroys = append(diff.Destroys, tableNames...)
 
+	diff.Removals = append(diff.Removals, diffRemovedGuards(old, new)...)
 	diff.Removals = append(diff.Removals, diffRemovedStorageRLS(old, new)...)
 	diff.Removals = append(diff.Removals, diffRemovedRPCFunctions(old, new)...)
 
@@ -111,6 +112,10 @@ func applyRenames(old, new *domain.Config) (*domain.Config, []string) {
 		// side is schema-qualified.
 		ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s RENAME TO %s;",
 			qualifiedTableName(src, table), newName))
+		if table.HasGuards() {
+			// CASCADE drops the renamed table's trigger; the guard pass recreates it on the new function.
+			ddl = append(ddl, fmt.Sprintf("DROP FUNCTION IF EXISTS %s() CASCADE;", guardFuncName(src, table)))
+		}
 	}
 
 	for _, tableName := range sortedKeys(new.Tables) {
@@ -218,14 +223,37 @@ func diffRemovedIndexes(old, new *domain.Config) []string {
 	return ddl
 }
 
+// diffRemovedGuards drops the guard trigger and function once a table no longer has guarded fields.
+func diffRemovedGuards(old, new *domain.Config) []string {
+	var ddl []string
+	for _, name := range sortedKeys(old.Tables) {
+		oldTable := old.Tables[name]
+		if !oldTable.HasGuards() {
+			continue
+		}
+		newTable, exists := new.Tables[name]
+		moved := exists && newTable.HasGuards() && guardFuncName(name, newTable) != guardFuncName(name, oldTable)
+		if exists && newTable.HasGuards() && !moved {
+			continue
+		}
+		if exists && !moved {
+			ddl = append(ddl, fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON %s;", guardTrigger, qualifiedTableName(name, oldTable)))
+		}
+		cascade := ""
+		if moved {
+			cascade = " CASCADE"
+		}
+		ddl = append(ddl, fmt.Sprintf("DROP FUNCTION IF EXISTS %s()%s;", guardFuncName(name, oldTable), cascade))
+	}
+	return ddl
+}
+
 // hasIndex reports whether an identical index (columns, uniqueness, WHERE)
 // exists; a same-columns index that changed keeps its name, so it must be
 // dropped rather than silently no-op'd by CREATE INDEX IF NOT EXISTS.
 func hasIndex(indexes []domain.Index, target domain.Index) bool {
 	for _, idx := range indexes {
-		if slices.Equal(idx.Columns, target.Columns) &&
-			idx.Unique == target.Unique &&
-			idx.Where == target.Where {
+		if idx.Same(target) {
 			return true
 		}
 	}

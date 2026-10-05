@@ -213,6 +213,28 @@ tables:
 
 Set `where:` for a partial index: `where: "status = 'published'"`.
 
+Set `method:` to pick the index type (`btree` default, `hash`, `gin`, `gist`, `brin`, `spgist`). A `gin` index on a `tsvector` column enables full-text search:
+
+```yaml
+    indexes:
+      - columns: [search]
+        method: gin
+```
+
+## Auto-updated and immutable fields
+
+```yaml
+    fields:
+      - name: updated_at
+        type: timestamptz
+        auto_updated_at: true   # set to now() on every update
+      - name: owner_id
+        type: uuid
+        immutable: true         # updates that change it fail with 400
+```
+
+Both are enforced by one engine-managed `BEFORE UPDATE` trigger per table, so they apply to every caller, including the secret key. `immutable` does not affect `INSERT`, and writing the same value back is allowed. Remove the option and the trigger is dropped on the next deploy.
+
 ## How migrations work
 
 - **Additive changes apply immediately.** New tables, new columns, new indexes, new policies — the migrator adds them on the next run.

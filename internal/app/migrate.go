@@ -4,6 +4,7 @@ package app
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -205,6 +206,7 @@ func planFromScratchStatements(cfg *domain.Config, roles domain.Roles) []string 
 		ddl = append(ddl, generateTable(name, table, cfg.Tables)...)
 		ddl = append(ddl, generateIndexes(name, table)...)
 		ddl = append(ddl, generateDeferredFKs(name, table)...)
+		ddl = append(ddl, generateGuards(name, table)...)
 	}
 
 	// Storage metadata table
@@ -281,6 +283,7 @@ func planUpdateStatements(oldCfg, newCfg *domain.Config, roles domain.Roles) []s
 	// Indexes (CREATE INDEX IF NOT EXISTS)
 	for _, name := range ordered {
 		ddl = append(ddl, generateIndexes(name, newCfg.Tables[name])...)
+		ddl = append(ddl, generateGuards(name, newCfg.Tables[name])...)
 	}
 
 	// RLS functions (CREATE OR REPLACE)
@@ -452,6 +455,9 @@ func (m *Migrator) Harden(ctx context.Context, cfg *domain.Config) error {
 		return fmt.Errorf("harden: %w", err)
 	}
 	stmts = append(stmts, healStorageRLS(applied)...)
+	if row, err := m.db.QueryRow(ctx, storageUploadedByFKNeedsHeal); err == nil && row["need"] == true {
+		stmts = append(stmts, storageUploadedByFKHeal)
+	}
 	return m.applyStatements(ctx, stmts)
 }
 
@@ -620,9 +626,10 @@ func (m *Migrator) beginLocked(ctx context.Context) (domain.Tx, error) {
 		_ = tx.Rollback(ctx)
 		return nil, err
 	}
+	// SQL rpc bodies may reference tables created later in the same migration.
 	// set_config with is_local=true is SET LOCAL with a bound value.
 	timeout := strconv.FormatInt(m.lockTimeout.Milliseconds(), 10) + "ms"
-	if _, err := tx.Exec(ctx, "SELECT set_config('lock_timeout', $1, true)", timeout); err != nil {
+	if _, err := tx.Exec(ctx, "SELECT set_config('lock_timeout', $1, true), set_config('check_function_bodies', 'off', true)", timeout); err != nil {
 		_ = tx.Rollback(ctx)
 		return nil, err
 	}
@@ -1153,10 +1160,46 @@ func generateIndexes(name string, table domain.Table) []string {
 		if idx.Where != "" {
 			where = " WHERE " + idx.Where
 		}
-		ddl = append(ddl, fmt.Sprintf("CREATE %sINDEX IF NOT EXISTS %s ON %s (%s)%s;",
-			unique, indexName, qualName, strings.Join(idx.Columns, ", "), where))
+		using := ""
+		if idx.EffectiveMethod() != "btree" {
+			using = " USING " + idx.Method
+		}
+		ddl = append(ddl, fmt.Sprintf("CREATE %sINDEX IF NOT EXISTS %s ON %s%s (%s)%s;",
+			unique, indexName, qualName, using, strings.Join(idx.Columns, ", "), where))
 	}
 	return ddl
+}
+
+// guardFuncName is the per-table trigger function; long names get a hash suffix to stay under 63 bytes.
+func guardFuncName(name string, t domain.Table) string {
+	fn := "inz_guard_" + name
+	if len(fn) > 63 {
+		sum := sha256.Sum256([]byte(fn))
+		fn = fn[:54] + "_" + hex.EncodeToString(sum[:4])[:8]
+	}
+	return qualifiedTableName(fn, t)
+}
+
+const guardTrigger = "inz_guard"
+
+// generateGuards emits the engine-managed BEFORE UPDATE trigger for auto_updated_at and immutable fields.
+func generateGuards(name string, table domain.Table) []string {
+	if !table.HasGuards() {
+		return nil
+	}
+	autoUpdated, immutable := table.GuardedFields()
+	var body strings.Builder
+	for _, c := range immutable {
+		fmt.Fprintf(&body, "  IF NEW.%[1]s IS DISTINCT FROM OLD.%[1]s THEN\n    RAISE EXCEPTION 'column \"%[1]s\" is immutable' USING ERRCODE = '23514';\n  END IF;\n", c)
+	}
+	for _, c := range autoUpdated {
+		fmt.Fprintf(&body, "  NEW.%s := now();\n", c)
+	}
+	fn := guardFuncName(name, table)
+	return []string{
+		fmt.Sprintf("CREATE OR REPLACE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $guard$\nBEGIN\n%s  RETURN NEW;\nEND;\n$guard$;", fn, body.String()),
+		fmt.Sprintf("CREATE OR REPLACE TRIGGER %s BEFORE UPDATE ON %s FOR EACH ROW EXECUTE FUNCTION %s();", guardTrigger, qualifiedTableName(name, table), fn),
+	}
 }
 
 // qualifiedTableName returns "schema.table" for non-default schemas, and the
@@ -1263,7 +1306,7 @@ func generateStorageTables(cfg *domain.Config) []string {
   name TEXT NOT NULL,
   size BIGINT NOT NULL DEFAULT 0,
   mime TEXT NOT NULL DEFAULT '',
-  uploaded_by UUID REFERENCES auth.users(id),
+  uploaded_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
   uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   metadata JSONB,
   user_metadata JSONB,
@@ -1277,6 +1320,32 @@ func generateStorageTables(cfg *domain.Config) []string {
 		storageIndexesWhenEmpty,
 	}
 }
+
+// storageUploadedByFKNeedsHeal is a catalog-only check, so a healed DB skips the heal on boot.
+const storageUploadedByFKNeedsHeal = `SELECT to_regclass('storage.objects') IS NOT NULL AND to_regclass('auth.users') IS NOT NULL AND EXISTS (
+  SELECT 1 FROM pg_constraint
+  WHERE conrelid = 'storage.objects'::regclass AND confrelid = 'auth.users'::regclass
+    AND contype = 'f' AND confdeltype <> 'n'
+    AND conkey = ARRAY[(SELECT attnum FROM pg_attribute WHERE attrelid = 'storage.objects'::regclass AND attname = 'uploaded_by')]
+) AS need`
+
+// storageUploadedByFKHeal drops every uploaded_by FK lacking ON DELETE SET NULL, then re-adds one.
+const storageUploadedByFKHeal = `DO $$
+DECLARE c RECORD; dropped boolean := false;
+BEGIN
+  IF to_regclass('storage.objects') IS NULL OR to_regclass('auth.users') IS NULL THEN RETURN; END IF;
+  FOR c IN SELECT conname FROM pg_constraint
+    WHERE conrelid = 'storage.objects'::regclass AND confrelid = 'auth.users'::regclass
+      AND contype = 'f' AND confdeltype <> 'n'
+      AND conkey = ARRAY[(SELECT attnum FROM pg_attribute WHERE attrelid = 'storage.objects'::regclass AND attname = 'uploaded_by')]
+  LOOP
+    EXECUTE format('ALTER TABLE storage.objects DROP CONSTRAINT %I', c.conname);
+    dropped := true;
+  END LOOP;
+  IF dropped THEN
+    ALTER TABLE storage.objects ADD CONSTRAINT objects_uploaded_by_fkey FOREIGN KEY (uploaded_by) REFERENCES auth.users(id) ON DELETE SET NULL;
+  END IF;
+END $$;`
 
 // storageListManualSQL is the by-hand equivalent of the boot heal for tables too large to change at boot; drop an INVALID index first.
 const storageListManualSQL = `ALTER TABLE storage.objects ADD COLUMN name_lower TEXT COLLATE "C" GENERATED ALWAYS AS (lower(name)) STORED; ` +
@@ -1602,7 +1671,9 @@ func generateRPCFunction(name string, fn domain.Function) string {
 	var sig []string
 	for _, a := range fn.Args {
 		piece := fmt.Sprintf(`"%s" %s`, a.Name, a.Type)
-		if a.Default != nil {
+		if str, ok := a.Default.(string); ok && strings.EqualFold(strings.TrimSpace(str), domain.NullDefault) {
+			piece += " DEFAULT NULL"
+		} else if a.Default != nil {
 			piece += fmt.Sprintf(" DEFAULT %s", formatDefault(a.Default, a.Type))
 		}
 		sig = append(sig, piece)

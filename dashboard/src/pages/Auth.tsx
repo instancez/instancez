@@ -331,7 +331,7 @@ export function AuthPage() {
                   </VStack>
                   <Toggle
                     aria-label="Allow anonymous sign-in"
-                    checked={auth.allow_anonymous ?? true}
+                    checked={auth.allow_anonymous ?? false}
                     disabled={!(auth.allow_signup ?? true)}
                     onChange={(v) => updateAuth((a) => ({ ...a, allow_anonymous: v }))}
                   />

@@ -150,3 +150,31 @@ func TestRawQuery(t *testing.T) {
 		t.Errorf("rawQuery = %q, want \"tag=a&tag=b&sig=abc123\"", got.RQ)
 	}
 }
+
+func TestRedirectPassesThrough(t *testing.T) {
+	cases := map[string]struct {
+		fn       string
+		status   int
+		location string
+	}{
+		"302 with location": {`export default async () => ({ status: 302, headers: { location: "https://example.com/next" } });`, 302, "https://example.com/next"},
+		"301 relative":      {`export default async () => ({ status: 301, headers: { location: "/elsewhere" } });`, 301, "/elsewhere"},
+		"302 no location":   {`export default async () => ({ status: 302 });`, 302, ""},
+		"500 untouched":     {`export default async () => ({ status: 500, body: "boom" });`, 500, ""},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			rt := newRawRuntime(t, tc.fn, nil, nil)
+			resp, err := rt.Invoke(context.Background(), domain.FunctionRequest{Name: "fn", Method: "GET"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.Status != tc.status {
+				t.Fatalf("status = %d, want %d", resp.Status, tc.status)
+			}
+			if got := http.Header(resp.Headers).Get("Location"); got != tc.location {
+				t.Errorf("Location = %q, want %q", got, tc.location)
+			}
+		})
+	}
+}

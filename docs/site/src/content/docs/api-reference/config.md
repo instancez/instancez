@@ -90,7 +90,7 @@ Auth is always provisioned, even if `auth:` is omitted entirely; the block only 
 | `auth.jwt_expiry` | `duration` | `15m` | Access token lifetime. |
 | `auth.refresh_token_expiry` | `duration` | `7d` | Refresh token lifetime. Refresh tokens are always issued. |
 | `auth.allow_signup` | `boolean` | `true` | Allow public sign-up: `POST /auth/v1/signup`, first-time `signInWithOtp`, and first-time OAuth / ID-token sign-in. Set to `false` for invite-only. |
-| `auth.allow_anonymous` | `boolean` | `true` | Allow anonymous sign-in (empty-body signup). |
+| `auth.allow_anonymous` | `boolean` | `false` | Allow anonymous sign-in (empty-body signup). Off by default; set `true` to enable. |
 | `auth.redirect_urls` | `string[]` | `[]` | Allowlist of origins for post-auth redirects (OAuth, email verification). The server's own origin is always allowed. |
 
 `auth.refresh_tokens` is deprecated and ignored — refresh tokens are always issued.
@@ -153,6 +153,8 @@ tables:
 | `fields[].check` | `string` | — | Raw SQL `CHECK` expression. |
 | `fields[].foreign_key.references` | `string` | — | `table.column` or `schema.table.column`. |
 | `fields[].foreign_key.on_delete` | `string` | `restrict` | `cascade`, `restrict`, or `set_null`. Defaults to `restrict` when omitted. |
+| `fields[].auto_updated_at` | `boolean` | `false` | Set the column to `now()` on every `UPDATE`. Only on `timestamp`/`timestamptz` fields. |
+| `fields[].immutable` | `boolean` | `false` | Reject any `UPDATE` that changes the column (error `23514`, HTTP 400), for every role including the secret key. `INSERT` is unaffected; an upsert that hits a conflict counts as an update. |
 | `fields[].ref` | `string` | — | Storage reference in the form `storage.<bucket>`. |
 | `fields[].on_delete` | `string` | — | (`ref` only) `cascade` or `keep` — whether to delete the object on row deletion. |
 
@@ -188,6 +190,7 @@ To reference one column of a composite key from another table's `foreign_key`, t
 | `indexes[].columns` | `string[]` | required | Columns to index. |
 | `indexes[].unique` | `boolean` | `false` | Create a unique index. |
 | `indexes[].where` | `string` | — | Partial index condition (SQL expression). |
+| `indexes[].method` | `string` | `btree` | `btree`, `hash`, `gin`, `gist`, `brin` or `spgist`. `unique` needs `btree`. Changing it rebuilds the index. |
 
 ### tables.\<name\>.rls
 
@@ -260,8 +263,8 @@ rpc:
 | `rpc.<name>.security` | `string` | `invoker` | `invoker` or `definer`. |
 | `rpc.<name>.args[].name` | `string` | required | Argument name. |
 | `rpc.<name>.args[].type` | `string` | required | Postgres type. |
-| `rpc.<name>.args[].required` | `boolean` | `false` | Return 400 if argument is absent. |
-| `rpc.<name>.args[].default` | `any` | — | Postgres DEFAULT value for optional args. |
+| `rpc.<name>.args[].required` | `boolean` | `false` | Return 404 `PGRST202` (with a hint naming the argument) if absent. |
+| `rpc.<name>.args[].default` | `any` | — | Postgres DEFAULT for optional args. `null` or `NULL` emits `DEFAULT NULL`. |
 | `rpc.<name>.returns.type` | `string` | — | Return type: `void`, `record`, a scalar or composite type, `setof <type>`, or `table(col type, …)`. |
 | `rpc.<name>.set` | `map` | — | Map of `search_path`, `statement_timeout`, `lock_timeout`, `work_mem`, emitted as `SET` on the function. |
 | `rpc.<name>.body` | `string` | required | Function body (PL/pgSQL or SQL). |

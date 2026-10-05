@@ -82,11 +82,17 @@ tables:
         type: timestamptz
         required: true
         default: now()               # a literal, or one of: now(), uuid_v7(), uuid_v4(), current_date, current_time
+      - name: updated_at
+        type: timestamptz
+        auto_updated_at: true        # set to now() on every update (timestamp types only)
+      # immutable: true on any field rejects updates that change it (400, all roles)
     indexes:
       - columns: [user_id, created_at]
       - columns: [title]
         unique: true
         where: "status = 'published'"   # partial index
+      - columns: [search]
+        method: gin                     # btree (default) | hash | gin | gist | brin | spgist
     rls:
       - operations: [select]
         using: "true"
@@ -138,7 +144,7 @@ auth:
   refresh_tokens: true      # without this, supabase-js reports session: null even on successful sign-in
   refresh_token_expiry: 7d
   allow_signup: true
-  allow_anonymous: true
+  allow_anonymous: false    # anonymous sign-in is off by default; true enables signInAnonymously()
   redirect_urls:            # frontend origins OAuth/magic-link flows may land on
     - https://myapp.example.com
   oauth:
@@ -184,7 +190,7 @@ rpc:
       SELECT count(*) AS total FROM public.todos WHERE team_id = team_stats.team_id
 ```
 
-Called with `supabase.rpc('team_stats', { team_id: 42 })` or `POST /rest/v1/rpc/team_stats`. Args bind as typed parameters, never string-concatenated. The body runs under the caller's role, so RLS applies inside it unless `security: definer`. A definer function should pin `set: { search_path: "" }` and schema-qualify names; `inz validate` warns otherwise.
+Called with `supabase.rpc('team_stats', { team_id: 42 })` or `POST /rest/v1/rpc/team_stats`. Args bind as typed parameters, never string-concatenated. An optional arg takes `default: null` (or `NULL`) for `DEFAULT NULL`; other defaults are literals (use `"('null')"` for the text `null`). The body runs under the caller's role, so RLS applies inside it unless `security: definer`. A definer function should pin `set: { search_path: "" }` and schema-qualify names; `inz validate` warns otherwise.
 
 ## Code functions (Node.js)
 

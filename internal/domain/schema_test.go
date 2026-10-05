@@ -73,10 +73,20 @@ func TestAuth_SignupAllowed_ExplicitTrue(t *testing.T) {
 	}
 }
 
-func TestAuth_AnonymousAllowed_DefaultsTrue(t *testing.T) {
-	a := &Auth{}
-	if !a.AnonymousAllowed() {
-		t.Errorf("AnonymousAllowed() with nil AllowAnonymous = false, want true (default)")
+func TestAuth_AnonymousAllowed_DefaultsFalse(t *testing.T) {
+	if (&Auth{}).AnonymousAllowed() {
+		t.Errorf("AnonymousAllowed() with nil AllowAnonymous = true, want false (default)")
+	}
+	var nilAuth *Auth
+	if nilAuth.AnonymousAllowed() {
+		t.Errorf("AnonymousAllowed() on nil *Auth = true, want false")
+	}
+}
+
+func TestAuth_AnonymousAllowed_ExplicitTrue(t *testing.T) {
+	tr := true
+	if !(&Auth{AllowAnonymous: &tr}).AnonymousAllowed() {
+		t.Errorf("AnonymousAllowed() with AllowAnonymous=&true = false, want true")
 	}
 }
 

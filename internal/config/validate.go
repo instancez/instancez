@@ -282,6 +282,8 @@ func Warnings(cfg *domain.Config) domain.ValidationErrors {
 		t := cfg.Tables[name]
 		path := "tables." + name + ".rls_enabled"
 		switch {
+		case t.RLSEnabled == nil && len(t.RLS) > 0:
+			// policies imply RLS on
 		case t.RLSEnabled == nil:
 			ws = append(ws, &domain.ValidationError{
 				Path:       path,
@@ -441,6 +443,18 @@ func validateAuth(auth *domain.Auth) domain.ValidationErrors {
 	return errs
 }
 
+func isTimestampType(t string) bool {
+	t = strings.ToLower(t)
+	if i := strings.IndexByte(t, '('); i >= 0 {
+		t = t[:i]
+	}
+	switch strings.Join(strings.Fields(t), " ") {
+	case "timestamp", "timestamptz", "timestamp with time zone", "timestamp without time zone":
+		return true
+	}
+	return false
+}
+
 func validateTables(tables map[string]domain.Table, auth *domain.Auth) domain.ValidationErrors {
 	var errs domain.ValidationErrors
 
@@ -512,6 +526,22 @@ func validateTables(tables map[string]domain.Table, auth *domain.Auth) domain.Va
 				hasPK = true
 			}
 
+			if field.AutoUpdatedAt && !isTimestampType(field.Type) {
+				errs = append(errs, &domain.ValidationError{
+					Path:       fpath + ".auto_updated_at",
+					Message:    "auto_updated_at requires a timestamp or timestamptz field",
+					Suggestion: "Change the type to timestamptz",
+				})
+			}
+
+			if field.AutoUpdatedAt && field.Immutable {
+				errs = append(errs, &domain.ValidationError{
+					Path:       fpath + ".immutable",
+					Message:    "a field cannot be both auto_updated_at and immutable",
+					Suggestion: "Remove one of the two options",
+				})
+			}
+
 			// FK fields infer type — others must declare it
 			if field.ForeignKey == nil && field.Type == "" {
 				errs = append(errs, &domain.ValidationError{
@@ -577,6 +607,24 @@ func validateTables(tables map[string]domain.Table, auth *domain.Auth) domain.Va
 				errs = append(errs, &domain.ValidationError{
 					Path:    idxPath,
 					Message: "index must have at least one column",
+				})
+			}
+			if !slices.Contains(domain.IndexMethods, idx.EffectiveMethod()) {
+				errs = append(errs, &domain.ValidationError{
+					Path:       idxPath + ".method",
+					Message:    fmt.Sprintf("invalid index method %q", idx.Method),
+					Suggestion: "Supported: " + strings.Join(domain.IndexMethods, ", "),
+				})
+			} else if idx.Unique && idx.EffectiveMethod() != "btree" {
+				errs = append(errs, &domain.ValidationError{
+					Path:    idxPath + ".method",
+					Message: "unique indexes only support the btree method",
+				})
+			}
+			if idx.EffectiveMethod() == "hash" && len(idx.Columns) > 1 {
+				errs = append(errs, &domain.ValidationError{
+					Path:    idxPath + ".method",
+					Message: "hash indexes support a single column",
 				})
 			}
 			for _, col := range idx.Columns {

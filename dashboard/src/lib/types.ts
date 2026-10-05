@@ -127,6 +127,8 @@ export interface Field {
   on_delete?: string;
   /** Previous column name, so the migrator renames instead of dropping. */
   renamed_from?: string;
+  auto_updated_at?: boolean;
+  immutable?: boolean;
 }
 
 export interface ForeignKey {
@@ -138,6 +140,7 @@ export interface Index {
   columns: string[];
   unique: boolean;
   where: string;
+  method?: string;
 }
 
 export interface RLSPolicy {

@@ -6,8 +6,17 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 <!-- Add entries here as you merge changes. Move them under a version heading when you cut a release. -->
 
+### Added
+
+- `indexes[].method` (`btree` default, `hash`, `gin`, `gist`, `brin`, `spgist`); changing it rebuilds the index. For example, `gin` on a `tsvector` column enables full-text search.
+- Field options `auto_updated_at: true` (timestamp fields; sets the column to `now()` on every update) and `immutable: true` (updates that change the column fail with 400, for every role including the secret key). Both run in one engine-managed `BEFORE UPDATE` trigger per table, dropped when the options are removed.
+
 ### Changed
 
+- **BREAKING:** `auth.allow_anonymous` now defaults to `false`, matching Supabase. Anonymous sign-in (`signInAnonymously()`, empty-body `POST /auth/v1/signup`) returns 403 until you set `allow_anonymous: true`. `inz init` writes the flag explicitly.
+- RPC arg `default: null` (or the bare word `NULL`, any case) now emits `DEFAULT NULL` instead of the string literal `'null'`, which failed on non-text types. For the literal text `null`, write `default: "('null')"`.
+- REST and RPC database errors now use PostgREST's status mapping: not-null, check and invalid-input errors (23502, 23514, class 22) return 400 instead of 422, foreign-key violations return 409, and unknown SQLSTATEs return 400. `42501` (insufficient privilege) stays 403 for `anon`, a deliberate deviation from PostgREST's 401. The body and SQLSTATE `code` are unchanged.
+- A missing required RPC argument now returns 404 `PGRST202` with a hint naming the argument (was 400), as in PostgREST.
 - **BREAKING:** the `/api` prefix and the `/api/_admin` and `/api/storage/...` mounts were removed; use `/_admin` and `/storage/...`.
 - **BREAKING:** generated absolute URLs (OAuth `redirect_uri`, email verify, magic and recovery links such as `<base>/auth/v1/verify`) no longer carry a prefix. OAuth providers must register `<base>/auth/v1/callback/<provider>`, and links in already-sent emails stop working.
 - `v1` is now a reserved storage bucket name.

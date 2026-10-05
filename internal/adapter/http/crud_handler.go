@@ -983,43 +983,7 @@ func parseMissingPrefer(prefer string) bool {
 func handleDBError(c *gin.Context, err error) {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
-		status := 500
-		switch pgErr.Code {
-		case "23505": // unique_violation
-			status = 409
-		case "23503", // foreign_key_violation
-			"23502", // not_null_violation
-			"23514", // check_violation
-			"22P02": // invalid_text_representation
-			status = 422
-		case "42501": // insufficient_privilege
-			status = 403
-		case "42P01", // undefined_table
-			"42703": // undefined_column
-			status = 404
-		case "22001": // string_data_right_truncation
-			status = 422
-		case "22003": // numeric_value_out_of_range
-			status = 422
-		case "22007", // invalid_datetime_format
-			"22008": // datetime_field_overflow
-			status = 422
-		case "23000": // integrity_constraint_violation (generic)
-			status = 409
-		case "25006": // read_only_sql_transaction
-			status = 405
-		case "42601", // syntax_error
-			"42803": // grouping_error
-			status = 400
-		case "42602": // invalid_name
-			status = 400
-		case "42883": // undefined_function
-			status = 404
-		case "P0001": // raise_exception (user-defined)
-			// User-defined PL/pgSQL RAISE maps to 400 by default; the
-			// hint field often carries application-specific guidance.
-			status = 400
-		}
+		status := pgErrorStatus(pgErr)
 		// RLS policy violations surface as various SQLSTATEs depending on
 		// Postgres version; catch the common phrases too.
 		if strings.Contains(pgErr.Message, "row-level security") ||
@@ -1039,27 +1003,70 @@ func handleDBError(c *gin.Context, err error) {
 	case strings.Contains(errStr, "unique") || strings.Contains(errStr, "duplicate key"):
 		pgJSON(c, 409, "23505", errStr, "", "")
 	case strings.Contains(errStr, "foreign key"):
-		pgJSON(c, 422, "23503", errStr, "", "")
+		pgJSON(c, 409, "23503", errStr, "", "")
 	case strings.Contains(errStr, "violates check"):
-		pgJSON(c, 422, "23514", errStr, "", "")
+		pgJSON(c, 400, "23514", errStr, "", "")
 	case strings.Contains(errStr, "not-null constraint"):
-		pgJSON(c, 422, "23502", errStr, "", "")
+		pgJSON(c, 400, "23502", errStr, "", "")
 	case strings.Contains(errStr, "row-level security") || strings.Contains(errStr, "new row violates"):
 		pgJSON(c, 403, "42501", "Access denied by row-level security policy", "", "")
 	case strings.Contains(errStr, "permission denied"):
 		pgJSON(c, 403, "42501", errStr, "", "")
 	case strings.Contains(errStr, "value too long"):
-		pgJSON(c, 422, "22001", errStr, "", "")
+		pgJSON(c, 400, "22001", errStr, "", "")
 	case strings.Contains(errStr, "invalid input syntax"):
-		pgJSON(c, 422, "22P02", errStr, "", "Check that the value matches the expected column type")
+		pgJSON(c, 400, "22P02", errStr, "", "Check that the value matches the expected column type")
 	case strings.Contains(errStr, "cannot find encode plan"):
 		// pgx rejects the value before it hits Postgres (no SQLSTATE), e.g. a
-		// nested object like {"not":false} for a scalar column. Bad input, 422.
-		pgJSON(c, 422, "22P02", "Invalid value for column type", errStr,
+		// nested object like {"not":false} for a scalar column. Bad input, 400.
+		pgJSON(c, 400, "22P02", "Invalid value for column type", errStr,
 			"Column values must be scalars matching the column type; filter operators like {\"not\":...} go in the query string, not the body")
 	default:
 		pgJSON(c, 500, "XX000", "Database error", errStr, "")
 	}
+}
+
+// pgErrorStatus mirrors PostgREST's pgErrorStatus (v13); unknown codes are 400.
+func pgErrorStatus(e *pgconn.PgError) int {
+	if len(e.Code) < 2 {
+		return 400
+	}
+	switch e.Code {
+	case "23503", "23505":
+		return 409
+	case "25006":
+		return 405
+	case "21000":
+		if strings.HasSuffix(e.Message, "requires a WHERE clause") {
+			return 400
+		}
+		return 500
+	case "53400", "42P17":
+		return 500
+	case "57P01":
+		return 503
+	case "P0001":
+		return 400
+	case "42883", "42P01":
+		return 404
+	case "42501":
+		return 403
+	}
+	if strings.HasPrefix(e.Code, "PT") {
+		if n, err := strconv.Atoi(e.Code[2:]); err == nil && n >= 100 && n <= 599 {
+			return n
+		}
+		return 500
+	}
+	switch e.Code[:2] {
+	case "08", "53":
+		return 503
+	case "0L", "0P", "28":
+		return 403
+	case "09", "25", "2D", "38", "39", "3B", "40", "54", "55", "57", "58", "F0", "HV", "P0", "XX":
+		return 500
+	}
+	return 400
 }
 
 // suggestHintForPgError generates a hint string for common Postgres errors

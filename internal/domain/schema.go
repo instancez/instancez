@@ -215,11 +215,11 @@ func (a *Auth) SignupAllowed() bool {
 }
 
 // AnonymousAllowed reports whether anonymous sign-in (POST /auth/v1/signup
-// with an empty body) is permitted. Defaults to true when AllowAnonymous is
-// unset.
+// with an empty body) is permitted. Defaults to false when AllowAnonymous is
+// unset, like Supabase.
 func (a *Auth) AnonymousAllowed() bool {
 	if a == nil || a.AllowAnonymous == nil {
-		return true
+		return false
 	}
 	return *a.AllowAnonymous
 }
@@ -320,6 +320,11 @@ type Field struct {
 	Ref        string      `yaml:"ref" json:"ref"`             // storage reference: "storage.<bucket>"
 	OnDelete   string      `yaml:"on_delete" json:"on_delete"` // for storage refs: cascade | keep
 
+	// AutoUpdatedAt sets the column to now() on every UPDATE (timestamp types only).
+	AutoUpdatedAt bool `yaml:"auto_updated_at,omitempty" json:"auto_updated_at,omitempty"`
+	// Immutable rejects any UPDATE that changes the column, for every role.
+	Immutable bool `yaml:"immutable,omitempty" json:"immutable,omitempty"`
+
 	// RenamedFrom names this column's previous name. See Table.RenamedFrom:
 	// without it a rename reaches the migrator as a drop plus an add, which
 	// discards the column's data.
@@ -352,11 +357,41 @@ type Index struct {
 	Columns []string `yaml:"columns" json:"columns"`
 	Unique  bool     `yaml:"unique" json:"unique"`
 	Where   string   `yaml:"where" json:"where"` // partial index condition
+	Method  string   `yaml:"method,omitempty" json:"method,omitempty"`
+}
+
+// IndexMethods lists the allowed index access methods.
+var IndexMethods = []string{"btree", "hash", "gin", "gist", "brin", "spgist"}
+
+// EffectiveMethod returns the access method, defaulting to btree.
+func (i Index) EffectiveMethod() string {
+	if i.Method == "" {
+		return "btree"
+	}
+	return i.Method
 }
 
 // Same reports whether two indexes are declared identically.
 func (i Index) Same(o Index) bool {
-	return i.Unique == o.Unique && i.Where == o.Where && slices.Equal(i.Columns, o.Columns)
+	return i.Unique == o.Unique && i.Where == o.Where && i.EffectiveMethod() == o.EffectiveMethod() && slices.Equal(i.Columns, o.Columns)
+}
+
+// GuardedFields returns the fields that need the engine-managed UPDATE trigger.
+func (t Table) GuardedFields() (autoUpdated, immutable []string) {
+	for _, f := range t.Fields {
+		if f.AutoUpdatedAt {
+			autoUpdated = append(autoUpdated, f.Name)
+		}
+		if f.Immutable {
+			immutable = append(immutable, f.Name)
+		}
+	}
+	return
+}
+
+// HasGuards reports whether the table needs the engine-managed UPDATE trigger.
+func (t Table) HasGuards() bool {
+	return slices.ContainsFunc(t.Fields, func(f Field) bool { return f.AutoUpdatedAt || f.Immutable })
 }
 
 // RLSPolicy defines a row-level security policy. Using governs which rows
@@ -412,8 +447,27 @@ type FuncReturn struct {
 type FuncArg struct {
 	Name     string `yaml:"name" json:"name"`
 	Type     string `yaml:"type" json:"type"`
-	Default  any    `yaml:"default" json:"default"`
+	Default  any    `yaml:"default,omitempty" json:"default"`
 	Required bool   `yaml:"required" json:"required"`
+}
+
+// NullDefault is the Default a YAML `default: null` (key present) becomes.
+const NullDefault = "NULL"
+
+// UnmarshalYAML maps an explicit `default: null` to NullDefault; an absent key stays nil.
+func (a *FuncArg) UnmarshalYAML(unmarshal func(any) error) error {
+	type plain FuncArg
+	if err := unmarshal((*plain)(a)); err != nil {
+		return err
+	}
+	var raw map[string]any
+	if err := unmarshal(&raw); err != nil {
+		return err
+	}
+	if v, ok := raw["default"]; ok && v == nil {
+		a.Default = NullDefault
+	}
+	return nil
 }
 
 // CodeFunction is a user-declared HTTP handler written in JS, served at
