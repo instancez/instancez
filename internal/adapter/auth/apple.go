@@ -79,6 +79,7 @@ func (a appleProvider) ExchangeCode(cfg *domain.OAuthProvider, code string) (*OA
 }
 
 func (appleProvider) FetchUser(tok *OAuthToken, callback url.Values) (*OAuthUserInfo, error) {
+	// ExchangeCode already validated iss, aud and exp.
 	claims, err := parseAppleIDToken(tok.IDToken)
 	if err != nil {
 		return nil, err

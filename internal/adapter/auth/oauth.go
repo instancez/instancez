@@ -19,7 +19,7 @@ type OAuthUserInfo struct {
 	EmailVerified bool // provider asserts Email is verified
 }
 
-// exchangeOAuthCode exchanges an OAuth authorization code for an access token at
+// exchangeOAuthCode exchanges an OAuth authorization code for the token response at
 // the given token endpoint. The endpoint is provider-specific and supplied by
 // the caller (see the per-provider implementations in oauthprovider.go).
 func exchangeOAuthCode(tokenURL string, cfg *domain.OAuthProvider, code string) (*OAuthToken, error) {

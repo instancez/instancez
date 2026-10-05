@@ -1412,7 +1412,7 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 			return
 		}
 		if userInfo.Email == "" {
-			problemJSON(c, 400, "bad_request", "Could not retrieve email from OAuth provider")
+			h.oauthCallbackFail(c, redirectTo, isPKCE, "Could not retrieve email from OAuth provider")
 			return
 		}
 

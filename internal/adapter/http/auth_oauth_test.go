@@ -479,3 +479,27 @@ func TestOAuthCallback_ProviderErrorWithBadStateStays400(t *testing.T) {
 		t.Fatalf("status %d", w.Code)
 	}
 }
+
+func TestOAuthCallback_MissingEmailRedirectsToApp(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	adapterauth.RegisterOAuth(&countingOAuthProvider{})
+	upserted := false
+	h := linkHandler(t, &stubAuthService{
+		consumeOAuthFlowFn: func(context.Context, string) (domain.FlowState, error) {
+			return domain.FlowState{RedirectTo: "http://app.local/cb"}, nil
+		},
+		upsertOAuthUserFn: func(context.Context, domain.OAuthLogin) (map[string]any, error) {
+			upserted = true
+			return nil, nil
+		},
+	})
+	h.cfg.Auth.OAuth["unitcount"] = &domain.OAuthProvider{ClientID: "c", RedirectURL: "http://api/cb"}
+	r := gin.New()
+	r.GET("/cb", h.handleOAuthCallback("unitcount"))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/cb?state=s&code=c", nil))
+	loc := w.Header().Get("Location")
+	if upserted || w.Code != 302 || !strings.HasPrefix(loc, "http://app.local/cb") || !strings.Contains(loc, "error_description=") {
+		t.Fatalf("upserted=%v status %d loc %q body %s", upserted, w.Code, loc, w.Body.String())
+	}
+}

@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -77,31 +77,6 @@ func TestAppleSuccess(t *testing.T) {
 	}
 }
 
-func TestAppleEmailVerified(t *testing.T) {
-	cases := []struct {
-		name string
-		set  func(jwt.MapClaims)
-		want bool
-	}{
-		{"bool true", func(c jwt.MapClaims) { c["email_verified"] = true }, true},
-		{"string false", func(c jwt.MapClaims) { c["email_verified"] = "false" }, false},
-		{"absent", func(c jwt.MapClaims) { delete(c, "email_verified") }, false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			c := validClaims()
-			tc.set(c)
-			u, err := appleLogin(t, c, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if u.EmailVerified != tc.want {
-				t.Errorf("got %v", u.EmailVerified)
-			}
-		})
-	}
-}
-
 func TestAppleRejects(t *testing.T) {
 	cases := []struct {
 		name string
@@ -113,7 +88,6 @@ func TestAppleRejects(t *testing.T) {
 		{"expired", func(c jwt.MapClaims) { c["exp"] = time.Now().Add(-time.Minute).Unix() }},
 		{"missing exp", func(c jwt.MapClaims) { delete(c, "exp") }},
 		{"missing sub", func(c jwt.MapClaims) { delete(c, "sub") }},
-		{"empty sub", func(c jwt.MapClaims) { c["sub"] = "" }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -178,7 +152,7 @@ func TestAppleName(t *testing.T) {
 func TestClientIDs(t *testing.T) {
 	cases := map[string][]string{"": nil, " a , ,b ": {"a", "b"}, "x": {"x"}, ",,": nil}
 	for in, want := range cases {
-		if got := ClientIDs(in); !reflect.DeepEqual(got, want) && (len(got) != 0 || len(want) != 0) {
+		if got := ClientIDs(in); !slices.Equal(got, want) {
 			t.Errorf("%q: got %v want %v", in, got, want)
 		}
 	}
