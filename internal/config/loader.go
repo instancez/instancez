@@ -264,6 +264,18 @@ func applyDefaults(cfg *domain.Config) {
 		slog.Warn("auth.refresh_tokens is deprecated and ignored; refresh tokens are always enabled")
 	}
 
+	if DefaultLocalStorage && len(cfg.Storage) > 0 && cfg.Providers.Storage == nil {
+		cfg.Providers.Storage = &domain.StorageProvider{Type: "local", Path: "./uploads"}
+	}
+
+	for _, t := range cfg.Tables {
+		for _, f := range t.Fields {
+			if f.ForeignKey != nil {
+				f.ForeignKey.OnDelete = normalizeOnDelete(f.ForeignKey.OnDelete)
+			}
+		}
+	}
+
 	// RPC: fill defaults and derive ReturnCategory.
 	for name, fn := range cfg.RPC {
 		if fn.Language == "" {
@@ -292,4 +304,12 @@ func classifyRPCReturn(raw string) string {
 		return "setof"
 	}
 	return "scalar"
+}
+
+// DefaultLocalStorage lets `inz dev` fall back to local storage when buckets have no provider.
+var DefaultLocalStorage bool
+
+// normalizeOnDelete accepts "set null" and "set-null" as set_null.
+func normalizeOnDelete(s string) string {
+	return strings.NewReplacer(" ", "_", "-", "_").Replace(strings.ToLower(strings.TrimSpace(s)))
 }

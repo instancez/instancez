@@ -1276,7 +1276,7 @@ func TestValidate_RPCBodyShape(t *testing.T) {
 		cfg := validBaseConfig()
 		cfg.RPC = map[string]domain.Function{
 			"my_fn": {
-				Language:   "sql",
+				Language:   "plpgsql",
 				Volatility: "stable",
 				Security:   "invoker",
 				Returns:    domain.FuncReturn{Type: "void"},
