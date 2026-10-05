@@ -27,7 +27,7 @@ auth:
     jwt_expiry: 15m
     refresh_token_expiry: 7d
     # allow_signup: false       # admin-only: POST /auth/v1/signup → 403 signup_disabled
-    # allow_anonymous: false    # block empty-body anonymous sign-in
+    # allow_anonymous: true     # off by default; enable empty-body anonymous sign-in
     email: null
     # OAuth providers are keyed by name (google, github, …). Use env-var
     # interpolation for the secrets. See docs build/auth.

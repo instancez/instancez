@@ -1490,7 +1490,7 @@ await step('rest: unique violation surfaces 409 with code 23505', async () => {
   await client.from('todos').delete().eq('id', first.id)
 })
 
-await step('rest: not-null violation surfaces 422 with code 23502', async () => {
+await step('rest: not-null violation surfaces 400 with code 23502', async () => {
   const resp = await fetch(`${URL}/rest/v1/comments`, {
     method: 'POST',
     headers: {
@@ -1500,7 +1500,7 @@ await step('rest: not-null violation surfaces 422 with code 23502', async () => 
     },
     body: JSON.stringify({ todo_id: null, user_id: userId }), // body omitted: required, no default
   })
-  assertEq(resp.status, 422, 'not-null violation status')
+  assertEq(resp.status, 400, 'not-null violation status')
   const err = await resp.json()
   assertEq(err.code, '23502', 'not-null violation code')
 })

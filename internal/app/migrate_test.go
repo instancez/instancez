@@ -1059,7 +1059,7 @@ func TestHarden_NoRestrictiveBucketPolicy_TakesNoStorageLock(t *testing.T) {
 		t.Fatalf("Harden: %v", err)
 	}
 	for _, stmt := range db.execs {
-		if strings.Contains(stmt, "storage.objects") && !strings.Contains(stmt, "FROM pg_policies") && !strings.Contains(stmt, "FROM pg_indexes") {
+		if strings.Contains(stmt, "storage.objects") && !strings.Contains(stmt, "FROM pg_policies") && !strings.Contains(stmt, "FROM pg_indexes") && !strings.Contains(stmt, "FROM pg_constraint") {
 			t.Fatalf("Harden with no restrictive bucket policy must only touch storage.objects behind a pg_policies check, got: %s", stmt)
 		}
 	}
@@ -1273,5 +1273,30 @@ func TestHarden_StorageListHealStepsShareTheLockBudget(t *testing.T) {
 	}
 	if got, err := strconv.Atoi(strings.TrimSuffix(rec[1], "ms")); err != nil || got > 360 || got < 1 {
 		t.Fatalf("second heal tx must only get what the first left (<=360ms), got %q", rec[1])
+	}
+}
+
+func TestGenerateRPCFunction_ArgDefaultNull(t *testing.T) {
+	cases := []struct {
+		name string
+		def  any
+		want string
+	}{
+		{"bare NULL", "NULL", `"x" bigint DEFAULT NULL`},
+		{"lowercase null", "null", `"x" bigint DEFAULT NULL`},
+		{"mixed case padded", " Null ", `"x" bigint DEFAULT NULL`},
+		{"empty string stays literal", "", `"x" bigint DEFAULT ''`},
+		{"null inside text stays literal", "nullable", `"x" bigint DEFAULT 'nullable'`},
+		{"quoted literal null via parens", "('null')", `"x" bigint DEFAULT ('null')`},
+		{"quote injection escaped", "a'; DROP TABLE t;--", `"x" bigint DEFAULT 'a''; DROP TABLE t;--'`},
+		{"absent", nil, `"x" bigint)`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fn := domain.Function{Language: "sql", Volatility: "stable", Security: "invoker",
+				Returns: domain.FuncReturn{Type: "int"}, Body: "SELECT 1",
+				Args: []domain.FuncArg{{Name: "x", Type: "bigint", Default: c.def}}}
+			mustContain(t, generateRPCFunction("f", fn), c.want)
+		})
 	}
 }

@@ -265,3 +265,28 @@ func TestIntegration_ProvisionIdempotentDeniesPoliciesCallingMissingRPC(t *testi
 		t.Fatal("the unblocked plan creates the rpc")
 	}
 }
+
+func TestIntegration_RPCArgDefaultNull_BootsAndCallableWithoutArg(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+	m := app.NewMigrator(db).AllowDestructive(true)
+	fn := domain.Function{
+		Language: "sql", Volatility: "stable", Security: "invoker",
+		Args:    []domain.FuncArg{{Name: "limit_to", Type: "bigint", Default: domain.NullDefault}},
+		Returns: domain.FuncReturn{Type: "text"},
+		Body:    "SELECT coalesce(limit_to::text, 'none')",
+	}
+	cfg := &domain.Config{Version: 1, RPC: map[string]domain.Function{"pick": fn}}
+	for i := 0; i < 2; i++ {
+		if err := m.Apply(ctx, cfg); err != nil {
+			t.Fatalf("apply %d: %v", i, err)
+		}
+	}
+	row, err := db.QueryRow(ctx, `SELECT public.pick() AS v`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row["v"] != "none" {
+		t.Fatalf("pick() = %v, want none", row["v"])
+	}
+}

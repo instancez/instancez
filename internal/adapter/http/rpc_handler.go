@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -65,6 +66,13 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 		// Collect the request body (POST) or query params (GET) into a
 		// map keyed by arg name, respecting Prefer: params=single-object.
 		callArgs, err := h.collectRPCArgs(c, name, fn)
+		var missing *missingArgsError
+		if errors.As(err, &missing) {
+			pgJSON(c, http.StatusNotFound, "PGRST202",
+				fmt.Sprintf("Could not find the function public.%s in the schema cache", name),
+				missing.Error(), missing.hint())
+			return
+		}
 		if err != nil {
 			problemJSON(c, http.StatusBadRequest, "bad_request", err.Error())
 			return
@@ -106,9 +114,6 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 		if err != nil {
 			problemJSON(c, http.StatusInternalServerError, "internal", "Failed to set RLS context")
 			return
-		}
-		if isAdmin(c) {
-			ctx = c.Request.Context()
 		}
 
 		tx, err := h.db.Begin(ctx)
@@ -321,17 +326,37 @@ func (h *CRUDHandler) collectRPCArgs(c *gin.Context, fnName string, fn domain.Fu
 		out[k] = v
 	}
 
-	// Required-arg check. Postgres would raise a helpful error on its
-	// own, but catching it here gives a cleaner 400 before we even
-	// open a transaction.
+	var missing []string
 	for _, a := range fn.Args {
-		if a.Required {
-			if _, ok := out[a.Name]; !ok {
-				return nil, fmt.Errorf("missing required argument %q", a.Name)
-			}
+		if _, ok := out[a.Name]; a.Required && !ok {
+			missing = append(missing, a.Name)
 		}
 	}
+	if len(missing) > 0 {
+		return nil, &missingArgsError{names: missing}
+	}
 	return out, nil
+}
+
+// missingArgsError lists required arguments the caller omitted.
+type missingArgsError struct{ names []string }
+
+func (e *missingArgsError) Error() string {
+	quoted := make([]string, len(e.names))
+	for i, n := range e.names {
+		quoted[i] = strconv.Quote(n)
+	}
+	if len(quoted) == 1 {
+		return "missing required argument " + quoted[0]
+	}
+	return "missing required arguments: " + strings.Join(quoted, ", ")
+}
+
+func (e *missingArgsError) hint() string {
+	if len(e.names) == 1 {
+		return fmt.Sprintf("argument %s has no default", e.names[0])
+	}
+	return fmt.Sprintf("arguments %s have no default", strings.Join(e.names, ", "))
 }
 
 // buildRPCCall assembles the SELECT statement that invokes an RPC Function

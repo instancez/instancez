@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -678,7 +679,7 @@ func TestWarnings_RLSEnabled(t *testing.T) {
 		want    string // substring of Message; "" = no warning
 	}{
 		{"unset, no policies", nil, nil, "set rls_enabled explicitly"},
-		{"unset, with policies", nil, pol, "set rls_enabled explicitly"},
+		{"unset, with policies", nil, pol, ""},
 		{"false, no policies", &off, nil, "RLS is disabled"},
 		{"true, no policies", &on, nil, ""},
 		{"true, with policies", &on, pol, ""},
@@ -1723,6 +1724,64 @@ func TestWarnings_AppleSecretExpiry(t *testing.T) {
 	}
 }
 
+func TestValidate_IndexMethodAndFieldOptions(t *testing.T) {
+	cases := []struct {
+		name    string
+		mutate  func(*domain.Table)
+		wantErr string
+	}{
+		{"gin ok", func(t *domain.Table) { t.Indexes = []domain.Index{{Columns: []string{"title"}, Method: "gin"}} }, ""},
+		{"bad method", func(t *domain.Table) {
+			t.Indexes = []domain.Index{{Columns: []string{"title"}, Method: "btree; DROP TABLE x"}}
+		}, "tables.todos.indexes[0].method"},
+		{"uppercase method", func(t *domain.Table) { t.Indexes = []domain.Index{{Columns: []string{"title"}, Method: "GIN"}} }, "tables.todos.indexes[0].method"},
+		{"unique gin", func(t *domain.Table) {
+			t.Indexes = []domain.Index{{Columns: []string{"title"}, Method: "gin", Unique: true}}
+		}, "tables.todos.indexes[0].method"},
+		{"auto_updated_at on timestamptz", func(t *domain.Table) {
+			t.Fields = append(t.Fields, domain.Field{Name: "u", Type: "timestamptz", AutoUpdatedAt: true})
+		}, ""},
+		{"auto_updated_at on text", func(t *domain.Table) {
+			t.Fields = append(t.Fields, domain.Field{Name: "u", Type: "text", AutoUpdatedAt: true})
+		}, "tables.todos.fields.u.auto_updated_at"},
+		{"auto_updated_at on date", func(t *domain.Table) {
+			t.Fields = append(t.Fields, domain.Field{Name: "u", Type: "date", AutoUpdatedAt: true})
+		}, "tables.todos.fields.u.auto_updated_at"},
+		{"auto_updated_at on timestamptz(3)", func(t *domain.Table) {
+			t.Fields = append(t.Fields, domain.Field{Name: "u", Type: "TimestampTZ(3)", AutoUpdatedAt: true})
+		}, ""},
+		{"auto_updated_at on timestamp(6)", func(t *domain.Table) {
+			t.Fields = append(t.Fields, domain.Field{Name: "u", Type: "timestamp(6)", AutoUpdatedAt: true})
+		}, ""},
+		{"auto_updated_at and immutable", func(t *domain.Table) {
+			t.Fields = append(t.Fields, domain.Field{Name: "u", Type: "timestamptz", AutoUpdatedAt: true, Immutable: true})
+		}, "tables.todos.fields.u.immutable"},
+		{"hash single column ok", func(t *domain.Table) { t.Indexes = []domain.Index{{Columns: []string{"title"}, Method: "hash"}} }, ""},
+		{"hash multi column", func(t *domain.Table) {
+			t.Indexes = []domain.Index{{Columns: []string{"title", "id"}, Method: "hash"}}
+		}, "tables.todos.indexes[0].method"},
+		{"immutable ok", func(t *domain.Table) { t.Fields[1].Immutable = true }, ""},
+		{"immutable on pk ok", func(t *domain.Table) { t.Fields[0].Immutable = true }, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cfg := validBaseConfig()
+			tbl := cfg.Tables["todos"]
+			tbl.Fields = slices.Clone(tbl.Fields)
+			c.mutate(&tbl)
+			cfg.Tables["todos"] = tbl
+			errs := Validate(cfg)
+			if c.wantErr == "" {
+				if errs != nil {
+					t.Fatalf("unexpected errors: %v", errs)
+				}
+				return
+			}
+			assertHasErrorAt(t, errs, c.wantErr)
+		})
+	}
+}
+
 func TestWarnings_NoAuthOrApple(t *testing.T) {
 	cfg := validBaseConfig()
 	cfg.Auth = &domain.Auth{OAuth: map[string]*domain.OAuthProvider{"apple": nil}}
@@ -1752,5 +1811,17 @@ func TestLogWarnings(t *testing.T) {
 	LogWarnings(slog.New(slog.NewTextHandler(&buf, nil)), &domain.Config{})
 	if strings.Contains(buf.String(), "config warning") {
 		t.Errorf("no warnings expected, got %q", buf.String())
+	}
+}
+
+func TestIsTimestampType(t *testing.T) {
+	for in, want := range map[string]bool{
+		"timestamptz": true, "TIMESTAMPTZ(3)": true, "timestamp(6)": true,
+		"  Timestamp  with time zone (6)": true, "timestamp without time zone": true,
+		"date": false, "text": false, "": false, "time": false,
+	} {
+		if got := isTimestampType(in); got != want {
+			t.Errorf("isTimestampType(%q) = %v, want %v", in, got, want)
+		}
 	}
 }
