@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -34,10 +35,16 @@ var (
 )
 
 type jwksCache struct {
-	mu        sync.Mutex
-	keys      map[string]*rsa.PublicKey
-	fetchedAt time.Time
+	mu          sync.Mutex
+	keys        map[string]*rsa.PublicKey
+	fetchedAt   time.Time
+	lastAttempt time.Time
+	inflight    chan struct{}
 }
+
+var now = time.Now
+
+var errKeysUnavailable = errors.New("signing keys unavailable")
 
 var caches = struct {
 	mu sync.Mutex
@@ -61,30 +68,68 @@ func cacheFor(provider string) *jwksCache {
 	return c
 }
 
-// key returns the signing key for kid, refetching when the cache is stale or kid is unknown and the cache is over a minute old.
+// key returns the signing key for kid. A fetch runs outside the lock, at most once per minute
+// (failures count), and stale keys keep serving while refreshes fail.
 func (c *jwksCache) key(jwksURL, kid string) (*rsa.PublicKey, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	age := time.Since(c.fetchedAt)
-	if len(c.keys) > 0 && age < cacheTTL {
-		if k, ok := c.keys[kid]; ok {
+	k, known := c.keys[kid]
+	if known && now().Sub(c.fetchedAt) < cacheTTL {
+		c.mu.Unlock()
+		return k, nil
+	}
+	if ch := c.inflight; ch != nil {
+		c.mu.Unlock()
+		if known {
 			return k, nil
 		}
-		if age < refreshMinAge {
-			return nil, fmt.Errorf("unknown key ID: %s", kid)
+		<-ch
+		return c.lookup(kid)
+	}
+	if !c.lastAttempt.IsZero() && now().Sub(c.lastAttempt) < refreshMinAge {
+		c.mu.Unlock()
+		if known {
+			return k, nil
 		}
+		return nil, c.missing(kid)
 	}
+	ch := make(chan struct{})
+	c.inflight, c.lastAttempt = ch, now()
+	c.mu.Unlock()
+
 	keys, err := fetchJWKS(jwksURL)
+
+	c.mu.Lock()
+	if err == nil && len(keys) > 0 {
+		c.keys, c.fetchedAt = keys, now()
+	}
+	c.inflight = nil
+	close(ch)
+	c.mu.Unlock()
+
+	if k, err := c.lookup(kid); err == nil {
+		return k, nil
+	}
 	if err != nil {
-		return nil, err
+		return nil, errKeysUnavailable
 	}
-	c.keys, c.fetchedAt = keys, time.Now()
-	k, ok := keys[kid]
-	if !ok {
-		return nil, fmt.Errorf("unknown key ID: %s", kid)
+	return nil, fmt.Errorf("unknown key ID: %s", kid)
+}
+
+func (c *jwksCache) lookup(kid string) (*rsa.PublicKey, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if k, ok := c.keys[kid]; ok {
+		return k, nil
 	}
-	return k, nil
+	return nil, c.missing(kid)
+}
+
+// missing must be called with c.mu held.
+func (c *jwksCache) missing(kid string) error {
+	if len(c.keys) == 0 {
+		return errKeysUnavailable
+	}
+	return fmt.Errorf("unknown key ID: %s", kid)
 }
 
 func fetchJWKS(jwksURL string) (map[string]*rsa.PublicKey, error) {

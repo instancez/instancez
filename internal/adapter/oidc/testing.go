@@ -10,9 +10,9 @@ func SeedKeys(provider string, keys map[string]*rsa.PublicKey) {
 	c := cacheFor(provider)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.keys, c.fetchedAt = keys, time.Now()
+	c.keys, c.fetchedAt, c.lastAttempt = keys, now(), now()
 	if keys == nil {
-		c.fetchedAt = time.Time{}
+		c.fetchedAt, c.lastAttempt = time.Time{}, time.Time{}
 	}
 }
 
