@@ -37,9 +37,11 @@ rpc:
 | `auth_required` | no | Reject unauthenticated callers when `true` |
 | `set` | no | Map of `search_path`, `statement_timeout`, `lock_timeout`, `work_mem`, emitted as `SET` on the function. |
 | `args` | no | Ordered list of named arguments |
-| `args[].required` | no | Return 400 if the argument is absent |
-| `args[].default` | no | Postgres DEFAULT value for optional args |
+| `args[].required` | no | Return 404 `PGRST202` (with a hint naming the argument) if absent |
+| `args[].default` | no | Postgres DEFAULT for optional args. A YAML `null` (key present) or the bare word `NULL` (any case) emits `DEFAULT NULL`. Anything else is a quoted literal. |
 | `returns.type` | yes | Return type; `void` emits 204 No Content. One of: `void`, `record`, a scalar or composite type (`int`, `text`, `uuid`, a table's row type, …), `setof <type>`, or `table(col type, …)`. In the dashboard this is a dropdown of the common scalar types plus `void`/`record`, or `Custom…` to type `setof`/`table(...)`/a composite type directly into the generated `RETURNS` line. |
+
+Function bodies are not checked when the migration creates them, so a `language: sql` body can reference tables defined later in the same config. A typo in a body shows up when the function is first called. `inz validate` runs no DDL, and `inz validate --use-dsn` only prints the migration plan, so neither catches body errors. Call the function once in a dev database to check it.
 
 ## Calling via HTTP
 
@@ -93,7 +95,16 @@ Arguments are passed as a JSON object in the request body (POST) or as query par
 
 Values are passed to Postgres as typed bind parameters — they are never concatenated into SQL.
 
-Required arguments (`required: true`) that are missing cause a 400 error. Optional arguments with a `default` receive the Postgres DEFAULT when omitted.
+Required arguments (`required: true`) that are missing return 404 `PGRST202` with a hint naming them, as in PostgREST. Optional arguments with a `default` receive the Postgres DEFAULT when omitted.
+
+```yaml
+args:
+  - { name: limit_to, type: bigint, default: null }  # DEFAULT NULL
+  - { name: label, type: text, default: "" }         # DEFAULT '' (empty string, not null)
+  - { name: note, type: text, default: "('null')" }  # DEFAULT ('null'), the literal text "null"
+```
+
+An omitted `default` key means no default. A default containing `(` is passed through as a SQL expression, which is how to get the literal string `null` into a text argument.
 
 ## Roles
 

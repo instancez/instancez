@@ -141,13 +141,15 @@ func TestSupabaseJSCompat(t *testing.T) {
 	t.Setenv("INSTANCEZ_BASE_URL", baseURL)
 
 	verifyEmail := false
+	allowAnon := true
 	cfg := &domain.Config{
 		Version: 1,
 		Project: domain.Project{Name: "integration"},
 		// Production defaults, so the contract covers the max-rows cap, statement_timeout and API deadlines.
 		Server: domain.Server{Port: 0, MaxLimit: 1000, Timeouts: domain.Timeouts{Request: "25s", DBQuery: "10s"}},
 		Auth: &domain.Auth{
-			JWTExpiry: "1h",
+			JWTExpiry:      "1h",
+			AllowAnonymous: &allowAnon,
 			// The recovery/verify flow redirects to the app; the allowlist must
 			// include it or the redirect (which carries the session tokens)
 			// falls back to the base URL. See the redirect-allowlist hardening.

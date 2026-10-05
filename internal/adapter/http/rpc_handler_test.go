@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"net/url"
 	"reflect"
@@ -100,13 +101,12 @@ func TestCollectRPCArgs_RejectsUnknownKeys(t *testing.T) {
 	}
 }
 
-// TestCollectRPCArgs_RequiresRequired confirms that required args
-// missing from the body surface a clean 400-worthy error before the
-// request hits the database.
+// TestCollectRPCArgs_RequiresRequired confirms missing required args
+// surface a missingArgsError before the request hits the database.
 func TestCollectRPCArgs_RequiresRequired(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := &CRUDHandler{cfg: &domain.Config{}}
-	fn := domain.Function{Args: []domain.FuncArg{{Name: "x", Type: "int", Required: true}}}
+	fn := domain.Function{Args: []domain.FuncArg{{Name: "a", Type: "int", Required: true}, {Name: "b", Type: "int", Required: true}}}
 
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest("POST", "/rpc/f", strings.NewReader(`{}`))
@@ -116,8 +116,15 @@ func TestCollectRPCArgs_RequiresRequired(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing required arg")
 	}
-	if !strings.Contains(err.Error(), "missing required argument") {
-		t.Errorf("expected missing-required error, got %v", err)
+	var m *missingArgsError
+	if !errors.As(err, &m) {
+		t.Fatalf("expected missingArgsError, got %v", err)
+	}
+	if got := m.Error(); got != `missing required arguments: "a", "b"` {
+		t.Errorf("details = %s", got)
+	}
+	if got := m.hint(); got != "arguments a, b have no default" {
+		t.Errorf("hint = %s", got)
 	}
 }
 
@@ -969,4 +976,34 @@ func TestRenderRPCChain_InnerEmbedWhereFollowsParentArgs(t *testing.T) {
 	suffix, args := renderRPCChain(chain, 3)
 	assert.Equal(t, " WHERE status = $3 AND EXISTS (SELECT 1 FROM comments WHERE comments.todo_id = _rpc.id AND body = $4) HAVING count > $5", suffix)
 	assert.Equal(t, []any{"open", "hi", "1"}, args)
+}
+
+func TestHandleRPC_MissingArgIsPGRST202WithHint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	fn := domain.Function{Args: []domain.FuncArg{
+		{Name: "a", Type: "int", Required: true},
+		{Name: "b", Type: "int", Required: true},
+		{Name: "c", Type: "int"},
+	}}
+	h := &CRUDHandler{cfg: &domain.Config{RPC: map[string]domain.Function{"f": fn}}}
+
+	for name, tc := range map[string]struct{ body, hint string }{
+		"one missing": {`{"a": 1}`, "argument b has no default"},
+		"all missing": {`{}`, "arguments a, b have no default"},
+		"empty body":  {``, "arguments a, b have no default"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Params = gin.Params{{Key: "name", Value: "f"}}
+			c.Request = httptest.NewRequest("POST", "/rpc/f", strings.NewReader(tc.body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			h.handleRPC()(c)
+			assert.Equal(t, 404, w.Code)
+			var m map[string]any
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &m))
+			assert.Equal(t, "PGRST202", m["code"])
+			assert.Equal(t, tc.hint, m["hint"])
+		})
+	}
 }

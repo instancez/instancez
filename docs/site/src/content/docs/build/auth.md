@@ -14,8 +14,8 @@ auth:
 
   # Set to false to disable public sign-up (the secret key can still create users)
   allow_signup: true
-  # Set to false to block anonymous sign-in
-  allow_anonymous: true
+  # Anonymous sign-in is OFF by default; set to true to enable it
+  allow_anonymous: false
 
   # Allowlist of frontend origins that post-auth flows (OAuth, magic link,
   # password recovery) may redirect the user's browser back to. See "OAuth
@@ -104,7 +104,7 @@ The signed-in user's browser must finish the link. `/auth/v1/user/identities/aut
 
 **Anonymous** — `supabase.auth.signInAnonymously()`
 
-Issues a JWT with `is_anonymous: true` and the `anon` Postgres role. Set `allow_anonymous: false` to disable. Anonymous users can be promoted to a full account by calling `signUp` or linking an OAuth identity.
+Issues a JWT with `is_anonymous: true` and the `anon` Postgres role. **Off by default** (like Supabase): set `allow_anonymous: true` to enable it; until then the endpoint returns 403 `signup_disabled`. Anonymous users can be promoted to a full account by calling `signUp` or linking an OAuth identity.
 
 **Session management** — `getSession()`, `onAuthStateChange()` and `signOut()` all work as documented by supabase-js. `signOut` invalidates the refresh token server-side. Refresh tokens rotate on every use. Re-using an old one within 10 seconds (two tabs refreshing at once) is allowed; after that it revokes the whole session. A banned user (`admin.updateUserById(id, { ban_duration })` or the dashboard's disable/ban) can't sign in or refresh (`403 user_banned`). Access tokens already issued stay valid until they expire (`jwt_expiry`).
 

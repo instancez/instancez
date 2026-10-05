@@ -317,10 +317,17 @@ describe("AuthPage", () => {
 
   // ---------- Registration (allow_signup / allow_anonymous) ----------
 
-  it("shows registration toggles, both on when the flags are unset", () => {
+  it("shows registration toggles: sign-up on, anonymous off when the flags are unset", () => {
     renderAuth(makeConfig());
     expect(screen.getByText("Sign-up & verification")).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Allow public sign-up" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "Allow anonymous sign-in" })).not.toBeChecked();
+  });
+
+  it("reflects allow_anonymous=true as the anonymous toggle being on", () => {
+    const config = makeConfig();
+    config.auth!.allow_anonymous = true;
+    renderAuth(config);
     expect(screen.getByRole("switch", { name: "Allow anonymous sign-in" })).toBeChecked();
   });
 

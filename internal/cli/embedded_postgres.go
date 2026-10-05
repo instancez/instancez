@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
 )
@@ -35,11 +37,12 @@ func startEmbeddedPostgres(opts devOptions) (stop func(), dsn string, err error)
 		embeddedpostgres.DefaultConfig().
 			Version(embeddedpostgres.V16).
 			DataPath(opts.pgDataDir).
+			RuntimePath(opts.pgDataDir + ".runtime").
 			Port(port).
 			Logger(&pgLog),
 	)
 
-	if err := pg.Start(); err != nil {
+	if err := withFileLock(startLockPath(), pgStartLockTimeout, pg.Start); err != nil {
 		return nil, "", fmt.Errorf("start embedded Postgres: %w\n%s", err, pgLog.String())
 	}
 
@@ -107,4 +110,61 @@ func freePort() (uint32, error) {
 	}
 	defer func() { _ = l.Close() }()
 	return uint32(l.Addr().(*net.TCPAddr).Port), nil
+}
+
+const pgStartLockTimeout = 5 * time.Minute
+
+var (
+	staleLockAge      = 2 * time.Minute
+	lockHeartbeatTick = 10 * time.Second
+)
+
+// startLockPath is per-user so another account's lock cannot block or be tampered with.
+func startLockPath() string {
+	dir, err := os.UserCacheDir()
+	if err != nil || os.MkdirAll(dir, 0o700) != nil {
+		dir = os.TempDir()
+	}
+	return filepath.Join(dir, "inz-embedded-pg.lock")
+}
+
+// withFileLock serializes fn across processes via an O_EXCL lock file; the holder touches it so only a dead holder's lock goes stale.
+func withFileLock(path string, timeout time.Duration, fn func() error) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err == nil {
+			_ = f.Close()
+			break
+		}
+		if !os.IsExist(err) {
+			return err
+		}
+		if fi, serr := os.Stat(path); serr == nil && time.Since(fi.ModTime()) > staleLockAge {
+			_ = os.Remove(path)
+			continue
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for lock %s", path)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	stop, tick := make(chan struct{}), lockHeartbeatTick
+	go func() {
+		t := time.NewTicker(tick)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case now := <-t.C:
+				_ = os.Chtimes(path, now, now)
+			}
+		}
+	}()
+	defer func() {
+		close(stop)
+		_ = os.Remove(path)
+	}()
+	return fn()
 }

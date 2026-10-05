@@ -76,6 +76,9 @@ func TestRunInitScaffoldStartsCleanly(t *testing.T) {
 	if ws := config.Warnings(cfg); len(ws) != 0 {
 		t.Fatalf("scaffold must be warning-free, got %v", ws)
 	}
+	if cfg.Auth == nil || cfg.Auth.AllowAnonymous == nil || *cfg.Auth.AllowAnonymous {
+		t.Fatalf("scaffold must set auth.allow_anonymous: false explicitly, got %+v", cfg.Auth)
+	}
 }
 
 // TestRunInitScaffoldsFunctions verifies init drops a working starter code

@@ -1060,7 +1060,7 @@ func TestHandleSignupDispatch_AnonymousOnEmptyBody(t *testing.T) {
 		},
 	}
 	h := &AuthHandler{
-		cfg:     &domain.Config{Auth: &domain.Auth{JWTExpiry: "15m"}},
+		cfg:     &domain.Config{Auth: &domain.Auth{JWTExpiry: "15m", AllowAnonymous: ptrBool(true)}},
 		authSvc: svc,
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		jwtKeys: stubKeys(t),
@@ -1188,7 +1188,7 @@ func TestSignupGating_AnonymousFalse_AllowsEmailSignup(t *testing.T) {
 	}
 }
 
-func TestSignupGating_NilFlags_PreservesBackwardCompat(t *testing.T) {
+func TestSignupGating_NilFlags_AnonymousOffByDefault(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	// email signup
@@ -1198,11 +1198,15 @@ func TestSignupGating_NilFlags_PreservesBackwardCompat(t *testing.T) {
 		t.Fatalf("email signup with nil flags: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// anonymous
+	// anonymous is off unless allow_anonymous: true
 	h2, _ := signupGatingHandler(t, nil, nil)
 	w2 := postSignup(h2, `{}`)
-	if w2.Code != 200 {
-		t.Fatalf("anonymous signup with nil flags: expected 200, got %d: %s", w2.Code, w2.Body.String())
+	if w2.Code != 403 {
+		t.Fatalf("anonymous signup with nil flags: expected 403, got %d: %s", w2.Code, w2.Body.String())
+	}
+	h3, _ := signupGatingHandler(t, nil, ptrBool(true))
+	if w3 := postSignup(h3, `{}`); w3.Code != 200 {
+		t.Fatalf("anonymous signup with allow_anonymous=true: expected 200, got %d: %s", w3.Code, w3.Body.String())
 	}
 }
 

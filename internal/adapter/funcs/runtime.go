@@ -484,7 +484,11 @@ func (r *Runtime) spawnWorker(fnSpec string) (*worker, error) {
 		// request, so the Node side is continuable once it is instrumented.
 		rt = otelhttp.NewTransport(rt)
 	}
-	client := &http.Client{Transport: rt}
+	// Redirect responses belong to the caller, not to this hop.
+	client := &http.Client{
+		Transport:     rt,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 
 	w := &worker{cmd: cmd, sock: sock, client: client, health: healthClient}
 	w.healthy.Store(true)

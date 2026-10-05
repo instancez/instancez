@@ -197,6 +197,7 @@ providers:
 auth:
   jwt_expiry: 15m
   refresh_token_expiry: 7d
+  allow_anonymous: false  # empty-body anonymous sign-in; off by default
 
   email:
     verify_email: false
