@@ -1726,9 +1726,14 @@ func TestWarnings_AppleSecretExpiry(t *testing.T) {
 func TestWarnings_NoAuthOrApple(t *testing.T) {
 	cfg := validBaseConfig()
 	cfg.Auth = &domain.Auth{OAuth: map[string]*domain.OAuthProvider{"apple": nil}}
-	Warnings(cfg)
-	cfg.Auth = nil
-	Warnings(cfg)
+	for _, auth := range []*domain.Auth{cfg.Auth, nil} {
+		cfg.Auth = auth
+		for _, w := range Warnings(cfg) {
+			if strings.Contains(w.Path, "apple") {
+				t.Fatalf("unexpected apple warning: %v", w)
+			}
+		}
+	}
 }
 
 func TestLogWarnings(t *testing.T) {
