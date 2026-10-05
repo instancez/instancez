@@ -205,7 +205,7 @@ Self-hosting also runs on [Docker](https://instancez.github.io/deploy/docker/), 
 | Realtime / websockets | Not supported yet | Yes |
 | Schema definition | One declarative YAML file | SQL migrations + dashboard |
 | Self-host footprint | One binary + Postgres | Multi-container stack |
-| OAuth providers built in | Google, GitHub | Many |
+| OAuth providers built in | Google, GitHub, Apple | Many |
 
 ## Examples
 

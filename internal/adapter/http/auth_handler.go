@@ -23,6 +23,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	adapterauth "github.com/instancez/instancez/internal/adapter/auth"
+	"github.com/instancez/instancez/internal/adapter/oidc"
 	"github.com/instancez/instancez/internal/app"
 	"github.com/instancez/instancez/internal/domain"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -147,6 +148,7 @@ func (h *AuthHandler) Mount(root *gin.RouterGroup) {
 		}
 		if _, ok := adapterauth.OAuthRegistry(name); ok {
 			auth.GET("/callback/"+name, h.handleOAuthCallback(name))
+			auth.POST("/callback/"+name, h.handleOAuthFormPost(name))
 		}
 	}
 }
@@ -441,15 +443,6 @@ func (h *AuthHandler) handlePKCEGrant(c *gin.Context) {
 	c.JSON(200, session)
 }
 
-// emailVerifiedClaim reads an OIDC email_verified claim, which some IdPs send as a string.
-func emailVerifiedClaim(v any) bool {
-	if b, ok := v.(bool); ok {
-		return b
-	}
-	s, _ := v.(string)
-	return s == "true"
-}
-
 // oauthLoginError maps an UpsertOAuthUser failure to a status, code and message.
 func oauthLoginError(err error, provider string) (int, string, string) {
 	switch {
@@ -474,18 +467,17 @@ func (h *AuthHandler) handleIDTokenGrant(c *gin.Context) {
 		return
 	}
 
-	g := h.cfg.Auth.OAuth["google"]
-	if req.Provider != "google" || g == nil {
-		if req.Provider == "google" {
-			problemJSON(c, 400, "bad_request", "Google provider not configured")
-			return
-		}
+	if ok := oidc.Supported(req.Provider); !ok {
 		problemJSON(c, 400, "bad_request", "Unsupported provider for ID token: "+req.Provider)
 		return
 	}
-	clientID := g.ClientID
+	pc := h.cfg.Auth.OAuth[req.Provider]
+	if pc == nil {
+		problemJSON(c, 400, "bad_request", strings.ToUpper(req.Provider[:1])+req.Provider[1:]+" provider not configured")
+		return
+	}
 
-	claims, err := verifyIDToken(req.Provider, req.Token, clientID, req.Nonce)
+	claims, err := oidc.Verify(req.Provider, req.Token, adapterauth.ClientIDs(pc.ClientID), req.Nonce)
 	if err != nil {
 		h.logger.Error("id token verification failed", "provider", req.Provider, "error", err)
 		problemJSON(c, 401, "invalid_token", "ID token verification failed: "+err.Error())
@@ -503,7 +495,7 @@ func (h *AuthHandler) handleIDTokenGrant(c *gin.Context) {
 	ctx := c.Request.Context()
 	row, err := h.authSvc.UpsertOAuthUser(ctx, domain.OAuthLogin{
 		Provider: req.Provider, ProviderUserID: sub, Email: email, Name: name,
-		EmailVerified: emailVerifiedClaim(claims["email_verified"]), AllowSignup: h.cfg.Auth.SignupAllowed(),
+		EmailVerified: adapterauth.EmailVerifiedClaim(claims["email_verified"]), AllowSignup: h.cfg.Auth.SignupAllowed(),
 	})
 	if err != nil || row == nil {
 		st, code, msg := oauthLoginError(err, req.Provider)
@@ -1328,6 +1320,26 @@ func appendOAuthParams(target string, isPKCE bool, v url.Values) string {
 	return target + "#" + v.Encode()
 }
 
+const maxCallbackParam = 4096
+
+// handleOAuthFormPost turns a form_post callback (Apple) into the GET callback,
+// so state, PKCE and the SameSite=Lax link cookie work unchanged.
+func (h *AuthHandler) handleOAuthFormPost(provider string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		q := url.Values{}
+		for _, k := range []string{"code", "state", "user", "error", "error_description"} {
+			if v := c.PostForm(k); v != "" && len(v) <= maxCallbackParam {
+				q.Set(k, v)
+			}
+		}
+		target := oauthCallbackBase(h.cfg) + provider
+		if pc := h.effectiveOAuthConfig(provider, h.cfg.Auth.OAuth[provider]); pc != nil {
+			target = pc.RedirectURL
+		}
+		c.Redirect(http.StatusSeeOther, appendOAuthParams(target, true, q))
+	}
+}
+
 func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		state := c.Query("state")
@@ -1367,6 +1379,12 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 			return
 		}
 
+		if e := c.Query("error"); e != "" {
+			h.logger.Warn("oauth provider returned error", "provider", provider, "error", e)
+			h.oauthCallbackFail(c, redirectTo, isPKCE, "Authorization was denied by the provider")
+			return
+		}
+
 		code := c.Query("code")
 		if code == "" {
 			problemJSON(c, 400, "bad_request", "Missing authorization code")
@@ -1382,20 +1400,20 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 		// Token exchange must replay the same redirect_uri sent at authorize, so
 		// apply the identical default here.
 		providerCfg = h.effectiveOAuthConfig(provider, providerCfg)
-		oauthToken, err := prov.ExchangeCode(providerCfg, code)
+		tok, err := prov.ExchangeCode(providerCfg, code)
 		if err != nil {
 			h.logger.Error("oauth code exchange failed", "provider", provider, "error", err)
 			h.oauthCallbackFail(c, redirectTo, isPKCE, "Unable to exchange external code")
 			return
 		}
-		userInfo, err := prov.FetchUser(oauthToken)
+		userInfo, err := prov.FetchUser(tok, c.Request.URL.Query())
 		if err != nil {
 			h.logger.Error("oauth user info failed", "provider", provider, "error", err)
 			h.oauthCallbackFail(c, redirectTo, isPKCE, "Error getting user profile from external provider")
 			return
 		}
 		if userInfo.Email == "" {
-			problemJSON(c, 400, "bad_request", "Could not retrieve email from OAuth provider")
+			h.oauthCallbackFail(c, redirectTo, isPKCE, "Could not retrieve email from OAuth provider")
 			return
 		}
 
@@ -1460,7 +1478,7 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 			frag.Set("token_type", "bearer")
 			frag.Set("expires_in", fmt.Sprintf("%d", session["expires_in"].(int)))
 			frag.Set("expires_at", fmt.Sprintf("%d", session["expires_at"].(int64)))
-			frag.Set("provider_token", oauthToken)
+			frag.Set("provider_token", tok.AccessToken)
 			frag.Set("type", "oauth")
 			// Implicit flow only reaches here (PKCE returned above), so the
 			// session always rides back in the fragment, like Supabase.

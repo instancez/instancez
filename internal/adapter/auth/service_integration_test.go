@@ -942,3 +942,20 @@ func TestOTPIntegration(t *testing.T) {
 		}
 	})
 }
+
+func TestOAuthEmptyNameKeepsExisting(t *testing.T) {
+	s, db := newIntegrationService(t, &domain.Auth{})
+	ctx := context.Background()
+	in := domain.OAuthLogin{Provider: "apple", ProviderUserID: "001.n", Email: "n@e.com", Name: "Ada L", EmailVerified: true, AllowSignup: true}
+	if _, err := s.UpsertOAuthUser(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	in.Name = ""
+	if _, err := s.UpsertOAuthUser(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	r, err := db.QueryRow(ctx, "SELECT raw_user_meta_data->>'full_name' AS n FROM auth.users WHERE email = $1", "n@e.com")
+	if err != nil || r["n"] != "Ada L" {
+		t.Fatalf("name = %v, err %v", r["n"], err)
+	}
+}

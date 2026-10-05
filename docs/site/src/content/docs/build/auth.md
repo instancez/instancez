@@ -19,7 +19,7 @@ auth:
 
   # Allowlist of frontend origins that post-auth flows (OAuth, magic link,
   # password recovery) may redirect the user's browser back to. See "OAuth
-  # (Google, GitHub)" below for how this differs from oauth.<name>.redirect_url.
+  # (Google, GitHub, Apple)" below for how this differs from oauth.<name>.redirect_url.
   redirect_urls:
     - https://myapp.example.com
 
@@ -28,7 +28,7 @@ auth:
     # Requires an email provider under providers.email.
     verify_email: false
 
-  # OAuth providers are keyed by name under oauth. The name (google, github, …)
+  # OAuth providers are keyed by name under oauth. The name (google, github, apple, …)
   # selects the built-in provider implementation.
   oauth:
     google:
@@ -40,6 +40,12 @@ auth:
       client_id: YOUR_GITHUB_CLIENT_ID
       client_secret: ${INSTANCEZ_ENV_GITHUB_CLIENT_SECRET}
       redirect_url: https://api.myapp.example.com/auth/v1/callback/github
+
+    # Apple: client_id is the Services ID; client_secret is a signed JWT (see below).
+    apple:
+      client_id: com.myapp.web
+      client_secret: ${INSTANCEZ_ENV_APPLE_CLIENT_SECRET}
+      redirect_url: https://api.myapp.example.com/auth/v1/callback/apple
 ```
 
 All keys are optional. Auth is always provisioned, even if `auth:` is omitted entirely — JWT auth works with the defaults (15m expiry, 7d refresh token expiry, sign-up open). Refresh tokens are always issued; the old `auth.refresh_tokens` toggle is deprecated and ignored. After a signing-key rotation, tokens signed by the old key keep verifying until `jwt_expiry` (plus 30 seconds of clock skew) has passed, and are rejected after that. On a multi-instance deployment, a key retired on one instance can keep verifying on another for up to one extra key-cache reload interval (about 30 seconds) past that.
@@ -60,7 +66,7 @@ When `email.verify_email` is `false` (the default), `signUp` returns a session i
 
 Requires an `auth.email` block in the config — without it, the OTP endpoint isn't mounted at all and the call 404s. With the block present but no email provider configured to actually send it, `signInWithOtp` returns a 200 with an empty response body. Verifying a magic-link or signup code marks the email confirmed. A 6-digit code allows 5 wrong guesses. After that the code and its link stop working, and the code still counts toward the cooldown below. Each address gets at most one email per purpose (magic link, signup, recovery) every 60 seconds, and `admin.generateLink` starts that same cooldown. Inside that window, `signInWithOtp` and `resetPasswordForEmail` return an empty 200 and send nothing, so neither reveals whether the account exists; `resend` returns 429 `over_email_send_rate_limit` instead, which does reveal it, matching GoTrue. With `allow_signup: false`, `signInWithOtp` only signs in existing users. `resend({ type: 'signup' })` sends nothing once the address is confirmed, and `resend({ type: 'email_change' })` never sends, because email changes apply immediately.
 
-**OAuth (Google, GitHub)** — `supabase.auth.signInWithOAuth({ provider: 'google' })`
+**OAuth (Google, GitHub, Apple)** — `supabase.auth.signInWithOAuth({ provider: 'google' })`
 
 There are two different URLs involved, and they are not interchangeable:
 
@@ -97,6 +103,42 @@ How an OAuth login finds its account:
 3. Otherwise a new user is created, unless `allow_signup` is `false`, which returns `signup_disabled`.
 
 An unverified provider email that matches no existing identity fails with `provider_email_needs_verification`. GitHub logins use the verified address from GitHub's email list, not the public profile email.
+
+**Sign in with Apple**
+
+Apple works through the same `signInWithOAuth({ provider: 'apple' })` call. It is configured in YAML only; the dashboard has no Apple toggle yet.
+
+- `client_id` is your Apple **Services ID**.
+- `redirect_url` is `<base URL>/auth/v1/callback/apple`. Register it as a Return URL on the Services ID in the Apple developer console. Apple requires an HTTPS Return URL (not localhost).
+- `client_secret` is a JWT you sign yourself with the `.p8` key from Apple. Apple does not issue a static secret. Build it from your Team ID, Key ID and `.p8` key:
+
+  | Part | Value |
+  |---|---|
+  | header `alg` | `ES256` |
+  | header `kid` | your Key ID |
+  | `iss` | your Team ID |
+  | `iat` | now |
+  | `exp` | at most 6 months after `iat` |
+  | `aud` | `https://appleid.apple.com` |
+  | `sub` | the Services ID (same as `client_id`) |
+
+  Put the signed JWT in `INSTANCEZ_ENV_APPLE_CLIENT_SECRET`. Apple rejects the secret after `exp`, so Apple logins fail from then on. Generate a new one and redeploy before it expires. Validation rejects a secret that is not a JWT. An expired or soon-to-expire secret only warns (`inz validate`, `inz dev`, and the `inz serve` log at startup and on reload) so the server keeps booting, but once expired Apple logins fail with `invalid_client`.
+- Apple sends the user's name only on the first sign-in, in the callback form. instancez stores it then. Later logins carry no name.
+- Apple posts the callback (`response_mode=form_post`). instancez answers the POST with a 303 to the same callback URL as a GET, so state, PKCE and `linkIdentity` behave as with Google.
+- Apple's `id_token` is verified against Apple's published keys on both the web flow and `signInWithIdToken`.
+- The email comes from the `id_token`. Apple's private relay addresses count as verified only when Apple sets `email_verified` on the token.
+
+**Native apps — `signInWithIdToken`**
+
+```js
+const { data, error } = await supabase.auth.signInWithIdToken({
+  provider: 'apple',
+  token: appleIdToken,
+  nonce: rawNonce,
+})
+```
+
+The token's signature, issuer, expiry and audience are verified against Apple's keys. List every audience you use in `client_id`, comma-separated: the Services ID first, then your iOS bundle IDs, for example `com.myapp.web,com.myapp.ios`. The web flow uses the first ID. Send the hex SHA-256 of your nonce to Apple in the sign-in request and pass the raw nonce to `signInWithIdToken`. The raw value as the token's `nonce` claim is rejected. A token with a nonce needs one in the request, and the reverse. The name is read from the token's `name` claim, which Apple tokens do not normally carry, so set it from your app with `updateUser` if you need it. The token must contain an email.
 
 **Linking an identity** — `supabase.auth.linkIdentity({ provider: 'google' })`
 

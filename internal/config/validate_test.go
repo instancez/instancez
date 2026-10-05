@@ -1,10 +1,18 @@
 package config
 
 import (
+	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"log/slog"
 	"os"
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/instancez/instancez/internal/domain"
 )
@@ -1611,6 +1619,111 @@ func TestWarnings_CompositePKFKTarget(t *testing.T) {
 	}
 }
 
+func appleJWT(t *testing.T, claims jwt.MapClaims) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := jwt.NewWithClaims(jwt.SigningMethodES256, claims).SignedString(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func TestValidateAppleSecret(t *testing.T) {
+	future := jwt.MapClaims{"exp": time.Now().Add(time.Hour).Unix()}
+	past := jwt.MapClaims{"exp": time.Now().Add(-time.Hour).Unix()}
+	cases := []struct {
+		name    string
+		secret  string
+		wantMsg string
+	}{
+		{"valid future exp", appleJWT(t, future), ""},
+		{"expired is not a validation error", appleJWT(t, past), ""},
+		{"not a jwt", "abc", "must be a JWT"},
+		{"unexpanded env ref", "${INSTANCEZ_ENV_APPLE_SECRET}", ""},
+		{"empty left to required check", "", ""},
+		{"no exp claim", appleJWT(t, jwt.MapClaims{"iss": "team"}), ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateAppleSecret(tc.secret)
+			if tc.wantMsg == "" {
+				if err != nil {
+					t.Fatalf("want nil, got %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Message, tc.wantMsg) {
+				t.Fatalf("want message containing %q, got %v", tc.wantMsg, err)
+			}
+			if err.Path != "auth.oauth.apple.client_secret" {
+				t.Fatalf("path = %q", err.Path)
+			}
+		})
+	}
+}
+
+func TestValidate_AppleSecretOnlyCheckedForApple(t *testing.T) {
+	for name, wantErr := range map[string]bool{"apple": true, "google": false} {
+		cfg := validBaseConfig()
+		cfg.Auth = &domain.Auth{OAuth: map[string]*domain.OAuthProvider{
+			name: {ClientID: "id", ClientSecret: "abc"},
+		}}
+		got := false
+		for _, e := range Validate(cfg) {
+			if e.Path == "auth.oauth."+name+".client_secret" {
+				got = true
+			}
+		}
+		if got != wantErr {
+			t.Fatalf("%s: error present = %v, want %v", name, got, wantErr)
+		}
+	}
+}
+
+func TestWarnings_AppleSecretExpiry(t *testing.T) {
+	at := func(d time.Duration) string { return appleJWT(t, jwt.MapClaims{"exp": time.Now().Add(d).Unix()}) }
+	cases := []struct {
+		name, secret, want string
+	}{
+		{"expired", at(-time.Hour), "expired"},
+		{"within 30 days", at(10 * 24 * time.Hour), "expires within 30 days"},
+		{"far future", at(90 * 24 * time.Hour), ""},
+		{"no exp claim", appleJWT(t, jwt.MapClaims{"iss": "team"}), ""},
+		{"placeholder", "${INSTANCEZ_ENV_APPLE_SECRET}", ""},
+		{"not a jwt", "abc", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validBaseConfig()
+			cfg.Auth = &domain.Auth{OAuth: map[string]*domain.OAuthProvider{"apple": {ClientID: "id", ClientSecret: tc.secret}}}
+			if tc.want != "" {
+				if errs := Validate(cfg); errs != nil {
+					t.Fatalf("expiry must not fail Validate, got %v", errs)
+				}
+			}
+			var got []*domain.ValidationError
+			for _, w := range Warnings(cfg) {
+				if w.Path == "auth.oauth.apple.client_secret" {
+					got = append(got, w)
+				}
+			}
+			if tc.want == "" {
+				if len(got) != 0 {
+					t.Fatalf("want no warning, got %v", got)
+				}
+				return
+			}
+			if len(got) != 1 || !strings.Contains(got[0].Message, tc.want) {
+				t.Fatalf("want warning containing %q, got %v", tc.want, got)
+			}
+		})
+	}
+}
+
 func TestValidate_IndexMethodAndFieldOptions(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -1666,6 +1779,38 @@ func TestValidate_IndexMethodAndFieldOptions(t *testing.T) {
 			}
 			assertHasErrorAt(t, errs, c.wantErr)
 		})
+	}
+}
+
+func TestWarnings_NoAuthOrApple(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Auth = &domain.Auth{OAuth: map[string]*domain.OAuthProvider{"apple": nil}}
+	for _, auth := range []*domain.Auth{cfg.Auth, nil} {
+		cfg.Auth = auth
+		for _, w := range Warnings(cfg) {
+			if strings.Contains(w.Path, "apple") {
+				t.Fatalf("unexpected apple warning: %v", w)
+			}
+		}
+	}
+}
+
+func TestLogWarnings(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Tables = map[string]domain.Table{"a": {Fields: []domain.Field{{Name: "id", Type: "BIGINT", PrimaryKey: true}}}}
+	var buf bytes.Buffer
+	LogWarnings(slog.New(slog.NewTextHandler(&buf, nil)), cfg)
+	out := buf.String()
+	for _, want := range []string{"level=WARN", `msg="config warning"`, "path=tables.a.rls_enabled"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log %q missing %q", out, want)
+		}
+	}
+
+	buf.Reset()
+	LogWarnings(slog.New(slog.NewTextHandler(&buf, nil)), &domain.Config{})
+	if strings.Contains(buf.String(), "config warning") {
+		t.Errorf("no warnings expected, got %q", buf.String())
 	}
 }
 

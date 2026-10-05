@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"maps"
 	"math"
 	"os"
@@ -11,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/instancez/instancez/internal/domain"
 )
@@ -279,6 +282,13 @@ func Validate(cfg *domain.Config) domain.ValidationErrors {
 	return errs
 }
 
+// LogWarnings logs every config warning at warn level.
+func LogWarnings(logger *slog.Logger, cfg *domain.Config) {
+	for _, w := range Warnings(cfg) {
+		logger.Warn("config warning", "path", w.Path, "message", w.Message)
+	}
+}
+
 // Warnings reports config that is valid but probably not what the author meant; it never blocks a deploy.
 func Warnings(cfg *domain.Config) domain.ValidationErrors {
 	var ws domain.ValidationErrors
@@ -303,6 +313,11 @@ func Warnings(cfg *domain.Config) domain.ValidationErrors {
 		}
 	}
 	ws = append(ws, compositePKFKWarnings(cfg.Tables)...)
+	if cfg.Auth != nil && cfg.Auth.OAuth["apple"] != nil {
+		if w := appleSecretWarning(cfg.Auth.OAuth["apple"].ClientSecret); w != nil {
+			ws = append(ws, w)
+		}
+	}
 	if cfg.Server.MaxLimit == 100 {
 		ws = append(ws, &domain.ValidationError{
 			Path:       "server.max_limit",
@@ -438,6 +453,11 @@ func validateAuth(auth *domain.Auth) domain.ValidationErrors {
 		if p.ClientSecret == "" {
 			errs = append(errs, &domain.ValidationError{Path: "auth.oauth." + name + ".client_secret", Message: "required"})
 		}
+		if name == "apple" {
+			if e := validateAppleSecret(p.ClientSecret); e != nil {
+				errs = append(errs, e)
+			}
+		}
 		// redirect_url is optional: when blank the auth handler fills it with
 		// this server's own callback URL (AuthHandler.effectiveOAuthConfig).
 		// Whatever value ends up in use still has to be registered with the
@@ -445,6 +465,38 @@ func validateAuth(auth *domain.Auth) domain.ValidationErrors {
 	}
 
 	return errs
+}
+
+func validateAppleSecret(secret string) *domain.ValidationError {
+	const path = "auth.oauth.apple.client_secret"
+	if secret == "" || secret == unresolvedEnvPlaceholder || strings.Contains(secret, "${") {
+		return nil
+	}
+	claims := jwt.MapClaims{}
+	if _, _, err := jwt.NewParser().ParseUnverified(secret, claims); err != nil {
+		return &domain.ValidationError{Path: path, Message: "must be a JWT signed with your Apple .p8 key"}
+	}
+	return nil
+}
+
+// appleSecretWarning flags an expired or soon-to-expire Apple secret; an expired one must not block boot.
+func appleSecretWarning(secret string) *domain.ValidationError {
+	claims := jwt.MapClaims{}
+	if _, _, err := jwt.NewParser().ParseUnverified(secret, claims); err != nil {
+		return nil
+	}
+	exp, err := claims.GetExpirationTime()
+	if err != nil || exp == nil {
+		return nil
+	}
+	path := "auth.oauth.apple.client_secret"
+	switch left := time.Until(exp.Time); {
+	case left < 0:
+		return &domain.ValidationError{Path: path, Message: "expired; Apple sign-in fails with invalid_client until you generate a new secret", Suggestion: "Apple secrets last 6 months at most"}
+	case left < 30*24*time.Hour:
+		return &domain.ValidationError{Path: path, Message: "expires within 30 days; Apple sign-in will fail after that", Suggestion: "Generate a new secret before it expires"}
+	}
+	return nil
 }
 
 func isTimestampType(t string) bool {

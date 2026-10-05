@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -166,10 +167,10 @@ func (banOAuthProvider) Name() string { return "banoauth" }
 func (banOAuthProvider) AuthorizeURL(_ *domain.OAuthProvider, _ string) string {
 	return ""
 }
-func (banOAuthProvider) ExchangeCode(_ *domain.OAuthProvider, _ string) (string, error) {
-	return "tok", nil
+func (banOAuthProvider) ExchangeCode(_ *domain.OAuthProvider, _ string) (*adapterauth.OAuthToken, error) {
+	return &adapterauth.OAuthToken{AccessToken: "tok"}, nil
 }
-func (banOAuthProvider) FetchUser(_ string) (*adapterauth.OAuthUserInfo, error) {
+func (banOAuthProvider) FetchUser(_ *adapterauth.OAuthToken, _ url.Values) (*adapterauth.OAuthUserInfo, error) {
 	return &adapterauth.OAuthUserInfo{Email: "u@e.com", ProviderID: "p1"}, nil
 }
 

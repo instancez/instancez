@@ -17,7 +17,7 @@ func writeFakeBody(w http.ResponseWriter, body string) {
 }
 
 func TestOAuthRegistryBuiltins(t *testing.T) {
-	for _, name := range []string{"google", "github"} {
+	for _, name := range []string{"google", "github", "apple"} {
 		if _, ok := OAuthRegistry(name); !ok {
 			t.Errorf("provider %q not registered", name)
 		}
@@ -57,7 +57,7 @@ func githubServer(t *testing.T, user, emails string, emailsStatus int) *githubPr
 func TestGithubFetchUser_UsesVerifiedEmailOverProfileEmail(t *testing.T) {
 	gh := githubServer(t, `{"id":42,"email":"public@evil.co","name":"A"}`,
 		`[{"email":"public@evil.co","primary":false,"verified":false},{"email":"real@b.co","primary":true,"verified":true}]`, 200)
-	u, err := gh.FetchUser("tok")
+	u, err := gh.FetchUser(&OAuthToken{AccessToken: "tok"}, nil)
 	if err != nil || u.Email != "real@b.co" || !u.EmailVerified || u.ProviderID != "42" {
 		t.Fatalf("user=%+v err=%v", u, err)
 	}
@@ -66,7 +66,7 @@ func TestGithubFetchUser_UsesVerifiedEmailOverProfileEmail(t *testing.T) {
 func TestGithubFetchUser_UnverifiedPrimaryFallsBackToVerifiedSecondary(t *testing.T) {
 	gh := githubServer(t, `{"id":7,"email":"primary@b.co"}`,
 		`[{"email":"primary@b.co","primary":true,"verified":false},{"email":"second@b.co","primary":false,"verified":true}]`, 200)
-	u, err := gh.FetchUser("tok")
+	u, err := gh.FetchUser(&OAuthToken{AccessToken: "tok"}, nil)
 	if err != nil || u.Email != "second@b.co" || !u.EmailVerified {
 		t.Fatalf("user=%+v err=%v", u, err)
 	}
@@ -81,7 +81,7 @@ func TestGithubFetchUser_UnverifiedFallback(t *testing.T) {
 			`[{"email":"a@b.co","primary":true,"verified":true}]`, 403),
 		"no emails api": {userAPI: githubServer(t, `{"id":1,"email":"a@b.co"}`, ``, 200).userAPI},
 	} {
-		u, err := gh.FetchUser("tok")
+		u, err := gh.FetchUser(&OAuthToken{AccessToken: "tok"}, nil)
 		if err != nil || u.EmailVerified || u.Email != "a@b.co" {
 			t.Errorf("%s: user=%+v err=%v, want unverified a@b.co", name, u, err)
 		}
@@ -90,7 +90,7 @@ func TestGithubFetchUser_UnverifiedFallback(t *testing.T) {
 
 func TestGithubFetchUser_RejectsMissingID(t *testing.T) {
 	gh := githubServer(t, `{"email":"a@b.co"}`, `[{"email":"a@b.co","primary":true,"verified":true}]`, 200)
-	if u, err := gh.FetchUser("tok"); err == nil {
+	if u, err := gh.FetchUser(&OAuthToken{AccessToken: "tok"}, nil); err == nil {
 		t.Fatalf("want error for missing id, got %+v", u)
 	}
 }
@@ -102,7 +102,7 @@ func TestGoogleFetchUser_ReadsVerifiedEmail(t *testing.T) {
 		`{"id":"g1","email":"a@b.co"}`:                        false,
 	} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { writeFakeBody(w, body) }))
-		u, err := googleProvider{userAPI: srv.URL}.FetchUser("tok")
+		u, err := googleProvider{userAPI: srv.URL}.FetchUser(&OAuthToken{AccessToken: "tok"}, nil)
 		srv.Close()
 		if err != nil || u.EmailVerified != want || u.ProviderID != "g1" {
 			t.Errorf("%s: user=%+v err=%v", body, u, err)

@@ -108,13 +108,15 @@ Auth is always provisioned, even if `auth:` is omitted entirely; the block only 
 ### auth.oauth.&lt;name&gt;
 
 OAuth provider configuration. Providers are keyed by name under `auth.oauth`; the
-name (`google`, `github`, …) selects the built-in provider implementation.
+name (`google`, `github`, `apple`, …) selects the built-in provider implementation.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `auth.oauth.<name>.client_id` | `string` | — | OAuth client ID. Supports `${VAR}`. |
 | `auth.oauth.<name>.client_secret` | `string` | — | OAuth client secret. Supports `${VAR}`. |
 | `auth.oauth.<name>.redirect_url` | `string` | — | OAuth callback URL registered with the provider. |
+
+`apple` takes a Services ID plus optional iOS bundle IDs and an ES256 JWT `client_secret`; see [Auth](/build/auth/#sign-in-with-apple).
 
 ## tables
 
