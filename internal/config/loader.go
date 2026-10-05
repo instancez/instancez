@@ -271,7 +271,9 @@ func applyDefaults(cfg *domain.Config) {
 	for _, t := range cfg.Tables {
 		for _, f := range t.Fields {
 			if f.ForeignKey != nil {
-				f.ForeignKey.OnDelete = normalizeOnDelete(f.ForeignKey.OnDelete)
+				if n := normalizeOnDelete(f.ForeignKey.OnDelete); validOnDelete[n] {
+					f.ForeignKey.OnDelete = n
+				}
 			}
 		}
 	}
@@ -306,6 +308,7 @@ func classifyRPCReturn(raw string) string {
 	return "scalar"
 }
 
+// ponytail: global because Validate runs inside the loader; make it a loader option if a second caller appears.
 // DefaultLocalStorage lets `inz dev` fall back to local storage when buckets have no provider.
 var DefaultLocalStorage bool
 

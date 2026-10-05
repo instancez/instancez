@@ -218,11 +218,11 @@ var validEmailTemplateNames = map[string]bool{
 // rpcBodyDDLRE detects a pasted CREATE [OR REPLACE] FUNCTION statement at the
 // start of an rpc body (allowing leading whitespace and -- comments). The
 // migrator emits that wrapper itself, so bodies must be bare.
+var rpcBodyDDLRE = regexp.MustCompile(`(?is)^\s*(--[^\n]*\n\s*)*create\s+(or\s+replace\s+)?function\b`)
+
 // sqlBodyStartRE matches a language-sql body that opens with a statement
 // keyword or a parenthesized query, after any leading comments.
 var sqlBodyStartRE = regexp.MustCompile(`(?is)^\s*((--[^\n]*(\n|$)|/\*.*?\*/)\s*)*(\(|(select|with|insert|update|delete|values|table|merge)\b)`)
-
-var rpcBodyDDLRE = regexp.MustCompile(`(?is)^\s*(--[^\n]*\n\s*)*create\s+(or\s+replace\s+)?function\b`)
 
 // rlsCheckDDLRE detects a pasted CREATE ... statement where a boolean
 // expression is expected.

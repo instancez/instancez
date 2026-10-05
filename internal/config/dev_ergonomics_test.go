@@ -25,7 +25,7 @@ func TestApplyDefaults_NormalizesOnDelete(t *testing.T) {
 		"cascade":     "cascade",
 		"CASCADE":     "cascade",
 		"":            "",
-		"set nothing": "set_nothing", // still rejected by Validate
+		"set nothing": "set nothing", // left as typed so Validate quotes it
 	} {
 		cfg := &domain.Config{Tables: map[string]domain.Table{"t": {Fields: []domain.Field{
 			{Name: "a", ForeignKey: &domain.ForeignKey{References: "x.id", OnDelete: in}},
