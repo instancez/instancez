@@ -117,10 +117,22 @@ func TestIDTokenGrant_Apple(t *testing.T) {
 		delete(c, "aud")
 		rejected(t, runIDToken(t, "apple", "", true, c, ""), 401)
 	})
-	t.Run("raw nonce", func(t *testing.T) {
+	t.Run("raw nonce claim equal to request is rejected", func(t *testing.T) {
 		c := appleClaims("svc.id")
 		c["nonce"] = "n-123"
-		reached(t, runIDToken(t, "apple", ids, true, c, "n-123"))
+		rejected(t, runIDToken(t, "apple", ids, true, c, "n-123"), 401)
+	})
+	t.Run("replay: token nonce but request omits it", func(t *testing.T) {
+		c := appleClaims("svc.id")
+		c["nonce"] = hashedNonce("n-123")
+		r := runIDToken(t, "apple", ids, true, c, "")
+		rejected(t, r, 401)
+		if !strings.Contains(r.body, "nonce in id_token and params should either both exist or not") {
+			t.Fatalf("body %s", r.body)
+		}
+	})
+	t.Run("request nonce but token has none", func(t *testing.T) {
+		rejected(t, runIDToken(t, "apple", ids, true, appleClaims("svc.id"), "n-123"), 401)
 	})
 	t.Run("hashed nonce", func(t *testing.T) {
 		c := appleClaims("svc.id")
@@ -131,9 +143,6 @@ func TestIDTokenGrant_Apple(t *testing.T) {
 		c := appleClaims("svc.id")
 		c["nonce"] = hashedNonce("other")
 		rejected(t, runIDToken(t, "apple", ids, true, c, "n-123"), 401)
-	})
-	t.Run("missing nonce claim", func(t *testing.T) {
-		rejected(t, runIDToken(t, "apple", ids, true, appleClaims("svc.id"), "n-123"), 401)
 	})
 	t.Run("not configured", func(t *testing.T) {
 		r := runIDToken(t, "apple", "", false, appleClaims("svc.id"), "")
@@ -168,5 +177,52 @@ func TestIDTokenGrant_GoogleUnchanged(t *testing.T) {
 	c = jwt.MapClaims{"iss": "https://accounts.google.com", "aud": "cid", "sub": "g-1", "email": "g@e.com", "nonce": "raw"}
 	if r = runIDToken(t, "google", "cid", true, c, "raw"); r.got.Provider != "google" {
 		t.Fatalf("raw nonce: %d %s", r.code, r.body)
+	}
+}
+
+func TestIDTokenGrant_GoogleNonce(t *testing.T) {
+	base := func() jwt.MapClaims {
+		return jwt.MapClaims{"iss": "https://accounts.google.com", "aud": "cid", "sub": "g-1", "email": "g@e.com"}
+	}
+	c := base()
+	c["nonce"] = "raw"
+	if r := runIDToken(t, "google", "cid", true, c, ""); r.code != 401 || r.got.Provider != "" {
+		t.Fatalf("token nonce, request none: %d %s", r.code, r.body)
+	}
+	if r := runIDToken(t, "google", "cid", true, base(), "raw"); r.code != 401 || r.got.Provider != "" {
+		t.Fatalf("request nonce, token none: %d %s", r.code, r.body)
+	}
+	c["nonce"] = hashedNonce("raw")
+	if r := runIDToken(t, "google", "cid", true, c, "raw"); r.code != 401 {
+		t.Fatalf("google must not accept the hashed claim: %d %s", r.code, r.body)
+	}
+}
+
+func TestVerifyIDToken_RejectsForgedAlg(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	providerJWKS.mu.Lock()
+	providerJWKS.cache["google"] = &jwksCache{keys: map[string]*rsa.PublicKey{"k1": &key.PublicKey}, fetchedAt: time.Now()}
+	providerJWKS.mu.Unlock()
+	t.Cleanup(func() {
+		providerJWKS.mu.Lock()
+		delete(providerJWKS.cache, "google")
+		providerJWKS.mu.Unlock()
+	})
+	claims := jwt.MapClaims{"iss": "https://accounts.google.com", "aud": "cid", "exp": time.Now().Add(time.Minute).Unix()}
+
+	hs := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	hs.Header["kid"] = "k1"
+	hsTok, _ := hs.SignedString([]byte("secret"))
+	none := jwt.NewWithClaims(jwt.SigningMethodNone, claims)
+	none.Header["kid"] = "k1"
+	noneTok, _ := none.SignedString(jwt.UnsafeAllowNoneSignatureType)
+
+	for name, tok := range map[string]string{"hs256": hsTok, "none": noneTok} {
+		if _, err := verifyIDToken("google", tok, []string{"cid"}, ""); err == nil {
+			t.Fatalf("%s token accepted", name)
+		}
 	}
 }

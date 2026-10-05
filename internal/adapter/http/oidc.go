@@ -161,11 +161,17 @@ func verifyIDToken(provider, tokenStr string, audiences []string, expectedNonce 
 		return nil, fmt.Errorf("audience mismatch: got %v, want one of %v", []string(tokenAud), audiences)
 	}
 
-	// Verify nonce if provided
+	claimNonce, _ := claims["nonce"].(string)
+	if (claimNonce == "") != (expectedNonce == "") {
+		return nil, fmt.Errorf("nonce in id_token and params should either both exist or not")
+	}
 	if expectedNonce != "" {
-		nonce, _ := claims["nonce"].(string)
-		hashed := sha256.Sum256([]byte(expectedNonce))
-		if nonce != expectedNonce && nonce != hex.EncodeToString(hashed[:]) {
+		want := expectedNonce
+		if provider == "apple" {
+			hashed := sha256.Sum256([]byte(expectedNonce))
+			want = hex.EncodeToString(hashed[:])
+		}
+		if claimNonce != want {
 			return nil, fmt.Errorf("nonce mismatch")
 		}
 	}

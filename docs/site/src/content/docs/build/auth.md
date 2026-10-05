@@ -137,7 +137,7 @@ const { data, error } = await supabase.auth.signInWithIdToken({
 })
 ```
 
-The token's signature, issuer, expiry and audience are verified against Apple's keys. List every audience you use in `client_id`, comma-separated: the Services ID first, then your iOS bundle IDs, for example `com.myapp.web,com.myapp.ios`. The web flow uses the first ID. Pass the raw nonce (Apple gets its SHA-256 in the sign-in request). The hashed value is also accepted. The name is read from the token's `name` claim, which Apple tokens do not normally carry, so set it from your app with `updateUser` if you need it. The token must contain an email.
+The token's signature, issuer, expiry and audience are verified against Apple's keys. List every audience you use in `client_id`, comma-separated: the Services ID first, then your iOS bundle IDs, for example `com.myapp.web,com.myapp.ios`. The web flow uses the first ID. Send the hex SHA-256 of your nonce to Apple in the sign-in request and pass the raw nonce to `signInWithIdToken`. The raw value as the token's `nonce` claim is rejected. A token with a nonce needs one in the request, and the reverse. The name is read from the token's `name` claim, which Apple tokens do not normally carry, so set it from your app with `updateUser` if you need it. The token must contain an email.
 
 **Linking an identity** — `supabase.auth.linkIdentity({ provider: 'google' })`
 
