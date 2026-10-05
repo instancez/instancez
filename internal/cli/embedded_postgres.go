@@ -128,13 +128,12 @@ func startLockPath() string {
 	return filepath.Join(dir, "inz-embedded-pg.lock")
 }
 
-// withFileLock serializes fn across processes via an O_EXCL lock file; the holder touches it so only a dead holder's lock goes stale.
+// withFileLock serializes fn across processes via an atomic lock directory; the holder touches it so only a dead holder's lock goes stale.
 func withFileLock(path string, timeout time.Duration, fn func() error) error {
 	deadline := time.Now().Add(timeout)
 	for {
-		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) // nosemgrep: lock path is built from the user cache dir
+		err := os.Mkdir(path, 0o700)
 		if err == nil {
-			_ = f.Close()
 			break
 		}
 		if !os.IsExist(err) {

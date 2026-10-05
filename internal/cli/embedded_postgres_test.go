@@ -125,7 +125,7 @@ func TestWithFileLock_ReleasesOnErrorAndTimesOut(t *testing.T) {
 	if err := withFileLock(path, time.Second, func() error { return nil }); err != nil {
 		t.Fatalf("lock not released after error: %v", err)
 	}
-	if err := os.WriteFile(path, nil, 0o600); err != nil {
+	if err := os.Mkdir(path, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := withFileLock(path, 100*time.Millisecond, func() error { return nil }); err == nil {
@@ -135,7 +135,7 @@ func TestWithFileLock_ReleasesOnErrorAndTimesOut(t *testing.T) {
 
 func TestWithFileLock_BreaksStaleLock(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "x.lock")
-	if err := os.WriteFile(path, nil, 0o600); err != nil {
+	if err := os.Mkdir(path, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	old := time.Now().Add(-staleLockAge - time.Minute)
