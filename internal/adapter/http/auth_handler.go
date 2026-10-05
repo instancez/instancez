@@ -466,18 +466,17 @@ func (h *AuthHandler) handleIDTokenGrant(c *gin.Context) {
 		return
 	}
 
-	g := h.cfg.Auth.OAuth["google"]
-	if req.Provider != "google" || g == nil {
-		if req.Provider == "google" {
-			problemJSON(c, 400, "bad_request", "Google provider not configured")
-			return
-		}
+	if _, ok := oidcJWKSURLs[req.Provider]; !ok {
 		problemJSON(c, 400, "bad_request", "Unsupported provider for ID token: "+req.Provider)
 		return
 	}
-	clientID := g.ClientID
+	pc := h.cfg.Auth.OAuth[req.Provider]
+	if pc == nil {
+		problemJSON(c, 400, "bad_request", strings.ToUpper(req.Provider[:1])+req.Provider[1:]+" provider not configured")
+		return
+	}
 
-	claims, err := verifyIDToken(req.Provider, req.Token, clientID, req.Nonce)
+	claims, err := verifyIDToken(req.Provider, req.Token, adapterauth.ClientIDs(pc.ClientID), req.Nonce)
 	if err != nil {
 		h.logger.Error("id token verification failed", "provider", req.Provider, "error", err)
 		problemJSON(c, 401, "invalid_token", "ID token verification failed: "+err.Error())

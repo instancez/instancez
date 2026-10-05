@@ -4,10 +4,12 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math/big"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -18,10 +20,12 @@ import (
 // OIDC provider JWKS URLs
 var oidcJWKSURLs = map[string]string{
 	"google": "https://www.googleapis.com/oauth2/v3/certs",
+	"apple":  "https://appleid.apple.com/auth/keys",
 }
 
 var oidcIssuers = map[string][]string{
 	"google": {"https://accounts.google.com", "accounts.google.com"},
+	"apple":  {"https://appleid.apple.com"},
 }
 
 type jwksCache struct {
@@ -108,7 +112,7 @@ func getJWKS(provider string) (map[string]*rsa.PublicKey, error) {
 	return keys, nil
 }
 
-func verifyIDToken(provider, tokenStr, expectedAudience, expectedNonce string) (jwt.MapClaims, error) {
+func verifyIDToken(provider, tokenStr string, audiences []string, expectedNonce string) (jwt.MapClaims, error) {
 	keys, err := getJWKS(provider)
 	if err != nil {
 		return nil, err
@@ -152,15 +156,16 @@ func verifyIDToken(provider, tokenStr, expectedAudience, expectedNonce string) (
 	}
 
 	// Verify audience
-	aud, _ := claims["aud"].(string)
-	if aud != expectedAudience {
-		return nil, fmt.Errorf("audience mismatch: got %s, want %s", aud, expectedAudience)
+	tokenAud, _ := claims.GetAudience()
+	if !slices.ContainsFunc(tokenAud, func(a string) bool { return slices.Contains(audiences, a) }) {
+		return nil, fmt.Errorf("audience mismatch: got %v, want one of %v", []string(tokenAud), audiences)
 	}
 
 	// Verify nonce if provided
 	if expectedNonce != "" {
 		nonce, _ := claims["nonce"].(string)
-		if nonce != expectedNonce {
+		hashed := sha256.Sum256([]byte(expectedNonce))
+		if nonce != expectedNonce && nonce != hex.EncodeToString(hashed[:]) {
 			return nil, fmt.Errorf("nonce mismatch")
 		}
 	}
