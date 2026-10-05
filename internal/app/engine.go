@@ -265,6 +265,7 @@ func (e *Engine) runWatcher(ctx context.Context, interval time.Duration) {
 				}
 				continue
 			}
+			config.LogWarnings(e.logger, cfg)
 			e.mu.Lock()
 			e.cfg = cfg
 			e.mu.Unlock()

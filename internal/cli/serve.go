@@ -153,6 +153,7 @@ func runServe(opts serveOptions) error {
 		return fmt.Errorf("telemetry setup: %w", err)
 	}
 	logger := otel.ComposeLogger(base, otelHandler)
+	config.LogWarnings(logger, cfg)
 
 	logger.Info("starting instancez",
 		"version", version,

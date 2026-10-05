@@ -1,9 +1,11 @@
 package config
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
@@ -1727,4 +1729,23 @@ func TestWarnings_NoAuthOrApple(t *testing.T) {
 	Warnings(cfg)
 	cfg.Auth = nil
 	Warnings(cfg)
+}
+
+func TestLogWarnings(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Tables = map[string]domain.Table{"a": {Fields: []domain.Field{{Name: "id", Type: "BIGINT", PrimaryKey: true}}}}
+	var buf bytes.Buffer
+	LogWarnings(slog.New(slog.NewTextHandler(&buf, nil)), cfg)
+	out := buf.String()
+	for _, want := range []string{"level=WARN", `msg="config warning"`, "path=tables.a.rls_enabled"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log %q missing %q", out, want)
+		}
+	}
+
+	buf.Reset()
+	LogWarnings(slog.New(slog.NewTextHandler(&buf, nil)), &domain.Config{})
+	if strings.Contains(buf.String(), "config warning") {
+		t.Errorf("no warnings expected, got %q", buf.String())
+	}
 }

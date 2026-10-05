@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -412,6 +413,60 @@ func TestEngineRunWatcher_GoodEventReloads(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatalf("runWatcher did not return after context cancel")
+	}
+}
+
+type lockedBuf struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *lockedBuf) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuf) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
+// TestEngineRunWatcher_LogsConfigWarnings: a reload that validates with
+// warnings logs each one.
+func TestEngineRunWatcher_LogsConfigWarnings(t *testing.T) {
+	db := newFakeDB(t)
+	roles := domain.DefaultRoles()
+	initial := &domain.Config{
+		Tables: map[string]domain.Table{
+			"a": {Fields: []domain.Field{{Name: "id", Type: "BIGINT", PrimaryKey: true}}},
+		},
+		Server: domain.Server{Port: 8080},
+	}
+	if err := NewMigrator(db, roles).Apply(context.Background(), initial); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	logs := &lockedBuf{}
+	src := &fakeSource{ch: make(chan config.WatchEvent, 4)}
+	engine := NewEngine(initial, domain.OwnerDB{Database: db}, newFakeRequestDB(t), roles,
+		WithMode(ModeProd), WithMigrate(true), WithConfigSource(src),
+		WithLogger(slog.New(slog.NewTextHandler(logs, nil))))
+	engine.drift = NewDriftTracker(src.Describe())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go engine.runWatcher(ctx, 0)
+
+	src.ch <- config.WatchEvent{Data: []byte(watcherGoodYAML), Version: "v1"}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && !strings.Contains(logs.String(), "config warning") {
+		time.Sleep(10 * time.Millisecond)
+	}
+	out := logs.String()
+	if !strings.Contains(out, `msg="config warning"`) || !strings.Contains(out, "path=tables.a.rls_enabled") {
+		t.Fatalf("warning not logged on reload: %s", out)
 	}
 }
 

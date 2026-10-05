@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"maps"
 	"math"
 	"os"
@@ -275,6 +276,13 @@ func Validate(cfg *domain.Config) domain.ValidationErrors {
 		return nil
 	}
 	return errs
+}
+
+// LogWarnings logs every config warning at warn level.
+func LogWarnings(logger *slog.Logger, cfg *domain.Config) {
+	for _, w := range Warnings(cfg) {
+		logger.Warn("config warning", "path", w.Path, "message", w.Message)
+	}
 }
 
 // Warnings reports config that is valid but probably not what the author meant; it never blocks a deploy.
