@@ -124,7 +124,7 @@ Apple works through the same `signInWithOAuth({ provider: 'apple' })` call. It i
 
   Put the signed JWT in `INSTANCEZ_ENV_APPLE_CLIENT_SECRET`. Apple rejects the secret after `exp`, so Apple logins fail from then on. Generate a new one and redeploy before it expires. Validation rejects a secret that is not a JWT. An expired or soon-to-expire secret only warns (`inz validate`, `inz dev`) so the server keeps booting, but once expired Apple logins fail with `invalid_client`.
 - Apple sends the user's name only on the first sign-in, in the callback form. instancez stores it then. Later logins carry no name.
-- Apple posts the callback (`response_mode=form_post`). instancez answers the POST with a 303 to its own GET callback, so state, PKCE and `linkIdentity` behave as with Google.
+- Apple posts the callback (`response_mode=form_post`). instancez answers the POST with a 303 to the same callback URL as a GET, so state, PKCE and `linkIdentity` behave as with Google.
 - The email comes from the `id_token`. Apple's private relay addresses count as verified only when Apple sets `email_verified` on the token.
 
 **Native apps — `signInWithIdToken`**

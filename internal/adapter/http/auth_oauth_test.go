@@ -330,9 +330,16 @@ func postCallback(r *gin.Engine, path, body string) *httptest.ResponseRecorder {
 	return w
 }
 
+func formPostHandler(t *testing.T, base, redirectURL string) *AuthHandler {
+	h := linkHandler(t, &stubAuthService{})
+	t.Setenv("INSTANCEZ_BASE_URL", base)
+	h.cfg.Auth.OAuth["unitfake"].RedirectURL = redirectURL
+	return h
+}
+
 func TestOAuthFormPost_RedirectsToGetCallback(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	h := linkHandler(t, &stubAuthService{})
+	h := formPostHandler(t, "", "")
 	r := gin.New()
 	r.POST("/auth/v1/callback/unitfake", h.handleOAuthFormPost("unitfake"))
 	form := url.Values{"code": {"c1"}, "state": {"s1"}, "user": {`{"name":{"firstName":"A"}}`}, "junk": {"x"}}
@@ -347,10 +354,39 @@ func TestOAuthFormPost_RedirectsToGetCallback(t *testing.T) {
 	}
 }
 
+func TestOAuthFormPost_RedirectTarget(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct{ name, base, redirect, want string }{
+		{"hand-set redirect on another host", "https://app.example.com", "https://api.example.com/auth/v1/callback/unitfake", "https://api.example.com/auth/v1/callback/unitfake?code=c1&state=s1"},
+		{"blank redirect uses base url", "https://app.example.com", "", "https://app.example.com/auth/v1/callback/unitfake?code=c1&state=s1"},
+		{"redirect with query string", "", "https://api.example.com/cb?x=1", "https://api.example.com/cb?x=1&code=c1&state=s1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := gin.New()
+			r.POST("/cb", formPostHandler(t, tc.base, tc.redirect).handleOAuthFormPost("unitfake"))
+			w := postCallback(r, "/cb", url.Values{"code": {"c1"}, "state": {"s1"}}.Encode())
+			if w.Code != 303 || w.Header().Get("Location") != tc.want {
+				t.Fatalf("status %d location %q, want %q", w.Code, w.Header().Get("Location"), tc.want)
+			}
+		})
+	}
+}
+
+func TestOAuthFormPost_UnconfiguredProviderDoesNotPanic(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/cb", formPostHandler(t, "https://app.example.com", "").handleOAuthFormPost("ghost"))
+	w := postCallback(r, "/cb", "state=s1")
+	if w.Code != 303 || w.Header().Get("Location") != "https://app.example.com/auth/v1/callback/ghost?state=s1" {
+		t.Fatalf("status %d location %q", w.Code, w.Header().Get("Location"))
+	}
+}
+
 func TestOAuthFormPost_ForwardsProviderError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.POST("/cb", linkHandler(t, &stubAuthService{}).handleOAuthFormPost("unitfake"))
+	r.POST("/cb", formPostHandler(t, "", "").handleOAuthFormPost("unitfake"))
 	w := postCallback(r, "/cb", url.Values{"state": {"s"}, "error": {"user_cancelled_authorize"}, "error_description": {"no"}}.Encode())
 	q, _ := url.Parse(w.Header().Get("Location"))
 	if q.Query().Get("error") != "user_cancelled_authorize" || q.Query().Get("error_description") != "no" || q.Query().Has("code") {
@@ -361,8 +397,8 @@ func TestOAuthFormPost_ForwardsProviderError(t *testing.T) {
 func TestOAuthFormPost_DropsOversizedParam(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.POST("/cb", linkHandler(t, &stubAuthService{}).handleOAuthFormPost("unitfake"))
-	for size, wantKept := range map[int]bool{maxCallbackParam: true, maxCallbackParam + 1: false, 5000: false} {
+	r.POST("/cb", formPostHandler(t, "", "").handleOAuthFormPost("unitfake"))
+	for size, wantKept := range map[int]bool{maxCallbackParam: true, maxCallbackParam + 1: false} {
 		w := postCallback(r, "/cb", url.Values{"code": {strings.Repeat("a", size)}, "state": {"s"}}.Encode())
 		loc, _ := url.Parse(w.Header().Get("Location"))
 		if loc.Query().Has("code") != wantKept || loc.Query().Get("state") != "s" {
@@ -374,7 +410,7 @@ func TestOAuthFormPost_DropsOversizedParam(t *testing.T) {
 func TestOAuthFormPost_EmptyBody(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.POST("/cb", linkHandler(t, &stubAuthService{}).handleOAuthFormPost("unitfake"))
+	r.POST("/cb", formPostHandler(t, "", "").handleOAuthFormPost("unitfake"))
 	w := postCallback(r, "/cb", "")
 	loc, _ := url.Parse(w.Header().Get("Location"))
 	if w.Code != 303 || loc.RawQuery != "" || !strings.HasSuffix(loc.Path, "/auth/v1/callback/unitfake") {

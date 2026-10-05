@@ -1331,7 +1331,11 @@ func (h *AuthHandler) handleOAuthFormPost(provider string) gin.HandlerFunc {
 				q.Set(k, v)
 			}
 		}
-		c.Redirect(http.StatusSeeOther, oauthCallbackBase(h.cfg)+provider+"?"+q.Encode())
+		target := oauthCallbackBase(h.cfg) + provider
+		if pc := h.effectiveOAuthConfig(provider, h.cfg.Auth.OAuth[provider]); pc != nil {
+			target = pc.RedirectURL
+		}
+		c.Redirect(http.StatusSeeOther, appendOAuthParams(target, true, q))
 	}
 }
 
