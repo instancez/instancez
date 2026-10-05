@@ -116,7 +116,7 @@ name (`google`, `github`, `apple`, …) selects the built-in provider implementa
 | `auth.oauth.<name>.client_secret` | `string` | — | OAuth client secret. Supports `${VAR}`. |
 | `auth.oauth.<name>.redirect_url` | `string` | — | OAuth callback URL registered with the provider. |
 
-For `apple`, `client_id` is the Services ID. Add iOS bundle IDs after it, comma-separated, to accept native `signInWithIdToken` tokens; the web flow uses the first ID. `client_secret` must be an ES256 JWT signed with your `.p8` key (max 6-month life). A secret that is not a JWT or has expired fails validation. A `${VAR}` secret is not checked at validation time. See [Auth](/build/auth/#sign-in-with-apple).
+For `apple`, `client_id` is the Services ID. Add iOS bundle IDs after it, comma-separated, to accept native `signInWithIdToken` tokens; the web flow uses the first ID. `client_secret` must be an ES256 JWT signed with your `.p8` key (max 6-month life). A secret that is not a JWT or has expired fails validation. A `${VAR}` secret is checked once the env var is filled in; while the var is unset, the check is skipped. See [Auth](/build/auth/#sign-in-with-apple).
 
 ## tables
 

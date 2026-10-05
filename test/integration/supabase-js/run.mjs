@@ -281,10 +281,13 @@ await step('auth: form_post callback (Apple) 303-redirects to the GET callback a
   const post = await fetch(`${URL}/auth/v1/callback/fake`, {
     method: 'POST',
     redirect: 'manual',
-    body: new URLSearchParams({ code: params.get('code'), state: params.get('state') }),
+    body: new URLSearchParams({ code: params.get('code'), state: params.get('state'), user: '{"name":{"firstName":"A"}}' }),
   })
   assertEq(post.status, 303, 'form_post callback redirects with 303')
-  const getResp = await fetch(post.headers.get('location'), { redirect: 'manual' })
+  const next = new NodeURL(post.headers.get('location'))
+  assertEq(next.pathname, '/auth/v1/callback/fake', '303 targets the GET callback')
+  assertEq(next.searchParams.get('user'), '{"name":{"firstName":"A"}}', 'user field forwarded')
+  const getResp = await fetch(next, { redirect: 'manual' })
   assertEq(getResp.status, 302, 'followed GET callback redirects to the app')
   const tokens = Object.fromEntries(new URLSearchParams(getResp.headers.get('location').split('#')[1]))
   assert(tokens.access_token, 'form_post flow should return an access token')
@@ -298,6 +301,7 @@ await step('auth: form_post callback (Apple) 303-redirects to the GET callback a
     body: new URLSearchParams({ error: 'user_cancelled_authorize', state: params.get('state') }),
   })
   assertEq(err.status, 303, 'provider error post still redirects')
+  assertEq(new NodeURL(err.headers.get('location')).searchParams.get('error'), 'user_cancelled_authorize', 'provider error forwarded')
 })
 
 await step('auth: linkIdentity binds the link to the initiating browser', async () => {

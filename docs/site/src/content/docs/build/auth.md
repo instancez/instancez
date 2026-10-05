@@ -109,8 +109,8 @@ An unverified provider email that matches no existing identity fails with `provi
 Apple works through the same `signInWithOAuth({ provider: 'apple' })` call. It is configured in YAML only; the dashboard has no Apple toggle yet.
 
 - `client_id` is your Apple **Services ID**.
-- `redirect_url` is `<base URL>/auth/v1/callback/apple`. Register it as a Return URL on the Services ID in the Apple developer console. Apple needs an HTTPS URL on a domain you have verified there.
-- `client_secret` is a JWT you sign yourself with the `.p8` key from Apple. Apple has no static secret. Build it from your Team ID, Key ID and `.p8` key:
+- `redirect_url` is `<base URL>/auth/v1/callback/apple`. Register it as a Return URL on the Services ID in the Apple developer console. Apple requires an HTTPS Return URL (not localhost).
+- `client_secret` is a JWT you sign yourself with the `.p8` key from Apple. Apple does not issue a static secret. Build it from your Team ID, Key ID and `.p8` key:
 
   | Part | Value |
   |---|---|
@@ -122,7 +122,7 @@ Apple works through the same `signInWithOAuth({ provider: 'apple' })` call. It i
   | `aud` | `https://appleid.apple.com` |
   | `sub` | the Services ID (same as `client_id`) |
 
-  Put the signed JWT in `INSTANCEZ_ENV_APPLE_CLIENT_SECRET`. Apple stops accepting it at `exp`, and Apple logins fail from then on. Generate a new one and redeploy before it expires. Config validation rejects a secret that is not a JWT or is already expired.
+  Put the signed JWT in `INSTANCEZ_ENV_APPLE_CLIENT_SECRET`. Apple rejects the secret after `exp`, so Apple logins fail from then on. Generate a new one and redeploy before it expires. Config validation rejects a secret that is not a JWT or is already expired.
 - Apple sends the user's name only on the first sign-in, in the callback form. instancez stores it then. Later logins carry no name.
 - Apple posts the callback (`response_mode=form_post`). instancez answers the POST with a 303 to its own GET callback, so state, PKCE and `linkIdentity` behave as with Google.
 - The email comes from the `id_token`. Apple's private relay addresses count as verified only when Apple sets `email_verified` on the token.
@@ -137,7 +137,7 @@ const { data, error } = await supabase.auth.signInWithIdToken({
 })
 ```
 
-The token's signature, issuer, expiry and audience are verified against Apple's keys. List every audience you use in `client_id`, comma-separated: the Services ID first, then your iOS bundle IDs, for example `com.myapp.web,com.myapp.ios`. The web flow uses the first ID. If you passed a nonce to Apple, pass the same value here: the raw nonce, or its hex SHA-256, both match. The name is read from the token's `name` claim, which Apple does not set, so set it from your app with `updateUser` if you need it. The token must contain an email.
+The token's signature, issuer, expiry and audience are verified against Apple's keys. List every audience you use in `client_id`, comma-separated: the Services ID first, then your iOS bundle IDs, for example `com.myapp.web,com.myapp.ios`. The web flow uses the first ID. Pass the raw nonce (Apple gets its SHA-256 in the sign-in request). The hashed value is also accepted. The name is read from the token's `name` claim, which Apple tokens do not normally carry, so set it from your app with `updateUser` if you need it. The token must contain an email.
 
 **Linking an identity** — `supabase.auth.linkIdentity({ provider: 'google' })`
 
