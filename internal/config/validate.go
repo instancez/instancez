@@ -220,6 +220,10 @@ var validEmailTemplateNames = map[string]bool{
 // migrator emits that wrapper itself, so bodies must be bare.
 var rpcBodyDDLRE = regexp.MustCompile(`(?is)^\s*(--[^\n]*\n\s*)*create\s+(or\s+replace\s+)?function\b`)
 
+// sqlBodyStartRE matches a language-sql body that opens with a statement
+// keyword or a parenthesized query, after any leading comments.
+var sqlBodyStartRE = regexp.MustCompile(`(?is)^\s*((--[^\n]*(\n|$)|/\*.*?\*/)\s*)*(\(|(select|with|insert|update|delete|values|table|merge)\b)`)
+
 // rlsCheckDDLRE detects a pasted CREATE ... statement where a boolean
 // expression is expected.
 var rlsCheckDDLRE = regexp.MustCompile(`(?is)^\s*create\b`)
@@ -883,6 +887,14 @@ func validateRPCFunction(path, name string, fn domain.Function) domain.Validatio
 			Path:       path + ".body",
 			Message:    "body must be the bare function body — instancez wraps it in CREATE OR REPLACE FUNCTION for you",
 			Suggestion: "Remove the CREATE OR REPLACE FUNCTION ... AS $$ wrapper and keep only the body between the dollar quotes",
+		})
+	}
+
+	if strings.EqualFold(fn.Language, "sql") && fn.Body != "" && !sqlBodyStartRE.MatchString(fn.Body) {
+		errs = append(errs, &domain.ValidationError{
+			Path:       path + ".body",
+			Message:    "language sql body must be a statement (SELECT, WITH, INSERT, UPDATE, DELETE, VALUES, TABLE)",
+			Suggestion: "Prefix the expression with SELECT, or use language plpgsql with BEGIN ... END",
 		})
 	}
 

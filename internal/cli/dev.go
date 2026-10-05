@@ -40,6 +40,8 @@ func newDevCmd() *cobra.Command {
 }
 
 func runDev(opts devOptions) error {
+	config.DefaultLocalStorage = true
+
 	// dev runs against a local file + local DB; reject remote config sources
 	// before any preflight work so the failure is clear and immediate.
 	if err := requireLocalConfig(opts.configPath); err != nil {
