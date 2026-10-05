@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -2398,10 +2399,10 @@ type failingOAuthProvider struct{}
 
 func (failingOAuthProvider) Name() string                                          { return "failcb" }
 func (failingOAuthProvider) AuthorizeURL(_ *domain.OAuthProvider, _ string) string { return "" }
-func (failingOAuthProvider) ExchangeCode(_ *domain.OAuthProvider, _ string) (string, error) {
-	return "", fmt.Errorf("token endpoint returned 401: invalid_client")
+func (failingOAuthProvider) ExchangeCode(_ *domain.OAuthProvider, _ string) (*adapterauth.OAuthToken, error) {
+	return nil, fmt.Errorf("token endpoint returned 401: invalid_client")
 }
-func (failingOAuthProvider) FetchUser(_ string) (*adapterauth.OAuthUserInfo, error) {
+func (failingOAuthProvider) FetchUser(_ *adapterauth.OAuthToken, _ url.Values) (*adapterauth.OAuthUserInfo, error) {
 	return nil, fmt.Errorf("unused")
 }
 

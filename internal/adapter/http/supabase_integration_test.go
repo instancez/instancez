@@ -51,12 +51,12 @@ func (fakeOAuthProvider) AuthorizeURL(cfg *domain.OAuthProvider, state string) s
 	return fmt.Sprintf("%s?code=fake-code-%s&state=%s", cfg.RedirectURL, state, url.QueryEscape(state))
 }
 
-func (fakeOAuthProvider) ExchangeCode(cfg *domain.OAuthProvider, code string) (string, error) {
-	return code, nil
+func (fakeOAuthProvider) ExchangeCode(cfg *domain.OAuthProvider, code string) (*adapterauth.OAuthToken, error) {
+	return &adapterauth.OAuthToken{AccessToken: code}, nil
 }
 
-func (fakeOAuthProvider) FetchUser(accessToken string) (*adapterauth.OAuthUserInfo, error) {
-	sum := sha256.Sum256([]byte(accessToken))
+func (fakeOAuthProvider) FetchUser(tok *adapterauth.OAuthToken, _ url.Values) (*adapterauth.OAuthUserInfo, error) {
+	sum := sha256.Sum256([]byte(tok.AccessToken))
 	suffix := hex.EncodeToString(sum[:6])
 	return &adapterauth.OAuthUserInfo{
 		ProviderID:    "fake-" + suffix,

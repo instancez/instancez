@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -24,10 +25,10 @@ type unitOAuthProvider struct{}
 
 func (unitOAuthProvider) Name() string                                      { return "unitfake" }
 func (unitOAuthProvider) AuthorizeURL(*domain.OAuthProvider, string) string { return "http://idp" }
-func (unitOAuthProvider) ExchangeCode(*domain.OAuthProvider, string) (string, error) {
-	return "tok", nil
+func (unitOAuthProvider) ExchangeCode(*domain.OAuthProvider, string) (*adapterauth.OAuthToken, error) {
+	return &adapterauth.OAuthToken{AccessToken: "tok"}, nil
 }
-func (unitOAuthProvider) FetchUser(string) (*adapterauth.OAuthUserInfo, error) {
+func (unitOAuthProvider) FetchUser(_ *adapterauth.OAuthToken, _ url.Values) (*adapterauth.OAuthUserInfo, error) {
 	return &adapterauth.OAuthUserInfo{ProviderID: "p1", Email: "v@e.com", Name: "V", EmailVerified: false}, nil
 }
 

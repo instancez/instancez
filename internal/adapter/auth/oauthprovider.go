@@ -8,14 +8,17 @@ import (
 	"github.com/instancez/instancez/internal/domain"
 )
 
+// OAuthToken is the token endpoint response.
+type OAuthToken struct{ AccessToken, IDToken string }
+
 // OAuthProvider is the seam for an external identity provider. Adding a provider
 // is one implementation of this interface plus a RegisterOAuth call, with no
 // handler or config-struct edits.
 type OAuthProvider interface {
 	Name() string
 	AuthorizeURL(cfg *domain.OAuthProvider, state string) string
-	ExchangeCode(cfg *domain.OAuthProvider, code string) (accessToken string, err error)
-	FetchUser(accessToken string) (*OAuthUserInfo, error)
+	ExchangeCode(cfg *domain.OAuthProvider, code string) (*OAuthToken, error)
+	FetchUser(tok *OAuthToken, callback url.Values) (*OAuthUserInfo, error)
 }
 
 var (
@@ -56,12 +59,12 @@ func (googleProvider) AuthorizeURL(cfg *domain.OAuthProvider, state string) stri
 		cfg.ClientID, url.QueryEscape(cfg.RedirectURL), state)
 }
 
-func (googleProvider) ExchangeCode(cfg *domain.OAuthProvider, code string) (string, error) {
+func (googleProvider) ExchangeCode(cfg *domain.OAuthProvider, code string) (*OAuthToken, error) {
 	return exchangeOAuthCode("https://oauth2.googleapis.com/token", cfg, code)
 }
 
-func (g googleProvider) FetchUser(accessToken string) (*OAuthUserInfo, error) {
-	return fetchGoogleUser(g.userAPI, accessToken)
+func (g googleProvider) FetchUser(tok *OAuthToken, _ url.Values) (*OAuthUserInfo, error) {
+	return fetchGoogleUser(g.userAPI, tok.AccessToken)
 }
 
 // ---- github ----
@@ -81,10 +84,10 @@ func (githubProvider) AuthorizeURL(cfg *domain.OAuthProvider, state string) stri
 		cfg.ClientID, url.QueryEscape(cfg.RedirectURL), state)
 }
 
-func (githubProvider) ExchangeCode(cfg *domain.OAuthProvider, code string) (string, error) {
+func (githubProvider) ExchangeCode(cfg *domain.OAuthProvider, code string) (*OAuthToken, error) {
 	return exchangeOAuthCode("https://github.com/login/oauth/access_token", cfg, code)
 }
 
-func (g *githubProvider) FetchUser(accessToken string) (*OAuthUserInfo, error) {
-	return fetchGitHubUser(g, accessToken)
+func (g *githubProvider) FetchUser(tok *OAuthToken, _ url.Values) (*OAuthUserInfo, error) {
+	return fetchGitHubUser(g, tok.AccessToken)
 }

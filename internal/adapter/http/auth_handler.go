@@ -1382,13 +1382,13 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 		// Token exchange must replay the same redirect_uri sent at authorize, so
 		// apply the identical default here.
 		providerCfg = h.effectiveOAuthConfig(provider, providerCfg)
-		oauthToken, err := prov.ExchangeCode(providerCfg, code)
+		tok, err := prov.ExchangeCode(providerCfg, code)
 		if err != nil {
 			h.logger.Error("oauth code exchange failed", "provider", provider, "error", err)
 			h.oauthCallbackFail(c, redirectTo, isPKCE, "Unable to exchange external code")
 			return
 		}
-		userInfo, err := prov.FetchUser(oauthToken)
+		userInfo, err := prov.FetchUser(tok, c.Request.URL.Query())
 		if err != nil {
 			h.logger.Error("oauth user info failed", "provider", provider, "error", err)
 			h.oauthCallbackFail(c, redirectTo, isPKCE, "Error getting user profile from external provider")
@@ -1460,7 +1460,7 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 			frag.Set("token_type", "bearer")
 			frag.Set("expires_in", fmt.Sprintf("%d", session["expires_in"].(int)))
 			frag.Set("expires_at", fmt.Sprintf("%d", session["expires_at"].(int64)))
-			frag.Set("provider_token", oauthToken)
+			frag.Set("provider_token", tok.AccessToken)
 			frag.Set("type", "oauth")
 			// Implicit flow only reaches here (PKCE returned above), so the
 			// session always rides back in the fragment, like Supabase.

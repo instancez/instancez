@@ -22,7 +22,7 @@ type OAuthUserInfo struct {
 // exchangeOAuthCode exchanges an OAuth authorization code for an access token at
 // the given token endpoint. The endpoint is provider-specific and supplied by
 // the caller (see the per-provider implementations in oauthprovider.go).
-func exchangeOAuthCode(tokenURL string, cfg *domain.OAuthProvider, code string) (string, error) {
+func exchangeOAuthCode(tokenURL string, cfg *domain.OAuthProvider, code string) (*OAuthToken, error) {
 	data := url.Values{
 		"client_id":     {cfg.ClientID},
 		"client_secret": {cfg.ClientSecret},
@@ -33,37 +33,38 @@ func exchangeOAuthCode(tokenURL string, cfg *domain.OAuthProvider, code string) 
 
 	req, err := http.NewRequest("POST", tokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("token request failed: %w", err)
+		return nil, fmt.Errorf("token request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("token endpoint returned %d: %s", resp.StatusCode, body)
+		return nil, fmt.Errorf("token endpoint returned %d: %s", resp.StatusCode, body)
 	}
 
 	var tokenResp struct {
 		AccessToken string `json:"access_token"`
+		IDToken     string `json:"id_token"`
 		Error       string `json:"error"`
 	}
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return "", fmt.Errorf("failed to parse token response: %w", err)
+		return nil, fmt.Errorf("failed to parse token response: %w", err)
 	}
 	if tokenResp.Error != "" {
-		return "", fmt.Errorf("oauth error: %s", tokenResp.Error)
+		return nil, fmt.Errorf("oauth error: %s", tokenResp.Error)
 	}
 	if tokenResp.AccessToken == "" {
-		return "", fmt.Errorf("no access_token in response")
+		return nil, fmt.Errorf("no access_token in response")
 	}
 
-	return tokenResp.AccessToken, nil
+	return &OAuthToken{AccessToken: tokenResp.AccessToken, IDToken: tokenResp.IDToken}, nil
 }
 
 // fetchGitHubUser fetches a GitHub user's profile using an OAuth access token.
