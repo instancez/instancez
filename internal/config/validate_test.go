@@ -1,6 +1,12 @@
 package config
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 	"os"
 	"strings"
 	"testing"
@@ -1607,5 +1613,70 @@ func TestWarnings_CompositePKFKTarget(t *testing.T) {
 				t.Fatalf("a unique member must be told why unique: true isn't enough, got %v", ws[0].Message)
 			}
 		})
+	}
+}
+
+func appleJWT(t *testing.T, claims jwt.MapClaims) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := jwt.NewWithClaims(jwt.SigningMethodES256, claims).SignedString(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func TestValidateAppleSecret(t *testing.T) {
+	future := jwt.MapClaims{"exp": time.Now().Add(time.Hour).Unix()}
+	past := jwt.MapClaims{"exp": time.Now().Add(-time.Hour).Unix()}
+	cases := []struct {
+		name    string
+		secret  string
+		wantMsg string
+	}{
+		{"valid future exp", appleJWT(t, future), ""},
+		{"expired", appleJWT(t, past), "expired"},
+		{"not a jwt", "abc", "must be a JWT"},
+		{"unexpanded env ref", "${INSTANCEZ_ENV_APPLE_SECRET}", ""},
+		{"empty left to required check", "", ""},
+		{"no exp claim", appleJWT(t, jwt.MapClaims{"iss": "team"}), ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateAppleSecret(tc.secret)
+			if tc.wantMsg == "" {
+				if err != nil {
+					t.Fatalf("want nil, got %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Message, tc.wantMsg) {
+				t.Fatalf("want message containing %q, got %v", tc.wantMsg, err)
+			}
+			if err.Path != "auth.oauth.apple.client_secret" {
+				t.Fatalf("path = %q", err.Path)
+			}
+		})
+	}
+}
+
+func TestValidate_AppleSecretOnlyCheckedForApple(t *testing.T) {
+	for name, wantErr := range map[string]bool{"apple": true, "google": false} {
+		cfg := validBaseConfig()
+		cfg.Auth = &domain.Auth{OAuth: map[string]*domain.OAuthProvider{
+			name: {ClientID: "id", ClientSecret: "abc"},
+		}}
+		got := false
+		for _, e := range Validate(cfg) {
+			if e.Path == "auth.oauth."+name+".client_secret" {
+				got = true
+			}
+		}
+		if got != wantErr {
+			t.Fatalf("%s: error present = %v, want %v", name, got, wantErr)
+		}
 	}
 }

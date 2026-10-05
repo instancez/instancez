@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/instancez/instancez/internal/domain"
 )
 
@@ -432,6 +434,11 @@ func validateAuth(auth *domain.Auth) domain.ValidationErrors {
 		if p.ClientSecret == "" {
 			errs = append(errs, &domain.ValidationError{Path: "auth.oauth." + name + ".client_secret", Message: "required"})
 		}
+		if name == "apple" {
+			if e := validateAppleSecret(p.ClientSecret); e != nil {
+				errs = append(errs, e)
+			}
+		}
 		// redirect_url is optional: when blank the auth handler fills it with
 		// this server's own callback URL (AuthHandler.effectiveOAuthConfig).
 		// Whatever value ends up in use still has to be registered with the
@@ -439,6 +446,21 @@ func validateAuth(auth *domain.Auth) domain.ValidationErrors {
 	}
 
 	return errs
+}
+
+func validateAppleSecret(secret string) *domain.ValidationError {
+	const path = "auth.oauth.apple.client_secret"
+	if secret == "" || strings.Contains(secret, "${") {
+		return nil
+	}
+	claims := jwt.MapClaims{}
+	if _, _, err := jwt.NewParser().ParseUnverified(secret, claims); err != nil {
+		return &domain.ValidationError{Path: path, Message: "must be a JWT signed with your Apple .p8 key"}
+	}
+	if exp, err := claims.GetExpirationTime(); err == nil && exp != nil && exp.Before(time.Now()) {
+		return &domain.ValidationError{Path: path, Message: "expired; Apple secrets last 6 months at most, generate a new one"}
+	}
+	return nil
 }
 
 func validateTables(tables map[string]domain.Table, auth *domain.Auth) domain.ValidationErrors {
