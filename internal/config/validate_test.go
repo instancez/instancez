@@ -1700,7 +1700,7 @@ func TestWarnings_AppleSecretExpiry(t *testing.T) {
 			cfg := validBaseConfig()
 			cfg.Auth = &domain.Auth{OAuth: map[string]*domain.OAuthProvider{"apple": {ClientID: "id", ClientSecret: tc.secret}}}
 			if tc.want != "" {
-				if errs := Validate(cfg); errs != nil && tc.name != "not a jwt" {
+				if errs := Validate(cfg); errs != nil {
 					t.Fatalf("expiry must not fail Validate, got %v", errs)
 				}
 			}
