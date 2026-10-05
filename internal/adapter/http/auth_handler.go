@@ -147,6 +147,7 @@ func (h *AuthHandler) Mount(root *gin.RouterGroup) {
 		}
 		if _, ok := adapterauth.OAuthRegistry(name); ok {
 			auth.GET("/callback/"+name, h.handleOAuthCallback(name))
+			auth.POST("/callback/"+name, h.handleOAuthFormPost(name))
 		}
 	}
 }
@@ -1319,6 +1320,22 @@ func appendOAuthParams(target string, isPKCE bool, v url.Values) string {
 	return target + "#" + v.Encode()
 }
 
+const maxCallbackParam = 4096
+
+// handleOAuthFormPost turns a form_post callback (Apple) into the GET callback,
+// so state, PKCE and the SameSite=Lax link cookie work unchanged.
+func (h *AuthHandler) handleOAuthFormPost(provider string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		q := url.Values{}
+		for _, k := range []string{"code", "state", "user", "error", "error_description"} {
+			if v := c.PostForm(k); v != "" && len(v) <= maxCallbackParam {
+				q.Set(k, v)
+			}
+		}
+		c.Redirect(http.StatusSeeOther, oauthCallbackBase(h.cfg)+provider+"?"+q.Encode())
+	}
+}
+
 func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		state := c.Query("state")
@@ -1355,6 +1372,12 @@ func (h *AuthHandler) handleOAuthCallback(provider string) gin.HandlerFunc {
 			}
 		} else {
 			problemJSON(c, 400, "bad_request", "Invalid OAuth state")
+			return
+		}
+
+		if e := c.Query("error"); e != "" {
+			h.logger.Warn("oauth provider returned error", "provider", provider, "error", e)
+			h.oauthCallbackFail(c, redirectTo, isPKCE, "Authorization was denied by the provider")
 			return
 		}
 

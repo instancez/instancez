@@ -309,3 +309,137 @@ func TestOAuthCallback_LoginFlowIgnoresLinkCookie(t *testing.T) {
 		t.Fatalf("linked=%v loc %q", linked, w.Header().Get("Location"))
 	}
 }
+
+type countingOAuthProvider struct{ exchanges int }
+
+func (*countingOAuthProvider) Name() string                                      { return "unitcount" }
+func (*countingOAuthProvider) AuthorizeURL(*domain.OAuthProvider, string) string { return "http://idp" }
+func (p *countingOAuthProvider) ExchangeCode(*domain.OAuthProvider, string) (*adapterauth.OAuthToken, error) {
+	p.exchanges++
+	return &adapterauth.OAuthToken{AccessToken: "tok"}, nil
+}
+func (*countingOAuthProvider) FetchUser(*adapterauth.OAuthToken, url.Values) (*adapterauth.OAuthUserInfo, error) {
+	return &adapterauth.OAuthUserInfo{ProviderID: "p1"}, nil
+}
+
+func postCallback(r *gin.Engine, path, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest("POST", path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w
+}
+
+func TestOAuthFormPost_RedirectsToGetCallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := linkHandler(t, &stubAuthService{})
+	r := gin.New()
+	r.POST("/auth/v1/callback/unitfake", h.handleOAuthFormPost("unitfake"))
+	form := url.Values{"code": {"c1"}, "state": {"s1"}, "user": {`{"name":{"firstName":"A"}}`}, "junk": {"x"}}
+	w := postCallback(r, "/auth/v1/callback/unitfake", form.Encode())
+	loc, _ := url.Parse(w.Header().Get("Location"))
+	if w.Code != 303 || !strings.HasSuffix(loc.Path, "/auth/v1/callback/unitfake") {
+		t.Fatalf("status %d location %q", w.Code, loc)
+	}
+	q := loc.Query()
+	if q.Get("code") != "c1" || q.Get("state") != "s1" || q.Get("user") == "" || q.Has("junk") {
+		t.Fatalf("forwarded params = %v", q)
+	}
+}
+
+func TestOAuthFormPost_ForwardsProviderError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/cb", linkHandler(t, &stubAuthService{}).handleOAuthFormPost("unitfake"))
+	w := postCallback(r, "/cb", url.Values{"state": {"s"}, "error": {"user_cancelled_authorize"}, "error_description": {"no"}}.Encode())
+	q, _ := url.Parse(w.Header().Get("Location"))
+	if q.Query().Get("error") != "user_cancelled_authorize" || q.Query().Get("error_description") != "no" || q.Query().Has("code") {
+		t.Fatalf("location %q", w.Header().Get("Location"))
+	}
+}
+
+func TestOAuthFormPost_DropsOversizedParam(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/cb", linkHandler(t, &stubAuthService{}).handleOAuthFormPost("unitfake"))
+	for size, wantKept := range map[int]bool{maxCallbackParam: true, maxCallbackParam + 1: false, 5000: false} {
+		w := postCallback(r, "/cb", url.Values{"code": {strings.Repeat("a", size)}, "state": {"s"}}.Encode())
+		loc, _ := url.Parse(w.Header().Get("Location"))
+		if loc.Query().Has("code") != wantKept || loc.Query().Get("state") != "s" {
+			t.Fatalf("size %d: kept=%v want %v", size, loc.Query().Has("code"), wantKept)
+		}
+	}
+}
+
+func TestOAuthFormPost_EmptyBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/cb", linkHandler(t, &stubAuthService{}).handleOAuthFormPost("unitfake"))
+	w := postCallback(r, "/cb", "")
+	loc, _ := url.Parse(w.Header().Get("Location"))
+	if w.Code != 303 || loc.RawQuery != "" || !strings.HasSuffix(loc.Path, "/auth/v1/callback/unitfake") {
+		t.Fatalf("status %d location %q", w.Code, loc)
+	}
+}
+
+func TestOAuthFormPost_MountedWithoutAPIKeyOnlyForConfiguredProviders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	adapterauth.RegisterOAuth(unitOAuthProvider{})
+	h := linkHandler(t, &stubAuthService{})
+	h.cfg.Auth.OAuth["google"] = nil
+	r := gin.New()
+	h.Mount(r.Group(""))
+	w := postCallback(r, "/auth/v1/callback/unitfake", "code=c&state=s")
+	if w.Code != 303 {
+		t.Fatalf("configured provider, no apikey: status %d body %s", w.Code, w.Body.String())
+	}
+	if w := postCallback(r, "/auth/v1/callback/google", "code=c"); w.Code == 303 {
+		t.Fatal("nil-config provider must not get a POST callback")
+	}
+	if w := postCallback(r, "/auth/v1/callback/nope", "code=c"); w.Code == 303 {
+		t.Fatal("unconfigured provider must not get a POST callback")
+	}
+}
+
+func TestOAuthCallback_ProviderErrorSkipsExchange(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	prov := &countingOAuthProvider{}
+	adapterauth.RegisterOAuth(prov)
+	for _, pkce := range []bool{false, true} {
+		h := linkHandler(t, &stubAuthService{
+			consumeOAuthFlowFn: func(context.Context, string) (domain.FlowState, error) {
+				fs := domain.FlowState{RedirectTo: "http://app.local/cb"}
+				if pkce {
+					fs.CodeChallenge = "ch"
+				}
+				return fs, nil
+			},
+		})
+		h.cfg.Auth.OAuth["unitcount"] = &domain.OAuthProvider{ClientID: "c", RedirectURL: "http://api/cb"}
+		r := gin.New()
+		r.GET("/cb", h.handleOAuthCallback("unitcount"))
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest("GET", "/cb?state=s&error=user_cancelled_authorize", nil))
+		loc := w.Header().Get("Location")
+		if w.Code != 302 || !strings.Contains(loc, "error_description=Authorization+was+denied") || strings.Contains(loc, "access_token") {
+			t.Fatalf("pkce=%v status %d location %q", pkce, w.Code, loc)
+		}
+		if prov.exchanges != 0 {
+			t.Fatalf("provider called %d times", prov.exchanges)
+		}
+	}
+}
+
+func TestOAuthCallback_ProviderErrorWithBadStateStays400(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := linkHandler(t, &stubAuthService{consumeOAuthFlowFn: func(context.Context, string) (domain.FlowState, error) {
+		return domain.FlowState{}, errors.New("nope")
+	}})
+	r := gin.New()
+	r.GET("/cb", h.handleOAuthCallback("unitfake"))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/cb?state=bad&error=access_denied", nil))
+	if w.Code != 400 {
+		t.Fatalf("status %d", w.Code)
+	}
+}
