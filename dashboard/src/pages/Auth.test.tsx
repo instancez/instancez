@@ -326,7 +326,7 @@ describe("AuthPage", () => {
 
   it("reflects allow_anonymous=true as the anonymous toggle being on", () => {
     const config = makeConfig();
-    config.auth!.allow_anonymous = true;
+    if (config.auth) config.auth.allow_anonymous = true;
     renderAuth(config);
     expect(screen.getByRole("switch", { name: "Allow anonymous sign-in" })).toBeChecked();
   });

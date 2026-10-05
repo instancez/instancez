@@ -132,7 +132,7 @@ func startLockPath() string {
 func withFileLock(path string, timeout time.Duration, fn func() error) error {
 	deadline := time.Now().Add(timeout)
 	for {
-		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) // nosemgrep: lock path is built from the user cache dir
 		if err == nil {
 			_ = f.Close()
 			break
