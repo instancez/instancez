@@ -299,6 +299,11 @@ func Warnings(cfg *domain.Config) domain.ValidationErrors {
 		}
 	}
 	ws = append(ws, compositePKFKWarnings(cfg.Tables)...)
+	if cfg.Auth != nil && cfg.Auth.OAuth["apple"] != nil {
+		if w := appleSecretWarning(cfg.Auth.OAuth["apple"].ClientSecret); w != nil {
+			ws = append(ws, w)
+		}
+	}
 	if cfg.Server.MaxLimit == 100 {
 		ws = append(ws, &domain.ValidationError{
 			Path:       "server.max_limit",
@@ -457,8 +462,25 @@ func validateAppleSecret(secret string) *domain.ValidationError {
 	if _, _, err := jwt.NewParser().ParseUnverified(secret, claims); err != nil {
 		return &domain.ValidationError{Path: path, Message: "must be a JWT signed with your Apple .p8 key"}
 	}
-	if exp, err := claims.GetExpirationTime(); err == nil && exp != nil && exp.Before(time.Now()) {
-		return &domain.ValidationError{Path: path, Message: "expired; Apple secrets last 6 months at most, generate a new one"}
+	return nil
+}
+
+// appleSecretWarning flags an expired or soon-to-expire Apple secret; an expired one must not block boot.
+func appleSecretWarning(secret string) *domain.ValidationError {
+	claims := jwt.MapClaims{}
+	if _, _, err := jwt.NewParser().ParseUnverified(secret, claims); err != nil {
+		return nil
+	}
+	exp, err := claims.GetExpirationTime()
+	if err != nil || exp == nil {
+		return nil
+	}
+	path := "auth.oauth.apple.client_secret"
+	switch left := time.Until(exp.Time); {
+	case left < 0:
+		return &domain.ValidationError{Path: path, Message: "expired; Apple sign-in fails with invalid_client until you generate a new secret", Suggestion: "Apple secrets last 6 months at most"}
+	case left < 30*24*time.Hour:
+		return &domain.ValidationError{Path: path, Message: "expires within 30 days; Apple sign-in will fail after that", Suggestion: "Generate a new secret before it expires"}
 	}
 	return nil
 }

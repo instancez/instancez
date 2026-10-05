@@ -4,11 +4,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"strings"
+	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"strings"
-	"testing"
 )
 
 func TestValidateYAML_ValidConfigReturnsNil(t *testing.T) {
@@ -129,16 +129,6 @@ func appleYAML(secret string) []byte {
 	return []byte("version: 1\nproject:\n  name: demo\nauth:\n  oauth:\n    apple:\n      client_id: com.app.web\n      client_secret: " + secret + "\n")
 }
 
-func appleSecretProblems(probs []Problem) []Problem {
-	var out []Problem
-	for _, p := range probs {
-		if p.Path == "auth.oauth.apple.client_secret" {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
 func TestValidateYAML_AppleSecret(t *testing.T) {
 	signed := func(exp time.Time) string {
 		key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -156,14 +146,28 @@ func TestValidateYAML_AppleSecret(t *testing.T) {
 		{"unset env var", "${INSTANCEZ_ENV_APPLE_CLIENT_SECRET_UNSET}", false},
 		{"set valid env var", "${APPLE_SET}", false},
 		{"garbage", "abc", true},
-		{"expired", signed(time.Now().Add(-time.Hour)), true},
+		{"expired only warns", signed(time.Now().Add(-time.Hour)), false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := appleSecretProblems(ValidateYAML(appleYAML(tc.secret)))
+			var got []Problem
+			for _, p := range ValidateYAML(appleYAML(tc.secret)) {
+				if p.Path == "auth.oauth.apple.client_secret" {
+					got = append(got, p)
+				}
+			}
 			if (len(got) > 0) != tc.wantErr {
 				t.Fatalf("wantErr=%v, got %+v", tc.wantErr, got)
 			}
 		})
+	}
+}
+
+func TestWarningsYAML_ExpiredAppleSecret(t *testing.T) {
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	s, _ := jwt.NewWithClaims(jwt.SigningMethodES256, jwt.MapClaims{"exp": time.Now().Add(-time.Hour).Unix()}).SignedString(key)
+	ws := WarningsYAML(appleYAML(s))
+	if len(ws) != 1 || ws[0].Path != "auth.oauth.apple.client_secret" || !strings.Contains(ws[0].Message, "expired") {
+		t.Fatalf("want one expired warning, got %+v", ws)
 	}
 }

@@ -4,12 +4,12 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"time"
-
-	"github.com/golang-jwt/jwt/v5"
 	"os"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/instancez/instancez/internal/domain"
 )
@@ -1638,7 +1638,7 @@ func TestValidateAppleSecret(t *testing.T) {
 		wantMsg string
 	}{
 		{"valid future exp", appleJWT(t, future), ""},
-		{"expired", appleJWT(t, past), "expired"},
+		{"expired is not a validation error", appleJWT(t, past), ""},
 		{"not a jwt", "abc", "must be a JWT"},
 		{"unexpanded env ref", "${INSTANCEZ_ENV_APPLE_SECRET}", ""},
 		{"empty left to required check", "", ""},
@@ -1679,4 +1679,52 @@ func TestValidate_AppleSecretOnlyCheckedForApple(t *testing.T) {
 			t.Fatalf("%s: error present = %v, want %v", name, got, wantErr)
 		}
 	}
+}
+
+func TestWarnings_AppleSecretExpiry(t *testing.T) {
+	at := func(d time.Duration) string { return appleJWT(t, jwt.MapClaims{"exp": time.Now().Add(d).Unix()}) }
+	cases := []struct {
+		name, secret, want string
+	}{
+		{"expired", at(-time.Hour), "expired"},
+		{"within 30 days", at(10 * 24 * time.Hour), "expires within 30 days"},
+		{"far future", at(90 * 24 * time.Hour), ""},
+		{"no exp claim", appleJWT(t, jwt.MapClaims{"iss": "team"}), ""},
+		{"placeholder", "${INSTANCEZ_ENV_APPLE_SECRET}", ""},
+		{"not a jwt", "abc", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validBaseConfig()
+			cfg.Auth = &domain.Auth{OAuth: map[string]*domain.OAuthProvider{"apple": {ClientID: "id", ClientSecret: tc.secret}}}
+			if tc.want != "" {
+				if errs := Validate(cfg); errs != nil && tc.name != "not a jwt" {
+					t.Fatalf("expiry must not fail Validate, got %v", errs)
+				}
+			}
+			var got []*domain.ValidationError
+			for _, w := range Warnings(cfg) {
+				if w.Path == "auth.oauth.apple.client_secret" {
+					got = append(got, w)
+				}
+			}
+			if tc.want == "" {
+				if len(got) != 0 {
+					t.Fatalf("want no warning, got %v", got)
+				}
+				return
+			}
+			if len(got) != 1 || !strings.Contains(got[0].Message, tc.want) {
+				t.Fatalf("want warning containing %q, got %v", tc.want, got)
+			}
+		})
+	}
+}
+
+func TestWarnings_NoAuthOrApple(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Auth = &domain.Auth{OAuth: map[string]*domain.OAuthProvider{"apple": nil}}
+	Warnings(cfg)
+	cfg.Auth = nil
+	Warnings(cfg)
 }
