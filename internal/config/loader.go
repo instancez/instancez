@@ -113,6 +113,9 @@ func ParseBytesRaw(data []byte, origin string) (*domain.Config, error) {
 	return &cfg, nil
 }
 
+// unresolvedEnvPlaceholder stands in for a missing env var in lenient parsing.
+const unresolvedEnvPlaceholder = "placeholder"
+
 // interpolateEnvVarsLenient resolves ${VAR} from the environment, falls back to
 // ${VAR:-default}, and substitutes a placeholder for anything still missing so the
 // YAML can be parsed and structurally validated.
@@ -127,7 +130,7 @@ func interpolateEnvVarsLenient(input string) string {
 		if hasDefault {
 			return groups[2]
 		}
-		return "placeholder" // missing var: keep parse/validate unblocked
+		return unresolvedEnvPlaceholder // missing var: keep parse/validate unblocked
 	})
 }
 

@@ -450,7 +450,7 @@ func validateAuth(auth *domain.Auth) domain.ValidationErrors {
 
 func validateAppleSecret(secret string) *domain.ValidationError {
 	const path = "auth.oauth.apple.client_secret"
-	if secret == "" || strings.Contains(secret, "${") {
+	if secret == "" || secret == unresolvedEnvPlaceholder || strings.Contains(secret, "${") {
 		return nil
 	}
 	claims := jwt.MapClaims{}
