@@ -75,14 +75,14 @@ func rulePolicies(c *ctx) {
 				continue
 			}
 			at := []any{"tables", name, "rls", i}
-			openWrite(c, p, at, label)
+			openWrite(c, "policy-open-write", p, at, label)
 			openRead(c, p, at, label, t)
 			noIdentityWrite(c, p, at, label, t)
 		}
 	}
 }
 
-func openWrite(c *ctx, p domain.RLSPolicy, at []any, label string) {
+func openWrite(c *ctx, rule string, p domain.RLSPolicy, at []any, label string) {
 	for _, op := range opsOf(p, writeOps...) {
 		usesUsing, usesCheck := op != "insert", op != "delete"
 		for _, f := range []struct {
@@ -90,7 +90,7 @@ func openWrite(c *ctx, p domain.RLSPolicy, at []any, label string) {
 			used       bool
 		}{{"using", p.Using, usesUsing}, {"with_check", p.WithCheck, usesCheck}} {
 			if f.used && isLiteralTrue(f.expr) {
-				c.add("policy-open-write", Critical, append(slices.Clone(at), f.name),
+				c.add(rule, Critical, append(slices.Clone(at), f.name),
 					"Anyone can change rows",
 					fmt.Sprintf("This policy lets any caller, signed in or not, %s rows in %s.", op, label),
 					"Scope it to the caller, for example auth.uid() = user_id.")
