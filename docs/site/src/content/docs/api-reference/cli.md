@@ -158,6 +158,8 @@ tables:
 }
 ```
 
+The running engine serves the same report at `GET /_admin/vet` (secret key required). It returns `400 invalid_config` when the config does not parse.
+
 Run it in CI to block a merge:
 
 ```yaml

@@ -8,7 +8,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Added
 
-- `inz vet` lints `instancez.yaml` for security problems (open or missing RLS, hardcoded secrets, unsafe auth and CORS settings). It exits 1 at `--fail-on` severity (default `high`), prints JSON with `--json`, and honours `# inz-vet-ignore: <rule>` comments. `configvalidate.VetYAML` exposes it to Go callers.
+- `inz vet` lints `instancez.yaml` for security problems (open or missing RLS, hardcoded secrets, unsafe auth and CORS settings). It exits 1 at `--fail-on` severity (default `high`), prints JSON with `--json`, and honours `# inz-vet-ignore: <rule>` comments. `configvalidate.VetYAML` exposes it to Go callers. The admin API serves the same report at `GET /_admin/vet`.
 - `indexes[].method` (`btree` default, `hash`, `gin`, `gist`, `brin`, `spgist`); changing it rebuilds the index. For example, `gin` on a `tsvector` column enables full-text search.
 - Field options `auto_updated_at: true` (timestamp fields; sets the column to `now()` on every update) and `immutable: true` (updates that change the column fail with 400, for every role including the secret key). Both run in one engine-managed `BEFORE UPDATE` trigger per table, dropped when the options are removed.
 
