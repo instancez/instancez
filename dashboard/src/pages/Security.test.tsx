@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { ChakraProvider, createSystem, defaultConfig } from "@chakra-ui/react";
+import { ColorModeProvider } from "../components/color-mode";
 import { renderWithChakra } from "../test/helpers";
 import { SecurityPage } from "./Security";
 import { BackendProvider } from "../console/BackendContext";
@@ -12,10 +14,11 @@ const f = (over: Partial<VetFinding>): VetFinding => ({
   title: "RLS disabled", message: "Anyone can read this table.", fix: "Enable RLS.", ...over,
 });
 
-const report = (findings: VetFinding[]): VetReport => ({
-  findings,
-  counts: { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
-});
+const report = (findings: VetFinding[]): VetReport => {
+  const counts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+  for (const x of findings) if (x.severity in counts) counts[x.severity]++;
+  return { findings, counts };
+};
 
 function renderPage(getVetReport: ConsoleBackend["getVetReport"]) {
   const backend = { capabilities: fullCapabilities(), getVetReport } as unknown as ConsoleBackend;
@@ -94,18 +97,65 @@ describe("SecurityPage", () => {
     expect(screen.getByRole("button", { name: "info 1" })).toBeInTheDocument();
   });
 
-  it("ignores a stale response after a re-scan", async () => {
-    const user = userEvent.setup();
+  it("ignores a stale response after the backend changes", async () => {
     let resolveFirst!: (r: VetReport) => void;
-    const get = vi.fn()
-      .mockImplementationOnce(() => new Promise<VetReport>((r) => { resolveFirst = r; }))
-      .mockResolvedValueOnce(report([f({ title: "Fresh" })]));
-    renderPage(get);
-    await user.click(screen.getByRole("button", { name: /Re-scan/ }));
+    const mk = (g: ConsoleBackend["getVetReport"]) => ({ capabilities: fullCapabilities(), getVetReport: g }) as unknown as ConsoleBackend;
+    const first = mk(() => new Promise<VetReport>((r) => { resolveFirst = r; }));
+    const second = mk(async () => report([f({ title: "Fresh" })]));
+    const { rerender } = renderWithChakra(<BackendProvider backend={first}><SecurityPage /></BackendProvider>);
+    rerender(
+      <ChakraProvider value={createSystem(defaultConfig)}><ColorModeProvider>
+        <BackendProvider backend={second}><SecurityPage /></BackendProvider>
+      </ColorModeProvider></ChakraProvider>,
+    );
     expect(await screen.findByText("Fresh")).toBeInTheDocument();
     await act(async () => { resolveFirst(report([f({ title: "Stale" })])); });
     expect(screen.queryByText("Stale")).not.toBeInTheDocument();
     expect(screen.getByText("Fresh")).toBeInTheDocument();
+  });
+
+  it("disables Re-scan with aria-busy while a scan runs", async () => {
+    let resolve!: (r: VetReport) => void;
+    renderPage(() => new Promise<VetReport>((r) => { resolve = r; }));
+    const btn = screen.getByRole("button", { name: /Re-scan/ });
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute("aria-busy", "true");
+    await act(async () => { resolve(report([])); });
+    expect(btn).toBeEnabled();
+    expect(btn).toHaveAttribute("aria-busy", "false");
+  });
+
+  it("drops the stale count when a re-scan errors", async () => {
+    const user = userEvent.setup();
+    const get = vi.fn().mockResolvedValueOnce(report(sample)).mockRejectedValueOnce(new Error("boom"));
+    renderPage(get);
+    expect(await screen.findByText("4 findings")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Re-scan/ }));
+    expect(await screen.findByText("boom")).toBeInTheDocument();
+    expect(screen.queryByText("4 findings")).not.toBeInTheDocument();
+  });
+
+  it("takes tile counts from report.counts, missing keys as 0", async () => {
+    renderPage(async () => ({ findings: [f({ severity: "high" })], counts: { high: 5 } as never }));
+    expect(await screen.findByRole("button", { name: "high 5" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "low 0" })).toBeInTheDocument();
+  });
+
+  it("resets the filter when its severity disappears after a re-scan", async () => {
+    const user = userEvent.setup();
+    const get = vi.fn()
+      .mockResolvedValueOnce(report(sample))
+      .mockResolvedValueOnce(report([f({ rule: "r-crit", severity: "critical", title: "Crit one" })]))
+      .mockResolvedValueOnce(report(sample));
+    renderPage(get);
+    await screen.findByText("Crit one");
+    await user.click(screen.getByRole("button", { name: "high 2" }));
+    await user.click(screen.getByRole("button", { name: /Re-scan/ }));
+    await waitFor(() => { expect(screen.getByRole("button", { name: "high 0" })).toBeInTheDocument(); });
+    await user.click(screen.getByRole("button", { name: /Re-scan/ }));
+    expect(await screen.findByText("High one")).toBeInTheDocument();
+    expect(screen.getByText("Crit one")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "high 2" })).toHaveAttribute("aria-pressed", "false");
   });
 
   it("does not set state after unmount", async () => {
@@ -134,15 +184,16 @@ describe("SecurityPage", () => {
     expect(screen.getByText("# inz-vet-ignore: rls-disabled")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Copy ignore comment/ }));
     expect(writeText).toHaveBeenCalledWith("# inz-vet-ignore: rls-disabled");
-    expect(await screen.findByText("Copied")).toBeInTheDocument();
   });
 
-  it("reports a failed copy when the clipboard rejects", async () => {
+  it("survives a rejected clipboard write", async () => {
     const user = userEvent.setup();
-    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText: vi.fn().mockRejectedValue(new Error("denied")) } });
+    const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
     renderPage(async () => report([f({})]));
     await user.click(await screen.findByText("Ignore"));
     await user.click(screen.getByRole("button", { name: /Copy ignore comment/ }));
-    await waitFor(() => { expect(screen.getByText("Copy failed")).toBeInTheDocument(); });
+    expect(writeText).toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /Copy ignore comment/ })).toBeInTheDocument();
   });
 });

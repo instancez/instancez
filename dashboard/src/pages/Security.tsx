@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, Copy, Lightbulb, RefreshCw, ShieldAlert, ShieldCheck } from "lucide-react";
+import { Lightbulb, RefreshCw, ShieldAlert, ShieldCheck } from "lucide-react";
 import { Box, chakra, Code, Flex, HStack, Text, VStack } from "@chakra-ui/react";
+import { CopyButton } from "../components/ApiKeys";
 import { Card } from "../components/Card";
 import { EmptyState } from "../components/EmptyState";
 import { ListSkeleton } from "../components/Skeletons";
 import { Button, Disclosure } from "../components/ui";
 import { useBackend } from "../console/BackendContext";
-import { copyText } from "../lib/copyText";
 import type { VetFinding, VetReport, VetSeverity } from "../lib/types";
 
 const SEVERITIES: VetSeverity[] = ["critical", "high", "medium", "low", "info"];
@@ -48,19 +48,11 @@ function SeverityBadge({ severity }: { severity: string }) {
 
 function IgnoreSnippet({ rule }: { rule: string }) {
   const snippet = `# inz-vet-ignore: ${rule}`;
-  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
-  const copy = async () => {
-    setState((await copyText(snippet)) ? "copied" : "failed");
-    setTimeout(() => { setState("idle"); }, 1500);
-  };
   return (
     <Disclosure label="Ignore">
       <HStack gap="2" flexWrap="wrap">
         <Code fontSize="xs" px="2" py="1" borderRadius="md" bg="bg.muted" color="fg" wordBreak="break-all">{snippet}</Code>
-        <Button variant="outline" size="xs" onClick={() => void copy()} aria-label={`Copy ignore comment for ${rule}`}>
-          {state === "copied" ? <Check size={12} /> : <Copy size={12} />}
-          {state === "copied" ? "Copied" : state === "failed" ? "Copy failed" : "Copy"}
-        </Button>
+        <CopyButton value={snippet} label={`Copy ignore comment for ${rule}`} />
       </HStack>
     </Disclosure>
   );
@@ -71,7 +63,7 @@ function FindingCard({ finding }: { finding: VetFinding }) {
   return (
     <Card>
       <Flex gap="4" align="stretch">
-        <Box w="1" flexShrink="0" borderRadius="full" bg={`${p}.solid`} alignSelf="stretch" />
+        <Box aria-hidden w="1" flexShrink="0" borderRadius="full" bg={`${p}.solid`} alignSelf="stretch" />
         <VStack align="stretch" gap="3" flex="1" minW="0">
           <HStack gap="2" flexWrap="wrap">
             <SeverityBadge severity={finding.severity} />
@@ -131,14 +123,16 @@ export function SecurityPage() {
   const [report, setReport] = useState<VetReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<VetSeverity | null>(null);
+  const [scanning, setScanning] = useState(true);
   const seq = useRef(0);
 
   const scan = useCallback(() => {
     const id = ++seq.current;
     setError(null);
+    setScanning(true);
     backend.getVetReport().then(
-      (r) => { if (id === seq.current) { setReport(r); } },
-      (e: unknown) => { if (id === seq.current) { setError(e instanceof Error ? e.message : String(e)); } },
+      (r) => { if (id === seq.current) { setReport(r); setScanning(false); } },
+      (e: unknown) => { if (id === seq.current) { setError(e instanceof Error ? e.message : String(e)); setScanning(false); } },
     );
   }, [backend]);
 
@@ -148,16 +142,20 @@ export function SecurityPage() {
   }, [scan]);
 
   const findings = report?.findings ?? [];
-  const counts = Object.fromEntries(SEVERITIES.map((s) => [s, 0])) as Record<VetSeverity, number>;
-  for (const f of findings) counts[bucketOf(f.severity)]++;
+  const counts = Object.fromEntries(SEVERITIES.map((s) => [s, report?.counts[s] ?? 0])) as Record<VetSeverity, number>;
+  for (const f of findings) if (!(f.severity in counts)) counts.info++;
   const active = filter && counts[filter] > 0 ? filter : null;
+
+  useEffect(() => {
+    if (filter && !active) setFilter(null);
+  }, [filter, active]);
 
   const toolbar = (
     <HStack justify="space-between" gap="4" pb="6" flexWrap="wrap">
       <Text fontSize="sm" color="fg.muted">
-        {report ? `${findings.length} finding${findings.length !== 1 ? "s" : ""}` : "Scanning instancez.yaml"}
+        {report && !error ? `${findings.length} finding${findings.length !== 1 ? "s" : ""}` : "Scanning instancez.yaml"}
       </Text>
-      <Button variant="outline" size="sm" onClick={scan}><RefreshCw size={14} /> Re-scan</Button>
+      <Button variant="outline" size="sm" onClick={scan} disabled={scanning} aria-busy={scanning}><RefreshCw size={14} /> Re-scan</Button>
     </HStack>
   );
 

@@ -160,15 +160,15 @@ tables:
 
 The running engine serves the same report at `GET /_admin/vet` (secret key required). It returns `400 invalid_config` when the config does not parse.
 
-### Dashboard
-
-The dashboard's Security page runs the same scan. It lists findings by severity, filterable by severity tile, with the fix and an `# inz-vet-ignore: <rule>` comment you can copy. Use Re-scan after editing the config.
-
 Run it in CI to block a merge:
 
 ```yaml
 - run: inz vet --fail-on medium
 ```
+
+### Dashboard
+
+The dashboard's Security page runs the same scan. It lists findings by severity, filterable by severity tile, with the fix and an `# inz-vet-ignore: <rule>` comment you can copy. Use Re-scan after editing the config.
 
 ### Rules
 
