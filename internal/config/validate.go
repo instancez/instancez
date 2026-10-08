@@ -234,7 +234,7 @@ func sqlBodyLead(body string) (lead, next string) {
 		case strings.IndexByte(" \t\n\r\f\v;", body[i]) >= 0:
 			i++
 		case strings.HasPrefix(body[i:], "--"):
-			j := strings.IndexByte(body[i:], '\n')
+			j := strings.IndexAny(body[i:], "\r\n")
 			if j < 0 {
 				return "", ""
 			}
@@ -265,7 +265,7 @@ func sqlBodyLead(body string) (lead, next string) {
 			if word == "" {
 				return "", ""
 			}
-			next, _ = sqlWord(strings.TrimLeft(rest, " \t\n\r\f\v"))
+			next, _ = sqlBodyLead(rest)
 			return word, next
 		}
 	}
@@ -278,7 +278,7 @@ func sqlWord(s string) (word, rest string) {
 	for i < len(s) && s[i]|0x20 >= 'a' && s[i]|0x20 <= 'z' {
 		i++
 	}
-	if i < len(s) && (s[i] == '_' || s[i] >= '0' && s[i] <= '9' || s[i] >= 0x80) {
+	if i < len(s) && (s[i] == '_' || s[i] == '$' || s[i] >= '0' && s[i] <= '9' || s[i] >= 0x80) {
 		return "", s
 	}
 	return strings.ToLower(s[:i]), s[i:]
@@ -294,7 +294,7 @@ var sqlBodyTxControl = map[string]bool{"abort": true, "begin": true, "commit": t
 var sqlBodyCommands = map[string]bool{}
 
 func init() {
-	for _, c := range strings.Fields(`alter analyze call checkpoint close cluster comment copy create deallocate
+	for _, c := range strings.Fields(`alter analyse analyze call checkpoint close cluster comment copy create deallocate
 		declare delete discard do drop execute explain fetch grant import insert listen load lock merge move notify
 		prepare reassign refresh reindex reset revoke security select set show table truncate unlisten update vacuum
 		values with`) {

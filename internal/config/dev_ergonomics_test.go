@@ -113,12 +113,12 @@ func TestValidate_SQLRPCBody_AcceptsEveryCommandPostgresAllows(t *testing.T) {
 		"SHOW work_mem", "EXPLAIN SELECT 1", "DO $$ BEGIN NULL; END $$", "NOTIFY ch", "LISTEN ch", "UNLISTEN ch",
 		"LOCK TABLE t IN ACCESS SHARE MODE", "TRUNCATE t", "CREATE TEMP TABLE x(a int)", "ALTER TABLE t ADD COLUMN c int",
 		"DROP TABLE IF EXISTS x", "GRANT SELECT ON t TO anon", "REVOKE SELECT ON t FROM anon", "COMMENT ON TABLE t IS 'x'",
-		"REFRESH MATERIALIZED VIEW mv", "REINDEX TABLE t", "CLUSTER t", "ANALYZE t", "VACUUM t", "DISCARD TEMP",
+		"ANALYSE t", "REFRESH MATERIALIZED VIEW mv", "REINDEX TABLE t", "CLUSTER t", "ANALYZE t", "VACUUM t", "DISCARD TEMP",
 		"CHECKPOINT", "COPY t TO STDOUT", "DECLARE c CURSOR FOR SELECT 1", "FETCH 1 FROM c", "MOVE 1 IN c", "CLOSE c",
 		"PREPARE p AS SELECT 1", "EXECUTE p", "DEALLOCATE p", "LOAD 'x'", "REASSIGN OWNED BY a TO b",
 		"SECURITY LABEL ON TABLE t IS 'x'", "IMPORT FOREIGN SCHEMA s FROM SERVER v INTO public",
 		"-- note\nSELECT 1", "  -- note\n WITH x AS (SELECT 1) SELECT * FROM x", "/* c */ (SELECT 1)", "/* a */ /* b */ SELECT 1",
-		"-- a\n-- b\nSELECT 1", "-- a\r\nSELECT 1", "/* multi\nline */\nSELECT 1", "; SELECT 1", ";;SELECT 1",
+		"-- a\n-- b\nSELECT 1", "-- a\r\nSELECT 1", "-- c\rSELECT 1", "-- c\r\n-- d\rSELECT 1", "/* multi\nline */\nSELECT 1", "; SELECT 1", ";;SELECT 1",
 		"SELECT 'begin'", "SELECT 1; COMMIT", "SELECT 1 -- BEGIN", "SELECT 1 /* END */", "/* a /* nested */ b */ SELECT 1",
 		"SELECT 1; BEGIN", "-- c\n/* d */ -- e\nSELECT 1", "PREPARE p AS SELECT 1",
 	}
@@ -137,7 +137,7 @@ func TestValidate_SQLRPCBody_RejectsTransactionControl(t *testing.T) {
 		"ROLLBACK": "ROLLBACK", "ROLLBACK TO SAVEPOINT s": "ROLLBACK", "ROLLBACK PREPARED 'x'": "ROLLBACK", "ABORT": "ABORT",
 		"START TRANSACTION": "START", "SAVEPOINT s": "SAVEPOINT", "RELEASE SAVEPOINT s": "RELEASE", "RELEASE s": "RELEASE",
 		"PREPARE TRANSACTION 'x'": "PREPARE TRANSACTION", "prepare \n\t transaction 'x'": "PREPARE TRANSACTION",
-		"-- note\nBEGIN": "BEGIN", "/* c */ COMMIT": "COMMIT", "/* a */ -- b\n ROLLBACK": "ROLLBACK", "/* a /* nested */ b */ BEGIN": "BEGIN", "BEGIN\r\n": "BEGIN", "; BEGIN": "BEGIN",
+		"-- note\nBEGIN": "BEGIN", "/* c */ COMMIT": "COMMIT", "/* a */ -- b\n ROLLBACK": "ROLLBACK", "/* a /* nested */ b */ BEGIN": "BEGIN", "PREPARE /* x */ TRANSACTION 'x'": "PREPARE TRANSACTION", "PREPARE -- x\n TRANSACTION 'x'": "PREPARE TRANSACTION", "-- c\rBEGIN": "BEGIN", "BEGIN\r\n": "BEGIN", "; BEGIN": "BEGIN",
 		"\n\t  BEGIN": "BEGIN",
 	}
 	for body, stmt := range cases {
@@ -161,7 +161,7 @@ func TestValidate_SQLRPCBody_RejectsBareExpressionsAndNonCommands(t *testing.T) 
 		"CASE WHEN true THEN 1 ELSE 2 END", "coalesce(1, 2)", "  \n -- c\n 1 + 1", "/* c */ now()", "1", "'text'", "now()",
 		"RETURN 1", "PERFORM 1", "x := 1", "IF true THEN NULL; END IF", "FOR r IN SELECT 1 LOOP END LOOP",
 		"beginning", "begin_x", "selection", "selected", "with_x", "endpoint", "commit_log", "startup",
-		"/* unterminated SELECT 1", "/* a /* nested */ SELECT 1", "-- only a comment", "-- c\n-- d", "prepare_x", "begin1", "café", "éselect 1", "/* only a comment */", ";", ";;", "   \n\t ", "$$SELECT 1$$", "\"select\" 1",
+		"/* unterminated SELECT 1", "/* a /* nested */ SELECT 1", "-- only a comment", "-- c\n-- d", "prepare_x", "begin1", "select$1", "begin$x", "\x00SELECT 1", "café", "éselect 1", "/* only a comment */", ";", ";;", "   \n\t ", "$$SELECT 1$$", "\"select\" 1",
 	}
 	for _, b := range bad {
 		errs := sqlBodyErrors(b, "sql")
