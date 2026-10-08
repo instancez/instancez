@@ -125,10 +125,14 @@ func TestRPCSeverities(t *testing.T) {
 		name, src, rule string
 		want            Severity
 	}{
-		{"no auth plain", rpcFn(pin, "delete from t;"), "rpc-definer-no-auth", High},
-		{"no auth refs uid", rpcFn(pin, "delete from t where id = AUTH.UID();"), "rpc-definer-no-auth", Medium},
-		{"no auth refs jwt", rpcFn(pin, "select auth.jwt();"), "rpc-definer-no-auth", Medium},
-		{"no auth refs role", rpcFn(pin, "select auth.role();"), "rpc-definer-no-auth", Medium},
+		{"write no ident", rpcFn(pin, "delete from t;"), "rpc-definer-no-auth", High},
+		{"write dynamic no ident", rpcFn(pin, "begin execute 'x'; end;"), "rpc-definer-no-auth", High},
+		{"write with uid", rpcFn(pin, "delete from t where id = AUTH.UID();"), "rpc-definer-no-auth", Medium},
+		{"read no ident", rpcFn(pin, "select 1;"), "rpc-definer-no-auth", Medium},
+		{"read created_at not a write", rpcFn(pin, "select created_at from t;"), "rpc-definer-no-auth", Medium},
+		{"read refs jwt", rpcFn(pin, "select auth.jwt();"), "rpc-definer-no-auth", Low},
+		{"read refs role", rpcFn(pin, "select auth.role();"), "rpc-definer-no-auth", Low},
+		{"read refs email", rpcFn(pin, "select auth.email();"), "rpc-definer-no-auth", Low},
 		{"unpinned", rpcFn("    security: DEFINER\n", "select 1;"), "rpc-definer-search-path", High},
 		{"dynamic invoker", rpcFn("", "begin execute 'a' || b; end;"), "rpc-dynamic-sql", Medium},
 		{"dynamic definer", rpcFn(pin, "begin execute 'a' || b; end;"), "rpc-dynamic-sql", High},
@@ -195,5 +199,11 @@ func TestFunctionRules(t *testing.T) {
 				t.Errorf("rules = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestFunctionSecretsLow(t *testing.T) {
+	if s, ok := sevOf(t, fnSrc("", "    env:\n      A_TOKEN: ${X}\n"), "function-public-secrets"); !ok || s != Low {
+		t.Errorf("function-public-secrets = %v, %v; want low", s, ok)
 	}
 }

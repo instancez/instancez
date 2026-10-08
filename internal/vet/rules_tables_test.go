@@ -198,3 +198,33 @@ func TestRLSDisabledMatchesWarnings(t *testing.T) {
 		}
 	}
 }
+
+func TestIdentityRPCPolicies(t *testing.T) {
+	rpcs := func(body string) string {
+		return "rpc:\n  is_admin:\n    returns: {type: boolean}\n    language: sql\n    body: |\n      " + body + "\n"
+	}
+	const on = "    rls_enabled: true\n"
+	idRPC := rpcs("select exists (select 1 from profiles where id = auth.uid() and role = 'admin')")
+	cases := []struct {
+		name, expr, rpcs string
+		want             []string
+	}{
+		{"qualified", "public.is_admin()", idRPC, nil},
+		{"bare", "is_admin()", idRPC, nil},
+		{"upper spaced", "PUBLIC . IS_ADMIN ()", idRPC, nil},
+		{"combined", "status = 'x' and is_admin()", idRPC, nil},
+		{"exists auth.uid", "exists (select 1 from m where m.user_id = auth.uid())", "", nil},
+		{"rpc without identity", "public.is_admin()", rpcs("select true"), []string{"policy-no-identity-write"}},
+		{"other schema same name", "other.is_admin()", idRPC, []string{"policy-no-identity-write"}},
+		{"name substring", "not_is_admin()", idRPC, []string{"policy-no-identity-write"}},
+		{"undeclared rpc", "my_role() = 'a'", idRPC, []string{"policy-no-identity-write"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := tbl(on, idField, pol("update", tc.expr, "", "")) + tc.rpcs
+			if got := vetIDs(t, src); !slices.Equal(got, tc.want) {
+				t.Errorf("rules = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

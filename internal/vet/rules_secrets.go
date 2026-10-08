@@ -57,9 +57,9 @@ func ruleFunctionSecrets(c *ctx) {
 	for _, name := range slices.Sorted(maps.Keys(c.cfg.Functions)) {
 		fn := c.cfg.Functions[name]
 		if keys := secretEnvKeys(fn.Env, false); !fn.AuthRequired && len(keys) > 0 {
-			c.add("function-public-secrets", Medium, []any{"functions", name, "auth_required"},
+			c.add("function-public-secrets", Low, []any{"functions", name, "auth_required"},
 				"Public function can use secrets",
-				fmt.Sprintf("Function %s can be called without signing in and has secret-looking env %s in scope.", name, keys[0]),
+				fmt.Sprintf("Function %s can be called without signing in, so anyone can trigger code that uses the secret-looking env %s. They cannot read it.", name, keys[0]),
 				"Set auth_required: true, or make sure the function never exposes what that value unlocks.")
 		}
 	}

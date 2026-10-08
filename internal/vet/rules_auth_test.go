@@ -188,3 +188,22 @@ func TestServerRules(t *testing.T) {
 		t.Errorf("limit sev = %v", got)
 	}
 }
+
+func TestSignupUnverifiedSeverity(t *testing.T) {
+	mail := "providers:\n  email:\n    provider: resend\n    api_key: ${INSTANCEZ_ENV_K:-x}\n    from: a@b.c\n"
+	for name, tc := range map[string]struct {
+		src  string
+		want Severity
+	}{
+		"no provider":       {"tables: {}\n", Low},
+		"with provider":     {mail, Medium},
+		"provider verified": {mail + "auth:\n  email:\n    verify_email: true\n", 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, ok := sevOf(t, tc.src, "signup-unverified-email")
+			if tc.want == 0 && ok || tc.want != 0 && (!ok || got != tc.want) {
+				t.Errorf("got %v, %v; want %v", got, ok, tc.want)
+			}
+		})
+	}
+}

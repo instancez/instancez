@@ -32,6 +32,12 @@ func ruleSignupUnverified(c *ctx) {
 	if a == nil || !a.SignupAllowed() || (a.Email != nil && a.Email.VerifyEmail) {
 		return
 	}
+	if c.cfg.Providers.Email == nil {
+		c.add("signup-unverified-email", Low, []any{"auth", "email", "verify_email"}, "Sign-up does not verify email",
+			"Anyone can sign up with an email address they do not own, and no email provider is configured to send verification mail.",
+			"Configure providers.email, then set auth.email.verify_email: true, or set auth.allow_signup: false.")
+		return
+	}
 	c.add("signup-unverified-email", Medium, []any{"auth", "email", "verify_email"}, "Sign-up does not verify email",
 		"Anyone can sign up with an email address they do not own.",
 		"Set auth.email.verify_email: true, or set auth.allow_signup: false.")

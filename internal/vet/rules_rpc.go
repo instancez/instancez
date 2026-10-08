@@ -11,7 +11,8 @@ import (
 )
 
 var (
-	bodyAuthRef = regexp.MustCompile(`(?i)auth\s*\.\s*(uid|jwt|role)\s*\(`)
+	bodyAuthRef = regexp.MustCompile(`(?i)auth\s*\.\s*(uid|jwt|email|role)\s*\(`)
+	bodyWrites  = regexp.MustCompile(`(?i)\b(insert|update|delete|truncate|drop|alter|create|grant|execute)\b`)
 	dynamicSQL  = regexp.MustCompile(`(?is)\bexecute\b[^;]*(\|\||\bformat\s*\([^;]*%(\d+\$)?s)`)
 )
 
@@ -23,14 +24,12 @@ func ruleRPC(c *ctx) {
 		definer := isDefiner(fn)
 		if definer {
 			if !fn.AuthRequired {
-				sev := High
-				if bodyAuthRef.MatchString(fn.Body) {
-					sev = Medium
-				}
+				writes, ident := bodyWrites.MatchString(fn.Body), bodyAuthRef.MatchString(fn.Body)
+				sev := map[[2]bool]Severity{{true, false}: High, {true, true}: Medium, {false, false}: Medium, {false, true}: Low}[[2]bool{writes, ident}]
 				c.add("rpc-definer-no-auth", sev, []any{"rpc", name, "auth_required"},
 					"Public function runs with owner rights",
-					fmt.Sprintf("%s is security definer and callable without signing in, so anonymous callers get its owner's access and skip RLS. Found by a raw text scan of the body.", name),
-					"Set auth_required: true, or check auth.uid() inside the body.")
+					fmt.Sprintf("%s is security definer and callable without signing in, so anonymous callers run it with its owner's access: whatever it reads bypasses RLS, and whatever it writes is unchecked. Found by a raw text scan of the body.", name),
+					"Keep it public only if the data it returns is meant to be public; otherwise set auth_required: true.")
 			}
 			if _, pinned := fn.Set["search_path"]; !pinned {
 				c.add("rpc-definer-search-path", High, []any{"rpc", name, "set", "search_path"},

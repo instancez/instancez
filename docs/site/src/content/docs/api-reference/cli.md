@@ -178,18 +178,18 @@ The dashboard's Security page runs the same scan. It lists findings by severity,
 | `policy-open-write` | critical | An insert, update or delete policy whose `using` or `with_check` is always true. |
 | `policy-open-read` | low, high | A select policy whose `using` is always true. High when the table has sensitive columns. |
 | `policy-authed-read-sensitive` | medium | A select policy that only checks the caller is signed in, on a table with sensitive columns. |
-| `policy-no-identity-write` | medium, high | A write policy that never checks the caller's identity. High when the table has an owner column. |
+| `policy-no-identity-write` | medium, high | A write policy that never checks the caller's identity, directly or through a declared rpc that does. High when the table has an owner column. |
 | `bucket-open-write` | critical | A storage policy that lets any caller with a JWT (including anonymous sign-in users) write or delete. |
 | `bucket-open-read` | medium | A select policy on a non-public bucket whose `using` is always true, so any caller with a JWT can list and read every object. |
 | `bucket-no-rls` | medium, high | A bucket with no policies. High when other buckets have them. |
 | `bucket-public` | low | A bucket with `public: true`. |
-| `rpc-definer-no-auth` | medium, high | A `security: definer` function callable without sign-in. Medium when the body calls `auth.uid()`, `auth.jwt()` or `auth.role()`. |
+| `rpc-definer-no-auth` | low, medium, high | A `security: definer` function callable without sign-in, so its reads bypass RLS. High when the body writes (or runs `EXECUTE`) with no `auth.*` check, medium when it only reads or writes with a check, low when it only reads and checks `auth.uid()`, `auth.jwt()`, `auth.email()` or `auth.role()`. |
 | `rpc-definer-search-path` | high | A `security: definer` function with no pinned `search_path`. |
 | `rpc-dynamic-sql` | medium, high | A plpgsql `EXECUTE` on a string built with `\|\|` or `format(%s)`. High on definer functions. |
-| `function-public-secrets` | medium | A function with `auth_required: false` that has secret-looking env values. |
+| `function-public-secrets` | low | A function with `auth_required: false` that has secret-looking env values, so anyone can trigger its use (not read it). |
 | `hardcoded-secret` | high | A literal email `api_key`, storage keys, OAuth `client_secret`, or secret-looking function env value. |
 | `jwt-expiry-long` | medium, high | `auth.jwt_expiry` over 1 hour. High over 24 hours. |
-| `signup-unverified-email` | medium | Sign-up is open and `auth.email.verify_email` is off. |
+| `signup-unverified-email` | low, medium | Sign-up is open and `auth.email.verify_email` is off. Low when no `providers.email` is configured to send mail. |
 | `anonymous-signins` | low | `auth.allow_anonymous: true`. |
 | `redirect-insecure` | low, medium | An auth redirect URL that uses a wildcard or local http (low), or plain http or a `javascript:`, `data:` or `vbscript:` scheme (medium). |
 | `cors-wildcard` | low | `*` in `server.cors.origins`. |

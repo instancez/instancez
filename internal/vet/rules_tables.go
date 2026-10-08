@@ -3,6 +3,7 @@ package vet
 import (
 	"fmt"
 	"maps"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -135,7 +136,7 @@ func noIdentityWrite(c *ctx, p domain.RLSPolicy, at []any, label string, t domai
 		return
 	}
 	for _, e := range exprs {
-		if refsIdentity(e) || strings.Contains(squash(e), "service_role") {
+		if refsIdentity(e) || strings.Contains(squash(e), "service_role") || c.callsIdentityRPC(e) {
 			return
 		}
 	}
@@ -186,4 +187,18 @@ func ruleBuckets(c *ctx) {
 				"Keep it only for content that is meant to be public.")
 		}
 	}
+}
+
+// callsIdentityRPC reports whether expr calls a user-declared rpc whose body reads the caller's identity.
+func (c *ctx) callsIdentityRPC(expr string) bool {
+	for name, fn := range c.cfg.RPC {
+		if !bodyAuthRef.MatchString(fn.Body) {
+			continue
+		}
+		call := regexp.MustCompile(`(?i)(?:^|[^\w.])(?:public\s*\.\s*)?` + regexp.QuoteMeta(name) + `\s*\(`)
+		if call.MatchString(expr) {
+			return true
+		}
+	}
+	return false
 }
