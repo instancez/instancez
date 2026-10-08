@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -437,4 +438,24 @@ func TestRunInitPreservesProductionEnvExample(t *testing.T) {
 	if string(data) != customContent {
 		t.Errorf(".production.env.example was overwritten\n--- got ---\n%s--- want ---\n%s", data, customContent)
 	}
+}
+
+func TestRunInitNextStepsLeadWithEmbeddedPG(t *testing.T) {
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	orig := os.Stdout
+	os.Stdout = w
+	runErr := runInit(initOptions{name: "demo", dir: t.TempDir()})
+	os.Stdout = orig
+	w.Close()
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+	require.NoError(t, runErr)
+
+	got := string(out)
+	embedded := strings.Index(got, "inz dev --embedded-pg")
+	env := strings.Index(got, "cp .development.env.example")
+	assert.NotEqual(t, -1, embedded)
+	assert.NotEqual(t, -1, env)
+	assert.Less(t, embedded, env)
 }

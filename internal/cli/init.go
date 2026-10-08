@@ -157,8 +157,8 @@ func runInit(opts initOptions) error {
 	if dir != mustCwd() {
 		fmt.Printf("  cd %s\n", opts.dir)
 	}
-	fmt.Println("  cp .development.env.example .development.env   # set INSTANCEZ_DATABASE_URL")
-	fmt.Println("  inz dev")
+	fmt.Println("  inz dev --embedded-pg   # no Postgres install needed")
+	fmt.Println("  (own Postgres: cp .development.env.example .development.env, set INSTANCEZ_DATABASE_URL, run inz dev)")
 	return nil
 }
 
