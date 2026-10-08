@@ -7,6 +7,7 @@ package configvalidate
 import (
 	"github.com/instancez/instancez/internal/config"
 	"github.com/instancez/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/vet"
 	"gopkg.in/yaml.v3"
 )
 
@@ -93,4 +94,28 @@ func ValidateEnvNamespace(raw []byte) []Problem {
 		probs = append(probs, Problem{Path: ve.Path, Message: ve.Message, Suggestion: ve.Suggestion})
 	}
 	return probs
+}
+
+// VetFinding is one security finding from VetYAML.
+type VetFinding struct {
+	Rule     string `json:"rule"`
+	Severity string `json:"severity"`
+	Path     string `json:"path"`
+	Line     int    `json:"line"`
+	Title    string `json:"title"`
+	Message  string `json:"message"`
+	Fix      string `json:"fix"`
+}
+
+// VetYAML runs the `inz vet` security rules on config bytes; the error is a parse failure.
+func VetYAML(data []byte) ([]VetFinding, error) {
+	rep, err := vet.Run(data, vet.Options{})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]VetFinding, 0, len(rep.Findings))
+	for _, f := range rep.Findings {
+		out = append(out, VetFinding{f.Rule, f.Severity.String(), f.Path, f.Line, f.Title, f.Message, f.Fix})
+	}
+	return out, nil
 }

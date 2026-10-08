@@ -204,6 +204,8 @@ The Postgres role names default to the values in the table above, matching Supab
 
 The request pool logs in as the `authenticator` role, which is `NOINHERIT`. Without an explicit `SET LOCAL ROLE`, it carries no table privileges. Every request transaction starts by issuing `SET LOCAL ROLE` to the appropriate role, then runs the query, so the role is always correct for the lifetime of that transaction.
 
+Run `inz vet` to catch open policies and disabled RLS before you deploy. See [`inz vet`](/instancez/api-reference/cli/#inz-vet).
+
 ## What's next
 
 - [Auth](/instancez/build/auth/) — how users sign up and get JWTs

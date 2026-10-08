@@ -114,6 +114,81 @@ inz validate --project                # preview against instancez.yaml's linked 
 inz validate --project abc123         # preview against a specific project id
 ```
 
+## inz vet
+
+Lint `instancez.yaml` for security problems: open RLS policies, disabled RLS, hardcoded secrets, unsafe auth and CORS settings. It reads the file only, with no database or network, and does not interpolate `${...}` values.
+
+```
+inz vet [flags]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--config` | `instancez.yaml` | Local config file. Env: `INSTANCEZ_CONFIG`. |
+| `--json` | `false` | Print the report as JSON. Env: `INSTANCEZ_JSON`. |
+| `--fail-on` | `high` | Exit 1 when a finding is at this severity or above: `info`, `low`, `medium`, `high`, `critical`, or `none`. Env: `INSTANCEZ_FAIL_ON`. |
+| `--ignore` | — | Comma-separated rule ids to skip. Env: `INSTANCEZ_IGNORE`. |
+
+Exit codes: `0` when nothing reaches `--fail-on`, `1` when something does, or when the file cannot be read or parsed.
+
+To silence one finding, put a comment on the flagged line (or the line above it):
+
+```yaml
+tables:
+  posts:
+    rls_enabled: false # inz-vet-ignore: rls-disabled
+```
+
+`--json` prints every finding, even those below `--fail-on`:
+
+```json
+{
+  "findings": [
+    {
+      "rule": "rls-disabled",
+      "severity": "critical",
+      "path": "tables.posts.rls_enabled",
+      "line": 4,
+      "title": "Row-level security is off",
+      "message": "Anyone with the public key can read and write every row in posts.",
+      "fix": "Set rls_enabled: true and add policies, unless the table is meant to be public."
+    }
+  ],
+  "counts": { "info": 0, "low": 0, "medium": 0, "high": 0, "critical": 1 }
+}
+```
+
+Run it in CI to block a merge:
+
+```yaml
+- run: inz vet --fail-on medium
+```
+
+### Rules
+
+| Rule | Severity | Flags |
+|------|----------|-------|
+| `rls-disabled` | critical | A table with `rls_enabled: false`. |
+| `policy-open-write` | critical | An insert, update or delete policy whose `using` or `with_check` is always true. |
+| `policy-open-read` | low, high | A select policy whose `using` is always true. High when the table has sensitive columns. |
+| `policy-authed-read-sensitive` | medium | A select policy that only checks the caller is signed in, on a table with sensitive columns. |
+| `policy-no-identity-write` | medium, high | A write policy that never checks the caller's identity. High when the table has an owner column. |
+| `bucket-open-write` | critical | A storage policy that lets anyone write or delete. |
+| `bucket-no-rls` | medium, high | A bucket with no policies. High when other buckets have them. |
+| `bucket-public` | low | A bucket with `public: true`. |
+| `rpc-definer-no-auth` | medium, high | A `security: definer` function callable without sign-in. Medium when the body calls `auth.uid()`, `auth.jwt()` or `auth.role()`. |
+| `rpc-definer-search-path` | high | A `security: definer` function with no pinned `search_path`. |
+| `rpc-dynamic-sql` | medium, high | A plpgsql `EXECUTE` on a string built with `\|\|` or `format(%s)`. High on definer functions. |
+| `function-public-secrets` | medium | A function with `auth_required: false` that has secret-looking env values. |
+| `hardcoded-secret` | high | A literal email `api_key`, storage keys, OAuth `client_secret`, or secret-looking function env value. |
+| `jwt-expiry-long` | medium, high | `auth.jwt_expiry` over 1 hour. High over 24 hours. |
+| `signup-unverified-email` | medium | Sign-up is open and `auth.email.verify_email` is off. |
+| `anonymous-signins` | low | `auth.allow_anonymous: true`. |
+| `redirect-insecure` | low, medium | An auth redirect URL that uses a wildcard or local http (low), or plain http (medium). |
+| `cors-wildcard` | low | `*` in `server.cors.origins`. |
+| `cors-null-origin` | medium | `null` in `server.cors.origins`. |
+| `max-limit-disabled` | medium | `server.max_limit: -1` (no row limit). |
+
 ## inz bundle
 
 Build a self-contained tar.gz bundle from `instancez.yaml` and `functions/`.

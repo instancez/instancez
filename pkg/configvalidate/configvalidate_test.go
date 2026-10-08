@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -170,4 +171,41 @@ func TestWarningsYAML_ExpiredAppleSecret(t *testing.T) {
 	if len(ws) != 1 || ws[0].Path != "auth.oauth.apple.client_secret" || !strings.Contains(ws[0].Message, "expired") {
 		t.Fatalf("want one expired warning, got %+v", ws)
 	}
+}
+
+const vetCleanYAML = "version: 1\nproject:\n  name: demo\nauth:\n  email:\n    verify_email: true\ntables:\n  todos:\n    rls_enabled: true\n    fields:\n      - name: id\n        type: bigserial\n        primary_key: true\n"
+
+func TestVetYAML(t *testing.T) {
+	t.Run("parse error", func(t *testing.T) {
+		if _, err := VetYAML([]byte("tables: [unclosed")); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+	t.Run("empty yaml", func(t *testing.T) {
+		if _, err := VetYAML(nil); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+	t.Run("clean config", func(t *testing.T) {
+		got, err := VetYAML([]byte(vetCleanYAML))
+		if err != nil || len(got) != 0 {
+			t.Fatalf("want none, got %+v, %v", got, err)
+		}
+	})
+	t.Run("bad config", func(t *testing.T) {
+		bad := strings.Replace(vetCleanYAML, "rls_enabled: true", "rls_enabled: false", 1)
+		got, err := VetYAML([]byte(bad))
+		if err != nil || len(got) == 0 {
+			t.Fatalf("want findings, got %+v, %v", got, err)
+		}
+		f := got[0]
+		if f.Rule != "rls-disabled" || f.Severity != "critical" || f.Path != "tables.todos.rls_enabled" || f.Line != 9 || f.Fix == "" {
+			t.Fatalf("unexpected finding %+v", f)
+		}
+		b, _ := json.Marshal(f)
+		var back VetFinding
+		if err := json.Unmarshal(b, &back); err != nil || back != f {
+			t.Fatalf("round-trip mismatch: %s", b)
+		}
+	})
 }
