@@ -447,7 +447,7 @@ func TestRunInitNextStepsLeadWithEmbeddedPG(t *testing.T) {
 	os.Stdout = w
 	runErr := runInit(initOptions{name: "demo", dir: t.TempDir()})
 	os.Stdout = orig
-	w.Close()
+	require.NoError(t, w.Close())
 	out, err := io.ReadAll(r)
 	require.NoError(t, err)
 	require.NoError(t, runErr)
