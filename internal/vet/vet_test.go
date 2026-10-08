@@ -194,8 +194,8 @@ func TestRunEdgeConfigs(t *testing.T) {
 	for name, src := range map[string]string{
 		"empty mapping":   "{}\n",
 		"no tables":       "server: {}\n",
-		"nil auth":        "tables:\n  a:\n    fields: []\n",
-		"zero fields":     "tables:\n  a:\n    fields: []\n    rls: []\n",
+		"nil auth":        "tables:\n  a:\n    rls_enabled: true\n    fields: []\n",
+		"zero fields":     "tables:\n  a:\n    rls_enabled: true\n    fields: []\n    rls: []\n",
 		"env placeholder": "auth:\n  jwt_expiry: ${X:-1h}\n",
 	} {
 		r, err := Run([]byte(src), Options{})
