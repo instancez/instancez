@@ -16,6 +16,7 @@ export {
   providersRoutes,
   projectRoutes,
   sqlRoutes,
+  securityRoutes,
 } from "./routes";
 export { DiffViewer } from "../components/DiffViewer";
 export { ConfirmSaveDialog } from "../components/ConfirmSaveDialog";

@@ -34,6 +34,7 @@ export const adminBackend: ConsoleBackend = {
   capabilities: fullCapabilities(),
   getConfig: () => api.getConfig(),
   getConfigStatus: () => api.getConfigStatus(),
+  getVetReport: () => api.getVet(),
   previewConfig: (config) => api.previewConfig(config),
   putConfig: (config, checksum) => api.putConfig(config, checksum),
   getEnvVars: (names) => api.getEnvVars(names),

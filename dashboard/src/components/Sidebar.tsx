@@ -12,6 +12,7 @@ import {
   Plug,
   Globe,
   Terminal,
+  ShieldAlert,
 } from "lucide-react";
 
 type NavItem = { to: string; icon: LucideIcon; label: string };
@@ -51,7 +52,10 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
   },
   {
     title: "Project",
-    items: [{ to: "/project", icon: Globe, label: "Project" }],
+    items: [
+      { to: "/project", icon: Globe, label: "Project" },
+      { to: "/security", icon: ShieldAlert, label: "Security" },
+    ],
   },
 ];
 

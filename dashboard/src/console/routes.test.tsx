@@ -44,6 +44,11 @@ describe("consoleRoutes", () => {
     await waitFor(() => expect(screen.getByText("Email Provider")).toBeInTheDocument());
   });
 
+  it("registers the security route with its title", () => {
+    const route = consoleRoutes().find((r) => r.path === "security");
+    expect(route?.children?.[0]?.handle).toEqual({ title: "Security" });
+  });
+
   it("mounts the SQL editor", async () => {
     renderWithChakra(
       <MemoryRouter initialEntries={["/sql"]}>

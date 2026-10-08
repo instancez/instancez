@@ -204,6 +204,23 @@ export interface ValidationError {
   suggestion?: string;
 }
 
+export type VetSeverity = "critical" | "high" | "medium" | "low" | "info";
+
+export interface VetFinding {
+  rule: string;
+  severity: VetSeverity;
+  path: string;
+  line: number;
+  title: string;
+  message: string;
+  fix: string;
+}
+
+export interface VetReport {
+  findings: VetFinding[];
+  counts: Record<VetSeverity, number>;
+}
+
 export type ConfigStatus = {
   status: "ok" | "drift" | "unknown";
   config_source: string;

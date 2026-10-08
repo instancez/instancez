@@ -6,6 +6,7 @@ import type {
   AdminUser,
   SqlResult,
   StorageListResult,
+  VetReport,
 } from "../lib/types";
 import type { EnvVarsResponse, ConfigPreview } from "../api/client";
 
@@ -59,6 +60,7 @@ export interface ConsoleBackend {
   // config
   getConfig(): Promise<Config>;
   getConfigStatus(): Promise<ConfigStatus>;
+  getVetReport(): Promise<VetReport>;
   previewConfig(config: Omit<Config, "_checksum">): Promise<ConfigPreview>;
   putConfig(
     config: Omit<Config, "_checksum">,
