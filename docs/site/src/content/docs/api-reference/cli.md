@@ -129,14 +129,14 @@ inz vet [flags]
 | `--fail-on` | `high` | Exit 1 when a finding is at this severity or above: `info`, `low`, `medium`, `high`, `critical`, or `none`. Env: `INSTANCEZ_FAIL_ON`. |
 | `--ignore` | — | Comma-separated rule ids to skip. Env: `INSTANCEZ_IGNORE`. |
 
-Exit codes: `0` when nothing reaches `--fail-on`, `1` when something does, or when the file cannot be read or parsed.
+Exit codes: `0` when nothing reaches `--fail-on`, `1` when something does, or when the file cannot be read or parsed. A structurally invalid file (wrong types) is an error; run `inz validate` for details.
 
-To silence one finding, put a comment on the flagged line (or the line above it):
+To silence one finding, put a comment on the flagged line, or on a comment-only line right above it. Text after the rule id is ignored, so you can add a reason:
 
 ```yaml
 tables:
   posts:
-    rls_enabled: false # inz-vet-ignore: rls-disabled
+    rls_enabled: false # inz-vet-ignore: rls-disabled because dev
 ```
 
 `--json` prints every finding, even those below `--fail-on`:
@@ -173,7 +173,8 @@ Run it in CI to block a merge:
 | `policy-open-read` | low, high | A select policy whose `using` is always true. High when the table has sensitive columns. |
 | `policy-authed-read-sensitive` | medium | A select policy that only checks the caller is signed in, on a table with sensitive columns. |
 | `policy-no-identity-write` | medium, high | A write policy that never checks the caller's identity. High when the table has an owner column. |
-| `bucket-open-write` | critical | A storage policy that lets anyone write or delete. |
+| `bucket-open-write` | critical | A storage policy that lets any caller with a JWT (including anonymous sign-in users) write or delete. |
+| `bucket-open-read` | medium | A select policy on a non-public bucket whose `using` is always true, so any caller with a JWT can list and read every object. |
 | `bucket-no-rls` | medium, high | A bucket with no policies. High when other buckets have them. |
 | `bucket-public` | low | A bucket with `public: true`. |
 | `rpc-definer-no-auth` | medium, high | A `security: definer` function callable without sign-in. Medium when the body calls `auth.uid()`, `auth.jwt()` or `auth.role()`. |
@@ -184,9 +185,10 @@ Run it in CI to block a merge:
 | `jwt-expiry-long` | medium, high | `auth.jwt_expiry` over 1 hour. High over 24 hours. |
 | `signup-unverified-email` | medium | Sign-up is open and `auth.email.verify_email` is off. |
 | `anonymous-signins` | low | `auth.allow_anonymous: true`. |
-| `redirect-insecure` | low, medium | An auth redirect URL that uses a wildcard or local http (low), or plain http (medium). |
+| `redirect-insecure` | low, medium | An auth redirect URL that uses a wildcard or local http (low), or plain http or a `javascript:`, `data:` or `vbscript:` scheme (medium). |
 | `cors-wildcard` | low | `*` in `server.cors.origins`. |
 | `cors-null-origin` | medium | `null` in `server.cors.origins`. |
+| `unknown-key` | medium | A key that is not a known setting (usually a typo), so it has no effect. |
 | `max-limit-disabled` | medium | `server.max_limit: -1` (no row limit). |
 
 ## inz bundle

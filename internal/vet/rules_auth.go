@@ -45,28 +45,29 @@ func ruleAnonymousSignins(c *ctx) {
 	}
 }
 
+var scriptSchemes = []string{"javascript", "data", "vbscript"}
+
 func (c *ctx) checkRedirect(path []any, raw string) {
 	if raw == "" {
 		return
 	}
-	title := "Risky redirect URL"
-	fix := "Use an exact https:// URL without wildcards."
-	if strings.Contains(raw, "*") {
-		c.add("redirect-insecure", Low, path, title,
-			fmt.Sprintf("%q uses a wildcard, so more hosts than you intend may receive session tokens.", raw), fix)
-		return
+	sev, msg := Low, fmt.Sprintf("%q uses a wildcard, so more hosts than you intend may receive session tokens.", raw)
+	if !strings.Contains(raw, "*") {
+		u, err := url.Parse(raw)
+		switch {
+		case err != nil:
+			return
+		case slices.Contains(scriptSchemes, u.Scheme):
+			sev, msg = Medium, fmt.Sprintf("%q is a %s: URL, which can run script instead of returning to your app.", raw, u.Scheme)
+		case u.Scheme != "http":
+			return
+		case slices.Contains([]string{"localhost", "127.0.0.1", "::1"}, strings.ToLower(u.Hostname())):
+			msg = fmt.Sprintf("%q is a local http URL; remove it before going to production.", raw)
+		default:
+			sev, msg = Medium, fmt.Sprintf("%q is plain http, so session tokens in the redirect can be read on the network.", raw)
+		}
 	}
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "http" {
-		return
-	}
-	if h := u.Hostname(); h == "localhost" || h == "127.0.0.1" {
-		c.add("redirect-insecure", Low, path, title,
-			fmt.Sprintf("%q is a local http URL; remove it before going to production.", raw), fix)
-		return
-	}
-	c.add("redirect-insecure", Medium, path, title,
-		fmt.Sprintf("%q is plain http, so session tokens in the redirect can be read on the network.", raw), fix)
+	c.add("redirect-insecure", sev, path, "Risky redirect URL", msg, "Use an exact https:// URL without wildcards.")
 }
 
 func ruleRedirects(c *ctx) {
@@ -81,5 +82,28 @@ func ruleRedirects(c *ctx) {
 		if o := a.OAuth[name]; o != nil {
 			c.checkRedirect([]any{"auth", "oauth", name, "redirect_url"}, o.RedirectURL)
 		}
+	}
+}
+
+func ruleCORS(c *ctx) {
+	for i, o := range c.cfg.Server.CORS.Origins {
+		switch strings.ToLower(o) {
+		case "*":
+			c.add("cors-wildcard", Low, []any{"server", "cors", "origins", i}, "CORS allows every origin",
+				"Any website can call this API from a browser.",
+				"List only your own site origins in server.cors.origins.")
+		case "null":
+			c.add("cors-null-origin", Medium, []any{"server", "cors", "origins", i}, "CORS allows the null origin",
+				"Sandboxed iframes and local files send the null origin, so attackers can use them to call this API.",
+				"Remove \"null\" from server.cors.origins.")
+		}
+	}
+}
+
+func ruleMaxLimit(c *ctx) {
+	if c.cfg.Server.MaxLimit == -1 {
+		c.add("max-limit-disabled", Medium, []any{"server", "max_limit"}, "Row limit is off",
+			"One request can pull a whole table, which makes scraping and memory spikes easy.",
+			"Set server.max_limit to a number such as 1000.")
 	}
 }

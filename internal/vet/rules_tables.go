@@ -9,6 +9,11 @@ import (
 	"github.com/instancez/instancez/internal/domain"
 )
 
+const (
+	anyCaller = "any caller, signed in or not,"
+	anyJWT    = "any caller with a JWT (including anonymous sign-in users)"
+)
+
 var writeOps = []string{"insert", "update", "delete"}
 
 func tableLabel(name string, t domain.Table) string {
@@ -50,8 +55,6 @@ func hasOwnerColumn(t domain.Table) bool {
 	})
 }
 
-func isLiteralFalse(expr string) bool { return squash(expr) == "false" }
-
 // opsOf returns the policy operations that are in set.
 func opsOf(p domain.RLSPolicy, set ...string) []string {
 	var out []string
@@ -75,14 +78,14 @@ func rulePolicies(c *ctx) {
 				continue
 			}
 			at := []any{"tables", name, "rls", i}
-			openWrite(c, "policy-open-write", p, at, label)
+			openWrite(c, "policy-open-write", p, at, anyCaller, label)
 			openRead(c, p, at, label, t)
 			noIdentityWrite(c, p, at, label, t)
 		}
 	}
 }
 
-func openWrite(c *ctx, rule string, p domain.RLSPolicy, at []any, label string) {
+func openWrite(c *ctx, rule string, p domain.RLSPolicy, at []any, who, label string) {
 	for _, op := range opsOf(p, writeOps...) {
 		usesUsing, usesCheck := op != "insert", op != "delete"
 		for _, f := range []struct {
@@ -92,7 +95,7 @@ func openWrite(c *ctx, rule string, p domain.RLSPolicy, at []any, label string) 
 			if f.used && isLiteralTrue(f.expr) {
 				c.add(rule, Critical, append(slices.Clone(at), f.name),
 					"Anyone can change rows",
-					fmt.Sprintf("This policy lets any caller, signed in or not, %s rows in %s.", op, label),
+					fmt.Sprintf("This policy lets %s %s rows in %s.", who, op, label),
 					"Scope it to the caller, for example auth.uid() = user_id.")
 				return
 			}
@@ -128,7 +131,7 @@ func noIdentityWrite(c *ctx, p domain.RLSPolicy, at []any, label string, t domai
 	for _, op := range opsOf(p, writeOps...) {
 		exprs = append(exprs, exprsFor(op, p)...)
 	}
-	if len(exprs) == 0 || slices.ContainsFunc(exprs, isLiteralTrue) || !slices.ContainsFunc(exprs, func(e string) bool { return !isLiteralFalse(e) }) {
+	if len(exprs) == 0 || slices.ContainsFunc(exprs, isLiteralTrue) || !slices.ContainsFunc(exprs, func(e string) bool { return squash(e) != "false" }) {
 		return
 	}
 	for _, e := range exprs {
@@ -148,4 +151,39 @@ func noIdentityWrite(c *ctx, p domain.RLSPolicy, at []any, label string, t domai
 		"Write policy ignores who the caller is",
 		fmt.Sprintf("This policy never checks the caller's identity, so any user who passes it can change other users' rows in %s.", label),
 		"Add an identity check, for example auth.uid() = user_id.")
+}
+
+func ruleBuckets(c *ctx) {
+	anyRLS := slices.ContainsFunc(slices.Collect(maps.Values(c.cfg.Storage)), func(b domain.Bucket) bool { return len(b.RLS) > 0 })
+	for _, name := range slices.Sorted(maps.Keys(c.cfg.Storage)) {
+		b := c.cfg.Storage[name]
+		at := []any{"storage", name}
+		for i, p := range b.RLS {
+			if !strings.EqualFold(p.Type, "restrictive") {
+				pat := append(slices.Clone(at), "rls", i)
+				openWrite(c, "bucket-open-write", p, pat, anyJWT, "bucket "+name)
+				if !b.Public && len(opsOf(p, "select")) > 0 && isLiteralTrue(p.Using) {
+					c.add("bucket-open-read", Medium, append(pat, "using"), "Anyone can read every object",
+						fmt.Sprintf("This policy lets %s list and read all objects in bucket %s.", anyJWT, name),
+						"Scope it to the caller, for example by object path and auth.uid(), or make the bucket public if that is intended.")
+				}
+			}
+		}
+		if len(b.RLS) == 0 {
+			sev := Medium
+			if anyRLS {
+				sev = High
+			}
+			c.add("bucket-no-rls", sev, at,
+				"Bucket has no per-user access rules",
+				fmt.Sprintf("Bucket %s has no rls policies, so any JWT holder, including anonymous sign-in users, can write and delete its objects.", name),
+				"Add rls policies scoped to the caller, for example based on the object path and auth.uid().")
+		}
+		if b.Public {
+			c.add("bucket-public", Low, append(slices.Clone(at), "public"),
+				"Bucket is public",
+				fmt.Sprintf("Anyone with a URL can read objects in %s. Public skips RLS for reads only; writes still follow the policies.", name),
+				"Keep it only for content that is meant to be public.")
+		}
+	}
 }

@@ -14,7 +14,6 @@ import (
 )
 
 type Options struct {
-	// Ignore lists rule ids to drop; unknown ids are ignored.
 	Ignore []string
 }
 
@@ -31,7 +30,7 @@ func (c *ctx) add(rule string, sev Severity, path []any, title, msg, fix string)
 	})
 }
 
-// rules is the registry: adding a rule is a new func plus one line here.
+// rules is the registry; a new rule is one func plus one line here.
 var rules = []func(*ctx){ruleRLSDisabled, rulePolicies, ruleBuckets, ruleRPC, ruleFunctionSecrets,
 	ruleHardcodedSecret, ruleJWTExpiry, ruleSignupUnverified, ruleAnonymousSignins, ruleRedirects, ruleCORS, ruleMaxLimit}
 
@@ -45,11 +44,20 @@ func run(src []byte, opts Options, rs []func(*ctx)) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
+	var unknown []Finding
+	for _, e := range cfg.UnknownKeys {
+		if !strings.HasPrefix(e.Message, "unknown key") {
+			return nil, fmt.Errorf("invalid config: %s (run `inz validate` for details)", e.Message)
+		}
+		unknown = append(unknown, Finding{Rule: "unknown-key", Severity: Medium, Path: e.Path, Line: e.Line,
+			Title: "Unknown config key", Message: fmt.Sprintf("%s under %s is not a known setting, so it has no effect.", e.Message, e.Path),
+			Fix: "Fix the spelling or remove the key."})
+	}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(src, &doc); err != nil {
 		return nil, fmt.Errorf("parse yaml: %w", err)
 	}
-	c := &ctx{cfg: cfg, doc: &doc}
+	c := &ctx{cfg: cfg, doc: &doc, findings: unknown}
 	for _, r := range rs {
 		r(c)
 	}
@@ -75,7 +83,7 @@ func run(src []byte, opts Options, rs []func(*ctx)) (*Report, error) {
 
 var ignoreComment = regexp.MustCompile(`#\s*inz-vet-ignore:\s*([A-Za-z0-9_,\s-]+)`)
 
-// inlineIgnores maps a 1-based line to the rule ids named by a `# inz-vet-ignore:` comment on it.
+// inlineIgnores maps a 1-based line to rule ids from an ignore comment on it; a comment-only line also covers the next line.
 func inlineIgnores(src []byte) map[int][]string {
 	out := map[int][]string{}
 	for i, line := range strings.Split(string(src), "\n") {
@@ -83,9 +91,14 @@ func inlineIgnores(src []byte) map[int][]string {
 		if m == nil {
 			continue
 		}
-		for _, id := range strings.Split(m[1], ",") {
-			if id = strings.TrimSpace(id); id != "" {
-				out[i+1] = append(out[i+1], id)
+		for _, item := range strings.Split(m[1], ",") {
+			f := strings.Fields(item)
+			if len(f) == 0 {
+				continue
+			}
+			out[i+1] = append(out[i+1], f[0])
+			if strings.HasPrefix(strings.TrimSpace(line), "#") {
+				out[i+2] = append(out[i+2], f[0])
 			}
 		}
 	}
@@ -93,8 +106,5 @@ func inlineIgnores(src []byte) map[int][]string {
 }
 
 func ignored(f Finding, global []string, inline map[int][]string) bool {
-	if slices.Contains(global, f.Rule) {
-		return true
-	}
-	return f.Line > 0 && (slices.Contains(inline[f.Line], f.Rule) || slices.Contains(inline[f.Line-1], f.Rule))
+	return slices.Contains(global, f.Rule) || (f.Line > 0 && slices.Contains(inline[f.Line], f.Rule))
 }

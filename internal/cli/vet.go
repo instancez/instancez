@@ -10,8 +10,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const failOnNone = "none"
-
 func newVetCmd() *cobra.Command {
 	var (
 		configPath string
@@ -35,7 +33,7 @@ Silence a rule with --ignore <rule-id>.`,
 				return err
 			}
 			threshold := vet.Critical + 1
-			if strings.ToLower(strings.TrimSpace(failOn)) != failOnNone {
+			if !strings.EqualFold(strings.TrimSpace(failOn), "none") {
 				s, err := vet.ParseSeverity(failOn)
 				if err != nil {
 					return fmt.Errorf("--fail-on: %w", err)
@@ -53,8 +51,8 @@ Silence a rule with --ignore <rule-id>.`,
 			if err != nil {
 				return err
 			}
-			top, any := report.Max()
-			failed := any && top >= threshold
+			top, found := report.Max()
+			failed := found && top >= threshold
 
 			out := cmd.OutOrStdout()
 			if jsonOutput {

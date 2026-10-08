@@ -72,7 +72,7 @@ func TestLocate(t *testing.T) {
 func TestSQLHelpers(t *testing.T) {
 	for expr, want := range map[string]bool{
 		"true": true, " TRUE ": true, "( TRUE )": true, "((true))": true, "1=1": true, "1 = 1": true,
-		"": false, "false": false, "auth.uid() = user_id": false, "true and x": false, "(a) or (true)": false,
+		"": false, "false": false, "auth.uid() = user_id": false, "true::boolean": true, "(TRUE::BOOLEAN)": true, "true and x": false, "(a) or (true)": false,
 	} {
 		if got := isLiteralTrue(expr); got != want {
 			t.Errorf("isLiteralTrue(%q) = %v", expr, got)
@@ -97,7 +97,7 @@ func TestSQLHelpers(t *testing.T) {
 	}
 	for name, want := range map[string]bool{
 		"password": true, "user_email": true, "api_key": true, "apikey": true, "Phone_Number": true, "ssn": true,
-		"ip_address": false, "title": false, "": false, "api": false, "key": false, "keyboard": false, "tokenizer": false,
+		"passwordHash": true, "apiKey": true, "userEmail": true, "ipAddress": false, "ip_address": false, "title": false, "": false, "api": false, "key": false, "keyboard": false, "tokenizer": false,
 	} {
 		if got := hasSensitiveSegment(name); got != want {
 			t.Errorf("hasSensitiveSegment(%q) = %v", name, got)
@@ -176,6 +176,8 @@ func TestRunIgnore(t *testing.T) {
 		{"unknown id tolerated", twoTables, Options{Ignore: []string{"does-not-exist"}}, "a-rule,a-rule2,c-rule,b-rule"},
 		{"same line", "tables:\n  a:\n    fields: []\n  b: # inz-vet-ignore: a-rule, b-rule\n    fields: []\n", Options{}, "a-rule2,c-rule"},
 		{"previous line", "tables:\n  a:\n    fields: []\n  # inz-vet-ignore: a-rule\n  b:\n    fields: []\n", Options{}, "a-rule2,c-rule,b-rule"},
+		{"reason text", "tables:\n  a:\n    fields: []\n  b: # inz-vet-ignore: a-rule because dev\n    fields: []\n", Options{}, "a-rule2,c-rule,b-rule"},
+		{"code line above does not apply", "tables:\n  a:\n    fields: [] # inz-vet-ignore: a-rule\n  b:\n    fields: []\n", Options{}, "a-rule,a-rule2,c-rule,b-rule"},
 		{"two lines above does not apply", "tables:\n  a:\n    fields: []\n  # inz-vet-ignore: a-rule\n\n  b:\n    fields: []\n", Options{}, "a-rule,a-rule2,c-rule,b-rule"},
 		{"other rule unaffected", "tables:\n  a:\n    fields: []\n  b: # inz-vet-ignore: zzz\n    fields: []\n", Options{}, "a-rule,a-rule2,c-rule,b-rule"},
 	}
@@ -210,7 +212,7 @@ func TestRunEdgeConfigs(t *testing.T) {
 }
 
 func TestRunErrors(t *testing.T) {
-	for _, src := range []string{"tables: [", "", "# nothing\n"} {
+	for _, src := range []string{"tables: [", "", "# nothing\n", "tables: [1, 2]\n", "tables: *a\n", "tables:\n  a:\n    rls_enabled: [x]\n"} {
 		if r, err := Run([]byte(src), quiet); err == nil || r != nil {
 			t.Errorf("Run(%q) = %v, %v; want error", src, r, err)
 		}
@@ -244,5 +246,35 @@ func TestReportMax(t *testing.T) {
 	r, _ := run([]byte(twoTables), Options{}, []func(*ctx){fakeRules})
 	if m, ok := r.Max(); !ok || m != Critical {
 		t.Errorf("max = %v, %v", m, ok)
+	}
+}
+
+func TestUnknownKeys(t *testing.T) {
+	src := "tables:\n  a:\n    rls_enabld: true\n    fields: []\n    rls:\n      - operations: [select]\n        with_chek: x\n"
+	r, err := Run([]byte(src), quiet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []Finding
+	for _, f := range r.Findings {
+		if f.Rule == "unknown-key" {
+			got = append(got, f)
+		}
+	}
+	if len(got) != 2 || got[0].Severity != Medium || got[0].Line != 3 || got[1].Line != 7 || !strings.Contains(got[0].Message, "rls_enabld") {
+		t.Errorf("unknown-key findings = %+v", got)
+	}
+	ignored, _ := Run([]byte(src), Options{Ignore: []string{"unknown-key"}})
+	for _, f := range ignored.Findings {
+		if f.Rule == "unknown-key" {
+			t.Error("unknown-key not ignorable")
+		}
+	}
+}
+
+func TestRunErrorPointsAtValidate(t *testing.T) {
+	_, err := Run([]byte("tables: [1, 2]\n"), quiet)
+	if err == nil || !strings.Contains(err.Error(), "inz validate") {
+		t.Errorf("err = %v", err)
 	}
 }

@@ -7,7 +7,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// formatPath renders a path of string keys and int indexes as tables.posts.rls[1].using.
+// formatPath renders a path as tables.posts.rls[1].using.
 func formatPath(path []any) string {
 	var b strings.Builder
 	for _, p := range path {
@@ -24,8 +24,7 @@ func formatPath(path []any) string {
 	return b.String()
 }
 
-// lineOf returns the 1-based line of path, the nearest existing parent when it is
-// missing, or 0 when nothing resolves.
+// lineOf returns the 1-based line of path, its nearest parent's if missing, or 0.
 func lineOf(doc *yaml.Node, path []any) int {
 	if doc == nil {
 		return 0

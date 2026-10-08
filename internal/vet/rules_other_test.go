@@ -2,6 +2,7 @@ package vet
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/instancez/instancez/internal/config"
@@ -12,6 +13,7 @@ func bucket(name, body string) string { return "storage:\n  " + name + ":\n" + b
 const (
 	openIns  = "    rls:\n      - operations: [insert]\n        with_check: \"true\"\n"
 	scoped   = "    rls:\n      - operations: [select]\n        using: \"auth.uid() is not null\"\n"
+	openSel  = "    rls:\n      - operations: [select]\n        using: \"true\"\n"
 	restrict = "    rls:\n      - operations: [insert]\n        with_check: \"true\"\n        type: restrictive\n"
 )
 
@@ -33,7 +35,11 @@ func TestStorageRules(t *testing.T) {
 		{"public no rls", bucket("b", "    public: true\n"), []string{"bucket-no-rls", "bucket-public"}},
 		{"open write", bucket("b", openIns), []string{"bucket-open-write"}},
 		{"restrictive write ignored", bucket("b", restrict), nil},
-		{"all four ops", bucket("b", "    rls:\n      - operations: [select, insert, update, delete]\n        using: \"true\"\n        with_check: \"true\"\n"), []string{"bucket-open-write"}},
+		{"all four ops", bucket("b", "    rls:\n      - operations: [select, insert, update, delete]\n        using: \"true\"\n        with_check: \"true\"\n"), []string{"bucket-open-read", "bucket-open-write"}},
+		{"open read", bucket("b", openSel), []string{"bucket-open-read"}},
+		{"open read on public bucket", bucket("b", "    public: true\n"+openSel), []string{"bucket-public"}},
+		{"open read restrictive ignored", bucket("b", openSel+"        type: restrictive\n"), nil},
+		{"open read bool cast", bucket("b", strings.Replace(openSel, `"true"`, `"true::boolean"`, 1)), []string{"bucket-open-read"}},
 		{"scoped", bucket("b", scoped), nil},
 	}
 	for _, tc := range cases {
@@ -68,6 +74,13 @@ func TestBucketSeverities(t *testing.T) {
 	}
 	if got := sev(bucket("a", openIns), "bucket-open-write"); got != Critical {
 		t.Errorf("open write = %v", got)
+	}
+	if got := sev(bucket("a", openSel), "bucket-open-read"); got != Medium {
+		t.Errorf("open read = %v", got)
+	}
+	r, _ := Run([]byte(bucket("a", openIns)), quiet)
+	if m := r.Findings[0].Message; !strings.Contains(m, "anonymous sign-in") || strings.Contains(m, "signed in or not") {
+		t.Errorf("bucket write message = %q", m)
 	}
 	if got := sev(bucket("a", "    public: true\n"+scoped), "bucket-public"); got != Low {
 		t.Errorf("public = %v", got)

@@ -3,9 +3,12 @@ package vet
 import (
 	"fmt"
 	"maps"
+	"regexp"
 	"slices"
 	"strings"
 )
+
+var secretEnvName = regexp.MustCompile(`(?i)password|secret|token|key|credential|private|pass`)
 
 const secretFix = "Move it to an environment variable and reference it as ${INSTANCEZ_ENV_NAME}."
 
@@ -37,11 +40,27 @@ func ruleHardcodedSecret(c *ctx) {
 		}
 	}
 	for _, name := range slices.Sorted(maps.Keys(c.cfg.Functions)) {
-		env := c.cfg.Functions[name].Env
-		for _, k := range slices.Sorted(maps.Keys(env)) {
-			if secretEnvName.MatchString(k) && isLiteral(env[k]) {
-				c.hardcoded([]any{"functions", name, "env", k}, fmt.Sprintf("Function %s env %s", name, k))
-			}
+		for _, k := range secretEnvKeys(c.cfg.Functions[name].Env, true) {
+			c.hardcoded([]any{"functions", name, "env", k}, fmt.Sprintf("Function %s env %s", name, k))
+		}
+	}
+}
+
+// secretEnvKeys returns the sorted secret-looking env keys, only literal ones when literalOnly.
+func secretEnvKeys(env map[string]string, literalOnly bool) []string {
+	return slices.DeleteFunc(slices.Sorted(maps.Keys(env)), func(k string) bool {
+		return !secretEnvName.MatchString(k) || (literalOnly && !isLiteral(env[k]))
+	})
+}
+
+func ruleFunctionSecrets(c *ctx) {
+	for _, name := range slices.Sorted(maps.Keys(c.cfg.Functions)) {
+		fn := c.cfg.Functions[name]
+		if keys := secretEnvKeys(fn.Env, false); !fn.AuthRequired && len(keys) > 0 {
+			c.add("function-public-secrets", Medium, []any{"functions", name, "auth_required"},
+				"Public function can use secrets",
+				fmt.Sprintf("Function %s can be called without signing in and has secret-looking env %s in scope.", name, keys[0]),
+				"Set auth_required: true, or make sure the function never exposes what that value unlocks.")
 		}
 	}
 }

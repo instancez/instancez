@@ -3,6 +3,7 @@ package vet
 import (
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/instancez/instancez/internal/domain"
 )
@@ -14,8 +15,12 @@ func squash(expr string) string {
 // isLiteralTrue reports whether expr is a constant-true predicate such as `( TRUE )` or `1=1`.
 func isLiteralTrue(expr string) bool {
 	s := squash(expr)
-	for strings.HasPrefix(s, "(") && strings.HasSuffix(s, ")") {
-		s = s[1 : len(s)-1]
+	for prev := ""; prev != s; {
+		prev = s
+		s = strings.TrimSuffix(s, "::boolean")
+		if strings.HasPrefix(s, "(") && strings.HasSuffix(s, ")") {
+			s = s[1 : len(s)-1]
+		}
 	}
 	return s == "true" || s == "1=1"
 }
@@ -53,19 +58,24 @@ func exprsFor(op string, p domain.RLSPolicy) []string {
 	return slices.DeleteFunc(exprs, func(e string) bool { return strings.TrimSpace(e) == "" })
 }
 
-var sensitiveSegments = []string{"password", "passwd", "secret", "token", "apikey", "ssn", "email", "phone", "dob", "iban"}
+var sensitiveWords = []string{"password", "passwd", "secret", "token", "apikey", "api_key", "ssn", "email", "phone", "dob", "iban"}
 
+// wordSegments splits on _, - and camelCase humps.
 func wordSegments(name string) []string {
-	return strings.FieldsFunc(strings.ToLower(name), func(r rune) bool { return r == '_' || r == '-' })
+	var b strings.Builder
+	prev := ' '
+	for _, r := range name {
+		if unicode.IsUpper(r) && (unicode.IsLower(prev) || unicode.IsDigit(prev)) {
+			b.WriteByte('_')
+		}
+		b.WriteRune(unicode.ToLower(r))
+		prev = r
+	}
+	return strings.FieldsFunc(b.String(), func(r rune) bool { return r == '_' || r == '-' })
 }
 
-// hasSensitiveSegment matches whole underscore-separated words, so ip_address is not sensitive but api_key is.
+// hasSensitiveSegment matches whole words, so ip_address is not sensitive but api_key and passwordHash are.
 func hasSensitiveSegment(name string) bool {
-	segs := wordSegments(name)
-	for i, s := range segs {
-		if slices.Contains(sensitiveSegments, s) || (s == "api" && i+1 < len(segs) && segs[i+1] == "key") {
-			return true
-		}
-	}
-	return false
+	joined := "_" + strings.Join(wordSegments(name), "_") + "_"
+	return slices.ContainsFunc(sensitiveWords, func(w string) bool { return strings.Contains(joined, "_"+w+"_") })
 }

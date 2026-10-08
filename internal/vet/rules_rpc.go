@@ -20,30 +20,31 @@ func isDefiner(fn domain.Function) bool { return strings.EqualFold(fn.Security, 
 func ruleRPC(c *ctx) {
 	for _, name := range slices.Sorted(maps.Keys(c.cfg.RPC)) {
 		fn := c.cfg.RPC[name]
-		if !isDefiner(fn) {
-			if dynamicSQL.MatchString(fn.Body) && strings.EqualFold(fn.Language, "plpgsql") {
-				dynamicSQLFinding(c, name, Medium)
+		definer := isDefiner(fn)
+		if definer {
+			if !fn.AuthRequired {
+				sev := High
+				if bodyAuthRef.MatchString(fn.Body) {
+					sev = Medium
+				}
+				c.add("rpc-definer-no-auth", sev, []any{"rpc", name, "auth_required"},
+					"Public function runs with owner rights",
+					fmt.Sprintf("%s is security definer and callable without signing in, so anonymous callers get its owner's access and skip RLS. Found by a raw text scan of the body.", name),
+					"Set auth_required: true, or check auth.uid() inside the body.")
 			}
-			continue
-		}
-		if !fn.AuthRequired {
-			sev := High
-			if bodyAuthRef.MatchString(fn.Body) {
-				sev = Medium
+			if _, pinned := fn.Set["search_path"]; !pinned {
+				c.add("rpc-definer-search-path", High, []any{"rpc", name, "set", "search_path"},
+					"Definer function has no pinned search_path",
+					fmt.Sprintf("%s is security definer without a pinned search_path, so callers can shadow the objects its body uses.", name),
+					`Add set: { search_path: "" } and schema-qualify names in the body.`)
 			}
-			c.add("rpc-definer-no-auth", sev, []any{"rpc", name, "auth_required"},
-				"Public function runs with owner rights",
-				fmt.Sprintf("%s is security definer and callable without signing in, so anonymous callers get its owner's access and skip RLS. Found by a raw text scan of the body.", name),
-				"Set auth_required: true, or check auth.uid() inside the body.")
-		}
-		if _, pinned := fn.Set["search_path"]; !pinned {
-			c.add("rpc-definer-search-path", High, []any{"rpc", name, "set", "search_path"},
-				"Definer function has no pinned search_path",
-				fmt.Sprintf("%s is security definer without a pinned search_path, so callers can shadow the objects its body uses.", name),
-				`Add set: { search_path: "" } and schema-qualify names in the body.`)
 		}
 		if strings.EqualFold(fn.Language, "plpgsql") && dynamicSQL.MatchString(fn.Body) {
-			dynamicSQLFinding(c, name, High)
+			sev := Medium
+			if definer {
+				sev = High
+			}
+			dynamicSQLFinding(c, name, sev)
 		}
 	}
 }
