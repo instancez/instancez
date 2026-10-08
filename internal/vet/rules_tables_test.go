@@ -11,7 +11,16 @@ import (
 
 func vetIDs(t *testing.T, src string) []string {
 	t.Helper()
-	r, err := Run([]byte(src), Options{})
+	return vetIDsOpts(t, src, quiet)
+}
+
+// quiet drops the default-config finding so other rule tests stay focused.
+var quiet = Options{Ignore: []string{"signup-unverified-email"}}
+
+// vetIDsOpts returns sorted rule ids; vetIDs drops the default-config noise.
+func vetIDsOpts(t *testing.T, src string, o Options) []string {
+	t.Helper()
+	r, err := Run([]byte(src), o)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +143,7 @@ func TestTableRuleSeverities(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			r, err := Run([]byte(tc.src), Options{})
+			r, err := Run([]byte(tc.src), quiet)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -156,7 +165,7 @@ func TestTableRuleSeverities(t *testing.T) {
 
 func TestTableRulePathsAndLabels(t *testing.T) {
 	src := tbl("    schema: app\n"+on, idField, pol("select", "auth.uid() = id", "", "")+pol("update", "auth.uid() = id", "true", ""))
-	r, err := Run([]byte(src), Options{})
+	r, err := Run([]byte(src), quiet)
 	if err != nil || len(r.Findings) != 1 {
 		t.Fatalf("got %v, %v", r, err)
 	}

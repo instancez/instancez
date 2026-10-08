@@ -48,7 +48,7 @@ func TestStorageRules(t *testing.T) {
 func TestBucketSeverities(t *testing.T) {
 	sev := func(src, rule string) Severity {
 		t.Helper()
-		r, err := Run([]byte(src), Options{})
+		r, err := Run([]byte(src), quiet)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -122,7 +122,7 @@ func TestRPCSeverities(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			r, err := Run([]byte(tc.src), Options{})
+			r, err := Run([]byte(tc.src), quiet)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -167,13 +167,13 @@ func TestFunctionRules(t *testing.T) {
 		src  string
 		want []string
 	}{
-		{"public with secret env", fnSrc("", "    env:\n      STRIPE_SECRET: x\n"), []string{"function-public-secrets"}},
+		{"public with secret env", fnSrc("", "    env:\n      STRIPE_SECRET: ${X}\n"), []string{"function-public-secrets"}},
 		{"public with password env lower", fnSrc("", "    env:\n      db_password: ${X}\n"), []string{"function-public-secrets"}},
 		{"public benign env", fnSrc("", "    env:\n      REGION: eu\n"), nil},
 		{"public nil env", fnSrc("", ""), nil},
 		{"public empty env", fnSrc("", "    env: {}\n"), nil},
-		{"auth required secret env", fnSrc("    auth_required: true\n", "    env:\n      API_KEY: x\n"), nil},
-		{"two secrets one finding", fnSrc("", "    env:\n      A_TOKEN: x\n      B_KEY: y\n"), []string{"function-public-secrets"}},
+		{"auth required secret env", fnSrc("    auth_required: true\n", "    env:\n      API_KEY: ${X}\n"), nil},
+		{"two secrets one finding", fnSrc("", "    env:\n      A_TOKEN: ${X}\n      B_KEY: ${Y}\n"), []string{"function-public-secrets"}},
 		{"no functions", "tables: {}\n", nil},
 	}
 	for _, tc := range cases {

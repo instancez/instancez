@@ -198,7 +198,7 @@ func TestRunEdgeConfigs(t *testing.T) {
 		"zero fields":     "tables:\n  a:\n    rls_enabled: true\n    fields: []\n    rls: []\n",
 		"env placeholder": "auth:\n  jwt_expiry: ${X:-1h}\n",
 	} {
-		r, err := Run([]byte(src), Options{})
+		r, err := Run([]byte(src), quiet)
 		if err != nil {
 			t.Errorf("%s: %v", name, err)
 			continue
@@ -211,14 +211,14 @@ func TestRunEdgeConfigs(t *testing.T) {
 
 func TestRunErrors(t *testing.T) {
 	for _, src := range []string{"tables: [", "", "# nothing\n"} {
-		if r, err := Run([]byte(src), Options{}); err == nil || r != nil {
+		if r, err := Run([]byte(src), quiet); err == nil || r != nil {
 			t.Errorf("Run(%q) = %v, %v; want error", src, r, err)
 		}
 	}
 }
 
 func TestReportJSON(t *testing.T) {
-	r, _ := Run([]byte("{}"), Options{})
+	r, _ := Run([]byte("{}"), quiet)
 	b, err := json.Marshal(r)
 	if err != nil {
 		t.Fatal(err)

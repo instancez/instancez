@@ -32,7 +32,8 @@ func (c *ctx) add(rule string, sev Severity, path []any, title, msg, fix string)
 }
 
 // rules is the registry: adding a rule is a new func plus one line here.
-var rules = []func(*ctx){ruleRLSDisabled, rulePolicies, ruleBuckets, ruleRPC, ruleFunctionSecrets}
+var rules = []func(*ctx){ruleRLSDisabled, rulePolicies, ruleBuckets, ruleRPC, ruleFunctionSecrets,
+	ruleHardcodedSecret, ruleJWTExpiry, ruleSignupUnverified, ruleAnonymousSignins, ruleRedirects, ruleCORS, ruleMaxLimit}
 
 // Run parses src without env interpolation and returns the ranked findings.
 func Run(src []byte, opts Options) (*Report, error) {
