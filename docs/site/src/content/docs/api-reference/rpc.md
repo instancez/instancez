@@ -41,6 +41,8 @@ rpc:
 | `args[].default` | no | Postgres DEFAULT for optional args. A YAML `null` (key present) or the bare word `NULL` (any case) emits `DEFAULT NULL`. Anything else is a quoted literal. |
 | `returns.type` | yes | Return type; `void` emits 204 No Content. One of: `void`, `record`, a scalar or composite type (`int`, `text`, `uuid`, a table's row type, …), `setof <type>`, or `table(col type, …)`. In the dashboard this is a dropdown of the common scalar types plus `void`/`record`, or `Custom…` to type `setof`/`table(...)`/a composite type directly into the generated `RETURNS` line. |
 
+A `language: sql` body must start with a Postgres command or a parenthesized query, after any comments. Bodies that open with `BEGIN`, `COMMIT`, `END`, `ROLLBACK` or another transaction-control statement are rejected, because Postgres refuses those inside a SQL function. Use `language: plpgsql` for `BEGIN ... END` blocks.
+
 Function bodies are not checked when the migration creates them, so a `language: sql` body can reference tables defined later in the same config. A typo in a body shows up when the function is first called. `inz validate` runs no DDL, and `inz validate --use-dsn` only prints the migration plan, so neither catches body errors. Call the function once in a dev database to check it.
 
 ## Calling via HTTP

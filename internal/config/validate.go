@@ -223,9 +223,84 @@ var validEmailTemplateNames = map[string]bool{
 // migrator emits that wrapper itself, so bodies must be bare.
 var rpcBodyDDLRE = regexp.MustCompile(`(?is)^\s*(--[^\n]*\n\s*)*create\s+(or\s+replace\s+)?function\b`)
 
-// sqlBodyStartRE matches a language-sql body that opens with a statement
-// keyword or a parenthesized query, after any leading comments.
-var sqlBodyStartRE = regexp.MustCompile(`(?is)^\s*((--[^\n]*(\n|$)|/\*.*?\*/)\s*)*(\(|(select|with|insert|update|delete|values|table|merge)\b)`)
+// sqlBodyLead returns the first word of a language-sql body, or "(" for a
+// parenthesized query, after whitespace, empty statements and comments (block
+// comments nest, as in Postgres). It returns "" when no word follows or a block
+// comment never closes, and the lowercased word after it as next.
+func sqlBodyLead(body string) (lead, next string) {
+	i, n := 0, len(body)
+	for i < n {
+		switch {
+		case strings.IndexByte(" \t\n\r\f\v;", body[i]) >= 0:
+			i++
+		case strings.HasPrefix(body[i:], "--"):
+			j := strings.IndexAny(body[i:], "\r\n")
+			if j < 0 {
+				return "", ""
+			}
+			i += j + 1
+		case strings.HasPrefix(body[i:], "/*"):
+			depth := 1
+			i += 2
+			for i < n && depth > 0 {
+				switch {
+				case strings.HasPrefix(body[i:], "/*"):
+					depth++
+					i += 2
+				case strings.HasPrefix(body[i:], "*/"):
+					depth--
+					i += 2
+				default:
+					i++
+				}
+			}
+			if depth > 0 {
+				return "", ""
+			}
+		default:
+			if body[i] == '(' {
+				return "(", ""
+			}
+			word, rest := sqlWord(body[i:])
+			if word == "" {
+				return "", ""
+			}
+			next, _ = sqlBodyLead(rest)
+			return word, next
+		}
+	}
+	return "", ""
+}
+
+// sqlWord splits a leading ASCII word off s. A letter run followed by a digit, underscore or non-ASCII byte is an identifier, not a keyword.
+func sqlWord(s string) (word, rest string) {
+	i := 0
+	for i < len(s) && s[i]|0x20 >= 'a' && s[i]|0x20 <= 'z' {
+		i++
+	}
+	if i < len(s) && (s[i] == '_' || s[i] == '$' || s[i] >= '0' && s[i] <= '9' || s[i] >= 0x80) {
+		return "", s
+	}
+	return strings.ToLower(s[:i]), s[i:]
+}
+
+// sqlBodyTxControl are the statements Postgres refuses inside a SQL function
+// ("BEGIN is not allowed in an SQL function"). It accepts them at CREATE time and
+// fails every call, so rejecting them early only removes a function that cannot run.
+var sqlBodyTxControl = map[string]bool{"abort": true, "begin": true, "commit": true, "end": true, "rollback": true, "savepoint": true, "release": true, "start": true}
+
+// sqlBodyCommands lists every Postgres command that may open a SQL function
+// body, so a bare expression such as `coalesce(a, b)` still gets caught.
+var sqlBodyCommands = map[string]bool{}
+
+func init() {
+	for _, c := range strings.Fields(`alter analyse analyze call checkpoint close cluster comment copy create deallocate
+		declare delete discard do drop execute explain fetch grant import insert listen load lock merge move notify
+		prepare reassign refresh reindex reset revoke security select set show table truncate unlisten update vacuum
+		values with`) {
+		sqlBodyCommands[c] = true
+	}
+}
 
 // rlsCheckDDLRE detects a pasted CREATE ... statement where a boolean
 // expression is expected.
@@ -942,12 +1017,26 @@ func validateRPCFunction(path, name string, fn domain.Function) domain.Validatio
 		})
 	}
 
-	if strings.EqualFold(fn.Language, "sql") && fn.Body != "" && !sqlBodyStartRE.MatchString(fn.Body) {
-		errs = append(errs, &domain.ValidationError{
-			Path:       path + ".body",
-			Message:    "language sql body must be a statement (SELECT, WITH, INSERT, UPDATE, DELETE, VALUES, TABLE)",
-			Suggestion: "Prefix the expression with SELECT, or use language plpgsql with BEGIN ... END",
-		})
+	if strings.EqualFold(fn.Language, "sql") && fn.Body != "" {
+		lead, next := sqlBodyLead(fn.Body)
+		switch {
+		case sqlBodyTxControl[lead] || lead == "prepare" && next == "transaction":
+			stmt := strings.ToUpper(lead)
+			if lead == "prepare" {
+				stmt += " TRANSACTION"
+			}
+			errs = append(errs, &domain.ValidationError{
+				Path:       path + ".body",
+				Message:    stmt + " is not allowed in a language sql body",
+				Suggestion: "Use language plpgsql for BEGIN ... END blocks; transaction control is not allowed inside functions",
+			})
+		case lead != "(" && !sqlBodyCommands[lead]:
+			errs = append(errs, &domain.ValidationError{
+				Path:       path + ".body",
+				Message:    "language sql body must start with a SQL command (SELECT, WITH, INSERT, UPDATE, DELETE, VALUES, CALL, ...)",
+				Suggestion: "Prefix the expression with SELECT, or use language plpgsql with BEGIN ... END",
+			})
+		}
 	}
 
 	if e := validateRPCReturnType(path+".returns.type", fn.Returns.Type); e != nil {
