@@ -1,9 +1,11 @@
 {
   "name": "instancez-get",
   "private": true,
+  "type": "module",
   "description": "Cloudflare Worker serving the instancez install scripts at get.instancez.ai",
   "scripts": {
     "gen": "node gen.mjs",
+    "test": "node gen.mjs && node --test src/index.test.js",
     "dev": "node gen.mjs && wrangler dev",
     "deploy": "./deploy.sh"
   },

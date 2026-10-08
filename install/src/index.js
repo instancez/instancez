@@ -20,6 +20,29 @@ const installPs1 = decode(installPs1B64)
 
 const CACHE = 'public, max-age=300'
 
+const UMAMI_URL = 'https://cloud.umami.is/api/send'
+const UMAMI_WEBSITE = 'c4a9bad4-b3c1-4dcd-b0ed-9bd291da9af1'
+// Umami drops curl/PowerShell user agents as bots, so send a fixed one.
+const UMAMI_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+
+export function trackInstall(request, url, os) {
+  return fetch(UMAMI_URL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'user-agent': UMAMI_UA },
+    body: JSON.stringify({
+      type: 'event',
+      payload: {
+        website: UMAMI_WEBSITE,
+        hostname: url.hostname,
+        url: url.pathname + url.search,
+        referrer: request.headers.get('referer') || '',
+        name: 'install_script',
+        data: { os, ua: (request.headers.get('user-agent') || '').slice(0, 100) },
+      },
+    }),
+  }).catch(() => {})
+}
+
 function script(body, type) {
   return new Response(body, {
     headers: { 'content-type': type, 'cache-control': CACHE },
@@ -27,15 +50,20 @@ function script(body, type) {
 }
 
 export default {
-  async fetch(request) {
-    const { pathname } = new URL(request.url)
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url)
+    const track = (os) => {
+      if (request.method === 'GET') ctx?.waitUntil(trackInstall(request, url, os))
+    }
 
-    switch (pathname) {
+    switch (url.pathname) {
       case '/':
       case '/install.sh':
+        track('sh')
         return script(installSh, 'text/x-shellscript; charset=utf-8')
       case '/windows':
       case '/install.ps1':
+        track('ps1')
         return script(installPs1, 'text/plain; charset=utf-8')
       default:
         return new Response('Not found. Try https://get.instancez.ai for the installer.\n', {
