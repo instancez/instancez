@@ -20,6 +20,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - **BREAKING:** the `/api` prefix and the `/api/_admin` and `/api/storage/...` mounts were removed; use `/_admin` and `/storage/...`.
 - **BREAKING:** generated absolute URLs (OAuth `redirect_uri`, email verify, magic and recovery links such as `<base>/auth/v1/verify`) no longer carry a prefix. OAuth providers must register `<base>/auth/v1/callback/<provider>`, and links in already-sent emails stop working.
 - `v1` is now a reserved storage bucket name.
+- A `language: sql` RPC body may now start with any Postgres command (`CALL`, `SET LOCAL`, `EXPLAIN`, `DO`, `MERGE`, and so on), as in Supabase, not only `SELECT`, `WITH`, `INSERT`, `UPDATE`, `DELETE`, `VALUES` and `TABLE`. Validation now rejects a body that opens with transaction control (`BEGIN`, `COMMIT`, `END`, `ROLLBACK`, `ABORT`, `START`, `SAVEPOINT`, `RELEASE`, `PREPARE TRANSACTION`), which Postgres refuses inside every SQL function, and points at `language: plpgsql`. Block comments before the first statement may nest.
 
 ### Fixed
 
