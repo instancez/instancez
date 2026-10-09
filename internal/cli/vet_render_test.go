@@ -53,6 +53,21 @@ func TestRenderEmpty(t *testing.T) {
 	assert.NotContains(t, out, "critical")
 }
 
+func TestRenderChecksFooter(t *testing.T) {
+	r := reportOf(sample)
+	r.Checks = vet.Checks{Total: 21, Passed: 20}
+	assert.Contains(t, render(r, false), "\n 20 of 21 checks passed\n")
+	assert.Contains(t, render(r, true), "20 of 21 checks passed")
+	clean := reportOf()
+	clean.Checks = vet.Checks{Total: 21, Passed: 21}
+	assert.Contains(t, render(clean, false), "21 of 21 checks passed")
+}
+
+func TestRenderChecksFooterOmittedWhenTotalZero(t *testing.T) {
+	assert.NotContains(t, render(reportOf(sample), false), "checks passed")
+	assert.NotContains(t, render(reportOf(), false), "checks passed")
+}
+
 func TestRenderLineZeroOmitsLine(t *testing.T) {
 	f := sample
 	f.Line = 0

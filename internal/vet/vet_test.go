@@ -225,7 +225,7 @@ func TestReportJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"findings":[],"counts":{"critical":0,"high":0,"info":0,"low":0,"medium":0}}`
+	want := `{"findings":[],"counts":{"critical":0,"high":0,"info":0,"low":0,"medium":0},"checks":{"total":21,"passed":21}}`
 	if string(b) != want {
 		t.Errorf("json = %s", b)
 	}

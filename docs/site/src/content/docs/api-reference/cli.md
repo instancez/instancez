@@ -154,9 +154,12 @@ tables:
       "fix": "Set rls_enabled: true and add policies, unless the table is meant to be public."
     }
   ],
-  "counts": { "info": 0, "low": 0, "medium": 0, "high": 0, "critical": 1 }
+  "counts": { "info": 0, "low": 0, "medium": 0, "high": 0, "critical": 1 },
+  "checks": { "total": 21, "passed": 20 }
 }
 ```
+
+`checks.total` is the number of rules below, and `checks.passed` is how many of them have no finding left after ignores. The human output ends with the same tally, for example `20 of 21 checks passed`. `unknown-key` is reported but is not a check.
 
 The running engine serves the same report at `GET /_admin/vet` (secret key required). It returns `400 invalid_config` when the config does not parse.
 

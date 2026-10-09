@@ -188,17 +188,23 @@ func TestVetYAML(t *testing.T) {
 	})
 	t.Run("clean config", func(t *testing.T) {
 		got, err := VetYAML([]byte(vetCleanYAML))
-		if err != nil || len(got) != 0 {
-			t.Fatalf("want none, got %+v, %v", got, err)
+		if err != nil || got.Findings == nil || len(got.Findings) != 0 {
+			t.Fatalf("want empty non-nil findings, got %+v, %v", got, err)
+		}
+		if got.Checks.Total == 0 || got.Checks.Passed != got.Checks.Total {
+			t.Fatalf("clean config should pass every check, got %+v", got.Checks)
 		}
 	})
 	t.Run("bad config", func(t *testing.T) {
 		bad := strings.Replace(vetCleanYAML, "rls_enabled: true", "rls_enabled: false", 1)
 		got, err := VetYAML([]byte(bad))
-		if err != nil || len(got) == 0 {
+		if err != nil || len(got.Findings) == 0 {
 			t.Fatalf("want findings, got %+v, %v", got, err)
 		}
-		f := got[0]
+		if got.Checks.Passed != got.Checks.Total-1 {
+			t.Fatalf("one failed check, got %+v", got.Checks)
+		}
+		f := got.Findings[0]
 		if f.Rule != "rls-disabled" || f.Severity != "critical" || f.Path != "tables.todos.rls_enabled" || f.Line != 9 || f.Fix == "" {
 			t.Fatalf("unexpected finding %+v", f)
 		}

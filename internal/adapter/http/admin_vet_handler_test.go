@@ -56,9 +56,13 @@ func TestVetFindings(t *testing.T) {
 			Rule string `json:"rule"`
 		} `json:"findings"`
 		Counts map[string]int `json:"counts"`
+		Checks struct{ Total, Passed int }
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &rep); err != nil {
 		t.Fatal(err)
+	}
+	if rep.Checks.Total == 0 || rep.Checks.Passed >= rep.Checks.Total {
+		t.Fatalf("checks = %+v", rep.Checks)
 	}
 	found := false
 	for _, f := range rep.Findings {
@@ -78,9 +82,13 @@ func TestVetCleanHasAllCountKeys(t *testing.T) {
 	var raw struct {
 		Findings []any          `json:"findings"`
 		Counts   map[string]int `json:"counts"`
+		Checks   struct{ Total, Passed int }
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
 		t.Fatal(err)
+	}
+	if raw.Checks.Total == 0 || raw.Checks.Passed != raw.Checks.Total {
+		t.Fatalf("clean checks = %+v", raw.Checks)
 	}
 	if raw.Findings == nil || len(raw.Findings) != 0 {
 		t.Fatalf("findings must be [], got %s", w.Body)

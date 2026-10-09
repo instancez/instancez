@@ -106,8 +106,11 @@ func TestVetJSON(t *testing.T) {
 	var r struct {
 		Findings []map[string]any `json:"findings"`
 		Counts   map[string]int   `json:"counts"`
+		Checks   struct{ Total, Passed int }
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &r))
+	assert.Greater(t, r.Checks.Total, 0)
+	assert.Equal(t, r.Checks.Total-1, r.Checks.Passed)
 	require.Len(t, r.Findings, 1)
 	assert.Equal(t, "policy-open-write", r.Findings[0]["rule"])
 	assert.Equal(t, "critical", r.Findings[0]["severity"])
@@ -126,6 +129,7 @@ func TestVetPrettyOutputPlain(t *testing.T) {
 	assert.NotContains(t, out, "\x1b[")
 	assert.Contains(t, out, "policy-open-write")
 	assert.Contains(t, out, "failed")
+	assert.Regexp(t, `\d+ of \d+ checks passed`, out)
 }
 
 func TestVetEnvBinding(t *testing.T) {

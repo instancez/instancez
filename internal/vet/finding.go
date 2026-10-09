@@ -50,6 +50,22 @@ type Finding struct {
 type Report struct {
 	Findings []Finding      `json:"findings"`
 	Counts   map[string]int `json:"counts"`
+	Checks   Checks         `json:"checks"`
+}
+
+// Checks counts the catalog rules; Passed is those with no finding left after ignores.
+type Checks struct {
+	Total  int `json:"total"`
+	Passed int `json:"passed"`
+}
+
+// checkIDs is every rule a user can fail; a new rule means updating this list, the allRulesYAML test fixture and the docs rule table.
+var checkIDs = []string{
+	"rls-disabled", "policy-open-write", "policy-open-read", "policy-authed-read-sensitive", "policy-no-identity-write",
+	"bucket-open-write", "bucket-open-read", "bucket-no-rls", "bucket-public",
+	"rpc-definer-no-auth", "rpc-definer-search-path", "rpc-dynamic-sql",
+	"function-public-secrets", "hardcoded-secret", "jwt-expiry-long", "signup-unverified-email",
+	"anonymous-signins", "redirect-insecure", "cors-wildcard", "cors-null-origin", "max-limit-disabled",
 }
 
 // newReport always fills every severity count and a non-nil findings slice.
@@ -61,10 +77,18 @@ func newReport(findings []Finding) *Report {
 	for _, n := range severityNames {
 		counts[n] = 0
 	}
+	failed := map[string]bool{}
 	for _, f := range findings {
 		counts[f.Severity.String()]++
+		failed[f.Rule] = true
 	}
-	return &Report{Findings: findings, Counts: counts}
+	passed := 0
+	for _, id := range checkIDs {
+		if !failed[id] {
+			passed++
+		}
+	}
+	return &Report{Findings: findings, Counts: counts, Checks: Checks{Total: len(checkIDs), Passed: passed}}
 }
 
 // Max returns the highest severity present and whether there are any findings.

@@ -82,6 +82,7 @@ func renderVetReport(w io.Writer, r *vet.Report, file string, color bool) {
 
 	if len(r.Findings) == 0 {
 		fmt.Fprintf(w, "\n %s\n", p.wrap("32", "✓ No security findings"))
+		writeChecks(w, p, r.Checks)
 		return
 	}
 
@@ -119,6 +120,13 @@ func renderVetReport(w io.Writer, r *vet.Report, file string, color bool) {
 		}
 	}
 	fmt.Fprintf(w, "\n %s\n", strings.Join(parts, p.wrap("2", " · ")))
+	writeChecks(w, p, r.Checks)
+}
+
+func writeChecks(w io.Writer, p painter, c vet.Checks) {
+	if c.Total > 0 {
+		fmt.Fprintf(w, " %s\n", p.wrap("2", fmt.Sprintf("%d of %d checks passed", c.Passed, c.Total)))
+	}
 }
 
 func renderVetVerdict(w io.Writer, failed bool, failOn vet.Severity, color bool) {

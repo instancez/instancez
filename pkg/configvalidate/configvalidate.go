@@ -107,15 +107,27 @@ type VetFinding struct {
 	Fix      string `json:"fix"`
 }
 
+// VetChecks counts the vet rules; Passed is those with no finding.
+type VetChecks struct {
+	Total  int `json:"total"`
+	Passed int `json:"passed"`
+}
+
+// VetResult is the findings plus the checks tally from VetYAML.
+type VetResult struct {
+	Findings []VetFinding `json:"findings"`
+	Checks   VetChecks    `json:"checks"`
+}
+
 // VetYAML runs the `inz vet` security rules on config bytes; the error is a parse failure.
-func VetYAML(data []byte) ([]VetFinding, error) {
+func VetYAML(data []byte) (*VetResult, error) {
 	rep, err := vet.Run(data, vet.Options{})
 	if err != nil {
 		return nil, err
 	}
-	out := make([]VetFinding, 0, len(rep.Findings))
+	out := &VetResult{Findings: make([]VetFinding, 0, len(rep.Findings)), Checks: VetChecks(rep.Checks)}
 	for _, f := range rep.Findings {
-		out = append(out, VetFinding{f.Rule, f.Severity.String(), f.Path, f.Line, f.Title, f.Message, f.Fix})
+		out.Findings = append(out.Findings, VetFinding{f.Rule, f.Severity.String(), f.Path, f.Line, f.Title, f.Message, f.Fix})
 	}
 	return out, nil
 }
