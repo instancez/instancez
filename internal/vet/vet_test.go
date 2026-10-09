@@ -21,7 +21,7 @@ func TestParseSeverity(t *testing.T) {
 			t.Errorf("ParseSeverity(%q) should fail", bad)
 		}
 	}
-	if !(Info < Low && Low < Medium && Medium < High && High < Critical) {
+	if Info >= Low || Low >= Medium || Medium >= High || High >= Critical {
 		t.Error("severity order")
 	}
 	if Severity(99).String() == "" {

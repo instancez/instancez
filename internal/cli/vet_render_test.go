@@ -125,7 +125,7 @@ func TestUseColor(t *testing.T) {
 	assert.False(t, useColor(&bytes.Buffer{}), "non-file writer")
 	f, err := os.CreateTemp(t.TempDir(), "x")
 	require.NoError(t, err)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	assert.False(t, useColor(f), "regular file is not a tty")
 	t.Setenv("NO_COLOR", "1")
 	assert.False(t, useColor(os.Stdout))

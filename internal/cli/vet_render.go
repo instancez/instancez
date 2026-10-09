@@ -72,16 +72,16 @@ func writeWrapped(w io.Writer, prefix, hang, text string) {
 		if i == 0 {
 			p = prefix
 		}
-		fmt.Fprintf(w, "%s%s\n", p, l)
+		_, _ = fmt.Fprintf(w, "%s%s\n", p, l)
 	}
 }
 
 func renderVetReport(w io.Writer, r *vet.Report, file string, color bool) {
 	p := painter(color)
-	fmt.Fprintf(w, "%s  %s\n", p.wrap("1", "inz vet"), p.wrap("2", file))
+	_, _ = fmt.Fprintf(w, "%s  %s\n", p.wrap("1", "inz vet"), p.wrap("2", file))
 
 	if len(r.Findings) == 0 {
-		fmt.Fprintf(w, "\n %s\n", p.wrap("32", "✓ No security findings"))
+		_, _ = fmt.Fprintf(w, "\n %s\n", p.wrap("32", "✓ No security findings"))
 		writeChecks(w, p, r.Checks)
 		return
 	}
@@ -97,10 +97,10 @@ func renderVetReport(w io.Writer, r *vet.Report, file string, color bool) {
 			if f.Line > 0 {
 				loc = fmt.Sprintf("%s:%d", file, f.Line)
 			}
-			fmt.Fprintf(w, "\n %s %s  %s %s\n", p.wrap(code, "●"), p.wrap(code, fmt.Sprintf("%-8s", name)),
+			_, _ = fmt.Fprintf(w, "\n %s %s  %s %s\n", p.wrap(code, "●"), p.wrap(code, fmt.Sprintf("%-8s", name)),
 				p.wrap("1", fmt.Sprintf("%-32s", f.Rule)), p.wrap("2", loc))
 			if f.Path != "" {
-				fmt.Fprintf(w, "   %s\n", p.wrap("2", f.Path))
+				_, _ = fmt.Fprintf(w, "   %s\n", p.wrap("2", f.Path))
 			}
 			writeWrapped(w, "   ", "   ", f.Message)
 			if f.Fix != "" {
@@ -119,21 +119,21 @@ func renderVetReport(w io.Writer, r *vet.Report, file string, color bool) {
 			parts = append(parts, p.wrap(sevCode(sev), s))
 		}
 	}
-	fmt.Fprintf(w, "\n %s\n", strings.Join(parts, p.wrap("2", " · ")))
+	_, _ = fmt.Fprintf(w, "\n %s\n", strings.Join(parts, p.wrap("2", " · ")))
 	writeChecks(w, p, r.Checks)
 }
 
 func writeChecks(w io.Writer, p painter, c vet.Checks) {
 	if c.Total > 0 {
-		fmt.Fprintf(w, " %s\n", p.wrap("2", fmt.Sprintf("%d of %d checks passed", c.Passed, c.Total)))
+		_, _ = fmt.Fprintf(w, " %s\n", p.wrap("2", fmt.Sprintf("%d of %d checks passed", c.Passed, c.Total)))
 	}
 }
 
 func renderVetVerdict(w io.Writer, failed bool, failOn vet.Severity, color bool) {
 	p := painter(color)
 	if failed {
-		fmt.Fprintf(w, " %s\n", p.wrap("1;31", fmt.Sprintf("✗ failed: findings at or above %s", failOn)))
+		_, _ = fmt.Fprintf(w, " %s\n", p.wrap("1;31", fmt.Sprintf("✗ failed: findings at or above %s", failOn)))
 		return
 	}
-	fmt.Fprintf(w, " %s\n", p.wrap("32", "✓ passed"))
+	_, _ = fmt.Fprintf(w, " %s\n", p.wrap("32", "✓ passed"))
 }
