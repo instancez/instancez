@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { ChakraProvider, createSystem, defaultConfig } from "@chakra-ui/react";
 import { ColorModeProvider } from "../components/color-mode";
 import { renderWithChakra } from "../test/helpers";
@@ -22,8 +23,10 @@ const report = (findings: VetFinding[], checks?: VetReport["checks"]): VetReport
 
 function renderPage(getVetReport: ConsoleBackend["getVetReport"]) {
   const backend = { capabilities: fullCapabilities(), getVetReport } as unknown as ConsoleBackend;
-  return renderWithChakra(<BackendProvider backend={backend}><SecurityPage /></BackendProvider>);
+  return renderWithChakra(<MemoryRouter><BackendProvider backend={backend}><SecurityPage /><Where /></BackendProvider></MemoryRouter>);
 }
+
+function Where() { return <span data-testid="where">{useLocation().pathname}</span>; }
 
 const sample = [
   f({ rule: "r-info", severity: "info", title: "Info one" }),
@@ -31,8 +34,6 @@ const sample = [
   f({ rule: "r-high", severity: "high", title: "High one" }),
   f({ rule: "r-high2", severity: "high", title: "High two" }),
 ];
-
-const order = () => ["Crit one", "High one", "High two", "Info one"].map((t) => screen.queryByText(t)).filter(Boolean);
 
 afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -44,39 +45,38 @@ describe("SecurityPage", () => {
 
   it("renders per-severity counts and groups findings by severity descending", async () => {
     renderPage(async () => report(sample));
-    await screen.findByText("Crit one");
+    await screen.findByText("HOW TO FIX");
     expect(screen.getByRole("button", { name: "1 critical" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "2 high" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "0 medium" })).toBeDisabled();
-    const text = document.body.textContent ?? "";
-    const idx = ["Crit one", "High one", "High two", "Info one"].map((t) => text.indexOf(t));
-    expect(idx).toEqual([...idx].sort((a, b) => a - b));
-    expect(order()).toHaveLength(4);
+    const titles = ["Crit one", "High one", "High two", "Info one"];
+    const listed = screen.getAllByRole("button").map((b) => titles.find((t) => b.textContent?.startsWith(t))).filter(Boolean);
+    expect(listed).toEqual(titles);
   });
 
   it("filters by tile and clears on a second click", async () => {
     const user = userEvent.setup();
     renderPage(async () => report(sample));
-    await screen.findByText("Crit one");
+    await screen.findByText("HOW TO FIX");
     await user.click(screen.getByRole("button", { name: "2 high" }));
     expect(screen.queryByText("Crit one")).not.toBeInTheDocument();
-    expect(screen.getByText("High one")).toBeInTheDocument();
+    expect(screen.getAllByText("High one").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "2 high" })).toHaveAttribute("aria-pressed", "true");
     await user.click(screen.getByRole("button", { name: "2 high" }));
-    expect(screen.getByText("Crit one")).toBeInTheDocument();
+    expect(screen.getAllByText("Crit one").length).toBeGreaterThan(0);
   });
 
   it("does not filter on a zero-count tile", async () => {
     const user = userEvent.setup();
     renderPage(async () => report(sample));
-    await screen.findByText("Crit one");
+    await screen.findByText("HOW TO FIX");
     await user.click(screen.getByRole("button", { name: "0 medium" }));
-    expect(screen.getByText("Crit one")).toBeInTheDocument();
+    expect(screen.getAllByText("Crit one").length).toBeGreaterThan(0);
   });
 
   it("shows the all-clear state for no findings", async () => {
     renderPage(async () => report([]));
-    expect(await screen.findByText("No security findings")).toBeInTheDocument();
+    expect(await screen.findByText("Nothing to fix")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "0 critical" })).toBeDisabled();
   });
 
@@ -86,13 +86,13 @@ describe("SecurityPage", () => {
     renderPage(get);
     expect(await screen.findByText("config is invalid: fix it first")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Retry" }));
-    expect(await screen.findByText("No security findings")).toBeInTheDocument();
+    expect(await screen.findByText("Nothing to fix")).toBeInTheDocument();
     expect(get).toHaveBeenCalledTimes(2);
   });
 
   it("buckets an unknown severity as info without crashing", async () => {
     renderPage(async () => report([f({ rule: "r-x", severity: "catastrophic" as never, title: "Future one" })]));
-    expect(await screen.findByText("Future one")).toBeInTheDocument();
+    await screen.findByText("HOW TO FIX");
     expect(screen.getByText("catastrophic")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "1 info" })).toBeInTheDocument();
   });
@@ -102,16 +102,16 @@ describe("SecurityPage", () => {
     const mk = (g: ConsoleBackend["getVetReport"]) => ({ capabilities: fullCapabilities(), getVetReport: g }) as unknown as ConsoleBackend;
     const first = mk(() => new Promise<VetReport>((r) => { resolveFirst = r; }));
     const second = mk(async () => report([f({ title: "Fresh" })]));
-    const { rerender } = renderWithChakra(<BackendProvider backend={first}><SecurityPage /></BackendProvider>);
+    const { rerender } = renderWithChakra(<MemoryRouter><BackendProvider backend={first}><SecurityPage /></BackendProvider></MemoryRouter>);
     rerender(
       <ChakraProvider value={createSystem(defaultConfig)}><ColorModeProvider>
-        <BackendProvider backend={second}><SecurityPage /></BackendProvider>
+        <MemoryRouter><BackendProvider backend={second}><SecurityPage /></BackendProvider></MemoryRouter>
       </ColorModeProvider></ChakraProvider>,
     );
-    expect(await screen.findByText("Fresh")).toBeInTheDocument();
+    await screen.findByText("HOW TO FIX");
     await act(async () => { resolveFirst(report([f({ title: "Stale" })])); });
     expect(screen.queryByText("Stale")).not.toBeInTheDocument();
-    expect(screen.getByText("Fresh")).toBeInTheDocument();
+    expect(screen.getAllByText("Fresh").length).toBeGreaterThan(0);
   });
 
   it("disables Re-scan with aria-busy while a scan runs", async () => {
@@ -148,13 +148,13 @@ describe("SecurityPage", () => {
       .mockResolvedValueOnce(report([f({ rule: "r-crit", severity: "critical", title: "Crit one" })]))
       .mockResolvedValueOnce(report(sample));
     renderPage(get);
-    await screen.findByText("Crit one");
+    await screen.findByText("HOW TO FIX");
     await user.click(screen.getByRole("button", { name: "2 high" }));
     await user.click(screen.getByRole("button", { name: /Re-scan/ }));
     await waitFor(() => { expect(screen.getByRole("button", { name: "0 high" })).toBeInTheDocument(); });
     await user.click(screen.getByRole("button", { name: /Re-scan/ }));
-    expect(await screen.findByText("High one")).toBeInTheDocument();
-    expect(screen.getByText("Crit one")).toBeInTheDocument();
+    await screen.findAllByText("High one");
+    expect(screen.getAllByText("Crit one").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "2 high" })).toHaveAttribute("aria-pressed", "false");
   });
 
@@ -168,33 +168,174 @@ describe("SecurityPage", () => {
     err.mockRestore();
   });
 
-  it("hides the line when it is 0 and shows it otherwise", async () => {
-    renderPage(async () => report([f({ title: "A", line: 0 }), f({ title: "B", line: 7, rule: "r2" })]));
-    await screen.findByText("A");
-    expect(screen.queryByText("line 0")).not.toBeInTheDocument();
-    expect(screen.getByText("line 7")).toBeInTheDocument();
-  });
-
-  it("copies the exact ignore comment", async () => {
-    const user = userEvent.setup();
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
-    renderPage(async () => report([f({})]));
-    await user.click(await screen.findByText("Ignore"));
-    expect(screen.getByText("# inz-vet-ignore: rls-disabled")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Copy ignore comment/ }));
-    expect(writeText).toHaveBeenCalledWith("# inz-vet-ignore: rls-disabled");
-  });
-
   it("survives a rejected clipboard write", async () => {
     const user = userEvent.setup();
     const writeText = vi.fn().mockRejectedValue(new Error("denied"));
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
     renderPage(async () => report([f({})]));
-    await user.click(await screen.findByText("Ignore"));
+    await user.click(await screen.findByText("Ignore…"));
     await user.click(screen.getByRole("button", { name: /Copy ignore comment/ }));
     expect(writeText).toHaveBeenCalled();
     expect(screen.getByRole("button", { name: /Copy ignore comment/ })).toBeInTheDocument();
+  });
+});
+
+describe("SecurityPage list and detail", () => {
+  const items = [
+    f({ rule: "r-crit", severity: "critical", title: "Crit one", path: "tables.a.rls[0]", line: 3, fix: "Fix crit." }),
+    f({ rule: "r-high", severity: "high", title: "High one", path: "storage.b", line: 0, fix: "Fix high." }),
+    f({ rule: "r-high", severity: "high", title: "High one", path: "storage.b", line: 0, fix: "Fix high dup." }),
+    f({ rule: "r-low", severity: "low", title: "Low one", path: "server.cors", line: 9, fix: "Fix low." }),
+  ];
+  const rows = () => screen.getAllByRole("button").filter((b) => b.hasAttribute("aria-current") || /· line|^storage|^server|^tables/.test(b.textContent ?? ""));
+  const row = (t: string, i = 0) => screen.getAllByRole("button").filter((b) => b.textContent?.includes(t))[i]!;
+  const stubClipboard = () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    return writeText;
+  };
+
+  it("selects the first finding by default and shows its detail", async () => {
+    renderPage(async () => report(items));
+    await screen.findByText("HOW TO FIX");
+    expect(row("Crit one")).toHaveAttribute("aria-current", "true");
+    expect(row("High one")).not.toHaveAttribute("aria-current");
+    expect(screen.getByText("Fix crit.")).toBeInTheDocument();
+    expect(screen.getByText("r-crit")).toBeInTheDocument();
+    expect(screen.getByText("Anyone can read this table.")).toBeInTheDocument();
+    expect(screen.getByText("line 3")).toBeInTheDocument();
+  });
+
+  it("lists path and line, hiding line 0", async () => {
+    renderPage(async () => report(items));
+    await screen.findByText("HOW TO FIX");
+    expect(row("Crit one")).toHaveTextContent("tables.a.rls[0] · line 3");
+    expect(row("High one")).toHaveTextContent(/^.*storage\.b(?! · line)/);
+    expect(row("High one").textContent).not.toContain("line 0");
+  });
+
+  it("changes the detail on click, keeping duplicate rows distinct", async () => {
+    const user = userEvent.setup();
+    renderPage(async () => report(items));
+    await screen.findByText("HOW TO FIX");
+    await user.click(row("High one", 1));
+    expect(screen.getByText("Fix high dup.")).toBeInTheDocument();
+    expect(row("High one", 1)).toHaveAttribute("aria-current", "true");
+    expect(row("High one", 0)).not.toHaveAttribute("aria-current");
+  });
+
+  it("resets the selection to the first visible when the filter changes", async () => {
+    const user = userEvent.setup();
+    renderPage(async () => report(items));
+    await screen.findByText("HOW TO FIX");
+    await user.click(row("Low one"));
+    await user.click(screen.getByRole("button", { name: "2 high" }));
+    expect(row("High one", 0)).toHaveAttribute("aria-current", "true");
+    expect(screen.getByText("Fix high.")).toBeInTheDocument();
+  });
+
+  it("keeps the selection across a re-scan and drops it when it disappears", async () => {
+    const user = userEvent.setup();
+    const get = vi.fn()
+      .mockResolvedValueOnce(report(items))
+      .mockResolvedValueOnce(report(items))
+      .mockResolvedValueOnce(report(items.slice(0, 2)));
+    renderPage(get);
+    await screen.findByText("HOW TO FIX");
+    await user.click(row("Low one"));
+    await user.click(screen.getByRole("button", { name: /Re-scan/ }));
+    await waitFor(() => { expect(get).toHaveBeenCalledTimes(2); });
+    expect(row("Low one")).toHaveAttribute("aria-current", "true");
+    await user.click(screen.getByRole("button", { name: /Re-scan/ }));
+    await waitFor(() => { expect(screen.queryByText("Low one")).not.toBeInTheDocument(); });
+    expect(row("Crit one")).toHaveAttribute("aria-current", "true");
+  });
+
+  it("copies the fix text", async () => {
+    const user = userEvent.setup();
+    const writeText = stubClipboard();
+    renderPage(async () => report(items));
+    await screen.findByText("HOW TO FIX");
+    await user.click(screen.getByRole("button", { name: "Copy fix" }));
+    expect(writeText).toHaveBeenCalledWith("Fix crit.");
+  });
+
+  it("hides the fix callout and copy when there is no fix", async () => {
+    renderPage(async () => report([f({ fix: "" })]));
+    await screen.findByText("Anyone can read this table.");
+    expect(screen.queryByText("HOW TO FIX")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy fix" })).not.toBeInTheDocument();
+  });
+
+  it("shows and copies the exact ignore snippet", async () => {
+    const user = userEvent.setup();
+    const writeText = stubClipboard();
+    renderPage(async () => report(items));
+    await user.click(await screen.findByText("Ignore…"));
+    expect(screen.getByText("# inz-vet-ignore: r-crit")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Copy ignore comment for r-crit" }));
+    expect(writeText).toHaveBeenCalledWith("# inz-vet-ignore: r-crit");
+  });
+
+  it.each([
+    ["tables.a.rls[0]", "tables"], ["storage.b", "storage"], ["rpc.fn", "rpc"],
+    ["functions.hook", "functions"], ["auth.jwt_expiry", "auth"],
+  ])("links %s to its section", async (path, section) => {
+    const user = userEvent.setup();
+    renderPage(async () => report([f({ path })]));
+    const link = await screen.findByRole("link", { name: `Open in ${section}` });
+    expect(link).toHaveAttribute("href", `/${section}`);
+    await user.click(link);
+    expect(screen.getByTestId("where")).toHaveTextContent(`/${section}`);
+  });
+
+  it.each(["server.cors", "weird", "", "tablesx.a"])("has no open link for %j", async (path) => {
+    renderPage(async () => report([f({ path })]));
+    await screen.findByText("HOW TO FIX");
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+  });
+
+  it("scrolls the detail into view only when stacked", async () => {
+    const user = userEvent.setup();
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    const rect = vi.spyOn(Element.prototype, "getBoundingClientRect");
+    renderPage(async () => report(items));
+    await screen.findByText("HOW TO FIX");
+    rect.mockImplementation(function (this: Element) {
+      return { top: this.textContent?.includes("HOW TO FIX") ? 0 : 0, bottom: 100 } as DOMRect;
+    });
+    await user.click(row("Low one"));
+    expect(scroll).not.toHaveBeenCalled();
+    rect.mockImplementation(function (this: Element) {
+      return { top: this.textContent?.includes("HOW TO FIX") ? 500 : 0, bottom: 100 } as DOMRect;
+    });
+    await user.click(row("High one"));
+    expect(scroll).toHaveBeenCalledTimes(1);
+    rect.mockRestore();
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+
+  it("does not crash on selection when scrollIntoView is missing", async () => {
+    const user = userEvent.setup();
+    renderPage(async () => report(items));
+    await screen.findByText("HOW TO FIX");
+    await user.click(row("Low one"));
+    expect(row("Low one")).toHaveAttribute("aria-current", "true");
+  });
+
+  it("renders long text without breaking the list", async () => {
+    const long = "x".repeat(400);
+    renderPage(async () => report([f({ title: long, path: long })]));
+    await screen.findByText("HOW TO FIX");
+    expect(row(long.slice(0, 10))).toBeInTheDocument();
+    expect(rows().length).toBeGreaterThan(0);
+  });
+
+  it("shows an unknown severity with its raw label in the detail", async () => {
+    renderPage(async () => report([f({ severity: "weird" as never, title: "W" })]));
+    await screen.findByText("HOW TO FIX");
+    expect(screen.getByText("weird")).toBeInTheDocument();
   });
 });
 
@@ -267,19 +408,19 @@ describe("SecurityPage banner", () => {
   it("chips filter with aria-pressed and All resets", async () => {
     const user = userEvent.setup();
     renderPage(async () => report(many, ck));
-    await screen.findByText("C1");
+    await screen.findByText("HOW TO FIX");
     expect(screen.getByRole("button", { name: "All 4" })).toHaveAttribute("aria-pressed", "true");
     await user.click(screen.getByRole("button", { name: "1 high" }));
     expect(screen.queryByText("C1")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "1 high" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "All 4" })).toHaveAttribute("aria-pressed", "false");
     await user.click(screen.getByRole("button", { name: "All 4" }));
-    expect(screen.getByText("C1")).toBeInTheDocument();
+    expect(screen.getAllByText("C1").length).toBeGreaterThan(0);
   });
 
   it("disables zero-count chips", async () => {
     renderPage(async () => report(many, ck));
-    await screen.findByText("C1");
+    await screen.findByText("HOW TO FIX");
     expect(screen.getByRole("button", { name: "0 medium" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "0 info" })).toBeDisabled();
   });

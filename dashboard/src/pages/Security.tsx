@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Lightbulb, RefreshCw, ShieldAlert, ShieldCheck } from "lucide-react";
+import { Link } from "react-router-dom";
+import { RefreshCw, ShieldAlert, ShieldCheck } from "lucide-react";
 import { Box, chakra, Code, Flex, HStack, Text, VStack } from "@chakra-ui/react";
 import { CopyButton } from "../components/ApiKeys";
-import { Card } from "../components/Card";
 import { EmptyState } from "../components/EmptyState";
 import { ListSkeleton } from "../components/Skeletons";
 import { Button, Disclosure } from "../components/ui";
@@ -46,10 +46,12 @@ function SeverityBadge({ severity }: { severity: string }) {
   );
 }
 
-function IgnoreSnippet({ rule }: { rule: string }) {
+const SECTIONS = ["tables", "storage", "rpc", "functions", "auth"];
+
+function Ignore({ rule }: { rule: string }) {
   const snippet = `# inz-vet-ignore: ${rule}`;
   return (
-    <Disclosure label="Ignore">
+    <Disclosure label="Ignore…">
       <HStack gap="2" flexWrap="wrap">
         <Code fontSize="xs" px="2" py="1" borderRadius="md" bg="bg.muted" color="fg" wordBreak="break-all">{snippet}</Code>
         <CopyButton value={snippet} label={`Copy ignore comment for ${rule}`} />
@@ -58,37 +60,62 @@ function IgnoreSnippet({ rule }: { rule: string }) {
   );
 }
 
-function FindingCard({ finding }: { finding: VetFinding }) {
-  const p = PALETTE[bucketOf(finding.severity)];
+function FindingRow({ finding, selected, onSelect }: { finding: VetFinding; selected: boolean; onSelect: () => void }) {
+  const sev = bucketOf(finding.severity);
+  const p = PALETTE[sev];
+  const where = finding.line > 0 ? `${finding.path} · line ${finding.line}` : finding.path;
   return (
-    <Card>
-      <Flex gap="4" align="stretch">
-        <Box aria-hidden w="1" flexShrink="0" borderRadius="full" bg={`${p}.solid`} alignSelf="stretch" />
-        <VStack align="stretch" gap="3" flex="1" minW="0">
-          <HStack gap="2" flexWrap="wrap">
-            <SeverityBadge severity={finding.severity} />
-            <Code fontSize="xs" color="fg.muted" bg="transparent" p="0">{finding.rule}</Code>
-          </HStack>
-          <Text fontSize="md" fontWeight="semibold" color="fg">{finding.title}</Text>
-          <Text fontSize="sm" color="fg.muted">{finding.message}</Text>
-          {(finding.path || finding.line > 0) && (
-            <HStack gap="2" flexWrap="wrap">
-              {finding.path && (
-                <Code fontSize="xs" px="2" py="0.5" borderRadius="md" bg="bg.muted" color="fg" wordBreak="break-all">{finding.path}</Code>
-              )}
-              {finding.line > 0 && <Text fontSize="xs" color="fg.muted">line {finding.line}</Text>}
-            </HStack>
-          )}
-          {finding.fix && (
-            <HStack align="flex-start" gap="2" p="3" borderRadius="md" bg="green.subtle" color="green.fg" borderWidth="1px" borderColor="green.muted">
-              <Box mt="0.5" flexShrink="0"><Lightbulb size={14} /></Box>
-              <Text fontSize="sm"><b>Fix:</b> {finding.fix}</Text>
-            </HStack>
-          )}
-          <IgnoreSnippet rule={finding.rule} />
+    <chakra.button
+      type="button"
+      onClick={onSelect}
+      aria-current={selected ? "true" : undefined}
+      display="flex" alignItems="center" gap="3" w="full" textAlign="left" px="4" py="3"
+      borderBottomWidth="1px" cursor="pointer"
+      bg={selected ? `${p}.subtle` : "transparent"}
+      boxShadow={selected ? "inset 3px 0 0 var(--chakra-colors-" + p + "-solid)" : undefined}
+      _hover={{ bg: selected ? `${p}.subtle` : "bg.subtle" }}
+    >
+      <Dot color={`${p}.solid`} size="2.5" />
+      <Box flex="1" minW="0">
+        <Text fontSize="sm" fontWeight="semibold" color="fg" truncate>{finding.title}</Text>
+        <Text fontSize="xs" color="fg.muted" fontFamily="mono" truncate>{where}</Text>
+      </Box>
+      <Text fontSize="xs" fontWeight="semibold" color={`${p}.fg`} textTransform="uppercase" flexShrink="0">{sev}</Text>
+    </chakra.button>
+  );
+}
+
+function FindingDetail({ finding }: { finding: VetFinding }) {
+  const section = finding.path.split(".")[0] ?? "";
+  const target = SECTIONS.includes(section) ? section : null;
+  return (
+    <VStack align="stretch" gap="4">
+      <HStack gap="2.5" flexWrap="wrap">
+        <SeverityBadge severity={finding.severity} />
+        <Code fontSize="xs" color="fg.muted" bg="transparent" p="0">{finding.rule}</Code>
+      </HStack>
+      <Text fontSize="xl" fontWeight="bold" color="fg" lineHeight="1.25" wordBreak="break-word">{finding.title}</Text>
+      <Text fontSize="sm" color="fg.muted" lineHeight="1.55" wordBreak="break-word">{finding.message}</Text>
+      {(finding.path || finding.line > 0) && (
+        <HStack gap="2" flexWrap="wrap">
+          {finding.path && <Code fontSize="xs" px="2" py="1" borderRadius="md" bg="bg.muted" color="fg" wordBreak="break-all">{finding.path}</Code>}
+          {finding.line > 0 && <Text fontSize="xs" color="fg.muted" fontFamily="mono">line {finding.line}</Text>}
+        </HStack>
+      )}
+      {finding.fix && (
+        <VStack align="stretch" gap="2" p="4" borderRadius="lg" bg="green.subtle" borderWidth="1px" borderColor="green.muted">
+          <Text fontSize="xs" fontWeight="bold" letterSpacing="0.04em" color="green.fg">HOW TO FIX</Text>
+          <Text fontSize="sm" color="fg" whiteSpace="pre-wrap" wordBreak="break-word">{finding.fix}</Text>
         </VStack>
-      </Flex>
-    </Card>
+      )}
+      <HStack gap="2" flexWrap="wrap">
+        {finding.fix && <HStack gap="1" fontSize="sm" color="fg.muted">Copy fix<CopyButton value={finding.fix} label="Copy fix" /></HStack>}
+        {target && (
+          <Button asChild variant="outline" size="sm"><Link to={`/${target}`}>Open in {target}</Link></Button>
+        )}
+      </HStack>
+      <Ignore rule={finding.rule} />
+    </VStack>
   );
 }
 
@@ -199,6 +226,9 @@ export function SecurityPage() {
   const [report, setReport] = useState<VetReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<VetSeverity | null>(null);
+  const [selKey, setSelKey] = useState<string | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const detailRef = useRef<HTMLDivElement>(null);
   const [scanning, setScanning] = useState(true);
   const seq = useRef(0);
 
@@ -226,6 +256,24 @@ export function SecurityPage() {
     if (filter && !active) setFilter(null);
   }, [filter, active]);
 
+  const seen = new Map<string, number>();
+  const visible = SEVERITIES.filter((s) => !active || s === active).flatMap((s) =>
+    findings.filter((f) => bucketOf(f.severity) === s).map((finding) => {
+      const base = `${finding.rule}:${finding.path}:${finding.line}`;
+      const n = seen.get(base) ?? 0;
+      seen.set(base, n + 1);
+      return { finding, key: `${base}:${n}` };
+    }),
+  );
+  const selected = visible.find((v) => v.key === selKey) ?? visible[0];
+
+  function select(key: string) {
+    setSelKey(key);
+    const list = listRef.current?.getBoundingClientRect();
+    const detail = detailRef.current;
+    if (list && detail && detail.getBoundingClientRect().top >= list.bottom) detail.scrollIntoView?.({ block: "start", behavior: "smooth" });
+  }
+
   const toolbar = (
     <HStack justify="space-between" gap="4" pb="6" flexWrap="wrap">
       <Text fontSize="sm" color="fg.muted">{report && !error ? "Checked" : "Scanning"} <Code fontSize="xs">instancez.yaml</Code></Text>
@@ -242,25 +290,26 @@ export function SecurityPage() {
   } else if (!report) {
     body = <ListSkeleton rows={4} />;
   } else if (findings.length === 0) {
-    body = <EmptyState icon={ShieldCheck} title="No security findings" description="Your config passed every check." />;
+    body = <EmptyState icon={ShieldCheck} title="Nothing to fix" description="Your config passed every check." />;
   } else {
     body = (
-      <>
-        <VStack gap="3" align="stretch">
-          {SEVERITIES.filter((s) => !active || s === active).flatMap((s) =>
-            findings.filter((f) => bucketOf(f.severity) === s).map((f, i) => (
-              <FindingCard key={`${f.rule}:${f.path}:${f.line}:${i}`} finding={f} />
-            )),
-          )}
-        </VStack>
-      </>
+      <Flex gap="5" align="flex-start" flexWrap="wrap">
+        <Box ref={listRef} flex="1 1 320px" maxW={{ base: "full", xl: "520px" }} minW="0" bg="bg" borderWidth="1px" borderRadius="xl" overflow="hidden">
+          {visible.map((v) => (
+            <FindingRow key={v.key} finding={v.finding} selected={v.key === selected?.key} onSelect={() => { select(v.key); }} />
+          ))}
+        </Box>
+        <Box ref={detailRef} flex="2 1 320px" minW="0" bg="bg" borderWidth="1px" borderRadius="xl" p={{ base: "5", md: "7" }}>
+          {selected && <FindingDetail finding={selected.finding} />}
+        </Box>
+      </Flex>
     );
   }
 
   return (
     <Box pb="8">
       {toolbar}
-      {report && !error && <Banner report={report} findings={findings} counts={counts} active={active} onFilter={setFilter} />}
+      {report && !error && <Banner report={report} findings={findings} counts={counts} active={active} onFilter={(s) => { setFilter(s); setSelKey(null); }} />}
       {body}
     </Box>
   );
