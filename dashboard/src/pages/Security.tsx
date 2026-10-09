@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ComponentProps } from "react";
-import { RefreshCw, ShieldAlert, ShieldCheck } from "lucide-react";
+import { ShieldAlert, ShieldCheck } from "lucide-react";
 import { Box, chakra, Code, Flex, HStack, Text, VisuallyHidden, VStack } from "@chakra-ui/react";
 import { EmptyState } from "../components/EmptyState";
 import { ListSkeleton } from "../components/Skeletons";
@@ -7,7 +7,7 @@ import { Button } from "../components/ui";
 import { useBackend } from "../console/BackendContext";
 import { useConfig } from "../hooks/useConfig";
 import { applyVetEdit } from "../lib/vetEdit";
-import type { VetEdit, VetFinding, VetReport, VetSeverity } from "../lib/types";
+import type { VetFinding, VetReport, VetSeverity } from "../lib/types";
 
 const SEVERITIES: VetSeverity[] = ["critical", "high", "medium", "low", "info"];
 
@@ -223,16 +223,14 @@ export function SecurityPage() {
   const [selKey, setSelKey] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const detailRef = useRef<HTMLDivElement>(null);
-  const [scanning, setScanning] = useState(true);
   const seq = useRef(0);
 
   const scan = useCallback(() => {
     const id = ++seq.current;
     setError(null);
-    setScanning(true);
     backend.getVetReport().then(
-      (r) => { if (id === seq.current) { setReport(r); setScanning(false); } },
-      (e: unknown) => { if (id === seq.current) { setError(e instanceof Error ? e.message : String(e)); setScanning(false); } },
+      (r) => { if (id === seq.current) setReport(r); },
+      (e: unknown) => { if (id === seq.current) setError(e instanceof Error ? e.message : String(e)); },
     );
   }, [backend]);
 
@@ -242,16 +240,27 @@ export function SecurityPage() {
   }, [scan]);
 
   const fixingRef = useRef(false);
-  async function fix(edit: VetEdit) {
+  async function fix(stale: VetFinding) {
     if (!config || fixingRef.current) return;
-    const next = applyVetEdit(config, edit);
-    if (!next) {
-      scan();
-      return;
-    }
     fixingRef.current = true;
     setFixing(true);
+    const id = ++seq.current;
     try {
+      let fresh: VetReport;
+      try {
+        fresh = await backend.getVetReport();
+      } catch (e) {
+        if (id === seq.current) setError(e instanceof Error ? e.message : String(e));
+        return;
+      }
+      if (id !== seq.current) return;
+      const edit = fresh.findings.find((x) => x.rule === stale.rule && x.path === stale.path)?.edit;
+      const next = edit && applyVetEdit(config, edit);
+      if (!next) {
+        setReport(fresh);
+        setSelKey(null);
+        return;
+      }
       if (await save(next)) scan();
     } finally {
       fixingRef.current = false;
@@ -290,7 +299,7 @@ export function SecurityPage() {
   if (error) {
     body = (
       <EmptyState icon={ShieldAlert} title="Couldn't scan the config" description={error}
-        action={<Button variant="outline" onClick={scan} disabled={scanning}>Retry</Button>} />
+        action={<Button variant="outline" onClick={scan}>Retry</Button>} />
     );
   } else if (!report) {
     body = <ListSkeleton rows={4} />;
@@ -309,7 +318,7 @@ export function SecurityPage() {
             <FindingDetail
               finding={selected.finding}
               busy={fixing}
-              onFix={selected.finding.edit && config && backend.capabilities.canWriteConfig ? () => { void fix(selected.finding.edit!); } : undefined}
+              onFix={selected.finding.edit && config && backend.capabilities.canWriteConfig ? () => { void fix(selected.finding); } : undefined}
             />
           )}
         </Box>
@@ -319,10 +328,7 @@ export function SecurityPage() {
 
   return (
     <Box pb="8">
-      <HStack justify="space-between" gap="4" pb="6" flexWrap="wrap">
-        <Text fontSize="sm" color="fg.muted">{scanning ? "Scanning" : "Checked"} <Mono>instancez.yaml</Mono></Text>
-        <Button variant="outline" size="sm" onClick={scan} disabled={scanning} aria-busy={scanning}><RefreshCw size={14} /> Re-scan</Button>
-      </HStack>
+      <Text fontSize="sm" color="fg.muted" pb="6">Checked <Mono>instancez.yaml</Mono></Text>
       {report && !error && <Banner report={report} findings={findings} counts={counts} active={active} onFilter={(s) => { setFilter(s); setSelKey(null); }} />}
       {body}
     </Box>

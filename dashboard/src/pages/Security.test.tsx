@@ -152,56 +152,6 @@ describe("SecurityPage", () => {
     expect(screen.getAllByText("Fresh").length).toBeGreaterThan(0);
   });
 
-  it("disables Re-scan with aria-busy while a scan runs", async () => {
-    let resolve!: (r: VetReport) => void;
-    renderPage(() => new Promise<VetReport>((r) => { resolve = r; }));
-    const btn = screen.getByRole("button", { name: /Re-scan/ });
-    expect(btn).toBeDisabled();
-    expect(btn).toHaveAttribute("aria-busy", "true");
-    await act(async () => { resolve(report([])); });
-    expect(btn).toBeEnabled();
-    expect(btn).toHaveAttribute("aria-busy", "false");
-  });
-
-  it("says Scanning only while scanning, else Checked, also on error", async () => {
-    const user = userEvent.setup();
-    const get = vi.fn().mockResolvedValueOnce(report([])).mockRejectedValueOnce(new Error("boom"));
-    renderPage(get);
-    expect(screen.getByText(/Scanning/)).toBeInTheDocument();
-    expect(await screen.findByText(/Checked/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Re-scan/ }));
-    await screen.findByText("boom");
-    expect(screen.getByText(/Checked/)).toBeInTheDocument();
-    expect(screen.queryByText(/Scanning/)).not.toBeInTheDocument();
-  });
-
-  it("drops the stale count when a re-scan errors", async () => {
-    const user = userEvent.setup();
-    const get = vi.fn().mockResolvedValueOnce(report(sample)).mockRejectedValueOnce(new Error("boom"));
-    renderPage(get);
-    expect(await screen.findByText("4 findings", { exact: false })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Re-scan/ }));
-    expect(await screen.findByText("boom")).toBeInTheDocument();
-    expect(screen.queryByText("4 findings", { exact: false })).not.toBeInTheDocument();
-  });
-
-  it("resets the filter when its severity disappears after a re-scan", async () => {
-    const user = userEvent.setup();
-    const get = vi.fn()
-      .mockResolvedValueOnce(report(sample))
-      .mockResolvedValueOnce(report([f({ rule: "r-crit", severity: "critical", title: "Crit one" })]))
-      .mockResolvedValueOnce(report(sample));
-    renderPage(get);
-    await screen.findByText("HOW TO FIX");
-    await user.click(screen.getByRole("button", { name: "2 high" }));
-    await user.click(screen.getByRole("button", { name: /Re-scan/ }));
-    await waitFor(() => { expect(screen.getByRole("button", { name: "0 high" })).toBeInTheDocument(); });
-    await user.click(screen.getByRole("button", { name: /Re-scan/ }));
-    await screen.findAllByText("High one");
-    expect(screen.getAllByText("Crit one").length).toBeGreaterThan(0);
-    expect(screen.getByRole("button", { name: "2 high" })).toHaveAttribute("aria-pressed", "false");
-  });
-
   it("does not set state after unmount", async () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     let resolve!: (r: VetReport) => void;
@@ -260,23 +210,6 @@ describe("SecurityPage list and detail", () => {
     await user.click(screen.getByRole("button", { name: "2 high" }));
     expect(row("High one", 0)).toHaveAttribute("aria-current", "true");
     expect(screen.getByText("Fix high.")).toBeInTheDocument();
-  });
-
-  it("keeps the selection across a re-scan and drops it when it disappears", async () => {
-    const user = userEvent.setup();
-    const get = vi.fn()
-      .mockResolvedValueOnce(report(items))
-      .mockResolvedValueOnce(report(items))
-      .mockResolvedValueOnce(report(items.slice(0, 2)));
-    renderPage(get);
-    await screen.findByText("HOW TO FIX");
-    await user.click(row("Low one"));
-    await user.click(screen.getByRole("button", { name: /Re-scan/ }));
-    await waitFor(() => { expect(get).toHaveBeenCalledTimes(2); });
-    expect(row("Low one")).toHaveAttribute("aria-current", "true");
-    await user.click(screen.getByRole("button", { name: /Re-scan/ }));
-    await waitFor(() => { expect(screen.queryByText("Low one")).not.toBeInTheDocument(); });
-    expect(row("Crit one")).toHaveAttribute("aria-current", "true");
   });
 
   it("hides the fix callout when there is no fix text", async () => {
@@ -395,16 +328,91 @@ describe("SecurityPage Fix it", () => {
   const edit = { path: ["tables", "notes", "rls_enabled"], value: true };
   const fixable = () => report([f({ edit })]);
 
-  it("stages the edit through save and rescans on success", async () => {
+  it("has no Re-scan button", async () => {
+    renderPage(async () => fixable());
+    await screen.findByText("HOW TO FIX");
+    expect(screen.queryByRole("button", { name: /Re-scan/ })).not.toBeInTheDocument();
+  });
+
+  it("rechecks first, then stages the fresh finding's edit and reloads on success", async () => {
     const user = userEvent.setup();
-    const getVetReport = vi.fn().mockResolvedValue(fixable());
+    const freshEdit = { path: ["tables", "notes", "other"], value: 7 };
+    const getVetReport = vi.fn()
+      .mockResolvedValueOnce(fixable())
+      .mockResolvedValueOnce(report([f({ edit: freshEdit })]))
+      .mockResolvedValue(fixable());
     const { save } = renderPage(getVetReport);
     await user.click(await screen.findByRole("button", { name: "Fix it" }));
     expect(save).toHaveBeenCalledTimes(1);
     const saved = save.mock.calls[0]![0] as Config;
-    expect(saved.tables["notes"]!.rls_enabled).toBe(true);
-    expect(baseConfig.tables["notes"]!.rls_enabled).toBe(false);
-    await waitFor(() => { expect(getVetReport).toHaveBeenCalledTimes(2); });
+    expect((saved.tables["notes"] as unknown as Record<string, unknown>)["other"]).toBe(7);
+    expect(saved.tables["notes"]!.rls_enabled).toBe(false);
+    expect(baseConfig.tables["notes"]).not.toHaveProperty("other");
+    await waitFor(() => { expect(getVetReport).toHaveBeenCalledTimes(3); });
+  });
+
+  it("still matches by rule and path when the line moved", async () => {
+    const user = userEvent.setup();
+    const getVetReport = vi.fn().mockResolvedValueOnce(report([f({ line: 12, edit })])).mockResolvedValue(report([f({ line: 40, edit })]));
+    const { save } = renderPage(getVetReport);
+    await user.click(await screen.findByRole("button", { name: "Fix it" }));
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it("reloads the list and stages nothing when the finding is gone", async () => {
+    const user = userEvent.setup();
+    const other = f({ rule: "r-other", severity: "low", title: "Other one", path: "server.cors" });
+    const getVetReport = vi.fn()
+      .mockResolvedValueOnce(report([f({ edit }), other]))
+      .mockResolvedValueOnce(report([other]));
+    const { save } = renderPage(getVetReport);
+    await user.click(await screen.findByRole("button", { name: "Fix it" }));
+    await waitFor(() => { expect(screen.queryByText("RLS disabled")).not.toBeInTheDocument(); });
+    expect(screen.getAllByText("Other one").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "All 1" })).toBeInTheDocument();
+    expect(save).not.toHaveBeenCalled();
+    expect(getVetReport).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("button", { name: /Other one/ })).toHaveAttribute("aria-current", "true");
+  });
+
+  it("shows the error state with Retry when the recheck fails, and stages nothing", async () => {
+    const user = userEvent.setup();
+    const getVetReport = vi.fn().mockResolvedValueOnce(fixable()).mockRejectedValueOnce(new Error("boom")).mockResolvedValue(report([]));
+    const { save } = renderPage(getVetReport);
+    await user.click(await screen.findByRole("button", { name: "Fix it" }));
+    expect(await screen.findByText("boom")).toBeInTheDocument();
+    expect(save).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("Nothing to fix")).toBeInTheDocument();
+  });
+
+  it("disables Fix it with aria-busy and runs one recheck on a double click", async () => {
+    const user = userEvent.setup();
+    let resolve!: (r: VetReport) => void;
+    const getVetReport = vi.fn().mockResolvedValueOnce(fixable()).mockImplementationOnce(() => new Promise<VetReport>((r) => { resolve = r; }));
+    const { save } = renderPage(getVetReport);
+    const btn = await screen.findByRole("button", { name: "Fix it" });
+    await user.dblClick(btn);
+    expect(getVetReport).toHaveBeenCalledTimes(2);
+    const busy = screen.getByRole("button", { name: "Fixing…" });
+    expect(busy).toBeDisabled();
+    expect(busy).toHaveAttribute("aria-busy", "true");
+    await act(async () => { resolve(report([])); });
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("is safe when unmounted mid-recheck", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const user = userEvent.setup();
+    let resolve!: (r: VetReport) => void;
+    const getVetReport = vi.fn().mockResolvedValueOnce(fixable()).mockImplementationOnce(() => new Promise<VetReport>((r) => { resolve = r; }));
+    const { save, unmount } = renderPage(getVetReport);
+    await user.click(await screen.findByRole("button", { name: "Fix it" }));
+    unmount();
+    await act(async () => { resolve(fixable()); });
+    expect(save).not.toHaveBeenCalled();
+    expect(err).not.toHaveBeenCalled();
+    err.mockRestore();
   });
 
   it("does not rescan when the save is cancelled or rejected", async () => {
@@ -413,7 +421,7 @@ describe("SecurityPage Fix it", () => {
     const { save } = renderPage(getVetReport, { save: vi.fn().mockResolvedValue(false) });
     await user.click(await screen.findByRole("button", { name: "Fix it" }));
     await waitFor(() => { expect(save).toHaveBeenCalled(); });
-    expect(getVetReport).toHaveBeenCalledTimes(1);
+    expect(getVetReport).toHaveBeenCalledTimes(2);
     expect(screen.getByRole("button", { name: "Fix it" })).toBeEnabled();
   });
 

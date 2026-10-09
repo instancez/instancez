@@ -165,7 +165,7 @@ Run it in CI to block a merge:
 
 ### Dashboard
 
-The dashboard's Security page runs the same scan. A banner shows how many checks passed, with severity chips to filter the list. Pick a finding to see its detail. When the finding has an `edit`, a Fix it button shows the change in the usual save confirmation and rescans after you confirm; it needs write access to the config. Use Re-scan after editing the config by hand.
+The dashboard's Security page runs the same scan. A banner shows how many checks passed, with severity chips to filter the list. Pick a finding to see its detail. When the finding has an `edit`, a Fix it button rechecks first. If the finding is already gone, the list just refreshes. Otherwise it shows the change in the usual save confirmation and reloads the list after you confirm; it needs write access to the config.
 
 ### Rules
 
