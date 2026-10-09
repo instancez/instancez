@@ -219,6 +219,8 @@ export interface VetFinding {
 export interface VetReport {
   findings: VetFinding[];
   counts: Record<VetSeverity, number>;
+  /** Absent on older servers. */
+  checks?: { total: number; passed: number };
 }
 
 export type ConfigStatus = {
