@@ -153,7 +153,7 @@ Exit codes: `0` when nothing reaches `--fail-on`, `1` when something does, or wh
 
 `checks.total` is the number of rules below, and `checks.passed` is how many of them have no finding. The human output ends with the same tally, for example `20 of 21 checks passed`. `unknown-key` is reported but is not a check.
 
-`edit` is present when one config change resolves the finding: `rls-disabled`, `bucket-public`, `anonymous-signins`, `jwt-expiry-long`, `signup-unverified-email` (only when an email provider is configured), `cors-null-origin` and `max-limit-disabled`. `path` lists object keys and array indexes, and `remove: true` deletes the value instead of setting `value`. Findings whose right fix depends on your app, such as policies, have no `edit`.
+`edit` is present when one config change resolves the finding: `rls-disabled` (only for a table that already has policies, since turning RLS on without any denies every row), `anonymous-signins`, `jwt-expiry-long`, `signup-unverified-email` (only when an email provider is configured), `cors-null-origin` and `max-limit-disabled`. `path` lists object keys and array indexes. `remove: true` deletes the value instead of setting it, and `value` is then the value expected at `path`. Findings whose right fix depends on your app, such as policies, have no `edit`.
 
 The running engine serves the same report at `GET /_admin/vet` (secret key required). It returns `400 invalid_config` when the config does not parse.
 

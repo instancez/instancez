@@ -210,12 +210,26 @@ func TestVetYAML(t *testing.T) {
 		if f.Rule != "rls-disabled" || f.Severity != "critical" || f.Path != "tables.todos.rls_enabled" || f.Line != 9 || f.Fix == "" {
 			t.Fatalf("unexpected finding %+v", f)
 		}
-		if f.Edit == nil || f.Edit.Value != true || strings.Join(stringsOf(f.Edit.Path), ".") != "tables.todos.rls_enabled" {
-			t.Fatalf("rls-disabled should carry its edit, got %+v", f.Edit)
+		if f.Edit != nil {
+			t.Fatalf("a table with no policies must not offer an RLS edit, got %+v", f.Edit)
 		}
-		b, _ := json.Marshal(f)
+		withPolicy := strings.Replace(bad, "    rls_enabled: false\n", "    rls_enabled: false\n    rls:\n      - operations: [select]\n        using: \"true\"\n", 1)
+		pgot, err := VetYAML([]byte(withPolicy))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rls VetFinding
+		for _, pf := range pgot.Findings {
+			if pf.Rule == "rls-disabled" {
+				rls = pf
+			}
+		}
+		if rls.Edit == nil || rls.Edit.Value != true || strings.Join(stringsOf(rls.Edit.Path), ".") != "tables.todos.rls_enabled" {
+			t.Fatalf("rls-disabled with policies should carry its edit, got %+v", rls.Edit)
+		}
+		b, _ := json.Marshal(rls)
 		var back VetFinding
-		if err := json.Unmarshal(b, &back); err != nil || !reflect.DeepEqual(back, f) {
+		if err := json.Unmarshal(b, &back); err != nil || !reflect.DeepEqual(back, rls) {
 			t.Fatalf("round-trip mismatch: %s", b)
 		}
 	})

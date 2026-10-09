@@ -241,12 +241,20 @@ export function SecurityPage() {
     return () => { seq.current++; };
   }, [scan]);
 
+  const fixingRef = useRef(false);
   async function fix(edit: VetEdit) {
-    if (!config) return;
+    if (!config || fixingRef.current) return;
+    const next = applyVetEdit(config, edit);
+    if (!next) {
+      scan();
+      return;
+    }
+    fixingRef.current = true;
     setFixing(true);
     try {
-      if (await save(applyVetEdit(config, edit))) scan();
+      if (await save(next)) scan();
     } finally {
+      fixingRef.current = false;
       setFixing(false);
     }
   }

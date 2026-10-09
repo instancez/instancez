@@ -218,7 +218,7 @@ export interface VetFinding {
   edit?: VetEdit;
 }
 
-/** `path` holds object keys and array indexes; `remove` deletes the value there instead of setting `value`. */
+/** `path` holds object keys and array indexes; `remove` deletes the value there instead of setting it, and `value` is then the value expected there. */
 export interface VetEdit {
   path: (string | number)[];
   value: unknown;

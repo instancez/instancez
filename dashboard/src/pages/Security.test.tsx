@@ -431,6 +431,15 @@ describe("SecurityPage Fix it", () => {
     expect(await screen.findByRole("button", { name: "Fix it" })).toBeEnabled();
   });
 
+  it("rescans instead of saving when the scan no longer matches the config", async () => {
+    const user = userEvent.setup();
+    const getVetReport = vi.fn().mockResolvedValue(report([f({ edit: { path: ["server", "cors", "origins", 0], value: "null", remove: true } })]));
+    const { save } = renderPage(getVetReport);
+    await user.click(await screen.findByRole("button", { name: "Fix it" }));
+    await waitFor(() => { expect(getVetReport).toHaveBeenCalledTimes(2); });
+    expect(save).not.toHaveBeenCalled();
+  });
+
   it("is hidden without an edit, without write access, or before the config loads", async () => {
     const { unmount } = renderPage(async () => report([f({})]));
     await screen.findByText("HOW TO FIX");

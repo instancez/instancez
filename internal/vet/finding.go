@@ -48,8 +48,8 @@ type Finding struct {
 	Edit     *Edit    `json:"edit,omitempty"`
 }
 
-// Edit is the config change that resolves a finding. Path holds map keys and list indexes;
-// Remove deletes the value there instead of setting Value.
+// Edit is the config change that resolves a finding. Path holds map keys and list indexes.
+// Remove deletes the value there instead of setting it; Value is then the value expected at Path, so a stale edit can be refused.
 type Edit struct {
 	Path   []any `json:"path"`
 	Value  any   `json:"value"`
