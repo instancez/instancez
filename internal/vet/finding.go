@@ -59,7 +59,7 @@ type Checks struct {
 	Passed int `json:"passed"`
 }
 
-// checkIDs is every rule a user can fail; a new rule means updating this list, the allRulesYAML test fixture and the docs rule table.
+// checkIDs is every rule a user can fail; keep it in sync with the docs table.
 var checkIDs = []string{
 	"rls-disabled", "policy-open-write", "policy-open-read", "policy-authed-read-sensitive", "policy-no-identity-write",
 	"bucket-open-write", "bucket-open-read", "bucket-no-rls", "bucket-public",

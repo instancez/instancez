@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ComponentProps } from "react";
 import { Link } from "react-router-dom";
 import { RefreshCw, ShieldAlert, ShieldCheck } from "lucide-react";
-import { Box, chakra, Code, Flex, HStack, Text, VStack } from "@chakra-ui/react";
+import { Box, chakra, Code, Flex, HStack, Text, VisuallyHidden, VStack } from "@chakra-ui/react";
 import { CopyButton } from "../components/ApiKeys";
 import { EmptyState } from "../components/EmptyState";
 import { ListSkeleton } from "../components/Skeletons";
@@ -46,6 +46,12 @@ function SeverityBadge({ severity }: { severity: string }) {
   );
 }
 
+const MUTED = "gray.400";
+
+function Mono(props: ComponentProps<typeof Code>) {
+  return <Code fontSize="xs" px="2" py="1" borderRadius="md" bg="bg.muted" color="fg" wordBreak="break-all" {...props} />;
+}
+
 const SECTIONS = ["tables", "storage", "rpc", "functions", "auth"];
 
 function Ignore({ rule }: { rule: string }) {
@@ -53,7 +59,7 @@ function Ignore({ rule }: { rule: string }) {
   return (
     <Disclosure label="Ignore…">
       <HStack gap="2" flexWrap="wrap">
-        <Code fontSize="xs" px="2" py="1" borderRadius="md" bg="bg.muted" color="fg" wordBreak="break-all">{snippet}</Code>
+        <Mono>{snippet}</Mono>
         <CopyButton value={snippet} label={`Copy ignore comment for ${rule}`} />
       </HStack>
     </Disclosure>
@@ -72,7 +78,7 @@ function FindingRow({ finding, selected, onSelect }: { finding: VetFinding; sele
       display="flex" alignItems="center" gap="3" w="full" textAlign="left" px="4" py="3"
       borderBottomWidth="1px" cursor="pointer"
       bg={selected ? `${p}.subtle` : "transparent"}
-      boxShadow={selected ? "inset 3px 0 0 var(--chakra-colors-" + p + "-solid)" : undefined}
+      boxShadow={selected ? `inset 3px 0 0 {colors.${p}.solid}` : undefined}
       _hover={{ bg: selected ? `${p}.subtle` : "bg.subtle" }}
     >
       <Dot color={`${p}.solid`} size="2.5" />
@@ -80,18 +86,21 @@ function FindingRow({ finding, selected, onSelect }: { finding: VetFinding; sele
         <Text fontSize="sm" fontWeight="semibold" color="fg" truncate>{finding.title}</Text>
         <Text fontSize="xs" color="fg.muted" fontFamily="mono" truncate>{where}</Text>
       </Box>
-      <Text fontSize="xs" fontWeight="semibold" color={`${p}.fg`} textTransform="uppercase" flexShrink="0">{sev}</Text>
+      <VisuallyHidden>{sev}</VisuallyHidden>
     </chakra.button>
   );
 }
 
 function CopyFix({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => { clearTimeout(timer.current); }, []);
   async function copy() {
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
-      setTimeout(() => { setCopied(false); }, 1500);
+      clearTimeout(timer.current);
+      timer.current = setTimeout(() => { setCopied(false); }, 1500);
     } catch {
       // Clipboard unavailable (insecure context).
     }
@@ -99,10 +108,10 @@ function CopyFix({ text }: { text: string }) {
   return (
     <chakra.button
       type="button" onClick={() => { void copy(); }}
-      h="9" px="4" borderRadius="lg" bg="#1b1b1a" color="white" fontSize="sm" fontWeight="semibold" cursor="pointer"
-      _hover={{ bg: "#2a2926" }}
+      h="9" px="4" borderRadius="lg" bg="gray.900" color="white" fontSize="sm" fontWeight="semibold" cursor="pointer"
+      _hover={{ bg: "gray.800" }}
     >
-      {copied ? "Copied" : "Copy fix"}
+      <span aria-live="polite">{copied ? "Copied" : "Copy fix"}</span>
     </chakra.button>
   );
 }
@@ -114,13 +123,13 @@ function FindingDetail({ finding }: { finding: VetFinding }) {
     <VStack align="stretch" gap="4">
       <HStack gap="2.5" flexWrap="wrap">
         <SeverityBadge severity={finding.severity} />
-        <Code fontSize="xs" color="fg.muted" bg="transparent" p="0">{finding.rule}</Code>
+        <Mono color="fg.muted">{finding.rule}</Mono>
       </HStack>
       <Text fontSize="xl" fontWeight="bold" color="fg" lineHeight="1.25" wordBreak="break-word">{finding.title}</Text>
       <Text fontSize="sm" color="fg.muted" lineHeight="1.55" wordBreak="break-word">{finding.message}</Text>
       {(finding.path || finding.line > 0) && (
         <HStack gap="2" flexWrap="wrap">
-          {finding.path && <Code fontSize="xs" px="2" py="1" borderRadius="md" bg="bg.muted" color="fg" wordBreak="break-all">{finding.path}</Code>}
+          {finding.path && <Mono>{finding.path}</Mono>}
           {finding.line > 0 && <Text fontSize="xs" color="fg.muted" fontFamily="mono">line {finding.line}</Text>}
         </HStack>
       )}
@@ -147,8 +156,8 @@ function Dot({ color, size = "2" }: { color: string; size?: string }) {
   return <Box as="span" aria-hidden w={size} h={size} borderRadius="full" bg={color} flexShrink="0" display="inline-block" />;
 }
 
-function SeverityChip({ severity, count, active, onClick }: { severity: VetSeverity; count: number; active: boolean; onClick: () => void }) {
-  const zero = count === 0;
+function SeverityChip({ severity, count, active, onClick }: { severity: VetSeverity | null; count: number; active: boolean; onClick: () => void }) {
+  const zero = severity !== null && count === 0;
   return (
     <chakra.button
       type="button"
@@ -158,23 +167,30 @@ function SeverityChip({ severity, count, active, onClick }: { severity: VetSever
       display="inline-flex"
       alignItems="center"
       gap="2"
-      h="8"
+      h="30px"
       px="3"
-      borderRadius="md"
+      borderRadius="15px"
       borderWidth="1px"
-      borderColor={active ? "#6b6a66" : "#3a3935"}
-      bg={active ? "#2a2926" : "transparent"}
+      borderColor={active ? "gray.500" : "gray.700"}
+      bg={active ? "gray.800" : "transparent"}
       color="white"
-      fontSize="sm"
-      fontWeight="medium"
+      fontSize="13px"
+      fontWeight="600"
       opacity={zero ? 0.4 : 1}
       cursor={zero ? "default" : "pointer"}
-      _hover={zero ? undefined : { bg: "#2a2926" }}
+      _hover={zero ? undefined : { bg: "gray.800" }}
     >
-      <Dot color={`${PALETTE[severity]}.solid`} />
-      {count} {severity}
+      <Dot color={severity ? `${PALETTE[severity]}.solid` : MUTED} />
+      {severity ? `${count} ${severity}` : `All ${count}`}
     </chakra.button>
   );
+}
+
+function summarize(total: number, rules: number, counts: Record<VetSeverity, number>) {
+  if (total === 0) return "";
+  const base = `${plural(total, "finding")} across ${plural(rules, "check")}`;
+  const [n, word] = counts.critical > 0 ? [counts.critical, "critical"] : [counts.high, "high"];
+  return n > 0 ? `${base} · start with the ${n} ${word} ${n === 1 ? "one" : "ones"}` : base;
 }
 
 function Banner({ report, findings, counts, active, onFilter }: {
@@ -184,26 +200,23 @@ function Banner({ report, findings, counts, active, onFilter }: {
   const total = findings.length;
   const checks = report.checks;
   const worst = SEVERITIES.find((s) => counts[s] > 0);
-  const rules = new Set(findings.map((f) => f.rule)).size;
-  const lead = counts.critical > 0 ? `${counts.critical} critical` : counts.high > 0 ? `${counts.high} high` : null;
-  const leadN = counts.critical > 0 ? counts.critical : counts.high;
-  const summary = total === 0 ? "" : `${plural(total, "finding")} across ${plural(rules, "check")}${lead ? ` · start with the ${lead} ${leadN === 1 ? "one" : "ones"}` : ""}`;
+  const summary = summarize(total, new Set(findings.map((f) => f.rule)).size, counts);
   const status = worst ? "Needs attention" : checks ? "All checks passed" : "No findings";
 
   return (
-    <Flex bg="#1b1b1a" color="white" borderRadius="2xl" px={{ base: "5", md: "7" }} py="6" gap={{ base: "5", md: "9" }} align="center" flexWrap="wrap" mb="6">
+    <Flex bg="gray.900" color="white" borderRadius="2xl" px={{ base: "5", md: "7" }} py="6" gap={{ base: "5", md: "9" }} align="center" flexWrap="wrap" mb="6">
       <Box flexShrink="0">
-        <Text fontSize="xs" fontWeight="bold" letterSpacing="0.05em" color="#a8a7a2">RESULT</Text>
+        <Text fontSize="xs" fontWeight="bold" letterSpacing="0.05em" color={MUTED}>RESULT</Text>
         <Flex align="baseline" gap="2" mt="1.5">
           {checks ? (
             <>
               <Text as="span" fontSize="5xl" fontWeight="bold" letterSpacing="-0.03em" lineHeight="1">{checks.passed}</Text>
-              <Text as="span" fontSize="xl" color="#a8a7a2">of {checks.total} checks passed</Text>
+              <Text as="span" fontSize="xl" color={MUTED}>of {checks.total} checks passed</Text>
             </>
           ) : total > 0 ? (
             <>
               <Text as="span" fontSize="5xl" fontWeight="bold" letterSpacing="-0.03em" lineHeight="1">{total}</Text>
-              <Text as="span" fontSize="xl" color="#a8a7a2">{total === 1 ? "finding" : "findings"}</Text>
+              <Text as="span" fontSize="xl" color={MUTED}>{total === 1 ? "finding" : "findings"}</Text>
             </>
           ) : (
             <Text as="span" fontSize="4xl" fontWeight="bold" letterSpacing="-0.03em" lineHeight="1">All clear</Text>
@@ -214,28 +227,20 @@ function Banner({ report, findings, counts, active, onFilter }: {
         <Flex align="center" gap="2.5" flexWrap="wrap">
           <Dot color={worst ? `${PALETTE[worst]}.solid` : "green.solid"} />
           <Text fontWeight="bold">{status}</Text>
-          {summary && <Text fontSize="sm" color="#a8a7a2">{summary}</Text>}
+          {summary && <Text fontSize="sm" color={MUTED}>{summary}</Text>}
         </Flex>
+        {/* The bar mixes passed checks with finding counts. */}
         <Flex aria-hidden h="2.5" borderRadius="md" overflow="hidden" gap="0.5">
           {checks && checks.passed > 0 && <Box flex={checks.passed} bg="green.solid" />}
           {SEVERITIES.filter((s) => counts[s] > 0).map((s) => <Box key={s} flex={counts[s]} bg={`${PALETTE[s]}.solid`} />)}
         </Flex>
         <Flex gap="2" flexWrap="wrap" align="center">
-          <chakra.button
-            type="button"
-            onClick={() => { onFilter(null); }}
-            aria-pressed={active === null}
-            display="inline-flex" alignItems="center" gap="2" h="8" px="3" borderRadius="md" borderWidth="1px"
-            borderColor={active === null ? "#6b6a66" : "#3a3935"} bg={active === null ? "#2a2926" : "transparent"}
-            color="white" fontSize="sm" fontWeight="medium" cursor="pointer" _hover={{ bg: "#2a2926" }}
-          >
-            <Dot color="#a8a7a2" />All {total}
-          </chakra.button>
+          <SeverityChip severity={null} count={total} active={active === null} onClick={() => { onFilter(null); }} />
           {SEVERITIES.map((s) => (
             <SeverityChip key={s} severity={s} count={counts[s]} active={active === s} onClick={() => { onFilter(active === s ? null : s); }} />
           ))}
           {checks && (
-            <Flex ml="auto" align="center" gap="2" fontSize="sm" color="#a8a7a2"><Dot color="green.solid" />{checks.passed} passed</Flex>
+            <Flex ml="auto" align="center" gap="2" fontSize="sm" color={MUTED}><Dot color="green.solid" />{checks.passed} passed</Flex>
           )}
         </Flex>
       </VStack>
@@ -270,8 +275,8 @@ export function SecurityPage() {
   }, [scan]);
 
   const findings = report?.findings ?? [];
-  const counts = Object.fromEntries(SEVERITIES.map((s) => [s, report?.counts[s] ?? 0])) as Record<VetSeverity, number>;
-  for (const f of findings) if (!(f.severity in counts)) counts.info++;
+  const counts = Object.fromEntries(SEVERITIES.map((s) => [s, 0])) as Record<VetSeverity, number>;
+  for (const f of findings) counts[bucketOf(f.severity)]++;
   const active = filter && counts[filter] > 0 ? filter : null;
 
   useEffect(() => {
@@ -296,18 +301,11 @@ export function SecurityPage() {
     if (list && detail && detail.getBoundingClientRect().top >= list.bottom) detail.scrollIntoView?.({ block: "start", behavior: "smooth" });
   }
 
-  const toolbar = (
-    <HStack justify="space-between" gap="4" pb="6" flexWrap="wrap">
-      <Text fontSize="sm" color="fg.muted">{report && !error ? "Checked" : "Scanning"} <Code fontSize="xs">instancez.yaml</Code></Text>
-      <Button variant="outline" size="sm" onClick={scan} disabled={scanning} aria-busy={scanning}><RefreshCw size={14} /> Re-scan</Button>
-    </HStack>
-  );
-
   let body;
   if (error) {
     body = (
       <EmptyState icon={ShieldAlert} title="Couldn't scan the config" description={error}
-        action={<Button variant="outline" onClick={scan}>Retry</Button>} />
+        action={<Button variant="outline" onClick={scan} disabled={scanning}>Retry</Button>} />
     );
   } else if (!report) {
     body = <ListSkeleton rows={4} />;
@@ -330,7 +328,10 @@ export function SecurityPage() {
 
   return (
     <Box pb="8">
-      {toolbar}
+      <HStack justify="space-between" gap="4" pb="6" flexWrap="wrap">
+        <Text fontSize="sm" color="fg.muted">{scanning ? "Scanning" : "Checked"} <Mono>instancez.yaml</Mono></Text>
+        <Button variant="outline" size="sm" onClick={scan} disabled={scanning} aria-busy={scanning}><RefreshCw size={14} /> Re-scan</Button>
+      </HStack>
       {report && !error && <Banner report={report} findings={findings} counts={counts} active={active} onFilter={(s) => { setFilter(s); setSelKey(null); }} />}
       {body}
     </Box>

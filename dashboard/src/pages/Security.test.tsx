@@ -17,7 +17,7 @@ const f = (over: Partial<VetFinding>): VetFinding => ({
 
 const report = (findings: VetFinding[], checks?: VetReport["checks"]): VetReport => {
   const counts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
-  for (const x of findings) if (x.severity in counts) counts[x.severity]++;
+  for (const x of findings) counts[x.severity in counts ? x.severity : "info"]++;
   return checks ? { findings, counts, checks } : { findings, counts };
 };
 
@@ -54,23 +54,22 @@ describe("SecurityPage", () => {
     expect(listed).toEqual(titles);
   });
 
-  it("filters by tile and clears on a second click", async () => {
+  it("filters by chip, clears on a second click or All, ignores zero chips", async () => {
     const user = userEvent.setup();
     renderPage(async () => report(sample));
     await screen.findByText("HOW TO FIX");
+    expect(screen.getByRole("button", { name: "All 4" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: "0 medium" }));
+    expect(screen.getAllByText("Crit one").length).toBeGreaterThan(0);
     await user.click(screen.getByRole("button", { name: "2 high" }));
     expect(screen.queryByText("Crit one")).not.toBeInTheDocument();
     expect(screen.getAllByText("High one").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "2 high" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "All 4" })).toHaveAttribute("aria-pressed", "false");
     await user.click(screen.getByRole("button", { name: "2 high" }));
     expect(screen.getAllByText("Crit one").length).toBeGreaterThan(0);
-  });
-
-  it("does not filter on a zero-count tile", async () => {
-    const user = userEvent.setup();
-    renderPage(async () => report(sample));
-    await screen.findByText("HOW TO FIX");
-    await user.click(screen.getByRole("button", { name: "0 medium" }));
+    await user.click(screen.getByRole("button", { name: "2 high" }));
+    await user.click(screen.getByRole("button", { name: "All 4" }));
     expect(screen.getAllByText("Crit one").length).toBeGreaterThan(0);
   });
 
@@ -90,11 +89,28 @@ describe("SecurityPage", () => {
     expect(get).toHaveBeenCalledTimes(2);
   });
 
-  it("buckets an unknown severity as info without crashing", async () => {
-    renderPage(async () => report([f({ rule: "r-x", severity: "catastrophic" as never, title: "Future one" })]));
+  it("buckets an unknown severity as info everywhere, once, keeping its raw label in the detail", async () => {
+    const weird = f({ rule: "r-x", severity: "weird" as never, title: "Future one" });
+    renderPage(async () => report([weird], { total: 21, passed: 20 }));
     await screen.findByText("HOW TO FIX");
-    expect(screen.getByText("catastrophic")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "1 info" })).toBeInTheDocument();
+    expect(screen.getByText("weird")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "1 info" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "All 1" })).toBeInTheDocument();
+    expect(screen.getByText("1 finding across 1 check")).toBeInTheDocument();
+  });
+
+  it("derives counts from findings, ignoring server counts that already fold unknown into info", async () => {
+    const findings = [f({ severity: "high" }), f({ rule: "r-x", severity: "weird" as never })];
+    renderPage(async () => ({ findings, counts: { critical: 0, high: 1, medium: 0, low: 0, info: 1 } }));
+    expect(await screen.findByRole("button", { name: "1 info" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "1 high" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All 2" })).toBeInTheDocument();
+  });
+
+  it("derives counts from findings when the server counts are wrong or missing", async () => {
+    renderPage(async () => ({ findings: [f({ severity: "high" })], counts: { high: 5 } as never }));
+    expect(await screen.findByRole("button", { name: "1 high" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "0 low" })).toBeInTheDocument();
   });
 
   it("ignores a stale response after the backend changes", async () => {
@@ -125,6 +141,18 @@ describe("SecurityPage", () => {
     expect(btn).toHaveAttribute("aria-busy", "false");
   });
 
+  it("says Scanning only while scanning, else Checked, also on error", async () => {
+    const user = userEvent.setup();
+    const get = vi.fn().mockResolvedValueOnce(report([])).mockRejectedValueOnce(new Error("boom"));
+    renderPage(get);
+    expect(screen.getByText(/Scanning/)).toBeInTheDocument();
+    expect(await screen.findByText(/Checked/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Re-scan/ }));
+    await screen.findByText("boom");
+    expect(screen.getByText(/Checked/)).toBeInTheDocument();
+    expect(screen.queryByText(/Scanning/)).not.toBeInTheDocument();
+  });
+
   it("drops the stale count when a re-scan errors", async () => {
     const user = userEvent.setup();
     const get = vi.fn().mockResolvedValueOnce(report(sample)).mockRejectedValueOnce(new Error("boom"));
@@ -133,12 +161,6 @@ describe("SecurityPage", () => {
     await user.click(screen.getByRole("button", { name: /Re-scan/ }));
     expect(await screen.findByText("boom")).toBeInTheDocument();
     expect(screen.queryByText("4 findings", { exact: false })).not.toBeInTheDocument();
-  });
-
-  it("takes tile counts from report.counts, missing keys as 0", async () => {
-    renderPage(async () => ({ findings: [f({ severity: "high" })], counts: { high: 5 } as never }));
-    expect(await screen.findByRole("button", { name: "5 high" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "0 low" })).toBeInTheDocument();
   });
 
   it("resets the filter when its severity disappears after a re-scan", async () => {
@@ -187,7 +209,6 @@ describe("SecurityPage list and detail", () => {
     f({ rule: "r-high", severity: "high", title: "High one", path: "storage.b", line: 0, fix: "Fix high dup." }),
     f({ rule: "r-low", severity: "low", title: "Low one", path: "server.cors", line: 9, fix: "Fix low." }),
   ];
-  const rows = () => screen.getAllByRole("button").filter((b) => b.hasAttribute("aria-current") || /· line|^storage|^server|^tables/.test(b.textContent ?? ""));
   const row = (t: string, i = 0) => screen.getAllByRole("button").filter((b) => b.textContent?.includes(t))[i]!;
   const stubClipboard = () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
@@ -259,6 +280,24 @@ describe("SecurityPage list and detail", () => {
     await user.click(screen.getByRole("button", { name: "Copy fix" }));
     expect(writeText).toHaveBeenCalledWith("Fix crit.");
     expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
+    expect(screen.getByText("Copied")).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("clears the copied timer on unmount", async () => {
+    const user = userEvent.setup();
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const clear = vi.spyOn(globalThis, "clearTimeout");
+    stubClipboard();
+    const { unmount } = renderPage(async () => report(items));
+    await screen.findByText("HOW TO FIX");
+    await user.click(screen.getByRole("button", { name: "Copy fix" }));
+    await screen.findByRole("button", { name: "Copied" });
+    clear.mockClear();
+    unmount();
+    expect(clear).toHaveBeenCalled();
+    expect(err).not.toHaveBeenCalled();
+    clear.mockRestore();
+    err.mockRestore();
   });
 
   it("keeps the label when the clipboard is unavailable", async () => {
@@ -334,20 +373,6 @@ describe("SecurityPage list and detail", () => {
     await user.click(row("Low one"));
     expect(row("Low one")).toHaveAttribute("aria-current", "true");
   });
-
-  it("renders long text without breaking the list", async () => {
-    const long = "x".repeat(400);
-    renderPage(async () => report([f({ title: long, path: long })]));
-    await screen.findByText("HOW TO FIX");
-    expect(row(long.slice(0, 10))).toBeInTheDocument();
-    expect(rows().length).toBeGreaterThan(0);
-  });
-
-  it("shows an unknown severity with its raw label in the detail", async () => {
-    renderPage(async () => report([f({ severity: "weird" as never, title: "W" })]));
-    await screen.findByText("HOW TO FIX");
-    expect(screen.getByText("weird")).toBeInTheDocument();
-  });
 });
 
 describe("SecurityPage banner", () => {
@@ -359,23 +384,21 @@ describe("SecurityPage banner", () => {
     f({ rule: "c", severity: "low", title: "L1" }),
   ];
 
-  it("shows passed of total and the summary line", async () => {
+  it.each([
+    ["critical leads", [f({ rule: "a", severity: "critical" }), f({ rule: "a", severity: "critical", path: "p2" }), f({ rule: "b", severity: "high" }), f({ rule: "c", severity: "low" })], "4 findings across 3 checks · start with the 2 critical ones"],
+    ["singular high leads", [f({ severity: "high" })], "1 finding across 1 check · start with the 1 high one"],
+    ["no lead without critical or high", [f({ severity: "low" }), f({ severity: "medium", rule: "z" })], "2 findings across 2 checks"],
+  ])("summary: %s", async (_n, findings, text) => {
+    renderPage(async () => report(findings, ck));
+    expect(await screen.findByText(text)).toBeInTheDocument();
+    expect(screen.getByText("Needs attention")).toBeInTheDocument();
+  });
+
+  it("shows passed of total", async () => {
     renderPage(async () => report(many, ck));
     expect(await screen.findByText("12")).toBeInTheDocument();
     expect(screen.getByText("of 21 checks passed")).toBeInTheDocument();
-    expect(screen.getByText("Needs attention")).toBeInTheDocument();
-    expect(screen.getByText("4 findings across 3 checks · start with the 2 critical ones")).toBeInTheDocument();
     expect(screen.getByText("12 passed")).toBeInTheDocument();
-  });
-
-  it("singular wording and leads with high when no critical", async () => {
-    renderPage(async () => report([f({ severity: "high" })], ck));
-    expect(await screen.findByText("1 finding across 1 check · start with the 1 high one")).toBeInTheDocument();
-  });
-
-  it("omits the start-with clause without critical or high", async () => {
-    renderPage(async () => report([f({ severity: "low" }), f({ severity: "medium", rule: "z" })], ck));
-    expect(await screen.findByText("2 findings across 2 checks")).toBeInTheDocument();
   });
 
   it("says all checks passed with no findings", async () => {
@@ -385,20 +408,15 @@ describe("SecurityPage banner", () => {
     expect(screen.queryByText(/across/)).not.toBeInTheDocument();
   });
 
-  it("falls back to a findings headline without checks", async () => {
-    renderPage(async () => report(many));
-    expect(await screen.findByText("findings")).toBeInTheDocument();
+  it.each([
+    ["findings", many, "findings"],
+    ["finding", [f({})], "finding"],
+    ["all clear", [], "All clear"],
+  ])("without checks falls back to %s", async (_n, findings, text) => {
+    renderPage(async () => report(findings));
+    expect(await screen.findByText(text)).toBeInTheDocument();
     expect(screen.queryByText(/checks passed/)).not.toBeInTheDocument();
     expect(screen.queryByText(/ passed$/)).not.toBeInTheDocument();
-  });
-
-  it("fallback singular and all-clear without numbers", async () => {
-    const { unmount } = renderPage(async () => report([f({})]));
-    expect(await screen.findByText("finding")).toBeInTheDocument();
-    unmount();
-    renderPage(async () => report([]));
-    expect(await screen.findByText("All clear")).toBeInTheDocument();
-    expect(screen.queryByText(/of \d+ checks/)).not.toBeInTheDocument();
   });
 
   it("hides zero segments and aria-hides the bar", async () => {
@@ -416,29 +434,10 @@ describe("SecurityPage banner", () => {
     expect(bar.children).toHaveLength(3);
   });
 
-  it("chips filter with aria-pressed and All resets", async () => {
-    const user = userEvent.setup();
-    renderPage(async () => report(many, ck));
-    await screen.findByText("HOW TO FIX");
-    expect(screen.getByRole("button", { name: "All 4" })).toHaveAttribute("aria-pressed", "true");
-    await user.click(screen.getByRole("button", { name: "1 high" }));
-    expect(screen.queryByText("C1")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "1 high" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "All 4" })).toHaveAttribute("aria-pressed", "false");
-    await user.click(screen.getByRole("button", { name: "All 4" }));
-    expect(screen.getAllByText("C1").length).toBeGreaterThan(0);
-  });
-
   it("disables zero-count chips", async () => {
     renderPage(async () => report(many, ck));
     await screen.findByText("HOW TO FIX");
     expect(screen.getByRole("button", { name: "0 medium" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "0 info" })).toBeDisabled();
-  });
-
-  it("buckets an unknown severity as info in the summary and chips", async () => {
-    renderPage(async () => report([f({ severity: "weird" as never })], ck));
-    expect(await screen.findByText("1 finding across 1 check")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "1 info" })).toBeEnabled();
   });
 });

@@ -2,6 +2,7 @@ package vet
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -87,6 +88,37 @@ func TestCheckIDsAllFireOnFixture(t *testing.T) {
 	}
 	if r.Checks.Total != len(checkIDs) || r.Checks.Passed != 0 {
 		t.Errorf("checks = %+v", r.Checks)
+	}
+}
+
+func TestCheckIDsMatchSource(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`(?:\.add\(|openWrite\(c, |Rule: )"([a-z-]+)"`)
+	found := map[string]bool{}
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range re.FindAllStringSubmatch(string(b), -1) {
+			found[m[1]] = true
+		}
+	}
+	want := append(slices.Clone(checkIDs), "unknown-key")
+	var got []string
+	for id := range found {
+		got = append(got, id)
+	}
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("rule ids in source = %v, want %v", got, want)
 	}
 }
 

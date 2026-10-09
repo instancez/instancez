@@ -108,10 +108,7 @@ type VetFinding struct {
 }
 
 // VetChecks counts the vet rules; Passed is those with no finding.
-type VetChecks struct {
-	Total  int `json:"total"`
-	Passed int `json:"passed"`
-}
+type VetChecks = vet.Checks
 
 // VetResult is the findings plus the checks tally from VetYAML.
 type VetResult struct {
@@ -125,7 +122,7 @@ func VetYAML(data []byte) (*VetResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := &VetResult{Findings: make([]VetFinding, 0, len(rep.Findings)), Checks: VetChecks(rep.Checks)}
+	out := &VetResult{Findings: make([]VetFinding, 0, len(rep.Findings)), Checks: rep.Checks}
 	for _, f := range rep.Findings {
 		out.Findings = append(out.Findings, VetFinding{f.Rule, f.Severity.String(), f.Path, f.Line, f.Title, f.Message, f.Fix})
 	}
