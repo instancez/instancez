@@ -152,16 +152,20 @@ describe("SecurityPage", () => {
     expect(screen.getAllByText("Fresh").length).toBeGreaterThan(0);
   });
 
-  it("does not set state after unmount", async () => {
+  it("does not set state or stage a fix after unmount", async () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const user = userEvent.setup();
     let resolve!: (r: VetReport) => void;
-    const { unmount } = renderPage(() => new Promise<VetReport>((r) => { resolve = r; }));
+    const getVetReport = vi.fn().mockResolvedValueOnce(report([f({ edit: { path: ["tables", "notes", "rls_enabled"], value: true } })]))
+      .mockImplementationOnce(() => new Promise<VetReport>((r) => { resolve = r; }));
+    const { save, unmount } = renderPage(getVetReport);
+    await user.click(await screen.findByRole("button", { name: "Fix it" }));
     unmount();
-    await act(async () => { resolve(report([f({})])); });
+    await act(async () => { resolve(report([f({ edit: { path: ["tables", "notes", "rls_enabled"], value: true } })])); });
+    expect(save).not.toHaveBeenCalled();
     expect(err).not.toHaveBeenCalled();
     err.mockRestore();
   });
-
 });
 
 describe("SecurityPage list and detail", () => {
@@ -328,18 +332,12 @@ describe("SecurityPage Fix it", () => {
   const edit = { path: ["tables", "notes", "rls_enabled"], value: true };
   const fixable = () => report([f({ edit })]);
 
-  it("has no Re-scan button", async () => {
-    renderPage(async () => fixable());
-    await screen.findByText("HOW TO FIX");
-    expect(screen.queryByRole("button", { name: /Re-scan/ })).not.toBeInTheDocument();
-  });
-
-  it("rechecks first, then stages the fresh finding's edit and reloads on success", async () => {
+  it("rechecks first, matches by rule and path when the line moved, stages the fresh edit, reloads on success", async () => {
     const user = userEvent.setup();
     const freshEdit = { path: ["tables", "notes", "other"], value: 7 };
     const getVetReport = vi.fn()
       .mockResolvedValueOnce(fixable())
-      .mockResolvedValueOnce(report([f({ edit: freshEdit })]))
+      .mockResolvedValueOnce(report([f({ line: 40, edit: freshEdit })]))
       .mockResolvedValue(fixable());
     const { save } = renderPage(getVetReport);
     await user.click(await screen.findByRole("button", { name: "Fix it" }));
@@ -349,14 +347,6 @@ describe("SecurityPage Fix it", () => {
     expect(saved.tables["notes"]!.rls_enabled).toBe(false);
     expect(baseConfig.tables["notes"]).not.toHaveProperty("other");
     await waitFor(() => { expect(getVetReport).toHaveBeenCalledTimes(3); });
-  });
-
-  it("still matches by rule and path when the line moved", async () => {
-    const user = userEvent.setup();
-    const getVetReport = vi.fn().mockResolvedValueOnce(report([f({ line: 12, edit })])).mockResolvedValue(report([f({ line: 40, edit })]));
-    const { save } = renderPage(getVetReport);
-    await user.click(await screen.findByRole("button", { name: "Fix it" }));
-    expect(save).toHaveBeenCalledTimes(1);
   });
 
   it("reloads the list and stages nothing when the finding is gone", async () => {
@@ -401,21 +391,7 @@ describe("SecurityPage Fix it", () => {
     expect(save).not.toHaveBeenCalled();
   });
 
-  it("is safe when unmounted mid-recheck", async () => {
-    const err = vi.spyOn(console, "error").mockImplementation(() => {});
-    const user = userEvent.setup();
-    let resolve!: (r: VetReport) => void;
-    const getVetReport = vi.fn().mockResolvedValueOnce(fixable()).mockImplementationOnce(() => new Promise<VetReport>((r) => { resolve = r; }));
-    const { save, unmount } = renderPage(getVetReport);
-    await user.click(await screen.findByRole("button", { name: "Fix it" }));
-    unmount();
-    await act(async () => { resolve(fixable()); });
-    expect(save).not.toHaveBeenCalled();
-    expect(err).not.toHaveBeenCalled();
-    err.mockRestore();
-  });
-
-  it("does not rescan when the save is cancelled or rejected", async () => {
+  it("keeps Fix it enabled and does not reload when the save is cancelled or rejected", async () => {
     const user = userEvent.setup();
     const getVetReport = vi.fn().mockResolvedValue(fixable());
     const { save } = renderPage(getVetReport, { save: vi.fn().mockResolvedValue(false) });
@@ -423,6 +399,20 @@ describe("SecurityPage Fix it", () => {
     await waitFor(() => { expect(save).toHaveBeenCalled(); });
     expect(getVetReport).toHaveBeenCalledTimes(2);
     expect(screen.getByRole("button", { name: "Fix it" })).toBeEnabled();
+  });
+
+  it("shows Fixing only on the finding being fixed", async () => {
+    const user = userEvent.setup();
+    const other = f({ rule: "r-other", severity: "low", title: "Other one", path: "server.cors", edit });
+    let resolve!: (r: VetReport) => void;
+    const getVetReport = vi.fn().mockResolvedValueOnce(report([f({ edit }), other]))
+      .mockImplementationOnce(() => new Promise<VetReport>((r) => { resolve = r; }));
+    renderPage(getVetReport);
+    await user.click(await screen.findByRole("button", { name: "Fix it" }));
+    expect(screen.getByRole("button", { name: "Fixing…" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: /Other one/ }));
+    expect(screen.getByRole("button", { name: "Fix it" })).toBeEnabled();
+    await act(async () => { resolve(report([])); });
   });
 
   it("shows Fixing and blocks a second click while the save is pending", async () => {

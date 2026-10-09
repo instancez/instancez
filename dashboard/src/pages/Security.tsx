@@ -216,7 +216,7 @@ function Banner({ report, findings, counts, active, onFilter }: {
 export function SecurityPage() {
   const backend = useBackend();
   const { config, save } = useConfig();
-  const [fixing, setFixing] = useState(false);
+  const [fixingKey, setFixingKey] = useState<string | null>(null);
   const [report, setReport] = useState<VetReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<VetSeverity | null>(null);
@@ -225,12 +225,14 @@ export function SecurityPage() {
   const detailRef = useRef<HTMLDivElement>(null);
   const seq = useRef(0);
 
+  const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
   const scan = useCallback(() => {
     const id = ++seq.current;
     setError(null);
     backend.getVetReport().then(
       (r) => { if (id === seq.current) setReport(r); },
-      (e: unknown) => { if (id === seq.current) setError(e instanceof Error ? e.message : String(e)); },
+      (e: unknown) => { if (id === seq.current) setError(message(e)); },
     );
   }, [backend]);
 
@@ -240,17 +242,17 @@ export function SecurityPage() {
   }, [scan]);
 
   const fixingRef = useRef(false);
-  async function fix(stale: VetFinding) {
+  async function fix(key: string, stale: VetFinding) {
     if (!config || fixingRef.current) return;
     fixingRef.current = true;
-    setFixing(true);
+    setFixingKey(key);
     const id = ++seq.current;
     try {
       let fresh: VetReport;
       try {
         fresh = await backend.getVetReport();
       } catch (e) {
-        if (id === seq.current) setError(e instanceof Error ? e.message : String(e));
+        if (id === seq.current) setError(message(e));
         return;
       }
       if (id !== seq.current) return;
@@ -258,13 +260,12 @@ export function SecurityPage() {
       const next = edit && applyVetEdit(config, edit);
       if (!next) {
         setReport(fresh);
-        setSelKey(null);
         return;
       }
       if (await save(next)) scan();
     } finally {
       fixingRef.current = false;
-      setFixing(false);
+      setFixingKey(null);
     }
   }
 
@@ -317,8 +318,8 @@ export function SecurityPage() {
           {selected && (
             <FindingDetail
               finding={selected.finding}
-              busy={fixing}
-              onFix={selected.finding.edit && config && backend.capabilities.canWriteConfig ? () => { void fix(selected.finding); } : undefined}
+              busy={fixingKey === selected.key}
+              onFix={selected.finding.edit && config && backend.capabilities.canWriteConfig ? () => { void fix(selected.key, selected.finding); } : undefined}
             />
           )}
         </Box>
@@ -328,7 +329,6 @@ export function SecurityPage() {
 
   return (
     <Box pb="8">
-      <Text fontSize="sm" color="fg.muted" pb="6">Checked <Mono>instancez.yaml</Mono></Text>
       {report && !error && <Banner report={report} findings={findings} counts={counts} active={active} onFilter={(s) => { setFilter(s); setSelKey(null); }} />}
       {body}
     </Box>
