@@ -105,7 +105,7 @@ func ruleCORS(c *ctx) {
 			c.add("cors-null-origin", Medium, []any{"server", "cors", "origins", i}, "CORS allows the null origin",
 				"Sandboxed iframes and local files send the null origin, so attackers can use them to call this API.",
 				"Remove \"null\" from server.cors.origins.")
-			c.withEdit(Edit{Path: []any{"server", "cors", "origins", i}, Value: "null", Remove: true})
+			c.withEdit(Edit{Path: []any{"server", "cors", "origins", i}, Value: o, Remove: true})
 		}
 	}
 }

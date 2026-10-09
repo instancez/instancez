@@ -48,6 +48,7 @@ func TestEditsResolveTheirFinding(t *testing.T) {
 		{"long jwt", "jwt-expiry-long", "auth:\n  jwt_expiry: 72h\n", []any{"auth", "jwt_expiry"}, "1h", false},
 		{"unverified signup with email provider", "signup-unverified-email", "providers:\n  email:\n    provider: resend\n    api_key: k\n    from: a@b.c\nauth:\n  allow_signup: true\n", []any{"auth", "email", "verify_email"}, true, false},
 		{"null origin", "cors-null-origin", "server:\n  cors:\n    origins: [\"https://a.example\", \"null\"]\n", []any{"server", "cors", "origins", 1}, "null", true},
+		{"null origin keeps case", "cors-null-origin", "server:\n  cors:\n    origins: [\"NULL\"]\n", []any{"server", "cors", "origins", 0}, "NULL", true},
 		{"max limit off", "max-limit-disabled", "server:\n  max_limit: -1\n", []any{"server", "max_limit"}, 1000, false},
 	}
 	for _, tc := range cases {
