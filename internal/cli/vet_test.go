@@ -177,11 +177,13 @@ func TestVetBinary(t *testing.T) {
 		t.Skip("go toolchain unavailable")
 	}
 	bin := filepath.Join(t.TempDir(), "inz")
+	// nosemgrep: test builds the repo's own binary
 	build := exec.Command(goBin, "build", "-o", bin, "../../cmd/inz")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Skipf("go build failed: %v\n%s", err, out)
 	}
 	run := func(args ...string) (string, int) {
+		// nosemgrep: runs the binary built above
 		cmd := exec.Command(bin, append([]string{"vet"}, args...)...)
 		out, err := cmd.Output()
 		var ee *exec.ExitError

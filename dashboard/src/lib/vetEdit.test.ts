@@ -13,6 +13,13 @@ describe("applyVetEdit", () => {
     expect(applyVetEdit(cfg(), { path: ["server", "max_limit"], value: 0 })!.server.max_limit).toBe(0);
   });
 
+  it("refuses prototype keys", () => {
+    for (const k of ["__proto__", "constructor", "prototype"]) {
+      expect(applyVetEdit(cfg(), { path: ["tables", k, "x"], value: true })).toBeNull();
+    }
+    expect(({} as Record<string, unknown>).x).toBeUndefined();
+  });
+
   it("does not mutate its input", () => {
     const input = cfg();
     const snapshot = JSON.stringify(input);
