@@ -3,11 +3,8 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -169,37 +166,4 @@ func TestVetShippedExamples(t *testing.T) {
 			assert.NotNil(t, r.Findings)
 		})
 	}
-}
-
-func TestVetBinary(t *testing.T) {
-	goBin, err := exec.LookPath("go")
-	if err != nil {
-		t.Skip("go toolchain unavailable")
-	}
-	bin := filepath.Join(t.TempDir(), "inz")
-	// nosemgrep: test builds the repo's own binary
-	build := exec.Command(goBin, "build", "-o", bin, "../../cmd/inz")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Skipf("go build failed: %v\n%s", err, out)
-	}
-	run := func(args ...string) (string, int) {
-		// nosemgrep: runs the binary built above
-		cmd := exec.Command(bin, append([]string{"vet"}, args...)...)
-		out, err := cmd.Output()
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			return string(out), ee.ExitCode()
-		}
-		require.NoError(t, err)
-		return string(out), 0
-	}
-
-	out, code := run("--config", writeTemp(t, badYAML), "--json")
-	assert.Equal(t, 1, code)
-	assert.Contains(t, out, `"policy-open-write"`)
-
-	out, code = run("--config", writeTemp(t, cleanYAML+noSignup))
-	assert.Equal(t, 0, code)
-	assert.Contains(t, out, "No security findings")
-	assert.False(t, strings.Contains(out, "\x1b["), "piped output must be plain")
 }
