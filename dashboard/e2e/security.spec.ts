@@ -13,6 +13,8 @@ test("Security shows the banner, then findings or the all-clear state", async ({
   await page.goto("/dashboard/security");
   await expect(page.getByText(/of \d+ checks passed|All clear/).first()).toBeVisible();
 
+  await expect(page.getByRole("button", { name: /Re-scan/ })).toHaveCount(0);
+
   const rows = page.locator("button").filter({ has: page.locator("p") });
   const n = await rows.count();
   if (n === 0) {
