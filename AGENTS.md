@@ -39,6 +39,7 @@ go build -o inz ./cmd/inz
 ./inz serve            # production mode
 ./inz validate         # YAML syntax check + function file existence, no DB
 ./inz validate --use-dsn <owner-dsn>   # also prints migration plan (plan only, never applied)
+./inz vet              # security lint of instancez.yaml, no DB
 ./inz bundle           # build instancez.yaml + functions/ into a tar.gz artifact
 ./inz bundle --output s3://bucket/key  # build + upload to S3, print pointer
 ./inz serve --bundle s3://bucket/key#etag   # production mode using bundle (config + functions from single archive)

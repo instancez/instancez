@@ -8,6 +8,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Added
 
+- `inz vet` lints `instancez.yaml` for security problems (open or missing RLS, hardcoded secrets, unsafe auth and CORS settings). It exits 1 at `--fail-on` severity (default `high`), and prints JSON with `--json`. Findings that one config change resolves carry an `edit` (path and value) in the JSON. The report includes a `checks` tally (`N of M checks passed`). `configvalidate.VetYAML` exposes it to Go callers and returns the findings plus that tally. The admin API serves the same report at `GET /_admin/vet`, and the dashboard shows it on a Security page with a checks-passed banner, severity filters, a finding list and detail view, and a Fix it button that stages the finding's `edit` through the save confirmation. Vet severities are tuned to cut false positives on the shipped templates: policies that call an identity-aware rpc pass, read-only definer functions rank lower, and missing email verification is low without an email provider.
 - `indexes[].method` (`btree` default, `hash`, `gin`, `gist`, `brin`, `spgist`); changing it rebuilds the index. For example, `gin` on a `tsvector` column enables full-text search.
 - Field options `auto_updated_at: true` (timestamp fields; sets the column to `now()` on every update) and `immutable: true` (updates that change the column fail with 400, for every role including the secret key). Both run in one engine-managed `BEFORE UPDATE` trigger per table, dropped when the options are removed.
 

@@ -5,6 +5,7 @@ import type {
   DiffResponse,
   AdminUser,
   SqlResult,
+  VetReport,
 } from "../lib/types";
 
 const BASE = "/_admin";
@@ -82,6 +83,10 @@ export async function getConfigDiff(): Promise<DiffResponse> {
 
 export async function getConfigStatus(): Promise<ConfigStatus> {
   return request<ConfigStatus>("/config/status");
+}
+
+export async function getVet(): Promise<VetReport> {
+  return request<VetReport>("/vet");
 }
 
 /** Existence probe for a function file path (relative to the config root). */

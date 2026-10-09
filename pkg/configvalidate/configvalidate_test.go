@@ -4,6 +4,9 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"encoding/json"
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -170,4 +173,87 @@ func TestWarningsYAML_ExpiredAppleSecret(t *testing.T) {
 	if len(ws) != 1 || ws[0].Path != "auth.oauth.apple.client_secret" || !strings.Contains(ws[0].Message, "expired") {
 		t.Fatalf("want one expired warning, got %+v", ws)
 	}
+}
+
+const vetCleanYAML = "version: 1\nproject:\n  name: demo\nauth:\n  email:\n    verify_email: true\ntables:\n  todos:\n    rls_enabled: true\n    fields:\n      - name: id\n        type: bigserial\n        primary_key: true\n"
+
+func TestVetYAML(t *testing.T) {
+	t.Run("parse error", func(t *testing.T) {
+		if _, err := VetYAML([]byte("tables: [unclosed")); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+	t.Run("empty yaml", func(t *testing.T) {
+		if _, err := VetYAML(nil); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+	t.Run("clean config", func(t *testing.T) {
+		got, err := VetYAML([]byte(vetCleanYAML))
+		if err != nil || got.Findings == nil || len(got.Findings) != 0 {
+			t.Fatalf("want empty non-nil findings, got %+v, %v", got, err)
+		}
+		if got.Checks.Total == 0 || got.Checks.Passed != got.Checks.Total {
+			t.Fatalf("clean config should pass every check, got %+v", got.Checks)
+		}
+	})
+	t.Run("bad config", func(t *testing.T) {
+		bad := strings.Replace(vetCleanYAML, "rls_enabled: true", "rls_enabled: false", 1)
+		got, err := VetYAML([]byte(bad))
+		if err != nil || len(got.Findings) == 0 {
+			t.Fatalf("want findings, got %+v, %v", got, err)
+		}
+		if got.Checks.Passed != got.Checks.Total-1 {
+			t.Fatalf("one failed check, got %+v", got.Checks)
+		}
+		f := got.Findings[0]
+		if f.Rule != "rls-disabled" || f.Severity != "critical" || f.Path != "tables.todos.rls_enabled" || f.Line != 9 || f.Fix == "" {
+			t.Fatalf("unexpected finding %+v", f)
+		}
+		if f.Edit != nil {
+			t.Fatalf("a table with no policies must not offer an RLS edit, got %+v", f.Edit)
+		}
+		withPolicy := strings.Replace(bad, "    rls_enabled: false\n", "    rls_enabled: false\n    rls:\n      - operations: [select]\n        using: \"true\"\n", 1)
+		pgot, err := VetYAML([]byte(withPolicy))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rls VetFinding
+		for _, pf := range pgot.Findings {
+			if pf.Rule == "rls-disabled" {
+				rls = pf
+			}
+		}
+		if rls.Edit == nil || rls.Edit.Value != true || strings.Join(stringsOf(rls.Edit.Path), ".") != "tables.todos.rls_enabled" {
+			t.Fatalf("rls-disabled with policies should carry its edit, got %+v", rls.Edit)
+		}
+		b, _ := json.Marshal(rls)
+		var back VetFinding
+		if err := json.Unmarshal(b, &back); err != nil || !reflect.DeepEqual(back, rls) {
+			t.Fatalf("round-trip mismatch: %s", b)
+		}
+	})
+	t.Run("finding without a one-change fix has no edit", func(t *testing.T) {
+		src := strings.Replace(vetCleanYAML, "    rls_enabled: true\n", "    rls_enabled: true\n    rls:\n      - operations: [insert]\n        with_check: \"true\"\n", 1)
+		got, err := VetYAML([]byte(src))
+		if err != nil || len(got.Findings) == 0 {
+			t.Fatalf("want findings, got %+v, %v", got, err)
+		}
+		for _, f := range got.Findings {
+			if f.Edit != nil {
+				t.Fatalf("%s must not offer an edit: %+v", f.Rule, f.Edit)
+			}
+			if b, _ := json.Marshal(f); strings.Contains(string(b), `"edit"`) {
+				t.Fatalf("edit field should be omitted: %s", b)
+			}
+		}
+	})
+}
+
+func stringsOf(path []any) []string {
+	out := make([]string, len(path))
+	for i, p := range path {
+		out[i] = fmt.Sprint(p)
+	}
+	return out
 }

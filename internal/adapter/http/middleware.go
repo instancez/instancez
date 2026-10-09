@@ -504,6 +504,7 @@ var errTypeToCode = map[string]string{
 	"provider_email_needs_verification": "provider_email_needs_verification",
 	"email_exists":                      "email_exists",
 	"bad_oauth_state":                   "bad_oauth_state",
+	"invalid_config":                    "invalid_config",
 }
 
 // profileHeaderGuard enforces that Accept-Profile (for reads) and

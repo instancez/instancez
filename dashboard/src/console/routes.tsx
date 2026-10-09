@@ -31,6 +31,7 @@ const FunctionDetail = lazy(() => import("../pages/FunctionDetail").then(m => ({
 const ProvidersPage = lazy(() => import("../pages/Providers").then(m => ({ default: m.ProvidersPage })));
 const UsersPage = lazy(() => import("../pages/Users").then(m => ({ default: m.UsersPage })));
 const ProjectPage = lazy(() => import("../pages/Project").then(m => ({ default: m.ProjectPage })));
+const SecurityPage = lazy(() => import("../pages/Security").then(m => ({ default: m.SecurityPage })));
 const SqlEditor = lazy(() => import("../pages/SqlEditor").then((m) => ({ default: m.SqlEditor })));
 
 export const overviewRoutes = (): RouteObject[] => [
@@ -85,6 +86,10 @@ export const sqlRoutes = (): RouteObject[] => [
   { index: true, element: <SqlEditor />, handle: { title: "SQL Editor" } satisfies ConsoleRouteHandle },
 ];
 
+export const securityRoutes = (): RouteObject[] => [
+  { index: true, element: <SecurityPage />, handle: { title: "Security" } satisfies ConsoleRouteHandle },
+];
+
 export function consoleRoutes(): RouteObject[] {
   return [
     ...overviewRoutes(),
@@ -97,5 +102,6 @@ export function consoleRoutes(): RouteObject[] {
     { path: "functions", children: functionsRoutes() },
     { path: "providers", children: providersRoutes() },
     { path: "project", children: projectRoutes() },
+    { path: "security", children: securityRoutes() },
   ];
 }

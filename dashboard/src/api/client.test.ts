@@ -4,6 +4,7 @@ import {
   getConfigStatus,
   getEnvVars,
   getStats,
+  getVet,
   getStatus,
   putConfig,
   putDotenv,
@@ -157,6 +158,35 @@ describe("getConfigStatus", () => {
         headers: expect.objectContaining({ Authorization: "Bearer test-key" }),
       }),
     );
+  });
+});
+
+describe("getVet", () => {
+  beforeEach(() => sessionStorage.setItem("instancez_secret_key", "test-key"));
+  afterEach(() => {
+    sessionStorage.clear();
+    vi.unstubAllGlobals();
+  });
+
+  it("GETs /_admin/vet with the bearer header", async () => {
+    const report = { findings: [], counts: { critical: 0, high: 0, medium: 0, low: 0, info: 0 } };
+    const f = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => report });
+    vi.stubGlobal("fetch", f);
+    expect(await getVet()).toEqual(report);
+    expect(f).toHaveBeenCalledWith(
+      "/_admin/vet",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer test-key" }),
+      }),
+    );
+  });
+
+  it("surfaces the server message on 400", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: false, status: 400, json: async () => ({ message: "invalid config" }) }),
+    );
+    await expect(getVet()).rejects.toThrow("invalid config");
   });
 });
 

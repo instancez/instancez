@@ -17,6 +17,7 @@ describe("ConsoleBackend types", () => {
       capabilities: fullCapabilities(),
       getConfig: async () => ({ version: 1 }) as any,
       getConfigStatus: async () => ({ dotenv_writable: false }) as any,
+      getVetReport: async () => ({ findings: [], counts: { critical: 0, high: 0, medium: 0, low: 0, info: 0 } }),
       previewConfig: async () => ({ current: "", proposed: "" }),
       putConfig: async () => ({ message: "" }),
       getEnvVars: async () => ({ vars: {} }),

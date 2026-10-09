@@ -204,6 +204,34 @@ export interface ValidationError {
   suggestion?: string;
 }
 
+export type VetSeverity = "critical" | "high" | "medium" | "low" | "info";
+
+export interface VetFinding {
+  rule: string;
+  severity: VetSeverity;
+  path: string;
+  line: number;
+  title: string;
+  message: string;
+  fix: string;
+  /** The config change that resolves the finding; absent when the right change depends on the app. */
+  edit?: VetEdit;
+}
+
+/** `path` holds object keys and array indexes; `remove` deletes the value there instead of setting it, and `value` is then the value expected there. */
+export interface VetEdit {
+  path: (string | number)[];
+  value: unknown;
+  remove?: boolean;
+}
+
+export interface VetReport {
+  findings: VetFinding[];
+  counts: Record<VetSeverity, number>;
+  /** Absent on older servers. */
+  checks?: { total: number; passed: number };
+}
+
 export type ConfigStatus = {
   status: "ok" | "drift" | "unknown";
   config_source: string;

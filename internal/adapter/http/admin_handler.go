@@ -17,6 +17,7 @@ import (
 	"github.com/instancez/instancez/internal/app"
 	"github.com/instancez/instancez/internal/config"
 	"github.com/instancez/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/vet"
 	"gopkg.in/yaml.v3"
 )
 
@@ -109,6 +110,7 @@ func (h *AdminHandler) Mount(root *gin.RouterGroup) {
 	admin.GET("/config", h.handleGetConfig)
 	admin.PUT("/config", h.handlePutConfig)
 	admin.GET("/config/status", h.handleConfigStatus)
+	admin.GET("/vet", h.handleVet)
 	admin.GET("/config/diff", h.handleConfigDiff)
 	admin.GET("/config/env-vars", h.handleGetEnvVars)
 	admin.PUT("/config/dotenv", h.handlePutDotenv)
@@ -1074,4 +1076,23 @@ func searchString(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// handleVet lints the current config source and returns the vet report.
+func (h *AdminHandler) handleVet(c *gin.Context) {
+	if h.configSource == nil {
+		problemJSON(c, 503, "config_source_unavailable", "Config source not available")
+		return
+	}
+	raw, _, err := h.configSource.Read(c.Request.Context())
+	if err != nil {
+		problemJSON(c, 500, "internal", "Failed to read config source: "+err.Error())
+		return
+	}
+	report, err := vet.Run(raw)
+	if err != nil {
+		problemJSON(c, 400, "invalid_config", err.Error())
+		return
+	}
+	c.JSON(200, report)
 }
