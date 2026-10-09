@@ -258,6 +258,17 @@ describe("SecurityPage list and detail", () => {
     await screen.findByText("HOW TO FIX");
     await user.click(screen.getByRole("button", { name: "Copy fix" }));
     expect(writeText).toHaveBeenCalledWith("Fix crit.");
+    expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
+  });
+
+  it("keeps the label when the clipboard is unavailable", async () => {
+    const user = userEvent.setup();
+    const writeText = stubClipboard();
+    writeText.mockRejectedValue(new Error("denied"));
+    renderPage(async () => report(items));
+    await screen.findByText("HOW TO FIX");
+    await user.click(screen.getByRole("button", { name: "Copy fix" }));
+    expect(screen.getByRole("button", { name: "Copy fix" })).toBeInTheDocument();
   });
 
   it("hides the fix callout and copy when there is no fix", async () => {

@@ -171,7 +171,7 @@ Run it in CI to block a merge:
 
 ### Dashboard
 
-The dashboard's Security page runs the same scan. It lists findings by severity, filterable by severity tile, with the fix and an `# inz-vet-ignore: <rule>` comment you can copy. Use Re-scan after editing the config.
+The dashboard's Security page runs the same scan. A banner shows how many checks passed, with severity chips to filter the list. Pick a finding to see its detail, a Copy fix button, an Open in link to the matching section (tables, storage, rpc, functions or auth), and an `# inz-vet-ignore: <rule>` snippet you can copy. Use Re-scan after editing the config.
 
 ### Rules
 

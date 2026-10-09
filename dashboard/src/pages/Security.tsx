@@ -85,6 +85,28 @@ function FindingRow({ finding, selected, onSelect }: { finding: VetFinding; sele
   );
 }
 
+function CopyFix({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => { setCopied(false); }, 1500);
+    } catch {
+      // Clipboard unavailable (insecure context).
+    }
+  }
+  return (
+    <chakra.button
+      type="button" onClick={() => { void copy(); }}
+      h="9" px="4" borderRadius="lg" bg="#1b1b1a" color="white" fontSize="sm" fontWeight="semibold" cursor="pointer"
+      _hover={{ bg: "#2a2926" }}
+    >
+      {copied ? "Copied" : "Copy fix"}
+    </chakra.button>
+  );
+}
+
 function FindingDetail({ finding }: { finding: VetFinding }) {
   const section = finding.path.split(".")[0] ?? "";
   const target = SECTIONS.includes(section) ? section : null;
@@ -109,7 +131,7 @@ function FindingDetail({ finding }: { finding: VetFinding }) {
         </VStack>
       )}
       <HStack gap="2" flexWrap="wrap">
-        {finding.fix && <HStack gap="1" fontSize="sm" color="fg.muted">Copy fix<CopyButton value={finding.fix} label="Copy fix" /></HStack>}
+        {finding.fix && <CopyFix text={finding.fix} />}
         {target && (
           <Button asChild variant="outline" size="sm"><Link to={`/${target}`}>Open in {target}</Link></Button>
         )}
