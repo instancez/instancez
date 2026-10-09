@@ -54,7 +54,7 @@ func TestStorageRules(t *testing.T) {
 func TestBucketSeverities(t *testing.T) {
 	sev := func(src, rule string) Severity {
 		t.Helper()
-		r, err := Run([]byte(src), quiet)
+		r, err := runQuiet([]byte(src))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -78,7 +78,7 @@ func TestBucketSeverities(t *testing.T) {
 	if got := sev(bucket("a", openSel), "bucket-open-read"); got != Medium {
 		t.Errorf("open read = %v", got)
 	}
-	r, _ := Run([]byte(bucket("a", openIns)), quiet)
+	r, _ := runQuiet([]byte(bucket("a", openIns)))
 	if m := r.Findings[0].Message; !strings.Contains(m, "anonymous sign-in") || strings.Contains(m, "signed in or not") {
 		t.Errorf("bucket write message = %q", m)
 	}
@@ -139,7 +139,7 @@ func TestRPCSeverities(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			r, err := Run([]byte(tc.src), quiet)
+			r, err := runQuiet([]byte(tc.src))
 			if err != nil {
 				t.Fatal(err)
 			}

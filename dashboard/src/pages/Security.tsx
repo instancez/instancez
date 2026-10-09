@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type ComponentProps } from "react";
-import { Link } from "react-router-dom";
 import { RefreshCw, ShieldAlert, ShieldCheck } from "lucide-react";
 import { Box, chakra, Code, Flex, HStack, Text, VisuallyHidden, VStack } from "@chakra-ui/react";
-import { CopyButton } from "../components/ApiKeys";
 import { EmptyState } from "../components/EmptyState";
 import { ListSkeleton } from "../components/Skeletons";
-import { Button, Disclosure } from "../components/ui";
+import { Button } from "../components/ui";
 import { useBackend } from "../console/BackendContext";
-import type { VetFinding, VetReport, VetSeverity } from "../lib/types";
+import { useConfig } from "../hooks/useConfig";
+import { applyVetEdit } from "../lib/vetEdit";
+import type { VetEdit, VetFinding, VetReport, VetSeverity } from "../lib/types";
 
 const SEVERITIES: VetSeverity[] = ["critical", "high", "medium", "low", "info"];
 
@@ -52,20 +52,6 @@ function Mono(props: ComponentProps<typeof Code>) {
   return <Code fontSize="xs" px="2" py="1" borderRadius="md" bg="bg.muted" color="fg" wordBreak="break-all" {...props} />;
 }
 
-const SECTIONS = ["tables", "storage", "rpc", "functions", "auth"];
-
-function Ignore({ rule }: { rule: string }) {
-  const snippet = `# inz-vet-ignore: ${rule}`;
-  return (
-    <Disclosure label="Ignore…">
-      <HStack gap="2" flexWrap="wrap">
-        <Mono>{snippet}</Mono>
-        <CopyButton value={snippet} label={`Copy ignore comment for ${rule}`} />
-      </HStack>
-    </Disclosure>
-  );
-}
-
 function FindingRow({ finding, selected, onSelect }: { finding: VetFinding; selected: boolean; onSelect: () => void }) {
   const sev = bucketOf(finding.severity);
   const p = PALETTE[sev];
@@ -91,34 +77,19 @@ function FindingRow({ finding, selected, onSelect }: { finding: VetFinding; sele
   );
 }
 
-function CopyFix({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  useEffect(() => () => { clearTimeout(timer.current); }, []);
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      clearTimeout(timer.current);
-      timer.current = setTimeout(() => { setCopied(false); }, 1500);
-    } catch {
-      // Clipboard unavailable (insecure context).
-    }
-  }
+function FixIt({ onFix, busy }: { onFix: () => void; busy: boolean }) {
   return (
     <chakra.button
-      type="button" onClick={() => { void copy(); }}
+      type="button" onClick={onFix} disabled={busy} aria-busy={busy}
       h="9" px="4" borderRadius="lg" bg="gray.900" color="white" fontSize="sm" fontWeight="semibold" cursor="pointer"
-      _hover={{ bg: "gray.800" }}
+      _hover={{ bg: "gray.800" }} _disabled={{ opacity: 0.6, cursor: "default" }}
     >
-      <span aria-live="polite">{copied ? "Copied" : "Copy fix"}</span>
+      {busy ? "Fixing…" : "Fix it"}
     </chakra.button>
   );
 }
 
-function FindingDetail({ finding }: { finding: VetFinding }) {
-  const section = finding.path.split(".")[0] ?? "";
-  const target = SECTIONS.includes(section) ? section : null;
+function FindingDetail({ finding, onFix, busy }: { finding: VetFinding; onFix?: () => void; busy: boolean }) {
   return (
     <VStack align="stretch" gap="4">
       <HStack gap="2.5" flexWrap="wrap">
@@ -139,13 +110,7 @@ function FindingDetail({ finding }: { finding: VetFinding }) {
           <Text fontSize="sm" color="fg" whiteSpace="pre-wrap" wordBreak="break-word">{finding.fix}</Text>
         </VStack>
       )}
-      <HStack gap="2" flexWrap="wrap">
-        {finding.fix && <CopyFix text={finding.fix} />}
-        {target && (
-          <Button asChild variant="outline" size="sm"><Link to={`/${target}`}>Open in {target}</Link></Button>
-        )}
-      </HStack>
-      <Ignore rule={finding.rule} />
+      {onFix && <FixIt onFix={onFix} busy={busy} />}
     </VStack>
   );
 }
@@ -250,6 +215,8 @@ function Banner({ report, findings, counts, active, onFilter }: {
 
 export function SecurityPage() {
   const backend = useBackend();
+  const { config, save } = useConfig();
+  const [fixing, setFixing] = useState(false);
   const [report, setReport] = useState<VetReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<VetSeverity | null>(null);
@@ -273,6 +240,16 @@ export function SecurityPage() {
     scan();
     return () => { seq.current++; };
   }, [scan]);
+
+  async function fix(edit: VetEdit) {
+    if (!config) return;
+    setFixing(true);
+    try {
+      if (await save(applyVetEdit(config, edit))) scan();
+    } finally {
+      setFixing(false);
+    }
+  }
 
   const findings = report?.findings ?? [];
   const counts = Object.fromEntries(SEVERITIES.map((s) => [s, 0])) as Record<VetSeverity, number>;
@@ -320,7 +297,13 @@ export function SecurityPage() {
           ))}
         </Box>
         <Box ref={detailRef} flex="2 1 320px" minW="0" bg="bg" borderWidth="1px" borderRadius="xl" p={{ base: "5", md: "7" }}>
-          {selected && <FindingDetail finding={selected.finding} />}
+          {selected && (
+            <FindingDetail
+              finding={selected.finding}
+              busy={fixing}
+              onFix={selected.finding.edit && config && backend.capabilities.canWriteConfig ? () => { void fix(selected.finding.edit!); } : undefined}
+            />
+          )}
         </Box>
       </Flex>
     );

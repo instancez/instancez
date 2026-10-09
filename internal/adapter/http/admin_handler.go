@@ -1089,7 +1089,7 @@ func (h *AdminHandler) handleVet(c *gin.Context) {
 		problemJSON(c, 500, "internal", "Failed to read config source: "+err.Error())
 		return
 	}
-	report, err := vet.Run(raw, vet.Options{})
+	report, err := vet.Run(raw)
 	if err != nil {
 		problemJSON(c, 400, "invalid_config", err.Error())
 		return

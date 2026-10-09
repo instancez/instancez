@@ -15,7 +15,6 @@ func newVetCmd() *cobra.Command {
 		configPath string
 		jsonOutput bool
 		failOn     string
-		ignore     []string
 	)
 
 	cmd := &cobra.Command{
@@ -25,8 +24,7 @@ func newVetCmd() *cobra.Command {
 policies, disabled RLS, hardcoded secrets and unsafe auth settings. No database
 or network needed.
 
-Exits 1 when a finding is at or above --fail-on (default high).
-Silence a rule with --ignore <rule-id>.`,
+Exits 1 when a finding is at or above --fail-on (default high).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if _, err := applyEnvDefaults(cmd.Flags(), nil, os.Getenv); err != nil {
@@ -47,7 +45,7 @@ Silence a rule with --ignore <rule-id>.`,
 			if err != nil {
 				return fmt.Errorf("read %s: %w", configPath, err)
 			}
-			report, err := vet.Run(src, vet.Options{Ignore: ignore})
+			report, err := vet.Run(src)
 			if err != nil {
 				return err
 			}
@@ -78,6 +76,5 @@ Silence a rule with --ignore <rule-id>.`,
 	cmd.Flags().StringVar(&configPath, "config", "instancez.yaml", "config source (env: INSTANCEZ_CONFIG)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "print the report as JSON (for CI)")
 	cmd.Flags().StringVar(&failOn, "fail-on", "high", "exit 1 at this severity or above: info|low|medium|high|critical|none")
-	cmd.Flags().StringSliceVar(&ignore, "ignore", nil, "comma-separated rule ids to skip")
 	return cmd
 }

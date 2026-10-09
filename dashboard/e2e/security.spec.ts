@@ -20,7 +20,7 @@ test("Security shows the banner, then findings or the all-clear state", async ({
     return;
   }
   await expect(rows.first()).toHaveAttribute("aria-current", "true");
-  await expect(page.getByRole("button", { name: "Ignore…" })).toBeVisible();
+  await expect(page.getByText("HOW TO FIX")).toBeVisible();
 
   if (n > 1) {
     const title = (await rows.nth(1).locator("p").first().textContent()) ?? "";

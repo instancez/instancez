@@ -34,6 +34,7 @@ func ruleRLSDisabled(c *ctx) {
 			"Row-level security is off",
 			fmt.Sprintf("Anyone with the public key can read and write every row in %s.", tableLabel(name, t)),
 			"Set rls_enabled: true and add policies, unless the table is meant to be public.")
+		c.withEdit(Edit{Path: []any{"tables", name, "rls_enabled"}, Value: true})
 	}
 }
 
@@ -185,6 +186,7 @@ func ruleBuckets(c *ctx) {
 				"Bucket is public",
 				fmt.Sprintf("Anyone with a URL can read objects in %s. Public skips RLS for reads only; writes still follow the policies.", name),
 				"Keep it only for content that is meant to be public.")
+			c.withEdit(Edit{Path: append(slices.Clone(at), "public"), Value: false})
 		}
 	}
 }

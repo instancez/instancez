@@ -36,6 +36,9 @@ const cleanYAML = `tables:
         using: "auth.uid() = user_id"
 `
 
+// noSignup removes the default unverified-signup finding.
+const noSignup = "auth:\n  allow_signup: false\n"
+
 func writeTemp(t *testing.T, content string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "instancez.yaml")
@@ -57,6 +60,7 @@ func runVet(t *testing.T, args ...string) (string, error) {
 func TestVetExitSemantics(t *testing.T) {
 	bad := writeTemp(t, badYAML)
 	clean := writeTemp(t, cleanYAML)
+	cleanNoSignup := writeTemp(t, cleanYAML+noSignup)
 	cases := []struct {
 		name    string
 		args    []string
@@ -65,11 +69,9 @@ func TestVetExitSemantics(t *testing.T) {
 		{"bad default high", []string{"--config", bad}, true},
 		{"bad fail-on none", []string{"--config", bad, "--fail-on", "none"}, false},
 		{"bad fail-on critical", []string{"--config", bad, "--fail-on", "critical"}, true},
-		{"bad ignore rule", []string{"--config", bad, "--ignore", "policy-open-write"}, false},
-		{"bad ignore unknown id", []string{"--config", bad, "--ignore", "nope"}, true},
 		{"clean default", []string{"--config", clean}, false},
 		{"clean fail-on info sees default finding", []string{"--config", clean, "--fail-on", "info"}, true},
-		{"clean fail-on info ignoring all", []string{"--config", clean, "--fail-on", "info", "--ignore", "signup-unverified-email"}, false},
+		{"clean without signup fail-on info", []string{"--config", cleanNoSignup, "--fail-on", "info"}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -101,7 +103,7 @@ func TestVetPlainErrors(t *testing.T) {
 }
 
 func TestVetJSON(t *testing.T) {
-	out, err := runVet(t, "--config", writeTemp(t, badYAML), "--json", "--ignore", "signup-unverified-email")
+	out, err := runVet(t, "--config", writeTemp(t, badYAML+noSignup), "--json")
 	require.ErrorIs(t, err, errReported)
 	var r struct {
 		Findings []map[string]any `json:"findings"`
@@ -119,7 +121,7 @@ func TestVetJSON(t *testing.T) {
 }
 
 func TestVetJSONEmptyFindingsIsArray(t *testing.T) {
-	out, err := runVet(t, "--config", writeTemp(t, cleanYAML), "--json", "--ignore", "signup-unverified-email")
+	out, err := runVet(t, "--config", writeTemp(t, cleanYAML+noSignup), "--json")
 	require.NoError(t, err)
 	assert.Contains(t, out, `"findings": []`)
 }
@@ -136,11 +138,6 @@ func TestVetEnvBinding(t *testing.T) {
 	bad := writeTemp(t, badYAML)
 	t.Run("INSTANCEZ_FAIL_ON none", func(t *testing.T) {
 		t.Setenv("INSTANCEZ_FAIL_ON", "none")
-		_, err := runVet(t, "--config", bad)
-		require.NoError(t, err)
-	})
-	t.Run("INSTANCEZ_IGNORE comma list", func(t *testing.T) {
-		t.Setenv("INSTANCEZ_IGNORE", "policy-open-write,signup-unverified-email")
 		_, err := runVet(t, "--config", bad)
 		require.NoError(t, err)
 	})
@@ -199,7 +196,7 @@ func TestVetBinary(t *testing.T) {
 	assert.Equal(t, 1, code)
 	assert.Contains(t, out, `"policy-open-write"`)
 
-	out, code = run("--config", writeTemp(t, cleanYAML), "--ignore", "signup-unverified-email")
+	out, code = run("--config", writeTemp(t, cleanYAML+noSignup))
 	assert.Equal(t, 0, code)
 	assert.Contains(t, out, "No security findings")
 	assert.False(t, strings.Contains(out, "\x1b["), "piped output must be plain")

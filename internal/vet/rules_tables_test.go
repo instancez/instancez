@@ -9,18 +9,16 @@ import (
 	"github.com/instancez/instancez/internal/domain"
 )
 
+// vetIDs returns sorted rule ids, dropping the default-config unverified-signup finding.
 func vetIDs(t *testing.T, src string) []string {
 	t.Helper()
-	return vetIDsOpts(t, src, quiet)
+	return slices.DeleteFunc(vetIDsAll(t, src), func(id string) bool { return id == "signup-unverified-email" })
 }
 
-// quiet drops the default-config finding so other rule tests stay focused.
-var quiet = Options{Ignore: []string{"signup-unverified-email"}}
-
-// vetIDsOpts returns sorted rule ids; vetIDs drops the default-config noise.
-func vetIDsOpts(t *testing.T, src string, o Options) []string {
+// vetIDsAll returns every sorted rule id.
+func vetIDsAll(t *testing.T, src string) []string {
 	t.Helper()
-	r, err := Run([]byte(src), o)
+	r, err := Run([]byte(src))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,6 +28,15 @@ func vetIDsOpts(t *testing.T, src string, o Options) []string {
 	}
 	slices.Sort(ids)
 	return ids
+}
+
+// runQuiet runs vet without the default-config unverified-signup finding so other rule tests stay focused.
+func runQuiet(src []byte) (*Report, error) {
+	r, err := Run(src)
+	if err != nil {
+		return r, err
+	}
+	return newReport(slices.DeleteFunc(r.Findings, func(f Finding) bool { return f.Rule == "signup-unverified-email" })), nil
 }
 
 // tbl builds a one-table config; header holds table-level keys, pols the rls list.
@@ -143,7 +150,7 @@ func TestTableRuleSeverities(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			r, err := Run([]byte(tc.src), quiet)
+			r, err := runQuiet([]byte(tc.src))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -165,7 +172,7 @@ func TestTableRuleSeverities(t *testing.T) {
 
 func TestTableRulePathsAndLabels(t *testing.T) {
 	src := tbl("    schema: app\n"+on, idField, pol("select", "auth.uid() = id", "", "")+pol("update", "auth.uid() = id", "true", ""))
-	r, err := Run([]byte(src), quiet)
+	r, err := runQuiet([]byte(src))
 	if err != nil || len(r.Findings) != 1 {
 		t.Fatalf("got %v, %v", r, err)
 	}

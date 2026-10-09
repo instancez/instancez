@@ -5,6 +5,8 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -208,10 +210,36 @@ func TestVetYAML(t *testing.T) {
 		if f.Rule != "rls-disabled" || f.Severity != "critical" || f.Path != "tables.todos.rls_enabled" || f.Line != 9 || f.Fix == "" {
 			t.Fatalf("unexpected finding %+v", f)
 		}
+		if f.Edit == nil || f.Edit.Value != true || strings.Join(stringsOf(f.Edit.Path), ".") != "tables.todos.rls_enabled" {
+			t.Fatalf("rls-disabled should carry its edit, got %+v", f.Edit)
+		}
 		b, _ := json.Marshal(f)
 		var back VetFinding
-		if err := json.Unmarshal(b, &back); err != nil || back != f {
+		if err := json.Unmarshal(b, &back); err != nil || !reflect.DeepEqual(back, f) {
 			t.Fatalf("round-trip mismatch: %s", b)
 		}
 	})
+	t.Run("finding without a one-change fix has no edit", func(t *testing.T) {
+		src := strings.Replace(vetCleanYAML, "    rls_enabled: true\n", "    rls_enabled: true\n    rls:\n      - operations: [insert]\n        with_check: \"true\"\n", 1)
+		got, err := VetYAML([]byte(src))
+		if err != nil || len(got.Findings) == 0 {
+			t.Fatalf("want findings, got %+v, %v", got, err)
+		}
+		for _, f := range got.Findings {
+			if f.Edit != nil {
+				t.Fatalf("%s must not offer an edit: %+v", f.Rule, f.Edit)
+			}
+			if b, _ := json.Marshal(f); strings.Contains(string(b), `"edit"`) {
+				t.Fatalf("edit field should be omitted: %s", b)
+			}
+		}
+	})
+}
+
+func stringsOf(path []any) []string {
+	out := make([]string, len(path))
+	for i, p := range path {
+		out[i] = fmt.Sprint(p)
+	}
+	return out
 }

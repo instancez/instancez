@@ -105,7 +105,12 @@ type VetFinding struct {
 	Title    string `json:"title"`
 	Message  string `json:"message"`
 	Fix      string `json:"fix"`
+	// Edit is the config change that resolves the finding; nil when the right change depends on the app.
+	Edit *VetEdit `json:"edit,omitempty"`
 }
+
+// VetEdit is a config change: Path holds map keys and list indexes, and Remove deletes the value instead of setting Value.
+type VetEdit = vet.Edit
 
 // VetChecks counts the vet rules; Passed is those with no finding.
 type VetChecks = vet.Checks
@@ -118,13 +123,13 @@ type VetResult struct {
 
 // VetYAML runs the `inz vet` security rules on config bytes; the error is a parse failure.
 func VetYAML(data []byte) (*VetResult, error) {
-	rep, err := vet.Run(data, vet.Options{})
+	rep, err := vet.Run(data)
 	if err != nil {
 		return nil, err
 	}
 	out := &VetResult{Findings: make([]VetFinding, 0, len(rep.Findings)), Checks: rep.Checks}
 	for _, f := range rep.Findings {
-		out.Findings = append(out.Findings, VetFinding{f.Rule, f.Severity.String(), f.Path, f.Line, f.Title, f.Message, f.Fix})
+		out.Findings = append(out.Findings, VetFinding{f.Rule, f.Severity.String(), f.Path, f.Line, f.Title, f.Message, f.Fix, f.Edit})
 	}
 	return out, nil
 }

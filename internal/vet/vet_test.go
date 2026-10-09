@@ -147,7 +147,7 @@ func ruleIDs(r *Report) string {
 }
 
 func TestRunSortAndLines(t *testing.T) {
-	r, err := run([]byte(twoTables), Options{}, []func(*ctx){fakeRules})
+	r, err := run([]byte(twoTables), []func(*ctx){fakeRules})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,35 +160,9 @@ func TestRunSortAndLines(t *testing.T) {
 	if r.Counts["critical"] != 1 || r.Counts["low"] != 3 || r.Counts["info"] != 0 {
 		t.Errorf("counts = %v", r.Counts)
 	}
-	again, _ := run([]byte(twoTables), Options{}, []func(*ctx){fakeRules})
+	again, _ := run([]byte(twoTables), []func(*ctx){fakeRules})
 	if ruleIDs(again) != ruleIDs(r) {
 		t.Error("order not deterministic")
-	}
-}
-
-func TestRunIgnore(t *testing.T) {
-	cases := []struct {
-		name, src string
-		opts      Options
-		want      string
-	}{
-		{"flag", twoTables, Options{Ignore: []string{"a-rule", "nope"}}, "a-rule2,c-rule,b-rule"},
-		{"unknown id tolerated", twoTables, Options{Ignore: []string{"does-not-exist"}}, "a-rule,a-rule2,c-rule,b-rule"},
-		{"same line", "tables:\n  a:\n    fields: []\n  b: # inz-vet-ignore: a-rule, b-rule\n    fields: []\n", Options{}, "a-rule2,c-rule"},
-		{"previous line", "tables:\n  a:\n    fields: []\n  # inz-vet-ignore: a-rule\n  b:\n    fields: []\n", Options{}, "a-rule2,c-rule,b-rule"},
-		{"reason text", "tables:\n  a:\n    fields: []\n  b: # inz-vet-ignore: a-rule because dev\n    fields: []\n", Options{}, "a-rule2,c-rule,b-rule"},
-		{"code line above does not apply", "tables:\n  a:\n    fields: [] # inz-vet-ignore: a-rule\n  b:\n    fields: []\n", Options{}, "a-rule,a-rule2,c-rule,b-rule"},
-		{"two lines above does not apply", "tables:\n  a:\n    fields: []\n  # inz-vet-ignore: a-rule\n\n  b:\n    fields: []\n", Options{}, "a-rule,a-rule2,c-rule,b-rule"},
-		{"other rule unaffected", "tables:\n  a:\n    fields: []\n  b: # inz-vet-ignore: zzz\n    fields: []\n", Options{}, "a-rule,a-rule2,c-rule,b-rule"},
-	}
-	for _, tc := range cases {
-		r, err := run([]byte(tc.src), tc.opts, []func(*ctx){fakeRules})
-		if err != nil {
-			t.Fatalf("%s: %v", tc.name, err)
-		}
-		if got := ruleIDs(r); got != tc.want {
-			t.Errorf("%s: got %s, want %s", tc.name, got, tc.want)
-		}
 	}
 }
 
@@ -200,7 +174,7 @@ func TestRunEdgeConfigs(t *testing.T) {
 		"zero fields":     "tables:\n  a:\n    rls_enabled: true\n    fields: []\n    rls: []\n",
 		"env placeholder": "auth:\n  jwt_expiry: ${X:-1h}\n",
 	} {
-		r, err := Run([]byte(src), quiet)
+		r, err := runQuiet([]byte(src))
 		if err != nil {
 			t.Errorf("%s: %v", name, err)
 			continue
@@ -213,14 +187,14 @@ func TestRunEdgeConfigs(t *testing.T) {
 
 func TestRunErrors(t *testing.T) {
 	for _, src := range []string{"tables: [", "", "# nothing\n", "tables: [1, 2]\n", "tables: *a\n", "tables:\n  a:\n    rls_enabled: [x]\n"} {
-		if r, err := Run([]byte(src), quiet); err == nil || r != nil {
+		if r, err := runQuiet([]byte(src)); err == nil || r != nil {
 			t.Errorf("Run(%q) = %v, %v; want error", src, r, err)
 		}
 	}
 }
 
 func TestReportJSON(t *testing.T) {
-	r, _ := Run([]byte("{}"), quiet)
+	r, _ := runQuiet([]byte("{}"))
 	b, err := json.Marshal(r)
 	if err != nil {
 		t.Fatal(err)
@@ -229,7 +203,7 @@ func TestReportJSON(t *testing.T) {
 	if string(b) != want {
 		t.Errorf("json = %s", b)
 	}
-	r, _ = run([]byte(twoTables), Options{}, []func(*ctx){fakeRules})
+	r, _ = run([]byte(twoTables), []func(*ctx){fakeRules})
 	b, _ = json.Marshal(r.Findings[0])
 	if !strings.Contains(string(b), `"severity":"critical"`) || !strings.Contains(string(b), `"line":4`) {
 		t.Errorf("finding json = %s", b)
@@ -243,7 +217,7 @@ func TestReportMax(t *testing.T) {
 	if _, ok := newReport(nil).Max(); ok {
 		t.Error("empty report has no max")
 	}
-	r, _ := run([]byte(twoTables), Options{}, []func(*ctx){fakeRules})
+	r, _ := run([]byte(twoTables), []func(*ctx){fakeRules})
 	if m, ok := r.Max(); !ok || m != Critical {
 		t.Errorf("max = %v, %v", m, ok)
 	}
@@ -251,7 +225,7 @@ func TestReportMax(t *testing.T) {
 
 func TestUnknownKeys(t *testing.T) {
 	src := "tables:\n  a:\n    rls_enabld: true\n    fields: []\n    rls:\n      - operations: [select]\n        with_chek: x\n"
-	r, err := Run([]byte(src), quiet)
+	r, err := runQuiet([]byte(src))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,16 +238,10 @@ func TestUnknownKeys(t *testing.T) {
 	if len(got) != 2 || got[0].Severity != Medium || got[0].Line != 3 || got[1].Line != 7 || !strings.Contains(got[0].Message, "rls_enabld") {
 		t.Errorf("unknown-key findings = %+v", got)
 	}
-	ignored, _ := Run([]byte(src), Options{Ignore: []string{"unknown-key"}})
-	for _, f := range ignored.Findings {
-		if f.Rule == "unknown-key" {
-			t.Error("unknown-key not ignorable")
-		}
-	}
 }
 
 func TestRunErrorPointsAtValidate(t *testing.T) {
-	_, err := Run([]byte("tables: [1, 2]\n"), quiet)
+	_, err := runQuiet([]byte("tables: [1, 2]\n"))
 	if err == nil || !strings.Contains(err.Error(), "inz validate") {
 		t.Errorf("err = %v", err)
 	}

@@ -45,6 +45,15 @@ type Finding struct {
 	Title    string   `json:"title"`
 	Message  string   `json:"message"`
 	Fix      string   `json:"fix"`
+	Edit     *Edit    `json:"edit,omitempty"`
+}
+
+// Edit is the config change that resolves a finding. Path holds map keys and list indexes;
+// Remove deletes the value there instead of setting Value.
+type Edit struct {
+	Path   []any `json:"path"`
+	Value  any   `json:"value"`
+	Remove bool  `json:"remove,omitempty"`
 }
 
 type Report struct {
@@ -53,7 +62,7 @@ type Report struct {
 	Checks   Checks         `json:"checks"`
 }
 
-// Checks counts the catalog rules; Passed is those with no finding left after ignores.
+// Checks counts the catalog rules; Passed is those with no finding.
 type Checks struct {
 	Total  int `json:"total"`
 	Passed int `json:"passed"`

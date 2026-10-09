@@ -67,7 +67,7 @@ functions:
 `
 
 func TestCheckIDsAllFireOnFixture(t *testing.T) {
-	r, err := Run([]byte(allRulesYAML), Options{})
+	r, err := Run([]byte(allRulesYAML))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,15 +161,5 @@ func TestReportChecks(t *testing.T) {
 				t.Errorf("checks = %+v, want passed %d of %d", r.Checks, tc.want, total)
 			}
 		})
-	}
-}
-
-func TestIgnoredFindingPassesCheck(t *testing.T) {
-	r, err := Run([]byte("tables:\n  off:\n    rls_enabled: false # inz-vet-ignore: rls-disabled\n"), quiet)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.Checks.Passed != r.Checks.Total {
-		t.Errorf("checks = %+v", r.Checks)
 	}
 }

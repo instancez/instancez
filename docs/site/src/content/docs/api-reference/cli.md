@@ -127,17 +127,8 @@ inz vet [flags]
 | `--config` | `instancez.yaml` | Local config file. Env: `INSTANCEZ_CONFIG`. |
 | `--json` | `false` | Print the report as JSON. Env: `INSTANCEZ_JSON`. |
 | `--fail-on` | `high` | Exit 1 when a finding is at this severity or above: `info`, `low`, `medium`, `high`, `critical`, or `none`. Env: `INSTANCEZ_FAIL_ON`. |
-| `--ignore` | — | Comma-separated rule ids to skip. Env: `INSTANCEZ_IGNORE`. |
 
 Exit codes: `0` when nothing reaches `--fail-on`, `1` when something does, or when the file cannot be read or parsed. A structurally invalid file (wrong types) is an error; run `inz validate` for details.
-
-To silence one finding, put a comment on the flagged line, or on a comment-only line right above it. Text after the rule id is ignored, so you can add a reason:
-
-```yaml
-tables:
-  posts:
-    rls_enabled: false # inz-vet-ignore: rls-disabled because dev
-```
 
 `--json` prints every finding, even those below `--fail-on`:
 
@@ -151,7 +142,8 @@ tables:
       "line": 4,
       "title": "Row-level security is off",
       "message": "Anyone with the public key can read and write every row in posts.",
-      "fix": "Set rls_enabled: true and add policies, unless the table is meant to be public."
+      "fix": "Set rls_enabled: true and add policies, unless the table is meant to be public.",
+      "edit": { "path": ["tables", "posts", "rls_enabled"], "value": true }
     }
   ],
   "counts": { "info": 0, "low": 0, "medium": 0, "high": 0, "critical": 1 },
@@ -159,7 +151,9 @@ tables:
 }
 ```
 
-`checks.total` is the number of rules below, and `checks.passed` is how many of them have no finding left after ignores. The human output ends with the same tally, for example `20 of 21 checks passed`. `unknown-key` is reported but is not a check.
+`checks.total` is the number of rules below, and `checks.passed` is how many of them have no finding. The human output ends with the same tally, for example `20 of 21 checks passed`. `unknown-key` is reported but is not a check.
+
+`edit` is present when one config change resolves the finding: `rls-disabled`, `bucket-public`, `anonymous-signins`, `jwt-expiry-long`, `signup-unverified-email` (only when an email provider is configured), `cors-null-origin` and `max-limit-disabled`. `path` lists object keys and array indexes, and `remove: true` deletes the value instead of setting `value`. Findings whose right fix depends on your app, such as policies, have no `edit`.
 
 The running engine serves the same report at `GET /_admin/vet` (secret key required). It returns `400 invalid_config` when the config does not parse.
 
@@ -171,7 +165,7 @@ Run it in CI to block a merge:
 
 ### Dashboard
 
-The dashboard's Security page runs the same scan. A banner shows how many checks passed, with severity chips to filter the list. Pick a finding to see its detail, a Copy fix button, an Open in link to the matching section (tables, storage, rpc, functions or auth), and an `# inz-vet-ignore: <rule>` snippet you can copy. Use Re-scan after editing the config.
+The dashboard's Security page runs the same scan. A banner shows how many checks passed, with severity chips to filter the list. Pick a finding to see its detail. When the finding has an `edit`, a Fix it button shows the change in the usual save confirmation and rescans after you confirm; it needs write access to the config. Use Re-scan after editing the config by hand.
 
 ### Rules
 

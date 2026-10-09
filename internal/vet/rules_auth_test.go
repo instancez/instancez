@@ -31,7 +31,7 @@ func TestSecretRules(t *testing.T) {
 }
 
 func TestSecretOrderAndPath(t *testing.T) {
-	r, err := Run([]byte("auth:\n  oauth:\n    google: {client_id: a, client_secret: s1}\n    github: {client_id: b, client_secret: s2}\n"), Options{})
+	r, err := Run([]byte("auth:\n  oauth:\n    google: {client_id: a, client_secret: s1}\n    github: {client_id: b, client_secret: s2}\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestSecretOrderAndPath(t *testing.T) {
 
 func sevOf(t *testing.T, src, rule string) (Severity, bool) {
 	t.Helper()
-	r, err := Run([]byte(src), Options{})
+	r, err := Run([]byte(src))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,24 +99,23 @@ func TestSignupUnverified(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := slices.Contains(vetIDsOpts(t, tc.src, Options{}), "signup-unverified-email")
+			got := slices.Contains(vetIDsAll(t, tc.src), "signup-unverified-email")
 			if got != tc.hit {
 				t.Errorf("hit = %v, want %v", got, tc.hit)
 			}
 		})
 	}
-	if got := vetIDsOpts(t, "tables: {}\n", Options{}); !slices.Equal(got, []string{"signup-unverified-email"}) {
+	if got := vetIDsAll(t, "tables: {}\n"); !slices.Equal(got, []string{"signup-unverified-email"}) {
 		t.Errorf("default config findings = %v", got)
 	}
 }
 
 func TestAnonymousSignins(t *testing.T) {
-	ign := quiet
-	if got := vetIDsOpts(t, "auth:\n  allow_anonymous: true\n", ign); !slices.Equal(got, []string{"anonymous-signins"}) {
+	if got := vetIDs(t, "auth:\n  allow_anonymous: true\n"); !slices.Equal(got, []string{"anonymous-signins"}) {
 		t.Errorf("on = %v", got)
 	}
 	for _, src := range []string{"auth:\n  allow_anonymous: false\n", "tables: {}\n"} {
-		if got := vetIDsOpts(t, src, ign); got != nil {
+		if got := vetIDs(t, src); len(got) != 0 {
 			t.Errorf("%q = %v", src, got)
 		}
 	}

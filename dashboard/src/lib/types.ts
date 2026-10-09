@@ -214,6 +214,15 @@ export interface VetFinding {
   title: string;
   message: string;
   fix: string;
+  /** The config change that resolves the finding; absent when the right change depends on the app. */
+  edit?: VetEdit;
+}
+
+/** `path` holds object keys and array indexes; `remove` deletes the value there instead of setting `value`. */
+export interface VetEdit {
+  path: (string | number)[];
+  value: unknown;
+  remove?: boolean;
 }
 
 export interface VetReport {

@@ -25,6 +25,7 @@ func ruleJWTExpiry(c *ctx) {
 	c.add("jwt-expiry-long", sev, []any{"auth", "jwt_expiry"}, "Access tokens live too long",
 		fmt.Sprintf("jwt_expiry is %s, and a leaked token stays valid that long.", a.JWTExpiry),
 		"Use 1h or less; refresh tokens keep users signed in.")
+	c.withEdit(Edit{Path: []any{"auth", "jwt_expiry"}, Value: "1h"})
 }
 
 func ruleSignupUnverified(c *ctx) {
@@ -41,6 +42,7 @@ func ruleSignupUnverified(c *ctx) {
 	c.add("signup-unverified-email", Medium, []any{"auth", "email", "verify_email"}, "Sign-up does not verify email",
 		"Anyone can sign up with an email address they do not own.",
 		"Set auth.email.verify_email: true, or set auth.allow_signup: false.")
+	c.withEdit(Edit{Path: []any{"auth", "email", "verify_email"}, Value: true})
 }
 
 func ruleAnonymousSignins(c *ctx) {
@@ -48,6 +50,7 @@ func ruleAnonymousSignins(c *ctx) {
 		c.add("anonymous-signins", Low, []any{"auth", "allow_anonymous"}, "Anonymous sign-ins are on",
 			"Anyone can get a signed-in session without credentials, which passes any auth.uid() is not null policy.",
 			"Turn off auth.allow_anonymous unless you need guest users, and scope policies to real accounts.")
+		c.withEdit(Edit{Path: []any{"auth", "allow_anonymous"}, Value: false})
 	}
 }
 
@@ -102,6 +105,7 @@ func ruleCORS(c *ctx) {
 			c.add("cors-null-origin", Medium, []any{"server", "cors", "origins", i}, "CORS allows the null origin",
 				"Sandboxed iframes and local files send the null origin, so attackers can use them to call this API.",
 				"Remove \"null\" from server.cors.origins.")
+			c.withEdit(Edit{Path: []any{"server", "cors", "origins", i}, Remove: true})
 		}
 	}
 }
@@ -111,5 +115,6 @@ func ruleMaxLimit(c *ctx) {
 		c.add("max-limit-disabled", Medium, []any{"server", "max_limit"}, "Row limit is off",
 			"One request can pull a whole table, which makes scraping and memory spikes easy.",
 			"Set server.max_limit to a number such as 1000.")
+		c.withEdit(Edit{Path: []any{"server", "max_limit"}, Value: 1000})
 	}
 }

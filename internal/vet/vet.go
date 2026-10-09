@@ -3,8 +3,6 @@ package vet
 
 import (
 	"fmt"
-	"regexp"
-	"slices"
 	"sort"
 	"strings"
 
@@ -12,10 +10,6 @@ import (
 	"github.com/instancez/instancez/internal/domain"
 	"gopkg.in/yaml.v3"
 )
-
-type Options struct {
-	Ignore []string
-}
 
 type ctx struct {
 	cfg      *domain.Config
@@ -30,16 +24,21 @@ func (c *ctx) add(rule string, sev Severity, path []any, title, msg, fix string)
 	})
 }
 
+// withEdit attaches the one-click fix to the finding just added.
+func (c *ctx) withEdit(e Edit) {
+	c.findings[len(c.findings)-1].Edit = &e
+}
+
 // rules is the registry; a new rule is one func plus one line here.
 var rules = []func(*ctx){ruleRLSDisabled, rulePolicies, ruleBuckets, ruleRPC, ruleFunctionSecrets,
 	ruleHardcodedSecret, ruleJWTExpiry, ruleSignupUnverified, ruleAnonymousSignins, ruleRedirects, ruleCORS, ruleMaxLimit}
 
 // Run parses src without env interpolation and returns the ranked findings.
-func Run(src []byte, opts Options) (*Report, error) {
-	return run(src, opts, rules)
+func Run(src []byte) (*Report, error) {
+	return run(src, rules)
 }
 
-func run(src []byte, opts Options, rs []func(*ctx)) (*Report, error) {
+func run(src []byte, rs []func(*ctx)) (*Report, error) {
 	cfg, err := config.ParseBytesRaw(src, "instancez.yaml")
 	if err != nil {
 		return nil, err
@@ -61,13 +60,7 @@ func run(src []byte, opts Options, rs []func(*ctx)) (*Report, error) {
 	for _, r := range rs {
 		r(c)
 	}
-	inline := inlineIgnores(src)
-	kept := c.findings[:0]
-	for _, f := range c.findings {
-		if !ignored(f, opts.Ignore, inline) {
-			kept = append(kept, f)
-		}
-	}
+	kept := c.findings
 	sort.SliceStable(kept, func(i, j int) bool {
 		a, b := kept[i], kept[j]
 		if a.Severity != b.Severity {
@@ -79,32 +72,4 @@ func run(src []byte, opts Options, rs []func(*ctx)) (*Report, error) {
 		return a.Rule < b.Rule
 	})
 	return newReport(kept), nil
-}
-
-var ignoreComment = regexp.MustCompile(`#\s*inz-vet-ignore:\s*([A-Za-z0-9_,\s-]+)`)
-
-// inlineIgnores maps a 1-based line to rule ids from an ignore comment on it; a comment-only line also covers the next line.
-func inlineIgnores(src []byte) map[int][]string {
-	out := map[int][]string{}
-	for i, line := range strings.Split(string(src), "\n") {
-		m := ignoreComment.FindStringSubmatch(line)
-		if m == nil {
-			continue
-		}
-		for _, item := range strings.Split(m[1], ",") {
-			f := strings.Fields(item)
-			if len(f) == 0 {
-				continue
-			}
-			out[i+1] = append(out[i+1], f[0])
-			if strings.HasPrefix(strings.TrimSpace(line), "#") {
-				out[i+2] = append(out[i+2], f[0])
-			}
-		}
-	}
-	return out
-}
-
-func ignored(f Finding, global []string, inline map[int][]string) bool {
-	return slices.Contains(global, f.Rule) || (f.Line > 0 && slices.Contains(inline[f.Line], f.Rule))
 }

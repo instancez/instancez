@@ -8,7 +8,8 @@ import { renderWithChakra } from "../test/helpers";
 import { SecurityPage } from "./Security";
 import { BackendProvider } from "../console/BackendContext";
 import { fullCapabilities, type ConsoleBackend } from "../console/backend";
-import type { VetFinding, VetReport } from "../lib/types";
+import { ConfigContext } from "../hooks/useConfig";
+import type { Config, VetFinding, VetReport } from "../lib/types";
 
 const f = (over: Partial<VetFinding>): VetFinding => ({
   rule: "rls-disabled", severity: "high", path: "tables.notes.rls_enabled", line: 12,
@@ -21,9 +22,31 @@ const report = (findings: VetFinding[], checks?: VetReport["checks"]): VetReport
   return checks ? { findings, counts, checks } : { findings, counts };
 };
 
-function renderPage(getVetReport: ConsoleBackend["getVetReport"]) {
-  const backend = { capabilities: fullCapabilities(), getVetReport } as unknown as ConsoleBackend;
-  return renderWithChakra(<MemoryRouter><BackendProvider backend={backend}><SecurityPage /><Where /></BackendProvider></MemoryRouter>);
+const baseConfig = {
+  version: 1, project: { name: "t", description: "" }, tables: { notes: { rls_enabled: false } }, auth: null,
+  storage: {}, rpc: {}, functions: {}, server: { cors: { origins: ["https://a.example", "null"] } },
+} as unknown as Config;
+
+type ConfigValue = NonNullable<React.ContextType<typeof ConfigContext>>;
+type PageOpts = { save?: ConfigValue["save"]; canWriteConfig?: boolean; config?: Config | null };
+
+const baseCtx = {
+  config: baseConfig, loading: false, error: null, checksum: "c", saving: false, saveErrors: [],
+  dotenvWritable: false, oauthCallbackBase: "", refresh: vi.fn(), save: vi.fn().mockResolvedValue(true), updateConfig: vi.fn(),
+} as ConfigValue;
+
+function renderPage(getVetReport: ConsoleBackend["getVetReport"], opts: PageOpts = {}) {
+  const capabilities = { ...fullCapabilities(), canWriteConfig: opts.canWriteConfig ?? true };
+  const backend = { capabilities, getVetReport } as unknown as ConsoleBackend;
+  const save = opts.save ?? vi.fn().mockResolvedValue(true);
+  const ctx = {
+    config: opts.config === undefined ? baseConfig : opts.config, loading: false, error: null, checksum: "c", saving: false, saveErrors: [],
+    dotenvWritable: false, oauthCallbackBase: "", refresh: vi.fn(), save, updateConfig: vi.fn(),
+  } as ConfigValue;
+  const view = renderWithChakra(
+    <MemoryRouter><ConfigContext.Provider value={ctx}><BackendProvider backend={backend}><SecurityPage /><Where /></BackendProvider></ConfigContext.Provider></MemoryRouter>,
+  );
+  return { ...view, save: save as ReturnType<typeof vi.fn> };
 }
 
 function Where() { return <span data-testid="where">{useLocation().pathname}</span>; }
@@ -118,12 +141,11 @@ describe("SecurityPage", () => {
     const mk = (g: ConsoleBackend["getVetReport"]) => ({ capabilities: fullCapabilities(), getVetReport: g }) as unknown as ConsoleBackend;
     const first = mk(() => new Promise<VetReport>((r) => { resolveFirst = r; }));
     const second = mk(async () => report([f({ title: "Fresh" })]));
-    const { rerender } = renderWithChakra(<MemoryRouter><BackendProvider backend={first}><SecurityPage /></BackendProvider></MemoryRouter>);
-    rerender(
-      <ChakraProvider value={createSystem(defaultConfig)}><ColorModeProvider>
-        <MemoryRouter><BackendProvider backend={second}><SecurityPage /></BackendProvider></MemoryRouter>
-      </ColorModeProvider></ChakraProvider>,
+    const tree = (b: ConsoleBackend) => (
+      <MemoryRouter><ConfigContext.Provider value={baseCtx}><BackendProvider backend={b}><SecurityPage /></BackendProvider></ConfigContext.Provider></MemoryRouter>
     );
+    const { rerender } = renderWithChakra(tree(first));
+    rerender(<ChakraProvider value={createSystem(defaultConfig)}><ColorModeProvider>{tree(second)}</ColorModeProvider></ChakraProvider>);
     await screen.findByText("HOW TO FIX");
     await act(async () => { resolveFirst(report([f({ title: "Stale" })])); });
     expect(screen.queryByText("Stale")).not.toBeInTheDocument();
@@ -190,16 +212,6 @@ describe("SecurityPage", () => {
     err.mockRestore();
   });
 
-  it("survives a rejected clipboard write", async () => {
-    const user = userEvent.setup();
-    const writeText = vi.fn().mockRejectedValue(new Error("denied"));
-    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
-    renderPage(async () => report([f({})]));
-    await user.click(await screen.findByText("Ignore…"));
-    await user.click(screen.getByRole("button", { name: /Copy ignore comment/ }));
-    expect(writeText).toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: /Copy ignore comment/ })).toBeInTheDocument();
-  });
 });
 
 describe("SecurityPage list and detail", () => {
@@ -210,11 +222,6 @@ describe("SecurityPage list and detail", () => {
     f({ rule: "r-low", severity: "low", title: "Low one", path: "server.cors", line: 9, fix: "Fix low." }),
   ];
   const row = (t: string, i = 0) => screen.getAllByRole("button").filter((b) => b.textContent?.includes(t))[i]!;
-  const stubClipboard = () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
-    return writeText;
-  };
 
   it("selects the first finding by default and shows its detail", async () => {
     renderPage(async () => report(items));
@@ -272,77 +279,19 @@ describe("SecurityPage list and detail", () => {
     expect(row("Crit one")).toHaveAttribute("aria-current", "true");
   });
 
-  it("copies the fix text", async () => {
-    const user = userEvent.setup();
-    const writeText = stubClipboard();
-    renderPage(async () => report(items));
-    await screen.findByText("HOW TO FIX");
-    await user.click(screen.getByRole("button", { name: "Copy fix" }));
-    expect(writeText).toHaveBeenCalledWith("Fix crit.");
-    expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
-    expect(screen.getByText("Copied")).toHaveAttribute("aria-live", "polite");
-  });
-
-  it("clears the copied timer on unmount", async () => {
-    const user = userEvent.setup();
-    const err = vi.spyOn(console, "error").mockImplementation(() => {});
-    const clear = vi.spyOn(globalThis, "clearTimeout");
-    stubClipboard();
-    const { unmount } = renderPage(async () => report(items));
-    await screen.findByText("HOW TO FIX");
-    await user.click(screen.getByRole("button", { name: "Copy fix" }));
-    await screen.findByRole("button", { name: "Copied" });
-    clear.mockClear();
-    unmount();
-    expect(clear).toHaveBeenCalled();
-    expect(err).not.toHaveBeenCalled();
-    clear.mockRestore();
-    err.mockRestore();
-  });
-
-  it("keeps the label when the clipboard is unavailable", async () => {
-    const user = userEvent.setup();
-    const writeText = stubClipboard();
-    writeText.mockRejectedValue(new Error("denied"));
-    renderPage(async () => report(items));
-    await screen.findByText("HOW TO FIX");
-    await user.click(screen.getByRole("button", { name: "Copy fix" }));
-    expect(screen.getByRole("button", { name: "Copy fix" })).toBeInTheDocument();
-  });
-
-  it("hides the fix callout and copy when there is no fix", async () => {
+  it("hides the fix callout when there is no fix text", async () => {
     renderPage(async () => report([f({ fix: "" })]));
     await screen.findByText("Anyone can read this table.");
     expect(screen.queryByText("HOW TO FIX")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Copy fix" })).not.toBeInTheDocument();
   });
 
-  it("shows and copies the exact ignore snippet", async () => {
-    const user = userEvent.setup();
-    const writeText = stubClipboard();
-    renderPage(async () => report(items));
-    await user.click(await screen.findByText("Ignore…"));
-    expect(screen.getByText("# inz-vet-ignore: r-crit")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Copy ignore comment for r-crit" }));
-    expect(writeText).toHaveBeenCalledWith("# inz-vet-ignore: r-crit");
-  });
-
-  it.each([
-    ["tables.a.rls[0]", "tables"], ["storage.b", "storage"], ["rpc.fn", "rpc"],
-    ["functions.hook", "functions"], ["auth.jwt_expiry", "auth"],
-  ])("links %s to its section", async (path, section) => {
-    const user = userEvent.setup();
-    renderPage(async () => report([f({ path })]));
-    const link = await screen.findByRole("link", { name: `Open in ${section}` });
-    expect(link).toHaveAttribute("href", `/${section}`);
-    await user.click(link);
-    expect(screen.getByTestId("where")).toHaveTextContent(`/${section}`);
-  });
-
-  it.each(["server.cors", "weird", "", "tablesx.a"])("has no open link for %j", async (path) => {
-    renderPage(async () => report([f({ path })]));
+  it("has no copy, open-in or ignore actions", async () => {
+    renderPage(async () => report([f({ edit: { path: ["tables", "notes", "rls_enabled"], value: true } })]));
     await screen.findByText("HOW TO FIX");
+    expect(screen.queryByRole("button", { name: /Copy/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Ignore/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/inz-vet-ignore/)).not.toBeInTheDocument();
   });
 
   it("scrolls the detail into view only when stacked", async () => {
@@ -439,5 +388,71 @@ describe("SecurityPage banner", () => {
     await screen.findByText("HOW TO FIX");
     expect(screen.getByRole("button", { name: "0 medium" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "0 info" })).toBeDisabled();
+  });
+});
+
+describe("SecurityPage Fix it", () => {
+  const edit = { path: ["tables", "notes", "rls_enabled"], value: true };
+  const fixable = () => report([f({ edit })]);
+
+  it("stages the edit through save and rescans on success", async () => {
+    const user = userEvent.setup();
+    const getVetReport = vi.fn().mockResolvedValue(fixable());
+    const { save } = renderPage(getVetReport);
+    await user.click(await screen.findByRole("button", { name: "Fix it" }));
+    expect(save).toHaveBeenCalledTimes(1);
+    const saved = save.mock.calls[0]![0] as Config;
+    expect(saved.tables["notes"]!.rls_enabled).toBe(true);
+    expect(baseConfig.tables["notes"]!.rls_enabled).toBe(false);
+    await waitFor(() => { expect(getVetReport).toHaveBeenCalledTimes(2); });
+  });
+
+  it("does not rescan when the save is cancelled or rejected", async () => {
+    const user = userEvent.setup();
+    const getVetReport = vi.fn().mockResolvedValue(fixable());
+    const { save } = renderPage(getVetReport, { save: vi.fn().mockResolvedValue(false) });
+    await user.click(await screen.findByRole("button", { name: "Fix it" }));
+    await waitFor(() => { expect(save).toHaveBeenCalled(); });
+    expect(getVetReport).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Fix it" })).toBeEnabled();
+  });
+
+  it("shows Fixing and blocks a second click while the save is pending", async () => {
+    const user = userEvent.setup();
+    let finish!: (ok: boolean) => void;
+    const save = vi.fn(() => new Promise<boolean>((r) => { finish = r; }));
+    renderPage(async () => fixable(), { save });
+    await user.click(await screen.findByRole("button", { name: "Fix it" }));
+    const busy = await screen.findByRole("button", { name: "Fixing…" });
+    expect(busy).toBeDisabled();
+    await user.click(busy);
+    expect(save).toHaveBeenCalledTimes(1);
+    await act(async () => { finish(false); });
+    expect(await screen.findByRole("button", { name: "Fix it" })).toBeEnabled();
+  });
+
+  it("is hidden without an edit, without write access, or before the config loads", async () => {
+    const { unmount } = renderPage(async () => report([f({})]));
+    await screen.findByText("HOW TO FIX");
+    expect(screen.queryByRole("button", { name: "Fix it" })).not.toBeInTheDocument();
+    unmount();
+    const second = renderPage(async () => fixable(), { canWriteConfig: false });
+    await screen.findByText("HOW TO FIX");
+    expect(screen.queryByRole("button", { name: "Fix it" })).not.toBeInTheDocument();
+    second.unmount();
+    renderPage(async () => fixable(), { config: null });
+    await screen.findByText("HOW TO FIX");
+    expect(screen.queryByRole("button", { name: "Fix it" })).not.toBeInTheDocument();
+  });
+
+  it("applies a remove edit and creates missing parents", async () => {
+    const user = userEvent.setup();
+    const { save, unmount } = renderPage(async () => report([f({ edit: { path: ["server", "cors", "origins", 1], value: null, remove: true } })]));
+    await user.click(await screen.findByRole("button", { name: "Fix it" }));
+    expect((save.mock.calls[0]![0] as Config).server.cors.origins).toEqual(["https://a.example"]);
+    unmount();
+    const next = renderPage(async () => report([f({ edit: { path: ["auth", "email", "verify_email"], value: true } })]), { config: { ...baseConfig, auth: { jwt_expiry: "1h" } as Config["auth"] } });
+    await user.click(await screen.findByRole("button", { name: "Fix it" }));
+    expect((next.save.mock.calls[0]![0] as Config).auth).toEqual({ jwt_expiry: "1h", email: { verify_email: true } });
   });
 });
