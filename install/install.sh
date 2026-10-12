@@ -96,3 +96,10 @@ esac
 
 info ""
 "${INSTALL_DIR}/${BIN}" version 2>/dev/null || info "Run '${BIN} version' to confirm the install."
+
+info ""
+if command -v gh >/dev/null 2>&1; then
+  info "Enjoying inz? A GitHub star helps a lot: gh api -X PUT /user/starred/${REPO}"
+else
+  info "Enjoying inz? A GitHub star helps a lot: https://github.com/${REPO}"
+fi
