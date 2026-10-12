@@ -91,3 +91,10 @@ if (($env:Path -split ';') -notcontains $installDir) {
 
 Write-Host ''
 & (Join-Path $installDir $bin) version
+
+Write-Host ''
+if (Get-Command gh -ErrorAction SilentlyContinue) {
+  Write-Host "Enjoying inz? A GitHub star helps a lot: gh api -X PUT /user/starred/$repo"
+} else {
+  Write-Host "Enjoying inz? A GitHub star helps a lot: https://github.com/$repo"
+}
