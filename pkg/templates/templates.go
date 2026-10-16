@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -169,6 +170,10 @@ func loadOne(fsys fs.FS, dir, dirName string) (*Template, error) {
 	return t, nil
 }
 
+func ValidSecretName(name string) bool { return secretPattern.MatchString(name) }
+
+func hasControl(s string) bool { return strings.IndexFunc(s, unicode.IsControl) >= 0 }
+
 func (t *Template) check(dirName string) error {
 	switch {
 	case !ValidID(t.ID):
@@ -189,6 +194,8 @@ func (t *Template) check(dirName string) error {
 			return fmt.Errorf("secret %q must match %s", s.Name, secretPattern)
 		case declared[s.Name]:
 			return fmt.Errorf("secret %q declared twice", s.Name)
+		case hasControl(s.Label) || hasControl(s.NeededFor) || hasControl(s.URL):
+			return fmt.Errorf("secret %s has control characters in label, needed_for or url", s.Name)
 		case s.Label == "" || s.Description == "" || s.NeededFor == "":
 			return fmt.Errorf("secret %s needs label, description and needed_for", s.Name)
 		}

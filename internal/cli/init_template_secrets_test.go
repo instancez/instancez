@@ -181,3 +181,49 @@ func TestInitTemplateRefusesDanglingSymlinkedExample(t *testing.T) {
 	_, statErr := os.Stat(target)
 	assert.True(t, os.IsNotExist(statErr), "dangling target must not be created")
 }
+
+func TestAppendSecretsSanitizesHostileFields(t *testing.T) {
+	hostile := []templates.Secret{{Name: "INSTANCEZ_ENV_OK", Label: "x\nINSTANCEZ_ENV_EVIL=1", NeededFor: "\x1b[31mred\u009b", Required: true}}
+	out := appendSecrets("", "x", hostile)
+	for _, line := range strings.Split(out, "\n") {
+		assert.False(t, strings.HasPrefix(line, "INSTANCEZ_ENV_EVIL"), line)
+	}
+	assert.NotContains(t, out, "\x1b")
+	assert.NotContains(t, out, "\u009b")
+	assert.Contains(t, out, "INSTANCEZ_ENV_OK=\n")
+}
+
+func TestAppendSecretsSkipsInvalidNames(t *testing.T) {
+	bad := []templates.Secret{
+		{Name: "evil\nINSTANCEZ_ENV_X", Label: "l", NeededFor: "n"},
+		{Name: "instancez_env_lower", Label: "l", NeededFor: "n"},
+		{Name: "", Label: "l", NeededFor: "n"},
+	}
+	assert.Equal(t, "# base\n", appendSecrets("# base\n", "x", bad))
+}
+
+func TestNextStepsSanitizesHostileManifest(t *testing.T) {
+	var buf bytes.Buffer
+	m := templates.Manifest{
+		ID: "id\x1b[2J",
+		Secrets: []templates.Secret{
+			{Name: "INSTANCEZ_ENV_A", NeededFor: "n\nFAKE LINE", URL: "https://x\x1b]0;t\x07", Required: true},
+			{Name: "bad\nname", NeededFor: "n"},
+		},
+		Setup: []string{"step\none\x1b[31m", "two"},
+	}
+	renderNextSteps(&buf, m, "/work", "/work")
+	out := buf.String()
+	assert.NotContains(t, out, "\x1b")
+	assert.NotContains(t, out, "\x07")
+	assert.NotContains(t, out, "bad")
+	assert.NotContains(t, out, "\nFAKE LINE")
+	assert.Contains(t, out, "\n  1. step one[31m\n")
+	assert.Contains(t, out, "\n  2. two\n")
+	assert.Equal(t, 1, strings.Count(out, "INSTANCEZ_ENV_A"))
+}
+
+func TestRelOr(t *testing.T) {
+	assert.Equal(t, "proj", relOr("/work", "/work/proj"))
+	assert.Equal(t, "/other/proj", relOr("/work", "/other/proj"))
+}

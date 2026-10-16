@@ -6,12 +6,28 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/instancez/instancez/pkg/templates"
 )
 
+func clean(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) && !unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, s)
+	return strings.Join(strings.Fields(s), " ")
+}
+
 func sortedSecrets(in []templates.Secret) []templates.Secret {
-	out := append([]templates.Secret(nil), in...)
+	var out []templates.Secret
+	for _, s := range in {
+		if templates.ValidSecretName(s.Name) {
+			out = append(out, s)
+		}
+	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Required && !out[j].Required })
 	return out
 }
@@ -31,9 +47,9 @@ func appendSecrets(existing, templateID string, secrets []templates.Secret) stri
 	if existing != "" && !strings.HasSuffix(existing, "\n") {
 		b.WriteString("\n")
 	}
-	fmt.Fprintf(&b, "\n# Secrets for the %s template (the app boots without them)\n", templateID)
+	fmt.Fprintf(&b, "\n# Secrets for the %s template (the app boots without them)\n", clean(templateID))
 	for _, s := range missing {
-		fmt.Fprintf(&b, "# %s: %s\n%s=\n", s.Label, s.NeededFor, s.Name)
+		fmt.Fprintf(&b, "# %s: %s\n%s=\n", clean(s.Label), clean(s.NeededFor), s.Name)
 	}
 	return b.String()
 }
@@ -53,16 +69,16 @@ func renderNextSteps(w io.Writer, m templates.Manifest, dir, cwd string) {
 	if dir != cwd {
 		fmt.Fprintf(w, "  cd %s\n", relOr(cwd, dir))
 	}
-	if len(m.Secrets) > 0 {
-		fmt.Fprintf(w, "\nSecrets for %q:\n", m.ID)
-		for _, s := range sortedSecrets(m.Secrets) {
+	if secrets := sortedSecrets(m.Secrets); len(secrets) > 0 {
+		fmt.Fprintf(w, "\nSecrets for %q:\n", clean(m.ID))
+		for _, s := range secrets {
 			kind := "optional"
 			if s.Required {
 				kind = "REQUIRED"
 			}
-			line := fmt.Sprintf("  %-8s  %-40s %s", kind, s.Name, s.NeededFor)
-			if s.URL != "" {
-				line += "  " + s.URL
+			line := fmt.Sprintf("  %-8s  %-40s %s", kind, s.Name, clean(s.NeededFor))
+			if u := clean(s.URL); u != "" {
+				line += "  " + u
 			}
 			fmt.Fprintln(w, line)
 		}
@@ -74,7 +90,7 @@ func renderNextSteps(w io.Writer, m templates.Manifest, dir, cwd string) {
 	if len(m.Setup) > 0 {
 		fmt.Fprintln(w, "\nManual steps:")
 		for i, s := range m.Setup {
-			fmt.Fprintf(w, "  %d. %s\n", i+1, s)
+			fmt.Fprintf(w, "  %d. %s\n", i+1, clean(s))
 		}
 	}
 	fmt.Fprintln(w, "\n  inz dev --embedded-pg   # no Postgres install needed")

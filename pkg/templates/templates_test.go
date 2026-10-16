@@ -210,6 +210,15 @@ func TestLoadRejectsBrokenTemplates(t *testing.T) {
 		"secret lowercase": func(f map[string]string) {
 			f[m] = strings.Replace(f[m], "INSTANCEZ_ENV_DEMO_KEY", "INSTANCEZ_ENV_demo", 1)
 		},
+		"secret label control char": func(f map[string]string) {
+			f[m] = strings.Replace(f[m], "label: Demo key", `label: "x\nINSTANCEZ_ENV_EVIL=1"`, 1)
+		},
+		"secret needed_for escape": func(f map[string]string) {
+			f[m] = strings.Replace(f[m], "needed_for: demo", `needed_for: "\e[31m"`, 1)
+		},
+		"secret url control char": func(f map[string]string) {
+			f[m] = strings.Replace(f[m], "required: false}", `required: false, url: "https://x.test/\r"}`, 1)
+		},
 		"secret no needed_for": func(f map[string]string) { f[m] = strings.Replace(f[m], "needed_for: demo", "needed_for: ''", 1) },
 		"duplicate secret": func(f map[string]string) {
 			f[m] += "  - {name: INSTANCEZ_ENV_DEMO_KEY, label: l, description: d, needed_for: n}\n"
