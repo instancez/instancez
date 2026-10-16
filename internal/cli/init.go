@@ -90,6 +90,9 @@ func runInit(opts initOptions) error {
 	if err != nil {
 		return fmt.Errorf("resolve dir: %w", err)
 	}
+	if opts.templateSet {
+		return runInitTemplate(opts, dir)
+	}
 	yamlPath := filepath.Join(dir, "instancez.yaml")
 	_, statErr := os.Stat(yamlPath)
 	yamlExists := statErr == nil

@@ -1,0 +1,213 @@
+package cli
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+
+	"github.com/instancez/instancez/internal/adapter/funcs"
+	"github.com/instancez/instancez/internal/cloud"
+	"github.com/instancez/instancez/internal/config"
+	"github.com/instancez/instancez/pkg/templates"
+	"gopkg.in/yaml.v3"
+)
+
+const maxBundleFiles = 50
+
+var functionFile = regexp.MustCompile(`^functions/[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+func checkBundlePaths(files map[string]string) error {
+	if _, ok := files["instancez.yaml"]; !ok {
+		return errors.New("template response has no instancez.yaml")
+	}
+	if len(files) > maxBundleFiles {
+		return fmt.Errorf("template response has %d files, limit %d", len(files), maxBundleFiles)
+	}
+	for p := range files {
+		if p == "instancez.yaml" {
+			continue
+		}
+		if !functionFile.MatchString(p) || path.Clean(p) != p {
+			return fmt.Errorf("template response contains an unsafe path %q", p)
+		}
+	}
+	return nil
+}
+
+func setProjectName(yamlText, name string) (string, error) {
+	if strings.ContainsAny(name, "\r\n\x00") {
+		return "", errors.New("project name must be a single line")
+	}
+	scalar, err := yaml.Marshal(name)
+	if err != nil {
+		return "", err
+	}
+	lines := strings.Split(yamlText, "\n")
+	inProject := false
+	for i, l := range lines {
+		switch {
+		case l == "project:":
+			inProject = true
+		case inProject && strings.HasPrefix(l, "  name:"):
+			lines[i] = "  name: " + strings.TrimRight(string(scalar), "\n")
+			out := strings.Join(lines, "\n")
+			var doc struct {
+				Project struct {
+					Name string `yaml:"name"`
+				} `yaml:"project"`
+			}
+			if err := yaml.Unmarshal([]byte(out), &doc); err != nil || doc.Project.Name != name {
+				return "", fmt.Errorf("could not set project name %q", name)
+			}
+			return out, nil
+		case inProject && l != "" && !strings.HasPrefix(l, " "):
+			inProject = false
+		}
+	}
+	return "", errors.New("template has no project.name to replace")
+}
+
+func runInitTemplate(opts initOptions, dir string) error {
+	id := templates.NormalizeID(opts.template)
+	conflicts, err := existingTargets(dir, opts.force)
+	if err != nil {
+		return err
+	}
+	if len(conflicts) > 0 {
+		return fmt.Errorf("%s already exist; use --force to overwrite", strings.Join(conflicts, ", "))
+	}
+	bundle, err := cloud.NewClient(cloud.APIURL(), "").GetTemplate(id)
+	if err != nil {
+		var nf *cloud.TemplateNotFoundError
+		if errors.As(err, &nf) {
+			return fmt.Errorf("%w; run `inz init --list-templates`", err)
+		}
+		return fmt.Errorf("fetch template %q: %w", id, err)
+	}
+	if err := checkBundlePaths(bundle.Files); err != nil {
+		return err
+	}
+	if conflicts, err := bundleConflicts(dir, bundle, opts.force); err != nil {
+		return err
+	} else if len(conflicts) > 0 {
+		return fmt.Errorf("%s already exist; use --force to overwrite", strings.Join(conflicts, ", "))
+	}
+
+	yamlText := bundle.LocalYAML()
+	if opts.name != "" {
+		if yamlText, err = setProjectName(yamlText, opts.name); err != nil {
+			return err
+		}
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create directory: %w", err)
+	}
+	if err := writeTemplateFiles(dir, bundle, yamlText); err != nil {
+		return err
+	}
+	return finishTemplateInit(dir, opts, bundle)
+}
+
+// existingTargets runs before the network call so a doomed init costs nothing.
+func existingTargets(dir string, force bool) ([]string, error) {
+	if force {
+		return nil, nil
+	}
+	if _, err := os.Stat(filepath.Join(dir, "instancez.yaml")); err == nil {
+		return []string{"instancez.yaml"}, nil
+	}
+	return nil, nil
+}
+
+func bundleConflicts(dir string, b *templates.Bundle, force bool) ([]string, error) {
+	if force {
+		return nil, nil
+	}
+	var out []string
+	for p := range b.Files {
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(p))); err == nil {
+			out = append(out, p)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func writeTemplateFiles(dir string, b *templates.Bundle, yamlText string) error {
+	paths := make([]string, 0, len(b.Files))
+	for p := range b.Files {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		content := b.Files[p]
+		if p == "instancez.yaml" {
+			content = yamlText
+		}
+		target := filepath.Join(dir, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return fmt.Errorf("create %s: %w", filepath.Dir(p), err)
+		}
+		if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+			return fmt.Errorf("write %s: %w", p, err)
+		}
+		fmt.Printf("  + %s\n", p)
+	}
+	return nil
+}
+
+func nodeWarning(b *templates.Bundle) {
+	if len(b.Manifest.Includes.Functions) == 0 || funcs.RequireNode() == nil {
+		return
+	}
+	alertf("  ! Node.js not found on PATH. This template has code functions that need Node.js >= %d.", funcs.MinNodeMajorVersion)
+}
+
+func validateScaffold(dir string) {
+	cfg, err := config.Load(filepath.Join(dir, "instancez.yaml"))
+	if err == nil {
+		if errs := config.Validate(cfg); errs != nil {
+			err = fmt.Errorf("%v", errs)
+		}
+	}
+	if err != nil {
+		alertf("  ! The template did not validate with this inz version (%v). Upgrade inz or report it.", err)
+	}
+}
+
+func finishTemplateInit(dir string, opts initOptions, bundle *templates.Bundle) error {
+	if err := applyWrite(dir, ".gitignore", func(existing string) (string, writeAction) {
+		merged := mergeGitignore(existing, scaffoldGitignore())
+		switch {
+		case existing == "":
+			return merged, actionCreate
+		case merged == existing:
+			return existing, actionSkip
+		default:
+			return merged, actionUpdate
+		}
+	}); err != nil {
+		return err
+	}
+	for name, content := range map[string]string{
+		".production.env.example":  scaffoldProductionEnvExample(),
+		".development.env.example": scaffoldDevelopmentEnvExample(),
+	} {
+		if err := applyWrite(dir, name, func(existing string) (string, writeAction) {
+			if existing != "" {
+				return existing, actionSkip
+			}
+			return content, actionCreate
+		}); err != nil {
+			return err
+		}
+	}
+	nodeWarning(bundle)
+	validateScaffold(dir)
+	return nil
+}
