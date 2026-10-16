@@ -19,7 +19,9 @@ import (
 
 const maxBundleFiles = 50
 
-var functionFile = regexp.MustCompile(`^functions/[A-Za-z0-9][A-Za-z0-9._-]*$`)
+var functionFile = regexp.MustCompile(`^functions/[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9_-])?$`)
+
+var windowsReserved = regexp.MustCompile(`^(con|prn|aux|nul|com[1-9]|lpt[1-9])$`)
 
 func checkBundlePaths(files map[string]string) error {
 	if _, ok := files["instancez.yaml"]; !ok {
@@ -28,11 +30,18 @@ func checkBundlePaths(files map[string]string) error {
 	if len(files) > maxBundleFiles {
 		return fmt.Errorf("template response has %d files, limit %d", len(files), maxBundleFiles)
 	}
+	seen := make(map[string]string, len(files))
 	for p := range files {
+		if prev, dup := seen[strings.ToLower(p)]; dup {
+			return fmt.Errorf("template response contains an unsafe path %q (collides with %q)", p, prev)
+		}
+		seen[strings.ToLower(p)] = p
 		if p == "instancez.yaml" {
 			continue
 		}
-		if !functionFile.MatchString(p) || path.Clean(p) != p {
+		base := strings.ToLower(strings.TrimPrefix(p, "functions/"))
+		base, _, _ = strings.Cut(base, ".")
+		if !functionFile.MatchString(p) || path.Clean(p) != p || windowsReserved.MatchString(base) {
 			return fmt.Errorf("template response contains an unsafe path %q", p)
 		}
 	}
@@ -74,10 +83,7 @@ func setProjectName(yamlText, name string) (string, error) {
 
 func runInitTemplate(opts initOptions, dir string) error {
 	id := templates.NormalizeID(opts.template)
-	conflicts, err := existingTargets(dir, opts.force)
-	if err != nil {
-		return err
-	}
+	conflicts := existingTargets(dir, opts.force)
 	if len(conflicts) > 0 {
 		return fmt.Errorf("%s already exist; use --force to overwrite", strings.Join(conflicts, ", "))
 	}
@@ -92,9 +98,11 @@ func runInitTemplate(opts initOptions, dir string) error {
 	if err := checkBundlePaths(bundle.Files); err != nil {
 		return err
 	}
-	if conflicts, err := bundleConflicts(dir, bundle, opts.force); err != nil {
+	conflicts, err = bundleConflicts(dir, bundle, opts.force)
+	if err != nil {
 		return err
-	} else if len(conflicts) > 0 {
+	}
+	if len(conflicts) > 0 {
 		return fmt.Errorf("%s already exist; use --force to overwrite", strings.Join(conflicts, ", "))
 	}
 
@@ -114,24 +122,40 @@ func runInitTemplate(opts initOptions, dir string) error {
 }
 
 // existingTargets runs before the network call so a doomed init costs nothing.
-func existingTargets(dir string, force bool) ([]string, error) {
+func existingTargets(dir string, force bool) []string {
 	if force {
-		return nil, nil
+		return nil
 	}
-	if _, err := os.Stat(filepath.Join(dir, "instancez.yaml")); err == nil {
-		return []string{"instancez.yaml"}, nil
+	if _, err := os.Lstat(filepath.Join(dir, "instancez.yaml")); err == nil {
+		return []string{"instancez.yaml"}
 	}
-	return nil, nil
+	return nil
 }
 
+// bundleConflicts uses Lstat so symlinks are never followed, even with --force.
 func bundleConflicts(dir string, b *templates.Bundle, force bool) ([]string, error) {
-	if force {
-		return nil, nil
+	if fi, err := os.Lstat(filepath.Join(dir, "functions")); err == nil {
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return nil, errors.New("refusing to write through symlink functions")
+		}
+		if !fi.IsDir() {
+			return nil, errors.New("functions exists and is not a directory")
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("check functions: %w", err)
 	}
 	var out []string
 	for p := range b.Files {
-		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(p))); err == nil {
-			out = append(out, p)
+		fi, err := os.Lstat(filepath.Join(dir, filepath.FromSlash(p)))
+		switch {
+		case err == nil && fi.Mode()&os.ModeSymlink != 0:
+			return nil, fmt.Errorf("refusing to write through symlink %s", p)
+		case err == nil:
+			if !force {
+				out = append(out, p)
+			}
+		case !os.IsNotExist(err):
+			return nil, fmt.Errorf("check %s: %w", p, err)
 		}
 	}
 	sort.Strings(out)

@@ -182,8 +182,12 @@ func TestInitTemplateForceOverwrites(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "instancez.yaml"), []byte("version: 1\n# mine\n"), 0o644))
 	require.NoError(t, runInit(initOptions{dir: dir, template: "blog", templateSet: true, force: true}))
-	got, _ := os.ReadFile(filepath.Join(dir, "instancez.yaml"))
+	got, err := os.ReadFile(filepath.Join(dir, "instancez.yaml"))
+	require.NoError(t, err)
 	assert.NotContains(t, string(got), "# mine")
+	cfg, err := config.Load(filepath.Join(dir, "instancez.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, "Blog", cfg.Project.Name)
 }
 
 func TestInitTemplateUnknownIDSuggests(t *testing.T) {
@@ -236,6 +240,12 @@ func TestCheckBundlePaths(t *testing.T) {
 		"missing yaml":   {"functions/a.js": "x"},
 		"nul byte":       {"instancez.yaml": "x", "functions/a\x00.js": "x"},
 		"empty":          {},
+		"reserved CON":   {"instancez.yaml": "x", "functions/CON": "x"},
+		"reserved nul":   {"instancez.yaml": "x", "functions/nul.js": "x"},
+		"reserved com1":  {"instancez.yaml": "x", "functions/com1.txt": "x"},
+		"trailing dot":   {"instancez.yaml": "x", "functions/a.js.": "x"},
+		"case collision": {"instancez.yaml": "x", "functions/A.js": "x", "functions/a.js": "x"},
+		"yaml collision": {"instancez.yaml": "x", "INSTANCEZ.yaml": "x"},
 	}
 	for name, files := range bad {
 		assert.Error(t, checkBundlePaths(files), name)
@@ -248,28 +258,96 @@ func TestCheckBundlePaths(t *testing.T) {
 }
 
 func TestInitTemplateHostileServerWritesNothing(t *testing.T) {
-	hostile := []map[string]string{
-		{"instancez.yaml": "version: 1\n", "../../evil.sh": "boom"},
-		{"instancez.yaml": "version: 1\n", "/tmp/evil": "boom"},
-		{"functions/a.js": "x"},
+	cases := []struct {
+		files map[string]string
+		want  string
+	}{
+		{map[string]string{"instancez.yaml": "version: 1\n", "../../evil.sh": "boom"}, "unsafe path"},
+		{map[string]string{"instancez.yaml": "version: 1\n", "/tmp/evil": "boom"}, "unsafe path"},
+		{map[string]string{"functions/a.js": "x"}, "no instancez.yaml"},
 	}
-	for i, files := range hostile {
+	for i, c := range cases {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			writeJSON(w, 200, templates.Bundle{Manifest: templates.Manifest{ID: "blog"}, Files: files})
+			writeJSON(w, 200, templates.Bundle{Manifest: templates.Manifest{ID: "blog"}, Files: c.files})
 		}))
 		t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
 		t.Setenv("HOME", t.TempDir())
-		parent := t.TempDir()
+		root := t.TempDir()
+		parent := filepath.Join(root, "a", "b")
+		require.NoError(t, os.MkdirAll(parent, 0o755))
 		dir := filepath.Join(parent, "proj")
-		require.Error(t, runInit(initOptions{dir: dir, template: "blog", templateSet: true}), i)
-		entries, _ := os.ReadDir(parent)
-		for _, e := range entries {
-			assert.NotEqual(t, "evil.sh", e.Name())
+		err := runInit(initOptions{dir: dir, template: "blog", templateSet: true})
+		require.Error(t, err, i)
+		assert.Contains(t, err.Error(), c.want, i)
+		_, statErr := os.Stat(dir)
+		assert.True(t, os.IsNotExist(statErr), "dir must not be created: %d", i)
+		for _, d := range []string{parent, filepath.Dir(parent), root} {
+			_, statErr = os.Stat(filepath.Join(d, "evil.sh"))
+			assert.True(t, os.IsNotExist(statErr), "escape in %s: %d", d, i)
 		}
-		_, statErr := os.Stat(filepath.Join(dir, "instancez.yaml"))
-		assert.True(t, os.IsNotExist(statErr), i)
 		srv.Close()
 	}
+}
+
+func TestInitTemplateFlowStyleProjectWithNameWritesNothing(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, templates.Bundle{
+			Manifest: templates.Manifest{ID: "blog"},
+			Files:    map[string]string{"instancez.yaml": "version: 1\nproject: {name: x}\n"},
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
+	t.Setenv("HOME", t.TempDir())
+	dir := filepath.Join(t.TempDir(), "proj")
+	err := runInit(initOptions{dir: dir, name: "y", template: "blog", templateSet: true})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "project.name")
+	assert.NoDirExists(t, dir)
+}
+
+func TestInitTemplateDanglingYAMLSymlinkRefused(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		fakeCloud(t)
+		dir := t.TempDir()
+		victim := filepath.Join(t.TempDir(), "victim.yaml")
+		require.NoError(t, os.Symlink(victim, filepath.Join(dir, "instancez.yaml")))
+		err := runInit(initOptions{dir: dir, template: "blog", templateSet: true, force: force})
+		require.Error(t, err, force)
+		assert.NoFileExists(t, victim, "link target must not be created, force=%v", force)
+		assert.NoFileExists(t, filepath.Join(dir, ".gitignore"))
+	}
+}
+
+func TestInitTemplateFunctionsSymlinkRefused(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		fakeCloud(t)
+		dir := t.TempDir()
+		other := t.TempDir()
+		require.NoError(t, os.Symlink(other, filepath.Join(dir, "functions")))
+		err := runInit(initOptions{dir: dir, template: "course-platform", templateSet: true, force: force})
+		require.Error(t, err, force)
+		assert.Contains(t, err.Error(), "symlink")
+		entries, _ := os.ReadDir(other)
+		assert.Empty(t, entries, "nothing may be written through the link")
+		assert.NoFileExists(t, filepath.Join(dir, "instancez.yaml"))
+	}
+}
+
+func TestInitTemplateFunctionsFileRefusedWithoutCreatingDir(t *testing.T) {
+	fakeCloud(t)
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "proj")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "functions"), []byte("x"), 0o644))
+	err := runInit(initOptions{dir: dir, template: "course-platform", templateSet: true, force: true})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not a directory")
+	assert.NoFileExists(t, filepath.Join(dir, "instancez.yaml"))
+
+	fresh := filepath.Join(parent, "fresh")
+	require.Error(t, runInit(initOptions{dir: fresh, template: "nope-nope", templateSet: true}))
+	assert.NoDirExists(t, fresh)
 }
 
 func TestSetProjectName(t *testing.T) {
@@ -321,7 +399,17 @@ func TestInitTemplateWithoutNodeStillWritesFunctions(t *testing.T) {
 	fakeCloud(t)
 	t.Setenv("PATH", t.TempDir())
 	dir := t.TempDir()
-	require.NoError(t, runInit(initOptions{dir: dir, template: "course-platform", templateSet: true}))
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+	runErr := runInit(initOptions{dir: dir, template: "course-platform", templateSet: true})
+	os.Stderr = old
+	require.NoError(t, w.Close())
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	require.NoError(t, runErr)
+	assert.Contains(t, buf.String(), "Node.js")
 	assert.FileExists(t, filepath.Join(dir, "functions", "checkout.js"))
 }
 
