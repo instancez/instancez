@@ -118,7 +118,7 @@ func runInitTemplate(opts initOptions, dir string) error {
 	if err := writeTemplateFiles(dir, bundle, yamlText); err != nil {
 		return err
 	}
-	return finishTemplateInit(dir, opts, bundle)
+	return finishTemplateInit(dir, bundle)
 }
 
 // existingTargets runs before the network call so a doomed init costs nothing.
@@ -204,7 +204,10 @@ func validateScaffold(dir string) {
 	}
 }
 
-func finishTemplateInit(dir string, opts initOptions, bundle *templates.Bundle) error {
+func finishTemplateInit(dir string, b *templates.Bundle) error {
+	if err := refuseScaffoldSymlinks(dir); err != nil {
+		return err
+	}
 	if err := applyWrite(dir, ".gitignore", func(existing string) (string, writeAction) {
 		merged := mergeGitignore(existing, scaffoldGitignore())
 		switch {
@@ -218,20 +221,40 @@ func finishTemplateInit(dir string, opts initOptions, bundle *templates.Bundle) 
 	}); err != nil {
 		return err
 	}
-	for name, content := range map[string]string{
-		".production.env.example":  scaffoldProductionEnvExample(),
+	examples := map[string]string{
 		".development.env.example": scaffoldDevelopmentEnvExample(),
-	} {
+		".production.env.example":  scaffoldProductionEnvExample(),
+	}
+	for _, name := range []string{".development.env.example", ".production.env.example"} {
+		base := examples[name]
 		if err := applyWrite(dir, name, func(existing string) (string, writeAction) {
-			if existing != "" {
+			if existing == "" {
+				return appendSecrets(base, b.Manifest.ID, b.Manifest.Secrets), actionCreate
+			}
+			merged := appendSecrets(existing, b.Manifest.ID, b.Manifest.Secrets)
+			if merged == existing {
 				return existing, actionSkip
 			}
-			return content, actionCreate
+			return merged, actionUpdate
 		}); err != nil {
 			return err
 		}
 	}
-	nodeWarning(bundle)
+	nodeWarning(b)
 	validateScaffold(dir)
+	renderNextSteps(os.Stdout, b.Manifest, dir, mustCwd())
+	return nil
+}
+
+func refuseScaffoldSymlinks(dir string) error {
+	for _, name := range []string{".gitignore", ".development.env.example", ".production.env.example"} {
+		fi, err := os.Lstat(filepath.Join(dir, name))
+		switch {
+		case err == nil && fi.Mode()&os.ModeSymlink != 0:
+			return fmt.Errorf("refusing to write through symlink %s", name)
+		case err != nil && !os.IsNotExist(err):
+			return fmt.Errorf("check %s: %w", name, err)
+		}
+	}
 	return nil
 }
