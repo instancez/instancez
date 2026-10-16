@@ -1,0 +1,28 @@
+id: course-platform
+name: Course Platform
+tagline: Courses, lessons, enrollments and progress tracking, with optional paid unlock.
+description: An online-course backend. Instructors publish courses made of video and markdown lessons; students enroll, tick off lessons and see their progress. Free courses work with zero setup; paid courses unlock through Stripe Checkout once the keys are added.
+category: education
+tags: [courses, lms, learning, video, stripe, progress]
+secrets:
+  - name: INSTANCEZ_ENV_STRIPE_SECRET_KEY
+    label: Stripe secret key
+    description: Starts with sk_test_ or sk_live_. Lets the checkout function create Checkout sessions for paid courses.
+    needed_for: Selling paid courses
+    required: false
+    url: https://dashboard.stripe.com/apikeys
+  - name: INSTANCEZ_ENV_STRIPE_WEBHOOK_SECRET
+    label: Stripe webhook signing secret
+    description: Starts with whsec_. Verifies payment events, grants the enrollment once a course is paid and revokes it on a full refund.
+    needed_for: Unlocking paid courses after payment
+    required: false
+    url: https://dashboard.stripe.com/webhooks
+setup:
+  - "Promote yourself to instructor: run `update profiles set role = 'instructor' where id = '<your user id>'` in the SQL console. Instructors create courses, lessons and lesson_content."
+  - "Create a profiles row for every new user on sign-up (id = auth user id). Role is always 'student' on insert."
+  - "Free course: price_cents = 0, students enroll by inserting into enrollments with source 'free'. Mark a few lessons is_preview = true to show them before enrollment."
+  - "Paid course (needs Stripe): set price_cents (min 50) and currency, call functions.invoke('checkout', { body: { course_id, success_url, cancel_url } }) and redirect to the returned url."
+  - "In Stripe add a webhook endpoint https://<your-app-url>/functions/v1/stripe-webhook subscribed to checkout.session.completed, checkout.session.async_payment_succeeded and charge.refunded. A full refund removes the student's access; a double payment is not refunded for you."
+  - "Comp a student: as the instructor insert into enrollments with source 'grant' and the student's user_id (revoke by deleting that row). Unpublish a course instead of deleting it: deleting removes every enrollment, including paid ones."
+  - "Not included: reviews, certificates, quizzes and drip schedules."
+  - "Show progress with supabase.rpc('course_progress', { p_course_id })."

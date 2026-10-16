@@ -1,0 +1,299 @@
+version: 1
+project:
+  name: Helpdesk
+  description: Public ticket intake with agents, internal notes and SLA due times
+auth:
+  jwt_expiry: 1h
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+tables:
+  agents:
+    fields:
+      - name: user_id
+        primary_key: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: name
+        type: text
+        required: true
+        check: "length(name) BETWEEN 1 AND 120"
+      - name: role
+        type: text
+        required: true
+        default: agent
+        enum: [agent, admin]
+    rls:
+      - operations: [select]
+        using: "user_id = auth.uid() OR public.is_admin()"
+  tickets:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: public_token
+        type: uuid
+        required: true
+        default: uuid_v4()
+      - name: customer_email
+        type: text
+        required: true
+        check: "length(customer_email) <= 254 AND customer_email = lower(customer_email)"
+      - name: customer_name
+        type: text
+        check: "length(customer_name) <= 120"
+      - name: subject
+        type: text
+        required: true
+        check: "length(subject) BETWEEN 1 AND 200"
+      - name: status
+        type: text
+        required: true
+        default: open
+        enum: [open, pending, resolved, closed]
+      - name: priority
+        type: text
+        required: true
+        default: normal
+        enum: [low, normal, high, urgent]
+      - name: assigned_to
+        foreign_key: { references: auth.users.id, on_delete: set_null }
+      - name: first_response_due_at
+        type: timestamptz
+      - name: resolution_due_at
+        type: timestamptz
+      - name: first_responded_at
+        type: timestamptz
+      - name: resolved_at
+        type: timestamptz
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [public_token]
+        unique: true
+      - columns: [status, priority, created_at]
+      - columns: [assigned_to, status]
+      - columns: [customer_email]
+    rls:
+      - operations: [select]
+        using: "EXISTS (SELECT 1 FROM agents WHERE user_id = auth.uid())"
+      - operations: [update]
+        using: "EXISTS (SELECT 1 FROM agents WHERE user_id = auth.uid())"
+        with_check: "EXISTS (SELECT 1 FROM agents WHERE user_id = auth.uid())"
+      - operations: [delete]
+        using: "EXISTS (SELECT 1 FROM agents WHERE user_id = auth.uid() AND role = 'admin')"
+  ticket_messages:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: ticket_id
+        type: bigint
+        required: true
+        foreign_key: { references: tickets.id, on_delete: cascade }
+      - name: kind
+        type: text
+        required: true
+        enum: [customer, reply, note]
+      - name: author_id
+        foreign_key: { references: auth.users.id, on_delete: set_null }
+      - name: body
+        type: text
+        required: true
+        check: "length(body) BETWEEN 1 AND 10000"
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [ticket_id, created_at]
+      - columns: [author_id]
+    rls:
+      - operations: [select]
+        using: "EXISTS (SELECT 1 FROM agents WHERE user_id = auth.uid())"
+      - operations: [insert]
+        with_check: "author_id = auth.uid() AND kind IN ('reply', 'note') AND EXISTS (SELECT 1 FROM agents WHERE user_id = auth.uid())"
+      - operations: [delete]
+        using: "author_id = auth.uid() AND kind = 'note'"
+  canned_replies:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: title
+        type: text
+        required: true
+        check: "length(title) BETWEEN 1 AND 120"
+      - name: body
+        type: text
+        required: true
+        check: "length(body) BETWEEN 1 AND 10000"
+    rls:
+      - operations: [select]
+        using: "EXISTS (SELECT 1 FROM agents WHERE user_id = auth.uid())"
+      - operations: [insert]
+        with_check: "EXISTS (SELECT 1 FROM agents WHERE user_id = auth.uid() AND role = 'admin')"
+      - operations: [update]
+        using: "EXISTS (SELECT 1 FROM agents WHERE user_id = auth.uid() AND role = 'admin')"
+        with_check: "EXISTS (SELECT 1 FROM agents WHERE user_id = auth.uid() AND role = 'admin')"
+      - operations: [delete]
+        using: "EXISTS (SELECT 1 FROM agents WHERE user_id = auth.uid() AND role = 'admin')"
+  intake_attempts:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: bucket
+        type: text
+        required: true
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [bucket, created_at]
+      - columns: [created_at]
+    rls:
+      - operations: [select]
+        using: "false"
+rpc:
+  is_admin:
+    auth_required: false
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set: { search_path: public }
+    returns:
+      type: boolean
+    body: |
+      BEGIN RETURN EXISTS (SELECT 1 FROM agents WHERE user_id = auth.uid() AND role = 'admin'); END;
+  submit_ticket:
+    description: Public intake. Validates, rate limits per email and globally, then opens the ticket with SLA due times.
+    auth_required: false
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_email
+        type: text
+        required: true
+      - name: p_name
+        type: text
+      - name: p_subject
+        type: text
+        required: true
+      - name: p_body
+        type: text
+        required: true
+    returns:
+      type: "table(ticket_id bigint, public_token uuid)"
+    body: |
+      DECLARE
+        v_email text := lower(btrim(coalesce(p_email, '')));
+        v_subject text := btrim(regexp_replace(coalesce(p_subject, ''), '[[:cntrl:]]+', ' ', 'g'));
+        v_body text := btrim(coalesce(p_body, ''));
+        v_id bigint;
+        v_token uuid;
+      BEGIN
+        IF length(v_email) > 254 OR v_email !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$' THEN
+          RAISE EXCEPTION 'invalid email';
+        END IF;
+        IF v_subject = '' OR length(v_subject) > 200 THEN
+          RAISE EXCEPTION 'subject must be 1-200 characters';
+        END IF;
+        IF v_body = '' OR length(v_body) > 10000 THEN
+          RAISE EXCEPTION 'body must be 1-10000 characters';
+        END IF;
+
+        PERFORM pg_advisory_xact_lock(hashtext('intake:' || v_email));
+        DELETE FROM public.intake_attempts WHERE created_at < now() - interval '1 day';
+        IF (SELECT count(*) FROM public.intake_attempts WHERE bucket = 'email:' || v_email AND created_at > now() - interval '1 hour') >= 5
+           OR (SELECT count(*) FROM public.intake_attempts WHERE bucket = 'global' AND created_at > now() - interval '1 hour') >= 200 THEN
+          RAISE EXCEPTION 'too many tickets, try again later';
+        END IF;
+        INSERT INTO public.intake_attempts (bucket) VALUES ('email:' || v_email), ('global');
+
+        INSERT INTO public.tickets (customer_email, customer_name, subject, first_response_due_at, resolution_due_at)
+        VALUES (v_email, nullif(left(btrim(coalesce(p_name, '')), 120), ''), v_subject, now() + interval '24 hours', now() + interval '72 hours')
+        RETURNING id, tickets.public_token INTO v_id, v_token;
+        INSERT INTO public.ticket_messages (ticket_id, kind, body) VALUES (v_id, 'customer', v_body);
+        RETURN QUERY SELECT v_id, v_token;
+      END;
+  ticket_thread:
+    description: A customer's ticket and its public messages, looked up by the private token. Internal notes are never returned.
+    auth_required: false
+    language: sql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_token
+        type: uuid
+        required: true
+    returns:
+      type: jsonb
+    body: |
+      SELECT jsonb_build_object(
+        'id', t.id, 'subject', t.subject, 'status', t.status, 'created_at', t.created_at,
+        'messages', COALESCE((
+          SELECT jsonb_agg(jsonb_build_object('kind', m.kind, 'body', m.body, 'created_at', m.created_at) ORDER BY m.created_at, m.id)
+          FROM public.ticket_messages m WHERE m.ticket_id = t.id AND m.kind IN ('customer', 'reply')
+        ), '[]'::jsonb))
+      FROM public.tickets t WHERE t.public_token = p_token
+  customer_reply:
+    description: A customer answers on their ticket. Reopens it and rate limits per ticket.
+    auth_required: false
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_token
+        type: uuid
+        required: true
+      - name: p_body
+        type: text
+        required: true
+    returns:
+      type: bigint
+    body: |
+      DECLARE
+        v_body text := btrim(coalesce(p_body, ''));
+        v_ticket public.tickets;
+        v_id bigint;
+      BEGIN
+        IF v_body = '' OR length(v_body) > 10000 THEN
+          RAISE EXCEPTION 'body must be 1-10000 characters';
+        END IF;
+        SELECT * INTO v_ticket FROM public.tickets WHERE public_token = p_token;
+        IF NOT FOUND OR v_ticket.status = 'closed' THEN
+          RAISE EXCEPTION 'ticket not found or closed';
+        END IF;
+        IF (SELECT count(*) FROM public.ticket_messages WHERE ticket_id = v_ticket.id AND kind = 'customer' AND created_at > now() - interval '1 hour') >= 20 THEN
+          RAISE EXCEPTION 'too many messages, try again later';
+        END IF;
+        INSERT INTO public.ticket_messages (ticket_id, kind, body) VALUES (v_ticket.id, 'customer', v_body) RETURNING id INTO v_id;
+        UPDATE public.tickets SET status = 'open', resolved_at = NULL WHERE id = v_ticket.id;
+        RETURN v_id;
+      END;
+functions:
+  submit-ticket:
+    runtime: node
+    file: functions/submit-ticket.js
+    auth_required: false
+    timeout: 30s
+    env:
+      RESEND_API_KEY: ${INSTANCEZ_ENV_RESEND_API_KEY:-}
+      MAIL_FROM: ${INSTANCEZ_ENV_MAIL_FROM:-}
+  reply-ticket:
+    runtime: node
+    file: functions/reply-ticket.js
+    auth_required: true
+    timeout: 30s
+    env:
+      RESEND_API_KEY: ${INSTANCEZ_ENV_RESEND_API_KEY:-}
+      MAIL_FROM: ${INSTANCEZ_ENV_MAIL_FROM:-}

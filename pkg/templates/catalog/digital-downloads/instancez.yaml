@@ -1,0 +1,232 @@
+version: 1
+project:
+  name: Digital Downloads
+  description: Sell files with Stripe Checkout and signed downloads
+auth:
+  jwt_expiry: 1h
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+tables:
+  profiles:
+    rls_enabled: true
+    fields:
+      - name: id
+        primary_key: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: display_name
+        type: text
+        check: "char_length(display_name) <= 100"
+      - name: role
+        type: text
+        required: true
+        default: customer
+        enum: [customer, admin]
+    rls:
+      - operations: [select]
+        using: "auth.uid() = id OR public.is_admin()"
+      - operations: [insert]
+        with_check: "auth.uid() = id AND role = 'customer'"
+      - operations: [update]
+        using: "auth.uid() = id"
+        with_check: "auth.uid() = id AND role = public.my_role()"
+  products:
+    rls_enabled: true
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: slug
+        type: text
+        required: true
+        pattern: "^[a-z0-9-]+$"
+      - name: name
+        type: text
+        required: true
+        check: "char_length(name) BETWEEN 1 AND 200"
+      - name: description
+        type: text
+        check: "char_length(description) <= 5000"
+      - name: price_cents
+        type: integer
+        required: true
+        min: 50
+        max: 10000000
+      - name: currency
+        type: text
+        required: true
+        default: usd
+        pattern: "^[a-z]{3}$"
+      - name: cover_path
+        type: text
+      - name: file_path
+        type: text
+        required: true
+        check: "char_length(file_path) BETWEEN 1 AND 1024"
+      - name: file_name
+        type: text
+        check: "char_length(file_name) <= 255"
+      - name: active
+        type: boolean
+        required: true
+        default: true
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [slug]
+        unique: true
+      - columns: [active, created_at]
+    rls:
+      - operations: [select]
+        using: "active = true OR public.is_admin()"
+      - operations: [insert]
+        with_check: "public.is_admin()"
+      - operations: [update]
+        using: "public.is_admin()"
+        with_check: "public.is_admin()"
+      - operations: [delete]
+        using: "public.is_admin()"
+  purchases:
+    rls_enabled: true
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: user_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: product_id
+        type: bigint
+        required: true
+        foreign_key: { references: products.id, on_delete: restrict }
+      - name: status
+        type: text
+        required: true
+        default: pending
+        enum: [pending, paid, expired, refunded]
+      - name: amount_cents
+        type: integer
+        required: true
+        min: 0
+      - name: currency
+        type: text
+        required: true
+        pattern: "^[a-z]{3}$"
+      - name: stripe_session_id
+        type: text
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+      - name: paid_at
+        type: timestamptz
+    indexes:
+      - columns: [stripe_session_id]
+        unique: true
+      - columns: [user_id, product_id, status]
+      - columns: [product_id]
+    rls:
+      - operations: [select]
+        using: "user_id = auth.uid() OR public.is_admin()"
+  downloads:
+    rls_enabled: true
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: purchase_id
+        type: bigint
+        required: true
+        foreign_key: { references: purchases.id, on_delete: cascade }
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [purchase_id, created_at]
+    rls:
+      - operations: [select]
+        using: "public.is_admin() OR EXISTS (SELECT 1 FROM purchases p WHERE p.id = purchase_id AND p.user_id = auth.uid())"
+storage:
+  product_files:
+    public: false
+    max_size: 500MB
+    rls:
+      - operations: [select]
+        using: "public.is_admin()"
+      - operations: [insert]
+        with_check: "public.is_admin()"
+      - operations: [update]
+        using: "public.is_admin()"
+        with_check: "public.is_admin()"
+      - operations: [delete]
+        using: "public.is_admin()"
+  covers:
+    public: true
+    max_size: 5MB
+    types: [image/png, image/jpeg, image/webp, image/gif, image/avif]
+    rls:
+      - operations: [insert]
+        with_check: "public.is_admin()"
+      - operations: [update]
+        using: "public.is_admin()"
+        with_check: "public.is_admin()"
+      - operations: [delete]
+        using: "public.is_admin()"
+functions:
+  checkout:
+    runtime: node
+    file: functions/checkout.js
+    auth_required: true
+    timeout: 30s
+    env:
+      STRIPE_SECRET_KEY: ${INSTANCEZ_ENV_STRIPE_SECRET_KEY:-}
+  stripe-webhook:
+    runtime: node
+    file: functions/stripe-webhook.js
+    auth_required: false
+    timeout: 30s
+    env:
+      STRIPE_WEBHOOK_SECRET: ${INSTANCEZ_ENV_STRIPE_WEBHOOK_SECRET:-}
+  download:
+    runtime: node
+    file: functions/download.js
+    auth_required: true
+    timeout: 15s
+rpc:
+  my_role:
+    auth_required: false
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set: { search_path: public }
+    returns:
+      type: text
+    body: |
+      BEGIN RETURN (SELECT role FROM profiles WHERE id = auth.uid()); END;
+  is_admin:
+    auth_required: false
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set: { search_path: public }
+    returns:
+      type: boolean
+    body: |
+      BEGIN RETURN (SELECT EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')); END;
+  my_library:
+    auth_required: true
+    language: sql
+    volatility: stable
+    security: invoker
+    returns:
+      type: "table(product_id bigint, name text, slug text, cover_path text, purchased_at timestamptz, downloads bigint)"
+    body: |
+      SELECT pr.id, pr.name, pr.slug, pr.cover_path, max(pu.paid_at), count(d.id)
+      FROM purchases pu
+      JOIN products pr ON pr.id = pu.product_id
+      LEFT JOIN downloads d ON d.purchase_id = pu.id
+      WHERE pu.user_id = auth.uid() AND pu.status = 'paid'
+      GROUP BY pr.id, pr.name, pr.slug, pr.cover_path
+      ORDER BY max(pu.paid_at) DESC

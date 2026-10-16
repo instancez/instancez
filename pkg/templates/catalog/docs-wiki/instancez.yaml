@@ -1,0 +1,345 @@
+version: 1
+project:
+  name: Docs Wiki
+  description: Knowledge base with nested pages, revisions and full-text search
+auth:
+  jwt_expiry: 1h
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+tables:
+  profiles:
+    rls_enabled: true
+    fields:
+      - name: id
+        primary_key: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: display_name
+        type: text
+        check: "char_length(display_name) <= 80"
+      - name: role
+        type: text
+        required: true
+        default: member
+        enum: [member, editor, admin]
+    rls:
+      - operations: [select]
+        using: "true"
+      - operations: [insert]
+        with_check: "auth.uid() = id AND role = 'member'"
+      - operations: [update]
+        using: "auth.uid() = id"
+        with_check: "auth.uid() = id AND role = public.my_role()"
+      - operations: [update]
+        using: "public.is_admin()"
+        with_check: "public.is_admin()"
+  spaces:
+    rls_enabled: true
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: slug
+        type: text
+        required: true
+        pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+      - name: name
+        type: text
+        required: true
+        check: "char_length(btrim(name)) BETWEEN 1 AND 120"
+      - name: description
+        type: text
+        check: "char_length(description) <= 1000"
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [slug]
+        unique: true
+    rls:
+      - operations: [select]
+        using: "true"
+      - operations: [insert]
+        with_check: "public.is_admin()"
+      - operations: [update]
+        using: "public.is_admin()"
+        with_check: "public.is_admin()"
+      - operations: [delete]
+        using: "public.is_admin()"
+  pages:
+    rls_enabled: true
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: space_id
+        type: bigint
+        required: true
+        foreign_key: { references: spaces.id, on_delete: cascade }
+      - name: parent_id
+        type: bigint
+        foreign_key: { references: pages.id, on_delete: set_null }
+      - name: slug
+        type: text
+        required: true
+        pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+        check: "char_length(slug) <= 120"
+      - name: title
+        type: text
+        required: true
+        check: "char_length(btrim(title)) BETWEEN 1 AND 200"
+      - name: body
+        type: text
+        required: true
+        default: ""
+        check: "char_length(body) <= 200000"
+      - name: visibility
+        type: text
+        required: true
+        default: public
+        enum: [public, members]
+      - name: sort_order
+        type: integer
+        required: true
+        default: 0
+      - name: version
+        type: integer
+        required: true
+        default: 1
+      - name: search
+        type: tsvector
+      - name: created_by
+        foreign_key: { references: auth.users.id, on_delete: set_null }
+      - name: updated_by
+        foreign_key: { references: auth.users.id, on_delete: set_null }
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+      - name: updated_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [space_id, slug]
+        unique: true
+      - columns: [space_id, parent_id, sort_order]
+      - columns: [parent_id]
+      - columns: [created_by]
+      - columns: [updated_by]
+    rls:
+      - operations: [select]
+        using: "visibility = 'public' OR auth.is_authenticated()"
+      - operations: [delete]
+        using: "public.is_editor()"
+  page_revisions:
+    rls_enabled: true
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: page_id
+        type: bigint
+        required: true
+        foreign_key: { references: pages.id, on_delete: cascade }
+      - name: version
+        type: integer
+        required: true
+      - name: title
+        type: text
+        required: true
+      - name: body
+        type: text
+        required: true
+      - name: summary
+        type: text
+        check: "char_length(summary) <= 500"
+      - name: edited_by
+        foreign_key: { references: auth.users.id, on_delete: set_null }
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [page_id, version]
+        unique: true
+      - columns: [edited_by]
+    rls:
+      - operations: [select]
+        using: "EXISTS (SELECT 1 FROM pages p WHERE p.id = page_id)"
+rpc:
+  my_role:
+    auth_required: false
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set: { search_path: public }
+    returns:
+      type: text
+    body: |
+      BEGIN RETURN (SELECT role FROM profiles WHERE id = auth.uid()); END;
+  is_admin:
+    auth_required: false
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set: { search_path: public }
+    returns:
+      type: boolean
+    body: |
+      BEGIN RETURN (SELECT EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')); END;
+  is_editor:
+    auth_required: false
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set: { search_path: public }
+    returns:
+      type: boolean
+    body: |
+      BEGIN RETURN (SELECT EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('editor', 'admin'))); END;
+  save_page:
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set: { search_path: "" }
+    args:
+      - name: p_space_id
+        type: bigint
+        required: true
+      - name: p_slug
+        type: text
+        required: true
+      - name: p_title
+        type: text
+        required: true
+      - name: p_body
+        type: text
+        default: ""
+      - name: p_parent_id
+        type: bigint
+        default: "CAST(NULL AS bigint)"
+      - name: p_visibility
+        type: text
+        default: "CAST(NULL AS text)"
+      - name: p_page_id
+        type: bigint
+        default: "CAST(NULL AS bigint)"
+      - name: p_base_version
+        type: integer
+        default: "CAST(NULL AS integer)"
+      - name: p_summary
+        type: text
+        default: "CAST(NULL AS text)"
+      - name: p_sort_order
+        type: integer
+        default: "CAST(NULL AS integer)"
+    returns:
+      type: bigint
+    body: |
+      DECLARE
+        v_id bigint;
+        v_space bigint := p_space_id;
+        v_version integer;
+        v_search tsvector;
+      BEGIN
+        IF NOT public.is_editor() THEN
+          RAISE EXCEPTION 'editor role required' USING ERRCODE = '42501';
+        END IF;
+        IF btrim(coalesce(p_title, '')) = '' THEN
+          RAISE EXCEPTION 'title is required' USING ERRCODE = '22023';
+        END IF;
+        IF p_visibility NOT IN ('public', 'members') THEN
+          RAISE EXCEPTION 'visibility must be public or members' USING ERRCODE = '22023';
+        END IF;
+        IF p_page_id IS NOT NULL AND p_base_version IS NULL THEN
+          RAISE EXCEPTION 'p_base_version is required when editing a page' USING ERRCODE = '22023';
+        END IF;
+        IF p_page_id IS NOT NULL THEN
+          SELECT space_id INTO v_space FROM public.pages WHERE id = p_page_id;
+          IF NOT FOUND THEN
+            RAISE EXCEPTION 'page not found' USING ERRCODE = 'P0002';
+          END IF;
+        END IF;
+        IF p_parent_id IS NOT NULL THEN
+          IF p_parent_id = p_page_id OR NOT EXISTS (SELECT 1 FROM public.pages WHERE id = p_parent_id AND space_id = v_space) THEN
+            RAISE EXCEPTION 'parent must be another page in the same space' USING ERRCODE = '22023';
+          END IF;
+          IF p_page_id IS NOT NULL AND EXISTS (
+            WITH RECURSIVE d AS (
+              SELECT id FROM public.pages WHERE parent_id = p_page_id
+              UNION
+              SELECT c.id FROM public.pages c JOIN d ON c.parent_id = d.id
+            ) SELECT 1 FROM d WHERE id = p_parent_id
+          ) THEN
+            RAISE EXCEPTION 'a page cannot move under its own descendant' USING ERRCODE = '22023';
+          END IF;
+        END IF;
+
+        v_search := setweight(to_tsvector('english', p_title), 'A') || setweight(to_tsvector('english', coalesce(p_body, '')), 'B');
+
+        IF p_page_id IS NULL THEN
+          INSERT INTO public.pages (space_id, parent_id, slug, title, body, visibility, sort_order, search, created_by, updated_by)
+          VALUES (v_space, p_parent_id, p_slug, p_title, coalesce(p_body, ''), coalesce(p_visibility, 'public'), coalesce(p_sort_order, 0), v_search, auth.uid(), auth.uid())
+          RETURNING id, version INTO v_id, v_version;
+        ELSE
+          UPDATE public.pages
+          SET parent_id = p_parent_id, slug = p_slug, title = p_title, body = coalesce(p_body, ''),
+              visibility = coalesce(p_visibility, visibility), sort_order = coalesce(p_sort_order, sort_order),
+              search = v_search, version = version + 1,
+              updated_by = auth.uid(), updated_at = now()
+          WHERE id = p_page_id AND (p_base_version IS NULL OR version = p_base_version)
+          RETURNING id, version INTO v_id, v_version;
+          IF NOT FOUND THEN
+            RAISE EXCEPTION 'page was edited by someone else, reload and retry' USING ERRCODE = '40001';
+          END IF;
+        END IF;
+
+        INSERT INTO public.page_revisions (page_id, version, title, body, summary, edited_by)
+        VALUES (v_id, v_version, p_title, coalesce(p_body, ''), p_summary, auth.uid());
+        RETURN v_id;
+      END
+  page_tree:
+    auth_required: false
+    language: sql
+    volatility: stable
+    security: invoker
+    args:
+      - name: p_space_id
+        type: bigint
+        required: true
+    returns:
+      type: "table(id bigint, parent_id bigint, slug text, title text, depth integer)"
+    body: |
+      WITH RECURSIVE t AS (
+        SELECT p.id, p.parent_id, p.slug, p.title, 0 AS depth, ARRAY[p.sort_order::bigint, p.id] AS path
+        FROM pages p
+        WHERE p.space_id = p_space_id AND (p.parent_id IS NULL OR NOT EXISTS (SELECT 1 FROM pages x WHERE x.id = p.parent_id))
+        UNION ALL
+        SELECT c.id, c.parent_id, c.slug, c.title, t.depth + 1, t.path || ARRAY[c.sort_order::bigint, c.id]
+        FROM pages c JOIN t ON c.parent_id = t.id
+      )
+      SELECT t.id, t.parent_id, t.slug, t.title, t.depth FROM t ORDER BY t.path
+  search_pages:
+    auth_required: false
+    language: sql
+    volatility: stable
+    security: invoker
+    args:
+      - name: p_query
+        type: text
+        required: true
+      - name: p_space_id
+        type: bigint
+        default: "CAST(NULL AS bigint)"
+    returns:
+      type: "table(id bigint, space_id bigint, slug text, title text, snippet text, rank real)"
+    body: |
+      SELECT p.id, p.space_id, p.slug, p.title,
+             ts_headline('english', p.body, q.tsq, 'MaxFragments=2,MaxWords=18,MinWords=6'),
+             ts_rank(p.search, q.tsq)
+      FROM pages p, websearch_to_tsquery('english', left(coalesce(p_query, ''), 200)) AS q(tsq)
+      WHERE p.search @@ q.tsq AND (p_space_id IS NULL OR p.space_id = p_space_id)
+      ORDER BY ts_rank(p.search, q.tsq) DESC, p.updated_at DESC, p.id
+      LIMIT 50

@@ -1,0 +1,13 @@
+id: feature-flags
+name: Feature Flags
+tagline: Flags per environment with percentage rollouts, targeting rules and an audit log.
+description: A feature-flag service. Projects hold environments and flags; each flag has an on/off switch, a rollout percentage and targeting rules per environment. SDKs call a public evaluate function with an environment key and a user key. Every change is recorded in an audit log. Works with zero setup.
+category: tools
+tags: [feature-flags, rollout, experiments, targeting, config]
+secrets: []
+setup:
+  - "Create a project with supabase.rpc('create_project', { p_name, p_slug }); it adds development and production environments, each with a client_key."
+  - "Create flags by inserting into flags (project_id, key, description). Change a flag per environment with supabase.rpc('set_flag_config', { p_flag_id, p_environment_id, p_enabled, p_rollout, p_rules }); this also writes the audit_log."
+  - "Rules are a JSON array like [{\"attribute\":\"plan\",\"op\":\"in\",\"value\":[\"pro\",\"team\"]}]. Ops: eq, neq, in, not_in, contains, gt, lt. A user matching any rule gets the flag on; everyone else falls back to the rollout percentage. Flags that are disabled are off for all."
+  - "Clients call functions.invoke('evaluate', { body: { client_key, user: { key: 'user-123', plan: 'pro' } } }) with the publishable key and get { flags: { my_flag: true } }. The same user always lands in the same bucket per flag."
+  - "Client keys are public: they expose flag keys and rules, so keep secrets and personal data out of rules."

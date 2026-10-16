@@ -1,0 +1,221 @@
+version: 1
+project:
+  name: Launch Waitlist
+  description: Waitlist with referral boosts, queue positions and admin export
+auth:
+  jwt_expiry: 1h
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+tables:
+  waitlist_admins:
+    fields:
+      - name: user_id
+        primary_key: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+    rls:
+      - operations: [select]
+        using: "user_id = auth.uid()"
+  signups:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: email
+        type: text
+        required: true
+        check: "length(email) <= 254 AND email = lower(email)"
+      - name: referral_code
+        type: text
+        required: true
+      - name: referred_by
+        type: bigint
+        foreign_key: { references: signups.id, on_delete: set_null }
+      - name: referral_count
+        type: integer
+        required: true
+        default: 0
+        min: 0
+      - name: status
+        type: text
+        required: true
+        default: waiting
+        enum: [waiting, invited]
+      - name: source
+        type: text
+      - name: invited_at
+        type: timestamptz
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [email]
+        unique: true
+      - columns: [referral_code]
+        unique: true
+      - columns: [status, id]
+    rls:
+      - operations: [select]
+        using: "EXISTS (SELECT 1 FROM waitlist_admins a WHERE a.user_id = auth.uid())"
+      - operations: [update]
+        using: "EXISTS (SELECT 1 FROM waitlist_admins a WHERE a.user_id = auth.uid())"
+        with_check: "EXISTS (SELECT 1 FROM waitlist_admins a WHERE a.user_id = auth.uid())"
+      - operations: [delete]
+        using: "EXISTS (SELECT 1 FROM waitlist_admins a WHERE a.user_id = auth.uid())"
+  join_attempts:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: ip
+        type: text
+        required: true
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [ip, created_at]
+      - columns: [created_at]
+    rls:
+      - operations: [select]
+        using: "false"
+rpc:
+  join_waitlist:
+    description: Called by the join function only (needs the secret key). Validates and dedupes the email, rate limits per IP, credits the referrer, returns code and position.
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_email
+        type: text
+        required: true
+      - name: p_ref
+        type: text
+      - name: p_source
+        type: text
+      - name: p_ip
+        type: text
+    returns:
+      type: "table(referral_code text, queue_position bigint, queue_total bigint, is_new boolean)"
+    body: |
+      DECLARE
+        v_email text := lower(btrim(coalesce(p_email, '')));
+        v_ip text := nullif(left(btrim(coalesce(p_ip, '')), 64), '');
+        v_ref bigint;
+        v_row public.signups;
+        v_new boolean := false;
+        v_tries integer := 0;
+      BEGIN
+        IF auth.uid() IS NOT NULL THEN
+          RAISE EXCEPTION 'use the join function' USING ERRCODE = '42501';
+        END IF;
+        IF length(v_email) > 254 OR v_email !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$' THEN
+          RAISE EXCEPTION 'invalid email';
+        END IF;
+        SELECT * INTO v_row FROM public.signups WHERE email = v_email;
+        IF NOT FOUND THEN
+          DELETE FROM public.join_attempts WHERE created_at < now() - interval '1 day';
+          IF v_ip IS NOT NULL THEN
+            PERFORM pg_advisory_xact_lock(hashtext('join:' || v_ip));
+            IF (SELECT count(*) FROM public.join_attempts WHERE ip = v_ip AND created_at > now() - interval '1 hour') >= 10 THEN
+              RAISE EXCEPTION 'too many signups, try again later';
+            END IF;
+            INSERT INTO public.join_attempts (ip) VALUES (v_ip);
+          END IF;
+          SELECT s.id INTO v_ref FROM public.signups s WHERE s.referral_code = lower(btrim(coalesce(p_ref, '')));
+          LOOP
+            BEGIN
+              INSERT INTO public.signups (email, referral_code, referred_by, source)
+              VALUES (v_email, substr(md5(random()::text || clock_timestamp()::text), 1, 8), v_ref, left(btrim(coalesce(p_source, '')), 100))
+              ON CONFLICT (email) DO NOTHING
+              RETURNING * INTO v_row;
+              EXIT;
+            EXCEPTION WHEN unique_violation THEN
+              v_tries := v_tries + 1;
+              IF v_tries > 5 THEN RAISE; END IF;
+            END;
+          END LOOP;
+          IF v_row.id IS NULL THEN
+            SELECT * INTO v_row FROM public.signups WHERE email = v_email;
+          ELSE
+            v_new := true;
+            IF v_ref IS NOT NULL THEN
+              UPDATE public.signups SET referral_count = referral_count + 1 WHERE id = v_ref;
+            END IF;
+          END IF;
+        END IF;
+        RETURN QUERY
+        SELECT v_row.referral_code,
+               1 + (SELECT count(*) FROM public.signups o WHERE o.status = 'waiting'
+                    AND (o.id - 10 * LEAST(o.referral_count, 20), o.id) < (v_row.id - 10 * LEAST(v_row.referral_count, 20), v_row.id)),
+               (SELECT count(*) FROM public.signups WHERE status = 'waiting'),
+               v_new;
+      END;
+  waitlist_status:
+    description: Queue position and referral count for a referral code
+    auth_required: false
+    language: sql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_code
+        type: text
+        required: true
+    returns:
+      type: "table(queue_position bigint, queue_total bigint, referral_count integer, status text)"
+    body: |
+      SELECT CASE WHEN me.status = 'waiting' THEN 1 + (SELECT count(*) FROM public.signups o WHERE o.status = 'waiting'
+                    AND (o.id - 10 * LEAST(o.referral_count, 20), o.id) < (me.id - 10 * LEAST(me.referral_count, 20), me.id)) END,
+             (SELECT count(*) FROM public.signups WHERE status = 'waiting'),
+             me.referral_count, me.status
+      FROM public.signups me WHERE me.referral_code = lower(btrim(p_code))
+  invite_batch:
+    description: Admin only. Marks the next waiting signups as invited, in queue order, and returns them.
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    args:
+      - name: p_count
+        type: integer
+        required: true
+    returns:
+      type: "table(email text, referral_code text)"
+    body: |
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM public.waitlist_admins a WHERE a.user_id = auth.uid()) THEN
+          RAISE EXCEPTION 'admins only' USING ERRCODE = '42501';
+        END IF;
+        RETURN QUERY
+        WITH picked AS MATERIALIZED (
+          SELECT s.id FROM public.signups s WHERE s.status = 'waiting'
+          ORDER BY s.id - 10 * LEAST(s.referral_count, 20), s.id
+          LIMIT GREATEST(LEAST(COALESCE(p_count, 0), 500), 0)
+          FOR UPDATE SKIP LOCKED
+        ), invited AS (
+          UPDATE public.signups u SET status = 'invited', invited_at = now()
+          FROM picked WHERE u.id = picked.id
+          RETURNING u.email, u.referral_code
+        )
+        SELECT i.email, i.referral_code FROM invited i;
+      END;
+functions:
+  join:
+    runtime: node
+    file: functions/join.js
+    auth_required: false
+    timeout: 30s
+    env:
+      RESEND_API_KEY: ${INSTANCEZ_ENV_RESEND_API_KEY:-}
+      MAIL_FROM: ${INSTANCEZ_ENV_MAIL_FROM:-}
+      LANDING_URL: ${INSTANCEZ_ENV_LANDING_URL:-}
+  export-signups:
+    runtime: node
+    file: functions/export-signups.js
+    auth_required: true
+    timeout: 60s

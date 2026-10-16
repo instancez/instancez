@@ -1,0 +1,354 @@
+version: 1
+project:
+  name: Invoicing
+  description: Clients, numbered invoices with line items and optional Stripe Payment Links
+auth:
+  jwt_expiry: 1h
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+tables:
+  clients:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: user_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: name
+        type: text
+        required: true
+        check: "char_length(btrim(name)) BETWEEN 1 AND 200"
+      - name: email
+        type: text
+        check: "char_length(email) <= 254"
+      - name: company
+        type: text
+        check: "char_length(company) <= 200"
+      - name: address
+        type: text
+        check: "char_length(address) <= 1000"
+      - name: tax_id
+        type: text
+        check: "char_length(tax_id) <= 64"
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [user_id, name]
+    rls:
+      - operations: [select]
+        using: "user_id = auth.uid()"
+      - operations: [insert]
+        with_check: "user_id = auth.uid()"
+      - operations: [update]
+        using: "user_id = auth.uid()"
+        with_check: "user_id = auth.uid()"
+      - operations: [delete]
+        using: "user_id = auth.uid()"
+  invoice_counters:
+    fields:
+      - name: user_id
+        primary_key: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: last_number
+        type: integer
+        required: true
+        default: 0
+        min: 0
+    rls:
+      - operations: [select]
+        using: "user_id = auth.uid()"
+  invoices:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: user_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: client_id
+        type: bigint
+        required: true
+        foreign_key: { references: clients.id, on_delete: restrict }
+      - name: number
+        type: text
+        required: true
+      - name: status
+        type: text
+        required: true
+        default: draft
+        enum: [draft, sent, paid, void]
+      - name: currency
+        type: text
+        required: true
+        default: usd
+        pattern: "^[a-z]{3}$"
+      - name: issue_date
+        type: date
+        required: true
+        default: now()
+      - name: due_date
+        type: date
+      - name: tax_percent
+        type: "numeric(12,2)"
+        required: true
+        default: 0
+        min: 0
+        max: 100
+      - name: subtotal_cents
+        type: bigint
+        required: true
+        default: 0
+        min: 0
+      - name: tax_cents
+        type: bigint
+        required: true
+        default: 0
+        min: 0
+      - name: total_cents
+        type: bigint
+        required: true
+        default: 0
+        min: 0
+      - name: notes
+        type: text
+        check: "char_length(notes) <= 2000"
+      - name: payment_link_url
+        type: text
+      - name: payment_link_id
+        type: text
+      - name: paid_at
+        type: timestamptz
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [user_id, number]
+        unique: true
+      - columns: [user_id, status, due_date]
+      - columns: [client_id]
+      - columns: [payment_link_id]
+        unique: true
+        where: "payment_link_id IS NOT NULL"
+    rls:
+      - operations: [select]
+        using: "user_id = auth.uid()"
+      - operations: [update]
+        using: "user_id = auth.uid() AND status = 'draft'"
+        with_check: "user_id = auth.uid() AND status = 'draft' AND EXISTS (SELECT 1 FROM clients c WHERE c.id = client_id AND c.user_id = auth.uid())"
+      - operations: [delete]
+        using: "user_id = auth.uid() AND status = 'draft'"
+  invoice_items:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: invoice_id
+        type: bigint
+        required: true
+        foreign_key: { references: invoices.id, on_delete: cascade }
+      - name: position
+        type: integer
+        required: true
+        default: 0
+      - name: description
+        type: text
+        required: true
+        check: "char_length(btrim(description)) BETWEEN 1 AND 500"
+      - name: quantity
+        type: "numeric(12,2)"
+        required: true
+        default: 1
+        min: 0
+      - name: unit_price_cents
+        type: bigint
+        required: true
+        default: 0
+        min: 0
+    indexes:
+      - columns: [invoice_id, position]
+    rls:
+      - operations: [select]
+        using: "EXISTS (SELECT 1 FROM invoices i WHERE i.id = invoice_id AND i.user_id = auth.uid())"
+      - operations: [insert]
+        with_check: "EXISTS (SELECT 1 FROM invoices i WHERE i.id = invoice_id AND i.user_id = auth.uid() AND i.status = 'draft')"
+      - operations: [update]
+        using: "EXISTS (SELECT 1 FROM invoices i WHERE i.id = invoice_id AND i.user_id = auth.uid() AND i.status = 'draft')"
+        with_check: "EXISTS (SELECT 1 FROM invoices i WHERE i.id = invoice_id AND i.user_id = auth.uid() AND i.status = 'draft')"
+      - operations: [delete]
+        using: "EXISTS (SELECT 1 FROM invoices i WHERE i.id = invoice_id AND i.user_id = auth.uid() AND i.status = 'draft')"
+rpc:
+  create_invoice:
+    description: Creates a draft invoice with the next number (INV-0001, ...) for the caller. Returns the invoice id.
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_client_id
+        type: bigint
+        required: true
+      - name: p_currency
+        type: text
+        default: usd
+      - name: p_due_in_days
+        type: integer
+        default: 30
+      - name: p_tax_percent
+        type: "numeric(12,2)"
+        default: 0
+    returns:
+      type: bigint
+    body: |
+      DECLARE
+        v_n integer;
+        v_id bigint;
+        v_cur text := lower(btrim(coalesce(p_currency, 'usd')));
+        v_days integer := coalesce(p_due_in_days, 30);
+        v_tax numeric := coalesce(p_tax_percent, 0);
+      BEGIN
+        IF auth.uid() IS NULL THEN
+          RAISE EXCEPTION 'sign in required' USING ERRCODE = '42501';
+        END IF;
+        IF v_cur !~ '^[a-z]{3}$' THEN
+          RAISE EXCEPTION 'currency must be a 3-letter code';
+        END IF;
+        IF v_days NOT BETWEEN 0 AND 3650 THEN
+          RAISE EXCEPTION 'p_due_in_days must be between 0 and 3650';
+        END IF;
+        IF v_tax NOT BETWEEN 0 AND 100 THEN
+          RAISE EXCEPTION 'p_tax_percent must be between 0 and 100';
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM public.clients WHERE id = p_client_id AND user_id = auth.uid()) THEN
+          RAISE EXCEPTION 'client not found';
+        END IF;
+        INSERT INTO public.invoice_counters (user_id, last_number) VALUES (auth.uid(), 1)
+        ON CONFLICT (user_id) DO UPDATE SET last_number = invoice_counters.last_number + 1
+        RETURNING last_number INTO v_n;
+        INSERT INTO public.invoices (user_id, client_id, number, currency, due_date, tax_percent)
+        VALUES (auth.uid(), p_client_id, 'INV-' || lpad(v_n::text, 4, '0'), v_cur, current_date + v_days, v_tax)
+        RETURNING id INTO v_id;
+        RETURN v_id;
+      END;
+  save_invoice_items:
+    description: Replaces a draft invoice's line items and recomputes subtotal, tax and total. Returns the total in cents.
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    args:
+      - name: p_invoice_id
+        type: bigint
+        required: true
+      - name: p_items
+        type: jsonb
+        required: true
+    returns:
+      type: bigint
+    body: |
+      DECLARE
+        v_inv invoices;
+        v_sub bigint;
+        v_tax bigint;
+      BEGIN
+        SELECT * INTO v_inv FROM invoices WHERE id = p_invoice_id AND user_id = auth.uid() FOR UPDATE;
+        IF NOT FOUND THEN
+          RAISE EXCEPTION 'draft invoice not found (only your own drafts can be edited)';
+        END IF;
+        IF p_items IS NULL OR jsonb_typeof(p_items) <> 'array' THEN
+          RAISE EXCEPTION 'p_items must be a json array';
+        END IF;
+        IF jsonb_array_length(p_items) > 200 THEN
+          RAISE EXCEPTION 'at most 200 line items';
+        END IF;
+        IF EXISTS (
+          SELECT 1 FROM jsonb_array_elements(p_items) AS e(item)
+          WHERE jsonb_typeof(e.item) <> 'object'
+             OR jsonb_typeof(e.item->'description') IS DISTINCT FROM 'string'
+             OR btrim(e.item->>'description') = '' OR length(e.item->>'description') > 500
+             OR coalesce(jsonb_typeof(e.item->'quantity'), 'number') <> 'number'
+             OR coalesce(jsonb_typeof(e.item->'unit_price_cents'), 'number') <> 'number'
+        ) OR EXISTS (
+          SELECT 1 FROM jsonb_array_elements(p_items) AS e(item)
+          WHERE coalesce((e.item->>'quantity')::numeric, 1) NOT BETWEEN 0.01 AND 1000000
+             OR coalesce((e.item->>'unit_price_cents')::numeric, 0) NOT BETWEEN 0 AND 10000000000
+             OR coalesce((e.item->>'unit_price_cents')::numeric, 0) <> trunc(coalesce((e.item->>'unit_price_cents')::numeric, 0))
+        ) THEN
+          RAISE EXCEPTION 'each item needs a description (max 500 chars), quantity 0.01-1000000 and an integer unit_price_cents >= 0';
+        END IF;
+        DELETE FROM invoice_items WHERE invoice_id = p_invoice_id;
+        INSERT INTO invoice_items (invoice_id, position, description, quantity, unit_price_cents)
+        SELECT p_invoice_id, (e.ord - 1)::integer, btrim(e.item->>'description'), COALESCE((e.item->>'quantity')::numeric, 1), COALESCE((e.item->>'unit_price_cents')::bigint, 0)
+        FROM jsonb_array_elements(p_items) WITH ORDINALITY AS e(item, ord);
+        SELECT COALESCE(sum(round(quantity * unit_price_cents)), 0)::bigint INTO v_sub FROM invoice_items WHERE invoice_id = p_invoice_id;
+        v_tax := round(v_sub * v_inv.tax_percent / 100)::bigint;
+        IF v_sub + v_tax > 99999999 THEN
+          RAISE EXCEPTION 'invoice total cannot exceed 99999999 (Stripe limit)';
+        END IF;
+        UPDATE invoices SET subtotal_cents = v_sub, tax_cents = v_tax, total_cents = v_sub + v_tax, payment_link_url = NULL, payment_link_id = NULL WHERE id = p_invoice_id;
+        RETURN v_sub + v_tax;
+      END;
+  set_invoice_status:
+    description: Moves the caller's invoice along draft -> sent -> paid, or to void from draft or sent. Returns the new status.
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_invoice_id
+        type: bigint
+        required: true
+      - name: p_status
+        type: text
+        required: true
+    returns:
+      type: text
+    body: |
+      DECLARE
+        v_inv invoices;
+        v_sub bigint;
+        v_tax bigint;
+      BEGIN
+        SELECT * INTO v_inv FROM public.invoices WHERE id = p_invoice_id AND user_id = auth.uid() FOR UPDATE;
+        IF NOT FOUND THEN
+          RAISE EXCEPTION 'invoice not found';
+        END IF;
+        IF p_status IS NULL OR NOT ((v_inv.status = 'draft' AND p_status IN ('sent', 'void'))
+             OR (v_inv.status = 'sent' AND p_status IN ('paid', 'void'))) THEN
+          RAISE EXCEPTION 'cannot move invoice from % to %', v_inv.status, p_status;
+        END IF;
+        IF p_status = 'sent' THEN
+          SELECT COALESCE(sum(round(quantity * unit_price_cents)), 0)::bigint INTO v_sub FROM public.invoice_items WHERE invoice_id = p_invoice_id;
+          v_tax := round(v_sub * v_inv.tax_percent / 100)::bigint;
+          IF v_sub + v_tax <= 0 THEN
+            RAISE EXCEPTION 'save line items before sending';
+          END IF;
+          IF v_sub + v_tax > 99999999 THEN
+            RAISE EXCEPTION 'invoice total cannot exceed 99999999 (Stripe limit)';
+          END IF;
+          UPDATE public.invoices SET subtotal_cents = v_sub, tax_cents = v_tax, total_cents = v_sub + v_tax WHERE id = p_invoice_id;
+        END IF;
+        UPDATE public.invoices SET status = p_status, paid_at = CASE WHEN p_status = 'paid' THEN now() ELSE paid_at END WHERE id = p_invoice_id;
+        RETURN p_status;
+      END;
+functions:
+  create-payment-link:
+    runtime: node
+    file: functions/create-payment-link.js
+    auth_required: true
+    timeout: 30s
+    env:
+      STRIPE_SECRET_KEY: ${INSTANCEZ_ENV_STRIPE_SECRET_KEY:-}
+  stripe-webhook:
+    runtime: node
+    file: functions/stripe-webhook.js
+    auth_required: false
+    timeout: 30s
+    env:
+      STRIPE_WEBHOOK_SECRET: ${INSTANCEZ_ENV_STRIPE_WEBHOOK_SECRET:-}

@@ -1,0 +1,12 @@
+id: feedback-roadmap
+name: Feedback & Roadmap
+tagline: Feature requests with one-vote-per-user, a public roadmap and admin-only statuses.
+description: A public feedback board. Users post requests, vote once each and comment; admins move requests through planned, in-progress and shipped and can leave an official response. Works with zero setup.
+category: community
+tags: [feedback, roadmap, voting, feature-requests, changelog]
+secrets: []
+setup:
+  - "Sign up once, then promote yourself: run `update profiles set role = 'admin' where id = '<your user id>'` in the SQL console."
+  - "Create a profiles row for each new user on sign-up (insert into profiles with id = the user id). Role is always 'member' on insert."
+  - "Vote with supabase.rpc('toggle_vote', { p_request_id }); it returns { voted, vote_count }. Build the roadmap with select('*').in('status', ['planned','in-progress','shipped'])."
+  - "Voting closes once a request is shipped or declined (removing a vote still works). Not included: duplicate merging, notifications to voters."

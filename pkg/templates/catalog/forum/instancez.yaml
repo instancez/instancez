@@ -1,0 +1,342 @@
+version: 1
+project:
+  name: Community Forum
+  description: Categories, threads, replies and moderation
+auth:
+  jwt_expiry: 1h
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+tables:
+  profiles:
+    fields:
+      - name: id
+        primary_key: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: display_name
+        type: text
+        required: true
+        check: "char_length(btrim(display_name)) BETWEEN 1 AND 80"
+      - name: bio
+        type: text
+        check: "char_length(bio) <= 500"
+      - name: role
+        type: text
+        required: true
+        default: member
+        enum: [member, moderator, admin]
+      - name: banned
+        type: boolean
+        required: true
+        default: false
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    rls:
+      - operations: [select]
+        using: "true"
+      - operations: [insert]
+        with_check: "auth.uid() = id AND role = 'member' AND banned = false"
+      - operations: [update]
+        using: "auth.uid() = id"
+        with_check: "auth.uid() = id AND role = public.my_role() AND banned = NOT public.can_post()"
+      # Only admins change anyone's role or ban.
+      - operations: [update]
+        using: "public.my_role() = 'admin'"
+        with_check: "public.my_role() = 'admin'"
+  categories:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: slug
+        type: text
+        required: true
+        pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+      - name: name
+        type: text
+        required: true
+        check: "char_length(btrim(name)) BETWEEN 1 AND 80"
+      - name: description
+        type: text
+        check: "char_length(description) <= 500"
+      - name: position
+        type: integer
+        required: true
+        default: 0
+    indexes:
+      - columns: [slug]
+        unique: true
+    rls:
+      - operations: [select]
+        using: "true"
+      - operations: [insert]
+        with_check: "EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')"
+      - operations: [update]
+        using: "EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')"
+        with_check: "EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')"
+      - operations: [delete]
+        using: "EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')"
+  threads:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: category_id
+        type: bigint
+        required: true
+        foreign_key: { references: categories.id, on_delete: restrict }
+      - name: author_id
+        required: true
+        foreign_key: { references: profiles.id, on_delete: cascade }
+      - name: title
+        type: text
+        required: true
+        check: "char_length(btrim(title)) BETWEEN 1 AND 200"
+      - name: body
+        type: text
+        required: true
+        check: "char_length(btrim(body)) BETWEEN 1 AND 20000"
+      - name: pinned
+        type: boolean
+        required: true
+        default: false
+      - name: locked
+        type: boolean
+        required: true
+        default: false
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [category_id, created_at]
+      - columns: [author_id]
+    rls:
+      - operations: [select]
+        using: "true"
+      - operations: [insert]
+        with_check: "author_id = auth.uid() AND pinned = false AND locked = false AND created_at = now() AND public.can_post()"
+      # Authors edit their own unlocked threads; pinned and created_at stay as they were.
+      - operations: [update]
+        using: "author_id = auth.uid() AND locked = false AND public.can_post()"
+        with_check: "author_id = auth.uid() AND locked = false AND public.thread_unchanged(id, pinned, created_at)"
+      - operations: [update]
+        using: "EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('moderator', 'admin'))"
+        with_check: "EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('moderator', 'admin'))"
+      # Authors delete their own thread only while nobody has replied.
+      - operations: [delete]
+        using: "(author_id = auth.uid() AND NOT EXISTS (SELECT 1 FROM replies r WHERE r.thread_id = threads.id)) OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('moderator', 'admin'))"
+  replies:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: thread_id
+        type: bigint
+        required: true
+        foreign_key: { references: threads.id, on_delete: cascade }
+      - name: author_id
+        required: true
+        foreign_key: { references: profiles.id, on_delete: cascade }
+      - name: body
+        type: text
+        required: true
+        check: "char_length(btrim(body)) BETWEEN 1 AND 10000"
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [thread_id, created_at]
+      - columns: [author_id]
+    rls:
+      - operations: [select]
+        using: "true"
+      - operations: [insert]
+        with_check: "author_id = auth.uid() AND created_at = now() AND public.can_post() AND EXISTS (SELECT 1 FROM threads t WHERE t.id = thread_id AND t.locked = false)"
+      - operations: [update]
+        using: "author_id = auth.uid() AND public.can_post() AND EXISTS (SELECT 1 FROM threads t WHERE t.id = thread_id AND t.locked = false)"
+        with_check: "author_id = auth.uid() AND public.reply_unchanged(id, thread_id, created_at)"
+      - operations: [delete]
+        using: "author_id = auth.uid() OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('moderator', 'admin'))"
+  reactions:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: user_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: thread_id
+        type: bigint
+        foreign_key: { references: threads.id, on_delete: cascade }
+        check: "(thread_id IS NULL) <> (reply_id IS NULL)"
+      - name: reply_id
+        type: bigint
+        foreign_key: { references: replies.id, on_delete: cascade }
+      - name: emoji
+        type: text
+        required: true
+        enum: [like, love, laugh, insightful]
+    indexes:
+      - columns: [user_id, thread_id, emoji]
+        unique: true
+        where: "thread_id IS NOT NULL"
+      - columns: [user_id, reply_id, emoji]
+        unique: true
+        where: "reply_id IS NOT NULL"
+      - columns: [user_id]
+      - columns: [thread_id]
+      - columns: [reply_id]
+    rls:
+      - operations: [select]
+        using: "true"
+      # Exactly one target: a thread or a reply.
+      - operations: [insert]
+        with_check: "user_id = auth.uid() AND ((thread_id IS NULL) <> (reply_id IS NULL))"
+      - operations: [delete]
+        using: "user_id = auth.uid()"
+  reports:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: reporter_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: thread_id
+        type: bigint
+        foreign_key: { references: threads.id, on_delete: cascade }
+        check: "(thread_id IS NULL) <> (reply_id IS NULL)"
+      - name: reply_id
+        type: bigint
+        foreign_key: { references: replies.id, on_delete: cascade }
+      - name: reason
+        type: text
+        required: true
+        check: "char_length(btrim(reason)) BETWEEN 1 AND 1000"
+      - name: status
+        type: text
+        required: true
+        default: open
+        enum: [open, resolved, dismissed]
+      - name: resolved_by
+        foreign_key: { references: auth.users.id, on_delete: set_null }
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [status, created_at]
+      - columns: [reporter_id]
+      - columns: [thread_id]
+      - columns: [reply_id]
+      - columns: [resolved_by]
+      - columns: [reporter_id, thread_id]
+        unique: true
+        where: "thread_id IS NOT NULL"
+      - columns: [reporter_id, reply_id]
+        unique: true
+        where: "reply_id IS NOT NULL"
+    rls:
+      - operations: [select]
+        using: "reporter_id = auth.uid() OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('moderator', 'admin'))"
+      - operations: [insert]
+        with_check: "reporter_id = auth.uid() AND status = 'open' AND ((thread_id IS NULL) <> (reply_id IS NULL))"
+      # Moderators close a report and sign it with their id.
+      - operations: [update]
+        using: "EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('moderator', 'admin'))"
+        with_check: "EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('moderator', 'admin')) AND ((status = 'open' AND resolved_by IS NULL) OR resolved_by = auth.uid())"
+rpc:
+  my_role:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set: { search_path: public }
+    returns:
+      type: text
+    body: |
+      BEGIN
+        RETURN (SELECT role FROM profiles WHERE id = auth.uid());
+      END;
+  can_post:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set: { search_path: public }
+    returns:
+      type: boolean
+    body: |
+      BEGIN
+        RETURN EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND NOT banned);
+      END;
+  thread_unchanged:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set: { search_path: public }
+    args:
+      - name: p_id
+        type: bigint
+        required: true
+      - name: p_pinned
+        type: boolean
+        required: true
+      - name: p_created_at
+        type: timestamptz
+        required: true
+    returns:
+      type: boolean
+    body: |
+      BEGIN
+        RETURN EXISTS (SELECT 1 FROM threads WHERE id = p_id AND pinned = p_pinned AND created_at = p_created_at);
+      END;
+  reply_unchanged:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set: { search_path: public }
+    args:
+      - name: p_id
+        type: bigint
+        required: true
+      - name: p_thread_id
+        type: bigint
+        required: true
+      - name: p_created_at
+        type: timestamptz
+        required: true
+    returns:
+      type: boolean
+    body: |
+      BEGIN
+        RETURN EXISTS (SELECT 1 FROM replies WHERE id = p_id AND thread_id = p_thread_id AND created_at = p_created_at);
+      END;
+  list_threads:
+    description: Threads with author, reply counts and last activity, pinned first
+    language: sql
+    volatility: stable
+    args:
+      - name: p_category_id
+        type: bigint
+        default: 0
+      - name: p_limit
+        type: integer
+        default: 20
+      - name: p_offset
+        type: integer
+        default: 0
+    returns:
+      type: "table(id bigint, category_id bigint, author_id uuid, author_name text, title text, pinned boolean, locked boolean, created_at timestamptz, reply_count bigint, last_activity_at timestamptz)"
+    body: |
+      SELECT t.id, t.category_id, t.author_id, p.display_name, t.title, t.pinned, t.locked, t.created_at,
+             count(r.id) AS reply_count,
+             COALESCE(max(r.created_at), t.created_at) AS last_activity_at
+      FROM threads t
+      LEFT JOIN profiles p ON p.id = t.author_id
+      LEFT JOIN replies r ON r.thread_id = t.id
+      WHERE COALESCE(p_category_id, 0) = 0 OR t.category_id = p_category_id
+      GROUP BY t.id, p.display_name
+      ORDER BY t.pinned DESC, COALESCE(max(r.created_at), t.created_at) DESC, t.id DESC
+      LIMIT LEAST(GREATEST(COALESCE(p_limit, 20), 1), 100) OFFSET GREATEST(COALESCE(p_offset, 0), 0)

@@ -1,0 +1,146 @@
+version: 1
+project:
+  name: Link Shortener
+  description: Short links with click analytics
+auth:
+  allow_anonymous: false
+  jwt_expiry: 1h
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+tables:
+  links:
+    rls_enabled: true
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: owner_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: slug
+        type: text
+        required: true
+        pattern: "^[a-zA-Z0-9_-]{3,64}$"
+      - name: target_url
+        type: text
+        required: true
+        pattern: "^https?://[^\\s]+$"
+        check: "char_length(target_url) <= 2048"
+      - name: title
+        type: text
+        check: "char_length(title) <= 200"
+      - name: active
+        type: boolean
+        required: true
+        default: true
+      - name: expires_at
+        type: timestamptz
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [slug]
+        unique: true
+      - columns: [owner_id, created_at]
+    rls:
+      - operations: [select]
+        using: "owner_id = auth.uid()"
+      - operations: [insert]
+        with_check: "owner_id = auth.uid()"
+      - operations: [update]
+        using: "owner_id = auth.uid()"
+        with_check: "owner_id = auth.uid()"
+      - operations: [delete]
+        using: "owner_id = auth.uid()"
+  clicks:
+    rls_enabled: true
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: link_id
+        type: bigint
+        required: true
+        foreign_key: { references: links.id, on_delete: cascade }
+      - name: clicked_at
+        type: timestamptz
+        required: true
+        default: now()
+      - name: referrer
+        type: text
+      - name: country
+        type: text
+    indexes:
+      - columns: [link_id, clicked_at]
+    rls:
+      - operations: [select]
+        using: "EXISTS (SELECT 1 FROM links l WHERE l.id = link_id AND l.owner_id = auth.uid())"
+functions:
+  go:
+    runtime: node
+    file: functions/go.js
+    auth_required: false
+    timeout: 10s
+rpc:
+  random_slug:
+    auth_required: true
+    description: A free 7-character slug (definer, so it sees every owner's slugs)
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set:
+      search_path: public
+    returns:
+      type: text
+    body: |
+      DECLARE
+        s text;
+      BEGIN
+        LOOP
+          s := substr(md5(random()::text || clock_timestamp()::text), 1, 7);
+          EXIT WHEN NOT EXISTS (SELECT 1 FROM public.links WHERE slug = s);
+        END LOOP;
+        RETURN s;
+      END;
+  link_stats:
+    auth_required: true
+    language: sql
+    volatility: stable
+    security: invoker
+    args:
+      - name: p_link_id
+        type: bigint
+        required: true
+      - name: p_days
+        type: integer
+        default: 30
+    returns:
+      type: "table(day date, clicks bigint)"
+    body: |
+      SELECT d::date, count(c.id)
+      FROM links l
+      CROSS JOIN generate_series(current_date - (LEAST(GREATEST(coalesce(p_days, 30), 1), 365) - 1), current_date, interval '1 day') AS d
+      LEFT JOIN clicks c ON c.link_id = l.id AND c.clicked_at >= d AND c.clicked_at < d + interval '1 day'
+      WHERE l.id = p_link_id
+      GROUP BY d ORDER BY d
+  link_top_referrers:
+    auth_required: true
+    language: sql
+    volatility: stable
+    security: invoker
+    args:
+      - name: p_link_id
+        type: bigint
+        required: true
+      - name: p_limit
+        type: integer
+        default: 10
+    returns:
+      type: "table(referrer text, clicks bigint)"
+    body: |
+      SELECT coalesce(c.referrer, '(direct)'), count(*)
+      FROM clicks c
+      WHERE c.link_id = p_link_id
+      GROUP BY 1 ORDER BY 2 DESC, 1
+      LIMIT LEAST(GREATEST(coalesce(p_limit, 10), 1), 100)

@@ -1,0 +1,27 @@
+id: invoicing
+name: Invoicing
+tagline: Clients, numbered invoices with line items, totals and Stripe Payment Links.
+description: A freelancer and small-business invoicing backend. Create clients, draft invoices with line items, and let the database number them and compute totals. Mark invoices sent, paid or void. Optionally generate a Stripe Payment Link per invoice and mark it paid automatically through a webhook. Everything except payment links works with zero setup.
+category: business
+tags: [invoices, billing, freelance, stripe, payments]
+secrets:
+  - name: INSTANCEZ_ENV_STRIPE_SECRET_KEY
+    label: Stripe secret key
+    description: Starts with sk_test_ or sk_live_. Lets the create-payment-link function create a payment page for an invoice.
+    needed_for: Payment links
+    required: true
+    url: https://dashboard.stripe.com/apikeys
+  - name: INSTANCEZ_ENV_STRIPE_WEBHOOK_SECRET
+    label: Stripe webhook signing secret
+    description: Starts with whsec_. Verifies payment events so paid invoices are marked paid automatically.
+    needed_for: Auto-marking invoices paid
+    required: false
+    url: https://dashboard.stripe.com/webhooks
+setup:
+  - "Create an invoice: rpc('create_invoice', { p_client_id }) returns the new invoice id with the next number (INV-0001, INV-0002, ...) for your account."
+  - "Save line items: rpc('save_invoice_items', { p_invoice_id, p_items: [{ description, quantity, unit_price_cents }] }). It replaces the items and recomputes subtotal, tax and total in one step. Only drafts can be edited; saving items clears any payment link."
+  - "Amounts are in the smallest currency unit (cents), at most 99999999 per invoice, 200 items max. Set tax_percent on the invoice before saving items; totals are recomputed when you send."
+  - "Change status with rpc('set_invoice_status', { p_invoice_id, p_status }): draft to sent, sent to paid, draft or sent to void."
+  - "Payment links: call the create-payment-link function with { invoice_id } on a sent invoice. Voiding does not deactivate an existing Stripe Payment Link, so deactivate it in Stripe."
+  - "To mark invoices paid automatically, add a Stripe webhook endpoint https://<your-app-url>/functions/v1/stripe-webhook subscribed to checkout.session.completed and checkout.session.async_payment_succeeded. Without it, call set_invoice_status yourself."
+  - "Numbers are gapless only if you void instead of deleting drafts. There are no PDFs, reminders, refunds or credit notes: add those in your own app."

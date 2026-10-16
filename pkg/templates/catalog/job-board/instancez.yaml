@@ -1,0 +1,295 @@
+version: 1
+project:
+  name: Job Board
+  description: Companies, jobs, applications with private resumes, saved jobs and search
+auth:
+  jwt_expiry: 1h
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+tables:
+  companies:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: owner_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: name
+        type: text
+        required: true
+        check: "char_length(name) BETWEEN 1 AND 120"
+      - name: slug
+        type: text
+        required: true
+        pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+      - name: website
+        type: text
+        pattern: "^https?://[^[:space:]]+$"
+        check: "char_length(website) <= 500"
+      - name: description
+        type: text
+        check: "char_length(description) <= 5000"
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [slug]
+        unique: true
+      - columns: [owner_id]
+    rls:
+      - operations: [select]
+        using: "true"
+      - operations: [insert]
+        with_check: "owner_id = auth.uid()"
+      - operations: [update]
+        using: "owner_id = auth.uid()"
+        with_check: "owner_id = auth.uid()"
+      - operations: [delete]
+        using: "owner_id = auth.uid()"
+  jobs:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: company_id
+        type: bigint
+        required: true
+        foreign_key: { references: companies.id, on_delete: cascade }
+      - name: title
+        type: text
+        required: true
+        check: "char_length(title) BETWEEN 1 AND 200"
+      - name: description
+        type: text
+        required: true
+        check: "char_length(description) BETWEEN 1 AND 20000"
+      - name: location
+        type: text
+        check: "char_length(location) <= 200"
+      - name: remote
+        type: text
+        required: true
+        default: onsite
+        enum: [onsite, hybrid, remote]
+      - name: employment_type
+        type: text
+        required: true
+        default: full_time
+        enum: [full_time, part_time, contract, internship]
+      - name: salary_min
+        type: integer
+        min: 0
+      - name: salary_max
+        type: integer
+        min: 0
+        check: "salary_max >= salary_min"
+      - name: salary_currency
+        type: text
+        required: true
+        default: usd
+        pattern: "^[a-z]{3}$"
+      - name: tags
+        type: text[]
+        check: "cardinality(tags) <= 10"
+      - name: status
+        type: text
+        required: true
+        default: draft
+        enum: [draft, open, closed]
+      - name: expires_at
+        type: timestamptz
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [status, created_at]
+      - columns: [company_id, status]
+    rls:
+      - operations: [select]
+        using: "(status = 'open' AND (expires_at IS NULL OR expires_at > now())) OR EXISTS (SELECT 1 FROM companies c WHERE c.id = company_id AND c.owner_id = auth.uid())"
+      - operations: [insert]
+        with_check: "EXISTS (SELECT 1 FROM companies c WHERE c.id = company_id AND c.owner_id = auth.uid())"
+      - operations: [update]
+        using: "EXISTS (SELECT 1 FROM companies c WHERE c.id = company_id AND c.owner_id = auth.uid())"
+        with_check: "EXISTS (SELECT 1 FROM companies c WHERE c.id = company_id AND c.owner_id = auth.uid())"
+      - operations: [delete]
+        using: "EXISTS (SELECT 1 FROM companies c WHERE c.id = company_id AND c.owner_id = auth.uid())"
+  applications:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: job_id
+        type: bigint
+        required: true
+        foreign_key: { references: jobs.id, on_delete: cascade }
+      - name: applicant_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: applicant_name
+        type: text
+        check: "char_length(applicant_name) <= 200"
+      - name: contact_email
+        type: text
+        pattern: "^[^@\\s]+@[^@\\s]+$"
+      - name: cover_letter
+        type: text
+        check: "char_length(cover_letter) <= 10000"
+      - name: resume_path
+        type: text
+      - name: status
+        type: text
+        required: true
+        default: submitted
+        enum: [submitted, reviewing, interview, offer, rejected, withdrawn]
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [job_id, applicant_id]
+        unique: true
+      - columns: [applicant_id, created_at]
+      - columns: [resume_path]
+    rls:
+      - operations: [select]
+        using: "applicant_id = auth.uid() OR EXISTS (SELECT 1 FROM jobs j JOIN companies c ON c.id = j.company_id WHERE j.id = job_id AND c.owner_id = auth.uid())"
+      - operations: [insert]
+        with_check: "applicant_id = auth.uid() AND status = 'submitted' AND (resume_path IS NULL OR resume_path LIKE auth.uid()::text || '/%') AND EXISTS (SELECT 1 FROM jobs j WHERE j.id = job_id AND j.status = 'open' AND (j.expires_at IS NULL OR j.expires_at > now()))"
+      - operations: [delete]
+        using: "applicant_id = auth.uid() AND status IN ('submitted', 'withdrawn')"
+  saved_jobs:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: user_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: job_id
+        type: bigint
+        required: true
+        foreign_key: { references: jobs.id, on_delete: cascade }
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [user_id, job_id]
+        unique: true
+      - columns: [job_id]
+    rls:
+      - operations: [select]
+        using: "user_id = auth.uid()"
+      - operations: [insert]
+        with_check: "user_id = auth.uid() AND EXISTS (SELECT 1 FROM jobs j WHERE j.id = job_id)"
+      - operations: [delete]
+        using: "user_id = auth.uid()"
+storage:
+  resumes:
+    public: false
+    max_size: 5MB
+    types: [application/pdf, application/msword, application/vnd.openxmlformats-officedocument.wordprocessingml.document]
+    rls:
+      - operations: [insert]
+        with_check: "uploaded_by = auth.uid() AND name LIKE auth.uid()::text || '/%'"
+      - operations: [select]
+        using: "uploaded_by = auth.uid() OR EXISTS (SELECT 1 FROM applications a WHERE a.resume_path = name AND a.job_id IN (SELECT j.id FROM jobs j WHERE j.company_id IN (SELECT c.id FROM companies c WHERE c.owner_id = auth.uid())))"
+      - operations: [delete]
+        using: "uploaded_by = auth.uid()"
+rpc:
+  withdraw_application:
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set: { search_path: public }
+    args:
+      - name: p_application_id
+        type: bigint
+        required: true
+    returns:
+      type: boolean
+    body: |
+      BEGIN
+        UPDATE applications SET status = 'withdrawn'
+          WHERE id = p_application_id AND applicant_id = auth.uid() AND status NOT IN ('withdrawn', 'offer', 'rejected');
+        RETURN FOUND;
+      END;
+  set_application_status:
+    description: Company owner moves an application to reviewing, interview, offer or rejected
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set: { search_path: public }
+    args:
+      - name: p_application_id
+        type: bigint
+        required: true
+      - name: p_status
+        type: text
+        required: true
+    returns:
+      type: boolean
+    body: |
+      BEGIN
+        IF p_status IS NULL OR p_status NOT IN ('reviewing', 'interview', 'offer', 'rejected') THEN
+          RAISE EXCEPTION 'invalid status' USING ERRCODE = '22023';
+        END IF;
+        UPDATE applications a SET status = p_status
+          WHERE a.id = p_application_id AND a.status <> 'withdrawn'
+            AND EXISTS (SELECT 1 FROM jobs j JOIN companies c ON c.id = j.company_id
+                        WHERE j.id = a.job_id AND c.owner_id = auth.uid());
+        RETURN FOUND;
+      END;
+  search_jobs:
+    description: Open jobs with optional text, remote, salary, tag and type filters, newest first
+    auth_required: false
+    language: sql
+    volatility: stable
+    args:
+      - name: p_query
+        type: text
+        default: "CAST(NULL AS text)"
+      - name: p_remote
+        type: text
+        default: "CAST(NULL AS text)"
+      - name: p_min_salary
+        type: integer
+        default: "CAST(NULL AS integer)"
+      - name: p_tags
+        type: "text[]"
+        default: "CAST(NULL AS text[])"
+      - name: p_employment_type
+        type: text
+        default: "CAST(NULL AS text)"
+      - name: p_currency
+        type: text
+        default: "CAST(NULL AS text)"
+      - name: p_limit
+        type: integer
+        default: 20
+      - name: p_offset
+        type: integer
+        default: 0
+    returns:
+      type: "table(id bigint, title text, company_id bigint, company_name text, location text, remote text, employment_type text, salary_min integer, salary_max integer, salary_currency text, tags text[], created_at timestamptz)"
+    body: |
+      SELECT j.id, j.title, j.company_id, c.name, j.location, j.remote, j.employment_type,
+             j.salary_min, j.salary_max, j.salary_currency, j.tags, j.created_at
+      FROM jobs j JOIN companies c ON c.id = j.company_id
+      WHERE j.status = 'open'
+        AND (j.expires_at IS NULL OR j.expires_at > now())
+        AND (nullif(btrim(left(p_query, 100)), '') IS NULL OR j.title ILIKE '%' || btrim(left(p_query, 100)) || '%' OR j.description ILIKE '%' || btrim(left(p_query, 100)) || '%' OR c.name ILIKE '%' || btrim(left(p_query, 100)) || '%')
+        AND (p_remote IS NULL OR j.remote = p_remote)
+        AND (p_employment_type IS NULL OR j.employment_type = p_employment_type)
+        AND (p_currency IS NULL OR j.salary_currency = lower(p_currency))
+        AND (p_min_salary IS NULL OR COALESCE(j.salary_max, j.salary_min) >= p_min_salary)
+        AND (p_tags IS NULL OR cardinality(p_tags) = 0 OR j.tags && p_tags)
+      ORDER BY j.created_at DESC, j.id DESC
+      LIMIT LEAST(GREATEST(COALESCE(p_limit, 20), 1), 100)
+      OFFSET GREATEST(COALESCE(p_offset, 0), 0)

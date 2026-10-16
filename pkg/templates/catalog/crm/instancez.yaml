@@ -1,0 +1,338 @@
+version: 1
+project:
+  name: Team CRM
+  description: Companies, contacts, deals, activities and tasks for a small team
+auth:
+  allow_anonymous: false
+  jwt_expiry: 1h
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+tables:
+  members:
+    fields:
+      - name: user_id
+        primary_key: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: name
+        type: text
+        required: true
+        pattern: "\\S"
+        check: "char_length(name) <= 200"
+      - name: role
+        type: text
+        required: true
+        default: member
+        enum: [member, admin]
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    rls:
+      - operations: [select]
+        using: "user_id = auth.uid() OR public.is_admin()"
+      - operations: [insert]
+        with_check: "public.is_admin()"
+      - operations: [update]
+        using: "public.is_admin()"
+        with_check: "public.is_admin()"
+      - operations: [delete]
+        using: "public.is_admin()"
+  companies:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: name
+        type: text
+        required: true
+        pattern: "\\S"
+        check: "char_length(name) <= 200"
+      - name: website
+        type: text
+        check: "char_length(website) <= 2048"
+      - name: industry
+        type: text
+        check: "char_length(industry) <= 100"
+      - name: tags
+        type: text[]
+      - name: owner_id
+        foreign_key: { references: auth.users.id, on_delete: set_null }
+      - name: created_by
+        foreign_key: { references: auth.users.id, on_delete: set_null }
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [name]
+      - columns: [owner_id]
+      - columns: [created_by]
+    rls:
+      - operations: [select]
+        using: "public.is_member()"
+      - operations: [insert]
+        with_check: "created_by = auth.uid() AND public.is_member()"
+      - operations: [update]
+        using: "public.is_member()"
+        with_check: "public.is_member()"
+      - operations: [delete]
+        using: "public.is_admin()"
+  contacts:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: company_id
+        type: bigint
+        foreign_key: { references: companies.id, on_delete: set_null }
+      - name: first_name
+        type: text
+        required: true
+        pattern: "\\S"
+        check: "char_length(first_name) <= 100"
+      - name: last_name
+        type: text
+        check: "char_length(last_name) <= 100"
+      - name: email
+        type: text
+        pattern: "^[^@\\s]+@[^@\\s]+$"
+        check: "char_length(email) <= 320"
+      - name: phone
+        type: text
+        check: "char_length(phone) <= 50"
+      - name: job_title
+        type: text
+        check: "char_length(job_title) <= 100"
+      - name: tags
+        type: text[]
+      - name: owner_id
+        foreign_key: { references: auth.users.id, on_delete: set_null }
+      - name: created_by
+        foreign_key: { references: auth.users.id, on_delete: set_null }
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [company_id]
+      - columns: [email]
+      - columns: [owner_id]
+      - columns: [created_by]
+    rls:
+      - operations: [select]
+        using: "public.is_member()"
+      - operations: [insert]
+        with_check: "created_by = auth.uid() AND public.is_member()"
+      - operations: [update]
+        using: "public.is_member()"
+        with_check: "public.is_member()"
+      - operations: [delete]
+        using: "public.is_admin()"
+  deals:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: company_id
+        type: bigint
+        foreign_key: { references: companies.id, on_delete: set_null }
+      - name: contact_id
+        type: bigint
+        foreign_key: { references: contacts.id, on_delete: set_null }
+      - name: title
+        type: text
+        required: true
+        pattern: "\\S"
+        check: "char_length(title) <= 200"
+      - name: stage
+        type: text
+        required: true
+        default: lead
+        enum: [lead, qualified, proposal, negotiation, won, lost]
+      - name: value_cents
+        type: bigint
+        required: true
+        default: 0
+        min: 0
+        max: 100000000000000
+      - name: currency
+        type: text
+        required: true
+        default: usd
+        pattern: "^[a-z]{3}$"
+      - name: expected_close
+        type: date
+      - name: closed_at
+        type: timestamptz
+        check: "(stage IN ('won', 'lost')) = (closed_at IS NOT NULL)"
+      - name: owner_id
+        foreign_key: { references: auth.users.id, on_delete: set_null }
+      - name: created_by
+        foreign_key: { references: auth.users.id, on_delete: set_null }
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [stage]
+      - columns: [owner_id, stage]
+      - columns: [company_id]
+      - columns: [contact_id]
+      - columns: [created_by]
+    rls:
+      - operations: [select]
+        using: "public.is_member()"
+      - operations: [insert]
+        with_check: "created_by = auth.uid() AND public.is_member()"
+      - operations: [update]
+        using: "public.is_member()"
+        with_check: "public.is_member()"
+      - operations: [delete]
+        using: "public.is_admin()"
+  activities:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: kind
+        type: text
+        required: true
+        default: note
+        enum: [note, call, email, meeting]
+      - name: body
+        type: text
+        required: true
+        pattern: "\\S"
+        check: "char_length(body) <= 10000"
+      - name: deal_id
+        type: bigint
+        foreign_key: { references: deals.id, on_delete: cascade }
+      - name: contact_id
+        type: bigint
+        foreign_key: { references: contacts.id, on_delete: cascade }
+      - name: company_id
+        type: bigint
+        foreign_key: { references: companies.id, on_delete: cascade }
+      - name: occurred_at
+        type: timestamptz
+        required: true
+        default: now()
+      - name: created_by
+        foreign_key: { references: auth.users.id, on_delete: set_null }
+    indexes:
+      - columns: [deal_id, occurred_at]
+      - columns: [contact_id, occurred_at]
+      - columns: [company_id, occurred_at]
+      - columns: [created_by]
+    rls:
+      - operations: [select]
+        using: "public.is_member()"
+      - operations: [insert]
+        with_check: "created_by = auth.uid() AND public.is_member() AND (deal_id IS NOT NULL OR contact_id IS NOT NULL OR company_id IS NOT NULL)"
+      - operations: [update]
+        using: "created_by = auth.uid() AND public.is_member()"
+        with_check: "created_by = auth.uid() AND public.is_member()"
+      - operations: [delete]
+        using: "created_by = auth.uid() OR public.is_admin()"
+  tasks:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: title
+        type: text
+        required: true
+        pattern: "\\S"
+        check: "char_length(title) <= 200"
+      - name: due_date
+        type: date
+      - name: done
+        type: boolean
+        required: true
+        default: false
+      - name: completed_at
+        type: timestamptz
+        check: "done = (completed_at IS NOT NULL)"
+      - name: assignee_id
+        foreign_key: { references: auth.users.id, on_delete: set_null }
+      - name: deal_id
+        type: bigint
+        foreign_key: { references: deals.id, on_delete: cascade }
+      - name: contact_id
+        type: bigint
+        foreign_key: { references: contacts.id, on_delete: cascade }
+      - name: created_by
+        foreign_key: { references: auth.users.id, on_delete: set_null }
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [assignee_id, done, due_date]
+      - columns: [deal_id]
+      - columns: [contact_id]
+      - columns: [created_by]
+    rls:
+      - operations: [select]
+        using: "public.is_member()"
+      - operations: [insert]
+        with_check: "created_by = auth.uid() AND public.is_member()"
+      - operations: [update]
+        using: "public.is_member()"
+        with_check: "public.is_member()"
+      - operations: [delete]
+        using: "public.is_admin()"
+rpc:
+  is_member:
+    description: True when the caller is on the team
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    returns:
+      type: boolean
+    body: |
+      BEGIN
+        RETURN EXISTS (SELECT 1 FROM public.members WHERE user_id = auth.uid());
+      END;
+  is_admin:
+    description: True when the caller is a team admin
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    returns:
+      type: boolean
+    body: |
+      BEGIN
+        RETURN EXISTS (SELECT 1 FROM public.members WHERE user_id = auth.uid() AND role = 'admin');
+      END;
+  pipeline_summary:
+    description: Deal count and total value per stage and currency, in pipeline order
+    auth_required: true
+    language: sql
+    volatility: stable
+    returns:
+      type: "table(stage text, currency text, deal_count bigint, total_cents bigint)"
+    body: |
+      SELECT s.stage, d.currency, count(d.id), COALESCE(sum(d.value_cents), 0)::bigint
+      FROM unnest(ARRAY['lead','qualified','proposal','negotiation','won','lost']) WITH ORDINALITY AS s(stage, ord)
+      LEFT JOIN deals d ON d.stage = s.stage
+      GROUP BY s.stage, s.ord, d.currency
+      ORDER BY s.ord, d.currency
+  team_members:
+    description: Teammates, for owner and assignee pickers
+    auth_required: true
+    language: sql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    returns:
+      type: "table(user_id uuid, name text, role text)"
+    body: |
+      SELECT m.user_id, m.name, m.role FROM public.members m
+      WHERE EXISTS (SELECT 1 FROM public.members me WHERE me.user_id = auth.uid())
+      ORDER BY m.name

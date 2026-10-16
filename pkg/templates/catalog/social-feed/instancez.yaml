@@ -1,0 +1,229 @@
+version: 1
+project:
+  name: Social Feed
+  description: Posts, follows, likes and a home feed
+auth:
+  jwt_expiry: 1h
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+tables:
+  profiles:
+    fields:
+      - name: id
+        primary_key: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: username
+        type: text
+        required: true
+        pattern: "^[a-z0-9_]{3,20}$"
+      - name: display_name
+        type: text
+        check: "char_length(display_name) <= 50"
+      - name: bio
+        type: text
+        check: "char_length(bio) <= 160"
+      - name: avatar_path
+        type: text
+        check: "char_length(avatar_path) <= 300"
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [username]
+        unique: true
+    rls:
+      - operations: [select]
+        using: "true"
+      - operations: [insert]
+        with_check: "auth.uid() = id AND (avatar_path IS NULL OR avatar_path LIKE auth.uid()::text || '/%')"
+      - operations: [update]
+        using: "auth.uid() = id"
+        with_check: "auth.uid() = id AND (avatar_path IS NULL OR avatar_path LIKE auth.uid()::text || '/%')"
+  posts:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: author_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: body
+        type: text
+        required: true
+        check: "char_length(btrim(body)) BETWEEN 1 AND 500"
+      - name: image_path
+        type: text
+        check: "char_length(image_path) <= 300"
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [author_id, created_at]
+      - columns: [created_at]
+    rls:
+      - operations: [select]
+        using: "true"
+      - operations: [insert]
+        with_check: "author_id = auth.uid() AND created_at <= now() AND (image_path IS NULL OR image_path LIKE auth.uid()::text || '/%')"
+      - operations: [update]
+        using: "author_id = auth.uid()"
+        with_check: "author_id = auth.uid() AND created_at <= now() AND (image_path IS NULL OR image_path LIKE auth.uid()::text || '/%')"
+      - operations: [delete]
+        using: "author_id = auth.uid()"
+  comments:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: post_id
+        type: bigint
+        required: true
+        foreign_key: { references: posts.id, on_delete: cascade }
+      - name: author_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: body
+        type: text
+        required: true
+        check: "char_length(btrim(body)) BETWEEN 1 AND 500"
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [post_id, created_at]
+      - columns: [author_id]
+    rls:
+      - operations: [select]
+        using: "true"
+      - operations: [insert]
+        with_check: "author_id = auth.uid() AND created_at <= now()"
+      - operations: [update]
+        using: "author_id = auth.uid()"
+        with_check: "author_id = auth.uid() AND created_at <= now()"
+      - operations: [delete]
+        using: "author_id = auth.uid() OR EXISTS (SELECT 1 FROM posts p WHERE p.id = post_id AND p.author_id = auth.uid())"
+  follows:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: follower_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: followee_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [follower_id, followee_id]
+        unique: true
+      - columns: [followee_id]
+    rls:
+      - operations: [select]
+        using: "true"
+      - operations: [insert]
+        with_check: "follower_id = auth.uid() AND follower_id <> followee_id"
+      - operations: [delete]
+        using: "follower_id = auth.uid()"
+  likes:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: user_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: post_id
+        type: bigint
+        required: true
+        foreign_key: { references: posts.id, on_delete: cascade }
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [user_id, post_id]
+        unique: true
+      - columns: [post_id]
+    rls:
+      - operations: [select]
+        using: "true"
+      - operations: [insert]
+        with_check: "user_id = auth.uid()"
+      - operations: [delete]
+        using: "user_id = auth.uid()"
+storage:
+  post_images:
+    public: true
+    max_size: 5MB
+    types: [image/*]
+    rls:
+      - operations: [insert]
+        with_check: "auth.uid() IS NOT NULL AND name LIKE auth.uid()::text || '/%'"
+      - operations: [update]
+        using: "auth.uid() IS NOT NULL AND name LIKE auth.uid()::text || '/%'"
+        with_check: "auth.uid() IS NOT NULL AND name LIKE auth.uid()::text || '/%'"
+      - operations: [delete]
+        using: "auth.uid() IS NOT NULL AND name LIKE auth.uid()::text || '/%'"
+rpc:
+  home_feed:
+    description: Posts from followed users and yourself, newest first, cursor paginated
+    auth_required: true
+    language: sql
+    volatility: stable
+    args:
+      - name: p_limit
+        type: integer
+        default: 20
+      - name: p_before
+        type: timestamptz
+        default: infinity
+      - name: p_before_id
+        type: bigint
+        default: 9223372036854775807
+    returns:
+      type: "table(id bigint, author_id uuid, body text, image_path text, created_at timestamptz, like_count bigint, liked_by_me boolean, comment_count bigint)"
+    body: |
+      SELECT p.id, p.author_id, p.body, p.image_path, p.created_at,
+             (SELECT count(*) FROM likes l WHERE l.post_id = p.id) AS like_count,
+             EXISTS (SELECT 1 FROM likes l WHERE l.post_id = p.id AND l.user_id = auth.uid()) AS liked_by_me,
+             (SELECT count(*) FROM comments c WHERE c.post_id = p.id) AS comment_count
+      FROM posts p
+      WHERE (p.created_at, p.id) < (COALESCE(p_before, 'infinity'::timestamptz), COALESCE(p_before_id, 9223372036854775807))
+        AND (p.author_id = auth.uid()
+             OR p.author_id IN (SELECT f.followee_id FROM follows f WHERE f.follower_id = auth.uid()))
+      ORDER BY p.created_at DESC, p.id DESC
+      LIMIT LEAST(GREATEST(COALESCE(p_limit, 20), 1), 100)
+  follow_user:
+    description: Follow a user; repeating it is a no-op
+    auth_required: true
+    language: sql
+    volatility: volatile
+    args:
+      - name: p_user_id
+        type: uuid
+        required: true
+    returns:
+      type: void
+    body: |
+      INSERT INTO follows (follower_id, followee_id) VALUES (auth.uid(), p_user_id)
+      ON CONFLICT (follower_id, followee_id) DO NOTHING
+  unfollow_user:
+    description: Unfollow a user; repeating it is a no-op
+    auth_required: true
+    language: sql
+    volatility: volatile
+    args:
+      - name: p_user_id
+        type: uuid
+        required: true
+    returns:
+      type: void
+    body: |
+      DELETE FROM follows WHERE follower_id = auth.uid() AND followee_id = p_user_id

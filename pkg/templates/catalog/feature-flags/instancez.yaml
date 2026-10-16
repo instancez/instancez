@@ -1,0 +1,298 @@
+version: 1
+project:
+  name: Feature Flags
+  description: Flags, rollouts, targeting and audit log
+auth:
+  jwt_expiry: 1h
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+tables:
+  projects:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: owner_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: name
+        type: text
+        required: true
+        check: "char_length(name) between 1 and 100"
+      - name: slug
+        type: text
+        required: true
+        pattern: "^[a-z0-9-]{1,50}$"
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [slug]
+        unique: true
+      - columns: [owner_id]
+    rls:
+      # Created through create_project so every project starts with environments.
+      - operations: [select]
+        using: "owner_id = auth.uid()"
+      - operations: [update]
+        using: "owner_id = auth.uid()"
+        with_check: "owner_id = auth.uid()"
+      - operations: [delete]
+        using: "owner_id = auth.uid()"
+  environments:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: project_id
+        type: bigint
+        required: true
+        foreign_key: { references: projects.id, on_delete: cascade }
+      - name: key
+        type: text
+        required: true
+        pattern: "^[a-z0-9-]{1,50}$"
+      - name: client_key
+        type: text
+        required: true
+        default: uuid_v4()
+        check: "char_length(client_key) >= 16"
+    indexes:
+      - columns: [project_id, key]
+        unique: true
+      - columns: [client_key]
+        unique: true
+    rls:
+      - operations: [select]
+        using: "EXISTS (SELECT 1 FROM projects p WHERE p.id = environments.project_id AND p.owner_id = auth.uid())"
+      - operations: [insert]
+        with_check: "EXISTS (SELECT 1 FROM projects p WHERE p.id = environments.project_id AND p.owner_id = auth.uid())"
+      - operations: [update]
+        using: "EXISTS (SELECT 1 FROM projects p WHERE p.id = environments.project_id AND p.owner_id = auth.uid())"
+        with_check: "EXISTS (SELECT 1 FROM projects p WHERE p.id = environments.project_id AND p.owner_id = auth.uid())"
+      - operations: [delete]
+        using: "EXISTS (SELECT 1 FROM projects p WHERE p.id = environments.project_id AND p.owner_id = auth.uid())"
+  flags:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: project_id
+        type: bigint
+        required: true
+        foreign_key: { references: projects.id, on_delete: cascade }
+      - name: key
+        type: text
+        required: true
+        pattern: "^[a-z0-9_.-]{1,100}$"
+      - name: description
+        type: text
+        check: "char_length(description) <= 500"
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [project_id, key]
+        unique: true
+    rls:
+      - operations: [select]
+        using: "EXISTS (SELECT 1 FROM projects p WHERE p.id = flags.project_id AND p.owner_id = auth.uid())"
+      - operations: [insert]
+        with_check: "EXISTS (SELECT 1 FROM projects p WHERE p.id = flags.project_id AND p.owner_id = auth.uid())"
+      - operations: [update]
+        using: "EXISTS (SELECT 1 FROM projects p WHERE p.id = flags.project_id AND p.owner_id = auth.uid())"
+        with_check: "EXISTS (SELECT 1 FROM projects p WHERE p.id = flags.project_id AND p.owner_id = auth.uid())"
+      - operations: [delete]
+        using: "EXISTS (SELECT 1 FROM projects p WHERE p.id = flags.project_id AND p.owner_id = auth.uid())"
+  flag_configs:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: flag_id
+        type: bigint
+        required: true
+        foreign_key: { references: flags.id, on_delete: cascade }
+      - name: environment_id
+        type: bigint
+        required: true
+        foreign_key: { references: environments.id, on_delete: cascade }
+      - name: enabled
+        type: boolean
+        required: true
+        default: false
+      - name: rollout_percentage
+        type: integer
+        required: true
+        default: 100
+        min: 0
+        max: 100
+      - name: rules
+        type: jsonb
+        required: true
+        default: "[]"
+      - name: updated_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [flag_id, environment_id]
+        unique: true
+      - columns: [environment_id]
+    rls:
+      # Writes go through set_flag_config so each change is audited.
+      - operations: [select]
+        using: "EXISTS (SELECT 1 FROM flags f JOIN projects p ON p.id = f.project_id WHERE f.id = flag_configs.flag_id AND p.owner_id = auth.uid())"
+  audit_log:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: project_id
+        type: bigint
+        required: true
+        foreign_key: { references: projects.id, on_delete: cascade }
+      - name: actor_id
+        foreign_key: { references: auth.users.id, on_delete: set_null }
+      - name: flag_key
+        type: text
+        required: true
+      - name: environment_key
+        type: text
+        required: true
+      - name: before
+        type: jsonb
+      - name: after
+        type: jsonb
+        required: true
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [project_id, created_at]
+      - columns: [actor_id]
+    rls:
+      - operations: [select]
+        using: "EXISTS (SELECT 1 FROM projects p WHERE p.id = audit_log.project_id AND p.owner_id = auth.uid())"
+functions:
+  evaluate:
+    runtime: node
+    file: functions/evaluate.js
+    auth_required: false
+    timeout: 10s
+rpc:
+  create_project:
+    description: Create a project with development and production environments
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set: { search_path: "" }
+    args:
+      - name: p_name
+        type: text
+        required: true
+      - name: p_slug
+        type: text
+        required: true
+    returns:
+      type: jsonb
+    body: |
+      DECLARE
+        v_id bigint;
+      BEGIN
+        IF auth.uid() IS NULL THEN RAISE EXCEPTION 'not authenticated'; END IF;
+        IF p_name IS NULL OR char_length(btrim(p_name)) NOT BETWEEN 1 AND 100 THEN RAISE EXCEPTION 'name must be 1-100 characters'; END IF;
+        INSERT INTO public.projects (owner_id, name, slug) VALUES (auth.uid(), btrim(p_name), p_slug) RETURNING id INTO v_id;
+        INSERT INTO public.environments (project_id, key) VALUES (v_id, 'development'), (v_id, 'production');
+        RETURN jsonb_build_object('id', v_id, 'slug', p_slug);
+      END;
+  set_flag_config:
+    description: Upsert a flag's config for one environment and write the audit log
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set: { search_path: "" }
+    args:
+      - name: p_flag_id
+        type: bigint
+        required: true
+      - name: p_environment_id
+        type: bigint
+        required: true
+      - name: p_enabled
+        type: boolean
+        required: true
+      - name: p_rollout
+        type: integer
+        default: 100
+      - name: p_rules
+        type: jsonb
+        default: "[]"
+    returns:
+      type: jsonb
+    body: |
+      DECLARE
+        v_project bigint;
+        v_flag text;
+        v_env text;
+        v_before jsonb;
+        v_after jsonb;
+      BEGIN
+        IF auth.uid() IS NULL THEN RAISE EXCEPTION 'not authenticated'; END IF;
+        SELECT f.project_id, f.key INTO v_project, v_flag
+          FROM public.flags f JOIN public.projects p ON p.id = f.project_id
+          WHERE f.id = p_flag_id AND p.owner_id = auth.uid()
+          FOR UPDATE OF f;
+        IF v_project IS NULL THEN RAISE EXCEPTION 'flag not found'; END IF;
+        SELECT e.key INTO v_env FROM public.environments e WHERE e.id = p_environment_id AND e.project_id = v_project;
+        IF v_env IS NULL THEN RAISE EXCEPTION 'environment not found'; END IF;
+        IF p_rollout IS NULL OR p_rollout < 0 OR p_rollout > 100 THEN RAISE EXCEPTION 'rollout must be 0-100'; END IF;
+        IF p_rules IS NULL OR jsonb_typeof(p_rules) <> 'array' THEN RAISE EXCEPTION 'rules must be a JSON array'; END IF;
+        IF jsonb_array_length(p_rules) > 50 THEN RAISE EXCEPTION 'at most 50 rules'; END IF;
+        IF EXISTS (
+          SELECT 1 FROM jsonb_array_elements(p_rules) r
+          WHERE jsonb_typeof(r) IS DISTINCT FROM 'object'
+             OR jsonb_typeof(r->'attribute') IS DISTINCT FROM 'string'
+             OR NOT (COALESCE(r->>'op', '') = ANY (ARRAY['eq','neq','in','not_in','contains','gt','lt']))
+             OR (r->>'op' IN ('in','not_in') AND jsonb_typeof(r->'value') IS DISTINCT FROM 'array')
+             OR (r->>'op' NOT IN ('in','not_in') AND COALESCE(jsonb_typeof(r->'value'), '') NOT IN ('string','number','boolean'))
+        ) THEN RAISE EXCEPTION 'each rule needs attribute, op and value (in/not_in take an array)'; END IF;
+
+        SELECT jsonb_build_object('enabled', enabled, 'rollout', rollout_percentage, 'rules', rules) INTO v_before
+          FROM public.flag_configs WHERE flag_id = p_flag_id AND environment_id = p_environment_id;
+        INSERT INTO public.flag_configs (flag_id, environment_id, enabled, rollout_percentage, rules)
+          VALUES (p_flag_id, p_environment_id, p_enabled, p_rollout, p_rules)
+          ON CONFLICT (flag_id, environment_id) DO UPDATE
+          SET enabled = EXCLUDED.enabled, rollout_percentage = EXCLUDED.rollout_percentage,
+              rules = EXCLUDED.rules, updated_at = now();
+        v_after := jsonb_build_object('enabled', p_enabled, 'rollout', p_rollout, 'rules', p_rules);
+        INSERT INTO public.audit_log (project_id, actor_id, flag_key, environment_key, before, after)
+          VALUES (v_project, auth.uid(), v_flag, v_env, v_before, v_after);
+        RETURN v_after;
+      END;
+  flag_snapshot:
+    description: All flag configs for an environment client key, used by the evaluate function
+    language: sql
+    volatility: stable
+    security: definer
+    set: { search_path: "" }
+    args:
+      - name: p_client_key
+        type: text
+        required: true
+    returns:
+      type: jsonb
+    body: |
+      SELECT CASE WHEN EXISTS (SELECT 1 FROM public.environments e0 WHERE e0.client_key = p_client_key) THEN (
+        SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                 'key', f.key, 'enabled', c.enabled, 'rollout', c.rollout_percentage, 'rules', c.rules)), '[]'::jsonb)
+        FROM public.environments e
+        JOIN public.flags f ON f.project_id = e.project_id
+        LEFT JOIN public.flag_configs c ON c.flag_id = f.id AND c.environment_id = e.id
+        WHERE e.client_key = p_client_key
+      ) END

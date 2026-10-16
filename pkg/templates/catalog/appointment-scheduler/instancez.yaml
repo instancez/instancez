@@ -1,0 +1,334 @@
+version: 1
+project:
+  name: Appointment Scheduler
+  description: Services, weekly availability and double-booking-safe bookings
+auth:
+  jwt_expiry: 1h
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+tables:
+  profiles:
+    rls_enabled: true
+    fields:
+      - name: id
+        primary_key: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: full_name
+        type: text
+        check: "char_length(full_name) <= 120"
+      - name: phone
+        type: text
+        check: "char_length(phone) <= 40"
+      - name: role
+        type: text
+        required: true
+        default: customer
+        enum: [customer, admin]
+    rls:
+      - operations: [select]
+        using: "auth.uid() = id OR public.is_admin()"
+      - operations: [insert]
+        with_check: "auth.uid() = id AND role = 'customer'"
+      - operations: [update]
+        using: "auth.uid() = id"
+        with_check: "auth.uid() = id AND role = public.my_role()"
+  providers:
+    rls_enabled: true
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: name
+        type: text
+        required: true
+        check: "char_length(name) BETWEEN 1 AND 120"
+      - name: bio
+        type: text
+        check: "char_length(bio) <= 2000"
+      - name: timezone
+        type: text
+        required: true
+        default: UTC
+      - name: active
+        type: boolean
+        required: true
+        default: true
+    rls:
+      - operations: [select]
+        using: "active = true OR public.is_admin()"
+      - operations: [insert]
+        with_check: "public.is_admin()"
+      - operations: [update]
+        using: "public.is_admin()"
+        with_check: "public.is_admin()"
+      - operations: [delete]
+        using: "public.is_admin()"
+  services:
+    rls_enabled: true
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: provider_id
+        type: bigint
+        required: true
+        foreign_key: { references: providers.id, on_delete: cascade }
+      - name: name
+        type: text
+        required: true
+        check: "char_length(name) BETWEEN 1 AND 120"
+      - name: description
+        type: text
+        check: "char_length(description) <= 2000"
+      - name: duration_minutes
+        type: integer
+        required: true
+        min: 5
+        max: 480
+      - name: price_cents
+        type: integer
+        min: 0
+      - name: cancel_hours_before
+        type: integer
+        required: true
+        default: 2
+        min: 0
+        max: 720
+      - name: active
+        type: boolean
+        required: true
+        default: true
+    indexes:
+      - columns: [provider_id]
+    rls:
+      - operations: [select]
+        using: "public.is_admin() OR (active AND EXISTS (SELECT 1 FROM providers p WHERE p.id = provider_id AND p.active))"
+      - operations: [insert]
+        with_check: "public.is_admin()"
+      - operations: [update]
+        using: "public.is_admin()"
+        with_check: "public.is_admin()"
+      - operations: [delete]
+        using: "public.is_admin()"
+  availability_rules:
+    rls_enabled: true
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: provider_id
+        type: bigint
+        required: true
+        foreign_key: { references: providers.id, on_delete: cascade }
+      - name: weekday
+        type: smallint
+        required: true
+        min: 0
+        max: 6
+      - name: start_time
+        type: time
+        required: true
+      - name: end_time
+        type: time
+        required: true
+        check: "end_time > start_time"
+    indexes:
+      - columns: [provider_id, weekday]
+    rls:
+      - operations: [select]
+        using: "public.is_admin() OR EXISTS (SELECT 1 FROM providers p WHERE p.id = provider_id AND p.active)"
+      - operations: [insert]
+        with_check: "public.is_admin()"
+      - operations: [update]
+        using: "public.is_admin()"
+        with_check: "public.is_admin()"
+      - operations: [delete]
+        using: "public.is_admin()"
+  bookings:
+    rls_enabled: true
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: service_id
+        type: bigint
+        required: true
+        foreign_key: { references: services.id, on_delete: restrict }
+      - name: provider_id
+        type: bigint
+        required: true
+        foreign_key: { references: providers.id, on_delete: restrict }
+      - name: customer_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: starts_at
+        type: timestamptz
+        required: true
+      - name: ends_at
+        type: timestamptz
+        required: true
+        check: "ends_at > starts_at"
+      - name: status
+        type: text
+        required: true
+        default: confirmed
+        enum: [confirmed, cancelled, completed]
+      - name: notes
+        type: text
+        check: "char_length(notes) <= 1000"
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+      - name: cancelled_at
+        type: timestamptz
+    indexes:
+      - columns: [provider_id, starts_at]
+        unique: true
+        where: "status = 'confirmed'"
+      - columns: [customer_id, starts_at]
+      - columns: [provider_id, status, starts_at]
+    rls:
+      - operations: [select]
+        using: "customer_id = auth.uid() OR public.is_admin()"
+      - operations: [update]
+        using: "public.is_admin()"
+        with_check: "public.is_admin()"
+functions:
+  book:
+    runtime: node
+    file: functions/book.js
+    auth_required: true
+    timeout: 20s
+    env:
+      RESEND_API_KEY: ${INSTANCEZ_ENV_RESEND_API_KEY:-}
+      FROM_ADDRESS: ${INSTANCEZ_ENV_FROM_ADDRESS:-Bookings <onboarding@resend.dev>}
+rpc:
+  my_role:
+    auth_required: false
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set: { search_path: public }
+    returns:
+      type: text
+    body: |
+      BEGIN RETURN (SELECT role FROM profiles WHERE id = auth.uid()); END;
+  is_admin:
+    auth_required: false
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set: { search_path: public }
+    returns:
+      type: boolean
+    body: |
+      BEGIN RETURN (SELECT EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')); END;
+  available_slots:
+    auth_required: false
+    language: sql
+    volatility: stable
+    security: definer
+    set: { search_path: public }
+    args:
+      - name: p_service_id
+        type: bigint
+        required: true
+      - name: p_day
+        type: date
+        required: true
+    returns:
+      type: "table(starts_at timestamptz, ends_at timestamptz)"
+    body: |
+      SELECT DISTINCT s.t, s.t + make_interval(mins => sv.duration_minutes)
+      FROM services sv
+      JOIN providers p ON p.id = sv.provider_id AND p.active
+      JOIN availability_rules r ON r.provider_id = p.id AND r.weekday = EXTRACT(dow FROM p_day)::int
+      CROSS JOIN LATERAL generate_series(
+        (p_day + r.start_time) AT TIME ZONE p.timezone,
+        (p_day + r.end_time) AT TIME ZONE p.timezone - make_interval(mins => sv.duration_minutes),
+        make_interval(mins => sv.duration_minutes)
+      ) AS s(t)
+      WHERE sv.id = p_service_id AND sv.active AND s.t > now() AND p_day <= current_date + 365
+        AND NOT EXISTS (
+          SELECT 1 FROM bookings b
+          WHERE b.provider_id = p.id AND b.status = 'confirmed'
+            AND b.starts_at < s.t + make_interval(mins => sv.duration_minutes) AND b.ends_at > s.t
+        )
+      ORDER BY s.t
+  book_slot:
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set: { search_path: public }
+    args:
+      - name: p_service_id
+        type: bigint
+        required: true
+      - name: p_starts_at
+        type: timestamptz
+        required: true
+      - name: p_notes
+        type: text
+        default: "CAST(NULL AS text)"
+    returns:
+      type: bigint
+    body: |
+      DECLARE
+        v_service services%ROWTYPE;
+        v_tz text;
+        v_id bigint;
+      BEGIN
+        IF auth.uid() IS NULL THEN
+          RAISE EXCEPTION 'sign in to book' USING ERRCODE = '42501';
+        END IF;
+        SELECT * INTO v_service FROM services WHERE id = p_service_id AND active;
+        IF NOT FOUND THEN
+          RAISE EXCEPTION 'service not found' USING ERRCODE = 'P0002';
+        END IF;
+        SELECT timezone INTO v_tz FROM providers WHERE id = v_service.provider_id AND active;
+        IF NOT FOUND THEN
+          RAISE EXCEPTION 'provider not available' USING ERRCODE = 'P0002';
+        END IF;
+        PERFORM pg_advisory_xact_lock(v_service.provider_id);
+        IF (SELECT count(*) FROM bookings WHERE customer_id = auth.uid() AND status = 'confirmed' AND ends_at > now()) >= 20 THEN
+          RAISE EXCEPTION 'too many upcoming bookings' USING ERRCODE = '53400';
+        END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM available_slots(p_service_id, (p_starts_at AT TIME ZONE v_tz)::date) a WHERE a.starts_at = p_starts_at
+        ) THEN
+          RAISE EXCEPTION 'slot is not available' USING ERRCODE = '23P01';
+        END IF;
+        INSERT INTO bookings (service_id, provider_id, customer_id, starts_at, ends_at, notes)
+        VALUES (p_service_id, v_service.provider_id, auth.uid(), p_starts_at,
+                p_starts_at + make_interval(mins => v_service.duration_minutes), left(p_notes, 1000))
+        RETURNING id INTO v_id;
+        RETURN v_id;
+      END;
+  cancel_booking:
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set: { search_path: public }
+    args:
+      - name: p_booking_id
+        type: bigint
+        required: true
+    returns:
+      type: boolean
+    body: |
+      DECLARE
+        v_done bigint;
+      BEGIN
+        UPDATE bookings b SET status = 'cancelled', cancelled_at = now()
+        FROM services s
+        WHERE b.id = p_booking_id AND s.id = b.service_id AND b.status = 'confirmed'
+          AND (is_admin() OR (b.customer_id = auth.uid() AND b.starts_at > now() + make_interval(hours => s.cancel_hours_before)))
+        RETURNING b.id INTO v_done;
+        IF v_done IS NULL AND EXISTS (SELECT 1 FROM bookings WHERE id = p_booking_id AND customer_id = auth.uid() AND status = 'confirmed') THEN
+          RAISE EXCEPTION 'too late to cancel' USING ERRCODE = '55000';
+        END IF;
+        RETURN v_done IS NOT NULL;
+      END;

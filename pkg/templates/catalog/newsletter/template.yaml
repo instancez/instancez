@@ -1,0 +1,32 @@
+id: newsletter
+name: Newsletter
+tagline: Double opt-in subscribers, draft issues and one-call sending through Resend.
+description: A newsletter backend. Visitors subscribe and confirm by email, you write issues as drafts, then send them to confirmed subscribers with an unsubscribe link in every email. Subscribers and drafts work with zero setup; confirmation and sending need a Resend key.
+category: content
+tags: [newsletter, email, resend, subscribers, double-opt-in]
+secrets:
+  - name: INSTANCEZ_ENV_RESEND_API_KEY
+    label: Resend API key
+    description: Starts with re_. Lets the functions send confirmation emails and issues through Resend.
+    needed_for: Confirmation emails and sending issues
+    required: true
+    url: https://resend.com/api-keys
+  - name: INSTANCEZ_ENV_FROM_ADDRESS
+    label: From address
+    description: Sender such as "Acme <news@yourdomain.com>". The domain must be verified in Resend. Defaults to Resend's test sender, which only delivers to your own account email.
+    needed_for: Sender shown on emails
+    required: false
+    url: https://resend.com/domains
+  - name: INSTANCEZ_ENV_PUBLIC_BASE_URL
+    label: Public backend URL
+    description: Your backend's own URL, for example https://myapp.example.com. Used for the confirm and unsubscribe links, never taken from request headers.
+    needed_for: Links in confirmation emails and issues
+    required: true
+    url: ""
+setup:
+  - "Sign up, create your profiles row, then promote yourself: update profiles set role = 'admin' where id = '<your user id>' in the SQL console."
+  - "Add your frontend form: call the `subscribe` function with {email} (no login needed). The confirmation email links to the `confirm` function."
+  - "As admin insert an issue (subject, body_html) and call `send-issue` with {issue_id}. Pass {issue_id, test_to: 'you@example.com'} first to send yourself a preview."
+  - "Confirmation links expire after 7 days (subscribing again sends a fresh one). Public signups are capped at 200 per hour in total; put a CAPTCHA or proxy in front of the form for per-client limits."
+  - "Not included: bounce and complaint handling (add a Resend webhook if you need it), open tracking, scheduled sends."
+  - "Sending is resumable: if a send fails midway, call it again and already-delivered subscribers are skipped."

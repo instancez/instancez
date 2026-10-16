@@ -1,0 +1,12 @@
+id: crm
+name: Team CRM
+tagline: Companies, contacts, deals, tasks and a pipeline summary, shared by your team.
+description: A small-team CRM. Everyone on the team sees the same companies, contacts and deals; activities and tasks track follow-ups, and one RPC returns count and value per pipeline stage and currency. Needs no secrets. Team access is an allowlist in the members table; only admins delete records or manage members.
+category: business
+tags: [crm, sales, pipeline, deals, contacts]
+secrets: []
+setup:
+  - "Bootstrap the first admin in the SQL console after they sign up: insert into members (user_id, name, role) values ('<user id>', 'Ada', 'admin'). Admins then add teammates through the API. Users not in members see nothing; anonymous sign-in is off."
+  - "Stages: lead, qualified, proposal, negotiation, won, lost. Moving a deal to won or lost must set closed_at, and reopening must clear it. Completing a task must set completed_at, and reopening must clear it."
+  - "value_cents is integer cents; currency is a lowercase ISO code (usd). Show the pipeline with supabase.rpc('pipeline_summary'): one row per stage and currency, never mixed."
+  - "created_by is informational (any member can edit any record, so it is not tamper-proof). Deleting a teammate keeps their records. No duplicate detection, search index or audit log: add them if you need them."

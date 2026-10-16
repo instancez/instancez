@@ -1,0 +1,13 @@
+id: survey-forms
+name: Survey Forms
+tagline: Build forms with text, choice and rating questions, collect validated responses.
+description: A form builder backend. Owners create forms and questions; anyone with the link submits through a function that validates answers against the form definition. Only the owner can read results, with a ready-made summary. Works with zero setup.
+category: tools
+tags: [forms, survey, feedback, poll, questionnaire]
+secrets: []
+setup:
+  - "Create a form (status 'draft'), add questions with positions, then set status to 'open' to accept responses. Choice questions need options as a JSON array of strings, e.g. [\"Yes\",\"No\"]. Optional closes_at stops submissions at that time."
+  - "Respondents call functions.invoke('submit-response', { body: { form_id, answers: { '<question id>': value } } }) with the publishable key; no sign-in needed. Text answers are strings, choice answers one of the options, rating answers an integer from 1 to max_rating."
+  - "Owners read results with supabase.rpc('results_summary', { p_form_id }) or select from responses (owner-only)."
+  - "Open forms and their questions are readable by anyone (ids are sequential, so links are not secret); keep draft until ready. Each submission is stored as-is: no dedupe, one-per-user or response cap."
+  - "Anonymous submissions are not rate limited; put a CAPTCHA or proxy in front of your form page if it is public."

@@ -1,0 +1,14 @@
+id: kanban-board
+name: Kanban Board
+tagline: Boards, columns and cards with drag-and-drop ordering, labels and sharing.
+description: Trello-style boards. Cards use fractional positions and one atomic move_card function, so reordering never rewrites a whole column and concurrent drags cannot corrupt it. Share boards with teammates as editors or viewers. Needs no secrets.
+category: productivity
+tags: [kanban, boards, cards, trello, drag-and-drop, labels, sharing]
+secrets: []
+setup:
+  - "Sign up, then create a board with supabase.rpc('create_board', { p_title }). It creates your profile, adds you as owner and creates To do, Doing and Done columns (max 50 owned boards)."
+  - "Insert cards with position = (last position in the column) + 1024, or 1024 for an empty column. Positions must stay within +-1e12."
+  - "On drop call rpc('move_card', { p_card_id, p_column_id, p_after_card_id }). Use p_after_card_id = 0 to put the card on top. The function rebalances positions when they get too close."
+  - "Share with rpc('share_board', { p_board_id, p_email, p_role }) where p_role is editor or viewer; the person must have signed up first. Sharing reveals whether an email has an account, so only owners can call it."
+  - "Remove people or leave with rpc('remove_board_member', { p_board_id, p_user_id }); they are unassigned from cards. Hand over with rpc('transfer_board', { p_board_id, p_user_id })."
+  - "Deleting an owner's account deletes their boards; transfer first. Deleting a column deletes its cards. There is no archive or activity log."

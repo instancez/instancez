@@ -1,0 +1,253 @@
+version: 1
+project:
+  name: Online Store
+  description: Products, carts, orders and Stripe Checkout
+auth:
+  jwt_expiry: 1h
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+tables:
+  profiles:
+    fields:
+      - name: id
+        primary_key: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: full_name
+        type: text
+        check: "char_length(full_name) <= 100"
+      - name: role
+        type: text
+        required: true
+        default: customer
+        enum: [customer, admin]
+    rls:
+      - operations: [select]
+        using: "auth.uid() = id OR public.is_admin()"
+      - operations: [insert]
+        with_check: "auth.uid() = id AND role = 'customer'"
+      - operations: [update]
+        using: "auth.uid() = id"
+        with_check: "auth.uid() = id AND (role = 'customer' OR public.is_admin())"
+  categories:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: name
+        type: text
+        required: true
+        check: "char_length(name) BETWEEN 1 AND 100"
+      - name: slug
+        type: text
+        required: true
+        pattern: "^[a-z0-9-]+$"
+    indexes:
+      - columns: [slug]
+        unique: true
+    rls:
+      - operations: [select]
+        using: "true"
+      - operations: [insert]
+        with_check: "public.is_admin()"
+      - operations: [update]
+        using: "public.is_admin()"
+        with_check: "public.is_admin()"
+      - operations: [delete]
+        using: "public.is_admin()"
+  products:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: category_id
+        type: bigint
+        foreign_key: { references: categories.id, on_delete: set_null }
+      - name: name
+        type: text
+        required: true
+        check: "char_length(name) BETWEEN 1 AND 200"
+      - name: description
+        type: text
+        check: "char_length(description) <= 5000"
+      - name: price_cents
+        type: integer
+        required: true
+        min: 0
+        max: 10000000
+      - name: currency
+        type: text
+        required: true
+        default: usd
+        pattern: "^[a-z]{3}$"
+      - name: stock
+        type: integer
+        required: true
+        default: 0
+        min: 0
+        max: 1000000
+      - name: image_path
+        type: text
+      - name: active
+        type: boolean
+        required: true
+        default: true
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [category_id]
+      - columns: [active, created_at]
+    rls:
+      - operations: [select]
+        using: "active = true OR public.is_admin()"
+      - operations: [insert]
+        with_check: "public.is_admin()"
+      - operations: [update]
+        using: "public.is_admin()"
+        with_check: "public.is_admin()"
+      - operations: [delete]
+        using: "public.is_admin()"
+  cart_items:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: user_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: product_id
+        type: bigint
+        required: true
+        foreign_key: { references: products.id, on_delete: cascade }
+      - name: quantity
+        type: integer
+        required: true
+        default: 1
+        min: 1
+        max: 99
+    indexes:
+      - columns: [user_id, product_id]
+        unique: true
+      - columns: [product_id]
+    rls:
+      - operations: [select]
+        using: "user_id = auth.uid()"
+      - operations: [insert]
+        with_check: "user_id = auth.uid() AND EXISTS (SELECT 1 FROM products p WHERE p.id = product_id AND p.active)"
+      - operations: [update]
+        using: "user_id = auth.uid()"
+        with_check: "user_id = auth.uid()"
+      - operations: [delete]
+        using: "user_id = auth.uid()"
+  orders:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: user_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: status
+        type: text
+        required: true
+        default: pending
+        enum: [pending, paid, shipped, cancelled, refunded]
+      - name: total_cents
+        type: integer
+        required: true
+        min: 1
+      - name: currency
+        type: text
+        required: true
+        pattern: "^[a-z]{3}$"
+      - name: stripe_session_id
+        type: text
+      - name: shipping
+        type: jsonb
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+      - name: paid_at
+        type: timestamptz
+    indexes:
+      - columns: [user_id, created_at]
+      - columns: [stripe_session_id]
+        unique: true
+    rls:
+      - operations: [select]
+        using: "user_id = auth.uid() OR public.is_admin()"
+      - operations: [update]
+        using: "public.is_admin()"
+        with_check: "public.is_admin()"
+  order_items:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: order_id
+        type: bigint
+        required: true
+        foreign_key: { references: orders.id, on_delete: cascade }
+      - name: product_id
+        type: bigint
+        foreign_key: { references: products.id, on_delete: set_null }
+      - name: name
+        type: text
+        required: true
+      - name: unit_price_cents
+        type: integer
+        required: true
+        min: 0
+      - name: quantity
+        type: integer
+        required: true
+        min: 1
+    indexes:
+      - columns: [order_id]
+      - columns: [product_id]
+    rls:
+      - operations: [select]
+        using: "EXISTS (SELECT 1 FROM orders o WHERE o.id = order_id AND (o.user_id = auth.uid() OR public.is_admin()))"
+storage:
+  product_images:
+    public: true
+    max_size: 5MB
+    types: [image/png, image/jpeg, image/webp, image/gif, image/avif]
+    rls:
+      - operations: [insert]
+        with_check: "public.is_admin()"
+      - operations: [update]
+        using: "public.is_admin()"
+        with_check: "public.is_admin()"
+      - operations: [delete]
+        using: "public.is_admin()"
+functions:
+  checkout:
+    runtime: node
+    file: functions/checkout.js
+    auth_required: true
+    timeout: 30s
+    env:
+      STRIPE_SECRET_KEY: ${INSTANCEZ_ENV_STRIPE_SECRET_KEY:-}
+  stripe-webhook:
+    runtime: node
+    file: functions/stripe-webhook.js
+    auth_required: false
+    timeout: 30s
+    env:
+      STRIPE_WEBHOOK_SECRET: ${INSTANCEZ_ENV_STRIPE_WEBHOOK_SECRET:-}
+rpc:
+  is_admin:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    returns:
+      type: boolean
+    body: |
+      BEGIN
+        RETURN EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin');
+      END;

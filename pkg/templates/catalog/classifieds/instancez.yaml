@@ -1,0 +1,351 @@
+version: 1
+project:
+  name: Classifieds
+  description: Local classifieds with photos, favorites, messages and reports
+auth:
+  jwt_expiry: 1h
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+tables:
+  profiles:
+    rls_enabled: true
+    fields:
+      - name: id
+        primary_key: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: display_name
+        type: text
+        check: "char_length(display_name) <= 60"
+      - name: city
+        type: text
+        check: "char_length(city) <= 80"
+      - name: role
+        type: text
+        required: true
+        default: member
+        enum: [member, admin]
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    rls:
+      - operations: [select]
+        using: "true"
+      - operations: [insert]
+        with_check: "auth.uid() = id AND role = 'member'"
+      - operations: [update]
+        using: "auth.uid() = id"
+        with_check: "auth.uid() = id AND role = public.my_role()"
+  categories:
+    rls_enabled: true
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: name
+        type: text
+        required: true
+        check: "char_length(name) BETWEEN 1 AND 60"
+      - name: slug
+        type: text
+        required: true
+        pattern: "^[a-z0-9-]{1,60}$"
+      - name: sort_order
+        type: integer
+        required: true
+        default: 0
+    indexes:
+      - columns: [slug]
+        unique: true
+    rls:
+      - operations: [select]
+        using: "true"
+      - operations: [insert]
+        with_check: "public.is_admin()"
+      - operations: [update]
+        using: "public.is_admin()"
+        with_check: "public.is_admin()"
+      - operations: [delete]
+        using: "public.is_admin()"
+  listings:
+    rls_enabled: true
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: seller_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: category_id
+        type: bigint
+        foreign_key: { references: categories.id, on_delete: set_null }
+      - name: title
+        type: text
+        required: true
+        check: "char_length(title) BETWEEN 3 AND 120"
+      - name: description
+        type: text
+        check: "char_length(description) <= 5000"
+      - name: price_cents
+        type: integer
+        min: 0
+      - name: currency
+        type: text
+        required: true
+        default: usd
+        pattern: "^[a-z]{3}$"
+      - name: condition
+        type: text
+        required: true
+        default: used
+        enum: [new, like_new, used, for_parts]
+      - name: city
+        type: text
+        check: "char_length(city) <= 80"
+      - name: images
+        type: "text[]"
+        required: true
+        default: "{}"
+        check: "cardinality(images) <= 8"
+      - name: status
+        type: text
+        required: true
+        default: active
+        enum: [active, sold, hidden]
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+      - name: sold_at
+        type: timestamptz
+    indexes:
+      - columns: [status, created_at]
+      - columns: [category_id, status]
+      - columns: [seller_id]
+      - columns: [city]
+    rls:
+      - operations: [select]
+        using: "status <> 'hidden' OR seller_id = auth.uid() OR public.is_admin()"
+      - operations: [insert]
+        with_check: "seller_id = auth.uid() AND status = 'active'"
+      - operations: [update]
+        using: "(seller_id = auth.uid() AND status <> 'hidden') OR public.is_admin()"
+        with_check: "(seller_id = auth.uid() AND status <> 'hidden') OR public.is_admin()"
+      - operations: [delete]
+        using: "seller_id = auth.uid() OR public.is_admin()"
+  favorites:
+    rls_enabled: true
+    fields:
+      - name: user_id
+        primary_key: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: listing_id
+        type: bigint
+        primary_key: true
+        foreign_key: { references: listings.id, on_delete: cascade }
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [listing_id]
+    rls:
+      - operations: [select]
+        using: "user_id = auth.uid()"
+      - operations: [insert]
+        with_check: "user_id = auth.uid()"
+      - operations: [delete]
+        using: "user_id = auth.uid()"
+  messages:
+    rls_enabled: true
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: listing_id
+        type: bigint
+        required: true
+        foreign_key: { references: listings.id, on_delete: cascade }
+      - name: sender_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: recipient_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: body
+        type: text
+        required: true
+        check: "char_length(body) BETWEEN 1 AND 2000"
+      - name: read_at
+        type: timestamptz
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [listing_id, created_at]
+      - columns: [recipient_id, read_at]
+      - columns: [sender_id]
+    rls:
+      - operations: [select]
+        using: "sender_id = auth.uid() OR recipient_id = auth.uid()"
+      - operations: [insert]
+        with_check: "sender_id = auth.uid() AND recipient_id <> sender_id AND EXISTS (SELECT 1 FROM listings l WHERE l.id = listing_id AND (l.seller_id = recipient_id OR (l.seller_id = sender_id AND public.has_message_from(listing_id, recipient_id))))"
+  reports:
+    rls_enabled: true
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: listing_id
+        type: bigint
+        required: true
+        foreign_key: { references: listings.id, on_delete: cascade }
+      - name: reporter_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: reason
+        type: text
+        required: true
+        enum: [spam, scam, prohibited, wrong_category, other]
+      - name: details
+        type: text
+        check: "char_length(details) <= 1000"
+      - name: status
+        type: text
+        required: true
+        default: open
+        enum: [open, resolved]
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [listing_id, reporter_id]
+        unique: true
+      - columns: [status, created_at]
+      - columns: [reporter_id]
+    rls:
+      - operations: [select]
+        using: "reporter_id = auth.uid() OR public.is_admin()"
+      - operations: [insert]
+        with_check: "reporter_id = auth.uid() AND status = 'open'"
+      - operations: [update]
+        using: "public.is_admin()"
+        with_check: "public.is_admin()"
+      - operations: [delete]
+        using: "public.is_admin()"
+storage:
+  listing_images:
+    public: true
+    max_size: 5MB
+    types: [image/*]
+    rls:
+      - operations: [insert]
+        with_check: "auth.is_authenticated() AND name LIKE auth.uid()::text || '/%'"
+      - operations: [update]
+        using: "name LIKE auth.uid()::text || '/%'"
+        with_check: "name LIKE auth.uid()::text || '/%'"
+      - operations: [delete]
+        using: "name LIKE auth.uid()::text || '/%'"
+rpc:
+  my_role:
+    auth_required: false
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set: { search_path: public }
+    returns:
+      type: text
+    body: |
+      BEGIN RETURN (SELECT role FROM profiles WHERE id = auth.uid()); END;
+  is_admin:
+    auth_required: false
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set: { search_path: public }
+    returns:
+      type: boolean
+    body: |
+      BEGIN RETURN (SELECT EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')); END;
+  has_message_from:
+    auth_required: false
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set: { search_path: public }
+    args:
+      - name: p_listing_id
+        type: bigint
+        required: true
+      - name: p_user_id
+        type: uuid
+        required: true
+    returns:
+      type: boolean
+    body: |
+      BEGIN
+        RETURN EXISTS (SELECT 1 FROM messages WHERE listing_id = p_listing_id AND sender_id = p_user_id AND recipient_id = auth.uid());
+      END;
+  mark_sold:
+    auth_required: true
+    language: sql
+    volatility: volatile
+    security: invoker
+    args:
+      - name: p_listing_id
+        type: bigint
+        required: true
+    returns:
+      type: boolean
+    body: |
+      WITH u AS (
+        UPDATE listings SET status = 'sold', sold_at = now()
+        WHERE id = p_listing_id AND seller_id = auth.uid() AND status = 'active'
+        RETURNING 1
+      )
+      SELECT EXISTS (SELECT 1 FROM u)
+  mark_thread_read:
+    auth_required: true
+    language: sql
+    volatility: volatile
+    security: definer
+    set: { search_path: "" }
+    args:
+      - name: p_listing_id
+        type: bigint
+        required: true
+      - name: p_other_user
+        type: uuid
+        required: true
+    returns:
+      type: void
+    body: |
+      UPDATE public.messages SET read_at = now()
+      WHERE listing_id = p_listing_id AND sender_id = p_other_user
+        AND recipient_id = auth.uid() AND read_at IS NULL
+  my_threads:
+    auth_required: true
+    language: sql
+    volatility: stable
+    security: invoker
+    args:
+      - name: p_limit
+        type: integer
+        default: 50
+      - name: p_offset
+        type: integer
+        default: 0
+    returns:
+      type: "table(listing_id bigint, other_user_id uuid, last_message text, last_at timestamptz, unread bigint)"
+    body: |
+      WITH t AS (
+        SELECT m.*, CASE WHEN m.sender_id = auth.uid() THEN m.recipient_id ELSE m.sender_id END AS other
+        FROM messages m
+      )
+      SELECT t.listing_id, t.other, (array_agg(t.body ORDER BY t.created_at DESC))[1],
+             max(t.created_at), count(*) FILTER (WHERE t.recipient_id = auth.uid() AND t.read_at IS NULL)
+      FROM t GROUP BY t.listing_id, t.other
+      ORDER BY max(t.created_at) DESC, t.listing_id DESC, t.other DESC
+      LIMIT LEAST(GREATEST(COALESCE(p_limit, 50), 1), 100) OFFSET GREATEST(COALESCE(p_offset, 0), 0)
