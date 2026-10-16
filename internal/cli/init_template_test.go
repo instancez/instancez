@@ -61,6 +61,24 @@ func TestListTemplatesPrintsEveryTemplate(t *testing.T) {
 	assert.Equal(t, len(templates.Default().List()), len(strings.Split(strings.TrimSpace(out), "\n")))
 }
 
+func TestListTemplatesSanitizesServerStrings(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{"templates": []map[string]any{
+			{"id": "blog\x1b[31m", "category": "cat\u202Eegory", "tagline": "tag\nFAKE ROW\x1b[2J"},
+			{"id": "shop", "category": "commerce", "tagline": "fine"},
+		}})
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
+	var buf bytes.Buffer
+	require.NoError(t, runListTemplates(&buf))
+	out := buf.String()
+	assert.NotContains(t, out, "\x1b")
+	assert.NotContains(t, out, "\u202e")
+	assert.Equal(t, 2, strings.Count(out, "\n"))
+	assert.Contains(t, out, "shop")
+}
+
 func TestListTemplatesOffline(t *testing.T) {
 	t.Setenv("INSTANCEZ_CLOUD_API", "http://127.0.0.1:1")
 	t.Setenv("HOME", t.TempDir())

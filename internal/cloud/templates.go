@@ -21,7 +21,18 @@ func (e *TemplateNotFoundError) Error() string {
 	if len(e.Suggestions) == 0 {
 		return fmt.Sprintf("template %q not found", e.ID)
 	}
-	return fmt.Sprintf("template %q not found, did you mean: %s", e.ID, strings.Join(e.Suggestions, ", "))
+	return fmt.Sprintf("template %q not found, did you mean: %s", templates.Clean(e.ID), strings.Join(e.Suggestions, ", "))
+}
+
+const maxErrorText = 200
+
+// safeError flattens a server-influenced error into bounded, printable text.
+func safeError(err error) error {
+	msg := []rune(templates.Clean(err.Error()))
+	if len(msg) > maxErrorText {
+		msg = append(msg[:maxErrorText], '…')
+	}
+	return errors.New(string(msg))
 }
 
 func (c *Client) ListTemplates() ([]templates.Manifest, error) {
@@ -31,7 +42,7 @@ func (c *Client) ListTemplates() ([]templates.Manifest, error) {
 		Templates []templates.Manifest `json:"templates"`
 	}
 	if err := cc.do("GET", "/public/templates", nil, &out); err != nil {
-		return nil, err
+		return nil, safeError(err)
 	}
 	return out.Templates, nil
 }
@@ -51,12 +62,16 @@ func (c *Client) GetTemplate(id string) (*templates.Bundle, error) {
 			Suggestions []string `json:"suggestions"`
 		}
 		if json.Unmarshal([]byte(api.Body), &body) == nil && body.Suggestions != nil {
-			nf.Suggestions = body.Suggestions
+			for _, sg := range body.Suggestions {
+				if templates.ValidID(sg) {
+					nf.Suggestions = append(nf.Suggestions, sg)
+				}
+			}
 		}
 		return nil, nf
 	}
 	if err != nil {
-		return nil, err
+		return nil, safeError(err)
 	}
 	if len(b.Files) == 0 {
 		return nil, fmt.Errorf("template %q response has no files", id)

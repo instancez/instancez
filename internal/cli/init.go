@@ -80,7 +80,7 @@ func runListTemplates(w io.Writer) error {
 		return fmt.Errorf("list templates: %w", err)
 	}
 	for _, m := range list {
-		fmt.Fprintf(w, "%-24s %-13s %s\n", m.ID, m.Category, m.Tagline)
+		fmt.Fprintf(w, "%-24s %-13s %s\n", templates.Clean(m.ID), templates.Clean(m.Category), templates.Clean(m.Tagline))
 	}
 	return nil
 }

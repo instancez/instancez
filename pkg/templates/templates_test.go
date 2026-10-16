@@ -219,6 +219,9 @@ func TestLoadRejectsBrokenTemplates(t *testing.T) {
 		"secret url control char": func(f map[string]string) {
 			f[m] = strings.Replace(f[m], "required: false}", `required: false, url: "https://x.test/\r"}`, 1)
 		},
+		"secret label bidi override": func(f map[string]string) {
+			f[m] = strings.Replace(f[m], "label: Demo key", `label: "Demo\u202Ekey"`, 1)
+		},
 		"secret no needed_for": func(f map[string]string) { f[m] = strings.Replace(f[m], "needed_for: demo", "needed_for: ''", 1) },
 		"duplicate secret": func(f map[string]string) {
 			f[m] += "  - {name: INSTANCEZ_ENV_DEMO_KEY, label: l, description: d, needed_for: n}\n"
@@ -315,6 +318,28 @@ func TestIDRule(t *testing.T) {
 	for _, id := range bad {
 		if ValidID(id) {
 			t.Errorf("ValidID(%q) = true, want false", id)
+		}
+	}
+}
+
+func TestClean(t *testing.T) {
+	cases := map[string]string{
+		"":                     "",
+		"plain text":           "plain text",
+		"a\x1b[31mb":           "a[31mb",
+		"a\nb\tc\r\nd":         "a b c d",
+		"  lead  and   trail ": "lead and trail",
+		"x\u202Ey":             "xy",
+		"x\u2066y\u2069":       "xy",
+		"x\u200By":             "xy",
+		"x\u2028y":             "x y",
+		"x\u009by":             "xy",
+		"ünï 日本":               "ünï 日本",
+		"\x00\x07":             "",
+	}
+	for in, want := range cases {
+		if got := Clean(in); got != want {
+			t.Errorf("Clean(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

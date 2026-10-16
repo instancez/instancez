@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/instancez/instancez/pkg/templates"
 	"github.com/stretchr/testify/assert"
@@ -198,4 +199,39 @@ func TestGetTemplateNotFoundNonJSONBody(t *testing.T) {
 	require.True(t, errors.As(err, &nf))
 	assert.NotNil(t, nf.Suggestions)
 	assert.Empty(t, nf.Suggestions)
+}
+
+func TestGetTemplateNotFoundKeepsOnlyValidSuggestions(t *testing.T) {
+	c := tplServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+		_, _ = w.Write([]byte(`{"error":"template_not_found","suggestions":["blog","evil\u001b[2J","a\nb","Bad_ID"]}`))
+	})
+	_, err := c.GetTemplate("blg")
+	var nf *TemplateNotFoundError
+	require.ErrorAs(t, err, &nf)
+	assert.Equal(t, []string{"blog"}, nf.Suggestions)
+	assert.Equal(t, strings.IndexFunc(err.Error(), unicode.IsControl), -1)
+}
+
+func TestTemplateErrorsCarryNoControlCharacters(t *testing.T) {
+	c := tplServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+		_, _ = w.Write([]byte(`{"error":"boom\u001b[2J\u202Eevil"}`))
+	})
+	_, err := c.GetTemplate("blog")
+	require.Error(t, err)
+	assert.Equal(t, -1, strings.IndexFunc(err.Error(), func(r rune) bool { return unicode.IsControl(r) || r == '\u202e' }))
+	_, err = c.ListTemplates()
+	require.Error(t, err)
+	assert.Equal(t, -1, strings.IndexFunc(err.Error(), func(r rune) bool { return unicode.IsControl(r) || r == '\u202e' }))
+}
+
+func TestTemplateErrorTextIsBounded(t *testing.T) {
+	c := tplServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+		_, _ = w.Write([]byte(`{"error":"` + strings.Repeat("x", 5000) + `"}`))
+	})
+	_, err := c.GetTemplate("blog")
+	require.Error(t, err)
+	assert.LessOrEqual(t, len(err.Error()), 300)
 }

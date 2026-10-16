@@ -172,7 +172,23 @@ func loadOne(fsys fs.FS, dir, dirName string) (*Template, error) {
 
 func ValidSecretName(name string) bool { return secretPattern.MatchString(name) }
 
-func hasControl(s string) bool { return strings.IndexFunc(s, unicode.IsControl) >= 0 }
+func unsafeRune(r rune) bool {
+	return !unicode.IsSpace(r) && (unicode.IsControl(r) || unicode.Is(unicode.Cf, r))
+}
+
+func hasControl(s string) bool {
+	return strings.IndexFunc(s, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) }) >= 0
+}
+
+// Clean strips control and format characters and collapses whitespace.
+func Clean(s string) string {
+	return strings.Join(strings.Fields(strings.Map(func(r rune) rune {
+		if unsafeRune(r) {
+			return -1
+		}
+		return r
+	}, s)), " ")
+}
 
 func (t *Template) check(dirName string) error {
 	switch {
