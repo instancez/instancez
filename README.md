@@ -55,7 +55,7 @@ cd instancez
 
 ```bash
 mkdir my-app && cd my-app
-inz init
+inz init                # or start from a template: inz init --template blog (list: inz init --list-templates)
 inz dev --embedded-pg   # no Postgres to install; or drop the flag and set INSTANCEZ_DATABASE_URL to use your own
 
 # you can run the following command or watch the output of the previous command for your secret key and publishable key

@@ -21,6 +21,8 @@ inz init [name] [flags]
 |------|---------|-------------|
 | `--dir` | `.` | Output directory. |
 | `--force` | `false` | Overwrite existing scaffolding files. |
+| `--template` | | Scaffold from a hosted template id. See [templates](https://github.com/instancez/instancez/blob/main/docs/templates.md). |
+| `--list-templates` | `false` | List available templates and exit. |
 
 ```bash
 inz init my-app --dir ./my-app
