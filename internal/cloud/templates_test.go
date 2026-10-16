@@ -235,3 +235,14 @@ func TestTemplateErrorTextIsBounded(t *testing.T) {
 	require.Error(t, err)
 	assert.LessOrEqual(t, len(err.Error()), 300)
 }
+
+func TestListTemplatesDropsInvalidIDs(t *testing.T) {
+	c := tplServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"templates":[{"id":"blog"},{"id":"evil\u001b[2J"},{"id":""},{"id":"Bad_ID"},{"id":"shop-front"}]}`))
+	})
+	got, err := c.ListTemplates()
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, "blog", got[0].ID)
+	assert.Equal(t, "shop-front", got[1].ID)
+}

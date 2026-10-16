@@ -200,8 +200,12 @@ func validateScaffold(dir string) {
 		}
 	}
 	if err != nil {
-		alertf("  ! The template did not validate with this inz version (%v). Upgrade inz or report it.", err)
+		alertf("%s", scaffoldWarning(err))
 	}
+}
+
+func scaffoldWarning(err error) string {
+	return fmt.Sprintf("  ! The template did not validate with this inz version (%s). Upgrade inz or report it.", templates.CleanN(err.Error(), 300))
 }
 
 func finishTemplateInit(dir string, b *templates.Bundle) error {

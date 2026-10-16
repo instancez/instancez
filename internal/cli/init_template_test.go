@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -64,7 +65,7 @@ func TestListTemplatesPrintsEveryTemplate(t *testing.T) {
 func TestListTemplatesSanitizesServerStrings(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"templates": []map[string]any{
-			{"id": "blog\x1b[31m", "category": "cat\u202Eegory", "tagline": "tag\nFAKE ROW\x1b[2J"},
+			{"id": "blog", "category": "cat\u202Eegory", "tagline": "tag\nFAKE ROW\x1b[2J"},
 			{"id": "shop", "category": "commerce", "tagline": "fine"},
 		}})
 	}))
@@ -435,4 +436,58 @@ func TestPlainInitStillOfflineAfterTemplateSupport(t *testing.T) {
 	t.Setenv("INSTANCEZ_CLOUD_API", "http://127.0.0.1:1")
 	t.Setenv("HOME", t.TempDir())
 	require.NoError(t, runInit(initOptions{dir: t.TempDir(), name: "demo"}))
+}
+
+func TestInitTemplateInvalidYAMLWarningIsSanitized(t *testing.T) {
+	for name, yml := range map[string]string{
+		"escape key": "version: 1\nevil_\x1b[31mkey: 1\n",
+		"bidi key":   "version: 1\nevil_‮key: 1\nother: 2\n",
+		"multi line": "version: 1\nunknown_a: 1\nunknown_b: 2\n",
+		"type echo":  "version: 1\ntables: \"a\\u202E\\x1b[31mb\"\n",
+		"mapping":    "version: 1\nproject:\n  name: [a\u202E\n",
+		"unknown":    "version: 1\nproject:\n  evil\u202E: 1\n  nm\\x1b: 2\n",
+		"dup key":    "version: 1\nversion: 2\u202E\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				writeJSON(w, 200, map[string]any{
+					"manifest": map[string]any{"id": "blog"},
+					"files":    map[string]string{"instancez.yaml": yml},
+				})
+			}))
+			t.Cleanup(srv.Close)
+			t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
+			t.Setenv("HOME", t.TempDir())
+			dir := t.TempDir()
+			old := os.Stderr
+			r, w, err := os.Pipe()
+			require.NoError(t, err)
+			os.Stderr = w
+			t.Cleanup(func() { os.Stderr = old })
+			runErr := runInit(initOptions{dir: dir, template: "blog", templateSet: true})
+			os.Stderr = old
+			require.NoError(t, w.Close())
+			var buf bytes.Buffer
+			_, _ = buf.ReadFrom(r)
+			require.NoError(t, runErr)
+			out := buf.String()
+			assert.Contains(t, out, "did not validate")
+			assert.NotContains(t, out, "\x1b")
+			assert.NotContains(t, out, "‮")
+			assert.Equal(t, 1, strings.Count(out, "\n"), out)
+			assert.FileExists(t, filepath.Join(dir, "instancez.yaml"))
+		})
+	}
+}
+
+func TestScaffoldWarningSanitizesAndBoundsError(t *testing.T) {
+	hostile := errors.New("bad key \x1b[31m‮evil\nsecond line " + strings.Repeat("y", 1000))
+	msg := scaffoldWarning(hostile)
+	assert.NotContains(t, msg, "\x1b")
+	assert.NotContains(t, msg, "‮")
+	assert.NotContains(t, msg, "\n")
+	assert.Contains(t, msg, "did not validate")
+	assert.Contains(t, msg, "bad key")
+	assert.LessOrEqual(t, len([]rune(msg)), 450)
+	assert.Contains(t, msg, "…")
 }

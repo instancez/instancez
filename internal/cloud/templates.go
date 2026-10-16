@@ -28,11 +28,7 @@ const maxErrorText = 200
 
 // safeError flattens a server-influenced error into bounded, printable text.
 func safeError(err error) error {
-	msg := []rune(templates.Clean(err.Error()))
-	if len(msg) > maxErrorText {
-		msg = append(msg[:maxErrorText], '…')
-	}
-	return errors.New(string(msg))
+	return errors.New(templates.CleanN(err.Error(), maxErrorText))
 }
 
 func (c *Client) ListTemplates() ([]templates.Manifest, error) {
@@ -44,7 +40,13 @@ func (c *Client) ListTemplates() ([]templates.Manifest, error) {
 	if err := cc.do("GET", "/public/templates", nil, &out); err != nil {
 		return nil, safeError(err)
 	}
-	return out.Templates, nil
+	valid := out.Templates[:0]
+	for _, m := range out.Templates {
+		if templates.ValidID(m.ID) {
+			valid = append(valid, m)
+		}
+	}
+	return valid, nil
 }
 
 func (c *Client) GetTemplate(id string) (*templates.Bundle, error) {

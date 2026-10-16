@@ -176,6 +176,15 @@ func unsafeRune(r rune) bool {
 	return !unicode.IsSpace(r) && (unicode.IsControl(r) || unicode.Is(unicode.Cf, r))
 }
 
+// CleanN is Clean capped at n runes, with an ellipsis when cut.
+func CleanN(s string, n int) string {
+	r := []rune(Clean(s))
+	if len(r) > n {
+		return string(r[:n]) + "…"
+	}
+	return string(r)
+}
+
 func hasControl(s string) bool {
 	return strings.IndexFunc(s, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) }) >= 0
 }
