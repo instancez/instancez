@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/instancez/instancez/pkg/templates"
@@ -73,12 +74,19 @@ func TestInitTemplateFlagMisuse(t *testing.T) {
 	}
 	for name, args := range cases {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv("INSTANCEZ_CLOUD_API", "http://127.0.0.1:1")
+			var hits atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hits.Add(1)
+				t.Errorf("flag misuse hit the network: %s", r.URL.Path)
+			}))
+			t.Cleanup(srv.Close)
+			t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
 			dir := t.TempDir()
 			cmd := newInitCmd()
 			cmd.SetArgs(append(args, "--dir", dir))
 			cmd.SilenceUsage, cmd.SilenceErrors = true, true
 			require.Error(t, cmd.Execute())
+			assert.Zero(t, hits.Load(), "flag errors must not touch the network")
 			assert.NoFileExists(t, dir+"/instancez.yaml", "nothing may be written on a flag error")
 		})
 	}
