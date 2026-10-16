@@ -49,11 +49,7 @@ func TestCatalogContract(t *testing.T) {
 	for _, tpl := range c.List() {
 		t.Run(tpl.ID, func(t *testing.T) {
 			// With no secrets set, ${X:-} resolves empty: this proves the app boots unconfigured.
-			y := tpl.YAML
-			if len(tpl.Includes.Buckets) > 0 {
-				// replaced by Bundle.LocalYAML in the next task
-				y += "\nproviders:\n  storage:\n    type: local\n"
-			}
+			y := tpl.Bundle().LocalYAML()
 			cfg, err := config.ParseBytes([]byte(y), tpl.ID)
 			if err != nil {
 				t.Fatalf("load with empty env: %v", err)
@@ -272,8 +268,8 @@ func TestEmptyIncludesAreNotNil(t *testing.T) {
 }
 
 func TestIDRule(t *testing.T) {
-	ok := []string{"blog", "ai-chat", "a-b-c", "kanban-board"}
-	bad := []string{"", "Blog", "v2-blog", "a-b-c-d", "-x", "x-", "a--b", "blog_x", "blög", "../x", "a b", strings.Repeat("a", 31), "a1"}
+	ok := []string{"blog", "ai-chat", "a-b-c", "kanban-board", strings.Repeat("a", 30)}
+	bad := []string{"", "Blog", "v2-blog", "a-b-c-d", "-x", "x-", "a--b", "blog_x", "blög", "../x", "a b", strings.Repeat("a", 31), "a1", "blog\n"}
 	for _, id := range ok {
 		if !ValidID(id) {
 			t.Errorf("ValidID(%q) = false, want true", id)
