@@ -26,7 +26,7 @@ func (e *TemplateNotFoundError) Error() string {
 
 func (c *Client) ListTemplates() ([]templates.Manifest, error) {
 	cc := *c
-	cc.Bearer, cc.MaxResponseBytes = "", MaxTemplateBytes
+	cc.Bearer, cc.Org, cc.MaxResponseBytes = "", "", MaxTemplateBytes
 	var out struct {
 		Templates []templates.Manifest `json:"templates"`
 	}
@@ -41,7 +41,7 @@ func (c *Client) GetTemplate(id string) (*templates.Bundle, error) {
 		return nil, fmt.Errorf("invalid template id %q", id)
 	}
 	cc := *c
-	cc.Bearer, cc.MaxResponseBytes = "", MaxTemplateBytes
+	cc.Bearer, cc.Org, cc.MaxResponseBytes = "", "", MaxTemplateBytes
 	var b templates.Bundle
 	err := cc.do("GET", "/public/templates/"+url.PathEscape(id), nil, &b)
 	var api *APIError

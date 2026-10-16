@@ -134,3 +134,68 @@ func TestGetTemplateSendsExtraHeaders(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "yes", got)
 }
+
+func TestPublicTemplateCallsDropOrgHeader(t *testing.T) {
+	t.Setenv("INSTANCEZ_ORG", "org_1")
+	var gotOrg []string
+	c := tplServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotOrg = append(gotOrg, r.Header.Get("X-Instancez-Org"))
+		if r.URL.Path == "/public/templates" {
+			_, _ = w.Write([]byte(`{"templates":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"manifest":{"id":"blog"},"files":{"instancez.yaml":"x"}}`))
+	})
+	require.Equal(t, "org_1", c.Org)
+	_, err := c.ListTemplates()
+	require.NoError(t, err)
+	_, err = c.GetTemplate("blog")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"", ""}, gotOrg)
+}
+
+func TestGetTemplateBodySizeBoundary(t *testing.T) {
+	const pre, post = `{"manifest":{},"files":{"instancez.yaml":"`, `"}}`
+	body := func(total int) string {
+		return pre + strings.Repeat("a", total-len(pre)-len(post)) + post
+	}
+	for name, tc := range map[string]struct {
+		total   int
+		wantErr bool
+	}{
+		"exact limit": {MaxTemplateBytes, false},
+		"one over":    {MaxTemplateBytes + 1, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			payload := body(tc.total)
+			require.Len(t, payload, tc.total)
+			c := tplServer(t, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(payload)) })
+			_, err := c.GetTemplate("blog")
+			if tc.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "too large")
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestListTemplatesNotFoundIsError(t *testing.T) {
+	c := tplServer(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(404) })
+	got, err := c.ListTemplates()
+	require.Error(t, err)
+	assert.Nil(t, got)
+}
+
+func TestGetTemplateNotFoundNonJSONBody(t *testing.T) {
+	c := tplServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+		_, _ = w.Write([]byte(`<html>not found</html>`))
+	})
+	_, err := c.GetTemplate("zzzz")
+	var nf *TemplateNotFoundError
+	require.True(t, errors.As(err, &nf))
+	assert.NotNil(t, nf.Suggestions)
+	assert.Empty(t, nf.Suggestions)
+}
