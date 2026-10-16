@@ -12,10 +12,11 @@ import (
 	"testing/fstest"
 
 	"github.com/instancez/instancez/internal/config"
+	"github.com/instancez/instancez/pkg/configvalidate"
 	"gopkg.in/yaml.v3"
 )
 
-const minTemplates = 20
+const minTemplates = 27
 const pkgJSON = `{"type":"module","dependencies":{"@supabase/supabase-js":"^2.107.0"}}`
 
 func clearSecretEnv(t *testing.T) {
@@ -48,18 +49,45 @@ func TestCatalogContract(t *testing.T) {
 	}
 	for _, tpl := range c.List() {
 		t.Run(tpl.ID, func(t *testing.T) {
-			// With no secrets set, ${X:-} resolves empty: this proves the app boots unconfigured.
-			y := tpl.Bundle().LocalYAML()
-			cfg, err := config.ParseBytes([]byte(y), tpl.ID)
+			local := tpl.Bundle().LocalYAML()
+			cfg, err := config.ParseBytes([]byte(local), tpl.ID)
 			if err != nil {
 				t.Fatalf("load with empty env: %v", err)
 			}
 			if errs := config.Validate(cfg); errs != nil {
 				t.Fatalf("validate: %v", errs)
 			}
+			for _, p := range configvalidate.ValidateYAML([]byte(local)) {
+				t.Errorf("configvalidate: %s: %s", p.Path, p.Message)
+			}
+			checkNoProviders(t, tpl.YAML)
 			checkRLS(t, tpl.YAML)
 			checkFunctionsParse(t, tpl)
 		})
+	}
+}
+
+func hasProviders(cfg string) bool {
+	var doc map[string]any
+	if err := yaml.Unmarshal([]byte(cfg), &doc); err != nil {
+		return false
+	}
+	_, has := doc["providers"]
+	return has
+}
+
+func checkNoProviders(t *testing.T, cfg string) {
+	if hasProviders(cfg) {
+		t.Error("templates must not declare providers; the cloud injects them and init adds a local storage provider")
+	}
+}
+
+func TestHasProvidersDetectsBlock(t *testing.T) {
+	if !hasProviders("version: 1\nproviders:\n  storage:\n    type: local\n") {
+		t.Fatal("providers block must be detected")
+	}
+	if hasProviders("version: 1\ntables: {}\n") {
+		t.Fatal("no providers block must not be flagged")
 	}
 }
 
