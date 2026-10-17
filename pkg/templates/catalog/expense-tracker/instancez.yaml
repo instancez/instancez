@@ -1,0 +1,242 @@
+version: 1
+project:
+  name: Expense Tracker
+  description: Accounts, categories, transactions, budgets and receipts
+auth:
+  allow_anonymous: false
+  jwt_expiry: 1h
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+tables:
+  accounts:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: user_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: name
+        type: text
+        required: true
+        pattern: "\\S"
+        check: "char_length(name) <= 100"
+      - name: type
+        type: text
+        required: true
+        default: checking
+        enum: [checking, savings, credit, cash]
+      - name: opening_balance_cents
+        type: bigint
+        required: true
+        default: 0
+        check: "abs(opening_balance_cents) <= 100000000000000"
+      - name: archived
+        type: boolean
+        required: true
+        default: false
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [user_id, name]
+        unique: true
+    rls:
+      - operations: [select]
+        using: "user_id = auth.uid()"
+      - operations: [insert]
+        with_check: "user_id = auth.uid()"
+      - operations: [update]
+        using: "user_id = auth.uid()"
+        with_check: "user_id = auth.uid()"
+      - operations: [delete]
+        using: "user_id = auth.uid()"
+  categories:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: user_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: name
+        type: text
+        required: true
+        pattern: "\\S"
+        check: "char_length(name) <= 100"
+      - name: color
+        type: text
+        required: true
+        default: "#6366f1"
+        pattern: "^#[0-9a-fA-F]{6}$"
+    indexes:
+      - columns: [user_id, name]
+        unique: true
+    rls:
+      - operations: [select]
+        using: "user_id = auth.uid()"
+      - operations: [insert]
+        with_check: "user_id = auth.uid()"
+      - operations: [update]
+        using: "user_id = auth.uid()"
+        with_check: "user_id = auth.uid()"
+      - operations: [delete]
+        using: "user_id = auth.uid()"
+  transactions:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: user_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: account_id
+        type: bigint
+        required: true
+        foreign_key: { references: accounts.id, on_delete: cascade }
+      - name: category_id
+        type: bigint
+        foreign_key: { references: categories.id, on_delete: set_null }
+      - name: amount_cents
+        type: bigint
+        required: true
+        check: "amount_cents <> 0 AND abs(amount_cents) <= 100000000000000"
+      - name: occurred_on
+        type: date
+        required: true
+        default: current_date
+      - name: merchant
+        type: text
+        check: "char_length(merchant) <= 200"
+      - name: note
+        type: text
+        check: "char_length(note) <= 2000"
+      - name: receipt_path
+        type: text
+        check: "char_length(receipt_path) <= 1024"
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [user_id, occurred_on]
+      - columns: [account_id]
+      - columns: [category_id]
+    rls:
+      - operations: [select]
+        using: "user_id = auth.uid()"
+      - operations: [insert]
+        with_check: "user_id = auth.uid() AND EXISTS (SELECT 1 FROM accounts a WHERE a.id = account_id) AND (category_id IS NULL OR EXISTS (SELECT 1 FROM categories c WHERE c.id = category_id)) AND (receipt_path IS NULL OR receipt_path LIKE auth.uid()::text || '/%')"
+      - operations: [update]
+        using: "user_id = auth.uid()"
+        with_check: "user_id = auth.uid() AND EXISTS (SELECT 1 FROM accounts a WHERE a.id = account_id) AND (category_id IS NULL OR EXISTS (SELECT 1 FROM categories c WHERE c.id = category_id)) AND (receipt_path IS NULL OR receipt_path LIKE auth.uid()::text || '/%')"
+      - operations: [delete]
+        using: "user_id = auth.uid()"
+  budgets:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: user_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: category_id
+        type: bigint
+        required: true
+        foreign_key: { references: categories.id, on_delete: cascade }
+      - name: month
+        type: date
+        required: true
+        check: "month = date_trunc('month', month)::date"
+      - name: amount_cents
+        type: bigint
+        required: true
+        min: 1
+        max: 100000000000000
+    indexes:
+      - columns: [user_id, category_id, month]
+        unique: true
+      - columns: [category_id]
+    rls:
+      - operations: [select]
+        using: "user_id = auth.uid()"
+      - operations: [insert]
+        with_check: "user_id = auth.uid() AND EXISTS (SELECT 1 FROM categories c WHERE c.id = category_id)"
+      - operations: [update]
+        using: "user_id = auth.uid()"
+        with_check: "user_id = auth.uid() AND EXISTS (SELECT 1 FROM categories c WHERE c.id = category_id)"
+      - operations: [delete]
+        using: "user_id = auth.uid()"
+storage:
+  receipts:
+    public: false
+    max_size: 10MB
+    types: [image/*, application/pdf]
+    rls:
+      - operations: [select]
+        using: "name LIKE auth.uid()::text || '/%'"
+      - operations: [insert]
+        with_check: "name LIKE auth.uid()::text || '/%'"
+      - operations: [update]
+        using: "name LIKE auth.uid()::text || '/%'"
+        with_check: "name LIKE auth.uid()::text || '/%'"
+      - operations: [delete]
+        using: "name LIKE auth.uid()::text || '/%'"
+rpc:
+  monthly_summary:
+    auth_required: true
+    language: plpgsql
+    volatility: stable
+    security: invoker
+    set:
+      search_path: public
+    args:
+      - name: p_month
+        type: date
+        required: true
+    returns:
+      type: jsonb
+    body: |
+      DECLARE
+        m date := date_trunc('month', p_month::timestamp)::date;
+      BEGIN
+        IF p_month IS NULL THEN RAISE EXCEPTION 'p_month is required' USING ERRCODE = '23502'; END IF;
+        RETURN jsonb_build_object(
+          'month', m,
+          'income_cents', coalesce((SELECT sum(amount_cents) FROM transactions WHERE amount_cents > 0 AND occurred_on >= m AND occurred_on < m + interval '1 month'), 0),
+          'spent_cents', coalesce((SELECT -sum(amount_cents) FROM transactions WHERE amount_cents < 0 AND occurred_on >= m AND occurred_on < m + interval '1 month'), 0),
+          'categories', coalesce((
+            SELECT jsonb_agg(row_to_json(r) ORDER BY r.spent_cents DESC, r.name) FROM (
+              SELECT c.id AS category_id, c.name, c.color,
+                     coalesce(s.spent, 0)::bigint AS spent_cents,
+                     b.amount_cents AS budget_cents,
+                     b.amount_cents - coalesce(s.spent, 0)::bigint AS remaining_cents,
+                     coalesce(s.spent, 0) > coalesce(b.amount_cents, 9223372036854775807) AS over_budget
+              FROM categories c
+              LEFT JOIN budgets b ON b.category_id = c.id AND b.month = m
+              LEFT JOIN (SELECT category_id, -sum(amount_cents) AS spent FROM transactions
+                         WHERE amount_cents < 0 AND occurred_on >= m AND occurred_on < m + interval '1 month' GROUP BY category_id) s ON s.category_id = c.id
+              WHERE s.spent IS NOT NULL OR b.id IS NOT NULL
+              UNION ALL
+              SELECT NULL, 'Uncategorized', '#94a3b8', -sum(amount_cents)::bigint, NULL, NULL, false
+              FROM transactions WHERE amount_cents < 0 AND category_id IS NULL AND occurred_on >= m AND occurred_on < m + interval '1 month'
+              HAVING count(*) > 0
+            ) r), '[]'::jsonb));
+      END;
+  account_balances:
+    auth_required: true
+    language: plpgsql
+    volatility: stable
+    security: invoker
+    set:
+      search_path: public
+    returns:
+      type: jsonb
+    body: |
+      BEGIN
+        RETURN coalesce((
+          SELECT jsonb_agg(jsonb_build_object('account_id', a.id, 'name', a.name,
+                 'balance_cents', a.opening_balance_cents + coalesce((SELECT sum(t.amount_cents) FROM transactions t WHERE t.account_id = a.id), 0)) ORDER BY a.name)
+          FROM accounts a WHERE NOT a.archived), '[]'::jsonb);
+      END;

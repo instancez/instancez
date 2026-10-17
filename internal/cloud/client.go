@@ -24,7 +24,8 @@ type Client struct {
 	// Org, when set, is sent as X-Instancez-Org on every request so org-scoped
 	// endpoints act on the chosen org. Empty lets the server pick the user's
 	// sole org.
-	Org string
+	Org              string
+	MaxResponseBytes int64 // 0 = unlimited
 }
 
 // NewClient returns a client with sane defaults.
@@ -390,7 +391,14 @@ func (c *Client) do(method, path string, payload, out any) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	respBody, _ := io.ReadAll(resp.Body)
+	r := io.Reader(resp.Body)
+	if c.MaxResponseBytes > 0 {
+		r = io.LimitReader(r, c.MaxResponseBytes+1)
+	}
+	respBody, _ := io.ReadAll(r)
+	if c.MaxResponseBytes > 0 && int64(len(respBody)) > c.MaxResponseBytes {
+		return fmt.Errorf("response too large (limit %d bytes)", c.MaxResponseBytes)
+	}
 
 	if resp.StatusCode >= 400 {
 		apiErr := &APIError{Status: resp.StatusCode, Body: string(respBody)}

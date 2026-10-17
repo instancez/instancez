@@ -1,0 +1,269 @@
+version: 1
+project:
+  name: Course Platform
+  description: Courses, lessons, enrollments and progress
+auth:
+  jwt_expiry: 1h
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+tables:
+  profiles:
+    fields:
+      - name: id
+        primary_key: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: display_name
+        type: text
+        check: "char_length(display_name) <= 100"
+      - name: role
+        type: text
+        required: true
+        default: student
+        enum: [student, instructor]
+    rls:
+      - operations: [select]
+        using: "true"
+      - operations: [insert]
+        with_check: "auth.uid() = id AND role = 'student'"
+      - operations: [update]
+        using: "auth.uid() = id"
+        with_check: "auth.uid() = id AND role = public.my_role()"
+  courses:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: instructor_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: slug
+        type: text
+        required: true
+        pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+        check: "char_length(slug) <= 80"
+      - name: title
+        type: text
+        required: true
+        check: "char_length(btrim(title)) BETWEEN 1 AND 200"
+      - name: summary
+        type: text
+        check: "char_length(summary) <= 2000"
+      - name: cover_url
+        type: text
+        pattern: "^https?://"
+      - name: level
+        type: text
+        required: true
+        default: beginner
+        enum: [beginner, intermediate, advanced]
+      - name: price_cents
+        type: integer
+        required: true
+        default: 0
+        min: 0
+        max: 99999999
+        check: "price_cents = 0 OR price_cents >= 50"
+      - name: currency
+        type: text
+        required: true
+        default: usd
+        pattern: "^[a-z]{3}$"
+      - name: published
+        type: boolean
+        required: true
+        default: false
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [slug]
+        unique: true
+      - columns: [published, created_at]
+      - columns: [instructor_id]
+    rls:
+      - operations: [select]
+        using: "published = true OR instructor_id = auth.uid()"
+      - operations: [insert]
+        with_check: "instructor_id = auth.uid() AND EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'instructor')"
+      - operations: [update]
+        using: "instructor_id = auth.uid()"
+        with_check: "instructor_id = auth.uid()"
+      - operations: [delete]
+        using: "instructor_id = auth.uid()"
+  lessons:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: course_id
+        type: bigint
+        required: true
+        foreign_key: { references: courses.id, on_delete: cascade }
+      - name: position
+        type: integer
+        required: true
+        min: 0
+        max: 100000
+      - name: title
+        type: text
+        required: true
+        check: "char_length(btrim(title)) BETWEEN 1 AND 200"
+      - name: duration_seconds
+        type: integer
+        min: 0
+        max: 86400
+      - name: is_preview
+        type: boolean
+        required: true
+        default: false
+    indexes:
+      - columns: [course_id, position]
+    rls:
+      # Outline is public for published courses; the video and text live in lesson_content.
+      - operations: [select]
+        using: "EXISTS (SELECT 1 FROM courses c WHERE c.id = lessons.course_id AND (c.published = true OR c.instructor_id = auth.uid()))"
+      - operations: [insert]
+        with_check: "EXISTS (SELECT 1 FROM courses c WHERE c.id = lessons.course_id AND c.instructor_id = auth.uid())"
+      - operations: [update]
+        using: "EXISTS (SELECT 1 FROM courses c WHERE c.id = lessons.course_id AND c.instructor_id = auth.uid())"
+        with_check: "EXISTS (SELECT 1 FROM courses c WHERE c.id = lessons.course_id AND c.instructor_id = auth.uid())"
+      - operations: [delete]
+        using: "EXISTS (SELECT 1 FROM courses c WHERE c.id = lessons.course_id AND c.instructor_id = auth.uid())"
+  lesson_content:
+    fields:
+      - name: lesson_id
+        type: bigint
+        primary_key: true
+        foreign_key: { references: lessons.id, on_delete: cascade }
+      - name: video_url
+        type: text
+        pattern: "^https?://"
+      - name: body_md
+        type: text
+        check: "char_length(body_md) <= 200000"
+    rls:
+      # Enrolled students, the instructor, and anyone for preview lessons.
+      - operations: [select]
+        using: "EXISTS (SELECT 1 FROM lessons l JOIN courses c ON c.id = l.course_id WHERE l.id = lesson_content.lesson_id AND (c.instructor_id = auth.uid() OR (c.published = true AND (l.is_preview = true OR EXISTS (SELECT 1 FROM enrollments e WHERE e.course_id = c.id AND e.user_id = auth.uid())))))"
+      - operations: [insert]
+        with_check: "EXISTS (SELECT 1 FROM lessons l JOIN courses c ON c.id = l.course_id WHERE l.id = lesson_content.lesson_id AND c.instructor_id = auth.uid())"
+      - operations: [update]
+        using: "EXISTS (SELECT 1 FROM lessons l JOIN courses c ON c.id = l.course_id WHERE l.id = lesson_content.lesson_id AND c.instructor_id = auth.uid())"
+        with_check: "EXISTS (SELECT 1 FROM lessons l JOIN courses c ON c.id = l.course_id WHERE l.id = lesson_content.lesson_id AND c.instructor_id = auth.uid())"
+      - operations: [delete]
+        using: "EXISTS (SELECT 1 FROM lessons l JOIN courses c ON c.id = l.course_id WHERE l.id = lesson_content.lesson_id AND c.instructor_id = auth.uid())"
+  enrollments:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: user_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: course_id
+        type: bigint
+        required: true
+        foreign_key: { references: courses.id, on_delete: cascade }
+      - name: source
+        type: text
+        required: true
+        default: free
+        enum: [free, stripe, grant]
+      - name: stripe_session_id
+        type: text
+      - name: stripe_payment_intent_id
+        type: text
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [user_id, course_id]
+        unique: true
+      - columns: [course_id]
+      - columns: [stripe_session_id]
+        unique: true
+        where: "stripe_session_id IS NOT NULL"
+      - columns: [stripe_payment_intent_id]
+        where: "stripe_payment_intent_id IS NOT NULL"
+    rls:
+      - operations: [select]
+        using: "user_id = auth.uid() OR EXISTS (SELECT 1 FROM courses c WHERE c.id = enrollments.course_id AND c.instructor_id = auth.uid())"
+      # Self-enroll only into published free courses; paid enrollments come from the webhook.
+      - operations: [insert]
+        with_check: "stripe_session_id IS NULL AND stripe_payment_intent_id IS NULL AND ((user_id = auth.uid() AND source = 'free' AND EXISTS (SELECT 1 FROM courses c WHERE c.id = enrollments.course_id AND c.published = true AND c.price_cents = 0)) OR (source = 'grant' AND EXISTS (SELECT 1 FROM courses c WHERE c.id = enrollments.course_id AND c.instructor_id = auth.uid())))"
+      # Students drop free enrollments; instructors revoke their own grants. Paid ones stay.
+      - operations: [delete]
+        using: "(user_id = auth.uid() AND source = 'free') OR (source = 'grant' AND EXISTS (SELECT 1 FROM courses c WHERE c.id = enrollments.course_id AND c.instructor_id = auth.uid()))"
+  progress:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: user_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: lesson_id
+        type: bigint
+        required: true
+        foreign_key: { references: lessons.id, on_delete: cascade }
+      - name: completed_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [user_id, lesson_id]
+        unique: true
+      - columns: [lesson_id]
+    rls:
+      - operations: [select]
+        using: "user_id = auth.uid()"
+      - operations: [insert]
+        with_check: "user_id = auth.uid() AND EXISTS (SELECT 1 FROM lessons l JOIN enrollments e ON e.course_id = l.course_id WHERE l.id = progress.lesson_id AND e.user_id = auth.uid())"
+      - operations: [delete]
+        using: "user_id = auth.uid()"
+functions:
+  checkout:
+    runtime: node
+    file: functions/checkout.js
+    auth_required: true
+    timeout: 30s
+    env:
+      STRIPE_SECRET_KEY: ${INSTANCEZ_ENV_STRIPE_SECRET_KEY:-}
+  stripe-webhook:
+    runtime: node
+    file: functions/stripe-webhook.js
+    auth_required: false
+    timeout: 30s
+    env:
+      STRIPE_WEBHOOK_SECRET: ${INSTANCEZ_ENV_STRIPE_WEBHOOK_SECRET:-}
+rpc:
+  my_role:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set: { search_path: public }
+    returns:
+      type: text
+    body: |
+      BEGIN
+        RETURN (SELECT role FROM profiles WHERE id = auth.uid());
+      END;
+  course_progress:
+    description: Lessons completed by the caller in a course
+    auth_required: true
+    language: sql
+    volatility: stable
+    args:
+      - name: p_course_id
+        type: bigint
+        required: true
+    returns:
+      type: "table(total_lessons bigint, completed_lessons bigint, percent integer)"
+    body: |
+      SELECT t.total, d.done,
+             CASE WHEN t.total = 0 THEN 0 ELSE (d.done * 100 / t.total)::integer END
+      FROM (SELECT count(*) AS total FROM lessons WHERE course_id = p_course_id) t,
+           (SELECT count(*) AS done FROM progress p JOIN lessons l ON l.id = p.lesson_id
+            WHERE l.course_id = p_course_id AND p.user_id = auth.uid()) d

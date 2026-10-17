@@ -1,0 +1,27 @@
+id: helpdesk
+name: Helpdesk
+tagline: Public ticket intake, agent replies, internal notes and SLA due times.
+description: Customers submit tickets without an account and follow them with a private link token. Agents reply, leave internal notes customers never see, and work to SLA due times. Intake is rate limited per email and globally. Works with zero setup; email notifications need a Resend key.
+category: business
+tags: [support, tickets, helpdesk, sla, email]
+secrets:
+  - name: INSTANCEZ_ENV_RESEND_API_KEY
+    label: Resend API key
+    description: Starts with re_. Lets the functions email customers a confirmation and agent replies. Without it tickets still work, no email is sent.
+    needed_for: Customer email notifications
+    required: false
+    url: https://resend.com/api-keys
+  - name: INSTANCEZ_ENV_MAIL_FROM
+    label: From address
+    description: Sender shown to customers, for example "Support <support@yourdomain.com>". The domain must be verified in Resend.
+    needed_for: Customer email notifications
+    required: false
+    url: https://resend.com/domains
+setup:
+  - "Add agents in the SQL console after they sign up: insert into agents (user_id, name, role) values ('<user id>', 'Sam', 'admin'). The API cannot write agents, so nobody can promote themselves."
+  - "Customers call the submit-ticket function (POST /functions/v1/submit-ticket with email, name, subject, body). It returns a ticket id and a token."
+  - "Customers read their thread with supabase.rpc('ticket_thread', { p_token }) and answer with rpc('customer_reply', { p_token, p_body })."
+  - "Agents answer through the reply-ticket function (public reply emails the customer, internal note does not)."
+  - "Agents see only their own agents row; admins see all (use it to pick an assignee). Admins also delete tickets and manage canned replies."
+  - "Not included: attachments, agent notification when a customer replies, auto-close of resolved tickets, and per-priority SLA. SLA due times are fixed at 24h first response and 72h resolution at intake."
+  - "Intake allows 5 tickets per email and 200 in total per hour. Put a CAPTCHA or proxy in front of a public form for per-client limits."

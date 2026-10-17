@@ -1,0 +1,511 @@
+version: 1
+project:
+  name: Team Todo
+  description: Workspaces, members, invites, tasks and comments
+auth:
+  jwt_expiry: 1h
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+tables:
+  profiles:
+    fields:
+      - name: id
+        primary_key: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: display_name
+        type: text
+        check: "char_length(display_name) <= 80"
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    rls:
+      - operations: [select]
+        using: "id = auth.uid() OR public.shares_workspace(id)"
+      - operations: [insert]
+        with_check: "id = auth.uid()"
+      - operations: [update]
+        using: "id = auth.uid()"
+        with_check: "id = auth.uid()"
+  workspaces:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: name
+        type: text
+        required: true
+        check: "char_length(btrim(name)) BETWEEN 1 AND 80"
+      - name: owner_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [owner_id]
+    rls:
+      - operations: [select]
+        using: "public.is_member(id)"
+      - operations: [update]
+        using: "public.ws_role(id) = 'owner'"
+        with_check: "public.ws_role(id) = 'owner' AND owner_id = auth.uid()"
+      - operations: [delete]
+        using: "public.ws_role(id) = 'owner'"
+  workspace_members:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: workspace_id
+        type: bigint
+        required: true
+        foreign_key: { references: workspaces.id, on_delete: cascade }
+      - name: user_id
+        type: uuid
+        required: true
+        foreign_key: { references: profiles.id, on_delete: cascade }
+      - name: role
+        type: text
+        required: true
+        default: member
+        enum: [owner, admin, member]
+      - name: joined_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [workspace_id, user_id]
+        unique: true
+      - columns: [user_id]
+      - columns: [workspace_id]
+        unique: true
+        where: "role = 'owner'"
+    rls:
+      - operations: [select]
+        using: "public.is_member(workspace_id)"
+  invites:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: workspace_id
+        type: bigint
+        required: true
+        foreign_key: { references: workspaces.id, on_delete: cascade }
+      - name: token
+        type: text
+        required: true
+      - name: role
+        type: text
+        required: true
+        default: member
+        enum: [admin, member]
+      - name: created_by
+        foreign_key: { references: auth.users.id, on_delete: set_null }
+      - name: expires_at
+        type: timestamptz
+        required: true
+      - name: max_uses
+        type: integer
+        required: true
+        default: 1
+        min: 1
+      - name: uses
+        type: integer
+        required: true
+        default: 0
+        min: 0
+    indexes:
+      - columns: [token]
+        unique: true
+      - columns: [workspace_id]
+      - columns: [created_by]
+    rls:
+      - operations: [select]
+        using: "public.ws_role(workspace_id) IN ('owner', 'admin')"
+      - operations: [delete]
+        using: "public.ws_role(workspace_id) IN ('owner', 'admin')"
+  tasks:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: workspace_id
+        type: bigint
+        required: true
+        foreign_key: { references: workspaces.id, on_delete: cascade }
+      - name: title
+        type: text
+        required: true
+        check: "char_length(btrim(title)) BETWEEN 1 AND 200"
+      - name: description
+        type: text
+        check: "char_length(description) <= 5000"
+      - name: status
+        type: text
+        required: true
+        default: todo
+        enum: [todo, doing, done]
+      - name: priority
+        type: smallint
+        required: true
+        default: 2
+        min: 1
+        max: 3
+      - name: assignee_id
+        type: uuid
+        foreign_key: { references: profiles.id, on_delete: set_null }
+      - name: due_date
+        type: date
+      - name: created_by
+        foreign_key: { references: auth.users.id, on_delete: set_null }
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [workspace_id, status]
+      - columns: [assignee_id, due_date]
+      - columns: [created_by]
+    rls:
+      - operations: [select]
+        using: "public.is_member(workspace_id)"
+      - operations: [insert]
+        with_check: "created_by = auth.uid() AND public.is_member(workspace_id) AND (assignee_id IS NULL OR public.is_user_member(workspace_id, assignee_id))"
+      - operations: [update]
+        using: "public.is_member(workspace_id)"
+        with_check: "public.is_member(workspace_id) AND created_by IS NOT DISTINCT FROM public.task_creator(id) AND workspace_id = public.task_workspace(id) AND (assignee_id IS NULL OR public.is_user_member(workspace_id, assignee_id))"
+      - operations: [delete]
+        using: "public.is_member(workspace_id) AND (created_by = auth.uid() OR public.ws_role(workspace_id) IN ('owner', 'admin'))"
+  task_comments:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: task_id
+        type: bigint
+        required: true
+        foreign_key: { references: tasks.id, on_delete: cascade }
+      - name: user_id
+        type: uuid
+        required: true
+        foreign_key: { references: profiles.id, on_delete: cascade }
+      - name: body
+        type: text
+        required: true
+        pattern: "\\S"
+        check: "char_length(body) <= 5000"
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [task_id, created_at]
+      - columns: [user_id]
+    rls:
+      - operations: [select]
+        using: "EXISTS (SELECT 1 FROM tasks t WHERE t.id = task_id)"
+      - operations: [insert]
+        with_check: "user_id = auth.uid() AND EXISTS (SELECT 1 FROM tasks t WHERE t.id = task_id)"
+      - operations: [update]
+        using: "user_id = auth.uid() AND EXISTS (SELECT 1 FROM tasks t WHERE t.id = task_id)"
+        with_check: "user_id = auth.uid() AND EXISTS (SELECT 1 FROM tasks t WHERE t.id = task_id)"
+      - operations: [delete]
+        using: "user_id = auth.uid()"
+rpc:
+  is_member:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_workspace_id
+        type: bigint
+        required: true
+    returns:
+      type: boolean
+    body: |
+      BEGIN
+        RETURN EXISTS (SELECT 1 FROM workspace_members WHERE workspace_id = p_workspace_id AND user_id = auth.uid());
+      END;
+  is_user_member:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_workspace_id
+        type: bigint
+        required: true
+      - name: p_user_id
+        type: uuid
+        required: true
+    returns:
+      type: boolean
+    body: |
+      BEGIN
+        RETURN is_member(p_workspace_id) AND EXISTS (SELECT 1 FROM workspace_members WHERE workspace_id = p_workspace_id AND user_id = p_user_id);
+      END;
+  ws_role:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_workspace_id
+        type: bigint
+        required: true
+    returns:
+      type: text
+    body: |
+      BEGIN
+        RETURN (SELECT role FROM workspace_members WHERE workspace_id = p_workspace_id AND user_id = auth.uid());
+      END;
+  shares_workspace:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_user_id
+        type: uuid
+        required: true
+    returns:
+      type: boolean
+    body: |
+      BEGIN
+        RETURN EXISTS (SELECT 1 FROM workspace_members a JOIN workspace_members b ON a.workspace_id = b.workspace_id
+                       WHERE a.user_id = auth.uid() AND b.user_id = p_user_id);
+      END;
+  task_creator:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_task_id
+        type: bigint
+        required: true
+    returns:
+      type: uuid
+    body: |
+      BEGIN
+        RETURN (SELECT created_by FROM tasks WHERE id = p_task_id AND is_member(workspace_id));
+      END;
+  task_workspace:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_task_id
+        type: bigint
+        required: true
+    returns:
+      type: bigint
+    body: |
+      BEGIN
+        RETURN (SELECT workspace_id FROM tasks WHERE id = p_task_id AND is_member(workspace_id));
+      END;
+  create_workspace:
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_name
+        type: text
+        required: true
+    returns:
+      type: bigint
+    body: |
+      DECLARE
+        ws_id bigint;
+      BEGIN
+        IF length(btrim(coalesce(p_name, ''))) NOT BETWEEN 1 AND 80 THEN RAISE EXCEPTION 'name must be 1-80 characters'; END IF;
+        IF (SELECT count(*) FROM workspaces WHERE owner_id = auth.uid()) >= 20 THEN RAISE EXCEPTION 'workspace limit reached (20)'; END IF;
+        INSERT INTO profiles (id) VALUES (auth.uid()) ON CONFLICT DO NOTHING;
+        INSERT INTO workspaces (name, owner_id) VALUES (btrim(p_name), auth.uid()) RETURNING id INTO ws_id;
+        INSERT INTO workspace_members (workspace_id, user_id, role) VALUES (ws_id, auth.uid(), 'owner');
+        RETURN ws_id;
+      END;
+  create_invite:
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_workspace_id
+        type: bigint
+        required: true
+      - name: p_role
+        type: text
+        default: member
+      - name: p_days
+        type: integer
+        default: "7"
+      - name: p_max_uses
+        type: integer
+        default: "1"
+    returns:
+      type: text
+    body: |
+      DECLARE
+        t text := replace(gen_random_uuid()::text, '-', '');
+      BEGIN
+        IF coalesce(ws_role(p_workspace_id), '') NOT IN ('owner', 'admin') THEN RAISE EXCEPTION 'only owners and admins can invite'; END IF;
+        IF p_role IS NULL OR p_role NOT IN ('admin', 'member') THEN RAISE EXCEPTION 'role must be admin or member'; END IF;
+        IF p_role = 'admin' AND ws_role(p_workspace_id) <> 'owner' THEN RAISE EXCEPTION 'only the owner can invite admins'; END IF;
+        IF p_days IS NULL OR p_max_uses IS NULL OR p_days NOT BETWEEN 1 AND 90 OR p_max_uses NOT BETWEEN 1 AND 1000 THEN RAISE EXCEPTION 'days must be 1-90 and max uses 1-1000'; END IF;
+        INSERT INTO invites (workspace_id, token, role, created_by, expires_at, max_uses)
+          VALUES (p_workspace_id, t, p_role, auth.uid(), now() + make_interval(days => p_days), p_max_uses);
+        RETURN t;
+      END;
+  accept_invite:
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_token
+        type: text
+        required: true
+    returns:
+      type: bigint
+    body: |
+      DECLARE
+        inv invites%ROWTYPE;
+      BEGIN
+        SELECT * INTO inv FROM invites WHERE token = p_token FOR UPDATE;
+        IF NOT FOUND THEN RAISE EXCEPTION 'invite is invalid or expired'; END IF;
+        IF is_member(inv.workspace_id) THEN RETURN inv.workspace_id; END IF;
+        IF inv.expires_at <= now() OR inv.uses >= inv.max_uses THEN RAISE EXCEPTION 'invite is invalid or expired'; END IF;
+        INSERT INTO profiles (id) VALUES (auth.uid()) ON CONFLICT DO NOTHING;
+        INSERT INTO workspace_members (workspace_id, user_id, role) VALUES (inv.workspace_id, auth.uid(), inv.role);
+        UPDATE invites SET uses = uses + 1 WHERE id = inv.id;
+        RETURN inv.workspace_id;
+      END;
+  set_member_role:
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_workspace_id
+        type: bigint
+        required: true
+      - name: p_user_id
+        type: uuid
+        required: true
+      - name: p_role
+        type: text
+        required: true
+    returns:
+      type: boolean
+    body: |
+      BEGIN
+        IF ws_role(p_workspace_id) IS DISTINCT FROM 'owner' THEN RAISE EXCEPTION 'only the owner can change roles'; END IF;
+        IF p_role IS NULL OR p_role NOT IN ('admin', 'member') THEN RAISE EXCEPTION 'role must be admin or member'; END IF;
+        UPDATE workspace_members SET role = p_role
+          WHERE workspace_id = p_workspace_id AND user_id = p_user_id AND role <> 'owner';
+        RETURN FOUND;
+      END;
+  remove_member:
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_workspace_id
+        type: bigint
+        required: true
+      - name: p_user_id
+        type: uuid
+        required: true
+    returns:
+      type: boolean
+    body: |
+      DECLARE
+        me text := ws_role(p_workspace_id);
+        target uuid := p_user_id;
+        target_role text;
+      BEGIN
+        IF me IS NULL THEN RAISE EXCEPTION 'not a member of this workspace'; END IF;
+        SELECT role INTO target_role FROM workspace_members WHERE workspace_id = p_workspace_id AND user_id = target;
+        IF target_role IS NULL THEN RETURN false; END IF;
+        IF target_role = 'owner' THEN RAISE EXCEPTION 'the owner cannot be removed; transfer ownership first'; END IF;
+        IF target <> auth.uid() AND NOT (me = 'owner' OR (me = 'admin' AND target_role = 'member')) THEN
+          RAISE EXCEPTION 'not allowed to remove this member';
+        END IF;
+        UPDATE tasks SET assignee_id = NULL WHERE workspace_id = p_workspace_id AND assignee_id = target;
+        DELETE FROM workspace_members WHERE workspace_id = p_workspace_id AND user_id = target;
+        RETURN true;
+      END;
+  transfer_ownership:
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_workspace_id
+        type: bigint
+        required: true
+      - name: p_user_id
+        type: uuid
+        required: true
+    returns:
+      type: boolean
+    body: |
+      BEGIN
+        IF ws_role(p_workspace_id) IS DISTINCT FROM 'owner' THEN RAISE EXCEPTION 'only the owner can transfer ownership'; END IF;
+        IF p_user_id IS NULL OR p_user_id = auth.uid() OR NOT is_user_member(p_workspace_id, p_user_id) THEN
+          RAISE EXCEPTION 'pick another member of this workspace';
+        END IF;
+        UPDATE workspace_members SET role = 'admin' WHERE workspace_id = p_workspace_id AND user_id = auth.uid();
+        UPDATE workspace_members SET role = 'owner' WHERE workspace_id = p_workspace_id AND user_id = p_user_id;
+        UPDATE workspaces SET owner_id = p_user_id WHERE id = p_workspace_id;
+        RETURN true;
+      END;
+  workspace_summary:
+    auth_required: true
+    language: plpgsql
+    volatility: stable
+    security: invoker
+    set:
+      search_path: public
+    args:
+      - name: p_workspace_id
+        type: bigint
+        required: true
+    returns:
+      type: jsonb
+    body: |
+      BEGIN
+        IF NOT is_member(p_workspace_id) THEN RAISE EXCEPTION 'workspace not found'; END IF;
+        RETURN (SELECT jsonb_build_object(
+          'todo', count(*) FILTER (WHERE status = 'todo'),
+          'doing', count(*) FILTER (WHERE status = 'doing'),
+          'done', count(*) FILTER (WHERE status = 'done'),
+          'overdue', count(*) FILTER (WHERE status <> 'done' AND due_date < current_date))
+          FROM tasks WHERE workspace_id = p_workspace_id);
+      END;

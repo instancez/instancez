@@ -1,0 +1,24 @@
+id: appointment-scheduler
+name: Appointment Scheduler
+tagline: Providers, weekly hours, bookable slots and double-booking protection.
+description: A booking backend. Providers offer services with weekly availability, customers list open slots and book them, and the database refuses overlapping bookings. Cancellations follow a per-service cutoff. Everything works with zero setup; confirmation emails need an optional Resend key.
+category: booking
+tags: [booking, appointments, scheduling, calendar, resend]
+secrets:
+  - name: INSTANCEZ_ENV_RESEND_API_KEY
+    label: Resend API key
+    description: Starts with re_. When set, the book function emails the customer a confirmation. Bookings succeed without it.
+    needed_for: Booking confirmation emails
+    required: false
+    url: https://resend.com/api-keys
+  - name: INSTANCEZ_ENV_FROM_ADDRESS
+    label: From address
+    description: Sender such as "Acme <bookings@yourdomain.com>". The domain must be verified in Resend. Defaults to Resend's test sender.
+    needed_for: Sender shown on confirmation emails
+    required: false
+    url: https://resend.com/domains
+setup:
+  - "Sign up, create your profiles row, then promote yourself: update profiles set role = 'admin' where id = '<your user id>' in the SQL console. Only admins manage providers, services and hours."
+  - "Insert a provider (set timezone to an IANA name like Europe/Berlin), a service with duration_minutes, and availability_rules rows (weekday 0 = Sunday ... 6 = Saturday, local start_time and end_time)."
+  - "Customers call rpc available_slots({p_service_id, p_day}) to list open slots, then the `book` function with {service_id, starts_at, notes}. Slots are aligned to the service duration from each window start."
+  - "Customers cancel with rpc cancel_booking({p_booking_id}); allowed until services.cancel_hours_before hours before the start. Admins can always cancel."

@@ -1,0 +1,14 @@
+id: team-todo
+name: Team Todo
+tagline: Shared workspaces with roles, invite links, assigned tasks and comments.
+description: Workspaces where owners, admins and members share tasks with assignees, due dates, statuses and comment threads. Teammates join through expiring invite links. Access is enforced by membership in the database, so no secrets or server code are needed.
+category: productivity
+tags: [tasks, todo, teams, workspaces, invites, collaboration]
+secrets: []
+setup:
+  - "Sign up, then create a workspace with supabase.rpc('create_workspace', { p_name }). You become its owner and your profile row is created for you (max 20 owned workspaces)."
+  - "Invite people: rpc('create_invite', { p_workspace_id, p_role, p_days, p_max_uses }) returns a token. Share a link carrying it; the invitee calls rpc('accept_invite', { p_token })."
+  - "Owners promote or demote members with rpc('set_member_role', { p_workspace_id, p_user_id, p_role }) and hand over with rpc('transfer_ownership', { p_workspace_id, p_user_id }). Only the owner renames or deletes a workspace."
+  - "Remove a member or leave with rpc('remove_member', { p_workspace_id, p_user_id }); pass your own id to leave. Removed members are unassigned from tasks. Admins remove members, owners remove anyone."
+  - "rpc('workspace_summary', { p_workspace_id }) returns todo, doing, done and overdue counts for a dashboard."
+  - "Deleting an owner's account deletes that workspace and its tasks; transfer ownership first. Deleting a member's account keeps their tasks and unassigns them."

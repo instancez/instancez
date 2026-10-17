@@ -1,0 +1,13 @@
+id: resource-booking
+name: Resource Booking
+tagline: Book rooms, desks, equipment or tables with a no-double-booking guarantee.
+description: Resources people can reserve for a time window. Booking goes through one atomic function, so two people can never hold overlapping slots. Includes free-slot search, anonymous-safe availability, my bookings and an admin view. Needs no secrets. Bookings are limited to one year ahead and 50 upcoming per user; recurring bookings, approvals and notifications are not included.
+category: booking
+tags: [booking, rooms, desks, equipment, restaurant, reservations, calendar]
+secrets: []
+setup:
+  - "Sign up, insert your profile row, then promote yourself: update profiles set role = 'admin' where id = '<your user id>' in the SQL console."
+  - "As admin, insert resources (kind: room, desk, equipment or table). max_minutes caps one booking's length."
+  - "Book with supabase.rpc('book_resource', { p_resource_id, p_starts_at, p_ends_at, p_title }). Overlaps return an error containing 'already booked'. Resources with bookings cannot be deleted: set active = false instead."
+  - "Draw calendars with rpc('resource_busy', { p_resource_id, p_from, p_to }); it returns busy windows without exposing who booked."
+  - "Find something free with rpc('available_resources', { p_from, p_to, p_kind, p_min_capacity }). Cancel with rpc('cancel_booking', { p_booking_id })."

@@ -1,0 +1,12 @@
+id: habit-tracker
+name: Habit Tracker
+tagline: Private daily and weekly habits with check-ins and current and longest streaks.
+description: Each user tracks their own habits, daily or a set number of times per week, and checks them off per day. Streaks are computed in the database from the user's local date, so time zones never break them. Everything is private to the signed-in user. Needs no secrets.
+category: productivity
+tags: [habits, streaks, goals, tracking, personal, private]
+secrets: []
+setup:
+  - "Users sign up and call supabase.from('habits').insert({ user_id, name, cadence, target }). Daily habits ignore target; weekly habits need target 1 to 7 check-ins per week. Names are 1-100 characters."
+  - "Check a day on or off with rpc('toggle_check_in', { p_habit_id, p_day }); p_day is the user's local date (YYYY-MM-DD), no later than tomorrow."
+  - "Render the home screen with one call: rpc('habit_overview', { p_today }). It returns up to 100 active habits with current streak, longest streak and whether today is done. p_today must be within 2 days of the server date."
+  - "Weeks start on Monday. An unfinished current day or week never breaks a streak; it only breaks once it has passed. Archive a habit instead of deleting it to keep its history."

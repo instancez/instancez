@@ -1,0 +1,15 @@
+id: forum
+name: Community Forum
+tagline: Categories, threads, replies, reactions and a moderation queue.
+description: A discussion forum with categories, threaded replies and emoji reactions. Moderators can pin, lock and delete; admins can ban users; members report posts into a review queue. Works with zero setup.
+category: community
+tags: [forum, discussion, community, moderation, threads]
+secrets: []
+setup:
+  - "Insert a few categories (slug, name, position) in the SQL console or from your admin UI as a moderator."
+  - "Promote moderators: run `update profiles set role = 'admin' where id = '<your user id>'` in the SQL console. Roles are member, moderator and admin; only admins can change roles after that."
+  - "Create a profiles row for every new user on sign-up (id = auth user id, display_name required). Role is always 'member' on insert. Posting needs a profile; banned users cannot post or edit."
+  - "Admins ban with `update profiles set banned = true where id = '<user id>'` (API or SQL console). Moderators resolve reports by setting status and resolved_by = their own id."
+  - "List threads with supabase.rpc('list_threads', { p_category_id, p_limit, p_offset }). Pass p_category_id = 0 (the default) for all categories. Limit is capped at 100."
+  - "Deleting an account deletes its threads and replies. Authors can delete a thread only until someone replies; moderators can always delete. A category must be emptied before it can be deleted."
+  - "Not included: thread search, notifications, edit history, rate limits. list_threads counts replies per request, so denormalize reply counts past ~100k replies."

@@ -1,0 +1,148 @@
+version: 1
+project:
+  name: Blog
+  description: Posts, tags and comments
+auth:
+  jwt_expiry: 1h
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+tables:
+  profiles:
+    fields:
+      - name: id
+        primary_key: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: display_name
+        type: text
+        check: "char_length(display_name) <= 80"
+      - name: role
+        type: text
+        required: true
+        default: reader
+        enum: [reader, author]
+    rls:
+      - operations: [select]
+        using: "true"
+      - operations: [insert]
+        with_check: "auth.uid() = id AND role = 'reader'"
+      - operations: [update]
+        using: "auth.uid() = id"
+        with_check: "auth.uid() = id AND (role = 'reader' OR public.is_author())"
+  posts:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: author_id
+        required: true
+        foreign_key: { references: profiles.id, on_delete: cascade }
+      - name: slug
+        type: text
+        required: true
+        pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+        check: "char_length(slug) <= 120"
+      - name: title
+        type: text
+        required: true
+        check: "char_length(btrim(title)) BETWEEN 1 AND 200"
+      - name: excerpt
+        type: text
+        check: "char_length(excerpt) <= 500"
+      - name: body
+        type: text
+        required: true
+        check: "char_length(body) <= 200000"
+      - name: cover_path
+        type: text
+      - name: tags
+        type: "text[]"
+        check: "cardinality(tags) <= 10"
+      - name: published
+        type: boolean
+        required: true
+        default: false
+      - name: published_at
+        type: timestamptz
+        check: "published = false OR published_at IS NOT NULL"
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+      - name: updated_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [slug]
+        unique: true
+      - columns: [published, published_at]
+      - columns: [author_id]
+    rls:
+      - operations: [select]
+        using: "published = true OR author_id = auth.uid()"
+      - operations: [insert]
+        with_check: "author_id = auth.uid() AND public.is_author()"
+      - operations: [update]
+        using: "author_id = auth.uid() AND public.is_author()"
+        with_check: "author_id = auth.uid() AND public.is_author()"
+      - operations: [delete]
+        using: "author_id = auth.uid()"
+  comments:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: post_id
+        type: bigint
+        required: true
+        foreign_key: { references: posts.id, on_delete: cascade }
+      - name: user_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: body
+        type: text
+        required: true
+        check: "char_length(btrim(body)) BETWEEN 1 AND 5000"
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [post_id, created_at]
+      - columns: [user_id]
+    rls:
+      - operations: [select]
+        using: "EXISTS (SELECT 1 FROM posts WHERE posts.id = post_id AND posts.published)"
+      - operations: [insert]
+        with_check: "user_id = auth.uid() AND created_at = now() AND EXISTS (SELECT 1 FROM posts WHERE posts.id = post_id AND posts.published)"
+      - operations: [delete]
+        using: "user_id = auth.uid() OR EXISTS (SELECT 1 FROM posts WHERE posts.id = post_id AND posts.author_id = auth.uid())"
+storage:
+  covers:
+    public: true
+    max_size: 5MB
+    types: [image/*]
+    rls:
+      - operations: [select]
+        using: "name LIKE auth.uid()::text || '/%'"
+      - operations: [insert]
+        with_check: "public.is_author() AND name LIKE auth.uid()::text || '/%'"
+      - operations: [update]
+        using: "name LIKE auth.uid()::text || '/%'"
+        with_check: "name LIKE auth.uid()::text || '/%'"
+      - operations: [delete]
+        using: "name LIKE auth.uid()::text || '/%'"
+rpc:
+  is_author:
+    auth_required: false
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    returns:
+      type: boolean
+    body: |
+      BEGIN
+        RETURN EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'author');
+      END;

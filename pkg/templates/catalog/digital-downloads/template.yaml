@@ -1,0 +1,25 @@
+id: digital-downloads
+name: Digital Downloads
+tagline: Sell ebooks, presets and files. Stripe checkout, buyer-only signed downloads.
+description: A storefront for digital products. Files sit in a private bucket and only buyers get a short-lived signed link. Catalog and accounts work with zero setup; checkout and paid-order tracking need Stripe keys.
+category: commerce
+tags: [digital, downloads, stripe, ebooks, files, payments]
+secrets:
+  - name: INSTANCEZ_ENV_STRIPE_SECRET_KEY
+    label: Stripe secret key
+    description: Starts with sk_test_ or sk_live_. Lets the checkout function create Stripe Checkout sessions.
+    needed_for: Checkout
+    required: true
+    url: https://dashboard.stripe.com/apikeys
+  - name: INSTANCEZ_ENV_STRIPE_WEBHOOK_SECRET
+    label: Stripe webhook signing secret
+    description: Starts with whsec_. Verifies payment events really come from Stripe, then unlocks the download.
+    needed_for: Marking purchases as paid
+    required: true
+    url: https://dashboard.stripe.com/webhooks
+setup:
+  - "In Stripe add a webhook endpoint https://<your-app-url>/functions/v1/stripe-webhook and subscribe to checkout.session.completed and checkout.session.expired."
+  - "Promote an admin: update profiles set role = 'admin' where id = '<your user id>' in the SQL console (sign up and create your profile row first)."
+  - "As admin, upload the file to the private `product_files` bucket, then insert a product with file_path set to that object path and price_cents in the smallest currency unit."
+  - "Deactivate products instead of deleting them (purchases keep a restricted link). To refund, refund in Stripe, then set purchases.status = 'refunded' to revoke the download."
+  - "Call the `checkout` function with {product_id, success_url, cancel_url}, and the `download` function with {product_id} after payment."

@@ -1,0 +1,12 @@
+id: classifieds
+name: Classifieds
+tagline: Local marketplace with photos, favorites, private seller chat and reports.
+description: A classifieds backend. Sellers post listings with photos, buyers favorite them and message the seller privately, and anyone can report a bad listing. Needs no secrets and works fully out of the box.
+category: commerce
+tags: [classifieds, marketplace, listings, messaging, local]
+secrets: []
+setup:
+  - "Sign up, create your profiles row, then promote yourself: update profiles set role = 'admin' where id = '<your user id>' in the SQL console. Admins can hide listings and review reports."
+  - "Insert a few rows into categories (name, slug) so sellers have something to pick."
+  - "Not included: search, user blocking, moderation audit trail, photo cleanup when a listing or account is deleted. Sellers can only message users who wrote to them first."
+  - "Upload listing photos to the listing_images bucket under '<user id>/<file>' and store the paths in listings.images."

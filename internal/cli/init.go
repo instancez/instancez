@@ -1,20 +1,26 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/instancez/instancez/internal/adapter/funcs"
+	"github.com/instancez/instancez/internal/cloud"
+	"github.com/instancez/instancez/pkg/templates"
 	"github.com/spf13/cobra"
 )
 
 // initOptions captures the resolved positional + flags for `inz init`.
 type initOptions struct {
-	name  string
-	dir   string
-	force bool
+	name          string
+	dir           string
+	force         bool
+	template      string
+	listTemplates bool
 }
 
 func newInitCmd() *cobra.Command {
@@ -36,19 +42,58 @@ init only writes scaffolding files; it never touches a database. A
 			if len(args) == 1 {
 				opts.name = args[0]
 			}
+			if err := validateTemplateFlags(cmd, opts); err != nil {
+				return err
+			}
+			if opts.listTemplates {
+				return runListTemplates(cmd.OutOrStdout())
+			}
+			opts.template = templates.NormalizeID(opts.template)
 			return runInit(opts)
 		},
 	}
 
 	cmd.Flags().StringVar(&opts.dir, "dir", ".", "output directory")
 	cmd.Flags().BoolVar(&opts.force, "force", false, "overwrite existing scaffolding files")
+	cmd.Flags().StringVar(&opts.template, "template", "", "scaffold from a hosted template (see --list-templates)")
+	cmd.Flags().BoolVar(&opts.listTemplates, "list-templates", false, "list available templates and exit")
 	return cmd
+}
+
+func validateTemplateFlags(cmd *cobra.Command, opts initOptions) error {
+	set := cmd.Flags().Changed("template")
+	switch {
+	case set && opts.listTemplates:
+		return errors.New("use either --template or --list-templates, not both")
+	case set && strings.TrimSpace(opts.template) == "":
+		return errors.New("--template needs an id; run `inz init --list-templates`")
+	case set && !templates.ValidID(templates.NormalizeID(opts.template)):
+		return fmt.Errorf("invalid template id %q; run `inz init --list-templates`", opts.template)
+	}
+	return nil
+}
+
+func runListTemplates(w io.Writer) error {
+	list, err := cloud.NewClient(cloud.APIURL(), "").ListTemplates()
+	if err != nil {
+		return fmt.Errorf("list templates: %w", err)
+	}
+	if len(list) == 0 {
+		_, _ = fmt.Fprintln(w, "no templates available")
+	}
+	for _, m := range list {
+		_, _ = fmt.Fprintf(w, "%-24s %-13s %s\n", templates.Clean(m.ID), templates.Clean(m.Category), templates.Clean(m.Tagline))
+	}
+	return nil
 }
 
 func runInit(opts initOptions) error {
 	dir, err := filepath.Abs(opts.dir)
 	if err != nil {
 		return fmt.Errorf("resolve dir: %w", err)
+	}
+	if opts.template != "" {
+		return runInitTemplate(opts, dir)
 	}
 	yamlPath := filepath.Join(dir, "instancez.yaml")
 	_, statErr := os.Stat(yamlPath)
@@ -82,19 +127,7 @@ func runInit(opts initOptions) error {
 		}
 	}
 
-	// .gitignore: append-only — preserve user customizations, only add our
-	// entries that aren't already present.
-	if err := applyWrite(dir, ".gitignore", func(existing string) (string, writeAction) {
-		merged := mergeGitignore(existing, scaffoldGitignore())
-		switch {
-		case existing == "":
-			return merged, actionCreate
-		case merged == existing:
-			return existing, actionSkip
-		default:
-			return merged, actionUpdate
-		}
-	}); err != nil {
+	if err := writeGitignore(dir); err != nil {
 		return err
 	}
 
@@ -415,6 +448,25 @@ type envKV struct{ Key, Val string }
 // runs the planner to decide the new content + action, then writes (or stays
 // silent on skip). The planner owns the per-file merge policy; applyWrite
 // is just the IO + logging shell.
+func diffAction(existing, merged string) writeAction {
+	switch {
+	case existing == "":
+		return actionCreate
+	case merged == existing:
+		return actionSkip
+	default:
+		return actionUpdate
+	}
+}
+
+// writeGitignore is append-only: user entries stay, ours are added when missing.
+func writeGitignore(dir string) error {
+	return applyWrite(dir, ".gitignore", func(existing string) (string, writeAction) {
+		merged := mergeGitignore(existing, scaffoldGitignore())
+		return merged, diffAction(existing, merged)
+	})
+}
+
 func applyWrite(dir, name string, plan func(existing string) (string, writeAction)) error {
 	path := filepath.Join(dir, name)
 	var existing string

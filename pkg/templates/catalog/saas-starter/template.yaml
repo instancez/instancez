@@ -1,0 +1,37 @@
+id: saas-starter
+name: SaaS Starter
+tagline: Organizations, roles, Stripe subscriptions mirrored by webhook, and usage events.
+description: The multi-tenant core of a SaaS. Users create organizations and add existing users as owners, admins or members. Stripe Billing subscriptions are mirrored into the database by a webhook, and has_active_plan(org_id) tells your app (or your own RLS policies) who has paid. Organizations, roles and usage events work without Stripe; billing needs the keys and price ids.
+category: business
+tags: [saas, multi-tenant, organizations, subscriptions, stripe, billing]
+secrets:
+  - name: INSTANCEZ_ENV_STRIPE_SECRET_KEY
+    label: Stripe secret key
+    description: Starts with sk_test_ or sk_live_. Creates Checkout and Billing Portal sessions and reads subscriptions.
+    needed_for: Checkout, billing portal, webhook
+    required: true
+    url: https://dashboard.stripe.com/apikeys
+  - name: INSTANCEZ_ENV_STRIPE_WEBHOOK_SECRET
+    label: Stripe webhook signing secret
+    description: Starts with whsec_. Verifies that subscription events really come from Stripe.
+    needed_for: Mirroring subscriptions
+    required: true
+    url: https://dashboard.stripe.com/webhooks
+  - name: INSTANCEZ_ENV_STRIPE_PRICE_PRO
+    label: Stripe price id for Pro
+    description: Starts with price_. A recurring price you created for your Pro plan. Not secret, but you must supply it.
+    needed_for: Subscribing to Pro
+    required: true
+    url: https://dashboard.stripe.com/products
+  - name: INSTANCEZ_ENV_STRIPE_PRICE_TEAM
+    label: Stripe price id for Team
+    description: Starts with price_. A recurring price for a second tier. Leave empty to offer only Pro.
+    needed_for: Subscribing to Team
+    required: false
+    url: https://dashboard.stripe.com/products
+setup:
+  - "In Stripe add a webhook endpoint pointing to https://<your-app-url>/functions/v1/stripe-webhook and subscribe to checkout.session.completed, customer.subscription.updated and customer.subscription.deleted."
+  - "In Stripe enable the Customer Portal (Settings > Billing > Customer portal) so create-billing-portal can open it."
+  - "Seed plans for your pricing page in the SQL console: insert into plans (id, name, price_cents, seat_limit, monthly_event_limit) values ('free','Free',0,3,1000), ('pro','Pro',2900,25,100000), ('team','Team',9900,100,1000000)."
+  - "Create an organization with rpc('create_organization', { p_name, p_slug }). Add someone who already has an account with rpc('add_org_member', { p_org_id, p_email, p_role }); it never says whether the email exists, so confirm in your UI (rpc('org_members')). Seats are capped by plans.seat_limit (the free plan until a subscription is active). Change roles with rpc('set_member_role') and remove people with rpc('remove_org_member'). Deleting a user's account removes their memberships, so transfer ownership first; there are no email invitations for people without an account. usage_events are client-reported (any member can insert any quantity), so do not use them for billing; meter server-side for that."
+  - "Gate features with rpc('has_active_plan', { p_org_id }), or call it from your own RLS policies. Record usage by inserting into usage_events, then read totals with rpc('org_usage', { p_org_id, p_since })."

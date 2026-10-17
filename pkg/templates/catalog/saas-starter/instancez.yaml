@@ -1,0 +1,405 @@
+version: 1
+project:
+  name: SaaS Starter
+  description: Organizations, roles, Stripe subscriptions and usage events
+auth:
+  jwt_expiry: 1h
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+tables:
+  plans:
+    fields:
+      - name: id
+        type: text
+        primary_key: true
+        pattern: "^[a-z][a-z0-9_]*$"
+      - name: name
+        type: text
+        required: true
+        check: "char_length(name) <= 100"
+      - name: price_cents
+        type: integer
+        required: true
+        default: 0
+        min: 0
+      - name: seat_limit
+        type: integer
+        min: 1
+      - name: monthly_event_limit
+        type: integer
+        min: 0
+    rls:
+      - operations: [select]
+        using: "true"
+  organizations:
+    fields:
+      - name: id
+        type: uuid
+        primary_key: true
+        default: uuid_v7()
+      - name: name
+        type: text
+        required: true
+        check: "char_length(btrim(name)) BETWEEN 1 AND 100"
+      - name: slug
+        type: text
+        required: true
+        pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+        check: "char_length(slug) <= 63"
+      - name: created_by
+        foreign_key: { references: auth.users.id, on_delete: set_null }
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [slug]
+        unique: true
+    rls:
+      - operations: [select]
+        using: "EXISTS (SELECT 1 FROM memberships m WHERE m.org_id = organizations.id AND m.user_id = auth.uid())"
+      - operations: [update]
+        using: "EXISTS (SELECT 1 FROM memberships m WHERE m.org_id = organizations.id AND m.user_id = auth.uid() AND m.role IN ('owner', 'admin'))"
+        with_check: "EXISTS (SELECT 1 FROM memberships m WHERE m.org_id = organizations.id AND m.user_id = auth.uid() AND m.role IN ('owner', 'admin'))"
+      - operations: [delete]
+        using: "EXISTS (SELECT 1 FROM memberships m WHERE m.org_id = organizations.id AND m.user_id = auth.uid() AND m.role = 'owner')"
+  memberships:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: org_id
+        type: uuid
+        required: true
+        foreign_key: { references: organizations.id, on_delete: cascade }
+      - name: user_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: role
+        type: text
+        required: true
+        default: member
+        enum: [owner, admin, member]
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [org_id, user_id]
+        unique: true
+      - columns: [user_id]
+    rls:
+      - operations: [select]
+        using: "user_id = auth.uid()"
+      - operations: [delete]
+        using: "user_id = auth.uid() AND role <> 'owner'"
+  subscriptions:
+    fields:
+      - name: org_id
+        type: uuid
+        primary_key: true
+        foreign_key: { references: organizations.id, on_delete: cascade }
+      - name: stripe_customer_id
+        type: text
+      - name: stripe_subscription_id
+        type: text
+      - name: plan_id
+        type: text
+      - name: status
+        type: text
+        required: true
+        default: incomplete
+        enum: [incomplete, incomplete_expired, trialing, active, past_due, canceled, unpaid, paused]
+      - name: current_period_end
+        type: timestamptz
+      - name: cancel_at_period_end
+        type: boolean
+        required: true
+        default: false
+      - name: updated_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [stripe_customer_id]
+      - columns: [stripe_subscription_id]
+        unique: true
+    rls:
+      - operations: [select]
+        using: "EXISTS (SELECT 1 FROM memberships m WHERE m.org_id = subscriptions.org_id AND m.user_id = auth.uid())"
+  usage_events:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: org_id
+        type: uuid
+        required: true
+        foreign_key: { references: organizations.id, on_delete: cascade }
+      - name: user_id
+        foreign_key: { references: auth.users.id, on_delete: set_null }
+      - name: event
+        type: text
+        required: true
+        check: "char_length(event) BETWEEN 1 AND 100"
+      - name: quantity
+        type: integer
+        required: true
+        default: 1
+        min: 1
+        max: 1000000
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [org_id, event, created_at]
+      - columns: [user_id]
+    rls:
+      - operations: [select]
+        using: "EXISTS (SELECT 1 FROM memberships m WHERE m.org_id = usage_events.org_id AND m.user_id = auth.uid())"
+      - operations: [insert]
+        with_check: "user_id = auth.uid() AND EXISTS (SELECT 1 FROM memberships m WHERE m.org_id = usage_events.org_id AND m.user_id = auth.uid())"
+rpc:
+  create_organization:
+    description: Creates an organization with the caller as owner. Returns the organization id.
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_name
+        type: text
+        required: true
+      - name: p_slug
+        type: text
+        required: true
+    returns:
+      type: uuid
+    body: |
+      DECLARE
+        v_id uuid;
+      BEGIN
+        IF auth.uid() IS NULL THEN
+          RAISE EXCEPTION 'sign in required' USING ERRCODE = '42501';
+        END IF;
+        IF btrim(coalesce(p_name, '')) = '' OR length(p_name) > 100 THEN
+          RAISE EXCEPTION 'name must be 1-100 characters';
+        END IF;
+        INSERT INTO public.organizations (name, slug, created_by) VALUES (btrim(p_name), lower(btrim(p_slug)), auth.uid()) RETURNING id INTO v_id;
+        INSERT INTO public.memberships (org_id, user_id, role) VALUES (v_id, auth.uid(), 'owner');
+        RETURN v_id;
+      END;
+  add_org_member:
+    description: Owner or admin adds an existing user by email. Returns the same result whether or not the email has an account. Only owners can add owners.
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_org_id
+        type: uuid
+        required: true
+      - name: p_email
+        type: text
+        required: true
+      - name: p_role
+        type: text
+        default: member
+    returns:
+      type: void
+    body: |
+      DECLARE
+        v_caller text;
+        v_user uuid;
+        v_role text := coalesce(p_role, 'member');
+        v_limit integer;
+      BEGIN
+        PERFORM 1 FROM public.organizations WHERE id = p_org_id FOR UPDATE;
+        SELECT role INTO v_caller FROM public.memberships WHERE org_id = p_org_id AND user_id = auth.uid();
+        IF v_caller IS NULL OR v_caller = 'member' THEN
+          RAISE EXCEPTION 'owner or admin required' USING ERRCODE = '42501';
+        END IF;
+        IF v_role NOT IN ('owner', 'admin', 'member') OR (v_role = 'owner' AND v_caller <> 'owner') THEN
+          RAISE EXCEPTION 'role not allowed' USING ERRCODE = '42501';
+        END IF;
+        SELECT p.seat_limit INTO v_limit FROM public.plans p
+        WHERE p.id = coalesce(
+          (SELECT s.plan_id FROM public.subscriptions s WHERE s.org_id = p_org_id AND s.status IN ('active', 'trialing')),
+          'free');
+        IF v_limit IS NOT NULL AND (SELECT count(*) FROM public.memberships WHERE org_id = p_org_id) >= v_limit THEN
+          RAISE EXCEPTION 'seat limit reached for this plan';
+        END IF;
+        SELECT id INTO v_user FROM auth.users WHERE lower(email) = lower(btrim(p_email));
+        IF v_user IS NULL THEN
+          RETURN;
+        END IF;
+        INSERT INTO public.memberships (org_id, user_id, role) VALUES (p_org_id, v_user, v_role)
+        ON CONFLICT (org_id, user_id) DO NOTHING;
+      END;
+  remove_org_member:
+    description: Owner or admin removes a member. The last owner cannot be removed.
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_org_id
+        type: uuid
+        required: true
+      - name: p_user_id
+        type: uuid
+        required: true
+    returns:
+      type: void
+    body: |
+      DECLARE
+        v_caller text;
+        v_target text;
+      BEGIN
+        PERFORM 1 FROM public.organizations WHERE id = p_org_id FOR UPDATE;
+        SELECT role INTO v_caller FROM public.memberships WHERE org_id = p_org_id AND user_id = auth.uid();
+        IF v_caller IS NULL OR v_caller = 'member' THEN
+          RAISE EXCEPTION 'owner or admin required' USING ERRCODE = '42501';
+        END IF;
+        SELECT role INTO v_target FROM public.memberships WHERE org_id = p_org_id AND user_id = p_user_id;
+        IF v_target IS NULL THEN
+          RETURN;
+        END IF;
+        IF v_target = 'owner' AND (v_caller <> 'owner' OR (SELECT count(*) FROM public.memberships WHERE org_id = p_org_id AND role = 'owner') < 2) THEN
+          RAISE EXCEPTION 'cannot remove this owner' USING ERRCODE = '42501';
+        END IF;
+        DELETE FROM public.memberships WHERE org_id = p_org_id AND user_id = p_user_id;
+      END;
+  set_member_role:
+    description: Owner changes a member's role. The last owner cannot be demoted.
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_org_id
+        type: uuid
+        required: true
+      - name: p_user_id
+        type: uuid
+        required: true
+      - name: p_role
+        type: text
+        required: true
+    returns:
+      type: void
+    body: |
+      DECLARE
+        v_target text;
+      BEGIN
+        PERFORM 1 FROM public.organizations WHERE id = p_org_id FOR UPDATE;
+        IF NOT EXISTS (SELECT 1 FROM public.memberships WHERE org_id = p_org_id AND user_id = auth.uid() AND role = 'owner') THEN
+          RAISE EXCEPTION 'owner required' USING ERRCODE = '42501';
+        END IF;
+        IF p_role IS NULL OR p_role NOT IN ('owner', 'admin', 'member') THEN
+          RAISE EXCEPTION 'role not allowed';
+        END IF;
+        SELECT role INTO v_target FROM public.memberships WHERE org_id = p_org_id AND user_id = p_user_id;
+        IF v_target IS NULL THEN
+          RAISE EXCEPTION 'not a member';
+        END IF;
+        IF v_target = 'owner' AND p_role <> 'owner' AND (SELECT count(*) FROM public.memberships WHERE org_id = p_org_id AND role = 'owner') < 2 THEN
+          RAISE EXCEPTION 'cannot demote the last owner' USING ERRCODE = '42501';
+        END IF;
+        UPDATE public.memberships SET role = p_role WHERE org_id = p_org_id AND user_id = p_user_id;
+      END;
+  org_members:
+    description: Members of an organization with their emails. Callable by any member.
+    auth_required: true
+    language: sql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_org_id
+        type: uuid
+        required: true
+    returns:
+      type: "table(user_id uuid, email text, role text, joined_at timestamptz)"
+    body: |
+      SELECT m.user_id, u.email::text, m.role, m.created_at
+      FROM public.memberships m JOIN auth.users u ON u.id = m.user_id
+      WHERE m.org_id = p_org_id
+        AND EXISTS (SELECT 1 FROM public.memberships me WHERE me.org_id = p_org_id AND me.user_id = auth.uid())
+      ORDER BY m.created_at
+  has_active_plan:
+    description: True when the organization has a paid subscription that is active or trialing. Free orgs return false.
+    auth_required: true
+    language: sql
+    volatility: stable
+    args:
+      - name: p_org_id
+        type: uuid
+        required: true
+    returns:
+      type: boolean
+    body: |
+      SELECT EXISTS (
+        SELECT 1 FROM subscriptions s
+        WHERE s.org_id = p_org_id
+          AND s.status IN ('active', 'trialing')
+          AND (s.current_period_end IS NULL OR s.current_period_end > now() - interval '1 day')
+      )
+  org_usage:
+    description: Total usage per event since a point in time, for members of the organization
+    auth_required: true
+    language: sql
+    volatility: stable
+    args:
+      - name: p_org_id
+        type: uuid
+        required: true
+      - name: p_since
+        type: timestamptz
+        default: "CAST(NULL AS timestamptz)"
+    returns:
+      type: "table(event text, total bigint)"
+    body: |
+      SELECT u.event, sum(u.quantity)::bigint
+      FROM usage_events u
+      WHERE u.org_id = p_org_id AND u.created_at >= COALESCE(p_since, date_trunc('month', now()))
+      GROUP BY u.event
+      ORDER BY 2 DESC, 1
+      LIMIT 1000
+functions:
+  create-subscription-checkout:
+    runtime: node
+    file: functions/create-subscription-checkout.js
+    auth_required: true
+    timeout: 30s
+    env:
+      STRIPE_SECRET_KEY: ${INSTANCEZ_ENV_STRIPE_SECRET_KEY:-}
+      STRIPE_PRICE_PRO: ${INSTANCEZ_ENV_STRIPE_PRICE_PRO:-}
+      STRIPE_PRICE_TEAM: ${INSTANCEZ_ENV_STRIPE_PRICE_TEAM:-}
+  create-billing-portal:
+    runtime: node
+    file: functions/create-billing-portal.js
+    auth_required: true
+    timeout: 30s
+    env:
+      STRIPE_SECRET_KEY: ${INSTANCEZ_ENV_STRIPE_SECRET_KEY:-}
+  stripe-webhook:
+    runtime: node
+    file: functions/stripe-webhook.js
+    auth_required: false
+    timeout: 30s
+    env:
+      STRIPE_SECRET_KEY: ${INSTANCEZ_ENV_STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${INSTANCEZ_ENV_STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_PRO: ${INSTANCEZ_ENV_STRIPE_PRICE_PRO:-}
+      STRIPE_PRICE_TEAM: ${INSTANCEZ_ENV_STRIPE_PRICE_TEAM:-}

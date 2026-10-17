@@ -1,0 +1,13 @@
+id: social-feed
+name: Social Feed
+tagline: Profiles, posts with images, follows, likes and a paginated home feed.
+description: A small social network backend. Users post text and images, follow, like and comment. A home_feed function returns posts from people you follow with like counts, paginated by cursor. Works with zero setup.
+category: community
+tags: [social, feed, follow, likes, timeline]
+secrets: []
+setup:
+  - "Create a profiles row for every new user on sign-up (id = auth user id, username 3-20 chars of a-z, 0-9, underscore)."
+  - "Upload post images to the post_images bucket under '<user id>/<file>' and store that path in posts.image_path. Users can only write inside their own folder."
+  - "Follow with supabase.rpc('follow_user', { p_user_id }) and unfollow with unfollow_user; both are safe to repeat. Like by inserting into likes (user_id, post_id) and unlike by deleting."
+  - "Load the feed with supabase.rpc('home_feed', { p_limit: 20 }). For the next page pass p_before = created_at and p_before_id = id of the last post. The feed includes your own posts."
+  - "Not included: blocking, private accounts, reporting, notifications, image cleanup when a post or account is deleted. Deleting the auth user removes the profile and all content."

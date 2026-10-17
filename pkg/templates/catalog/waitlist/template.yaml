@@ -1,0 +1,34 @@
+id: waitlist
+name: Launch Waitlist
+tagline: Waitlist with referral codes, queue position, referral boosts and CSV export.
+description: A pre-launch waitlist. A public join function validates the email, dedupes, and returns the signup's queue position and referral code. Each referral moves the referrer up the queue. Admins export signups as CSV and invite the next batch. Joining works with zero setup; the welcome email needs a Resend key.
+category: business
+tags: [waitlist, launch, referrals, growth, email]
+secrets:
+  - name: INSTANCEZ_ENV_RESEND_API_KEY
+    label: Resend API key
+    description: Starts with re_. Lets the join function email a welcome message with the referral link. Without it signups still work, no email is sent.
+    needed_for: Welcome email
+    required: false
+    url: https://resend.com/api-keys
+  - name: INSTANCEZ_ENV_MAIL_FROM
+    label: From address
+    description: Sender shown on the welcome email, for example "Acme <hello@yourdomain.com>". The domain must be verified in Resend.
+    needed_for: Welcome email
+    required: false
+    url: https://resend.com/domains
+  - name: INSTANCEZ_ENV_LANDING_URL
+    label: Landing page URL
+    description: Your public landing page, for example https://acme.com. The welcome email links to it with the signup's ?ref= code. Fixed here so a caller cannot put their own link in your email.
+    needed_for: Referral link in the welcome email
+    required: false
+    url: ""
+setup:
+  - "Make yourself an admin after signing up: insert into waitlist_admins (user_id) values ('<your user id>') in the SQL console. The API cannot write this table."
+  - "Your form posts { email, ref, source } to /functions/v1/join. ref is the referral code from the URL. Returns 201 for a new signup, 200 for a repeat, 429 when rate limited."
+  - "Show a signup its spot with rpc('waitlist_status', { p_code })."
+  - "Admins: call the export-signups function for a CSV, and rpc('invite_batch', { p_count }) to mark the next people invited (it returns their emails)."
+  - "Queue order = join order minus 10 spots per referral, capped at 20 referrals. The numbers live in join_waitlist, waitlist_status and invite_batch."
+  - "Referrals are not email-verified, so a determined person can farm them with throwaway addresses (10 signups per IP per hour, 20 referrals counted). Review the top referrers before inviting."
+  - "A repeat join with an existing email returns that signup's referral code and position, so anyone who knows an email can read them. Do not treat the code as a secret."
+  - "The IP rate limit (10 joins per hour) reads x-forwarded-for. Keep the backend behind your proxy."

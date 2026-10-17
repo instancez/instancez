@@ -1,0 +1,163 @@
+version: 1
+project:
+  name: AI Chat
+  description: Private Claude conversations with a daily cap
+auth:
+  jwt_expiry: 1h
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+tables:
+  conversations:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: user_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: title
+        type: text
+        required: true
+        default: New chat
+        check: "char_length(title) between 1 and 200"
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+      - name: updated_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [user_id, updated_at]
+    rls:
+      - operations: [select]
+        using: "user_id = auth.uid()"
+      - operations: [insert]
+        with_check: "user_id = auth.uid()"
+      - operations: [update]
+        using: "user_id = auth.uid()"
+        with_check: "user_id = auth.uid()"
+      - operations: [delete]
+        using: "user_id = auth.uid()"
+  messages:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: conversation_id
+        type: bigint
+        required: true
+        foreign_key: { references: conversations.id, on_delete: cascade }
+      - name: user_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: role
+        type: text
+        required: true
+        enum: [user, assistant]
+      - name: content
+        type: text
+        required: true
+        check: "char_length(content) <= 20000"
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [conversation_id, id]
+      - columns: [user_id]
+    rls:
+      # Only the chat function writes messages, so users cannot forge assistant replies.
+      - operations: [select]
+        using: "user_id = auth.uid()"
+      - operations: [delete]
+        using: "user_id = auth.uid()"
+  app_settings:
+    fields:
+      - name: key
+        type: text
+        primary_key: true
+      - name: value
+        type: text
+        required: true
+    rls:
+      - operations: [select]
+        using: "true"
+  usage_daily:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: user_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: day
+        type: date
+        required: true
+      - name: message_count
+        type: integer
+        required: true
+        default: 0
+        min: 0
+    indexes:
+      - columns: [user_id, day]
+        unique: true
+    rls:
+      - operations: [select]
+        using: "user_id = auth.uid()"
+functions:
+  chat:
+    runtime: node
+    file: functions/chat.js
+    auth_required: true
+    timeout: 60s
+    env:
+      ANTHROPIC_API_KEY: ${INSTANCEZ_ENV_ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${INSTANCEZ_ENV_ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
+rpc:
+  consume_message_quota:
+    description: Count one message against today's cap; allowed is false once the cap is hit
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set: { search_path: "" }
+    returns:
+      type: jsonb
+    body: |
+      DECLARE
+        v_uid uuid := auth.uid();
+        v_cap integer;
+        v_used integer;
+      BEGIN
+        IF v_uid IS NULL THEN RAISE EXCEPTION 'not authenticated'; END IF;
+        SELECT CASE WHEN value ~ '^[0-9]{1,6}$' THEN value::integer END INTO v_cap
+          FROM public.app_settings WHERE key = 'daily_message_cap';
+        v_cap := COALESCE(v_cap, 50);
+        INSERT INTO public.usage_daily (user_id, day, message_count)
+          VALUES (v_uid, (now() AT TIME ZONE 'utc')::date, 0)
+          ON CONFLICT (user_id, day) DO NOTHING;
+        UPDATE public.usage_daily SET message_count = message_count + 1
+          WHERE user_id = v_uid AND day = (now() AT TIME ZONE 'utc')::date AND message_count < v_cap
+          RETURNING message_count INTO v_used;
+        IF v_used IS NULL THEN
+          RETURN jsonb_build_object('allowed', false, 'used', v_cap, 'cap', v_cap);
+        END IF;
+        RETURN jsonb_build_object('allowed', true, 'used', v_used, 'cap', v_cap);
+      END;
+  refund_message_quota:
+    description: Give back one message when the model call failed
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set: { search_path: "" }
+    returns:
+      type: void
+    body: |
+      BEGIN
+        IF auth.uid() IS NULL THEN RAISE EXCEPTION 'not authenticated'; END IF;
+        UPDATE public.usage_daily SET message_count = greatest(message_count - 1, 0)
+          WHERE user_id = auth.uid() AND day = (now() AT TIME ZONE 'utc')::date;
+      END;

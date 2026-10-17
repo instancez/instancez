@@ -1,0 +1,220 @@
+version: 1
+project:
+  name: Feedback & Roadmap
+  description: Feature requests, votes and a public roadmap
+auth:
+  jwt_expiry: 1h
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+tables:
+  profiles:
+    fields:
+      - name: id
+        primary_key: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: display_name
+        type: text
+        check: "char_length(display_name) <= 60"
+      - name: role
+        type: text
+        required: true
+        default: member
+        enum: [member, admin]
+    rls:
+      - operations: [select]
+        using: "true"
+      - operations: [insert]
+        with_check: "auth.uid() = id AND role = 'member'"
+      - operations: [update]
+        using: "auth.uid() = id"
+        with_check: "auth.uid() = id AND role = public.my_role()"
+  requests:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: author_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: title
+        type: text
+        required: true
+        check: "char_length(btrim(title)) BETWEEN 3 AND 120"
+      - name: body
+        type: text
+        check: "char_length(body) <= 5000"
+      - name: category
+        type: text
+        required: true
+        default: feature
+        enum: [feature, improvement, bug, integration, other]
+      - name: status
+        type: text
+        required: true
+        default: open
+        enum: [open, planned, in-progress, shipped, declined]
+      - name: response
+        type: text
+        check: "char_length(response) <= 2000"
+      - name: vote_count
+        type: integer
+        required: true
+        default: 0
+        min: 0
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [status, vote_count]
+      - columns: [author_id]
+      - columns: [created_at]
+    rls:
+      - operations: [select]
+        using: "true"
+      - operations: [insert]
+        with_check: "author_id = auth.uid() AND status = 'open' AND vote_count = 0 AND response IS NULL"
+      # Authors may edit only while open; status, response and votes stay untouched.
+      - operations: [update]
+        using: "author_id = auth.uid() AND status = 'open'"
+        with_check: "author_id = auth.uid() AND status = 'open' AND response IS NULL AND vote_count = public.request_votes(id)"
+      - operations: [update]
+        using: "public.is_admin()"
+        with_check: "public.is_admin()"
+      - operations: [delete]
+        using: "(author_id = auth.uid() AND status = 'open') OR public.is_admin()"
+  votes:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: request_id
+        type: bigint
+        required: true
+        foreign_key: { references: requests.id, on_delete: cascade }
+      - name: user_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [request_id, user_id]
+        unique: true
+      - columns: [user_id]
+    rls:
+      # Written only by toggle_vote; users can read their own votes to show a filled arrow.
+      - operations: [select]
+        using: "user_id = auth.uid()"
+  comments:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: request_id
+        type: bigint
+        required: true
+        foreign_key: { references: requests.id, on_delete: cascade }
+      - name: author_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: body
+        type: text
+        required: true
+        check: "char_length(btrim(body)) BETWEEN 1 AND 2000"
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [request_id, created_at]
+      - columns: [author_id]
+    rls:
+      - operations: [select]
+        using: "true"
+      - operations: [insert]
+        with_check: "author_id = auth.uid()"
+      - operations: [update]
+        using: "author_id = auth.uid()"
+        with_check: "author_id = auth.uid()"
+      - operations: [delete]
+        using: "author_id = auth.uid() OR public.is_admin()"
+rpc:
+  my_role:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set: { search_path: public }
+    returns:
+      type: text
+    body: |
+      BEGIN
+        RETURN (SELECT role FROM profiles WHERE id = auth.uid());
+      END;
+  is_admin:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set: { search_path: public }
+    returns:
+      type: boolean
+    body: |
+      BEGIN
+        RETURN EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin');
+      END;
+  request_votes:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set: { search_path: public }
+    args:
+      - name: p_id
+        type: bigint
+        required: true
+    returns:
+      type: integer
+    body: |
+      BEGIN
+        RETURN (SELECT vote_count FROM requests WHERE id = p_id);
+      END;
+  toggle_vote:
+    description: Add or remove the caller's vote on a request
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set: { search_path: "" }
+    args:
+      - name: p_request_id
+        type: bigint
+        required: true
+    returns:
+      type: jsonb
+    body: |
+      DECLARE
+        v_uid uuid := auth.uid();
+        v_voted boolean;
+        v_total integer;
+        v_status text;
+      BEGIN
+        IF v_uid IS NULL THEN RAISE EXCEPTION 'not authenticated'; END IF;
+        SELECT status INTO v_status FROM public.requests WHERE id = p_request_id;
+        IF NOT FOUND THEN
+          RAISE EXCEPTION 'request not found';
+        END IF;
+        DELETE FROM public.votes WHERE request_id = p_request_id AND user_id = v_uid;
+        IF FOUND THEN
+          v_voted := false;
+          UPDATE public.requests SET vote_count = GREATEST(vote_count - 1, 0) WHERE id = p_request_id;
+        ELSE
+          IF v_status IN ('shipped', 'declined') THEN RAISE EXCEPTION 'voting closed'; END IF;
+          INSERT INTO public.votes (request_id, user_id) VALUES (p_request_id, v_uid) ON CONFLICT DO NOTHING;
+          IF FOUND THEN
+            UPDATE public.requests SET vote_count = vote_count + 1 WHERE id = p_request_id;
+          END IF;
+          v_voted := true;
+        END IF;
+        SELECT vote_count INTO v_total FROM public.requests WHERE id = p_request_id;
+        RETURN jsonb_build_object('voted', v_voted, 'vote_count', v_total);
+      END;

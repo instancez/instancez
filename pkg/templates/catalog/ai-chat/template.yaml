@@ -1,0 +1,24 @@
+id: ai-chat
+name: AI Chat
+tagline: Private chat conversations powered by Claude, with a per-user daily message cap.
+description: A chat app backend. Users keep private conversations; a chat function loads the history, calls the Anthropic Messages API, stores the reply and enforces a daily message cap. Everything boots without setup, but sending messages needs an Anthropic API key.
+category: tools
+tags: [ai, chat, llm, anthropic, claude, assistant]
+secrets:
+  - name: INSTANCEZ_ENV_ANTHROPIC_API_KEY
+    label: Anthropic API key
+    description: Starts with sk-ant-. Lets the chat function call the Claude Messages API.
+    needed_for: Sending chat messages
+    required: true
+    url: https://console.anthropic.com/settings/keys
+  - name: INSTANCEZ_ENV_ANTHROPIC_MODEL
+    label: Claude model
+    description: Model id to use. Defaults to claude-haiku-4-5-20251001 when empty.
+    needed_for: Choosing a different model
+    required: false
+    url: https://docs.claude.com/en/docs/about-claude/models/overview
+setup:
+  - "Call functions.invoke('chat', { body: { message, conversation_id } }). Omit conversation_id to start a new conversation; the reply includes conversation_id, reply and the remaining quota."
+  - "Default cap is 50 messages per user per UTC day. Change it by running `insert into app_settings (key, value) values ('daily_message_cap', '100') on conflict (key) do update set value = excluded.value` in the SQL console."
+  - "Read history with supabase.from('messages').select('*').eq('conversation_id', id).order('created_at'). Users only see their own conversations."
+  - "Signup is open, so anyone can create an account and chat. The daily cap bounds cost per user only; disable signups or add CAPTCHA if you need a hard total limit."

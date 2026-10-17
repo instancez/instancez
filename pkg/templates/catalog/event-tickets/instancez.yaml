@@ -1,0 +1,333 @@
+version: 1
+project:
+  name: Event Tickets
+  description: Events, ticket types, Stripe checkout and QR check-in
+auth:
+  jwt_expiry: 1h
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+tables:
+  profiles:
+    fields:
+      - name: id
+        primary_key: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: display_name
+        type: text
+        check: "char_length(display_name) <= 100"
+      - name: role
+        type: text
+        required: true
+        default: attendee
+        enum: [attendee, staff, admin]
+    rls:
+      - operations: [select]
+        using: "id = auth.uid()"
+      - operations: [insert]
+        with_check: "id = auth.uid() AND role = 'attendee'"
+      - operations: [update]
+        using: "id = auth.uid()"
+        with_check: "id = auth.uid() AND role = public.my_role()"
+  events:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: slug
+        type: text
+        required: true
+        pattern: "^[a-z0-9-]+$"
+        check: "char_length(slug) <= 100"
+      - name: title
+        type: text
+        required: true
+        check: "char_length(title) BETWEEN 1 AND 200"
+      - name: description
+        type: text
+        check: "char_length(description) <= 5000"
+      - name: venue
+        type: text
+        check: "char_length(venue) <= 300"
+      - name: starts_at
+        type: timestamptz
+        required: true
+      - name: ends_at
+        type: timestamptz
+        check: "ends_at >= starts_at"
+      - name: published
+        type: boolean
+        required: true
+        default: false
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [slug]
+        unique: true
+      - columns: [starts_at]
+        where: "published"
+    rls:
+      - operations: [select]
+        using: "published OR public.my_role() = 'admin'"
+      - operations: [insert]
+        with_check: "public.my_role() = 'admin'"
+      - operations: [update]
+        using: "public.my_role() = 'admin'"
+        with_check: "public.my_role() = 'admin'"
+      - operations: [delete]
+        using: "public.my_role() = 'admin'"
+  ticket_types:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: event_id
+        type: bigint
+        required: true
+        foreign_key: { references: events.id, on_delete: cascade }
+      - name: name
+        type: text
+        required: true
+        check: "char_length(name) BETWEEN 1 AND 100"
+      - name: price_cents
+        type: integer
+        required: true
+        min: 50
+        max: 10000000
+      - name: currency
+        type: text
+        required: true
+        default: usd
+        pattern: "^[a-z]{3}$"
+      - name: capacity
+        type: integer
+        required: true
+        min: 0
+        max: 1000000
+      - name: max_per_order
+        type: integer
+        required: true
+        default: 10
+        min: 1
+        max: 50
+      - name: active
+        type: boolean
+        required: true
+        default: true
+    indexes:
+      - columns: [event_id]
+    rls:
+      - operations: [select]
+        using: "EXISTS (SELECT 1 FROM events e WHERE e.id = event_id) AND (active OR public.my_role() = 'admin')"
+      - operations: [insert]
+        with_check: "public.my_role() = 'admin'"
+      - operations: [update]
+        using: "public.my_role() = 'admin'"
+        with_check: "public.my_role() = 'admin'"
+      - operations: [delete]
+        using: "public.my_role() = 'admin'"
+  orders:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: user_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: ticket_type_id
+        type: bigint
+        required: true
+        foreign_key: { references: ticket_types.id, on_delete: restrict }
+      - name: quantity
+        type: integer
+        required: true
+        min: 1
+        max: 50
+      - name: total_cents
+        type: integer
+        required: true
+        min: 0
+      - name: currency
+        type: text
+        required: true
+        pattern: "^[a-z]{3}$"
+      - name: status
+        type: text
+        required: true
+        default: pending
+        enum: [pending, paid, expired]
+      - name: stripe_session_id
+        type: text
+      - name: hold_expires_at
+        type: timestamptz
+        required: true
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [user_id, created_at]
+      - columns: [ticket_type_id, status]
+      - columns: [stripe_session_id]
+        unique: true
+    rls:
+      - operations: [select]
+        using: "user_id = auth.uid() OR public.my_role() = 'admin'"
+  tickets:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: order_id
+        type: bigint
+        required: true
+        foreign_key: { references: orders.id, on_delete: cascade }
+      - name: seq
+        type: smallint
+        required: true
+        min: 1
+      - name: ticket_type_id
+        type: bigint
+        required: true
+        foreign_key: { references: ticket_types.id, on_delete: restrict }
+      - name: owner_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: code
+        type: text
+        required: true
+        check: "char_length(code) BETWEEN 8 AND 64"
+      - name: status
+        type: text
+        required: true
+        default: valid
+        enum: [valid, used, void]
+      - name: used_at
+        type: timestamptz
+      - name: used_by
+        foreign_key: { references: auth.users.id, on_delete: set_null }
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [code]
+        unique: true
+      - columns: [order_id, seq]
+        unique: true
+      - columns: [owner_id]
+      - columns: [ticket_type_id, status]
+      - columns: [used_by]
+    rls:
+      - operations: [select]
+        using: "owner_id = auth.uid() OR public.my_role() IN ('staff', 'admin')"
+      - operations: [update]
+        using: "public.my_role() = 'admin'"
+        with_check: "public.my_role() = 'admin'"
+functions:
+  checkout:
+    runtime: node
+    file: functions/checkout.js
+    auth_required: true
+    timeout: 30s
+    env:
+      STRIPE_SECRET_KEY: ${INSTANCEZ_ENV_STRIPE_SECRET_KEY:-}
+  stripe-webhook:
+    runtime: node
+    file: functions/stripe-webhook.js
+    auth_required: false
+    timeout: 30s
+    env:
+      STRIPE_WEBHOOK_SECRET: ${INSTANCEZ_ENV_STRIPE_WEBHOOK_SECRET:-}
+  check-in:
+    runtime: node
+    file: functions/check-in.js
+    auth_required: true
+    timeout: 15s
+rpc:
+  my_role:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    returns:
+      type: text
+    body: |
+      BEGIN
+        RETURN (SELECT role FROM profiles WHERE id = auth.uid());
+      END;
+  ticket_availability:
+    auth_required: false
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_event_id
+        type: bigint
+        required: true
+    returns:
+      type: jsonb
+    body: |
+      BEGIN
+        RETURN COALESCE((
+          SELECT jsonb_agg(jsonb_build_object(
+            'ticket_type_id', tt.id,
+            'remaining', GREATEST(tt.capacity
+              - (SELECT COALESCE(sum(o.quantity), 0) FROM orders o WHERE o.ticket_type_id = tt.id AND (o.status = 'paid' OR (o.status = 'pending' AND o.hold_expires_at > now())))
+              + (SELECT count(*) FROM tickets t WHERE t.ticket_type_id = tt.id AND t.status = 'void'), 0)
+          ) ORDER BY tt.id)
+          FROM ticket_types tt
+          JOIN events e ON e.id = tt.event_id
+          WHERE tt.event_id = p_event_id AND tt.active AND e.published
+        ), '[]'::jsonb);
+      END;
+  reserve_tickets:
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_ticket_type_id
+        type: bigint
+        required: true
+      - name: p_quantity
+        type: integer
+        required: true
+    returns:
+      type: jsonb
+    body: |
+      DECLARE
+        tt ticket_types%ROWTYPE;
+        taken integer;
+        new_order orders%ROWTYPE;
+      BEGIN
+        IF auth.uid() IS NULL THEN RAISE EXCEPTION 'sign in required'; END IF;
+        IF p_ticket_type_id IS NULL OR p_quantity IS NULL THEN RAISE EXCEPTION 'ticket type and quantity are required'; END IF;
+        SELECT * INTO tt FROM ticket_types WHERE id = p_ticket_type_id AND active
+          AND EXISTS (SELECT 1 FROM events e WHERE e.id = event_id AND e.published AND COALESCE(e.ends_at, e.starts_at) > now()) FOR UPDATE;
+        IF NOT FOUND THEN RAISE EXCEPTION 'ticket type not available'; END IF;
+        IF p_quantity < 1 OR p_quantity > tt.max_per_order THEN
+          RAISE EXCEPTION 'quantity must be between 1 and %', tt.max_per_order;
+        END IF;
+        IF EXISTS (SELECT 1 FROM orders WHERE user_id = auth.uid() AND ticket_type_id = tt.id AND status = 'pending' AND hold_expires_at > now()) THEN
+          RAISE EXCEPTION 'you already have a pending hold for this ticket type';
+        END IF;
+        IF (SELECT count(*) FROM orders WHERE user_id = auth.uid() AND status = 'pending' AND hold_expires_at > now()) >= 5 THEN
+          RAISE EXCEPTION 'too many pending holds, finish or wait for your open checkouts';
+        END IF;
+        SELECT COALESCE((SELECT sum(quantity) FROM orders WHERE ticket_type_id = tt.id AND (status = 'paid' OR (status = 'pending' AND hold_expires_at > now()))), 0)
+             - (SELECT count(*) FROM tickets WHERE ticket_type_id = tt.id AND status = 'void')
+          INTO taken;
+        IF taken + p_quantity > tt.capacity THEN RAISE EXCEPTION 'sold out'; END IF;
+        INSERT INTO orders (user_id, ticket_type_id, quantity, total_cents, currency, hold_expires_at)
+          VALUES (auth.uid(), tt.id, p_quantity, tt.price_cents * p_quantity, tt.currency, now() + interval '35 minutes')
+          RETURNING * INTO new_order;
+        RETURN jsonb_build_object('order_id', new_order.id, 'total_cents', new_order.total_cents,
+          'currency', new_order.currency, 'unit_cents', tt.price_cents, 'name', tt.name);
+      END;

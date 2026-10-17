@@ -1,0 +1,25 @@
+id: online-store
+name: Online Store
+tagline: Products, carts, orders and Stripe Checkout.
+description: A full e-commerce backend. Browse products by category, keep a cart, and pay through Stripe Checkout. A webhook atomically marks orders paid, decrements stock and clears the cart. Product images live in a public bucket. Browsing and carts work without Stripe; checkout needs the keys.
+category: commerce
+tags: [ecommerce, shop, stripe, payments, cart]
+secrets:
+  - name: INSTANCEZ_ENV_STRIPE_SECRET_KEY
+    label: Stripe secret key
+    description: Starts with sk_test_ or sk_live_. Lets the checkout function create Stripe Checkout sessions.
+    needed_for: Checkout
+    required: true
+    url: https://dashboard.stripe.com/apikeys
+  - name: INSTANCEZ_ENV_STRIPE_WEBHOOK_SECRET
+    label: Stripe webhook signing secret
+    description: Starts with whsec_. Verifies that payment events really come from Stripe.
+    needed_for: Marking orders as paid
+    required: true
+    url: https://dashboard.stripe.com/webhooks
+setup:
+  - "In Stripe add a webhook endpoint pointing to https://<your-app-url>/functions/v1/stripe-webhook and subscribe to checkout.session.completed and checkout.session.expired."
+  - "Insert products with price_cents and currency (e.g. usd). Prices are in the smallest currency unit."
+  - "Sign up, then insert your profile row (id = your user id) and promote yourself: update profiles set role = 'admin' where id = '<your user id>' in the SQL console."
+  - "Checkout takes {success_url, cancel_url, shipping_countries?}; pass shipping_countries (e.g. ['US']) to collect an address, saved to orders.shipping."
+  - "Stock is decremented on payment and never goes below zero, so a simultaneous last-unit purchase can oversell. Refunds are issued in Stripe; then set orders.status = 'refunded' and restock by hand."

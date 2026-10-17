@@ -1,0 +1,13 @@
+id: expense-tracker
+name: Expense Tracker
+tagline: Private accounts, categories, budgets and receipts with monthly summaries.
+description: Track money across accounts, tag transactions with categories, set monthly budgets and see spending against them in one call. Amounts are integer cents and receipts live in a private bucket. Everything is private to each user. Needs no secrets.
+category: productivity
+tags: [expenses, budget, finance, receipts, accounts, personal]
+secrets: []
+setup:
+  - "Users create accounts and categories, then insert transactions. amount_cents is signed: negative for spending, positive for income. All amounts are in one currency of your choice."
+  - "Deleting an account deletes its transactions (so deleting a user never fails); set archived = true to retire an account instead. Transfers between accounts, recurring transactions and multi-currency are not built in."
+  - "Set a budget per category per month with a row in budgets; month is the first day of the month (2026-10-01)."
+  - "Monthly dashboard: rpc('monthly_summary', { p_month: '2026-10-01' }) returns income, spending and each category's spend against its budget. rpc('account_balances') returns current balances."
+  - "Upload a receipt to the private receipts bucket under '<user id>/<file>' and store that path in transactions.receipt_path. Read it back with a signed URL. Deleting a transaction does not delete its receipt file."

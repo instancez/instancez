@@ -1,0 +1,198 @@
+version: 1
+project:
+  name: Habit Tracker
+  description: Private habits, check-ins and streaks
+auth:
+  jwt_expiry: 1h
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+tables:
+  habits:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: user_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: name
+        type: text
+        required: true
+        pattern: "\\S"
+        check: "char_length(name) <= 100"
+      - name: icon
+        type: text
+        check: "char_length(icon) <= 40"
+      - name: color
+        type: text
+        required: true
+        default: "#22c55e"
+        pattern: "^#[0-9a-fA-F]{6}$"
+      - name: cadence
+        type: text
+        required: true
+        default: daily
+        enum: [daily, weekly]
+      - name: target
+        type: smallint
+        required: true
+        default: 1
+        min: 1
+        max: 7
+      - name: archived
+        type: boolean
+        required: true
+        default: false
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [user_id, archived]
+    rls:
+      - operations: [select]
+        using: "user_id = auth.uid()"
+      - operations: [insert]
+        with_check: "user_id = auth.uid()"
+      - operations: [update]
+        using: "user_id = auth.uid()"
+        with_check: "user_id = auth.uid()"
+      - operations: [delete]
+        using: "user_id = auth.uid()"
+  check_ins:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: habit_id
+        type: bigint
+        required: true
+        foreign_key: { references: habits.id, on_delete: cascade }
+      - name: user_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: day
+        type: date
+        required: true
+      - name: note
+        type: text
+        check: "char_length(note) <= 500"
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [habit_id, day]
+        unique: true
+      - columns: [user_id, day]
+    rls:
+      - operations: [select]
+        using: "user_id = auth.uid()"
+      - operations: [insert]
+        with_check: "user_id = auth.uid() AND day <= current_date + 1 AND EXISTS (SELECT 1 FROM habits h WHERE h.id = habit_id)"
+      - operations: [update]
+        using: "user_id = auth.uid()"
+        with_check: "user_id = auth.uid() AND day <= current_date + 1 AND EXISTS (SELECT 1 FROM habits h WHERE h.id = habit_id)"
+      - operations: [delete]
+        using: "user_id = auth.uid()"
+rpc:
+  habit_streaks:
+    auth_required: true
+    language: plpgsql
+    volatility: stable
+    security: invoker
+    set:
+      search_path: public
+    args:
+      - name: p_habit_id
+        type: bigint
+        required: true
+      - name: p_today
+        type: date
+        required: true
+    returns:
+      type: jsonb
+    body: |
+      DECLARE
+        h habits%ROWTYPE;
+        units integer[];
+        cur_unit integer;
+        longest integer;
+        current_run integer;
+        total integer;
+      BEGIN
+        IF p_today IS NULL OR abs(p_today - current_date) > 2 THEN RAISE EXCEPTION 'p_today must be within 2 days of the server date'; END IF;
+        SELECT * INTO h FROM habits WHERE id = p_habit_id;
+        IF NOT FOUND THEN RAISE EXCEPTION 'habit not found'; END IF;
+        SELECT count(*) INTO total FROM check_ins WHERE habit_id = h.id AND day <= p_today;
+        IF h.cadence = 'daily' THEN
+          units := ARRAY(SELECT DISTINCT day - date '2000-01-01' FROM check_ins WHERE habit_id = h.id AND day <= p_today);
+          cur_unit := p_today - date '2000-01-01';
+        ELSE
+          units := ARRAY(
+            SELECT (date_trunc('week', day::timestamp)::date - date '2000-01-03') / 7
+            FROM check_ins WHERE habit_id = h.id AND day <= p_today
+            GROUP BY 1 HAVING count(*) >= h.target);
+          cur_unit := (date_trunc('week', p_today::timestamp)::date - date '2000-01-03') / 7;
+        END IF;
+        SELECT coalesce(max(len), 0), coalesce(max(len) FILTER (WHERE last_unit >= cur_unit - 1), 0)
+          INTO longest, current_run
+          FROM (
+            SELECT count(*) AS len, max(unit) AS last_unit
+            FROM (SELECT unit, unit - row_number() OVER (ORDER BY unit) AS grp FROM unnest(units) AS unit) g
+            GROUP BY grp
+          ) runs;
+        RETURN jsonb_build_object('habit_id', h.id, 'cadence', h.cadence, 'current', current_run, 'longest', longest, 'total', total);
+      END;
+  habit_overview:
+    auth_required: true
+    language: plpgsql
+    volatility: stable
+    security: invoker
+    set:
+      search_path: public
+    args:
+      - name: p_today
+        type: date
+        required: true
+    returns:
+      type: jsonb
+    body: |
+      DECLARE
+        h habits%ROWTYPE;
+        result jsonb := '[]'::jsonb;
+      BEGIN
+        IF p_today IS NULL OR abs(p_today - current_date) > 2 THEN RAISE EXCEPTION 'p_today must be within 2 days of the server date'; END IF;
+        FOR h IN SELECT * FROM habits WHERE user_id = auth.uid() AND NOT archived ORDER BY created_at, id LIMIT 100 LOOP
+          result := result || (to_jsonb(h) || habit_streaks(h.id, p_today) || jsonb_build_object(
+            'done_today', EXISTS (SELECT 1 FROM check_ins WHERE habit_id = h.id AND day = p_today),
+            'this_week', (SELECT count(*) FROM check_ins WHERE habit_id = h.id AND day >= date_trunc('week', p_today::timestamp)::date AND day <= p_today)
+          ));
+        END LOOP;
+        RETURN result;
+      END;
+  toggle_check_in:
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: invoker
+    set:
+      search_path: public
+    args:
+      - name: p_habit_id
+        type: bigint
+        required: true
+      - name: p_day
+        type: date
+        required: true
+    returns:
+      type: boolean
+    body: |
+      BEGIN
+        IF p_day IS NULL OR p_day > current_date + 1 THEN RAISE EXCEPTION 'p_day must be a date no later than tomorrow'; END IF;
+        IF NOT EXISTS (SELECT 1 FROM habits WHERE id = p_habit_id) THEN RAISE EXCEPTION 'habit not found'; END IF;
+        INSERT INTO check_ins (habit_id, user_id, day) VALUES (p_habit_id, auth.uid(), p_day) ON CONFLICT (habit_id, day) DO NOTHING;
+        IF FOUND THEN RETURN true; END IF;
+        DELETE FROM check_ins WHERE habit_id = p_habit_id AND day = p_day AND user_id = auth.uid();
+        RETURN false;
+      END;

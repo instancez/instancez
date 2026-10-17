@@ -1,0 +1,267 @@
+version: 1
+project:
+  name: Resource Booking
+  description: Rooms, desks, equipment and tables with atomic bookings
+auth:
+  jwt_expiry: 1h
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+tables:
+  profiles:
+    fields:
+      - name: id
+        primary_key: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: display_name
+        type: text
+        check: "char_length(display_name) <= 120"
+      - name: role
+        type: text
+        required: true
+        default: member
+        enum: [member, admin]
+    rls:
+      - operations: [select]
+        using: "id = auth.uid() OR public.is_admin()"
+      - operations: [insert]
+        with_check: "id = auth.uid() AND role = 'member'"
+      - operations: [update]
+        using: "id = auth.uid()"
+        with_check: "id = auth.uid() AND role = public.my_role()"
+  resources:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: name
+        type: text
+        required: true
+        check: "char_length(name) BETWEEN 1 AND 120"
+      - name: kind
+        type: text
+        required: true
+        default: room
+        enum: [room, desk, equipment, table]
+      - name: capacity
+        type: integer
+        required: true
+        default: 1
+        min: 1
+      - name: location
+        type: text
+        check: "char_length(location) <= 200"
+      - name: description
+        type: text
+        check: "char_length(description) <= 2000"
+      - name: max_minutes
+        type: integer
+        required: true
+        default: 240
+        min: 5
+        max: 1440
+      - name: active
+        type: boolean
+        required: true
+        default: true
+    indexes:
+      - columns: [kind]
+    rls:
+      - operations: [select]
+        using: "active OR public.is_admin()"
+      - operations: [insert]
+        with_check: "public.is_admin()"
+      - operations: [update]
+        using: "public.is_admin()"
+        with_check: "public.is_admin()"
+      - operations: [delete]
+        using: "public.is_admin()"
+  bookings:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: resource_id
+        type: bigint
+        required: true
+        foreign_key: { references: resources.id, on_delete: restrict }
+      - name: user_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: title
+        type: text
+        check: "char_length(title) <= 200"
+      - name: starts_at
+        type: timestamptz
+        required: true
+      - name: ends_at
+        type: timestamptz
+        required: true
+        check: "ends_at > starts_at"
+      - name: status
+        type: text
+        required: true
+        default: confirmed
+        enum: [confirmed, cancelled]
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [resource_id, starts_at, ends_at]
+        where: "status = 'confirmed'"
+      - columns: [user_id, starts_at]
+    rls:
+      - operations: [select]
+        using: "user_id = auth.uid() OR public.is_admin()"
+rpc:
+  my_role:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    returns:
+      type: text
+    body: |
+      BEGIN
+        RETURN (SELECT role FROM profiles WHERE id = auth.uid());
+      END;
+  is_admin:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    returns:
+      type: boolean
+    body: |
+      BEGIN
+        RETURN EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin');
+      END;
+  book_resource:
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_resource_id
+        type: bigint
+        required: true
+      - name: p_starts_at
+        type: timestamptz
+        required: true
+      - name: p_ends_at
+        type: timestamptz
+        required: true
+      - name: p_title
+        type: text
+        default: ""
+    returns:
+      type: jsonb
+    body: |
+      DECLARE
+        r resources%ROWTYPE;
+        b bookings%ROWTYPE;
+      BEGIN
+        IF auth.uid() IS NULL THEN RAISE EXCEPTION 'sign in to book' USING ERRCODE = '42501'; END IF;
+        IF p_ends_at <= p_starts_at THEN RAISE EXCEPTION 'end must be after start'; END IF;
+        IF p_starts_at < now() - interval '5 minutes' THEN RAISE EXCEPTION 'cannot book in the past'; END IF;
+        IF p_starts_at > now() + interval '1 year' THEN RAISE EXCEPTION 'cannot book more than a year ahead'; END IF;
+        SELECT * INTO r FROM resources WHERE id = p_resource_id AND active FOR UPDATE;
+        IF NOT FOUND THEN RAISE EXCEPTION 'resource not available'; END IF;
+        IF p_ends_at - p_starts_at > make_interval(mins => r.max_minutes) THEN
+          RAISE EXCEPTION 'longer than the % minute limit', r.max_minutes;
+        END IF;
+        IF EXISTS (SELECT 1 FROM bookings WHERE resource_id = r.id AND status = 'confirmed'
+                   AND starts_at < p_ends_at AND ends_at > p_starts_at) THEN
+          RAISE EXCEPTION 'already booked for that time';
+        END IF;
+        IF (SELECT count(*) FROM bookings WHERE user_id = auth.uid() AND status = 'confirmed' AND ends_at > now()) >= 50 THEN
+          RAISE EXCEPTION 'too many upcoming bookings';
+        END IF;
+        INSERT INTO bookings (resource_id, user_id, title, starts_at, ends_at)
+          VALUES (r.id, auth.uid(), left(p_title, 200), p_starts_at, p_ends_at) RETURNING * INTO b;
+        RETURN to_jsonb(b);
+      END;
+  cancel_booking:
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_booking_id
+        type: bigint
+        required: true
+    returns:
+      type: boolean
+    body: |
+      BEGIN
+        UPDATE bookings SET status = 'cancelled'
+          WHERE id = p_booking_id AND status = 'confirmed' AND (user_id = auth.uid() OR public.is_admin());
+        RETURN FOUND;
+      END;
+  resource_busy:
+    auth_required: false
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_resource_id
+        type: bigint
+        required: true
+      - name: p_from
+        type: timestamptz
+        required: true
+      - name: p_to
+        type: timestamptz
+        required: true
+    returns:
+      type: jsonb
+    body: |
+      BEGIN
+        IF p_to <= p_from OR p_to - p_from > interval '93 days' THEN RAISE EXCEPTION 'range must be positive and at most 93 days'; END IF;
+        RETURN (SELECT COALESCE(jsonb_agg(jsonb_build_object('starts_at', b.starts_at, 'ends_at', b.ends_at) ORDER BY b.starts_at), '[]'::jsonb)
+          FROM bookings b JOIN resources r ON r.id = b.resource_id
+          WHERE b.resource_id = p_resource_id AND r.active AND b.status = 'confirmed'
+            AND b.starts_at < p_to AND b.ends_at > p_from);
+      END;
+  available_resources:
+    auth_required: false
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_from
+        type: timestamptz
+        required: true
+      - name: p_to
+        type: timestamptz
+        required: true
+      - name: p_kind
+        type: text
+        default: ""
+      - name: p_min_capacity
+        type: integer
+        default: "0"
+    returns:
+      type: jsonb
+    body: |
+      BEGIN
+        IF p_to <= p_from THEN RAISE EXCEPTION 'end must be after start'; END IF;
+        RETURN (SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.name, x.id), '[]'::jsonb) FROM (SELECT r.*
+          FROM resources r
+          WHERE r.active
+            AND (COALESCE(p_kind, '') = '' OR r.kind = p_kind)
+            AND r.capacity >= COALESCE(p_min_capacity, 1)
+            AND NOT EXISTS (SELECT 1 FROM bookings b WHERE b.resource_id = r.id AND b.status = 'confirmed'
+                            AND b.starts_at < p_to AND b.ends_at > p_from)
+          ORDER BY r.name, r.id LIMIT 200) x);
+      END;

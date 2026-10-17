@@ -1,0 +1,13 @@
+id: docs-wiki
+name: Docs Wiki
+tagline: Knowledge base with nested pages, revision history and full-text search.
+description: A team wiki. Spaces hold nested pages, every save snapshots a revision with edit-conflict detection, and search ranks results with Postgres full text. Pages are public or members-only (any signed-in user). Needs no secrets.
+category: content
+tags: [wiki, docs, knowledge-base, search, revisions]
+secrets: []
+setup:
+  - "Sign up, create your profiles row, then promote yourself: update profiles set role = 'admin' where id = '<your user id>' in the SQL console. Admins create spaces and can change roles; editors and admins write and delete pages."
+  - "Grant editing to teammates with update profiles set role = 'editor' where id = '<user id>'."
+  - "Pages are written only through the save_page rpc so revisions and the search index stay in sync. To edit, pass p_page_id and the p_base_version you loaded; a stale version fails with 40001. Send p_parent_id on every edit (null moves the page to the top level); p_visibility and p_sort_order keep their old value when omitted."
+  - "Read pages with plain selects, call page_tree(space_id) for the outline and search_pages(query, space_id) for the top 50 matches. For very large wikis add a GIN index on pages.search in the SQL console."
+  - "Members-only pages are visible to any signed-in user. Set allow_signup: false under auth in the config to keep the wiki closed."

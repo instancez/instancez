@@ -1,0 +1,12 @@
+id: link-shortener
+name: Link Shortener
+tagline: Short links with custom slugs, expiry and daily click stats. Zero setup.
+description: A URL shortener backend. Signed-in users create links with a custom or random slug, a public function resolves a slug to its target and records the click, and rpcs return clicks per day and top referrers. Needs no secrets.
+category: tools
+tags: [url-shortener, links, analytics, redirect]
+secrets: []
+setup:
+  - "Create links as a signed-in user: insert into links (owner_id, slug, target_url) via supabase-js. Call rpc random_slug() for a random 7-character slug."
+  - "Point your short domain at a redirect that calls https://<your-app-url>/functions/v1/go?slug=<slug>. It answers a 200 page that redirects the browser, or JSON {url} when you pass json=1 (use that to issue your own 302). Expired and deactivated links answer 410; unknown slugs 404."
+  - "Stats: call rpc link_stats({p_link_id, p_days}) (days in the database time zone, max 365) and link_top_referrers({p_link_id, p_limit}) (max 100). Only the link owner sees its clicks."
+  - "Public clicks are unthrottled and kept forever: put the redirect behind a CDN or rate limit and prune old clicks if you expect abuse or volume. Anonymous sign-in is off."

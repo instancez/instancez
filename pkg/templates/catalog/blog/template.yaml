@@ -1,0 +1,13 @@
+id: blog
+name: Blog
+tagline: Posts, tags, comments and cover images. Zero setup.
+description: A publishing backend. Authors write drafts and publish them; anyone can read published posts, and signed-in readers can comment. Post authors can remove comments on their posts. Cover images go to a public bucket. Needs no secrets.
+category: content
+tags: [blog, cms, publishing, comments]
+secrets: []
+setup:
+  - "Every user needs a profiles row (id = auth user id, role stays 'reader' on insert). Create it right after sign-up."
+  - "Promote authors in the SQL console: `update profiles set role = 'author' where id = '<user id>'`. Only authors can create posts and upload covers."
+  - "Publishing: set published = true and published_at together (the database rejects one without the other). Set updated_at yourself on edits."
+  - "Upload covers to the covers bucket under `<your user id>/<file>`; the public URL is /storage/v1/object/public/covers/<path>."
+  - "Not included: comment moderation queue, spam rate limits, post search. Add them when you need them."

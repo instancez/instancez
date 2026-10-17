@@ -1,0 +1,572 @@
+version: 1
+project:
+  name: Kanban Board
+  description: Boards, columns, cards, labels and comments
+auth:
+  jwt_expiry: 1h
+  refresh_tokens: true
+  refresh_token_expiry: 7d
+tables:
+  profiles:
+    fields:
+      - name: id
+        primary_key: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: display_name
+        type: text
+        check: "char_length(display_name) <= 80"
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    rls:
+      - operations: [select]
+        using: "id = auth.uid() OR public.shares_board(id)"
+      - operations: [insert]
+        with_check: "id = auth.uid()"
+      - operations: [update]
+        using: "id = auth.uid()"
+        with_check: "id = auth.uid()"
+  boards:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: title
+        type: text
+        required: true
+        check: "char_length(btrim(title)) BETWEEN 1 AND 120"
+      - name: owner_id
+        required: true
+        foreign_key: { references: auth.users.id, on_delete: cascade }
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [owner_id]
+    rls:
+      - operations: [select]
+        using: "public.can_view_board(id)"
+      - operations: [update]
+        using: "public.board_role(id) = 'owner'"
+        with_check: "public.board_role(id) = 'owner' AND owner_id = auth.uid()"
+      - operations: [delete]
+        using: "public.board_role(id) = 'owner'"
+  board_members:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: board_id
+        type: bigint
+        required: true
+        foreign_key: { references: boards.id, on_delete: cascade }
+      - name: user_id
+        type: uuid
+        required: true
+        foreign_key: { references: profiles.id, on_delete: cascade }
+      - name: role
+        type: text
+        required: true
+        default: editor
+        enum: [owner, editor, viewer]
+    indexes:
+      - columns: [board_id, user_id]
+        unique: true
+      - columns: [user_id]
+      - columns: [board_id]
+        unique: true
+        where: "role = 'owner'"
+    rls:
+      - operations: [select]
+        using: "public.can_view_board(board_id)"
+  board_columns:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: board_id
+        type: bigint
+        required: true
+        foreign_key: { references: boards.id, on_delete: cascade }
+      - name: title
+        type: text
+        required: true
+        check: "char_length(btrim(title)) BETWEEN 1 AND 120"
+      - name: position
+        type: numeric
+        required: true
+        check: "position > -1000000000000 AND position < 1000000000000"
+    indexes:
+      - columns: [board_id, position]
+    rls:
+      - operations: [select]
+        using: "public.can_view_board(board_id)"
+      - operations: [insert]
+        with_check: "public.can_edit_board(board_id)"
+      - operations: [update]
+        using: "public.can_edit_board(board_id)"
+        with_check: "public.can_edit_board(board_id) AND board_id = public.column_board(id)"
+      - operations: [delete]
+        using: "public.can_edit_board(board_id)"
+  cards:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: board_id
+        type: bigint
+        required: true
+        foreign_key: { references: boards.id, on_delete: cascade }
+      - name: column_id
+        type: bigint
+        required: true
+        foreign_key: { references: board_columns.id, on_delete: cascade }
+      - name: title
+        type: text
+        required: true
+        check: "char_length(btrim(title)) BETWEEN 1 AND 200"
+      - name: description
+        type: text
+        check: "char_length(description) <= 5000"
+      - name: position
+        type: numeric
+        required: true
+        check: "position > -1000000000000 AND position < 1000000000000"
+      - name: assignee_id
+        type: uuid
+        foreign_key: { references: profiles.id, on_delete: set_null }
+      - name: due_date
+        type: date
+      - name: created_by
+        foreign_key: { references: auth.users.id, on_delete: set_null }
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [column_id, position]
+      - columns: [board_id]
+      - columns: [assignee_id]
+      - columns: [created_by]
+    rls:
+      - operations: [select]
+        using: "public.can_view_board(board_id)"
+      - operations: [insert]
+        with_check: "created_by = auth.uid() AND public.can_edit_board(board_id) AND public.column_board(column_id) = board_id AND (assignee_id IS NULL OR public.is_board_user(board_id, assignee_id))"
+      - operations: [update]
+        using: "public.can_edit_board(board_id)"
+        with_check: "public.can_edit_board(board_id) AND public.column_board(column_id) = board_id AND board_id = public.card_board(id) AND created_by IS NOT DISTINCT FROM public.card_creator(id) AND (assignee_id IS NULL OR public.is_board_user(board_id, assignee_id))"
+      - operations: [delete]
+        using: "public.can_edit_board(board_id)"
+  labels:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: board_id
+        type: bigint
+        required: true
+        foreign_key: { references: boards.id, on_delete: cascade }
+      - name: name
+        type: text
+        required: true
+        check: "char_length(btrim(name)) BETWEEN 1 AND 50"
+      - name: color
+        type: text
+        required: true
+        default: "#64748b"
+        pattern: "^#[0-9a-fA-F]{6}$"
+    indexes:
+      - columns: [board_id, name]
+        unique: true
+    rls:
+      - operations: [select]
+        using: "public.can_view_board(board_id)"
+      - operations: [insert]
+        with_check: "public.can_edit_board(board_id)"
+      - operations: [update]
+        using: "public.can_edit_board(board_id)"
+        with_check: "public.can_edit_board(board_id) AND board_id = public.label_board(id)"
+      - operations: [delete]
+        using: "public.can_edit_board(board_id)"
+  card_labels:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: card_id
+        type: bigint
+        required: true
+        foreign_key: { references: cards.id, on_delete: cascade }
+      - name: label_id
+        type: bigint
+        required: true
+        foreign_key: { references: labels.id, on_delete: cascade }
+    indexes:
+      - columns: [card_id, label_id]
+        unique: true
+      - columns: [label_id]
+    rls:
+      - operations: [select]
+        using: "EXISTS (SELECT 1 FROM cards c WHERE c.id = card_id)"
+      - operations: [insert]
+        with_check: "EXISTS (SELECT 1 FROM cards c JOIN labels l ON l.board_id = c.board_id WHERE c.id = card_id AND l.id = label_id AND public.can_edit_board(c.board_id))"
+      - operations: [delete]
+        using: "EXISTS (SELECT 1 FROM cards c WHERE c.id = card_id AND public.can_edit_board(c.board_id))"
+  card_comments:
+    fields:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: card_id
+        type: bigint
+        required: true
+        foreign_key: { references: cards.id, on_delete: cascade }
+      - name: user_id
+        type: uuid
+        required: true
+        foreign_key: { references: profiles.id, on_delete: cascade }
+      - name: body
+        type: text
+        required: true
+        pattern: "\\S"
+        check: "char_length(body) <= 5000"
+      - name: created_at
+        type: timestamptz
+        required: true
+        default: now()
+    indexes:
+      - columns: [card_id, created_at]
+      - columns: [user_id]
+    rls:
+      - operations: [select]
+        using: "EXISTS (SELECT 1 FROM cards c WHERE c.id = card_id)"
+      - operations: [insert]
+        with_check: "user_id = auth.uid() AND EXISTS (SELECT 1 FROM cards c WHERE c.id = card_id AND public.can_edit_board(c.board_id))"
+      - operations: [update]
+        using: "user_id = auth.uid() AND EXISTS (SELECT 1 FROM cards c WHERE c.id = card_id AND public.can_edit_board(c.board_id))"
+        with_check: "user_id = auth.uid() AND EXISTS (SELECT 1 FROM cards c WHERE c.id = card_id AND public.can_edit_board(c.board_id))"
+      - operations: [delete]
+        using: "user_id = auth.uid()"
+rpc:
+  board_role:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_board_id
+        type: bigint
+        required: true
+    returns:
+      type: text
+    body: |
+      BEGIN
+        RETURN (SELECT role FROM board_members WHERE board_id = p_board_id AND user_id = auth.uid());
+      END;
+  can_view_board:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_board_id
+        type: bigint
+        required: true
+    returns:
+      type: boolean
+    body: |
+      BEGIN
+        RETURN EXISTS (SELECT 1 FROM board_members WHERE board_id = p_board_id AND user_id = auth.uid());
+      END;
+  can_edit_board:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_board_id
+        type: bigint
+        required: true
+    returns:
+      type: boolean
+    body: |
+      BEGIN
+        RETURN EXISTS (SELECT 1 FROM board_members WHERE board_id = p_board_id AND user_id = auth.uid() AND role IN ('owner', 'editor'));
+      END;
+  shares_board:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_user_id
+        type: uuid
+        required: true
+    returns:
+      type: boolean
+    body: |
+      BEGIN
+        RETURN EXISTS (SELECT 1 FROM board_members a JOIN board_members b ON a.board_id = b.board_id
+                       WHERE a.user_id = auth.uid() AND b.user_id = p_user_id);
+      END;
+  column_board:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_column_id
+        type: bigint
+        required: true
+    returns:
+      type: bigint
+    body: |
+      BEGIN
+        RETURN (SELECT board_id FROM board_columns WHERE id = p_column_id AND can_view_board(board_id));
+      END;
+  card_board:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_card_id
+        type: bigint
+        required: true
+    returns:
+      type: bigint
+    body: |
+      BEGIN
+        RETURN (SELECT board_id FROM cards WHERE id = p_card_id AND can_view_board(board_id));
+      END;
+  label_board:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_label_id
+        type: bigint
+        required: true
+    returns:
+      type: bigint
+    body: |
+      BEGIN
+        RETURN (SELECT board_id FROM labels WHERE id = p_label_id AND can_view_board(board_id));
+      END;
+  card_creator:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_card_id
+        type: bigint
+        required: true
+    returns:
+      type: uuid
+    body: |
+      BEGIN
+        RETURN (SELECT created_by FROM cards WHERE id = p_card_id AND can_view_board(board_id));
+      END;
+  is_board_user:
+    language: plpgsql
+    volatility: stable
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_board_id
+        type: bigint
+        required: true
+      - name: p_user_id
+        type: uuid
+        required: true
+    returns:
+      type: boolean
+    body: |
+      BEGIN
+        RETURN can_view_board(p_board_id) AND EXISTS (SELECT 1 FROM board_members WHERE board_id = p_board_id AND user_id = p_user_id);
+      END;
+  create_board:
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_title
+        type: text
+        required: true
+    returns:
+      type: bigint
+    body: |
+      DECLARE
+        b_id bigint;
+      BEGIN
+        IF length(btrim(coalesce(p_title, ''))) NOT BETWEEN 1 AND 120 THEN RAISE EXCEPTION 'title must be 1-120 characters'; END IF;
+        IF (SELECT count(*) FROM boards WHERE owner_id = auth.uid()) >= 50 THEN RAISE EXCEPTION 'board limit reached (50)'; END IF;
+        INSERT INTO profiles (id) VALUES (auth.uid()) ON CONFLICT DO NOTHING;
+        INSERT INTO boards (title, owner_id) VALUES (btrim(p_title), auth.uid()) RETURNING id INTO b_id;
+        INSERT INTO board_members (board_id, user_id, role) VALUES (b_id, auth.uid(), 'owner');
+        INSERT INTO board_columns (board_id, title, position) VALUES (b_id, 'To do', 1024), (b_id, 'Doing', 2048), (b_id, 'Done', 3072);
+        RETURN b_id;
+      END;
+  share_board:
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_board_id
+        type: bigint
+        required: true
+      - name: p_email
+        type: text
+        required: true
+      - name: p_role
+        type: text
+        default: editor
+    returns:
+      type: boolean
+    body: |
+      DECLARE
+        target uuid;
+      BEGIN
+        IF coalesce(board_role(p_board_id), '') <> 'owner' THEN RAISE EXCEPTION 'only the owner can share'; END IF;
+        IF p_role IS NULL OR p_role NOT IN ('editor', 'viewer') THEN RAISE EXCEPTION 'role must be editor or viewer'; END IF;
+        SELECT id INTO target FROM auth.users WHERE lower(email) = lower(btrim(p_email));
+        IF target IS NULL THEN RAISE EXCEPTION 'no user with that email has signed up'; END IF;
+        INSERT INTO profiles (id) VALUES (target) ON CONFLICT DO NOTHING;
+        INSERT INTO board_members (board_id, user_id, role) VALUES (p_board_id, target, p_role)
+          ON CONFLICT (board_id, user_id) DO UPDATE SET role = EXCLUDED.role WHERE board_members.role <> 'owner';
+        RETURN true;
+      END;
+  remove_board_member:
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_board_id
+        type: bigint
+        required: true
+      - name: p_user_id
+        type: uuid
+        required: true
+    returns:
+      type: boolean
+    body: |
+      DECLARE
+        me text := board_role(p_board_id);
+        target_role text;
+      BEGIN
+        IF me IS NULL THEN RAISE EXCEPTION 'board not found'; END IF;
+        SELECT role INTO target_role FROM board_members WHERE board_id = p_board_id AND user_id = p_user_id;
+        IF target_role IS NULL THEN RETURN false; END IF;
+        IF target_role = 'owner' THEN RAISE EXCEPTION 'the owner cannot be removed; transfer ownership first'; END IF;
+        IF p_user_id <> auth.uid() AND me <> 'owner' THEN RAISE EXCEPTION 'only the owner can remove others'; END IF;
+        UPDATE cards SET assignee_id = NULL WHERE board_id = p_board_id AND assignee_id = p_user_id;
+        DELETE FROM board_members WHERE board_id = p_board_id AND user_id = p_user_id;
+        RETURN true;
+      END;
+  transfer_board:
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_board_id
+        type: bigint
+        required: true
+      - name: p_user_id
+        type: uuid
+        required: true
+    returns:
+      type: boolean
+    body: |
+      BEGIN
+        IF board_role(p_board_id) IS DISTINCT FROM 'owner' THEN RAISE EXCEPTION 'only the owner can transfer the board'; END IF;
+        IF p_user_id IS NULL OR p_user_id = auth.uid() OR NOT is_board_user(p_board_id, p_user_id) THEN
+          RAISE EXCEPTION 'pick another member of this board';
+        END IF;
+        UPDATE board_members SET role = 'editor' WHERE board_id = p_board_id AND user_id = auth.uid();
+        UPDATE board_members SET role = 'owner' WHERE board_id = p_board_id AND user_id = p_user_id;
+        UPDATE boards SET owner_id = p_user_id WHERE id = p_board_id;
+        RETURN true;
+      END;
+  move_card:
+    auth_required: true
+    language: plpgsql
+    volatility: volatile
+    security: definer
+    set:
+      search_path: public
+    args:
+      - name: p_card_id
+        type: bigint
+        required: true
+      - name: p_column_id
+        type: bigint
+        required: true
+      - name: p_after_card_id
+        type: bigint
+        default: "0"
+    returns:
+      type: numeric
+    body: |
+      DECLARE
+        c cards%ROWTYPE;
+        prev numeric;
+        nxt numeric;
+        newpos numeric;
+      BEGIN
+        SELECT * INTO c FROM cards WHERE id = p_card_id;
+        IF NOT FOUND OR NOT can_edit_board(c.board_id) THEN RAISE EXCEPTION 'card not found'; END IF;
+        PERFORM 1 FROM boards WHERE id = c.board_id FOR UPDATE;
+        IF column_board(p_column_id) IS DISTINCT FROM c.board_id THEN RAISE EXCEPTION 'column is on another board'; END IF;
+        IF coalesce(p_after_card_id, 0) = p_card_id THEN RAISE EXCEPTION 'cannot place a card after itself'; END IF;
+
+        IF coalesce(p_after_card_id, 0) <> 0 THEN
+          SELECT position INTO prev FROM cards WHERE id = p_after_card_id AND column_id = p_column_id;
+          IF prev IS NULL THEN RAISE EXCEPTION 'after card is not in that column'; END IF;
+          SELECT min(position) INTO nxt FROM cards WHERE column_id = p_column_id AND id <> p_card_id AND position > prev;
+        ELSE
+          SELECT min(position) INTO nxt FROM cards WHERE column_id = p_column_id AND id <> p_card_id;
+        END IF;
+
+        IF prev IS NOT NULL AND nxt IS NOT NULL AND nxt - prev < 0.000001 THEN
+          WITH ranked AS (
+            SELECT id, row_number() OVER (ORDER BY position, id) * 1024 AS pos FROM cards WHERE column_id = p_column_id AND id <> p_card_id
+          )
+          UPDATE cards SET position = ranked.pos FROM ranked WHERE cards.id = ranked.id;
+          SELECT position INTO prev FROM cards WHERE id = p_after_card_id;
+          SELECT min(position) INTO nxt FROM cards WHERE column_id = p_column_id AND id <> p_card_id AND position > prev;
+        END IF;
+
+        newpos := CASE
+          WHEN prev IS NULL AND nxt IS NULL THEN 1024
+          WHEN prev IS NULL THEN nxt - 1024
+          WHEN nxt IS NULL THEN prev + 1024
+          ELSE (prev + nxt) / 2 END;
+        UPDATE cards SET column_id = p_column_id, position = newpos WHERE id = p_card_id;
+        RETURN newpos;
+      END;

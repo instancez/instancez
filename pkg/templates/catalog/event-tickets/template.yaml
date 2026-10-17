@@ -1,0 +1,26 @@
+id: event-tickets
+name: Event Tickets
+tagline: Sell tickets with Stripe, no overselling, and scan QR codes at the door.
+description: Events with ticket types and hard capacity limits. Buyers pay through Stripe Checkout, a webhook issues one unique QR code per ticket, and door staff check tickets in exactly once. Browsing events works without Stripe; buying needs the keys.
+category: booking
+tags: [events, tickets, stripe, qr, check-in, capacity]
+secrets:
+  - name: INSTANCEZ_ENV_STRIPE_SECRET_KEY
+    label: Stripe secret key
+    description: Starts with sk_test_ or sk_live_. Lets the checkout function create Stripe Checkout sessions.
+    needed_for: Buying tickets
+    required: true
+    url: https://dashboard.stripe.com/apikeys
+  - name: INSTANCEZ_ENV_STRIPE_WEBHOOK_SECRET
+    label: Stripe webhook signing secret
+    description: Starts with whsec_. Verifies that payment events really come from Stripe, then issues the tickets.
+    needed_for: Issuing tickets after payment
+    required: true
+    url: https://dashboard.stripe.com/webhooks
+setup:
+  - "In Stripe add a webhook endpoint pointing to https://<your-app-url>/functions/v1/stripe-webhook and subscribe to checkout.session.completed and checkout.session.expired."
+  - "Promote yourself: update profiles set role = 'admin' where id = '<your user id>' in the SQL console (sign up and insert your profile row first). Door staff get role = 'staff'."
+  - "Create an event (published = true) and ticket_types for it. price_cents is in the smallest currency unit (Stripe needs at least 50) and capacity is the hard limit."
+  - "Buy: call the checkout function with { ticket_type_id, quantity, success_url, cancel_url } and redirect to the returned url. Unpaid seats are held for 35 minutes."
+  - "Refunds: refund in Stripe, then void the tickets (update tickets set status = 'void' where order_id = ...) to free the seats. Events cannot be deleted once tickets are sold; unpublish them. Sales stop when an event ends."
+  - "Show each ticket's code as a QR code. Staff scan it and call check-in with { code }; a second scan of the same code is rejected."

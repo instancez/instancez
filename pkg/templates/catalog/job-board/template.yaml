@@ -1,0 +1,13 @@
+id: job-board
+name: Job Board
+tagline: Companies, job posts, applications with private resumes, and filtered search.
+description: A two-sided job board. Companies post jobs with salary range, remote type and tags; candidates save jobs and apply with a resume. Resumes live in a private bucket that only the applicant and the posting company's owner can read. One RPC searches open jobs with filters. Needs no secrets. No email notifications, moderation role or full-text index; add those as you grow.
+category: business
+tags: [jobs, hiring, recruiting, careers, marketplace]
+secrets: []
+setup:
+  - "Employers create a company (companies.owner_id = their user id), then jobs with status 'open' to publish. Drafts and closed jobs are visible only to the owner."
+  - "Upload resumes to the resumes bucket under '<your user id>/<file>' and set applications.resume_path to the same path. Paths for another user are rejected."
+  - "Search with supabase.rpc('search_jobs', { p_query, p_remote, p_min_salary, p_tags, p_employment_type, p_limit, p_offset }). Every argument is optional (p_currency filters the salary currency, p_limit is capped at 100)."
+  - "Apply with an insert into applications (job_id, applicant_id, applicant_name, contact_email, cover_letter, resume_path); the employer sees contact_email, not the account email. Applicants withdraw with rpc withdraw_application({p_application_id}); company owners move status with rpc set_application_status({p_application_id, p_status}). Direct updates to applications are denied."
+  - "Deleting an account removes its applications but not its stored resume files; clean the resumes bucket separately."
