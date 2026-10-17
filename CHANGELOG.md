@@ -6,27 +6,63 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 <!-- Add entries here as you merge changes. Move them under a version heading when you cut a release. -->
 
+## [0.0.8] - 2026-10-17
+
 ### Added
 
 - `inz init --template <id>` scaffolds a project from a hosted template (blog, online-store, kanban-board and more), and `inz init --list-templates` lists them. It prints the secrets each template needs and which env file they go in. See `docs/templates.md`.
+
+## [0.0.7] - 2026-10-12
+
+### Changed
+
+- After install, `install.sh` and `install.ps1` print a GitHub star hint: the line `gh api -X PUT /user/starred/<repo>` if `gh` is on your PATH, otherwise the repo URL. The command is only printed, never run.
+
+## [0.0.6] - 2026-10-10
+
+### Added
+
 - `inz vet` lints `instancez.yaml` for security problems (open or missing RLS, hardcoded secrets, unsafe auth and CORS settings). It exits 1 at `--fail-on` severity (default `high`), and prints JSON with `--json`. Findings that one config change resolves carry an `edit` (path and value) in the JSON. The report includes a `checks` tally (`N of M checks passed`). `configvalidate.VetYAML` exposes it to Go callers and returns the findings plus that tally. The admin API serves the same report at `GET /_admin/vet`, and the dashboard shows it on a Security page with a checks-passed banner, severity filters, a finding list and detail view, and a Fix it button that rechecks the finding first, then stages its `edit` through the save confirmation. Vet severities are tuned to cut false positives on the shipped templates: policies that call an identity-aware rpc pass, read-only definer functions rank lower, and missing email verification is low without an email provider.
+
+### Changed
+
+- The hosted installer (`get.instancez.ai`) now counts installs. For each GET of `install.sh`, `install.ps1`, `/` or `/windows`, the Cloudflare Worker sends an event to Umami Cloud with the script type (`sh` or `ps1`), the request path and query, the `Referer` header, and the first 100 characters of your `User-Agent`. The scripts and `inz` send nothing. There is no setting to turn it off; download a binary from GitHub Releases to skip the Worker. HEAD requests are not counted.
+- `inz init` next steps lead with `inz dev --embedded-pg` (no Postgres install needed) and show the own-Postgres path (`.development.env`, `INSTANCEZ_DATABASE_URL`) second.
+- A `language: sql` RPC body may now start with any Postgres command (`CALL`, `SET LOCAL`, `EXPLAIN`, `DO`, and so on), as in Supabase. In 0.0.5 only `SELECT`, `WITH`, `INSERT`, `UPDATE`, `DELETE`, `VALUES`, `TABLE`, `MERGE` or an opening parenthesis were accepted. Validation now rejects a body that opens with transaction control (`BEGIN`, `COMMIT`, `END`, `ROLLBACK`, `ABORT`, `START`, `SAVEPOINT`, `RELEASE`, `PREPARE TRANSACTION`), which Postgres refuses inside every SQL function, and points at `language: plpgsql`. Block comments before the first statement may nest.
+
+## [0.0.5] - 2026-10-06
+
+### Added
+
+- Sign in with Apple: `signInWithOAuth({ provider: 'apple' })` and `signInWithIdToken({ provider: 'apple' })` work once `auth.oauth.apple` is configured. `client_id` is the Services ID (comma-separate iOS bundle IDs to accept native ID tokens), and `client_secret` is a JWT you sign with your Apple `.p8` key, valid for at most 6 months. Apple's `form_post` callback is answered with a 303 to the same URL as a GET. Validation rejects a `client_secret` that is not a JWT, and an expired secret, or one that expires within 30 days, warns. See `docs/site/src/content/docs/build/auth.md`.
 - `indexes[].method` (`btree` default, `hash`, `gin`, `gist`, `brin`, `spgist`); changing it rebuilds the index. For example, `gin` on a `tsvector` column enables full-text search.
 - Field options `auto_updated_at: true` (timestamp fields; sets the column to `now()` on every update) and `immutable: true` (updates that change the column fail with 400, for every role including the secret key). Both run in one engine-managed `BEFORE UPDATE` trigger per table, dropped when the options are removed.
+- Dashboard: table pages gain a Data tab that pages rows 20 at a time, and each bucket gets its own page with an Objects tab, a browser that pages 20 per page with cursor paging. The old browser stopped at the first 100 objects.
+- `inz validate` and boot now reject a `language: sql` RPC body that does not open with a statement (`SELECT`, `WITH`, `INSERT`, `UPDATE`, `DELETE`, `VALUES`, `TABLE`, `MERGE` or an opening parenthesis), instead of failing on every call.
 
 ### Changed
 
 - **BREAKING:** `auth.allow_anonymous` now defaults to `false`, matching Supabase. Anonymous sign-in (`signInAnonymously()`, empty-body `POST /auth/v1/signup`) returns 403 until you set `allow_anonymous: true`. `inz init` writes the flag explicitly.
-- RPC arg `default: null` (or the bare word `NULL`, any case) now emits `DEFAULT NULL` instead of the string literal `'null'`, which failed on non-text types. For the literal text `null`, write `default: "('null')"`.
-- REST and RPC database errors now use PostgREST's status mapping: not-null, check and invalid-input errors (23502, 23514, class 22) return 400 instead of 422, foreign-key violations return 409, and unknown SQLSTATEs return 400. `42501` (insufficient privilege) stays 403 for `anon`, a deliberate deviation from PostgREST's 401. The body and SQLSTATE `code` are unchanged.
+- An RPC arg with `default: null` (YAML null) or the bare word `NULL` (any case) now emits `DEFAULT NULL`. Before, YAML null emitted no `DEFAULT` clause, and the string form was written as the text literal `'null'`, which failed on non-text types. For the literal text `null`, write `default: "('null')"`.
+- **BREAKING:** REST and RPC database errors now use PostgREST's status mapping: not-null, check and invalid-input errors (23502, 23514, class 22) return 400 instead of 422, foreign-key and unique violations (23503, 23505) return 409, undefined column (42703) returns 400 instead of 404, and unknown SQLSTATEs return 400. `42501` (insufficient privilege) stays 403 for `anon`, a deliberate deviation from PostgREST's 401. Connection and resource errors (classes 08 and 53) return 503 (53400 returns 500), authorization errors (classes 0L, 0P, 28) return 403, `PTnnn` codes return `nnn`, and other server-side classes (for example 40 serialization failures and 55 object state) return 500. The body and SQLSTATE `code` are unchanged.
 - A missing required RPC argument now returns 404 `PGRST202` with a hint naming the argument (was 400), as in PostgREST.
 - **BREAKING:** the `/api` prefix and the `/api/_admin` and `/api/storage/...` mounts were removed; use `/_admin` and `/storage/...`.
 - **BREAKING:** generated absolute URLs (OAuth `redirect_uri`, email verify, magic and recovery links such as `<base>/auth/v1/verify`) no longer carry a prefix. OAuth providers must register `<base>/auth/v1/callback/<provider>`, and links in already-sent emails stop working.
 - `v1` is now a reserved storage bucket name.
-- A `language: sql` RPC body may now start with any Postgres command (`CALL`, `SET LOCAL`, `EXPLAIN`, `DO`, `MERGE`, and so on), as in Supabase, not only `SELECT`, `WITH`, `INSERT`, `UPDATE`, `DELETE`, `VALUES` and `TABLE`. Validation now rejects a body that opens with transaction control (`BEGIN`, `COMMIT`, `END`, `ROLLBACK`, `ABORT`, `START`, `SAVEPOINT`, `RELEASE`, `PREPARE TRANSACTION`), which Postgres refuses inside every SQL function, and points at `language: plpgsql`. Block comments before the first statement may nest.
+- `inz dev` defaults to local storage (`type: local`, `path: ./uploads`) when the config declares buckets but no `providers.storage`. `inz validate` and `inz serve` still require a provider.
+- `inz serve` logs config warnings at startup and on every reload, as `inz validate` and `inz dev` already did.
+- The OAuth callback redirects to your `redirectTo` (or the first `auth.redirect_urls` entry) with GoTrue-style `error` parameters when the provider reports an error or returns no email. With no redirect target it returns a JSON error. A missing email used to return a bare 400, and a provider `error` fell through to 400 `Missing authorization code`.
+- The role behind the dashboard SQL editor's `run_sql` can now `SELECT` from `auth.users` (every column except `password_hash`) and from `storage.objects`. It still has no write access to the `auth` and `storage` schemas. The grants are re-applied on every boot.
+- The dashboard table page no longer shows the Migration Preview section.
+- Code functions' HTTP client no longer follows redirects; the response is returned to your code.
+- `storage.objects.uploaded_by` is now `ON DELETE SET NULL`, so deleting a user who uploaded files no longer fails. Existing databases are healed on boot.
+- Migrations no longer check RPC function bodies (`check_function_bodies` is off), so a SQL body can reference a table created later in the config.
 
 ### Fixed
 
-- OAuth login without PKCE no longer fails with `Invalid OAuth state` when the API is reached on a different host than the provider callback (for example `<app>.instancez.app` vs a custom domain). The state now lives in the database, like PKCE and identity linking, and the `oauth_state`/`oauth_redirect_to` cookies are gone. Like Supabase, plain flows are not bound to the browser that started them; use `flowType: 'pkce'` for that. Stale `auth.flow_state` rows are trimmed on each new login. A login in flight during the upgrade fails once; users retry.
+- OAuth login without PKCE no longer fails with `Invalid OAuth state` when the API is reached on a different host than the provider callback (for example `<app>.instancez.app` vs a custom domain). The state now lives in the database, like PKCE and identity linking, and the `oauth_state`/`oauth_redirect_to` cookies are gone. Like Supabase, plain flows are not bound to the browser that started them; use `flowType: 'pkce'` for that. Each new login deletes up to 100 `auth.flow_state` rows older than 24 hours. A login in flight during the upgrade fails once; users retry.
+- `foreign_key.on_delete` accepts `set null` and `set-null` (any case, surrounding spaces) as `set_null`.
+- `inz dev --embedded-pg` serializes startup across concurrent processes with a per-user file lock (5-minute timeout).
 
 ## [0.0.4] - 2026-09-29
 
@@ -216,7 +252,11 @@ First tagged release.
 - Deployment targets: Docker, Docker Compose, Kubernetes (Helm chart), AWS Lambda
 - A `@supabase/supabase-js` wire-compatibility test suite that runs on every commit
 
-[Unreleased]: https://github.com/instancez/instancez/compare/v0.0.4...HEAD
+[Unreleased]: https://github.com/instancez/instancez/compare/v0.0.8...HEAD
+[0.0.8]: https://github.com/instancez/instancez/compare/v0.0.7...v0.0.8
+[0.0.7]: https://github.com/instancez/instancez/compare/v0.0.6...v0.0.7
+[0.0.6]: https://github.com/instancez/instancez/compare/v0.0.5...v0.0.6
+[0.0.5]: https://github.com/instancez/instancez/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/instancez/instancez/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/instancez/instancez/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/instancez/instancez/compare/v0.0.1...v0.0.2
