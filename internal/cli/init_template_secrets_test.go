@@ -89,7 +89,7 @@ func TestNextStepsWithoutSecretsOrSetup(t *testing.T) {
 func TestInitTemplateWritesSecretsIntoBothExamples(t *testing.T) {
 	fakeCloud(t)
 	dir := t.TempDir()
-	require.NoError(t, runInit(initOptions{dir: dir, template: "course-platform", templateSet: true}))
+	require.NoError(t, runInit(initOptions{dir: dir, template: "course-platform"}))
 	tpl, _ := templates.Default().Get("course-platform")
 	require.NotEmpty(t, tpl.Secrets)
 	for _, f := range []string{".development.env.example", ".production.env.example"} {
@@ -104,7 +104,7 @@ func TestInitTemplateWritesSecretsIntoBothExamples(t *testing.T) {
 func TestInitTemplateTwiceWithForceDoesNotDuplicateSecrets(t *testing.T) {
 	fakeCloud(t)
 	dir := t.TempDir()
-	o := initOptions{dir: dir, template: "course-platform", templateSet: true}
+	o := initOptions{dir: dir, template: "course-platform"}
 	require.NoError(t, runInit(o))
 	o.force = true
 	require.NoError(t, runInit(o))
@@ -128,7 +128,7 @@ func TestInitTemplateWithoutSecretsLeavesExamplesPlain(t *testing.T) {
 		t.Skip("every template declares secrets")
 	}
 	dir := t.TempDir()
-	require.NoError(t, runInit(initOptions{dir: dir, template: plain, templateSet: true}))
+	require.NoError(t, runInit(initOptions{dir: dir, template: plain}))
 	raw, _ := os.ReadFile(filepath.Join(dir, ".development.env.example"))
 	assert.NotContains(t, string(raw), "INSTANCEZ_ENV_")
 }
@@ -159,7 +159,7 @@ func TestInitTemplateRefusesSymlinkedScaffoldFiles(t *testing.T) {
 					require.NoError(t, os.WriteFile(outside, []byte("keep\n"), 0o644))
 				}
 				require.NoError(t, os.Symlink(outside, filepath.Join(dir, name)))
-				err := runInit(initOptions{dir: dir, template: "course-platform", templateSet: true})
+				err := runInit(initOptions{dir: dir, template: "course-platform"})
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), name)
 				if dangling {

@@ -20,7 +20,6 @@ type initOptions struct {
 	dir           string
 	force         bool
 	template      string
-	templateSet   bool
 	listTemplates bool
 }
 
@@ -49,7 +48,7 @@ init only writes scaffolding files; it never touches a database. A
 			if opts.listTemplates {
 				return runListTemplates(cmd.OutOrStdout())
 			}
-			opts.templateSet = cmd.Flags().Changed("template")
+			opts.template = templates.NormalizeID(opts.template)
 			return runInit(opts)
 		},
 	}
@@ -93,7 +92,7 @@ func runInit(opts initOptions) error {
 	if err != nil {
 		return fmt.Errorf("resolve dir: %w", err)
 	}
-	if opts.templateSet {
+	if opts.template != "" {
 		return runInitTemplate(opts, dir)
 	}
 	yamlPath := filepath.Join(dir, "instancez.yaml")

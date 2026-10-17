@@ -136,7 +136,7 @@ func TestInitHasTemplateFlags(t *testing.T) {
 func TestInitTemplateWritesProject(t *testing.T) {
 	fakeCloud(t)
 	dir := t.TempDir()
-	require.NoError(t, runInit(initOptions{dir: dir, template: "blog", templateSet: true}))
+	require.NoError(t, runInit(initOptions{dir: dir, template: "blog"}))
 
 	cfg, err := config.Load(filepath.Join(dir, "instancez.yaml"))
 	require.NoError(t, err, "template must load with zero secrets")
@@ -149,14 +149,16 @@ func TestInitTemplateWritesProject(t *testing.T) {
 func TestInitTemplateIsCaseInsensitive(t *testing.T) {
 	fakeCloud(t)
 	dir := t.TempDir()
-	require.NoError(t, runInit(initOptions{dir: dir, template: "  BLOG ", templateSet: true}))
+	cmd := newInitCmd()
+	cmd.SetArgs([]string{"--dir", dir, "--template", "  BLOG "})
+	require.NoError(t, cmd.Execute())
 	assert.FileExists(t, filepath.Join(dir, "instancez.yaml"))
 }
 
 func TestInitTemplateWritesFunctionsAndPackageJSON(t *testing.T) {
 	fakeCloud(t)
 	dir := t.TempDir()
-	require.NoError(t, runInit(initOptions{dir: dir, template: "course-platform", templateSet: true}))
+	require.NoError(t, runInit(initOptions{dir: dir, template: "course-platform"}))
 	tpl, _ := templates.Default().Get("course-platform")
 	for p, src := range tpl.Files {
 		got, err := os.ReadFile(filepath.Join(dir, p))
@@ -176,7 +178,7 @@ func TestInitTemplateAppendsLocalStorageForBuckets(t *testing.T) {
 	}
 	require.NotEmpty(t, withBuckets, "catalog needs a template with buckets")
 	dir := t.TempDir()
-	require.NoError(t, runInit(initOptions{dir: dir, template: withBuckets, templateSet: true}))
+	require.NoError(t, runInit(initOptions{dir: dir, template: withBuckets}))
 	cfg, err := config.Load(filepath.Join(dir, "instancez.yaml"))
 	require.NoError(t, err)
 	assert.Equal(t, "local", cfg.Providers.Storage.Type)
@@ -187,7 +189,7 @@ func TestInitTemplateRefusesExistingFilesWithoutForce(t *testing.T) {
 	fakeCloud(t)
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "instancez.yaml"), []byte("version: 1\n# mine\n"), 0o644))
-	err := runInit(initOptions{dir: dir, template: "blog", templateSet: true})
+	err := runInit(initOptions{dir: dir, template: "blog"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "instancez.yaml")
 	assert.Contains(t, err.Error(), "--force")
@@ -201,7 +203,7 @@ func TestInitTemplateRefusesExistingFunctionFile(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "functions"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "functions", "checkout.js"), []byte("// mine"), 0o644))
-	err := runInit(initOptions{dir: dir, template: "course-platform", templateSet: true})
+	err := runInit(initOptions{dir: dir, template: "course-platform"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "functions/checkout.js")
 	assert.NoFileExists(t, filepath.Join(dir, "instancez.yaml"))
@@ -211,7 +213,7 @@ func TestInitTemplateForceOverwrites(t *testing.T) {
 	fakeCloud(t)
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "instancez.yaml"), []byte("version: 1\n# mine\n"), 0o644))
-	require.NoError(t, runInit(initOptions{dir: dir, template: "blog", templateSet: true, force: true}))
+	require.NoError(t, runInit(initOptions{dir: dir, template: "blog", force: true}))
 	got, err := os.ReadFile(filepath.Join(dir, "instancez.yaml"))
 	require.NoError(t, err)
 	assert.NotContains(t, string(got), "# mine")
@@ -223,7 +225,7 @@ func TestInitTemplateForceOverwrites(t *testing.T) {
 func TestInitTemplateUnknownIDSuggests(t *testing.T) {
 	fakeCloud(t)
 	dir := t.TempDir()
-	err := runInit(initOptions{dir: dir, template: "blgo", templateSet: true})
+	err := runInit(initOptions{dir: dir, template: "blgo"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "blog")
 	assert.Contains(t, err.Error(), "--list-templates")
@@ -234,7 +236,7 @@ func TestInitTemplateOfflineWritesNothing(t *testing.T) {
 	t.Setenv("INSTANCEZ_CLOUD_API", "http://127.0.0.1:1")
 	t.Setenv("HOME", t.TempDir())
 	dir := t.TempDir()
-	require.Error(t, runInit(initOptions{dir: dir, template: "blog", templateSet: true}))
+	require.Error(t, runInit(initOptions{dir: dir, template: "blog"}))
 	entries, _ := os.ReadDir(dir)
 	assert.Empty(t, entries)
 }
@@ -245,7 +247,7 @@ func TestInitTemplateServerErrorsWriteNothing(t *testing.T) {
 		t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
 		t.Setenv("HOME", t.TempDir())
 		dir := t.TempDir()
-		require.Error(t, runInit(initOptions{dir: dir, template: "blog", templateSet: true}), status)
+		require.Error(t, runInit(initOptions{dir: dir, template: "blog"}), status)
 		entries, _ := os.ReadDir(dir)
 		assert.Empty(t, entries, status)
 		srv.Close()
@@ -307,7 +309,7 @@ func TestInitTemplateHostileServerWritesNothing(t *testing.T) {
 		parent := filepath.Join(root, "a", "b")
 		require.NoError(t, os.MkdirAll(parent, 0o755))
 		dir := filepath.Join(parent, "proj")
-		err := runInit(initOptions{dir: dir, template: "blog", templateSet: true})
+		err := runInit(initOptions{dir: dir, template: "blog"})
 		require.Error(t, err, i)
 		assert.Contains(t, err.Error(), c.want, i)
 		_, statErr := os.Stat(dir)
@@ -331,7 +333,7 @@ func TestInitTemplateFlowStyleProjectWithNameWritesNothing(t *testing.T) {
 	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
 	t.Setenv("HOME", t.TempDir())
 	dir := filepath.Join(t.TempDir(), "proj")
-	err := runInit(initOptions{dir: dir, name: "y", template: "blog", templateSet: true})
+	err := runInit(initOptions{dir: dir, name: "y", template: "blog"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "project.name")
 	assert.NoDirExists(t, dir)
@@ -343,7 +345,7 @@ func TestInitTemplateDanglingYAMLSymlinkRefused(t *testing.T) {
 		dir := t.TempDir()
 		victim := filepath.Join(t.TempDir(), "victim.yaml")
 		require.NoError(t, os.Symlink(victim, filepath.Join(dir, "instancez.yaml")))
-		err := runInit(initOptions{dir: dir, template: "blog", templateSet: true, force: force})
+		err := runInit(initOptions{dir: dir, template: "blog", force: force})
 		require.Error(t, err, force)
 		assert.NoFileExists(t, victim, "link target must not be created, force=%v", force)
 		assert.NoFileExists(t, filepath.Join(dir, ".gitignore"))
@@ -356,7 +358,7 @@ func TestInitTemplateFunctionsSymlinkRefused(t *testing.T) {
 		dir := t.TempDir()
 		other := t.TempDir()
 		require.NoError(t, os.Symlink(other, filepath.Join(dir, "functions")))
-		err := runInit(initOptions{dir: dir, template: "course-platform", templateSet: true, force: force})
+		err := runInit(initOptions{dir: dir, template: "course-platform", force: force})
 		require.Error(t, err, force)
 		assert.Contains(t, err.Error(), "symlink")
 		entries, _ := os.ReadDir(other)
@@ -371,13 +373,13 @@ func TestInitTemplateFunctionsFileRefusedWithoutCreatingDir(t *testing.T) {
 	dir := filepath.Join(parent, "proj")
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "functions"), []byte("x"), 0o644))
-	err := runInit(initOptions{dir: dir, template: "course-platform", templateSet: true, force: true})
+	err := runInit(initOptions{dir: dir, template: "course-platform", force: true})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not a directory")
 	assert.NoFileExists(t, filepath.Join(dir, "instancez.yaml"))
 
 	fresh := filepath.Join(parent, "fresh")
-	require.Error(t, runInit(initOptions{dir: fresh, template: "nope-nope", templateSet: true}))
+	require.Error(t, runInit(initOptions{dir: fresh, template: "nope-nope"}))
 	assert.NoDirExists(t, fresh)
 }
 
@@ -406,7 +408,7 @@ func TestSetProjectName(t *testing.T) {
 func TestInitTemplateNameArgReplacesProjectName(t *testing.T) {
 	fakeCloud(t)
 	dir := t.TempDir()
-	require.NoError(t, runInit(initOptions{dir: dir, name: "My Shop", template: "online-store", templateSet: true}))
+	require.NoError(t, runInit(initOptions{dir: dir, name: "My Shop", template: "online-store"}))
 	cfg, err := config.Load(filepath.Join(dir, "instancez.yaml"))
 	require.NoError(t, err)
 	assert.Equal(t, "My Shop", cfg.Project.Name)
@@ -417,7 +419,7 @@ func TestInitTemplateAllCatalogTemplatesScaffold(t *testing.T) {
 	for _, tpl := range templates.Default().List() {
 		t.Run(tpl.ID, func(t *testing.T) {
 			dir := t.TempDir()
-			require.NoError(t, runInit(initOptions{dir: dir, name: "x-" + tpl.ID, template: tpl.ID, templateSet: true}))
+			require.NoError(t, runInit(initOptions{dir: dir, name: "x-" + tpl.ID, template: tpl.ID}))
 			cfg, err := config.Load(filepath.Join(dir, "instancez.yaml"))
 			require.NoError(t, err)
 			assert.Equal(t, "x-"+tpl.ID, cfg.Project.Name)
@@ -434,7 +436,7 @@ func TestInitTemplateWithoutNodeStillWritesFunctions(t *testing.T) {
 	r, w, err := os.Pipe()
 	require.NoError(t, err)
 	os.Stderr = w
-	runErr := runInit(initOptions{dir: dir, template: "course-platform", templateSet: true})
+	runErr := runInit(initOptions{dir: dir, template: "course-platform"})
 	os.Stderr = old
 	require.NoError(t, w.Close())
 	var buf bytes.Buffer
@@ -476,7 +478,7 @@ func TestInitTemplateInvalidYAMLWarningIsSanitized(t *testing.T) {
 			require.NoError(t, err)
 			os.Stderr = w
 			t.Cleanup(func() { os.Stderr = old })
-			runErr := runInit(initOptions{dir: dir, template: "blog", templateSet: true})
+			runErr := runInit(initOptions{dir: dir, template: "blog"})
 			os.Stderr = old
 			require.NoError(t, w.Close())
 			var buf bytes.Buffer

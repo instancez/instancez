@@ -74,7 +74,6 @@ func setProjectName(yamlText, name string) (string, error) {
 }
 
 func runInitTemplate(opts initOptions, dir string) error {
-	id := templates.NormalizeID(opts.template)
 	conflicts, err := checkTargets(dir, []string{"instancez.yaml"}, opts.force)
 	if err != nil {
 		return err
@@ -82,13 +81,13 @@ func runInitTemplate(opts initOptions, dir string) error {
 	if len(conflicts) > 0 {
 		return fmt.Errorf("%s already exist; use --force to overwrite", strings.Join(conflicts, ", "))
 	}
-	bundle, err := cloud.NewClient(cloud.APIURL(), "").GetTemplate(id)
+	bundle, err := cloud.NewClient(cloud.APIURL(), "").GetTemplate(opts.template)
 	if err != nil {
 		var nf *cloud.TemplateNotFoundError
 		if errors.As(err, &nf) {
 			return fmt.Errorf("%w; run `inz init --list-templates`", err)
 		}
-		return fmt.Errorf("fetch template %q: %w", id, err)
+		return fmt.Errorf("fetch template %q: %w", opts.template, err)
 	}
 	if err := checkBundlePaths(bundle.Files); err != nil {
 		return err
