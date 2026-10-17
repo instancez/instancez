@@ -128,19 +128,7 @@ func runInit(opts initOptions) error {
 		}
 	}
 
-	// .gitignore: append-only — preserve user customizations, only add our
-	// entries that aren't already present.
-	if err := applyWrite(dir, ".gitignore", func(existing string) (string, writeAction) {
-		merged := mergeGitignore(existing, scaffoldGitignore())
-		switch {
-		case existing == "":
-			return merged, actionCreate
-		case merged == existing:
-			return existing, actionSkip
-		default:
-			return merged, actionUpdate
-		}
-	}); err != nil {
+	if err := writeGitignore(dir); err != nil {
 		return err
 	}
 
@@ -461,6 +449,25 @@ type envKV struct{ Key, Val string }
 // runs the planner to decide the new content + action, then writes (or stays
 // silent on skip). The planner owns the per-file merge policy; applyWrite
 // is just the IO + logging shell.
+func diffAction(existing, merged string) writeAction {
+	switch {
+	case existing == "":
+		return actionCreate
+	case merged == existing:
+		return actionSkip
+	default:
+		return actionUpdate
+	}
+}
+
+// writeGitignore is append-only: user entries stay, ours are added when missing.
+func writeGitignore(dir string) error {
+	return applyWrite(dir, ".gitignore", func(existing string) (string, writeAction) {
+		merged := mergeGitignore(existing, scaffoldGitignore())
+		return merged, diffAction(existing, merged)
+	})
+}
+
 func applyWrite(dir, name string, plan func(existing string) (string, writeAction)) error {
 	path := filepath.Join(dir, name)
 	var existing string

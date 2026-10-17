@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"maps"
@@ -198,37 +199,20 @@ func scaffoldWarning(err error) string {
 }
 
 func finishTemplateInit(dir string, b *templates.Bundle) error {
-	if err := applyWrite(dir, ".gitignore", func(existing string) (string, writeAction) {
-		merged := mergeGitignore(existing, scaffoldGitignore())
-		switch {
-		case existing == "":
-			return merged, actionCreate
-		case merged == existing:
-			return existing, actionSkip
-		default:
-			return merged, actionUpdate
-		}
-	}); err != nil {
+	if err := writeGitignore(dir); err != nil {
 		return err
 	}
-	examples := map[string]string{
-		".development.env.example": scaffoldDevelopmentEnvExample(),
-		".production.env.example":  scaffoldProductionEnvExample(),
+	writeExample := func(name, base string) error {
+		return applyWrite(dir, name, func(existing string) (string, writeAction) {
+			merged := appendSecrets(cmp.Or(existing, base), b.Manifest.ID, b.Manifest.Secrets)
+			return merged, diffAction(existing, merged)
+		})
 	}
-	for _, name := range []string{".development.env.example", ".production.env.example"} {
-		base := examples[name]
-		if err := applyWrite(dir, name, func(existing string) (string, writeAction) {
-			if existing == "" {
-				return appendSecrets(base, b.Manifest.ID, b.Manifest.Secrets), actionCreate
-			}
-			merged := appendSecrets(existing, b.Manifest.ID, b.Manifest.Secrets)
-			if merged == existing {
-				return existing, actionSkip
-			}
-			return merged, actionUpdate
-		}); err != nil {
-			return err
-		}
+	if err := writeExample(".development.env.example", scaffoldDevelopmentEnvExample()); err != nil {
+		return err
+	}
+	if err := writeExample(".production.env.example", scaffoldProductionEnvExample()); err != nil {
+		return err
 	}
 	nodeWarning(b)
 	validateScaffold(dir)
