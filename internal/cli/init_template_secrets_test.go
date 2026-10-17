@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -149,37 +150,38 @@ func TestAppendSecretsRespectsExportedExistingKey(t *testing.T) {
 
 func TestInitTemplateRefusesSymlinkedScaffoldFiles(t *testing.T) {
 	for _, name := range []string{".gitignore", ".development.env.example", ".production.env.example"} {
-		t.Run(name, func(t *testing.T) {
-			fakeCloud(t)
-			dir := t.TempDir()
-			outside := filepath.Join(t.TempDir(), "victim")
-			require.NoError(t, os.WriteFile(outside, []byte("keep\n"), 0o644))
-			require.NoError(t, os.Symlink(outside, filepath.Join(dir, name)))
-			err := runInit(initOptions{dir: dir, template: "course-platform", templateSet: true})
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), name)
-			raw, _ := os.ReadFile(outside)
-			assert.Equal(t, "keep\n", string(raw))
-			for _, other := range []string{".gitignore", ".development.env.example", ".production.env.example"} {
-				if other != name {
-					_, statErr := os.Lstat(filepath.Join(dir, other))
-					assert.True(t, os.IsNotExist(statErr), "%s must not be written", other)
+		for _, dangling := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/dangling=%v", name, dangling), func(t *testing.T) {
+				fakeCloud(t)
+				dir := t.TempDir()
+				outside := filepath.Join(t.TempDir(), "victim")
+				if !dangling {
+					require.NoError(t, os.WriteFile(outside, []byte("keep\n"), 0o644))
 				}
-			}
-		})
+				require.NoError(t, os.Symlink(outside, filepath.Join(dir, name)))
+				err := runInit(initOptions{dir: dir, template: "course-platform", templateSet: true})
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), name)
+				if dangling {
+					_, statErr := os.Stat(outside)
+					assert.True(t, os.IsNotExist(statErr), "dangling target must not be created")
+				} else {
+					raw, _ := os.ReadFile(outside)
+					assert.Equal(t, "keep\n", string(raw))
+				}
+				for _, other := range []string{".gitignore", ".development.env.example", ".production.env.example"} {
+					if other != name {
+						_, statErr := os.Lstat(filepath.Join(dir, other))
+						assert.True(t, os.IsNotExist(statErr), "%s must not be written", other)
+					}
+				}
+				for _, p := range []string{"instancez.yaml", "functions"} {
+					_, statErr := os.Lstat(filepath.Join(dir, p))
+					assert.True(t, os.IsNotExist(statErr), "%s must not be written", p)
+				}
+			})
+		}
 	}
-}
-
-func TestInitTemplateRefusesDanglingSymlinkedExample(t *testing.T) {
-	fakeCloud(t)
-	dir := t.TempDir()
-	target := filepath.Join(t.TempDir(), "missing")
-	require.NoError(t, os.Symlink(target, filepath.Join(dir, ".development.env.example")))
-	err := runInit(initOptions{dir: dir, template: "course-platform", templateSet: true})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), ".development.env.example")
-	_, statErr := os.Stat(target)
-	assert.True(t, os.IsNotExist(statErr), "dangling target must not be created")
 }
 
 func TestAppendSecretsSanitizesHostileFields(t *testing.T) {

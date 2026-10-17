@@ -106,6 +106,9 @@ func runInitTemplate(opts initOptions, dir string) error {
 		return fmt.Errorf("%s already exist; use --force to overwrite", strings.Join(conflicts, ", "))
 	}
 
+	if err := refuseScaffoldSymlinks(dir); err != nil {
+		return err
+	}
 	yamlText := bundle.LocalYAML()
 	if opts.name != "" {
 		if yamlText, err = setProjectName(yamlText, opts.name); err != nil {
@@ -209,9 +212,6 @@ func scaffoldWarning(err error) string {
 }
 
 func finishTemplateInit(dir string, b *templates.Bundle) error {
-	if err := refuseScaffoldSymlinks(dir); err != nil {
-		return err
-	}
 	if err := applyWrite(dir, ".gitignore", func(existing string) (string, writeAction) {
 		merged := mergeGitignore(existing, scaffoldGitignore())
 		switch {
