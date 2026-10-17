@@ -3,10 +3,12 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -83,7 +85,10 @@ func setProjectName(yamlText, name string) (string, error) {
 
 func runInitTemplate(opts initOptions, dir string) error {
 	id := templates.NormalizeID(opts.template)
-	conflicts := existingTargets(dir, opts.force)
+	conflicts, err := checkTargets(dir, []string{"instancez.yaml"}, opts.force)
+	if err != nil {
+		return err
+	}
 	if len(conflicts) > 0 {
 		return fmt.Errorf("%s already exist; use --force to overwrite", strings.Join(conflicts, ", "))
 	}
@@ -98,15 +103,14 @@ func runInitTemplate(opts initOptions, dir string) error {
 	if err := checkBundlePaths(bundle.Files); err != nil {
 		return err
 	}
-	conflicts, err = bundleConflicts(dir, bundle, opts.force)
-	if err != nil {
+	paths := append(slices.Sorted(maps.Keys(bundle.Files)), "functions")
+	if conflicts, err = checkTargets(dir, paths, opts.force); err != nil {
 		return err
 	}
 	if len(conflicts) > 0 {
 		return fmt.Errorf("%s already exist; use --force to overwrite", strings.Join(conflicts, ", "))
 	}
-
-	if err := refuseScaffoldSymlinks(dir); err != nil {
+	if _, err = checkTargets(dir, scaffoldFiles, true); err != nil {
 		return err
 	}
 	yamlText := bundle.LocalYAML()
@@ -124,45 +128,27 @@ func runInitTemplate(opts initOptions, dir string) error {
 	return finishTemplateInit(dir, bundle)
 }
 
-// existingTargets runs before the network call so a doomed init costs nothing.
-func existingTargets(dir string, force bool) []string {
-	if force {
-		return nil
-	}
-	if _, err := os.Lstat(filepath.Join(dir, "instancez.yaml")); err == nil {
-		return []string{"instancez.yaml"}
-	}
-	return nil
-}
+var scaffoldFiles = []string{".gitignore", ".development.env.example", ".production.env.example"}
 
-// bundleConflicts uses Lstat so symlinks are never followed, even with --force.
-func bundleConflicts(dir string, b *templates.Bundle, force bool) ([]string, error) {
-	if fi, err := os.Lstat(filepath.Join(dir, "functions")); err == nil {
-		if fi.Mode()&os.ModeSymlink != 0 {
-			return nil, errors.New("refusing to write through symlink functions")
-		}
-		if !fi.IsDir() {
-			return nil, errors.New("functions exists and is not a directory")
-		}
-	} else if !os.IsNotExist(err) {
-		return nil, fmt.Errorf("check functions: %w", err)
-	}
-	var out []string
-	for p := range b.Files {
+// checkTargets Lstats each path so symlinks are never followed, even with force.
+func checkTargets(dir string, paths []string, force bool) ([]string, error) {
+	var conflicts []string
+	for _, p := range paths {
 		fi, err := os.Lstat(filepath.Join(dir, filepath.FromSlash(p)))
 		switch {
-		case err == nil && fi.Mode()&os.ModeSymlink != 0:
-			return nil, fmt.Errorf("refusing to write through symlink %s", p)
-		case err == nil:
-			if !force {
-				out = append(out, p)
-			}
-		case !os.IsNotExist(err):
+		case os.IsNotExist(err):
+		case err != nil:
 			return nil, fmt.Errorf("check %s: %w", p, err)
+		case fi.Mode()&os.ModeSymlink != 0:
+			return nil, fmt.Errorf("refusing to write through symlink %s", p)
+		case p == "functions" && !fi.IsDir():
+			return nil, errors.New("functions exists and is not a directory")
+		case p != "functions" && !force:
+			conflicts = append(conflicts, p)
 		}
 	}
-	sort.Strings(out)
-	return out, nil
+	sort.Strings(conflicts)
+	return conflicts, nil
 }
 
 func writeTemplateFiles(dir string, b *templates.Bundle, yamlText string) error {
@@ -247,18 +233,5 @@ func finishTemplateInit(dir string, b *templates.Bundle) error {
 	nodeWarning(b)
 	validateScaffold(dir)
 	renderNextSteps(os.Stdout, b.Manifest, dir, mustCwd())
-	return nil
-}
-
-func refuseScaffoldSymlinks(dir string) error {
-	for _, name := range []string{".gitignore", ".development.env.example", ".production.env.example"} {
-		fi, err := os.Lstat(filepath.Join(dir, name))
-		switch {
-		case err == nil && fi.Mode()&os.ModeSymlink != 0:
-			return fmt.Errorf("refusing to write through symlink %s", name)
-		case err != nil && !os.IsNotExist(err):
-			return fmt.Errorf("check %s: %w", name, err)
-		}
-	}
 	return nil
 }
