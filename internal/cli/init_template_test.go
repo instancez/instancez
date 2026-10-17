@@ -295,6 +295,7 @@ func TestInitTemplateHostileServerWritesNothing(t *testing.T) {
 		{map[string]string{"instancez.yaml": "version: 1\n", "../../evil.sh": "boom"}, "unsafe path"},
 		{map[string]string{"instancez.yaml": "version: 1\n", "/tmp/evil": "boom"}, "unsafe path"},
 		{map[string]string{"functions/a.js": "x"}, "no instancez.yaml"},
+		{map[string]string{}, "no instancez.yaml"},
 	}
 	for i, c := range cases {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

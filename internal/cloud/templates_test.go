@@ -65,7 +65,6 @@ func TestGetTemplateErrors(t *testing.T) {
 		"429":       func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(429) },
 		"bad json":  func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{not json`)) },
 		"html page": func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`<html>spa</html>`)) },
-		"empty":     func(w http.ResponseWriter, r *http.Request) {},
 	}
 	for name, h := range cases {
 		t.Run(name, func(t *testing.T) {

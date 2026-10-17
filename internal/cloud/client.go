@@ -391,14 +391,13 @@ func (c *Client) do(method, path string, payload, out any) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	var respBody []byte
+	r := io.Reader(resp.Body)
 	if c.MaxResponseBytes > 0 {
-		respBody, _ = io.ReadAll(io.LimitReader(resp.Body, c.MaxResponseBytes+1))
-		if int64(len(respBody)) > c.MaxResponseBytes {
-			return fmt.Errorf("response too large (limit %d bytes)", c.MaxResponseBytes)
-		}
-	} else {
-		respBody, _ = io.ReadAll(resp.Body)
+		r = io.LimitReader(r, c.MaxResponseBytes+1)
+	}
+	respBody, _ := io.ReadAll(r)
+	if c.MaxResponseBytes > 0 && int64(len(respBody)) > c.MaxResponseBytes {
+		return fmt.Errorf("response too large (limit %d bytes)", c.MaxResponseBytes)
 	}
 
 	if resp.StatusCode >= 400 {
