@@ -2,8 +2,11 @@ package templates
 
 import (
 	"encoding/json"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBundleHasYAMLAndFunctions(t *testing.T) {
@@ -116,6 +119,52 @@ func TestSuggest(t *testing.T) {
 		case tc.want != "" && (len(got) == 0 || got[0] != tc.want):
 			t.Errorf("Suggest(%q) = %v, want first %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestSuggestHugeIDIsBounded(t *testing.T) {
+	c := mustDefault(t)
+	start := time.Now()
+	got := c.Suggest(strings.Repeat("a", 1<<20))
+	if got == nil || len(got) != 0 {
+		t.Fatalf("got %v, want non-nil empty", got)
+	}
+	if d := time.Since(start); d > 200*time.Millisecond {
+		t.Fatalf("took %v", d)
+	}
+}
+
+func TestSuggestNearMissStillWorks(t *testing.T) {
+	if got := mustDefault(t).Suggest("blog2"); len(got) == 0 || got[0] != "blog" {
+		t.Fatalf("Suggest(blog2) = %v", got)
+	}
+}
+
+func TestSuggestCapsAtThreeByDistanceThenAlpha(t *testing.T) {
+	c := mustDefault(t)
+	const in = "ba"
+	type hit struct {
+		id string
+		d  int
+	}
+	var all []hit
+	for _, tpl := range c.List() {
+		if d := editDistance(in, tpl.ID); d <= 3 || strings.Contains(tpl.ID, in) {
+			all = append(all, hit{tpl.ID, d})
+		}
+	}
+	if len(all) <= 3 {
+		t.Fatalf("query %q matches only %d ids, pick another", in, len(all))
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].d != all[j].d {
+			return all[i].d < all[j].d
+		}
+		return all[i].id < all[j].id
+	})
+	want := []string{all[0].id, all[1].id, all[2].id}
+	if got := c.Suggest(in); !reflect.DeepEqual(got, want) {
+		t.Fatalf("Suggest(%q) = %v, want %v", in, got, want)
 	}
 }
 

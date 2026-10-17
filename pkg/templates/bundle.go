@@ -35,7 +35,7 @@ func NormalizeID(s string) string { return strings.ToLower(strings.TrimSpace(s))
 // Suggest returns up to three ids close to id, nearest first.
 func (c *Catalog) Suggest(id string) []string {
 	out := []string{}
-	if id == "" {
+	if id == "" || len(id) > 2*maxIDLen {
 		return out
 	}
 	type scored struct {
