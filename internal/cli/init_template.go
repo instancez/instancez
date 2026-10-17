@@ -115,7 +115,7 @@ func runInitTemplate(opts initOptions, dir string) error {
 	if err := writeTemplateFiles(dir, bundle, yamlText); err != nil {
 		return err
 	}
-	return finishTemplateInit(dir, bundle)
+	return finishTemplateInit(dir, opts.dir, bundle)
 }
 
 var scaffoldFiles = []string{".gitignore", ".development.env.example", ".production.env.example"}
@@ -187,7 +187,7 @@ func scaffoldWarning(err error) string {
 	return fmt.Sprintf("  ! The template did not validate with this inz version (%s). Upgrade inz or report it.", templates.CleanN(err.Error(), 300))
 }
 
-func finishTemplateInit(dir string, b *templates.Bundle) error {
+func finishTemplateInit(dir, shownDir string, b *templates.Bundle) error {
 	if err := writeGitignore(dir); err != nil {
 		return err
 	}
@@ -205,6 +205,6 @@ func finishTemplateInit(dir string, b *templates.Bundle) error {
 	}
 	nodeWarning(b)
 	validateScaffold(dir)
-	renderNextSteps(os.Stdout, b.Manifest, dir, mustCwd())
+	renderNextSteps(os.Stdout, b.Manifest, shownDir)
 	return nil
 }

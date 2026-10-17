@@ -60,7 +60,7 @@ func TestAppendSecretsNoTrailingNewlineInExisting(t *testing.T) {
 func TestNextStepsListsSecretsByEnvFile(t *testing.T) {
 	var buf bytes.Buffer
 	m := templates.Manifest{ID: "course-platform", Secrets: demoSecrets, Setup: []string{"Add the webhook in Stripe"}}
-	renderNextSteps(&buf, m, "/work/proj", "/work")
+	renderNextSteps(&buf, m, "proj")
 	out := buf.String()
 	assert.Contains(t, out, `Secrets for "course-platform"`)
 	assert.Contains(t, out, "REQUIRED  INSTANCEZ_ENV_REQ")
@@ -78,7 +78,7 @@ func TestNextStepsListsSecretsByEnvFile(t *testing.T) {
 
 func TestNextStepsWithoutSecretsOrSetup(t *testing.T) {
 	var buf bytes.Buffer
-	renderNextSteps(&buf, templates.Manifest{ID: "blog"}, "/work", "/work")
+	renderNextSteps(&buf, templates.Manifest{ID: "blog"}, ".")
 	out := buf.String()
 	assert.NotContains(t, out, "Secrets for")
 	assert.NotContains(t, out, "Manual steps")
@@ -214,7 +214,7 @@ func TestNextStepsSanitizesHostileManifest(t *testing.T) {
 		},
 		Setup: []string{"step\none\x1b[31m", "two"},
 	}
-	renderNextSteps(&buf, m, "/work", "/work")
+	renderNextSteps(&buf, m, ".")
 	out := buf.String()
 	assert.NotContains(t, out, "\x1b")
 	assert.NotContains(t, out, "\x07")
@@ -223,9 +223,4 @@ func TestNextStepsSanitizesHostileManifest(t *testing.T) {
 	assert.Contains(t, out, "\n  1. step one[31m\n")
 	assert.Contains(t, out, "\n  2. two\n")
 	assert.Equal(t, 1, strings.Count(out, "INSTANCEZ_ENV_A"))
-}
-
-func TestRelOr(t *testing.T) {
-	assert.Equal(t, "proj", relOr("/work", "/work/proj"))
-	assert.Equal(t, "/other/proj", relOr("/work", "/other/proj"))
 }

@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"io"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -52,11 +51,11 @@ func hasEnvKey(text, key string) bool {
 	return false
 }
 
-func renderNextSteps(w io.Writer, m templates.Manifest, dir, cwd string) {
+func renderNextSteps(w io.Writer, m templates.Manifest, dir string) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Done! Next steps:")
-	if dir != cwd {
-		fmt.Fprintf(w, "  cd %s\n", relOr(cwd, dir))
+	if dir != "." && dir != "" {
+		fmt.Fprintf(w, "  cd %s\n", dir)
 	}
 	if secrets := sortedSecrets(m.Secrets); len(secrets) > 0 {
 		fmt.Fprintf(w, "\nSecrets for %q:\n", templates.Clean(m.ID))
@@ -83,11 +82,4 @@ func renderNextSteps(w io.Writer, m templates.Manifest, dir, cwd string) {
 		}
 	}
 	fmt.Fprintln(w, "\n  inz dev --embedded-pg   # no Postgres install needed")
-}
-
-func relOr(cwd, dir string) string {
-	if r, err := filepath.Rel(cwd, dir); err == nil && !strings.HasPrefix(r, "..") {
-		return r
-	}
-	return dir
 }
