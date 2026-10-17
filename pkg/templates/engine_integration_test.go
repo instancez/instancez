@@ -66,12 +66,12 @@ func bootTemplate(t *testing.T, inz, adminDSN string, tpl Template) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close(ctx)
+	defer func() { _ = conn.Close(ctx) }()
 	_, _ = conn.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", dbName))
 	if _, err := conn.Exec(ctx, "CREATE DATABASE "+dbName); err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Exec(context.Background(), fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", dbName))
+	defer func() { _, _ = conn.Exec(context.Background(), fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", dbName)) }()
 
 	dir := t.TempDir()
 	cfg := tpl.Bundle().LocalYAML()
@@ -122,7 +122,7 @@ func bootTemplate(t *testing.T, inz, adminDSN string, tpl Template) {
 	}
 	for _, fn := range tpl.Includes.Functions {
 		status, body := httpDo(t, "POST", base+"/functions/v1/"+fn, anon, anon, []byte("{}"))
-		if status >= 500 && !(status == 503 && strings.Contains(body, "INSTANCEZ_ENV_")) {
+		if status >= 500 && (status != 503 || !strings.Contains(body, "INSTANCEZ_ENV_")) {
 			t.Errorf("function %s anon = %d: %s", fn, status, body)
 		}
 	}
@@ -155,7 +155,7 @@ func httpDo(t *testing.T, method, u, apikey, bearer string, body []byte) (int, s
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	b, _ := io.ReadAll(res.Body)
 	return res.StatusCode, string(b)
 }
@@ -169,7 +169,7 @@ func waitReady(base string, exited <-chan struct{}) error {
 		default:
 		}
 		if res, err := http.Get(base + "/rest/v1/"); err == nil {
-			res.Body.Close()
+			_ = res.Body.Close()
 			return nil
 		}
 		time.Sleep(500 * time.Millisecond)
@@ -182,7 +182,7 @@ func freePort(t *testing.T) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	return l.Addr().(*net.TCPAddr).Port
 }
 
@@ -201,7 +201,7 @@ func readEnvFile(t *testing.T, path string) map[string]string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		if k, v, ok := strings.Cut(sc.Text(), "="); ok {

@@ -23,7 +23,7 @@ func clearSecretEnv(t *testing.T) {
 	for _, kv := range os.Environ() {
 		if name, _, _ := strings.Cut(kv, "="); strings.HasPrefix(name, "INSTANCEZ_ENV_") {
 			t.Setenv(name, "")
-			os.Unsetenv(name)
+			_ = os.Unsetenv(name)
 		}
 	}
 }

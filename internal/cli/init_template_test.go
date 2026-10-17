@@ -455,7 +455,7 @@ func TestPlainInitStillOfflineAfterTemplateSupport(t *testing.T) {
 func TestInitTemplateInvalidYAMLWarningIsSanitized(t *testing.T) {
 	for name, yml := range map[string]string{
 		"escape key": "version: 1\nevil_\x1b[31mkey: 1\n",
-		"bidi key":   "version: 1\nevil_‮key: 1\nother: 2\n",
+		"bidi key":   "version: 1\nevil_\u202ekey: 1\nother: 2\n",
 		"multi line": "version: 1\nunknown_a: 1\nunknown_b: 2\n",
 		"type echo":  "version: 1\ntables: \"a\\u202E\\x1b[31mb\"\n",
 		"mapping":    "version: 1\nproject:\n  name: [a\u202E\n",
@@ -487,7 +487,7 @@ func TestInitTemplateInvalidYAMLWarningIsSanitized(t *testing.T) {
 			out := buf.String()
 			assert.Contains(t, out, "did not validate")
 			assert.NotContains(t, out, "\x1b")
-			assert.NotContains(t, out, "‮")
+			assert.NotContains(t, out, "\u202e")
 			assert.Equal(t, 1, strings.Count(out, "\n"), out)
 			assert.FileExists(t, filepath.Join(dir, "instancez.yaml"))
 		})
@@ -495,10 +495,10 @@ func TestInitTemplateInvalidYAMLWarningIsSanitized(t *testing.T) {
 }
 
 func TestScaffoldWarningSanitizesAndBoundsError(t *testing.T) {
-	hostile := errors.New("bad key \x1b[31m‮evil\nsecond line " + strings.Repeat("y", 1000))
+	hostile := errors.New("bad key \x1b[31m\u202eevil\nsecond line " + strings.Repeat("y", 1000))
 	msg := scaffoldWarning(hostile)
 	assert.NotContains(t, msg, "\x1b")
-	assert.NotContains(t, msg, "‮")
+	assert.NotContains(t, msg, "\u202e")
 	assert.NotContains(t, msg, "\n")
 	assert.Contains(t, msg, "did not validate")
 	assert.Contains(t, msg, "bad key")

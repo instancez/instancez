@@ -35,9 +35,9 @@ func appendSecrets(existing, templateID string, secrets []templates.Secret) stri
 	if existing != "" && !strings.HasSuffix(existing, "\n") {
 		b.WriteString("\n")
 	}
-	fmt.Fprintf(&b, "\n# Secrets for the %s template (the app boots without them)\n", templates.Clean(templateID))
+	_, _ = fmt.Fprintf(&b, "\n# Secrets for the %s template (the app boots without them)\n", templates.Clean(templateID))
 	for _, s := range missing {
-		fmt.Fprintf(&b, "# %s: %s\n%s=\n", templates.Clean(s.Label), templates.Clean(s.NeededFor), s.Name)
+		_, _ = fmt.Fprintf(&b, "# %s: %s\n%s=\n", templates.Clean(s.Label), templates.Clean(s.NeededFor), s.Name)
 	}
 	return b.String()
 }
@@ -52,13 +52,13 @@ func hasEnvKey(text, key string) bool {
 }
 
 func renderNextSteps(w io.Writer, m templates.Manifest, dir string) {
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Done! Next steps:")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Done! Next steps:")
 	if dir != "." && dir != "" {
-		fmt.Fprintf(w, "  cd %s\n", dir)
+		_, _ = fmt.Fprintf(w, "  cd %s\n", dir)
 	}
 	if secrets := sortedSecrets(m.Secrets); len(secrets) > 0 {
-		fmt.Fprintf(w, "\nSecrets for %q:\n", templates.Clean(m.ID))
+		_, _ = fmt.Fprintf(w, "\nSecrets for %q:\n", templates.Clean(m.ID))
 		for _, s := range secrets {
 			kind := "optional"
 			if s.Required {
@@ -68,18 +68,18 @@ func renderNextSteps(w io.Writer, m templates.Manifest, dir string) {
 			if u := templates.Clean(s.URL); u != "" {
 				line += "  " + u
 			}
-			fmt.Fprintln(w, line)
+			_, _ = fmt.Fprintln(w, line)
 		}
-		fmt.Fprintln(w, "Set them in:")
-		fmt.Fprintln(w, "  .development.env   for `inz dev`    (cp .development.env.example .development.env)")
-		fmt.Fprintln(w, "  .production.env    for `inz serve`  (cp .production.env.example .production.env)")
-		fmt.Fprintln(w, "The app boots without them; functions that need a missing secret return 503 naming it.")
+		_, _ = fmt.Fprintln(w, "Set them in:")
+		_, _ = fmt.Fprintln(w, "  .development.env   for `inz dev`    (cp .development.env.example .development.env)")
+		_, _ = fmt.Fprintln(w, "  .production.env    for `inz serve`  (cp .production.env.example .production.env)")
+		_, _ = fmt.Fprintln(w, "The app boots without them; functions that need a missing secret return 503 naming it.")
 	}
 	if len(m.Setup) > 0 {
-		fmt.Fprintln(w, "\nManual steps:")
+		_, _ = fmt.Fprintln(w, "\nManual steps:")
 		for i, s := range m.Setup {
-			fmt.Fprintf(w, "  %d. %s\n", i+1, templates.Clean(s))
+			_, _ = fmt.Fprintf(w, "  %d. %s\n", i+1, templates.Clean(s))
 		}
 	}
-	fmt.Fprintln(w, "\n  inz dev --embedded-pg   # no Postgres install needed")
+	_, _ = fmt.Fprintln(w, "\n  inz dev --embedded-pg   # no Postgres install needed")
 }
