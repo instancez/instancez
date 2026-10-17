@@ -185,10 +185,6 @@ func CleanN(s string, n int) string {
 	return string(r)
 }
 
-func hasControl(s string) bool {
-	return strings.IndexFunc(s, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) }) >= 0
-}
-
 // Clean strips control and format characters and collapses whitespace.
 func Clean(s string) string {
 	return strings.Join(strings.Fields(strings.Map(func(r rune) rune {
@@ -219,8 +215,8 @@ func (t *Template) check(dirName string) error {
 			return fmt.Errorf("secret %q must match %s", s.Name, secretPattern)
 		case declared[s.Name]:
 			return fmt.Errorf("secret %q declared twice", s.Name)
-		case hasControl(s.Label) || hasControl(s.NeededFor) || hasControl(s.URL):
-			return fmt.Errorf("secret %s has control characters in label, needed_for or url", s.Name)
+		case Clean(s.Label) != s.Label || Clean(s.NeededFor) != s.NeededFor || Clean(s.URL) != s.URL:
+			return fmt.Errorf("secret %s has control characters or odd spacing in label, needed_for or url", s.Name)
 		case s.Label == "" || s.Description == "" || s.NeededFor == "":
 			return fmt.Errorf("secret %s needs label, description and needed_for", s.Name)
 		}
