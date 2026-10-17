@@ -80,6 +80,17 @@ func TestListTemplatesSanitizesServerStrings(t *testing.T) {
 	assert.Contains(t, out, "shop")
 }
 
+func TestListTemplatesEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{"templates": []map[string]any{}})
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
+	var buf bytes.Buffer
+	require.NoError(t, runListTemplates(&buf))
+	assert.Equal(t, "no templates available\n", buf.String())
+}
+
 func TestListTemplatesOffline(t *testing.T) {
 	t.Setenv("INSTANCEZ_CLOUD_API", "http://127.0.0.1:1")
 	t.Setenv("HOME", t.TempDir())

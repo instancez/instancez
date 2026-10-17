@@ -79,6 +79,9 @@ func runListTemplates(w io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("list templates: %w", err)
 	}
+	if len(list) == 0 {
+		fmt.Fprintln(w, "no templates available")
+	}
 	for _, m := range list {
 		fmt.Fprintf(w, "%-24s %-13s %s\n", templates.Clean(m.ID), templates.Clean(m.Category), templates.Clean(m.Tagline))
 	}
