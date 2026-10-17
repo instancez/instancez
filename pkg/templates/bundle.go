@@ -2,6 +2,7 @@ package templates
 
 import (
 	"maps"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -28,6 +29,20 @@ func (b Bundle) LocalYAML() string {
 		return y
 	}
 	return strings.TrimRight(y, "\n") + "\n\n" + localStorage
+}
+
+var (
+	functionFile    = regexp.MustCompile(`^functions/[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9_-])?$`)
+	windowsReserved = regexp.MustCompile(`^(con|prn|aux|nul|com[1-9]|lpt[1-9])$`)
+)
+
+// SafeFilePath reports whether p may be written from a bundle: instancez.yaml or one flat functions/ file.
+func SafeFilePath(p string) bool {
+	if p == "instancez.yaml" {
+		return true
+	}
+	base, _, _ := strings.Cut(strings.ToLower(strings.TrimPrefix(p, "functions/")), ".")
+	return functionFile.MatchString(p) && !windowsReserved.MatchString(base)
 }
 
 func NormalizeID(s string) string { return strings.ToLower(strings.TrimSpace(s)) }

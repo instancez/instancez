@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"path"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -21,10 +19,6 @@ import (
 )
 
 const maxBundleFiles = 50
-
-var functionFile = regexp.MustCompile(`^functions/[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9_-])?$`)
-
-var windowsReserved = regexp.MustCompile(`^(con|prn|aux|nul|com[1-9]|lpt[1-9])$`)
 
 func checkBundlePaths(files map[string]string) error {
 	if _, ok := files["instancez.yaml"]; !ok {
@@ -39,12 +33,7 @@ func checkBundlePaths(files map[string]string) error {
 			return fmt.Errorf("template response contains an unsafe path %q (collides with %q)", p, prev)
 		}
 		seen[strings.ToLower(p)] = p
-		if p == "instancez.yaml" {
-			continue
-		}
-		base := strings.ToLower(strings.TrimPrefix(p, "functions/"))
-		base, _, _ = strings.Cut(base, ".")
-		if !functionFile.MatchString(p) || path.Clean(p) != p || windowsReserved.MatchString(base) {
+		if !templates.SafeFilePath(p) {
 			return fmt.Errorf("template response contains an unsafe path %q", p)
 		}
 	}

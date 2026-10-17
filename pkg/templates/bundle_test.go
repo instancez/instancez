@@ -168,6 +168,24 @@ func TestSuggestCapsAtThreeByDistanceThenAlpha(t *testing.T) {
 	}
 }
 
+func TestSafeFilePath(t *testing.T) {
+	for _, p := range []string{"instancez.yaml", "functions/a.js", "functions/package.json", "functions/a-b_c.1.js", "functions/console.js"} {
+		if !SafeFilePath(p) {
+			t.Errorf("%q should be safe", p)
+		}
+	}
+	for _, p := range []string{
+		"", "functions/../../evil", "../evil", "/etc/passwd", `functions\evil.js`, "functions/a/b.js",
+		"functions/", "functions/.", "functions/..", "functions/.env", ".development.env",
+		"functions/a\x00.js", "functions/CON", "functions/nul.js", "functions/com1.txt",
+		"functions/a.js.", "INSTANCEZ.yaml", "functions/a b.js",
+	} {
+		if SafeFilePath(p) {
+			t.Errorf("%q should be unsafe", p)
+		}
+	}
+}
+
 func mustDefault(t *testing.T) *Catalog {
 	t.Helper()
 	c, err := Load(embedded, "catalog")
