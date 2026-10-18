@@ -6,9 +6,15 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 <!-- Add entries here as you merge changes. Move them under a version heading when you cut a release. -->
 
+## [0.0.9] - 2026-10-18
+
 ### Added
 
 - An Interactive Demo page in the docs (`/interactive-demo/`). It replays real `inz` sessions (`init`, `dev`, `validate`, `vet`, `serve`) and the dashboard captured from a local instance, explains when to use each command, and embeds with an iframe. The `cloud deploy` chapter is illustrative. The source and captures live in `docs/demo/`; run `python3 docs/demo/build.py` to regenerate `docs/site/public/demo/instancez-demo.html`.
+
+### Changed
+
+- The hosted installer (`get.instancez.ai`) now sends its install count to PostHog instead of Umami Cloud. For each GET of `install.sh`, `install.ps1`, `/` or `/windows`, the Cloudflare Worker sends an `install_script` event with the script type (`os`), the `ref`, `utm_source` and `utm_campaign` query values, the full request URL, the `Referer` header, and the first 100 characters of your `User-Agent`. Each event uses a random id, creates no person profile, and has GeoIP lookup disabled. The scripts and `inz` send nothing. Download a binary from GitHub Releases to skip the Worker.
 
 ### Fixed
 
