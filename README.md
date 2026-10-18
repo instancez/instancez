@@ -18,7 +18,7 @@ Defined in one YAML file — self-hosted in seconds.
 
 ## Why instancez?
 
-- **One YAML file is the schema.** Edit `instancez.yaml` and instancez diffs it against the live database, applying just the delta migration (including drops) — no migration files to write or run by hand.
+- **One YAML file is the schema.** Edit `instancez.yaml` and instancez diffs it against the live database, applying just the delta migration, with no migration files to write or run by hand. Drops need `--allow-destructive` under `inz serve`.
 - **Compatible with Supabase clients** (`@supabase/supabase-js`, and others). Point your existing client at instancez and it works: auth, PostgREST-style REST, RPC, storage.
 - **Runs anywhere.** One self-contained, portable binary — locally, in Docker, on a VM, or on AWS Lambda.
 - **LLM-friendly.** A simple, easy-to-understand YAML schema — tables, RLS, storage, RPC, functions — one file an LLM (or teammate) can read end to end.
