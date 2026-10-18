@@ -1,0 +1,274 @@
+Script started on 2026-10-18 13:29:10-04:00 [COMMAND="inz dev --embedded-pg" <not executed on terminal>]
+  Starting embedded Postgres 16...
+generated INSTANCEZ_PUBLISHABLE_KEY + INSTANCEZ_SECRET_KEY — see .development.env
+  Installing function dependencies (npm install)...
+
+  instancez v0.0.8
+
+  Database
+    ✓ Embedded Postgres 16 ready
+    ✓ Connected (owner + authenticator)
+
+  Schema
+    ✓ Valid
+    Tables           1
+    Storage buckets  1
+    RPC functions    0
+    Auth             enabled
+
+  Providers
+    ✓ Storage: local
+
+  Functions
+    ✓ 1 function(s) · runtime ready
+
+  API Keys
+    Publishable  inz_publishable_UJoSv7m-K6KtBDLIXTHwHeix3cHtGg3a
+    Secret       inz_secret_V77X9VNTfJ6oYTvVobUaQYpEBKNJ5pdD
+
+  Server
+    API        http://localhost:8080
+    Dashboard  http://localhost:8080/dashboard
+
+  Watching for changes… (Ctrl+C to stop)
+  200   46.18ms  POST    /auth/v1/signup
+  200  49.796ms  POST    /auth/v1/signup
+  201   1.723ms  POST    /rest/v1/todos
+  201   1.137ms  POST    /rest/v1/todos
+  201     817µs  POST    /rest/v1/todos
+  201     641µs  POST    /rest/v1/todos
+  201   1.092ms  POST    /rest/v1/todos
+  200      61µs  GET     /dashboard/
+  200   4.445ms  GET     /dashboard/assets/index-CXVffMGm.css
+  200   4.776ms  GET     /dashboard/assets/index-CC1NdfT-.js
+  200      70µs  GET     /_admin/config/status
+  200      59µs  GET     /dashboard/favicon.svg
+  200     449µs  GET     /_admin/config
+  200     101µs  GET     /dashboard/assets/Overview-B4As9snz.js
+  200      36µs  GET     /dashboard/assets/ApiKeys-zvUrXBSs.js
+  200      17µs  GET     /dashboard/assets/check-Bg3aWMSO.js
+  200      39µs  GET     /dashboard/assets/grid-BuHeZt1r.js
+  200     102µs  GET     /_admin/config/status
+  200      72µs  GET     /_admin/keys
+  200   3.389ms  GET     /_admin/stats
+  200      19µs  GET     /dashboard/tables
+  200      14µs  GET     /dashboard/assets/index-CXVffMGm.css
+  200     298µs  GET     /dashboard/assets/index-CC1NdfT-.js
+  200      60µs  GET     /dashboard/favicon.svg
+  200      48µs  GET     /_admin/config/status
+  200     641µs  GET     /_admin/config
+  200      53µs  GET     /_admin/config/status
+  200      27µs  GET     /dashboard/tables/todos
+  200      21µs  GET     /dashboard/assets/index-CXVffMGm.css
+  200     302µs  GET     /dashboard/assets/index-CC1NdfT-.js
+  200      44µs  GET     /dashboard/favicon.svg
+  200     104µs  GET     /_admin/config/status
+  200   1.136ms  GET     /_admin/config
+  200      91µs  GET     /dashboard/assets/TableDetail-VCjumQeC.js
+  200      36µs  GET     /dashboard/assets/SaveBar-we0MWlJ3.js
+  200      28µs  GET     /dashboard/assets/DetailToolbar-C8Dh4lWn.js
+  200      85µs  GET     /dashboard/assets/RlsPolicyCard-SZKsOm4P.js
+  200     109µs  GET     /dashboard/assets/Toggle-Cl9kkMy5.js
+  200     482µs  GET     /dashboard/assets/CodeEditor-DmNYUnng.js
+  200      65µs  GET     /_admin/config/status
+time=2026-10-18T13:29:45.782-04:00 level=INFO msg="sql editor query" read_only=false bytes=53 rows=5
+  200   2.268ms  POST    /_admin/query
+  200      22µs  GET     /dashboard/
+  200      26µs  GET     /dashboard/assets/index-CXVffMGm.css
+  200     373µs  GET     /dashboard/assets/index-CC1NdfT-.js
+  200      41µs  GET     /dashboard/favicon.svg
+  200      57µs  GET     /_admin/config/status
+  200     660µs  GET     /_admin/config
+  200      75µs  GET     /dashboard/assets/Overview-B4As9snz.js
+  200      12µs  GET     /dashboard/assets/check-Bg3aWMSO.js
+  200      42µs  GET     /dashboard/assets/ApiKeys-zvUrXBSs.js
+  200       7µs  GET     /dashboard/assets/grid-BuHeZt1r.js
+  200      37µs  GET     /_admin/config/status
+  200      74µs  GET     /_admin/keys
+  200   2.479ms  GET     /_admin/stats
+  200      23µs  GET     /dashboard/users
+  200      17µs  GET     /dashboard/assets/index-CXVffMGm.css
+  200     273µs  GET     /dashboard/assets/index-CC1NdfT-.js
+  200      44µs  GET     /dashboard/favicon.svg
+  200      42µs  GET     /_admin/config/status
+  200     495µs  GET     /_admin/config
+  200      41µs  GET     /dashboard/assets/Users-DFEFp_am.js
+  200      71µs  GET     /dashboard/assets/Toggle-Cl9kkMy5.js
+  200      14µs  GET     /dashboard/assets/check-Bg3aWMSO.js
+  200      59µs  GET     /_admin/config/status
+  200    1.85ms  GET     /auth/v1/admin/users
+  200      30µs  GET     /dashboard/storage
+  200      16µs  GET     /dashboard/assets/index-CXVffMGm.css
+  200     305µs  GET     /dashboard/assets/index-CC1NdfT-.js
+  200      48µs  GET     /dashboard/favicon.svg
+  200      41µs  GET     /_admin/config/status
+  200     329µs  GET     /_admin/config
+  200      51µs  GET     /_admin/config/status
+  200     879µs  GET     /_admin/stats
+  200      23µs  GET     /dashboard/functions
+  200      16µs  GET     /dashboard/assets/index-CXVffMGm.css
+  200     278µs  GET     /dashboard/assets/index-CC1NdfT-.js
+  200      37µs  GET     /dashboard/favicon.svg
+  200      41µs  GET     /_admin/config/status
+  200     424µs  GET     /_admin/config
+  200      88µs  GET     /_admin/functions/deps
+  200      41µs  GET     /_admin/config/status
+  200      26µs  GET     /dashboard/security
+  200      15µs  GET     /dashboard/assets/index-CXVffMGm.css
+  200     290µs  GET     /dashboard/assets/index-CC1NdfT-.js
+  200      44µs  GET     /dashboard/favicon.svg
+  200      41µs  GET     /_admin/config/status
+  200     443µs  GET     /_admin/config
+  200     129µs  GET     /dashboard/assets/Security-C-A3C1Pw.js
+  200      27µs  GET     /dashboard/assets/shield-check-B26pUL9Y.js
+  200      54µs  GET     /_admin/config/status
+  200   3.148ms  GET     /_admin/vet
+  200      19µs  GET     /dashboard/project
+  200      24µs  GET     /dashboard/assets/index-CXVffMGm.css
+  200     321µs  GET     /dashboard/assets/index-CC1NdfT-.js
+  200      44µs  GET     /dashboard/favicon.svg
+  200      68µs  GET     /_admin/config/status
+  200     522µs  GET     /_admin/config
+  200      31µs  GET     /dashboard/assets/SaveBar-we0MWlJ3.js
+  200      48µs  GET     /dashboard/assets/Project-m-OtbF_1.js
+  200      54µs  GET     /_admin/config/status
+  200      35µs  GET     /dashboard/tables/todos
+  200      16µs  GET     /dashboard/assets/index-CXVffMGm.css
+  200     333µs  GET     /dashboard/assets/index-CC1NdfT-.js
+  200      31µs  GET     /dashboard/favicon.svg
+  200      50µs  GET     /_admin/config/status
+  200     506µs  GET     /_admin/config
+  200      92µs  GET     /dashboard/assets/TableDetail-VCjumQeC.js
+  200      25µs  GET     /dashboard/assets/SaveBar-we0MWlJ3.js
+  200      19µs  GET     /dashboard/assets/DetailToolbar-C8Dh4lWn.js
+  200     129µs  GET     /dashboard/assets/RlsPolicyCard-SZKsOm4P.js
+  200     135µs  GET     /dashboard/assets/Toggle-Cl9kkMy5.js
+  200     320µs  GET     /dashboard/assets/CodeEditor-DmNYUnng.js
+  200      62µs  GET     /_admin/config/status
+time=2026-10-18T13:30:02.652-04:00 level=INFO msg="sql editor query" read_only=false bytes=53 rows=5
+  200   1.004ms  POST    /_admin/query
+  200      88µs  GET     /_admin/config/status
+time=2026-10-18T13:30:43.113-04:00 level=INFO msg="config reloaded successfully" tables=1
+time=2026-10-18T13:30:43.464-04:00 level=INFO msg="functions: reloaded" count=1
+  400      78µs  PATCH   /rest/v1/todos
+  400     154µs  PATCH   /rest/v1/todos
+  200      19µs  GET     /dashboard/
+  200      20µs  GET     /dashboard/assets/index-CXVffMGm.css
+  200     499µs  GET     /dashboard/assets/index-CC1NdfT-.js
+  200      74µs  GET     /_admin/config/status
+  200      58µs  GET     /dashboard/favicon.svg
+  200     556µs  GET     /_admin/config
+  200     103µs  GET     /dashboard/assets/Overview-B4As9snz.js
+  200      46µs  GET     /dashboard/assets/ApiKeys-zvUrXBSs.js
+  200      21µs  GET     /dashboard/assets/check-Bg3aWMSO.js
+  200      14µs  GET     /dashboard/assets/grid-BuHeZt1r.js
+  200      52µs  GET     /_admin/config/status
+  200      76µs  GET     /_admin/keys
+  200   5.451ms  GET     /_admin/stats
+  200      21µs  GET     /dashboard/tables
+  200      34µs  GET     /dashboard/assets/index-CXVffMGm.css
+  200     259µs  GET     /dashboard/assets/index-CC1NdfT-.js
+  200      51µs  GET     /dashboard/favicon.svg
+  200      42µs  GET     /_admin/config/status
+  200     702µs  GET     /_admin/config
+  200      59µs  GET     /_admin/config/status
+  200      21µs  GET     /dashboard/tables/todos
+  200      43µs  GET     /dashboard/assets/index-CXVffMGm.css
+  200     426µs  GET     /dashboard/assets/index-CC1NdfT-.js
+  200      45µs  GET     /dashboard/favicon.svg
+  200      94µs  GET     /_admin/config/status
+  200   1.225ms  GET     /_admin/config
+  200     193µs  GET     /dashboard/assets/TableDetail-VCjumQeC.js
+  200      21µs  GET     /dashboard/assets/SaveBar-we0MWlJ3.js
+  200      18µs  GET     /dashboard/assets/DetailToolbar-C8Dh4lWn.js
+  200      55µs  GET     /dashboard/assets/RlsPolicyCard-SZKsOm4P.js
+  200     136µs  GET     /dashboard/assets/Toggle-Cl9kkMy5.js
+  200     262µs  GET     /dashboard/assets/CodeEditor-DmNYUnng.js
+  200     105µs  GET     /_admin/config/status
+time=2026-10-18T13:31:03.982-04:00 level=INFO msg="sql editor query" read_only=false bytes=53 rows=5
+  200   1.311ms  POST    /_admin/query
+  200      24µs  GET     /dashboard/
+  200      20µs  GET     /dashboard/assets/index-CXVffMGm.css
+  200     352µs  GET     /dashboard/assets/index-CC1NdfT-.js
+  200      45µs  GET     /dashboard/favicon.svg
+  200      38µs  GET     /_admin/config/status
+  200     471µs  GET     /_admin/config
+  200     111µs  GET     /dashboard/assets/Overview-B4As9snz.js
+  200      65µs  GET     /dashboard/assets/ApiKeys-zvUrXBSs.js
+  200      18µs  GET     /dashboard/assets/check-Bg3aWMSO.js
+  200      26µs  GET     /dashboard/assets/grid-BuHeZt1r.js
+  200      57µs  GET     /_admin/config/status
+  200      33µs  GET     /_admin/keys
+  200     971µs  GET     /_admin/stats
+  200      24µs  GET     /dashboard/users
+  200      33µs  GET     /dashboard/assets/index-CXVffMGm.css
+  200     300µs  GET     /dashboard/assets/index-CC1NdfT-.js
+  200      43µs  GET     /dashboard/favicon.svg
+  200      70µs  GET     /_admin/config/status
+  200     804µs  GET     /_admin/config
+  200      83µs  GET     /dashboard/assets/Users-DFEFp_am.js
+  200      59µs  GET     /dashboard/assets/Toggle-Cl9kkMy5.js
+  200      18µs  GET     /dashboard/assets/check-Bg3aWMSO.js
+  200      51µs  GET     /_admin/config/status
+  200   3.699ms  GET     /auth/v1/admin/users
+  200      24µs  GET     /dashboard/storage
+  200      18µs  GET     /dashboard/assets/index-CXVffMGm.css
+  200     331µs  GET     /dashboard/assets/index-CC1NdfT-.js
+  200      49µs  GET     /dashboard/favicon.svg
+  200      48µs  GET     /_admin/config/status
+  200     530µs  GET     /_admin/config
+  200      49µs  GET     /_admin/config/status
+  200   1.102ms  GET     /_admin/stats
+  200      29µs  GET     /dashboard/functions
+  200      23µs  GET     /dashboard/assets/index-CXVffMGm.css
+  200     379µs  GET     /dashboard/assets/index-CC1NdfT-.js
+  200      44µs  GET     /dashboard/favicon.svg
+  200      31µs  GET     /_admin/config/status
+  200     457µs  GET     /_admin/config
+  200     101µs  GET     /_admin/functions/deps
+  200      45µs  GET     /_admin/config/status
+  200      34µs  GET     /dashboard/security
+  200      27µs  GET     /dashboard/assets/index-CXVffMGm.css
+  200     357µs  GET     /dashboard/assets/index-CC1NdfT-.js
+  200      39µs  GET     /dashboard/favicon.svg
+  200      59µs  GET     /_admin/config/status
+  200     710µs  GET     /_admin/config
+  200      81µs  GET     /dashboard/assets/Security-C-A3C1Pw.js
+  200      15µs  GET     /dashboard/assets/shield-check-B26pUL9Y.js
+  200      39µs  GET     /_admin/config/status
+  200     959µs  GET     /_admin/vet
+  200      22µs  GET     /dashboard/project
+  200      15µs  GET     /dashboard/assets/index-CXVffMGm.css
+  200     325µs  GET     /dashboard/assets/index-CC1NdfT-.js
+  200      43µs  GET     /dashboard/favicon.svg
+  200      38µs  GET     /_admin/config/status
+  200     468µs  GET     /_admin/config
+  200      49µs  GET     /dashboard/assets/Project-m-OtbF_1.js
+  200      15µs  GET     /dashboard/assets/SaveBar-we0MWlJ3.js
+  200      62µs  GET     /_admin/config/status
+  200      22µs  GET     /dashboard/tables/todos
+  200      20µs  GET     /dashboard/assets/index-CXVffMGm.css
+  200     274µs  GET     /dashboard/assets/index-CC1NdfT-.js
+  200      47µs  GET     /dashboard/favicon.svg
+  200      55µs  GET     /_admin/config/status
+  200     460µs  GET     /_admin/config
+  200      78µs  GET     /dashboard/assets/TableDetail-VCjumQeC.js
+  200      23µs  GET     /dashboard/assets/SaveBar-we0MWlJ3.js
+  200      17µs  GET     /dashboard/assets/DetailToolbar-C8Dh4lWn.js
+  200      56µs  GET     /dashboard/assets/RlsPolicyCard-SZKsOm4P.js
+  200      83µs  GET     /dashboard/assets/Toggle-Cl9kkMy5.js
+  200     298µs  GET     /dashboard/assets/CodeEditor-DmNYUnng.js
+  200      57µs  GET     /_admin/config/status
+time=2026-10-18T13:31:21.026-04:00 level=INFO msg="sql editor query" read_only=false bytes=53 rows=5
+  200   1.411ms  POST    /_admin/query
+  200      67µs  GET     /_admin/config/status
+  400      70µs  PATCH   /rest/v1/todos
+  400     135µs  GET     /rest/v1/todos
+time=2026-10-18T13:31:49.046-04:00 level=INFO msg="sql editor query" read_only=false bytes=101 rows=6
+  200    7.11ms  POST    /_admin/query
+  400      82µs  GET     /rest/v1/todos
+  400      85µs  GET     /rest/v1/todos
+  400     153µs  GET     /rest/v1/todos
+  400     129µs  GET     /rest/v1/todos
+  200  54.903ms  POST    /auth/v1/token
+  200   2.314ms  GET     /rest/v1/todos

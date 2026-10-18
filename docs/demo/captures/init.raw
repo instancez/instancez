@@ -1,0 +1,10 @@
+  + instancez.yaml
+  + .gitignore
+  + functions/package.json
+  + functions/todos.js
+  + .production.env.example
+  + .development.env.example
+
+Done! Next steps:
+  inz dev --embedded-pg   # no Postgres install needed
+  (own Postgres: cp .development.env.example .development.env, set INSTANCEZ_DATABASE_URL, run inz dev)

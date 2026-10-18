@@ -8,6 +8,10 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Added
 
+- An Interactive Demo page in the docs (`/interactive-demo/`). It replays real `inz` sessions (`init`, `dev`, `validate`, `vet`, `serve`) and the dashboard captured from a local instance, explains when to use each command, and embeds with an iframe. The `cloud deploy` chapter is illustrative. The source and captures live in `docs/demo/`; run `python3 docs/demo/build.py` to regenerate `docs/site/public/demo/instancez-demo.html`.
+
+### Added
+
 - `inz init --template <id>` scaffolds a project from a hosted template (blog, online-store, kanban-board and more), and `inz init --list-templates` lists them. It prints the secrets each template needs and which env file they go in. See `docs/templates.md`.
 - `inz vet` lints `instancez.yaml` for security problems (open or missing RLS, hardcoded secrets, unsafe auth and CORS settings). It exits 1 at `--fail-on` severity (default `high`), and prints JSON with `--json`. Findings that one config change resolves carry an `edit` (path and value) in the JSON. The report includes a `checks` tally (`N of M checks passed`). `configvalidate.VetYAML` exposes it to Go callers and returns the findings plus that tally. The admin API serves the same report at `GET /_admin/vet`, and the dashboard shows it on a Security page with a checks-passed banner, severity filters, a finding list and detail view, and a Fix it button that rechecks the finding first, then stages its `edit` through the save confirmation. Vet severities are tuned to cut false positives on the shipped templates: policies that call an identity-aware rpc pass, read-only definer functions rank lower, and missing email verification is low without an email provider.
 - `indexes[].method` (`btree` default, `hash`, `gin`, `gist`, `brin`, `spgist`); changing it rebuilds the index. For example, `gin` on a `tsvector` column enables full-text search.

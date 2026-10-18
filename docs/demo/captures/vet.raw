@@ -1,0 +1,18 @@
+[1minz vet[0m  [2minstancez.yaml[0m
+
+ [34m●[0m [34mLOW     [0m  [1msignup-unverified-email         [0m [2minstancez.yaml:23[0m
+   [2mauth.email.verify_email[0m
+   Anyone can sign up with an email address they do not own, and no email provider is
+   configured to send verification mail.
+   Fix: Configure providers.email, then set auth.email.verify_email: true, or set
+        auth.allow_signup: false.
+
+ [34m●[0m [34mLOW     [0m  [1mbucket-public                   [0m [2minstancez.yaml:58[0m
+   [2mstorage.avatars.public[0m
+   Anyone with a URL can read objects in avatars. Public skips RLS for reads only;
+   writes still follow the policies.
+   Fix: Keep it only for content that is meant to be public.
+
+ [2m0 critical[0m[2m · [0m[2m0 high[0m[2m · [0m[2m0 medium[0m[2m · [0m[34m2 low[0m[2m · [0m[2m0 info[0m
+ [2m19 of 21 checks passed[0m
+ [32m✓ passed[0m
