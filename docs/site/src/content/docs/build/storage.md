@@ -172,7 +172,7 @@ await fetch(upload_url, { method: 'PUT', headers: { 'Content-Type': file.type },
 
 Use `GET /storage/<bucket>/<id>` to get a presigned download URL later.
 
-These endpoints run as the calling user, so the bucket's RLS policies apply: `insert` to sign an upload, `select` to sign a download (except on a public bucket, where anyone can sign a download, like `/object/public`), and `select` plus `delete` to delete (the `DELETE ... RETURNING` under RLS needs `select` to find the row, the same as `remove`). An object you can't see returns 404. A request with a present but invalid `Authorization: Bearer` token gets 401, even against a public bucket's download route: a bad token is always an error, not a silent fall-back to anonymous access.
+These legacy `/storage/<bucket>` endpoints run as the calling user, so the bucket's RLS policies apply: `insert` to sign an upload, `select` to sign a download (except on a public bucket, where anyone can sign a download, like `/object/public`; `/storage/v1` signing has no such exception and always follows `rls:`), and `select` plus `delete` to delete (the `DELETE ... RETURNING` under RLS needs `select` to find the row, the same as `remove`). An object you can't see returns 404. A request with a present but invalid `Authorization: Bearer` token gets 401, even against a public bucket's download route: a bad token is always an error, not a silent fall-back to anonymous access.
 
 ## What's next
 
