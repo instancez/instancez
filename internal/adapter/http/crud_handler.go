@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -23,30 +24,88 @@ import (
 
 // CRUDHandler serves PostgREST-compatible table endpoints.
 type CRUDHandler struct {
-	cfg     *domain.Config
-	db      domain.Database
-	logger  *slog.Logger
-	jwtKeys *app.JWTKeyManager
+	cfg      *domain.Config
+	configFn func() *domain.Config // live engine config, so hot reloads reach the REST layer
+	db       domain.Database
+	logger   *slog.Logger
+	jwtKeys  *app.JWTKeyManager
+	built    atomic.Pointer[crudSet]
 }
+
+// crudSet is the per-table handlers built from one config. It is rebuilt when
+// the engine swaps in a new config (file watch or dashboard save), so new
+// columns, tables and limits take effect without a restart.
+type crudSet struct {
+	cfg     *domain.Config
+	tables  map[string]domain.Table
+	byTable map[string]*tableHandlers
+}
+
+type tableHandlers struct{ list, create, upsert, update, del gin.HandlerFunc }
 
 func NewCRUDHandler(deps ServerDeps) *CRUDHandler {
 	return &CRUDHandler{
-		cfg:     deps.Config,
-		db:      deps.DB.Database,
-		logger:  deps.Logger,
-		jwtKeys: deps.JWTKeys,
+		cfg:      deps.Config,
+		configFn: deps.ConfigFn,
+		db:       deps.DB.Database,
+		logger:   deps.Logger,
+		jwtKeys:  deps.JWTKeys,
+	}
+}
+
+// config returns the live config, or the boot config when none is wired.
+func (h *CRUDHandler) config() *domain.Config {
+	if h.configFn != nil {
+		if c := h.configFn(); c != nil {
+			return c
+		}
+	}
+	return h.cfg
+}
+
+// current returns the handlers for the live config, rebuilding when it changed.
+func (h *CRUDHandler) current() *crudSet {
+	cfg := h.config()
+	if s := h.built.Load(); s != nil && s.cfg == cfg {
+		return s
+	}
+	s := &crudSet{cfg: cfg, tables: h.allTables(), byTable: make(map[string]*tableHandlers, len(cfg.Tables))}
+	for name, table := range cfg.Tables {
+		s.byTable[name] = &tableHandlers{
+			list:   h.handleList(name, table),
+			create: h.handleCreate(name, table),
+			upsert: h.handleUpsert(name, table),
+			update: h.handleUpdate(name, table),
+			del:    h.handleDelete(name, table),
+		}
+	}
+	h.built.Store(s)
+	return s
+}
+
+// dispatch resolves the table per request so routes follow config reloads.
+func (h *CRUDHandler) dispatch(pick func(*tableHandlers) gin.HandlerFunc) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		th, ok := h.current().byTable[c.Param("table")]
+		if !ok {
+			c.String(404, "404 page not found")
+			c.Abort()
+			return
+		}
+		pick(th)(c)
 	}
 }
 
 // allTables adds a public "users" stand-in when auth is on, so users.id references resolve; auth.users.id ones don't.
 func (h *CRUDHandler) allTables() map[string]domain.Table {
-	merged := make(map[string]domain.Table, len(h.cfg.Tables)+1)
-	for k, v := range h.cfg.Tables {
+	cfg := h.config()
+	merged := make(map[string]domain.Table, len(cfg.Tables)+1)
+	for k, v := range cfg.Tables {
 		merged[k] = v
 	}
 	// If auth is enabled but tables.users isn't declared, synthesize a
 	// minimal users entry so FK resolution can still find id/email.
-	if _, ok := merged["users"]; !ok && h.cfg.Auth != nil {
+	if _, ok := merged["users"]; !ok && cfg.Auth != nil {
 		merged["users"] = domain.Table{Fields: []domain.Field{
 			{Name: "id", Type: "uuid", PrimaryKey: true},
 			{Name: "email", Type: "text"},
@@ -60,7 +119,7 @@ func (h *CRUDHandler) allTables() map[string]domain.Table {
 func (h *CRUDHandler) Mount(root *gin.RouterGroup) {
 	rest := root.Group("/rest/v1")
 	var schemas []string
-	for _, t := range h.cfg.Tables {
+	for _, t := range h.config().Tables {
 		if s := t.EffectiveSchema(); s != "public" {
 			schemas = append(schemas, s)
 		}
@@ -83,26 +142,19 @@ func (h *CRUDHandler) Mount(root *gin.RouterGroup) {
 	// list path, net/http strips the body after the status + headers fly.
 	rest.HEAD("/rpc/:name", rejectPlan, jwtAuth(h.jwtKeys, false), rangeGuard, rpc)
 
-	for tableName, table := range h.cfg.Tables {
-		name := tableName
-		t := table
-		group := rest.Group("/" + name)
-		// JWT not required at HTTP level — anon falls through with
-		// session.Role="anon" and SQL-layer grants + RLS gate access.
-		// Writes refuse plans before auth.
-		auth := jwtAuth(h.jwtKeys, false)
-
-		list := h.handleList(name, t)
-		group.GET("", auth, list)
-		// HEAD reuses the list handler: Gin/net/http will write the status
-		// line and headers (Content-Range, Content-Type) but strip the body
-		// so clients can fetch counts and pagination metadata cheaply.
-		group.HEAD("", auth, list)
-		group.POST("", rejectPlan, auth, rangeGuard, h.handleCreate(name, t))
-		group.PUT("", rejectPlan, auth, rangeGuard, h.handleUpsert(name, t))
-		group.PATCH("", rejectPlan, auth, rangeGuard, h.handleUpdate(name, t))
-		group.DELETE("", rejectPlan, auth, rangeGuard, h.handleDelete(name, t))
-	}
+	// Tables resolve per request (see dispatch), so a config reload can add
+	// tables and columns without re-mounting routes. JWT is not required at the
+	// HTTP level: anon falls through with session.Role="anon" and SQL-layer
+	// grants + RLS gate access. Writes refuse plans before auth.
+	auth := jwtAuth(h.jwtKeys, false)
+	// GET and HEAD share the list handler: net/http strips the HEAD body after
+	// the status line and headers (Content-Range, Content-Type) are written.
+	rest.GET("/:table", auth, h.dispatch(func(t *tableHandlers) gin.HandlerFunc { return t.list }))
+	rest.HEAD("/:table", auth, h.dispatch(func(t *tableHandlers) gin.HandlerFunc { return t.list }))
+	rest.POST("/:table", rejectPlan, auth, rangeGuard, h.dispatch(func(t *tableHandlers) gin.HandlerFunc { return t.create }))
+	rest.PUT("/:table", rejectPlan, auth, rangeGuard, h.dispatch(func(t *tableHandlers) gin.HandlerFunc { return t.upsert }))
+	rest.PATCH("/:table", rejectPlan, auth, rangeGuard, h.dispatch(func(t *tableHandlers) gin.HandlerFunc { return t.update }))
+	rest.DELETE("/:table", rejectPlan, auth, rangeGuard, h.dispatch(func(t *tableHandlers) gin.HandlerFunc { return t.del }))
 }
 
 // handleList handles GET /rest/v1/<table> with PostgREST query params.
@@ -140,8 +192,8 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 			writeRangeError(c, err)
 			return
 		}
-		qp.Limit = capLimit(qp.Limit, h.cfg.Server.MaxLimit)
-		capEmbeds(qp.Embeds, h.cfg.Server.MaxLimit)
+		qp.Limit = capLimit(qp.Limit, h.config().Server.MaxLimit)
+		capEmbeds(qp.Embeds, h.config().Server.MaxLimit)
 
 		// Build SQL
 		query, args := postgrest.BuildSelectQueryFull(tableName, qp, table, allTbls)
@@ -1316,7 +1368,7 @@ func dbTimeout(cfgVal, prefer string) time.Duration {
 
 // withDBTimeout also bounds pool acquire and Begin for list reads.
 func (h *CRUDHandler) withDBTimeout(ctx context.Context, prefer string) (context.Context, context.CancelFunc) {
-	if d := dbTimeout(h.cfg.Server.Timeouts.DBQuery, prefer); d > 0 {
+	if d := dbTimeout(h.config().Server.Timeouts.DBQuery, prefer); d > 0 {
 		return context.WithTimeout(ctx, d)
 	}
 	return ctx, nil

@@ -6,11 +6,16 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 <!-- Add entries here as you merge changes. Move them under a version heading when you cut a release. -->
 
-## [0.0.8] - 2026-10-17
-
 ### Added
 
 - An Interactive Demo page in the docs (`/interactive-demo/`). It replays real `inz` sessions (`init`, `dev`, `validate`, `vet`, `serve`) and the dashboard captured from a local instance, explains when to use each command, and embeds with an iframe. The `cloud deploy` chapter is illustrative. The source and captures live in `docs/demo/`; run `python3 docs/demo/build.py` to regenerate `docs/site/public/demo/instancez-demo.html`.
+
+### Fixed
+
+- A config reload now reaches the REST layer. Columns added by editing `instancez.yaml` (file watch) or saving in the dashboard were rejected by `/rest/v1/*` with `unknown column` until you restarted, and tables added that way returned 404. The table handlers now follow the engine's live config.
+- The dashboard Project page crashed (`server.cors.origins is not iterable`) on a config with no `server.cors` block, such as the one `inz init` writes. `GET /_admin/config` now always returns `server.cors.origins` as an array, and the page tolerates a missing value.
+
+## [0.0.8] - 2026-10-17
 
 ### Added
 

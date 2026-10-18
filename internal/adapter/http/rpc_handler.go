@@ -33,7 +33,7 @@ import (
 func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		name := c.Param("name")
-		fn, ok := h.cfg.RPC[name]
+		fn, ok := h.config().RPC[name]
 		if !ok {
 			pgJSON(c, http.StatusNotFound, "PGRST202",
 				fmt.Sprintf("Could not find the function public.%s in the schema cache", name),
@@ -422,7 +422,7 @@ func (h *CRUDHandler) resolveRPCTargetTable(fn domain.Function) (domain.Table, b
 	if target == "" {
 		return domain.Table{}, false
 	}
-	if tbl, ok := h.cfg.Tables[target]; ok {
+	if tbl, ok := h.config().Tables[target]; ok {
 		return tbl, true
 	}
 	if tbl, ok := h.allTables()[target]; ok {
@@ -585,7 +585,7 @@ func (h *CRUDHandler) parseRPCChain(c *gin.Context, fn domain.Function, argNames
 	}
 	chain.hasOffset, chain.offset = chain.hasOffset || offset > 0, offset
 	chain.hasLimit, chain.limit = limit >= 0, limit
-	if maxRows := h.cfg.Server.MaxLimit; maxRows > 0 && (!chain.hasLimit || chain.limit > maxRows) {
+	if maxRows := h.config().Server.MaxLimit; maxRows > 0 && (!chain.hasLimit || chain.limit > maxRows) {
 		chain.hasLimit, chain.limit = true, maxRows
 	}
 

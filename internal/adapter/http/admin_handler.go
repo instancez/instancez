@@ -317,6 +317,7 @@ func (h *AdminHandler) handleGetConfig(c *gin.Context) {
 			return
 		}
 		result["_checksum"] = ver
+		ensureCORSOrigins(result)
 	} else {
 		// Test path: no source wired, fall back to live config (already resolved).
 		cfg := h.liveConfig()
@@ -329,8 +330,26 @@ func (h *AdminHandler) handleGetConfig(c *gin.Context) {
 			problemJSON(c, 500, "internal", "Failed to round-trip config")
 			return
 		}
+		ensureCORSOrigins(result)
 	}
 	c.JSON(200, result)
+}
+
+// ensureCORSOrigins makes server.cors.origins an array. A config with no
+// server block marshals the nil slice as null, and the dashboard spreads it.
+func ensureCORSOrigins(cfg map[string]any) {
+	server, ok := cfg["server"].(map[string]any)
+	if !ok {
+		return
+	}
+	cors, ok := server["cors"].(map[string]any)
+	if !ok {
+		cors = map[string]any{}
+		server["cors"] = cors
+	}
+	if cors["origins"] == nil {
+		cors["origins"] = []any{}
+	}
 }
 
 // handlePutConfig validates and writes config through the configured Source.
