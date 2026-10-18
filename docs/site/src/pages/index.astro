@@ -129,6 +129,39 @@ if (!version) {
   .kbtn.ghost { color: var(--text); border: 1px solid var(--hair); }
   .kbtn.ghost .key { background: #1a1a1a; color: var(--text-dim); border: 1px solid var(--hair); }
   .kbtn.ghost:hover { border-color: #333; background: var(--bg-lift); }
+  .kbtn.hot {
+    position: relative;
+    overflow: hidden;
+    color: var(--white);
+    background: #0c0c0c;
+    border: 1.5px solid var(--white);
+    padding-left: 11px;
+    animation: hot-pulse 2.6s ease-in-out infinite;
+  }
+  .kbtn.hot::after {
+    content: '';
+    position: absolute;
+    top: 0; bottom: 0; left: -60%;
+    width: 40%;
+    background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.28), transparent);
+    transform: skewX(-18deg);
+    animation: hot-shine 3.4s ease-in-out infinite;
+    pointer-events: none;
+  }
+  .kbtn.hot .key { background: var(--white); color: #080808; }
+  .kbtn.hot:hover { background: #1a1a1a; animation-play-state: paused; box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.18), 0 0 40px rgba(255, 255, 255, 0.4); }
+  .kbtn.hot .play {
+    display: inline-grid; place-items: center;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--white);
+  }
+  .kbtn.hot .play::before { content: ''; margin-left: 2px; border-left: 7px solid #080808; border-top: 4.5px solid transparent; border-bottom: 4.5px solid transparent; }
+  @keyframes hot-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.35), 0 0 22px rgba(255, 255, 255, 0.18); }
+    50% { box-shadow: 0 0 0 7px rgba(255, 255, 255, 0), 0 0 38px rgba(255, 255, 255, 0.34); }
+  }
+  @keyframes hot-shine { 0%, 55% { left: -60%; } 100% { left: 130%; } }
+  @media (prefers-reduced-motion: reduce) { .kbtn.hot, .kbtn.hot::after { animation: none; } }
 
   /* Copy / Ask AI dropdown in the topbar */
   .hp-menu { position: relative; }
@@ -378,6 +411,7 @@ if (!version) {
       </div>
     </details>
     <a href="https://github.com/instancez/instancez" class="kbtn ghost">GitHub <span class="key">G</span></a>
+    <a href={`${base}/demo/instancez-demo.html`} class="kbtn hot"><span class="play"></span>Interactive Demo <span class="key">D</span></a>
     <a href={`${base}/quick-start/`} class="kbtn solid">Quick Start <span class="key">S</span></a>
   </div>
 </header>
@@ -390,6 +424,7 @@ if (!version) {
       <p class="lede">Define your schema in one YAML file and get a full Postgres-backed API with auth, RLS, functions, and storage. Self-host it as a single binary, point your existing <code style="font-family:var(--mono);color:#ddd">supabase-js</code> code at it, and you are running in minutes.</p>
       <div class="hero-actions">
         <a href={`${base}/quick-start/`} class="kbtn solid">Quick Start <span class="key">S</span></a>
+        <a href={`${base}/demo/instancez-demo.html`} class="kbtn hot"><span class="play"></span>Interactive Demo <span class="key">D</span></a>
         <a href="https://github.com/instancez/instancez" class="kbtn ghost">View on GitHub <span class="key">G</span></a>
       </div>
 
@@ -580,13 +615,14 @@ if (!version) {
     })
   }
 
-  // Keyboard shortcuts: S → quick start, G → GitHub.
+  // Keyboard shortcuts: S → quick start, D → interactive demo, G → GitHub.
   document.addEventListener('keydown', e => {
     if (e.metaKey || e.ctrlKey || e.altKey) return
     const t = e.target as HTMLElement
     if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return
     if (e.key.toLowerCase() === 's') window.location.href = document.querySelector<HTMLAnchorElement>('.kbtn.solid')!.href
     if (e.key.toLowerCase() === 'g') window.location.href = 'https://github.com/instancez/instancez'
+    if (e.key.toLowerCase() === 'd') window.location.href = document.querySelector<HTMLAnchorElement>('.kbtn.hot')!.href
   })
 </script>
 

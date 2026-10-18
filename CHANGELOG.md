@@ -10,7 +10,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Added
 
-- An Interactive Demo page in the docs (`/interactive-demo/`). It replays real `inz` sessions (`init`, `dev`, `validate`, `vet`, `serve`) and the dashboard captured from a local instance, explains when to use each command, and embeds with an iframe. The `cloud deploy` chapter is illustrative. The source and captures live in `docs/demo/`; run `python3 docs/demo/build.py` to regenerate `docs/site/public/demo/instancez-demo.html`.
+- An interactive demo at `/demo/instancez-demo.html`, reached from a highlighted "Interactive Demo" button on the docs home page (key `D`), with a "Back to docs" link. It replays real `inz` sessions (`init`, `dev`, `validate`, `vet`, `serve`) and the dashboard captured from a local instance, and explains when to use each command. The `cloud deploy` chapter is illustrative. It is one self-contained file, so it embeds with an iframe (`?chrome=0`, `?chapter=`, `?autoplay=1`, and a `postMessage` API). Source, captures and embed docs live in `docs/demo/`; run `python3 docs/demo/build.py` to regenerate `docs/site/public/demo/instancez-demo.html`.
 
 ### Changed
 

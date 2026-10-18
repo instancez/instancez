@@ -1,6 +1,6 @@
 # Interactive demo
 
-Source for the demo at `/interactive-demo/` in the docs site. `build.py` inlines the captures, screenshots and fonts into one file, `docs/site/public/demo/instancez-demo.html`.
+Source for the interactive demo, served at `/demo/instancez-demo.html` and linked from the docs home page (highlighted "Interactive demo" button). The demo shows a "Back to docs" link when opened on its own. `build.py` inlines the captures, screenshots and fonts into one file, `docs/site/public/demo/instancez-demo.html`.
 
 ```sh
 python3 docs/demo/build.py
@@ -25,3 +25,32 @@ Do this when CLI output or the dashboard changes.
 5. Run `python3 docs/demo/build.py`, open the page, and click through every chapter.
 
 The `inz cloud deploy` sessions are illustrative (they need an account), so they live in `player.src.html` and are built from the strings in `internal/cli/deploy.go`.
+
+## Embedding
+
+The demo is one self-contained file, so any page can embed it:
+
+```html
+<iframe src="https://docs.instancez.ai/demo/instancez-demo.html?chrome=0"
+  title="instancez interactive demo" loading="lazy"
+  style="width:100%;aspect-ratio:16/10;border:0;border-radius:12px"></iframe>
+```
+
+| URL option | Effect |
+| --- | --- |
+| `chrome=0` | Hide the header (chapter tabs, Watch button, Back to docs). |
+| `chapter=serve` | Start at a chapter: `init`, `dev`, `validate`, `vet`, `serve`, `cloud`, `connect`. |
+| `step=2` | Start at a step inside the chapter. |
+| `autoplay=1` | Run on its own. Any click takes over. |
+| `back=<url>` | Where "Back to docs" points (default `/`). |
+
+The parent can control it with `postMessage`:
+
+```js
+iframe.contentWindow.postMessage({ type: 'inz-demo:goto', chapter: 'serve', step: 0 }, '*')
+iframe.contentWindow.postMessage({ type: 'inz-demo:play' }, '*')   // or 'inz-demo:pause'
+
+window.addEventListener('message', (e) => {
+  if (e.data?.source === 'instancez-demo') console.log(e.data.chapter, e.data.step)
+})
+```
