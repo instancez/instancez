@@ -1,0 +1,17 @@
+Script started on 2026-10-18 14:56:07-04:00 [COMMAND="inz serve --migrate --port 8090 --publishable-key inz_publishable_prod_demo --secret-key inz_secret_prod_demo" <not executed on terminal>]
+{"time":"2026-10-18T14:56:07.962791572-04:00","level":"INFO","msg":"starting instancez","version":"0.0.8","mode":"production","config_source":"instancez.yaml"}
+{"time":"2026-10-18T14:56:07.962856176-04:00","level":"INFO","msg":"schema valid"}
+{"time":"2026-10-18T14:56:07.962865945-04:00","level":"INFO","msg":"config resolved","watch":false,"watch_interval":"1m0s","dashboard":"disabled"}
+{"time":"2026-10-18T14:56:07.962874877-04:00","level":"WARN","msg":"instancez is designed for single-replica deployments; multi-replica support is planned"}
+{"time":"2026-10-18T14:56:08.019488183-04:00","level":"INFO","msg":"connected to postgres","pools":"owner+authenticator"}
+{"time":"2026-10-18T14:56:08.019592488-04:00","level":"INFO","msg":"storage bucket verified","bucket":"avatars"}
+{"time":"2026-10-18T14:56:08.019617104-04:00","level":"INFO","msg":"storage buckets verified"}
+{"time":"2026-10-18T14:56:08.020103157-04:00","level":"INFO","msg":"listening","port":8090}
+{"time":"2026-10-18T14:56:08.020132258-04:00","level":"INFO","msg":"starting instancez","mode":"production"}
+{"time":"2026-10-18T14:56:08.171405884-04:00","level":"INFO","msg":"migrations applied","duration":151000000}
+{"time":"2026-10-18T14:56:08.255147281-04:00","level":"INFO","msg":"startup complete","port":8090,"tables":1,"duration":235000000}
+{"time":"2026-10-18T14:56:08.255243846-04:00","level":"INFO","msg":"HTTP server listening","addr":":8090"}
+{"time":"2026-10-18T14:56:19.971410362-04:00","level":"INFO","msg":"request","method":"GET","path":"/dashboard/","status":404,"duration":12000,"user_id":"","request_id":"ddd6a0a349206aa6de24ba954a2e960b"}
+{"time":"2026-10-18T14:56:19.984694914-04:00","level":"INFO","msg":"request","method":"GET","path":"/rest/v1/todos","status":200,"duration":3268000,"user_id":"","request_id":"99ceec4ad60d53c954eac4fe84dd5c2f"}
+{"time":"2026-10-18T14:56:29.851505237-04:00","level":"INFO","msg":"request","method":"GET","path":"/dashboard/","status":404,"duration":40000,"user_id":"","request_id":"6d6f0a330fd2a9df8859d9ee78830f52"}
+{"time":"2026-10-18T14:56:29.867345988-04:00","level":"INFO","msg":"request","method":"GET","path":"/rest/v1/todos","status":200,"duration":2893000,"user_id":"","request_id":"ed91f6799bfe7d0d732e0c68d1646b95"}

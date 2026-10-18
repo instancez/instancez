@@ -1,0 +1,535 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>instancez interactive demo</title>
+<meta name="description" content="Run the real instancez workflow: init, dev, validate, vet, serve and cloud deploy, with the actual terminal output and dashboard.">
+<style>
+/*__FONTS__*/
+:root{--bg:#0a0a0b;--panel:#111114;--panel2:#16161a;--line:#26262b;--fg:#f5f5f5;--dim:#8a8a93;--mut:#5d5d68;--blue:#4f8cff;--green:#3ddc97;--amber:#ffc857;--red:#ff6b6b;--pink:#ff7ab6;--sans:Brico,ui-sans-serif,system-ui,sans-serif;--mono:JBM,ui-monospace,Menlo,Consolas,monospace;color-scheme:dark}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--fg);font-family:var(--sans);overflow:hidden}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--blue);outline-offset:2px}
+.app{display:grid;grid-template-rows:auto 1fr;height:100%;min-height:520px;background:radial-gradient(900px 500px at 85% -10%,rgba(79,140,255,.14),transparent 60%),radial-gradient(700px 500px at 0% 110%,rgba(61,220,151,.06),transparent 60%)}
+.app.nochrome .top{display:none}
+/* header */
+.top{display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);min-width:0}
+.brand{display:flex;align-items:center;gap:9px;font-weight:800;font-size:19px;letter-spacing:-.02em;flex:none}
+.brand img{width:22px}
+.tabs{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;flex:1;min-width:0}
+.tabs::-webkit-scrollbar{display:none}
+.tab{flex:none;border:1px solid transparent;background:none;border-radius:999px;padding:6px 13px;font:600 13.5px var(--sans);color:var(--dim);white-space:nowrap}
+.tab:hover{color:var(--fg)}
+.tab.on{background:#1b1b21;border-color:#33333a;color:var(--fg)}
+.tab.done .n{background:var(--green);color:#0a0a0b}
+.tab .n{display:inline-block;width:19px;height:19px;border-radius:50%;background:#2a2a31;color:#cfcfd6;font:700 11px/19px var(--mono);text-align:center;margin-right:7px}
+.tab.on .n{background:var(--blue);color:#fff}
+.btn{border:1px solid #33333a;background:#17171b;border-radius:10px;padding:8px 14px;font:600 13.5px var(--sans);transition:.15s;white-space:nowrap}
+.btn:hover{border-color:#4a4a55;background:#1f1f25}
+.btn.pri{background:var(--fg);color:#0a0a0b;border-color:var(--fg)}
+.btn.pri:hover{background:#fff}
+.btn.blue{background:var(--blue);border-color:var(--blue);color:#fff}
+.btn[disabled]{opacity:.4;cursor:default}
+/* body */
+.body{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:16px;padding:16px;min-height:0}
+.stage{position:relative;min-height:0;min-width:0;display:flex}
+#panes{display:flex;gap:12px;width:100%;min-height:0}
+.pane{position:relative;flex:1 1 0;min-width:0;min-height:0;background:var(--panel);border:1px solid #2b2b31;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 30px 80px rgba(0,0,0,.5);transition:flex .45s ease,opacity .3s}
+.pane.collapsed{flex:0 0 0;opacity:0;border-width:0}
+.bar{height:38px;flex:none;display:flex;align-items:center;gap:8px;padding:0 14px;background:#17171b;border-bottom:1px solid #26262b;font:400 12.5px var(--mono);color:var(--dim)}
+.bar i{width:11px;height:11px;border-radius:50%;background:#3a3a42;display:block}
+.bar i:nth-child(1){background:#ff5f57}.bar i:nth-child(2){background:#febc2e}.bar i:nth-child(3){background:#28c840}
+.bar span{margin-left:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar .chip{margin-left:auto;font:600 11px var(--sans);letter-spacing:.04em;padding:3px 10px;border-radius:999px;background:#3d3217;color:#ffd98a;white-space:nowrap}
+/* terminal */
+.tbody{flex:1;min-height:0;overflow:auto;padding:14px 16px 24px;font:400 14px/1.55 var(--mono);color:#d7d7de;scroll-behavior:smooth}
+.ln{white-space:pre-wrap;word-break:break-word;min-height:1.55em;border-radius:4px;transition:opacity .25s,background .25s}
+.ln.dim{opacity:.32}
+.ln.hl{background:rgba(79,140,255,.16);box-shadow:inset 3px 0 0 var(--blue)}
+.pr{color:var(--green)}.dl{color:var(--dim)}
+.b{font-weight:500;color:#fff}.d{opacity:.62}
+.f31{color:#ff6b6b}.f32{color:#3ddc97}.f33{color:#ffc857}.f34{color:#7cb2ff}.f35{color:#ff7ab6}.f36{color:#6be0e0}.f37{color:#e8e8ee}
+.f90{color:#8a8a93}.f91{color:#ff8e8e}.f92{color:#6ef0b2}.f93{color:#ffd98a}.f94{color:#9cc3ff}.f95{color:#ff9bc9}.f96{color:#8ee9e9}.f97{color:#fff}
+.cur{display:inline-block;width:.55em;height:1.1em;background:var(--fg);vertical-align:-.2em;animation:bl 1s steps(1) infinite}
+@keyframes bl{50%{opacity:0}}
+.hint{position:absolute;left:16px;bottom:14px;right:16px;display:flex;align-items:center;gap:10px;font:500 13px var(--sans);color:var(--dim);pointer-events:none}
+.hint kbd{font:600 12px var(--mono);border:1px solid #3a3a42;border-bottom-width:2px;border-radius:6px;padding:2px 8px;color:#e8e8ee;background:#1b1b21}
+/* editor */
+.ebody{flex:1;min-height:0;overflow:auto;padding:12px 0 24px;font:400 13.5px/1.6 var(--mono);scroll-behavior:smooth}
+.el{display:flex;border-radius:0;transition:opacity .25s,background .25s}
+.el .num{flex:none;width:46px;text-align:right;padding-right:14px;color:#4a4a55;user-select:none}
+.el .code{white-space:pre;color:#d7d7de}
+.el.dim{opacity:.34}
+.el.hl{background:rgba(79,140,255,.14);box-shadow:inset 3px 0 0 var(--blue)}
+.el.add{background:rgba(61,220,151,.16);box-shadow:inset 3px 0 0 var(--green)}
+.el.add .num{color:var(--green)}
+.k{color:#7cb2ff}.s{color:#9be28f}.n{color:#ffc857}.c{color:#5d5d68}.f{color:#ff7ab6}
+/* dashboard */
+.dwrap{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0a0a0a;padding:0}
+.vpbox{position:relative;overflow:hidden}
+.canvas{position:absolute;left:0;top:0;width:1440px;height:900px;transform-origin:0 0}
+.canvas img{position:absolute;inset:0;width:1440px;height:900px;display:block;user-select:none;-webkit-user-drag:none}
+.spot{position:absolute;border-radius:12px;border:2px solid var(--blue);box-shadow:0 0 0 3000px rgba(5,5,7,.66),0 0 36px rgba(79,140,255,.45);pointer-events:none;opacity:0;transition:left .45s ease,top .45s ease,width .45s ease,height .45s ease,opacity .3s}
+.spot.on{opacity:1}
+.hs{position:absolute;border-radius:10px;cursor:pointer;background:transparent;border:0}
+.hs:hover{background:rgba(79,140,255,.12);box-shadow:inset 0 0 0 1.5px rgba(79,140,255,.55)}
+.hs.need{background:rgba(79,140,255,.14);box-shadow:inset 0 0 0 2px var(--blue);animation:pulse 1.6s ease-out infinite}
+@keyframes pulse{0%{box-shadow:inset 0 0 0 2px var(--blue),0 0 0 0 rgba(79,140,255,.6)}100%{box-shadow:inset 0 0 0 2px var(--blue),0 0 0 22px rgba(79,140,255,0)}}
+.hs.need:after{content:"Click here";position:absolute;left:100%;top:50%;margin-left:14px;transform:translateY(-50%);white-space:nowrap;background:var(--blue);color:#fff;font:700 15px var(--sans);padding:7px 14px;border-radius:9px;box-shadow:0 10px 30px rgba(79,140,255,.45)}
+/* side */
+.side{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(--panel);border:1px solid #2b2b31;border-radius:14px;overflow:hidden}
+.sbody{flex:1;overflow:auto;padding:20px 20px 12px}
+.chap{font:700 11.5px var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--blue)}
+.stitle{font:800 25px/1.12 var(--sans);letter-spacing:-.02em;margin-top:8px}
+.cmdchip{display:inline-block;margin-top:12px;font:500 13.5px var(--mono);background:#0e0e11;border:1px solid #33333a;border-radius:8px;padding:5px 10px;color:#e8e8ee}
+.when{margin-top:16px;padding:12px 14px;border-radius:12px;background:#10192b;border:1px solid #25375f;font:400 14px/1.5 var(--sans);color:#c6d6fb}
+.when b{display:block;font:700 10.5px var(--sans);letter-spacing:.14em;text-transform:uppercase;color:#7ea4f2;margin-bottom:4px}
+.note{margin-top:16px;font:400 15.5px/1.55 var(--sans);color:#cfcfd6;min-height:80px}
+.note h3{font:700 16.5px var(--sans);color:#fff;margin-bottom:5px}
+.note code,.when code{font:500 12.5px var(--mono);background:rgba(255,255,255,.08);padding:1px 6px;border-radius:5px}
+.dots{display:flex;gap:6px;margin-top:14px}
+.dots i{width:22px;height:4px;border-radius:2px;background:#2c2c33}
+.dots i.on{background:var(--blue)}.dots i.done{background:#4a5f8f}
+.sfoot{display:flex;gap:10px;align-items:center;padding:14px 16px;border-top:1px solid var(--line);background:var(--panel)}
+.sfoot .spacer{flex:1}
+.prog{font:500 12px var(--mono);color:var(--dim)}
+/* chooser */
+.choose{width:100%;overflow:auto;display:grid;grid-template-columns:240px minmax(0,1fr);gap:14px;align-content:start}
+.scen{display:flex;flex-direction:column;gap:8px}
+.scen button{text-align:left;border:1px solid #33333a;background:#15151a;border-radius:12px;padding:12px 14px;font:600 14.5px/1.3 var(--sans);transition:.15s}
+.scen button:hover{border-color:#4a4a55}
+.scen button.on{border-color:var(--blue);background:#10192b}
+.cmds{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.cc{background:var(--panel);border:1px solid #2b2b31;border-radius:14px;padding:16px;opacity:.38;transition:.25s}
+.cc.on{opacity:1;border-color:var(--blue);box-shadow:0 0 40px rgba(79,140,255,.25)}
+.cc code{font:500 15px var(--mono);color:#fff}
+.cc ul{list-style:none;margin-top:10px;display:grid;gap:7px;font:400 13.5px/1.4 var(--sans);color:#b8b8c0}
+.cc li b{color:#e8e8ee;font-weight:600}
+/* welcome */
+.welcome{position:absolute;inset:0;z-index:30;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;background:rgba(8,8,10,.8);backdrop-filter:blur(10px);border-radius:14px}
+.welcome[hidden]{display:none}
+.welcome h1{font:800 clamp(30px,5vw,52px)/1.03 var(--sans);letter-spacing:-.04em;margin:14px 0}
+.welcome h1 em{font-style:normal;color:var(--blue)}
+.welcome p{max-width:520px;margin:0 auto 22px;color:#b8b8c0;font-size:17px;line-height:1.5}
+.welcome .row{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+@media (max-width:900px){.sfoot{position:sticky;bottom:0;z-index:5}.body{grid-template-columns:1fr;grid-template-rows:minmax(300px,1fr) auto;overflow:auto}.side{max-height:none}.sbody{padding:16px}#panes{flex-direction:column}.choose{grid-template-columns:1fr}html,body{overflow:auto}.app{height:auto;min-height:100%}.stage{min-height:420px}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <header class="top">
+    <div class="brand"><img id="logo" alt="">instancez</div>
+    <nav class="tabs" id="tabs" aria-label="Chapters"></nav>
+    <button class="btn" id="autobtn">▶ Watch it run</button>
+  </header>
+  <div class="body">
+    <section class="stage" aria-live="polite">
+      <div id="panes"></div>
+      <div class="welcome" id="welcome">
+        <div>
+          <img id="logo2" alt="" style="width:56px">
+          <h1>Run instancez,<br><em>step by step.</em></h1>
+          <p>This is the real CLI and dashboard from a local instancez instance. Press Enter to run each command, then follow the highlights to see what it does and when to use it.</p>
+          <div class="row"><button class="btn blue" id="start" style="font-size:16px;padding:13px 26px">Start the walkthrough →</button><button class="btn" id="watch" style="font-size:16px;padding:13px 22px">▶ Watch it run</button></div>
+        </div>
+      </div>
+    </section>
+    <aside class="side">
+      <div class="sbody" id="sbody"></div>
+      <div class="sfoot"><button class="btn" id="back">← Back</button><span class="prog" id="prog"></span><span class="spacer"></span><button class="btn pri" id="primary">Next →</button></div>
+    </aside>
+  </div>
+</div>
+<script>
+const D = "__DATA__";
+const Q = new URLSearchParams(location.search);
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const mk = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+$('#logo').src = D.logo; $('#logo2').src = D.logo;
+if (Q.get('chrome') === '0') $('#app').classList.add('nochrome');
+
+/* ---------- highlighting ---------- */
+function hlYaml(line){
+  if (/^\s*#/.test(line)) return `<span class="c">${esc(line)}</span>`;
+  let cm = '', body = line; const ci = line.indexOf(' #');
+  if (ci > -1){ cm = `<span class="c">${esc(line.slice(ci))}</span>`; body = line.slice(0, ci); }
+  const m = body.match(/^(\s*-?\s*)([A-Za-z_][\w.-]*)(:)(.*)$/);
+  if (!m) return esc(body) + cm;
+  let v = esc(m[4]);
+  v = v.replace(/(&quot;.*?&quot;|"[^"]*")/g, '<span class="s">$1</span>').replace(/(^|\s)(\d+[a-zA-Z]*|true|false)(?=\s|$)/g, '$1<span class="n">$2</span>');
+  return `${esc(m[1])}<span class="k">${esc(m[2])}</span>${m[3]}${v}${cm}`;
+}
+function hlJs(line){
+  let s = esc(line);
+  s = s.replace(/(\/\/.*)$/, '<span class="c">$1</span>').replace(/('[^']*')/g, '<span class="s">$1</span>');
+  s = s.replace(/\b(import|from|const|await|async|export|default|function|return)\b/g, '<span class="f">$1</span>');
+  return s.replace(/\.(from|select|order|auth|signInWithPassword)\b/g, '.<span class="k">$1</span>');
+}
+
+/* ---------- panes ---------- */
+const panes = [];           // live pane objects for the current step
+let TK = 0;                 // cancels in-flight async work when the step changes
+const alive = tk => tk === TK;
+const cwd = 'my-app';
+
+function termPane(o){
+  const root = mk('div', 'pane');
+  root.innerHTML = `<div class="bar"><i></i><i></i><i></i><span>${esc(o.title || 'Terminal')}</span>${o.sample ? '<em class="chip">Illustrative · needs an instancez Cloud account</em>' : ''}</div><div class="tbody"></div><div class="hint" hidden></div>`;
+  const p = { kind: 'term', root, body: $('.tbody', root), hint: $('.hint', root), out: [], outData: [] };
+  p.addLine = (h, cls) => { const d = mk('div', 'ln ' + (cls || ''), h === '' ? '&nbsp;' : h); p.body.appendChild(d); p.body.scrollTop = 1e9; return d; };
+  p.prompt = c => `<span class="pr">~/${cwd}</span> <span class="dl">$</span> ${c}`;
+  p.showHint = t => { p.hint.hidden = !t; p.hint.innerHTML = t || ''; };
+  p.prefill = (cmd, lines) => { p.addLine(p.prompt(esc(cmd))); lines.forEach(l => p.out.push(p.addLine(l.h))); p.outData = lines; };
+  p.run = async (cmd, lines, tk, ms = 38) => {
+    p.showHint('');
+    const d = p.addLine(p.prompt(''));
+    for (let i = 1; i <= cmd.length; i++){ if (!alive(tk)) return; d.innerHTML = p.prompt(esc(cmd.slice(0, i)) + '<span class="cur"></span>'); if (!REDUCE) await sleep(auto ? 9 : (cmd[i - 1] === ' ' ? 55 : 24)); }
+    d.innerHTML = p.prompt(esc(cmd)); if (!REDUCE) await sleep(260);
+    await p.append(lines, tk, ms);
+  };
+  p.append = async (lines, tk, ms = 38) => {
+    for (const l of lines){ if (!alive(tk)) return; p.out.push(p.addLine(l.h)); p.outData.push(l); if (!REDUCE) await sleep(l.t === '' ? 20 : ms); }
+  };
+  p.focus = (a, b) => { p.out.forEach((d, i) => { d.classList.toggle('dim', i < a || i > b); d.classList.toggle('hl', i >= a && i <= b); }); const t = p.out[a]; if (t) p.body.scrollTop = Math.max(0, t.offsetTop - 80); };
+  p.clear = () => p.out.forEach(d => d.classList.remove('dim', 'hl'));
+  p.find = (a, b) => { const T = p.outData.map(x => x.t); const i = T.findIndex(t => t.includes(a)); if (i < 0) return null; if (!b) return [i, i]; const j = T.findIndex((t, k) => k >= i && t.includes(b)); return [i, j < 0 ? i : j]; };
+  return p;
+}
+
+function editorPane(o){
+  const root = mk('div', 'pane');
+  root.innerHTML = `<div class="bar"><i></i><i></i><i></i><span>${esc(o.file)}</span></div><div class="ebody"></div><div class="hint" hidden></div>`;
+  const p = { kind: 'editor', root, body: $('.ebody', root), hint: $('.hint', root), lines: [], rows: [], hl: o.lang === 'js' ? hlJs : hlYaml };
+  p.set = (src, added = []) => {
+    p.lines = src.replace(/\n$/, '').split('\n'); p.body.innerHTML = ''; p.rows = [];
+    p.lines.forEach((l, i) => { const r = mk('div', 'el' + (added.includes(i) ? ' add' : ''), `<span class="num">${i + 1}</span><span class="code">${p.hl(l) || ' '}</span>`); p.body.appendChild(r); p.rows.push(r); });
+  };
+  p.showHint = t => { p.hint.hidden = !t; p.hint.innerHTML = t || ''; };
+  p.focus = (a, b) => { p.rows.forEach((r, i) => { r.classList.toggle('dim', i < a || i > b); r.classList.toggle('hl', i >= a && i <= b); }); const t = p.rows[a]; if (t) p.body.scrollTop = Math.max(0, t.offsetTop - 60); };
+  p.clear = () => p.rows.forEach(r => r.classList.remove('dim', 'hl'));
+  p.find = (a, b) => { const i = p.lines.findIndex(t => t.includes(a)); if (i < 0) return null; if (!b) return [i, i]; const j = p.lines.findIndex((t, k) => k >= i && t.includes(b)); return [i, j < 0 ? i : j]; };
+  p.set(o.src);
+  return p;
+}
+
+const NAV = { overview: 97, tables: 158, users: 320, storage: 379, functions: 441, security: 595 };
+const NAVTO = { overview: 'overview', tables: 'tables', users: 'users', storage: 'storage', functions: 'functions', security: 'security' };
+const TABS = { data: [320, 250], fields: [391, 250], indexes: [473, 250], rls: [547, 250] };
+
+function dashPane(o){
+  const root = mk('div', 'pane');
+  root.innerHTML = `<div class="bar"><i></i><i></i><i></i><span class="url"></span></div><div class="dwrap"><div class="vpbox"><div class="canvas"><img alt="instancez dashboard"><div class="spot"></div></div></div></div>`;
+  const p = { kind: 'dash', root, img: $('img', root), spot: $('.spot', root), canvas: $('.canvas', root), vp: $('.vpbox', root), wrap: $('.dwrap', root), url: $('.url', root), page: o.page, hs: [], need: null, onNav: null };
+  const SHOT = { overview: 'overview', tables: 'tables', users: 'users', storage: 'storage', functions: 'functions', security: 'security', rls: 'rls', indexes: 'indexes', data: () => state.edited ? 'data1' : 'data0', fields: () => state.edited ? 'fields1' : 'fields0' };
+  const URL = { overview: '', tables: 'tables', users: 'users', storage: 'storage', functions: 'functions', security: 'security', data: 'tables/todos', fields: 'tables/todos', indexes: 'tables/todos', rls: 'tables/todos' };
+  p.layout = () => { const w = p.wrap.clientWidth, h = p.wrap.clientHeight; const s = Math.min(w / 1440, h / 900); p.vp.style.width = (1440 * s) + 'px'; p.vp.style.height = (900 * s) + 'px'; p.canvas.style.transform = `scale(${s})`; };
+  p.rect = (el_, r) => { el_.style.left = r[0] + 'px'; el_.style.top = r[1] + 'px'; el_.style.width = r[2] + 'px'; el_.style.height = r[3] + 'px'; };
+  p.go = pg => {
+    p.page = pg; const k = SHOT[pg]; p.img.src = D.shots[typeof k === 'function' ? k() : k]; p.url.textContent = 'localhost:8080/dashboard/' + URL[pg];
+    p.hs.forEach(h => h.remove()); p.hs = [];
+    const add = (r, to, label, need) => { const h = mk('button', 'hs' + (need ? ' need' : '')); h.setAttribute('aria-label', label); p.rect(h, r); h.onclick = () => { if (p.onNav) p.onNav(to, need); p.go(to); }; p.canvas.appendChild(h); p.hs.push(h); if (need) p.need = h; };
+    Object.entries(NAV).forEach(([k, y]) => { if (k !== pg) add([16, y - 17, 224, 34], NAVTO[k], 'Open ' + k, p.needKey === 'nav:' + k); });
+    if (pg === 'tables') add([289, 235, 1111, 56], 'data', 'Open todos table', p.needKey === 'row:todos');
+    if (['data', 'fields', 'indexes', 'rls'].includes(pg)) Object.entries(TABS).forEach(([k, [x, y]]) => { if (k !== pg) add([x - 38, y - 20, 76, 40], k, 'Open ' + k + ' tab', p.needKey === 'tab:' + k); });
+  };
+  p.showSpot = r => { if (!r){ p.spot.classList.remove('on'); return; } p.rect(p.spot, r); p.spot.classList.add('on'); };
+  p.focus = (r) => p.showSpot(r); p.clear = () => p.showSpot(null);
+  p.setNeed = key => { p.needKey = key; p.go(p.page); };
+  p.go(o.page);
+  return p;
+}
+
+/* ---------- state ---------- */
+const state = { edited: false, done: {} };
+let ci = 0, si = 0, co = -1, actI = 0, busy = false, auto = false, started = false;
+
+/* ---------- content ---------- */
+const T = D.term;
+const CHAPTERS = [
+  { id: 'init', label: 'init', title: 'Create a project', cmd: 'inz init', when: 'Once per project. It only writes scaffolding files and never touches a database.', steps: [
+    { title: 'Scaffold the project', text: 'Run the command to create the project files.', panes: [{ t: 'term', title: 'zsh · my-app' }], actions: [{ run: 0, cmd: 'inz init', out: 'init' }], callouts: [
+      { pane: 0, find: ['instancez.yaml'], title: 'One file is your backend', text: 'Tables, auth, row-level security, storage and functions all live in <code>instancez.yaml</code>.' },
+      { pane: 0, find: ['functions/todos.js'], title: 'Code functions are optional', text: 'A sample JavaScript handler served at <code>/functions/v1/todos</code>.' },
+      { pane: 0, find: ['Done!', 'embedded-pg'], title: 'No Postgres to install', text: '<code>--embedded-pg</code> starts a bundled Postgres 16 for you. Or point instancez at your own database.' } ] },
+    { title: 'Meet instancez.yaml', text: 'This is the whole generated file. Step through the parts.', panes: [{ t: 'editor', file: 'instancez.yaml', src: 'yaml0' }], callouts: [
+      { pane: 0, find: ['tables:', 'default: now()'], title: 'Tables and fields', text: 'Declare columns here. instancez diffs this against your database and applies only what changed.' },
+      { pane: 0, find: ['    rls:', 'with_check: "user_id'], title: 'Authorization is a policy', text: 'Row-level security is the only access layer. This policy lets each user see only their own rows.' },
+      { pane: 0, find: ['storage:', 'types: [image/*]'], title: 'Storage buckets', text: 'Uploads are governed by RLS, exactly like tables.' },
+      { pane: 0, find: ['functions:', 'auth_required: true'], title: 'Functions', text: 'Point at a file in <code>functions/</code>. Callers must be signed in.' } ] },
+  ] },
+  { id: 'dev', label: 'dev', title: 'Develop locally', cmd: 'inz dev', when: 'Every day while you build. It runs the full backend on your machine, applies schema changes the moment you save, and serves a read-write dashboard.', steps: [
+    { title: 'Start the dev server', text: 'Run the dev server with an embedded Postgres.', panes: [{ t: 'term', title: 'zsh · my-app' }], actions: [{ run: 0, cmd: 'inz dev --embedded-pg', out: 'dev', ms: 90 }], callouts: [
+      { pane: 0, find: ['Embedded Postgres 16 ready', 'Connected'], title: 'A real Postgres, zero setup', text: 'The embedded database is created under <code>./pgdata</code>. Roles and RLS are provisioned for you on every start.' },
+      { pane: 0, find: ['Schema', 'Auth '], title: 'Your YAML, validated', text: 'The file is parsed and checked before anything runs. Tables, buckets and auth are counted here.' },
+      { pane: 0, find: ['API Keys', 'Secret'], title: 'Keys are generated', text: 'A publishable key for clients and a secret key for admin. They are saved to <code>.development.env</code> on first run.' },
+      { pane: 0, find: ['Server', 'Dashboard'], title: 'API and dashboard', text: 'Your Supabase-compatible API and the dashboard are both served from this one process.' },
+      { pane: 0, find: ['Watching for changes'], title: 'Hot reload is on', text: 'Edit <code>instancez.yaml</code> and the schema re-applies automatically.' } ] },
+    { title: 'Open the dashboard', text: 'The dashboard is part of the same binary.', gate: { pane: 0, key: 'nav:overview', skip: true }, panes: [{ t: 'dash', page: 'overview' }], callouts: [
+      { pane: 0, rect: [289, 182, 1110, 160], title: 'Live project overview', text: 'Tables, auth and storage at a glance, read straight from your running instance.' },
+      { pane: 0, rect: [289, 518, 1110, 225], title: 'Your API URL and keys', text: 'Everything a client needs to connect, ready to copy.' },
+      { pane: 0, rect: [0, 836, 1440, 64], title: 'Live edit mode', text: 'In dev, dashboard edits are written back to <code>instancez.yaml</code>, so the file stays the source of truth.' } ] },
+    { title: 'Edit the YAML, watch it apply', text: 'Add a field to the file and let hot reload do the rest.', panes: [{ t: 'editor', file: 'instancez.yaml', src: 'yaml0' }, { t: 'term', title: 'inz dev · running', prefill: { cmd: 'inz dev --embedded-pg', out: 'dev' } }], actions: [{ edit: 0, label: 'Save a new priority field', after: 43, lines: ['      - name: priority', '        type: integer', '        default: 0'] }, { append: 1, out: 'reload', ms: 260 }], callouts: [
+      { pane: 0, find: ['name: priority', 'default: 0'], title: 'Three new lines', text: 'No migration file to write. The new column is declared where the rest of the schema already lives.' },
+      { pane: 1, find: ['config reloaded successfully'], title: 'Applied on save', text: 'The file watcher saw the change, diffed it against Postgres and added the column.' } ] },
+    { title: 'Open the Tables page', text: 'Your dashboard is live. Open the Tables page from the sidebar.', gate: { key: 'nav:tables', msg: 'Click <b>Tables</b> in the sidebar.' }, doneText: 'These tables come straight from your YAML.', panes: [{ t: 'dash', page: 'overview' }], callouts: [] },
+    { title: 'Open the todos table', text: 'Open the todos table to browse its rows.', gate: { key: 'row:todos', msg: 'Click the <b>todos</b> row.' }, doneText: 'Live rows from your Postgres.', panes: [{ t: 'dash', page: 'tables' }], callouts: [] },
+    { title: 'The new column is live', text: 'Your change is already in the data.', panes: [{ t: 'dash', page: 'data' }], callouts: [
+      { pane: 0, rect: [1296, 313, 104, 210], title: 'priority is there', text: 'The column you added in YAML exists in Postgres and is shown here, defaulting to 0.' },
+      { pane: 0, rect: [289, 313, 1110, 210], title: 'Real rows', text: 'This is the actual table behind your API, not a mock.' } ] },
+    { title: 'Fields and policies', text: 'The same schema, viewed as a form.', panes: [{ t: 'dash', page: 'fields' }], callouts: [
+      { pane: 0, rect: [289, 545, 1110, 45], title: 'The same field, as a form', text: 'Because dev is in live edit mode, changing it here would write the change back to <code>instancez.yaml</code>.' },
+      { pane: 0, rect: [289, 150, 1110, 130], title: 'Everything in one place', text: 'Fields, indexes and RLS policies for the table are tabs on the same page.' } ] },
+  ] },
+  { id: 'validate', label: 'validate', title: 'Validate', cmd: 'inz validate', when: 'Before you commit or in CI. It checks the file without starting a server. With a database URL it also prints the migration it would run, and never applies it.', steps: [
+    { title: 'A valid file', text: 'Run the check on the file you have.', panes: [{ t: 'term', title: 'zsh · my-app' }], actions: [{ run: 0, cmd: 'inz validate', out: 'validate_ok' }], callouts: [{ pane: 0, find: ['Schema valid'], title: 'Fast and offline', text: 'No database and no server needed, so it is cheap to run on every pull request.' }] },
+    { title: 'Catch mistakes early', text: 'Now run it after a typo: <code>type</code> was misspelled as <code>typ</code>.', panes: [{ t: 'term', title: 'zsh · my-app' }], actions: [{ run: 0, cmd: 'inz validate', out: 'validate_bad' }], callouts: [
+      { pane: 0, find: ['unknown key'], title: 'The exact line', text: 'You get the file, the line and the problem. The exit code is non-zero, so CI fails the build.' },
+      { pane: 0, find: ['type is required'], title: 'Follow-on errors too', text: 'Related problems are reported together so you can fix them in one pass.' } ] },
+    { title: 'Preview the migration', text: 'Add a database URL to see what would change. It is planned, never applied.', panes: [{ t: 'term', title: 'zsh · my-app' }], actions: [{ run: 0, cmd: 'inz validate --use-dsn "$DATABASE_URL"', out: 'validate_plan', ms: 120 }], callouts: [
+      { pane: 0, find: ['Migration plan'], title: 'A dry run', text: 'The plan is computed by diffing your YAML against the live schema.' },
+      { pane: 0, find: ['ADD COLUMN due_date'], title: 'Only the difference', text: 'The new <code>due_date</code> column is the one change. Output is trimmed here, since the full plan also lists bootstrap statements.' } ] },
+  ] },
+  { id: 'vet', label: 'vet', title: 'Scan for risks', cmd: 'inz vet', when: 'Before every deploy and in CI. It reads your config and flags risky choices like open policies, public buckets or unverified sign-ups.', steps: [
+    { title: 'Scan the config', text: 'Run the security scan.', panes: [{ t: 'term', title: 'zsh · my-app' }], actions: [{ run: 0, cmd: 'inz vet', out: 'vet', ms: 90 }], callouts: [
+      { pane: 0, find: ['signup-unverified-email', 'allow_signup: false'], title: 'What, where and how to fix', text: 'Each finding names the rule, the config path and line, and a concrete fix.' },
+      { pane: 0, find: ['bucket-public', 'bucket'], title: 'Intentional choices stay visible', text: 'A public avatars bucket is flagged so it is a decision, not an accident.' },
+      { pane: 0, find: ['0 critical', 'checks passed'], title: 'A gate for CI', text: 'It exits 1 when a finding reaches <code>--fail-on</code> (default <code>high</code>). Add <code>--json</code> for machine-readable output.' } ] },
+    { title: 'The same findings in the dashboard', text: 'The Security tab shows the report with a fix for each item.', panes: [{ t: 'dash', page: 'security' }], callouts: [
+      { pane: 0, rect: [289, 168, 1110, 140], title: 'Result at a glance', text: 'Checks passed, severity filters and a progress bar.' },
+      { pane: 0, rect: [289, 336, 490, 126], title: 'A list of findings', text: 'Pick one to see the detail.' },
+      { pane: 0, rect: [780, 336, 620, 340], title: 'How to fix', text: 'The suggested change, ready to apply to your YAML.' } ] },
+  ] },
+  { id: 'serve', label: 'serve', title: 'Run in production', cmd: 'inz serve', when: 'On your own server, container or Kubernetes. It is strict by default: keys are required, migrations are opt-in, and the dashboard is off.', steps: [
+    { title: 'Start production mode', text: 'Run against a real Postgres (here a Docker container) with explicit keys.', panes: [{ t: 'term', title: 'zsh · my-app' }], actions: [{ run: 0, cmd: 'inz serve --migrate --publishable-key $PUBLISHABLE_KEY --secret-key $SECRET_KEY', out: 'serve', ms: 150 }], callouts: [
+      { pane: 0, find: ['"mode":"production"'], title: 'Structured logs', text: 'Production writes JSON logs, ready for your log pipeline.' },
+      { pane: 0, find: ['config resolved'], title: 'Watch and dashboard are off', text: 'No file watcher and <code>"dashboard":"disabled"</code> unless you ask for them.' },
+      { pane: 0, find: ['migrations applied'], title: 'Migrations are opt-in', text: '<code>--migrate</code> applies the YAML diff on start. Destructive changes also need <code>--allow-destructive</code>.' },
+      { pane: 0, find: ['startup complete'], title: 'Ready', text: 'One process, one port. Projects with code functions also ship a bundle via <code>--bundle</code>.' } ] },
+    { title: 'Check the surface', text: 'Probe the running server like a client would.', panes: [{ t: 'term', title: 'zsh · my-app' }], actions: [{ run: 0, cmd: 'curl localhost:8090/dashboard/ && curl localhost:8090/rest/v1/todos -H "apikey: $PUBLISHABLE_KEY"', out: 'curl_prod' }], callouts: [
+      { pane: 0, find: ['HTTP 404'], title: 'No dashboard in production', text: 'The admin UI is disabled by default. Enable it explicitly if you want it.' },
+      { pane: 0, find: ['[]'], title: 'RLS is already enforcing', text: 'The publishable key maps to the anon role. With no signed-in user, the policy returns nothing.' } ] },
+  ] },
+  { id: 'cloud', label: 'cloud deploy', title: 'Deploy to instancez Cloud', cmd: 'inz cloud deploy', when: 'When you want managed hosting. It pushes the same YAML to a cloud project, shows what will change, and asks before it applies. No servers to run.', steps: [
+    { title: 'Sign in', text: 'Cloud commands need an account. Without one, the CLI tells you exactly what to do.', panes: [{ t: 'term', title: 'zsh · my-app' }], actions: [{ run: 0, cmd: 'inz cloud whoami', out: 'cloud_whoami' }], callouts: [{ pane: 0, find: ['not logged in'], title: 'A clear next step', text: 'Run <code>inz cloud login</code> to authenticate with a device code in your browser.' }] },
+    { title: 'Create and deploy', text: 'The first deploy creates a project from your YAML.', sample: true, panes: [{ t: 'term', title: 'zsh · my-app', sample: true }], actions: [{ run: 0, cmd: 'inz cloud deploy --new', lines: [
+        'Create instancez Cloud project "my-app" and deploy? [y/N] y', '  Creating instancez Cloud project...', '  ✓ Project created (id: …)', '  Uploading function sources...', '  Uploading instancez.yaml...', '  ✓ Deployed.', '  Track progress in the instancez Cloud dashboard.'], ms: 360 }], callouts: [
+      { pane: 0, find: ['Create instancez Cloud project'], title: 'Confirm before anything is created', text: 'Declining leaves nothing behind. No project, no yaml edit, no uploads.' },
+      { pane: 0, find: ['Uploading function sources'], title: 'Functions go with it', text: 'Sources are uploaded and built in the cloud. No local npm or S3 bucket is required.' },
+      { pane: 0, find: ['Deployed'], title: 'Same file, new home', text: 'Your <code>instancez.yaml</code> is the deployment. Nothing else to configure.' } ] },
+    { title: 'Ship the next change', text: 'Later deploys show a diff first.', sample: true, panes: [{ t: 'term', title: 'zsh · my-app', sample: true }], actions: [{ run: 0, cmd: 'inz cloud deploy', lines: [
+        '  Checking what would change...', '', '  ~ table todos', '    + column priority', '', 'Deploy? [y/N] y', '  Uploading function sources...', '  Uploading instancez.yaml...', '  ✓ Deployed.'], ms: 360 }], callouts: [
+      { pane: 0, find: ['~ table todos', '+ column priority'], title: 'A readable diff', text: 'See exactly which tables and columns change before you confirm. Add <code>--yes</code> in CI to skip the prompt.' } ] },
+  ] },
+  { id: 'connect', label: 'connect', title: 'Connect your app', cmd: 'supabase-js', when: 'Any time. instancez speaks the Supabase wire protocol, so your existing client code works by changing the URL and key.', steps: [
+    { title: 'Use supabase-js as usual', text: 'This script uses the real <code>@supabase/supabase-js</code> package against the dev server.', panes: [{ t: 'editor', file: 'app.mjs', lang: 'js', src: 'app' }, { t: 'term', title: 'zsh · frontend' }], actions: [{ run: 1, cmd: 'node app.mjs', out: 'js_run', ms: 120 }], callouts: [
+      { pane: 0, find: ['createClient(', ')'], title: 'Same client, new URL', text: 'Point <code>createClient</code> at your instancez URL with the publishable key.' },
+      { pane: 0, find: ['signInWithPassword', '})'], title: 'Auth works unchanged', text: 'Email and password sign-in returns a session that the client attaches to every request.' },
+      { pane: 1, find: ['[', ']'], title: 'Only your rows come back', text: 'The query ran as the signed-in user, so row-level security returned just Maya\'s todos.' } ] },
+  ] },
+];
+
+const SCEN = [
+  { q: 'I am building a feature on my laptop', on: ['dev'] },
+  { q: 'A pull request should fail on a bad config', on: ['validate', 'vet'] },
+  { q: 'I want to preview a migration safely', on: ['validate'] },
+  { q: 'I need to ship to my own server or container', on: ['serve'] },
+  { q: 'I want managed hosting', on: ['cloud'] },
+  { q: 'I want to audit security before launch', on: ['vet'] },
+];
+const CMDCARDS = [
+  { id: 'dev', c: 'inz dev', li: ['<b>Database:</b> embedded Postgres, or your own', '<b>Hot reload:</b> on by default', '<b>Dashboard:</b> read-write', '<b>Keys:</b> generated for you'] },
+  { id: 'validate', c: 'inz validate', li: ['<b>Server:</b> none', '<b>Database:</b> optional, plan only', '<b>Use in:</b> CI and pre-commit', '<b>Writes:</b> nothing'] },
+  { id: 'vet', c: 'inz vet', li: ['<b>Server:</b> none', '<b>Checks:</b> policies, buckets, auth', '<b>Use in:</b> CI before deploy', '<b>Writes:</b> nothing'] },
+  { id: 'serve', c: 'inz serve', li: ['<b>Database:</b> your Postgres', '<b>Migrations:</b> with <code>--migrate</code>', '<b>Dashboard:</b> off by default', '<b>Keys:</b> required flags'] },
+  { id: 'cloud', c: 'inz cloud deploy', li: ['<b>Hosting:</b> managed by instancez', '<b>Shows:</b> a diff, then asks', '<b>Needs:</b> an account', '<b>You run:</b> nothing'] },
+];
+
+/* ---------- rendering ---------- */
+const panesEl = $('#panes'), sbody = $('#sbody'), tabsEl = $('#tabs');
+const cur = () => CHAPTERS[ci].steps[si];
+const FILES = { yaml0: D.files.yaml0, yaml1: D.files.yaml1, app: D.files.app };
+
+function renderTabs(){
+  tabsEl.innerHTML = '';
+  CHAPTERS.forEach((c, i) => { const b = mk('button', 'tab' + (i === ci ? ' on' : '') + (i < ci ? ' done' : ''), `<span class="n">${i < ci ? '✓' : i + 1}</span>${esc(c.label)}`); b.onclick = () => { stopAuto(); go(i, 0); }; tabsEl.appendChild(b); });
+  const on = $('.tab.on', tabsEl); if (on) on.scrollIntoView({ block: 'nearest', inline: 'center' });
+}
+
+function build(){
+  TK++; panesEl.innerHTML = ''; panes.length = 0; co = -1; actI = 0; busy = false;
+  const ch = CHAPTERS[ci], st = cur();
+  if (ch.choose){ renderChoose(); return; }
+  (st.panes).forEach((o, i) => {
+    let p;
+    if (o.t === 'term'){ p = termPane(o); if (o.prefill) p.prefill(o.prefill.cmd, T[o.prefill.out]); }
+    else if (o.t === 'editor') p = editorPane({ file: o.file, lang: o.lang, src: state.edited && o.src === 'yaml0' && st.title !== 'Edit the YAML, watch it apply' ? FILES.yaml1 : FILES[o.src] });
+    else { p = dashPane(o); }
+    panes.push(p); panesEl.appendChild(p.root);
+  });
+  panes.filter(p => p.kind === 'dash').forEach(p => { p.layout(); if (st.gate && !st.gate.skip) p.setNeed(st.gate.key); });
+  panes.filter(p => p.kind === 'dash').forEach(p => { p.onNav = (to, need) => { if (need){ gateDone(); } }; });
+  hintFor();
+  renderSide(); renderTabs(); emit();
+}
+
+function hintFor(){
+  const st = cur(); if (!st.actions) return;
+  const a = st.actions[actI]; if (!a) return;
+  if (a.run != null) panes[a.run].showHint(`<kbd>Enter</kbd> ${esc(a.cmd.length > 60 ? 'run the command' : 'to run  ' + a.cmd)}`);
+  if (a.edit != null) panes[a.edit].showHint('<kbd>Enter</kbd> save the change');
+}
+
+function renderChoose(){
+  const wrap = mk('div', 'choose');
+  wrap.innerHTML = `<div class="scen" role="group" aria-label="Scenarios">${SCEN.map((s, i) => `<button data-i="${i}">${esc(s.q)}</button>`).join('')}</div><div class="cmds">${CMDCARDS.map(c => `<div class="cc" data-id="${c.id}"><code>${esc(c.c)}</code><ul>${c.li.map(l => `<li>${l}</li>`).join('')}</ul></div>`).join('')}</div>`;
+  panesEl.appendChild(wrap);
+  const pick = i => { wrap.querySelectorAll('.scen button').forEach((b, k) => b.classList.toggle('on', k === i)); wrap.querySelectorAll('.cc').forEach(c => c.classList.toggle('on', SCEN[i].on.includes(c.dataset.id))); };
+  wrap.querySelectorAll('.scen button').forEach((b, i) => b.onclick = () => { stopAuto(); pick(i); });
+  pick(0); renderSide(); renderTabs(); emit();
+}
+
+function renderSide(){
+  const ch = CHAPTERS[ci], st = cur();
+  const total = ch.steps.length;
+  let note = '';
+  const gated = st.gate && !st.gate.done;
+  if (co >= 0 && st.callouts[co]) note = `<h3>${st.callouts[co].title}</h3>${st.callouts[co].text}`;
+  else if (st.gate && st.gate.done && st.doneText) note = `<h3>Nice</h3>${st.doneText}`;
+  else if (gated) note = `<h3>Your turn</h3>${st.gate.msg || 'Click the highlighted item in the dashboard.'}`;
+  else note = st.text;
+  const dots = st.callouts && st.callouts.length ? `<div class="dots">${st.callouts.map((_, i) => `<i class="${i === co ? 'on' : i < co ? 'done' : ''}"></i>`).join('')}</div>` : '';
+  sbody.innerHTML = `<div class="chap">${ci + 1} · ${esc(ch.title)}</div><h2 class="stitle">${esc(st.title)}</h2>${ch.cmd ? `<span class="cmdchip">${esc(ch.cmd)}</span>` : ''}${ch.when ? `<div class="when"><b>When to use it</b>${esc(ch.when)}</div>` : ''}<div class="note" id="note">${note}</div>${dots}`;
+  $('#prog').textContent = `Step ${si + 1}/${total}`;
+  const pb = $('#primary'); pb.textContent = primaryLabel(); pb.disabled = !!gated && !auto;
+  $('#back').disabled = ci === 0 && si === 0;
+}
+
+function pendingAction(){ const st = cur(); return st.actions && actI < st.actions.length ? st.actions[actI] : null; }
+function primaryLabel(){
+  const st = cur(); const a = pendingAction();
+  if (st.choose) return ci === CHAPTERS.length - 1 ? 'Finish' : 'Next →';
+  if (st.gate && !st.gate.done) return 'Click the highlight';
+  if (a){ if (a.run != null || a.append != null) return 'Run ⏎'; if (a.edit != null) return (a.label || 'Apply') + ' ⏎'; }
+  if (st.callouts && co < st.callouts.length - 1) return co < 0 ? 'Explain the output →' : 'Next highlight →';
+  return isLast() ? 'Finish' : 'Next step →';
+}
+const isLast = () => ci === CHAPTERS.length - 1 && si === CHAPTERS[ci].steps.length - 1;
+
+/* ---------- actions ---------- */
+async function runAction(a){
+  const tk = TK; busy = true; renderSide();
+  if (a.run != null){
+    const lines = a.out ? T[a.out] : a.lines.map(l => ({ h: esc(l), t: l }));
+    await panes[a.run].run(a.cmd, lines, tk, (a.ms || 38) * (auto ? .4 : 1));
+  } else if (a.append != null){
+    panes[a.append].showHint('');
+    await sleep(REDUCE ? 0 : 500); await panes[a.append].append(T[a.out], tk, (a.ms || 38) * (auto ? .5 : 1));
+  } else if (a.edit != null){
+    const p = panes[a.edit]; p.showHint('');
+    const src = FILES.yaml0.split('\n'); src.splice(a.after, 0, ...a.lines);
+    p.set(src.join('\n'), a.lines.map((_, i) => a.after + i));
+    state.edited = true; p.rows[a.after].scrollIntoView({ block: 'center' });
+    if (!REDUCE) await sleep(700);
+  }
+  if (!alive(tk)) return;
+  actI++; busy = false; hintFor();
+  if (!pendingAction()) co = -1;
+  renderSide();
+}
+
+function applyCallout(){
+  const st = cur(); const c = st.callouts[co];
+  panes.forEach(p => p.clear && p.clear());
+  if (!c) return;
+  const p = panes[c.pane];
+  if (p.kind === 'dash') p.focus(c.rect);
+  else { const r = p.find(c.find[0], c.find[1]); if (r) p.focus(r[0], r[1]); }
+}
+
+function gateDone(){ const st = cur(); if (st.gate) st.gate.done = true; renderSide(); if (st.next && st.next.gate && !st.next.started){ st.next.started = true; const p = panes.find(x => x.kind === 'dash'); if (p) setTimeout(() => p.setNeed(st.next.gate.key), 50); } }
+
+async function primary(){
+  if (busy) return;
+  const st = cur();
+  if (st.choose){ return next(); }
+  if (st.gate && !st.gate.done){ if (auto){ const p = panes.find(x => x.kind === 'dash'); const h = p && p.need; await sleep(900); if (h) h.click(); await sleep(700); } else return; }
+  const a = pendingAction();
+  if (a){ await runAction(a); return; }
+  if (st.callouts && co < st.callouts.length - 1){ co++; applyCallout(); renderSide(); return; }
+  return next();
+}
+
+function next(){
+  const ch = CHAPTERS[ci];
+  if (si < ch.steps.length - 1) return go(ci, si + 1);
+  if (ci < CHAPTERS.length - 1) return go(ci + 1, 0);
+  stopAuto(); $('#welcome').hidden = false; $('#welcome h1').innerHTML = 'That is the whole loop.<br><em>Try it yourself.</em>'; $('#welcome p').innerHTML = 'Install with <code style="font:500 15px var(--mono);background:#16161a;padding:2px 8px;border-radius:6px">curl -fsSL https://get.instancez.ai | sh</code> and run <code style="font:500 15px var(--mono);background:#16161a;padding:2px 8px;border-radius:6px">inz init</code>.'; $('#start').textContent = 'Replay →'; $('#start').onclick = () => { $('#welcome').hidden = true; go(0, 0); };
+  $('#watch').onclick = () => { $('#welcome').hidden = true; go(0, 0); startAuto(); };
+}
+function back(){
+  const st = cur();
+  if (co >= 0){ co--; applyCallout(); renderSide(); return; }
+  if (si > 0) return go(ci, si - 1);
+  if (ci > 0) return go(ci - 1, CHAPTERS[ci - 1].steps.length - 1);
+}
+function go(c, s){
+  if (cur().gate) { cur().gate.done = false; if (cur().next) cur().next.started = false; }
+  ci = c; si = s; $('#welcome').hidden = true; started = true; build();
+  const st = cur(); if (st.gate && st.gate.skip) st.gate.done = true;
+  // dashboard-only steps show their first highlight right away
+  if (st.panes && st.panes.every(p => p.t === 'dash') && !st.gate && st.callouts.length){ co = 0; applyCallout(); renderSide(); }
+  if (st.gate && st.gate.skip && st.callouts.length){ co = 0; applyCallout(); renderSide(); }
+}
+
+/* ---------- autoplay ---------- */
+function startAuto(){ auto = true; $('#autobtn').textContent = '❚❚ Pause'; loop(); }
+function stopAuto(){ auto = false; $('#autobtn').textContent = '▶ Watch it run'; }
+async function loop(){
+  const my = ++loopId;
+  while (auto && my === loopId){
+    const before = `${ci}.${si}.${co}.${actI}`;
+    await primary();
+    if (!auto || my !== loopId) return;
+    const st = cur();
+    await sleep(pendingAction() ? 300 : co >= 0 ? 2700 : 700);
+    if (before === `${ci}.${si}.${co}.${actI}` && !busy && st.choose) { await sleep(1200); next(); }
+  }
+}
+let loopId = 0;
+
+/* ---------- embed API ---------- */
+function emit(){ try { parent.postMessage({ source: 'instancez-demo', type: 'step', chapter: CHAPTERS[ci].id, step: si, chapterIndex: ci }, '*'); } catch (e) {} }
+addEventListener('message', e => { const d = e.data || {}; if (d.type === 'inz-demo:goto'){ const i = CHAPTERS.findIndex(c => c.id === d.chapter); if (i >= 0) { stopAuto(); go(i, d.step || 0); } } if (d.type === 'inz-demo:play') startAuto(); if (d.type === 'inz-demo:pause') stopAuto(); });
+window.InstancezDemo = { goto: (id, s = 0) => { const i = CHAPTERS.findIndex(c => c.id === id); if (i >= 0) go(i, s); }, play: startAuto, pause: stopAuto };
+
+/* ---------- wiring ---------- */
+$('#primary').onclick = () => { stopAuto(); primary(); };
+$('#back').onclick = () => { stopAuto(); back(); };
+$('#autobtn').onclick = () => { if (auto) stopAuto(); else { if (!started){ $('#welcome').hidden = true; go(0, 0); } startAuto(); } };
+$('#start').onclick = () => { $('#welcome').hidden = true; go(0, 0); };
+$('#watch').onclick = () => { $('#welcome').hidden = true; go(0, 0); startAuto(); };
+addEventListener('keydown', e => {
+  if (e.target.closest && e.target.closest('button') && e.key === 'Enter') return;
+  if (!started) return;
+  if (e.key === 'Enter' || e.key === 'ArrowRight'){ e.preventDefault(); stopAuto(); primary(); }
+  else if (e.key === 'ArrowLeft'){ e.preventDefault(); stopAuto(); back(); }
+});
+new ResizeObserver(() => panes.forEach(p => p.layout && p.layout())).observe(panesEl);
+
+/* deep links: ?chapter=dev&step=1&autoplay=1 */
+(function init(){
+  const c = Q.get('chapter'); const i = c ? CHAPTERS.findIndex(x => x.id === c) : -1;
+  if (i >= 0){ go(i, Math.max(0, parseInt(Q.get('step') || '0', 10))); }
+  else if (Q.get('autoplay') === '1'){ $('#welcome').hidden = true; go(0, 0); startAuto(); }
+  else { $('#welcome').hidden = false; renderTabs(); renderSide(); build.call(null); $('#welcome').hidden = false; }
+  if (i >= 0 && Q.get('autoplay') === '1') startAuto();
+})();
+</script>
+</body>
+</html>

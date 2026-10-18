@@ -1,0 +1,208 @@
+  ✓ Schema valid
+  ! Migration plan (would run on next dev/serve):
+
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+
+CREATE SCHEMA IF NOT EXISTS public;
+
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO anon, authenticated, service_role;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO anon, authenticated, service_role;
+
+CREATE SCHEMA IF NOT EXISTS auth;
+
+GRANT USAGE ON SCHEMA auth TO anon, authenticated, service_role;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA auth GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO service_role;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA auth GRANT USAGE, SELECT ON SEQUENCES TO service_role;
+
+CREATE SCHEMA IF NOT EXISTS storage;
+
+GRANT USAGE ON SCHEMA storage TO anon, authenticated, service_role;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA storage GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO anon, authenticated, service_role;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA storage GRANT USAGE, SELECT ON SEQUENCES TO anon, authenticated, service_role;
+
+CREATE SCHEMA IF NOT EXISTS auth;
+
+CREATE TABLE IF NOT EXISTS auth.jwt_keys (
+  kid TEXT PRIMARY KEY,
+  secret BYTEA NOT NULL,
+  algorithm TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  retired_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS auth.refresh_tokens (
+  id BIGSERIAL PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  token TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  session_id TEXT,
+  ip TEXT,
+  user_agent TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+DO $$ BEGIN
+IF to_regclass('auth.users') IS NOT NULL AND to_regclass('auth.idx_users_email_lower') IS NULL THEN
+  CREATE INDEX idx_users_email_lower ON auth.users (lower(email));
+END IF;
+END $$;
+
+DO $$ BEGIN
+IF to_regclass('auth.mfa_challenges') IS NOT NULL AND to_regclass('auth.idx_mfa_challenges_factor_created') IS NULL THEN
+  CREATE INDEX idx_mfa_challenges_factor_created ON auth.mfa_challenges (factor_id, created_at);
+END IF;
+END $$;
+
+DO $$ BEGIN
+IF to_regclass('auth.refresh_tokens') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('auth.refresh_tokens') AND attname = 'revoked_at' AND NOT attisdropped) THEN
+  ALTER TABLE auth.refresh_tokens ADD COLUMN revoked_at TIMESTAMPTZ;
+END IF;
+END $$;
+
+DO $$ BEGIN
+IF to_regclass('auth.refresh_tokens') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('auth.refresh_tokens') AND attname = 'aal' AND NOT attisdropped) THEN
+  ALTER TABLE auth.refresh_tokens ADD COLUMN aal TEXT NOT NULL DEFAULT 'aal1';
+END IF;
+END $$;
+
+DO $$ BEGIN
+IF to_regclass('auth.refresh_tokens') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('auth.refresh_tokens') AND attname = 'amr' AND NOT attisdropped) THEN
+  ALTER TABLE auth.refresh_tokens ADD COLUMN amr JSONB NOT NULL DEFAULT '[]'::jsonb;
+END IF;
+END $$;
+
+DO $$ BEGIN
+IF to_regclass('auth.refresh_tokens') IS NOT NULL AND to_regclass('auth.idx_refresh_tokens_session') IS NULL THEN
+  CREATE INDEX idx_refresh_tokens_session ON auth.refresh_tokens (session_id);
+END IF;
+END $$;
+
+DO $$ BEGIN
+IF to_regclass('auth.one_time_tokens') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('auth.one_time_tokens') AND attname = 'attempts' AND NOT attisdropped) THEN
+  ALTER TABLE auth.one_time_tokens ADD COLUMN attempts INT NOT NULL DEFAULT 0;
+END IF;
+END $$;
+
+DO $$ BEGIN
+IF to_regclass('auth.mfa_challenges') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('auth.mfa_challenges') AND attname = 'attempts' AND NOT attisdropped) THEN
+  ALTER TABLE auth.mfa_challenges ADD COLUMN attempts INT NOT NULL DEFAULT 0;
+END IF;
+END $$;
+
+DO $$ BEGIN
+IF to_regclass('auth.mfa_factors') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('auth.mfa_factors') AND attname = 'last_totp_step' AND NOT attisdropped) THEN
+  ALTER TABLE auth.mfa_factors ADD COLUMN last_totp_step BIGINT;
+END IF;
+END $$;
+
+ALTER TABLE todos ADD COLUMN due_date timestamptz;
+
+CREATE SCHEMA IF NOT EXISTS auth;
+
+CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
+  SELECT NULLIF(current_setting('app.user_id', true), '')::UUID;
+$$ LANGUAGE SQL STABLE;
+
+CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$
+  SELECT COALESCE(NULLIF(current_setting('app.role', true), ''), 'anon');
+$$ LANGUAGE SQL STABLE;
+
+CREATE OR REPLACE FUNCTION auth.email() RETURNS TEXT AS $$
+  SELECT NULLIF(current_setting('app.email', true), '');
+$$ LANGUAGE SQL STABLE;
+
+CREATE OR REPLACE FUNCTION auth.jwt() RETURNS JSONB AS $$
+  SELECT CASE
+    WHEN NULLIF(current_setting('app.jwt', true), '') IS NULL THEN NULL
+    ELSE convert_from(
+      decode(
+        translate(
+          split_part(current_setting('app.jwt', true), '.', 2),
+          '-_', '+/'
+        ) ||
+        repeat('=', (4 - length(split_part(current_setting('app.jwt', true), '.', 2)) % 4) % 4),
+        'base64'
+      ),
+      'utf8'
+    )::jsonb
+  END;
+$$ LANGUAGE SQL STABLE;
+
+CREATE OR REPLACE FUNCTION auth.is_authenticated() RETURNS BOOLEAN AS $$
+  SELECT auth.role() = 'authenticated' OR auth.role() = 'service_role';
+$$ LANGUAGE SQL STABLE;
+
+ALTER TABLE storage.objects ADD COLUMN IF NOT EXISTS user_metadata JSONB;
+
+ALTER TABLE todos ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE todos FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS todos_select_0 ON todos;
+
+CREATE POLICY todos_select_0 ON todos AS PERMISSIVE FOR SELECT USING (user_id = auth.uid());
+
+DROP POLICY IF EXISTS todos_insert_0 ON todos;
+
+CREATE POLICY todos_insert_0 ON todos AS PERMISSIVE FOR INSERT WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS todos_update_0 ON todos;
+
+CREATE POLICY todos_update_0 ON todos AS PERMISSIVE FOR UPDATE USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS todos_delete_0 ON todos;
+
+CREATE POLICY todos_delete_0 ON todos AS PERMISSIVE FOR DELETE USING (user_id = auth.uid());
+
+DROP POLICY IF EXISTS avatars_public_select ON storage.objects;
+
+ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE storage.objects FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS storage_avatars_select_0 ON storage.objects;
+
+CREATE POLICY storage_avatars_select_0 ON storage.objects AS PERMISSIVE FOR SELECT USING (bucket_id = 'avatars' AND (auth.is_authenticated()));
+
+DROP POLICY IF EXISTS storage_avatars_insert_1 ON storage.objects;
+
+CREATE POLICY storage_avatars_insert_1 ON storage.objects AS PERMISSIVE FOR INSERT WITH CHECK (bucket_id = 'avatars' AND (auth.is_authenticated()));
+
+DROP POLICY IF EXISTS storage_avatars_update_2 ON storage.objects;
+
+CREATE POLICY storage_avatars_update_2 ON storage.objects AS PERMISSIVE FOR UPDATE USING (bucket_id = 'avatars' AND (auth.is_authenticated())) WITH CHECK (bucket_id = 'avatars' AND (auth.is_authenticated()));
+
+DROP POLICY IF EXISTS storage_avatars_delete_3 ON storage.objects;
+
+CREATE POLICY storage_avatars_delete_3 ON storage.objects AS PERMISSIVE FOR DELETE USING (bucket_id = 'avatars' AND (auth.is_authenticated()));
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
+
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA auth TO service_role;
+
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA auth TO service_role;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA storage TO anon, authenticated, service_role;
+
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA storage TO anon, authenticated, service_role;
+
+REVOKE ALL ON ALL TABLES IN SCHEMA auth FROM anon, authenticated;
+
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA auth FROM anon, authenticated;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA auth REVOKE ALL ON TABLES FROM anon, authenticated;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA auth REVOKE ALL ON SEQUENCES FROM anon, authenticated;
+
+REVOKE ALL ON auth.jwt_keys FROM anon, authenticated, service_role;
+
+REVOKE ALL ON _instancez_migrations FROM anon, authenticated, service_role;

@@ -73,6 +73,7 @@ export default defineConfig({
       ],
       sidebar: [
         { label: 'Quick Start', slug: 'quick-start' },
+        { label: 'Interactive Demo', slug: 'interactive-demo' },
         { label: 'Installation', slug: 'install' },
         { label: 'Coding Agents', slug: 'coding-agents' },
         {

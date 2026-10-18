@@ -1,0 +1,65 @@
+---
+title: Interactive Demo
+description: Step through the real instancez CLI and dashboard. See what init, dev, validate, vet, serve and cloud deploy do, and when to use each one.
+tableOfContents: false
+---
+
+Run instancez without installing it. Every terminal session and dashboard screen below was captured from a real local instance (`inz` v0.0.8). Press <kbd>Enter</kbd> to run each command, then follow the highlights.
+
+<iframe
+  src="/demo/instancez-demo.html?chrome=0"
+  title="instancez interactive demo"
+  loading="lazy"
+  style={{ width: '100%', aspectRatio: '16 / 10', minHeight: '520px', border: '1px solid #26262b', borderRadius: '12px', background: '#0a0a0b' }}
+></iframe>
+
+[Open it full screen](/demo/instancez-demo.html) or press **Watch it run** inside the demo for a hands-free pass.
+
+## What each command is for
+
+| Command | Use it when | Database | Writes |
+| --- | --- | --- | --- |
+| `inz init` | You start a project. | None | Scaffolding files |
+| `inz dev` | You build locally. It hot-reloads the schema and serves a read-write dashboard. | Embedded Postgres or your own | Applies migrations |
+| `inz validate` | Before a commit or in CI. Add `--use-dsn` to preview the migration. | Optional, plan only | Nothing |
+| `inz vet` | Before a deploy or in CI. It exits 1 at `--fail-on` severity. | None | Nothing |
+| `inz serve` | You run in production on your own server or container. | Your Postgres | Migrations only with `--migrate` |
+| `inz cloud deploy` | You want managed hosting. It shows a diff and asks first. | Managed | Pushes `instancez.yaml` |
+
+## Notes on the demo
+
+- The `inz cloud deploy` chapter is illustrative. It needs an instancez Cloud account, so those sessions are built from the CLI's own messages and are labeled in the demo.
+- The migration plan in the `validate` chapter is trimmed. The full plan also lists bootstrap statements.
+- The `serve` chapter uses a project without code functions. Projects with code functions also pass `--bundle` (see [Docker](/deploy/docker/) and [Self-hosted](/deploy/self-hosted/)).
+
+## Embed it
+
+The demo is one self-contained file, so you can place it on any page.
+
+```html
+<iframe
+  src="https://docs.instancez.ai/demo/instancez-demo.html?chrome=0"
+  title="instancez interactive demo"
+  style="width:100%;aspect-ratio:16/10;border:0;border-radius:12px"
+  loading="lazy"></iframe>
+```
+
+| URL option | Effect |
+| --- | --- |
+| `chrome=0` | Hide the header with the chapter tabs. |
+| `chapter=serve` | Start at a chapter: `init`, `dev`, `validate`, `vet`, `serve`, `cloud`, `connect`. |
+| `step=2` | Start at a step inside the chapter. |
+| `autoplay=1` | Run on its own. Any click takes over. |
+
+The parent page can control it with `postMessage`:
+
+```js
+iframe.contentWindow.postMessage({ type: 'inz-demo:goto', chapter: 'serve', step: 0 }, '*')
+iframe.contentWindow.postMessage({ type: 'inz-demo:play' }, '*')   // or 'inz-demo:pause'
+
+window.addEventListener('message', (e) => {
+  if (e.data?.source === 'instancez-demo') console.log(e.data.chapter, e.data.step)
+})
+```
+
+Ready to try it for real? Start with the [Quick Start](/quick-start/).

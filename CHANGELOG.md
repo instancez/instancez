@@ -10,6 +10,10 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Added
 
+- An Interactive Demo page in the docs (`/interactive-demo/`). It replays real `inz` sessions (`init`, `dev`, `validate`, `vet`, `serve`) and the dashboard captured from a local instance, explains when to use each command, and embeds with an iframe. The `cloud deploy` chapter is illustrative. The source and captures live in `docs/demo/`; run `python3 docs/demo/build.py` to regenerate `docs/site/public/demo/instancez-demo.html`.
+
+### Added
+
 - `inz init --template <id>` scaffolds a project from a hosted template (blog, online-store, kanban-board and more), and `inz init --list-templates` lists them. It prints the secrets each template needs and which env file they go in. See `docs/templates.md`.
 
 ## [0.0.7] - 2026-10-12

@@ -1,0 +1,9 @@
+
+  ✗ Error: tables.<name>.fields[]
+    at instancez.yaml:45
+    unknown key "typ"
+
+  ✗ Error: tables.todos.fields.priority
+    type is required (or use foreign_key to infer type)
+
+  Found 2 error(s)
