@@ -20,24 +20,28 @@ const installPs1 = decode(installPs1B64)
 
 const CACHE = 'public, max-age=300'
 
-const UMAMI_URL = 'https://cloud.umami.is/api/send'
-const UMAMI_WEBSITE = 'c4a9bad4-b3c1-4dcd-b0ed-9bd291da9af1'
-// Umami drops curl/PowerShell user agents as bots, so send a fixed one.
-const UMAMI_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+const POSTHOG_URL = 'https://us.i.posthog.com/capture/'
+const POSTHOG_KEY = 'phc_E3FjB3GLyaE5GzWf1mRqOGfq89VUFRuLNWR4s0bBIew'
 
 export function trackInstall(request, url, os) {
-  return fetch(UMAMI_URL, {
+  const params = Object.fromEntries(url.searchParams)
+  return fetch(POSTHOG_URL, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'user-agent': UMAMI_UA },
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      type: 'event',
-      payload: {
-        website: UMAMI_WEBSITE,
-        hostname: url.hostname,
-        url: url.pathname + url.search,
-        referrer: request.headers.get('referer') || '',
-        name: 'install_script',
-        data: { os, ua: (request.headers.get('user-agent') || '').slice(0, 100) },
+      api_key: POSTHOG_KEY,
+      event: 'install_script',
+      distinct_id: crypto.randomUUID(),
+      properties: {
+        os,
+        ref: params.ref,
+        utm_source: params.utm_source,
+        utm_campaign: params.utm_campaign,
+        $current_url: url.href,
+        $referrer: request.headers.get('referer') || undefined,
+        client_ua: (request.headers.get('user-agent') || '').slice(0, 100),
+        $process_person_profile: false,
+        $geoip_disable: true,
       },
     }),
   }).catch(() => {})
