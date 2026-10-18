@@ -26,7 +26,7 @@ func TestMount_RegistersHEADForTables(t *testing.T) {
 
 	var sawHEAD, sawGET bool
 	for _, route := range r.Routes() {
-		if route.Path != "/rest/v1/todos" {
+		if route.Path != "/rest/v1/:table" {
 			continue
 		}
 		switch route.Method {
@@ -37,9 +37,9 @@ func TestMount_RegistersHEADForTables(t *testing.T) {
 		}
 	}
 	if !sawGET {
-		t.Error("expected GET /rest/v1/todos to be registered")
+		t.Error("expected GET /rest/v1/:table to be registered")
 	}
 	if !sawHEAD {
-		t.Error("expected HEAD /rest/v1/todos to be registered")
+		t.Error("expected HEAD /rest/v1/:table to be registered")
 	}
 }

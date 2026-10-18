@@ -103,4 +103,16 @@ describe("ProjectPage", () => {
     renderProject(makeConfig(["https://acme.com"]));
     expect(screen.queryByText("Save Changes")).not.toBeInTheDocument();
   });
+
+  it("renders and saves when the config has no CORS origins (null from an unset block)", async () => {
+    const config = makeConfig([]);
+    (config.server.cors as { origins: string[] | null }).origins = null;
+    const { save } = renderProject(config);
+    fireEvent.click(screen.getByText("Add origin"));
+    fireEvent.change(screen.getByLabelText("CORS origin 1"), { target: { value: "https://acme.com" } });
+    fireEvent.click(await screen.findByText("Save Changes"));
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({ server: expect.objectContaining({ cors: { origins: ["https://acme.com"] } }) })
+    );
+  });
 });

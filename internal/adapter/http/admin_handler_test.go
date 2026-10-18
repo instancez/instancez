@@ -1244,3 +1244,43 @@ func TestHandleListMigrations_ReadsOwnerPool(t *testing.T) {
 		t.Fatalf("status %d body %s", w.Code, w.Body.String())
 	}
 }
+
+// A config with no server.cors block serializes origins as JSON null, which
+// the dashboard spreads as an array and crashed on. The API contract is an
+// array, so GET /config always returns one.
+func TestGetConfig_CORSOriginsIsAlwaysAnArray(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  *domain.Config
+		want []any
+	}{
+		{"unset", &domain.Config{Version: 1}, []any{}},
+		{"set", &domain.Config{Version: 1, Server: domain.Server{CORS: domain.CORS{Origins: []string{"https://acme.com"}}}}, []any{"https://acme.com"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &AdminHandler{cfg: tc.cfg, db: &stubDB{}, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+			r := newAdminTestRouter(h)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/_admin/config", nil))
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+			}
+			var got struct {
+				Server struct {
+					CORS struct {
+						Origins []any `json:"origins"`
+					} `json:"cors"`
+				} `json:"server"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if got.Server.CORS.Origins == nil {
+				t.Fatalf("origins must be an array, got null in %s", w.Body.String())
+			}
+			if len(got.Server.CORS.Origins) != len(tc.want) {
+				t.Fatalf("origins = %v, want %v", got.Server.CORS.Origins, tc.want)
+			}
+		})
+	}
+}

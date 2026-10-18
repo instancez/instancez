@@ -505,11 +505,11 @@ func TestCRUDHandler_Mount_RegistersRestV1Routes(t *testing.T) {
 		paths[rt.Method+" "+rt.Path] = true
 	}
 	required := []string{
-		"GET /rest/v1/todos",
-		"POST /rest/v1/todos",
-		"PATCH /rest/v1/todos",
-		"DELETE /rest/v1/todos",
-		"HEAD /rest/v1/todos",
+		"GET /rest/v1/:table",
+		"POST /rest/v1/:table",
+		"PATCH /rest/v1/:table",
+		"DELETE /rest/v1/:table",
+		"HEAD /rest/v1/:table",
 		"POST /rest/v1/rpc/:name",
 	}
 	for _, r := range required {

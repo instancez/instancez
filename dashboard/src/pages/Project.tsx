@@ -13,9 +13,10 @@ export function ProjectPage() {
   const { config, save, saving, saveErrors } = useConfig();
   const canWriteConfig = backend.capabilities.canWriteConfig;
   const [origins, setOrigins] = useState<string[]>([]);
+  const savedOrigins = config?.server?.cors?.origins ?? [];
 
   useEffect(() => {
-    if (config) setOrigins([...config.server.cors.origins]);
+    if (config) setOrigins([...(config.server?.cors?.origins ?? [])]);
   }, [config]);
 
   if (!config) return null;
@@ -23,7 +24,7 @@ export function ProjectPage() {
   // Not trimmed/filtered here: an added-but-unfilled row should surface the
   // save bar immediately (matching the redirect-URL editor), even though
   // handleSave drops it before persisting.
-  const dirty = !jsonEqual(origins, config.server.cors.origins);
+  const dirty = !jsonEqual(origins, savedOrigins);
 
   async function handleSave() {
     if (!config) return;
