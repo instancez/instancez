@@ -33,6 +33,7 @@ button:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--blue);outl
 .tab.on .n{background:var(--blue);color:#fff}
 .btn{border:1px solid #33333a;background:#17171b;border-radius:10px;padding:8px 14px;font:600 13.5px var(--sans);transition:.15s;white-space:nowrap}
 .btn:hover{border-color:#4a4a55;background:#1f1f25}
+.btn{text-decoration:none;color:var(--fg);display:inline-block}
 .btn.pri{background:var(--fg);color:#0a0a0b;border-color:var(--fg)}
 .btn.pri:hover{background:#fff}
 .btn.blue{background:var(--blue);border-color:var(--blue);color:#fff}
@@ -128,6 +129,7 @@ button:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--blue);outl
   <header class="top">
     <div class="brand"><img id="logo" alt="">instancez</div>
     <nav class="tabs" id="tabs" aria-label="Chapters"></nav>
+    <a class="btn" id="backdocs" href="/">← Back to docs</a>
     <button class="btn" id="autobtn">▶ Watch it run</button>
   </header>
   <div class="body">
@@ -158,6 +160,8 @@ const REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const mk = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 $('#logo').src = D.logo; $('#logo2').src = D.logo;
 if (Q.get('chrome') === '0') $('#app').classList.add('nochrome');
+/* "Back to docs" shows only on the standalone page. ?back=<url> overrides the target. */
+(function(){ const b = $('#backdocs'); let embedded = false; try { embedded = window.top !== window; } catch (e) { embedded = true; } if (embedded) b.hidden = true; const back = Q.get('back'); if (back) b.href = back; else if (location.protocol === 'file:') b.hidden = true; })();
 
 /* ---------- highlighting ---------- */
 function hlYaml(line){
