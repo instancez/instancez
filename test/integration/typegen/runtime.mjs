@@ -1,18 +1,17 @@
 import { createClient } from '@supabase/supabase-js'
-import { readFileSync } from 'node:fs'
 
-const cols = JSON.parse(readFileSync(process.env.INZ_CASES, 'utf8'))
+const cols = JSON.parse(process.env.INZ_CASES)
 const sb = createClient(process.env.INZ_URL, process.env.INZ_KEY, { auth: { persistSession: false } })
 const fails = []
 const kind = (v) => (v === null ? 'null' : Array.isArray(v) ? 'array' : typeof v)
 const must = (cond, msg) => { if (!cond) fails.push(msg) }
 const ok = ({ data, error }, what) => { if (error) { fails.push(`${what}: ${JSON.stringify(error)}`); return null } return data }
 
-function checkRow(row, label, nulls) {
+function checkRow(row, label, sparse) {
   for (const c of cols) {
-    const got = nulls && !c.required ? 'null' : kind(row[c.col])
-    const want = nulls && !c.required ? 'null' : c.js
-    must(got === want, `${label}.${c.col} (${c.sql}): got ${got} (${JSON.stringify(row[c.col])}), want ${want}`)
+    const got = kind(row[c.col])
+    if (sparse && !c.required) must(got === 'null', `${label}.${c.col}: want null, got ${JSON.stringify(row[c.col])}`)
+    else must(got !== 'null' && (c.js === 'any' || got === c.js), `${label}.${c.col} (${c.sql}): got ${got} (${JSON.stringify(row[c.col])}), want ${c.js}`)
   }
 }
 
