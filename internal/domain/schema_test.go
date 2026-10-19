@@ -257,3 +257,9 @@ func TestResolverOver(t *testing.T) {
 		t.Error("empty map resolved")
 	}
 }
+
+func TestFKConstraintName(t *testing.T) {
+	if got := FKConstraintName("posts", "author_id"); got != "posts_author_id_fkey" {
+		t.Errorf("got %q", got)
+	}
+}

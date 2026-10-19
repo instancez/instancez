@@ -1132,7 +1132,7 @@ func generateDeferredFKs(name string, table domain.Table) []string {
 			continue
 		}
 		schema, refTable, refCol, _ := domain.ParseFKReference(f.ForeignKey.References)
-		con := name + "_" + f.Name + "_fkey"
+		con := domain.FKConstraintName(name, f.Name)
 		if len(con) > 63 {
 			con = con[:63]
 		}

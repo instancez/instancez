@@ -5,6 +5,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -170,7 +171,7 @@ func TestGenerateRelationshipRules(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &domain.Config{Tables: map[string]domain.Table{"child": {Fields: tc.fields, Indexes: tc.idx}}}
 			got := string(typegen.Generate(cfg))
-			want := "isOneToOne: " + map[bool]string{true: "true", false: "false"}[tc.want] + "\n"
+			want := "isOneToOne: " + strconv.FormatBool(tc.want) + "\n"
 			if !strings.Contains(got, want) {
 				t.Errorf("want %q in:\n%s", want, got)
 			}
@@ -237,5 +238,54 @@ func TestGenerateFunctionsEdge(t *testing.T) {
 	empty := string(typegen.Generate(&domain.Config{RPC: map[string]domain.Function{}}))
 	if !strings.Contains(empty, "Functions: {\n      [_ in never]: never") {
 		t.Error("no rpc must print an empty Functions block")
+	}
+}
+
+func TestGenerateSetofMixedCase(t *testing.T) {
+	got := string(typegen.Generate(loadYAML(t, "full.yaml")))
+	if !strings.Contains(got, `Returns: Database["public"]["Tables"]["cats"]["Row"][]`) {
+		t.Errorf("setof Cats must resolve to table cats:\n%s", got)
+	}
+}
+
+func TestGenerateArgsSorted(t *testing.T) {
+	cfg := &domain.Config{RPC: map[string]domain.Function{"f": {ReturnCategory: "void", Args: []domain.FuncArg{
+		{Name: "b", Type: "text", Required: true}, {Name: "a", Type: "int", Default: 1}}}}}
+	got := string(typegen.Generate(cfg))
+	if !strings.Contains(got, "Args: {\n          a?: number\n          b: string\n        }") {
+		t.Errorf("args must be sorted by name:\n%s", got)
+	}
+}
+
+func TestGenerateTableReturnEdges(t *testing.T) {
+	gen := func(typ string) string {
+		return string(typegen.Generate(&domain.Config{RPC: map[string]domain.Function{
+			"f": {ReturnCategory: "setof", Returns: domain.FuncReturn{Type: typ}}}}))
+	}
+	if got := gen("table(a\tint,  b   text )"); !strings.Contains(got, "a: number | null\n          b: string | null") {
+		t.Errorf("tab and extra spaces must split:\n%s", got)
+	}
+	got := gen("table()")
+	if !strings.Contains(got, "Returns: Record<string, never>[]") || strings.Contains(got, `"":`) {
+		t.Errorf("empty table() must be a valid empty-row array:\n%s", got)
+	}
+}
+
+func TestGenerateStringListWidthBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		n      int
+		broken bool
+	}{{55, false}, {56, true}} {
+		col := strings.Repeat("c", tc.n)
+		cfg := &domain.Config{Tables: map[string]domain.Table{"child": {Fields: []domain.Field{
+			{Name: col, ForeignKey: &domain.ForeignKey{References: "p.id"}}}}}}
+		got := string(typegen.Generate(cfg))
+		one := `            columns: ["` + col + `"]` + "\n"
+		if strings.Contains(got, one) == tc.broken {
+			t.Errorf("n=%d: single-line=%v, want broken=%v", tc.n, strings.Contains(got, one), tc.broken)
+		}
+		if tc.n == 55 && len(strings.TrimSuffix(one, "\n")) != 80 {
+			t.Fatalf("fixture line is %d wide, want 80", len(one)-1)
+		}
 	}
 }

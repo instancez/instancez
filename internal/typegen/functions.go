@@ -31,7 +31,9 @@ func (w *writer) args(depth int, args []domain.FuncArg) {
 		return
 	}
 	w.line(depth, "Args: {")
-	for _, a := range args {
+	sorted := slices.Clone(args)
+	slices.SortFunc(sorted, func(a, b domain.FuncArg) int { return strings.Compare(a.Name, b.Name) })
+	for _, a := range sorted {
 		optional := !a.Required && a.Default != nil
 		w.WriteString(field(depth+1, a.Name, optional, []string{tsType(a.Type)}))
 	}
@@ -66,6 +68,10 @@ func (w *writer) returns(depth int, name string, fn domain.Function, tables map[
 
 // objectArray prints an inline array of objects whose members are all nullable.
 func (w *writer) objectArray(depth int, cols [][2]string) {
+	if len(cols) == 0 {
+		w.line(depth, "Returns: Record<string, never>[]")
+		return
+	}
 	w.line(depth, "Returns: {")
 	for _, c := range cols {
 		w.line(depth+1, key(c[0])+": "+c[1]+" | null")
@@ -78,8 +84,11 @@ func tableColumns(t string) [][2]string {
 	inner := t[strings.Index(t, "(")+1 : strings.LastIndex(t, ")")]
 	var cols [][2]string
 	for _, part := range splitTopLevel(inner) {
-		name, typ, _ := strings.Cut(strings.TrimSpace(part), " ")
-		cols = append(cols, [2]string{name, tsType(typ)})
+		f := strings.Fields(part)
+		if len(f) == 0 {
+			continue
+		}
+		cols = append(cols, [2]string{f[0], tsType(strings.Join(f[1:], " "))})
 	}
 	return cols
 }
@@ -126,7 +135,7 @@ func (w *writer) relationships(depth int, name string, t domain.Table, fields []
 	w.line(depth, "Relationships: [")
 	for _, r := range rels {
 		w.line(depth+1, "{")
-		w.line(depth+2, "foreignKeyName: "+quoteString(fkName(name, r.field.Name)))
+		w.line(depth+2, "foreignKeyName: "+quoteString(domain.FKConstraintName(name, r.field.Name)))
 		w.stringList(depth+2, "columns", r.field.Name)
 		w.line(depth+2, "isOneToOne: "+strconv.FormatBool(isOneToOne(r.field, t)))
 		w.line(depth+2, "referencedRelation: "+quoteString(r.refTable))
@@ -148,26 +157,14 @@ func (w *writer) stringList(depth int, k, v string) {
 	w.line(depth, "]")
 }
 
-func fkName(table, col string) string { return table + "_" + col + "_fkey" }
-
 func isOneToOne(f domain.Field, t domain.Table) bool {
 	if f.Unique {
 		return true
 	}
-	if f.PrimaryKey && countPK(t) == 1 {
+	if f.PrimaryKey && len(t.PrimaryKeyColumns()) == 1 {
 		return true
 	}
 	return slices.ContainsFunc(t.Indexes, func(ix domain.Index) bool {
 		return ix.Unique && ix.Where == "" && len(ix.Columns) == 1 && ix.Columns[0] == f.Name
 	})
-}
-
-func countPK(t domain.Table) int {
-	n := 0
-	for _, f := range t.Fields {
-		if f.PrimaryKey {
-			n++
-		}
-	}
-	return n
 }

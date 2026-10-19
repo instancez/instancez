@@ -266,17 +266,21 @@ export type Database = {
         }
         Returns: number | null
       }
+      all_cats: {
+        Args: Record<PropertyKey, never>
+        Returns: Database["public"]["Tables"]["cats"]["Row"][]
+      }
       composite: {
         Args: Record<PropertyKey, never>
         Returns: unknown
       }
       greet: {
         Args: {
-          who: string
-          loud?: boolean
-          forced: string
           bare: string
+          forced: string
+          loud?: boolean
           nullable?: string
+          who: string
         }
         Returns: string | null
       }

@@ -284,6 +284,12 @@ func (t Table) PrimaryKeyColumns() []string {
 	return pks
 }
 
+// FKConstraintName is the name Postgres gives an inline single-column foreign key.
+func FKConstraintName(table, col string) string {
+	// ponytail: PG truncates names past 63 bytes differently; long names won't match as hints.
+	return table + "_" + col + "_fkey"
+}
+
 // GetField returns the named field and true, or zero value and false.
 func (t Table) GetField(name string) (Field, bool) {
 	for _, f := range t.Fields {

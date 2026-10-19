@@ -60,6 +60,10 @@ rpc:
       - {name: nullable, type: text, default: null}
     returns: {type: text}
     body: BEGIN RETURN 'hi'; END;
+  all_cats:
+    returns: {type: setof Cats}
+    body: BEGIN RETURN QUERY SELECT * FROM cats; END;
+  # typegen-only fixture: setof a non-public table
   recent_audit:
     returns: {type: setof audit_entries}
     body: BEGIN RETURN QUERY SELECT * FROM audit.audit_entries; END;
