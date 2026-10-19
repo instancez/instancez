@@ -16,14 +16,15 @@ func TestTSType(t *testing.T) {
 		"uuid": "string", " uuid ": "string", "UUID": "string", "date": "string", "timestamp": "string",
 		"timestamp with time zone": "string", "timestamp without time zone": "string",
 		"timestamp(3)": "string", "timestamptz": "string", "money": "string",
-		"inet": "string", "cidr": "string", "macaddr": "string", "bytea": "string", "xml": "string",
+		"inet": "string", "cidr": "string", "macaddr": "string", "macaddr8": "string", "bytea": "string", "xml": "string",
+		"point": "string", "tsquery": "string", "timetz": "string", "point[]": "string[]",
 		"text[]": "string[]", " text[] ": "string[]", "uuid[]": "string[]",
-		"interval": "unknown", "time": "unknown", "timetz": "unknown", "bit": "unknown",
+		"interval": "unknown", "time": "unknown", "bit": "unknown",
 		"bit varying": "unknown", "line": "unknown", "box": "unknown", "polygon": "unknown",
-		"circle": "unknown", "point": "unknown", "tsvector": "unknown", "tsquery": "unknown",
+		"circle": "unknown", "path": "unknown", "lseg": "unknown", "tsvector": "unknown", "int4range": "unknown",
 		"interval[]": "unknown[]", "": "unknown", "[]": "unknown[]", "(": "unknown", "nonsense": "unknown",
 		"text[][]": "unknown[]", "int2": "number", "int4": "number", "int8": "number", "float4": "number", "float8": "number",
-		"int8[]": "number[]", "timestamp(3) with time zone": "string", "time with time zone": "unknown",
+		"int8[]": "number[]", "timestamp(3) with time zone": "string", "time with time zone": "string", "time without time zone": "unknown",
 	}
 	for in, want := range cases {
 		if got := tsType(in); got != want {

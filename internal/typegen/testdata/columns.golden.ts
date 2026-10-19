@@ -69,7 +69,7 @@ export type Database = {
           c_jsonb: Json
           c_money: string | null
           c_numeric: number
-          c_point: unknown | null
+          c_point: string | null
           c_real: number | null
           c_smallint: number | null
           c_text: string | null
@@ -113,7 +113,7 @@ export type Database = {
           c_jsonb: Json
           c_money?: string | null
           c_numeric: number
-          c_point?: unknown | null
+          c_point?: string | null
           c_real?: number | null
           c_smallint?: number | null
           c_text?: string | null
@@ -157,7 +157,7 @@ export type Database = {
           c_jsonb?: Json
           c_money?: string | null
           c_numeric?: number
-          c_point?: unknown | null
+          c_point?: string | null
           c_real?: number | null
           c_smallint?: number | null
           c_text?: string | null

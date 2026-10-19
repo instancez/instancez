@@ -21,7 +21,8 @@ var tsTypes = map[string]string{
 	"character": "string", "uuid": "string", "date": "string", "timestamp": "string",
 	"timestamp with time zone": "string", "timestamp without time zone": "string",
 	"timestamptz": "string", "money": "string", "inet": "string", "cidr": "string",
-	"macaddr": "string", "bytea": "string", "xml": "string",
+	"macaddr": "string", "macaddr8": "string", "bytea": "string", "xml": "string",
+	"point": "string", "tsquery": "string", "timetz": "string", "time with time zone": "string",
 }
 
 func tsType(sqlType string) string {
