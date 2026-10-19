@@ -7,12 +7,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/instancez/instancez/internal/typegen"
 )
 
-// harnessDir returns the supabase-js harness with deps installed and an empty generated dir.
+// harnessDir returns the supabase-js typegen harness with deps installed and an empty generated dir.
 func harnessDir(t *testing.T) string {
 	t.Helper()
 	for _, bin := range []string{"node", "npm"} {
@@ -20,12 +21,17 @@ func harnessDir(t *testing.T) string {
 			t.Skipf("%s not on PATH; skipping typegen node checks", bin)
 		}
 	}
-	dir, err := filepath.Abs("../../test/integration/supabase-js")
+	dir, err := filepath.Abs("../../test/integration/typegen")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "node_modules", ".bin", "tsc")); err != nil {
-		run(t, dir, "npm", "ci", "--no-audit", "--no-fund", "--loglevel=error")
+	installOnce.Do(func() {
+		if !hasBins(dir) {
+			run(t, dir, "npm", "ci", "--no-audit", "--no-fund", "--loglevel=error")
+		}
+	})
+	if !hasBins(dir) {
+		t.Fatal("typegen harness deps missing after install")
 	}
 	gen := filepath.Join(dir, "types", "generated")
 	if err := os.RemoveAll(gen); err != nil {
@@ -36,6 +42,17 @@ func harnessDir(t *testing.T) string {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(gen) })
 	return dir
+}
+
+var installOnce sync.Once
+
+func hasBins(dir string) bool {
+	for _, b := range []string{"tsc", "prettier"} {
+		if _, err := os.Stat(filepath.Join(dir, "node_modules", ".bin", b)); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func run(t *testing.T, dir, name string, args ...string) {
@@ -73,7 +90,7 @@ func TestTypegenTscStrict(t *testing.T) {
 	dir := harnessDir(t)
 	files := generate(t, dir, allConfigs)
 	args := append([]string{"tsc", "--strict", "--noEmit", "--target", "es2022", "--module", "esnext", "--moduleResolution", "bundler"}, files...)
-	run(t, dir, "npx", args...)
+	run(t, dir, "npx", append([]string{"--no-install"}, args...)...)
 }
 
 func TestTypegenTypeLevel(t *testing.T) {
@@ -82,12 +99,12 @@ func TestTypegenTypeLevel(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "types", "types.test.ts")); err != nil {
 		t.Fatalf("type-level assertion file missing: %v", err)
 	}
-	run(t, dir, "npx", "tsc", "-p", "types/tsconfig.json")
+	run(t, dir, "npx", "--no-install", "tsc", "-p", "types/tsconfig.json")
 }
 
 func TestTypegenPrettierStable(t *testing.T) {
 	dir := harnessDir(t)
 	files := generate(t, dir, allConfigs)
 	args := append([]string{"prettier", "--no-config", "--no-editorconfig", "--parser", "typescript", "--no-semi", "--check"}, files...)
-	run(t, dir, "npx", args...)
+	run(t, dir, "npx", append([]string{"--no-install"}, args...)...)
 }

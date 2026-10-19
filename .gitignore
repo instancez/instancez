@@ -52,4 +52,4 @@ memory/
 docs/superpowers/
 
 # typegen integration output
-/test/integration/supabase-js/types/generated/
+/test/integration/typegen/types/generated/
