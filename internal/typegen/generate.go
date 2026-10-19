@@ -1,8 +1,8 @@
 package typegen
 
 import (
+	"maps"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/instancez/instancez/internal/domain"
@@ -49,12 +49,13 @@ func (w *writer) neverBlock(depth int, name string) {
 }
 
 func columnMembers(f domain.Field, typ string, nullable bool) []string {
-	members := []string{tsType(typ)}
+	var members []string
 	if len(f.Enum) > 0 && !strings.HasSuffix(strings.TrimSpace(typ), "[]") {
-		members = members[:0]
 		for _, v := range f.Enum {
 			members = append(members, quoteString(v))
 		}
+	} else {
+		members = []string{tsType(typ)}
 	}
 	if nullable {
 		members = append(members, "null")
@@ -62,18 +63,9 @@ func columnMembers(f domain.Field, typ string, nullable bool) []string {
 	return members
 }
 
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
 func (w *writer) table(name string, t domain.Table, resolve domain.FieldResolver) {
 	fields := slices.Clone(t.Fields)
-	sort.SliceStable(fields, func(i, j int) bool { return fields[i].Name < fields[j].Name })
+	slices.SortFunc(fields, func(a, b domain.Field) int { return strings.Compare(a.Name, b.Name) })
 	w.line(3, key(name)+": {")
 	for _, section := range []string{"Row", "Insert", "Update"} {
 		if len(fields) == 0 {
@@ -85,19 +77,19 @@ func (w *writer) table(name string, t domain.Table, resolve domain.FieldResolver
 			typ := domain.EffectiveType(f, resolve)
 			serial := isSerial(typ)
 			nullable := !(f.Required || f.PrimaryKey || serial)
+			members := columnMembers(f, typ, nullable)
+			optional := true
 			switch section {
 			case "Row":
-				w.WriteString(field(5, f.Name, false, columnMembers(f, typ, nullable)))
+				optional = false
 			case "Insert":
-				optional := f.Default != nil || serial || nullable
-				w.WriteString(field(5, f.Name, optional, columnMembers(f, typ, nullable)))
+				optional = f.Default != nil || serial || nullable
 			default:
 				if f.Immutable {
-					w.WriteString(field(5, f.Name, true, []string{"never"}))
-				} else {
-					w.WriteString(field(5, f.Name, true, columnMembers(f, typ, nullable)))
+					members = []string{"never"}
 				}
 			}
+			w.WriteString(field(5, f.Name, optional, members))
 		}
 		w.line(4, "}")
 	}
@@ -120,9 +112,9 @@ func Generate(cfg *domain.Config) []byte {
 	w := &writer{}
 	w.WriteString(jsonType + "\n")
 	w.line(0, "export type Database = {")
-	for _, schema := range sortedKeys(bySchema) {
+	for _, schema := range slices.Sorted(maps.Keys(bySchema)) {
 		names := bySchema[schema]
-		sort.Strings(names)
+		slices.Sort(names)
 		w.line(1, key(schema)+": {")
 		if len(names) == 0 {
 			w.neverBlock(2, "Tables")

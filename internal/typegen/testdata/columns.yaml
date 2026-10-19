@@ -34,6 +34,8 @@ tables:
       - {name: updated_at, type: timestamptz, auto_updated_at: true}
       - {name: owner_id, foreign_key: {references: auth.users.id}}
       - {name: ref_id, foreign_key: {references: everything.id}}
+      - {name: req_with_default, type: text, required: true, default: x}
+      - {name: req_auto, type: timestamptz, required: true, auto_updated_at: true}
       - {name: status, type: text, enum: [draft, published], default: draft}
       - {name: opt_enum, type: text, enum: [one, two]}
       - {name: weird, type: text, required: true, enum: ["say \"hi\"", "line\nbreak", "back\\slash", "", "it's", "日本語"]}

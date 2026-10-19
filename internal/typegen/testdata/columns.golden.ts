@@ -84,6 +84,8 @@ export type Database = {
           opt_enum: "one" | "two" | null
           owner_id: string | null
           ref_id: number | null
+          req_auto: string
+          req_with_default: string
           small_serial: number
           status: "draft" | "published" | null
           updated_at: string | null
@@ -126,6 +128,8 @@ export type Database = {
           opt_enum?: "one" | "two" | null
           owner_id?: string | null
           ref_id?: number | null
+          req_auto: string
+          req_with_default?: string
           small_serial?: number
           status?: "draft" | "published" | null
           updated_at?: string | null
@@ -168,6 +172,8 @@ export type Database = {
           opt_enum?: "one" | "two" | null
           owner_id?: string | null
           ref_id?: number | null
+          req_auto?: string
+          req_with_default?: string
           small_serial?: number
           status?: "draft" | "published" | null
           updated_at?: string | null

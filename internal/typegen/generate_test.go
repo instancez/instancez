@@ -94,23 +94,42 @@ func TestGenerateMatrix(t *testing.T) {
 		{Name: "en", Type: "text", Required: true, Enum: []string{"a", "b"}},
 	}}}}
 	got := string(typegen.Generate(cfg))
-	for _, want := range []string{
-		"          req: string\n", "          req?: string\n",
-		"          pk: string\n", "          def?: string\n", "          nul?: string | null\n",
-		"          ser?: number\n", "          ser: number\n", "          imm: string\n",
-		"          imm?: never\n", "          imm_nul?: never\n", "          auto: string\n",
-		"          auto?: string\n", "          arr: string[] | null\n", "          en: \"a\" | \"b\"\n",
-		"          en?: \"a\" | \"b\"\n",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("missing %q", want)
+	row := between(t, got, "        Row: {\n", "        }\n        Insert: {")
+	insert := between(t, got, "        Insert: {\n", "        }\n        Update: {")
+	update := between(t, got, "        Update: {\n", "        }\n        Relationships")
+	wants := map[string][]string{
+		"row": {"arr: string[] | null", "auto: string", "def: string", `en: "a" | "b"`, "imm: string",
+			"imm_nul: string | null", "nul: string | null", "pk: string", "req: string", "ser: number"},
+		"insert": {"arr?: string[] | null", "auto: string", "def?: string", `en: "a" | "b"`, "imm: string",
+			"imm_nul?: string | null", "nul?: string | null", "pk: string", "req: string", "ser?: number"},
+		"update": {"arr?: string[] | null", "auto?: string", "def?: string", `en?: "a" | "b"`, "imm?: never",
+			"imm_nul?: never", "nul?: string | null", "pk?: string", "req?: string", "ser?: number"},
+	}
+	for name, block := range map[string]string{"row": row, "insert": insert, "update": update} {
+		lines := strings.Split(strings.TrimSuffix(block, "\n"), "\n")
+		if len(lines) != len(wants[name]) {
+			t.Fatalf("%s has %d lines, want %d:\n%s", name, len(lines), len(wants[name]), block)
+		}
+		for i, l := range lines {
+			if l != "          "+wants[name][i] {
+				t.Errorf("%s line %d = %q, want %q", name, i, l, wants[name][i])
+			}
 		}
 	}
-	for _, bad := range []string{"ser: number | null", "\"ignored\""} {
-		if strings.Contains(got, bad) {
-			t.Errorf("unexpected %q", bad)
-		}
+}
+
+func between(t *testing.T, s, from, to string) string {
+	t.Helper()
+	i := strings.Index(s, from)
+	if i < 0 {
+		t.Fatalf("missing %q", from)
 	}
+	i += len(from)
+	j := strings.Index(s[i:], to)
+	if j < 0 {
+		t.Fatalf("missing %q after %q", to, from)
+	}
+	return s[i : i+j]
 }
 
 func TestGenerateEmptyPublicAlongsideOtherSchema(t *testing.T) {
