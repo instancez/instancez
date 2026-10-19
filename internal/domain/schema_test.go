@@ -234,3 +234,26 @@ func TestTableRLSEnabledOmittedWhenUnset(t *testing.T) {
 		t.Fatalf("explicit false dropped from JSON: %s", b)
 	}
 }
+
+func TestResolverOver(t *testing.T) {
+	tables := map[string]Table{
+		"users": {Fields: []Field{{Name: "id", Type: "UUID"}}},
+	}
+	res := ResolverOver(tables)
+	f, ok := res("users", "id")
+	if !ok || f.Type != "UUID" {
+		t.Fatalf("users.id = %+v, %v", f, ok)
+	}
+	if _, ok := res("nope", "id"); ok {
+		t.Error("missing table resolved")
+	}
+	if _, ok := res("users", "nope"); ok {
+		t.Error("missing column resolved")
+	}
+	if _, ok := ResolverOver(nil)("users", "id"); ok {
+		t.Error("nil map resolved")
+	}
+	if _, ok := ResolverOver(map[string]Table{})("users", "id"); ok {
+		t.Error("empty map resolved")
+	}
+}
