@@ -22,7 +22,8 @@ func TestTSType(t *testing.T) {
 		"bit varying": "unknown", "line": "unknown", "box": "unknown", "polygon": "unknown",
 		"circle": "unknown", "point": "unknown", "tsvector": "unknown", "tsquery": "unknown",
 		"interval[]": "unknown[]", "": "unknown", "[]": "unknown[]", "(": "unknown", "nonsense": "unknown",
-		"text[][]": "unknown[]",
+		"text[][]": "unknown[]", "int2": "number", "int4": "number", "int8": "number", "float4": "number", "float8": "number",
+		"int8[]": "number[]", "timestamp(3) with time zone": "string", "time with time zone": "unknown",
 	}
 	for in, want := range cases {
 		if got := tsType(in); got != want {
@@ -34,7 +35,7 @@ func TestTSType(t *testing.T) {
 func TestIsSerial(t *testing.T) {
 	cases := map[string]bool{
 		"serial": true, "SERIAL": true, "smallserial": true, "bigserial": true, "BigSerial": true,
-		"integer": false, "": false, "serial4": false, "serial[]": false,
+		"integer": false, " serial ": true, "": false, "serial4": false, "serial[]": false,
 	}
 	for in, want := range cases {
 		if got := isSerial(in); got != want {

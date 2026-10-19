@@ -10,7 +10,8 @@ import (
 )
 
 var tsTypes = map[string]string{
-	"smallint": "number", "integer": "number", "int": "number", "serial": "number",
+	"smallint": "number", "int2": "number", "int4": "number", "int8": "number",
+	"float4": "number", "float8": "number", "integer": "number", "int": "number", "serial": "number",
 	"smallserial": "number", "bigint": "number", "bigserial": "number", "real": "number",
 	"double": "number", "double precision": "number", "float": "number",
 	"numeric": "number", "decimal": "number",
@@ -37,7 +38,7 @@ func tsType(sqlType string) string {
 }
 
 func isSerial(sqlType string) bool {
-	switch strings.ToLower(sqlType) {
+	switch strings.ToLower(strings.TrimSpace(sqlType)) {
 	case "serial", "smallserial", "bigserial":
 		return true
 	}
@@ -62,7 +63,7 @@ func quoteString(s string) string {
 			b.WriteString(`\r`)
 		case r == '\t':
 			b.WriteString(`\t`)
-		case unicode.IsControl(r) || r == ' ' || r == ' ':
+		case unicode.IsControl(r) || r == '\u2028' || r == '\u2029':
 			fmt.Fprintf(&b, `\u%04x`, r)
 		default:
 			b.WriteRune(r)
