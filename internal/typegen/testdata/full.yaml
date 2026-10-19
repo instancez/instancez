@@ -1,0 +1,86 @@
+auth:
+  enabled: true
+tables:
+  cats:
+    fields:
+      - {name: id, type: serial, primary_key: true}
+      - {name: name, type: text, required: true}
+  tags:
+    fields:
+      - {name: slug, type: text, primary_key: true}
+  posts:
+    fields:
+      - {name: id, type: serial, primary_key: true}
+      - {name: author_id, foreign_key: {references: auth.users.id}}
+      - {name: tag_slug, foreign_key: {references: tags.slug}}
+      - {name: cat_id, foreign_key: {references: cats.id}, required: true}
+      - {name: parent_id, foreign_key: {references: posts.id}}
+  profiles:
+    fields:
+      - {name: user_id, foreign_key: {references: auth.users.id}, primary_key: true}
+      - {name: fav_cat, foreign_key: {references: cats.id}, unique: true}
+  links:
+    fields:
+      - {name: a_id, foreign_key: {references: cats.id}, primary_key: true}
+      - {name: b_id, type: bigint, primary_key: true}
+      - {name: solo_idx, foreign_key: {references: cats.id}}
+      - {name: partial_idx, foreign_key: {references: cats.id}}
+      - {name: multi_idx, foreign_key: {references: cats.id}}
+      - {name: plain_idx, foreign_key: {references: cats.id}}
+    indexes:
+      - {columns: [solo_idx], unique: true}
+      - {columns: [partial_idx], unique: true, where: "b_id > 0"}
+      - {columns: [multi_idx, b_id], unique: true}
+      - {columns: [plain_idx]}
+  long_names:
+    fields:
+      - {name: id, type: serial, primary_key: true}
+      - {name: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc_, foreign_key: {references: cats.id}}
+  audit_entries:
+    schema: audit
+    fields:
+      - {name: id, type: bigserial, primary_key: true}
+      - {name: actor, foreign_key: {references: auth.users.id}}
+      - {name: note, type: text}
+rpc:
+  ping:
+    returns: {type: void}
+    body: BEGIN END;
+  add_one:
+    args:
+      - {name: n, type: integer, default: 1}
+    returns: {type: integer}
+    body: BEGIN RETURN n + 1; END;
+  greet:
+    args:
+      - {name: who, type: text, required: true}
+      - {name: loud, type: boolean, default: false}
+      - {name: forced, type: text, required: true, default: x}
+      - {name: bare, type: text}
+      - {name: nullable, type: text, default: null}
+    returns: {type: text}
+    body: BEGIN RETURN 'hi'; END;
+  recent_audit:
+    returns: {type: setof audit_entries}
+    body: BEGIN RETURN QUERY SELECT * FROM audit.audit_entries; END;
+  some_ids:
+    returns: {type: setof int}
+    body: BEGIN RETURN QUERY SELECT 1; END;
+  stats:
+    returns: {type: "table(a int, b numeric(10,2), c timestamp with time zone, d interval)"}
+    body: BEGIN RETURN QUERY SELECT 1, 2.5, now(), interval '1 day'; END;
+  composite:
+    returns: {type: my_composite}
+    body: BEGIN RETURN NULL; END;
+  rec:
+    returns: {type: record}
+    body: BEGIN RETURN NULL; END;
+  qualified:
+    returns: {type: pg_catalog.int4}
+    body: BEGIN RETURN 1; END;
+  mystery_rows:
+    returns: {type: setof Missing_Thing}
+    body: BEGIN RETURN; END;
+  ints:
+    returns: {type: "integer[]"}
+    body: BEGIN RETURN NULL; END;

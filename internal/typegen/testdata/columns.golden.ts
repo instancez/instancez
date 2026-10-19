@@ -185,7 +185,22 @@ export type Database = {
             | "it's"
             | "日本語"
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "everything_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "everything_ref_id_fkey"
+            columns: ["ref_id"]
+            isOneToOne: false
+            referencedRelation: "everything"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       membership: {
         Row: {
