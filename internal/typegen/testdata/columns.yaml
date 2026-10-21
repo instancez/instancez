@@ -1,6 +1,5 @@
+version: 1
 tables:
-  zero_fields:
-    fields: []
   everything:
     fields:
       - {name: id, type: serial, primary_key: true}
@@ -15,7 +14,7 @@ tables:
       - {name: c_jsonb, type: jsonb, required: true}
       - {name: c_text, type: text}
       - {name: c_varchar, type: "varchar(255)", required: true}
-      - {name: c_uuid, type: uuid, default: gen_random_uuid()}
+      - {name: c_uuid, type: uuid, default: uuid_v4()}
       - {name: c_date, type: date}
       - {name: c_tstz, type: timestamptz, default: now()}
       - {name: c_money, type: money}
@@ -26,7 +25,7 @@ tables:
       - {name: c_bit, type: "bit(3)"}
       - {name: c_tsvector, type: tsvector}
       - {name: c_point, type: point}
-      - {name: c_text_arr, type: "text[]", enum: [ignored, for, arrays]}
+      - {name: c_text_arr, type: "text[]"}
       - {name: c_int_arr, type: "integer[]", required: true}
       - {name: small_serial, type: smallserial}
       - {name: big_serial, type: bigserial}
@@ -46,6 +45,7 @@ tables:
       - {name: role, type: text, required: true}
   widths:
     fields:
+      - {name: id, type: serial, primary_key: true}
       - {name: e79, type: text, required: true, enum: [aaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbb]}
       - {name: e80, type: text, required: true, enum: [aaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbb]}
       - {name: e81, type: text, required: true, enum: [aaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb]}
@@ -60,4 +60,5 @@ tables:
   "z_last":
     schema: audit
     fields:
+      - {name: id, type: serial, primary_key: true}
       - {name: v, type: uuid, required: true}

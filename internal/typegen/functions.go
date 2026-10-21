@@ -3,7 +3,6 @@ package typegen
 import (
 	"maps"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/instancez/instancez/internal/domain"
@@ -48,7 +47,7 @@ func (w *writer) returns(depth int, name string, fn domain.Function, tables map[
 	case fn.ReturnCategory == "setof" && !strings.HasPrefix(strings.ToLower(t), "setof"):
 		w.objectArray(depth, tableColumns(t))
 	case fn.ReturnCategory == "setof":
-		target := strings.ToLower(strings.TrimSpace(t[len("setof"):]))
+		target := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(t[len("setof"):])), "public.")
 		ts := tsType(target)
 		if tbl, ok := tables[target]; ok {
 			w.line(depth, "Returns: Database["+quoteString(tbl.EffectiveSchema())+`]["Tables"][`+quoteString(target)+`]["Row"][]`)
@@ -74,7 +73,7 @@ func (w *writer) objectArray(depth int, cols [][2]string) {
 	}
 	w.line(depth, "Returns: {")
 	for _, c := range cols {
-		w.line(depth+1, key(c[0])+": "+c[1]+" | null")
+		w.WriteString(field(depth+1, c[0], false, []string{c[1], "null"}))
 	}
 	w.line(depth, "}[]")
 }
@@ -118,7 +117,7 @@ type relationship struct {
 	refCol   string
 }
 
-func (w *writer) relationships(depth int, name string, t domain.Table, fields []domain.Field) {
+func (w *writer) relationships(depth int, name string, fields []domain.Field) {
 	var rels []relationship
 	for _, f := range fields {
 		if f.ForeignKey == nil {
@@ -137,7 +136,7 @@ func (w *writer) relationships(depth int, name string, t domain.Table, fields []
 		w.line(depth+1, "{")
 		w.line(depth+2, "foreignKeyName: "+quoteString(domain.FKConstraintName(name, r.field.Name)))
 		w.stringList(depth+2, "columns", r.field.Name)
-		w.line(depth+2, "isOneToOne: "+strconv.FormatBool(isOneToOne(r.field, t)))
+		w.line(depth+2, "isOneToOne: false")
 		w.line(depth+2, "referencedRelation: "+quoteString(r.refTable))
 		w.stringList(depth+2, "referencedColumns", r.refCol)
 		w.line(depth+1, "},")
@@ -155,16 +154,4 @@ func (w *writer) stringList(depth int, k, v string) {
 	w.line(depth, k+": [")
 	w.line(depth+1, quoteString(v)+",")
 	w.line(depth, "]")
-}
-
-func isOneToOne(f domain.Field, t domain.Table) bool {
-	if f.Unique {
-		return true
-	}
-	if f.PrimaryKey && len(t.PrimaryKeyColumns()) == 1 {
-		return true
-	}
-	return slices.ContainsFunc(t.Indexes, func(ix domain.Index) bool {
-		return ix.Unique && ix.Where == "" && len(ix.Columns) == 1 && ix.Columns[0] == f.Name
-	})
 }

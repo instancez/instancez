@@ -27,21 +27,19 @@ type failingWriter struct{}
 
 func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("boom") }
 
-func runGen(t *testing.T, stdout io.Writer, args ...string) (string, error) {
+func runGen(t *testing.T, stdout io.Writer, args ...string) error {
 	t.Helper()
 	cmd := NewRootCmd()
-	var errBuf bytes.Buffer
 	cmd.SetOut(stdout)
-	cmd.SetErr(&errBuf)
+	cmd.SetErr(io.Discard)
 	cmd.SetArgs(append([]string{"gen"}, args...))
-	err := cmd.Execute()
-	return errBuf.String(), err
+	return cmd.Execute()
 }
 
 func runGenOut(t *testing.T, args ...string) (stdout string, err error) {
 	t.Helper()
 	var out bytes.Buffer
-	_, err = runGen(t, &out, args...)
+	err = runGen(t, &out, args...)
 	return out.String(), err
 }
 
@@ -143,7 +141,7 @@ func TestGenTypesOutIsDirectory(t *testing.T) {
 
 func TestGenTypesStdoutWriteFails(t *testing.T) {
 	p := writeTemp(t, genValidYAML)
-	_, err := runGen(t, failingWriter{}, "types", "--config", p)
+	err := runGen(t, failingWriter{}, "types", "--config", p)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "boom")
 }

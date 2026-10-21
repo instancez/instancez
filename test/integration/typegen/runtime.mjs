@@ -29,6 +29,16 @@ if (rows.length === 2) {
 const audit = ok(await sb.schema('audit').from('rt_audit').insert({ id: 1, note: 'n' }).select(), 'audit insert')
 must(Array.isArray(audit) && kind(audit[0].id) === 'number' && kind(audit[0].note) === 'string', `audit row: ${JSON.stringify(audit)}`)
 
+ok(await sb.from('rt_parent').insert({ id: 1 }), 'parent insert')
+ok(await sb.from('rt_child').insert([{ parent_id: 1 }, { parent_id: 1 }]), 'child insert')
+ok(await sb.from('rt_solo').insert({ parent_id: 1 }), 'solo insert')
+const emb = ok(await sb.from('rt_parent').select('id, rt_child(id, parent_id), rt_solo(id, parent_id)'), 'embed') ?? []
+must(emb.length === 1, `embed rows: ${emb.length}`)
+if (emb.length === 1) {
+  must(Array.isArray(emb[0].rt_child) && emb[0].rt_child.length === 2, `reverse embed: ${JSON.stringify(emb[0].rt_child)}`)
+  must(Array.isArray(emb[0].rt_solo) && emb[0].rt_solo.length === 1, `unique reverse embed: ${JSON.stringify(emb[0].rt_solo)}`)
+}
+
 const v = await sb.rpc('rt_void')
 must(!v.error, `rt_void: ${JSON.stringify(v.error)}`)
 must(v.data == null, `rt_void data: ${JSON.stringify(v.data)}`)

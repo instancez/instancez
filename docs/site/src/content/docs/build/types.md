@@ -25,9 +25,7 @@ The output has the same shape as `supabase gen types typescript`: `Tables` with 
 
 ## Flags
 
-`--config` and `--out` are listed in the [CLI reference](/api-reference/cli/#inz-gen-types). `--out` has no env variable. Every schema that has a table is emitted, and `public` is always emitted, even when empty.
-
-Unset `${INSTANCEZ_ENV_*}` references in string fields are fine, so you do not need secrets to generate types. In a non-string field such as `server.port`, an unset reference fails with the usual decode error.
+See the [CLI reference](/api-reference/cli/#inz-gen-types). `public` is always emitted, even when empty, plus every other schema that has a table. Unset `${INSTANCEZ_ENV_*}` references are fine in string fields, so you need no secrets to generate types.
 
 ## Column types
 
@@ -51,7 +49,7 @@ Functions from `rpc:` are typed under `public`.
 
 - `void` returns `undefined`.
 - A scalar returns its mapped type plus `| null`. `record`, composite and schema-qualified names are `unknown`.
-- `setof <table>` returns that table's `Row[]`. An unknown table name gives `Record<string, unknown>[]`.
+- `setof <table>` returns that table's `Row[]`; a leading `public.` is ignored. An unknown table name gives `Record<string, unknown>[]`.
 - `setof <scalar>` returns `{ fn_name: T | null }[]`.
 - `table(...)` returns inline objects, with every field `| null`.
 
@@ -61,6 +59,7 @@ Functions from `rpc:` are typed under `public`.
 - A scalar `rpc` return is typed `T | null`, since a function can return NULL. Supabase omits the `| null`.
 - `setof <scalar>` returns `{ fn_name: T | null }[]`, which is the shape the REST layer sends.
 - `interval`, `time`, `bit`, geometric types and `tsvector` are `unknown`, because the REST layer returns objects for them, not strings.
+- Every relationship has `isOneToOne: false`, so a reverse embed is typed as an array. The server always returns an array for reverse embeds, even for a unique foreign key.
 - `rpc` functions appear only under `public`, where instancez creates them.
 - There is no `Constants` export and no `__InternalSupabase` block.
 - The `auth` and `storage` schemas are not typed. Foreign keys to `auth.users.id` still produce a relationship.

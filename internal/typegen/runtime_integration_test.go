@@ -56,22 +56,22 @@ var rtCols = []rtCol{
 	{Col: "c_macaddr", SQL: "macaddr", TS: "string", Sample: "08:00:2b:01:02:03"},
 	{Col: "c_bytea", SQL: "bytea", TS: "string", Sample: "\\x0102"},
 	{Col: "c_xml", SQL: "xml", TS: "string", Sample: "<a/>"},
-	{Col: "c_interval", SQL: "interval", TS: "unknown", Sample: "1 day"},
-	{Col: "c_time", SQL: "time", TS: "unknown", Sample: "01:02:03"},
-	{Col: "c_bit", SQL: "bit(3)", TS: "unknown", Sample: "101"},
+	{Col: "c_interval", SQL: "interval", TS: "unknown", JS: "object", Sample: "1 day"},
+	{Col: "c_time", SQL: "time", TS: "unknown", JS: "object", Sample: "01:02:03"},
+	{Col: "c_bit", SQL: "bit(3)", TS: "unknown", JS: "object", Sample: "101"},
 	{Col: "c_point", SQL: "point", TS: "string", Sample: "(1,2)"},
-	{Col: "c_tsvector", SQL: "tsvector", TS: "unknown", Sample: "a b"},
-	{Col: "c_line", SQL: "line", TS: "unknown", Sample: "{1,2,3}"},
-	{Col: "c_box", SQL: "box", TS: "unknown", Sample: "(1,2),(0,0)"},
-	{Col: "c_polygon", SQL: "polygon", TS: "unknown", Sample: "((0,0),(1,1),(1,0))"},
-	{Col: "c_circle", SQL: "circle", TS: "unknown", Sample: "<(0,0),1>"},
-	{Col: "c_path", SQL: "path", TS: "unknown", Sample: "[(0,0),(1,1)]"},
-	{Col: "c_lseg", SQL: "lseg", TS: "unknown", Sample: "[(0,0),(1,1)]"},
+	{Col: "c_tsvector", SQL: "tsvector", TS: "unknown", JS: "object", Sample: "a b"},
+	{Col: "c_line", SQL: "line", TS: "unknown", JS: "object", Sample: "{1,2,3}"},
+	{Col: "c_box", SQL: "box", TS: "unknown", JS: "object", Sample: "(1,2),(0,0)"},
+	{Col: "c_polygon", SQL: "polygon", TS: "unknown", JS: "object", Sample: "((0,0),(1,1),(1,0))"},
+	{Col: "c_circle", SQL: "circle", TS: "unknown", JS: "object", Sample: "<(0,0),1>"},
+	{Col: "c_path", SQL: "path", TS: "unknown", JS: "object", Sample: "[(0,0),(1,1)]"},
+	{Col: "c_lseg", SQL: "lseg", TS: "unknown", JS: "object", Sample: "[(0,0),(1,1)]"},
 	{Col: "c_tsquery", SQL: "tsquery", TS: "string", Sample: "a & b"},
 	{Col: "c_timetz", SQL: "timetz", TS: "string", Sample: "01:02:03+00"},
-	{Col: "c_varbit", SQL: "bit varying(5)", TS: "unknown", Sample: "101"},
+	{Col: "c_varbit", SQL: "bit varying(5)", TS: "unknown", JS: "object", Sample: "101"},
 	{Col: "c_macaddr8", SQL: "macaddr8", TS: "string", Sample: "08:00:2b:01:02:03:04:05"},
-	{Col: "c_int4range", SQL: "int4range", TS: "unknown", Sample: "[1,5)"},
+	{Col: "c_int4range", SQL: "int4range", TS: "unknown", JS: "object", Sample: "[1,5)"},
 	{Col: "c_text_arr", SQL: "text[]", TS: "string[]", Sample: []any{"a", "b"}},
 	{Col: "c_int_arr", SQL: "integer[]", TS: "number[]", Sample: []any{1, 2}},
 	{Col: "c_enum", SQL: "text", TS: `"one" | "two"`, Sample: "one", Enum: []string{"one", "two"}},
@@ -120,6 +120,9 @@ func rtYAML() string {
 		}
 		b.WriteString("}\n")
 	}
+	b.WriteString("  rt_parent:\n    fields:\n      - {name: id, type: serial, primary_key: true}\n")
+	b.WriteString("  rt_child:\n    fields:\n      - {name: id, type: serial, primary_key: true}\n      - {name: parent_id, foreign_key: {references: rt_parent.id}}\n")
+	b.WriteString("  rt_solo:\n    fields:\n      - {name: id, type: serial, primary_key: true}\n      - {name: parent_id, foreign_key: {references: rt_parent.id}, unique: true}\n")
 	b.WriteString("  rt_audit:\n    schema: audit\n    fields:\n      - {name: id, type: bigserial, primary_key: true}\n      - {name: note, type: text}\n")
 	return b.String() + rtRPC
 }
@@ -148,6 +151,7 @@ func TestTypegenRuntime(t *testing.T) {
 		"rt_setof_int: {\n        Args: Record<PropertyKey, never>\n        Returns: {\n          rt_setof_int: number | null\n        }[]\n      }",
 		"rt_table: {\n        Args: Record<PropertyKey, never>\n        Returns: {\n          a: number | null\n          b: string | null\n        }[]\n      }",
 		"  audit: {\n    Tables: {\n      rt_audit: {",
+		"isOneToOne: false",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("generated text lacks %q", want)
@@ -176,7 +180,9 @@ func TestTypegenRuntime(t *testing.T) {
 	t.Cleanup(ts.Close)
 
 	for i := range rtCols {
-		rtCols[i].JS = jsKind(rtCols[i].TS)
+		if rtCols[i].JS == "" {
+			rtCols[i].JS = jsKind(rtCols[i].TS)
+		}
 	}
 	cases, _ := json.Marshal(rtCols)
 	cmd := exec.CommandContext(ctx, "node", "runtime.mjs")

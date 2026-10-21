@@ -123,7 +123,7 @@ export type Database = {
           {
             foreignKeyName: "links_solo_idx_fkey"
             columns: ["solo_idx"]
-            isOneToOne: true
+            isOneToOne: false
             referencedRelation: "cats"
             referencedColumns: ["id"]
           },
@@ -230,14 +230,14 @@ export type Database = {
           {
             foreignKeyName: "profiles_fav_cat_fkey"
             columns: ["fav_cat"]
-            isOneToOne: true
+            isOneToOne: false
             referencedRelation: "cats"
             referencedColumns: ["id"]
           },
           {
             foreignKeyName: "profiles_user_id_fkey"
             columns: ["user_id"]
-            isOneToOne: true
+            isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["id"]
           },
@@ -288,6 +288,15 @@ export type Database = {
         Args: Record<PropertyKey, never>
         Returns: number[] | null
       }
+      long_table_col: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll:
+            | number
+            | null
+          short: string | null
+        }[]
+      }
       mystery_rows: {
         Args: Record<PropertyKey, never>
         Returns: Record<string, unknown>[]
@@ -295,6 +304,10 @@ export type Database = {
       ping: {
         Args: Record<PropertyKey, never>
         Returns: undefined
+      }
+      public_cats: {
+        Args: Record<PropertyKey, never>
+        Returns: Database["public"]["Tables"]["cats"]["Row"][]
       }
       qualified: {
         Args: Record<PropertyKey, never>
@@ -307,6 +320,14 @@ export type Database = {
       recent_audit: {
         Args: Record<PropertyKey, never>
         Returns: Database["audit"]["Tables"]["audit_entries"]["Row"][]
+      }
+      rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr:
+            | number
+            | null
+        }[]
       }
       some_ids: {
         Args: Record<PropertyKey, never>

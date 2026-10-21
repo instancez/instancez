@@ -26,12 +26,15 @@ export type Database = {
       }
       z_last: {
         Row: {
+          id: number
           v: string
         }
         Insert: {
+          id?: number
           v: string
         }
         Update: {
+          id?: number
           v?: string
         }
         Relationships: []
@@ -231,6 +234,7 @@ export type Database = {
           e81:
             | "aaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             | "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          id: number
           nullable_enum:
             | "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             | "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -247,6 +251,7 @@ export type Database = {
           e81:
             | "aaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             | "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          id?: number
           nullable_enum?:
             | "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             | "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -265,18 +270,13 @@ export type Database = {
           e81?:
             | "aaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             | "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          id?: number
           nullable_enum?:
             | "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             | "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
             | "cccccccccc"
             | null
         }
-        Relationships: []
-      }
-      zero_fields: {
-        Row: {}
-        Insert: {}
-        Update: {}
         Relationships: []
       }
     }

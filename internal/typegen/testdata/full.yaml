@@ -1,5 +1,4 @@
-auth:
-  enabled: true
+version: 1
 tables:
   cats:
     fields:
@@ -73,6 +72,15 @@ rpc:
   stats:
     returns: {type: "table(a int, b numeric(10,2), c timestamp with time zone, d interval)"}
     body: BEGIN RETURN QUERY SELECT 1, 2.5, now(), interval '1 day'; END;
+  rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr:
+    returns: {type: setof int}
+    body: BEGIN RETURN QUERY SELECT 1; END;
+  long_table_col:
+    returns: {type: "table(llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll int, short text)"}
+    body: BEGIN RETURN QUERY SELECT 1, 'a'; END;
+  public_cats:
+    returns: {type: setof public.Cats}
+    body: BEGIN RETURN QUERY SELECT * FROM cats; END;
   composite:
     returns: {type: my_composite}
     body: BEGIN RETURN NULL; END;

@@ -93,7 +93,7 @@ func (w *writer) table(name string, t domain.Table, resolve domain.FieldResolver
 		}
 		w.line(4, "}")
 	}
-	w.relationships(4, name, t, fields)
+	w.relationships(4, name, fields)
 	w.line(3, "}")
 }
 
@@ -126,7 +126,11 @@ func Generate(cfg *domain.Config) []byte {
 			w.line(2, "}")
 		}
 		w.neverBlock(2, "Views")
-		w.functions(2, rpcFor(schema, cfg.RPC), cfg.Tables)
+		rpc := cfg.RPC
+		if schema != "public" {
+			rpc = nil
+		}
+		w.functions(2, rpc, cfg.Tables)
 		w.neverBlock(2, "Enums")
 		w.neverBlock(2, "CompositeTypes")
 		w.line(1, "}")
@@ -134,11 +138,4 @@ func Generate(cfg *domain.Config) []byte {
 	w.line(0, "}")
 	w.WriteString(helperTypes)
 	return []byte(w.String())
-}
-
-func rpcFor(schema string, rpc map[string]domain.Function) map[string]domain.Function {
-	if schema != "public" {
-		return nil
-	}
-	return rpc
 }

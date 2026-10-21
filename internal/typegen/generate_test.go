@@ -5,7 +5,6 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -43,15 +42,19 @@ func loadYAML(t *testing.T, name string) *domain.Config {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if errs := config.Validate(cfg); errs != nil {
+		for _, e := range errs {
+			t.Errorf("%s: %s: %s", name, e.Path, e.Message)
+		}
+		t.FailNow()
+	}
 	return cfg
 }
 
 func TestGenerateEmpty(t *testing.T) {
-	checkGolden(t, "empty.golden.ts", typegen.Generate(&domain.Config{}))
-}
-
-func TestGenerateNilConfig(t *testing.T) {
-	if !bytes.Equal(typegen.Generate(nil), typegen.Generate(&domain.Config{})) {
+	out := typegen.Generate(&domain.Config{})
+	checkGolden(t, "empty.golden.ts", out)
+	if !bytes.Equal(typegen.Generate(nil), out) {
 		t.Error("nil config differs from empty config")
 	}
 }
@@ -148,32 +151,20 @@ func TestGenerateFull(t *testing.T) {
 	checkGolden(t, "full.golden.ts", typegen.Generate(loadYAML(t, "full.yaml")))
 }
 
-func TestGenerateRelationshipRules(t *testing.T) {
+func TestGenerateRelationshipsNeverOneToOne(t *testing.T) {
+	// The server returns reverse embeds as arrays, so supabase-js must never see a one-to-one.
 	fk := &domain.ForeignKey{References: "parent.id"}
-	cases := []struct {
-		name   string
-		fields []domain.Field
-		idx    []domain.Index
-		want   bool
-	}{
-		{"plain", []domain.Field{{Name: "c", ForeignKey: fk}}, nil, false},
-		{"unique", []domain.Field{{Name: "c", ForeignKey: fk, Unique: true}}, nil, true},
-		{"sole pk", []domain.Field{{Name: "c", ForeignKey: fk, PrimaryKey: true}}, nil, true},
-		{"composite pk", []domain.Field{{Name: "c", ForeignKey: fk, PrimaryKey: true}, {Name: "d", PrimaryKey: true}}, nil, false},
-		{"other col is sole pk", []domain.Field{{Name: "c", ForeignKey: fk}, {Name: "d", PrimaryKey: true}}, nil, false},
-		{"unique index", []domain.Field{{Name: "c", ForeignKey: fk}}, []domain.Index{{Columns: []string{"c"}, Unique: true}}, true},
-		{"unique index on other col", []domain.Field{{Name: "c", ForeignKey: fk}, {Name: "d"}}, []domain.Index{{Columns: []string{"d"}, Unique: true}}, false},
-		{"partial unique index", []domain.Field{{Name: "c", ForeignKey: fk}}, []domain.Index{{Columns: []string{"c"}, Unique: true, Where: "c > 0"}}, false},
-		{"multi-col unique index", []domain.Field{{Name: "c", ForeignKey: fk}, {Name: "d"}}, []domain.Index{{Columns: []string{"c", "d"}, Unique: true}}, false},
-		{"non-unique index", []domain.Field{{Name: "c", ForeignKey: fk}}, []domain.Index{{Columns: []string{"c"}}}, false},
+	cases := map[string]domain.Field{
+		"plain":   {Name: "c", ForeignKey: fk},
+		"unique":  {Name: "c", ForeignKey: fk, Unique: true},
+		"sole pk": {Name: "c", ForeignKey: fk, PrimaryKey: true},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := &domain.Config{Tables: map[string]domain.Table{"child": {Fields: tc.fields, Indexes: tc.idx}}}
+	for name, f := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := &domain.Config{Tables: map[string]domain.Table{"child": {Fields: []domain.Field{f}}}}
 			got := string(typegen.Generate(cfg))
-			want := "isOneToOne: " + strconv.FormatBool(tc.want) + "\n"
-			if !strings.Contains(got, want) {
-				t.Errorf("want %q in:\n%s", want, got)
+			if !strings.Contains(got, "isOneToOne: false\n") || strings.Contains(got, "isOneToOne: true") {
+				t.Errorf("want isOneToOne: false in:\n%s", got)
 			}
 			if !strings.Contains(got, `foreignKeyName: "child_c_fkey"`) || !strings.Contains(got, `referencedRelation: "parent"`) {
 				t.Errorf("fk name or target wrong:\n%s", got)
@@ -207,6 +198,8 @@ func TestGenerateFunctionRules(t *testing.T) {
 		"rec":          {"Returns: unknown"},
 		"ints":         {"Returns: number[] | null"},
 		"some_ids":     {"Returns: {\n          some_ids: number | null\n        }[]"},
+		"all_cats":     {`Returns: Database["public"]["Tables"]["cats"]["Row"][]`},
+		"public_cats":  {`Returns: Database["public"]["Tables"]["cats"]["Row"][]`},
 		"mystery_rows": {"Returns: Record<string, unknown>[]"},
 		"recent_audit": {`Returns: Database["audit"]["Tables"]["audit_entries"]["Row"][]`},
 		"stats":        {"a: number | null", "b: number | null", "c: string | null", "d: unknown | null"},
@@ -238,13 +231,6 @@ func TestGenerateFunctionsEdge(t *testing.T) {
 	empty := string(typegen.Generate(&domain.Config{RPC: map[string]domain.Function{}}))
 	if !strings.Contains(empty, "Functions: {\n      [_ in never]: never") {
 		t.Error("no rpc must print an empty Functions block")
-	}
-}
-
-func TestGenerateSetofMixedCase(t *testing.T) {
-	got := string(typegen.Generate(loadYAML(t, "full.yaml")))
-	if !strings.Contains(got, `Returns: Database["public"]["Tables"]["cats"]["Row"][]`) {
-		t.Errorf("setof Cats must resolve to table cats:\n%s", got)
 	}
 }
 

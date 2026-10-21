@@ -27,9 +27,8 @@ func newGenTypesCmd() *cobra.Command {
 		Long: `Generate a database.types.ts compatible with supabase-js createClient<Database>
 from instancez.yaml. No database or network needed.
 
-Prints to stdout unless --out is set. Unset ${INSTANCEZ_ENV_*} references in
-string fields are tolerated; in non-string fields (such as server.port) they
-fail with a decode error.`,
+Prints to stdout unless --out is set. Unset ${INSTANCEZ_ENV_*} references are
+tolerated in string fields only.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if _, err := applyEnvDefaults(cmd.Flags(), map[string][]string{"out": {}}, os.Getenv); err != nil {
