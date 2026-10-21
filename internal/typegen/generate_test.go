@@ -25,7 +25,7 @@ func checkGolden(t *testing.T, name string, got []byte) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer root.Close()
+		defer func() { _ = root.Close() }()
 		if err := root.WriteFile(name, got, 0o644); err != nil {
 			t.Fatal(err)
 		}
