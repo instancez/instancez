@@ -36,8 +36,10 @@ Column types come from the list `inz validate` accepts. In `rpc` args and return
 | smallint, integer, int, serial, smallserial, bigint, bigserial, real, double precision, float, numeric, decimal | `number` |
 | boolean, bool | `boolean` |
 | json, jsonb | `Json` |
-| text, varchar, char, uuid, date, timestamp, timestamptz, timetz, money, inet, cidr, macaddr, macaddr8, bytea, xml, point, tsquery | `string` |
-| interval, time, bit, line, lseg, box, path, polygon, circle, tsvector, ranges, anything else | `unknown` |
+| text, varchar, char, uuid, date, timestamp, timestamptz, timetz, money, inet, cidr, macaddr, bytea, xml, point, tsquery | `string` |
+| interval, time, bit, line, box, polygon, circle, tsvector, anything else | `unknown` |
+
+`macaddr8`, `lseg`, `path`, `bit varying` and range types such as `int4range` work only in `rpc` args and returns, where `macaddr8` is `string` and the rest are `unknown`. `inz validate` rejects them as column types.
 
 Types are matched case-insensitively. Parameters are ignored (`varchar(255)`, `numeric(10,2)`), and `text[]` becomes `string[]`. An `enum:` column is a union of string literals.
 
