@@ -38,7 +38,7 @@ jobs:
       - run: go test -race -covermode=atomic -coverpkg=./... -coverprofile=coverage-unit.out ./...
       - name: Enforce 100% coverage for typegen
         run: |
-          go tool cover -func=coverage-unit.out | grep -E '/(typegen/[^:]+|cli/gen)\.go:' | awk '$3!="100.0%"{bad=1; print} {n++} END{exit bad || !n}'
+          go tool cover -func=coverage-unit.out | awk '/\/(typegen\/[^:]+|cli\/gen)\.go:/{n++; if($3!="100.0%"){bad=1;print}} END{exit bad||!n}'
       - name: Upload coverage to Codacy (partial)
         if: env.CODACY_API_TOKEN != ''
         run: |

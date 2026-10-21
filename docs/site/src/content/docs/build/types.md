@@ -25,16 +25,13 @@ The output has the same shape as `supabase gen types typescript`: `Tables` with 
 
 ## Flags
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--config` | `instancez.yaml` | Local config file. Env: `INSTANCEZ_CONFIG`. |
-| `--out` | stdout | Write to this file instead. No env variable. |
-
-An invalid config prints the validation errors, exits 1 and writes nothing. Every schema that has a table is emitted. `public` is always emitted, even when empty.
+`--config` and `--out` are listed in the [CLI reference](/api-reference/cli/#inz-gen-types). `--out` has no env variable. Every schema that has a table is emitted, and `public` is always emitted, even when empty.
 
 Unset `${INSTANCEZ_ENV_*}` references in string fields are fine, so you do not need secrets to generate types. In a non-string field such as `server.port`, an unset reference fails with the usual decode error.
 
 ## Column types
+
+Each row also covers its aliases (`int2`, `int4`, `int8`, `float4`, `float8`, `character varying`, `character`, `timestamp with time zone`, `timestamp without time zone`, `time with time zone`).
 
 | Postgres | TypeScript |
 |---|---|
@@ -48,11 +45,20 @@ Types are matched case-insensitively. Parameters are ignored (`varchar(255)`, `n
 
 `Row` is nullable (`T | null`) unless the column is `required`, a primary key, or a serial type. In `Insert`, a column is optional when it has a `default`, is serial, or is nullable. `Update` makes every column optional, and an `immutable` column becomes `never`.
 
+## RPC return types
+
+Functions from `rpc:` are typed under `public`.
+
+- `void` returns `undefined`.
+- A scalar returns its mapped type plus `| null`. `record`, composite and schema-qualified names are `unknown`.
+- `setof <table>` returns that table's `Row[]`. An unknown table name gives `Record<string, unknown>[]`.
+- `setof <scalar>` returns `{ fn_name: T | null }[]`.
+- `table(...)` and `setof table(...)` return inline objects, with every field `| null`.
+
 ## Differences from Supabase
 
 - Enums are inline unions on the column. `Enums` stays empty, because the yaml creates a CHECK constraint, not a Postgres enum type.
 - A scalar `rpc` return is typed `T | null`, since a function can return NULL. Supabase omits the `| null`.
-- A void `rpc` returns `undefined`, as in Supabase.
 - `setof <scalar>` returns `{ fn_name: T | null }[]`, which is the shape the REST layer sends.
 - `interval`, `time`, `bit`, geometric types and `tsvector` are `unknown`, because the REST layer returns objects for them, not strings.
 - `rpc` functions appear only under `public`, where instancez creates them.

@@ -18,7 +18,7 @@ instancez implements the Supabase wire protocol. Any official Supabase SDK works
 | **Storage — `supabase.storage.*`** | ✅ Full | Upload (with `metadata`), download, move, copy, remove, `list`, `listV2`, `info`, `exists`. Guest (publishable-key) calls run as `anon` under the bucket's `rls:`, as in Supabase. Public URLs. Signed URLs (download, with the `download` or `transform` option, and upload). `/render/image/{public,authenticated,sign}` serve `transform` URLs. Bucket management (create, update, delete, empty). Image transforms: resize (`cover`, `contain`, `fill`), quality, format (`jpeg`, `png`); WebP and AVIF output are not supported. Transform limits match Supabase: 1-2500px, 25MB and 50MP sources. |
 | **Edge Functions — `supabase.functions.invoke()`** | ✅ Full | Calls code functions at `/functions/v1/<name>`. |
 | **RPC — `supabase.rpc()`** | ✅ Full | Calls SQL functions declared under `rpc:` in `instancez.yaml`. setof results take filters, embeds and aggregates like tables. |
-| **Type generation — `supabase gen types`** | ✅ Full | `inz gen types` writes a `Database` type for `createClient<Database>()` from the yaml, with no database needed. Enums are inline unions and scalar `rpc` returns are `T \| null`. See [TypeScript types](/build/types/). |
+| **Type generation — `supabase gen types`** | ⚠️ TypeScript only, differences listed | `inz gen types` writes a `Database` type for `createClient<Database>()` from the yaml, with no database needed. See [TypeScript types](/build/types/). |
 | **Realtime — `supabase.channel()`** | ❌ Not supported yet | instancez has no pub/sub listener. For event-driven patterns in the meantime, use a code function with Postgres LISTEN/NOTIFY or a webhook receiver. |
 
 ## Auth behavior differences from GoTrue

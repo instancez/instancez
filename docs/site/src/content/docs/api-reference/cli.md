@@ -127,13 +127,12 @@ inz gen types [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--config` | `instancez.yaml` | Local config file. Env: `INSTANCEZ_CONFIG`. |
-| `--out` | — | Write to this file instead of stdout. No env variable. |
+| `--out` | — | Write to this file instead of stdout. |
 
 An invalid config prints the validation errors, exits 1 and writes nothing.
 
 ```bash
 inz gen types --out database.types.ts
-inz gen types | diff - database.types.ts   # drift check for CI
 ```
 
 ## inz vet
