@@ -2,9 +2,9 @@ package typegen_test
 
 import (
 	"bytes"
+	"embed"
 	"flag"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,17 +13,25 @@ import (
 	"github.com/instancez/instancez/internal/typegen"
 )
 
+//go:embed testdata
+var testdata embed.FS
+
 var update = flag.Bool("update", false, "rewrite golden files")
 
 func checkGolden(t *testing.T, name string, got []byte) {
 	t.Helper()
-	path := filepath.Join("testdata", name)
 	if *update {
-		if err := os.WriteFile(path, got, 0o644); err != nil {
+		root, err := os.OpenRoot("testdata")
+		if err != nil {
 			t.Fatal(err)
 		}
+		defer root.Close()
+		if err := root.WriteFile(name, got, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return
 	}
-	want, err := os.ReadFile(path)
+	want, err := testdata.ReadFile("testdata/" + name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +42,7 @@ func checkGolden(t *testing.T, name string, got []byte) {
 
 func loadYAML(t *testing.T, name string) *domain.Config {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("testdata", name))
+	data, err := testdata.ReadFile("testdata/" + name)
 	if err != nil {
 		t.Fatal(err)
 	}

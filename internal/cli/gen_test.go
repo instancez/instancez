@@ -78,7 +78,10 @@ func TestGenTypesOutFile(t *testing.T) {
 	out, err := runGenOut(t, "types", "--config", p, "--out", dst)
 	require.NoError(t, err)
 	assert.Empty(t, out)
-	got, err := os.ReadFile(dst)
+	root, err := os.OpenRoot(filepath.Dir(dst))
+	require.NoError(t, err)
+	defer root.Close()
+	got, err := root.ReadFile("database.types.ts")
 	require.NoError(t, err)
 	assert.Equal(t, expectedTypes(t, genValidYAML), string(got))
 }

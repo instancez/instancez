@@ -76,7 +76,7 @@ func (w *writer) table(name string, t domain.Table, resolve domain.FieldResolver
 		for _, f := range fields {
 			typ := domain.EffectiveType(f, resolve)
 			serial := isSerial(typ)
-			nullable := !(f.Required || f.PrimaryKey || serial)
+			nullable := !f.Required && !f.PrimaryKey && !serial
 			members := columnMembers(f, typ, nullable)
 			optional := true
 			switch section {
