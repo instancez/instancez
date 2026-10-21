@@ -6,6 +6,10 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 <!-- Add entries here as you merge changes. Move them under a version heading when you cut a release. -->
 
+### Added
+
+- `inz gen types` writes `database.types.ts` from `instancez.yaml` with no database needed, for `createClient<Database>()` in `@supabase/supabase-js`. See `docs/site/src/content/docs/build/types.md`.
+
 ## [0.0.9] - 2026-10-18
 
 ### Added

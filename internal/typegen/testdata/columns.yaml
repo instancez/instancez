@@ -1,0 +1,64 @@
+version: 1
+tables:
+  everything:
+    fields:
+      - {name: id, type: serial, primary_key: true}
+      - {name: c_smallint, type: smallint}
+      - {name: c_integer, type: INTEGER, required: true}
+      - {name: c_bigint, type: bigint, default: 1}
+      - {name: c_real, type: real}
+      - {name: c_double, type: double precision}
+      - {name: c_numeric, type: "numeric(10,2)", required: true}
+      - {name: c_bool, type: boolean, default: false}
+      - {name: c_json, type: json}
+      - {name: c_jsonb, type: jsonb, required: true}
+      - {name: c_text, type: text}
+      - {name: c_varchar, type: "varchar(255)", required: true}
+      - {name: c_uuid, type: uuid, default: uuid_v4()}
+      - {name: c_date, type: date}
+      - {name: c_tstz, type: timestamptz, default: now()}
+      - {name: c_money, type: money}
+      - {name: c_inet, type: inet}
+      - {name: c_bytea, type: bytea}
+      - {name: c_interval, type: interval}
+      - {name: c_time, type: time}
+      - {name: c_bit, type: "bit(3)"}
+      - {name: c_tsvector, type: tsvector}
+      - {name: c_point, type: point}
+      - {name: c_text_arr, type: "text[]"}
+      - {name: c_int_arr, type: "integer[]", required: true}
+      - {name: small_serial, type: smallserial}
+      - {name: big_serial, type: bigserial}
+      - {name: created_at, type: timestamptz, immutable: true, default: now()}
+      - {name: updated_at, type: timestamptz, auto_updated_at: true}
+      - {name: owner_id, foreign_key: {references: auth.users.id}}
+      - {name: ref_id, foreign_key: {references: everything.id}}
+      - {name: req_with_default, type: text, required: true, default: x}
+      - {name: req_auto, type: timestamptz, required: true, auto_updated_at: true}
+      - {name: status, type: text, enum: [draft, published], default: draft}
+      - {name: opt_enum, type: text, enum: [one, two]}
+      - {name: weird, type: text, required: true, enum: ["say \"hi\"", "line\nbreak", "back\\slash", "", "it's", "日本語"]}
+  membership:
+    fields:
+      - {name: org_id, type: bigint, primary_key: true}
+      - {name: user_id, type: uuid, primary_key: true}
+      - {name: role, type: text, required: true}
+  widths:
+    fields:
+      - {name: id, type: serial, primary_key: true}
+      - {name: e79, type: text, required: true, enum: [aaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbb]}
+      - {name: e80, type: text, required: true, enum: [aaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbb]}
+      - {name: e81, type: text, required: true, enum: [aaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb]}
+      - {name: cjk79, type: text, required: true, enum: ["日日日日日日日日日日日日日日日日日日日日", "ccccccccccccccc"]}
+      - {name: cjk81, type: text, required: true, enum: ["日日日日日日日日日日日日日日日日日日日日", "ccccccccccccccccc"]}
+      - {name: nullable_enum, type: text, enum: [aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, cccccccccc]}
+  audit_log:
+    schema: audit
+    fields:
+      - {name: id, type: bigserial, primary_key: true}
+      - {name: note, type: text}
+  "z_last":
+    schema: audit
+    fields:
+      - {name: id, type: serial, primary_key: true}
+      - {name: v, type: uuid, required: true}

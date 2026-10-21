@@ -21,6 +21,8 @@ Edit `instancez.yaml`, save, and `inz dev` re-applies the schema automatically. 
 
 Without `--embedded-pg`, `inz dev` needs `INSTANCEZ_DATABASE_URL` set to a superuser DSN. API keys land in `.development.env` on first run (`INSTANCEZ_PUBLISHABLE_KEY`, `INSTANCEZ_SECRET_KEY`). `inz doctor` diagnoses a dev setup that won't boot.
 
+For typed queries, run `inz gen types --out database.types.ts` and pass the result to `createClient<Database>()`. It reads only the YAML; regenerate after schema changes.
+
 Client-side, the app is a normal Supabase app. Point any Supabase client library at the server and the whole surface works: PostgREST-style queries with filters and embeds, auth, storage, RPC, functions.
 
 ```js

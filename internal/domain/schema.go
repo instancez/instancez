@@ -284,6 +284,12 @@ func (t Table) PrimaryKeyColumns() []string {
 	return pks
 }
 
+// FKConstraintName is the name Postgres gives an inline single-column foreign key.
+func FKConstraintName(table, col string) string {
+	// ponytail: PG truncates names past 63 bytes differently; long names won't match as hints.
+	return table + "_" + col + "_fkey"
+}
+
 // GetField returns the named field and true, or zero value and false.
 func (t Table) GetField(name string) (Field, bool) {
 	for _, f := range t.Fields {
@@ -566,6 +572,19 @@ func FKCompatible(a, b string) bool { return typeClass(a) == typeClass(b) }
 
 // FieldResolver looks up a table's column definition, if known.
 type FieldResolver func(table, col string) (Field, bool)
+
+// ResolverOver builds a FieldResolver backed by tables, precomputing each
+// table's FieldMap once. A nil map resolves nothing.
+func ResolverOver(tables map[string]Table) FieldResolver {
+	fm := make(map[string]map[string]Field, len(tables))
+	for name, t := range tables {
+		fm[name] = t.FieldMap()
+	}
+	return func(table, col string) (Field, bool) {
+		f, ok := fm[table][col]
+		return f, ok
+	}
+}
 
 // EffectiveType resolves a field's SQL type, inferring an untyped foreign-key
 // column's type from its referenced column. An integer-family target keeps the

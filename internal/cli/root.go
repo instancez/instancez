@@ -40,6 +40,7 @@ func NewRootCmd() *cobra.Command {
 		newInitCmd(),
 		newValidateCmd(),
 		newVetCmd(),
+		newGenCmd(),
 		newBundleCmd(),
 		newDevCmd(),
 		newServeCmd(),

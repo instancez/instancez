@@ -86,6 +86,7 @@ export default defineConfig({
             { label: 'Storage', slug: 'build/storage' },
             { label: 'SQL Editor', slug: 'build/sql-editor' },
             { label: 'Querying', slug: 'build/querying' },
+            { label: 'TypeScript Types', slug: 'build/types' },
             { label: 'Supabase SDK Compatibility', slug: 'supabase-compatibility' },
           ],
         },

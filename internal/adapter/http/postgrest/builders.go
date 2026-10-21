@@ -250,14 +250,9 @@ type relCandidate struct {
 	constraint   string
 }
 
-func fkConstraintName(table, col string) string {
-	// ponytail: PG truncates names past 63 bytes differently; long names won't match as hints.
-	return table + "_" + col + "_fkey"
-}
-
 // matchesFKHint accepts the constraint name or either column of the FK, as PostgREST does.
 func matchesFKHint(hint, table, col, refCol string) bool {
-	return hint == col || hint == refCol || strings.TrimSuffix(col, "_id") == hint || hint == fkConstraintName(table, col)
+	return hint == col || hint == refCol || strings.TrimSuffix(col, "_id") == hint || hint == domain.FKConstraintName(table, col)
 }
 
 // fkTarget splits an FK reference; its schema must match the configured table, or be public when unconfigured.
@@ -298,7 +293,7 @@ func belongsToRels(tableName string, table domain.Table, name, fkHint string, al
 		if isOneToOne(table, field) {
 			card = "one-to-one"
 		}
-		cons := fkConstraintName(tableName, field.Name)
+		cons := domain.FKConstraintName(tableName, field.Name)
 		out = append(out, relCandidate{
 			emb:          Embed{FKColumn: field.Name, RefTable: refTable, RefColumn: refCol},
 			cardinality:  card,
@@ -330,7 +325,7 @@ func hasManyRels(tableName, name, fkHint string, allTables map[string]domain.Tab
 		if isOneToOne(other, field) {
 			card = "one-to-one"
 		}
-		cons := fkConstraintName(name, field.Name)
+		cons := domain.FKConstraintName(name, field.Name)
 		out = append(out, relCandidate{
 			emb:          Embed{FKColumn: field.Name, RefTable: name, RefColumn: refCol, IsReverse: true},
 			cardinality:  card,
@@ -371,7 +366,7 @@ func junctionRels(tableName, name, fkHint string, allTables map[string]domain.Ta
 					}},
 					cardinality: "many-to-many",
 					relationship: fmt.Sprintf("%s using %s(%s) and %s(%s)",
-						jt, fkConstraintName(jt, src.Name), src.Name, fkConstraintName(jt, tgt.Name), tgt.Name),
+						jt, domain.FKConstraintName(jt, src.Name), src.Name, domain.FKConstraintName(jt, tgt.Name), tgt.Name),
 					constraint: jt,
 				})
 			}

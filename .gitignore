@@ -50,3 +50,6 @@ prompts/
 memory/
 .superpowers/
 docs/superpowers/
+
+# typegen integration output
+/test/integration/typegen/types/generated/

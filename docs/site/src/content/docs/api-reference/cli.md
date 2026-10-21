@@ -116,6 +116,25 @@ inz validate --project                # preview against instancez.yaml's linked 
 inz validate --project abc123         # preview against a specific project id
 ```
 
+## inz gen types
+
+Generate TypeScript types for `@supabase/supabase-js` from `instancez.yaml`. It reads the file only, with no database or network. See [TypeScript types](/build/types/).
+
+```
+inz gen types [flags]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--config` | `instancez.yaml` | Local config file. Env: `INSTANCEZ_CONFIG`. |
+| `--out` | — | Write to this file instead of stdout. |
+
+An invalid config prints the validation errors, exits 1 and writes nothing.
+
+```bash
+inz gen types --out database.types.ts
+```
+
 ## inz vet
 
 Lint `instancez.yaml` for security problems: open RLS policies, disabled RLS, hardcoded secrets, unsafe auth and CORS settings. It reads the file only, with no database or network, and does not interpolate `${...}` values.

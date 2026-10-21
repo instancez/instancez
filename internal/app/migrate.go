@@ -1132,7 +1132,7 @@ func generateDeferredFKs(name string, table domain.Table) []string {
 			continue
 		}
 		schema, refTable, refCol, _ := domain.ParseFKReference(f.ForeignKey.References)
-		con := name + "_" + f.Name + "_fkey"
+		con := domain.FKConstraintName(name, f.Name)
 		if len(con) > 63 {
 			con = con[:63]
 		}
@@ -1213,26 +1213,10 @@ func qualifiedTableName(name string, t domain.Table) string {
 	return s + "." + name
 }
 
-// resolverOver builds a domain.FieldResolver backed by tables, precomputing
-// each table's FieldMap once rather than per lookup.
-func resolverOver(tables map[string]domain.Table) domain.FieldResolver {
-	if tables == nil {
-		return nil
-	}
-	fm := make(map[string]map[string]domain.Field, len(tables))
-	for name, t := range tables {
-		fm[name] = t.FieldMap()
-	}
-	return func(table, col string) (domain.Field, bool) {
-		f, ok := fm[table][col]
-		return f, ok
-	}
-}
-
 // effectiveType returns the resolved SQL type for a field, inferring an
 // untyped FK column's type from its referenced column via tables.
 func effectiveType(f domain.Field, tables map[string]domain.Table) string {
-	return domain.EffectiveType(f, resolverOver(tables))
+	return domain.EffectiveType(f, domain.ResolverOver(tables))
 }
 
 func formatColumn(name string, field domain.Field, tables map[string]domain.Table) string {
