@@ -31,7 +31,7 @@ Unset `${INSTANCEZ_ENV_*}` references in string fields are fine, so you do not n
 
 ## Column types
 
-Each row also covers its aliases (`int2`, `int4`, `int8`, `float4`, `float8`, `character varying`, `character`, `timestamp with time zone`, `timestamp without time zone`, `time with time zone`).
+Column types come from the list `inz validate` accepts. In `rpc` args and returns, the longer spellings (`int2`, `int4`, `int8`, `float4`, `float8`, `character varying`, `character`, `timestamp with time zone`, `timestamp without time zone`, `time with time zone`) map to the same types.
 
 | Postgres | TypeScript |
 |---|---|
@@ -53,7 +53,7 @@ Functions from `rpc:` are typed under `public`.
 - A scalar returns its mapped type plus `| null`. `record`, composite and schema-qualified names are `unknown`.
 - `setof <table>` returns that table's `Row[]`. An unknown table name gives `Record<string, unknown>[]`.
 - `setof <scalar>` returns `{ fn_name: T | null }[]`.
-- `table(...)` and `setof table(...)` return inline objects, with every field `| null`.
+- `table(...)` returns inline objects, with every field `| null`.
 
 ## Differences from Supabase
 
