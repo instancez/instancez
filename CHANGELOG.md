@@ -13,6 +13,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 ### Fixed
 
 - `inz dev` and `inz serve --watch` now reload when the config is saved atomically (temp file + rename, as most editors and Claude Code do). The watcher followed the file's inode and went deaf after the first rename; it now watches the parent directory, and also follows symlinked config and `.development.env` files.
+- `inz dev` now also reloads functions when a file in a `functions/` subdirectory changes or any function file is deleted. `node_modules` and dot directories are ignored.
 
 ## [0.0.9] - 2026-10-18
 

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -278,5 +279,109 @@ func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func startFunctionsWatch(t *testing.T, dir string) <-chan *domain.Config {
+	t.Helper()
+	reloads := make(chan *domain.Config, 16)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	go watchFunctionsDir(ctx, dir, func() *domain.Config { return &domain.Config{} }, func(c *domain.Config) { reloads <- c }, logger)
+	time.Sleep(100 * time.Millisecond) // let the watcher arm
+	return reloads
+}
+
+func expectReload(t *testing.T, ch <-chan *domain.Config, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("no reload for %s", what)
+	}
+}
+
+func expectNoReload(t *testing.T, ch <-chan *domain.Config, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+		t.Fatalf("unexpected reload for %s", what)
+	case <-time.After(600 * time.Millisecond):
+	}
+}
+
+func TestWatchFunctionsDir_AtomicSaveAndRemove(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.js"), "v0")
+	reloads := startFunctionsWatch(t, dir)
+
+	for i := 0; i < 3; i++ {
+		tmp := filepath.Join(dir, ".a.js.tmp")
+		writeFile(t, tmp, fmt.Sprintf("v%d", i+1))
+		if err := os.Rename(tmp, filepath.Join(dir, "a.js")); err != nil {
+			t.Fatal(err)
+		}
+		expectReload(t, reloads, "rename save")
+	}
+
+	if err := os.Remove(filepath.Join(dir, "a.js")); err != nil {
+		t.Fatal(err)
+	}
+	expectReload(t, reloads, "deleted file")
+}
+
+func TestWatchFunctionsDir_NestedDirs(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	reloads := startFunctionsWatch(t, dir)
+
+	writeFile(t, filepath.Join(dir, "lib", "util.js"), "x")
+	expectReload(t, reloads, "file in existing subdir")
+
+	if err := os.MkdirAll(filepath.Join(dir, "lib", "deep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	expectReload(t, reloads, "new subdir")
+	time.Sleep(200 * time.Millisecond) // new dir gets armed on Create
+	writeFile(t, filepath.Join(dir, "lib", "deep", "m.js"), "x")
+	expectReload(t, reloads, "file in new subdir")
+}
+
+func TestWatchFunctionsDir_IgnoresNodeModulesAndDotDirs(t *testing.T) {
+	dir := t.TempDir()
+	for _, d := range []string{"node_modules/pkg", ".cache"} {
+		if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reloads := startFunctionsWatch(t, dir)
+
+	writeFile(t, filepath.Join(dir, "node_modules", "pkg", "index.js"), "x")
+	writeFile(t, filepath.Join(dir, ".cache", "blob"), "x")
+	expectNoReload(t, reloads, "node_modules / dot dir churn")
+
+	if err := os.MkdirAll(filepath.Join(dir, "node_modules", "late"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "node_modules", "late", "i.js"), "x")
+	expectNoReload(t, reloads, "node_modules created after start")
+}
+
+func TestInSkippedDir(t *testing.T) {
+	root := filepath.Join("r", "functions")
+	for name, want := range map[string]bool{
+		filepath.Join(root, "a.js"):                        false,
+		filepath.Join(root, ".tmp"):                        false,
+		filepath.Join(root, "lib", "a.js"):                 false,
+		filepath.Join(root, "node_modules", "p", "a.js"):   true,
+		filepath.Join(root, ".cache", "a.js"):              true,
+		filepath.Join(root, "lib", "node_modules", "a.js"): true,
+	} {
+		if got := inSkippedDir(root, name); got != want {
+			t.Errorf("inSkippedDir(%q) = %v, want %v", name, got, want)
+		}
 	}
 }

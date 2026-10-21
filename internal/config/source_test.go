@@ -266,3 +266,25 @@ func TestFileSourceWatchMissingParentDirFails(t *testing.T) {
 		t.Fatal("want error for missing parent dir")
 	}
 }
+
+// Env and config share a dir; both changing inside one debounce window must
+// still reload the env vars before the YAML is read.
+func TestFileSourceWatchEnvAndConfigTogether(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "instancez.yaml")
+	env := filepath.Join(dir, ".development.env")
+	for p, c := range map[string]string{cfg: "version: 1\n", env: "WATCH_TEST_VAR2=a\n"} {
+		if err := os.WriteFile(p, []byte(c), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ch := startWatch(t, NewFileSourceWithEnv(cfg, env))
+
+	atomicSave(t, env, "WATCH_TEST_VAR2=b\n")
+	atomicSave(t, cfg, "version: 1\n# both\n")
+	expectData(t, ch, "# both")
+	if got := os.Getenv("WATCH_TEST_VAR2"); got != "b" {
+		t.Fatalf("WATCH_TEST_VAR2 = %q, want b", got)
+	}
+	expectQuiet(t, ch)
+}
