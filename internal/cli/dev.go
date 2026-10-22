@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -338,6 +339,39 @@ func isFunctionRuntimeShim(name string) bool {
 	return strings.HasPrefix(name, ".inz-worker-") && strings.HasSuffix(name, ".mjs")
 }
 
+// inSkippedDir reports whether name sits under a dependency or dot directory
+// below root, whose churn (npm installs, caches) must not trigger reloads.
+func inSkippedDir(root, name string) bool {
+	rel, err := filepath.Rel(root, filepath.Dir(name))
+	if err != nil || rel == "." {
+		return false
+	}
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part == "node_modules" || strings.HasPrefix(part, ".") {
+			return true
+		}
+	}
+	return false
+}
+
+// addWatchTree watches root and every subdirectory except node_modules and
+// dot directories. A root that is not a directory is ignored.
+func addWatchTree(w *fsnotify.Watcher, root string) error {
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || !d.IsDir() {
+			return nil
+		}
+		if path != root && (d.Name() == "node_modules" || strings.HasPrefix(d.Name(), ".")) {
+			return filepath.SkipDir
+		}
+		return w.Add(path)
+	})
+}
+
 // watchFunctionsDir watches a functions directory and calls reload whenever a
 // source file inside it changes. getConfig supplies the live engine config so a
 // function added at runtime is picked up. A 300ms debounce coalesces saves.
@@ -355,7 +389,7 @@ func watchFunctionsDir(
 	}
 	defer func() { _ = w.Close() }()
 
-	if err := w.Add(dir); err != nil {
+	if err := addWatchTree(w, dir); err != nil {
 		logger.Warn("functions watcher: watch failed", "dir", dir, "error", err)
 		return
 	}
@@ -369,11 +403,14 @@ func watchFunctionsDir(
 			if !ok {
 				return
 			}
-			if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) == 0 {
+			if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename|fsnotify.Remove) == 0 {
 				continue
 			}
-			if isFunctionRuntimeShim(filepath.Base(ev.Name)) {
+			if isFunctionRuntimeShim(filepath.Base(ev.Name)) || inSkippedDir(dir, ev.Name) {
 				continue
+			}
+			if ev.Op&fsnotify.Create != 0 {
+				_ = addWatchTree(w, ev.Name) // new subdirectory; no-op for files
 			}
 			if debounce != nil {
 				debounce.Stop()

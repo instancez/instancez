@@ -155,14 +155,22 @@ func (s *FileSource) Watch(ctx context.Context, _ time.Duration) (<-chan WatchEv
 	if err != nil {
 		return nil, fmt.Errorf("file watch: %w", err)
 	}
-	if err := w.Add(s.Path); err != nil {
-		_ = w.Close()
-		return nil, fmt.Errorf("file watch %s: %w", s.Path, err)
-	}
-	if s.EnvPath != "" {
-		if err := w.Add(s.EnvPath); err != nil {
-			_ = w.Close()
-			return nil, fmt.Errorf("file watch %s: %w", s.EnvPath, err)
+	// Watch parent dirs, not the files: an atomic save (temp file + rename)
+	// replaces the inode and would orphan a file watch.
+	targets := map[string]bool{} // cleaned file path -> is env file
+	for _, p := range []struct {
+		path  string
+		isEnv bool
+	}{{s.Path, false}, {s.EnvPath, true}} {
+		if p.path == "" {
+			continue
+		}
+		for _, f := range watchedPaths(p.path) {
+			targets[f] = p.isEnv
+			if err := w.Add(filepath.Dir(f)); err != nil {
+				_ = w.Close()
+				return nil, fmt.Errorf("file watch %s: %w", f, err)
+			}
 		}
 	}
 
@@ -171,19 +179,10 @@ func (s *FileSource) Watch(ctx context.Context, _ time.Duration) (<-chan WatchEv
 		defer close(out)
 		defer func() { _ = w.Close() }()
 
-		var debounce *time.Timer
-		emit := func(envChanged bool) {
-			if envChanged {
-				// Force-reload env vars so ${VAR} interpolation in the YAML
-				// picks up the new values before Read() is called.
-				_ = ForceLoadDotenv(s.EnvPath)
-			}
-			data, ver, err := s.Read(ctx)
-			select {
-			case out <- WatchEvent{Data: data, Version: ver, Err: err}:
-			case <-ctx.Done():
-			}
-		}
+		const debounce = 500 * time.Millisecond
+		timer := time.NewTimer(debounce)
+		timer.Stop()
+		envChanged := false
 
 		for {
 			select {
@@ -193,14 +192,31 @@ func (s *FileSource) Watch(ctx context.Context, _ time.Duration) (<-chan WatchEv
 				if !ok {
 					return
 				}
-				if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) == 0 {
+				if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename|fsnotify.Remove) == 0 {
 					continue
 				}
-				envChanged := s.EnvPath != "" && ev.Name == s.EnvPath
-				if debounce != nil {
-					debounce.Stop()
+				isEnv, watched := targets[filepath.Clean(ev.Name)]
+				if !watched {
+					continue
 				}
-				debounce = time.AfterFunc(500*time.Millisecond, func() { emit(envChanged) })
+				envChanged = envChanged || isEnv
+				timer.Reset(debounce)
+			case <-timer.C:
+				if envChanged {
+					// Force-reload env vars so ${VAR} interpolation in the YAML
+					// picks up the new values before Read() is called.
+					_ = ForceLoadDotenv(s.EnvPath)
+					envChanged = false
+				}
+				data, ver, err := s.Read(ctx)
+				if errors.Is(err, os.ErrNotExist) {
+					continue // briefly missing mid-replace; the next Create re-arms
+				}
+				select {
+				case out <- WatchEvent{Data: data, Version: ver, Err: err}:
+				case <-ctx.Done():
+					return
+				}
 			case err, ok := <-w.Errors:
 				if !ok {
 					return
@@ -215,6 +231,20 @@ func (s *FileSource) Watch(ctx context.Context, _ time.Duration) (<-chan WatchEv
 	}()
 
 	return out, nil
+}
+
+// watchedPaths returns the absolute path plus, for a symlink, its resolved
+// target, so edits to either are seen.
+func watchedPaths(path string) []string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = filepath.Clean(path)
+	}
+	paths := []string{abs}
+	if real, err := filepath.EvalSymlinks(abs); err == nil && real != abs {
+		paths = append(paths, real)
+	}
+	return paths
 }
 
 func fileVersionToken(info os.FileInfo) string {
