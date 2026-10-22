@@ -493,6 +493,10 @@ Add `.csv()` in `supabase-js` or set `Accept: text/csv` to receive results as CS
 const { data } = await supabase.from('todos').select('title').order('priority').csv()
 ```
 
+## Error statuses
+
+Database errors use PostgREST's status mapping. Not-null, check and invalid-input errors (`23502`, `23514`, class `22`) return 400, foreign-key violations (`23503`) return 409, and unknown SQLSTATEs return 400. `42501` (insufficient privilege) returns 403 for `anon`. The body and SQLSTATE `code` are unchanged. A missing required RPC argument returns 404 `PGRST202` with a hint naming the argument.
+
 ## What's next
 
 - [RLS](/instancez/build/rls/) — control access to rows with row-level security policies

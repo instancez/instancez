@@ -143,7 +143,6 @@ Set `rls_enabled` on every table. `rls_enabled: true` with no policies is deny-a
 ```yaml
 auth:
   jwt_expiry: 1h
-  refresh_tokens: true      # without this, supabase-js reports session: null even on successful sign-in
   refresh_token_expiry: 7d
   allow_signup: true
   allow_anonymous: false    # anonymous sign-in is off by default; true enables signInAnonymously()

@@ -212,7 +212,7 @@ Useful SQL helpers available in RLS expressions:
 
 ## storage
 
-Bucket definitions. Buckets cannot be created, modified, or deleted at runtime; only `instancez.yaml` changes take effect. Bucket names follow the identifier rules, and `public`, `sign`, `authenticated`, `info`, `upload`, `list`, `move` and `copy` are reserved because they're storage route segments.
+Bucket definitions. Buckets cannot be created, modified, or deleted at runtime; only `instancez.yaml` changes take effect. Bucket names follow the identifier rules, and `public`, `sign`, `authenticated`, `info`, `upload`, `list`, `move`, `copy` and `v1` are reserved because they're storage route segments.
 
 ```yaml
 storage:
