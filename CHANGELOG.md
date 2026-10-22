@@ -20,6 +20,10 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 - The hosted installer (`get.instancez.ai`) now sends its install count to PostHog instead of Umami Cloud. For each GET of `install.sh`, `install.ps1`, `/` or `/windows`, the Cloudflare Worker sends an `install_script` event with the script type (`os`), the `ref`, `utm_source` and `utm_campaign` query values, the full request URL, the `Referer` header, and the first 100 characters of your `User-Agent`. Each event uses a random id, creates no person profile, and has GeoIP lookup disabled. The scripts and `inz` send nothing. Download a binary from GitHub Releases to skip the Worker.
 
+### Documentation
+
+- Reserved bucket names now list `v1`, REST and RPC error statuses are documented, and the agent skill no longer shows the ignored `auth.refresh_tokens` key.
+
 ### Fixed
 
 - A config reload now reaches the REST layer. Columns added by editing `instancez.yaml` (file watch) or saving in the dashboard were rejected by `/rest/v1/*` with `unknown column` until you restarted, and tables added that way returned 404. The table handlers now follow the engine's live config.
