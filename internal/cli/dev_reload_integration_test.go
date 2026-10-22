@@ -76,6 +76,7 @@ func TestDevHotReload_AtomicRenameSave(t *testing.T) {
 
 	port := reloadTestPort(t)
 	var logs bytes.Buffer
+	// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command, go_subproc_rule-subproc
 	cmd := exec.Command(bin, "dev", "--embedded-pg", "--port", fmt.Sprint(port))
 	cmd.Dir = proj
 	cmd.Env = append(os.Environ(), "INSTANCEZ_SECRET_KEY=inz_secret_reloadtest", "INSTANCEZ_PUBLISHABLE_KEY=inz_publishable_reloadtest")
