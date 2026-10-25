@@ -178,18 +178,15 @@ func runDeploy(configPath string, opts deployOpts) error {
 		}
 	}
 
-	// Function sources go first, so the yaml write's functions-uploaded guard
-	// never trips: the sources are already there from this same invocation,
-	// after the gate above.
+	// Function sources and secrets ride in the yaml upload itself: one request
+	// is one deploy, checked as a whole before the server writes any of it.
+	var sources map[string]string
 	if len(cfg.Functions) > 0 {
-		fmt.Println("  Uploading function sources...")
-		sources, err := collectFunctionSources(filepath.Dir(configPath), cfg)
+		sources, err = collectFunctionSources(filepath.Dir(configPath), cfg)
 		if err != nil {
 			return fmt.Errorf("collect function sources: %w", err)
 		}
-		if err := c.UploadFunctions(projectID, sources); err != nil {
-			return fmt.Errorf("upload function sources: %w", err)
-		}
+		fmt.Printf("  Including %d function source file(s)\n", len(sources))
 	}
 
 	// Provision INSTANCEZ_ENV_* secrets so the deployed app resolves its ${...}
@@ -212,17 +209,14 @@ func runDeploy(configPath string, opts deployOpts) error {
 			names = append(names, n)
 		}
 		sort.Strings(names)
-		fmt.Printf("  Pushing %d secret(s): %s\n", len(secrets), strings.Join(names, ", "))
-		if err := c.UploadSecrets(projectID, secrets); err != nil {
-			return reportCloudErr("upload secrets", err)
-		}
+		fmt.Printf("  Including %d secret(s): %s\n", len(secrets), strings.Join(names, ", "))
 	}
 
-	fmt.Println("  Uploading instancez.yaml...")
+	fmt.Println("  Deploying...")
 	// The preview call above already printed dropped/diff for this same
 	// candidate yaml; no need to print them again here.
-	if _, _, err := c.UploadYAML(projectID, string(src)); err != nil {
-		return reportCloudErr("upload yaml", err)
+	if _, _, err := c.UploadYAML(projectID, string(src), sources, secrets); err != nil {
+		return reportCloudErr("deploy", err)
 	}
 
 	fmt.Println("  ✓ Deployed.")
