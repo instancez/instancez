@@ -145,13 +145,22 @@ type uploadYAMLResponse struct {
 const wireBranch = "production"
 
 // UploadYAML writes yamlContent to projectID's Defs and triggers a rebuild.
-// Called by `inz cloud deploy`. Returns any providers content the server
-// dropped (non-blocking: providers: is local-dev-only and inert in the cloud
-// runtime) and the page-free diff of what was actually written.
-func (c *Client) UploadYAML(projectID, yamlContent string) ([]Problem, ConfigDiff, error) {
+// Called by `inz cloud deploy`. functions (path-keyed sources, e.g.
+// "functions/hello.js") and secrets (INSTANCEZ_ENV_* name->value) ride in the
+// same request, so the server checks the whole deploy before writing any of it
+// and dispatches it once; nil leaves that part as stored. Returns any providers
+// content the server dropped (non-blocking: providers: is local-dev-only and
+// inert in the cloud runtime) and the page-free diff of what was actually
+// written.
+func (c *Client) UploadYAML(projectID, yamlContent string, functions, secrets map[string]string) ([]Problem, ConfigDiff, error) {
+	body := struct {
+		YAML      string            `json:"yaml"`
+		Branch    string            `json:"branch"`
+		Functions map[string]string `json:"functions,omitempty"`
+		Secrets   map[string]string `json:"secrets,omitempty"`
+	}{yamlContent, wireBranch, functions, secrets}
 	var out uploadYAMLResponse
-	if err := c.do("PUT", "/instancez/projects/"+projectID+"/yaml",
-		map[string]string{"yaml": yamlContent, "branch": wireBranch}, &out); err != nil {
+	if err := c.do("PUT", "/instancez/projects/"+projectID+"/yaml", body, &out); err != nil {
 		return nil, ConfigDiff{}, err
 	}
 	return out.Dropped, out.Diff, nil
@@ -174,23 +183,6 @@ func (c *Client) PreviewConfig(projectID, yamlContent string) ([]Problem, Config
 		return nil, ConfigDiff{}, err
 	}
 	return out.Dropped, out.Diff, nil
-}
-
-// UploadFunctions replaces the project's function sources with the given
-// path-keyed map (keys are project-relative, e.g. "functions/hello.js"). The
-// cloud builds the functions bundle from these at the next rebuild. Called by
-// `inz cloud deploy`.
-func (c *Client) UploadFunctions(projectID string, files map[string]string) error {
-	return c.do("PUT", "/instancez/projects/"+projectID+"/functions",
-		map[string]any{"files": files, "branch": wireBranch}, nil)
-}
-
-// UploadSecrets pushes name->value INSTANCEZ_ENV_ secrets to the project's
-// app_secrets. The cloud encrypts and upserts them; keys absent from this call
-// are left untouched. Called by `inz deploy`.
-func (c *Client) UploadSecrets(projectID string, secrets map[string]string) error {
-	return c.do("PUT", "/instancez/projects/"+projectID+"/secrets",
-		map[string]any{"secrets": secrets, "branch": wireBranch}, nil)
 }
 
 type validateConfigResponse struct {

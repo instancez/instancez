@@ -3,10 +3,8 @@ package cloud
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -166,12 +164,16 @@ func TestClientUploadYAML(t *testing.T) {
 		assert.Equal(t, "/instancez/projects/app-uuid/yaml", r.URL.Path)
 
 		var body struct {
-			YAML   string `json:"yaml"`
-			Branch string `json:"branch"`
+			YAML      string            `json:"yaml"`
+			Branch    string            `json:"branch"`
+			Functions map[string]string `json:"functions"`
+			Secrets   map[string]string `json:"secrets"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		assert.Contains(t, body.YAML, "version: 1")
 		assert.Equal(t, "production", body.Branch)
+		assert.Equal(t, map[string]string{"functions/hello.js": "x"}, body.Functions)
+		assert.Equal(t, map[string]string{"INSTANCEZ_ENV_FOO": "bar"}, body.Secrets)
 
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":      true,
@@ -182,7 +184,8 @@ func TestClientUploadYAML(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "instancez_pat_test")
-	dropped, diff, err := c.UploadYAML("app-uuid", "version: 1\n")
+	dropped, diff, err := c.UploadYAML("app-uuid", "version: 1\n",
+		map[string]string{"functions/hello.js": "x"}, map[string]string{"INSTANCEZ_ENV_FOO": "bar"})
 	assert.NoError(t, err)
 	assert.Empty(t, dropped)
 	assert.False(t, diff.HasChanges)
@@ -201,7 +204,7 @@ func TestClientUploadYAMLValidationFailed(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "instancez_pat_test")
-	_, _, err := c.UploadYAML("app-uuid", "version: 1\n")
+	_, _, err := c.UploadYAML("app-uuid", "version: 1\n", nil, nil)
 
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {
@@ -234,7 +237,7 @@ func TestClientUploadYAMLReturnsDroppedAndDiff(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "instancez_pat_test")
-	dropped, diff, err := c.UploadYAML("app-uuid", "version: 1\nproviders:\n  storage:\n    type: local\n")
+	dropped, diff, err := c.UploadYAML("app-uuid", "version: 1\nproviders:\n  storage:\n    type: local\n", nil, nil)
 	require.NoError(t, err)
 	require.Len(t, dropped, 1)
 	assert.Equal(t, "providers.storage", dropped[0].Path)
@@ -242,58 +245,6 @@ func TestClientUploadYAMLReturnsDroppedAndDiff(t *testing.T) {
 	require.Len(t, diff.Tables, 1)
 	assert.Equal(t, "todos", diff.Tables[0].Name)
 	assert.Equal(t, ChangeAdded, diff.Tables[0].Change)
-}
-
-func TestUploadSecrets(t *testing.T) {
-	var gotPath, gotBody string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		b, _ := io.ReadAll(r.Body)
-		gotBody = string(b)
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"ok":true}`))
-	}))
-	defer srv.Close()
-
-	c := NewClient(srv.URL, "pat")
-	if err := c.UploadSecrets("proj1", map[string]string{"INSTANCEZ_ENV_FOO": "bar"}); err != nil {
-		t.Fatalf("UploadSecrets: %v", err)
-	}
-	if gotPath != "/instancez/projects/proj1/secrets" {
-		t.Errorf("path = %q", gotPath)
-	}
-	if !strings.Contains(gotBody, `"secrets"`) || !strings.Contains(gotBody, "INSTANCEZ_ENV_FOO") {
-		t.Errorf("body = %q", gotBody)
-	}
-	if !strings.Contains(gotBody, `"branch":"production"`) {
-		t.Errorf("body missing branch: %q", gotBody)
-	}
-}
-
-func TestUploadFunctions(t *testing.T) {
-	var gotPath, gotBody string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		b, _ := io.ReadAll(r.Body)
-		gotBody = string(b)
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"ok":true}`))
-	}))
-	defer srv.Close()
-
-	c := NewClient(srv.URL, "pat")
-	if err := c.UploadFunctions("proj1", map[string]string{"functions/hello.js": "x"}); err != nil {
-		t.Fatalf("UploadFunctions: %v", err)
-	}
-	if gotPath != "/instancez/projects/proj1/functions" {
-		t.Errorf("path = %q", gotPath)
-	}
-	if !strings.Contains(gotBody, `"files"`) || !strings.Contains(gotBody, "functions/hello.js") {
-		t.Errorf("body = %q", gotBody)
-	}
-	if !strings.Contains(gotBody, `"branch":"production"`) {
-		t.Errorf("body missing branch: %q", gotBody)
-	}
 }
 
 func TestClientPreviewConfig(t *testing.T) {

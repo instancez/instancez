@@ -35,17 +35,18 @@ func TestRunDeployRejectsBareEnvRef(t *testing.T) {
 	}
 }
 
-// deployToFakeCloud points runDeploy at a fake cloud API and records whether
-// (and with what body) the /secrets endpoint was called. yes:true skips the
-// confirmation prompt, since these tests exercise the secrets push, not the
-// prompt itself.
-func deployToFakeCloud(t *testing.T, dotenv string) (hitSecrets bool, secretsBody string, err error) {
+// deployToFakeCloud points runDeploy at a fake cloud API and returns the
+// secrets the yaml upload carried. yes:true skips the confirmation prompt,
+// since these tests exercise the secrets push, not the prompt itself.
+func deployToFakeCloud(t *testing.T, dotenv string) (secrets map[string]string, err error) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/secrets") {
-			hitSecrets = true
-			b, _ := io.ReadAll(r.Body)
-			secretsBody = string(b)
+		if strings.HasSuffix(r.URL.Path, "/yaml") {
+			var body struct {
+				Secrets map[string]string `json:"secrets"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			secrets = body.Secrets
 		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{}`))
@@ -63,39 +64,22 @@ func deployToFakeCloud(t *testing.T, dotenv string) (hitSecrets bool, secretsBod
 		t.Fatal(e)
 	}
 	err = runDeploy(cfgPath, deployOpts{yes: true})
-	return hitSecrets, secretsBody, err
+	return secrets, err
 }
 
 func TestRunDeployPushesEnvSecrets(t *testing.T) {
 	// INSTANCEZ_ENV_FOO is pushed; UNRELATED is filtered out (wrong namespace);
 	// INSTANCEZ_ENV_EMPTY has a blank value and is dropped, not pushed.
-	hit, body, err := deployToFakeCloud(t, "INSTANCEZ_ENV_FOO=bar\nUNRELATED=x\nINSTANCEZ_ENV_EMPTY=\n")
-	if err != nil {
-		t.Fatalf("runDeploy: %v", err)
-	}
-	if !hit {
-		t.Fatal("expected /secrets to be called")
-	}
-	if !strings.Contains(body, "INSTANCEZ_ENV_FOO") || !strings.Contains(body, "bar") {
-		t.Errorf("secrets body missing the pushed secret: %q", body)
-	}
-	if strings.Contains(body, "UNRELATED") {
-		t.Errorf("non-namespace var leaked into push: %q", body)
-	}
-	if strings.Contains(body, "INSTANCEZ_ENV_EMPTY") {
-		t.Errorf("empty-valued secret was pushed: %q", body)
-	}
+	secrets, err := deployToFakeCloud(t, "INSTANCEZ_ENV_FOO=bar\nUNRELATED=x\nINSTANCEZ_ENV_EMPTY=\n")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"INSTANCEZ_ENV_FOO": "bar"}, secrets)
 }
 
 func TestRunDeployNoSecretsSkipsPush(t *testing.T) {
-	// No INSTANCEZ_ENV_ vars present, so the /secrets endpoint is never called.
-	hit, _, err := deployToFakeCloud(t, "UNRELATED=x\n")
-	if err != nil {
-		t.Fatalf("runDeploy: %v", err)
-	}
-	if hit {
-		t.Error("expected /secrets NOT to be called when no INSTANCEZ_ENV_ vars are present")
-	}
+	// No INSTANCEZ_ENV_ vars present, so the yaml upload carries no secrets.
+	secrets, err := deployToFakeCloud(t, "UNRELATED=x\n")
+	require.NoError(t, err)
+	assert.Empty(t, secrets)
 }
 
 func TestRunDeployFunctionsWithoutFunctionsDir(t *testing.T) {
@@ -197,7 +181,6 @@ func TestRunDeployDeclineNeverUploadsFunctions(t *testing.T) {
 	t.Setenv("HOME", home)
 	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "tok-123"}))
 
-	fnUploadCalled := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -206,11 +189,8 @@ func TestRunDeployDeclineNeverUploadsFunctions(t *testing.T) {
 				"dropped": []any{},
 				"diff":    map[string]any{"tables": []any{}, "config_sections": []any{}, "has_changes": false},
 			})
-		case r.Method == "PUT" && r.URL.Path == "/instancez/projects/abc/functions":
-			fnUploadCalled = true
-			w.WriteHeader(http.StatusOK)
-		case r.Method == "PUT" && r.URL.Path == "/instancez/projects/abc/yaml":
-			t.Error("yaml must not be written after decline")
+		case r.Method == "PUT":
+			t.Errorf("nothing may be written after decline, got PUT %s", r.URL.Path)
 		}
 	}))
 	defer srv.Close()
@@ -226,7 +206,6 @@ func TestRunDeployDeclineNeverUploadsFunctions(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "functions", "hello.js"), []byte("export default () => {}"), 0o644))
 
 	require.NoError(t, runDeploy(cfgPath, deployOpts{}))
-	assert.False(t, fnUploadCalled, "declining must skip function-source upload too")
 }
 
 // TestRunDeployAcceptWrites: accepting the prompt proceeds to the write call.
@@ -624,8 +603,10 @@ func TestRunDeployFunctionsUploaded(t *testing.T) {
 	t.Setenv("HOME", home)
 	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "tok-123"}))
 
-	var fnBranch string
+	var calls []string
+	var fns map[string]string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == "POST" && r.URL.Path == "/instancez/projects/abc/config/preview":
@@ -633,14 +614,12 @@ func TestRunDeployFunctionsUploaded(t *testing.T) {
 				"dropped": []any{},
 				"diff":    map[string]any{"tables": []any{}, "config_sections": []any{}, "has_changes": true},
 			})
-		case r.Method == "PUT" && r.URL.Path == "/instancez/projects/abc/functions":
+		case r.Method == "PUT" && r.URL.Path == "/instancez/projects/abc/yaml":
 			var body struct {
-				Branch string `json:"branch"`
+				Functions map[string]string `json:"functions"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
-			fnBranch = body.Branch
-			w.WriteHeader(http.StatusOK)
-		case r.Method == "PUT" && r.URL.Path == "/instancez/projects/abc/yaml":
+			fns = body.Functions
 			_, _ = w.Write([]byte(uploadYAMLResponseBody(true)))
 		}
 	}))
@@ -655,7 +634,10 @@ func TestRunDeployFunctionsUploaded(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "functions", "hello.js"), []byte("export default () => {}"), 0o644))
 
 	require.NoError(t, runDeploy(cfgPath, deployOpts{yes: true}))
-	assert.Equal(t, "production", fnBranch)
+	// Sources ride in the one yaml write, so a separate upload can't start a
+	// deploy that makes the yaml write 409.
+	assert.Equal(t, map[string]string{"functions/hello.js": "export default () => {}"}, fns)
+	assert.NotContains(t, calls, "PUT /instancez/projects/abc/functions")
 }
 
 func swapPromptConfirm(fn func(string) bool) func() {
