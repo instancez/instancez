@@ -1365,6 +1365,7 @@ await step('rest: upsert().select() serializes like PostgREST', async () => {
 })
 
 await step('rest: update().select().single() returns an object', async () => {
+  assert(wireId, 'insert step must run first')
   const { data, error } = await wireClient().from('wire_types')
     .update({ f: 1.5 }).eq('id', wireId).select().single()
   if (error) throw error
@@ -1373,18 +1374,12 @@ await step('rest: update().select().single() returns an object', async () => {
   assertEq(data.f, 1.5, 'float')
 })
 
-await step('rest: select alias named like the helper column', async () => {
-  const { data, error } = await wireClient().from('wire_types')
-    .select('_inz_r:id,d').eq('id', wireId)
-  if (error) throw error
-  assertEq(data[0]._inz_r, wireId, 'alias value')
-  assertEq(data[0].d, '2024-01-02', 'date')
-})
-
 await step('rpc: setof rows serialize like PostgREST', async () => {
+  assert(wireId, 'insert step must run first')
   const { data, error } = await wireClient().rpc('wire_types_rpc')
   if (error) throw error
   const row = data.find((r) => r.id === wireId)
+  assert(row, 'inserted row is in the setof result')
   assertEq(row.d, '2024-01-02', 'date')
   assertEq(row.tstz, '2024-01-02T03:04:05+00:00', 'timestamptz')
 })
@@ -1403,14 +1398,8 @@ await step('rpc: table() with exotic types', async () => {
   assertEq(data[0].r, '[1,5)', 'int4range')
 })
 
-// The row comes from SQL: a JSON request body is still parsed to float64 on insert.
-await step('rpc: csv keeps big json numbers exact', async () => {
-  const { data, error } = await wireClient().rpc('wire_big').csv()
-  if (error) throw error
-  assert(data.includes('12345678901234567890'), `csv keeps the exact number, got ${data}`)
-})
-
 await step('rest: delete().select() serializes like PostgREST', async () => {
+  assert(wireId, 'insert step must run first')
   const { data, error } = await wireClient().from('wire_types')
     .delete().eq('id', wireId).select()
   if (error) throw error

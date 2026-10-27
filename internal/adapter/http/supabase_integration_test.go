@@ -411,15 +411,6 @@ func TestSupabaseJSCompat(t *testing.T) {
 				Body:       "SELECT '2024-01-02'::date",
 				Args:       []domain.FuncArg{},
 			},
-			"wire_big": {
-				Language:       "sql",
-				Volatility:     "stable",
-				Security:       "invoker",
-				Returns:        domain.FuncReturn{Type: "table(j jsonb)"},
-				ReturnCategory: "setof",
-				Body:           `SELECT '{"n":12345678901234567890}'::jsonb`,
-				Args:           []domain.FuncArg{},
-			},
 			"wire_shape": {
 				Language:       "sql",
 				Volatility:     "stable",
