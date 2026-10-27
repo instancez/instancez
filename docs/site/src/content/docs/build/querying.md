@@ -516,7 +516,7 @@ Add `.csv()` in `supabase-js` or set `Accept: text/csv` to receive results as CS
 const { data } = await supabase.from('todos').select('title').order('priority').csv()
 ```
 
-Cells use the same values as JSON, so booleans and timestamps can differ from PostgREST's CSV. `json` and array cells are compact JSON.
+CSV cells use the JSON value formats (`true`, `2024-01-02T03:04:05+00:00`, `[1,2]`, compact JSON). PostgREST's CSV uses Postgres text output instead (`t`, `"2024-01-02 03:04:05+00"`, `"{1,2}"`, json as stored), so boolean, timestamp, array and json cells differ.
 
 ## Error statuses
 

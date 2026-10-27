@@ -65,11 +65,17 @@ var wireEdge = map[string]string{
 
 const wirePairExpr = `ROW(1,'2024-01-02')::wire_pair`
 
-const wireMoreExprs = `1::oid, 'a'::"char", '(0,1)'::tid, '08:00:2b:01:02:03:04:05'::macaddr8, '[2024-01-01,2024-02-01)'::daterange, '{[1,3),[5,7)}'::int4multirange, ` + wirePairExpr
-
 var wireMoreCols = []struct{ name, expr string }{
 	{"o", "1::oid"}, {"c", `'a'::"char"`}, {"t", "'(0,1)'::tid"}, {"m", "'08:00:2b:01:02:03:04:05'::macaddr8"},
 	{"d", "'[2024-01-01,2024-02-01)'::daterange"}, {"mr", "'{[1,3),[5,7)}'::int4multirange"}, {"p", wirePairExpr},
+}
+
+func wireMoreSelect() string {
+	exprs := make([]string, len(wireMoreCols))
+	for i, c := range wireMoreCols {
+		exprs[i] = c.expr
+	}
+	return strings.Join(exprs, ", ")
 }
 
 func wireConfig() *domain.Config {
@@ -102,7 +108,7 @@ func wireConfig() *domain.Config {
 			"wire_date":  fn("date", "scalar", "SELECT '2024-01-02'::date"),
 			"wire_nan":   fn("double precision", "scalar", "SELECT 'NaN'::float8"),
 			"wire_json":  fn("jsonb", "scalar", `SELECT '{"n":12345678901234567890}'::jsonb`),
-			"wire_more":  fn(`table(o oid, c "char", t tid, m macaddr8, d daterange, mr int4multirange, p wire_pair)`, "setof", "SELECT "+wireMoreExprs),
+			"wire_more":  fn(`table(o oid, c "char", t tid, m macaddr8, d daterange, mr int4multirange, p wire_pair)`, "setof", "SELECT "+wireMoreSelect()),
 			"wire_pair":  fn("wire_pair", "scalar", "SELECT "+wirePairExpr),
 		},
 	}
@@ -135,17 +141,7 @@ type wireEnv struct {
 	owner domain.OwnerDB
 }
 
-func (e *wireEnv) call(t *testing.T, method, path, body string, headers map[string]string) (int, string) {
-	t.Helper()
-	h := map[string]string{"apikey": "inz_secret_wire"}
-	for k, v := range headers {
-		h[k] = v
-	}
-	code, _, raw := doJSON(t, method, e.ts.URL+path, body, h)
-	return code, raw
-}
-
-func (e *wireEnv) contentRange(t *testing.T, method, path, body string, headers map[string]string) (int, string, string) {
+func (e *wireEnv) do(t *testing.T, method, path, body string, headers map[string]string) (int, http.Header, string) {
 	t.Helper()
 	req, err := http.NewRequest(method, e.ts.URL+path, strings.NewReader(body))
 	require.NoError(t, err)
@@ -159,7 +155,13 @@ func (e *wireEnv) contentRange(t *testing.T, method, path, body string, headers 
 	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
-	return resp.StatusCode, resp.Header.Get("Content-Range"), string(raw)
+	return resp.StatusCode, resp.Header, string(raw)
+}
+
+func (e *wireEnv) call(t *testing.T, method, path, body string, headers map[string]string) (int, string) {
+	t.Helper()
+	code, _, raw := e.do(t, method, path, body, headers)
+	return code, raw
 }
 
 func (e *wireEnv) oracle(t *testing.T, sql string, args ...any) any {
@@ -245,6 +247,7 @@ func TestWireSerialization(t *testing.T) {
 	_, err = owner.Exec(ctx, "INSERT INTO wire_parent (id, name, big, amount) VALUES (1, 'p1', 9007199254740993, 123456789012345678901234567890.12345)")
 	require.NoError(t, err)
 	for _, row := range []map[string]string{wireTypical, wireEdge, {"id": "3"}} {
+		// nosemgrep -- wireInsert builds SQL from the fixed seed maps
 		_, err = owner.Exec(ctx, wireInsert(row))
 		require.NoError(t, err)
 	}
@@ -253,9 +256,9 @@ func TestWireSerialization(t *testing.T) {
 	rep := map[string]string{"Prefer": "return=representation"}
 
 	t.Run("list matches to_json", func(t *testing.T) {
-		code, cr, raw := e.contentRange(t, "GET", "/rest/v1/wire_all?order=id.desc", "", map[string]string{"Range": "0-1"})
+		code, hdr, raw := e.do(t, "GET", "/rest/v1/wire_all?order=id.desc", "", map[string]string{"Range": "0-1"})
 		require.Equal(t, 200, code, raw)
-		assert.Equal(t, "0-1/*", cr)
+		assert.Equal(t, "0-1/*", hdr.Get("Content-Range"))
 		rows := wireRows(t, raw)
 		require.Len(t, rows, 2)
 		assert.EqualValues(t, 3, wireID(t, rows[0]))
@@ -385,9 +388,9 @@ func TestWireSerialization(t *testing.T) {
 	})
 
 	t.Run("rpc setof with count", func(t *testing.T) {
-		code, cr, raw := e.contentRange(t, "POST", "/rest/v1/rpc/wire_setof?limit=1", "{}", map[string]string{"Prefer": "count=exact", "apikey": "inz_secret_wire"})
+		code, hdr, raw := e.do(t, "POST", "/rest/v1/rpc/wire_setof?limit=1", "{}", map[string]string{"Prefer": "count=exact"})
 		require.Equal(t, 206, code, raw)
-		assert.Equal(t, "0-0/3", cr)
+		assert.Equal(t, "0-0/3", hdr.Get("Content-Range"))
 		rows := wireRows(t, raw)
 		require.Len(t, rows, 1)
 		e.assertRow(t, rows[0], 1)
@@ -427,6 +430,7 @@ func TestWireSerialization(t *testing.T) {
 		code, raw = e.call(t, "POST", "/rest/v1/rpc/wire_pair", "{}", nil)
 		require.Equal(t, 200, code, raw)
 		assert.JSONEq(t, `{"a":1,"b":"2024-01-02"}`, raw)
+		// nosemgrep -- wirePairExpr is a constant
 		assert.Equal(t, e.oracle(t, "SELECT to_json("+wirePairExpr+")::text AS v"), wireDecode(t, raw))
 	})
 }

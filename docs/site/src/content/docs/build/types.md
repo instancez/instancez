@@ -59,7 +59,7 @@ Functions from `rpc:` are typed under `public`.
 
 - `Enums` and `Constants.*.Enums` stay empty because instancez enums are CHECK constraints; columns use inline unions.
 - `setof <scalar>` returns `{ fn_name: T | null }[]`, which is the shape the REST layer sends.
-- `bit`, geometric types, `tsvector` and range types arrive as Postgres text strings but stay `unknown`, to match Supabase.
+- `bit`, geometric types other than `point`, `tsvector` and range types arrive as Postgres text strings but stay `unknown`, to match Supabase.
 - Every relationship has `isOneToOne: false`, so a reverse embed is typed as an array. The server always returns an array for reverse embeds, even for a unique foreign key.
 - `rpc` functions appear only under `public`, where instancez creates them.
 - No `__InternalSupabase` block.
