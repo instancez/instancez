@@ -63,6 +63,7 @@ Functions from `rpc:` are typed under `public`.
 - Every relationship has `isOneToOne: false`, so a reverse embed is typed as an array. The server always returns an array for reverse embeds, even for a unique foreign key.
 - `rpc` functions appear only under `public`, where instancez creates them.
 - No `__InternalSupabase` block.
+- Embeds across schemas work at runtime, since the server serves them, but are not typed because relationships are same-schema only. Use a cast or `.schema()` to type them.
 - `auth` and `storage` are not typed, so FKs to `auth.users.id` produce no relationship (Supabase does the same).
 - `functions:` (code functions) are not typed.
 

@@ -51,6 +51,7 @@ func (w *writer) returns(depth int, name string, fn domain.Function, tables map[
 		ts := tsType(target)
 		if tbl, ok := tables[target]; ok {
 			w.line(depth, "Returns: Database["+quoteString(tbl.EffectiveSchema())+`]["Tables"][`+quoteString(target)+`]["Row"][]`)
+			// Table names are unique across schemas, so `to` is the bare name.
 			w.line(depth, "SetofOptions: {")
 			w.line(depth+1, `from: "*"`)
 			w.line(depth+1, "to: "+quoteString(target))
