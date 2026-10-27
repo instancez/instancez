@@ -162,7 +162,7 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 				query = buildRPCCountedQuery(callSQL, rpcChain, callArgCount+1)
 			}
 			// nosemgrep -- query uses validated identifiers; values are bound args
-			rows, err := tx.Query(ctx, query, placeholders...)
+			rows, err := queryWireRows(ctx, tx, query, placeholders...)
 			if err != nil {
 				h.logger.Error("rpc setof error", "fn", name, "error", err)
 				handleDBError(c, err)
@@ -220,11 +220,15 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 			return
 
 		default: // "scalar"
-			row, err := tx.QueryRow(ctx, sql, placeholders...)
+			rows, err := queryWireRows(ctx, tx, sql, placeholders...)
 			if err != nil {
 				h.logger.Error("rpc scalar error", "fn", name, "error", err)
 				handleDBError(c, err)
 				return
+			}
+			var row map[string]any
+			if len(rows) > 0 {
+				row = rows[0]
 			}
 			if err := tx.Commit(ctx); err != nil {
 				problemJSON(c, http.StatusInternalServerError, "internal", "Transaction commit failed")
@@ -861,8 +865,10 @@ func splitRPCTotal(rows []map[string]any) ([]map[string]any, int) {
 	total := -1
 	out := make([]map[string]any, 0, len(rows))
 	for _, r := range rows {
-		if n, ok := r["__inz_total"].(int64); ok {
-			total = int(n)
+		if n, ok := r["__inz_total"].(json.Number); ok {
+			if v, err := n.Int64(); err == nil {
+				total = int(v)
+			}
 		}
 		present := r["__inz_row"] != nil
 		delete(r, "__inz_total")

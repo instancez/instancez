@@ -255,7 +255,7 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 
 		applySchemaSearchPath(c, ctx, tx)
 
-		rows, err := tx.Query(ctx, query, args...)
+		rows, err := queryWireRows(ctx, tx, query, args...)
 		if err != nil {
 			h.logger.Error("query error", "table", tableName, "error", err)
 			handleDBError(c, err)
@@ -432,7 +432,7 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 		}
 
 		if returnMode == "representation" {
-			rows, err := tx.Query(ctx, query, args...)
+			rows, err := queryWireRows(ctx, tx, query, args...)
 			if err != nil {
 				handleDBError(c, err)
 				return
@@ -510,7 +510,7 @@ func (h *CRUDHandler) handleUpsert(tableName string, table domain.Table) gin.Han
 		}
 		query, args := postgrest.BuildBulkUpsertQuery(tableName, records, pkCols, "merge", returnMode == "representation")
 		if returnMode == "representation" {
-			rows, err := tx.Query(ctx, query, args...)
+			rows, err := queryWireRows(ctx, tx, query, args...)
 			if err != nil {
 				handleDBError(c, err)
 				return
@@ -578,7 +578,7 @@ func (h *CRUDHandler) handleUpdate(tableName string, table domain.Table) gin.Han
 		query, args := postgrest.BuildUpdateQuery(tableName, updates, where, returnMode == "representation")
 
 		if returnMode == "representation" {
-			rows, err := tx.Query(ctx, query, args...)
+			rows, err := queryWireRows(ctx, tx, query, args...)
 			if err != nil {
 				handleDBError(c, err)
 				return
@@ -590,7 +590,7 @@ func (h *CRUDHandler) handleUpdate(tableName string, table domain.Table) gin.Han
 			if !finishTx(c, tx, ctx, parseTxPrefer(prefer)) {
 				return
 			}
-			c.JSON(200, rows)
+			writeMutationResponse(c, 200, "representation", rows)
 		} else {
 			affected, err := tx.Exec(ctx, query, args...)
 			if err != nil {
@@ -649,7 +649,7 @@ func (h *CRUDHandler) handleDelete(tableName string, table domain.Table) gin.Han
 		query, args := postgrest.BuildDeleteQuery(tableName, where, returnMode == "representation")
 
 		if returnMode == "representation" {
-			rows, err := tx.Query(ctx, query, args...)
+			rows, err := queryWireRows(ctx, tx, query, args...)
 			if err != nil {
 				handleDBError(c, err)
 				return

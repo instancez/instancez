@@ -16,6 +16,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func unwrapWireSQL(q string) string {
+	pre, suf, _ := strings.Cut(wireRowsSQL(""), ")")
+	return strings.TrimSuffix(strings.TrimPrefix(q, pre), ")"+suf)
+}
+
+func wireStubRows(rows []map[string]any) []map[string]any {
+	if rows == nil {
+		return nil
+	}
+	out := make([]map[string]any, len(rows))
+	for i, r := range rows {
+		b, err := json.Marshal(r)
+		if err != nil {
+			panic(err)
+		}
+		out[i] = map[string]any{"_inz_row": string(b)}
+	}
+	return out
+}
+
 func listStatus(t *testing.T, method, rawQuery string, headers map[string]string, n int, total int64) *httptest.ResponseRecorder {
 	w, _ := listStatusSQL(t, method, rawQuery, headers, n, total)
 	return w
@@ -32,8 +52,8 @@ func listStatusSQL(t *testing.T, method, rawQuery string, headers map[string]str
 	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) {
 		return &stubTx{
 			queryFn: func(_ context.Context, q string, _ ...any) ([]map[string]any, error) {
-				sql = q
-				return rows, nil
+				sql = unwrapWireSQL(q)
+				return wireStubRows(rows), nil
 			},
 			queryRowFn: func(context.Context, string, ...any) (map[string]any, error) {
 				return map[string]any{"count": total}, nil
@@ -225,7 +245,7 @@ func rpcStatus(t *testing.T, method, rawQuery string, headers map[string]string,
 	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) {
 		return &stubTx{queryFn: func(_ context.Context, _ string, a ...any) ([]map[string]any, error) {
 			args = a
-			return rows, nil
+			return wireStubRows(rows), nil
 		}}, nil
 	}}
 	cfg := &domain.Config{RPC: map[string]domain.Function{"list": {
