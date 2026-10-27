@@ -17,7 +17,6 @@ Details: https://docs.instancez.ai/telemetry/
 
 The install script prints the same three lines after installing. The notice is not shown for `serve`, `version`, `telemetry`, `help`, or `completion`. The `telemetry`, `help`, and `completion` commands send nothing, not even `command_run`, and never create `~/.instancez/telemetry.json`.
 
-
 ## The hosted installer
 
 `curl -fsSL https://get.instancez.ai | sh` and the Windows one-liner are served by a small Cloudflare Worker. Each time it serves a script it sends one `install_script` event to the same PostHog project: the script type (`sh` or `ps1`), the `ref`, `utm_source` and `utm_campaign` query values, the request URL, the `Referer` header, and the first 100 characters of your `User-Agent`. It uses a random id per request, creates no person profile, and disables GeoIP lookup. The CLI opt-outs do not apply to it, since it runs before `inz` is installed. To skip it, download a binary from [GitHub Releases](https://github.com/instancez/instancez/releases).
