@@ -13,7 +13,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Changed
 
-- Breaking, `inz gen types`: the generated file is a runtime module because of `Constants`, so it cannot be a `.d.ts`. Scalar `rpc` returns lost `| null` and are `T`, as in Supabase; a SQL NULL still arrives as `null`. Relationships to `auth` or other schemas are dropped; only same-schema relationships remain.
+- Breaking, `inz gen types`: the generated file is a runtime module because of `Constants`, so it cannot be a `.d.ts`. Scalar `rpc` returns are now `T`, not `T | null`; a SQL NULL still arrives as `null`. Relationships to `auth` or other schemas are dropped; only same-schema relationships remain.
 
 ## [0.0.9] - 2026-10-18
 

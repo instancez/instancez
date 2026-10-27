@@ -51,19 +51,19 @@ Functions from `rpc:` are typed under `public`.
 
 - `void` returns `undefined`.
 - A scalar returns its mapped type `T`. A SQL NULL still arrives as `null`. `record`, composite and schema-qualified names are `unknown`.
-- `setof <table>` returns that table's `Row[]` plus `SetofOptions`; a leading `public.` is ignored. An unknown table name gives `Record<string, unknown>[]`.
+- `setof <table>` returns that table's `Row[]` plus `SetofOptions`; a leading `public.` is ignored. An unknown table name, or a schema-qualified name other than `public.`, gives `Record<string, unknown>[]`.
 - `setof <scalar>` returns `{ fn_name: T | null }[]`.
 - `table(...)` returns inline objects, with every field `| null`.
 
 ## Differences from Supabase
 
-- Enums are inline unions on the column. `Enums` stays empty, because the yaml creates a CHECK constraint, not a Postgres enum type.
+- `Enums` and `Constants.*.Enums` stay empty because instancez enums are CHECK constraints; columns use inline unions.
 - `setof <scalar>` returns `{ fn_name: T | null }[]`, which is the shape the REST layer sends.
 - `interval`, `time`, `bit`, geometric types and `tsvector` are `unknown`, because the REST layer returns objects for them, not strings.
 - Every relationship has `isOneToOne: false`, so a reverse embed is typed as an array. The server always returns an array for reverse embeds, even for a unique foreign key.
 - `rpc` functions appear only under `public`, where instancez creates them.
-- `Constants` always has an empty `Enums` per schema, and there is no `__InternalSupabase` block.
-- The `auth` and `storage` schemas are not typed. Relationships are same-schema only, so a foreign key to `auth.users.id` produces none.
+- No `__InternalSupabase` block.
+- `auth` and `storage` are not typed, so FKs to `auth.users.id` produce no relationship (Supabase does the same).
 - `functions:` (code functions) are not typed.
 
 ## Keep it in sync in CI

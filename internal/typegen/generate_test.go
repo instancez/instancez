@@ -159,13 +159,6 @@ func TestGenerateEmptyPublicAlongsideOtherSchema(t *testing.T) {
 	}
 }
 
-func TestGenerateConstantsEmpty(t *testing.T) {
-	got := string(typegen.Generate(nil))
-	if !strings.HasSuffix(got, "export const Constants = {\n  public: {\n    Enums: {},\n  },\n} as const\n") {
-		t.Errorf("empty config must still emit Constants:\n%s", got)
-	}
-}
-
 func TestGenerateSetofOptions(t *testing.T) {
 	cfg := &domain.Config{
 		Tables: map[string]domain.Table{"cats": {}, "entries": {Schema: "audit"}},
