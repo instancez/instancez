@@ -22,9 +22,6 @@ func unwrapWireSQL(q string) string {
 }
 
 func wireStubRows(rows []map[string]any) []map[string]any {
-	if rows == nil {
-		return nil
-	}
 	out := make([]map[string]any, len(rows))
 	for i, r := range rows {
 		b, err := json.Marshal(r)

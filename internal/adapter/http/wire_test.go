@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -68,13 +69,23 @@ func TestQueryWireRows_BadCells(t *testing.T) {
 		"nil cell":     {"_inz_row": nil},
 		"empty string": {"_inz_row": ""},
 		"trailing":     {"_inz_row": `{"a":1} {"b":2}`},
+		"null row":     {"_inz_row": "null"},
 	}
 	for name, row := range cases {
 		t.Run(name, func(t *testing.T) {
 			_, err := queryWireRows(context.Background(), &wireFakeTx{rows: []map[string]any{row}}, "SELECT 1")
 			require.Error(t, err)
+			assert.True(t, strings.HasPrefix(err.Error(), "decode wire row:"), err.Error())
 		})
 	}
+}
+
+func TestQueryWireRows_BadJSONWrapsCause(t *testing.T) {
+	_, err := queryWireRows(context.Background(), &wireFakeTx{rows: []map[string]any{{"_inz_row": "{bad"}}}, "SELECT 1")
+	require.Error(t, err)
+	var syn *json.SyntaxError
+	assert.ErrorAs(t, err, &syn)
+	assert.NotNil(t, errors.Unwrap(err))
 }
 
 func TestQueryWireRows_QueryErrorPassesThrough(t *testing.T) {

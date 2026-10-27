@@ -35,7 +35,10 @@ func queryWireRows(ctx context.Context, tx domain.Tx, sql string, args ...any) (
 			return nil, fmt.Errorf("decode wire row: %w", err)
 		}
 		if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-			return nil, fmt.Errorf("decode wire row: trailing data")
+			return nil, errors.New("decode wire row: trailing data")
+		}
+		if m == nil {
+			return nil, errors.New("decode wire row: null row")
 		}
 		rows = append(rows, m)
 	}

@@ -3,12 +3,11 @@
 package http_test
 
 import (
-	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -19,7 +18,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	instancezhttp "github.com/instancez/instancez/internal/adapter/http"
 	"github.com/instancez/instancez/internal/app"
 	"github.com/instancez/instancez/internal/domain"
 	"github.com/instancez/instancez/internal/testutil/dbboot"
@@ -65,6 +63,15 @@ var wireEdge = map[string]string{
 	"c_bytea": `''::bytea`, "c_jsonb": "'null'::jsonb", "c_date_arr": "'{}'",
 }
 
+const wirePairExpr = `ROW(1,'2024-01-02')::wire_pair`
+
+const wireMoreExprs = `1::oid, 'a'::"char", '(0,1)'::tid, '08:00:2b:01:02:03:04:05'::macaddr8, '[2024-01-01,2024-02-01)'::daterange, '{[1,3),[5,7)}'::int4multirange, ` + wirePairExpr
+
+var wireMoreCols = []struct{ name, expr string }{
+	{"o", "1::oid"}, {"c", `'a'::"char"`}, {"t", "'(0,1)'::tid"}, {"m", "'08:00:2b:01:02:03:04:05'::macaddr8"},
+	{"d", "'[2024-01-01,2024-02-01)'::daterange"}, {"mr", "'{[1,3),[5,7)}'::int4multirange"}, {"p", wirePairExpr},
+}
+
 func wireConfig() *domain.Config {
 	fields := []domain.Field{
 		{Name: "id", Type: "bigserial", PrimaryKey: true},
@@ -95,6 +102,8 @@ func wireConfig() *domain.Config {
 			"wire_date":  fn("date", "scalar", "SELECT '2024-01-02'::date"),
 			"wire_nan":   fn("double precision", "scalar", "SELECT 'NaN'::float8"),
 			"wire_json":  fn("jsonb", "scalar", `SELECT '{"n":12345678901234567890}'::jsonb`),
+			"wire_more":  fn(`table(o oid, c "char", t tid, m macaddr8, d daterange, mr int4multirange, p wire_pair)`, "setof", "SELECT "+wireMoreExprs),
+			"wire_pair":  fn("wire_pair", "scalar", "SELECT "+wirePairExpr),
 		},
 	}
 }
@@ -121,6 +130,98 @@ func wireDecode(t *testing.T, raw string) any {
 	return v
 }
 
+type wireEnv struct {
+	ts    *httptest.Server
+	owner domain.OwnerDB
+}
+
+func (e *wireEnv) call(t *testing.T, method, path, body string, headers map[string]string) (int, string) {
+	t.Helper()
+	h := map[string]string{"apikey": "inz_secret_wire"}
+	for k, v := range headers {
+		h[k] = v
+	}
+	code, _, raw := doJSON(t, method, e.ts.URL+path, body, h)
+	return code, raw
+}
+
+func (e *wireEnv) contentRange(t *testing.T, method, path, body string, headers map[string]string) (int, string, string) {
+	t.Helper()
+	req, err := http.NewRequest(method, e.ts.URL+path, strings.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("apikey", "inz_secret_wire")
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	return resp.StatusCode, resp.Header.Get("Content-Range"), string(raw)
+}
+
+func (e *wireEnv) oracle(t *testing.T, sql string, args ...any) any {
+	t.Helper()
+	rows, err := e.owner.Query(context.Background(), sql, args...)
+	require.NoError(t, err)
+	require.Len(t, rows, 1, sql)
+	text, ok := rows[0]["v"].(string)
+	require.True(t, ok, "%s: v is %T", sql, rows[0]["v"])
+	return wireDecode(t, text)
+}
+
+func (e *wireEnv) want(t *testing.T, col string, id any) any {
+	t.Helper()
+	// nosemgrep -- col comes from the fixed wireCols list
+	return e.oracle(t, fmt.Sprintf("SELECT coalesce(to_json(%s)::text,'null') AS v FROM wire_all WHERE id=$1", col), id)
+}
+
+func (e *wireEnv) assertRow(t *testing.T, row map[string]any, id int64) {
+	t.Helper()
+	assert.Equal(t, e.want(t, "parent_id", id), row["parent_id"], "id=%d col=parent_id", id)
+	for _, c := range wireCols {
+		assert.Equal(t, e.want(t, c.name, id), row[c.name], "id=%d col=%s", id, c.name)
+	}
+}
+
+func wireRows(t *testing.T, raw string) []map[string]any {
+	t.Helper()
+	list, ok := wireDecode(t, raw).([]any)
+	require.True(t, ok, raw)
+	out := make([]map[string]any, len(list))
+	for i, r := range list {
+		m, ok := r.(map[string]any)
+		require.True(t, ok, raw)
+		out[i] = m
+	}
+	return out
+}
+
+func wireObj(t *testing.T, raw string) map[string]any {
+	t.Helper()
+	m, ok := wireDecode(t, raw).(map[string]any)
+	require.True(t, ok, raw)
+	return m
+}
+
+func wireID(t *testing.T, row map[string]any) int64 {
+	t.Helper()
+	n, ok := row["id"].(json.Number)
+	require.True(t, ok, "id is %T", row["id"])
+	id, err := n.Int64()
+	require.NoError(t, err)
+	return id
+}
+
+func wireStr(t *testing.T, v any) string {
+	t.Helper()
+	s, ok := v.(string)
+	require.True(t, ok, "want string, got %T", v)
+	return s
+}
+
 func TestWireSerialization(t *testing.T) {
 	url := dbboot.StartRawContainer(t)
 	ctx := context.Background()
@@ -136,6 +237,8 @@ func TestWireSerialization(t *testing.T) {
 		_ = owner.Close()
 		_ = reqDB.Close()
 	})
+	_, err = owner.Exec(ctx, "CREATE TYPE wire_pair AS (a int, b date)")
+	require.NoError(t, err)
 	cfg := wireConfig()
 	require.NoError(t, app.NewMigrator(owner).Apply(ctx, cfg))
 
@@ -146,214 +249,191 @@ func TestWireSerialization(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	keys := app.NewJWTKeyManager(owner)
-	_, err = keys.Active(ctx)
-	require.NoError(t, err)
-	t.Setenv("INSTANCEZ_PUBLISHABLE_KEY", "inz_publishable_wire")
-	t.Setenv("INSTANCEZ_SECRET_KEY", "inz_secret_wire")
-	srv := instancezhttp.NewServer(instancezhttp.ServerDeps{
-		Config: cfg, DB: reqDB, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		DevMode: true, JWTKeys: keys,
-	})
-	ts := httptest.NewServer(srv.Handler())
-	t.Cleanup(ts.Close)
-
-	call := func(method, path, body string, headers map[string]string) (int, http.Header, string) {
-		t.Helper()
-		req, err := http.NewRequest(method, ts.URL+path, bytes.NewBufferString(body))
-		require.NoError(t, err)
-		req.Header.Set("apikey", "inz_secret_wire")
-		req.Header.Set("Content-Type", "application/json")
-		for k, v := range headers {
-			req.Header.Set(k, v)
-		}
-		resp, err := http.DefaultClient.Do(req)
-		require.NoError(t, err)
-		defer func() { _ = resp.Body.Close() }()
-		raw, err := io.ReadAll(resp.Body)
-		require.NoError(t, err)
-		return resp.StatusCode, resp.Header, string(raw)
-	}
+	e := &wireEnv{ts: bootServer(t, cfg, owner, reqDB, "wire"), owner: owner}
 	rep := map[string]string{"Prefer": "return=representation"}
 
-	want := func(col string, id any) any {
-		t.Helper()
-		rows, err := owner.Query(ctx, fmt.Sprintf("SELECT coalesce(to_json(%s)::text,'null') AS v FROM wire_all WHERE id=$1", col), id)
-		require.NoError(t, err)
-		require.Len(t, rows, 1, "%s id=%v", col, id)
-		return wireDecode(t, rows[0]["v"].(string))
-	}
-	allCols := []string{"parent_id"}
-	for _, c := range wireCols {
-		allCols = append(allCols, c.name)
-	}
-	assertRow := func(row map[string]any, id int64) {
-		t.Helper()
-		for _, col := range allCols {
-			assert.Equal(t, want(col, id), row[col], "id=%d col=%s", id, col)
-		}
-	}
-	rowsOf := func(raw string) []map[string]any {
-		t.Helper()
-		var out []map[string]any
-		for _, r := range wireDecode(t, raw).([]any) {
-			out = append(out, r.(map[string]any))
-		}
-		return out
-	}
-	idOf := func(row map[string]any) int64 {
-		n, err := row["id"].(json.Number).Int64()
-		require.NoError(t, err)
-		return n
-	}
-
 	t.Run("list matches to_json", func(t *testing.T) {
-		code, h, raw := call("GET", "/rest/v1/wire_all?order=id.desc", "", map[string]string{"Range": "0-1"})
+		code, cr, raw := e.contentRange(t, "GET", "/rest/v1/wire_all?order=id.desc", "", map[string]string{"Range": "0-1"})
 		require.Equal(t, 200, code, raw)
-		assert.Equal(t, "0-1/*", h.Get("Content-Range"))
-		rows := rowsOf(raw)
+		assert.Equal(t, "0-1/*", cr)
+		rows := wireRows(t, raw)
 		require.Len(t, rows, 2)
-		assert.EqualValues(t, 3, idOf(rows[0]))
-		assert.EqualValues(t, 2, idOf(rows[1]))
+		assert.EqualValues(t, 3, wireID(t, rows[0]))
+		assert.EqualValues(t, 2, wireID(t, rows[1]))
 		for _, r := range rows {
-			assertRow(r, idOf(r))
+			e.assertRow(t, r, wireID(t, r))
 		}
 	})
 
-	t.Run("typical row has exact and tz-shifted values", func(t *testing.T) {
-		code, _, raw := call("GET", "/rest/v1/wire_all?id=eq.1", "", nil)
+	t.Run("typical and edge rows", func(t *testing.T) {
+		code, raw := e.call(t, "GET", "/rest/v1/wire_all?id=eq.1", "", nil)
 		require.Equal(t, 200, code, raw)
-		row := rowsOf(raw)[0]
-		assertRow(row, 1)
-		assert.True(t, strings.HasSuffix(row["c_timestamptz"].(string), "+05:30"), row["c_timestamptz"])
-		assert.Equal(t, json.Number("9007199254740993"), row["c_bigint"])
-		assert.Equal(t, "2024-01-02", row["c_date"])
-		assert.Equal(t, "infinity", rowsOf(mustGet(t, call, "/rest/v1/wire_all?id=eq.2"))[0]["c_date"])
-		assert.Equal(t, "NaN", rowsOf(mustGet(t, call, "/rest/v1/wire_all?id=eq.2"))[0]["c_real"])
+		rows := wireRows(t, raw)
+		require.Len(t, rows, 1)
+		e.assertRow(t, rows[0], 1)
+		assert.True(t, strings.HasSuffix(wireStr(t, rows[0]["c_timestamptz"]), "+05:30"), rows[0]["c_timestamptz"])
+		assert.Equal(t, json.Number("9007199254740993"), rows[0]["c_bigint"])
+		assert.Equal(t, "2024-01-02", rows[0]["c_date"])
+
+		code, raw = e.call(t, "GET", "/rest/v1/wire_all?id=eq.2", "", nil)
+		require.Equal(t, 200, code, raw)
+		edge := wireRows(t, raw)
+		require.Len(t, edge, 1)
+		e.assertRow(t, edge[0], 2)
+		assert.Equal(t, "infinity", edge[0]["c_date"])
+		assert.Equal(t, "NaN", edge[0]["c_real"])
 	})
 
 	t.Run("single object", func(t *testing.T) {
-		code, _, raw := call("GET", "/rest/v1/wire_all?id=eq.1", "", map[string]string{"Accept": "application/vnd.pgrst.object+json"})
+		code, raw := e.call(t, "GET", "/rest/v1/wire_all?id=eq.1", "", map[string]string{"Accept": "application/vnd.pgrst.object+json"})
 		require.Equal(t, 200, code, raw)
-		assertRow(wireDecode(t, raw).(map[string]any), 1)
+		e.assertRow(t, wireObj(t, raw), 1)
 	})
 
-	t.Run("csv keeps arrays as json", func(t *testing.T) {
-		code, _, raw := call("GET", "/rest/v1/wire_all?id=eq.1&select=id,c_int_arr,c_jsonb", "", map[string]string{"Accept": "text/csv"})
+	t.Run("csv", func(t *testing.T) {
+		code, raw := e.call(t, "GET", "/rest/v1/wire_all?id=eq.1&select=id,c_int_arr,c_jsonb,c_timestamptz,c_boolean", "", map[string]string{"Accept": "text/csv"})
 		require.Equal(t, 200, code, raw)
-		assert.Contains(t, raw, `"[[1,2],[3,4]]"`)
-		assert.Contains(t, raw, "12345678901234567890")
+		recs, err := csv.NewReader(strings.NewReader(raw)).ReadAll()
+		require.NoError(t, err, raw)
+		require.Len(t, recs, 2)
+		cell := map[string]string{}
+		for i, name := range recs[0] {
+			cell[name] = recs[1][i]
+		}
+		assert.Equal(t, "[[1,2],[3,4]]", cell["c_int_arr"])
+		assert.Contains(t, cell["c_jsonb"], "12345678901234567890")
+		assert.Equal(t, "true", cell["c_boolean"])
+		assert.Equal(t, wireStr(t, e.want(t, "c_timestamptz", 1)), cell["c_timestamptz"])
 	})
 
 	t.Run("cast and aggregate", func(t *testing.T) {
-		code, _, raw := call("GET", "/rest/v1/wire_all?id=eq.1&select=c_date::text,c_timestamptz.max()", "", nil)
+		code, raw := e.call(t, "GET", "/rest/v1/wire_all?id=eq.1&select=c_date::text,c_timestamptz.max()", "", nil)
 		require.Equal(t, 200, code, raw)
-		row := rowsOf(raw)[0]
-		assert.Equal(t, "2024-01-02", row["c_date"])
-		rows, err := owner.Query(ctx, "SELECT to_json(max(c_timestamptz))::text AS v FROM wire_all WHERE id=1")
-		require.NoError(t, err)
-		assert.Equal(t, wireDecode(t, rows[0]["v"].(string)), row["max"])
+		rows := wireRows(t, raw)
+		require.Len(t, rows, 1)
+		assert.Equal(t, "2024-01-02", rows[0]["c_date"])
+		assert.Equal(t, e.oracle(t, "SELECT to_json(max(c_timestamptz))::text AS v FROM wire_all WHERE id=1"), rows[0]["max"])
 	})
 
 	t.Run("embeds", func(t *testing.T) {
-		code, _, raw := call("GET", "/rest/v1/wire_all?id=eq.1&select=id,...wire_parent(name)", "", nil)
+		code, raw := e.call(t, "GET", "/rest/v1/wire_all?id=eq.1&select=id,...wire_parent(name)", "", nil)
 		require.Equal(t, 200, code, raw)
 		assert.JSONEq(t, `[{"id":1,"name":"p1"}]`, raw)
 
-		code, _, raw = call("GET", "/rest/v1/wire_all?id=eq.1&select=id,wire_parent(big,amount)", "", nil)
+		code, raw = e.call(t, "GET", "/rest/v1/wire_all?id=eq.1&select=id,wire_parent(big,amount)", "", nil)
 		require.Equal(t, 200, code, raw)
-		parent := rowsOf(raw)[0]["wire_parent"].(map[string]any)
-		rows, err := owner.Query(ctx, "SELECT to_json(big)::text AS b, to_json(amount)::text AS a FROM wire_parent WHERE id=1")
-		require.NoError(t, err)
-		assert.Equal(t, wireDecode(t, rows[0]["b"].(string)), parent["big"])
-		assert.Equal(t, wireDecode(t, rows[0]["a"].(string)), parent["amount"])
+		rows := wireRows(t, raw)
+		require.Len(t, rows, 1)
+		parent, ok := rows[0]["wire_parent"].(map[string]any)
+		require.True(t, ok, raw)
+		assert.Equal(t, e.oracle(t, "SELECT to_json(big)::text AS v FROM wire_parent WHERE id=1"), parent["big"])
+		assert.Equal(t, e.oracle(t, "SELECT to_json(amount)::text AS v FROM wire_parent WHERE id=1"), parent["amount"])
 		assert.Equal(t, json.Number("123456789012345678901234567890.12345"), parent["amount"])
 	})
 
 	t.Run("alias named like the wrapper", func(t *testing.T) {
-		code, _, raw := call("GET", "/rest/v1/wire_all?id=eq.1&select=_inz_r:id", "", nil)
+		code, raw := e.call(t, "GET", "/rest/v1/wire_all?id=eq.1&select=_inz_r:id", "", nil)
 		require.Equal(t, 200, code, raw)
 		assert.JSONEq(t, `[{"_inz_r":1}]`, raw)
 	})
 
 	t.Run("insert upsert patch delete", func(t *testing.T) {
 		body := `{"id":10,"c_integer":5,"c_date":"2024-03-04","c_timestamptz":"2024-03-04T00:00:00Z","c_numeric":"12.50","c_bytea":"\\x0a0b","c_real":"NaN"}`
-		code, _, raw := call("POST", "/rest/v1/wire_all", body, rep)
+		code, raw := e.call(t, "POST", "/rest/v1/wire_all", body, rep)
 		require.Equal(t, 201, code, raw)
-		rows := rowsOf(raw)
+		rows := wireRows(t, raw)
 		require.Len(t, rows, 1)
-		assertRow(rows[0], 10)
+		e.assertRow(t, rows[0], 10)
 		assert.Equal(t, "2024-03-04", rows[0]["c_date"])
-		assert.True(t, strings.HasSuffix(rows[0]["c_timestamptz"].(string), "+05:30"), rows[0]["c_timestamptz"])
+		assert.True(t, strings.HasSuffix(wireStr(t, rows[0]["c_timestamptz"]), "+05:30"), rows[0]["c_timestamptz"])
 		assert.Equal(t, "NaN", rows[0]["c_real"])
 
-		code, _, raw = call("PUT", "/rest/v1/wire_all", `{"id":10,"c_integer":6,"c_date":"2024-03-05"}`, rep)
+		code, raw = e.call(t, "PUT", "/rest/v1/wire_all", `{"id":10,"c_integer":6,"c_date":"2024-03-05"}`, rep)
 		require.Equal(t, 200, code, raw)
-		rows = rowsOf(raw)
+		rows = wireRows(t, raw)
 		require.Len(t, rows, 1)
-		assertRow(rows[0], 10)
+		e.assertRow(t, rows[0], 10)
 		assert.Equal(t, "2024-03-05", rows[0]["c_date"])
 
-		code, _, raw = call("PATCH", "/rest/v1/wire_all?id=eq.10", `{"c_integer":7}`, rep)
+		code, raw = e.call(t, "PATCH", "/rest/v1/wire_all?id=eq.10", `{"c_integer":7}`, rep)
 		require.Equal(t, 200, code, raw)
-		rows = rowsOf(raw)
+		rows = wireRows(t, raw)
 		require.Len(t, rows, 1)
-		assertRow(rows[0], 10)
+		e.assertRow(t, rows[0], 10)
 
-		code, _, raw = call("PATCH", "/rest/v1/wire_all?id=eq.10", `{"c_integer":8}`, map[string]string{
+		code, raw = e.call(t, "PATCH", "/rest/v1/wire_all?id=eq.10", `{"c_integer":8}`, map[string]string{
 			"Prefer": "return=representation", "Accept": "application/vnd.pgrst.object+json",
 		})
 		require.Equal(t, 200, code, raw)
-		assertRow(wireDecode(t, raw).(map[string]any), 10)
+		e.assertRow(t, wireObj(t, raw), 10)
 
-		code, _, raw = call("PATCH", "/rest/v1/wire_all?id=eq.-1", `{"c_integer":1}`, rep)
+		code, raw = e.call(t, "PATCH", "/rest/v1/wire_all?id=eq.-1", `{"c_integer":1}`, rep)
 		require.Equal(t, 200, code, raw)
 		assert.JSONEq(t, `[]`, raw)
 
 		before := map[string]any{}
-		for _, col := range allCols {
-			before[col] = want(col, 10)
+		for _, c := range wireCols {
+			before[c.name] = e.want(t, c.name, 10)
 		}
-		code, _, raw = call("DELETE", "/rest/v1/wire_all?id=eq.10", "", rep)
+		code, raw = e.call(t, "DELETE", "/rest/v1/wire_all?id=eq.10", "", rep)
 		require.Equal(t, 200, code, raw)
-		rows = rowsOf(raw)
+		rows = wireRows(t, raw)
 		require.Len(t, rows, 1)
-		for _, col := range allCols {
-			assert.Equal(t, before[col], rows[0][col], col)
+		for _, c := range wireCols {
+			assert.Equal(t, before[c.name], rows[0][c.name], c.name)
 		}
 	})
 
 	t.Run("rpc setof with count", func(t *testing.T) {
-		code, h, raw := call("POST", "/rest/v1/rpc/wire_setof?limit=1", "{}", map[string]string{"Prefer": "count=exact"})
+		code, cr, raw := e.contentRange(t, "POST", "/rest/v1/rpc/wire_setof?limit=1", "{}", map[string]string{"Prefer": "count=exact", "apikey": "inz_secret_wire"})
 		require.Equal(t, 206, code, raw)
-		assert.Equal(t, "0-0/3", h.Get("Content-Range"))
-		rows := rowsOf(raw)
+		assert.Equal(t, "0-0/3", cr)
+		rows := wireRows(t, raw)
 		require.Len(t, rows, 1)
-		assertRow(rows[0], 1)
+		e.assertRow(t, rows[0], 1)
 	})
 
 	t.Run("rpc shapes", func(t *testing.T) {
-		code, _, raw := call("POST", "/rest/v1/rpc/wire_shape", "{}", nil)
+		code, raw := e.call(t, "POST", "/rest/v1/rpc/wire_shape", "{}", nil)
 		require.Equal(t, 200, code, raw)
 		assert.JSONEq(t, `[{"l":"[(0,0),(1,1)]","r":"[1,5)"}]`, raw)
 
-		code, _, raw = call("POST", "/rest/v1/rpc/wire_date", "{}", nil)
+		code, raw = e.call(t, "POST", "/rest/v1/rpc/wire_date", "{}", nil)
 		require.Equal(t, 200, code, raw)
 		assert.JSONEq(t, `"2024-01-02"`, raw)
 
-		code, _, raw = call("POST", "/rest/v1/rpc/wire_nan", "{}", nil)
+		code, raw = e.call(t, "POST", "/rest/v1/rpc/wire_nan", "{}", nil)
 		require.Equal(t, 200, code, raw)
 		assert.JSONEq(t, `"NaN"`, raw)
 
-		code, _, raw = call("POST", "/rest/v1/rpc/wire_json", "{}", nil)
+		code, raw = e.call(t, "POST", "/rest/v1/rpc/wire_json", "{}", nil)
 		require.Equal(t, 200, code, raw)
 		assert.Equal(t, `{"n":12345678901234567890}`, raw)
 	})
+
+	t.Run("rpc exotic types and composites", func(t *testing.T) {
+		code, raw := e.call(t, "POST", "/rest/v1/rpc/wire_more", "{}", nil)
+		require.Equal(t, 200, code, raw)
+		rows := wireRows(t, raw)
+		require.Len(t, rows, 1)
+		for _, c := range wireMoreCols {
+			// nosemgrep -- expr comes from the fixed wireMoreCols list
+			assert.Equal(t, e.oracle(t, "SELECT to_json("+c.expr+")::text AS v"), rows[0][c.name], c.name)
+		}
+		assert.Equal(t, "a", rows[0]["c"])
+		assert.Equal(t, "[2024-01-01,2024-02-01)", rows[0]["d"])
+		assert.JSONEq(t, `{"a":1,"b":"2024-01-02"}`, mustMarshal(t, rows[0]["p"]))
+
+		code, raw = e.call(t, "POST", "/rest/v1/rpc/wire_pair", "{}", nil)
+		require.Equal(t, 200, code, raw)
+		assert.JSONEq(t, `{"a":1,"b":"2024-01-02"}`, raw)
+		assert.Equal(t, e.oracle(t, "SELECT to_json("+wirePairExpr+")::text AS v"), wireDecode(t, raw))
+	})
 }
 
-func mustGet(t *testing.T, call func(method, path, body string, headers map[string]string) (int, http.Header, string), path string) string {
+func mustMarshal(t *testing.T, v any) string {
 	t.Helper()
-	code, _, raw := call("GET", path, "", nil)
-	require.Equal(t, 200, code, raw)
-	return raw
+	b, err := json.Marshal(v)
+	require.NoError(t, err)
+	return string(b)
 }

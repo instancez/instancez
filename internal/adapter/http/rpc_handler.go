@@ -236,8 +236,7 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 			}
 			// For scalar functions, PostgREST returns the bare value
 			// (number, string, bool, null) — not wrapped in an object.
-			// QueryRow returns a map[col]value; our SELECT aliases the
-			// call as the function name, so there's exactly one entry.
+			// Our SELECT aliases the call as the function name, so there's one entry.
 			if row == nil {
 				c.JSON(http.StatusOK, nil)
 				return
