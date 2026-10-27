@@ -21,7 +21,8 @@ const installPs1 = decode(installPs1B64)
 const CACHE = 'public, max-age=300'
 
 const POSTHOG_URL = 'https://us.i.posthog.com/capture/'
-const POSTHOG_KEY = 'phc_E3FjB3GLyaE5GzWf1mRqOGfq89VUFRuLNWR4s0bBIew'
+// Same project as the inz CLI telemetry (internal/telemetry APIKey).
+const POSTHOG_KEY = 'phc_pTBwgBY5a4f2TsTMBhsqonSmTAC8duxSjFscRUfpKdPK'
 
 export function trackInstall(request, url, os) {
   const params = Object.fromEntries(url.searchParams)

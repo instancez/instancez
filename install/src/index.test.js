@@ -84,3 +84,12 @@ test('installers print the same telemetry notice as the CLI', async () => {
     for (const l of lines) assert.ok(src.includes(l), `${f} missing: ${l}`)
   }
 })
+
+test('installer reports to the same PostHog project as the CLI', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const cli = await readFile(new URL('../../internal/telemetry/telemetry.go', import.meta.url), 'utf8')
+  const key = cli.match(/APIKey\s*=\s*"(phc_[^"]+)"/)?.[1]
+  assert.ok(key, 'CLI PostHog key not found')
+  const { calls } = await run('/')
+  assert.equal(calls[0].body.api_key, key)
+})
