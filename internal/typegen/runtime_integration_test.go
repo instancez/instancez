@@ -146,8 +146,8 @@ func TestTypegenRuntime(t *testing.T) {
 	}
 	for _, want := range []string{
 		"rt_void: {\n        Args: Record<PropertyKey, never>\n        Returns: undefined\n      }",
-		"rt_scalar: {\n        Args: Record<PropertyKey, never>\n        Returns: number | null\n      }",
-		"rt_setof_table: {\n        Args: Record<PropertyKey, never>\n        Returns: Database[\"public\"][\"Tables\"][\"rt_all\"][\"Row\"][]\n      }",
+		"rt_scalar: {\n        Args: Record<PropertyKey, never>\n        Returns: number\n      }",
+		"rt_setof_table: {\n        Args: Record<PropertyKey, never>\n        Returns: Database[\"public\"][\"Tables\"][\"rt_all\"][\"Row\"][]\n        SetofOptions: {\n          from: \"*\"\n          to: \"rt_all\"\n          isOneToOne: false\n          isSetofReturn: true\n        }\n      }",
 		"rt_setof_int: {\n        Args: Record<PropertyKey, never>\n        Returns: {\n          rt_setof_int: number | null\n        }[]\n      }",
 		"rt_table: {\n        Args: Record<PropertyKey, never>\n        Returns: {\n          a: number | null\n          b: string | null\n        }[]\n      }",
 		"  audit: {\n    Tables: {\n      rt_audit: {",

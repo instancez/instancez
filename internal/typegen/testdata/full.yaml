@@ -1,5 +1,8 @@
 version: 1
 tables:
+  users:
+    fields:
+      - {name: nickname, type: text}
   cats:
     fields:
       - {name: id, type: serial, primary_key: true}
@@ -41,6 +44,12 @@ tables:
       - {name: id, type: bigserial, primary_key: true}
       - {name: actor, foreign_key: {references: auth.users.id}}
       - {name: note, type: text}
+      - {name: post_id, foreign_key: {references: public.posts.id}}
+  audit_details:
+    schema: audit
+    fields:
+      - {name: id, type: bigserial, primary_key: true}
+      - {name: entry_id, foreign_key: {references: audit.audit_entries.id}}
 rpc:
   ping:
     returns: {type: void}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"embed"
 	"flag"
+	"maps"
 	"os"
 	"strings"
 	"testing"
@@ -153,6 +154,34 @@ func TestGenerateEmptyPublicAlongsideOtherSchema(t *testing.T) {
 	if !strings.Contains(got, "      x: {\n        Row: {}") {
 		t.Errorf("zero-field table missing:\n%s", got)
 	}
+	if !strings.HasSuffix(got, "export const Constants = {\n  public: {\n    Enums: {},\n  },\n  zeta: {\n    Enums: {},\n  },\n} as const\n") {
+		t.Errorf("Constants must list every schema at the end:\n%s", got)
+	}
+}
+
+func TestGenerateSetofOptions(t *testing.T) {
+	cfg := &domain.Config{
+		Tables: map[string]domain.Table{"cats": {}, "entries": {Schema: "audit"}},
+		RPC: map[string]domain.Function{
+			"tbl":     {ReturnCategory: "setof", Returns: domain.FuncReturn{Type: "setof cats"}},
+			"other":   {ReturnCategory: "setof", Returns: domain.FuncReturn{Type: "setof entries"}},
+			"scalar":  {ReturnCategory: "setof", Returns: domain.FuncReturn{Type: "setof int"}},
+			"cols":    {ReturnCategory: "setof", Returns: domain.FuncReturn{Type: "table(a int)"}},
+			"missing": {ReturnCategory: "setof", Returns: domain.FuncReturn{Type: "setof nope"}},
+		},
+	}
+	got := string(typegen.Generate(cfg))
+	opts := func(to string) string {
+		return "[]\n        SetofOptions: {\n          from: \"*\"\n          to: \"" + to + "\"\n          isOneToOne: false\n          isSetofReturn: true\n        }\n"
+	}
+	for fn, to := range map[string]string{"tbl": "cats", "other": "entries"} {
+		if !strings.Contains(got, opts(to)) {
+			t.Errorf("%s: SetofOptions missing:\n%s", fn, got)
+		}
+	}
+	if n := strings.Count(got, "SetofOptions"); n != 2 {
+		t.Errorf("SetofOptions count = %d, want 2 (scalar, table(...) and unresolved get none):\n%s", n, got)
+	}
 }
 
 func TestGenerateFull(t *testing.T) {
@@ -162,6 +191,7 @@ func TestGenerateFull(t *testing.T) {
 func TestGenerateRelationshipsNeverOneToOne(t *testing.T) {
 	// The server returns reverse embeds as arrays, so supabase-js must never see a one-to-one.
 	fk := &domain.ForeignKey{References: "parent.id"}
+	parent := domain.Table{Fields: []domain.Field{{Name: "id", PrimaryKey: true}}}
 	cases := map[string]domain.Field{
 		"plain":   {Name: "c", ForeignKey: fk},
 		"unique":  {Name: "c", ForeignKey: fk, Unique: true},
@@ -169,7 +199,7 @@ func TestGenerateRelationshipsNeverOneToOne(t *testing.T) {
 	}
 	for name, f := range cases {
 		t.Run(name, func(t *testing.T) {
-			cfg := &domain.Config{Tables: map[string]domain.Table{"child": {Fields: []domain.Field{f}}}}
+			cfg := &domain.Config{Tables: map[string]domain.Table{"child": {Fields: []domain.Field{f}}, "parent": parent}}
 			got := string(typegen.Generate(cfg))
 			if !strings.Contains(got, "isOneToOne: false\n") || strings.Contains(got, "isOneToOne: true") {
 				t.Errorf("want isOneToOne: false in:\n%s", got)
@@ -191,20 +221,63 @@ func TestGenerateRelationshipsEdge(t *testing.T) {
 	}
 }
 
+func TestGenerateRelationshipSchemaRules(t *testing.T) {
+	got := string(typegen.Generate(loadYAML(t, "full.yaml")))
+	rels := func(table string) string {
+		return between(t, got, "      "+table+": {\n", "\n      }\n")
+	}
+	if r := rels("audit_entries"); strings.Contains(r, "foreignKeyName") {
+		t.Errorf("cross-schema fk must be dropped:\n%s", r)
+	}
+	if r := rels("audit_details"); !strings.Contains(r, `foreignKeyName: "audit_details_entry_id_fkey"`) || !strings.Contains(r, `referencedRelation: "audit_entries"`) {
+		t.Errorf("same non-public schema fk must be kept:\n%s", r)
+	}
+	if r := rels("profiles"); strings.Contains(r, "user_id_fkey") {
+		t.Errorf("auth.users fk must be dropped even with a public users table:\n%s", r)
+	}
+}
+
+func TestGenerateRelationshipTargetRules(t *testing.T) {
+	child := func(ref string, auth *domain.Auth, extra map[string]domain.Table) string {
+		tables := map[string]domain.Table{"child": {Fields: []domain.Field{{Name: "c", ForeignKey: &domain.ForeignKey{References: ref}}}}}
+		maps.Copy(tables, extra)
+		return string(typegen.Generate(&domain.Config{Auth: auth, Tables: tables}))
+	}
+	if got := child("ghost.id", nil, nil); strings.Contains(got, "foreignKeyName") {
+		t.Errorf("missing target table must drop the relationship:\n%s", got)
+	}
+	users := map[string]domain.Table{"users": {Fields: []domain.Field{{Name: "id", PrimaryKey: true}}}}
+	for name, auth := range map[string]*domain.Auth{"auth on": {}, "auth off": nil} {
+		if got := child("users.id", auth, users); !strings.Contains(got, `referencedRelation: "users"`) {
+			t.Errorf("%s: declared public users table is a real same-schema target:\n%s", name, got)
+		}
+		if got := child("auth.users.id", auth, users); strings.Contains(got, "foreignKeyName") {
+			t.Errorf("%s: auth.users.id must be dropped even with a public users table:\n%s", name, got)
+		}
+	}
+	if got := child("users.id", &domain.Auth{}, nil); strings.Contains(got, "foreignKeyName") {
+		t.Errorf("auth on without a declared users table must drop the relationship:\n%s", got)
+	}
+	other := map[string]domain.Table{"p": {Schema: "other"}}
+	if got := child("p.id", nil, other); strings.Contains(got, "foreignKeyName") {
+		t.Errorf("target in another schema than the reference must be dropped:\n%s", got)
+	}
+}
+
 func TestGenerateFunctionRules(t *testing.T) {
 	cfg := loadYAML(t, "full.yaml")
 	got := string(typegen.Generate(cfg))
 	fn := func(name string) string {
-		return between(t, got, "      "+name+": {\n", "\n      }\n")
+		return between(t, got, "      "+name+": {\n", "\n      }\n") + "\n"
 	}
 	wants := map[string][]string{
-		"add_one":      {"n?: number", "Returns: number | null"},
-		"greet":        {"who: string\n", "loud?: boolean", "forced: string\n", "bare: string\n", "nullable?: string", "Returns: string | null"},
+		"add_one":      {"n?: number", "Returns: number\n"},
+		"greet":        {"who: string\n", "loud?: boolean", "forced: string\n", "bare: string\n", "nullable?: string", "Returns: string\n"},
 		"ping":         {"Args: Record<PropertyKey, never>", "Returns: undefined"},
 		"composite":    {"Returns: unknown"},
 		"qualified":    {"Returns: unknown"},
 		"rec":          {"Returns: unknown"},
-		"ints":         {"Returns: number[] | null"},
+		"ints":         {"Returns: number[]\n"},
 		"some_ids":     {"Returns: {\n          some_ids: number | null\n        }[]"},
 		"all_cats":     {`Returns: Database["public"]["Tables"]["cats"]["Row"][]`},
 		"public_cats":  {`Returns: Database["public"]["Tables"]["cats"]["Row"][]`},
@@ -233,7 +306,7 @@ func TestGenerateFunctionsEdge(t *testing.T) {
 		"f": {ReturnCategory: "scalar", Returns: domain.FuncReturn{Type: "text"}, Args: []domain.FuncArg{{Name: "a", Type: "text"}}},
 	}}
 	got := string(typegen.Generate(cfg))
-	if !strings.Contains(got, "a: string\n") || !strings.Contains(got, "Returns: string | null") {
+	if !strings.Contains(got, "a: string\n") || !strings.Contains(got, "Returns: string\n") {
 		t.Errorf("hand-built function wrong:\n%s", got)
 	}
 	empty := string(typegen.Generate(&domain.Config{RPC: map[string]domain.Function{}}))
@@ -272,7 +345,7 @@ func TestGenerateStringListWidthBoundary(t *testing.T) {
 	}{{55, false}, {56, true}} {
 		col := strings.Repeat("c", tc.n)
 		cfg := &domain.Config{Tables: map[string]domain.Table{"child": {Fields: []domain.Field{
-			{Name: col, ForeignKey: &domain.ForeignKey{References: "p.id"}}}}}}
+			{Name: col, ForeignKey: &domain.ForeignKey{References: "p.id"}}}}, "p": {}}}
 		got := string(typegen.Generate(cfg))
 		one := `            columns: ["` + col + `"]` + "\n"
 		if strings.Contains(got, one) == tc.broken {

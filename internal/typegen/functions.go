@@ -51,17 +51,20 @@ func (w *writer) returns(depth int, name string, fn domain.Function, tables map[
 		ts := tsType(target)
 		if tbl, ok := tables[target]; ok {
 			w.line(depth, "Returns: Database["+quoteString(tbl.EffectiveSchema())+`]["Tables"][`+quoteString(target)+`]["Row"][]`)
+			// Table names are unique across schemas, so `to` is the bare name.
+			w.line(depth, "SetofOptions: {")
+			w.line(depth+1, `from: "*"`)
+			w.line(depth+1, "to: "+quoteString(target))
+			w.line(depth+1, "isOneToOne: false")
+			w.line(depth+1, "isSetofReturn: true")
+			w.line(depth, "}")
 		} else if ts != "unknown" {
 			w.objectArray(depth, [][2]string{{name, ts}})
 		} else {
 			w.line(depth, "Returns: Record<string, unknown>[]")
 		}
 	default:
-		ts := tsType(t)
-		if ts != "unknown" {
-			ts += " | null"
-		}
-		w.line(depth, "Returns: "+ts)
+		w.line(depth, "Returns: "+tsType(t))
 	}
 }
 
@@ -117,13 +120,17 @@ type relationship struct {
 	refCol   string
 }
 
-func (w *writer) relationships(depth int, name string, fields []domain.Field) {
+func (w *writer) relationships(depth int, name string, t domain.Table, fields []domain.Field, cfg *domain.Config) {
 	var rels []relationship
 	for _, f := range fields {
 		if f.ForeignKey == nil {
 			continue
 		}
-		if _, tbl, col, err := domain.ParseFKReference(f.ForeignKey.References); err == nil {
+		schema, tbl, col, err := domain.ParseFKReference(f.ForeignKey.References)
+		if err != nil || schema != t.EffectiveSchema() {
+			continue
+		}
+		if target, ok := cfg.Tables[tbl]; ok && target.EffectiveSchema() == schema {
 			rels = append(rels, relationship{f, tbl, col})
 		}
 	}

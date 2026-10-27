@@ -21,7 +21,7 @@ const { data } = await supabase.from('todos').select('id, title') // typed rows
 await supabase.from('todos').insert({ title: 'ship it' })         // checked against Insert
 ```
 
-The output has the same shape as `supabase gen types typescript`: `Tables` with `Row`, `Insert`, `Update` and `Relationships`, plus the `Tables<>`, `TablesInsert<>` and `TablesUpdate<>` helpers.
+The output has the same shape as `supabase gen types typescript`: `Tables` with `Row`, `Insert`, `Update` and `Relationships`, plus the `Tables<>`, `TablesInsert<>` and `TablesUpdate<>` helpers and a `Constants` export. The file is a runtime module because of `Constants`, so name it `.ts`, not `.d.ts`.
 
 ## Flags
 
@@ -50,21 +50,21 @@ Types are matched case-insensitively. Parameters are ignored (`varchar(255)`, `n
 Functions from `rpc:` are typed under `public`.
 
 - `void` returns `undefined`.
-- A scalar returns its mapped type plus `| null`. `record`, composite and schema-qualified names are `unknown`.
-- `setof <table>` returns that table's `Row[]`; a leading `public.` is ignored. An unknown table name gives `Record<string, unknown>[]`.
+- A scalar returns its mapped type `T`. A SQL NULL still arrives as `null`. `record`, composite and schema-qualified names are `unknown`.
+- `setof <table>` returns that table's `Row[]` plus `SetofOptions`; a leading `public.` is ignored. An unknown table name, or a schema-qualified name other than `public.`, gives `Record<string, unknown>[]`.
 - `setof <scalar>` returns `{ fn_name: T | null }[]`.
 - `table(...)` returns inline objects, with every field `| null`.
 
 ## Differences from Supabase
 
-- Enums are inline unions on the column. `Enums` stays empty, because the yaml creates a CHECK constraint, not a Postgres enum type.
-- A scalar `rpc` return is typed `T | null`, since a function can return NULL. Supabase omits the `| null`.
+- `Enums` and `Constants.*.Enums` stay empty because instancez enums are CHECK constraints; columns use inline unions.
 - `setof <scalar>` returns `{ fn_name: T | null }[]`, which is the shape the REST layer sends.
 - `interval`, `time`, `bit`, geometric types and `tsvector` are `unknown`, because the REST layer returns objects for them, not strings.
 - Every relationship has `isOneToOne: false`, so a reverse embed is typed as an array. The server always returns an array for reverse embeds, even for a unique foreign key.
 - `rpc` functions appear only under `public`, where instancez creates them.
-- There is no `Constants` export and no `__InternalSupabase` block.
-- The `auth` and `storage` schemas are not typed. Foreign keys to `auth.users.id` still produce a relationship.
+- No `__InternalSupabase` block.
+- Embeds across schemas work at runtime, since the server serves them, but are not typed because relationships are same-schema only. Cast the result to type them.
+- `auth` and `storage` are not typed, so FKs to `auth.users.id` produce no relationship (Supabase does the same).
 - `functions:` (code functions) are not typed.
 
 ## Keep it in sync in CI

@@ -190,13 +190,6 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "everything_owner_id_fkey"
-            columns: ["owner_id"]
-            isOneToOne: false
-            referencedRelation: "users"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "everything_ref_id_fkey"
             columns: ["ref_id"]
             isOneToOne: false
@@ -411,3 +404,12 @@ export type CompositeTypes<
   : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema["CompositeTypes"]
     ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
     : never
+
+export const Constants = {
+  audit: {
+    Enums: {},
+  },
+  public: {
+    Enums: {},
+  },
+} as const
