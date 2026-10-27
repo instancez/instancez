@@ -67,7 +67,7 @@ Exits 1 when a finding is at or above --fail-on (default high).`,
 				}
 			}
 			if failed {
-				return errReported
+				return reported("vet")
 			}
 			return nil
 		},

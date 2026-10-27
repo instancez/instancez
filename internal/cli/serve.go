@@ -91,7 +91,7 @@ func runServe(opts serveOptions) error {
 			preflight.ConfigValidCheck(opts.configPath),
 		}); failed {
 			fmt.Fprintf(os.Stderr, "  ✗ %s — %s\n    hint: %s\n", r.Name, r.Detail, r.FixHint)
-			return errReported
+			return reported("preflight:" + r.Name)
 		}
 
 		if err := requireConfigFile(opts.configPath); err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -17,9 +18,9 @@ const ownerRole = "instancez_owner"
 // passwordFromDSN extracts the password component from a Postgres DSN URL.
 // Returns an empty string (no error) when no password is present.
 func passwordFromDSN(rawURL string) (string, error) {
-	u, err := url.Parse(rawURL)
+	u, err := parseDSN(rawURL)
 	if err != nil {
-		return "", fmt.Errorf("parse DSN: %w", err)
+		return "", err
 	}
 	pass, _ := u.User.Password()
 	return pass, nil
@@ -149,13 +150,26 @@ func randomPassword() (string, error) {
 // withUserPass returns rawURL rewritten with the given userinfo and explicit
 // /dbname path.
 func withUserPass(rawURL, user, pass, dbName string) (string, error) {
-	u, err := url.Parse(rawURL)
+	u, err := parseDSN(rawURL)
 	if err != nil {
-		return "", fmt.Errorf("parse DSN: %w", err)
+		return "", err
 	}
 	u.User = url.UserPassword(user, pass)
 	u.Path = "/" + dbName
 	return u.String(), nil
+}
+
+// parseDSN drops the raw URL from parse errors so credentials never reach logs or telemetry.
+func parseDSN(rawURL string) (*url.URL, error) {
+	u, err := url.Parse(rawURL)
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		err = ue.Err
+	}
+	if err != nil {
+		return nil, fmt.Errorf("parse DSN: %w", err)
+	}
+	return u, nil
 }
 
 func firstSQLLine(s string) string {

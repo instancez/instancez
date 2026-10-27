@@ -36,7 +36,7 @@ func runDoctor(configPath string) error {
 	preflight.Render(os.Stdout, results)
 
 	if preflight.AnyFailed(results) {
-		return errReported
+		return reported("doctor")
 	}
 	return nil
 }

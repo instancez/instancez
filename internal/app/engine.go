@@ -60,6 +60,11 @@ type Engine struct {
 	// the function runtime when the functions bundle version changes. It runs on
 	// the watcher goroutine and must not block for long.
 	onFunctionReload func(*domain.Config)
+
+	// onReady fires once after the HTTP server goroutine starts.
+	onReady func()
+	// onRuntimeError fires for each failure the engine survives, never for returned errors.
+	onRuntimeError func(error)
 }
 
 type Mode int
@@ -98,6 +103,18 @@ func WithOTelShutdown(fn func(context.Context) error) EngineOption {
 // the function runtime on a bundle version change.
 func WithFunctionReload(fn func(*domain.Config)) EngineOption {
 	return func(e *Engine) { e.onFunctionReload = fn }
+}
+
+func WithOnReady(fn func()) EngineOption { return func(e *Engine) { e.onReady = fn } }
+
+func WithOnRuntimeError(fn func(error)) EngineOption {
+	return func(e *Engine) { e.onRuntimeError = fn }
+}
+
+func (e *Engine) reportRuntimeError(err error) {
+	if e.onRuntimeError != nil {
+		e.onRuntimeError(err)
+	}
 }
 
 func NewEngine(cfg *domain.Config, ownerDB domain.OwnerDB, authDB domain.RequestDB, roles domain.Roles, opts ...EngineOption) *Engine {
@@ -205,6 +222,9 @@ func (e *Engine) applyMigrationsWithFallback(ctx context.Context) (*DriftTracker
 			"reason", applyErr.Error(),
 			"running_applied_at", last.AppliedAt,
 		)
+		if !errors.Is(applyErr, ErrDestructive) {
+			e.reportRuntimeError(applyErr)
+		}
 		e.mu.Lock()
 		e.cfg = &goodCfg
 		e.mu.Unlock()
@@ -252,6 +272,7 @@ func (e *Engine) runWatcher(ctx context.Context, interval time.Duration) {
 			cfg, err := config.ParseBytes(ev.Data, e.source.Describe())
 			if err != nil {
 				e.logger.Error("config reload: parse failed", "error", err)
+				e.reportRuntimeError(err)
 				if d := e.Drift(); d != nil {
 					d.MarkDrift(versionChecksum(ev.Data), err.Error(), time.Now())
 				}
@@ -259,6 +280,7 @@ func (e *Engine) runWatcher(ctx context.Context, interval time.Duration) {
 			}
 			if errs := config.Validate(cfg); errs != nil {
 				e.logger.Error("config reload: validation failed", "count", len(errs))
+				e.reportRuntimeError(errs)
 				if d := e.Drift(); d != nil {
 					msg := errs[0].Path + ": " + errs[0].Message
 					d.MarkDrift(versionChecksum(ev.Data), msg, time.Now())
@@ -272,10 +294,12 @@ func (e *Engine) runWatcher(ctx context.Context, interval time.Duration) {
 			tracker, err := e.applyMigrationsWithFallback(ctx)
 			if err != nil {
 				e.logger.Error("config reload: migration unrecoverable", "error", err)
+				e.reportRuntimeError(err)
 				continue
 			}
 			if err := e.migrator.Harden(ctx, e.Config()); err != nil {
 				e.logger.Error("config reload: harden failed", "error", err)
+				e.reportRuntimeError(err)
 			}
 			e.mu.Lock()
 			e.drift = tracker
@@ -376,6 +400,11 @@ func (e *Engine) Start(ctx context.Context) error {
 				srvErrCh <- err
 			}
 		}()
+	}
+
+	if e.onReady != nil {
+		// ponytail: fires before the listener binds; hook Server.Start after listen if exactness matters.
+		e.onReady()
 	}
 
 	// 4. Start config source watcher

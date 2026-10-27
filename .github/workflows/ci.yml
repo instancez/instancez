@@ -354,7 +354,7 @@ jobs:
               [ "$os" = "windows" ] && ext=".exe"
               out="dist/inz_${VERSION}_${os}_${arch}${ext}"
               CGO_ENABLED=0 GOOS=$os GOARCH=$arch \
-                go build -ldflags "$LDFLAGS" -o "$out" ./cmd/inz
+                go build -trimpath -ldflags "$LDFLAGS" -o "$out" ./cmd/inz
               # Stable, version-less copy so the installer can pull a fixed URL:
               # github.com/instancez/instancez/releases/latest/download/inz_<os>_<arch>
               cp "$out" "dist/inz_${os}_${arch}${ext}"
