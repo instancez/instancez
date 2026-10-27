@@ -63,7 +63,7 @@ func columnMembers(f domain.Field, typ string, nullable bool) []string {
 	return members
 }
 
-func (w *writer) table(name string, t domain.Table, resolve domain.FieldResolver) {
+func (w *writer) table(name string, t domain.Table, cfg *domain.Config, resolve domain.FieldResolver) {
 	fields := slices.Clone(t.Fields)
 	slices.SortFunc(fields, func(a, b domain.Field) int { return strings.Compare(a.Name, b.Name) })
 	w.line(3, key(name)+": {")
@@ -93,7 +93,7 @@ func (w *writer) table(name string, t domain.Table, resolve domain.FieldResolver
 		}
 		w.line(4, "}")
 	}
-	w.relationships(4, name, fields)
+	w.relationships(4, name, t, fields, cfg)
 	w.line(3, "}")
 }
 
@@ -121,7 +121,7 @@ func Generate(cfg *domain.Config) []byte {
 		} else {
 			w.line(2, "Tables: {")
 			for _, n := range names {
-				w.table(n, cfg.Tables[n], resolve)
+				w.table(n, cfg.Tables[n], cfg, resolve)
 			}
 			w.line(2, "}")
 		}

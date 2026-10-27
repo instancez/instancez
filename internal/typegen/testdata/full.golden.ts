@@ -9,31 +9,49 @@ export type Json =
 export type Database = {
   audit: {
     Tables: {
+      audit_details: {
+        Row: {
+          entry_id: number | null
+          id: number
+        }
+        Insert: {
+          entry_id?: number | null
+          id?: number
+        }
+        Update: {
+          entry_id?: number | null
+          id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "audit_details_entry_id_fkey"
+            columns: ["entry_id"]
+            isOneToOne: false
+            referencedRelation: "audit_entries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       audit_entries: {
         Row: {
           actor: string | null
           id: number
           note: string | null
+          post_id: number | null
         }
         Insert: {
           actor?: string | null
           id?: number
           note?: string | null
+          post_id?: number | null
         }
         Update: {
           actor?: string | null
           id?: number
           note?: string | null
+          post_id?: number | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "audit_entries_actor_fkey"
-            columns: ["actor"]
-            isOneToOne: false
-            referencedRelation: "users"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
     }
     Views: {
@@ -184,13 +202,6 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "posts_author_id_fkey"
-            columns: ["author_id"]
-            isOneToOne: false
-            referencedRelation: "users"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "posts_cat_id_fkey"
             columns: ["cat_id"]
             isOneToOne: false
@@ -234,13 +245,6 @@ export type Database = {
             referencedRelation: "cats"
             referencedColumns: ["id"]
           },
-          {
-            foreignKeyName: "profiles_user_id_fkey"
-            columns: ["user_id"]
-            isOneToOne: false
-            referencedRelation: "users"
-            referencedColumns: ["id"]
-          },
         ]
       }
       tags: {
@@ -255,6 +259,18 @@ export type Database = {
         }
         Relationships: []
       }
+      users: {
+        Row: {
+          nickname: string | null
+        }
+        Insert: {
+          nickname?: string | null
+        }
+        Update: {
+          nickname?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -264,7 +280,7 @@ export type Database = {
         Args: {
           n?: number
         }
-        Returns: number | null
+        Returns: number
       }
       all_cats: {
         Args: Record<PropertyKey, never>
@@ -282,11 +298,11 @@ export type Database = {
           nullable?: string
           who: string
         }
-        Returns: string | null
+        Returns: string
       }
       ints: {
         Args: Record<PropertyKey, never>
-        Returns: number[] | null
+        Returns: number[]
       }
       long_table_col: {
         Args: Record<PropertyKey, never>

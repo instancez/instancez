@@ -57,11 +57,7 @@ func (w *writer) returns(depth int, name string, fn domain.Function, tables map[
 			w.line(depth, "Returns: Record<string, unknown>[]")
 		}
 	default:
-		ts := tsType(t)
-		if ts != "unknown" {
-			ts += " | null"
-		}
-		w.line(depth, "Returns: "+ts)
+		w.line(depth, "Returns: "+tsType(t))
 	}
 }
 
@@ -117,13 +113,17 @@ type relationship struct {
 	refCol   string
 }
 
-func (w *writer) relationships(depth int, name string, fields []domain.Field) {
+func (w *writer) relationships(depth int, name string, t domain.Table, fields []domain.Field, cfg *domain.Config) {
 	var rels []relationship
 	for _, f := range fields {
 		if f.ForeignKey == nil {
 			continue
 		}
-		if _, tbl, col, err := domain.ParseFKReference(f.ForeignKey.References); err == nil {
+		schema, tbl, col, err := domain.ParseFKReference(f.ForeignKey.References)
+		if err != nil || schema != t.EffectiveSchema() || (cfg.Auth != nil && tbl == "users") {
+			continue
+		}
+		if target, ok := cfg.Tables[tbl]; ok && target.EffectiveSchema() == schema {
 			rels = append(rels, relationship{f, tbl, col})
 		}
 	}
