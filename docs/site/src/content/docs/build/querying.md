@@ -506,7 +506,7 @@ Rows are serialized by Postgres `to_json`, as in PostgREST. This applies to list
 | `bit`, geometric, `tsvector`, ranges | Postgres text |
 | `geometry` (PostGIS) | GeoJSON object |
 
-Keys follow the select list. A `json` column keeps its stored text, while Postgres sorts `jsonb` keys. A `timestamp` has no offset, so JS `new Date()` reads it as local time. Use `timestamptz` for instants.
+Keys follow the select list; embedded resources come after the plain columns. A `json` column keeps its stored text, while Postgres sorts `jsonb` keys. A `timestamp` has no offset, so JS `new Date()` reads it as local time. Use `timestamptz` for instants.
 
 ## CSV output
 

@@ -19,7 +19,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
   - `date` is `"2024-01-02"` (was `"2024-01-02T00:00:00Z"`).
   - A `PATCH` with `return=representation` that matches no rows returns `[]` (was `null`), and honours `Accept: application/vnd.pgrst.object+json` when exactly one row matches.
   - Float `NaN` and `Infinity` are strings (the response was an empty 200).
-  - JSON object keys follow the select list (were alphabetical), and `json` columns keep their stored text.
+  - JSON object keys follow the select list (were alphabetical), and `json` columns keep their stored text. `<`, `>`, `&` and U+2028/2029 are no longer escaped in JSON bodies, as in PostgREST (RPC `count=exact` still escapes U+2028/2029).
   - Run `inz gen types` again: `interval` and `time` are now `string`.
 - Breaking, `inz gen types`: the generated file is a runtime module because of `Constants`, so it cannot be a `.d.ts`. Scalar `rpc` returns are now `T`, not `T | null`; a SQL NULL still arrives as `null`. Relationships to `auth` or other schemas are dropped; only same-schema relationships remain.
 

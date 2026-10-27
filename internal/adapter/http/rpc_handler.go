@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -890,11 +891,13 @@ func splitRawRPCTotal(raw []json.RawMessage) ([]json.RawMessage, int, error) {
 	kept, total := splitRPCTotal(decoded)
 	out := make([]json.RawMessage, 0, len(kept))
 	for _, r := range kept {
-		b, err := json.Marshal(r)
-		if err != nil {
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(r); err != nil {
 			return nil, -1, err
 		}
-		out = append(out, b)
+		out = append(out, bytes.TrimSuffix(buf.Bytes(), []byte("\n")))
 	}
 	return out, total, nil
 }

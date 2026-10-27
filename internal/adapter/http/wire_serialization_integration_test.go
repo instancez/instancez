@@ -343,6 +343,14 @@ func TestWireSerialization(t *testing.T) {
 		assert.Equal(t, `[{"c_text":"k","id":4,"c_json":{"b":1,"a":2},"c_jsonb":{"a": 2, "b": 1}}]`, raw)
 	})
 
+	t.Run("embeds come after plain columns", func(t *testing.T) {
+		code, raw := e.call(t, "GET", "/rest/v1/wire_all?id=eq.1&select=c_text,wire_parent(name),id", "", nil)
+		require.Equal(t, 200, code, raw)
+		assert.Contains(t, raw, "<a>", "no HTML escaping")
+		assert.Less(t, strings.Index(raw, `"id"`), strings.Index(raw, `"wire_parent"`), raw)
+		assert.Less(t, strings.Index(raw, `"c_text"`), strings.Index(raw, `"id"`), raw)
+	})
+
 	t.Run("alias named like the wrapper", func(t *testing.T) {
 		code, raw := e.call(t, "GET", "/rest/v1/wire_all?id=eq.1&select=_inz_r:id", "", nil)
 		require.Equal(t, 200, code, raw)

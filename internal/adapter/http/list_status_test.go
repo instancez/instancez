@@ -398,3 +398,31 @@ func TestHandleList_RawJSONBody(t *testing.T) {
 	w = listStatus(t, "GET", "", map[string]string{"Accept": "application/vnd.pgrst.object+json"}, 1, 0)
 	assert.Equal(t, `{"id":0}`, w.Body.String())
 }
+
+func TestHandleList_GeoJSONFeatures(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) {
+		return &stubTx{
+			queryFn: func(context.Context, string, ...any) ([]map[string]any, error) {
+				return wireStubRows([]map[string]any{{"id": 7, "name": "a", "geom": map[string]any{"type": "Point", "coordinates": []any{1, 2}}}}), nil
+			},
+			queryRowFn: func(context.Context, string, ...any) (map[string]any, error) {
+				return map[string]any{"?column?": int32(1)}, nil
+			},
+		}, nil
+	}}
+	table := domain.Table{Fields: []domain.Field{
+		{Name: "id", Type: "bigserial", PrimaryKey: true},
+		{Name: "name", Type: "text"},
+		{Name: "geom", Type: "geometry(Point,4326)"},
+	}}
+	h := &CRUDHandler{cfg: &domain.Config{}, db: db, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/rest/v1/places", nil)
+	c.Request.Header.Set("Accept", "application/geo+json")
+	c.Set(contextKeySession, domain.Session{Role: "service_role", IsAuthenticated: true})
+	h.handleList("places", table)(c)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.JSONEq(t, `{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[1,2]},"properties":{"id":7,"name":"a"}}]}`, w.Body.String())
+}

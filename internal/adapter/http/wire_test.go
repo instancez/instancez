@@ -123,3 +123,15 @@ func TestQueryWireRaw_BadCells(t *testing.T) {
 		})
 	}
 }
+
+func TestSplitRawRPCTotal_NoHTMLEscape(t *testing.T) {
+	raw := []json.RawMessage{json.RawMessage(`{"s":"<a> & b","__inz_total":3,"__inz_row":true,"__inz_rn":1}`)}
+	out, total, err := splitRawRPCTotal(raw)
+	require.NoError(t, err)
+	assert.Equal(t, 3, total)
+	require.Len(t, out, 1)
+	assert.Equal(t, `{"s":"<a> & b"}`, string(out[0]))
+
+	_, _, err = splitRawRPCTotal([]json.RawMessage{json.RawMessage("{bad")})
+	require.Error(t, err)
+}

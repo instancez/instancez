@@ -27,10 +27,7 @@ func queryWireRaw(ctx context.Context, tx domain.Tx, sql string, args ...any) ([
 	}
 	rows := make([]json.RawMessage, 0, len(raw))
 	for _, r := range raw {
-		text, ok := r["_inz_row"].(string)
-		if !ok {
-			return nil, fmt.Errorf("decode wire row: _inz_row is %T, want string", r["_inz_row"])
-		}
+		text, _ := r["_inz_row"].(string)
 		if !strings.HasPrefix(text, "{") {
 			return nil, errors.New("decode wire row: cell is not a JSON object")
 		}
