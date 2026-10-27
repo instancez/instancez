@@ -58,14 +58,14 @@ func TestTelemetryCmdDisableEnable(t *testing.T) {
 	if err != nil || !strings.Contains(string(b), `"disabled":true`) {
 		t.Fatalf("state after disable = %s, %v", b, err)
 	}
-	if out := statusOut(t, home); !strings.Contains(out, "disabled (disabled by inz telemetry disable)") {
+	if out := statusOut(t, home); !strings.Contains(out, "disabled (disabled by inz telemetry disable)") || strings.Contains(out, "Disable:") {
 		t.Errorf("status = %q", out)
 	}
 
 	if _, _, code := runCLI(t, home, nil, "telemetry", "enable"); code != 0 {
 		t.Fatalf("enable exit %d", code)
 	}
-	if out := statusOut(t, home); !strings.HasPrefix(out, "enabled") || !strings.Contains(out, "anonymous id: ") {
+	if out := statusOut(t, home); !strings.HasPrefix(out, "enabled") || !strings.Contains(out, "anonymous id: ") || !strings.Contains(out, "Disable: inz telemetry disable") {
 		t.Errorf("status = %q", out)
 	}
 }
@@ -175,13 +175,13 @@ func TestServeSendsNoUsage(t *testing.T) {
 	if len(events) != 0 {
 		t.Errorf("serve sent events: %v", events)
 	}
-	if strings.Contains(stderr, "anonymous usage data") {
+	if strings.Contains(stderr, "anonymous usage and error data") {
 		t.Error("serve printed the notice")
 	}
 }
 
 func TestNoticeShownOnceAndSkipped(t *testing.T) {
-	const notice = "anonymous usage data"
+	const notice = "anonymous usage and error data"
 	for _, args := range [][]string{{"version"}, {"telemetry", "status"}, {"--help"}, {"help"}} {
 		if out, _, _ := runCLI(t, t.TempDir(), nil, args...); strings.Contains(out, notice) {
 			t.Errorf("%v printed the notice", args)
@@ -198,7 +198,7 @@ func TestNoticeShownOnceAndSkipped(t *testing.T) {
 
 func TestNoTelemetryFlagSendsNothing(t *testing.T) {
 	stderr, events, _ := runCLI(t, t.TempDir(), map[string]string{"INSTANCEZ_TELEMETRY_DEBUG": "1"}, "version", "--no-telemetry")
-	if len(events) != 0 || strings.Contains(stderr, "anonymous usage data") {
+	if len(events) != 0 || strings.Contains(stderr, "anonymous usage and error data") {
 		t.Errorf("flag leaked: %q", stderr)
 	}
 }
@@ -233,7 +233,7 @@ func TestPreRunFailuresAreReported(t *testing.T) {
 			if run.Props["error_class"] != c.class {
 				t.Errorf("class = %v", run.Props["error_class"])
 			}
-			if !strings.Contains(stderr, "anonymous usage data") {
+			if !strings.Contains(stderr, "anonymous usage and error data") {
 				t.Error("notice must show before the first capture")
 			}
 		})
@@ -298,7 +298,7 @@ func mustJSON(v any) []byte { b, _ := json.Marshal(v); return b }
 func TestTelemetryCommandsReportNothing(t *testing.T) {
 	for _, args := range [][]string{{"telemetry", "disable"}, {"telemetry", "enable"}, {"telemetry", "status"}} {
 		stderr, events, code := runCLI(t, t.TempDir(), debugEnv, args...)
-		if code != 0 || len(events) != 0 || strings.Contains(stderr, "anonymous usage data") {
+		if code != 0 || len(events) != 0 || strings.Contains(stderr, "anonymous usage and error data") {
 			t.Errorf("%v: code=%d events=%v stderr=%q", args, code, events, stderr)
 		}
 	}

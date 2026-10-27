@@ -24,8 +24,10 @@ const (
 	prodHost      = "https://us.i.posthog.com"
 	flushCap      = 2 * time.Second
 	sourceBuild   = "source build"
-	notice        = "inz collects anonymous usage data to improve the CLI.\nDisable: inz telemetry disable  (or INSTANCEZ_TELEMETRY_DISABLED=1)\nDetails: https://docs.instancez.ai/telemetry/\n"
+	notice        = "inz collects anonymous usage and error data to improve the CLI.\n" + DisableHint + "\nDetails: https://docs.instancez.ai/telemetry/\n"
 	disabledByCmd = "disabled by inz telemetry disable"
+	// DisableHint is the one-line opt-out instruction shown wherever telemetry is on.
+	DisableHint = "Disable: inz telemetry disable  (or INSTANCEZ_TELEMETRY_DISABLED=1)"
 )
 
 var agentEnvVars = []string{"CLAUDECODE", "CURSOR_AGENT", "GEMINI_CLI", "CODEX_SANDBOX"}

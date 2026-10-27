@@ -116,7 +116,7 @@ func TestNoticeOnce(t *testing.T) {
 	c2 := Init(Options{Version: "1.0.0", Home: home, Stderr: buf, Getenv: func(string) string { return "" }})
 	c2.MaybeShowNotice()
 	out := buf.String()
-	if n := strings.Count(out, "inz collects anonymous usage data"); n != 1 {
+	if n := strings.Count(out, "inz collects anonymous usage and error data"); n != 1 {
 		t.Fatalf("notice count = %d in %q", n, out)
 	}
 	for _, want := range []string{"Disable: inz telemetry disable  (or INSTANCEZ_TELEMETRY_DISABLED=1)", "Details: https://docs.instancez.ai/telemetry/"} {

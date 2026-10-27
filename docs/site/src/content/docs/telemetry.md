@@ -3,19 +3,19 @@ title: Telemetry
 description: What the inz CLI sends, what it never sends, crash reports, and how to turn it all off.
 ---
 
-The `inz` CLI sends anonymous usage data to help the instancez team see where people get stuck. It is on by default. You can turn it off with one command. This page lists everything it sends.
+The `inz` CLI sends anonymous usage and error data to help the instancez team see where people get stuck. It is on by default. You can turn it off with one command. This page lists everything it sends.
 
 Telemetry comes from the CLI process only. The running server never reports request or user data. `dev_ready` does send table and function counts.
 
 The first time you run a command with telemetry on, `inz` prints this once to stderr:
 
 ```
-inz collects anonymous usage data to improve the CLI.
+inz collects anonymous usage and error data to improve the CLI.
 Disable: inz telemetry disable  (or INSTANCEZ_TELEMETRY_DISABLED=1)
 Details: https://docs.instancez.ai/telemetry/
 ```
 
-The notice is not shown for `serve`, `version`, `telemetry`, `help`, or `completion`. The `telemetry`, `help`, and `completion` commands send nothing, not even `command_run`, and never create `~/.instancez/telemetry.json`.
+The install script prints the same three lines after installing. The notice is not shown for `serve`, `version`, `telemetry`, `help`, or `completion`. The `telemetry`, `help`, and `completion` commands send nothing, not even `command_run`, and never create `~/.instancez/telemetry.json`.
 
 ## Turn it off
 
@@ -28,7 +28,7 @@ Any one of these is enough:
 | `INSTANCEZ_TELEMETRY_DISABLED=1` | Environment. Also accepts `true`, `yes`, or `on`, in any case, with surrounding spaces ignored. |
 | `DO_NOT_TRACK=1` | The [Do Not Track](https://consoledonottrack.com) convention. Accepts the same values. |
 
-`inz telemetry enable` turns it back on. `inz telemetry status` shows whether it is on, why it is off if so, and your anonymous id.
+`inz telemetry enable` turns it back on. `inz telemetry status` shows whether it is on, how to turn it off (or why it is off), and your anonymous id.
 
 Builds made from source (version `dev`) never send anything.
 

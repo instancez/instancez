@@ -93,6 +93,11 @@ Write-Host ''
 & (Join-Path $installDir $bin) version
 
 Write-Host ''
+Write-Host 'inz collects anonymous usage and error data to improve the CLI.'
+Write-Host 'Disable: inz telemetry disable  (or INSTANCEZ_TELEMETRY_DISABLED=1)'
+Write-Host 'Details: https://docs.instancez.ai/telemetry/'
+
+Write-Host ''
 if (Get-Command gh -ErrorAction SilentlyContinue) {
   Write-Host "Enjoying inz? A GitHub star helps a lot: gh api -X PUT /user/starred/$repo"
 } else {

@@ -71,7 +71,7 @@ func newRootCmd(env teleEnv) *cobra.Command {
 		},
 	}
 	root.PersistentFlags().StringVar(&orgFlag, "org", "", "organization id (org_...) for org-scoped cloud commands; defaults to your only org")
-	root.PersistentFlags().BoolVar(&noTelemetry, "no-telemetry", false, "disable anonymous usage telemetry for this run")
+	root.PersistentFlags().BoolVar(&noTelemetry, "no-telemetry", false, "disable anonymous usage and error telemetry for this run")
 
 	root.AddCommand(
 		newInitCmd(),

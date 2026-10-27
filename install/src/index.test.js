@@ -68,3 +68,19 @@ test('very long user agent is truncated', async () => {
   const { calls } = await run('/', { headers: { 'user-agent': 'x'.repeat(500) } })
   assert.equal(calls[0].body.properties.client_ua.length, 100)
 })
+
+test('installers print the same telemetry notice as the CLI', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const read = (f) => readFile(new URL(f, import.meta.url), 'utf8')
+  const lines = [
+    'inz collects anonymous usage and error data to improve the CLI.',
+    'Disable: inz telemetry disable  (or INSTANCEZ_TELEMETRY_DISABLED=1)',
+    'Details: https://docs.instancez.ai/telemetry/',
+  ]
+  const cli = await read('../../internal/telemetry/telemetry.go')
+  for (const l of lines) assert.ok(cli.includes(l), `CLI notice drifted: ${l}`)
+  for (const f of ['../install.sh', '../install.ps1']) {
+    const src = await read(f)
+    for (const l of lines) assert.ok(src.includes(l), `${f} missing: ${l}`)
+  }
+})

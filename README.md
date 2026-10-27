@@ -45,7 +45,7 @@ curl -fsSL https://get.instancez.ai | sh
 irm https://get.instancez.ai/windows | iex
 ```
 
-`inz` sends anonymous usage telemetry. Turn it off with `inz telemetry disable` or `INSTANCEZ_TELEMETRY_DISABLED=1`. See [what is collected](https://docs.instancez.ai/telemetry/).
+`inz` sends anonymous usage and error telemetry. Turn it off with `inz telemetry disable` or `INSTANCEZ_TELEMETRY_DISABLED=1`. See [what is collected](https://docs.instancez.ai/telemetry/).
 
 Or build from source. This needs Go 1.25+ and Node 22+. The dashboard is embedded into the binary, so build it before the Go install:
 

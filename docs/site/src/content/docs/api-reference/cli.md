@@ -10,7 +10,7 @@ inz [command] [flags]
 | Global flag | Description |
 |-------------|-------------|
 | `--org` | Organization id (`org_...`) for org-scoped cloud commands. |
-| `--no-telemetry` | Disable anonymous usage telemetry for this run. See [Telemetry](/telemetry/). |
+| `--no-telemetry` | Disable anonymous usage and error telemetry for this run. See [Telemetry](/telemetry/). |
 
 ## inz init
 
@@ -338,7 +338,7 @@ inz cloud whoami
 
 ## inz telemetry
 
-Manage anonymous usage telemetry. See [Telemetry](/telemetry/) for what is collected.
+Manage anonymous usage and error telemetry. See [Telemetry](/telemetry/) for what is collected.
 
 ```
 inz telemetry status
@@ -346,7 +346,7 @@ inz telemetry enable
 inz telemetry disable
 ```
 
-`status` prints whether telemetry is enabled, the reason if not, and your anonymous id. `enable` and `disable` save the choice in `~/.instancez/telemetry.json`.
+`status` prints whether telemetry is enabled, how to disable it (or the reason it is off), and your anonymous id. `enable` and `disable` save the choice in `~/.instancez/telemetry.json`.
 
 ## inz version
 
