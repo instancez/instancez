@@ -109,10 +109,11 @@ func Generate(cfg *domain.Config) []byte {
 		bySchema[s] = append(bySchema[s], name)
 	}
 
+	schemas := slices.Sorted(maps.Keys(bySchema))
 	w := &writer{}
 	w.WriteString(jsonType + "\n")
 	w.line(0, "export type Database = {")
-	for _, schema := range slices.Sorted(maps.Keys(bySchema)) {
+	for _, schema := range schemas {
 		names := bySchema[schema]
 		slices.Sort(names)
 		w.line(1, key(schema)+": {")
@@ -137,5 +138,13 @@ func Generate(cfg *domain.Config) []byte {
 	}
 	w.line(0, "}")
 	w.WriteString(helperTypes)
+	w.line(0, "")
+	w.line(0, "export const Constants = {")
+	for _, schema := range schemas {
+		w.line(1, key(schema)+": {")
+		w.line(2, "Enums: {},")
+		w.line(1, "},")
+	}
+	w.line(0, "} as const")
 	return []byte(w.String())
 }

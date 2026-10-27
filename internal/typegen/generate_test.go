@@ -154,6 +154,41 @@ func TestGenerateEmptyPublicAlongsideOtherSchema(t *testing.T) {
 	if !strings.Contains(got, "      x: {\n        Row: {}") {
 		t.Errorf("zero-field table missing:\n%s", got)
 	}
+	if !strings.HasSuffix(got, "export const Constants = {\n  public: {\n    Enums: {},\n  },\n  zeta: {\n    Enums: {},\n  },\n} as const\n") {
+		t.Errorf("Constants must list every schema at the end:\n%s", got)
+	}
+}
+
+func TestGenerateConstantsEmpty(t *testing.T) {
+	got := string(typegen.Generate(nil))
+	if !strings.HasSuffix(got, "export const Constants = {\n  public: {\n    Enums: {},\n  },\n} as const\n") {
+		t.Errorf("empty config must still emit Constants:\n%s", got)
+	}
+}
+
+func TestGenerateSetofOptions(t *testing.T) {
+	cfg := &domain.Config{
+		Tables: map[string]domain.Table{"cats": {}, "entries": {Schema: "audit"}},
+		RPC: map[string]domain.Function{
+			"tbl":     {ReturnCategory: "setof", Returns: domain.FuncReturn{Type: "setof cats"}},
+			"other":   {ReturnCategory: "setof", Returns: domain.FuncReturn{Type: "setof entries"}},
+			"scalar":  {ReturnCategory: "setof", Returns: domain.FuncReturn{Type: "setof int"}},
+			"cols":    {ReturnCategory: "setof", Returns: domain.FuncReturn{Type: "table(a int)"}},
+			"missing": {ReturnCategory: "setof", Returns: domain.FuncReturn{Type: "setof nope"}},
+		},
+	}
+	got := string(typegen.Generate(cfg))
+	opts := func(to string) string {
+		return "[]\n        SetofOptions: {\n          from: \"*\"\n          to: \"" + to + "\"\n          isOneToOne: false\n          isSetofReturn: true\n        }\n"
+	}
+	for fn, to := range map[string]string{"tbl": "cats", "other": "entries"} {
+		if !strings.Contains(got, opts(to)) {
+			t.Errorf("%s: SetofOptions missing:\n%s", fn, got)
+		}
+	}
+	if n := strings.Count(got, "SetofOptions"); n != 2 {
+		t.Errorf("SetofOptions count = %d, want 2 (scalar, table(...) and unresolved get none):\n%s", n, got)
+	}
 }
 
 func TestGenerateFull(t *testing.T) {

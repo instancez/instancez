@@ -1,6 +1,6 @@
 package typegen
 
-// Copied from supabase/postgres-meta@ecc19497 (test/server/typegen.ts), minus Constants; redundant parens dropped so prettier leaves it unchanged.
+// Copied from supabase/postgres-meta@ecc19497 (test/server/typegen.ts); Constants is emitted by Generate, shapes checked against supabase/sdk@982f77c. Redundant parens dropped so prettier leaves it unchanged.
 const helperTypes = `
 type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
 

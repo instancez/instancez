@@ -51,6 +51,12 @@ func (w *writer) returns(depth int, name string, fn domain.Function, tables map[
 		ts := tsType(target)
 		if tbl, ok := tables[target]; ok {
 			w.line(depth, "Returns: Database["+quoteString(tbl.EffectiveSchema())+`]["Tables"][`+quoteString(target)+`]["Row"][]`)
+			w.line(depth, "SetofOptions: {")
+			w.line(depth+1, `from: "*"`)
+			w.line(depth+1, "to: "+quoteString(target))
+			w.line(depth+1, "isOneToOne: false")
+			w.line(depth+1, "isSetofReturn: true")
+			w.line(depth, "}")
 		} else if ts != "unknown" {
 			w.objectArray(depth, [][2]string{{name, ts}})
 		} else {

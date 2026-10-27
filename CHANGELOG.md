@@ -9,6 +9,11 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 ### Added
 
 - `inz gen types` writes `database.types.ts` from `instancez.yaml` with no database needed, for `createClient<Database>()` in `@supabase/supabase-js`. See `docs/site/src/content/docs/build/types.md`.
+- `inz gen types` output now ends with `export const Constants` (empty `Enums` per schema) and adds `SetofOptions` to `rpc` functions that return `setof <table>`.
+
+### Changed
+
+- Breaking, `inz gen types`: the generated file is a runtime module because of `Constants`, so it cannot be a `.d.ts`. Scalar `rpc` returns lost `| null` and are `T`, as in Supabase; a SQL NULL still arrives as `null`. Relationships to `auth` or other schemas are dropped; only same-schema relationships remain.
 
 ## [0.0.9] - 2026-10-18
 

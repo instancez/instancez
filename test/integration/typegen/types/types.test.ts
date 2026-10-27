@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js"
 import type { Database as Cols } from "./generated/columns"
 import type { Database as Full } from "./generated/full"
+import { Constants } from "./generated/full"
 
 type Equal<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
@@ -26,6 +27,9 @@ assert<Equal<Everything["Update"]["created_at"], undefined>>()
 type Cats = Full["public"]["Tables"]["cats"]
 assert<Equal<Cats["Insert"], { id?: number; name: string }>>()
 assert<Equal<Full["audit"]["Tables"]["audit_entries"]["Row"]["id"], number>>()
+
+assert<Equal<typeof Constants.public.Enums, {}>>()
+assert<Equal<keyof typeof Constants, "audit" | "public">>()
 
 // selected rows carry the generated shape
 async function selected() {

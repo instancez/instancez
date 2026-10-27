@@ -285,6 +285,12 @@ export type Database = {
       all_cats: {
         Args: Record<PropertyKey, never>
         Returns: Database["public"]["Tables"]["cats"]["Row"][]
+        SetofOptions: {
+          from: "*"
+          to: "cats"
+          isOneToOne: false
+          isSetofReturn: true
+        }
       }
       composite: {
         Args: Record<PropertyKey, never>
@@ -324,6 +330,12 @@ export type Database = {
       public_cats: {
         Args: Record<PropertyKey, never>
         Returns: Database["public"]["Tables"]["cats"]["Row"][]
+        SetofOptions: {
+          from: "*"
+          to: "cats"
+          isOneToOne: false
+          isSetofReturn: true
+        }
       }
       qualified: {
         Args: Record<PropertyKey, never>
@@ -336,6 +348,12 @@ export type Database = {
       recent_audit: {
         Args: Record<PropertyKey, never>
         Returns: Database["audit"]["Tables"]["audit_entries"]["Row"][]
+        SetofOptions: {
+          from: "*"
+          to: "audit_entries"
+          isOneToOne: false
+          isSetofReturn: true
+        }
       }
       rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr: {
         Args: Record<PropertyKey, never>
@@ -486,3 +504,12 @@ export type CompositeTypes<
   : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema["CompositeTypes"]
     ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
     : never
+
+export const Constants = {
+  audit: {
+    Enums: {},
+  },
+  public: {
+    Enums: {},
+  },
+} as const
