@@ -1331,6 +1331,93 @@ await step('rest: .csv() returns text/csv body', async () => {
   assert(lines.includes('epsilon'), 'csv contains epsilon')
 })
 
+// --- Wire serialization: values must match PostgREST (to_json) ---
+const wireClient = () => createClient(URL, PUBLISHABLE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+  global: { headers: { Authorization: `Bearer ${accessToken}` } },
+})
+let wireId
+
+await step('rest: insert().select() serializes like PostgREST', async () => {
+  const { data, error } = await wireClient().from('wire_types').insert({
+    d: '2024-01-02', ts: '2024-01-02 03:04:05.5', tstz: '2024-01-02T03:04:05Z', iv: '1 day 02:03:04',
+    t: '03:04:05', ip: '10.0.0.1', b: '\\xdeadbeef', f: 'NaN', j: { n: 1 },
+  }).select().single()
+  if (error) throw error
+  wireId = data.id
+  assertEq(data.d, '2024-01-02', 'date')
+  assertEq(data.ts, '2024-01-02T03:04:05.5', 'timestamp is ISO without zone')
+  assertEq(data.tstz, '2024-01-02T03:04:05+00:00', 'timestamptz')
+  assertEq(data.iv, '1 day 02:03:04', 'interval')
+  assertEq(data.t, '03:04:05', 'time')
+  assertEq(data.ip, '10.0.0.1', 'inet has no /32')
+  assertEq(data.b, '\\xdeadbeef', 'bytea hex')
+  assertEq(data.f, 'NaN', 'float NaN is the string NaN')
+  assertEq(data.j.n, 1, 'jsonb')
+})
+
+await step('rest: upsert().select() serializes like PostgREST', async () => {
+  const { data, error } = await wireClient().from('wire_types')
+    .upsert({ id: wireId, iv: '2 days' }).select()
+  if (error) throw error
+  assertEq(data[0].iv, '2 days', 'interval')
+  assertEq(data[0].d, '2024-01-02', 'date kept')
+})
+
+await step('rest: update().select().single() returns an object', async () => {
+  const { data, error } = await wireClient().from('wire_types')
+    .update({ f: 1.5 }).eq('id', wireId).select().single()
+  if (error) throw error
+  assert(!Array.isArray(data), 'single object')
+  assertEq(data.d, '2024-01-02', 'date')
+  assertEq(data.f, 1.5, 'float')
+})
+
+await step('rest: select alias named like the helper column', async () => {
+  const { data, error } = await wireClient().from('wire_types')
+    .select('_inz_r:id,d').eq('id', wireId)
+  if (error) throw error
+  assertEq(data[0]._inz_r, wireId, 'alias value')
+  assertEq(data[0].d, '2024-01-02', 'date')
+})
+
+await step('rpc: setof rows serialize like PostgREST', async () => {
+  const { data, error } = await wireClient().rpc('wire_types_rpc')
+  if (error) throw error
+  const row = data.find((r) => r.id === wireId)
+  assertEq(row.d, '2024-01-02', 'date')
+  assertEq(row.tstz, '2024-01-02T03:04:05+00:00', 'timestamptz')
+})
+
+await step('rpc: scalar date', async () => {
+  const { data, error } = await wireClient().rpc('wire_date')
+  if (error) throw error
+  assertEq(data, '2024-01-02')
+})
+
+await step('rpc: table() with exotic types', async () => {
+  const { data, error } = await wireClient().rpc('wire_shape')
+  if (error) throw error
+  assertEq(data.length, 1, 'one row')
+  assertEq(data[0].l, '[(0,0),(1,1)]', 'lseg')
+  assertEq(data[0].r, '[1,5)', 'int4range')
+})
+
+// The row comes from SQL: a JSON request body is still parsed to float64 on insert.
+await step('rpc: csv keeps big json numbers exact', async () => {
+  const { data, error } = await wireClient().rpc('wire_big').csv()
+  if (error) throw error
+  assert(data.includes('12345678901234567890'), `csv keeps the exact number, got ${data}`)
+})
+
+await step('rest: delete().select() serializes like PostgREST', async () => {
+  const { data, error } = await wireClient().from('wire_types')
+    .delete().eq('id', wireId).select()
+  if (error) throw error
+  assertEq(data.length, 1, 'one row deleted')
+  assertEq(data[0].b, '\\xdeadbeef', 'bytea hex')
+})
+
 await step('rest: array operators (.contains/.containedBy/.overlaps)', async () => {
   const client = createClient(URL, PUBLISHABLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },

@@ -185,6 +185,21 @@ func TestSupabaseJSCompat(t *testing.T) {
 					{Name: "user_id", ForeignKey: &domain.ForeignKey{References: "auth.users.id", OnDelete: "cascade"}},
 				},
 			},
+			// wire_types holds one column per type whose JSON form PostgREST fixes.
+			"wire_types": {
+				Fields: []domain.Field{
+					{Name: "id", Type: "bigserial", PrimaryKey: true},
+					{Name: "d", Type: "date"},
+					{Name: "ts", Type: "timestamp"},
+					{Name: "tstz", Type: "timestamptz"},
+					{Name: "iv", Type: "interval"},
+					{Name: "t", Type: "time"},
+					{Name: "ip", Type: "inet"},
+					{Name: "b", Type: "bytea"},
+					{Name: "f", Type: "double precision"},
+					{Name: "j", Type: "jsonb"},
+				},
+			},
 			"comments": {
 				Fields: []domain.Field{
 					{Name: "id", Type: "bigserial", PrimaryKey: true},
@@ -377,6 +392,41 @@ func TestSupabaseJSCompat(t *testing.T) {
 				Returns:        domain.FuncReturn{Type: "setof todos"},
 				ReturnCategory: "setof",
 				Body:           "SELECT * FROM todos",
+				Args:           []domain.FuncArg{},
+			},
+			"wire_types_rpc": {
+				Language:       "sql",
+				Volatility:     "stable",
+				Security:       "invoker",
+				Returns:        domain.FuncReturn{Type: "setof wire_types"},
+				ReturnCategory: "setof",
+				Body:           "SELECT * FROM wire_types ORDER BY id",
+				Args:           []domain.FuncArg{},
+			},
+			"wire_date": {
+				Language:   "sql",
+				Volatility: "stable",
+				Security:   "invoker",
+				Returns:    domain.FuncReturn{Type: "date"},
+				Body:       "SELECT '2024-01-02'::date",
+				Args:       []domain.FuncArg{},
+			},
+			"wire_big": {
+				Language:       "sql",
+				Volatility:     "stable",
+				Security:       "invoker",
+				Returns:        domain.FuncReturn{Type: "table(j jsonb)"},
+				ReturnCategory: "setof",
+				Body:           `SELECT '{"n":12345678901234567890}'::jsonb`,
+				Args:           []domain.FuncArg{},
+			},
+			"wire_shape": {
+				Language:       "sql",
+				Volatility:     "stable",
+				Security:       "invoker",
+				Returns:        domain.FuncReturn{Type: "table(l lseg, r int4range)"},
+				ReturnCategory: "setof",
+				Body:           "SELECT '[(0,0),(1,1)]'::lseg, '[1,5)'::int4range",
 				Args:           []domain.FuncArg{},
 			},
 			"double_it": {
