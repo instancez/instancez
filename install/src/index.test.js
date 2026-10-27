@@ -68,3 +68,13 @@ test('very long user agent is truncated', async () => {
   const { calls } = await run('/', { headers: { 'user-agent': 'x'.repeat(500) } })
   assert.equal(calls[0].body.properties.client_ua.length, 100)
 })
+
+test('installers tell users how to opt out of telemetry', async () => {
+  const { readFile } = await import('node:fs/promises')
+  for (const f of ['install.sh', 'install.ps1']) {
+    const src = await readFile(new URL(`../${f}`, import.meta.url), 'utf8')
+    assert.match(src, /anonymous usage and error data/, f)
+    assert.match(src, /inz telemetry disable/, f)
+    assert.match(src, /INSTANCEZ_TELEMETRY_DISABLED=1/, f)
+  }
+})

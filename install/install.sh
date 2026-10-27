@@ -98,6 +98,11 @@ info ""
 "${INSTALL_DIR}/${BIN}" version 2>/dev/null || info "Run '${BIN} version' to confirm the install."
 
 info ""
+info "inz sends anonymous usage and error data to improve the CLI."
+info "Disable: inz telemetry disable  (or INSTANCEZ_TELEMETRY_DISABLED=1)"
+info "Details: https://docs.instancez.ai/telemetry/"
+
+info ""
 if command -v gh >/dev/null 2>&1; then
   info "Enjoying inz? A GitHub star helps a lot: gh api -X PUT /user/starred/${REPO}"
 else

@@ -16,7 +16,7 @@ import (
 func newTelemetryCmd(env teleEnv) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "telemetry",
-		Short: "Manage anonymous usage telemetry",
+		Short: "Manage anonymous usage and error telemetry",
 	}
 	cmd.AddCommand(
 		&cobra.Command{
@@ -28,6 +28,7 @@ func newTelemetryCmd(env teleEnv) *cobra.Command {
 				c := telemetry.Init(telemetry.Options{Version: version, Commit: commit, FlagDisabled: off, Getenv: env.getenv, Home: env.home, NoPersist: true})
 				if on, reason := c.Enabled(); on {
 					cmd.Println("enabled")
+					cmd.Println(telemetry.DisableHint)
 				} else {
 					cmd.Printf("disabled (%s)\n", reason)
 				}

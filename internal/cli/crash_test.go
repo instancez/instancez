@@ -205,7 +205,7 @@ func TestServeCrashSendsNothingUnlessAccepted(t *testing.T) {
 	if len(r.events) != 0 || !r.prompted() {
 		t.Errorf("declined serve: events=%v prompted=%v", r.events, r.prompted())
 	}
-	if strings.Contains(r.stderr, "anonymous usage data") {
+	if strings.Contains(r.stderr, "anonymous usage and error data") {
 		t.Error("serve printed the first-run notice")
 	}
 	if _, err := os.Stat(filepath.Join(r.home, ".instancez")); err == nil {
