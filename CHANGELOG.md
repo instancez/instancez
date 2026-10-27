@@ -13,6 +13,18 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Changed
 
+- Breaking, REST and RPC row values: rows are now serialized like PostgREST (Postgres `to_json`) on list, single, CSV, insert, upsert, update, delete and RPC responses. See `docs/site/src/content/docs/build/querying.md`. If your client parsed the old formats, update it.
+  - `date` is `"2024-01-02"` (was `"2024-01-02T00:00:00Z"`). `timestamp` has no `Z` (`"2024-01-02T03:04:05"`), so JS `new Date()` now reads it as local time; use `timestamptz` for instants.
+  - `timestamptz` uses the database `TimeZone` with a `+HH:MM` offset, not the instancez process timezone.
+  - `bytea` is `"\\x..."` hex (was base64), `xml` and `macaddr` are plain text (were base64), and `inet` drops `/32`.
+  - `infinity` dates and timestamps are `"infinity"` and `"-infinity"` (were `1` and `-1`). Float `NaN` and `Infinity` are strings (were a 500 error).
+  - `interval`, `time`, `bit`, geometric types, `tsvector` and ranges are Postgres text (were Go objects). `oid` and `"char"` are strings (were numbers).
+  - `uuid[]` is an array of strings, multi-dimensional arrays keep their nesting, and composite values are nested objects.
+  - Large integers, `numeric` values and numbers inside `json` and `jsonb` are exact, in embeds too.
+  - With PostGIS, `geometry` is a GeoJSON object (was a hex EWKB string), including `Feature.geometry` in `application/geo+json`.
+  - A `PATCH` with `return=representation` that matches no rows returns `[]` (was `null`) and honours `Accept: application/vnd.pgrst.object+json`.
+  - CSV uses the same values; `json` and array cells are compact JSON. A `json` (not `jsonb`) column still loses key order and duplicate keys.
+  - Run `inz gen types` again: `interval` and `time` are now `string`. Other changed types stay `unknown`, as in Supabase.
 - Breaking, `inz gen types`: the generated file is a runtime module because of `Constants`, so it cannot be a `.d.ts`. Scalar `rpc` returns are now `T`, not `T | null`; a SQL NULL still arrives as `null`. Relationships to `auth` or other schemas are dropped; only same-schema relationships remain.
 
 ### Fixed
