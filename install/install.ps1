@@ -93,7 +93,7 @@ Write-Host ''
 & (Join-Path $installDir $bin) version
 
 Write-Host ''
-Write-Host 'inz sends anonymous usage and error data to improve the CLI.'
+Write-Host 'inz collects anonymous usage and error data to improve the CLI.'
 Write-Host 'Disable: inz telemetry disable  (or INSTANCEZ_TELEMETRY_DISABLED=1)'
 Write-Host 'Details: https://docs.instancez.ai/telemetry/'
 

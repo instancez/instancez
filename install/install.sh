@@ -98,7 +98,7 @@ info ""
 "${INSTALL_DIR}/${BIN}" version 2>/dev/null || info "Run '${BIN} version' to confirm the install."
 
 info ""
-info "inz sends anonymous usage and error data to improve the CLI."
+info "inz collects anonymous usage and error data to improve the CLI."
 info "Disable: inz telemetry disable  (or INSTANCEZ_TELEMETRY_DISABLED=1)"
 info "Details: https://docs.instancez.ai/telemetry/"
 
