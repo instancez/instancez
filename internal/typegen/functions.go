@@ -120,7 +120,7 @@ func (w *writer) relationships(depth int, name string, t domain.Table, fields []
 			continue
 		}
 		schema, tbl, col, err := domain.ParseFKReference(f.ForeignKey.References)
-		if err != nil || schema != t.EffectiveSchema() || (cfg.Auth != nil && tbl == "users") {
+		if err != nil || schema != t.EffectiveSchema() {
 			continue
 		}
 		if target, ok := cfg.Tables[tbl]; ok && target.EffectiveSchema() == schema {

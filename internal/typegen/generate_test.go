@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"embed"
 	"flag"
+	"maps"
 	"os"
 	"strings"
 	"testing"
@@ -211,20 +212,23 @@ func TestGenerateRelationshipSchemaRules(t *testing.T) {
 func TestGenerateRelationshipTargetRules(t *testing.T) {
 	child := func(ref string, auth *domain.Auth, extra map[string]domain.Table) string {
 		tables := map[string]domain.Table{"child": {Fields: []domain.Field{{Name: "c", ForeignKey: &domain.ForeignKey{References: ref}}}}}
-		for k, v := range extra {
-			tables[k] = v
-		}
+		maps.Copy(tables, extra)
 		return string(typegen.Generate(&domain.Config{Auth: auth, Tables: tables}))
 	}
 	if got := child("ghost.id", nil, nil); strings.Contains(got, "foreignKeyName") {
 		t.Errorf("missing target table must drop the relationship:\n%s", got)
 	}
-	users := map[string]domain.Table{"users": {}}
-	if got := child("users.id", &domain.Auth{}, users); strings.Contains(got, "foreignKeyName") {
-		t.Errorf("two-part users.id resolves to auth.users when auth is on:\n%s", got)
+	users := map[string]domain.Table{"users": {Fields: []domain.Field{{Name: "id", PrimaryKey: true}}}}
+	for name, auth := range map[string]*domain.Auth{"auth on": {}, "auth off": nil} {
+		if got := child("users.id", auth, users); !strings.Contains(got, `referencedRelation: "users"`) {
+			t.Errorf("%s: declared public users table is a real same-schema target:\n%s", name, got)
+		}
+		if got := child("auth.users.id", auth, users); strings.Contains(got, "foreignKeyName") {
+			t.Errorf("%s: auth.users.id must be dropped even with a public users table:\n%s", name, got)
+		}
 	}
-	if got := child("users.id", nil, users); !strings.Contains(got, `referencedRelation: "users"`) {
-		t.Errorf("users is a plain table when auth is off:\n%s", got)
+	if got := child("users.id", &domain.Auth{}, nil); strings.Contains(got, "foreignKeyName") {
+		t.Errorf("auth on without a declared users table must drop the relationship:\n%s", got)
 	}
 	other := map[string]domain.Table{"p": {Schema: "other"}}
 	if got := child("p.id", nil, other); strings.Contains(got, "foreignKeyName") {
@@ -236,16 +240,16 @@ func TestGenerateFunctionRules(t *testing.T) {
 	cfg := loadYAML(t, "full.yaml")
 	got := string(typegen.Generate(cfg))
 	fn := func(name string) string {
-		return between(t, got, "      "+name+": {\n", "\n      }\n")
+		return between(t, got, "      "+name+": {\n", "\n      }\n") + "\n"
 	}
 	wants := map[string][]string{
-		"add_one":      {"n?: number", "Returns: number"},
-		"greet":        {"who: string\n", "loud?: boolean", "forced: string\n", "bare: string\n", "nullable?: string", "Returns: string"},
+		"add_one":      {"n?: number", "Returns: number\n"},
+		"greet":        {"who: string\n", "loud?: boolean", "forced: string\n", "bare: string\n", "nullable?: string", "Returns: string\n"},
 		"ping":         {"Args: Record<PropertyKey, never>", "Returns: undefined"},
 		"composite":    {"Returns: unknown"},
 		"qualified":    {"Returns: unknown"},
 		"rec":          {"Returns: unknown"},
-		"ints":         {"Returns: number[]"},
+		"ints":         {"Returns: number[]\n"},
 		"some_ids":     {"Returns: {\n          some_ids: number | null\n        }[]"},
 		"all_cats":     {`Returns: Database["public"]["Tables"]["cats"]["Row"][]`},
 		"public_cats":  {`Returns: Database["public"]["Tables"]["cats"]["Row"][]`},
@@ -274,7 +278,7 @@ func TestGenerateFunctionsEdge(t *testing.T) {
 		"f": {ReturnCategory: "scalar", Returns: domain.FuncReturn{Type: "text"}, Args: []domain.FuncArg{{Name: "a", Type: "text"}}},
 	}}
 	got := string(typegen.Generate(cfg))
-	if !strings.Contains(got, "a: string\n") || !strings.Contains(got, "Returns: string") {
+	if !strings.Contains(got, "a: string\n") || !strings.Contains(got, "Returns: string\n") {
 		t.Errorf("hand-built function wrong:\n%s", got)
 	}
 	empty := string(typegen.Generate(&domain.Config{RPC: map[string]domain.Function{}}))
