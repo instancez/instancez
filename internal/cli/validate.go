@@ -263,7 +263,7 @@ func printPrettyErrors(errs domain.ValidationErrors) error {
 		}
 	}
 	fmt.Fprintf(os.Stderr, "\n  Found %d error(s)\n", len(errs))
-	return errReported
+	return reportedValidation(errs)
 }
 
 // printWarnings writes non-blocking findings; it never fails the command.
@@ -298,7 +298,7 @@ func printJSONErrors(errs domain.ValidationErrors) error {
 	if err := enc.Encode(out); err != nil {
 		return fmt.Errorf("encode json: %w", err)
 	}
-	return errReported
+	return reportedValidation(errs)
 }
 
 func printJSONError(err error) error {
@@ -308,7 +308,8 @@ func printJSONError(err error) error {
 	if encErr := enc.Encode(out); encErr != nil {
 		return fmt.Errorf("encode json error: %w", encErr)
 	}
-	return errReported
+	class, _, _ := classifyErr(err)
+	return reported(class)
 }
 
 // planAgainstProject previews the local yaml against the cloud project. This

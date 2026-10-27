@@ -96,7 +96,7 @@ func requireConfigFile(path string) error {
 	}
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("no %s in this directory; run `inz init` first", path)
+			return userError("config_missing", fmt.Errorf("no %s in this directory; run `inz init` first", path))
 		}
 		return fmt.Errorf("stat %s: %w", path, err)
 	}

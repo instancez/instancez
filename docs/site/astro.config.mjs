@@ -100,6 +100,7 @@ export default defineConfig({
             { label: 'Self-hosted', slug: 'deploy/self-hosted' },
             { label: 'Environment Variables', slug: 'deploy/env-vars' },
             { label: 'Observability', slug: 'deploy/observability' },
+            { label: 'Telemetry', slug: 'telemetry' },
           ],
         },
         {

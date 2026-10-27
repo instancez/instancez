@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -20,6 +21,7 @@ import (
 	"github.com/instancez/instancez/internal/cli/preflight"
 	"github.com/instancez/instancez/internal/config"
 	"github.com/instancez/instancez/internal/domain"
+	"github.com/instancez/instancez/internal/telemetry"
 	"github.com/spf13/cobra"
 )
 
@@ -60,7 +62,7 @@ func runDev(opts devOptions) error {
 		stop, superuserDSN, err := startEmbeddedPostgres(opts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  ✗ embedded Postgres failed to start: %v\n    hint: %s\n", err, embeddedPGHint(err))
-			return errReported
+			return reported("embedded_pg")
 		}
 		defer stop()
 		embeddedSuperuserDSN = superuserDSN
@@ -84,7 +86,7 @@ func runDev(opts devOptions) error {
 	}
 	if r, failed := preflight.RunUntilFail(checks); failed {
 		fmt.Fprintf(os.Stderr, "  ✗ %s — %s\n    hint: %s\n", r.Name, r.Detail, r.FixHint)
-		return errReported
+		return reported("preflight:" + r.Name)
 	}
 
 	cfg, err := config.LoadWithDotenv(opts.configPath, ".development.env")
@@ -231,6 +233,8 @@ func runDev(opts devOptions) error {
 		app.WithHTTPServer(httpServer),
 		app.WithFunctionReload(reloadFuncs),
 		app.WithOTelShutdown(otelShutdown),
+		app.WithOnReady(func() { captureDevReady(banner.embedded, len(cfg.Functions), len(cfg.Tables)) }),
+		app.WithOnRuntimeError(captureDevRuntimeError),
 	)
 
 	banner.print()
@@ -253,6 +257,43 @@ func runDev(opts devOptions) error {
 
 	// Start engine (blocks until shutdown signal)
 	return engine.Start(ctx)
+}
+
+// processStart approximates process start for dev_ready's duration_ms.
+var processStart = time.Now()
+
+func captureDevReady(embedded bool, functions, tables int) {
+	if tele == nil {
+		return
+	}
+	props := map[string]any{"duration_ms": time.Since(processStart).Milliseconds(), "embedded_pg": embedded, "functions": functions, "tables": tables}
+	tele.Capture("dev_ready", props)
+}
+
+const maxDevRuntimeErrors = 10
+
+var devErrs = struct {
+	sync.Mutex
+	seen map[string]bool
+}{seen: map[string]bool{}}
+
+// captureDevRuntimeError sends each distinct failure once, at most maxDevRuntimeErrors per run.
+func captureDevRuntimeError(err error) {
+	if tele == nil || err == nil {
+		return
+	}
+	class, expected, msg := classifyErr(err)
+	msg = telemetry.Sanitize(msg, teleEnv{}.homeDir())
+	devErrs.Lock()
+	key := class + "\x00" + msg
+	send := !devErrs.seen[key] && len(devErrs.seen) < maxDevRuntimeErrors
+	if send {
+		devErrs.seen[key] = true
+	}
+	devErrs.Unlock()
+	if send {
+		tele.Capture("dev_runtime_error", map[string]any{"error_class": class, "expected": expected, "error_message": msg})
+	}
 }
 
 // devBanner holds the facts gathered during startup so the human-facing

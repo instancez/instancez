@@ -30,7 +30,7 @@ func reportCloudErr(action string, err error) error {
 		}
 	}
 	fmt.Fprintf(os.Stderr, "\n  Found %d problem(s)\n", len(apiErr.Problems))
-	return errReported
+	return reported(cloudAPIClass(apiErr.Status))
 }
 
 // reportCloudProblems renders a slice of blocking validation problems (from the
@@ -50,7 +50,7 @@ func reportCloudProblems(action string, problems []cloud.Problem) error {
 		}
 	}
 	fmt.Fprintf(os.Stderr, "\n  Found %d problem(s)\n", len(problems))
-	return errReported
+	return reported("cloud_api")
 }
 
 // printDropped prints one warning line per entry a successful UploadYAML
