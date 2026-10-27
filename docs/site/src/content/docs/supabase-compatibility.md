@@ -36,7 +36,7 @@ instancez's auth server matches Supabase's GoTrue on the wire, with a few delibe
 ## REST behavior differences from PostgREST
 
 - CSV cells differ from PostgREST's CSV; see [CSV output](/build/querying/#csv-output). `rpc` ignores `Accept: text/csv`.
-- Row keys come back in alphabetical order, not column order. Keys inside `json` and `jsonb` values are also sorted alphabetically.
+- Rows from `Accept: text/csv`, `application/geo+json` and RPC calls with `count=exact` list keys in alphabetical order, not select order.
 
 ## Direct storage upload (no SDK needed)
 

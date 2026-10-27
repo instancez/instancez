@@ -388,3 +388,13 @@ func TestRangeGuard(t *testing.T) {
 		})
 	}
 }
+
+func TestHandleList_RawJSONBody(t *testing.T) {
+	w := listStatus(t, "GET", "", nil, 2, 0)
+	assert.Equal(t, "application/json; charset=utf-8", w.Header().Get("Content-Type"))
+	assert.Equal(t, `[{"id":0},{"id":1}]`, w.Body.String())
+	w = listStatus(t, "GET", "", nil, 0, 0)
+	assert.Equal(t, `[]`, w.Body.String())
+	w = listStatus(t, "GET", "", map[string]string{"Accept": "application/vnd.pgrst.object+json"}, 1, 0)
+	assert.Equal(t, `{"id":0}`, w.Body.String())
+}

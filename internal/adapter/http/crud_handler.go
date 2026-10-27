@@ -255,7 +255,11 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 
 		applySchemaSearchPath(c, ctx, tx)
 
-		rows, err := queryWireRows(ctx, tx, query, args...)
+		rows, err := queryWireRaw(ctx, tx, query, args...)
+		var decoded []map[string]any
+		if err == nil && (accept == "application/geo+json" || acceptsCSV(accept)) {
+			decoded, err = decodeWireRows(rows)
+		}
 		if err != nil {
 			h.logger.Error("query error", "table", tableName, "error", err)
 			handleDBError(c, err)
@@ -307,8 +311,8 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 		}
 
 		if accept == "application/geo+json" {
-			features := make([]map[string]any, 0, len(rows))
-			for _, r := range rows {
+			features := make([]map[string]any, 0, len(decoded))
+			for _, r := range decoded {
 				geom := r[geomCol]
 				props := make(map[string]any, len(r)-1)
 				for k, v := range r {
@@ -330,17 +334,13 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 		}
 
 		if singular {
-			c.JSON(status, rows[0])
+			writeWireRow(c, status, rows[0])
 			return
-		}
-
-		if rows == nil {
-			rows = []map[string]any{}
 		}
 
 		// CSV response via Accept: text/csv.
 		if acceptsCSV(accept) {
-			out, err := csvRenderRows(rows)
+			out, err := csvRenderRows(decoded)
 			if err != nil {
 				problemJSON(c, 500, "internal", "CSV render failed")
 				return
@@ -349,7 +349,7 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 			return
 		}
 
-		c.JSON(status, rows)
+		writeWireRows(c, status, rows)
 	}
 }
 
@@ -395,7 +395,7 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 
 		returnMode := parseReturnPrefer(prefer)
 		resolution := parseResolutionPrefer(prefer)
-		var results []map[string]any
+		var results []json.RawMessage
 
 		var pkCols []string
 		defaultTarget := false
@@ -432,7 +432,7 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 		}
 
 		if returnMode == "representation" {
-			rows, err := queryWireRows(ctx, tx, query, args...)
+			rows, err := queryWireRaw(ctx, tx, query, args...)
 			if err != nil {
 				handleDBError(c, err)
 				return
@@ -502,7 +502,7 @@ func (h *CRUDHandler) handleUpsert(tableName string, table domain.Table) gin.Han
 		defer rollback(ctx)
 
 		returnMode := parseReturnPrefer(prefer)
-		var results []map[string]any
+		var results []json.RawMessage
 
 		if pkCols, err = livePrimaryKeyOr(ctx, tx, tableName, pkCols); err != nil {
 			handleDBError(c, err)
@@ -510,7 +510,7 @@ func (h *CRUDHandler) handleUpsert(tableName string, table domain.Table) gin.Han
 		}
 		query, args := postgrest.BuildBulkUpsertQuery(tableName, records, pkCols, "merge", returnMode == "representation")
 		if returnMode == "representation" {
-			rows, err := queryWireRows(ctx, tx, query, args...)
+			rows, err := queryWireRaw(ctx, tx, query, args...)
 			if err != nil {
 				handleDBError(c, err)
 				return
@@ -578,7 +578,7 @@ func (h *CRUDHandler) handleUpdate(tableName string, table domain.Table) gin.Han
 		query, args := postgrest.BuildUpdateQuery(tableName, updates, where, returnMode == "representation")
 
 		if returnMode == "representation" {
-			rows, err := queryWireRows(ctx, tx, query, args...)
+			rows, err := queryWireRaw(ctx, tx, query, args...)
 			if err != nil {
 				handleDBError(c, err)
 				return
@@ -649,7 +649,7 @@ func (h *CRUDHandler) handleDelete(tableName string, table domain.Table) gin.Han
 		query, args := postgrest.BuildDeleteQuery(tableName, where, returnMode == "representation")
 
 		if returnMode == "representation" {
-			rows, err := queryWireRows(ctx, tx, query, args...)
+			rows, err := queryWireRaw(ctx, tx, query, args...)
 			if err != nil {
 				handleDBError(c, err)
 				return
@@ -662,13 +662,10 @@ func (h *CRUDHandler) handleDelete(tableName string, table domain.Table) gin.Han
 				return
 			}
 			if c.GetHeader("Accept") == "application/vnd.pgrst.object+json" && len(rows) == 1 {
-				c.JSON(200, rows[0])
+				writeWireRow(c, 200, rows[0])
 				return
 			}
-			if rows == nil {
-				rows = []map[string]any{}
-			}
-			c.JSON(200, rows)
+			writeWireRows(c, 200, rows)
 			return
 		}
 
@@ -1432,16 +1429,13 @@ func applySchemaSearchPath(c *gin.Context, ctx context.Context, tx domain.Tx) {
 
 // writeMutationResponse writes the HTTP response for a mutation.
 // status is 201 for create, 200 for upsert/update.
-func writeMutationResponse(c *gin.Context, status int, returnMode string, results []map[string]any) {
+func writeMutationResponse(c *gin.Context, status int, returnMode string, results []json.RawMessage) {
 	switch returnMode {
 	case "representation":
 		if c.GetHeader("Accept") == "application/vnd.pgrst.object+json" && len(results) == 1 {
-			c.JSON(status, results[0])
+			writeWireRow(c, status, results[0])
 		} else {
-			if results == nil {
-				results = []map[string]any{}
-			}
-			c.JSON(status, results)
+			writeWireRows(c, status, results)
 		}
 	case "headers-only":
 		c.Header("Preference-Applied", "return=headers-only")

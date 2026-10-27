@@ -334,6 +334,15 @@ func TestWireSerialization(t *testing.T) {
 		assert.Equal(t, json.Number("123456789012345678901234567890.12345"), parent["amount"])
 	})
 
+	t.Run("key order follows select and json text is kept", func(t *testing.T) {
+		_, err := owner.Exec(ctx, `INSERT INTO wire_all (id, c_text, c_json, c_jsonb) VALUES (4, 'k', '{"b":1,"a":2}', '{"b":1,"a":2}')`)
+		require.NoError(t, err)
+		t.Cleanup(func() { _, _ = owner.Exec(ctx, "DELETE FROM wire_all WHERE id=4") })
+		code, raw := e.call(t, "GET", "/rest/v1/wire_all?id=eq.4&select=c_text,id,c_json,c_jsonb", "", nil)
+		require.Equal(t, 200, code, raw)
+		assert.Equal(t, `[{"c_text":"k","id":4,"c_json":{"b":1,"a":2},"c_jsonb":{"a": 2, "b": 1}}]`, raw)
+	})
+
 	t.Run("alias named like the wrapper", func(t *testing.T) {
 		code, raw := e.call(t, "GET", "/rest/v1/wire_all?id=eq.1&select=_inz_r:id", "", nil)
 		require.Equal(t, 200, code, raw)

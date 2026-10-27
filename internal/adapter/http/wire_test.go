@@ -93,3 +93,33 @@ func TestQueryWireRows_QueryErrorPassesThrough(t *testing.T) {
 	_, err := queryWireRows(context.Background(), &wireFakeTx{err: sentinel}, "SELECT 1")
 	assert.ErrorIs(t, err, sentinel)
 }
+
+func TestQueryWireRaw_KeepsBytesAndOrder(t *testing.T) {
+	const a, b = `{"z":1,"a":9007199254740993,"n":"NaN"}`, `{"j":{"y":1,"x":[1.50]}}`
+	tx := &wireFakeTx{rows: []map[string]any{{"_inz_row": a}, {"_inz_row": b}}}
+	rows, err := queryWireRaw(context.Background(), tx, "SELECT 1")
+	require.NoError(t, err)
+	assert.Equal(t, wireRowsSQL("SELECT 1"), tx.gotSQL)
+	require.Len(t, rows, 2)
+	assert.Equal(t, a, string(rows[0]))
+	assert.Equal(t, `[`+a+`,`+b+`]`, string(joinWireRows(rows)))
+}
+
+func TestJoinWireRows_EmptyIsArray(t *testing.T) {
+	assert.Equal(t, "[]", string(joinWireRows(nil)))
+	rows, err := queryWireRaw(context.Background(), &wireFakeTx{}, "SELECT 1")
+	require.NoError(t, err)
+	assert.Equal(t, "[]", string(joinWireRows(rows)))
+}
+
+func TestQueryWireRaw_BadCells(t *testing.T) {
+	for name, cell := range map[string]any{
+		"nil": nil, "int": int64(1), "empty": "", "null": "null", "array": "[1]", "string": `"x"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := queryWireRaw(context.Background(), &wireFakeTx{rows: []map[string]any{{"_inz_row": cell}}}, "SELECT 1")
+			require.Error(t, err)
+			assert.True(t, strings.HasPrefix(err.Error(), "decode wire row:"), err.Error())
+		})
+	}
+}

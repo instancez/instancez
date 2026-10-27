@@ -506,7 +506,7 @@ Rows are serialized by Postgres `to_json`, as in PostgREST. This applies to list
 | `bit`, geometric, `tsvector`, ranges | Postgres text |
 | `geometry` (PostGIS) | GeoJSON object |
 
-A `json` column (not `jsonb`) loses key order and duplicate keys. A `timestamp` has no offset, so JS `new Date()` reads it as local time. Use `timestamptz` for instants.
+Keys follow the select list. A `json` column keeps its stored text, while Postgres sorts `jsonb` keys. A `timestamp` has no offset, so JS `new Date()` reads it as local time. Use `timestamptz` for instants.
 
 ## CSV output
 
@@ -516,7 +516,7 @@ Add `.csv()` in `supabase-js` or set `Accept: text/csv` to receive results as CS
 const { data } = await supabase.from('todos').select('title').order('priority').csv()
 ```
 
-CSV cells use the JSON value formats (`true`, `2024-01-02T03:04:05+00:00`, `[1,2]`, compact JSON). PostgREST's CSV uses Postgres text output instead (`t`, `"2024-01-02 03:04:05+00"`, `"{1,2}"`, json as stored), so boolean, timestamp, array and json cells differ.
+CSV cells use the JSON value formats (`true`, `2024-01-02T03:04:05+00:00`, `[1,2]`, compact JSON). PostgREST's CSV uses Postgres text output instead (`t`, `"2024-01-02 03:04:05+00"`, `"{1,2}"`, json as stored), so boolean, timestamp, array and json cells differ. CSV columns are sorted alphabetically, not in select order.
 
 ## Error statuses
 
