@@ -29,15 +29,15 @@ See the [CLI reference](/api-reference/cli/#inz-gen-types). `public` is always e
 
 ## Column types
 
-Column types come from the list `inz validate` accepts. In `rpc` args and returns, the longer spellings (`int2`, `int4`, `int8`, `float4`, `float8`, `character varying`, `character`, `timestamp with time zone`, `timestamp without time zone`, `time with time zone`) map to the same types.
+Column types come from the list `inz validate` accepts. In `rpc` args and returns, the longer spellings (`int2`, `int4`, `int8`, `float4`, `float8`, `character varying`, `character`, `timestamp with time zone`, `timestamp without time zone`, `time without time zone`, `time with time zone`) map to the same types.
 
 | Postgres | TypeScript |
 |---|---|
 | smallint, integer, int, serial, smallserial, bigint, bigserial, real, double precision, float, numeric, decimal | `number` |
 | boolean, bool | `boolean` |
 | json, jsonb | `Json` |
-| text, varchar, char, uuid, date, timestamp, timestamptz, timetz, money, inet, cidr, macaddr, bytea, xml, point, tsquery | `string` |
-| interval, time, bit, line, box, polygon, circle, tsvector, anything else | `unknown` |
+| text, varchar, char, uuid, date, timestamp, timestamptz, time, timetz, interval, money, inet, cidr, macaddr, bytea, xml, point, tsquery | `string` |
+| bit, line, box, polygon, circle, tsvector, anything else | `unknown` |
 
 `macaddr8`, `lseg`, `path`, `bit varying` and range types such as `int4range` work only in `rpc` args and returns, where `macaddr8` is `string` and the rest are `unknown`. `inz validate` rejects them as column types.
 
@@ -59,7 +59,7 @@ Functions from `rpc:` are typed under `public`.
 
 - `Enums` and `Constants.*.Enums` stay empty because instancez enums are CHECK constraints; columns use inline unions.
 - `setof <scalar>` returns `{ fn_name: T | null }[]`, which is the shape the REST layer sends.
-- `interval`, `time`, `bit`, geometric types and `tsvector` are `unknown`, because the REST layer returns objects for them, not strings.
+- `bit`, geometric types, `tsvector` and range types arrive as Postgres text strings but stay `unknown`, to match Supabase.
 - Every relationship has `isOneToOne: false`, so a reverse embed is typed as an array. The server always returns an array for reverse embeds, even for a unique foreign key.
 - `rpc` functions appear only under `public`, where instancez creates them.
 - No `__InternalSupabase` block.

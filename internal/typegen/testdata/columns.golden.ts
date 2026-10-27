@@ -67,7 +67,7 @@ export type Database = {
           c_inet: string | null
           c_int_arr: number[]
           c_integer: number
-          c_interval: unknown | null
+          c_interval: string | null
           c_json: Json | null
           c_jsonb: Json
           c_money: string | null
@@ -77,7 +77,7 @@ export type Database = {
           c_smallint: number | null
           c_text: string | null
           c_text_arr: string[] | null
-          c_time: unknown | null
+          c_time: string | null
           c_tstz: string | null
           c_tsvector: unknown | null
           c_uuid: string | null
@@ -111,7 +111,7 @@ export type Database = {
           c_inet?: string | null
           c_int_arr: number[]
           c_integer: number
-          c_interval?: unknown | null
+          c_interval?: string | null
           c_json?: Json | null
           c_jsonb: Json
           c_money?: string | null
@@ -121,7 +121,7 @@ export type Database = {
           c_smallint?: number | null
           c_text?: string | null
           c_text_arr?: string[] | null
-          c_time?: unknown | null
+          c_time?: string | null
           c_tstz?: string | null
           c_tsvector?: unknown | null
           c_uuid?: string | null
@@ -155,7 +155,7 @@ export type Database = {
           c_inet?: string | null
           c_int_arr?: number[]
           c_integer?: number
-          c_interval?: unknown | null
+          c_interval?: string | null
           c_json?: Json | null
           c_jsonb?: Json
           c_money?: string | null
@@ -165,7 +165,7 @@ export type Database = {
           c_smallint?: number | null
           c_text?: string | null
           c_text_arr?: string[] | null
-          c_time?: unknown | null
+          c_time?: string | null
           c_tstz?: string | null
           c_tsvector?: unknown | null
           c_uuid?: string | null
