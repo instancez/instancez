@@ -44,7 +44,7 @@ mkdir my-app && cd my-app
 inz init
 ```
 
-This creates `instancez.yaml` (project name inferred from the directory) with a `todos` table, an `avatars` storage bucket, and a `todos` code function. Nothing touches the database yet.
+This creates `instancez.yaml` (project name inferred from the directory) with `profiles` and `todos` tables, an `avatars` storage bucket, and a `todos` code function. Nothing touches the database yet.
 
 Code functions run in Node.js workers, so the example function is only scaffolded when Node.js 22+ is on your PATH. Without it, `inz init` prints a warning and skips the function; everything else works the same.
 
