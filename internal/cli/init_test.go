@@ -74,6 +74,18 @@ func TestRunInitScaffoldStartsCleanly(t *testing.T) {
 	if p := todos.RLSEnabled; p == nil || !*p {
 		t.Fatalf("scaffold todos must set rls_enabled: true explicitly, got %v", p)
 	}
+	profiles, ok := cfg.Tables["profiles"]
+	if !ok {
+		t.Fatal("scaffold missing profiles table")
+	}
+	var profileCols []string
+	for _, f := range profiles.Fields {
+		profileCols = append(profileCols, f.Name)
+	}
+	assert.Equal(t, []string{"id", "name", "avatar_path"}, profileCols)
+	if p := profiles.RLSEnabled; p == nil || !*p {
+		t.Fatalf("scaffold profiles must set rls_enabled: true explicitly, got %v", p)
+	}
 	if ws := config.Warnings(cfg); len(ws) != 0 {
 		t.Fatalf("scaffold must be warning-free, got %v", ws)
 	}
