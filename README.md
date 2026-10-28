@@ -87,6 +87,32 @@ auth:
     verify_email: false
 
 tables:
+  profiles:
+    rls_enabled: true
+    fields:
+      - name: id
+        primary_key: true
+        foreign_key:
+          references: auth.users.id
+          on_delete: cascade
+      - name: name
+        type: text
+        required: true
+      - name: avatar_path      # path of the file in the avatars bucket below
+        type: text
+
+    rls:
+      # Profiles are readable by anyone signed in; users manage only their own.
+      - operations: [select]
+        using: "auth.is_authenticated()"
+      - operations: [insert]
+        with_check: "id = auth.uid()"
+      - operations: [update]
+        using: "id = auth.uid()"
+        with_check: "id = auth.uid()"
+      - operations: [delete]
+        using: "id = auth.uid()"
+
   todos:
     rls_enabled: true
     fields:
