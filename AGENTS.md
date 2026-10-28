@@ -29,6 +29,10 @@ Concrete rules that fall out of this:
 - When adding a new feature exposed over HTTP, add coverage in `run.mjs` if `supabase-js` has a corresponding API surface. Don't ship behavior that only the bespoke Go tests exercise.
 </supabase_js_compat>
 
+<release_changelog>
+**Never tag a release without a CHANGELOG.md entry.** Before `git tag vX.Y.Z`, move everything under `[Unreleased]` into a new `## [X.Y.Z] - YYYY-MM-DD` section, then run `scripts/check-changelog.sh vX.Y.Z`. It fails if the heading is missing, the section is empty, or `[Unreleased]` still has entries. CI runs the same script on `v*` tags (the `Changelog` job) and `images` / `binaries` need it, so a tag without a changelog publishes nothing. Also add an entry to `[Unreleased]` for every user-visible change as you merge it.
+</release_changelog>
+
 ## Common commands
 
 <commands>
