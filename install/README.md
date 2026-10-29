@@ -54,13 +54,14 @@ CI job for it. Needs a Cloudflare account with the `instancez.ai` zone on it.
 The `custom_domain` route makes Cloudflare manage the DNS record, so there's no
 separate CNAME to add.
 
-`deploy.sh` reads a Cloudflare API token from the environment and pushes the
-Worker. Create a token scoped to "Workers Scripts: Edit" at
-<https://dash.cloudflare.com/profile/api-tokens>, then:
+`deploy.sh` pushes the Worker. It needs either a `npx wrangler login` session
+or a Cloudflare API token scoped to "Workers Scripts: Edit" (create one at
+<https://dash.cloudflare.com/profile/api-tokens>), and exits early if neither
+is present:
 
 ```sh
 cd install
-export CLOUDFLARE_API_TOKEN=...
+npx wrangler login              # or: export CLOUDFLARE_API_TOKEN=...
 # If the token can see more than one account, also:
 # export CLOUDFLARE_ACCOUNT_ID=...
 ./deploy.sh
