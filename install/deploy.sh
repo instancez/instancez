@@ -1,7 +1,8 @@
 #!/bin/sh
 # Deploy the get.instancez.ai Worker to Cloudflare.
 #
-# Create a Cloudflare API token scoped to "Workers Scripts: Edit", then:
+# Auth with either `npx wrangler login`, or a Cloudflare API token scoped to
+# "Workers Scripts: Edit":
 #   export CLOUDFLARE_API_TOKEN=...
 #   ./deploy.sh
 #
@@ -12,17 +13,17 @@ set -eu
 
 cd "$(dirname "$0")"
 
-if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
-  echo "error: CLOUDFLARE_API_TOKEN is not set." >&2
-  echo "Create one with 'Workers Scripts: Edit' at" >&2
-  echo "  https://dash.cloudflare.com/profile/api-tokens" >&2
-  echo "then run: export CLOUDFLARE_API_TOKEN=... && ./deploy.sh" >&2
-  exit 1
-fi
-
 # Pull in wrangler the first time it runs.
 if [ ! -d node_modules ]; then
   npm install
+fi
+
+# whoami exits 0 even when logged out, so match its output.
+if [ -z "${CLOUDFLARE_API_TOKEN:-}" ] && ! npx wrangler whoami 2>&1 | grep -q "You are logged in"; then
+  echo "error: not authenticated with Cloudflare." >&2
+  echo "Run 'npx wrangler login', or export CLOUDFLARE_API_TOKEN with" >&2
+  echo "'Workers Scripts: Edit' from https://dash.cloudflare.com/profile/api-tokens" >&2
+  exit 1
 fi
 
 # Regenerate the base64-bundled scripts so the upload stays in sync and clears
