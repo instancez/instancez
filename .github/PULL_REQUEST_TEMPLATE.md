@@ -10,6 +10,7 @@
 - [ ] `npm test` passes in `dashboard/`, if I changed the frontend
 - [ ] The supabase-js compatibility test still passes, if I touched the HTTP surface, auth, RPC, storage, or JWT handling
 - [ ] Docs and examples in `docs/site/` are updated, if behavior or config changed
+- [ ] `CHANGELOG.md` has an `[Unreleased]` entry, if the change is user-visible
 - [ ] First contribution: I've included the CLA statement below (see [CLA.md](../CLA.md))
 
 <!-- First-time contributors only: paste this line — "I have read and agree to the instancez CLA (CLA.md)." -->
