@@ -4,13 +4,6 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
-<!-- Add entries here as you merge changes. Move them under a version heading when you cut a release. -->
-
-### Added
-
-- `inz gen types` writes `database.types.ts` from `instancez.yaml` with no database needed, for `createClient<Database>()` in `@supabase/supabase-js`. See `docs/site/src/content/docs/build/types.md`.
-- `inz gen types` output now ends with `export const Constants` (empty `Enums` per schema) and adds `SetofOptions` to `rpc` functions that return `setof <table>`.
-
 ### Changed
 
 - Breaking, REST and RPC row values: rows are now serialized like PostgREST (Postgres `to_json`) on list, single, CSV, insert, upsert, update, delete and RPC responses. If your client parsed the old formats, update it. See the [Value formats](docs/site/src/content/docs/build/querying.md#value-formats) table.
@@ -21,7 +14,31 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
   - Float `NaN` and `Infinity` are strings (the response was an empty 200).
   - JSON object keys follow the select list (were alphabetical), and `json` columns keep their stored text. `<`, `>`, `&` and U+2028/2029 are no longer escaped in JSON bodies, as in PostgREST (RPC `count=exact` still escapes U+2028/2029).
   - Run `inz gen types` again: `interval` and `time` are now `string`.
+
+## [0.0.11] - 2026-10-27
+
+### Added
+
+- Anonymous, opt-out usage and error telemetry in the `inz` CLI, sent to PostHog: `command_run` for every command, `$exception` when one fails, plus `dev_ready` and `dev_runtime_error` from `inz dev`. Unexpected `inz dev` / `inz serve` failures ask before sending a crash report with redacted `instancez.yaml` and function source. Turn it off with `inz telemetry disable`, `--no-telemetry`, `INSTANCEZ_TELEMETRY_DISABLED=1` or `DO_NOT_TRACK=1`. `inz serve` sends no usage events. See `docs/site/src/content/docs/telemetry.md`.
+- `inz gen types` output now ends with `export const Constants` (empty `Enums` per schema) and adds `SetofOptions` to `rpc` functions that return `setof <table>`.
+- `inz init` scaffolds a `profiles` table (`name`, `avatar_path`) FK'd to `auth.users.id`.
+
+### Changed
+
+- The first-run telemetry notice says it sends usage and error data, `inz telemetry status` shows how to turn it off, and the install scripts print the same notice.
+- The hosted installer's `install_script` events now go to the same PostHog project as the CLI, so installs and CLI usage are reported in one place.
+- Release binaries and images are built with `-trimpath`.
 - Breaking, `inz gen types`: the generated file is a runtime module because of `Constants`, so it cannot be a `.d.ts`. Scalar `rpc` returns are now `T`, not `T | null`; a SQL NULL still arrives as `null`. Relationships to `auth` or other schemas are dropped; only same-schema relationships remain.
+
+## [0.0.10] - 2026-10-25
+
+### Added
+
+- `inz gen types` writes `database.types.ts` from `instancez.yaml` with no database needed, for `createClient<Database>()` in `@supabase/supabase-js`. See `docs/site/src/content/docs/build/types.md`.
+
+### Documentation
+
+- `inz serve` needs `--allow-destructive` to apply a plan that drops a table or column.
 
 ### Fixed
 
