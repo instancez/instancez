@@ -506,6 +506,8 @@ Rows are serialized by Postgres `to_json`, as in PostgREST. This applies to list
 | `bit`, geometric, `tsvector`, ranges | Postgres text |
 | `geometry` (PostGIS) | GeoJSON object |
 
+The exactness applies to the response JSON. `supabase-js` parses JSON numbers as JavaScript `number` values, so values above `2^53` can be rounded. JSON write bodies are decoded into Go `float64` values before SQL construction, so integers above `2^53` can also change. Use text representations or a lossless JSON parser when exact values matter.
+
 Keys follow the select list; embedded resources come after the plain columns. A `json` column keeps its stored text, while Postgres sorts `jsonb` keys. A `timestamp` has no offset, so JS `new Date()` reads it as local time. Use `timestamptz` for instants.
 
 ## CSV output
