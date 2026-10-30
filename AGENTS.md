@@ -29,6 +29,10 @@ Concrete rules that fall out of this:
 - When adding a new feature exposed over HTTP, add coverage in `run.mjs` if `supabase-js` has a corresponding API surface. Don't ship behavior that only the bespoke Go tests exercise.
 </supabase_js_compat>
 
+<release_changelog>
+**Never tag a release without a CHANGELOG.md entry.** Before `git tag vX.Y.Z`, move everything under `[Unreleased]` into a new `## [X.Y.Z] - YYYY-MM-DD` section, then run `scripts/check-changelog.sh vX.Y.Z`. It fails if the heading is missing, the section is empty, or `[Unreleased]` still has entries. CI runs the same script on `v*` tags (the `Changelog` job) and `images` / `binaries` need it, so a tag without a changelog publishes nothing. Also add an entry to `[Unreleased]` for every user-visible change as you merge it.
+</release_changelog>
+
 ## Common commands
 
 <commands>
@@ -118,8 +122,29 @@ Removal DDL iterates sorted keys. Before that it ranged over maps, and a coupled
 - **Lambda images and registries.** AWS Lambda only pulls single-arch images from private ECR: never manifest lists, never ghcr. The public `ghcr.io/instancez/instancez:<ver>-lambda` tag built by ci.yml's `images` job is intentionally a multi-arch manifest list (nothing feeds it to Lambda). The per-arch ECR image Lambda actually runs (`instancez/<env>:<sha>-lambda-arm64`) is built from instancez source by instancez-platform's `docker-services.yml`. Don't "simplify" that ECR build into a manifest list.
 </gotchas>
 
-## PRs
+## Before every PR
 
-See CONTRIBUTING.md for the full checklist (CLA, docs). If the change touches HTTP, auth, storage, or RPC, call out explicitly that `TestSupabaseJSCompat` passed.
+<pr_checklist>
+Run through this before pushing or opening a PR. A PR that skips it is not done.
 
-## DO NOT FORGET TO UPDATE DOCS AND EXAMPLES EACH TIME A CODE, CONFIG, CLI, BEHAVIOR CHANGE HAPPENS - Located in docs/site/
+1. **Feedback loop green.** See `<feedback_loop>`. If the change touches HTTP, auth, storage, RPC, or JWT handling, say in the PR body that `TestSupabaseJSCompat` passed.
+2. **CHANGELOG.md.** Add a line under `## [Unreleased]` for every user-visible change (feature, fix, behavior/config/CLI/env change, breaking change). Internal refactors and test-only changes can skip it.
+3. **Docs.** Update every place the change shows up, in the same PR:
+
+| Changed | Update |
+|---|---|
+| Config keys, YAML behavior | `docs/site/src/content/docs/api-reference/config.md`, the relevant `build/*.md` page, `skills/instancez/SKILL.md` |
+| CLI commands or flags | `docs/site/src/content/docs/api-reference/cli.md`, the Common commands block above, `README.md` if it shows the command |
+| RPC behavior | `docs/site/src/content/docs/api-reference/rpc.md` |
+| HTTP / supabase-js surface | `docs/site/src/content/docs/supabase-compatibility.md`, `test/integration/supabase-js/run.mjs` |
+| Env vars, deploy targets | `docs/site/src/content/docs/deploy/*.md` (`env-vars.md` especially), `helm/instancez/values.yaml` |
+| Telemetry | `docs/site/src/content/docs/telemetry.md` |
+| Installer | `install/README.md`, `docs/site/src/content/docs/install.mdx` |
+| Agent-facing behavior | `skills/instancez/SKILL.md`, `docs/site/src/content/docs/coding-agents.md` |
+| Templates | `pkg/templates/catalog/<id>/`, `docs/templates.md` |
+| Dev setup, test loop, architecture | this file and `CONTRIBUTING.md` |
+
+Examples (`docs/site/src/content/docs/examples/`, `docs/examples/`, `pkg/templates/catalog/`) must still be valid after a config change: run `./inz validate` against any you touched.
+
+4. **CONTRIBUTING.md** covers the rest (CLA).
+</pr_checklist>
