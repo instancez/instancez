@@ -23,6 +23,7 @@ var tsTypes = map[string]string{
 	"timestamptz": "string", "money": "string", "inet": "string", "cidr": "string",
 	"macaddr": "string", "macaddr8": "string", "bytea": "string", "xml": "string",
 	"point": "string", "tsquery": "string", "timetz": "string", "time with time zone": "string",
+	"interval": "string", "time": "string", "time without time zone": "string",
 }
 
 func tsType(sqlType string) string {

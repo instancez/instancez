@@ -790,24 +790,32 @@ func TestBuildRPCCountedQuery_AliasOrderFallsBackToPlainWindow(t *testing.T) {
 
 func TestSplitRPCTotal(t *testing.T) {
 	rows := []map[string]any{
-		{"id": int64(1), "__inz_row": true, "__inz_rn": int64(1), "__inz_total": int64(7)},
-		{"id": int64(2), "__inz_row": true, "__inz_rn": int64(2), "__inz_total": int64(7)},
+		{"id": int64(1), "__inz_row": true, "__inz_rn": int64(1), "__inz_total": json.Number("7")},
+		{"id": int64(2), "__inz_row": true, "__inz_rn": int64(2), "__inz_total": json.Number("7")},
 	}
 	got, total := splitRPCTotal(rows)
 	if total != 7 || len(got) != 2 || !reflect.DeepEqual(got[0], map[string]any{"id": int64(1)}) {
 		t.Fatalf("got %v total %d", got, total)
 	}
-	got, total = splitRPCTotal([]map[string]any{{"id": nil, "__inz_row": nil, "__inz_rn": nil, "__inz_total": int64(5)}})
+	got, total = splitRPCTotal([]map[string]any{{"id": nil, "__inz_row": nil, "__inz_rn": nil, "__inz_total": json.Number("5")}})
 	if total != 5 || len(got) != 0 {
 		t.Fatalf("empty page: got %v total %d", got, total)
 	}
-	got, total = splitRPCTotal([]map[string]any{{"id": nil, "__inz_row": nil, "__inz_rn": nil, "__inz_total": int64(0)}})
+	got, total = splitRPCTotal([]map[string]any{{"id": nil, "__inz_row": nil, "__inz_rn": nil, "__inz_total": json.Number("0")}})
 	if total != 0 || len(got) != 0 {
 		t.Fatalf("zero total: got %v total %d", got, total)
 	}
 	got, total = splitRPCTotal(nil)
 	if total != -1 || len(got) != 0 {
 		t.Fatalf("nil: got %v total %d", got, total)
+	}
+	got, total = splitRPCTotal([]map[string]any{{"id": json.Number("1"), "__inz_row": true, "__inz_total": json.Number("3")}})
+	if total != 3 || len(got) != 1 || got[0]["id"] != json.Number("1") {
+		t.Fatalf("json.Number: got %v total %d", got, total)
+	}
+	got, total = splitRPCTotal([]map[string]any{{"id": json.Number("1"), "__inz_row": true, "__inz_total": json.Number("x")}})
+	if total != -1 || len(got) != 1 {
+		t.Fatalf("bad total: got %v total %d", got, total)
 	}
 }
 

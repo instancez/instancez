@@ -43,11 +43,16 @@ func rpcRoleServer(t *testing.T) *httptest.Server {
 		},
 	}
 	require.NoError(t, app.NewMigrator(owner).Apply(ctx, cfg))
+	return bootServer(t, cfg, owner, req, "rolecheck")
+}
+
+func bootServer(t *testing.T, cfg *domain.Config, owner domain.OwnerDB, req domain.RequestDB, key string) *httptest.Server {
+	t.Helper()
 	keys := app.NewJWTKeyManager(owner)
-	_, err := keys.Active(ctx)
+	_, err := keys.Active(context.Background())
 	require.NoError(t, err)
-	t.Setenv("INSTANCEZ_PUBLISHABLE_KEY", "inz_publishable_rolecheck")
-	t.Setenv("INSTANCEZ_SECRET_KEY", "inz_secret_rolecheck")
+	t.Setenv("INSTANCEZ_PUBLISHABLE_KEY", "inz_publishable_"+key)
+	t.Setenv("INSTANCEZ_SECRET_KEY", "inz_secret_"+key)
 	srv := instancezhttp.NewServer(instancezhttp.ServerDeps{
 		Config: cfg, DB: req, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		DevMode: true, JWTKeys: keys,

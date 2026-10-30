@@ -4,6 +4,17 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Changed
+
+- Breaking, REST and RPC row values: rows are now serialized like PostgREST (Postgres `to_json`) on list, single, CSV, insert, upsert, update, delete and RPC responses. If your client parsed the old formats, update it. See the [Value formats](docs/site/src/content/docs/build/querying.md#value-formats) table.
+  - `timestamp` has no `Z` (`"2024-01-02T03:04:05"`), so JS `new Date()` reads it as local time; use `timestamptz` for instants.
+  - `timestamptz` uses the database `TimeZone` with a `+HH:MM` offset, not the instancez process timezone.
+  - `date` is `"2024-01-02"` (was `"2024-01-02T00:00:00Z"`).
+  - A `PATCH` with `return=representation` that matches no rows returns `[]` (was `null`), and honours `Accept: application/vnd.pgrst.object+json` when exactly one row matches.
+  - Float `NaN` and `Infinity` are strings (the response was an empty 200).
+  - JSON object keys follow the select list (were alphabetical), and `json` columns keep their stored text. `<`, `>`, `&` and U+2028/2029 are no longer escaped in JSON bodies, as in PostgREST (RPC `count=exact` still escapes U+2028/2029).
+  - Run `inz gen types` again: `interval` and `time` are now `string`.
+
 ## [0.0.11] - 2026-10-27
 
 ### Added

@@ -485,6 +485,31 @@ Roll back the transaction after the query executes without committing changes:
 Prefer: tx=rollback
 ```
 
+## Value formats
+
+Rows are serialized by Postgres `to_json`, as in PostgREST. This applies to list, single, insert, upsert, update, delete and RPC responses. The `timestamptz` offset follows the database `TimeZone`, and `interval` text follows `IntervalStyle`.
+
+| Postgres type | JSON value |
+|---|---|
+| `date` | `"2024-01-02"` |
+| `timestamp` | `"2024-01-02T03:04:05"` (no offset) |
+| `timestamptz` | `"2024-01-02T03:04:05+00:00"` |
+| `time`, `interval` | text, such as `"03:04:05"` and `"1 day"` |
+| `bytea` | `"\\xdeadbeef"` |
+| `inet` | `"10.0.0.1"` (no `/32`) |
+| `infinity` date or timestamp | `"infinity"`, `"-infinity"` |
+| `NaN`, `Infinity` | `"NaN"`, `"Infinity"` (strings) |
+| `bigint`, `numeric` | exact JSON number |
+| arrays | JSON arrays, nested for multiple dimensions |
+| `json`, `jsonb` | nested JSON, with large numbers kept exact |
+| composite | nested object |
+| `bit`, geometric, `tsvector`, ranges | Postgres text |
+| `geometry` (PostGIS) | GeoJSON object |
+
+The exactness applies to the response JSON. `supabase-js` parses JSON numbers as JavaScript `number` values, so values above `2^53` can be rounded. JSON write bodies are decoded into Go `float64` values before SQL construction, so integers above `2^53` can also change. Use text representations or a lossless JSON parser when exact values matter.
+
+Keys follow the select list; embedded resources come after the plain columns. A `json` column keeps its stored text, while Postgres sorts `jsonb` keys. A `timestamp` has no offset, so JS `new Date()` reads it as local time. Use `timestamptz` for instants.
+
 ## CSV output
 
 Add `.csv()` in `supabase-js` or set `Accept: text/csv` to receive results as CSV:
@@ -492,6 +517,8 @@ Add `.csv()` in `supabase-js` or set `Accept: text/csv` to receive results as CS
 ```js
 const { data } = await supabase.from('todos').select('title').order('priority').csv()
 ```
+
+CSV cells use the JSON value formats (`true`, `2024-01-02T03:04:05+00:00`, `[1,2]`, compact JSON). PostgREST's CSV uses Postgres text output instead (`t`, `"2024-01-02 03:04:05+00"`, `"{1,2}"`, json as stored), so boolean, timestamp, array and json cells differ. CSV columns are sorted alphabetically, not in select order.
 
 ## Error statuses
 

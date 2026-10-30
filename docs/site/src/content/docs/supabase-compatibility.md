@@ -9,7 +9,7 @@ instancez implements the Supabase wire protocol. Any official Supabase SDK works
 
 | Feature | Status | Notes |
 |---|---|---|
-| **Database — `supabase.from()`** | ✅ Full | `select`, `insert`, `update`, `upsert`, `delete`. All PostgREST filter operators (`eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `like`, `ilike`, `is`, `in`, `contains`, `containedBy`, `overlaps`, …). Embeds (`!inner`, `!left`, FK hints, many-to-many through junction tables, 300 `PGRST201` when ambiguous). `order`, `limit`, `offset`, Range-header pagination with PostgREST's statuses: 206 for a partial counted page, 416 `PGRST103` past the end (`data` and `count` are `null`). `Prefer: return`, `count`, `resolution`, `missing`, `max-affected`, `tx`. CSV responses (`Accept: text/csv`). HEAD requests. The secret key can use `.explain()` (text or JSON, with `analyze`, `verbose`, `settings`, `buffers`, `wal`) on reads. The plan runs in a transaction that is always rolled back. Other callers get 406 `PGRST107`. `.explain()` on insert, upsert, update, delete and rpc returns 406 `PGRST107` for every caller, the secret key included, and nothing runs. |
+| **Database — `supabase.from()`** | ✅ Full | `select`, `insert`, `update`, `upsert`, `delete`. All PostgREST filter operators (`eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `like`, `ilike`, `is`, `in`, `contains`, `containedBy`, `overlaps`, …). Embeds (`!inner`, `!left`, FK hints, many-to-many through junction tables, 300 `PGRST201` when ambiguous). `order`, `limit`, `offset`, Range-header pagination with PostgREST's statuses: 206 for a partial counted page, 416 `PGRST103` past the end (`data` and `count` are `null`). `Prefer: return`, `count`, `resolution`, `missing`, `max-affected`, `tx`. Row values serialized like PostgREST (`to_json`), see [Value formats](/build/querying/#value-formats). CSV responses (`Accept: text/csv`). HEAD requests. The secret key can use `.explain()` (text or JSON, with `analyze`, `verbose`, `settings`, `buffers`, `wal`) on reads. The plan runs in a transaction that is always rolled back. Other callers get 406 `PGRST107`. `.explain()` on insert, upsert, update, delete and rpc returns 406 `PGRST107` for every caller, the secret key included, and nothing runs. |
 | **Auth — `supabase.auth.*`** | ✅ Full | Email + password, magic link / OTP, anonymous sign-in, session refresh, `updateUser`, `resetPasswordForEmail`, identity linking/unlinking (`linkIdentity` needs the frontend on the API's origin, see [Auth](/build/auth/)), PKCE. |
 | **OAuth — `signInWithOAuth`** | ⚠️ Google, GitHub and Apple only | The `provider` field accepts `google`, `github` and `apple`. Other providers return a 400. Apple is configured in YAML only. |
 | **OAuth — `signInWithIdToken`** | ⚠️ Google and Apple only | Verifies the token against the provider's keys, with `nonce` (a token that has one needs one in the request, and the reverse). Google compares it raw. Apple compares the claim to the hex SHA-256 of the request nonce. Apple takes several audiences in `client_id` (comma-separated) for iOS bundle IDs. |
@@ -32,6 +32,11 @@ instancez's auth server matches Supabase's GoTrue on the wire, with a few delibe
 - `/otp` and `/recover` return a silent empty 200 on a repeat within 60 seconds, so neither reveals whether the account exists. `/resend` instead returns 429 `over_email_send_rate_limit` on the same cooldown — matching GoTrue, but inconsistent with instancez's own `/otp` and `/recover`.
 - An access token issued before a ban or a password change stays valid until it expires; it isn't revoked early.
 - JWTs are only accepted if signed `RS256` or `HS256`.
+
+## REST behavior differences from PostgREST
+
+- CSV cells differ from PostgREST's CSV; see [CSV output](/build/querying/#csv-output). `rpc` ignores `Accept: text/csv`.
+- Rows from `Accept: text/csv`, `application/geo+json` and RPC calls with `count=exact` list keys in alphabetical order, not select order.
 
 ## Direct storage upload (no SDK needed)
 

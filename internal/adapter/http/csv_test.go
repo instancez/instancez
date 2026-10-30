@@ -1,6 +1,9 @@
 package http
 
 import (
+	"bytes"
+	"encoding/csv"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -236,5 +239,24 @@ func TestCsvCoerceRecords(t *testing.T) {
 	}
 	if out[1]["score"] != nil {
 		t.Errorf("empty float should be nil, got %v", out[1]["score"])
+	}
+}
+
+func TestCsvRenderRows_JSONAndBigNumbers(t *testing.T) {
+	rows := []map[string]any{{
+		"j": map[string]any{"k": "<a>"},
+		"a": []any{"x"},
+		"n": json.Number("9007199254740993"),
+	}}
+	out, err := csvRenderRows(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := csv.NewReader(bytes.NewReader(out)).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(r[1], "|"); got != `["x"]|{"k":"<a>"}|9007199254740993` {
+		t.Errorf("cells = %q", got)
 	}
 }

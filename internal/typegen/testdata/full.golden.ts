@@ -375,7 +375,7 @@ export type Database = {
           a: number | null
           b: number | null
           c: string | null
-          d: unknown | null
+          d: string | null
         }[]
       }
     }
