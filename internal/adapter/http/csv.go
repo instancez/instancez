@@ -3,6 +3,7 @@ package http
 import (
 	"bytes"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -62,7 +63,7 @@ func csvRenderRows(rows []map[string]any) ([]byte, error) {
 		line := make([]string, len(cols))
 		for i, col := range cols {
 			if v, ok := row[col]; ok && v != nil {
-				line[i] = fmt.Sprintf("%v", v)
+				line[i] = csvCell(v)
 			}
 		}
 		if err := w.Write(line); err != nil {
@@ -74,4 +75,17 @@ func csvRenderRows(rows []map[string]any) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+func csvCell(v any) string {
+	switch v.(type) {
+	case map[string]any, []any:
+		var b bytes.Buffer
+		enc := json.NewEncoder(&b)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(v); err == nil {
+			return strings.TrimSuffix(b.String(), "\n")
+		}
+	}
+	return fmt.Sprintf("%v", v)
 }

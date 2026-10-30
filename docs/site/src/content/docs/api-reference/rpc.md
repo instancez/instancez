@@ -47,6 +47,8 @@ Function bodies are not checked when the migration creates them, so a `language:
 
 ## Calling via HTTP
 
+Result values use the same formats as table reads, listed in [Value formats](/build/querying/#value-formats).
+
 ```http
 POST /rest/v1/rpc/team_stats
 Content-Type: application/json

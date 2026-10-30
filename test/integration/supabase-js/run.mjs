@@ -1331,6 +1331,82 @@ await step('rest: .csv() returns text/csv body', async () => {
   assert(lines.includes('epsilon'), 'csv contains epsilon')
 })
 
+// --- Wire serialization: values must match PostgREST (to_json) ---
+const sessionClient = () => createClient(URL, PUBLISHABLE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+  global: { headers: { Authorization: `Bearer ${accessToken}` } },
+})
+let wireId
+
+await step('rest: insert().select() serializes like PostgREST', async () => {
+  const { data, error } = await sessionClient().from('wire_types').insert({
+    d: '2024-01-02', ts: '2024-01-02 03:04:05.5', tstz: '2024-01-02T03:04:05Z', iv: '1 day 02:03:04',
+    t: '03:04:05', ip: '10.0.0.1', b: '\\xdeadbeef', f: 'NaN', j: { n: 1 },
+  }).select().single()
+  if (error) throw error
+  wireId = data.id
+  assertEq(data.d, '2024-01-02', 'date')
+  assertEq(data.ts, '2024-01-02T03:04:05.5', 'timestamp is ISO without zone')
+  assertEq(data.tstz, '2024-01-02T03:04:05+00:00', 'timestamptz')
+  assertEq(data.iv, '1 day 02:03:04', 'interval')
+  assertEq(data.t, '03:04:05', 'time')
+  assertEq(data.ip, '10.0.0.1', 'inet has no /32')
+  assertEq(data.b, '\\xdeadbeef', 'bytea hex')
+  assertEq(data.f, 'NaN', 'float NaN is the string NaN')
+  assertEq(data.j.n, 1, 'jsonb')
+})
+
+await step('rest: upsert().select() serializes like PostgREST', async () => {
+  const { data, error } = await sessionClient().from('wire_types')
+    .upsert({ id: wireId, iv: '2 days' }).select()
+  if (error) throw error
+  assertEq(data[0].iv, '2 days', 'interval')
+  assertEq(data[0].d, '2024-01-02', 'date kept')
+})
+
+await step('rest: update().select().single() returns an object', async () => {
+  assert(wireId, 'insert step must run first')
+  const { data, error } = await sessionClient().from('wire_types')
+    .update({ f: 1.5 }).eq('id', wireId).select().single()
+  if (error) throw error
+  assert(!Array.isArray(data), 'single object')
+  assertEq(data.d, '2024-01-02', 'date')
+  assertEq(data.f, 1.5, 'float')
+})
+
+await step('rpc: setof rows serialize like PostgREST', async () => {
+  assert(wireId, 'insert step must run first')
+  const { data, error } = await sessionClient().rpc('wire_types_rpc')
+  if (error) throw error
+  const row = data.find((r) => r.id === wireId)
+  assert(row, 'inserted row is in the setof result')
+  assertEq(row.d, '2024-01-02', 'date')
+  assertEq(row.tstz, '2024-01-02T03:04:05+00:00', 'timestamptz')
+})
+
+await step('rpc: scalar date', async () => {
+  const { data, error } = await sessionClient().rpc('wire_date')
+  if (error) throw error
+  assertEq(data, '2024-01-02')
+})
+
+await step('rpc: table() with exotic types', async () => {
+  const { data, error } = await sessionClient().rpc('wire_shape')
+  if (error) throw error
+  assertEq(data.length, 1, 'one row')
+  assertEq(data[0].l, '[(0,0),(1,1)]', 'lseg')
+  assertEq(data[0].r, '[1,5)', 'int4range')
+})
+
+await step('rest: delete().select() serializes like PostgREST', async () => {
+  assert(wireId, 'insert step must run first')
+  const { data, error } = await sessionClient().from('wire_types')
+    .delete().eq('id', wireId).select()
+  if (error) throw error
+  assertEq(data.length, 1, 'one row deleted')
+  assertEq(data[0].b, '\\xdeadbeef', 'bytea hex')
+})
+
 await step('rest: array operators (.contains/.containedBy/.overlaps)', async () => {
   const client = createClient(URL, PUBLISHABLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -2470,10 +2546,6 @@ if (SECRET_KEY) {
 // ==========================================================================
 
 // Helper: create an authenticated client with fresh access token.
-const storageClient = () => createClient(URL, PUBLISHABLE_KEY, {
-  auth: { persistSession: false, autoRefreshToken: false },
-  global: { headers: { Authorization: `Bearer ${accessToken}` } },
-})
 
 // --- Bucket admin ---
 
@@ -2613,7 +2685,7 @@ await step('storage: download public object without auth', async () => {
 
 // Supabase parity: public opens /object/public downloads only; listing and exists still follow RLS.
 await step('storage: public bucket downloads for anyone but lists only per RLS', async () => {
-  const { error: upErr } = await storageClient().storage.from('pubgated').upload('gated.txt', 'gated body', { contentType: 'text/plain', upsert: true })
+  const { error: upErr } = await sessionClient().storage.from('pubgated').upload('gated.txt', 'gated body', { contentType: 'text/plain', upsert: true })
   assert(!upErr, `owner upload failed: ${upErr?.message}`)
 
   const guest = createClient(URL, PUBLISHABLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
@@ -2638,7 +2710,7 @@ await step('storage: public bucket downloads for anyone but lists only per RLS',
   assert(!otherErr, `non-owner list errored: ${otherErr?.message}`)
   assertEq(otherList.length, 0, 'a non-owner must not list a public bucket whose select policy excludes them')
 
-  const { data: ownerList, error: ownerErr } = await storageClient().storage.from('pubgated').list()
+  const { data: ownerList, error: ownerErr } = await sessionClient().storage.from('pubgated').list()
   assert(!ownerErr, `owner list errored: ${ownerErr?.message}`)
   assert(ownerList.some(o => o.name === 'gated.txt'), `owner list missing gated.txt: ${JSON.stringify(ownerList)}`)
 })
@@ -2804,7 +2876,7 @@ await step('storage: listV2 cursor pagination', async () => {
 })
 
 await step('storage: list() and listV2() fold nested folders like Supabase', async () => {
-  const bucket = storageClient().storage.from('avatars')
+  const bucket = sessionClient().storage.from('avatars')
   const keys = ['tree/a.txt', 'tree/b/one.txt', 'tree/b/deep/two.txt', 'tree/C/three.txt', 'tree/z.txt']
   for (const k of keys) {
     const { error } = await bucket.upload(k, 'x', { contentType: 'text/plain', upsert: true })
@@ -2843,7 +2915,7 @@ await step('storage: list() and listV2() fold nested folders like Supabase', asy
 })
 
 await step('storage: list() keeps names that differ only by case', async () => {
-  const bucket = storageClient().storage.from('avatars')
+  const bucket = sessionClient().storage.from('avatars')
   const keys = ['case/a.txt', 'case/A.txt']
   for (const k of keys) {
     const { error } = await bucket.upload(k, 'x', { contentType: 'text/plain', upsert: true })
@@ -2944,7 +3016,7 @@ await step('storage: move object', async () => {
 // This harness runs LocalStore, so redemption streams; the S3 302 path is covered by Go unit + MinIO tests.
 
 await step('storage: createSignedUrl works through supabase-js, with download', async () => {
-  const bucket = storageClient().storage.from('avatars')
+  const bucket = sessionClient().storage.from('avatars')
   const { data, error } = await bucket.createSignedUrl('test-file.txt', 3600)
   if (error) throw error
   assert(data.signedUrl.startsWith(`${URL}/storage/v1/object/sign/avatars/test-file.txt?token=`), data.signedUrl)
@@ -2973,7 +3045,7 @@ await step('storage: createSignedUrl works through supabase-js, with download', 
 })
 
 await step('storage: createSignedUrls batch URLs redeem, with download', async () => {
-  const bucket = storageClient().storage.from('avatars')
+  const bucket = sessionClient().storage.from('avatars')
   const { data, error } = await bucket.createSignedUrls(['test-file.txt', 'no-such-file.txt'], 3600, { download: true })
   if (error) throw error
   const resp = await fetch(data[0].signedUrl)
@@ -2985,7 +3057,7 @@ await step('storage: createSignedUrls batch URLs redeem, with download', async (
 })
 
 await step('storage: getPublicUrl honors download', async () => {
-  const { data } = storageClient().storage.from('avatars').getPublicUrl('test-file.txt', { download: 'pub.txt' })
+  const { data } = sessionClient().storage.from('avatars').getPublicUrl('test-file.txt', { download: 'pub.txt' })
   const resp = await fetch(data.publicUrl)
   assertEq(resp.status, 200)
   assertEq(resp.headers.get('content-disposition'), 'attachment; filename=pub.txt')
@@ -2994,7 +3066,7 @@ await step('storage: getPublicUrl honors download', async () => {
 // --- Signed upload URL + uploadToSignedUrl ---
 
 await step('storage: createSignedUploadUrl + uploadToSignedUrl flow', async () => {
-  const bucket = storageClient().storage.from('avatars')
+  const bucket = sessionClient().storage.from('avatars')
   const { data: signed, error } = await bucket.createSignedUploadUrl('signed-upload.txt')
   if (error) throw error
   assert(signed.token, 'token present')
@@ -3029,13 +3101,13 @@ await step('storage: uploadToSignedUrl rejects bad token', async () => {
 })
 
 const mintUploadToken = async (bucket, path) => {
-  const { data, error } = await storageClient().storage.from(bucket).createSignedUploadUrl(path)
+  const { data, error } = await sessionClient().storage.from(bucket).createSignedUploadUrl(path)
   if (error) throw error
   return data.token
 }
 
 await step('storage: uploadToSignedUrl with a Blob stores the file, not the multipart framing', async () => {
-  const bucket = storageClient().storage.from('avatars')
+  const bucket = sessionClient().storage.from('avatars')
   const token = await mintUploadToken('avatars', 'signed-blob.txt')
   const { error } = await bucket.uploadToSignedUrl('signed-blob.txt', token, new Blob(['blob via signed url'], { type: 'text/plain' }))
   if (error) throw error
@@ -3055,7 +3127,7 @@ await step('storage: uploadToSignedUrl with a Blob stores the file, not the mult
 })
 
 await step('storage: upload({ metadata }) round-trips through info() and resets on upsert', async () => {
-  const bucket = storageClient().storage.from('avatars')
+  const bucket = sessionClient().storage.from('avatars')
   const meta = { owner: 'ana', emoji: '✓', nested: { n: 1 } }
   for (const [path, body] of [['meta-header.txt', 'string body'], ['meta-form.txt', new Blob(['blob body'], { type: 'text/plain' })]]) {
     const { error } = await bucket.upload(path, body, { contentType: 'text/plain', metadata: meta, upsert: true })
@@ -3087,7 +3159,7 @@ await step('storage: upload({ metadata }) round-trips through info() and resets 
 })
 
 await step('storage: uploadToSignedUrl enforces the bucket MIME allowlist', async () => {
-  const bucket = storageClient().storage.from('avatars')
+  const bucket = sessionClient().storage.from('avatars')
   const token = await mintUploadToken('avatars', 'signed-evil.html')
   // nosemgrep -- URL and TOKEN are the test harness's own server URL and self-minted token, not user input
   const raw = await fetch(`${URL}/storage/v1/object/upload/sign/avatars/signed-evil.html?token=${token}`, {
@@ -3168,7 +3240,7 @@ if (SECRET_KEY) {
       .upload('mine/admin.txt', 'admin secret', { contentType: 'text/plain', upsert: true })
     if (seedErr) throw seedErr
 
-    const bucket = storageClient().storage.from('owned')
+    const bucket = sessionClient().storage.from('owned')
     const { data, error } = await bucket.createSignedUrls(['mine/admin.txt', 'mine/file.txt'], 60)
     if (error) throw error
     const hidden = data.find(d => d.path === 'mine/admin.txt')
@@ -3194,7 +3266,7 @@ if (SECRET_KEY) {
     const { error: seedErr } = await admin.upload('mine/admin.txt', 'admin secret', { contentType: 'text/plain', upsert: true })
     if (seedErr) throw seedErr
 
-    const { error } = await storageClient().storage.emptyBucket('owned')
+    const { error } = await sessionClient().storage.emptyBucket('owned')
     if (error) throw error
     assertEq((await admin.exists('mine/admin.txt')).data, true, 'hidden object survives emptyBucket')
     assertEq((await admin.exists('mine/file.txt')).data, false, "caller's own object was removed")
@@ -3202,7 +3274,7 @@ if (SECRET_KEY) {
     assertEq(bytes, 'admin secret', 'hidden bytes untouched')
 
     // Later steps read mine/file.txt, so the owner puts it back.
-    const { error: restoreErr } = await storageClient().storage.from('owned')
+    const { error: restoreErr } = await sessionClient().storage.from('owned')
       .upload('mine/file.txt', 'owned content', { contentType: 'text/plain' })
     if (restoreErr) throw restoreErr
     const { error: rmErr } = await admin.remove(['mine/admin.txt'])
@@ -3218,12 +3290,12 @@ await step('storage: traversal keys are rejected', async () => {
     body: 'x',
   })
   assertEq(resp.status, 400, 'upload to a traversal key')
-  const { error } = await storageClient().storage.from('avatars').copy('test-file.txt', '../../escape.txt')
+  const { error } = await sessionClient().storage.from('avatars').copy('test-file.txt', '../../escape.txt')
   assert(error, 'copy to a traversal key must fail')
 })
 
 await step('storage: private downloads are private, nosniff, and HTML is an attachment', async () => {
-  const { error: upErr } = await storageClient().storage.from('documents')
+  const { error: upErr } = await sessionClient().storage.from('documents')
     .upload('page.html', '<html><script>alert(1)</script></html>', { contentType: 'text/html', upsert: true })
   if (upErr) throw upErr
   const dl = await fetch(`${URL}/storage/v1/object/authenticated/documents/page.html`, {
@@ -3304,7 +3376,7 @@ if (SECRET_KEY) {
     })
     assert(put.ok, `admin seed upload failed: ${put.status}`)
 
-    const { data, error } = await storageClient().storage.from('readonly').remove(['ro-remove.txt'])
+    const { data, error } = await sessionClient().storage.from('readonly').remove(['ro-remove.txt'])
     if (error) throw error
     assertEq(data.length, 0, 'RLS denies the delete, so nothing is reported removed')
 
@@ -3602,7 +3674,7 @@ await step('storage: image transform quality affects jpeg output size', async ()
 })
 
 await step('storage: render/image routes serve storage-js transforms', async () => {
-  const pub = storageClient().storage.from('avatars')
+  const pub = sessionClient().storage.from('avatars')
   const { data: urlData } = pub.getPublicUrl('transform-test.png', { transform: { width: 3, height: 5, resize: 'fill' } })
   assert(urlData.publicUrl.includes('/render/image/public/avatars/transform-test.png'), urlData.publicUrl)
   const pr = await fetch(urlData.publicUrl)

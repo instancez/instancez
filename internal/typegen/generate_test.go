@@ -283,7 +283,7 @@ func TestGenerateFunctionRules(t *testing.T) {
 		"public_cats":  {`Returns: Database["public"]["Tables"]["cats"]["Row"][]`},
 		"mystery_rows": {"Returns: Record<string, unknown>[]"},
 		"recent_audit": {`Returns: Database["audit"]["Tables"]["audit_entries"]["Row"][]`},
-		"stats":        {"a: number | null", "b: number | null", "c: string | null", "d: unknown | null"},
+		"stats":        {"a: number | null", "b: number | null", "c: string | null", "d: string | null"},
 	}
 	for name, subs := range wants {
 		body := fn(name)

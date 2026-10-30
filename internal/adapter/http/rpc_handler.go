@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -162,7 +163,7 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 				query = buildRPCCountedQuery(callSQL, rpcChain, callArgCount+1)
 			}
 			// nosemgrep -- query uses validated identifiers; values are bound args
-			rows, err := tx.Query(ctx, query, placeholders...)
+			rows, err := queryWireRaw(ctx, tx, query, placeholders...)
 			if err != nil {
 				h.logger.Error("rpc setof error", "fn", name, "error", err)
 				handleDBError(c, err)
@@ -171,7 +172,11 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 			total := -1
 			switch countMode {
 			case "exact":
-				rows, total = splitRPCTotal(rows)
+				if rows, total, err = splitRawRPCTotal(rows); err != nil {
+					h.logger.Error("rpc count error", "fn", name, "error", err)
+					handleDBError(c, err)
+					return
+				}
 			case "planned", "estimated":
 				if total, err = executeRPCPlannedCount(ctx, tx, callSQL, placeholders[:callArgCount:callArgCount], rpcChain); err != nil {
 					h.logger.Error("rpc count error", "fn", name, "error", err)
@@ -182,9 +187,6 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 			if err := tx.Commit(ctx); err != nil {
 				problemJSON(c, http.StatusInternalServerError, "internal", "Transaction commit failed")
 				return
-			}
-			if rows == nil {
-				rows = []map[string]any{}
 			}
 			// Content-Range goes on every setof response, like PostgREST.
 			offset := 0
@@ -213,18 +215,22 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 				return
 			}
 			if singular {
-				c.JSON(status, rows[0])
+				writeWireRow(c, status, rows[0])
 				return
 			}
-			c.JSON(status, rows)
+			writeWireRows(c, status, rows)
 			return
 
 		default: // "scalar"
-			row, err := tx.QueryRow(ctx, sql, placeholders...)
+			rows, err := queryWireRows(ctx, tx, sql, placeholders...)
 			if err != nil {
 				h.logger.Error("rpc scalar error", "fn", name, "error", err)
 				handleDBError(c, err)
 				return
+			}
+			var row map[string]any
+			if len(rows) > 0 {
+				row = rows[0]
 			}
 			if err := tx.Commit(ctx); err != nil {
 				problemJSON(c, http.StatusInternalServerError, "internal", "Transaction commit failed")
@@ -232,8 +238,7 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 			}
 			// For scalar functions, PostgREST returns the bare value
 			// (number, string, bool, null) — not wrapped in an object.
-			// QueryRow returns a map[col]value; our SELECT aliases the
-			// call as the function name, so there's exactly one entry.
+			// Our SELECT aliases the call as the function name, so there's one entry.
 			if row == nil {
 				c.JSON(http.StatusOK, nil)
 				return
@@ -861,8 +866,10 @@ func splitRPCTotal(rows []map[string]any) ([]map[string]any, int) {
 	total := -1
 	out := make([]map[string]any, 0, len(rows))
 	for _, r := range rows {
-		if n, ok := r["__inz_total"].(int64); ok {
-			total = int(n)
+		if n, ok := r["__inz_total"].(json.Number); ok {
+			if v, err := n.Int64(); err == nil {
+				total = int(v)
+			}
 		}
 		present := r["__inz_row"] != nil
 		delete(r, "__inz_total")
@@ -873,6 +880,26 @@ func splitRPCTotal(rows []map[string]any) ([]map[string]any, int) {
 		}
 	}
 	return out, total
+}
+
+// splitRawRPCTotal is splitRPCTotal for raw rows; the counted page is re-encoded.
+func splitRawRPCTotal(raw []json.RawMessage) ([]json.RawMessage, int, error) {
+	decoded, err := decodeWireRows(raw)
+	if err != nil {
+		return nil, -1, err
+	}
+	kept, total := splitRPCTotal(decoded)
+	out := make([]json.RawMessage, 0, len(kept))
+	for _, r := range kept {
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(r); err != nil {
+			return nil, -1, err
+		}
+		out = append(out, bytes.TrimSuffix(buf.Bytes(), []byte("\n")))
+	}
+	return out, total, nil
 }
 
 // executeRPCPlannedCount estimates with plain EXPLAIN, which never executes the function.

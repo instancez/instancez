@@ -16,6 +16,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func unwrapWireSQL(q string) string {
+	pre, suf, _ := strings.Cut(wireRowsSQL(""), ")")
+	return strings.TrimSuffix(strings.TrimPrefix(q, pre), ")"+suf)
+}
+
+func wireStubRows(rows []map[string]any) []map[string]any {
+	out := make([]map[string]any, len(rows))
+	for i, r := range rows {
+		b, err := json.Marshal(r)
+		if err != nil {
+			panic(err)
+		}
+		out[i] = map[string]any{"_inz_row": string(b)}
+	}
+	return out
+}
+
 func listStatus(t *testing.T, method, rawQuery string, headers map[string]string, n int, total int64) *httptest.ResponseRecorder {
 	w, _ := listStatusSQL(t, method, rawQuery, headers, n, total)
 	return w
@@ -32,8 +49,8 @@ func listStatusSQL(t *testing.T, method, rawQuery string, headers map[string]str
 	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) {
 		return &stubTx{
 			queryFn: func(_ context.Context, q string, _ ...any) ([]map[string]any, error) {
-				sql = q
-				return rows, nil
+				sql = unwrapWireSQL(q)
+				return wireStubRows(rows), nil
 			},
 			queryRowFn: func(context.Context, string, ...any) (map[string]any, error) {
 				return map[string]any{"count": total}, nil
@@ -225,7 +242,7 @@ func rpcStatus(t *testing.T, method, rawQuery string, headers map[string]string,
 	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) {
 		return &stubTx{queryFn: func(_ context.Context, _ string, a ...any) ([]map[string]any, error) {
 			args = a
-			return rows, nil
+			return wireStubRows(rows), nil
 		}}, nil
 	}}
 	cfg := &domain.Config{RPC: map[string]domain.Function{"list": {
@@ -370,4 +387,42 @@ func TestRangeGuard(t *testing.T) {
 			assert.Contains(t, w.Body.String(), c.body)
 		})
 	}
+}
+
+func TestHandleList_RawJSONBody(t *testing.T) {
+	w := listStatus(t, "GET", "", nil, 2, 0)
+	assert.Equal(t, "application/json; charset=utf-8", w.Header().Get("Content-Type"))
+	assert.Equal(t, `[{"id":0},{"id":1}]`, w.Body.String())
+	w = listStatus(t, "GET", "", nil, 0, 0)
+	assert.Equal(t, `[]`, w.Body.String())
+	w = listStatus(t, "GET", "", map[string]string{"Accept": "application/vnd.pgrst.object+json"}, 1, 0)
+	assert.Equal(t, `{"id":0}`, w.Body.String())
+}
+
+func TestHandleList_GeoJSONFeatures(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := &stubDB{beginFn: func(context.Context) (domain.Tx, error) {
+		return &stubTx{
+			queryFn: func(context.Context, string, ...any) ([]map[string]any, error) {
+				return wireStubRows([]map[string]any{{"id": 7, "name": "a", "geom": map[string]any{"type": "Point", "coordinates": []any{1, 2}}}}), nil
+			},
+			queryRowFn: func(context.Context, string, ...any) (map[string]any, error) {
+				return map[string]any{"?column?": int32(1)}, nil
+			},
+		}, nil
+	}}
+	table := domain.Table{Fields: []domain.Field{
+		{Name: "id", Type: "bigserial", PrimaryKey: true},
+		{Name: "name", Type: "text"},
+		{Name: "geom", Type: "geometry(Point,4326)"},
+	}}
+	h := &CRUDHandler{cfg: &domain.Config{}, db: db, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/rest/v1/places", nil)
+	c.Request.Header.Set("Accept", "application/geo+json")
+	c.Set(contextKeySession, domain.Session{Role: "service_role", IsAuthenticated: true})
+	h.handleList("places", table)(c)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.JSONEq(t, `{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[1,2]},"properties":{"id":7,"name":"a"}}]}`, w.Body.String())
 }
