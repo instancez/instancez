@@ -29,9 +29,13 @@ var planForTypes = map[string]bool{
 // splitUnquoted splits on sep outside double quotes; mime.ParseMediaType rejects the `options=;` postgrest-js sends.
 func splitUnquoted(s string, sep rune) []string {
 	var out []string
-	inQ, start := false, 0
+	inQ, esc, start := false, false, 0
 	for i, r := range s {
 		switch {
+		case esc:
+			esc = false
+		case inQ && r == '\\':
+			esc = true
 		case r == '"':
 			inQ = !inQ
 		case r == sep && !inQ:

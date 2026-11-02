@@ -534,6 +534,61 @@ func TestEngineRunWatcher_BadMigrationFallsBack(t *testing.T) {
 	}
 }
 
+// TestEngineRunWatcher_UnrecoverableMigrationRestoresPrevConfig: when a reload
+// fails with no last-known-good, the failed candidate must not stay live and
+// the source must be reported as drifted.
+func TestEngineRunWatcher_UnrecoverableMigrationRestoresPrevConfig(t *testing.T) {
+	db := newFakeDB(t)
+	roles := domain.DefaultRoles()
+	authDB := newFakeRequestDB(t)
+
+	initial := &domain.Config{
+		Tables: map[string]domain.Table{
+			"a": {Fields: []domain.Field{{Name: "id", Type: "BIGINT", PrimaryKey: true}}},
+		},
+		Server: domain.Server{Port: 9000},
+	}
+	src := &fakeSource{ch: make(chan config.WatchEvent, 4)}
+	engine := NewEngine(initial, domain.OwnerDB{Database: db}, authDB, roles,
+		WithMode(ModeProd), WithMigrate(true), WithConfigSource(src))
+	engine.drift = NewDriftTracker(src.Describe())
+	engine.drift.MarkOK("seed", time.Now())
+
+	db.failOnStatementContaining = "CREATE TABLE IF NOT EXISTS a"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		engine.runWatcher(ctx, 0)
+		close(done)
+	}()
+
+	src.ch <- config.WatchEvent{Data: []byte(watcherGoodYAML), Version: "v2"}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && engine.Drift().Snapshot().Status != DriftStatusDrift {
+		time.Sleep(10 * time.Millisecond)
+	}
+	state := engine.Drift().Snapshot()
+	if state.Status != DriftStatusDrift {
+		t.Fatalf("expected drift after unrecoverable migration, got %q", state.Status)
+	}
+	if !strings.Contains(state.LastError, "migration failed") {
+		t.Fatalf("drift should carry the migration error, got %q", state.LastError)
+	}
+	if got := engine.Config(); got != initial {
+		t.Fatalf("failed candidate stayed live: port=%d", got.Server.Port)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("runWatcher did not return after context cancel")
+	}
+}
+
 // TestEngineRunWatcher_InvalidYAMLMarksDrift: a config that parses but fails
 // validation must mark drift via the raw-bytes checksum without touching
 // engine.cfg or invoking the migrator.

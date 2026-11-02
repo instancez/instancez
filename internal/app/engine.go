@@ -289,12 +289,21 @@ func (e *Engine) runWatcher(ctx context.Context, interval time.Duration) {
 			}
 			config.LogWarnings(e.logger, cfg)
 			e.mu.Lock()
+			prev := e.cfg
 			e.cfg = cfg
 			e.mu.Unlock()
 			tracker, err := e.applyMigrationsWithFallback(ctx)
 			if err != nil {
 				e.logger.Error("config reload: migration unrecoverable", "error", err)
 				e.reportRuntimeError(err)
+				e.mu.Lock()
+				if e.cfg == cfg { // a newer SetConfig wins
+					e.cfg = prev
+				}
+				e.mu.Unlock()
+				if d := e.Drift(); d != nil {
+					d.MarkDrift(versionChecksum(ev.Data), err.Error(), time.Now())
+				}
 				continue
 			}
 			if err := e.migrator.Harden(ctx, e.Config()); err != nil {
