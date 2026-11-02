@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/instancez/instancez/internal/config"
 	"github.com/instancez/instancez/pkg/templates"
@@ -95,9 +96,15 @@ func TestListTemplatesOffline(t *testing.T) {
 	t.Setenv("INSTANCEZ_CLOUD_API", "http://127.0.0.1:1")
 	t.Setenv("HOME", t.TempDir())
 	var buf bytes.Buffer
-	err := runListTemplates(&buf)
-	require.Error(t, err)
-	assert.Empty(t, buf.String())
+	require.NoError(t, runListTemplates(&buf))
+	out := buf.String()
+	assert.Contains(t, out, "kanban-board")
+	assert.Contains(t, out, "blog")
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	assert.Len(t, lines, len(templates.Default().List()))
+	for _, tpl := range templates.Default().List() {
+		assert.Contains(t, out, fmt.Sprintf("%-24s %-13s %s\n", tpl.ID, tpl.Category, tpl.Tagline))
+	}
 }
 
 func TestInitTemplateFlagMisuse(t *testing.T) {
@@ -232,26 +239,100 @@ func TestInitTemplateUnknownIDSuggests(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(dir, "instancez.yaml"))
 }
 
-func TestInitTemplateOfflineWritesNothing(t *testing.T) {
+func TestInitTemplateOfflineUsesEmbedded(t *testing.T) {
 	t.Setenv("INSTANCEZ_CLOUD_API", "http://127.0.0.1:1")
 	t.Setenv("HOME", t.TempDir())
 	dir := t.TempDir()
-	require.Error(t, runInit(initOptions{dir: dir, template: "blog"}))
+	require.NoError(t, runInit(initOptions{dir: dir, template: "blog"}))
+	tpl, ok := templates.Default().Get("blog")
+	require.True(t, ok)
+	want := tpl.Bundle()
+	got, err := os.ReadFile(filepath.Join(dir, "instancez.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, want.LocalYAML(), string(got))
+	assert.FileExists(t, filepath.Join(dir, ".gitignore"))
+}
+
+func TestInitTemplateServerErrorsUseEmbedded(t *testing.T) {
+	handlers := map[string]http.HandlerFunc{
+		"429":      func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(429) },
+		"500":      func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(500) },
+		"502":      func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(502) },
+		"not-json": func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("not json")) },
+	}
+	for name, h := range handlers {
+		srv := httptest.NewServer(h)
+		t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
+		t.Setenv("HOME", t.TempDir())
+		dir := t.TempDir()
+		require.NoError(t, runInit(initOptions{dir: dir, template: "blog"}), name)
+		assert.FileExists(t, filepath.Join(dir, "instancez.yaml"), name)
+		srv.Close()
+	}
+}
+
+func TestInitTemplateBadBundleDoesNotFallBack(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, templates.Bundle{
+			Manifest: templates.Manifest{ID: "blog"},
+			Files:    map[string]string{"../x": "a", "instancez.yaml": "version: 1\n"},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	err := runInit(initOptions{dir: dir, template: "blog"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsafe path")
 	entries, _ := os.ReadDir(dir)
 	assert.Empty(t, entries)
 }
 
-func TestInitTemplateServerErrorsWriteNothing(t *testing.T) {
-	for _, status := range []int{429, 500, 502} {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(status) }))
-		t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
-		t.Setenv("HOME", t.TempDir())
-		dir := t.TempDir()
-		require.Error(t, runInit(initOptions{dir: dir, template: "blog"}), status)
-		entries, _ := os.ReadDir(dir)
-		assert.Empty(t, entries, status)
-		srv.Close()
+func TestInitTemplateOfflineUnknownIDSuggests(t *testing.T) {
+	t.Setenv("INSTANCEZ_CLOUD_API", "http://127.0.0.1:1")
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	err := runInit(initOptions{dir: dir, template: "blgo"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "blog")
+	assert.Contains(t, err.Error(), "--list-templates")
+	assert.NoFileExists(t, filepath.Join(dir, "instancez.yaml"))
+}
+
+func TestInitTemplateNotFoundIsAuthoritative(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 404, map[string]any{"error": "template_not_found", "suggestions": []string{}})
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	err := runInit(initOptions{dir: dir, template: "blog"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `template "blog" not found`)
+	entries, _ := os.ReadDir(dir)
+	assert.Empty(t, entries)
+}
+
+func TestInitTemplateTimeoutFallsBack(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits for the 10s catalog timeout")
 	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(12 * time.Second):
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	start := time.Now()
+	require.NoError(t, runInit(initOptions{dir: dir, template: "blog"}))
+	assert.Less(t, time.Since(start), 11*time.Second)
+	assert.FileExists(t, filepath.Join(dir, "instancez.yaml"))
 }
 
 func TestCheckBundlePaths(t *testing.T) {

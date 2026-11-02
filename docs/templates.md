@@ -29,6 +29,7 @@ inz init --list-templates
 - Manual steps from `setup[]` are printed after the secrets.
 
 Trust: templates are fetched from the Instancez Cloud API (`INSTANCEZ_CLOUD_API` overrides the URL).
+If it is unreachable, inz uses the copy built into the binary, which may be older.
 That includes `functions/package.json`, so review it before running `npm install`.
 
 ## Adding or changing a template

@@ -143,6 +143,7 @@ func TestInzBinaryListTemplatesAndErrors(t *testing.T) {
 	assert.Contains(t, out, "did you mean")
 	assert.Contains(t, out, "blog")
 
-	_, err = runInz(t, bin, "http://127.0.0.1:1", "", "init", "--template", "blog", "--dir", t.TempDir())
-	require.Error(t, err)
+	out, err = runInz(t, bin, "http://127.0.0.1:1", "", "init", "--template", "blog", "--dir", t.TempDir())
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "using templates built into this inz")
 }

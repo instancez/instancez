@@ -245,3 +245,11 @@ func TestListTemplatesDropsInvalidIDs(t *testing.T) {
 	assert.Equal(t, "blog", got[0].ID)
 	assert.Equal(t, "shop-front", got[1].ID)
 }
+
+func TestPublicClientTimeout(t *testing.T) {
+	c := NewClient("http://127.0.0.1:1", "")
+	orig := c.HTTP.Timeout
+	assert.Equal(t, 10*time.Second, c.public().HTTP.Timeout)
+	assert.Equal(t, orig, c.HTTP.Timeout)
+	assert.Equal(t, 60*time.Second, orig)
+}

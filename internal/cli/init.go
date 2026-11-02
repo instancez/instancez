@@ -56,7 +56,7 @@ init only writes scaffolding files; it never touches a database. A
 
 	cmd.Flags().StringVar(&opts.dir, "dir", ".", "output directory")
 	cmd.Flags().BoolVar(&opts.force, "force", false, "overwrite existing scaffolding files")
-	cmd.Flags().StringVar(&opts.template, "template", "", "scaffold from a hosted template (see --list-templates)")
+	cmd.Flags().StringVar(&opts.template, "template", "", "scaffold from a template (cloud catalog, built-in copy offline; see --list-templates)")
 	cmd.Flags().BoolVar(&opts.listTemplates, "list-templates", false, "list available templates and exit")
 	return cmd
 }
@@ -74,8 +74,20 @@ func validateTemplateFlags(cmd *cobra.Command, opts initOptions) error {
 	return nil
 }
 
-func runListTemplates(w io.Writer) error {
+func listTemplates() ([]templates.Manifest, error) {
 	list, err := cloud.NewClient(cloud.APIURL(), "").ListTemplates()
+	if err == nil {
+		return list, nil
+	}
+	catalogFallbackNotice(err)
+	for _, t := range templates.Default().List() {
+		list = append(list, t.Manifest)
+	}
+	return list, nil
+}
+
+func runListTemplates(w io.Writer) error {
+	list, err := listTemplates()
 	if err != nil {
 		return fmt.Errorf("list templates: %w", err)
 	}

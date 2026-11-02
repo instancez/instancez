@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/instancez/instancez/pkg/templates"
 )
@@ -32,6 +34,7 @@ func safeError(err error) error {
 func (c *Client) public() *Client {
 	cc := *c
 	cc.Bearer, cc.Org, cc.MaxResponseBytes = "", "", MaxTemplateBytes
+	cc.HTTP = &http.Client{Timeout: 10 * time.Second}
 	return &cc
 }
 
