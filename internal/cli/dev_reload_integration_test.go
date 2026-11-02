@@ -191,3 +191,70 @@ func TestDevHotReload_AtomicRenameSave(t *testing.T) {
 		t.Fatalf("save after invalid save did not reload (notes = %d)\n%s", restStatus(port, "notes"), logs.String())
 	}
 }
+
+// A reload whose migration fails must say so, keep serving the old schema, and not claim success.
+func TestDevHotReload_MigrationFailureNotReportedAsSuccess(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "inz")
+	if out, err := exec.Command("go", "build", "-o", bin, "../../cmd/inz").CombinedOutput(); err != nil {
+		t.Fatalf("build inz: %v\n%s", err, out)
+	}
+	proj := t.TempDir()
+	cfgPath := filepath.Join(proj, "instancez.yaml")
+	if err := os.WriteFile(cfgPath, []byte(reloadBaseYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	port := reloadTestPort(t)
+	var logs lockedBuffer
+	// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command, go_subproc_rule-subproc
+	cmd := exec.Command(bin, "dev", "--embedded-pg", "--port", fmt.Sprint(port))
+	cmd.Dir = proj
+	cmd.Env = append(os.Environ(), "INSTANCEZ_TELEMETRY_DISABLED=1", "INSTANCEZ_SECRET_KEY=inz_secret_reloadtest", "INSTANCEZ_PUBLISHABLE_KEY=inz_publishable_reloadtest")
+	cmd.Stdout, cmd.Stderr = &logs, &logs
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		_ = cmd.Wait()
+	})
+
+	deadline := time.Now().Add(3 * time.Minute)
+	for restStatus(port, "notes") == 0 {
+		if time.Now().After(deadline) {
+			if strings.Contains(logs.String(), "embedded") && isEmbeddedPGEnvLimitation(fmt.Errorf("%s", logs.String())) {
+				t.Skip("embedded Postgres unavailable in this environment")
+			}
+			t.Fatalf("server did not start:\n%s", logs.String())
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if err := os.WriteFile(cfgPath, []byte(reloadTableYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !waitStatus(port, "notes", 200, 20*time.Second) {
+		t.Fatalf("notes not served after good reload\n%s", logs.String())
+	}
+
+	offset := len(logs.String())
+	bad := reloadTableYAML + "    rls_enabled: true\n    rls:\n      - operations: [select]\n        using: \"owner_id = auth.uid()\"\n"
+	if err := os.WriteFile(cfgPath, []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const want = "migration failed, still running last applied config"
+	end := time.Now().Add(20 * time.Second)
+	for !strings.Contains(logs.String()[offset:], want) {
+		if time.Now().After(end) {
+			t.Fatalf("fallback line not logged\n%s", logs.String()[offset:])
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	time.Sleep(time.Second)
+	if strings.Contains(logs.String()[offset:], "config reloaded successfully") {
+		t.Fatalf("failed reload reported as success\n%s", logs.String()[offset:])
+	}
+	if got := restStatus(port, "notes"); got != 200 {
+		t.Fatalf("notes after failed reload = %d, want 200", got)
+	}
+}

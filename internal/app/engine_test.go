@@ -472,6 +472,64 @@ func TestEngineRunWatcher_LogsConfigWarnings(t *testing.T) {
 	}
 }
 
+// TestEngineRunWatcher_ValidationFailureLogsEachError: every validation error
+// is logged with its path, not just a count.
+func TestEngineRunWatcher_ValidationFailureLogsEachError(t *testing.T) {
+	db := newFakeDB(t)
+	roles := domain.DefaultRoles()
+	initial := &domain.Config{
+		Tables: map[string]domain.Table{
+			"a": {Fields: []domain.Field{{Name: "id", Type: "BIGINT", PrimaryKey: true}}},
+		},
+		Server: domain.Server{Port: 8080},
+	}
+	if err := NewMigrator(db, roles).Apply(context.Background(), initial); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	logs := &lockedBuf{}
+	src := &fakeSource{ch: make(chan config.WatchEvent, 4)}
+	engine := NewEngine(initial, domain.OwnerDB{Database: db}, newFakeRequestDB(t), roles,
+		WithMode(ModeProd), WithMigrate(true), WithConfigSource(src),
+		WithLogger(slog.New(slog.NewTextHandler(logs, nil))))
+	engine.drift = NewDriftTracker(src.Describe())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go engine.runWatcher(ctx, 0)
+
+	bad := `version: 1
+project:
+  name: t
+server:
+  port: 8080
+tables:
+  t1:
+    fields:
+      - name: id
+        type: nosuchtype
+  t2:
+    fields:
+      - name: id
+        type: nosuchtype
+`
+	src.ch <- config.WatchEvent{Data: []byte(bad), Version: "v1"}
+	for dl := time.Now().Add(2 * time.Second); time.Now().Before(dl) && engine.Drift().Snapshot().Status != DriftStatusDrift; {
+		time.Sleep(10 * time.Millisecond)
+	}
+	out := logs.String()
+	if n := strings.Count(out, `msg="config reload: validation failed"`); n < 2 {
+		t.Fatalf("want one record per error, got %d: %s", n, out)
+	}
+	if strings.Contains(out, "count=") {
+		t.Fatalf("count-only record still logged: %s", out)
+	}
+	for _, p := range []string{"path=tables.t1", "path=tables.t2", "message="} {
+		if !strings.Contains(out, p) {
+			t.Fatalf("missing %q in %s", p, out)
+		}
+	}
+}
+
 // TestEngineRunWatcher_BadMigrationFallsBack: a parseable+valid config whose
 // migration fails should swap engine.cfg back to last-known-good and report
 // drift instead of crashing the watcher.
@@ -490,9 +548,13 @@ func TestEngineRunWatcher_BadMigrationFallsBack(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
+	logs := &lockedBuf{}
+	var reloads atomic.Int32
 	src := &fakeSource{ch: make(chan config.WatchEvent, 4)}
 	engine := NewEngine(initial, domain.OwnerDB{Database: db}, authDB, roles,
-		WithMode(ModeProd), WithMigrate(true), WithConfigSource(src))
+		WithMode(ModeProd), WithMigrate(true), WithConfigSource(src),
+		WithLogger(slog.New(slog.NewTextHandler(logs, nil))),
+		WithFunctionReload(func(*domain.Config) { reloads.Add(1) }))
 	engine.drift = NewDriftTracker(src.Describe())
 	engine.drift.MarkOK("seed", time.Now())
 
@@ -526,6 +588,20 @@ func TestEngineRunWatcher_BadMigrationFallsBack(t *testing.T) {
 	}
 	if _, hasB := engine.Config().Tables["b"]; hasB {
 		t.Fatalf("engine.cfg should have fallen back to good config without table b")
+	}
+	const fallbackMsg = "config reload: migration failed, still running last applied config"
+	for dl := time.Now().Add(2 * time.Second); time.Now().Before(dl) && !strings.Contains(logs.String(), fallbackMsg); {
+		time.Sleep(10 * time.Millisecond)
+	}
+	out := logs.String()
+	if !strings.Contains(out, fallbackMsg) {
+		t.Fatalf("fallback not logged: %s", out)
+	}
+	if strings.Contains(out, "config reloaded successfully") {
+		t.Fatalf("fallback logged as success: %s", out)
+	}
+	if n := reloads.Load(); n != 0 {
+		t.Fatalf("functions reloaded from rejected config %d times", n)
 	}
 
 	cancel()

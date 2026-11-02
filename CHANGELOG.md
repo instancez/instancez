@@ -26,6 +26,9 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - Breaking, `inz validate` rejects RLS `using`/`with_check` expressions that can never parse: whitespace-only, unbalanced `(` or quotes, a doubled comparison like `= =`, doubled `AND`/`OR`, or a leading or trailing `AND`/`OR`. Error: `invalid SQL expression: <reason>`. Fix the expression.
 - Breaking, `inz validate` rejects a table that declares the same field twice (migrate failed with `column specified more than once`). Remove or rename one.
 - Breaking, `inz validate` now rejects foreign keys that fail at migrate: `users.id` with no public `users` table (use `auth.users.id`), a bare `x.col` where `x` has `schema:` set (use `schema.x.col`), `auth.users.<col>` other than `id`/`email` or `storage.objects.<col>` other than `id` (no unique constraint), and a misspelled `auth` or `storage` schema such as `auht.users.id`. Everything inz validate cannot prove wrong only warns: other undeclared or near-miss schemas (with a did-you-mean), tables in a declared schema that the config does not define, and auth/storage tables other than the ones instancez creates.
+- `inz dev` hot reload logs every validation error with its path and line, not just a count.
+- A hot reload whose migration fails now logs the failure and keeps the running config's functions; it used to log "config reloaded successfully" and load functions from the rejected config.
+
 
 ## [0.0.12] - 2026-11-02
 

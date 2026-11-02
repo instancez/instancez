@@ -279,7 +279,16 @@ func (e *Engine) runWatcher(ctx context.Context, interval time.Duration) {
 				continue
 			}
 			if errs := config.ValidateSource(e.source, cfg); errs != nil {
-				e.logger.Error("config reload: validation failed", "count", len(errs))
+				for _, ve := range errs {
+					attrs := []any{"path", ve.Path, "message", ve.Message}
+					if ve.Line > 0 {
+						attrs = append(attrs, "line", ve.Line)
+					}
+					if ve.Suggestion != "" {
+						attrs = append(attrs, "suggestion", ve.Suggestion)
+					}
+					e.logger.Error("config reload: validation failed", attrs...)
+				}
 				e.reportRuntimeError(errs)
 				if d := e.Drift(); d != nil {
 					msg := errs[0].Path + ": " + errs[0].Message
@@ -316,6 +325,10 @@ func (e *Engine) runWatcher(ctx context.Context, interval time.Duration) {
 			e.mu.Lock()
 			e.drift = tracker
 			e.mu.Unlock()
+			if snap := tracker.Snapshot(); snap.Status == DriftStatusDrift {
+				e.logger.Error("config reload: migration failed, still running last applied config", "error", snap.LastError)
+				continue
+			}
 			e.logger.Info("config reloaded successfully", "tables", len(cfg.Tables))
 			if e.onFunctionReload != nil {
 				e.onFunctionReload(cfg)
