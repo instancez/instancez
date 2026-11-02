@@ -1364,8 +1364,14 @@ func validateCodeFunctions(functions map[string]domain.CodeFunction) domain.Vali
 
 // uniqueSystemTargets are the only auth/storage columns with a unique constraint.
 var uniqueSystemTargets = map[string]map[string]domain.Field{
-	"auth.users":      {"id": {Type: "uuid", PrimaryKey: true}, "email": {Type: "text"}},
-	"storage.objects": {"id": {Type: "uuid", PrimaryKey: true}},
+	"auth.users":           {"id": {Type: "uuid", PrimaryKey: true}, "email": {Type: "text"}},
+	"auth.identities":      {"id": {Type: "bigint", PrimaryKey: true}},
+	"auth.refresh_tokens":  {"id": {Type: "bigint", PrimaryKey: true}},
+	"auth.one_time_tokens": {"id": {Type: "bigint", PrimaryKey: true}},
+	"auth.mfa_factors":     {"id": {Type: "uuid", PrimaryKey: true}},
+	"auth.mfa_challenges":  {"id": {Type: "uuid", PrimaryKey: true}},
+	"auth.flow_state":      {"id": {Type: "uuid", PrimaryKey: true}},
+	"storage.objects":      {"id": {Type: "uuid", PrimaryKey: true}},
 }
 
 type fkTarget struct {
@@ -1410,10 +1416,14 @@ func resolveFK(tables map[string]domain.Table, schemas []string, ref, path strin
 		return t, true
 	}
 	if !slices.Contains(schemas, schema) {
+		sugg := ""
 		if near := closest(schema, schemas); near != "" {
-			return fail(fmt.Sprintf("unknown schema %q", schema), fmt.Sprintf("did you mean %s.%s.%s?", near, table, col)), true
+			sugg = fmt.Sprintf("did you mean %s.%s.%s?", near, table, col)
+			if near == "auth" || near == "storage" {
+				return fail(fmt.Sprintf("unknown schema %q", schema), sugg), true
+			}
 		}
-		t.warn = &domain.ValidationError{Path: path, Message: fmt.Sprintf("schema %q is not declared in this config, so the reference is not checked", schema)}
+		t.warn = &domain.ValidationError{Path: path, Message: fmt.Sprintf("schema %q is not declared in this config, so the reference is not checked", schema), Suggestion: sugg}
 		return t, true
 	}
 	if tb, ok := tables[table]; ok && tb.EffectiveSchema() == schema {
@@ -1426,8 +1436,12 @@ func resolveFK(tables map[string]domain.Table, schemas []string, ref, path strin
 	if tb, ok := tables[table]; ok && schema == "public" {
 		return fail(fmt.Sprintf("table %q is in schema %q", table, tb.EffectiveSchema()), fmt.Sprintf("Reference it as %s.%s.%s", tb.EffectiveSchema(), table, col)), true
 	}
+	if schema != "public" {
+		t.warn = &domain.ValidationError{Path: path, Message: fmt.Sprintf("table %q is not declared in schema %q, so the reference is not checked", table, schema)}
+		return t, true
+	}
 	sugg := fmt.Sprintf("Define a %q table or check spelling", table)
-	if schema == "public" && table == "users" {
+	if table == "users" {
 		sugg = fmt.Sprintf("did you mean auth.users.%s?", col)
 	}
 	return fail(fmt.Sprintf("references table %q which does not exist", table), sugg), true

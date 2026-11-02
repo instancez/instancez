@@ -47,6 +47,7 @@ func TestValidateRejectsWhatMigrateRejects(t *testing.T) {
 		{"bare users fk", fkCfg("users.id", nil), "tables.a.fields.f.foreign_key.references", "42P01"},
 		{"fk to table in other schema", fkCfg("x.id", map[string]domain.Table{"x": appX}), "tables.a.fields.f.foreign_key.references", "42P01"},
 		{"fk to non-unique auth column", fkCfg("auth.users.created_at", nil), "tables.a.fields.f.foreign_key.references", "42830"},
+		{"fk to non-unique storage column", fkCfg("storage.objects.name", nil), "tables.a.fields.f.foreign_key.references", "42830"},
 		{"fk to unknown schema", fkCfg("auht.users.id", nil), "tables.a.fields.f.foreign_key.references", "3F000"},
 		{"duplicate field", &domain.Config{Version: 1, Tables: map[string]domain.Table{"a": {Fields: []domain.Field{
 			pkField(), {Name: "x", Type: "text"}, {Name: "x", Type: "text"},

@@ -176,6 +176,7 @@ func TestValidate_FKTargets(t *testing.T) {
 		wantErr    string
 		wantSugg   string
 		wantWarnAt bool
+		ref2type   string
 	}{
 		{name: "bare users no table", ref: "users.id", wantErr: "does not exist", wantSugg: "auth.users.id"},
 		{name: "bare users without id", ref: "users.id", extra: map[string]domain.Table{"users": usersNoID}, wantErr: "does not exist"},
@@ -187,10 +188,13 @@ func TestValidate_FKTargets(t *testing.T) {
 		{name: "storage objects name", ref: "storage.objects.name", wantErr: "no unique constraint"},
 		{name: "schema typo", ref: "auht.users.id", wantErr: "unknown schema", wantSugg: "auth.users.id"},
 		{name: "far schema warns", ref: "zzz.t.id", wantWarnAt: true},
-		{name: "other auth table warns", ref: "auth.identities.id", wantWarnAt: true},
+		{name: "other auth table warns", ref: "auth.sessions.id", wantWarnAt: true},
+		{name: "instancez-owned auth table is unique", ref: "auth.identities.id", ref2type: "bigint"},
+		{name: "auth near miss errors", ref: "auth2.users.id", wantErr: "unknown schema", wantSugg: "auth.users.id"},
+		{name: "near miss of declared schema only warns", ref: "api.x.id", extra: map[string]domain.Table{"x": appX}, wantWarnAt: true},
 		{name: "table in other schema", ref: "x.id", extra: map[string]domain.Table{"x": appX}, wantErr: `schema "app"`, wantSugg: "app.x.id"},
 		{name: "declared schema ok", ref: "app.x.id", extra: map[string]domain.Table{"x": appX}},
-		{name: "declared schema missing table", ref: "app.nope.id", extra: map[string]domain.Table{"x": appX}, wantErr: "does not exist"},
+		{name: "declared schema missing table warns", ref: "app.nope.id", extra: map[string]domain.Table{"x": appX}, wantWarnAt: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -202,6 +206,9 @@ func TestValidate_FKTargets(t *testing.T) {
 			todos.Fields = append(todos.Fields, domain.Field{Name: "f", Type: "uuid", ForeignKey: &domain.ForeignKey{References: tc.ref}})
 			if tc.ref == "auth.users.email" {
 				todos.Fields[len(todos.Fields)-1].Type = "text"
+			}
+			if tc.ref2type != "" {
+				todos.Fields[len(todos.Fields)-1].Type = tc.ref2type
 			}
 			cfg.Tables["todos"] = todos
 			errs := Validate(cfg)
@@ -2197,4 +2204,24 @@ func TestValidateFieldType_DidYouMean(t *testing.T) {
 			t.Errorf("%q: %v", ok, errs)
 		}
 	}
+}
+
+func TestWarnings_FKNearMissSuggestsDeclaredSchema(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Tables["x"] = domain.Table{Schema: "app", Fields: []domain.Field{{Name: "id", Type: "uuid", PrimaryKey: true}}}
+	todos := cfg.Tables["todos"]
+	todos.Fields = append(todos.Fields, domain.Field{Name: "f", Type: "uuid", ForeignKey: &domain.ForeignKey{References: "api.x.id"}})
+	cfg.Tables["todos"] = todos
+	if errs := Validate(cfg); errs != nil {
+		t.Fatalf("near miss of a declared schema must not error: %v", errs)
+	}
+	for _, w := range Warnings(cfg) {
+		if w.Path == "tables.todos.fields.f.foreign_key.references" {
+			if !strings.Contains(w.Suggestion, "app.x.id") {
+				t.Fatalf("suggestion %q", w.Suggestion)
+			}
+			return
+		}
+	}
+	t.Fatal("no warning")
 }
