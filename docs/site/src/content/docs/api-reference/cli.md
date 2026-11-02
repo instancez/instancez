@@ -305,6 +305,7 @@ inz cloud status [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--config` | `instancez.yaml` | Path to `instancez.yaml`. |
+| `--json` | `false` | Print the project and deploy state as JSON (the API response). Never prompts for login. |
 
 ```bash
 inz cloud status
