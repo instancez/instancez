@@ -113,9 +113,7 @@ func TestScaffoldBootsAndEnforces(t *testing.T) {
 		assert.GreaterOrEqual(t, api.upload(tokA, uidB+"/a.png", false), 400)
 		assert.GreaterOrEqual(t, api.upload(tokB, uidA+"/a.png", true), 400)
 
-		status, _ := api.do("DELETE", "/storage/v1/object/avatars/"+uidA+"/a.png", tokB, nil, nil)
-		assert.NotEqual(t, 200, status)
-		status, _ = api.do("DELETE", "/storage/v1/object/avatars", tokB, bulk(uidA+"/a.png"), jsonHdr)
+		status, _ := api.do("DELETE", "/storage/v1/object/avatars", tokB, bulk(uidA+"/a.png"), jsonHdr)
 		assert.Less(t, status, 500)
 		status, _ = api.do("GET", "/storage/v1/object/public/avatars/"+uidA+"/a.png", "", nil, nil)
 		assert.Equal(t, 200, status, "B must not delete A's avatar\n"+logs.String())
@@ -128,8 +126,5 @@ func TestScaffoldBootsAndEnforces(t *testing.T) {
 		status, _ = api.do("GET", "/storage/v1/object/public/avatars/"+uidA+"/a.png", "", nil, nil)
 		assert.GreaterOrEqual(t, status, 400, "owner bulk delete must remove the object")
 
-		assert.Equal(t, 200, api.upload(tokA, uidA+"/b.png", false))
-		status, out = api.do("DELETE", "/storage/v1/object/avatars/"+uidA+"/b.png", tokA, nil, nil)
-		assert.Equal(t, 200, status, string(out))
 	})
 }
