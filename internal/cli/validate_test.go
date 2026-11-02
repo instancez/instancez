@@ -183,11 +183,11 @@ func TestPlanAgainstProjectSendsWireBranch(t *testing.T) {
 
 func TestPrintWarnings(t *testing.T) {
 	var buf bytes.Buffer
-	printWarnings(&buf, "instancez.yaml", nil)
+	printWarnings(&buf, cfgSrc{file: "instancez.yaml"}, nil)
 	if buf.Len() != 0 {
 		t.Fatalf("nil warnings printed %q", buf.String())
 	}
-	printWarnings(&buf, "instancez.yaml", domain.ValidationErrors{{Path: "tables.todos.rls_enabled", Message: "m", Suggestion: "s"}})
+	printWarnings(&buf, cfgSrc{file: "instancez.yaml"}, domain.ValidationErrors{{Path: "tables.todos.rls_enabled", Message: "m", Suggestion: "s"}})
 	out := buf.String()
 	for _, want := range []string{"! Warning: tables.todos.rls_enabled", "m", "Suggestion: s"} {
 		if !strings.Contains(out, want) {
@@ -340,13 +340,13 @@ func TestPrintPrettyErrors_UsesConfigPath(t *testing.T) {
 	path := filepath.Join(dir, "other.yaml")
 	require.NoError(t, os.WriteFile(path, []byte("version: 1\ntables:\n  t:\n    rls_enabeld: true\n"), 0o600))
 	errs := domain.ValidationErrors{{Path: "tables.t", Message: "boom"}}
-	out := captureStderr(t, func() { _ = printPrettyErrors(path, errs) })
+	out := captureStderr(t, func() { _ = printPrettyErrors(readSrc(path), errs) })
 	assert.Contains(t, out, "other.yaml:3:3")
 	assert.NotContains(t, out, "instancez.yaml")
 }
 
 func TestPrintPrettyErrors_NoFileNoPosition(t *testing.T) {
-	out := captureStderr(t, func() { _ = printPrettyErrors("s3://b/k", domain.ValidationErrors{{Path: "x", Message: "m"}}) })
+	out := captureStderr(t, func() { _ = printPrettyErrors(cfgSrc{}, domain.ValidationErrors{{Path: "x", Message: "m"}}) })
 	assert.NotContains(t, out, "at ")
 }
 
@@ -377,7 +377,6 @@ func captureStdout(t *testing.T, fn func()) string {
 	return string(out)
 }
 
-
 const placeholderCascadeCfg = `version: 1
 project: {name: t}
 server:
@@ -406,4 +405,14 @@ func TestRunValidate_MissingVarDoesNotCascadeIntoTypeErrors(t *testing.T) {
 	assert.NotContains(t, out, "placeho")
 	assert.NotContains(t, out, "expected a number")
 	assert.Contains(t, out, "tables.t.fields.bad.type", "unrelated errors are still reported")
+}
+
+func TestPrintPrettyErrors_BundleSourceShowsNoLocalPosition(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	require.NoError(t, os.WriteFile("instancez.yaml", []byte("version: 1\ntables:\n  t:\n    x: 1\n"), 0o600))
+	errs := domain.ValidationErrors{{Path: "tables.t", Message: "boom"}, {Path: "x", Message: "m", Line: 7, Column: 2}}
+	out := captureStderr(t, func() { _ = printPrettyErrors(cfgSrc{}, errs) })
+	assert.NotContains(t, out, "at ")
+	assert.NotContains(t, out, "instancez.yaml")
 }

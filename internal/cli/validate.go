@@ -160,29 +160,30 @@ func missingEnvReport(raw []byte, err error) domain.ValidationErrors {
 	return errs
 }
 
-// annotateFromFile adds line:column from the raw file; non-file sources are skipped.
-func annotateFromFile(file string, errs domain.ValidationErrors) {
-	if raw, err := os.ReadFile(file); err == nil {
-		config.Annotate(raw, errs)
-	}
+// cfgSrc is a config file path with its raw bytes; a zero value means no file (bundle, s3), so no positions are shown.
+type cfgSrc struct {
+	file string
+	raw  []byte
 }
 
-func atPosition(file string, e *domain.ValidationError) string {
+func readSrc(file string) cfgSrc {
+	raw, _ := os.ReadFile(file)
+	return cfgSrc{file: file, raw: raw}
+}
+
+func (s cfgSrc) at(e *domain.ValidationError) string {
 	switch {
-	case e.Line > 0 && e.Column > 0:
-		return fmt.Sprintf("%s:%d:%d", file, e.Line, e.Column)
-	case e.Line > 0:
-		return fmt.Sprintf("%s:%d", file, e.Line)
+	case s.file == "" || e.Line == 0:
+		return ""
+	case e.Column > 0:
+		return fmt.Sprintf("%s:%d:%d", s.file, e.Line, e.Column)
 	}
-	return ""
+	return fmt.Sprintf("%s:%d", s.file, e.Line)
 }
 
 // warnBlanked tells the user which unset ${VAR}s were treated as empty, and where they are used.
-func warnBlanked(errOut io.Writer, file string, names []string) {
-	var locs map[string][]config.Location
-	if raw, err := os.ReadFile(file); err == nil {
-		locs = config.EnvRefLocations(raw)
-	}
+func warnBlanked(errOut io.Writer, src cfgSrc, names []string) {
+	locs := config.EnvRefLocations(src.raw)
 	for _, name := range names {
 		at := ""
 		if l := locs[name]; len(l) > 0 {
@@ -198,13 +199,14 @@ func runValidate(ctx context.Context, errOut io.Writer, configPath string, jsonO
 	}
 
 	cfg, blanked, err := config.LoadLocalWithDotenv(configPath, ".development.env")
-	warnBlanked(errOut, configPath, blanked)
-	raw, _ := os.ReadFile(configPath)
+	src := readSrc(configPath)
+	raw := src.raw
+	warnBlanked(errOut, src, blanked)
 	if errs := missingEnvReport(raw, err); errs != nil {
 		if jsonOutput {
-			return printJSONErrors(configPath, errs)
+			return printJSONErrors(src, errs)
 		}
-		return printPrettyErrors(configPath, errs)
+		return printPrettyErrors(src, errs)
 	}
 	if err != nil {
 		if jsonOutput {
@@ -217,19 +219,19 @@ func runValidate(ctx context.Context, errOut io.Writer, configPath string, jsonO
 	errs = append(errs, config.ValidateEnvNamespace(raw)...)
 	if errs != nil {
 		if jsonOutput {
-			return printJSONErrors(configPath, errs)
+			return printJSONErrors(src, errs)
 		}
-		return printPrettyErrors(configPath, errs)
+		return printPrettyErrors(src, errs)
 	}
 
-	printWarnings(errOut, configPath, config.Warnings(cfg))
-	printWarnings(errOut, configPath, config.LocalWarnings(cfg))
+	printWarnings(errOut, src, config.Warnings(cfg))
+	printWarnings(errOut, src, config.LocalWarnings(cfg))
 
 	if fileErrs := config.ValidateFunctionFiles(cfg, filepath.Dir(configPath)); fileErrs != nil {
 		if jsonOutput {
-			return printJSONErrors(configPath, fileErrs)
+			return printJSONErrors(src, fileErrs)
 		}
-		return printPrettyErrors(configPath, fileErrs)
+		return printPrettyErrors(src, fileErrs)
 	}
 
 	if !jsonOutput {
@@ -353,11 +355,11 @@ func migrationsTableExists(ctx context.Context, owner domain.OwnerDB) (bool, err
 
 // printPrettyErrors writes a formatted validation report to stderr and returns
 // errReported so the caller exits non-zero without re-printing a bare error.
-func printPrettyErrors(file string, errs domain.ValidationErrors) error {
-	annotateFromFile(file, errs)
+func printPrettyErrors(src cfgSrc, errs domain.ValidationErrors) error {
+	config.Annotate(src.raw, errs)
 	for _, e := range errs {
 		fmt.Fprintf(os.Stderr, "\n  ✗ Error: %s\n", e.Path)
-		if at := atPosition(file, e); at != "" {
+		if at := src.at(e); at != "" {
 			fmt.Fprintf(os.Stderr, "    at %s\n", at)
 		}
 		fmt.Fprintf(os.Stderr, "    %s\n", e.Message)
@@ -370,11 +372,11 @@ func printPrettyErrors(file string, errs domain.ValidationErrors) error {
 }
 
 // printWarnings writes non-blocking findings; it never fails the command.
-func printWarnings(w io.Writer, file string, ws domain.ValidationErrors) {
-	annotateFromFile(file, ws)
+func printWarnings(w io.Writer, src cfgSrc, ws domain.ValidationErrors) {
+	config.Annotate(src.raw, ws)
 	for _, e := range ws {
 		_, _ = fmt.Fprintf(w, "\n  ! Warning: %s\n", e.Path)
-		if at := atPosition(file, e); at != "" {
+		if at := src.at(e); at != "" {
 			_, _ = fmt.Fprintf(w, "    at %s\n", at)
 		}
 		_, _ = fmt.Fprintf(w, "    %s\n", e.Message)
@@ -392,8 +394,8 @@ type jsonError struct {
 	Suggestion string `json:"suggestion,omitempty"`
 }
 
-func printJSONErrors(file string, errs domain.ValidationErrors) error {
-	annotateFromFile(file, errs)
+func printJSONErrors(src cfgSrc, errs domain.ValidationErrors) error {
+	config.Annotate(src.raw, errs)
 	out := make([]jsonError, len(errs))
 	for i, e := range errs {
 		out[i] = jsonError{

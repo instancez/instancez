@@ -46,7 +46,7 @@ tolerated in string fields only.`,
 				return err
 			}
 			if errs := config.Validate(cfg); errs != nil {
-				return printPrettyErrors(configPath, errs)
+				return printPrettyErrors(cfgSrc{configPath, src}, errs)
 			}
 			ts := typegen.Generate(cfg)
 			if outPath != "" {
