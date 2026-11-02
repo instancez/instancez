@@ -1332,3 +1332,22 @@ func TestRequiredAuthDefaultAdds(t *testing.T) {
 		t.Fatalf("unchanged config: got %v", got)
 	}
 }
+
+func TestRequiredAuthDefaultAddsSkipsNonNullHelpers(t *testing.T) {
+	col := func(name, typ, def string) domain.Field {
+		return domain.Field{Name: name, Type: typ, Required: true, Default: def}
+	}
+	oldCfg := &domain.Config{Tables: map[string]domain.Table{"t": {Fields: []domain.Field{{Name: "id", Type: "uuid"}}}}}
+	newCfg := &domain.Config{Tables: map[string]domain.Table{"t": {Fields: []domain.Field{
+		{Name: "id", Type: "uuid"},
+		col("role", "text", "auth.role()"),
+		col("who", "uuid", "auth.uid()"),
+		col("mail", "text", "auth.email()"),
+		col("claims", "jsonb", "auth.jwt()"),
+	}}}}
+	got := requiredAuthDefaultAdds(oldCfg, newCfg)
+	want := []string{"t.who", "t.mail", "t.claims"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %v, want %v (auth.role() falls back to 'anon', never NULL)", got, want)
+	}
+}
