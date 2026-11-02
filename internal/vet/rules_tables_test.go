@@ -237,6 +237,8 @@ func TestIdentityRPCPolicies(t *testing.T) {
 	}
 }
 
+const adminRPC = "rpc:\n  is_admin:\n    returns: {type: boolean}\n    language: sql\n    body: select exists (select 1 from admins where id = auth.uid());\n"
+
 func TestBucketAuthedWrite(t *testing.T) {
 	pol := func(ops, field, expr, extra string) string {
 		return bucket("b", "    rls:\n      - operations: ["+ops+"]\n        "+field+": \""+expr+"\"\n"+extra)
@@ -251,6 +253,8 @@ func TestBucketAuthedWrite(t *testing.T) {
 		{"insert out of scope", pol("insert", "with_check", "auth.is_authenticated()", ""), nil},
 		{"social feed shape", pol("update", "using", "auth.uid() IS NOT NULL AND name LIKE auth.uid()::text || '/%'", ""), nil},
 		{"admin rpc", pol("delete", "using", "public.is_admin()", ""), nil},
+		{"service role gate", pol("delete", "using", "auth.role() = 'service_role'", ""), nil},
+		{"authed and admin rpc", pol("delete", "using", "auth.is_authenticated() AND public.is_admin()", "") + adminRPC, nil},
 		{"restrictive", pol("delete", "using", "auth.is_authenticated()", "        type: restrictive\n"), nil},
 		{"empty delete using", bucket("b", "    rls:\n      - operations: [delete]\n"), nil},
 		{"literal true is open write only", pol("delete", "using", "true", ""), []string{"bucket-open-write"}},
@@ -263,7 +267,12 @@ func TestBucketAuthedWrite(t *testing.T) {
 		})
 	}
 
-	r, err := runQuiet([]byte(pol("update", "using", "auth.is_authenticated()", "")))
+	r, err := runQuiet([]byte(bucket("b", "    rls:\n      - operations: [insert]\n        with_check: \"true\"\n        type: restrictive\n      - operations: [update]\n        with_check: \"auth.is_authenticated()\"\n")))
+	if err != nil || len(r.Findings) != 1 || r.Findings[0].Path != "storage.b.rls[1].with_check" {
+		t.Fatalf("with_check-only path: %+v, err = %v", r, err)
+	}
+
+	r, err = runQuiet([]byte(pol("update", "using", "auth.is_authenticated()", "")))
 	if err != nil || len(r.Findings) != 1 {
 		t.Fatalf("findings = %v, err = %v", r, err)
 	}
