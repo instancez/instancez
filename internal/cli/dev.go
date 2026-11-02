@@ -242,17 +242,12 @@ func runDev(opts devOptions) error {
 	if opts.watch {
 		// Watch the functions/ directory for JS/TS code edits that don't
 		// touch instancez.yaml — those won't trigger the config watcher.
-		// Create it if absent so the watcher arms even for a project that
-		// starts with no functions: the dashboard can add one at runtime, and
-		// its .js write must be seen. Reload against the engine's live config
-		// (not the boot snapshot) so that added function is picked up: the
-		// create path adds the config entry via PUT /config before the write.
+		// The folder may not exist yet; the watcher arms when it appears. Reload
+		// against the engine's live config (not the boot snapshot) so a function
+		// added at runtime is picked up: the create path adds the config entry
+		// via PUT /config before the write.
 		functionsDir := filepath.Join(filepath.Dir(opts.configPath), "functions")
-		if err := os.MkdirAll(functionsDir, 0o755); err != nil {
-			logger.Warn("functions watcher: could not ensure dir", "dir", functionsDir, "error", err)
-		} else {
-			go watchFunctionsDir(ctx, functionsDir, engine.Config, reloadFuncs, logger)
-		}
+		go watchFunctionsDir(ctx, functionsDir, engine.Config, reloadFuncs, logger)
 	}
 
 	// Start engine (blocks until shutdown signal)
@@ -380,11 +375,18 @@ func isFunctionRuntimeShim(name string) bool {
 	return strings.HasPrefix(name, ".inz-worker-") && strings.HasSuffix(name, ".mjs")
 }
 
+// isUnder reports whether name is root itself or sits below it.
+func isUnder(root, name string) bool {
+	root, name = filepath.Clean(root), filepath.Clean(name)
+	return name == root || strings.HasPrefix(name, root+string(filepath.Separator))
+}
+
 // inSkippedDir reports whether name sits under a dependency or dot directory
 // below root, whose churn (npm installs, caches) must not trigger reloads.
 func inSkippedDir(root, name string) bool {
 	rel, err := filepath.Rel(root, filepath.Dir(name))
-	if err != nil || rel == "." {
+	// root itself has Dir(root) outside root, so Rel yields ".." and must not count as a dot dir.
+	if err != nil || rel == "." || filepath.Clean(name) == filepath.Clean(root) {
 		return false
 	}
 	for _, part := range strings.Split(rel, string(filepath.Separator)) {
@@ -423,6 +425,18 @@ func watchFunctionsDir(
 	reload func(*domain.Config),
 	logger *slog.Logger,
 ) {
+	watchFunctionsDirReady(ctx, dir, getConfig, reload, logger, nil)
+}
+
+// watchFunctionsDirReady closes ready (when non-nil) once the parent-dir watch is armed, plus the tree watch if functions/ exists.
+func watchFunctionsDirReady(
+	ctx context.Context,
+	dir string,
+	getConfig func() *domain.Config,
+	reload func(*domain.Config),
+	logger *slog.Logger,
+	ready chan<- struct{},
+) {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		logger.Warn("functions watcher: init failed", "error", err)
@@ -430,9 +444,17 @@ func watchFunctionsDir(
 	}
 	defer func() { _ = w.Close() }()
 
+	// Parent first, so a folder created during the tree scan still fires an event.
+	if err := w.Add(filepath.Dir(dir)); err != nil {
+		logger.Warn("functions watcher: watch failed", "dir", filepath.Dir(dir), "error", err)
+		return
+	}
 	if err := addWatchTree(w, dir); err != nil {
 		logger.Warn("functions watcher: watch failed", "dir", dir, "error", err)
 		return
+	}
+	if ready != nil {
+		close(ready)
 	}
 
 	var debounce *time.Timer
@@ -447,7 +469,7 @@ func watchFunctionsDir(
 			if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename|fsnotify.Remove) == 0 {
 				continue
 			}
-			if isFunctionRuntimeShim(filepath.Base(ev.Name)) || inSkippedDir(dir, ev.Name) {
+			if !isUnder(dir, ev.Name) || isFunctionRuntimeShim(filepath.Base(ev.Name)) || inSkippedDir(dir, ev.Name) {
 				continue
 			}
 			if ev.Op&fsnotify.Create != 0 {

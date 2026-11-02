@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -62,6 +63,23 @@ func waitStatus(port int, table string, want int, within time.Duration) bool {
 
 // `inz dev` must hot-reload a config saved the way most editors (and Claude
 // Code's Edit tool) save: write a temp file, then rename it over the original.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
 func TestDevHotReload_AtomicRenameSave(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "inz")
 	if out, err := exec.Command("go", "build", "-o", bin, "../../cmd/inz").CombinedOutput(); err != nil {
@@ -75,7 +93,7 @@ func TestDevHotReload_AtomicRenameSave(t *testing.T) {
 	}
 
 	port := reloadTestPort(t)
-	var logs bytes.Buffer
+	var logs lockedBuffer
 	// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command, go_subproc_rule-subproc
 	cmd := exec.Command(bin, "dev", "--embedded-pg", "--port", fmt.Sprint(port))
 	cmd.Dir = proj
@@ -104,6 +122,41 @@ func TestDevHotReload_AtomicRenameSave(t *testing.T) {
 	if got := restStatus(port, "notes"); got != 404 {
 		t.Fatalf("notes before reload = %d, want 404", got)
 	}
+	if _, err := os.Stat(filepath.Join(proj, "functions")); !os.IsNotExist(err) {
+		t.Fatalf("inz dev created functions/ in a project without functions (stat err = %v)", err)
+	}
+
+	// functions/ created after boot arms the watcher; removing and recreating it still reloads.
+	fnDir := filepath.Join(proj, "functions")
+	reloads := func() int { return strings.Count(logs.String(), "functions: code change detected") }
+	waitReloads := func(want int) {
+		t.Helper()
+		for end := time.Now().Add(20 * time.Second); reloads() < want; time.Sleep(200 * time.Millisecond) {
+			if time.Now().After(end) {
+				t.Fatalf("functions reloads = %d, want %d\n%s", reloads(), want, logs.String())
+			}
+		}
+	}
+	if err := os.Mkdir(fnDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if err := os.WriteFile(filepath.Join(fnDir, "a.js"), []byte("// 1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitReloads(1)
+	if err := os.RemoveAll(fnDir); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if err := os.Mkdir(fnDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if err := os.WriteFile(filepath.Join(fnDir, "b.js"), []byte("// 2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitReloads(2)
 
 	tmp := filepath.Join(proj, ".instancez.yaml.tmp")
 	if err := os.WriteFile(tmp, []byte(reloadTableYAML), 0o644); err != nil {

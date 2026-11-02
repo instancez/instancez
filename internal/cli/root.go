@@ -61,6 +61,7 @@ func newRootCmd(env teleEnv) *cobra.Command {
 		Use:           "inz",
 		Short:         "instancez — declarative backend from a single YAML file",
 		Long:          "instancez turns a YAML config into a full backend: Postgres CRUD, auth, storage, events, and more.",
+		Version:       versionString(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
@@ -70,6 +71,7 @@ func newRootCmd(env teleEnv) *cobra.Command {
 			}
 		},
 	}
+	root.SetVersionTemplate("{{.Version}}\n")
 	root.PersistentFlags().StringVar(&orgFlag, "org", "", "organization id (org_...) for org-scoped cloud commands; defaults to your only org")
 	root.PersistentFlags().BoolVar(&noTelemetry, "no-telemetry", false, "disable anonymous usage and error telemetry for this run")
 
@@ -237,12 +239,14 @@ func printFinalErr(w io.Writer, err error) {
 	}
 }
 
+func versionString() string { return fmt.Sprintf("instancez v%s (%s)", version, commit) }
+
 func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Print the version",
 		Run: func(cmd *cobra.Command, args []string) {
-			cmd.Printf("instancez v%s (%s)\n", version, commit)
+			cmd.Println(versionString())
 		},
 	}
 }
