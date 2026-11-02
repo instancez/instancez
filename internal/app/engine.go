@@ -301,6 +301,9 @@ func (e *Engine) runWatcher(ctx context.Context, interval time.Duration) {
 					e.cfg = prev
 				}
 				e.mu.Unlock()
+				if d := e.Drift(); d != nil {
+					d.MarkDrift(versionChecksum(ev.Data), err.Error(), time.Now())
+				}
 				continue
 			}
 			if err := e.migrator.Harden(ctx, e.Config()); err != nil {

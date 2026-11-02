@@ -535,7 +535,8 @@ func TestEngineRunWatcher_BadMigrationFallsBack(t *testing.T) {
 }
 
 // TestEngineRunWatcher_UnrecoverableMigrationRestoresPrevConfig: when a reload
-// fails with no last-known-good, the failed candidate must not stay live.
+// fails with no last-known-good, the failed candidate must not stay live and
+// the source must be reported as drifted.
 func TestEngineRunWatcher_UnrecoverableMigrationRestoresPrevConfig(t *testing.T) {
 	db := newFakeDB(t)
 	roles := domain.DefaultRoles()
@@ -564,15 +565,17 @@ func TestEngineRunWatcher_UnrecoverableMigrationRestoresPrevConfig(t *testing.T)
 	}()
 
 	src.ch <- config.WatchEvent{Data: []byte(watcherGoodYAML), Version: "v2"}
-	// Events are handled in order; this one marks drift once the first is done.
-	src.ch <- config.WatchEvent{Data: []byte(watcherInvalidYAML), Version: "v3"}
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) && engine.Drift().Snapshot().Status != DriftStatusDrift {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if engine.Drift().Snapshot().Status != DriftStatusDrift {
-		t.Fatalf("watcher did not process the second event")
+	state := engine.Drift().Snapshot()
+	if state.Status != DriftStatusDrift {
+		t.Fatalf("expected drift after unrecoverable migration, got %q", state.Status)
+	}
+	if !strings.Contains(state.LastError, "migration failed") {
+		t.Fatalf("drift should carry the migration error, got %q", state.LastError)
 	}
 	if got := engine.Config(); got != initial {
 		t.Fatalf("failed candidate stayed live: port=%d", got.Server.Port)
