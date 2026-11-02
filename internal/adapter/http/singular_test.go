@@ -48,6 +48,8 @@ func TestWantsSingular(t *testing.T) {
 		`application/json;q=0.5, ` + s + `;foo="x,y"`: true,
 		`application/json;foo="x,y";q=0.5, ` + s:      true,
 		`application/json;foo="x,y", ` + s:            false,
+		`application/json;foo="a\"b";q=0.5, ` + s:     true,
+		`application/json;foo="a\\", ` + s:            false,
 	}
 	for accept, want := range cases {
 		if got := wantsSingular(ctxWithAccept(accept)); got != want {
