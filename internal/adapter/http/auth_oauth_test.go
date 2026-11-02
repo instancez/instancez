@@ -498,3 +498,38 @@ func TestOAuthCallback_MissingEmailRedirectsToApp(t *testing.T) {
 		t.Fatalf("upserted=%v status %d loc %q body %s", upserted, w.Code, loc, w.Body.String())
 	}
 }
+
+func TestIDTokenGrant_SignupClosedIs422(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oidc.SeedKeys("google", map[string]*rsa.PublicKey{"k1": &key.PublicKey})
+	t.Cleanup(func() { oidc.SeedKeys("google", nil) })
+	claims := jwt.MapClaims{"iss": "https://accounts.google.com", "aud": "cid", "sub": "g-new", "email": "new@e.com", "exp": time.Now().Add(time.Minute).Unix()}
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	tok.Header["kid"] = "k1"
+	signed, _ := tok.SignedString(key)
+
+	no := false
+	var got domain.OAuthLogin
+	h := &AuthHandler{
+		cfg:    &domain.Config{Auth: &domain.Auth{AllowSignup: &no, OAuth: map[string]*domain.OAuthProvider{"google": {ClientID: "cid"}}}},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)), jwtKeys: stubKeys(t),
+		authSvc: &stubAuthService{upsertOAuthUserFn: func(_ context.Context, in domain.OAuthLogin) (map[string]any, error) {
+			got = in
+			return nil, domain.ErrSignupDisabled
+		}},
+	}
+	r := gin.New()
+	r.POST("/token", h.handleIDTokenGrant)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("POST", "/token", strings.NewReader(`{"provider":"google","token":"`+signed+`"}`)))
+	if got.AllowSignup {
+		t.Fatalf("AllowSignup=false not passed to service: %+v", got)
+	}
+	if w.Code != 422 || !strings.Contains(w.Body.String(), `"code":"signup_disabled"`) || !strings.Contains(w.Body.String(), "Signups not allowed for this instance") {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+}

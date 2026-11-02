@@ -561,11 +561,8 @@ func TestSupabaseJSCompat(t *testing.T) {
 
 func runSignupDisabledFlow(t *testing.T, cfg *domain.Config, baseURL, publishableKey, secretKey string) {
 	t.Helper()
-	// Restore via Cleanup so any t.Fatalf below still resets the live cfg
-	// — the dispatcher reads this pointer on every request.
 	disabled := false
 	cfg.Auth.AllowSignup = &disabled
-	t.Cleanup(func() { cfg.Auth.AllowSignup = nil })
 
 	signupBody := bytes.NewBufferString(`{"email":"blocked@example.com","password":"hunter2hunter2"}`)
 	signupReq, _ := http.NewRequest("POST", baseURL+"/auth/v1/signup", signupBody)
@@ -618,6 +615,26 @@ func runSignupDisabledFlow(t *testing.T, cfg *domain.Config, baseURL, publishabl
 	_ = adminResp.Body.Close()
 	if adminResp.StatusCode != 200 {
 		t.Fatalf("disabled signup: admin/users status = %d, want 200; body = %s", adminResp.StatusCode, adminRespBody)
+	}
+
+	runSignupDisabledJS(t, baseURL, publishableKey, adminEmail)
+}
+
+// runSignupDisabledJS asserts supabase-js surfaces the 422s as AuthApiError.
+func runSignupDisabledJS(t *testing.T, baseURL, publishableKey, existingEmail string) {
+	t.Helper()
+	harnessDir, err := filepath.Abs("../../../test/integration/supabase-js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("node", "signup-disabled.mjs")
+	cmd.Dir = harnessDir
+	cmd.Env = append(os.Environ(),
+		"INSTANCEZ_URL="+baseURL, "INSTANCEZ_PUBLISHABLE_KEY="+publishableKey,
+		"EXISTING_EMAIL="+existingEmail, "EXISTING_PASSWORD=hunter2hunter2")
+	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("supabase-js signup-disabled harness failed: %v", err)
 	}
 }
 
