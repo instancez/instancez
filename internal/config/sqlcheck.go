@@ -170,7 +170,7 @@ func dollarTag(s string) string {
 		if c == '$' {
 			return s[:i+1]
 		}
-		if !(c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || i > 1 && c >= '0' && c <= '9') {
+		if c != '_' && (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (i == 1 || c < '0' || c > '9') {
 			return ""
 		}
 	}

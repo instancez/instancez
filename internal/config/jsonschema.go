@@ -58,7 +58,7 @@ func JSONSchema() ([]byte, error) {
 type schemaGen struct{ enums map[string][]string }
 
 func (g *schemaGen) typeSchema(t reflect.Type, enumKey string) map[string]any {
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	switch t.Kind() {
