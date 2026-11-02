@@ -193,6 +193,9 @@ func (bs *BundleSource) fetchAndRead(ctx context.Context, pointer string) ([]byt
 	if err != nil {
 		return nil, "", fmt.Errorf("bundle source: instancez.yaml not found in %s: %w", pointer, err)
 	}
+	if err := config.RejectInclude(pointer, data); err != nil {
+		return nil, "", err
+	}
 	return data, version, nil
 }
 

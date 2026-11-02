@@ -314,6 +314,24 @@ functions:
 
 `INSTANCEZ_ENV_*` references are resolved from the process environment. Plain `${VAR}` references (without the `INSTANCEZ_ENV_` prefix) are not supported in `env:` — use them elsewhere in the config file for other values.
 
+## include
+
+Split a large config across files. Only the main `instancez.yaml` may use it.
+
+```yaml
+version: 1
+include:
+  - tables/*.yaml
+  - rpc.yaml
+```
+
+- Paths are relative to the main file's directory. Glob characters (`*`, `?`, `[...]`) are allowed only in the last path element, there is no `**`, and each pattern must match at least one file. `${VAR}` and absolute paths are rejected.
+- An included file may only contain `tables`, `storage`, `rpc` and `functions` (empty files are fine). Nested `include` is an error.
+- The same table, bucket, rpc or function name in two files is an error. `functions.<name>.file` stays relative to the project root.
+- Every match must resolve inside the project directory, symlinks included. The main file is skipped if a glob matches it.
+- Errors in a fragment name the file and line. Line numbers in later validation errors refer to the merged document.
+- `inz validate`, `inz vet`, `inz gen`, `inz dev` and `inz serve` read the merged config. S3 and bundle config sources do not support `include`; `inz bundle` writes the merged file into the bundle.
+
 ## functions_bundle
 
 Bundle pointer for self-hosted deployments. `inz bundle` produces the value (e.g. `s3://bucket/key#sha256`) and writes it here; the managed cloud stamps it server-side from uploaded sources. `inz cloud deploy` does not write this field.

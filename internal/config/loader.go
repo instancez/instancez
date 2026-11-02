@@ -17,9 +17,9 @@ var envVarPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-(.*?))?
 
 // Load reads a YAML config file, interpolates env vars, and parses it into a Config.
 func Load(path string) (*domain.Config, error) {
-	data, err := os.ReadFile(path)
+	data, err := ReadConfigFile(path)
 	if err != nil {
-		return nil, &domain.ConfigError{Path: path, Message: "cannot read file", Err: err}
+		return nil, err
 	}
 	return ParseBytes(data, path)
 }
@@ -96,9 +96,9 @@ func LoadLocalWithDotenv(configPath, dotenvPath string) (*domain.Config, []strin
 	if err := LoadDotenv(dotenvPath); err != nil {
 		return nil, nil, err
 	}
-	data, err := os.ReadFile(configPath)
+	data, err := ReadConfigFile(configPath)
 	if err != nil {
-		return nil, nil, &domain.ConfigError{Path: configPath, Message: "cannot read file", Err: err}
+		return nil, nil, err
 	}
 	return ParseBytesLocal(data, configPath)
 }

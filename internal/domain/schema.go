@@ -33,6 +33,9 @@ type Config struct {
 	// not read by the runtime yet.
 	FunctionsBundle string `yaml:"functions_bundle" json:"functions_bundle"`
 
+	// Include lists config fragments merged by config.ResolveIncludes before decode; it is only ever set on an unresolved file.
+	Include []string `yaml:"include,omitempty" json:"-"`
+
 	// UnknownKeys carries config keys that did not map to any field, detected at
 	// decode time and surfaced by Validate alongside structural errors (so a
 	// caller sees unknown keys and other problems in one pass). It is never

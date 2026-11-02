@@ -5,6 +5,8 @@ package app_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -205,5 +207,47 @@ func TestIntegration_OwnerShorthandBucket(t *testing.T) {
 	}
 	if err := ins(u2, u1); err == nil || !strings.Contains(err.Error(), "row-level security") {
 		t.Fatalf("foreign insert = %v, want RLS violation", err)
+	}
+}
+
+func TestIntegration_IncludeMigrates(t *testing.T) {
+	owner, _ := dbboot.StartContainer(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	write := func(rel, body string) {
+		p := filepath.Join(dir, rel)
+		_ = os.MkdirAll(filepath.Dir(p), 0o755)
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("instancez.yaml", "version: 1\ninclude: [tables/*.yaml]\n")
+	write("tables/notes.yaml", "tables:\n  notes:\n    rls_enabled: true\n    fields:\n      - {name: id, type: bigserial, primary_key: true}\n")
+
+	src := &config.FileSource{Path: filepath.Join(dir, "instancez.yaml")}
+	cfg, err := src.Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := app.NewMigrator(owner)
+	if err := m.Apply(ctx, cfg); err != nil {
+		t.Fatalf("apply v1: %v", err)
+	}
+
+	write("tables/notes.yaml", "tables:\n  notes:\n    rls_enabled: true\n    fields:\n      - {name: id, type: bigserial, primary_key: true}\n      - {name: body, type: text}\n")
+	data, _, err := src.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg2, _, err := config.ParseSourceBytes(src, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Apply(ctx, cfg2); err != nil {
+		t.Fatalf("apply v2: %v", err)
+	}
+	rows, err := owner.Query(ctx, "SELECT count(*) AS n FROM information_schema.columns WHERE table_name='notes' AND column_name='body'")
+	if err != nil || rows[0]["n"].(int64) != 1 {
+		t.Fatalf("body column missing: %v %v", rows, err)
 	}
 }

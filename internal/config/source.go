@@ -113,15 +113,11 @@ func (s *FileSource) Load(ctx context.Context) (*domain.Config, error) {
 }
 
 func (s *FileSource) Read(ctx context.Context) ([]byte, string, error) {
-	data, err := os.ReadFile(s.Path)
+	r, err := ResolveIncludes(s.Path)
 	if err != nil {
-		return nil, "", &domain.ConfigError{Path: s.Path, Message: "cannot read file", Err: err}
+		return nil, "", err
 	}
-	info, err := os.Stat(s.Path)
-	if err != nil {
-		return nil, "", &domain.ConfigError{Path: s.Path, Message: "cannot stat file", Err: err}
-	}
-	return data, fileVersionToken(info), nil
+	return r.Data, r.Version, nil
 }
 
 func (s *FileSource) Write(ctx context.Context, data []byte, expectedVersion string) (string, error) {
@@ -329,6 +325,9 @@ func (s *S3Source) Read(ctx context.Context) ([]byte, string, error) {
 	data, err := io.ReadAll(out.Body)
 	if err != nil {
 		return nil, "", fmt.Errorf("s3 config %s: read body: %w", s.Describe(), err)
+	}
+	if err := RejectInclude(s.Describe(), data); err != nil {
+		return nil, "", err
 	}
 	return data, aws.ToString(out.ETag), nil
 }

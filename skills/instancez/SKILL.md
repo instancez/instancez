@@ -52,6 +52,7 @@ tables:        # your schema + RLS policies
 storage:       # buckets + RLS policies
 rpc:           # Postgres stored procedures at /rest/v1/rpc/<name>
 functions:     # Node.js handlers at /functions/v1/<name>
+include:       # optional: merge tables/storage/rpc/functions from other files, e.g. [tables/*.yaml]
 ```
 
 `rpc:` is SQL running inside Postgres. `functions:` is JavaScript running in Node workers. Don't mix them up.

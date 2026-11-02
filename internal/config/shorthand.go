@@ -12,6 +12,12 @@ import (
 // them. Conflicts leave the shorthand in place and land in cfg.ExpandErrors.
 func ExpandShorthands(cfg *domain.Config) {
 	cfg.ExpandErrors = nil
+	if len(cfg.Include) > 0 {
+		cfg.ExpandErrors = append(cfg.ExpandErrors, &domain.ValidationError{
+			Path:    "include",
+			Message: "include: is only supported for local config files; run inz bundle to flatten",
+		})
+	}
 	resolve := domain.ResolverOver(cfg.Tables)
 	for name, t := range cfg.Tables {
 		if t.Timestamps {
