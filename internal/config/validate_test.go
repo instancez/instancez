@@ -2040,3 +2040,40 @@ func TestIsAllowedDefault(t *testing.T) {
 		}
 	}
 }
+
+func TestValidate_DuplicateFieldName(t *testing.T) {
+	build := func(names ...string) domain.ValidationErrors {
+		cfg := validBaseConfig()
+		fields := []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}}
+		for _, n := range names {
+			fields = append(fields, domain.Field{Name: n, Type: "text"})
+		}
+		cfg.Tables["todos"] = domain.Table{Fields: fields, RLS: cfg.Tables["todos"].RLS}
+		return Validate(cfg)
+	}
+	dups := func(errs domain.ValidationErrors) (out []*domain.ValidationError) {
+		for _, e := range errs {
+			if strings.Contains(e.Message, "duplicate field") {
+				out = append(out, e)
+			}
+		}
+		return
+	}
+	t.Run("one duplicate", func(t *testing.T) {
+		d := dups(build("title", "title"))
+		if len(d) != 1 || d[0].Path != "tables.todos.fields[2]" || d[0].Message != `duplicate field "title" (first at fields[1])` {
+			t.Fatalf("got %v", d)
+		}
+	})
+	t.Run("three copies", func(t *testing.T) {
+		d := dups(build("x", "x", "x"))
+		if len(d) != 2 || d[0].Path != "tables.todos.fields[2]" || d[1].Path != "tables.todos.fields[3]" {
+			t.Fatalf("got %v", d)
+		}
+	})
+	t.Run("empty names are not duplicates", func(t *testing.T) {
+		if d := dups(build("", "")); len(d) != 0 {
+			t.Fatalf("got %v", d)
+		}
+	})
+}

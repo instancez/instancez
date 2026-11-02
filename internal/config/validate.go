@@ -675,8 +675,20 @@ func validateTables(tables map[string]domain.Table, auth *domain.Auth) domain.Va
 
 		// Validate fields
 		hasPK := false
-		for _, field := range table.Fields {
+		seenFields := map[string]int{}
+		for i, field := range table.Fields {
 			fpath := fmt.Sprintf("%s.fields.%s", path, field.Name)
+			if field.Name != "" {
+				if first, dup := seenFields[field.Name]; dup {
+					errs = append(errs, &domain.ValidationError{
+						Path:       fmt.Sprintf("%s.fields[%d]", path, i),
+						Message:    fmt.Sprintf("duplicate field %q (first at fields[%d])", field.Name, first),
+						Suggestion: "Remove or rename one of them",
+					})
+				} else {
+					seenFields[field.Name] = i
+				}
+			}
 
 			if err := validateIdent(fpath, field.Name); err != nil {
 				errs = append(errs, err)
