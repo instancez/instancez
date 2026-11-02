@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/instancez/instancez/internal/domain"
@@ -522,4 +523,27 @@ func TestParseBytesLocalInvalidYAML(t *testing.T) {
 	if (localErr == nil) != (strictErr == nil) {
 		t.Fatalf("empty input: local err %v, strict err %v, want same outcome", localErr, strictErr)
 	}
+}
+
+func TestLoadLocalWithDotenv(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "instancez.yaml")
+	if err := os.WriteFile(cfgPath, []byte("version: 1\nproject:\n  name: p\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("missing dotenv is fine", func(t *testing.T) {
+		if _, _, err := LoadLocalWithDotenv(cfgPath, filepath.Join(t.TempDir(), "nope.env")); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("malformed dotenv errors", func(t *testing.T) {
+		env := filepath.Join(t.TempDir(), ".development.env")
+		if err := os.WriteFile(env, []byte("garbage\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, _, err := LoadLocalWithDotenv(cfgPath, env)
+		if err == nil || !strings.Contains(err.Error(), "line 1") {
+			t.Fatalf("err = %v, want a line-1 parse error", err)
+		}
+	})
 }
