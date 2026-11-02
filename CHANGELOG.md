@@ -22,7 +22,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 
 - `inz dev` hot reload logs every validation error with its path and line, not just a count.
-- `inz init` adds `pgdata.runtime/` (embedded Postgres binaries) to `.gitignore`. Existing projects: re-run `inz init` (it only appends missing lines) or add the line by hand.
+- `inz init` adds `pgdata.runtime/` (embedded Postgres binaries) and `bundle.tar.gz` to `.gitignore`. Existing projects: re-run `inz init` (it only appends missing lines) or add the line by hand.
 - A second `inz dev --embedded-pg` in the same project now stops with "another inz dev is already using this pgdata directory (Postgres PID N, port P)" instead of suggesting `--reset-pg`, and `--reset-pg` no longer wipes a data directory another `inz dev` is using.
 - A hot reload whose migration fails now logs the failure and keeps the running config's functions; it used to log "config reloaded successfully" and load functions from the rejected config.
 
