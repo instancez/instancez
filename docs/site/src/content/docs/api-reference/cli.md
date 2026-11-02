@@ -105,7 +105,7 @@ Local validation (including `--use-dsn`) loads `.development.env` first. An unse
 
 With `--use-dsn`, also connects to the database and prints the migration plan (DDL diff) without applying it.
 
-Add `--dry-run-ddl` to also run the migration inside a transaction that is always rolled back. That surfaces unknown columns in RLS policies and bad `language: sql` rpc bodies as real Postgres errors, and exits non-zero on failure. It is opt-in because it takes the migration advisory lock and DDL locks until the rollback (`lock_timeout` 2s, `statement_timeout` 30s). It needs a DSN with the instancez roles provisioned, and runs destructive changes inside the rolled-back transaction. With `--json`, the output gains `dry_run` (`"ok"` or the error).
+Add `--dry-run-ddl` to also run the migration inside a transaction that is always rolled back. That surfaces unknown columns in RLS policies and bad `language: sql` rpc bodies as real Postgres errors, and exits non-zero on failure. It is opt-in because it takes the migration advisory lock and DDL locks until the rollback (`lock_timeout` 2s, `statement_timeout` 30s per statement, 2 minutes for the whole run). When the database already matches the config, it skips the plan but still re-creates every rpc with body checking on. It needs a DSN with the instancez roles provisioned, and runs destructive changes inside the rolled-back transaction. With `--json`, the output gains `dry_run` (`"ok"` or the error).
 
 ```
 inz validate [flags]

@@ -6,6 +6,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/instancez/instancez/internal/adapter/postgres"
 	"github.com/instancez/instancez/internal/app"
@@ -168,5 +169,81 @@ func TestDryRun_LockTimeoutDoesNotHang(t *testing.T) {
 	err = m.DryRun(ctx, next)
 	if err == nil || !strings.Contains(err.Error(), "lock timeout") {
 		t.Fatalf("want lock timeout, got %v", err)
+	}
+}
+
+func TestDryRun_InSyncStillChecksRPCBodies(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+	m := app.NewMigrator(db)
+	cfg := dryRunCfg("user_id = auth.uid()")
+	cfg.RPC = map[string]domain.Function{"bad": sqlRPC("select * from nope")}
+	if err := m.Apply(ctx, cfg); err != nil {
+		t.Fatalf("apply creates bodies unchecked: %v", err)
+	}
+	err := m.DryRun(ctx, cfg)
+	if err == nil || !strings.Contains(err.Error(), `relation "nope" does not exist`) {
+		t.Fatalf("in-sync dry run must still check bodies, got %v", err)
+	}
+}
+
+func TestDryRun_AdvisoryLockContentionTimesOut(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+	holder, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Rollback(ctx)
+	if _, err := holder.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", domain.MigrationLockKey); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	err = app.NewMigrator(db).DryRun(ctx, dryRunCfg("true"))
+	if err == nil || !strings.Contains(err.Error(), "lock timeout") {
+		t.Fatalf("want lock timeout, got %v", err)
+	}
+	if time.Since(start) > 10*time.Second {
+		t.Fatalf("waited %s, lock_timeout should bound it", time.Since(start))
+	}
+}
+
+func TestDryRun_CancelledContextLeavesNoTrace(t *testing.T) {
+	db := startPostgres(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := app.NewMigrator(db).DryRun(ctx, dryRunCfg("true")); err == nil {
+		t.Fatal("want error from a cancelled context")
+	}
+	if !regclassNull(t, db, "public.todos") || !regclassNull(t, db, "_instancez_migrations") {
+		t.Fatal("cancelled dry run left objects behind")
+	}
+}
+
+func TestDryRun_NoCreatePrivilegeHint(t *testing.T) {
+	url := dbboot.StartRawContainer(t)
+	super, err := postgres.NewOwner(context.Background(), url, domain.PoolConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = super.Close() })
+	ctx := context.Background()
+	for _, q := range []string{
+		"CREATE ROLE dryrun_low LOGIN PASSWORD 'low'",
+		"REVOKE CREATE ON SCHEMA public FROM PUBLIC",
+		"GRANT CONNECT ON DATABASE instancez_test TO dryrun_low",
+	} {
+		if _, err := super.Exec(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	low, err := postgres.NewOwner(ctx, strings.Replace(url, "postgres:postgres@", "dryrun_low:low@", 1), domain.PoolConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = low.Close() })
+	err = app.NewMigrator(low.Database).DryRun(ctx, dryRunCfg("true"))
+	if err == nil || !strings.Contains(err.Error(), "owner-class DSN") || !strings.Contains(err.Error(), "create migrations table") {
+		t.Fatalf("got %v", err)
 	}
 }
