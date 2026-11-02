@@ -385,3 +385,61 @@ func TestInSkippedDir(t *testing.T) {
 		}
 	}
 }
+
+func TestWatchFunctionsDir_DirCreatedLater(t *testing.T) {
+	project := t.TempDir()
+	dir := filepath.Join(project, "functions")
+	reloads := startFunctionsWatch(t, dir)
+
+	writeFile(t, filepath.Join(project, "instancez.yaml"), "version: 1\n")
+	expectNoReload(t, reloads, "unrelated project file")
+
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	expectReload(t, reloads, "functions dir created")
+
+	writeFile(t, filepath.Join(dir, "greet.js"), "export default () => {}")
+	expectReload(t, reloads, "write inside newly created functions dir")
+}
+
+func TestWatchFunctionsDir_RemovedAndRecreated(t *testing.T) {
+	project := t.TempDir()
+	dir := filepath.Join(project, "functions")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	reloads := startFunctionsWatch(t, dir)
+
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	expectReload(t, reloads, "functions dir removed")
+
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	expectReload(t, reloads, "functions dir recreated")
+	writeFile(t, filepath.Join(dir, "a.js"), "x")
+	expectReload(t, reloads, "write after recreate")
+}
+
+func TestWatchFunctionsDir_FunctionsIsAFile(t *testing.T) {
+	project := t.TempDir()
+	dir := filepath.Join(project, "functions")
+	writeFile(t, dir, "not a dir")
+	reloads := startFunctionsWatch(t, dir) // must not panic or crash
+	writeFile(t, filepath.Join(project, "other.txt"), "x")
+	expectNoReload(t, reloads, "unrelated file while functions is a file")
+}
+
+func TestWatchFunctionsDir_RelativePath(t *testing.T) {
+	project := t.TempDir()
+	t.Chdir(project)
+	reloads := startFunctionsWatch(t, "functions")
+
+	if err := os.Mkdir("functions", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	expectReload(t, reloads, "relative functions dir created")
+}
