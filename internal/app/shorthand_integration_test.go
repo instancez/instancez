@@ -4,8 +4,10 @@ package app_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/instancez/instancez/internal/app"
 	"github.com/instancez/instancez/internal/config"
@@ -89,5 +91,55 @@ tables:
 	})
 	if err != nil || n != 0 {
 		t.Fatalf("delete affected %d (err %v), want 0 with no delete policy", n, err)
+	}
+}
+
+const tsYAML = `
+version: 1
+tables:
+  items:
+    timestamps: true
+    fields:
+      - {name: id, type: bigserial, primary_key: true}
+      - {name: title, type: text}
+`
+
+func TestIntegration_TimestampsShorthand(t *testing.T) {
+	owner, _ := dbboot.StartContainer(t)
+	ctx := context.Background()
+	applyYAML(t, app.NewMigrator(owner), tsYAML)
+
+	if _, err := owner.Exec(ctx, "INSERT INTO items (title) VALUES ('a')"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	if _, err := owner.Exec(ctx, "UPDATE items SET title='b'"); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := owner.Query(ctx, "SELECT updated_at > created_at AS moved FROM items")
+	if err != nil || len(rows) != 1 || rows[0]["moved"] != true {
+		t.Fatalf("updated_at did not advance: rows=%v err=%v", rows, err)
+	}
+
+	mig, err := owner.GetLastMigration(ctx)
+	if err != nil || mig == nil {
+		t.Fatalf("last migration: %v %v", mig, err)
+	}
+	if !strings.Contains(mig.ConfigJSON, `"updated_at"`) || strings.Contains(mig.ConfigJSON, "timestamps") {
+		t.Fatalf("stored config not expanded: %s", mig.ConfigJSON)
+	}
+}
+
+func TestIntegration_TimestampsRemovalIsDestructive(t *testing.T) {
+	owner, _ := dbboot.StartContainer(t)
+	m := app.NewMigrator(owner)
+	applyYAML(t, m, tsYAML)
+
+	cfg, err := config.ParseBytes([]byte("version: 1\ntables:\n  items:\n    fields:\n      - {name: id, type: bigserial, primary_key: true}\n      - {name: title, type: text}\n"), "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Apply(context.Background(), cfg); !errors.Is(err, app.ErrDestructive) {
+		t.Fatalf("err = %v, want ErrDestructive", err)
 	}
 }

@@ -257,3 +257,13 @@ func stringsOf(path []any) []string {
 	}
 	return out
 }
+
+func TestMarshalYAML_ExpandsTimestamps(t *testing.T) {
+	out, probs, err := MarshalYAML([]byte(`{"version":1,"tables":{"t":{"timestamps":true,"fields":[{"name":"id","type":"bigserial","primary_key":true}]}}}`))
+	if err != nil || len(probs) != 0 {
+		t.Fatalf("err=%v probs=%v", err, probs)
+	}
+	if !strings.Contains(string(out), "auto_updated_at: true") || strings.Contains(string(out), "timestamps:") {
+		t.Fatalf("not expanded:\n%s", out)
+	}
+}

@@ -195,6 +195,12 @@ To reference one column of a composite key from another table's `foreign_key`, t
 |-----|------|---------|-------------|
 | `rls_enabled` | `boolean` | inferred: `true` if `rls` has policies, else `false` | Turn row-level security on or off for the table. `true` with no policies denies `anon`/`authenticated` everything. `false` with policies is a validation error. Leaving it unset produces a validation warning. See [RLS](/instancez/build/rls/). |
 
+### tables.\<name\>.timestamps
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `timestamps` | `boolean` | `false` | Appends `created_at` (`timestamptz`, required, default `now()`) and `updated_at` (same, plus `auto_updated_at: true`) after the declared fields. Declaring either column as well is a validation error. Removing `timestamps` later drops both columns, so it needs `--allow-destructive`. A dashboard save writes the expanded fields, not the shorthand. |
+
 ### tables.\<name\>.indexes
 
 | Key | Type | Default | Description |

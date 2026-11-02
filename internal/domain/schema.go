@@ -38,6 +38,9 @@ type Config struct {
 	// caller sees unknown keys and other problems in one pass). It is never
 	// serialized — the decoders populate it, Validate reads it.
 	UnknownKeys ValidationErrors `yaml:"-" json:"-"`
+
+	// ExpandErrors carries shorthand expansion conflicts, surfaced by Validate.
+	ExpandErrors ValidationErrors `yaml:"-" json:"-"`
 }
 
 // Project holds display-only metadata.
@@ -249,6 +252,10 @@ type Table struct {
 	// RLSEnabled nil means "infer from RLS"; see EffectiveRLSEnabled.
 	RLSEnabled *bool       `yaml:"rls_enabled,omitempty" json:"rls_enabled,omitempty"`
 	RLS        []RLSPolicy `yaml:"rls" json:"rls"`
+
+	// Timestamps is a shorthand for created_at/updated_at fields. It is
+	// expanded into Fields at load time and cleared; see config.ExpandShorthands.
+	Timestamps bool `yaml:"timestamps,omitempty" json:"timestamps,omitempty"`
 
 	// RenamedFrom names this table's previous name. The migrator cannot tell a
 	// rename from a drop-plus-create by comparing configs, so without this it

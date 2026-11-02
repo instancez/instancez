@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/instancez/instancez/internal/config"
 	"github.com/instancez/instancez/internal/domain"
 )
 
@@ -1363,5 +1364,20 @@ func TestRequiredAuthDefaultAddsSkipsNonNullHelpers(t *testing.T) {
 	want := []string{"t.who", "t.mail", "t.claims"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("got %v, want %v (auth.role() falls back to 'anon', never NULL)", got, want)
+	}
+}
+
+func TestExpandTimestamps_EquivalentToLongForm(t *testing.T) {
+	short := "version: 1\ntables:\n  t:\n    timestamps: true\n    fields:\n      - {name: id, type: bigserial, primary_key: true}\n"
+	long := "version: 1\ntables:\n  t:\n    fields:\n      - {name: id, type: bigserial, primary_key: true}\n      - {name: created_at, type: timestamptz, required: true, default: now()}\n      - {name: updated_at, type: timestamptz, required: true, default: now(), auto_updated_at: true}\n"
+	plan := func(y string) string {
+		cfg, err := config.ParseBytes([]byte(y), "x")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Join(planUpdateStatements(&domain.Config{}, cfg, domain.DefaultRoles()), "\n")
+	}
+	if a, b := plan(short), plan(long); a != b {
+		t.Fatalf("shorthand plan differs from long form:\n%s\n---\n%s", a, b)
 	}
 }

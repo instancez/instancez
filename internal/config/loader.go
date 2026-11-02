@@ -293,6 +293,7 @@ func ApplyDefaults(cfg *domain.Config) { applyDefaults(cfg) }
 
 // applyDefaults sets sensible defaults on a parsed Config.
 func applyDefaults(cfg *domain.Config) {
+	ExpandShorthands(cfg)
 	if cfg.Server.Port == 0 {
 		cfg.Server.Port = 8080
 	}

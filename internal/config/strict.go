@@ -196,6 +196,7 @@ func UnmarshalConfigJSON(data []byte) (*domain.Config, error) {
 	for _, key := range jsonUnknownFields(data) {
 		cfg.UnknownKeys = append(cfg.UnknownKeys, &domain.ValidationError{Message: fmt.Sprintf("unknown key %q", key)})
 	}
+	ExpandShorthands(&cfg)
 	return &cfg, nil
 }
 

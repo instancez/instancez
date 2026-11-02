@@ -1320,3 +1320,65 @@ func TestHandlePutFunctionCode_CreatesMissingDir(t *testing.T) {
 		t.Errorf("bad body: code=%d, want 400", w.Code)
 	}
 }
+
+type recordingSource struct {
+	stubSource
+	written []byte
+}
+
+func (s *recordingSource) Write(ctx context.Context, data []byte, expected string) (string, error) {
+	s.written = data
+	return s.stubSource.Write(ctx, data, expected)
+}
+
+func putShorthandConfig(t *testing.T, body string) *recordingSource {
+	t.Helper()
+	parsed, err := config.UnmarshalConfigJSON([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfgJSON, _ := json.Marshal(parsed)
+	wrapped := &lastMigrationStubDB{stubDB: &stubDB{}, checksum: fmt.Sprintf("%x", sha256.Sum256(cfgJSON))}
+	src := &recordingSource{stubSource: stubSource{readVersion: "v1"}}
+	h := &AdminHandler{
+		cfg:           &domain.Config{Version: 1},
+		db:            wrapped,
+		logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		dashboardMode: DashboardReadwrite,
+		configSource:  src,
+	}
+	req := httptest.NewRequest(http.MethodPut, "/_admin/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	newAdminTestRouter(h).ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT = %d: %s", w.Code, w.Body.String())
+	}
+	return src
+}
+
+const shorthandBody = `{"version":1,"tables":{"t":{"timestamps":true,"fields":[{"name":"id","type":"bigserial","primary_key":true}]}}}`
+
+func TestAdminPutConfig_ExpandsTimestamps(t *testing.T) {
+	src := putShorthandConfig(t, shorthandBody)
+	out := string(src.written)
+	if !strings.Contains(out, "updated_at") || strings.Contains(out, "timestamps:") {
+		t.Fatalf("written YAML not expanded:\n%s", out)
+	}
+}
+
+func TestAdminPutConfig_ShorthandRoundTripNoDrift(t *testing.T) {
+	first := putShorthandConfig(t, shorthandBody)
+	cfg, err := config.ParseBytes(first.written, "rt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(cfg)
+	second := putShorthandConfig(t, string(body))
+	if n := strings.Count(string(second.written), "name: created_at"); n != 1 {
+		t.Fatalf("created_at appears %d times:\n%s", n, second.written)
+	}
+	if strings.Contains(string(second.written), "timestamps:") {
+		t.Fatal("expanded config must not carry timestamps")
+	}
+}

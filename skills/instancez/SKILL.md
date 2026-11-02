@@ -106,6 +106,7 @@ Rules the migrator enforces:
 
 - Every table needs a field with `primary_key: true`. Nothing is auto-added, not `id`, not `created_at`. Mark two or more fields for a composite key (a junction table keyed on both FKs also enables many-to-many embeds like `posts?select=*,tags(*)`). Key columns can't change once the table exists.
 - `type` comes from a fixed allowlist of standard Postgres types (serials, integers, text/varchar/char, boolean, numeric, date/time, uuid, jsonb, bytea, inet, and similar). Custom types like `citext` or `hstore` fail validation. `[]` array suffixes work.
+- `timestamps: true` on a table appends `created_at` and `updated_at` (auto-updated); do not also declare those fields.
 - Names are lowercase snake_case, starting with a letter, no SQL keywords.
 - The `auth` and `storage` schemas are reserved. User profile data goes in a regular table with a FK to `auth.users.id`, never in `schema: auth`.
 - Removing a table or column from the YAML drops it on the next run, with no confirmation. Warn the user before deleting anything from the YAML of a project with real data.

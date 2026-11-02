@@ -351,6 +351,7 @@ func validate(cfg *domain.Config, local bool) domain.ValidationErrors {
 	// Unknown keys detected at decode time are reported first, alongside the
 	// structural errors below, so the caller sees everything in one pass.
 	errs = append(errs, cfg.UnknownKeys...)
+	errs = append(errs, cfg.ExpandErrors...)
 
 	if cfg.Version != 1 {
 		errs = append(errs, &domain.ValidationError{
