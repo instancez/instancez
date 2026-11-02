@@ -174,7 +174,7 @@ func (h *AuthHandler) handleSignupDispatch(c *gin.Context) {
 	// also avoids wasting a body read + JSON unmarshal on requests we'll
 	// reject anyway.
 	if !h.cfg.Auth.SignupAllowed() {
-		problemJSON(c, 403, "signup_disabled", "Public signup is disabled")
+		problemJSON(c, 422, "signup_disabled", msgSignupDisabled)
 		return
 	}
 
@@ -191,7 +191,7 @@ func (h *AuthHandler) handleSignupDispatch(c *gin.Context) {
 	isAnonymous := strings.TrimSpace(email) == ""
 
 	if isAnonymous && !h.cfg.Auth.AnonymousAllowed() {
-		problemJSON(c, 403, "signup_disabled", "Anonymous sign-in is not allowed")
+		problemJSON(c, 422, "anonymous_provider_disabled", "Anonymous sign-ins are disabled")
 		return
 	}
 
@@ -443,11 +443,14 @@ func (h *AuthHandler) handlePKCEGrant(c *gin.Context) {
 	c.JSON(200, session)
 }
 
+// msgSignupDisabled matches GoTrue's signup_disabled message.
+const msgSignupDisabled = "Signups not allowed for this instance"
+
 // oauthLoginError maps an UpsertOAuthUser failure to a status, code and message.
 func oauthLoginError(err error, provider string) (int, string, string) {
 	switch {
 	case errors.Is(err, domain.ErrSignupDisabled):
-		return 403, "signup_disabled", "Signups not allowed for this instance"
+		return 422, "signup_disabled", msgSignupDisabled
 	case errors.Is(err, domain.ErrProviderEmailUnverified):
 		return 422, "provider_email_needs_verification", "Unverified email with " + provider
 	case errors.Is(err, domain.ErrOAuthLinkRefused):
@@ -459,11 +462,20 @@ func oauthLoginError(err error, provider string) (int, string, string) {
 func (h *AuthHandler) handleIDTokenGrant(c *gin.Context) {
 	var req struct {
 		Provider string `json:"provider" binding:"required"`
-		Token    string `json:"token" binding:"required"`
+		IDToken  string `json:"id_token"`
+		Token    string `json:"token"`
 		Nonce    string `json:"nonce"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		problemJSON(c, 400, "bad_request", "Missing provider or token")
+		problemJSON(c, 400, "bad_request", "Missing provider or id_token")
+		return
+	}
+	// supabase-js and GoTrue send id_token; token is kept for older callers.
+	if req.IDToken != "" {
+		req.Token = req.IDToken
+	}
+	if req.Token == "" {
+		problemJSON(c, 400, "bad_request", "Missing provider or id_token")
 		return
 	}
 

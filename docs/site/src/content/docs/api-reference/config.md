@@ -89,7 +89,7 @@ Auth is always provisioned, even if `auth:` is omitted entirely; the block only 
 |-----|------|---------|-------------|
 | `auth.jwt_expiry` | `duration` | `15m` | Access token lifetime. |
 | `auth.refresh_token_expiry` | `duration` | `7d` | Refresh token lifetime. Refresh tokens are always issued. |
-| `auth.allow_signup` | `boolean` | `true` | Allow public sign-up: `POST /auth/v1/signup`, first-time `signInWithOtp`, and first-time OAuth / ID-token sign-in. Set to `false` for invite-only. |
+| `auth.allow_signup` | `boolean` | `true` | Allow public sign-up: `POST /auth/v1/signup`, first-time `signInWithOtp`, and first-time OAuth / ID-token sign-in. Set to `false` for invite-only; blocked sign-ups get 422 `signup_disabled`, except first-time `signInWithOtp`, which returns an empty 200. |
 | `auth.allow_anonymous` | `boolean` | `false` | Allow anonymous sign-in (empty-body signup). Off by default; set `true` to enable. |
 | `auth.redirect_urls` | `string[]` | `[]` | Allowlist of origins for post-auth redirects (OAuth, email verification). The server's own origin is always allowed. |
 
