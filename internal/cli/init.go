@@ -379,7 +379,7 @@ func scaffoldFunctionsPackageJSON() string {
   "type": "module",
   "dependencies": {
     "@supabase/supabase-js": "^2.107.0",
-    "zod": "^3.23.8"
+    "zod": "^4.6.7"
   }
 }
 `
