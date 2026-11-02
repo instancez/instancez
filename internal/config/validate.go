@@ -415,6 +415,7 @@ func Warnings(cfg *domain.Config) domain.ValidationErrors {
 	}
 	ws = append(ws, compositePKFKWarnings(cfg.Tables)...)
 	ws = append(ws, fkWarnings(cfg.Tables)...)
+	ws = append(ws, fieldRefWarnings(cfg.Tables)...)
 	if cfg.Auth != nil {
 		for _, name := range slices.Sorted(maps.Keys(idTokenOnlyProviders)) {
 			if p := cfg.Auth.OAuth[name]; p != nil && p.ClientSecret == "" {
@@ -1443,6 +1444,30 @@ func validateForeignKeys(tables map[string]domain.Table) domain.ValidationErrors
 		}
 	}
 	return errs
+}
+
+// fieldRefWarnings flags the field-level ref and on_delete keys, which nothing reads.
+func fieldRefWarnings(tables map[string]domain.Table) domain.ValidationErrors {
+	var ws domain.ValidationErrors
+	for _, tableName := range slices.Sorted(maps.Keys(tables)) {
+		for _, f := range tables[tableName].Fields {
+			p := fmt.Sprintf("tables.%s.fields.%s", tableName, f.Name)
+			if f.Ref != "" {
+				sugg := "Remove it; storage references are not implemented"
+				if strings.HasPrefix(f.Ref, "auth.") {
+					sugg = fmt.Sprintf("Use foreign_key: {references: %s}", f.Ref)
+				}
+				ws = append(ws, &domain.ValidationError{Path: p + ".ref", Message: fmt.Sprintf("ref %q has no effect", f.Ref), Suggestion: sugg})
+			}
+			switch {
+			case f.OnDelete != "" && f.ForeignKey != nil:
+				ws = append(ws, &domain.ValidationError{Path: p + ".on_delete", Message: "field-level on_delete has no effect", Suggestion: "Remove it, or move it under foreign_key"})
+			case f.OnDelete != "":
+				ws = append(ws, &domain.ValidationError{Path: p + ".on_delete", Message: "on_delete has no effect without foreign_key", Suggestion: "Remove it"})
+			}
+		}
+	}
+	return ws
 }
 
 // fkWarnings flags references into tables instancez cannot check.

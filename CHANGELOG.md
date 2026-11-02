@@ -8,6 +8,10 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 - `inz validate --use-dsn <dsn> --dry-run-ddl` runs the migration in a transaction that is always rolled back (`lock_timeout` 2s, `statement_timeout` 30s), so unknown RLS columns and bad rpc bodies fail validation. It exits non-zero on failure and adds `dry_run` to `--json`. Plain `--use-dsn` still only prints the plan.
 
+### Deprecated
+
+- Field-level `ref:` and `on_delete:` never did anything. `inz validate` now warns and the docs no longer list them. Use `foreign_key: {references, on_delete}`.
+
 ### Fixed
 
 - `inz validate` and `inz dev` now warn when `rls_enabled` is unset on a table with policies (inferred true; removing the last policy turns RLS off). The no-policy warning says RLS is off instead of citing policies.

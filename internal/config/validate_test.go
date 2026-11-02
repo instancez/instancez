@@ -2094,3 +2094,47 @@ func TestValidate_RLSExprSyntax(t *testing.T) {
 		}
 	}
 }
+
+func TestWarnings_FieldRefOnDelete(t *testing.T) {
+	fk := &domain.ForeignKey{References: "auth.users.id"}
+	cases := []struct {
+		name     string
+		field    domain.Field
+		wantPath string // "" = no warning
+		wantMsg  string
+		wantSugg string
+	}{
+		{"ref storage", domain.Field{Type: "text", Ref: "storage.avatars"}, "tables.todos.fields.f.ref", "has no effect", ""},
+		{"ref auth users", domain.Field{Type: "uuid", Ref: "auth.users.id"}, "tables.todos.fields.f.ref", "has no effect", "foreign_key: {references: auth.users.id}"},
+		{"on_delete with fk", domain.Field{ForeignKey: fk, OnDelete: "cascade"}, "tables.todos.fields.f.on_delete", "has no effect", "move it under foreign_key"},
+		{"on_delete without fk", domain.Field{Type: "text", OnDelete: "cascade"}, "tables.todos.fields.f.on_delete", "has no effect without foreign_key", ""},
+		{"neither", domain.Field{Type: "text"}, "", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validBaseConfig()
+			todos := cfg.Tables["todos"]
+			tc.field.Name = "f"
+			todos.Fields = append(todos.Fields, tc.field)
+			cfg.Tables["todos"] = todos
+			if errs := Validate(cfg); errs != nil {
+				t.Fatalf("must stay valid, got %v", errs)
+			}
+			var got *domain.ValidationError
+			for _, w := range Warnings(cfg) {
+				if strings.HasPrefix(w.Path, "tables.todos.fields.f.") {
+					got = w
+				}
+			}
+			if tc.wantPath == "" {
+				if got != nil {
+					t.Fatalf("unexpected warning %v", got)
+				}
+				return
+			}
+			if got == nil || got.Path != tc.wantPath || !strings.Contains(got.Message, tc.wantMsg) || !strings.Contains(got.Suggestion, tc.wantSugg) {
+				t.Fatalf("got %+v", got)
+			}
+		})
+	}
+}
