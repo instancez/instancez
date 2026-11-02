@@ -24,7 +24,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Changed
 
-- Breaking, disabled sign-ups: `allow_signup: false` now returns 422 `signup_disabled` (was 403) on `POST /auth/v1/signup`, anonymous sign-in and first-time ID-token login (the browser OAuth callback redirects with `unexpected_failure`), with GoTrue's message `Signups not allowed for this instance`. Anonymous sign-in turned off returns 422 `anonymous_provider_disabled` "Anonymous sign-ins are disabled" (was 403 `signup_disabled`). Clients that checked for 403 must check the `code` or 422. `signInWithOtp` keeps its empty 200.
+- Breaking, disabled sign-ups: `allow_signup: false` now returns 422 `signup_disabled` (was 403) on `POST /auth/v1/signup`, anonymous sign-in and first-time ID-token login, with GoTrue's message `Signups not allowed for this instance`. With sign-ups allowed and `allow_anonymous: false`, anonymous sign-in returns 422 `anonymous_provider_disabled` "Anonymous sign-ins are disabled" (was 403 `signup_disabled`); with both off it returns `signup_disabled`. The browser OAuth callback redirects with `unexpected_failure` when it has a landing URL, otherwise it returns 500 `oauth_error`. Clients that checked for 403 must check the `code` or 422. `signInWithOtp` keeps its empty 200.
 - Breaking, `.single()` / `Accept: application/vnd.pgrst.object+json` on `POST`, `PUT`, `PATCH` and `DELETE` now returns `406` `PGRST116` unless exactly one row is affected, for every `Prefer: return=` mode, and the transaction rolls back. It returned `200` with an array or `204` before. Use `.maybeSingle()` or drop `.single()` when a mutation may touch 0 or many rows. The `Accept` header is now parsed as a media type: parameters (`; nulls=stripped`) and `q` priorities are honoured.
 - Breaking, REST and RPC row values: rows are now serialized like PostgREST (Postgres `to_json`) on list, single, CSV, insert, upsert, update, delete and RPC responses. If your client parsed the old formats, update it. See the [Value formats](docs/site/src/content/docs/build/querying.md#value-formats) table.
   - `timestamp` has no `Z` (`"2024-01-02T03:04:05"`), so JS `new Date()` reads it as local time; use `timestamptz` for instants.
@@ -335,7 +335,8 @@ First tagged release.
 - Deployment targets: Docker, Docker Compose, Kubernetes (Helm chart), AWS Lambda
 - A `@supabase/supabase-js` wire-compatibility test suite that runs on every commit
 
-[Unreleased]: https://github.com/instancez/instancez/compare/v0.0.8...HEAD
+[Unreleased]: https://github.com/instancez/instancez/compare/v0.0.12...HEAD
+[0.0.12]: https://github.com/instancez/instancez/compare/v0.0.11...v0.0.12
 [0.0.8]: https://github.com/instancez/instancez/compare/v0.0.7...v0.0.8
 [0.0.7]: https://github.com/instancez/instancez/compare/v0.0.6...v0.0.7
 [0.0.6]: https://github.com/instancez/instancez/compare/v0.0.5...v0.0.6
