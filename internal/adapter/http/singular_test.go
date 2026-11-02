@@ -32,6 +32,11 @@ func TestWantsSingular(t *testing.T) {
 		"*/*":                               false,
 		";;;garbage":                        false,
 		s + "x":                             false,
+		s + ";q=0":                          false,
+		s + ";q=0, application/json":        false,
+		"application/json;q=0, " + s:        true,
+		s + ";q=abc":                        false,
+		s + ";q=abc, application/json":      false,
 	}
 	for accept, want := range cases {
 		if got := wantsSingular(ctxWithAccept(accept)); got != want {

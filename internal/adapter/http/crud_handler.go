@@ -17,10 +17,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/instancez/instancez/internal/adapter/http/postgrest"
 	"github.com/instancez/instancez/internal/app"
 	"github.com/instancez/instancez/internal/domain"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // CRUDHandler serves PostgREST-compatible table endpoints.
@@ -1456,9 +1456,14 @@ func wantsSingular(c *gin.Context) bool {
 		}
 		q := 1.0
 		if v, ok := params["q"]; ok {
-			if f, err := strconv.ParseFloat(v, 64); err == nil {
-				q = f
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				continue
 			}
+			q = f
+		}
+		if q <= 0 {
+			continue
 		}
 		if q > bestQ {
 			best, bestQ = mt, q
