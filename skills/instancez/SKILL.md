@@ -66,7 +66,7 @@ tables:
         primary_key: true
       - name: user_id
         foreign_key:
-          references: auth.users.id   # table.column or schema.table.column; type inferred: uuid for auth.users.id, bigint otherwise
+          references: auth.users.id   # table.column (public) or schema.table.column; type inferred: uuid for auth.users.id, bigint otherwise
           on_delete: cascade          # cascade | restrict (default) | set_null
       - name: title
         type: text

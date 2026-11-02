@@ -155,7 +155,7 @@ tables:
 | `fields[].min` | `number` | — | Minimum numeric value (inclusive). |
 | `fields[].max` | `number` | — | Maximum numeric value (inclusive). |
 | `fields[].check` | `string` | — | Raw SQL `CHECK` expression. |
-| `fields[].foreign_key.references` | `string` | — | `table.column` or `schema.table.column`. |
+| `fields[].foreign_key.references` | `string` | — | `table.column` or `schema.table.column`. `table.column` is `public`; use `auth.users.id` for auth users. |
 | `fields[].foreign_key.on_delete` | `string` | `restrict` | `cascade`, `restrict`, or `set_null`. Defaults to `restrict` when omitted. |
 | `fields[].auto_updated_at` | `boolean` | `false` | Set the column to `now()` on every `UPDATE`. Only on `timestamp`/`timestamptz` fields. |
 | `fields[].immutable` | `boolean` | `false` | Reject any `UPDATE` that changes the column (error `23514`, HTTP 400), for every role including the secret key. `INSERT` is unaffected; an upsert that hits a conflict counts as an update. |

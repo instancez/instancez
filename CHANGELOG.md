@@ -4,6 +4,10 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Fixed
+
+- Breaking, `inz validate` now rejects foreign keys that fail at migrate: `users.id` with no public `users` table (use `auth.users.id`), a bare `x.col` where `x` has `schema:` set (use `schema.x.col`), `auth.users.<col>` other than `id`/`email` or `storage.objects.<col>` other than `id` (no unique constraint), and a misspelled schema such as `auht.users.id`. Other auth/storage tables and undeclared schemas warn.
+
 ## [0.0.12] - 2026-11-02
 
 ### Added
