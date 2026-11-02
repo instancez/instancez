@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -127,9 +128,10 @@ func padLeft(s string, w int) string {
 }
 
 // corsMiddleware handles CORS headers.
-func corsMiddleware(cfg domain.CORS, devMode bool) gin.HandlerFunc {
+// cfgFn is read per request so config reloads apply without a restart.
+func corsMiddleware(cfgFn func() domain.CORS, devMode bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		origins := cfg.Origins
+		origins := cfgFn().Origins
 		if devMode && len(origins) == 0 {
 			origins = []string{"*"}
 		}
@@ -177,16 +179,29 @@ func corsMiddleware(cfg domain.CORS, devMode bool) gin.HandlerFunc {
 
 // bodySizeLimit limits request body size. Storage upload paths are excluded
 // because the storage handler applies per-bucket size limits itself.
-func bodySizeLimit(maxSize string) gin.HandlerFunc {
-	limit := parseSizeBytes(maxSize)
-	if limit == 0 {
-		limit = 1 << 20 // 1MB default
+// sizeFn is read per request; the parsed value is cached until the string changes.
+func bodySizeLimit(sizeFn func() string) gin.HandlerFunc {
+	type parsed struct {
+		raw   string
+		limit int64
 	}
+	var cache atomic.Pointer[parsed]
 	return func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/storage/v1/object/") {
 			c.Next()
 			return
 		}
+		raw := sizeFn()
+		p := cache.Load()
+		if p == nil || p.raw != raw {
+			limit := parseSizeBytes(raw)
+			if limit <= 0 {
+				limit = 1 << 20 // 1MB default
+			}
+			p = &parsed{raw, limit}
+			cache.Store(p)
+		}
+		limit := p.limit
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 		c.Next()
 	}
