@@ -43,13 +43,17 @@ func runGenOut(t *testing.T, args ...string) (stdout string, err error) {
 	return out.String(), err
 }
 
-func captureStderr(t *testing.T, fn func()) string {
+func captureStderr(t *testing.T, fn func()) string { return captureFile(t, &os.Stderr, fn) }
+
+func captureStdout(t *testing.T, fn func()) string { return captureFile(t, &os.Stdout, fn) }
+
+func captureFile(t *testing.T, target **os.File, fn func()) string {
 	t.Helper()
-	old := os.Stderr
+	old := *target
 	r, w, err := os.Pipe()
 	require.NoError(t, err)
-	os.Stderr = w
-	defer func() { os.Stderr = old }()
+	*target = w
+	defer func() { *target = old }()
 	fn()
 	require.NoError(t, w.Close())
 	b, err := io.ReadAll(r)

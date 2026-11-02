@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -117,7 +116,7 @@ func TestRunInitScaffoldsFunctions(t *testing.T) {
 		Dependencies map[string]string `json:"dependencies"`
 	}
 	require.NoError(t, json.Unmarshal(pkg, &parsed))
-	assert.Equal(t, "^4.6.7", parsed.Dependencies["zod"])
+	assert.Equal(t, "^4.6.7", parsed.Dependencies["zod"], "zod < 4.6.6 has GHSA-mrhx-c7xc-m3w5")
 
 	// The handler is a real one (uses ctx.supabase + default export).
 	fn, err := os.ReadFile(filepath.Join(dir, "functions", "todos.js"))
@@ -503,18 +502,6 @@ func TestWithSchemaHeaderIsIdempotent(t *testing.T) {
 	if got := withSchemaHeader(""); got != config.SchemaHeader+"\n" {
 		t.Fatalf("empty input: %q", got)
 	}
-}
-
-// GHSA-mrhx-c7xc-m3w5 affects zod < 4.6.6.
-func TestScaffoldZodNotVulnerable(t *testing.T) {
-	var parsed struct {
-		Dependencies map[string]string `json:"dependencies"`
-	}
-	require.NoError(t, json.Unmarshal([]byte(scaffoldFunctionsPackageJSON()), &parsed))
-	var major, minor, patch int
-	_, err := fmt.Sscanf(strings.TrimPrefix(parsed.Dependencies["zod"], "^"), "%d.%d.%d", &major, &minor, &patch)
-	require.NoError(t, err)
-	assert.True(t, major > 4 || (major == 4 && (minor > 6 || (minor == 6 && patch >= 6))), "zod %d.%d.%d", major, minor, patch)
 }
 
 func TestScaffoldAvatarsScopedToOwner(t *testing.T) {

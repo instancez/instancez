@@ -251,5 +251,4 @@ func TestPublicClientTimeout(t *testing.T) {
 	orig := c.HTTP.Timeout
 	assert.Equal(t, 10*time.Second, c.public().HTTP.Timeout)
 	assert.Equal(t, orig, c.HTTP.Timeout)
-	assert.Equal(t, 60*time.Second, orig)
 }

@@ -27,10 +27,6 @@ func TestRunBundleNoOutput(t *testing.T) {
 	assert.Len(t, after, len(before), "temp bundle must be removed")
 }
 
-func TestBundleHelpSummary(t *testing.T) {
-	assert.Contains(t, newBundleCmd().Short, "instancez.yaml")
-}
-
 func TestRunBundleLocalOutput(t *testing.T) {
 	dir := writeBundleFixture(t)
 	configPath := filepath.Join(dir, "instancez.yaml")

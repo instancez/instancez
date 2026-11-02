@@ -363,20 +363,6 @@ func TestRunValidate_JSONHasColumn(t *testing.T) {
 	assert.EqualValues(t, 5, got[0]["column"])
 }
 
-func captureStdout(t *testing.T, fn func()) string {
-	t.Helper()
-	old := os.Stdout
-	r, w, err := os.Pipe()
-	require.NoError(t, err)
-	os.Stdout = w
-	defer func() { os.Stdout = old }()
-	fn()
-	require.NoError(t, w.Close())
-	out, err := io.ReadAll(r)
-	require.NoError(t, err)
-	return string(out)
-}
-
 const placeholderCascadeCfg = `version: 1
 project: {name: t}
 server:

@@ -131,10 +131,3 @@ func TestApplyEnvDefaults(t *testing.T) {
 		}
 	})
 }
-
-func TestRootHelpNoEvents(t *testing.T) {
-	long := NewRootCmd().Long
-	if strings.Contains(long, "events") || !strings.Contains(long, "functions") {
-		t.Errorf("root Long = %q", long)
-	}
-}

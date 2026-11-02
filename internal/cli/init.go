@@ -74,23 +74,20 @@ func validateTemplateFlags(cmd *cobra.Command, opts initOptions) error {
 	return nil
 }
 
-func listTemplates() ([]templates.Manifest, error) {
+func listTemplates() []templates.Manifest {
 	list, err := cloud.NewClient(cloud.APIURL(), "").ListTemplates()
 	if err == nil {
-		return list, nil
+		return list
 	}
 	catalogFallbackNotice(err)
 	for _, t := range templates.Default().List() {
 		list = append(list, t.Manifest)
 	}
-	return list, nil
+	return list
 }
 
 func runListTemplates(w io.Writer) error {
-	list, err := listTemplates()
-	if err != nil {
-		return fmt.Errorf("list templates: %w", err)
-	}
+	list := listTemplates()
 	if len(list) == 0 {
 		_, _ = fmt.Fprintln(w, "no templates available")
 	}

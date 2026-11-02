@@ -73,15 +73,10 @@ func setProjectName(yamlText, name string) (string, error) {
 	return "", errors.New("template has no project.name to replace")
 }
 
-// embeddedFallback reports whether err means the catalog is unreachable; the cloud's own 404 is authoritative.
-func embeddedFallback(err error) bool {
-	var nf *cloud.TemplateNotFoundError
-	return err != nil && !errors.As(err, &nf)
-}
-
 func fetchTemplate(id string) (*templates.Bundle, error) {
 	b, err := cloud.NewClient(cloud.APIURL(), "").GetTemplate(id)
-	if !embeddedFallback(err) {
+	var nf *cloud.TemplateNotFoundError
+	if err == nil || errors.As(err, &nf) {
 		return b, err
 	}
 	catalogFallbackNotice(err)

@@ -98,8 +98,6 @@ func TestListTemplatesOffline(t *testing.T) {
 	var buf bytes.Buffer
 	require.NoError(t, runListTemplates(&buf))
 	out := buf.String()
-	assert.Contains(t, out, "kanban-board")
-	assert.Contains(t, out, "blog")
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	assert.Len(t, lines, len(templates.Default().List()))
 	for _, tpl := range templates.Default().List() {
@@ -254,11 +252,9 @@ func TestInitTemplateOfflineUsesEmbedded(t *testing.T) {
 }
 
 func TestInitTemplateServerErrorsUseEmbedded(t *testing.T) {
-	handlers := map[string]http.HandlerFunc{
-		"429":      func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(429) },
-		"500":      func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(500) },
-		"502":      func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(502) },
-		"not-json": func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("not json")) },
+	handlers := map[string]http.HandlerFunc{"not-json": func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("not json")) }}
+	for _, status := range []int{429, 500, 502} {
+		handlers[fmt.Sprint(status)] = func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(status) }
 	}
 	for name, h := range handlers {
 		srv := httptest.NewServer(h)

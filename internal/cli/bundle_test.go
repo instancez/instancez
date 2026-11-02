@@ -312,13 +312,11 @@ func TestResolveBundleDest(t *testing.T) {
 	}
 }
 
-// fakeNodeAndNpm puts stub node and npm on PATH; npm runs the given sh body.
+// fakeNodeAndNpm adds a stub npm running the given sh body next to the stub node.
 func fakeNodeAndNpm(t *testing.T, npmBody string) {
 	t.Helper()
-	bin := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(bin, "node"), []byte("#!/bin/sh\nexit 0\n"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(bin, "npm"), []byte("#!/bin/sh\n"+npmBody+"\n"), 0o755))
-	t.Setenv("PATH", bin)
+	fakeNodeOnPath(t)
+	require.NoError(t, os.WriteFile(filepath.Join(os.Getenv("PATH"), "npm"), []byte("#!/bin/sh\n"+npmBody+"\n"), 0o755))
 }
 
 func writeDepsFixture(t *testing.T) string {
