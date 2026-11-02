@@ -1449,7 +1449,7 @@ func applySchemaSearchPath(c *gin.Context, ctx context.Context, tx domain.Tx) {
 // wantsSingular reports whether the highest-priority Accept type is the singular-object one.
 func wantsSingular(c *gin.Context) bool {
 	best, bestQ := "", -1.0
-	for _, part := range strings.Split(c.GetHeader("Accept"), ",") {
+	for _, part := range splitUnquoted(c.GetHeader("Accept"), ',') {
 		mt, params, err := mime.ParseMediaType(strings.TrimSpace(part))
 		if err != nil {
 			continue
@@ -1457,7 +1457,7 @@ func wantsSingular(c *gin.Context) bool {
 		q := 1.0
 		if v, ok := params["q"]; ok {
 			f, err := strconv.ParseFloat(v, 64)
-			if err != nil {
+			if err != nil || math.IsNaN(f) || f > 1 {
 				continue
 			}
 			q = f
