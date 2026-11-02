@@ -286,6 +286,7 @@ inz doctor [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--config` | `instancez.yaml` | Path to `instancez.yaml`. |
+| `--json` | `false` | Print results as one JSON object: `{"ok", "checks":[{"name","ok","detail","hint"}]}`. Still exits non-zero on failure. |
 
 ```bash
 inz doctor
