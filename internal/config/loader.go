@@ -134,6 +134,22 @@ func interpolateEnvVarsLenient(input string) string {
 	})
 }
 
+// BlankMissingEnv exports "" for every ${VAR} in data that is unset and has no
+// :- default, and returns their names. Local-only commands (dev, validate) call
+// it so a not-yet-configured secret warns instead of blocking.
+func BlankMissingEnv(data []byte) []string {
+	var missing []string
+	for _, m := range envVarPattern.FindAllStringSubmatch(string(data), -1) {
+		name := m[1]
+		if _, ok := os.LookupEnv(name); ok || strings.Contains(m[0], ":-") {
+			continue
+		}
+		_ = os.Setenv(name, "")
+		missing = append(missing, name)
+	}
+	return missing
+}
+
 // EnvRefs returns the unique names of all ${VAR} references in data, extracted
 // with the canonical interpolation pattern. Exposed so external policy checks
 // scan exactly what instancez interpolates.

@@ -1825,3 +1825,67 @@ func TestIsTimestampType(t *testing.T) {
 		}
 	}
 }
+
+func oauthCfg(name, secret string) *domain.Config {
+	cfg := validBaseConfig()
+	cfg.Auth = &domain.Auth{OAuth: map[string]*domain.OAuthProvider{name: {ClientID: "id", ClientSecret: secret}}}
+	return cfg
+}
+
+func hasPath(errs domain.ValidationErrors, path string) bool {
+	for _, e := range errs {
+		if e.Path == path {
+			return true
+		}
+	}
+	return false
+}
+
+func TestValidate_OAuthClientSecret(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider string
+		secret   string
+		local    bool
+		wantErr  bool
+	}{
+		{"github empty prod", "github", "", false, true},
+		{"github empty local", "github", "", true, false},
+		{"github set prod", "github", "s", false, false},
+		{"google empty prod: id_token only", "google", "", false, false},
+		{"apple empty prod: id_token only", "apple", "", false, false},
+		{"gitlab empty prod", "gitlab", "", false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func(old bool) { LocalDev = old }(LocalDev)
+			LocalDev = tt.local
+			errs := Validate(oauthCfg(tt.provider, tt.secret))
+			if got := hasPath(errs, "auth.oauth."+tt.provider+".client_secret"); got != tt.wantErr {
+				t.Fatalf("secret error = %v, want %v (errs=%v)", got, tt.wantErr, errs)
+			}
+		})
+	}
+}
+
+func TestValidate_OAuthClientIDStaysRequiredLocally(t *testing.T) {
+	defer func(old bool) { LocalDev = old }(LocalDev)
+	LocalDev = true
+	cfg := validBaseConfig()
+	cfg.Auth = &domain.Auth{OAuth: map[string]*domain.OAuthProvider{"github": {ClientSecret: "s"}}}
+	if !hasPath(Validate(cfg), "auth.oauth.github.client_id") {
+		t.Fatal("client_id must stay required in local mode")
+	}
+}
+
+func TestWarnings_GoogleAppleEmptySecret(t *testing.T) {
+	for _, p := range []string{"google", "apple"} {
+		ws := Warnings(oauthCfg(p, ""))
+		if !hasPath(ws, "auth.oauth."+p+".client_secret") {
+			t.Errorf("%s: want a warning that redirect sign-in needs client_secret, got %v", p, ws)
+		}
+	}
+	if hasPath(Warnings(oauthCfg("google", "s")), "auth.oauth.google.client_secret") {
+		t.Error("no warning expected when the secret is set")
+	}
+}
