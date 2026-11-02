@@ -16,7 +16,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - The singular-object `Accept` check keeps quoted commas and escaped quotes in media-type parameters together and ignores `q` values above 1, `NaN` and `Inf`.
 - `inz dev` no longer creates an empty `functions/` folder. It starts watching when the folder appears, including after you delete and recreate it.
 - Docs: a `foreign_key` field with no `type` takes the referenced column's type; the schema page wrongly said it was always `BIGINT`.
-- `inz validate` loads `.development.env`, and `inz validate` / `inz dev` warn about an unset `${INSTANCEZ_ENV_*}` (using an empty value) instead of failing, so a new OAuth block no longer needs a placeholder secret. `inz serve`, `deploy` and `bundle` stay strict.
+- `inz validate` loads `.development.env`, and `inz validate` / `inz dev` warn about an unset `${INSTANCEZ_ENV_*}` (using an empty value) instead of failing, so a new OAuth block no longer needs a placeholder secret. `inz serve` and `inz bundle` stay strict.
 - `client_secret` is optional for `google` and `apple` (`signInWithIdToken` needs none); `inz validate` warns that the redirect sign-in flow does.
 - `signInWithIdToken` works with supabase-js: `POST /auth/v1/token?grant_type=id_token` now reads GoTrue's `id_token` field (the old `token` field still works). Before, every supabase-js ID-token sign-in failed with 400.
 
