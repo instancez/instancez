@@ -416,3 +416,12 @@ func TestPrintPrettyErrors_BundleSourceShowsNoLocalPosition(t *testing.T) {
 	assert.NotContains(t, out, "at ")
 	assert.NotContains(t, out, "instancez.yaml")
 }
+
+func TestValidateHelpHasNoControlBytes(t *testing.T) {
+	var buf bytes.Buffer
+	cmd := newValidateCmd()
+	cmd.SetOut(&buf)
+	require.NoError(t, cmd.Help())
+	assert.NotContains(t, buf.String(), "\x00")
+	assert.Contains(t, buf.String(), `[="from-yaml"]`)
+}
