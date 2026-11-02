@@ -182,10 +182,11 @@ func (e *Engine) sourceDescription() string {
 func (e *Engine) applyMigrationsWithFallback(ctx context.Context) (*DriftTracker, error) {
 	tracker := NewDriftTracker(e.sourceDescription())
 
-	configJSON, _ := json.Marshal(e.cfg)
+	cfg := e.Config()
+	configJSON, _ := json.Marshal(cfg)
 	checksum := fmt.Sprintf("%x", sha256.Sum256(configJSON))
 
-	if err := e.migrator.Apply(ctx, e.cfg); err == nil {
+	if err := e.migrator.Apply(ctx, cfg); err == nil {
 		tracker.MarkOK(checksum, time.Now())
 		return tracker, nil
 	} else {
@@ -197,7 +198,7 @@ func (e *Engine) applyMigrationsWithFallback(ctx context.Context) (*DriftTracker
 		// gets its DB backing; the drop stays gated and we still fall back + report
 		// drift below. e.cfg is still the attempted config here (swap happens later).
 		if errors.Is(applyErr, ErrDestructive) {
-			if perr := e.migrator.ProvisionIdempotent(ctx, e.cfg); perr != nil {
+			if perr := e.migrator.ProvisionIdempotent(ctx, cfg); perr != nil {
 				e.logger.Error("idempotent provisioning after destructive block failed", "error", perr)
 			} else {
 				e.logger.Warn("destructive change blocked; applied additive provisioning only", "reason", applyErr.Error())
@@ -280,14 +281,7 @@ func (e *Engine) runWatcher(ctx context.Context, interval time.Duration) {
 			}
 			if errs := config.ValidateSource(e.source, cfg); errs != nil {
 				for _, ve := range errs {
-					attrs := []any{"path", ve.Path, "message", ve.Message}
-					if ve.Line > 0 {
-						attrs = append(attrs, "line", ve.Line)
-					}
-					if ve.Suggestion != "" {
-						attrs = append(attrs, "suggestion", ve.Suggestion)
-					}
-					e.logger.Error("config reload: validation failed", attrs...)
+					e.logger.Error("config reload: validation failed", "path", ve.Path, "message", ve.Message, "line", ve.Line, "suggestion", ve.Suggestion)
 				}
 				e.reportRuntimeError(errs)
 				if d := e.Drift(); d != nil {
@@ -448,7 +442,7 @@ func (e *Engine) Start(ctx context.Context) error {
 
 func (e *Engine) waitForShutdown(ctx context.Context, srvErrCh <-chan error) error {
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 
 	select {
 	case sig := <-sigCh:

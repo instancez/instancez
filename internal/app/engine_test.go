@@ -472,8 +472,6 @@ func TestEngineRunWatcher_LogsConfigWarnings(t *testing.T) {
 	}
 }
 
-// TestEngineRunWatcher_ValidationFailureLogsEachError: every validation error
-// is logged with its path, not just a count.
 func TestEngineRunWatcher_ValidationFailureLogsEachError(t *testing.T) {
 	db := newFakeDB(t)
 	roles := domain.DefaultRoles()

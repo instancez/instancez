@@ -28,7 +28,7 @@ func startEmbeddedPostgres(opts devOptions) (stop func(), dsn string, err error)
 	var port uint32
 	err = withFileLock(startLockPath(), pgStartLockTimeout, func() error {
 		if pid, livePort, live := liveEmbeddedPG(opts.pgDataDir); live {
-			return fmt.Errorf("%w (Postgres PID %d, port %d)", errEmbeddedPGRunning, pid, livePort)
+			return &embeddedPGRunningError{pid: pid, port: livePort}
 		}
 		if opts.resetPG {
 			if err := os.RemoveAll(opts.pgDataDir); err != nil {
@@ -86,7 +86,15 @@ func preferredPGPort(dataDir string) (uint32, error) {
 
 var errEmbeddedPGRunning = errors.New("another inz dev is already using this pgdata directory")
 
-// liveEmbeddedPG reports whether postmaster.pid in dataDir names a Postgres that still accepts connections.
+type embeddedPGRunningError struct{ pid, port int }
+
+func (e *embeddedPGRunningError) Error() string {
+	return fmt.Sprintf("%s (Postgres PID %d, port %d)", errEmbeddedPGRunning, e.pid, e.port)
+}
+
+func (e *embeddedPGRunningError) Unwrap() error { return errEmbeddedPGRunning }
+
+// liveEmbeddedPG reports whether postmaster.pid in dataDir names a running process that accepts connections on its port.
 func liveEmbeddedPG(dataDir string) (pid int, port int, live bool) {
 	data, err := os.ReadFile(filepath.Join(dataDir, "postmaster.pid"))
 	if err != nil {
@@ -98,7 +106,7 @@ func liveEmbeddedPG(dataDir string) (pid int, port int, live bool) {
 	}
 	pid, perr := strconv.Atoi(strings.TrimSpace(lines[0]))
 	port, qerr := strconv.Atoi(strings.TrimSpace(lines[3]))
-	if perr != nil || qerr != nil || port < 1 || port > 65535 {
+	if perr != nil || qerr != nil || !pidAlive(pid) {
 		return 0, 0, false
 	}
 	conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), 500*time.Millisecond)
@@ -119,7 +127,12 @@ func embeddedPGHint(err error) string {
 	msg := strings.ToLower(err.Error())
 	switch {
 	case errors.Is(err, errEmbeddedPGRunning):
-		return "stop the other inz dev (Ctrl+C in its terminal), or run this one from a different project directory"
+		hint := "stop the other inz dev (Ctrl+C in its terminal), or run this one from a different project directory"
+		var running *embeddedPGRunningError
+		if errors.As(err, &running) {
+			hint += fmt.Sprintf("; if no inz dev is running, a leftover Postgres is still up: kill %d", running.pid)
+		}
+		return hint
 
 	// Unsupported OS/arch: the library has no Postgres binary to download.
 	case strings.Contains(msg, "no version found matching"),
@@ -150,7 +163,7 @@ func embeddedPGHint(err error) string {
 		strings.Contains(msg, "unable to connect to create database"),
 		strings.Contains(msg, "process already listening on port"),
 		strings.Contains(msg, "timed out waiting"):
-		return "./pgdata may be corrupt, left by a different Postgres version, or left by a crashed run — stop any running instance, or wipe and reinitialize with: inz dev --embedded-pg --reset-pg"
+		return "./pgdata may be corrupt, left by a different Postgres version, or left by a crashed run — stop any running instance, delete ./pgdata/postmaster.pid if it is stale, or wipe and reinitialize with: inz dev --embedded-pg --reset-pg"
 
 	default:
 		return "set INSTANCEZ_DATABASE_URL to use a full Postgres installation instead"

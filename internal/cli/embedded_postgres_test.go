@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -70,9 +72,9 @@ func TestEmbeddedPGHint(t *testing.T) {
 			wantSub: "--reset-pg",
 		},
 		{
-			name:    "another dev live: suggests stopping it",
-			errMsg:  "start embedded Postgres: " + errEmbeddedPGRunning.Error() + " (Postgres PID 1, port 2)",
-			wantSub: "stop the other inz dev",
+			name:    "stale pid file: start failure points at postmaster.pid",
+			errMsg:  "start embedded Postgres: could not start postgres using /bin/pg_ctl:\nFATAL: lock file \"postmaster.pid\" already exists",
+			wantSub: "delete ./pgdata/postmaster.pid",
 		},
 		{
 			name:    "unknown error falls back to generic",
@@ -83,11 +85,7 @@ func TestEmbeddedPGHint(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := errors.New(tc.errMsg)
-			if strings.Contains(tc.errMsg, errEmbeddedPGRunning.Error()) {
-				err = fmt.Errorf("start embedded Postgres: %w", errEmbeddedPGRunning)
-			}
-			got := embeddedPGHint(err)
+			got := embeddedPGHint(errors.New(tc.errMsg))
 			if !strings.Contains(got, tc.wantSub) {
 				t.Errorf("embeddedPGHint(%q)\n  = %q\n  want substring %q", tc.errMsg, got, tc.wantSub)
 			}
@@ -194,11 +192,26 @@ func TestStartLockPath_PerUser(t *testing.T) {
 	}
 }
 
-func TestEmbeddedPGHintRunningDoesNotSuggestReset(t *testing.T) {
-	got := embeddedPGHint(fmt.Errorf("%w (Postgres PID 1, port 2)", errEmbeddedPGRunning))
-	if strings.Contains(got, "--reset-pg") {
-		t.Fatalf("live-instance hint must not suggest --reset-pg: %q", got)
+func TestEmbeddedPGHintRunning(t *testing.T) {
+	got := embeddedPGHint(fmt.Errorf("start embedded Postgres: %w", &embeddedPGRunningError{pid: 4242, port: 5432}))
+	for _, want := range []string{"stop the other inz dev", "kill 4242"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("hint %q missing %q", got, want)
+		}
 	}
+	if strings.Contains(got, "--reset-pg") {
+		t.Errorf("live-instance hint must not suggest --reset-pg: %q", got)
+	}
+}
+
+// deadPID returns the PID of a process that has already exited.
+func deadPID(t *testing.T) int {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	return cmd.Process.Pid
 }
 
 func writePidFile(t *testing.T, dir, content string) {
@@ -219,6 +232,7 @@ func TestLiveEmbeddedPG(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	self := os.Getpid()
 
 	cases := []struct {
 		name     string
@@ -233,8 +247,20 @@ func TestLiveEmbeddedPG(t *testing.T) {
 		{name: "two lines only", content: ptr("123\n/data\n")},
 		{name: "garbage port", content: ptr("123\n/data\n1\nxx\n")},
 		{name: "port zero", content: ptr("123\n/data\n1\n0\n")},
-		{name: "live listener", content: ptr(fmt.Sprintf("4242\n/data\n1\n%d\n", livePort)), wantLive: true, wantPID: 4242, wantPort: livePort},
-		{name: "stale pid file", content: ptr(fmt.Sprintf("4242\n/data\n1\n%d\n", deadPort))},
+		{name: "live pid and listener", content: ptr(fmt.Sprintf("%d\n/data\n1\n%d\n", self, livePort)), wantLive: true, wantPID: self, wantPort: livePort},
+		{name: "live pid, nothing listening", content: ptr(fmt.Sprintf("%d\n/data\n1\n%d\n", self, deadPort))},
+		{name: "pid zero", content: ptr(fmt.Sprintf("0\n/data\n1\n%d\n", livePort))},
+		{name: "negative pid", content: ptr(fmt.Sprintf("-1\n/data\n1\n%d\n", livePort))},
+	}
+	if runtime.GOOS != "windows" {
+		// An unrelated service now owns the port the crashed Postgres used.
+		cases = append(cases, struct {
+			name     string
+			content  *string
+			wantLive bool
+			wantPID  int
+			wantPort int
+		}{name: "stale pid file, port held by unrelated listener", content: ptr(fmt.Sprintf("%d\n/data\n1\n%d\n", deadPID(t), livePort))})
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -253,13 +279,14 @@ func TestLiveEmbeddedPG(t *testing.T) {
 func ptr(s string) *string { return &s }
 
 func TestStartEmbeddedPostgres_ResetRefusedWhileLiveUnit(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	dir := t.TempDir()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = l.Close() }()
-	writePidFile(t, dir, fmt.Sprintf("4242\n%s\n1\n%d\n", dir, l.Addr().(*net.TCPAddr).Port))
+	writePidFile(t, dir, fmt.Sprintf("%d\n%s\n1\n%d\n", os.Getpid(), dir, l.Addr().(*net.TCPAddr).Port))
 	marker := filepath.Join(dir, "marker")
 	if err := os.WriteFile(marker, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
@@ -322,5 +349,38 @@ func TestPreferredPGPort(t *testing.T) {
 				t.Fatalf("got %d, want a free valid port", got)
 			}
 		})
+	}
+}
+
+// The liveness check must run under the start lock, or two concurrent starts both pass it.
+func TestStartEmbeddedPostgres_LivenessCheckedUnderLock(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	dir := t.TempDir()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = l.Close() }()
+
+	errCh := make(chan error, 1)
+	lockErr := withFileLock(startLockPath(), 5*time.Second, func() error {
+		go func() {
+			_, _, err := startEmbeddedPostgres(devOptions{pgDataDir: dir})
+			errCh <- err
+		}()
+		time.Sleep(300 * time.Millisecond) // the second start is now waiting on the lock
+		writePidFile(t, dir, fmt.Sprintf("%d\n%s\n1\n%d\n", os.Getpid(), dir, l.Addr().(*net.TCPAddr).Port))
+		return nil
+	})
+	if lockErr != nil {
+		t.Fatal(lockErr)
+	}
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, errEmbeddedPGRunning) {
+			t.Fatalf("err = %v, want errEmbeddedPGRunning", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("second start did not return")
 	}
 }
