@@ -83,7 +83,7 @@ tables:
       - name: created_at
         type: timestamptz
         required: true
-        default: now()               # a literal, or one of: now(), uuid_v7(), uuid_v4(), current_date, current_time
+        default: now()               # a literal, or one of: now(), uuid_v7(), uuid_v4(), current_date, current_time, auth.uid() (uuid), auth.role()/auth.email() (text), auth.jwt() (jsonb)
       - name: updated_at
         type: timestamptz
         auto_updated_at: true        # set to now() on every update (timestamp types only)
