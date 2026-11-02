@@ -1889,3 +1889,86 @@ func TestWarnings_GoogleAppleEmptySecret(t *testing.T) {
 		t.Error("no warning expected when the secret is set")
 	}
 }
+
+func TestValidate_AuthHelperDefaults(t *testing.T) {
+	tests := []struct {
+		name    string
+		def     string
+		typ     string
+		wantErr bool
+	}{
+		{"uid on uuid", "auth.uid()", "uuid", false},
+		{"uid upper-case expr", "AUTH.UID()", "uuid", false},
+		{"uid upper-case type", "auth.uid()", "UUID", false},
+		{"uid on text", "auth.uid()", "text", true},
+		{"uid on bigint", "auth.uid()", "bigint", true},
+		{"uid on uuid array", "auth.uid()", "uuid[]", true},
+		{"role on text", "auth.role()", "text", false},
+		{"role on varchar(20)", "auth.role()", "varchar(20)", false},
+		{"role on uuid", "auth.role()", "uuid", true},
+		{"email on text", "auth.email()", "text", false},
+		{"email on integer", "auth.email()", "integer", true},
+		{"jwt on jsonb", "auth.jwt()", "jsonb", false},
+		{"jwt on json", "auth.jwt()", "json", false},
+		{"jwt on text", "auth.jwt()", "text", true},
+		{"unknown helper", "auth.nope()", "uuid", true},
+		{"is_authenticated not a default", "auth.is_authenticated()", "boolean", true},
+		{"stmt injection", "auth.uid(); drop table todos", "uuid", true},
+		{"comment injection", "auth.uid() --", "uuid", true},
+		{"cast suffix", "auth.uid()::text", "text", true},
+		{"leading space", " auth.uid()", "uuid", true},
+		{"inner space", "auth.uid( )", "uuid", true},
+		{"with arg", "auth.uid(1)", "uuid", true},
+		{"subquery", "(select auth.uid())", "uuid", true},
+		{"schema qualified other", "public.auth.uid()", "uuid", true},
+		{"empty string literal", "", "uuid", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validBaseConfig()
+			cfg.Auth = &domain.Auth{Email: &domain.AuthEmail{}}
+			table := cfg.Tables["todos"]
+			table.Fields = append(table.Fields, domain.Field{Name: "col", Type: tt.typ, Default: tt.def})
+			cfg.Tables["todos"] = table
+			errs := Validate(cfg)
+			if got := hasPath(errs, "tables.todos.fields.col.default"); got != tt.wantErr {
+				t.Fatalf("default error = %v, want %v (errs=%v)", got, tt.wantErr, errs)
+			}
+		})
+	}
+}
+
+// An untyped FK to auth.users.id is a uuid column, so auth.uid() fits; an
+// untyped FK to an integer key is bigint, so it must not.
+func TestValidate_AuthUIDDefaultOnInferredFKType(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Auth = &domain.Auth{Email: &domain.AuthEmail{}}
+	cfg.Tables["notes"] = domain.Table{Fields: []domain.Field{
+		{Name: "id", Type: "bigserial", PrimaryKey: true},
+		{Name: "created_by", Default: "auth.uid()", ForeignKey: &domain.ForeignKey{References: "auth.users.id"}},
+		{Name: "todo_id", Default: "auth.uid()", ForeignKey: &domain.ForeignKey{References: "todos.id"}},
+	}}
+	errs := Validate(cfg)
+	if hasPath(errs, "tables.notes.fields.created_by.default") {
+		t.Errorf("FK to auth.users.id is uuid, auth.uid() must be allowed: %v", errs)
+	}
+	if !hasPath(errs, "tables.notes.fields.todo_id.default") {
+		t.Errorf("FK to a bigint key must reject auth.uid(): %v", errs)
+	}
+}
+
+// The auth.* helpers are installed with the auth block, so a default that
+// calls one without it would fail at migrate time.
+func TestValidate_AuthDefaultNeedsAuthBlock(t *testing.T) {
+	cfg := validBaseConfig()
+	table := cfg.Tables["todos"]
+	table.Fields = append(table.Fields, domain.Field{Name: "created_by", Type: "uuid", Default: "auth.uid()"})
+	cfg.Tables["todos"] = table
+	if !hasPath(Validate(cfg), "tables.todos.fields.created_by.default") {
+		t.Fatal("auth.uid() default without an auth block must fail validation")
+	}
+	cfg.Auth = &domain.Auth{Email: &domain.AuthEmail{}}
+	if hasPath(Validate(cfg), "tables.todos.fields.created_by.default") {
+		t.Fatal("auth.uid() default with an auth block must pass")
+	}
+}
