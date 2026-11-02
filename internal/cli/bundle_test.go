@@ -363,6 +363,7 @@ func TestBuildBundleNpmFlags(t *testing.T) {
 	bundle, err := BuildBundle(writeDepsFixture(t))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.Remove(bundle) })
+	// nosemgrep -- path is in t.TempDir
 	got, err := os.ReadFile(argsFile)
 	require.NoError(t, err)
 	assert.Equal(t, "ci --no-audit --no-fund", strings.TrimSpace(string(got)))
