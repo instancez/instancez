@@ -39,8 +39,10 @@ Env vars are interpolated using `${VAR}` or `${VAR:-default}`. They are resolved
 
 ### server.cors
 
-Methods, headers, credentials, and preflight caching are fixed platform
-defaults — origins is the only knob, matching Supabase's own gateway.
+Methods (`GET, POST, PUT, PATCH, DELETE, OPTIONS`), headers, credentials, and
+preflight caching are fixed platform defaults — origins is the only knob,
+matching Supabase's own gateway. Changes to `origins` and `server.max_body_size`
+apply on config reload (`inz dev` file watch, dashboard save) without a restart.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -113,7 +115,7 @@ name (`google`, `github`, `apple`, …) selects the built-in provider implementa
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `auth.oauth.<name>.client_id` | `string` | — | OAuth client ID. Supports `${VAR}`. |
-| `auth.oauth.<name>.client_secret` | `string` | — | OAuth client secret. Supports `${VAR}`. |
+| `auth.oauth.<name>.client_secret` | `string` | — | OAuth client secret. Supports `${VAR}`. Optional for `google` and `apple` (only `signInWithIdToken` works without it; the redirect flow needs it), required for other providers. |
 | `auth.oauth.<name>.redirect_url` | `string` | — | OAuth callback URL registered with the provider. |
 
 `apple` takes a Services ID plus optional iOS bundle IDs and an ES256 JWT `client_secret`; see [Auth](/build/auth/#sign-in-with-apple).
