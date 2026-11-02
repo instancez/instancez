@@ -7,6 +7,16 @@ description: Complete instancez.yaml schema reference. Every key, type, default,
 
 Env vars are interpolated using `${VAR}` or `${VAR:-default}`. They are resolved at load time; references are never stored in the database.
 
+## Editor schema
+
+A JSON Schema for this file is published at `https://docs.instancez.ai/schema/instancez.json`. Add this as the first line of `instancez.yaml` for completion and inline errors in editors that use the YAML language server (VS Code YAML extension, Neovim, JetBrains):
+
+```yaml
+# yaml-language-server: $schema=https://docs.instancez.ai/schema/instancez.json
+```
+
+`inz init` writes the line for you. Numbers and booleans also accept a `${VAR}` string.
+
 ## version
 
 | Key | Type | Required | Description |

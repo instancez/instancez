@@ -52,6 +52,10 @@ Then add a line to your `AGENTS.md` (or `CLAUDE.md`, `.cursorrules`, ...):
 When working on the instancez backend (instancez.yaml, functions/), read docs/instancez-skill.md first.
 ```
 
+## Editor schema
+
+`inz init` adds a `yaml-language-server` line to `instancez.yaml`, so editors and agents that use the YAML language server get completion and key validation from `https://docs.instancez.ai/schema/instancez.json`.
+
 ## What the skill covers
 
 - The edit loop: `inz init`, edit `instancez.yaml`, `inz validate`, `inz dev`

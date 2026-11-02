@@ -10,6 +10,7 @@ import (
 
 	"github.com/instancez/instancez/internal/adapter/funcs"
 	"github.com/instancez/instancez/internal/cloud"
+	"github.com/instancez/instancez/internal/config"
 	"github.com/instancez/instancez/pkg/templates"
 	"github.com/spf13/cobra"
 )
@@ -207,6 +208,14 @@ func mustCwd() string {
 	return abs
 }
 
+// withSchemaHeader prepends the editor schema comment unless the file already has one.
+func withSchemaHeader(y string) string {
+	if strings.Contains(y, "yaml-language-server:") {
+		return y
+	}
+	return config.SchemaHeader + "\n" + y
+}
+
 // scaffoldYAML renders the starter instancez.yaml. withFunctions gates the
 // example code function: init omits it on machines without Node.js so the
 // scaffold's first `inz dev` boots instead of failing the node precheck.
@@ -323,7 +332,7 @@ functions:
     auth_required: true   # instancez returns 401 for anonymous callers
 `
 	}
-	return yaml
+	return withSchemaHeader(yaml)
 }
 
 // alertf prints a warning line to stderr, in red when stderr is a terminal

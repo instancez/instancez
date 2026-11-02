@@ -1,0 +1,723 @@
+{
+  "$id": "https://docs.instancez.ai/schema/instancez.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "auth": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_anonymous": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+              "type": "string"
+            }
+          ]
+        },
+        "allow_signup": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+              "type": "string"
+            }
+          ]
+        },
+        "email": {
+          "additionalProperties": false,
+          "properties": {
+            "templates": {
+              "additionalProperties": {
+                "additionalProperties": false,
+                "properties": {
+                  "body": {
+                    "type": "string"
+                  },
+                  "body_file": {
+                    "type": "string"
+                  },
+                  "subject": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "type": "object"
+            },
+            "verify_email": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "jwt_expiry": {
+          "type": "string"
+        },
+        "oauth": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "client_id": {
+                "type": "string"
+              },
+              "client_secret": {
+                "type": "string"
+              },
+              "redirect_url": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "object"
+        },
+        "redirect_urls": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "refresh_token_expiry": {
+          "type": "string"
+        },
+        "refresh_tokens": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "database": {
+      "additionalProperties": false,
+      "properties": {
+        "pool": {
+          "additionalProperties": false,
+          "properties": {
+            "idle_timeout": {
+              "type": "string"
+            },
+            "max": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                  "type": "string"
+                }
+              ]
+            },
+            "min": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "functions": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "auth_required": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                "type": "string"
+              }
+            ]
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "file": {
+            "type": "string"
+          },
+          "runtime": {
+            "type": "string"
+          },
+          "timeout": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "type": "object"
+    },
+    "functions_bundle": {
+      "type": "string"
+    },
+    "project": {
+      "additionalProperties": false,
+      "properties": {
+        "cloud": {
+          "additionalProperties": false,
+          "properties": {
+            "project_id": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "description": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "providers": {
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "additionalProperties": false,
+          "properties": {
+            "api_key": {
+              "type": "string"
+            },
+            "default_from_email": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "resend",
+                "ses"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "storage": {
+          "additionalProperties": false,
+          "properties": {
+            "access_key_id": {
+              "type": "string"
+            },
+            "bucket": {
+              "type": "string"
+            },
+            "endpoint": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "region": {
+              "type": "string"
+            },
+            "secret_access_key": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "local",
+                "s3"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "rpc": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "args": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "default": {},
+                "name": {
+                  "type": "string"
+                },
+                "required": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "type": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "auth_required": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                "type": "string"
+              }
+            ]
+          },
+          "body": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "language": {
+            "enum": [
+              "plpgsql",
+              "sql"
+            ],
+            "type": "string"
+          },
+          "returns": {
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "security": {
+            "enum": [
+              "definer",
+              "invoker"
+            ],
+            "type": "string"
+          },
+          "set": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "volatility": {
+            "enum": [
+              "immutable",
+              "stable",
+              "volatile"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "type": "object"
+    },
+    "server": {
+      "additionalProperties": false,
+      "properties": {
+        "cors": {
+          "additionalProperties": false,
+          "properties": {
+            "origins": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "max_body_size": {
+          "type": "string"
+        },
+        "max_limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+              "type": "string"
+            }
+          ]
+        },
+        "port": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+              "type": "string"
+            }
+          ]
+        },
+        "timeouts": {
+          "additionalProperties": false,
+          "properties": {
+            "db_query": {
+              "type": "string"
+            },
+            "request": {
+              "type": "string"
+            },
+            "shutdown": {
+              "type": "string"
+            },
+            "upload": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "storage": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "max_size": {
+            "type": "string"
+          },
+          "public": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                "type": "string"
+              }
+            ]
+          },
+          "rls": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "operations": {
+                  "items": {
+                    "enum": [
+                      "delete",
+                      "insert",
+                      "select",
+                      "update"
+                    ],
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "type": {
+                  "enum": [
+                    "permissive",
+                    "restrictive"
+                  ],
+                  "type": "string"
+                },
+                "using": {
+                  "type": "string"
+                },
+                "with_check": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "types": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "type": "object"
+    },
+    "tables": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "fields": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "auto_updated_at": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "check": {
+                  "type": "string"
+                },
+                "default": {},
+                "enum": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "foreign_key": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "on_delete": {
+                      "enum": [
+                        "cascade",
+                        "restrict",
+                        "set_null"
+                      ],
+                      "type": "string"
+                    },
+                    "references": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "immutable": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "max": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "min": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "name": {
+                  "type": "string"
+                },
+                "on_delete": {
+                  "deprecated": true,
+                  "type": "string"
+                },
+                "pattern": {
+                  "type": "string"
+                },
+                "primary_key": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "ref": {
+                  "deprecated": true,
+                  "type": "string"
+                },
+                "renamed_from": {
+                  "type": "string"
+                },
+                "required": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "type": {
+                  "type": "string"
+                },
+                "unique": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "indexes": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "columns": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "method": {
+                  "enum": [
+                    "btree",
+                    "hash",
+                    "gin",
+                    "gist",
+                    "brin",
+                    "spgist"
+                  ],
+                  "type": "string"
+                },
+                "unique": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "where": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "renamed_from": {
+            "type": "string"
+          },
+          "rls": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "operations": {
+                  "items": {
+                    "enum": [
+                      "delete",
+                      "insert",
+                      "select",
+                      "update"
+                    ],
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "type": {
+                  "enum": [
+                    "permissive",
+                    "restrictive"
+                  ],
+                  "type": "string"
+                },
+                "using": {
+                  "type": "string"
+                },
+                "with_check": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "rls_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                "type": "string"
+              }
+            ]
+          },
+          "schema": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "type": "object"
+    },
+    "version": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "title": "instancez.yaml",
+  "type": "object"
+}

@@ -505,3 +505,18 @@ func TestScaffoldWarningSanitizesAndBoundsError(t *testing.T) {
 	assert.LessOrEqual(t, len([]rune(msg)), 450)
 	assert.Contains(t, msg, "…")
 }
+
+func TestInitTemplateHeaderNotDuplicated(t *testing.T) {
+	dir := t.TempDir()
+	b := &templates.Bundle{Files: map[string]string{"instancez.yaml": "version: 1\n"}}
+	require.NoError(t, writeTemplateFiles(dir, b, config.SchemaHeader+"\nversion: 1\n"))
+	got, err := os.ReadFile(filepath.Join(dir, "instancez.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(string(got), "yaml-language-server"))
+
+	dir2 := t.TempDir()
+	require.NoError(t, writeTemplateFiles(dir2, b, "version: 1\n"))
+	got, err = os.ReadFile(filepath.Join(dir2, "instancez.yaml"))
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(string(got), config.SchemaHeader+"\n"))
+}
