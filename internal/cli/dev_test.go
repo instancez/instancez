@@ -212,7 +212,9 @@ func TestWatchFunctionsDir(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	go watchFunctionsDir(ctx, dir, func() *domain.Config { return live.Load() }, reload, logger)
+	ready := make(chan struct{})
+	go watchFunctionsDirReady(ctx, dir, func() *domain.Config { return live.Load() }, reload, logger, ready)
+	waitArmed(t, ready)
 
 	// A shim write must NOT cause a reload.
 	writeFile(t, filepath.Join(dir, ".inz-worker-deadbeef.mjs"), "// shim")
@@ -288,9 +290,19 @@ func startFunctionsWatch(t *testing.T, dir string) <-chan *domain.Config {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	go watchFunctionsDir(ctx, dir, func() *domain.Config { return &domain.Config{} }, func(c *domain.Config) { reloads <- c }, logger)
-	time.Sleep(100 * time.Millisecond) // let the watcher arm
+	ready := make(chan struct{})
+	go watchFunctionsDirReady(ctx, dir, func() *domain.Config { return &domain.Config{} }, func(c *domain.Config) { reloads <- c }, logger, ready)
+	waitArmed(t, ready)
 	return reloads
+}
+
+func waitArmed(t *testing.T, ready <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-ready:
+	case <-time.After(2 * time.Second):
+		t.Fatal("watcher did not arm")
+	}
 }
 
 func expectReload(t *testing.T, ch <-chan *domain.Config, what string) {
@@ -384,4 +396,62 @@ func TestInSkippedDir(t *testing.T) {
 			t.Errorf("inSkippedDir(%q) = %v, want %v", name, got, want)
 		}
 	}
+}
+
+func TestWatchFunctionsDir_DirCreatedLater(t *testing.T) {
+	project := t.TempDir()
+	dir := filepath.Join(project, "functions")
+	reloads := startFunctionsWatch(t, dir)
+
+	writeFile(t, filepath.Join(project, "instancez.yaml"), "version: 1\n")
+	expectNoReload(t, reloads, "unrelated project file")
+
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	expectReload(t, reloads, "functions dir created")
+
+	writeFile(t, filepath.Join(dir, "greet.js"), "export default () => {}")
+	expectReload(t, reloads, "write inside newly created functions dir")
+}
+
+func TestWatchFunctionsDir_RemovedAndRecreated(t *testing.T) {
+	project := t.TempDir()
+	dir := filepath.Join(project, "functions")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	reloads := startFunctionsWatch(t, dir)
+
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	expectReload(t, reloads, "functions dir removed")
+
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	expectReload(t, reloads, "functions dir recreated")
+	writeFile(t, filepath.Join(dir, "a.js"), "x")
+	expectReload(t, reloads, "write after recreate")
+}
+
+func TestWatchFunctionsDir_FunctionsIsAFile(t *testing.T) {
+	project := t.TempDir()
+	dir := filepath.Join(project, "functions")
+	writeFile(t, dir, "not a dir")
+	reloads := startFunctionsWatch(t, dir) // must not panic or crash
+	writeFile(t, filepath.Join(project, "other.txt"), "x")
+	expectNoReload(t, reloads, "unrelated file while functions is a file")
+}
+
+func TestWatchFunctionsDir_RelativePath(t *testing.T) {
+	project := t.TempDir()
+	t.Chdir(project)
+	reloads := startFunctionsWatch(t, "functions")
+
+	if err := os.Mkdir("functions", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	expectReload(t, reloads, "relative functions dir created")
 }

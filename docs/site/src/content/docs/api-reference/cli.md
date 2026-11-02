@@ -350,7 +350,7 @@ inz telemetry disable
 
 ## inz version
 
-Print the binary version.
+Print the binary version. `inz --version` prints the same line.
 
 ```
 inz version

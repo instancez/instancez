@@ -1284,3 +1284,39 @@ func TestGetConfig_CORSOriginsIsAlwaysAnArray(t *testing.T) {
 		})
 	}
 }
+
+// Saving code for a declared function must create a missing functions/ dir.
+func TestHandlePutFunctionCode_CreatesMissingDir(t *testing.T) {
+	dir := t.TempDir()
+	h := &AdminHandler{
+		cfg:           &domain.Config{Functions: map[string]domain.CodeFunction{"hello": {File: "functions/hello.js"}}},
+		configPath:    filepath.Join(dir, "instancez.yaml"),
+		dashboardMode: DashboardReadwrite,
+		logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	r := gin.New()
+	r.PUT("/functions/:name/code", h.handlePutFunctionCode)
+
+	put := func(name, body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("PUT", "/functions/"+name+"/code", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		return w
+	}
+
+	if w := put("hello", `{"content":"// hi"}`); w.Code != 200 {
+		t.Fatalf("write with no functions/ dir: code=%d body=%s", w.Code, w.Body.String())
+	}
+	// nosemgrep -- path is inside the test temp dir
+	got, err := os.ReadFile(filepath.Join(dir, "functions", "hello.js"))
+	if err != nil || string(got) != "// hi" {
+		t.Fatalf("file not written: %q err=%v", got, err)
+	}
+	if w := put("missing", `{"content":"x"}`); w.Code != 404 {
+		t.Errorf("undeclared function: code=%d, want 404", w.Code)
+	}
+	if w := put("hello", `not json`); w.Code != 400 {
+		t.Errorf("bad body: code=%d, want 400", w.Code)
+	}
+}
