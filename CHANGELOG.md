@@ -4,6 +4,8 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [0.0.12] - 2026-11-02
+
 ### Added
 
 - `inz --version` prints the same line as `inz version`.
@@ -16,7 +18,6 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - A config reload whose migration fails with no last-known-good no longer leaves the failed config live (its CORS and body limit applied to requests), and now reports drift.
 - The singular-object `Accept` check keeps quoted commas and escaped quotes in media-type parameters together and ignores `q` values above 1, `NaN` and `Inf`.
 - `inz dev` no longer creates an empty `functions/` folder. It starts watching when the folder appears, including after you delete and recreate it.
-- Docs: a `foreign_key` field with no `type` takes the referenced column's type; the schema page wrongly said it was always `BIGINT`.
 - `inz validate` loads `.development.env`, and `inz validate` / `inz dev` warn about an unset `${INSTANCEZ_ENV_*}` (using an empty value) instead of failing, so a new OAuth block no longer needs a placeholder secret. `inz serve` and `inz bundle` stay strict.
 - `client_secret` is optional for `google` and `apple` (`signInWithIdToken` needs none); `inz validate` warns that the redirect sign-in flow does.
 - `signInWithIdToken` works with supabase-js: `POST /auth/v1/token?grant_type=id_token` now reads GoTrue's `id_token` field (the old `token` field still works). Before, every supabase-js ID-token sign-in failed with 400.
@@ -24,6 +25,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 ### Changed
 
 - Breaking, disabled sign-ups: `allow_signup: false` now returns 422 `signup_disabled` (was 403) on `POST /auth/v1/signup`, anonymous sign-in and first-time ID-token login (the browser OAuth callback redirects with `unexpected_failure`), with GoTrue's message `Signups not allowed for this instance`. Anonymous sign-in turned off returns 422 `anonymous_provider_disabled` "Anonymous sign-ins are disabled" (was 403 `signup_disabled`). Clients that checked for 403 must check the `code` or 422. `signInWithOtp` keeps its empty 200.
+- Breaking, `.single()` / `Accept: application/vnd.pgrst.object+json` on `POST`, `PUT`, `PATCH` and `DELETE` now returns `406` `PGRST116` unless exactly one row is affected, for every `Prefer: return=` mode, and the transaction rolls back. It returned `200` with an array or `204` before. Use `.maybeSingle()` or drop `.single()` when a mutation may touch 0 or many rows. The `Accept` header is now parsed as a media type: parameters (`; nulls=stripped`) and `q` priorities are honoured.
 - Breaking, REST and RPC row values: rows are now serialized like PostgREST (Postgres `to_json`) on list, single, CSV, insert, upsert, update, delete and RPC responses. If your client parsed the old formats, update it. See the [Value formats](docs/site/src/content/docs/build/querying.md#value-formats) table.
   - `timestamp` has no `Z` (`"2024-01-02T03:04:05"`), so JS `new Date()` reads it as local time; use `timestamptz` for instants.
   - `timestamptz` uses the database `TimeZone` with a `+HH:MM` offset, not the instancez process timezone.
@@ -31,8 +33,12 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
   - A `PATCH` with `return=representation` that matches no rows returns `[]` (was `null`), and honours `Accept: application/vnd.pgrst.object+json` when exactly one row matches.
   - Float `NaN` and `Infinity` are strings (the response was an empty 200).
   - JSON object keys follow the select list (were alphabetical), and `json` columns keep their stored text. `<`, `>`, `&` and U+2028/2029 are no longer escaped in JSON bodies, as in PostgREST (RPC `count=exact` still escapes U+2028/2029).
-  - Breaking, `.single()` / `Accept: application/vnd.pgrst.object+json` on `POST`, `PUT`, `PATCH` and `DELETE` now returns `406` `PGRST116` unless exactly one row is affected, for every `Prefer: return=` mode, and the transaction rolls back. It returned `200` with an array or `204` before. Use `.maybeSingle()` or drop `.single()` when a mutation may touch 0 or many rows. The `Accept` header is now parsed as a media type: parameters (`; nulls=stripped`) and `q` priorities are honoured.
   - Run `inz gen types` again: `interval` and `time` are now `string`.
+
+### Documentation
+
+- A `foreign_key` field with no `type` takes the referenced column's type; the schema page wrongly said it was always `BIGINT`.
+
 ## [0.0.11] - 2026-10-27
 
 ### Added
