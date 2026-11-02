@@ -26,6 +26,11 @@ func fkCfg(ref string, extra map[string]domain.Table) *domain.Config {
 	return &domain.Config{Version: 1, Auth: &domain.Auth{}, Tables: tables}
 }
 
+func withBucket(c *domain.Config) *domain.Config {
+	c.Storage = map[string]domain.Bucket{"b": {}}
+	return c
+}
+
 func rlsExprCfg(expr string) *domain.Config {
 	on := true
 	return &domain.Config{Version: 1, Tables: map[string]domain.Table{"a": {
@@ -41,25 +46,26 @@ func TestValidateRejectsWhatMigrateRejects(t *testing.T) {
 	cases := []struct {
 		name      string
 		cfg       *domain.Config
+		prior     *domain.Config // applied first, so storage.objects exists
 		wantPath  string
 		wantState string
 	}{
-		{"bare users fk", fkCfg("users.id", nil), "tables.a.fields.f.foreign_key.references", "42P01"},
-		{"fk to table in other schema", fkCfg("x.id", map[string]domain.Table{"x": appX}), "tables.a.fields.f.foreign_key.references", "42P01"},
-		{"fk to non-unique auth column", fkCfg("auth.users.created_at", nil), "tables.a.fields.f.foreign_key.references", "42830"},
-		{"fk to non-unique storage column", fkCfg("storage.objects.name", nil), "tables.a.fields.f.foreign_key.references", "42830"},
-		{"fk to unknown schema", fkCfg("auht.users.id", nil), "tables.a.fields.f.foreign_key.references", "3F000"},
+		{"bare users fk", fkCfg("users.id", nil), nil, "tables.a.fields.f.foreign_key.references", "42P01"},
+		{"fk to table in other schema", fkCfg("x.id", map[string]domain.Table{"x": appX}), nil, "tables.a.fields.f.foreign_key.references", "42P01"},
+		{"fk to non-unique auth column", fkCfg("auth.users.created_at", nil), nil, "tables.a.fields.f.foreign_key.references", "42830"},
+		{"fk to non-unique storage column", withBucket(fkCfg("storage.objects.name", nil)), withBucket(&domain.Config{Version: 1, Auth: &domain.Auth{}}), "tables.a.fields.f.foreign_key.references", "42830"},
+		{"fk to unknown schema", fkCfg("auht.users.id", nil), nil, "tables.a.fields.f.foreign_key.references", "3F000"},
 		{"duplicate field", &domain.Config{Version: 1, Tables: map[string]domain.Table{"a": {Fields: []domain.Field{
 			pkField(), {Name: "x", Type: "text"}, {Name: "x", Type: "text"},
-		}}}}, "tables.a.fields[2]", "42701"},
-		{"rls doubled operator", rlsExprCfg("u1 = = auth.uid()"), "tables.a.rls[0].using", "42601"},
-		{"rls unbalanced paren", rlsExprCfg("(u1 is null"), "tables.a.rls[0].using", "42601"},
-		{"rls extra paren", rlsExprCfg("u1 is null)"), "tables.a.rls[0].using", "42601"},
-		{"rls unterminated string", rlsExprCfg("u1::text = 'x"), "tables.a.rls[0].using", "42601"},
-		{"rls trailing and", rlsExprCfg("u1 is null and"), "tables.a.rls[0].using", "42601"},
-		{"rls leading or", rlsExprCfg("or u1 is null"), "tables.a.rls[0].using", "42601"},
-		{"rls doubled and", rlsExprCfg("u1 is null and and u1 is null"), "tables.a.rls[0].using", "42601"},
-		{"rls whitespace only", rlsExprCfg("   "), "tables.a.rls[0].using", "42601"},
+		}}}}, nil, "tables.a.fields[2]", "42701"},
+		{"rls doubled operator", rlsExprCfg("u1 = = auth.uid()"), nil, "tables.a.rls[0].using", "42601"},
+		{"rls unbalanced paren", rlsExprCfg("(u1 is null"), nil, "tables.a.rls[0].using", "42601"},
+		{"rls extra paren", rlsExprCfg("u1 is null)"), nil, "tables.a.rls[0].using", "42601"},
+		{"rls unterminated string", rlsExprCfg("u1::text = 'x"), nil, "tables.a.rls[0].using", "42601"},
+		{"rls trailing and", rlsExprCfg("u1 is null and"), nil, "tables.a.rls[0].using", "42601"},
+		{"rls leading or", rlsExprCfg("or u1 is null"), nil, "tables.a.rls[0].using", "42601"},
+		{"rls doubled and", rlsExprCfg("u1 is null and and u1 is null"), nil, "tables.a.rls[0].using", "42601"},
+		{"rls whitespace only", rlsExprCfg("   "), nil, "tables.a.rls[0].using", "42601"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -73,6 +79,11 @@ func TestValidateRejectsWhatMigrateRejects(t *testing.T) {
 				t.Fatalf("validate did not flag %s", tc.wantPath)
 			}
 			db := startPostgres(t)
+			if tc.prior != nil {
+				if err := app.NewMigrator(db).Apply(context.Background(), tc.prior); err != nil {
+					t.Fatalf("prior: %v", err)
+				}
+			}
 			err := app.NewMigrator(db).Apply(context.Background(), tc.cfg)
 			var pg *pgconn.PgError
 			if !errors.As(err, &pg) || pg.Code != tc.wantState {
