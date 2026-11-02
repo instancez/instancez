@@ -2077,3 +2077,17 @@ func TestValidate_DuplicateFieldName(t *testing.T) {
 		}
 	})
 }
+
+func TestValidate_RLSExprSyntax(t *testing.T) {
+	cfg := validBaseConfig()
+	todos := cfg.Tables["todos"]
+	todos.RLS = []domain.RLSPolicy{{Operations: []string{"select"}, Using: "u1 = = auth.uid()"}}
+	cfg.Tables["todos"] = todos
+	errs := Validate(cfg)
+	assertHasErrorAt(t, errs, "tables.todos.rls[0].using")
+	for _, e := range errs {
+		if e.Path == "tables.todos.rls[0].using" && !strings.Contains(e.Message, "invalid SQL expression") {
+			t.Errorf("message = %q", e.Message)
+		}
+	}
+}

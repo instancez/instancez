@@ -963,6 +963,14 @@ func validateRLSExpr(path, expr string) domain.ValidationErrors {
 			Message:    "must be a boolean expression, not a CREATE statement — instancez generates the policy DDL for you",
 			Suggestion: "Keep only the expression, e.g. user_id = auth.uid()",
 		})
+	default:
+		if r := checkSQLExpr(expr); r != "" {
+			errs = append(errs, &domain.ValidationError{
+				Path:       path,
+				Message:    "invalid SQL expression: " + r,
+				Suggestion: "Example: user_id = auth.uid()",
+			})
+		}
 	}
 	return errs
 }

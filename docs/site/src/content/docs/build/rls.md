@@ -72,6 +72,8 @@ Changing the value migrates the table: `true → false` runs `DISABLE ROW LEVEL 
 
 instancez passes `using` straight through to Postgres's `USING` clause and `with_check` to `WITH CHECK`. This matches standard Postgres semantics, including the asymmetric `update`-only auto-fill behavior described above.
 
+`inz validate` catches expressions that can never parse (unbalanced parentheses or quotes, `= =`, a leading or trailing `AND`/`OR`). Unknown columns are only caught by `inz validate --use-dsn --dry-run-ddl`.
+
 ## auth.uid() and auth.is\_authenticated()
 
 instancez installs these helper functions in the `auth` schema at startup. They read session variables set by the request middleware, not application memory.
