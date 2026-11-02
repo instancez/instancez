@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"strings"
 	"time"
 
@@ -156,6 +157,24 @@ func SuperuserDSNPresentCheck(lookup func(string) string) Check {
 			}
 		}
 		return Result{Name: "Superuser DSN present", OK: true}
+	}
+}
+
+// PortFreeCheck fails when the HTTP port is already bound; port <= 0 always passes.
+func PortFreeCheck(port int) Check {
+	return func() Result {
+		if port > 0 {
+			l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+			if err != nil {
+				return Result{
+					Name:    "port free",
+					Detail:  fmt.Sprintf("port %d is already in use", port),
+					FixHint: "stop the process using it or pass --port <other>",
+				}
+			}
+			_ = l.Close()
+		}
+		return Result{Name: "port free", OK: true}
 	}
 }
 

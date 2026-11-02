@@ -3,6 +3,8 @@ package preflight_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -372,5 +374,31 @@ func TestRender_Output(t *testing.T) {
 	}
 	if !strings.Contains(out, "do this to fix") {
 		t.Error("expected FixHint in output")
+	}
+}
+
+func TestPortFreeCheck(t *testing.T) {
+	held, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = held.Close() }()
+	heldPort := held.Addr().(*net.TCPAddr).Port
+
+	tmp, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	freePort := tmp.Addr().(*net.TCPAddr).Port
+	_ = tmp.Close()
+
+	for _, p := range []int{0, -1, freePort} {
+		if r := preflight.PortFreeCheck(p)(); !r.OK {
+			t.Errorf("port %d: want OK, got %+v", p, r)
+		}
+	}
+	r := preflight.PortFreeCheck(heldPort)()
+	if r.OK || !strings.Contains(r.Detail, fmt.Sprint(heldPort)) || !strings.Contains(r.FixHint, "--port") {
+		t.Fatalf("busy port: got %+v", r)
 	}
 }

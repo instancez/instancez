@@ -37,7 +37,7 @@ inz init my-app --dir ./my-app
 
 Start a local development server with hot-reload.
 
-Reads config, connects to Postgres, runs migrations, and watches for file changes. Requires `INSTANCEZ_DATABASE_URL` (a superuser DSN) to provision roles on every startup, or set `INSTANCEZ_OWNER_DATABASE_URL` and `INSTANCEZ_AUTH_DATABASE_URL` directly.
+Reads config, connects to Postgres, runs migrations, and watches for file changes. Requires `INSTANCEZ_DATABASE_URL` (a superuser DSN) to provision roles on every startup, or set `INSTANCEZ_OWNER_DATABASE_URL` and `INSTANCEZ_AUTH_DATABASE_URL` directly. Startup order: validate the config, check that the HTTP port is free, then start embedded Postgres and function dependencies.
 
 ```
 inz dev [flags]

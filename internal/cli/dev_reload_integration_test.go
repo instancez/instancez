@@ -258,3 +258,51 @@ func TestDevHotReload_MigrationFailureNotReportedAsSuccess(t *testing.T) {
 		t.Fatalf("notes after failed reload = %d, want 200", got)
 	}
 }
+
+func TestDev_PortInUseFailsBeforePostgres(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "inz")
+	if out, err := exec.Command("go", "build", "-o", bin, "../../cmd/inz").CombinedOutput(); err != nil {
+		t.Fatalf("build inz: %v\n%s", err, out)
+	}
+	proj := t.TempDir()
+	if err := os.WriteFile(filepath.Join(proj, "instancez.yaml"), []byte(reloadBaseYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	l, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = l.Close() }()
+	port := l.Addr().(*net.TCPAddr).Port
+
+	var logs lockedBuffer
+	// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command, go_subproc_rule-subproc
+	cmd := exec.Command(bin, "dev", "--embedded-pg", "--port", fmt.Sprint(port))
+	cmd.Dir = proj
+	cmd.Env = append(os.Environ(), "INSTANCEZ_TELEMETRY_DISABLED=1")
+	cmd.Stdout, cmd.Stderr = &logs, &logs
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatalf("inz dev exited 0 on a busy port\n%s", logs.String())
+		}
+	case <-time.After(30 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatalf("inz dev did not fail fast\n%s", logs.String())
+	}
+	out := logs.String()
+	if !strings.Contains(out, fmt.Sprintf("port %d is already in use", port)) {
+		t.Fatalf("missing busy-port message:\n%s", out)
+	}
+	if strings.Contains(out, "Starting embedded Postgres") {
+		t.Fatalf("Postgres boot started before the port check:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(proj, "pgdata")); !os.IsNotExist(err) {
+		t.Fatalf("pgdata/ created despite busy port (stat err = %v)", err)
+	}
+}

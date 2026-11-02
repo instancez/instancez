@@ -51,23 +51,6 @@ func runDev(opts devOptions) error {
 		return err
 	}
 
-	// Embedded Postgres owns a throwaway local database; its superuser DSN is
-	// threaded straight into dbConnections below. We deliberately do not read or
-	// write any DSN env var for it. Scoped DSNs (or a stale superuser DSN) left
-	// in the shell or .development.env from an earlier external-Postgres setup
-	// must not redirect the instance at the wrong database.
-	var embeddedSuperuserDSN string
-	if opts.dbSrc == DevDBSourceEmbedded {
-		fmt.Printf("  Starting embedded Postgres 16...\n")
-		stop, superuserDSN, err := startEmbeddedPostgres(opts)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "  ✗ embedded Postgres failed to start: %v\n    hint: %s\n", err, embeddedPGHint(err))
-			return reported("embedded_pg")
-		}
-		defer stop()
-		embeddedSuperuserDSN = superuserDSN
-	}
-
 	// Preflight: load dev dotenv first so DSN env vars are visible, then run
 	// fail-fast checks before any expensive work.
 	_ = config.LoadDotenv(".development.env")
@@ -81,7 +64,7 @@ func runDev(opts devOptions) error {
 	// The superuser-DSN presence check only applies to the env-driven DSN path;
 	// embedded Postgres supplies its own DSN directly.
 	checks := []preflight.Check{preflight.ConfigValidCheck(opts.configPath)}
-	if embeddedSuperuserDSN == "" {
+	if opts.dbSrc != DevDBSourceEmbedded {
 		checks = append(checks, preflight.SuperuserDSNPresentCheck(os.Getenv))
 	}
 	if r, failed := preflight.RunUntilFail(checks); failed {
@@ -116,6 +99,28 @@ func runDev(opts devOptions) error {
 
 	if opts.port > 0 {
 		cfg.Server.Port = opts.port
+	}
+
+	if r := preflight.PortFreeCheck(cfg.Server.Port)(); !r.OK {
+		fmt.Fprintf(os.Stderr, "  ✗ %s — %s\n    hint: %s\n", r.Name, r.Detail, r.FixHint)
+		return reported("preflight:" + r.Name)
+	}
+
+	// Embedded Postgres owns a throwaway local database; its superuser DSN is
+	// threaded straight into dbConnections below. We deliberately do not read or
+	// write any DSN env var for it. Scoped DSNs (or a stale superuser DSN) left
+	// in the shell or .development.env from an earlier external-Postgres setup
+	// must not redirect the instance at the wrong database.
+	var embeddedSuperuserDSN string
+	if opts.dbSrc == DevDBSourceEmbedded {
+		fmt.Printf("  Starting embedded Postgres 16...\n")
+		stop, superuserDSN, err := startEmbeddedPostgres(opts)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  ✗ embedded Postgres failed to start: %v\n    hint: %s\n", err, embeddedPGHint(err))
+			return reported("embedded_pg")
+		}
+		defer stop()
+		embeddedSuperuserDSN = superuserDSN
 	}
 
 	// Set up logger
