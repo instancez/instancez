@@ -310,6 +310,12 @@ var validStorageProviders = map[string]bool{
 	"s3": true, "local": true,
 }
 
+// LocalDev relaxes checks that need real secrets; set by `inz dev` and `inz validate`.
+var LocalDev bool
+
+// idTokenOnlyProviders can sign in via signInWithIdToken without a client secret.
+var idTokenOnlyProviders = map[string]bool{"google": true, "apple": true}
+
 // allowedDefaults is the allowlist of SQL functions usable in field defaults.
 var allowedDefaults = map[string]bool{
 	"now()":        true,
@@ -388,6 +394,15 @@ func Warnings(cfg *domain.Config) domain.ValidationErrors {
 		}
 	}
 	ws = append(ws, compositePKFKWarnings(cfg.Tables)...)
+	for _, name := range []string{"apple", "google"} {
+		if p := oauthOf(cfg)[name]; p != nil && p.ClientSecret == "" {
+			ws = append(ws, &domain.ValidationError{
+				Path:       "auth.oauth." + name + ".client_secret",
+				Message:    "empty: only signInWithIdToken works, the redirect sign-in flow needs a secret",
+				Suggestion: "Set client_secret if you use signInWithOAuth",
+			})
+		}
+	}
 	if cfg.Auth != nil && cfg.Auth.OAuth["apple"] != nil {
 		if w := appleSecretWarning(cfg.Auth.OAuth["apple"].ClientSecret); w != nil {
 			ws = append(ws, w)
@@ -525,7 +540,7 @@ func validateAuth(auth *domain.Auth) domain.ValidationErrors {
 		if p.ClientID == "" {
 			errs = append(errs, &domain.ValidationError{Path: "auth.oauth." + name + ".client_id", Message: "required"})
 		}
-		if p.ClientSecret == "" {
+		if p.ClientSecret == "" && !LocalDev && !idTokenOnlyProviders[name] {
 			errs = append(errs, &domain.ValidationError{Path: "auth.oauth." + name + ".client_secret", Message: "required"})
 		}
 		if name == "apple" {
@@ -1491,4 +1506,11 @@ func ValidateFunctionFiles(cfg *domain.Config, projectDir string) domain.Validat
 		}
 	}
 	return errs
+}
+
+func oauthOf(cfg *domain.Config) map[string]*domain.OAuthProvider {
+	if cfg.Auth == nil {
+		return nil
+	}
+	return cfg.Auth.OAuth
 }

@@ -70,7 +70,7 @@ func runDev(opts devOptions) error {
 
 	// Preflight: load dev dotenv first so DSN env vars are visible, then run
 	// fail-fast checks before any expensive work.
-	_ = config.LoadDotenv(".development.env")
+	enterLocalMode(opts.configPath, os.Stderr)
 
 	if generated, err := ensureAPIKeys(".development.env"); err != nil {
 		return fmt.Errorf("ensure api keys: %w", err)

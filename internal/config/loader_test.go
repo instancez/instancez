@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/instancez/instancez/internal/domain"
@@ -447,5 +448,60 @@ func TestLoad_MaxLimitNegativeDisablesCap(t *testing.T) {
 	}
 	if cfg.Server.MaxLimit != -1 {
 		t.Fatalf("max_limit = %d, want -1 kept (cap disabled)", cfg.Server.MaxLimit)
+	}
+}
+
+func TestBlankMissingEnv(t *testing.T) {
+	t.Setenv("BME_SET", "real")
+	_ = os.Unsetenv("BME_UNSET")
+	_ = os.Unsetenv("BME_UNSET2")
+	_ = os.Unsetenv("BME_DEFAULTED")
+	t.Cleanup(func() { _ = os.Unsetenv("BME_UNSET"); _ = os.Unsetenv("BME_UNSET2") })
+
+	tests := []struct {
+		name    string
+		in      string
+		want    []string
+		wantEnv map[string]string
+	}{
+		{"nothing referenced", "version: 1\n", nil, nil},
+		{"empty input", "", nil, nil},
+		{"set var untouched", "a: ${BME_SET}", nil, map[string]string{"BME_SET": "real"}},
+		{"unset var blanked", "a: ${BME_UNSET}", []string{"BME_UNSET"}, map[string]string{"BME_UNSET": ""}},
+		{"default var left alone", "a: ${BME_DEFAULTED:-x}", nil, nil},
+		{"duplicates reported once", "a: ${BME_UNSET} b: ${BME_UNSET} c: ${BME_UNSET2}", []string{"BME_UNSET", "BME_UNSET2"}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_ = os.Unsetenv("BME_UNSET")
+			_ = os.Unsetenv("BME_UNSET2")
+			got := BlankMissingEnv([]byte(tt.in))
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("missing = %v, want %v", got, tt.want)
+			}
+			for k, v := range tt.wantEnv {
+				if got, ok := os.LookupEnv(k); !ok || got != v {
+					t.Errorf("env %s = %q (set=%v), want %q", k, got, ok, v)
+				}
+			}
+		})
+	}
+	if _, ok := os.LookupEnv("BME_DEFAULTED"); ok {
+		t.Error("var with a :- default must not be exported")
+	}
+}
+
+// After blanking, the strict loader must accept the config, so dev's reload
+// path (which parses strictly) never sees MissingEnvError.
+func TestBlankMissingEnvUnblocksStrictParse(t *testing.T) {
+	_ = os.Unsetenv("BME_SECRET")
+	t.Cleanup(func() { _ = os.Unsetenv("BME_SECRET") })
+	src := []byte("version: 1\nproject:\n  name: p\nauth:\n  oauth:\n    github:\n      client_id: id\n      client_secret: ${BME_SECRET}\n")
+	if _, err := ParseBytes(src, "t"); err == nil {
+		t.Fatal("precondition: strict parse should fail on unset var")
+	}
+	BlankMissingEnv(src)
+	if _, err := ParseBytes(src, "t"); err != nil {
+		t.Fatalf("strict parse after blanking: %v", err)
 	}
 }

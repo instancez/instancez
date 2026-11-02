@@ -119,10 +119,25 @@ func validateAgainstCloud(ctx context.Context, configPath string, jsonOutput boo
 // can equal, since ids are Mongo ObjectID hex strings.
 const useFileProjectID = "\x00use-file-project-id\x00"
 
+// enterLocalMode loads .development.env, blanks unset ${VAR}s with a warning,
+// and relaxes secret checks. The returned func undoes the relaxation.
+func enterLocalMode(configPath string, errOut io.Writer) func() {
+	_ = config.LoadDotenv(".development.env")
+	if raw, err := os.ReadFile(configPath); err == nil {
+		for _, name := range config.BlankMissingEnv(raw) {
+			_, _ = fmt.Fprintf(errOut, "  ! unset env %s (using empty)\n", name)
+		}
+	}
+	old := config.LocalDev
+	config.LocalDev = true
+	return func() { config.LocalDev = old }
+}
+
 func runValidate(ctx context.Context, errOut io.Writer, configPath string, jsonOutput bool, useDSN string) error {
 	if err := requireLocalConfig(configPath); err != nil {
 		return err
 	}
+	defer enterLocalMode(configPath, errOut)()
 
 	cfg, err := config.Load(configPath)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/instancez/instancez/internal/cloud"
+	"github.com/instancez/instancez/internal/config"
 	"github.com/instancez/instancez/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -210,5 +212,74 @@ func TestRunValidateWarningsDoNotFail(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "! Warning: tables.todos.rls_enabled") {
 		t.Fatalf("expected runValidate to print the rls_enabled warning, got:\n%s", errOut.String())
+	}
+}
+
+const oauthSecretCfg = "version: 1\nproject:\n  name: demo\nauth:\n  oauth:\n    github:\n      client_id: id\n      client_secret: ${INSTANCEZ_ENV_GH_SECRET_T}\ntables:\n  todos:\n    rls_enabled: true\n    fields:\n      - name: id\n        type: bigserial\n        primary_key: true\n"
+
+func writeCfgInCwd(t *testing.T, src string) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Chdir(dir)
+	path := filepath.Join(dir, "instancez.yaml")
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// register restore, then unset so the test starts clean
+	t.Setenv("INSTANCEZ_ENV_GH_SECRET_T", "x")
+	_ = os.Unsetenv("INSTANCEZ_ENV_GH_SECRET_T")
+	return path
+}
+
+// An unset provider secret must warn, not fail, for the local validate command.
+func TestRunValidateUnsetSecretWarns(t *testing.T) {
+	path := writeCfgInCwd(t, oauthSecretCfg)
+	defer func(old bool) { config.LocalDev = old }(config.LocalDev)
+
+	var errOut bytes.Buffer
+	if err := runValidate(context.Background(), &errOut, path, false, ""); err != nil {
+		t.Fatalf("runValidate: %v", err)
+	}
+	if !strings.Contains(errOut.String(), "unset env INSTANCEZ_ENV_GH_SECRET_T") {
+		t.Fatalf("expected an unset-env warning, got:\n%s", errOut.String())
+	}
+}
+
+// validate reads .development.env like dev does, so a defined secret is used and not warned about.
+func TestRunValidateLoadsDevelopmentEnv(t *testing.T) {
+	path := writeCfgInCwd(t, oauthSecretCfg)
+	defer func(old bool) { config.LocalDev = old }(config.LocalDev)
+	if err := os.WriteFile(".development.env", []byte("INSTANCEZ_ENV_GH_SECRET_T=real\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var errOut bytes.Buffer
+	if err := runValidate(context.Background(), &errOut, path, false, ""); err != nil {
+		t.Fatalf("runValidate: %v", err)
+	}
+	if strings.Contains(errOut.String(), "unset env") {
+		t.Fatalf("secret is defined in .development.env, got warning:\n%s", errOut.String())
+	}
+	if got := os.Getenv("INSTANCEZ_ENV_GH_SECRET_T"); got != "real" {
+		t.Fatalf("INSTANCEZ_ENV_GH_SECRET_T = %q, want real", got)
+	}
+}
+
+// Local relaxations must not leak out of runValidate into later strict callers.
+func TestRunValidateResetsLocalDev(t *testing.T) {
+	path := writeCfgInCwd(t, oauthSecretCfg)
+	if err := runValidate(context.Background(), io.Discard, path, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if config.LocalDev {
+		t.Fatal("config.LocalDev leaked after runValidate")
+	}
+}
+
+// Other problems still fail validate even in local mode.
+func TestRunValidateLocalStillFailsOnRealErrors(t *testing.T) {
+	path := writeCfgInCwd(t, strings.Replace(oauthSecretCfg, "client_id: id", "client_id: \"\"", 1))
+	if err := runValidate(context.Background(), io.Discard, path, false, ""); err == nil {
+		t.Fatal("empty client_id must still fail validate")
 	}
 }

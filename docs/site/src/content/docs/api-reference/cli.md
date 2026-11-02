@@ -101,6 +101,8 @@ Validate `instancez.yaml` structure and references without starting the server.
 
 Checks YAML structure, identifiers, cross-references, and verifies that each declared code function's `file:` exists on disk.
 
+Loads `.development.env` first. A `${VAR}` that is still unset (and has no `:-` default) warns and is treated as empty, as in `inz dev`; `inz serve` and `inz deploy` still fail on it.
+
 With `--use-dsn`, also connects to the database and prints the migration plan (DDL diff) without applying it.
 
 ```
