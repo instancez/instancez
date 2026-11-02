@@ -60,7 +60,7 @@ func newRootCmd(env teleEnv) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "inz",
 		Short:         "instancez — declarative backend from a single YAML file",
-		Long:          "instancez turns a YAML config into a full backend: Postgres CRUD, auth, storage, events, and more.",
+		Long:          "instancez turns a YAML config into a full backend: Postgres CRUD, auth, storage, functions, and more.",
 		Version:       versionString(),
 		SilenceUsage:  true,
 		SilenceErrors: true,

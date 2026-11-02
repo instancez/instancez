@@ -51,6 +51,15 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - A hot reload (`inz dev`, `inz serve --watch`) whose migration fails now logs the failure and keeps the running config's functions; it used to log "config reloaded successfully" and load functions from the rejected config.
 - `inz --version` / `inz version` show the module version and commit for `go build` and `go install` builds instead of `vdev (unknown)`.
 
+### Security
+
+- The `inz init` avatars bucket now lets users upload, replace and delete only files under `<their user id>/`. Before, any signed-in user could overwrite or delete any avatar. Existing projects: copy the new policies from a fresh `inz init`.
+- New projects from `inz init` pin zod `^4.6.7` (was `^3.23.8`, affected by GHSA-mrhx-c7xc-m3w5). Existing projects: run `npm install zod@^4.6.7` in `functions/`.
+
+### Documentation
+
+- The CLI reference covers `inz cloud frontend deploy`, `inz completion` and `inz validate --cloud`. The root help no longer mentions events.
+
 ## [0.0.12] - 2026-11-02
 
 ### Added

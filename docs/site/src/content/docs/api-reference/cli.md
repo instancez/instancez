@@ -113,6 +113,7 @@ inz validate [flags]
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--cloud` | `false` | Validate against the cloud's policy rules server-side (projectless; the same rules a deploy enforces). Requires `inz cloud login`. Cannot be combined with `--project`. |
 | `--config` | `instancez.yaml` | Config source. Env: `INSTANCEZ_CONFIG`. |
 | `--json` | `false` | Output errors as JSON (for CI): an array of `{path, message, line, column, suggestion}`. `line` and `column` are omitted when unknown. |
 | `--project` | — | Preview against a cloud project. Bare `--project` uses `instancez.yaml`'s linked project; `--project <id>` or `--project=<id>` targets a different one. Never creates a project; link one first with `inz cloud deploy --new`. |
@@ -122,6 +123,7 @@ inz validate [flags]
 ```bash
 inz validate
 inz validate --use-dsn postgres://owner:pass@localhost/mydb
+inz validate --cloud                  # check against the cloud's policy rules
 inz validate --project                # preview against instancez.yaml's linked project
 inz validate --project abc123         # preview against a specific project id
 ```
@@ -373,6 +375,38 @@ Print the currently logged-in instancez Cloud user.
 
 ```
 inz cloud whoami
+```
+
+## inz cloud frontend deploy
+
+Upload an externally-built static frontend bundle to an instancez Cloud project.
+
+The bundle is served as the project's static site. `<dist-dir>` must contain `index.html` (a Vite/SPA build). The project id is read from `project.cloud.project_id` in `instancez.yaml`, or pass `--project`.
+
+```
+inz cloud frontend deploy <dist-dir> [flags]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--branch` | — | Branch/version to deploy the frontend to (validated server-side). |
+| `--config` | `instancez.yaml` | Path to `instancez.yaml` (for the linked project id). |
+| `--project` | — | Target this cloud project id instead of `instancez.yaml`'s `project.cloud.project_id`. |
+
+```bash
+npm run build && inz cloud frontend deploy dist
+```
+
+## inz completion
+
+Generate the shell autocompletion script.
+
+```
+inz completion bash|zsh|fish|powershell
+```
+
+```bash
+source <(inz completion zsh)    # load for the current shell
 ```
 
 ## inz telemetry
