@@ -4,7 +4,10 @@ package cli
 
 import (
 	"context"
+	"errors"
+	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -72,4 +75,93 @@ func isEmbeddedPGEnvLimitation(err error) bool {
 		}
 	}
 	return false
+}
+
+func startPGOrSkip(t *testing.T, opts devOptions) (func(), string) {
+	t.Helper()
+	stop, dsn, err := startEmbeddedPostgres(opts)
+	if err != nil {
+		if isEmbeddedPGEnvLimitation(err) {
+			t.Skipf("embedded Postgres unavailable in this environment: %v", err)
+		}
+		t.Fatalf("startEmbeddedPostgres: %v", err)
+	}
+	t.Cleanup(stop)
+	return stop, dsn
+}
+
+func execPG(t *testing.T, dsn, sql string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer conn.Close(ctx)
+	if _, err := conn.Exec(ctx, sql); err != nil {
+		t.Fatalf("exec %q: %v", sql, err)
+	}
+}
+
+func TestStartEmbeddedPostgres_SecondStartRefusedWhileLive(t *testing.T) {
+	dir := t.TempDir()
+	_, dsn := startPGOrSkip(t, devOptions{pgDataDir: dir})
+
+	_, _, err := startEmbeddedPostgres(devOptions{pgDataDir: dir})
+	if !errors.Is(err, errEmbeddedPGRunning) {
+		t.Fatalf("err = %v, want errEmbeddedPGRunning", err)
+	}
+	if _, serr := os.Stat(dir + ".runtime"); serr != nil {
+		t.Fatalf("runtime dir of the live instance was removed: %v", serr)
+	}
+	execPG(t, dsn, "SELECT 1")
+}
+
+func TestStartEmbeddedPostgres_ResetRefusedWhileLive(t *testing.T) {
+	dir := t.TempDir()
+	_, dsn := startPGOrSkip(t, devOptions{pgDataDir: dir})
+	execPG(t, dsn, "CREATE TABLE marker (id int)")
+
+	_, _, err := startEmbeddedPostgres(devOptions{pgDataDir: dir, resetPG: true})
+	if !errors.Is(err, errEmbeddedPGRunning) {
+		t.Fatalf("err = %v, want errEmbeddedPGRunning", err)
+	}
+	execPG(t, dsn, "SELECT id FROM marker")
+}
+
+func TestStartEmbeddedPostgres_ConcurrentStartsOneWins(t *testing.T) {
+	dir := t.TempDir()
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	stops := make([]func(), 2)
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			stops[i], _, errs[i] = startEmbeddedPostgres(devOptions{pgDataDir: dir})
+		}()
+	}
+	wg.Wait()
+	for _, st := range stops {
+		if st != nil {
+			t.Cleanup(st)
+		}
+	}
+	var ok, refused int
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			ok++
+		case errors.Is(err, errEmbeddedPGRunning):
+			refused++
+		case isEmbeddedPGEnvLimitation(err):
+			t.Skipf("embedded Postgres unavailable in this environment: %v", err)
+		default:
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	if ok != 1 || refused != 1 {
+		t.Fatalf("ok=%d refused=%d, want exactly one of each", ok, refused)
+	}
 }

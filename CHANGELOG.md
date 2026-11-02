@@ -28,6 +28,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - Breaking, `inz validate` now rejects foreign keys that fail at migrate: `users.id` with no public `users` table (use `auth.users.id`), a bare `x.col` where `x` has `schema:` set (use `schema.x.col`), `auth.users.<col>` other than `id`/`email` or `storage.objects.<col>` other than `id` (no unique constraint), and a misspelled `auth` or `storage` schema such as `auht.users.id`. Everything inz validate cannot prove wrong only warns: other undeclared or near-miss schemas (with a did-you-mean), tables in a declared schema that the config does not define, and auth/storage tables other than the ones instancez creates.
 - `inz dev` hot reload logs every validation error with its path and line, not just a count.
 - `inz init` adds `pgdata.runtime/` (embedded Postgres binaries) to `.gitignore`. Existing projects: re-run `inz init` (it only appends missing lines) or add the line by hand.
+- A second `inz dev --embedded-pg` in the same project now stops with "another inz dev is already using this pgdata directory (Postgres PID N, port P)" instead of suggesting `--reset-pg`, and `--reset-pg` no longer wipes a data directory another `inz dev` is using.
 - A hot reload whose migration fails now logs the failure and keeps the running config's functions; it used to log "config reloaded successfully" and load functions from the rejected config.
 
 

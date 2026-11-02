@@ -2,10 +2,12 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,12 +24,6 @@ func startEmbeddedPostgres(opts devOptions) (stop func(), dsn string, err error)
 		return nil, "", fmt.Errorf("find free port for embedded Postgres: %w", err)
 	}
 
-	if opts.resetPG {
-		if err := os.RemoveAll(opts.pgDataDir); err != nil {
-			return nil, "", fmt.Errorf("reset pgdata: %w", err)
-		}
-	}
-
 	// The library defaults its logger to os.Stdout, which floods the dev banner
 	// with initdb/pg_ctl chatter and PG's own server log. Capture it instead and
 	// surface it only when Start fails.
@@ -42,7 +38,21 @@ func startEmbeddedPostgres(opts devOptions) (stop func(), dsn string, err error)
 			Logger(&pgLog),
 	)
 
-	if err := withFileLock(startLockPath(), pgStartLockTimeout, pg.Start); err != nil {
+	err = withFileLock(startLockPath(), pgStartLockTimeout, func() error {
+		if pid, livePort, live := liveEmbeddedPG(opts.pgDataDir); live {
+			return fmt.Errorf("%w (Postgres PID %d, port %d)", errEmbeddedPGRunning, pid, livePort)
+		}
+		if opts.resetPG {
+			if err := os.RemoveAll(opts.pgDataDir); err != nil {
+				return fmt.Errorf("reset pgdata: %w", err)
+			}
+		}
+		return pg.Start()
+	})
+	if errors.Is(err, errEmbeddedPGRunning) {
+		return nil, "", err
+	}
+	if err != nil {
 		return nil, "", fmt.Errorf("start embedded Postgres: %w\n%s", err, pgLog.String())
 	}
 
@@ -54,6 +64,31 @@ func startEmbeddedPostgres(opts devOptions) (stop func(), dsn string, err error)
 	}, superuserDSN, nil
 }
 
+var errEmbeddedPGRunning = errors.New("another inz dev is already using this pgdata directory")
+
+// liveEmbeddedPG reports whether postmaster.pid in dataDir names a Postgres that still accepts connections.
+func liveEmbeddedPG(dataDir string) (pid int, port int, live bool) {
+	data, err := os.ReadFile(filepath.Join(dataDir, "postmaster.pid"))
+	if err != nil {
+		return 0, 0, false
+	}
+	lines := strings.Split(string(data), "\n")
+	if len(lines) < 4 {
+		return 0, 0, false
+	}
+	pid, perr := strconv.Atoi(strings.TrimSpace(lines[0]))
+	port, qerr := strconv.Atoi(strings.TrimSpace(lines[3]))
+	if perr != nil || qerr != nil || port < 1 || port > 65535 {
+		return 0, 0, false
+	}
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), 500*time.Millisecond)
+	if err != nil {
+		return 0, 0, false
+	}
+	_ = conn.Close()
+	return pid, port, true
+}
+
 // embeddedPGHint maps a failure from startEmbeddedPostgres to a single
 // actionable remediation hint. The matches key off the error strings emitted
 // by the fergusstrange/embedded-postgres library and the OS, so they are
@@ -63,6 +98,9 @@ func startEmbeddedPostgres(opts devOptions) (stop func(), dsn string, err error)
 func embeddedPGHint(err error) string {
 	msg := strings.ToLower(err.Error())
 	switch {
+	case errors.Is(err, errEmbeddedPGRunning):
+		return "stop the other inz dev (Ctrl+C in its terminal), or run this one from a different project directory"
+
 	// Unsupported OS/arch: the library has no Postgres binary to download.
 	case strings.Contains(msg, "no version found matching"),
 		strings.Contains(msg, "cannot find binary in archive"):
@@ -92,7 +130,7 @@ func embeddedPGHint(err error) string {
 		strings.Contains(msg, "unable to connect to create database"),
 		strings.Contains(msg, "process already listening on port"),
 		strings.Contains(msg, "timed out waiting"):
-		return "./pgdata may be corrupt, left by a different Postgres version, or still in use by a stale process — stop any running instance, or wipe and reinitialize with: inz dev --embedded-pg --reset-pg"
+		return "./pgdata may be corrupt, left by a different Postgres version, or left by a crashed run — stop any running instance, or wipe and reinitialize with: inz dev --embedded-pg --reset-pg"
 
 	default:
 		return "set INSTANCEZ_DATABASE_URL to use a full Postgres installation instead"
