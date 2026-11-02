@@ -16,6 +16,10 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
   - JSON object keys follow the select list (were alphabetical), and `json` columns keep their stored text. `<`, `>`, `&` and U+2028/2029 are no longer escaped in JSON bodies, as in PostgREST (RPC `count=exact` still escapes U+2028/2029).
   - Run `inz gen types` again: `interval` and `time` are now `string`.
 
+### Fixed
+
+- `signInWithIdToken` works with supabase-js: `POST /auth/v1/token?grant_type=id_token` now reads GoTrue's `id_token` field (the old `token` field still works). Before, every supabase-js ID-token sign-in failed with 400.
+
 ## [0.0.11] - 2026-10-27
 
 ### Added

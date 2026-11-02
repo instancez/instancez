@@ -5,6 +5,8 @@ package http_test
 import (
 	"bytes"
 	"context"
+	crand "crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -24,12 +26,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	tc "github.com/testcontainers/testcontainers-go"
 	pgcontainer "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	adapterauth "github.com/instancez/instancez/internal/adapter/auth"
 	instancezhttp "github.com/instancez/instancez/internal/adapter/http"
+	"github.com/instancez/instancez/internal/adapter/oidc"
 	"github.com/instancez/instancez/internal/app"
 	"github.com/instancez/instancez/internal/cli"
 	"github.com/instancez/instancez/internal/domain"
@@ -158,6 +162,8 @@ func TestSupabaseJSCompat(t *testing.T) {
 			// Backs the OAuth/PKCE/identity-link run.mjs coverage — the
 			// wire-level counterpart to fakeOAuthProvider above.
 			OAuth: map[string]*domain.OAuthProvider{
+				// signInWithIdToken coverage: keys are seeded in runSignupDisabledJS.
+				"google": {ClientID: "cid"},
 				"fake": {
 					ClientID:     "test-client",
 					ClientSecret: "test-secret",
@@ -627,11 +633,32 @@ func runSignupDisabledJS(t *testing.T, baseURL, publishableKey, existingEmail st
 	if err != nil {
 		t.Fatal(err)
 	}
+	key, err := rsa.GenerateKey(crand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oidc.SeedKeys("google", map[string]*rsa.PublicKey{"k1": &key.PublicKey})
+	t.Cleanup(func() { oidc.SeedKeys("google", nil) })
+	idToken := func(sub, email string) string {
+		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+			"iss": "https://accounts.google.com", "aud": "cid", "sub": sub, "email": email,
+			"email_verified": true, "exp": time.Now().Add(time.Minute).Unix(),
+		})
+		tok.Header["kid"] = "k1"
+		signed, err := tok.SignedString(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return signed
+	}
+
 	cmd := exec.Command("node", "signup-disabled.mjs")
 	cmd.Dir = harnessDir
 	cmd.Env = append(os.Environ(),
 		"INSTANCEZ_URL="+baseURL, "INSTANCEZ_PUBLISHABLE_KEY="+publishableKey,
-		"EXISTING_EMAIL="+existingEmail, "EXISTING_PASSWORD=hunter2hunter2")
+		"EXISTING_EMAIL="+existingEmail, "EXISTING_PASSWORD=hunter2hunter2",
+		"NEW_ID_TOKEN="+idToken("g-new", "idtoken-new@example.com"),
+		"EXISTING_ID_TOKEN="+idToken("g-existing", existingEmail))
 	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("supabase-js signup-disabled harness failed: %v", err)

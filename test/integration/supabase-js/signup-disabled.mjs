@@ -1,7 +1,7 @@
 // supabase-js view of allow_signup=false.
 import { createClient } from '@supabase/supabase-js'
 
-const { INSTANCEZ_URL: URL, INSTANCEZ_PUBLISHABLE_KEY: KEY, EXISTING_EMAIL, EXISTING_PASSWORD } = process.env
+const { INSTANCEZ_URL: URL, INSTANCEZ_PUBLISHABLE_KEY: KEY, EXISTING_EMAIL, EXISTING_PASSWORD, NEW_ID_TOKEN, EXISTING_ID_TOKEN } = process.env
 const client = () => createClient(URL, KEY, { auth: { persistSession: false, autoRefreshToken: false } })
 
 let failures = 0
@@ -17,6 +17,12 @@ const expect422 = async (name, fn, code) => {
 
 await expect422('signUp', (c) => c.auth.signUp({ email: 'new@example.com', password: 'hunter2hunter2' }), 'signup_disabled')
 await expect422('signInAnonymously', (c) => c.auth.signInAnonymously(), 'signup_disabled')
+await expect422('signInWithIdToken (first-time)', (c) => c.auth.signInWithIdToken({ provider: 'google', token: NEW_ID_TOKEN }), 'signup_disabled')
+const { data: idData, error: idError } = await client().auth.signInWithIdToken({ provider: 'google', token: EXISTING_ID_TOKEN })
+if (idError || !idData.session) {
+  failures++
+  console.error('  FAIL existing user signInWithIdToken', idError)
+} else console.log('  ok  existing user signInWithIdToken')
 const { data, error } = await client().auth.signInWithPassword({ email: EXISTING_EMAIL, password: EXISTING_PASSWORD })
 if (error || !data.session) {
   failures++
