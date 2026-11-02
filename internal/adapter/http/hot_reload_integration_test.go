@@ -6,7 +6,9 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -71,4 +73,53 @@ func TestREST_FollowsConfigReload(t *testing.T) {
 	assert.Contains(t, raw, `"priority":2`)
 	code, _, raw = doJSON(t, "POST", ts.URL+"/rest/v1/labels", `{"name":"urgent"}`, h)
 	assert.Equal(t, 201, code, "a table added by the reload is routable: "+raw)
+}
+
+// server.cors and server.max_body_size must follow a config reload.
+func TestCORSAndBodyLimit_FollowConfigReload(t *testing.T) {
+	owner, req := dbboot.StartContainer(t)
+	ctx := context.Background()
+	cfg1, cfg2 := reloadConfig(false, false), reloadConfig(false, false)
+	cfg1.Server.CORS.Origins = []string{"https://a.com"}
+	cfg1.Server.MaxBodySize = "64"
+	cfg2.Server.CORS.Origins = []string{"https://a.com", "https://b.com"}
+	cfg2.Server.MaxBodySize = "1MB"
+	require.NoError(t, app.NewMigrator(owner).Apply(ctx, cfg1))
+
+	keys := app.NewJWTKeyManager(owner)
+	_, err := keys.Active(ctx)
+	require.NoError(t, err)
+	t.Setenv("INSTANCEZ_PUBLISHABLE_KEY", "inz_publishable_reload")
+	t.Setenv("INSTANCEZ_SECRET_KEY", "inz_secret_reload")
+
+	var live atomic.Pointer[domain.Config]
+	live.Store(cfg1)
+	srv := instancezhttp.NewServer(instancezhttp.ServerDeps{
+		Config: cfg1, ConfigFn: func() *domain.Config { return live.Load() }, DB: req,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), JWTKeys: keys,
+	})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	acao := func() string {
+		r, err := http.NewRequest("GET", ts.URL+"/live", nil)
+		require.NoError(t, err)
+		r.Header.Set("Origin", "https://b.com")
+		resp, err := http.DefaultClient.Do(r)
+		require.NoError(t, err)
+		resp.Body.Close()
+		return resp.Header.Get("Access-Control-Allow-Origin")
+	}
+	h := map[string]string{"apikey": "inz_secret_reload"}
+	big := `{"title":"` + strings.Repeat("x", 200) + `"}`
+
+	assert.Equal(t, "https://a.com", acao(), "b.com not allowed yet")
+	code, _, _ := doJSON(t, "POST", ts.URL+"/rest/v1/todos", big, h)
+	assert.Equal(t, 400, code, "body over the 64B limit is rejected (handler maps the read error to 400)")
+
+	live.Store(cfg2)
+
+	assert.Equal(t, "https://b.com", acao(), "b.com allowed after reload")
+	code, _, raw := doJSON(t, "POST", ts.URL+"/rest/v1/todos", big, h)
+	assert.Equal(t, 201, code, "limit raised by reload: "+raw)
 }

@@ -84,11 +84,20 @@ func NewServer(deps ServerDeps) *Server {
 	// Metrics middleware
 	r.Use(metricsMiddleware())
 
+	liveCfg := func() *domain.Config {
+		if deps.ConfigFn != nil {
+			if c := deps.ConfigFn(); c != nil {
+				return c
+			}
+		}
+		return deps.Config
+	}
+
 	// CORS
-	r.Use(corsMiddleware(deps.Config.Server.CORS, deps.DevMode))
+	r.Use(corsMiddleware(func() domain.CORS { return liveCfg().Server.CORS }, deps.DevMode))
 
 	// Body size limit
-	r.Use(bodySizeLimit(deps.Config.Server.MaxBodySize))
+	r.Use(bodySizeLimit(func() string { return liveCfg().Server.MaxBodySize }))
 
 	// Health endpoints are unauthenticated (load balancer / orchestrator
 	// probes). /metrics exposes request/latency internals, so it sits behind

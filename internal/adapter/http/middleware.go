@@ -127,9 +127,10 @@ func padLeft(s string, w int) string {
 }
 
 // corsMiddleware handles CORS headers.
-func corsMiddleware(cfg domain.CORS, devMode bool) gin.HandlerFunc {
+// cfgFn is read per request so config reloads apply without a restart.
+func corsMiddleware(cfgFn func() domain.CORS, devMode bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		origins := cfg.Origins
+		origins := cfgFn().Origins
 		if devMode && len(origins) == 0 {
 			origins = []string{"*"}
 		}
@@ -150,7 +151,7 @@ func corsMiddleware(cfg domain.CORS, devMode bool) gin.HandlerFunc {
 			c.Header("Vary", "Origin")
 		}
 
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 
 		// Reflect the headers the client asks for on the preflight. supabase-js
 		// keeps adding request headers over time (apikey, x-client-info, and now
@@ -177,15 +178,16 @@ func corsMiddleware(cfg domain.CORS, devMode bool) gin.HandlerFunc {
 
 // bodySizeLimit limits request body size. Storage upload paths are excluded
 // because the storage handler applies per-bucket size limits itself.
-func bodySizeLimit(maxSize string) gin.HandlerFunc {
-	limit := parseSizeBytes(maxSize)
-	if limit == 0 {
-		limit = 1 << 20 // 1MB default
-	}
+// sizeFn is read per request so config reloads apply without a restart.
+func bodySizeLimit(sizeFn func() string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/storage/v1/object/") {
 			c.Next()
 			return
+		}
+		limit := parseSizeBytes(sizeFn())
+		if limit <= 0 {
+			limit = 1 << 20 // 1MB default
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 		c.Next()
