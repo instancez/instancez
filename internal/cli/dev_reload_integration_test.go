@@ -320,3 +320,29 @@ func TestDev_ExternalDSNNotPrintedInBanner(t *testing.T) {
 		}
 	}
 }
+
+func TestDevHotReload_IncludedFile(t *testing.T) {
+	proj := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(proj, "tables"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, "instancez.yaml"), []byte(reloadBaseYAML+"include: [\"tables/*.yaml\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	base := "tables:\n  base:\n    fields:\n      - {name: id, type: bigserial, primary_key: true}\n"
+	if err := os.WriteFile(filepath.Join(proj, "tables", "base.yaml"), []byte(base), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	port, logs := startDev(t, proj)
+	if !waitStatus(port, "base", 200, 20*time.Second) {
+		t.Fatalf("included table base = %d, want 200\n%s", restStatus(port, "base"), logs.String())
+	}
+
+	notes := "tables:\n  notes:\n    fields:\n      - {name: id, type: bigserial, primary_key: true}\n"
+	if err := os.WriteFile(filepath.Join(proj, "tables", "notes.yaml"), []byte(notes), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !waitStatus(port, "notes", 200, 20*time.Second) {
+		t.Fatalf("new included file did not reload (notes = %d)\n%s", restStatus(port, "notes"), logs.String())
+	}
+}

@@ -321,3 +321,57 @@ func RejectInclude(origin string, data []byte) error {
 	}
 	return nil
 }
+
+func matchesAnyPattern(patterns []string, name string) bool {
+	for _, p := range patterns {
+		if ok, _ := filepath.Match(p, name); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// includeWatchTargets lists what to watch for the main file's include: patterns. It returns nothing when the file cannot be parsed.
+func includeWatchTargets(mainPath string) (dirs, patterns, files []string) {
+	data, err := os.ReadFile(mainPath)
+	if err != nil {
+		return nil, nil, nil
+	}
+	var doc yaml.Node
+	if yaml.Unmarshal(data, &doc) != nil {
+		return nil, nil, nil
+	}
+	_, inc := mappingEntry(rootMapping(&doc), "include")
+	if inc == nil || inc.Kind != yaml.SequenceNode {
+		return nil, nil, nil
+	}
+	abs, err := filepath.Abs(mainPath)
+	if err != nil {
+		return nil, nil, nil
+	}
+	base := filepath.Dir(abs)
+	seen := map[string]bool{}
+	addDir := func(d string) {
+		if !seen[d] {
+			seen[d] = true
+			dirs = append(dirs, d)
+		}
+	}
+	for _, n := range inc.Content {
+		if n.Kind != yaml.ScalarNode || n.Value == "" || filepath.IsAbs(n.Value) || strings.Contains(n.Value, "${") {
+			continue
+		}
+		pat := filepath.Join(base, n.Value)
+		patterns = append(patterns, pat)
+		addDir(filepath.Dir(pat))
+		matches, _ := filepath.Glob(pat)
+		for _, m := range matches {
+			files = append(files, m)
+			if real, err := filepath.EvalSymlinks(m); err == nil && real != m {
+				files = append(files, real)
+				addDir(filepath.Dir(real))
+			}
+		}
+	}
+	return dirs, patterns, files
+}

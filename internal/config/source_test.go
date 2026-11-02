@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -336,5 +337,125 @@ func TestParseSourceBytesReportsBlankedVars(t *testing.T) {
 	cfg, blanked, err = ParseSourceBytes(&FileSource{}, data)
 	if err == nil || cfg != nil || len(blanked) != 0 {
 		t.Fatalf("strict parse must fail on the unset var and blank nothing: cfg=%v blanked=%v err=%v", cfg, blanked, err)
+	}
+}
+
+func includeProject(t *testing.T) (main, dir string) {
+	t.Helper()
+	dir = t.TempDir()
+	main = filepath.Join(dir, "instancez.yaml")
+	writeFile(t, main, "version: 1\ninclude: [tables/*.yaml]\n")
+	writeFile(t, filepath.Join(dir, "tables", "a.yaml"), "tables:\n  a:\n    fields: []\n")
+	return main, dir
+}
+
+func writeFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFileSourceWatchFiresOnIncludedFileChange(t *testing.T) {
+	main, dir := includeProject(t)
+	ch := startWatch(t, &FileSource{Path: main})
+	writeFile(t, filepath.Join(dir, "tables", "a.yaml"), "tables:\n  a_changed:\n    fields: []\n")
+	expectData(t, ch, "a_changed")
+}
+
+func TestFileSourceWatchFiresOnNewFileMatchingGlob(t *testing.T) {
+	main, dir := includeProject(t)
+	ch := startWatch(t, &FileSource{Path: main})
+	writeFile(t, filepath.Join(dir, "tables", "b.yaml"), "tables:\n  brand_new:\n    fields: []\n")
+	expectData(t, ch, "brand_new")
+}
+
+func TestFileSourceWatchIgnoresNonMatchingFileInIncludeDir(t *testing.T) {
+	main, dir := includeProject(t)
+	ch := startWatch(t, &FileSource{Path: main})
+	writeFile(t, filepath.Join(dir, "tables", "notes.txt"), "x")
+	expectQuiet(t, ch)
+}
+
+func TestFileSourceWatchPicksUpNewPatternAfterMainEdit(t *testing.T) {
+	main, dir := includeProject(t)
+	writeFile(t, filepath.Join(dir, "extra", "x.yaml"), "tables:\n  x1:\n    fields: []\n")
+	ch := startWatch(t, &FileSource{Path: main})
+
+	writeFile(t, main, "version: 1\ninclude: [tables/*.yaml, extra/*.yaml]\n")
+	expectData(t, ch, "x1")
+	writeFile(t, filepath.Join(dir, "extra", "x.yaml"), "tables:\n  x2:\n    fields: []\n")
+	expectData(t, ch, "x2")
+}
+
+func TestFileSourceWatchIncludedAtomicSave(t *testing.T) {
+	main, dir := includeProject(t)
+	ch := startWatch(t, &FileSource{Path: main})
+	frag := filepath.Join(dir, "tables", "a.yaml")
+	for _, name := range []string{"one", "two"} {
+		tmp := frag + ".tmp"
+		writeFile(t, tmp, "tables:\n  "+name+":\n    fields: []\n")
+		if err := os.Rename(tmp, frag); err != nil {
+			t.Fatal(err)
+		}
+		expectData(t, ch, name)
+	}
+}
+
+func TestFileSourceWatchIncludeWithMissingPatternDir(t *testing.T) {
+	dir := t.TempDir()
+	main := filepath.Join(dir, "instancez.yaml")
+	writeFile(t, main, "version: 1\ninclude: [nodir/*.yaml]\n")
+	ch := startWatch(t, &FileSource{Path: main})
+	writeFile(t, main, "version: 1\n# edited\n")
+	select {
+	case <-ch:
+	case <-time.After(3 * time.Second):
+		t.Fatal("main file edits must still fire")
+	}
+}
+
+func TestFileSourceWriteReadOnlyWithInclude(t *testing.T) {
+	main, _ := includeProject(t)
+	before, _ := os.ReadFile(main)
+	src := &FileSource{Path: main}
+	if _, err := src.Write(context.Background(), []byte("version: 1\n"), ""); !errors.Is(err, ErrConfigReadOnly) {
+		t.Fatalf("err = %v, want ErrConfigReadOnly", err)
+	}
+	after, _ := os.ReadFile(main)
+	if string(before) != string(after) {
+		t.Fatal("main file was modified")
+	}
+	if !SourceReadOnly(src) {
+		t.Fatal("SourceReadOnly must be true for an include config")
+	}
+}
+
+func TestSourceReadOnly_FalseWithoutInclude(t *testing.T) {
+	if SourceReadOnly(&FileSource{Path: writeTemp(t, "version: 1\n")}) {
+		t.Fatal("plain config must stay writable")
+	}
+	if SourceReadOnly(&FileSource{Path: filepath.Join(t.TempDir(), "missing.yaml")}) {
+		t.Fatal("unreadable config is not read-only")
+	}
+	if SourceReadOnly(nil) {
+		t.Fatal("nil source")
+	}
+}
+
+func TestFileSourceReadVersionChangesOnFragmentEdit(t *testing.T) {
+	main, dir := includeProject(t)
+	src := &FileSource{Path: main}
+	_, v1, err := src.Read(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "tables", "a.yaml"), "tables:\n  a:\n    fields: []\n# more\n")
+	_, v2, _ := src.Read(context.Background())
+	if v1 == v2 {
+		t.Fatal("version must change when a fragment changes")
 	}
 }

@@ -330,6 +330,8 @@ include:
 - The same table, bucket, rpc or function name in two files is an error. `functions.<name>.file` stays relative to the project root.
 - Every match must resolve inside the project directory, symlinks included. The main file is skipped if a glob matches it.
 - Errors in a fragment name the file and line. Line numbers in later validation errors refer to the merged document.
+- `inz dev` reloads when the main file or any included file changes, including a new file that matches a glob.
+- The dashboard cannot save a config that uses `include:` (the save returns 409 `config_read_only`); edit the YAML files instead.
 - `inz validate`, `inz vet`, `inz gen`, `inz dev` and `inz serve` read the merged config. S3 and bundle config sources do not support `include`; `inz bundle` writes the merged file into the bundle.
 
 ## functions_bundle

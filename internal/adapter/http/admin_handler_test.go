@@ -1382,3 +1382,39 @@ func TestAdminPutConfig_ShorthandRoundTripNoDrift(t *testing.T) {
 		t.Fatal("expanded config must not carry timestamps")
 	}
 }
+
+func TestAdminPutConfig_IncludeReturns409(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "instancez.yaml")
+	if err := os.WriteFile(path, []byte("version: 1\ninclude: [a.yaml]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.yaml"), []byte("tables: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var calls int
+	db := &stubDB{
+		execFn:  func(context.Context, string, ...any) (int64, error) { calls++; return 0, nil },
+		beginFn: func(context.Context) (domain.Tx, error) { calls++; return nil, fmt.Errorf("must not migrate") },
+	}
+	h := &AdminHandler{
+		cfg:           &domain.Config{Version: 1},
+		db:            db,
+		logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		dashboardMode: DashboardReadwrite,
+		configSource:  &config.FileSource{Path: path},
+	}
+	req := httptest.NewRequest(http.MethodPut, "/_admin/config", strings.NewReader(`{"version":1}`))
+	w := httptest.NewRecorder()
+	newAdminTestRouter(h).ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "config_read_only") {
+		t.Fatalf("got %d: %s", w.Code, w.Body.String())
+	}
+	if calls != 0 {
+		t.Fatalf("migrator touched the DB %d times", calls)
+	}
+	if b, _ := os.ReadFile(path); !strings.Contains(string(b), "include") {
+		t.Fatal("main file was rewritten")
+	}
+}
