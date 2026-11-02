@@ -131,7 +131,7 @@ func validateAgainstCloud(ctx context.Context, configPath string, jsonOutput boo
 // can equal, since ids are Mongo ObjectID hex strings.
 const useFileProjectID = "\x00use-file-project-id\x00"
 
-// missingEnvReport turns a missing-env load error into one report with the namespace and structural errors, or nil.
+// missingEnvReport turns a missing-env load error into one report, leaving out errors caused by the placeholder for an unset var, or nil.
 func missingEnvReport(raw []byte, err error) domain.ValidationErrors {
 	var me *domain.MissingEnvError
 	if !errors.As(err, &me) {
@@ -141,8 +141,21 @@ func missingEnvReport(raw []byte, err error) domain.ValidationErrors {
 	if len(errs) == 0 {
 		return nil
 	}
-	if lenient, lerr := config.ParseBytesLenient(raw, ""); lerr == nil {
-		errs = append(errs, config.ValidateLocal(lenient)...)
+	lenient, lerr := config.ParseBytesLenient(raw, "")
+	if lerr != nil {
+		return errs
+	}
+	unset := map[string]bool{}
+	locs := config.EnvRefLocations(raw)
+	for _, v := range me.Vars {
+		for _, l := range locs[v] {
+			unset[l.Path] = true
+		}
+	}
+	for _, e := range config.ValidateLocal(lenient) {
+		if !unset[e.Path] {
+			errs = append(errs, e)
+		}
 	}
 	return errs
 }

@@ -377,3 +377,33 @@ func captureStdout(t *testing.T, fn func()) string {
 	return string(out)
 }
 
+
+const placeholderCascadeCfg = `version: 1
+project: {name: t}
+server:
+  port: ${PORT_CASCADE_T}
+providers:
+  email:
+    type: ${MAIL_KIND_CASCADE_T}
+    api_key: ${INSTANCEZ_ENV_K_CASCADE_T}
+tables:
+  t:
+    rls_enabled: true
+    fields:
+      - {name: id, type: uuid, primary_key: true}
+      - {name: bad, type: blob}
+`
+
+func TestRunValidate_MissingVarDoesNotCascadeIntoTypeErrors(t *testing.T) {
+	path := writeCfgInCwd(t, placeholderCascadeCfg)
+	_ = os.Unsetenv("PORT_CASCADE_T")
+	_ = os.Unsetenv("MAIL_KIND_CASCADE_T")
+	var err error
+	out := captureStderr(t, func() { err = runValidate(context.Background(), io.Discard, path, false, "", false) })
+	require.Error(t, err)
+	assert.Contains(t, out, "${PORT_CASCADE_T}")
+	assert.Contains(t, out, "server.port")
+	assert.NotContains(t, out, "placeho")
+	assert.NotContains(t, out, "expected a number")
+	assert.Contains(t, out, "tables.t.fields.bad.type", "unrelated errors are still reported")
+}
