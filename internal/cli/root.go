@@ -85,6 +85,7 @@ func newRootCmd(env teleEnv) *cobra.Command {
 		newServeCmd(),
 		newVersionCmd(),
 		newDoctorCmd(),
+		newDBCmd(),
 		newCloudCmd(),
 		newTelemetryCmd(env),
 	)

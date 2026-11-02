@@ -47,6 +47,7 @@ go build -o inz ./cmd/inz
 ./inz vet              # security lint of instancez.yaml, no DB
 ./inz bundle           # build instancez.yaml + functions/ into a tar.gz artifact
 ./inz bundle --output s3://bucket/key  # build + upload to S3, print pointer
+./inz db reset --embedded-pg --yes   # wipe local DB (local hosts only)
 ./inz serve --bundle s3://bucket/key#etag   # production mode using bundle (config + functions from single archive)
 ./inz serve --bundle s3://bucket/key --migrate --watch  # same, with migrations + hot-reload on ETag change
 docker compose -f docker-compose.dev.yaml up   # full stack: postgres + backend + dashboard

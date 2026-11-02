@@ -248,6 +248,31 @@ inz bundle --output bundle.tar.gz                # write to local file
 inz bundle --output s3://my-bucket/bundle.tar.gz # upload to S3, print pointer
 ```
 
+## inz db reset
+
+Drop all data in the local development database. Local only: it refuses any database host that is not `localhost`, a loopback address (`127.0.0.0/8`, `::1`) or a unix socket, and there is no override.
+
+It drops `public`, `auth`, `storage` and every schema your tables declare, then recreates an empty `public`. Other schemas are left alone. It does not migrate or seed: run `inz dev` afterwards to recreate the schema.
+
+Asks `Drop all data in <host:port/db>? [y/N]` on a terminal. Without a terminal it exits with an error unless `--yes` is set. If `inz dev` holds locks on the database, it fails after 5 seconds instead of hanging.
+
+With `--embedded-pg` it deletes `pgdata` and `pgdata.runtime` next to the config file, and refuses while `inz dev --embedded-pg` is running.
+
+```
+inz db reset [flags]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--config` | `instancez.yaml` | Path to `instancez.yaml`. |
+| `--embedded-pg` | `false` | Delete the embedded Postgres data dir instead of dropping schemas. |
+| `--yes`, `-y` | `false` | Skip the confirmation prompt. |
+
+```bash
+inz db reset
+inz db reset --embedded-pg --yes
+```
+
 ## inz cloud deploy
 
 Write the current `instancez.yaml` to an instancez Cloud project.
