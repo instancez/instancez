@@ -153,17 +153,88 @@ func TestValidate_FKReferencesNonexistentTable(t *testing.T) {
 	assertHasErrorAt(t, errs, "tables.todos.fields.cat_id.foreign_key.references")
 }
 
-func TestValidate_FKReferencesUsersOK(t *testing.T) {
+func TestValidate_FKBareUsersRejected(t *testing.T) {
 	cfg := validBaseConfig()
 	table := cfg.Tables["todos"]
 	table.Fields = append(table.Fields, domain.Field{
-		Name: "user_id", ForeignKey: &domain.ForeignKey{References: "users.id", OnDelete: "cascade"},
+		Name: "owner_id", ForeignKey: &domain.ForeignKey{References: "users.id", OnDelete: "cascade"},
 	})
 	cfg.Tables["todos"] = table
-
 	errs := Validate(cfg)
-	if errs != nil {
-		t.Errorf("expected no errors for FK to users.id, got: %v", errs)
+	assertHasErrorAt(t, errs, "tables.todos.fields.owner_id.foreign_key.references")
+}
+
+func TestValidate_FKTargets(t *testing.T) {
+	appX := domain.Table{Schema: "app", Fields: []domain.Field{{Name: "id", Type: "uuid", PrimaryKey: true}}}
+	usersID := domain.Table{Fields: []domain.Field{{Name: "id", Type: "uuid", PrimaryKey: true}}}
+	usersNoID := domain.Table{Fields: []domain.Field{{Name: "display_name", Type: "text"}}}
+	const path = "tables.todos.fields.f.foreign_key.references"
+	cases := []struct {
+		name       string
+		ref        string
+		extra      map[string]domain.Table
+		wantErr    string
+		wantSugg   string
+		wantWarnAt bool
+	}{
+		{name: "bare users no table", ref: "users.id", wantErr: "does not exist", wantSugg: "auth.users.id"},
+		{name: "bare users without id", ref: "users.id", extra: map[string]domain.Table{"users": usersNoID}, wantErr: "does not exist"},
+		{name: "public users with id", ref: "users.id", extra: map[string]domain.Table{"users": usersID}},
+		{name: "auth users id", ref: "auth.users.id"},
+		{name: "auth users email", ref: "auth.users.email"},
+		{name: "storage objects id", ref: "storage.objects.id"},
+		{name: "auth users created_at", ref: "auth.users.created_at", wantErr: "no unique constraint"},
+		{name: "storage objects name", ref: "storage.objects.name", wantErr: "no unique constraint"},
+		{name: "schema typo", ref: "auht.users.id", wantErr: "unknown schema", wantSugg: "auth.users.id"},
+		{name: "far schema warns", ref: "zzz.t.id", wantWarnAt: true},
+		{name: "other auth table warns", ref: "auth.identities.id", wantWarnAt: true},
+		{name: "table in other schema", ref: "x.id", extra: map[string]domain.Table{"x": appX}, wantErr: `schema "app"`, wantSugg: "app.x.id"},
+		{name: "declared schema ok", ref: "app.x.id", extra: map[string]domain.Table{"x": appX}},
+		{name: "declared schema missing table", ref: "app.nope.id", extra: map[string]domain.Table{"x": appX}, wantErr: "does not exist"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validBaseConfig()
+			for k, v := range tc.extra {
+				cfg.Tables[k] = v
+			}
+			todos := cfg.Tables["todos"]
+			todos.Fields = append(todos.Fields, domain.Field{Name: "f", Type: "uuid", ForeignKey: &domain.ForeignKey{References: tc.ref}})
+			if tc.ref == "auth.users.email" {
+				todos.Fields[len(todos.Fields)-1].Type = "text"
+			}
+			cfg.Tables["todos"] = todos
+			errs := Validate(cfg)
+			if tc.wantErr == "" {
+				for _, e := range errs {
+					if e.Path == path {
+						t.Fatalf("unexpected error: %v", e)
+					}
+				}
+			} else {
+				var found *domain.ValidationError
+				for _, e := range errs {
+					if e.Path == path {
+						found = e
+					}
+				}
+				if found == nil || !strings.Contains(found.Message, tc.wantErr) {
+					t.Fatalf("want error containing %q at %s, got %v", tc.wantErr, path, errs)
+				}
+				if !strings.Contains(found.Suggestion, tc.wantSugg) {
+					t.Fatalf("suggestion %q lacks %q", found.Suggestion, tc.wantSugg)
+				}
+			}
+			gotWarn := false
+			for _, w := range Warnings(cfg) {
+				if w.Path == path {
+					gotWarn = true
+				}
+			}
+			if gotWarn != tc.wantWarnAt {
+				t.Fatalf("warning at %s = %v, want %v", path, gotWarn, tc.wantWarnAt)
+			}
+		})
 	}
 }
 
@@ -558,7 +629,7 @@ func TestValidate_FullExampleConfig(t *testing.T) {
 				Fields: []domain.Field{
 					{Name: "id", Type: "bigserial", PrimaryKey: true},
 					{Name: "team_id", ForeignKey: &domain.ForeignKey{References: "teams.id", OnDelete: "cascade"}},
-					{Name: "user_id", ForeignKey: &domain.ForeignKey{References: "users.id", OnDelete: "cascade"}},
+					{Name: "user_id", ForeignKey: &domain.ForeignKey{References: "auth.users.id", OnDelete: "cascade"}},
 					{Name: "title", Type: "text", Required: true},
 					{Name: "status", Type: "text", Required: true, Enum: []string{"pending", "active", "done"}, Default: "pending"},
 				},

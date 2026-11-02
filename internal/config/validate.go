@@ -410,6 +410,7 @@ func Warnings(cfg *domain.Config) domain.ValidationErrors {
 		}
 	}
 	ws = append(ws, compositePKFKWarnings(cfg.Tables)...)
+	ws = append(ws, fkWarnings(cfg.Tables)...)
 	if cfg.Auth != nil {
 		for _, name := range slices.Sorted(maps.Keys(idTokenOnlyProviders)) {
 			if p := cfg.Auth.OAuth[name]; p != nil && p.ClientSecret == "" {
@@ -1302,77 +1303,139 @@ func validateCodeFunctions(functions map[string]domain.CodeFunction) domain.Vali
 	return errs
 }
 
+// uniqueSystemTargets are the only auth/storage columns with a unique constraint.
+var uniqueSystemTargets = map[string]map[string]domain.Field{
+	"auth.users":      {"id": {Type: "uuid", PrimaryKey: true}, "email": {Type: "text"}},
+	"storage.objects": {"id": {Type: "uuid", PrimaryKey: true}},
+}
+
+type fkTarget struct {
+	schema, table, col string
+	fields             map[string]domain.Field
+	known              bool // table resolved in a checked schema
+	err                *domain.ValidationError
+	warn               *domain.ValidationError
+}
+
+func fkSchemas(tables map[string]domain.Table) []string {
+	set := map[string]bool{"public": true, "auth": true, "storage": true}
+	for _, t := range tables {
+		set[t.EffectiveSchema()] = true
+	}
+	return slices.Sorted(maps.Keys(set))
+}
+
+// resolveFK classifies one foreign key reference against the declared tables.
+func resolveFK(tables map[string]domain.Table, schemas []string, ref, path string) (fkTarget, bool) {
+	schema, table, col, err := domain.ParseFKReference(ref)
+	if err != nil {
+		return fkTarget{}, false
+	}
+	t := fkTarget{schema: schema, table: table, col: col}
+	full := schema + "." + table
+	fail := func(msg, sugg string) fkTarget {
+		t.err = &domain.ValidationError{Path: path, Message: msg, Suggestion: sugg}
+		return t
+	}
+	if cols, ok := uniqueSystemTargets[full]; ok {
+		if f, ok := cols[col]; ok {
+			t.fields, t.known = map[string]domain.Field{col: f}, true
+			return t, true
+		}
+		return fail(fmt.Sprintf("%s.%s has no unique constraint, so Postgres rejects the foreign key", full, col),
+			fmt.Sprintf("Reference %s.id instead", full)), true
+	}
+	switch schema {
+	case "auth", "storage":
+		t.warn = &domain.ValidationError{Path: path, Message: fmt.Sprintf("%s is not checked: instancez cannot verify it has a unique column %q", full, col)}
+		return t, true
+	}
+	if !slices.Contains(schemas, schema) {
+		if near := closest(schema, schemas); near != "" {
+			return fail(fmt.Sprintf("unknown schema %q", schema), fmt.Sprintf("did you mean %s.%s.%s?", near, table, col)), true
+		}
+		t.warn = &domain.ValidationError{Path: path, Message: fmt.Sprintf("schema %q is not declared in this config, so the reference is not checked", schema)}
+		return t, true
+	}
+	if tb, ok := tables[table]; ok && tb.EffectiveSchema() == schema {
+		t.fields, t.known = tb.FieldMap(), true
+		if _, ok := t.fields[col]; !ok {
+			return fail(fmt.Sprintf("references %s.%s but column %q does not exist on table %q", table, col, col, table), ""), true
+		}
+		return t, true
+	}
+	if tb, ok := tables[table]; ok && schema == "public" {
+		return fail(fmt.Sprintf("table %q is in schema %q", table, tb.EffectiveSchema()), fmt.Sprintf("Reference it as %s.%s.%s", tb.EffectiveSchema(), table, col)), true
+	}
+	sugg := fmt.Sprintf("Define a %q table or check spelling", table)
+	if schema == "public" && table == "users" {
+		sugg = fmt.Sprintf("did you mean auth.users.%s?", col)
+	}
+	return fail(fmt.Sprintf("references table %q which does not exist", table), sugg), true
+}
+
+func fkPath(tableName, fieldName string) string {
+	return fmt.Sprintf("tables.%s.fields.%s.foreign_key", tableName, fieldName)
+}
+
 func validateForeignKeys(tables map[string]domain.Table) domain.ValidationErrors {
 	var errs domain.ValidationErrors
-
-	// Build set of known tables + their fields.
-	// The users table has implicit core columns (id, email, etc.) added by
-	// migrations, so pre-populate them before merging user-declared fields.
-	knownTables := map[string]map[string]domain.Field{
-		"users": {"id": {Type: "uuid", PrimaryKey: true}, "email": {Type: "text"}},
-	}
-	for name, table := range tables {
-		if name == "users" {
-			for _, f := range table.Fields {
-				knownTables["users"][f.Name] = f
-			}
-		} else {
-			knownTables[name] = table.FieldMap()
-		}
-	}
-
-	for tableName, table := range tables {
-		for _, field := range table.Fields {
-			fieldName := field.Name
+	schemas := fkSchemas(tables)
+	byName := domain.ResolverOver(tables)
+	for _, tableName := range slices.Sorted(maps.Keys(tables)) {
+		for _, field := range tables[tableName].Fields {
 			if field.ForeignKey == nil || field.ForeignKey.References == "" {
 				continue
 			}
-			fkPath := fmt.Sprintf("tables.%s.fields.%s.foreign_key", tableName, fieldName)
-			schema, refTable, refCol, err := domain.ParseFKReference(field.ForeignKey.References)
-			if err != nil {
+			p := fkPath(tableName, field.Name)
+			t, ok := resolveFK(tables, schemas, field.ForeignKey.References, p+".references")
+			if !ok {
 				continue // already caught by structural validation
 			}
-			// Cross-schema references (e.g. auth.users.id) target tables outside this
-			// config's tables map. We don't validate their existence here — that's the
-			// migrator's job at apply time.
-			if schema != "public" {
+			if t.err != nil {
+				errs = append(errs, t.err)
 				continue
 			}
-			targetFields, tableExists := knownTables[refTable]
-			if !tableExists {
-				errs = append(errs, &domain.ValidationError{
-					Path:       fkPath + ".references",
-					Message:    fmt.Sprintf("references table %q which does not exist", refTable),
-					Suggestion: fmt.Sprintf("Define a %q table or check spelling", refTable),
-				})
+			if !t.known {
 				continue
 			}
-
-			targetField, colExists := targetFields[refCol]
-			if !colExists {
+			resolve := func(table, col string) (domain.Field, bool) {
+				if table == t.table && t.fields != nil {
+					if f, ok := t.fields[col]; ok {
+						return f, true
+					}
+				}
+				return byName(table, col)
+			}
+			fkType := domain.EffectiveType(field, resolve)
+			refType := domain.EffectiveType(t.fields[t.col], resolve)
+			if !domain.FKCompatible(fkType, refType) {
 				errs = append(errs, &domain.ValidationError{
-					Path:    fkPath + ".references",
-					Message: fmt.Sprintf("references %s.%s but column %q does not exist on table %q", refTable, refCol, refCol, refTable),
+					Path:       p + ".type",
+					Message:    fmt.Sprintf("column type %q does not match referenced %s.%s type %q", fkType, t.table, t.col, refType),
+					Suggestion: fmt.Sprintf("declare \"type: %s\" on %q, or change the reference", refType, field.Name),
 				})
-			} else {
-				resolve := func(table, col string) (domain.Field, bool) {
-					f, ok := knownTables[table][col]
-					return f, ok
-				}
-				fkType := domain.EffectiveType(field, resolve)
-				refType := domain.EffectiveType(targetField, resolve)
-				if !domain.FKCompatible(fkType, refType) {
-					errs = append(errs, &domain.ValidationError{
-						Path:       fkPath + ".type",
-						Message:    fmt.Sprintf("column type %q does not match referenced %s.%s type %q", fkType, refTable, refCol, refType),
-						Suggestion: fmt.Sprintf("declare \"type: %s\" on %q, or change the reference", refType, fieldName),
-					})
-				}
 			}
 		}
 	}
-
 	return errs
+}
+
+// fkWarnings flags references into tables instancez cannot check.
+func fkWarnings(tables map[string]domain.Table) domain.ValidationErrors {
+	var ws domain.ValidationErrors
+	schemas := fkSchemas(tables)
+	for _, tableName := range slices.Sorted(maps.Keys(tables)) {
+		for _, field := range tables[tableName].Fields {
+			if field.ForeignKey == nil || field.ForeignKey.References == "" {
+				continue
+			}
+			if t, ok := resolveFK(tables, schemas, field.ForeignKey.References, fkPath(tableName, field.Name)+".references"); ok && t.warn != nil {
+				ws = append(ws, t.warn)
+			}
+		}
+	}
+	return ws
 }
 
 // compositePKFKWarnings flags FKs to one column of a composite primary key.
