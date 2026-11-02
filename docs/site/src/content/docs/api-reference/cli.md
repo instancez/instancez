@@ -101,7 +101,7 @@ Validate `instancez.yaml` structure and references without starting the server.
 
 Checks YAML structure, identifiers, cross-references, and verifies that each declared code function's `file:` exists on disk.
 
-Loads `.development.env` first. An unset `${INSTANCEZ_ENV_*}` reference (with no `:-` default) warns and is treated as empty, as in `inz dev`. Any other unset `${VAR}` is still an error, and `inz serve` and `inz deploy` fail on both.
+Local validation (including `--use-dsn`) loads `.development.env` first. An unset `${INSTANCEZ_ENV_*}` reference (with no `:-` default) warns and is treated as empty, as in `inz dev`. Any other unset `${VAR}` is still an error, and `inz serve` and `inz deploy` fail on both. `--project` and `--cloud` send the file as written: they load no `.development.env` and resolve no env references locally.
 
 With `--use-dsn`, also connects to the database and prints the migration plan (DDL diff) without applying it.
 
