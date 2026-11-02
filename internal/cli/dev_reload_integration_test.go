@@ -91,13 +91,19 @@ func buildInz(t *testing.T) string {
 
 // startDev runs `inz dev --embedded-pg` in proj and returns once the HTTP server answers.
 func startDev(t *testing.T, proj string) (port int, logs *lockedBuffer) {
+	return startDevWith(t, proj, []string{"--embedded-pg"}, nil)
+}
+
+// startDevWith is startDev with extra flags and env (e.g. an external DSN instead of --embedded-pg).
+func startDevWith(t *testing.T, proj string, flags, env []string) (port int, logs *lockedBuffer) {
 	t.Helper()
 	port = reloadTestPort(t)
 	logs = &lockedBuffer{}
 	// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command, go_subproc_rule-subproc
-	cmd := exec.Command(buildInz(t), "dev", "--embedded-pg", "--port", fmt.Sprint(port))
+	cmd := exec.Command(buildInz(t), append([]string{"dev", "--port", fmt.Sprint(port)}, flags...)...)
 	cmd.Dir = proj
 	cmd.Env = append(os.Environ(), "INSTANCEZ_TELEMETRY_DISABLED=1", "INSTANCEZ_SECRET_KEY=inz_secret_reloadtest", "INSTANCEZ_PUBLISHABLE_KEY=inz_publishable_reloadtest")
+	cmd.Env = append(cmd.Env, env...)
 	cmd.Stdout, cmd.Stderr = logs, logs
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
@@ -281,5 +287,29 @@ func TestDev_PortInUseFailsBeforePostgres(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(proj, "pgdata")); !os.IsNotExist(err) {
 		t.Fatalf("pgdata/ created despite busy port (stat err = %v)", err)
+	}
+}
+
+// An external DSN (with a password) must never be echoed in the startup banner or logs.
+func TestDev_ExternalDSNNotPrintedInBanner(t *testing.T) {
+	const password = "s3cretPw-9f2c"
+	_, dsn := startPGOrSkip(t, devOptions{pgDataDir: t.TempDir()})
+	execPG(t, dsn, "ALTER USER postgres PASSWORD '"+password+"'")
+	external := strings.Replace(dsn, "postgres:postgres@", "postgres:"+password+"@", 1)
+
+	proj := t.TempDir()
+	if err := os.WriteFile(filepath.Join(proj, "instancez.yaml"), []byte(reloadBaseYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, logs := startDevWith(t, proj, nil, []string{"INSTANCEZ_DATABASE_URL=" + external})
+
+	out := logs.String()
+	if !strings.Contains(out, "Connected") {
+		t.Fatalf("dev did not print its banner:\n%s", out)
+	}
+	for _, leak := range []string{"postgres://", password} {
+		if strings.Contains(out, leak) {
+			t.Fatalf("dev output leaks %q:\n%s", leak, out)
+		}
 	}
 }

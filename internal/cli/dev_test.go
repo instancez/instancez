@@ -464,14 +464,3 @@ func TestDevBannerShowsEmbeddedDSN(t *testing.T) {
 		t.Fatalf("banner missing embedded DSN:\n%s", buf.String())
 	}
 }
-
-func TestDevBannerOmitsDSNForExternalDB(t *testing.T) {
-	const secret = "postgres://admin:hunter2@prod.example.com/app"
-	t.Setenv("INSTANCEZ_DATABASE_URL", secret)
-	t.Setenv("INSTANCEZ_OWNER_DATABASE_URL", secret)
-	var buf strings.Builder
-	newDevBanner("", &domain.Config{}, devOptions{}).write(&buf)
-	if strings.Contains(buf.String(), "postgres://") || strings.Contains(buf.String(), "hunter2") {
-		t.Fatalf("banner leaked a DSN:\n%s", buf.String())
-	}
-}
