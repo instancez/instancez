@@ -7,8 +7,8 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 ### Fixed
 
 - `server.cors` and `server.max_body_size` now apply on config reload (`inz dev` file watch, dashboard save) without a restart.
-- A config reload whose migration fails with no last-known-good no longer leaves the failed config live (its CORS and body limit applied to requests).
-- The singular-object `Accept` check keeps quoted commas in media-type parameters together and ignores `q` values above 1, `NaN` and `Inf`.
+- A config reload whose migration fails with no last-known-good no longer leaves the failed config live (its CORS and body limit applied to requests), and now reports drift.
+- The singular-object `Accept` check keeps quoted commas and escaped quotes in media-type parameters together and ignores `q` values above 1, `NaN` and `Inf`.
 
 ### Changed
 
