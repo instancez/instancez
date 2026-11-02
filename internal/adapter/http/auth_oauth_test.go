@@ -499,7 +499,7 @@ func TestOAuthCallback_MissingEmailRedirectsToApp(t *testing.T) {
 	}
 }
 
-func TestIDTokenGrant_SignupClosedIs422(t *testing.T) {
+func TestIDTokenGrant_TokenField(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -512,24 +512,45 @@ func TestIDTokenGrant_SignupClosedIs422(t *testing.T) {
 	tok.Header["kid"] = "k1"
 	signed, _ := tok.SignedString(key)
 
+	cases := []struct {
+		name, body string
+		reaches    bool
+		status     int
+		frag       string
+	}{
+		{"id_token only (supabase-js)", `{"provider":"google","id_token":"` + signed + `"}`, true, 422, `"code":"signup_disabled"`},
+		{"token only (legacy)", `{"provider":"google","token":"` + signed + `"}`, true, 422, `"code":"signup_disabled"`},
+		{"both: id_token wins", `{"provider":"google","id_token":"` + signed + `","token":"garbage"}`, true, 422, `"code":"signup_disabled"`},
+		{"empty id_token falls back to token", `{"provider":"google","id_token":"","token":"` + signed + `"}`, true, 422, `"code":"signup_disabled"`},
+		{"neither", `{"provider":"google"}`, false, 400, "Missing provider or id_token"},
+		{"both empty", `{"provider":"google","id_token":"","token":""}`, false, 400, "Missing provider or id_token"},
+		{"no provider", `{"id_token":"` + signed + `"}`, false, 400, "Missing provider or id_token"},
+	}
 	no := false
-	var got domain.OAuthLogin
-	h := &AuthHandler{
-		cfg:    &domain.Config{Auth: &domain.Auth{AllowSignup: &no, OAuth: map[string]*domain.OAuthProvider{"google": {ClientID: "cid"}}}},
-		logger: slog.New(slog.NewTextHandler(io.Discard, nil)), jwtKeys: stubKeys(t),
-		authSvc: &stubAuthService{upsertOAuthUserFn: func(_ context.Context, in domain.OAuthLogin) (map[string]any, error) {
-			got = in
-			return nil, domain.ErrSignupDisabled
-		}},
-	}
-	r := gin.New()
-	r.POST("/token", h.handleIDTokenGrant)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest("POST", "/token", strings.NewReader(`{"provider":"google","token":"`+signed+`"}`)))
-	if got.AllowSignup {
-		t.Fatalf("AllowSignup=false not passed to service: %+v", got)
-	}
-	if w.Code != 422 || !strings.Contains(w.Body.String(), `"code":"signup_disabled"`) || !strings.Contains(w.Body.String(), "Signups not allowed for this instance") {
-		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got domain.OAuthLogin
+			h := &AuthHandler{
+				cfg:    &domain.Config{Auth: &domain.Auth{AllowSignup: &no, OAuth: map[string]*domain.OAuthProvider{"google": {ClientID: "cid"}}}},
+				logger: slog.New(slog.NewTextHandler(io.Discard, nil)), jwtKeys: stubKeys(t),
+				authSvc: &stubAuthService{upsertOAuthUserFn: func(_ context.Context, in domain.OAuthLogin) (map[string]any, error) {
+					got = in
+					return nil, domain.ErrSignupDisabled
+				}},
+			}
+			r := gin.New()
+			r.POST("/token", h.handleIDTokenGrant)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest("POST", "/token", strings.NewReader(tc.body)))
+			if w.Code != tc.status || !strings.Contains(w.Body.String(), tc.frag) {
+				t.Fatalf("status %d body %s", w.Code, w.Body.String())
+			}
+			if tc.reaches && (got.AllowSignup || got.Email != "new@e.com") {
+				t.Fatalf("login passed to service = %+v", got)
+			}
+			if !tc.reaches && got.Provider != "" {
+				t.Fatalf("service reached on rejected request: %+v", got)
+			}
+		})
 	}
 }

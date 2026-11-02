@@ -462,11 +462,20 @@ func oauthLoginError(err error, provider string) (int, string, string) {
 func (h *AuthHandler) handleIDTokenGrant(c *gin.Context) {
 	var req struct {
 		Provider string `json:"provider" binding:"required"`
-		Token    string `json:"token" binding:"required"`
+		IDToken  string `json:"id_token"`
+		Token    string `json:"token"`
 		Nonce    string `json:"nonce"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		problemJSON(c, 400, "bad_request", "Missing provider or token")
+		problemJSON(c, 400, "bad_request", "Missing provider or id_token")
+		return
+	}
+	// supabase-js and GoTrue send id_token; token is kept for older callers.
+	if req.IDToken != "" {
+		req.Token = req.IDToken
+	}
+	if req.Token == "" {
+		problemJSON(c, 400, "bad_request", "Missing provider or id_token")
 		return
 	}
 
