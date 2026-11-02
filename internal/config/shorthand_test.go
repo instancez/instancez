@@ -110,3 +110,109 @@ func TestValidate_SurfacesExpandErrors(t *testing.T) {
 	ExpandShorthands(cfg)
 	assertHasErrorAt(t, Validate(cfg), "tables.todos.timestamps")
 }
+
+func ownerCfg(pol domain.RLSPolicy, fields ...domain.Field) *domain.Config {
+	if fields == nil {
+		fields = []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}, {Name: "user_id", Type: "uuid"}}
+	}
+	return &domain.Config{Tables: map[string]domain.Table{"t": {Fields: fields, RLS: []domain.RLSPolicy{pol}}}}
+}
+
+func TestExpandOwner_DefaultsAllFourOps(t *testing.T) {
+	cfg := ownerCfg(domain.RLSPolicy{Owner: "user_id"})
+	ExpandShorthands(cfg)
+	p := cfg.Tables["t"].RLS[0]
+	if !reflect.DeepEqual(p.Operations, []string{"select", "insert", "update", "delete"}) ||
+		p.Using != "user_id = auth.uid()" || p.WithCheck != "user_id = auth.uid()" || p.Owner != "" {
+		t.Fatalf("got %+v", p)
+	}
+	if len(cfg.ExpandErrors) != 0 {
+		t.Fatal(cfg.ExpandErrors)
+	}
+}
+
+func TestExpandOwner_InsertOnly(t *testing.T) {
+	cfg := ownerCfg(domain.RLSPolicy{Operations: []string{"insert"}, Owner: "user_id"})
+	ExpandShorthands(cfg)
+	if p := cfg.Tables["t"].RLS[0]; p.Using != "" || p.WithCheck != "user_id = auth.uid()" {
+		t.Fatalf("got %+v", p)
+	}
+}
+
+func TestExpandOwner_SelectOnly(t *testing.T) {
+	cfg := ownerCfg(domain.RLSPolicy{Operations: []string{"select"}, Owner: "user_id"})
+	ExpandShorthands(cfg)
+	if p := cfg.Tables["t"].RLS[0]; p.WithCheck != "" || p.Using != "user_id = auth.uid()" {
+		t.Fatalf("got %+v", p)
+	}
+}
+
+func expectOwnerErr(t *testing.T, cfg *domain.Config, path, msg string) {
+	t.Helper()
+	ExpandShorthands(cfg)
+	if len(cfg.ExpandErrors) != 1 || cfg.ExpandErrors[0].Path != path || !strings.Contains(cfg.ExpandErrors[0].Message, msg) {
+		t.Fatalf("errors = %v, want %s containing %q", cfg.ExpandErrors, path, msg)
+	}
+}
+
+func TestExpandOwner_ConflictsWithUsing(t *testing.T) {
+	cfg := ownerCfg(domain.RLSPolicy{Owner: "user_id", Using: "true"})
+	expectOwnerErr(t, cfg, "tables.t.rls[0].owner", "cannot be combined")
+	if cfg.Tables["t"].RLS[0].Owner != "user_id" {
+		t.Fatal("conflicting policy must stay unexpanded")
+	}
+}
+
+func TestExpandOwner_UnknownColumn(t *testing.T) {
+	expectOwnerErr(t, ownerCfg(domain.RLSPolicy{Owner: "uid"}), "tables.t.rls[0].owner", `column "uid" not found`)
+}
+
+func TestExpandOwner_NonUUIDColumn(t *testing.T) {
+	cfg := ownerCfg(domain.RLSPolicy{Owner: "user_id"}, domain.Field{Name: "id", Type: "bigserial", PrimaryKey: true}, domain.Field{Name: "user_id", Type: "text"})
+	expectOwnerErr(t, cfg, "tables.t.rls[0].owner", "must be uuid")
+}
+
+func TestExpandOwner_FKToAuthUsersUntyped(t *testing.T) {
+	cfg := ownerCfg(domain.RLSPolicy{Owner: "user_id"},
+		domain.Field{Name: "id", Type: "bigserial", PrimaryKey: true},
+		domain.Field{Name: "user_id", ForeignKey: &domain.ForeignKey{References: "auth.users.id"}})
+	ExpandShorthands(cfg)
+	if len(cfg.ExpandErrors) != 0 || cfg.Tables["t"].RLS[0].Using == "" {
+		t.Fatalf("errors=%v policy=%+v", cfg.ExpandErrors, cfg.Tables["t"].RLS[0])
+	}
+}
+
+func TestExpandOwner_InvalidIdent(t *testing.T) {
+	expectOwnerErr(t, ownerCfg(domain.RLSPolicy{Owner: "x; drop"}), "tables.t.rls[0].owner", "invalid identifier")
+}
+
+func TestExpandOwner_Bucket(t *testing.T) {
+	cfg := &domain.Config{Storage: map[string]domain.Bucket{"a": {RLS: []domain.RLSPolicy{{Owner: "uploaded_by", Operations: []string{"select"}}, {Owner: "owner", Operations: []string{"insert"}}}}}}
+	ExpandShorthands(cfg)
+	r := cfg.Storage["a"].RLS
+	if len(cfg.ExpandErrors) != 0 || r[0].Using != "uploaded_by = auth.uid()" || r[1].WithCheck != "owner = auth.uid()" || r[0].Owner != "" {
+		t.Fatalf("errors=%v rls=%+v", cfg.ExpandErrors, r)
+	}
+
+	bad := &domain.Config{Storage: map[string]domain.Bucket{"avatars": {RLS: []domain.RLSPolicy{{Owner: "user_id"}}}}}
+	expectOwnerErr(t, bad, "storage.avatars.rls[0].owner", "must be uploaded_by or owner")
+}
+
+func TestExpandOwner_Idempotent(t *testing.T) {
+	cfg := ownerCfg(domain.RLSPolicy{Owner: "user_id"})
+	ExpandShorthands(cfg)
+	first := cfg.Tables["t"].RLS[0]
+	ExpandShorthands(cfg)
+	if !reflect.DeepEqual(first, cfg.Tables["t"].RLS[0]) || len(cfg.ExpandErrors) != 0 {
+		t.Fatal("second expansion changed the policy")
+	}
+}
+
+func TestExpandOwner_DoesNotMutateSharedSlice(t *testing.T) {
+	orig := []domain.RLSPolicy{{Owner: "user_id"}}
+	cfg := &domain.Config{Tables: map[string]domain.Table{"t": {Fields: []domain.Field{{Name: "user_id", Type: "uuid"}}, RLS: orig}}}
+	ExpandShorthands(cfg)
+	if orig[0].Owner != "user_id" {
+		t.Fatal("expansion must copy the policy slice, not mutate the caller's")
+	}
+}

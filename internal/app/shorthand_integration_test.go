@@ -143,3 +143,67 @@ func TestIntegration_TimestampsRemovalIsDestructive(t *testing.T) {
 		t.Fatalf("err = %v, want ErrDestructive", err)
 	}
 }
+
+func TestIntegration_OwnerShorthandTable(t *testing.T) {
+	owner, req := dbboot.StartContainer(t)
+	applyYAML(t, app.NewMigrator(owner), `
+version: 1
+tables:
+  notes:
+    rls_enabled: true
+    fields:
+      - {name: id, type: bigserial, primary_key: true}
+      - {name: user_id, type: uuid, required: true}
+    rls:
+      - owner: user_id
+`)
+	ins := func(as, uid string) error {
+		return asUser(t, req, as, func(ctx context.Context, tx domain.Tx) error {
+			_, err := tx.Exec(ctx, "INSERT INTO notes (user_id) VALUES ($1)", uid)
+			return err
+		})
+	}
+	if err := ins(u1, u1); err != nil {
+		t.Fatalf("own insert: %v", err)
+	}
+	if err := ins(u2, u1); err == nil || !strings.Contains(err.Error(), "row-level security") {
+		t.Fatalf("insert as other user = %v, want RLS violation", err)
+	}
+	if _, err := owner.Exec(context.Background(), "INSERT INTO notes (user_id) VALUES ($1)", u1); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	_ = asUser(t, req, u2, func(ctx context.Context, tx domain.Tx) error {
+		rows, err := tx.Query(ctx, "SELECT id FROM notes")
+		n = len(rows)
+		return err
+	})
+	if n != 0 {
+		t.Fatalf("u2 sees %d of u1's rows", n)
+	}
+}
+
+func TestIntegration_OwnerShorthandBucket(t *testing.T) {
+	owner, req := dbboot.StartContainer(t)
+	m := app.NewMigrator(owner)
+	applyYAML(t, m, "version: 1\nauth: {}\nproviders: {storage: {type: local}}\nstorage:\n  b:\n    rls:\n      - {operations: [select], using: \"true\"}\n")
+	for _, c := range []string{"owner", "owner_id"} {
+		if _, err := owner.Exec(context.Background(), "ALTER TABLE storage.objects DROP COLUMN "+c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	applyYAML(t, m, "version: 1\nauth: {}\nproviders: {storage: {type: local}}\nstorage:\n  b:\n    rls:\n      - {owner: owner, operations: [insert]}\n")
+	seedUsers(t, owner)
+	ins := func(as, uploader string) error {
+		return asUser(t, req, as, func(ctx context.Context, tx domain.Tx) error {
+			_, err := tx.Exec(ctx, "INSERT INTO storage.objects (bucket_id, name, uploaded_by) VALUES ('b', 'f', $1::uuid)", uploader)
+			return err
+		})
+	}
+	if err := ins(u1, u1); err != nil {
+		t.Fatalf("own insert: %v", err)
+	}
+	if err := ins(u2, u1); err == nil || !strings.Contains(err.Error(), "row-level security") {
+		t.Fatalf("foreign insert = %v, want RLS violation", err)
+	}
+}

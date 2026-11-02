@@ -422,6 +422,8 @@ type RLSPolicy struct {
 	Using      string   `yaml:"using,omitempty" json:"using,omitempty"`           // SQL boolean expression
 	WithCheck  string   `yaml:"with_check,omitempty" json:"with_check,omitempty"` // SQL boolean expression
 	Type       string   `yaml:"type,omitempty" json:"type,omitempty"`             // permissive (default) | restrictive
+	// Owner is a shorthand for "<column> = auth.uid()"; expanded at load time and cleared.
+	Owner string `yaml:"owner,omitempty" json:"owner,omitempty"`
 }
 
 // Bucket defines a storage bucket.

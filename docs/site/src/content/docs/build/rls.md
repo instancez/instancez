@@ -122,6 +122,19 @@ rls:
     with_check: "auth.is_authenticated()"
 ```
 
+### Owner shorthand
+
+`owner: <column>` replaces `using` and `with_check` for the common "user_id = auth.uid()" rule. `operations` defaults to all four, and the column must be a `uuid` (or an untyped foreign key to `auth.users.id`). `owner` cannot be combined with `using` or `with_check`.
+
+```yaml
+rls:
+  - owner: user_id
+  - operations: [select]
+    owner: user_id
+```
+
+On a bucket, `owner` must be `uploaded_by` or `owner`.
+
 ### Private (owner only)
 
 Only the row's owner can see or modify it.

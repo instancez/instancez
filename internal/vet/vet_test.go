@@ -246,3 +246,24 @@ func TestRunErrorPointsAtValidate(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func TestVet_OwnerShorthandNotFlagged(t *testing.T) {
+	tmpl := "version: 1\nauth: {}\ntables:\n  notes:\n    rls_enabled: true\n    fields:\n      - {name: id, type: bigserial, primary_key: true}\n      - {name: user_id, type: uuid}\n    rls:\n%s"
+	short := "      - owner: user_id\n"
+	long := "      - operations: [select, insert, update, delete]\n        using: \"user_id = auth.uid()\"\n        with_check: \"user_id = auth.uid()\"\n"
+	keys := func(y string) []string {
+		rep, err := Run([]byte(y))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, f := range rep.Findings {
+			out = append(out, f.Rule+"|"+f.Path)
+		}
+		return out
+	}
+	a, b := keys(strings.Replace(tmpl, "%s", short, 1)), keys(strings.Replace(tmpl, "%s", long, 1))
+	if strings.Join(a, ",") != strings.Join(b, ",") {
+		t.Fatalf("shorthand findings %v differ from long form %v", a, b)
+	}
+}

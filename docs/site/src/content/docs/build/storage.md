@@ -129,6 +129,8 @@ storage:
         with_check: "(storage.foldername(name))[1] = auth.uid()::text"
 ```
 
+Bucket policies also accept `owner: uploaded_by` (or `owner: owner`) as a shorthand for `uploaded_by = auth.uid()`.
+
 On a database that already has `storage.objects`, the first policy that mentions `owner` or `owner_id` adds those columns, which rewrites the table once. They are not added to API responses.
 
 ### Downloads

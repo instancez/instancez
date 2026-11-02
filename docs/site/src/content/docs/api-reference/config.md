@@ -220,6 +220,7 @@ RLS is the only authorization layer. Declare policies here; instancez creates th
 | `rls[].using` | `string` | conditional | SQL boolean expression selecting which existing rows the operation can see or target. |
 | `rls[].with_check` | `string` | conditional | SQL boolean expression deciding what a written row is allowed to look like. |
 | `rls[].type` | `string` | `permissive` | `permissive` or `restrictive`. |
+| `rls[].owner` | `string` | — | Shorthand for `<column> = auth.uid()` in `using` and `with_check` (whichever the operations read). `operations` defaults to all four. The column must be `uuid`. Cannot be combined with `using`/`with_check`. A dashboard save writes the expanded form. |
 
 Useful SQL helpers available in RLS expressions:
 

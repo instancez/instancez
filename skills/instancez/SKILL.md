@@ -121,6 +121,8 @@ RLS is the only authorization layer. There is no HTTP-level RBAC and no role tab
 | Publishable key + user JWT | `authenticated` | enforced |
 | Secret key | `service_role` | bypassed |
 
+`owner: user_id` is a shorthand for `using`/`with_check` of `user_id = auth.uid()` (operations default to all four; column must be uuid). On buckets use `owner: uploaded_by`.
+
 Each policy entry has `operations` (one or more of select/insert/update/delete), `using` (which existing rows the operation may touch), and `with_check` (what a written row may look like).
 
 ```yaml
