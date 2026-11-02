@@ -37,7 +37,7 @@ tolerated in string fields only.`,
 			if err := requireLocalConfig(configPath); err != nil {
 				return err
 			}
-			src, err := os.ReadFile(configPath)
+			src, err := config.ReadConfigFile(configPath)
 			if err != nil {
 				return fmt.Errorf("read %s: %w", configPath, err)
 			}

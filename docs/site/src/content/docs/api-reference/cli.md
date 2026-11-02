@@ -99,9 +99,9 @@ inz serve --bundle /path/to/bundle.tar.gz --migrate
 
 Validate `instancez.yaml` structure and references without starting the server.
 
-Checks YAML structure, identifiers, cross-references, and verifies that each declared code function's `file:` exists on disk.
+Follows `include:` files. Checks YAML structure, identifiers, cross-references, and verifies that each declared code function's `file:` exists on disk.
 
-Local validation (including `--use-dsn`) loads `.development.env` first. An unset `${INSTANCEZ_ENV_*}` reference (with no `:-` default) warns and is treated as empty, as in `inz dev`. Any other unset `${VAR}` is still an error. `inz validate` and `inz dev` also warn when an OAuth provider other than `google`/`apple` ends up with an empty `client_secret` (`inz serve` rejects it). When an unset variable is outside the `INSTANCEZ_ENV_` namespace, the report lists it together with every other error. `${VAR}` on a full-line `#` comment is ignored everywhere (this includes a line starting with `#` inside a `|` block scalar). `inz serve` and `inz bundle` stay strict and fail on any unset `${VAR}`. `inz cloud deploy` parses leniently and leaves validation to the cloud, so it does not fail locally on an unset variable. `--project` and `--cloud` send the file as written: they load no `.development.env` and resolve no env references locally.
+Local validation (including `--use-dsn`) loads `.development.env` first. An unset `${INSTANCEZ_ENV_*}` reference (with no `:-` default) warns and is treated as empty, as in `inz dev`. Any other unset `${VAR}` is still an error. `inz validate` and `inz dev` also warn when an OAuth provider other than `google`/`apple` ends up with an empty `client_secret` (`inz serve` rejects it). When an unset variable is outside the `INSTANCEZ_ENV_` namespace, the report lists it together with every other error. `${VAR}` on a full-line `#` comment is ignored everywhere (this includes a line starting with `#` inside a `|` block scalar). `inz serve` and `inz bundle` stay strict and fail on any unset `${VAR}`. `inz cloud deploy` parses leniently and leaves validation to the cloud, so it does not fail locally on an unset variable. `--project` and `--cloud` load no `.development.env` and resolve no env references locally. They send the file as written, unless it uses `include:`. Then they send one merged file without the `include:` key. Shorthands (`timestamps`, `owner`) are sent as written, so the cloud needs a release that knows them before such a config deploys.
 
 With `--use-dsn`, also connects to the database and prints the migration plan (DDL diff) without applying it.
 
@@ -230,6 +230,8 @@ The dashboard's Security page runs the same scan. A banner shows how many checks
 Build a self-contained tar.gz bundle from `instancez.yaml` and `functions/`.
 
 The bundle is the deployment artifact for projects that use code functions. It contains `instancez.yaml`, `functions/` (with vendored `node_modules/`), and a `manifest.json`. Upload it to S3 then set `functions_bundle:` in `instancez.yaml` to the returned pointer.
+
+The bundled `instancez.yaml` is flattened: `include:` files are merged and `timestamps` / `owner` shorthands expanded, so the bundle is a single plain file. Configs that use neither are bundled as written.
 
 Runs stateless validation (same as `inz validate`) including checking that each declared function's `file:` exists on disk.
 

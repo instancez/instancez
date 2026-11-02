@@ -332,7 +332,7 @@ include:
 - Errors in a fragment name the file and line. Line numbers in later validation errors refer to the merged document.
 - `inz dev` reloads when the main file or any included file changes, including a new file that matches a glob.
 - The dashboard cannot save a config that uses `include:` (the save returns 409 `config_read_only`); edit the YAML files instead.
-- `inz validate`, `inz vet`, `inz gen`, `inz dev` and `inz serve` read the merged config. S3 and bundle config sources do not support `include`; `inz bundle` writes the merged file into the bundle.
+- `inz validate`, `inz vet`, `inz gen`, `inz dev` and `inz serve` read the merged config. S3 and bundle config sources do not support `include`; `inz bundle` writes the merged file into the bundle. `inz cloud deploy` and `inz validate --cloud` send the merged file with `timestamps` / `owner` expanded, so the cloud does not need to know `include:`.
 
 ## functions_bundle
 

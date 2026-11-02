@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/instancez/instancez/internal/config"
 	"github.com/posthog/posthog-go"
 	"gopkg.in/yaml.v3"
 )
@@ -140,7 +141,7 @@ func BuildCrashReport(command string, err error, frames []posthog.StackFrame, co
 		r.Remote = true
 		return r
 	}
-	if raw, rerr := os.ReadFile(configPath); rerr == nil {
+	if raw, rerr := config.ReadConfigFile(configPath); rerr == nil {
 		if y, yerr := RedactYAML(raw, home); yerr != nil {
 			r.Truncated = append(r.Truncated, filepath.Base(configPath)+" (unparseable)")
 		} else {

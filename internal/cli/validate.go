@@ -30,7 +30,7 @@ func newValidateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "validate",
 		Short: "Validate config without starting the server",
-		Long: `Validate instancez.yaml structure and references.
+		Long: `Validate instancez.yaml structure and references. Follows include:.
 
 With --use-dsn, validate also connects to the given Postgres and prints
 the migration that would bring the database in sync with the yaml. The
@@ -103,7 +103,7 @@ func validateAgainstCloud(ctx context.Context, configPath string, jsonOutput boo
 	if err != nil {
 		return fmt.Errorf("--cloud requires authentication: %w", err)
 	}
-	src, err := os.ReadFile(configPath)
+	src, err := config.ReadExpandedConfigFile(configPath)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", configPath, err)
 	}
@@ -442,7 +442,7 @@ func planAgainstProject(ctx context.Context, configPath string, jsonOutput bool,
 		return fmt.Errorf("--project requires authentication: %w", err)
 	}
 
-	src, err := os.ReadFile(configPath)
+	src, err := config.ReadExpandedConfigFile(configPath)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", configPath, err)
 	}
