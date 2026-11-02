@@ -29,7 +29,7 @@ func Load(path string) (*domain.Config, error) {
 func ParseBytes(data []byte, origin string) (*domain.Config, error) {
 	interpolated, missing := interpolateEnvVars(string(data))
 	if len(missing) > 0 {
-		return nil, &domain.MissingEnvError{Vars: missing}
+		return nil, newMissingEnvError(data, missing)
 	}
 
 	var cfg domain.Config
@@ -39,6 +39,17 @@ func ParseBytes(data []byte, origin string) (*domain.Config, error) {
 
 	applyDefaults(&cfg)
 	return &cfg, nil
+}
+
+func newMissingEnvError(raw []byte, vars []string) *domain.MissingEnvError {
+	where := map[string]string{}
+	locs := EnvRefLocations(raw)
+	for _, v := range vars {
+		if l := locs[v]; len(l) > 0 {
+			where[v] = fmt.Sprintf("%s (line %d:%d)", l[0].Path, l[0].Line, l[0].Column)
+		}
+	}
+	return &domain.MissingEnvError{Vars: vars, Where: where}
 }
 
 // ParseBytesLocal is ParseBytes for local dev: an unset ${INSTANCEZ_ENV_*} with
@@ -69,7 +80,7 @@ func ParseBytesLocal(data []byte, origin string) (*domain.Config, []string, erro
 	}
 	if len(missing) > 0 {
 		slices.Sort(missing)
-		return nil, nil, &domain.MissingEnvError{Vars: slices.Compact(missing)}
+		return nil, nil, newMissingEnvError(data, slices.Compact(missing))
 	}
 	var cfg domain.Config
 	if err := decodeYAMLStrict([]byte(strings.Join(lines, "\n")), &cfg); err != nil {

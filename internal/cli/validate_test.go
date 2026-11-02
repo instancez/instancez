@@ -183,11 +183,11 @@ func TestPlanAgainstProjectSendsWireBranch(t *testing.T) {
 
 func TestPrintWarnings(t *testing.T) {
 	var buf bytes.Buffer
-	printWarnings(&buf, nil)
+	printWarnings(&buf, "instancez.yaml", nil)
 	if buf.Len() != 0 {
 		t.Fatalf("nil warnings printed %q", buf.String())
 	}
-	printWarnings(&buf, domain.ValidationErrors{{Path: "tables.todos.rls_enabled", Message: "m", Suggestion: "s"}})
+	printWarnings(&buf, "instancez.yaml", domain.ValidationErrors{{Path: "tables.todos.rls_enabled", Message: "m", Suggestion: "s"}})
 	out := buf.String()
 	for _, want := range []string{"! Warning: tables.todos.rls_enabled", "m", "Suggestion: s"} {
 		if !strings.Contains(out, want) {
@@ -334,3 +334,46 @@ func TestRunValidate_LocalSecretWarnsWithPath(t *testing.T) {
 	assert.Contains(t, errOut.String(), "auth.oauth.github.client_secret")
 	assert.Contains(t, errOut.String(), "inz serve rejects this")
 }
+
+func TestPrintPrettyErrors_UsesConfigPath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "other.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("version: 1\ntables:\n  t:\n    rls_enabeld: true\n"), 0o600))
+	errs := domain.ValidationErrors{{Path: "tables.t", Message: "boom"}}
+	out := captureStderr(t, func() { _ = printPrettyErrors(path, errs) })
+	assert.Contains(t, out, "other.yaml:3:3")
+	assert.NotContains(t, out, "instancez.yaml")
+}
+
+func TestPrintPrettyErrors_NoFileNoPosition(t *testing.T) {
+	out := captureStderr(t, func() { _ = printPrettyErrors("s3://b/k", domain.ValidationErrors{{Path: "x", Message: "m"}}) })
+	assert.NotContains(t, out, "at ")
+}
+
+func TestRunValidate_JSONHasColumn(t *testing.T) {
+	path := writeCfgInCwd(t, "version: 1\nproject: {name: t}\ntables:\n  u:\n    rls_enabeld: true\n    fields:\n      - {name: id, type: uuid, primary_key: true}\n")
+	var err error
+	out := captureStdout(t, func() { err = runValidate(context.Background(), io.Discard, path, true, "", false) })
+	require.Error(t, err)
+	var got []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &got))
+	require.NotEmpty(t, got)
+	assert.Equal(t, "tables.u", got[0]["path"])
+	assert.EqualValues(t, 5, got[0]["line"])
+	assert.EqualValues(t, 5, got[0]["column"])
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout = w
+	defer func() { os.Stdout = old }()
+	fn()
+	require.NoError(t, w.Close())
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+	return string(out)
+}
+

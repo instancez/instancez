@@ -90,10 +90,10 @@ func runDev(opts devOptions) error {
 	}
 
 	cfg, blanked, err := config.LoadLocalWithDotenv(opts.configPath, ".development.env")
-	warnBlanked(os.Stderr, blanked)
+	warnBlanked(os.Stderr, opts.configPath, blanked)
 	raw, _ := os.ReadFile(opts.configPath)
 	if errs := missingEnvReport(raw, err); errs != nil {
-		return printPrettyErrors(errs)
+		return printPrettyErrors(opts.configPath, errs)
 	}
 	if err != nil {
 		return err
@@ -102,10 +102,10 @@ func runDev(opts devOptions) error {
 	errs := config.ValidateLocal(cfg)
 	errs = append(errs, config.ValidateEnvNamespace(raw)...)
 	if errs != nil {
-		return printPrettyErrors(errs)
+		return printPrettyErrors(opts.configPath, errs)
 	}
-	printWarnings(os.Stderr, config.Warnings(cfg))
-	printWarnings(os.Stderr, config.LocalWarnings(cfg))
+	printWarnings(os.Stderr, opts.configPath, config.Warnings(cfg))
+	printWarnings(os.Stderr, opts.configPath, config.LocalWarnings(cfg))
 
 	// Build a Source handle for the engine + http deps.
 	// In dev mode we also watch .development.env so changes to env vars are

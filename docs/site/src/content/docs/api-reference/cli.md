@@ -114,7 +114,7 @@ inz validate [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--config` | `instancez.yaml` | Config source. Env: `INSTANCEZ_CONFIG`. |
-| `--json` | `false` | Output errors as JSON (for CI). |
+| `--json` | `false` | Output errors as JSON (for CI): an array of `{path, message, line, column, suggestion}`. `line` and `column` are omitted when unknown. |
 | `--project` | — | Preview against a cloud project. Bare `--project` uses `instancez.yaml`'s linked project; `--project <id>` or `--project=<id>` targets a different one. Never creates a project; link one first with `inz cloud deploy --new`. |
 | `--use-dsn` | — | After syntax check, plan a migration against this owner-class DSN (plan only — never applied). |
 | `--dry-run-ddl` | `false` | With `--use-dsn`, also run the migration in a rolled-back transaction. Takes DDL locks until rollback. |

@@ -373,10 +373,26 @@ func validate(cfg *domain.Config, local bool) domain.ValidationErrors {
 	// Cross-cutting: declared features must have the providers that back them
 	errs = append(errs, validateProviderRequirements(cfg)...)
 
+	errs = dedupeErrors(errs)
 	if len(errs) == 0 {
 		return nil
 	}
 	return errs
+}
+
+// dedupeErrors drops later errors with the same path and message.
+func dedupeErrors(errs domain.ValidationErrors) domain.ValidationErrors {
+	type key struct{ path, msg string }
+	seen := make(map[key]bool, len(errs))
+	out := errs[:0]
+	for _, e := range errs {
+		k := key{e.Path, e.Message}
+		if !seen[k] {
+			seen[k] = true
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // LogWarnings logs every config warning at warn level.

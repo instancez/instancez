@@ -35,20 +35,6 @@ func writeDSNCfg(t *testing.T, yaml string) string {
 	return p
 }
 
-func captureStdout(t *testing.T, fn func()) string {
-	t.Helper()
-	old := os.Stdout
-	r, w, err := os.Pipe()
-	require.NoError(t, err)
-	os.Stdout = w
-	defer func() { os.Stdout = old }()
-	fn()
-	require.NoError(t, w.Close())
-	out, err := io.ReadAll(r)
-	require.NoError(t, err)
-	return string(out)
-}
-
 func superDSN(t *testing.T) string {
 	t.Helper()
 	_, _, _, dsn := dbboot.StartContainerWithRawAuth(t)

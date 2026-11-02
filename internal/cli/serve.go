@@ -117,7 +117,7 @@ func runServe(opts serveOptions) error {
 	if _, ok := source.(*config.FileSource); ok {
 		if raw, err := os.ReadFile(opts.configPath); err == nil {
 			if errs := config.ValidateEnvNamespace(raw); errs != nil {
-				return printPrettyErrors(errs)
+				return printPrettyErrors(opts.configPath, errs)
 			}
 		}
 	}
@@ -136,7 +136,7 @@ func runServe(opts serveOptions) error {
 
 	errs := config.Validate(cfg)
 	if errs != nil {
-		return printPrettyErrors(errs)
+		return printPrettyErrors(opts.configPath, errs)
 	}
 
 	if opts.port > 0 {

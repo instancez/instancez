@@ -8,6 +8,10 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 - `inz validate --use-dsn <dsn> --dry-run-ddl` runs the migration in a transaction that is always rolled back (`lock_timeout` 2s, `statement_timeout` 30s), so unknown RLS columns and bad rpc bodies fail validation. It exits non-zero on failure and adds `dry_run` to `--json`. Plain `--use-dsn` still only prints the plan.
 
+### Changed
+
+- `inz validate`, `inz dev`, `inz serve` and `inz bundle` errors carry the real key path, `file:line:column`, plain-language type errors (`expected true or false, got "maybe"`), the duplicate-key path and a `check indentation at line N` hint. Identical errors are shown once, unset variables show where they are used, and `--json` gains `column`.
+
 ### Deprecated
 
 - Field-level `ref:` and `on_delete:` never did anything. `inz validate` now warns and the docs no longer list them. Use `foreign_key: {references, on_delete}`.

@@ -170,7 +170,8 @@ func TestGenTypesUnsetEnvRefInNonStringFieldFails(t *testing.T) {
 		_, err = runGenOut(t, "types", "--config", writeTemp(t, y))
 	})
 	assert.ErrorIs(t, err, errReported)
-	assert.Contains(t, stderr, "cannot unmarshal")
+	assert.Contains(t, stderr, "server.port")
+	assert.Contains(t, stderr, "expected a number")
 }
 
 func TestGenTypesMalformedYAML(t *testing.T) {
