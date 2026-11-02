@@ -304,3 +304,33 @@ func TestValidateDryRunDDLRequiresDSN(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "requires --use-dsn")
 }
+
+const missingEnvCfg = `version: 1
+project: {name: t}
+providers:
+  email: {type: resend, api_key: ${RESEND_KEY_T}}
+tables:
+  t:
+    rls_enabled: true
+    fields:
+      - {name: id, type: uuid, primary_key: true}
+      - {name: bad, type: blob}
+`
+
+func TestRunValidate_NonNamespacedMissingVarShowsAllErrors(t *testing.T) {
+	path := writeCfgInCwd(t, missingEnvCfg)
+	_ = os.Unsetenv("RESEND_KEY_T")
+	var err error
+	out := captureStderr(t, func() { err = runValidate(context.Background(), io.Discard, path, false, "", false) })
+	require.Error(t, err)
+	assert.Contains(t, out, "${RESEND_KEY_T}")
+	assert.Contains(t, out, "tables.t.fields.bad.type")
+}
+
+func TestRunValidate_LocalSecretWarnsWithPath(t *testing.T) {
+	path := writeCfgInCwd(t, oauthSecretCfg)
+	var errOut bytes.Buffer
+	require.NoError(t, runValidate(context.Background(), &errOut, path, false, "", false))
+	assert.Contains(t, errOut.String(), "auth.oauth.github.client_secret")
+	assert.Contains(t, errOut.String(), "inz serve rejects this")
+}

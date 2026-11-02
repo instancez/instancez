@@ -386,6 +386,24 @@ func LogWarnings(logger *slog.Logger, cfg *domain.Config) {
 	}
 }
 
+// LocalWarnings reports what local validation relaxes but inz serve still rejects.
+func LocalWarnings(cfg *domain.Config) domain.ValidationErrors {
+	if cfg == nil || cfg.Auth == nil {
+		return nil
+	}
+	var ws domain.ValidationErrors
+	for _, name := range slices.Sorted(maps.Keys(cfg.Auth.OAuth)) {
+		if p := cfg.Auth.OAuth[name]; p != nil && p.ClientSecret == "" && !idTokenOnlyProviders[name] {
+			ws = append(ws, &domain.ValidationError{
+				Path:       "auth.oauth." + name + ".client_secret",
+				Message:    "empty: inz serve rejects this (required)",
+				Suggestion: "Set the env var it references, or add it to .development.env",
+			})
+		}
+	}
+	return ws
+}
+
 // Warnings reports config that is valid but probably not what the author meant; it never blocks a deploy.
 func Warnings(cfg *domain.Config) domain.ValidationErrors {
 	var ws domain.ValidationErrors
@@ -1578,7 +1596,7 @@ func validateDefault(path string, val any, colType string) domain.ValidationErro
 			} else if fits, ok := authDefaultTypes[lower]; ok && !fits(strings.ToLower(colType)) {
 				errs = append(errs, &domain.ValidationError{
 					Path:    path + ".default",
-					Message: fmt.Sprintf("default %s does not fit a %s column", v, colType),
+					Message: fmt.Sprintf("default %s does not fit column type %s", v, colType),
 				})
 			}
 		}

@@ -112,6 +112,16 @@ func runServe(opts serveOptions) error {
 		}
 	}
 
+	// Enforce the INSTANCEZ_ENV_ namespace only for local (user-authored)
+	// configs; s3:// sources are generator-produced and reference platform vars.
+	if _, ok := source.(*config.FileSource); ok {
+		if raw, err := os.ReadFile(opts.configPath); err == nil {
+			if errs := config.ValidateEnvNamespace(raw); errs != nil {
+				return printPrettyErrors(errs)
+			}
+		}
+	}
+
 	cfg, err := source.Load(ctx)
 	if err != nil {
 		return err
@@ -122,16 +132,6 @@ func runServe(opts serveOptions) error {
 	// matching env vars (process env or a loaded .production.env).
 	if err := requireServeAPIKeys(opts.publishableKey, opts.secretKey); err != nil {
 		return err
-	}
-
-	// Enforce the INSTANCEZ_ENV_ namespace only for local (user-authored)
-	// configs; s3:// sources are generator-produced and reference platform vars.
-	if _, ok := source.(*config.FileSource); ok {
-		if raw, err := os.ReadFile(opts.configPath); err == nil {
-			if errs := config.ValidateEnvNamespace(raw); errs != nil {
-				return printPrettyErrors(errs)
-			}
-		}
 	}
 
 	errs := config.Validate(cfg)

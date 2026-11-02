@@ -131,6 +131,22 @@ func validateAgainstCloud(ctx context.Context, configPath string, jsonOutput boo
 // can equal, since ids are Mongo ObjectID hex strings.
 const useFileProjectID = "\x00use-file-project-id\x00"
 
+// missingEnvReport turns a missing-env load error into one report with the namespace and structural errors, or nil.
+func missingEnvReport(raw []byte, err error) domain.ValidationErrors {
+	var me *domain.MissingEnvError
+	if !errors.As(err, &me) {
+		return nil
+	}
+	errs := config.ValidateEnvNamespace(raw)
+	if len(errs) == 0 {
+		return nil
+	}
+	if lenient, lerr := config.ParseBytesLenient(raw, ""); lerr == nil {
+		errs = append(errs, config.ValidateLocal(lenient)...)
+	}
+	return errs
+}
+
 // warnBlanked tells the user which unset ${VAR}s were treated as empty.
 func warnBlanked(errOut io.Writer, names []string) {
 	for _, name := range names {
@@ -145,6 +161,13 @@ func runValidate(ctx context.Context, errOut io.Writer, configPath string, jsonO
 
 	cfg, blanked, err := config.LoadLocalWithDotenv(configPath, ".development.env")
 	warnBlanked(errOut, blanked)
+	raw, _ := os.ReadFile(configPath)
+	if errs := missingEnvReport(raw, err); errs != nil {
+		if jsonOutput {
+			return printJSONErrors(errs)
+		}
+		return printPrettyErrors(errs)
+	}
 	if err != nil {
 		if jsonOutput {
 			return printJSONError(err)
@@ -152,7 +175,6 @@ func runValidate(ctx context.Context, errOut io.Writer, configPath string, jsonO
 		return err
 	}
 
-	raw, _ := os.ReadFile(configPath)
 	errs := config.ValidateLocal(cfg)
 	errs = append(errs, config.ValidateEnvNamespace(raw)...)
 	if errs != nil {
@@ -163,6 +185,7 @@ func runValidate(ctx context.Context, errOut io.Writer, configPath string, jsonO
 	}
 
 	printWarnings(errOut, config.Warnings(cfg))
+	printWarnings(errOut, config.LocalWarnings(cfg))
 
 	if fileErrs := config.ValidateFunctionFiles(cfg, filepath.Dir(configPath)); fileErrs != nil {
 		if jsonOutput {

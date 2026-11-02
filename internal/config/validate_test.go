@@ -2138,3 +2138,41 @@ func TestWarnings_FieldRefOnDelete(t *testing.T) {
 		})
 	}
 }
+
+func TestLocalWarnings(t *testing.T) {
+	mk := func(name, secret string) *domain.Config {
+		return &domain.Config{Auth: &domain.Auth{OAuth: map[string]*domain.OAuthProvider{name: {ClientID: "id", ClientSecret: secret}}}}
+	}
+	if ws := LocalWarnings(mk("google", "")); len(ws) != 0 {
+		t.Errorf("google empty: %v", ws)
+	}
+	ws := LocalWarnings(mk("github", ""))
+	if len(ws) != 1 || ws[0].Path != "auth.oauth.github.client_secret" || !strings.Contains(ws[0].Message, "inz serve rejects this") {
+		t.Errorf("github empty: %v", ws)
+	}
+	if ws := LocalWarnings(mk("github", "s")); len(ws) != 0 {
+		t.Errorf("github set: %v", ws)
+	}
+	if ws := LocalWarnings(&domain.Config{}); ws != nil {
+		t.Errorf("nil auth: %v", ws)
+	}
+	if ws := LocalWarnings(nil); ws != nil {
+		t.Errorf("nil cfg: %v", ws)
+	}
+}
+
+func TestValidateDefault_Grammar(t *testing.T) {
+	cfg := validBaseConfig()
+	todos := cfg.Tables["todos"]
+	todos.Fields = append(todos.Fields, domain.Field{Name: "n", Type: "integer", Default: "auth.uid()"})
+	cfg.Tables["todos"] = todos
+	var msg string
+	for _, e := range Validate(cfg) {
+		if e.Path == "tables.todos.fields.n.default" {
+			msg = e.Message
+		}
+	}
+	if msg != "default auth.uid() does not fit column type integer" {
+		t.Fatalf("got %q", msg)
+	}
+}

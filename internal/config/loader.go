@@ -48,7 +48,7 @@ func ParseBytesLocal(data []byte, origin string) (*domain.Config, []string, erro
 	var blanked, missing []string
 	lines := strings.Split(string(data), "\n")
 	for i, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+		if isCommentLine(line) {
 			continue
 		}
 		lines[i] = envVarPattern.ReplaceAllStringFunc(line, func(match string) string {
@@ -192,11 +192,16 @@ func interpolateEnvVarsLenient(input string) string {
 func EnvRefs(data []byte) []string {
 	var names []string
 	seen := map[string]bool{}
-	for _, m := range envVarPattern.FindAllStringSubmatch(string(data), -1) {
-		name := m[1]
-		if !seen[name] {
-			seen[name] = true
-			names = append(names, name)
+	for _, line := range strings.Split(string(data), "\n") {
+		if isCommentLine(line) {
+			continue
+		}
+		for _, m := range envVarPattern.FindAllStringSubmatch(line, -1) {
+			name := m[1]
+			if !seen[name] {
+				seen[name] = true
+				names = append(names, name)
+			}
 		}
 	}
 	return names
@@ -208,28 +213,31 @@ func interpolateEnvVars(input string) (string, []string) {
 	var missing []string
 	seen := make(map[string]bool)
 
-	result := envVarPattern.ReplaceAllStringFunc(input, func(match string) string {
-		groups := envVarPattern.FindStringSubmatch(match)
-		name := groups[1]
-		defaultVal := groups[2]
-		hasDefault := strings.Contains(match, ":-")
-
-		val, ok := os.LookupEnv(name)
-		if ok {
-			return val
+	lines := strings.Split(input, "\n")
+	for i, line := range lines {
+		if isCommentLine(line) {
+			continue
 		}
-		if hasDefault {
-			return defaultVal
-		}
-		if !seen[name] {
-			missing = append(missing, name)
-			seen[name] = true
-		}
-		return match // leave as-is so YAML parse can proceed for error reporting
-	})
-
-	return result, missing
+		lines[i] = envVarPattern.ReplaceAllStringFunc(line, func(match string) string {
+			groups := envVarPattern.FindStringSubmatch(match)
+			name := groups[1]
+			if val, ok := os.LookupEnv(name); ok {
+				return val
+			}
+			if strings.Contains(match, ":-") {
+				return groups[2]
+			}
+			if !seen[name] {
+				missing = append(missing, name)
+				seen[name] = true
+			}
+			return match // leave as-is so YAML parse can proceed for error reporting
+		})
+	}
+	return strings.Join(lines, "\n"), missing
 }
+
+func isCommentLine(line string) bool { return strings.HasPrefix(strings.TrimSpace(line), "#") }
 
 // loadDotenv parses a simple .env file and sets env vars that aren't already set.
 // Real env vars always take priority.
