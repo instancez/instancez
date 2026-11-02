@@ -310,6 +310,9 @@ var validStorageProviders = map[string]bool{
 	"s3": true, "local": true,
 }
 
+// idTokenOnlyProviders can sign in via signInWithIdToken without a client secret.
+var idTokenOnlyProviders = map[string]bool{"google": true, "apple": true}
+
 // allowedDefaults is the allowlist of SQL functions usable in field defaults.
 var allowedDefaults = map[string]bool{
 	"now()":        true,
@@ -319,11 +322,30 @@ var allowedDefaults = map[string]bool{
 	"current_time": true,
 }
 
+// authDefaultTypes lists the column types each auth.* default can fill.
+var authDefaultTypes = map[string]func(typ string) bool{
+	"auth.uid()":   func(t string) bool { return t == "uuid" },
+	"auth.role()":  isStringType,
+	"auth.email()": isStringType,
+	"auth.jwt()":   func(t string) bool { return t == "jsonb" || t == "json" },
+}
+
+// IsAllowedDefault reports whether expr is an exact allowlisted default expression.
+func IsAllowedDefault(expr string) bool {
+	return allowedDefaults[expr] || authDefaultTypes[expr] != nil
+}
+
 // reservedTableNames cannot be used by user-defined tables.
 var reservedTableNames = map[string]bool{}
 
 // Validate checks a Config for all errors and returns them as a collected list.
-func Validate(cfg *domain.Config) domain.ValidationErrors {
+func Validate(cfg *domain.Config) domain.ValidationErrors { return validate(cfg, false) }
+
+// ValidateLocal is Validate for `inz dev` and `inz validate`: a provider secret
+// that is not set yet is not an error.
+func ValidateLocal(cfg *domain.Config) domain.ValidationErrors { return validate(cfg, true) }
+
+func validate(cfg *domain.Config, local bool) domain.ValidationErrors {
 	var errs domain.ValidationErrors
 
 	// Unknown keys detected at decode time are reported first, alongside the
@@ -339,7 +361,7 @@ func Validate(cfg *domain.Config) domain.ValidationErrors {
 	}
 
 	errs = append(errs, validateProviders(&cfg.Providers)...)
-	errs = append(errs, validateAuth(cfg.Auth)...)
+	errs = append(errs, validateAuth(cfg.Auth, local)...)
 	errs = append(errs, validateTables(cfg.Tables, cfg.Auth)...)
 	errs = append(errs, validateStorage(cfg.Storage)...)
 	errs = append(errs, validateRPC(cfg.RPC)...)
@@ -388,9 +410,20 @@ func Warnings(cfg *domain.Config) domain.ValidationErrors {
 		}
 	}
 	ws = append(ws, compositePKFKWarnings(cfg.Tables)...)
-	if cfg.Auth != nil && cfg.Auth.OAuth["apple"] != nil {
-		if w := appleSecretWarning(cfg.Auth.OAuth["apple"].ClientSecret); w != nil {
-			ws = append(ws, w)
+	if cfg.Auth != nil {
+		for _, name := range slices.Sorted(maps.Keys(idTokenOnlyProviders)) {
+			if p := cfg.Auth.OAuth[name]; p != nil && p.ClientSecret == "" {
+				ws = append(ws, &domain.ValidationError{
+					Path:       "auth.oauth." + name + ".client_secret",
+					Message:    "empty: only signInWithIdToken works, the redirect sign-in flow needs a secret",
+					Suggestion: "Set client_secret if you use signInWithOAuth",
+				})
+			}
+		}
+		if p := cfg.Auth.OAuth["apple"]; p != nil {
+			if w := appleSecretWarning(p.ClientSecret); w != nil {
+				ws = append(ws, w)
+			}
 		}
 	}
 	if cfg.Server.MaxLimit == 100 {
@@ -478,7 +511,7 @@ func validateProviderRequirements(cfg *domain.Config) domain.ValidationErrors {
 	return errs
 }
 
-func validateAuth(auth *domain.Auth) domain.ValidationErrors {
+func validateAuth(auth *domain.Auth, local bool) domain.ValidationErrors {
 	if auth == nil {
 		return nil
 	}
@@ -525,7 +558,7 @@ func validateAuth(auth *domain.Auth) domain.ValidationErrors {
 		if p.ClientID == "" {
 			errs = append(errs, &domain.ValidationError{Path: "auth.oauth." + name + ".client_id", Message: "required"})
 		}
-		if p.ClientSecret == "" {
+		if p.ClientSecret == "" && !local && !idTokenOnlyProviders[name] {
 			errs = append(errs, &domain.ValidationError{Path: "auth.oauth." + name + ".client_secret", Message: "required"})
 		}
 		if name == "apple" {
@@ -588,6 +621,7 @@ func isTimestampType(t string) bool {
 
 func validateTables(tables map[string]domain.Table, auth *domain.Auth) domain.ValidationErrors {
 	var errs domain.ValidationErrors
+	resolve := domain.ResolverOver(tables)
 
 	for name, table := range tables {
 		path := fmt.Sprintf("tables.%s", name)
@@ -686,7 +720,7 @@ func validateTables(tables map[string]domain.Table, auth *domain.Auth) domain.Va
 
 			// Validate default values
 			if field.Default != nil {
-				errs = append(errs, validateDefault(fpath, field.Default)...)
+				errs = append(errs, validateDefault(fpath, field.Default, domain.EffectiveType(field, resolve))...)
 			}
 
 			// FK validation (structural — cross-ref checked separately)
@@ -1416,18 +1450,23 @@ func validateFieldType(path, typ string) domain.ValidationErrors {
 	return errs
 }
 
-func validateDefault(path string, val any) domain.ValidationErrors {
+func validateDefault(path string, val any, colType string) domain.ValidationErrors {
 	var errs domain.ValidationErrors
 	switch v := val.(type) {
 	case string:
 		lower := strings.ToLower(v)
 		// Check if it's a SQL function call (contains parens or is a known keyword)
 		if strings.Contains(v, "(") || lower == "current_date" || lower == "current_time" {
-			if !allowedDefaults[lower] {
+			if !IsAllowedDefault(lower) {
 				errs = append(errs, &domain.ValidationError{
 					Path:       path + ".default",
 					Message:    fmt.Sprintf("SQL expression %q is not in the allowed defaults list", v),
-					Suggestion: "Allowed: now(), uuid_v7(), uuid_v4(), current_date, current_time",
+					Suggestion: "Allowed: now(), uuid_v7(), uuid_v4(), current_date, current_time, auth.uid(), auth.role(), auth.email(), auth.jwt()",
+				})
+			} else if fits, ok := authDefaultTypes[lower]; ok && !fits(strings.ToLower(colType)) {
+				errs = append(errs, &domain.ValidationError{
+					Path:    path + ".default",
+					Message: fmt.Sprintf("default %s does not fit a %s column", v, colType),
 				})
 			}
 		}

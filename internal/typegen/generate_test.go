@@ -356,3 +356,26 @@ func TestGenerateStringListWidthBoundary(t *testing.T) {
 		}
 	}
 }
+
+// A column with an auth.uid() default is required on read and optional on insert.
+func TestGenerateAuthDefaultOptionalOnInsert(t *testing.T) {
+	cfg := &domain.Config{Version: 1, Tables: map[string]domain.Table{"notes": {Fields: []domain.Field{
+		{Name: "id", Type: "bigserial", PrimaryKey: true},
+		{Name: "created_by", Type: "uuid", Required: true, Default: "auth.uid()"},
+	}}}}
+	s := string(typegen.Generate(cfg))
+	section := func(name string) string {
+		i := strings.Index(s, name+": {")
+		if i < 0 {
+			t.Fatalf("no %s section in:\n%s", name, s)
+		}
+		j := strings.Index(s[i:], "}")
+		return s[i : i+j]
+	}
+	if !strings.Contains(section("Row"), "created_by: string") {
+		t.Errorf("Row must require created_by:\n%s", section("Row"))
+	}
+	if !strings.Contains(section("Insert"), "created_by?: string") {
+		t.Errorf("Insert must make created_by optional:\n%s", section("Insert"))
+	}
+}

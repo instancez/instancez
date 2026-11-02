@@ -4032,6 +4032,32 @@ await step('rest: profiles cross-schema FK + auth.uid()-gated RLS', async () => 
   assert(foreignErr, "profiles insert with other user's id should be denied")
 })
 
+await step('rest: default auth.uid() fills created_by per caller', async () => {
+  const opts = (h) => ({ auth: { persistSession: false, autoRefreshToken: false }, global: { headers: h } })
+  const userClient = createClient(URL, PUBLISHABLE_KEY, opts({ Authorization: `Bearer ${accessToken}` }))
+  const anonClient = createClient(URL, PUBLISHABLE_KEY, opts({}))
+
+  const { data: mine, error: userErr } = await userClient.from('authored').insert({ body: 'mine' }).select().single()
+  if (userErr) throw new Error(`authenticated insert failed: ${userErr.message}`)
+  assertEq(mine.created_by, userId, 'authenticated insert must default created_by to auth.uid()')
+
+  const { data: anon, error: anonErr } = await anonClient.from('authored').insert({ body: 'anon' }).select().single()
+  if (anonErr) throw new Error(`anon insert failed: ${anonErr.message}`)
+  assertEq(anon.created_by, null, 'anon has no uid, default is NULL')
+
+  const explicit = '00000000-0000-0000-0000-000000000042'
+  const { data: set, error: setErr } = await userClient.from('authored').insert({ body: 'x', created_by: explicit }).select().single()
+  if (setErr) throw new Error(`explicit insert failed: ${setErr.message}`)
+  assertEq(set.created_by, explicit, 'an explicit value beats the default')
+
+  if (SECRET_KEY) {
+    const svc = createClient(URL, SECRET_KEY, opts({}))
+    const { data: s, error: svcErr } = await svc.from('authored').insert({ body: 'svc' }).select().single()
+    if (svcErr) throw new Error(`service_role insert failed: ${svcErr.message}`)
+    assertEq(s.created_by, null, 'service_role has no uid, default is NULL')
+  }
+})
+
 await step('auth.signOut revokes the session', async () => {
   const client = createClient(URL, PUBLISHABLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },

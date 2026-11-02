@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/instancez/instancez/internal/config"
 	"github.com/instancez/instancez/internal/domain"
 )
 
@@ -123,6 +124,9 @@ func (m *Migrator) planStatements(ctx context.Context, tx domain.Tx, oldCfg, new
 			"revert the primary_key flags, or create a new table and copy the data",
 			ErrPrimaryKeyChange, strings.Join(rejected, "; "))
 	}
+	for _, col := range requiredAuthDefaultAdds(oldCfg, newCfg) {
+		m.logger.Warn("new required column has an auth.* default; existing rows get NULL, so the migration fails on a non-empty table", "column", col)
+	}
 	if destroys := diff.Destroys; len(destroys) > 0 {
 		if !m.allowDestructive {
 			return nil, destructiveError(destroys)
@@ -133,6 +137,37 @@ func (m *Migrator) planStatements(ctx context.Context, tx domain.Tx, oldCfg, new
 			"drops", strings.Join(destroys, ", "))
 	}
 	return planUpdateStatements(oldCfg, newCfg, m.roles), nil
+}
+
+// usesAuthDefault reports whether any column default calls an auth.* helper.
+func usesAuthDefault(cfg *domain.Config) bool {
+	for _, t := range cfg.Tables {
+		for _, f := range t.Fields {
+			if d, _ := f.Default.(string); strings.HasPrefix(strings.ToLower(d), "auth.") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// requiredAuthDefaultAdds lists "table.column" for new required columns on existing tables whose default is an auth.* helper that can be NULL (auth.role() falls back to 'anon').
+func requiredAuthDefaultAdds(oldCfg, newCfg *domain.Config) []string {
+	var out []string
+	for _, name := range sortedKeys(newCfg.Tables) {
+		oldT, ok := oldCfg.Tables[name]
+		if !ok {
+			continue
+		}
+		had := oldT.FieldMap()
+		for _, f := range newCfg.Tables[name].Fields {
+			d, _ := f.Default.(string)
+			if _, seen := had[f.Name]; !seen && f.RenamedFrom == "" && f.Required && strings.HasPrefix(strings.ToLower(d), "auth.") && strings.ToLower(d) != "auth.role()" {
+				out = append(out, name+"."+f.Name)
+			}
+		}
+	}
+	return out
 }
 
 // LivePrimaryKey returns the primary key columns Postgres has for rel, sorted.
@@ -198,6 +233,10 @@ func planFromScratchStatements(cfg *domain.Config, roles domain.Roles) []string 
 	if cfg.Auth != nil {
 		ddl = append(ddl, generateAuthTables(cfg.Auth)...)
 	}
+	// Before the tables: a column default may call auth.uid().
+	if cfg.Auth != nil || usesAuthDefault(cfg) {
+		ddl = append(ddl, generateRLSFunctions()...)
+	}
 
 	// Each table is followed by its indexes so later FKs find their unique index.
 	ordered := orderTables(cfg.Tables)
@@ -212,9 +251,6 @@ func planFromScratchStatements(cfg *domain.Config, roles domain.Roles) []string 
 	// Storage metadata table
 	ddl = append(ddl, generateStorageTables(cfg)...)
 
-	if cfg.Auth != nil {
-		ddl = append(ddl, generateRLSFunctions()...)
-	}
 	// Policies may call user RPCs, and SQL RPC bodies need the tables above.
 	for _, n := range sortedKeys(cfg.RPC) {
 		ddl = append(ddl, generateRPCFunction(n, cfg.RPC[n]))
@@ -263,6 +299,11 @@ func planUpdateStatements(oldCfg, newCfg *domain.Config, roles domain.Roles) []s
 	// heals on its next migration. This covers apps whose config has no auth block.
 	ddl = append(ddl, generateJWTKeysTable()...)
 
+	// Before any table DDL: a new column default may call auth.uid().
+	if newCfg.Auth != nil || usesAuthDefault(newCfg) {
+		ddl = append(ddl, generateRLSFunctions()...)
+	}
+
 	// 0. Renames, before anything else looks at these tables by name.
 	ddl = append(ddl, diff.Renames...)
 
@@ -284,11 +325,6 @@ func planUpdateStatements(oldCfg, newCfg *domain.Config, roles domain.Roles) []s
 	for _, name := range ordered {
 		ddl = append(ddl, generateIndexes(name, newCfg.Tables[name])...)
 		ddl = append(ddl, generateGuards(name, newCfg.Tables[name])...)
-	}
-
-	// RLS functions (CREATE OR REPLACE)
-	if newCfg.Auth != nil {
-		ddl = append(ddl, generateRLSFunctions()...)
 	}
 
 	// Heal storage.objects on existing DBs. diffNewStorage only emits the
@@ -1246,6 +1282,12 @@ func formatDefault(val any, colType string) string {
 	case string:
 		lower := strings.ToLower(v)
 		// SQL functions/keywords — pass through as-is
+		if strings.HasPrefix(lower, "auth.") {
+			if config.IsAllowedDefault(lower) {
+				return lower
+			}
+			return sqlLiteral(v)
+		}
 		if strings.Contains(v, "(") || lower == "current_date" || lower == "current_time" {
 			// Map our shorthand to real Postgres functions
 			switch lower {

@@ -119,12 +119,20 @@ func validateAgainstCloud(ctx context.Context, configPath string, jsonOutput boo
 // can equal, since ids are Mongo ObjectID hex strings.
 const useFileProjectID = "\x00use-file-project-id\x00"
 
+// warnBlanked tells the user which unset ${VAR}s were treated as empty.
+func warnBlanked(errOut io.Writer, names []string) {
+	for _, name := range names {
+		_, _ = fmt.Fprintf(errOut, "  ! unset env %s (using empty)\n", name)
+	}
+}
+
 func runValidate(ctx context.Context, errOut io.Writer, configPath string, jsonOutput bool, useDSN string) error {
 	if err := requireLocalConfig(configPath); err != nil {
 		return err
 	}
 
-	cfg, err := config.Load(configPath)
+	cfg, blanked, err := config.LoadLocalWithDotenv(configPath, ".development.env")
+	warnBlanked(errOut, blanked)
 	if err != nil {
 		if jsonOutput {
 			return printJSONError(err)
@@ -133,7 +141,7 @@ func runValidate(ctx context.Context, errOut io.Writer, configPath string, jsonO
 	}
 
 	raw, _ := os.ReadFile(configPath)
-	errs := config.Validate(cfg)
+	errs := config.ValidateLocal(cfg)
 	errs = append(errs, config.ValidateEnvNamespace(raw)...)
 	if errs != nil {
 		if jsonOutput {

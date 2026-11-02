@@ -1,8 +1,11 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/instancez/instancez/internal/domain"
@@ -448,4 +451,99 @@ func TestLoad_MaxLimitNegativeDisablesCap(t *testing.T) {
 	if cfg.Server.MaxLimit != -1 {
 		t.Fatalf("max_limit = %d, want -1 kept (cap disabled)", cfg.Server.MaxLimit)
 	}
+}
+
+func TestParseBytesLocal(t *testing.T) {
+	t.Setenv("INSTANCEZ_ENV_PBL_SET", "real")
+	for _, n := range []string{"INSTANCEZ_ENV_PBL_UNSET", "INSTANCEZ_ENV_PBL_UNSET2", "PBL_CORE"} {
+		t.Setenv(n, "")
+		_ = os.Unsetenv(n)
+	}
+	const head = "version: 1\nproject:\n  name: p\nauth:\n  oauth:\n    github:\n      client_id: id\n"
+	tests := []struct {
+		name       string
+		secretLine string
+		extra      string
+		wantSecret string
+		wantBlank  []string
+		wantErr    bool
+	}{
+		{"set var used", "      client_secret: ${INSTANCEZ_ENV_PBL_SET}\n", "", "real", nil, false},
+		{"unset user var blanked", "      client_secret: ${INSTANCEZ_ENV_PBL_UNSET}\n", "", "", []string{"INSTANCEZ_ENV_PBL_UNSET"}, false},
+		{"default honored", "      client_secret: ${INSTANCEZ_ENV_PBL_UNSET:-dflt}\n", "", "dflt", nil, false},
+		{"duplicates reported once, sorted", "      client_secret: ${INSTANCEZ_ENV_PBL_UNSET2}${INSTANCEZ_ENV_PBL_UNSET}${INSTANCEZ_ENV_PBL_UNSET}\n", "", "", []string{"INSTANCEZ_ENV_PBL_UNSET", "INSTANCEZ_ENV_PBL_UNSET2"}, false},
+		{"comment-only refs ignored", "      client_secret: x\n", "# ${INSTANCEZ_ENV_PBL_UNSET}\n", "x", nil, false},
+		{"non-user var still errors", "      client_secret: ${PBL_CORE}\n", "", "", nil, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, blanked, err := ParseBytesLocal([]byte(head+tt.secretLine+tt.extra), "t")
+			if tt.wantErr {
+				var me *domain.MissingEnvError
+				if !errors.As(err, &me) || !slices.Equal(me.Vars, []string{"PBL_CORE"}) {
+					t.Fatalf("err = %v, want MissingEnvError[PBL_CORE]", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.Auth.OAuth["github"].ClientSecret; got != tt.wantSecret {
+				t.Errorf("secret = %q, want %q", got, tt.wantSecret)
+			}
+			if !slices.Equal(blanked, tt.wantBlank) {
+				t.Errorf("blanked = %v, want %v", blanked, tt.wantBlank)
+			}
+		})
+	}
+}
+
+// Local parsing must not touch the process environment, so child processes never inherit blanks.
+func TestParseBytesLocalDoesNotSetenv(t *testing.T) {
+	t.Setenv("INSTANCEZ_ENV_PBL_NOSET", "")
+	_ = os.Unsetenv("INSTANCEZ_ENV_PBL_NOSET")
+	src := "version: 1\nproject:\n  name: p\nauth:\n  oauth:\n    github:\n      client_id: id\n      client_secret: ${INSTANCEZ_ENV_PBL_NOSET}\n"
+	if _, _, err := ParseBytesLocal([]byte(src), "t"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := os.LookupEnv("INSTANCEZ_ENV_PBL_NOSET"); ok {
+		t.Fatal("ParseBytesLocal exported an env var")
+	}
+	if _, err := ParseBytes([]byte(src), "t"); err == nil {
+		t.Fatal("strict parse must still fail on the unset var")
+	}
+}
+
+func TestParseBytesLocalInvalidYAML(t *testing.T) {
+	if _, _, err := ParseBytesLocal([]byte("version: 1\n  bad: : :"), "t"); err == nil {
+		t.Fatal("want invalid YAML error")
+	}
+	_, _, localErr := ParseBytesLocal(nil, "t")
+	_, strictErr := ParseBytes(nil, "t")
+	if (localErr == nil) != (strictErr == nil) {
+		t.Fatalf("empty input: local err %v, strict err %v, want same outcome", localErr, strictErr)
+	}
+}
+
+func TestLoadLocalWithDotenv(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "instancez.yaml")
+	if err := os.WriteFile(cfgPath, []byte("version: 1\nproject:\n  name: p\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("missing dotenv is fine", func(t *testing.T) {
+		if _, _, err := LoadLocalWithDotenv(cfgPath, filepath.Join(t.TempDir(), "nope.env")); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("malformed dotenv errors", func(t *testing.T) {
+		env := filepath.Join(t.TempDir(), ".development.env")
+		if err := os.WriteFile(env, []byte("garbage\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, _, err := LoadLocalWithDotenv(cfgPath, env)
+		if err == nil || !strings.Contains(err.Error(), "line 1") {
+			t.Fatalf("err = %v, want a line-1 parse error", err)
+		}
+	})
 }

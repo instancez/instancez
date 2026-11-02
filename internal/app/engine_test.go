@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -833,5 +835,54 @@ func TestShutdownToleratesMissingRequestDB(t *testing.T) {
 		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
 	if err := e.shutdown(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestEngineRunWatcher_LocalReloadWarnsBlankedEnv: a local-dev reload that blanks an unset ${INSTANCEZ_ENV_*} names it in the log.
+func TestEngineRunWatcher_LocalReloadWarnsBlankedEnv(t *testing.T) {
+	const name = "INSTANCEZ_ENV_ENGINE_RELOAD_UNSET"
+	t.Setenv(name, "")
+	_ = os.Unsetenv(name)
+
+	db := newFakeDB(t)
+	roles := domain.DefaultRoles()
+	initial := &domain.Config{
+		Tables: map[string]domain.Table{"a": {Fields: []domain.Field{{Name: "id", Type: "BIGINT", PrimaryKey: true}}}},
+		Server: domain.Server{Port: 8080},
+	}
+	if err := NewMigrator(db, roles).Apply(context.Background(), initial); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	path := filepath.Join(t.TempDir(), "instancez.yaml")
+	body := watcherGoodYAML + "auth:\n  oauth:\n    github:\n      client_id: id\n      client_secret: ${" + name + "}\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src := config.NewFileSourceWithEnv(path, "")
+	src.Local = true
+
+	logs := &lockedBuf{}
+	engine := NewEngine(initial, domain.OwnerDB{Database: db}, newFakeRequestDB(t), roles,
+		WithMode(ModeProd), WithMigrate(true), WithConfigSource(src),
+		WithLogger(slog.New(slog.NewTextHandler(logs, nil))))
+	engine.drift = NewDriftTracker(src.Describe())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go engine.runWatcher(ctx, 0)
+
+	// The file watcher debounces for 500ms, so rewrite slower than that.
+	deadline := time.Now().Add(8 * time.Second)
+	for i := 0; time.Now().Before(deadline) && !strings.Contains(logs.String(), name); i++ {
+		time.Sleep(1200 * time.Millisecond)
+		touched := fmt.Sprintf("%s# touch %d\n", body, i)
+		if err := os.WriteFile(path, []byte(touched), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := logs.String()
+	if !strings.Contains(out, "unset env treated as empty") || !strings.Contains(out, "var="+name) {
+		t.Fatalf("blanked var not logged on local reload: %s", out)
 	}
 }

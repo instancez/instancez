@@ -89,13 +89,14 @@ func runDev(opts devOptions) error {
 		return reported("preflight:" + r.Name)
 	}
 
-	cfg, err := config.LoadWithDotenv(opts.configPath, ".development.env")
+	cfg, blanked, err := config.LoadLocalWithDotenv(opts.configPath, ".development.env")
+	warnBlanked(os.Stderr, blanked)
 	if err != nil {
 		return err
 	}
 
 	raw, _ := os.ReadFile(opts.configPath)
-	errs := config.Validate(cfg)
+	errs := config.ValidateLocal(cfg)
 	errs = append(errs, config.ValidateEnvNamespace(raw)...)
 	if errs != nil {
 		return printPrettyErrors(errs)
@@ -106,6 +107,7 @@ func runDev(opts devOptions) error {
 	// In dev mode we also watch .development.env so changes to env vars are
 	// picked up without a server restart.
 	source := config.NewFileSourceWithEnv(opts.configPath, ".development.env")
+	source.Local = true
 
 	if opts.port > 0 {
 		cfg.Server.Port = opts.port
