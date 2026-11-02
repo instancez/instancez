@@ -534,6 +534,58 @@ func TestEngineRunWatcher_BadMigrationFallsBack(t *testing.T) {
 	}
 }
 
+// TestEngineRunWatcher_UnrecoverableMigrationRestoresPrevConfig: when a reload
+// fails with no last-known-good, the failed candidate must not stay live.
+func TestEngineRunWatcher_UnrecoverableMigrationRestoresPrevConfig(t *testing.T) {
+	db := newFakeDB(t)
+	roles := domain.DefaultRoles()
+	authDB := newFakeRequestDB(t)
+
+	initial := &domain.Config{
+		Tables: map[string]domain.Table{
+			"a": {Fields: []domain.Field{{Name: "id", Type: "BIGINT", PrimaryKey: true}}},
+		},
+		Server: domain.Server{Port: 9000},
+	}
+	src := &fakeSource{ch: make(chan config.WatchEvent, 4)}
+	engine := NewEngine(initial, domain.OwnerDB{Database: db}, authDB, roles,
+		WithMode(ModeProd), WithMigrate(true), WithConfigSource(src))
+	engine.drift = NewDriftTracker(src.Describe())
+	engine.drift.MarkOK("seed", time.Now())
+
+	db.failOnStatementContaining = "CREATE TABLE IF NOT EXISTS a"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		engine.runWatcher(ctx, 0)
+		close(done)
+	}()
+
+	src.ch <- config.WatchEvent{Data: []byte(watcherGoodYAML), Version: "v2"}
+	// Events are handled in order; this one marks drift once the first is done.
+	src.ch <- config.WatchEvent{Data: []byte(watcherInvalidYAML), Version: "v3"}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && engine.Drift().Snapshot().Status != DriftStatusDrift {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if engine.Drift().Snapshot().Status != DriftStatusDrift {
+		t.Fatalf("watcher did not process the second event")
+	}
+	if got := engine.Config(); got != initial {
+		t.Fatalf("failed candidate stayed live: port=%d", got.Server.Port)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("runWatcher did not return after context cancel")
+	}
+}
+
 // TestEngineRunWatcher_InvalidYAMLMarksDrift: a config that parses but fails
 // validation must mark drift via the raw-bytes checksum without touching
 // engine.cfg or invoking the migrator.
