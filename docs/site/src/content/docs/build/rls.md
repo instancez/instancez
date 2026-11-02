@@ -133,7 +133,7 @@ rls:
     owner: user_id
 ```
 
-On a bucket, `owner` must be `uploaded_by` or `owner`.
+On a bucket, `owner` must be `uploaded_by`.
 
 ### Private (owner only)
 

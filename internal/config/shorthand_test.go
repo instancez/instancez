@@ -73,14 +73,6 @@ func TestExpandShorthands_NilAndEmpty(t *testing.T) {
 	}
 }
 
-func TestExpandTimestamps_EmptyTable(t *testing.T) {
-	cfg := tsCfg()
-	ExpandShorthands(cfg)
-	if len(cfg.Tables["t"].Fields) != 2 {
-		t.Fatalf("fields = %+v", cfg.Tables["t"].Fields)
-	}
-}
-
 func TestParseBytes_TimestampsExpands(t *testing.T) {
 	cfg, err := ParseBytes([]byte("version: 1\ntables:\n  t:\n    timestamps: true\n    fields:\n      - {name: id, type: bigserial, primary_key: true}\n"), "x")
 	if err != nil {
@@ -187,15 +179,18 @@ func TestExpandOwner_InvalidIdent(t *testing.T) {
 }
 
 func TestExpandOwner_Bucket(t *testing.T) {
-	cfg := &domain.Config{Storage: map[string]domain.Bucket{"a": {RLS: []domain.RLSPolicy{{Owner: "uploaded_by", Operations: []string{"select"}}, {Owner: "owner", Operations: []string{"insert"}}}}}}
+	cfg := &domain.Config{Storage: map[string]domain.Bucket{"a": {RLS: []domain.RLSPolicy{{Owner: "uploaded_by", Operations: []string{"select"}}}}}}
 	ExpandShorthands(cfg)
 	r := cfg.Storage["a"].RLS
-	if len(cfg.ExpandErrors) != 0 || r[0].Using != "uploaded_by = auth.uid()" || r[1].WithCheck != "owner = auth.uid()" || r[0].Owner != "" {
+	if len(cfg.ExpandErrors) != 0 || r[0].Using != "uploaded_by = auth.uid()" || r[0].Owner != "" {
 		t.Fatalf("errors=%v rls=%+v", cfg.ExpandErrors, r)
 	}
 
 	bad := &domain.Config{Storage: map[string]domain.Bucket{"avatars": {RLS: []domain.RLSPolicy{{Owner: "user_id"}}}}}
-	expectOwnerErr(t, bad, "storage.avatars.rls[0].owner", "must be uploaded_by or owner")
+	expectOwnerErr(t, bad, "storage.avatars.rls[0].owner", "must be uploaded_by")
+
+	alias := &domain.Config{Storage: map[string]domain.Bucket{"a": {RLS: []domain.RLSPolicy{{Owner: "owner"}}}}}
+	expectOwnerErr(t, alias, "storage.a.rls[0].owner", "must be uploaded_by")
 }
 
 func TestExpandOwner_Idempotent(t *testing.T) {

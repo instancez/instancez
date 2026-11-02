@@ -1408,22 +1408,35 @@ $function$;`,
 	}
 }
 
-var storageOwnerRefRe = regexp.MustCompile(`(?i)\bowner(_id)?\b`)
+var (
+	sqlStringLiteralRe = regexp.MustCompile(`'(?:[^']|'')*'`)
+	storageOwnerRefRe  = regexp.MustCompile(`(?i)\bowner(_id)?\b`)
+)
 
 // storageOwnerColumnDDL adds the owner aliases to an existing storage.objects only when a policy reads them, since a stored generated column rewrites the table.
 func storageOwnerColumnDDL(storage map[string]domain.Bucket) []string {
 	for _, b := range storage {
 		for _, p := range b.RLS {
-			if storageOwnerRefRe.MatchString(p.Using) || storageOwnerRefRe.MatchString(p.WithCheck) {
-				return []string{
-					`ALTER TABLE storage.objects ADD COLUMN IF NOT EXISTS owner UUID GENERATED ALWAYS AS (uploaded_by) STORED;`,
-					`ALTER TABLE storage.objects ADD COLUMN IF NOT EXISTS owner_id TEXT GENERATED ALWAYS AS (uploaded_by::text) STORED;`,
-				}
+			if storageOwnerRefRe.MatchString(sqlStringLiteralRe.ReplaceAllString(p.Using, "''")) ||
+				storageOwnerRefRe.MatchString(sqlStringLiteralRe.ReplaceAllString(p.WithCheck, "''")) {
+				return []string{storageOwnerColumnHeal}
 			}
 		}
 	}
 	return nil
 }
+
+// storageOwnerColumnHeal checks the catalog first, so a healed table takes no lock.
+const storageOwnerColumnHeal = `DO $$ BEGIN
+IF to_regclass('storage.objects') IS NOT NULL THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'storage.objects'::regclass AND attname = 'owner' AND NOT attisdropped) THEN
+    ALTER TABLE storage.objects ADD COLUMN owner UUID GENERATED ALWAYS AS (uploaded_by) STORED;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'storage.objects'::regclass AND attname = 'owner_id' AND NOT attisdropped) THEN
+    ALTER TABLE storage.objects ADD COLUMN owner_id TEXT GENERATED ALWAYS AS (uploaded_by::text) STORED;
+  END IF;
+END IF;
+END $$;`
 
 // storageUploadedByFKNeedsHeal is a catalog-only check, so a healed DB skips the heal on boot.
 const storageUploadedByFKNeedsHeal = `SELECT to_regclass('storage.objects') IS NOT NULL AND to_regclass('auth.users') IS NOT NULL AND EXISTS (

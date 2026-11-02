@@ -256,8 +256,7 @@ type Table struct {
 	RLSEnabled *bool       `yaml:"rls_enabled,omitempty" json:"rls_enabled,omitempty"`
 	RLS        []RLSPolicy `yaml:"rls" json:"rls"`
 
-	// Timestamps is a shorthand for created_at/updated_at fields. It is
-	// expanded into Fields at load time and cleared; see config.ExpandShorthands.
+	// Timestamps adds created_at/updated_at; expanded and cleared at load.
 	Timestamps bool `yaml:"timestamps,omitempty" json:"timestamps,omitempty"`
 
 	// RenamedFrom names this table's previous name. The migrator cannot tell a

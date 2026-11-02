@@ -187,14 +187,35 @@ tables:
 
 func TestIntegration_OwnerShorthandBucket(t *testing.T) {
 	owner, req := dbboot.StartContainer(t)
+	applyYAML(t, app.NewMigrator(owner), "version: 1\nauth: {}\nproviders: {storage: {type: local}}\nstorage:\n  b:\n    rls:\n      - {owner: uploaded_by, operations: [insert]}\n")
+	seedUsers(t, owner)
+	ins := func(as, uploader string) error {
+		return asUser(t, req, as, func(ctx context.Context, tx domain.Tx) error {
+			_, err := tx.Exec(ctx, "INSERT INTO storage.objects (bucket_id, name, uploaded_by) VALUES ('b', 'f', $1::uuid)", uploader)
+			return err
+		})
+	}
+	if err := ins(u1, u1); err != nil {
+		t.Fatalf("own insert: %v", err)
+	}
+	if err := ins(u2, u1); err == nil || !strings.Contains(err.Error(), "row-level security") {
+		t.Fatalf("foreign insert = %v, want RLS violation", err)
+	}
+}
+
+func TestIntegration_RawOwnerPolicyAddsColumnsOnExistingTable(t *testing.T) {
+	owner, req := dbboot.StartContainer(t)
 	m := app.NewMigrator(owner)
-	applyYAML(t, m, "version: 1\nauth: {}\nproviders: {storage: {type: local}}\nstorage:\n  b:\n    rls:\n      - {operations: [select], using: \"true\"}\n")
+	storageYAML := func(rls string) string {
+		return "version: 1\nauth: {}\nproviders: {storage: {type: local}}\nstorage:\n  b:\n    rls:\n      - " + rls + "\n"
+	}
+	applyYAML(t, m, storageYAML(`{operations: [select], using: "true"}`))
 	for _, c := range []string{"owner", "owner_id"} {
 		if _, err := owner.Exec(context.Background(), "ALTER TABLE storage.objects DROP COLUMN "+c); err != nil {
 			t.Fatal(err)
 		}
 	}
-	applyYAML(t, m, "version: 1\nauth: {}\nproviders: {storage: {type: local}}\nstorage:\n  b:\n    rls:\n      - {owner: owner, operations: [insert]}\n")
+	applyYAML(t, m, storageYAML(`{operations: [insert], with_check: "owner = auth.uid()"}`))
 	seedUsers(t, owner)
 	ins := func(as, uploader string) error {
 		return asUser(t, req, as, func(ctx context.Context, tx domain.Tx) error {

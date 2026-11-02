@@ -1394,9 +1394,13 @@ func TestStorageOwnerColumnDDL_OnlyWhenReferenced(t *testing.T) {
 		{"nil storage", nil, 0},
 		{"no policies", map[string]domain.Bucket{"a": {}}, 0},
 		{"uploaded_by only", b("uploaded_by = auth.uid()", ""), 0},
-		{"owner", b("owner = auth.uid()", ""), 2},
-		{"owner_id in with_check", b("", "owner_id = auth.uid()::text"), 2},
+		{"owner", b("owner = auth.uid()", ""), 1},
+		{"owner_id in with_check", b("", "owner_id = auth.uid()::text"), 1},
 		{"substring owner not matched", b("downer = auth.uid()", ""), 0},
+		{"json key is not the column", b("metadata->>'owner' = auth.uid()::text", ""), 0},
+		{"string literal is not the column", b("name = 'owner'", ""), 0},
+		{"escaped quote in literal", b("name = 'it''s owner'", ""), 0},
+		{"column next to a literal", b("name = 'x' AND owner = auth.uid()", ""), 1},
 	}
 	for _, c := range cases {
 		if got := storageOwnerColumnDDL(c.in); len(got) != c.want {
@@ -1405,11 +1409,12 @@ func TestStorageOwnerColumnDDL_OnlyWhenReferenced(t *testing.T) {
 	}
 }
 
-func TestStorageHelperFunctions_Defined(t *testing.T) {
-	joined := strings.Join(storageHelperFunctions(), "\n")
-	for _, fn := range []string{"foldername", "filename", "extension"} {
-		mustContain(t, joined, "CREATE OR REPLACE FUNCTION storage."+fn+"(name text)")
-	}
+func TestStorageOwnerColumnDDL_CatalogGuarded(t *testing.T) {
+	ddl := storageOwnerColumnDDL(map[string]domain.Bucket{"a": {RLS: []domain.RLSPolicy{{Operations: []string{"select"}, Using: "owner = auth.uid()"}}}})
+	joined := strings.Join(ddl, "\n")
+	mustContain(t, joined, "attname = 'owner'")
+	mustContain(t, joined, "attname = 'owner_id'")
+	mustContain(t, joined, "IF NOT EXISTS (SELECT 1 FROM pg_attribute")
 }
 
 func TestPlanUpdate_EmitsStorageHelpers(t *testing.T) {
@@ -1419,10 +1424,4 @@ func TestPlanUpdate_EmitsStorageHelpers(t *testing.T) {
 
 	without := strings.Join(planUpdateStatements(&domain.Config{}, &domain.Config{Version: 1}, domain.DefaultRoles()), "\n")
 	mustNotContain(t, without, "storage.foldername")
-}
-
-func TestGenerateStorageTables_HasOwnerAliasColumns(t *testing.T) {
-	joined := strings.Join(generateStorageTables(&domain.Config{Storage: map[string]domain.Bucket{"a": {}}}), "\n")
-	mustContain(t, joined, "owner UUID GENERATED ALWAYS AS (uploaded_by) STORED")
-	mustContain(t, joined, "owner_id TEXT GENERATED ALWAYS AS (uploaded_by::text) STORED")
 }

@@ -8,8 +8,7 @@ import (
 	"github.com/instancez/instancez/internal/domain"
 )
 
-// ExpandShorthands rewrites shorthand keys into their long form and clears
-// them. Conflicts leave the shorthand in place and land in cfg.ExpandErrors.
+// ExpandShorthands rewrites shorthands to long form; conflicts go to cfg.ExpandErrors.
 func ExpandShorthands(cfg *domain.Config) {
 	cfg.ExpandErrors = nil
 	if len(cfg.Include) > 0 {
@@ -39,8 +38,8 @@ func ExpandShorthands(cfg *domain.Config) {
 	}
 	for name, b := range cfg.Storage {
 		b.RLS = expandOwners(fmt.Sprintf("storage.%s", name), b.RLS, &cfg.ExpandErrors, func(col string) *domain.ValidationError {
-			if col != "uploaded_by" && col != "owner" {
-				return &domain.ValidationError{Message: "must be uploaded_by or owner"}
+			if col != "uploaded_by" {
+				return &domain.ValidationError{Message: "must be uploaded_by"}
 			}
 			return nil
 		})
@@ -50,9 +49,9 @@ func ExpandShorthands(cfg *domain.Config) {
 
 var allRLSOps = []string{"select", "insert", "update", "delete"}
 
-// expandOwners returns policies with owner shorthands expanded, copying the slice first so shared configs are not mutated.
+// expandOwners expands owner shorthands on a copy, so shared configs are not mutated.
 func expandOwners(parent string, in []domain.RLSPolicy, errs *domain.ValidationErrors, checkCol func(string) *domain.ValidationError) []domain.RLSPolicy {
-	var out []domain.RLSPolicy
+	out := slices.Clone(in)
 	for i, p := range in {
 		if p.Owner == "" {
 			continue
@@ -74,9 +73,6 @@ func expandOwners(parent string, in []domain.RLSPolicy, errs *domain.ValidationE
 			fail(ve)
 			continue
 		}
-		if out == nil {
-			out = slices.Clone(in)
-		}
 		if len(p.Operations) == 0 {
 			p.Operations = slices.Clone(allRLSOps)
 		}
@@ -91,9 +87,6 @@ func expandOwners(parent string, in []domain.RLSPolicy, errs *domain.ValidationE
 		}
 		p.Owner = ""
 		out[i] = p
-	}
-	if out == nil {
-		return in
 	}
 	return out
 }
