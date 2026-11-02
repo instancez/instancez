@@ -91,7 +91,7 @@ func ResolveIncludes(path string) (*Resolved, error) {
 	}
 	root := rootMapping(&doc)
 	idx, inc := mappingEntry(root, "include")
-	if inc == nil || (inc.Kind != yaml.SequenceNode && !(inc.Kind == yaml.ScalarNode && inc.Tag == "!!null")) {
+	if inc == nil || (inc.Kind != yaml.SequenceNode && (inc.Kind != yaml.ScalarNode || inc.Tag != "!!null")) {
 		return plain, nil
 	}
 
