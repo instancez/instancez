@@ -23,13 +23,12 @@ func TestLocalDSNHosts(t *testing.T) {
 		"postgres:///db?host=/var/run/postgresql",
 	}
 	for _, dsn := range ok {
-		target, err := localDSNHosts(dsn)
-		if err != nil {
+		if _, err := localDSNHosts(dsn); err != nil {
 			t.Errorf("%q refused: %v", dsn, err)
 		}
-		if strings.Contains(target, ":p@") || strings.Contains(target, "p@") {
-			t.Errorf("target %q leaks password", target)
-		}
+	}
+	if target, _ := localDSNHosts("postgres://u:p@localhost:5432/db"); target != "localhost:5432/db" {
+		t.Errorf("target = %q", target)
 	}
 	bad := map[string]string{
 		"postgres://db.example.com/x":           "db.example.com",
@@ -57,11 +56,12 @@ func resetFixture(t *testing.T) dbResetOpts {
 	if err := os.WriteFile("instancez.yaml", []byte("project:\n  name: t\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(swapPromptConfirm(func(string) bool { t.Fatal("confirm called"); return false }))
+	t.Cleanup(swapFindDependents(func(context.Context, string, []string) ([]string, error) { return nil, nil }))
 	return dbResetOpts{
 		configPath: "instancez.yaml",
 		getenv:     dbEnv(nil),
 		tty:        func() bool { return false },
-		confirm:    func(string) bool { t.Fatal("confirm called"); return false },
 		out:        &bytes.Buffer{},
 	}
 }
@@ -109,12 +109,15 @@ func TestDBResetDeclined(t *testing.T) {
 	o.getenv = dbEnv(map[string]string{"INSTANCEZ_DATABASE_URL": localDSN})
 	o.tty = func() bool { return true }
 	var prompt string
-	o.confirm = func(p string) bool { prompt = p; return false }
+	t.Cleanup(swapPromptConfirm(func(p string) bool { prompt = p; return false }))
+	t.Cleanup(swapFindDependents(func(context.Context, string, []string) ([]string, error) {
+		return []string{"view keepme.v"}, nil
+	}))
 	err := runDBReset(context.Background(), o)
 	if err == nil || err.Error() != "db reset aborted" {
 		t.Fatalf("err = %v", err)
 	}
-	if !strings.Contains(prompt, "127.0.0.1:1") || strings.Contains(prompt, "secretpw") {
+	if !strings.Contains(prompt, "127.0.0.1:1") || strings.Contains(prompt, "secretpw") || !strings.Contains(prompt, "will also be dropped: view keepme.v") {
 		t.Errorf("prompt = %q", prompt)
 	}
 }
@@ -174,7 +177,11 @@ func embeddedFixture(t *testing.T) (dbResetOpts, string) {
 	return o, dir
 }
 
-func exists(p string) bool { _, err := os.Stat(p); return err == nil }
+func swapFindDependents(fn func(context.Context, string, []string) ([]string, error)) func() {
+	prev := findDependents
+	findDependents = fn
+	return func() { findDependents = prev }
+}
 
 func TestDBResetEmbeddedWipes(t *testing.T) {
 	o, dir := embeddedFixture(t)
@@ -182,7 +189,7 @@ func TestDBResetEmbeddedWipes(t *testing.T) {
 	if err := runDBReset(context.Background(), o); err != nil {
 		t.Fatal(err)
 	}
-	if exists(dir) || exists("pgdata.runtime") {
+	if fileExists(dir) || fileExists("pgdata.runtime") {
 		t.Error("pgdata not removed")
 	}
 }
@@ -190,17 +197,17 @@ func TestDBResetEmbeddedWipes(t *testing.T) {
 func TestDBResetEmbeddedNonTTYNeedsYes(t *testing.T) {
 	o, dir := embeddedFixture(t)
 	err := runDBReset(context.Background(), o)
-	if err == nil || !strings.Contains(err.Error(), "--yes") || !exists(dir) {
-		t.Fatalf("err = %v, exists = %v", err, exists(dir))
+	if err == nil || !strings.Contains(err.Error(), "--yes") || !fileExists(dir) {
+		t.Fatalf("err = %v, exists = %v", err, fileExists(dir))
 	}
 }
 
 func TestDBResetEmbeddedDeclined(t *testing.T) {
 	o, dir := embeddedFixture(t)
 	o.tty = func() bool { return true }
-	o.confirm = func(string) bool { return false }
+	t.Cleanup(swapPromptConfirm(func(string) bool { return false }))
 	err := runDBReset(context.Background(), o)
-	if err == nil || err.Error() != "db reset aborted" || !exists(dir) {
+	if err == nil || err.Error() != "db reset aborted" || !fileExists(dir) {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -210,7 +217,7 @@ func TestDBResetEmbeddedRefusesLivePID(t *testing.T) {
 	o.yes = true
 	_ = os.WriteFile(filepath.Join(dir, "postmaster.pid"), []byte(strconv.Itoa(os.Getpid())+"\n/data\n"), 0o600)
 	err := runDBReset(context.Background(), o)
-	if err == nil || !strings.Contains(err.Error(), "PID") || !exists(dir) {
+	if err == nil || !strings.Contains(err.Error(), "PID") || !strings.Contains(err.Error(), "postmaster.pid") || !fileExists(dir) {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -233,7 +240,7 @@ func TestDBResetEmbeddedStalePID(t *testing.T) {
 			if err := runDBReset(context.Background(), o); err != nil {
 				t.Fatal(err)
 			}
-			if exists(dir) {
+			if fileExists(dir) {
 				t.Error("pgdata not removed")
 			}
 		})
@@ -248,5 +255,59 @@ func TestDBResetEmbeddedMissing(t *testing.T) {
 	}
 	if !strings.Contains(o.out.(*bytes.Buffer).String(), "nothing to reset") {
 		t.Error("missing 'nothing to reset'")
+	}
+}
+
+func TestPgdataRunningOtherUserProcess(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can signal pid 1")
+	}
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "postmaster.pid"), []byte("1\n"), 0o600)
+	if pid, running := pgdataRunning(dir); !running || pid != 1 {
+		t.Errorf("pgdataRunning = %d, %v; want 1, true (EPERM means alive)", pid, running)
+	}
+}
+
+func TestDBResetEnvDefaults(t *testing.T) {
+	run := func(t *testing.T, env map[string]string, args ...string) error {
+		resetFixture(t)
+		_ = os.MkdirAll("pgdata", 0o755)
+		for k, v := range env {
+			t.Setenv(k, v)
+		}
+		root := NewRootCmd()
+		root.SetOut(&bytes.Buffer{})
+		root.SetArgs(append([]string{"db", "reset"}, args...))
+		return root.Execute()
+	}
+	t.Run("embedded from env", func(t *testing.T) {
+		err := run(t, map[string]string{"INSTANCEZ_EMBEDDED_PG": "1", "INSTANCEZ_DATABASE_URL": "postgres://u@db.example.com/x"}, "--yes")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fileExists("pgdata") {
+			t.Error("pgdata not removed; env default ignored")
+		}
+	})
+	t.Run("yes never from env", func(t *testing.T) {
+		err := run(t, map[string]string{"INSTANCEZ_EMBEDDED_PG": "1", "INSTANCEZ_YES": "1"})
+		if err == nil || !strings.Contains(err.Error(), "--yes") || !fileExists("pgdata") {
+			t.Fatalf("err = %v; INSTANCEZ_YES must not skip confirmation", err)
+		}
+	})
+}
+
+func TestDependentsNote(t *testing.T) {
+	if dependentsNote(nil) != "" {
+		t.Error("empty list must give no note")
+	}
+	var many []string
+	for i := 0; i < 12; i++ {
+		many = append(many, "view v"+strconv.Itoa(i))
+	}
+	got := dependentsNote(many)
+	if !strings.Contains(got, "and 2 more") || strings.Contains(got, "v11") {
+		t.Errorf("got %q", got)
 	}
 }

@@ -73,6 +73,7 @@ func resetIntegrationSetup(t *testing.T) (string, *pgx.Conn) {
 	for _, q := range []string{
 		"INSERT INTO public.todos (id) VALUES (gen_random_uuid())",
 		"CREATE SCHEMA keepme", "CREATE TABLE keepme.t (id int)", "INSERT INTO keepme.t VALUES (1)",
+		"CREATE VIEW keepme.v AS SELECT id FROM public.todos",
 	} {
 		if _, err := su.Exec(ctx, q); err != nil {
 			t.Fatalf("%s: %v", q, err)
@@ -94,11 +95,19 @@ func TestDBResetIntegration(t *testing.T) {
 	ctx := context.Background()
 	_, su := resetIntegrationSetup(t)
 
+	var prompt string
+	t.Cleanup(swapPromptConfirm(func(p string) bool { prompt = p; return true }))
 	var out bytes.Buffer
-	err := runDBReset(ctx, dbResetOpts{configPath: "instancez.yaml", yes: true, getenv: os.Getenv,
-		tty: func() bool { return false }, confirm: func(string) bool { return false }, out: &out})
+	err := runDBReset(ctx, dbResetOpts{configPath: "instancez.yaml", getenv: os.Getenv,
+		tty: func() bool { return true }, out: &out})
 	if err != nil {
 		t.Fatalf("reset: %v", err)
+	}
+	if !strings.Contains(prompt, "will also be dropped") || !strings.Contains(prompt, "view keepme.v") {
+		t.Errorf("prompt does not list the dependent view: %q", prompt)
+	}
+	if n := count(t, su, "SELECT count(*) FROM pg_views WHERE viewname = 'v'"); n != 0 {
+		t.Error("dependent view survived CASCADE; the prompt would be lying")
 	}
 	if n := count(t, su, "SELECT count(*) FROM pg_namespace WHERE nspname IN ('auth','storage','app')"); n != 0 {
 		t.Errorf("managed schemas left: %d", n)
@@ -141,7 +150,7 @@ func TestDBResetLockTimeoutIntegration(t *testing.T) {
 
 	start := time.Now()
 	err = runDBReset(ctx, dbResetOpts{configPath: "instancez.yaml", yes: true, getenv: os.Getenv,
-		tty: func() bool { return false }, confirm: func(string) bool { return false }, out: &bytes.Buffer{}})
+		tty: func() bool { return false }, out: &bytes.Buffer{}})
 	if time.Since(start) > 15*time.Second {
 		t.Errorf("reset took %v", time.Since(start))
 	}
@@ -150,5 +159,30 @@ func TestDBResetLockTimeoutIntegration(t *testing.T) {
 	}
 	if n := count(t, su, "SELECT count(*) FROM pg_tables WHERE tablename = 'todos'"); n != 1 {
 		t.Error("todos dropped despite failed reset")
+	}
+}
+
+func TestDBResetScopedPairIntegration(t *testing.T) {
+	ctx := context.Background()
+	dsn, su := resetIntegrationSetup(t)
+
+	ownerDSN, authDSN, err := bootstrapDB(ctx, dsn, rolesFromEnv())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("INSTANCEZ_OWNER_DATABASE_URL", ownerDSN)
+	t.Setenv("INSTANCEZ_AUTH_DATABASE_URL", authDSN)
+
+	err = runDBReset(ctx, dbResetOpts{configPath: "instancez.yaml", yes: true, getenv: os.Getenv,
+		tty: func() bool { return false }, out: &bytes.Buffer{}})
+	if err != nil {
+		t.Fatalf("pair reset: %v", err)
+	}
+	if n := count(t, su, "SELECT count(*) FROM pg_namespace WHERE nspname IN ('auth','storage','app')"); n != 0 {
+		t.Errorf("managed schemas left: %d", n)
+	}
+	provisionAndMigrate(t, ctx)
+	if n := count(t, su, "SELECT count(*) FROM public.todos"); n != 0 {
+		t.Errorf("todos rows = %d, want 0", n)
 	}
 }

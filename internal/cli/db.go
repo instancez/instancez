@@ -25,7 +25,6 @@ type dbResetOpts struct {
 	yes        bool
 	getenv     func(string) string
 	tty        func() bool
-	confirm    func(string) bool
 	out        io.Writer
 }
 
@@ -44,12 +43,15 @@ func newDBResetCmd() *cobra.Command {
 		Use:   "reset",
 		Short: "Drop all local database data (local only)",
 		Long: `Drop every schema instancez manages (public, auth, storage and the schemas
-your tables declare) and recreate an empty public schema. Schemas outside that
-set are left alone.
+your tables declare) and recreate an empty public schema. Other schemas are
+kept, but views, foreign keys and functions in them that depend on the dropped
+schemas are dropped too (DROP ... CASCADE); the prompt lists them.
 
 Refuses any database host that is not localhost, a loopback address or a unix
-socket. Asks for confirmation on a terminal; pass --yes in non-interactive
-sessions. It does not migrate: run inz dev afterwards to recreate the schema.
+socket (a tunnel or proxy on localhost counts as local). Asks for confirmation
+on a terminal; pass --yes in non-interactive sessions. It needs a valid
+instancez.yaml and does not migrate: run inz dev afterwards to recreate the
+schema.
 
 With --embedded-pg it deletes ./pgdata (next to the config file) instead, and
 refuses while inz dev --embedded-pg is running.`,
@@ -59,7 +61,10 @@ refuses while inz dev --embedded-pg is running.`,
 			if err := config.LoadDotenv(".development.env"); err != nil {
 				return err
 			}
-			o.getenv, o.tty, o.confirm, o.out = os.Getenv, stdioIsTTY, promptConfirm, cmd.OutOrStdout()
+			if _, err := applyEnvDefaults(cmd.Flags(), map[string][]string{"yes": {}}, os.Getenv); err != nil {
+				return err
+			}
+			o.getenv, o.tty, o.out = os.Getenv, stdioIsTTY, cmd.OutOrStdout()
 			return runDBReset(cmd.Context(), o)
 		},
 	}
@@ -99,7 +104,18 @@ func runDBReset(ctx context.Context, o dbResetOpts) error {
 	if err != nil {
 		return err
 	}
-	if err := confirmReset(o, target); err != nil {
+	if err := needsConfirmFlag(o); err != nil {
+		return err
+	}
+	deps, err := findDependents(ctx, dropDSN, schemas)
+	if err != nil {
+		return err
+	}
+	note := dependentsNote(deps)
+	if o.yes && note != "" {
+		_, _ = fmt.Fprint(o.out, note)
+	}
+	if err := confirmReset(o, target, note); err != nil {
 		return err
 	}
 	if err := dropSchemas(ctx, dropDSN, schemas); err != nil {
@@ -113,14 +129,21 @@ func runDBReset(ctx context.Context, o dbResetOpts) error {
 	return nil
 }
 
-func confirmReset(o dbResetOpts, target string) error {
+func needsConfirmFlag(o dbResetOpts) error {
+	if !o.yes && !o.tty() {
+		return errors.New("db reset needs confirmation; pass --yes in non-interactive sessions")
+	}
+	return nil
+}
+
+func confirmReset(o dbResetOpts, target, note string) error {
 	if o.yes {
 		return nil
 	}
-	if !o.tty() {
-		return errors.New("db reset needs confirmation; pass --yes in non-interactive sessions")
+	if err := needsConfirmFlag(o); err != nil {
+		return err
 	}
-	if !o.confirm(fmt.Sprintf("Drop all data in %s? [y/N] ", target)) {
+	if !promptConfirm(fmt.Sprintf("%sDrop all data in %s? [y/N] ", note, target)) {
 		return errors.New("db reset aborted")
 	}
 	return nil
@@ -135,9 +158,9 @@ func resetEmbedded(o dbResetOpts) error {
 		return err
 	}
 	if pid, running := pgdataRunning(dir); running {
-		return fmt.Errorf("inz dev appears to be running (PID %d); stop it first", pid)
+		return fmt.Errorf("inz dev appears to be running (PID %d); stop it first, or delete %s if no server is running", pid, filepath.Join(dir, "postmaster.pid"))
 	}
-	if err := confirmReset(o, dir); err != nil {
+	if err := confirmReset(o, dir, ""); err != nil {
 		return err
 	}
 	for _, p := range []string{dir, dir + ".runtime"} {
@@ -218,6 +241,58 @@ func resetSchemas(configPath string) ([]string, error) {
 	return out, nil
 }
 
+const dependentsSQL = `
+WITH s AS (SELECT oid FROM pg_namespace WHERE nspname = ANY($1))
+SELECT DISTINCT d FROM (
+  SELECT 'view ' || v.relnamespace::regnamespace || '.' || v.relname AS d
+    FROM pg_depend dep
+    JOIN pg_rewrite r ON dep.classid = 'pg_rewrite'::regclass AND dep.objid = r.oid
+    JOIN pg_class v ON v.oid = r.ev_class
+    JOIN pg_class t ON dep.refclassid = 'pg_class'::regclass AND dep.refobjid = t.oid
+   WHERE t.relnamespace IN (SELECT oid FROM s) AND v.relnamespace NOT IN (SELECT oid FROM s)
+  UNION ALL
+  SELECT 'foreign key ' || c.conrelid::regclass || '.' || c.conname
+    FROM pg_constraint c
+    JOIN pg_class parent ON parent.oid = c.confrelid
+    JOIN pg_class child ON child.oid = c.conrelid
+   WHERE c.contype = 'f' AND parent.relnamespace IN (SELECT oid FROM s) AND child.relnamespace NOT IN (SELECT oid FROM s)
+  UNION ALL
+  SELECT 'function ' || p.pronamespace::regnamespace || '.' || p.proname
+    FROM pg_depend dep
+    JOIN pg_proc p ON dep.classid = 'pg_proc'::regclass AND dep.objid = p.oid
+   WHERE dep.refclassid IN ('pg_class'::regclass, 'pg_type'::regclass)
+     AND dep.refobjid IN (SELECT oid FROM pg_class WHERE relnamespace IN (SELECT oid FROM s)
+                          UNION SELECT oid FROM pg_type WHERE typnamespace IN (SELECT oid FROM s))
+     AND p.pronamespace NOT IN (SELECT oid FROM s)
+) x ORDER BY d`
+
+// findDependents lists objects outside schemas that DROP SCHEMA ... CASCADE would also drop.
+var findDependents = func(ctx context.Context, dsn string, schemas []string) ([]string, error) {
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("connect: %w", err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	rows, err := conn.Query(ctx, dependentsSQL, schemas)
+	if err != nil {
+		return nil, fmt.Errorf("list dependent objects: %w", err)
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[string])
+}
+
+func dependentsNote(deps []string) string {
+	if len(deps) == 0 {
+		return ""
+	}
+	const max = 10
+	more := ""
+	if len(deps) > max {
+		more = fmt.Sprintf(" and %d more", len(deps)-max)
+		deps = deps[:max]
+	}
+	return "These objects in other schemas will also be dropped: " + strings.Join(deps, ", ") + more + "\n"
+}
+
 func dropSchemas(ctx context.Context, dsn string, schemas []string) error {
 	conn, err := pgx.Connect(ctx, dsn)
 	if err != nil {
@@ -242,4 +317,3 @@ func dropSchemas(ctx context.Context, dsn string, schemas []string) error {
 	}
 	return tx.Commit(ctx)
 }
-

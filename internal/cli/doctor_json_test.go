@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"io"
-	"os"
 	"testing"
 
 	"github.com/instancez/instancez/internal/cli/preflight"
@@ -52,20 +50,11 @@ func TestDoctorJSONStdoutIsPureJSON(t *testing.T) {
 	t.Setenv("INSTANCEZ_DATABASE_URL", "")
 	t.Chdir(t.TempDir())
 
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	orig := os.Stdout
-	os.Stdout = w
+	var out bytes.Buffer
 	root := NewRootCmd()
 	root.SetArgs([]string{"doctor", "--json", "--config", "missing.yaml"})
-	var cmdOut bytes.Buffer
-	root.SetOut(&cmdOut)
+	root.SetOut(&out)
 	execErr := root.Execute()
-	os.Stdout = orig
-	_ = w.Close()
-	data, _ := io.ReadAll(r)
 
 	if !errors.Is(execErr, errReported) {
 		t.Fatalf("err = %v, want errReported", execErr)
@@ -74,8 +63,8 @@ func TestDoctorJSONStdoutIsPureJSON(t *testing.T) {
 		OK     bool             `json:"ok"`
 		Checks []map[string]any `json:"checks"`
 	}
-	if err := json.Unmarshal(data, &got); err != nil {
-		t.Fatalf("stdout not pure JSON: %v\n%s", err, data)
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("output not pure JSON: %v\n%s", err, out.Bytes())
 	}
 	if got.OK || len(got.Checks) == 0 {
 		t.Errorf("got %+v", got)

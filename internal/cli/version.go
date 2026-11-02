@@ -27,10 +27,7 @@ func resolveVersion(ver, com string, info *debug.BuildInfo) (string, string) {
 }
 
 func versionString() string {
-	bi, ok := debug.ReadBuildInfo()
-	if !ok {
-		bi = nil
-	}
+	bi, _ := debug.ReadBuildInfo()
 	v, c := resolveVersion(version, commit, bi)
 	return fmt.Sprintf("instancez v%s (%s)", v, c)
 }

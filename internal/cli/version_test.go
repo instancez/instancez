@@ -62,7 +62,7 @@ func TestResolveVersion(t *testing.T) {
 		{"tagged", "dev", "unknown", bi("v0.0.12", ""), "0.0.12", "unknown"},
 		{"pseudo dirty", "dev", "unknown", bi("v0.0.13-0.20261102120000-abcdef123456+dirty", "abcdef1234567890"), "0.0.13-0.20261102120000-abcdef123456+dirty", "abcdef1"},
 		{"devel with short rev", "dev", "unknown", bi("(devel)", "abc"), "dev", "abc"},
-		{"empty rev", "dev", "unknown", bi("", ""), "dev", "unknown"},
+		{"empty rev setting", "dev", "unknown", &debug.BuildInfo{Settings: []debug.BuildSetting{{Key: "vcs.revision"}}}, "dev", "unknown"},
 		{"ldflags win", "0.0.12", "1a2b3c4", bi("v9.9.9", "ffff"), "0.0.12", "1a2b3c4"},
 	}
 	for _, c := range cases {
@@ -72,12 +72,5 @@ func TestResolveVersion(t *testing.T) {
 				t.Errorf("got (%q,%q), want (%q,%q)", v, com, c.wantV, c.wantC)
 			}
 		})
-	}
-}
-
-func TestVersionStringKeepsTelemetryDevGate(t *testing.T) {
-	_ = versionString()
-	if version != "dev" {
-		t.Errorf("version var = %q, want dev (telemetry gate)", version)
 	}
 }

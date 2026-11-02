@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"io"
 	"os"
 
 	"github.com/instancez/instancez/internal/cli/preflight"
@@ -21,7 +22,7 @@ Database checks are skipped when no DSN is set; "inz dev --embedded-pg" needs no
 
 Exits non-zero if any check fails.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDoctor(configPath, jsonOut)
+			return runDoctor(cmd.OutOrStdout(), configPath, jsonOut)
 		},
 	}
 	cmd.Flags().StringVar(&configPath, "config", "instancez.yaml", "path to instancez.yaml")
@@ -29,7 +30,7 @@ Exits non-zero if any check fails.`,
 	return cmd
 }
 
-func runDoctor(configPath string, jsonOut bool) error {
+func runDoctor(w io.Writer, configPath string, jsonOut bool) error {
 	// Load the development dotenv before querying env vars so DSN checks
 	// reflect the same environment that `inz dev` would see.
 	_ = config.LoadDotenv(".development.env")
@@ -37,11 +38,11 @@ func runDoctor(configPath string, jsonOut bool) error {
 	checks := doctorChecks(configPath, os.Getenv)
 	results := preflight.RunAll(checks)
 	if jsonOut {
-		if err := renderDoctorJSON(os.Stdout, results); err != nil {
+		if err := renderDoctorJSON(w, results); err != nil {
 			return err
 		}
 	} else {
-		preflight.Render(os.Stdout, results)
+		preflight.Render(w, results)
 	}
 
 	if preflight.AnyFailed(results) {

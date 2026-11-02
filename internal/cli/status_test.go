@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -82,25 +81,6 @@ func TestRenderStatusShowsDeployError(t *testing.T) {
 	assert.Contains(t, out, "lambda init crashed")
 }
 
-func TestRenderStatusJSON(t *testing.T) {
-	var buf bytes.Buffer
-	app := &cloud.GetAppResponse{ID: "p1", Name: "n", PublishableKey: "pk", Deployment: cloud.DeploymentInfo{Status: "building"}}
-	if err := renderStatusJSON(&buf, app); err != nil {
-		t.Fatal(err)
-	}
-	var got map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
-		t.Fatal(err)
-	}
-	dep := got["deployment"].(map[string]any)
-	if v, ok := dep["deployed_at"]; !ok || v != nil {
-		t.Errorf("deployed_at = %v (present=%v), want null", v, ok)
-	}
-	if got["publishable_key"] != "pk" {
-		t.Errorf("publishable_key = %v", got["publishable_key"])
-	}
-}
-
 func statusJSONSetup(t *testing.T, saveCreds bool) (cfg string, hits *atomic.Int32) {
 	t.Helper()
 	hits = &atomic.Int32{}
@@ -110,7 +90,7 @@ func statusJSONSetup(t *testing.T, saveCreds bool) (cfg string, hits *atomic.Int
 			http.NotFound(w, r)
 			return
 		}
-		_, _ = w.Write([]byte(`{"id":"proj_1","name":"demo","deployment":{"status":"deploy_done","deployed_at":null}}`))
+		_, _ = w.Write([]byte(`{"id":"proj_1","name":"demo","publishable_key":"pk","deployment":{"status":"deploy_done","deployed_at":null}}`))
 	}))
 	t.Cleanup(srv.Close)
 	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
@@ -129,19 +109,12 @@ func statusJSONSetup(t *testing.T, saveCreds bool) (cfg string, hits *atomic.Int
 
 func runStatusCapture(t *testing.T, cfg string) ([]byte, error) {
 	t.Helper()
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	orig := os.Stdout
-	os.Stdout = w
+	var out bytes.Buffer
 	root := NewRootCmd()
 	root.SetArgs([]string{"cloud", "status", "--json", "--config", cfg})
-	execErr := root.Execute()
-	os.Stdout = orig
-	_ = w.Close()
-	data, _ := io.ReadAll(r)
-	return data, execErr
+	root.SetOut(&out)
+	err := root.Execute()
+	return out.Bytes(), err
 }
 
 func TestStatusJSONEndToEnd(t *testing.T) {
@@ -150,25 +123,40 @@ func TestStatusJSONEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got cloud.GetAppResponse
+	var got map[string]any
 	if err := json.Unmarshal(data, &got); err != nil {
-		t.Fatalf("stdout not JSON: %v\n%s", err, data)
+		t.Fatalf("output not JSON: %v\n%s", err, data)
 	}
-	if got.ID != "proj_1" {
-		t.Errorf("id = %q", got.ID)
+	if got["id"] != "proj_1" || got["publishable_key"] != "pk" {
+		t.Errorf("got %v", got)
+	}
+	if v, ok := got["deployment"].(map[string]any)["deployed_at"]; !ok || v != nil {
+		t.Errorf("deployed_at = %v (present=%v), want null", v, ok)
 	}
 }
 
 func TestStatusJSONNoPrompt(t *testing.T) {
 	cfg, hits := statusJSONSetup(t, false)
+	var prompted, flowRan bool
+	prev := statusLogin
+	statusLogin = ensureLoginOpts{
+		isTTY:   func() bool { return true },
+		confirm: func(string) bool { prompted = true; return false },
+		runFlow: func() (cloud.Credentials, error) { flowRan = true; return cloud.Credentials{}, nil },
+	}
+	t.Cleanup(func() { statusLogin = prev })
+
 	data, err := runStatusCapture(t, cfg)
 	if err == nil || !strings.Contains(err.Error(), "inz cloud login") {
 		t.Fatalf("err = %v", err)
+	}
+	if prompted || flowRan {
+		t.Errorf("login prompted=%v flowRan=%v, want neither", prompted, flowRan)
 	}
 	if hits.Load() != 0 {
 		t.Errorf("server hit %d times", hits.Load())
 	}
 	if len(data) != 0 {
-		t.Errorf("stdout not empty: %q", data)
+		t.Errorf("output not empty: %q", data)
 	}
 }
