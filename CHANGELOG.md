@@ -32,7 +32,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Changed
 
-- `inz bundle` writes `./bundle.tar.gz` by default (was a temp file) and hides npm output unless `npm ci` fails.
+- `inz bundle` writes `./bundle.tar.gz` by default (was a temp file) and hides npm output unless `npm ci` fails. An empty `--output` is now an error, and the output file is never packed into the bundle.
 
 ### Fixed
 

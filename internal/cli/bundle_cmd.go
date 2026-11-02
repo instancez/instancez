@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -57,7 +58,10 @@ func runBundle(ctx context.Context, configPath, output string) error {
 	}
 	fmt.Println("  ✓ Schema valid")
 
-	bundlePath, err := BuildBundle(projectDir)
+	if output == "" {
+		return errors.New("--output needs a path or s3://bucket/key")
+	}
+	bundlePath, err := BuildBundle(projectDir, output)
 	if err != nil {
 		return fmt.Errorf("build bundle: %w", err)
 	}

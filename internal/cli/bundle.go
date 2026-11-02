@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -39,7 +40,7 @@ type manifestFunction struct {
 // functions/ to vendor dependencies; a failing `npm ci` aborts the build (bad
 // deps must never ship). The returned path points at a temp file the caller is
 // responsible for cleaning up.
-func BuildBundle(projectDir string) (bundlePath string, err error) {
+func BuildBundle(projectDir string, skip ...string) (bundlePath string, err error) {
 	functionsDir := filepath.Join(projectDir, "functions")
 	info, err := os.Stat(functionsDir)
 	if err != nil || !info.IsDir() {
@@ -77,7 +78,10 @@ func BuildBundle(projectDir string) (bundlePath string, err error) {
 			if len(out) > maxTail {
 				out = out[len(out)-maxTail:]
 			}
-			return "", fmt.Errorf("npm ci in %s: %w\n%s", functionsDir, err, strings.TrimSpace(string(out)))
+			if tail := strings.TrimSpace(strings.ToValidUTF8(string(out), "")); tail != "" {
+				return "", fmt.Errorf("npm ci in %s: %w\n%s", functionsDir, err, tail)
+			}
+			return "", fmt.Errorf("npm ci in %s: %w", functionsDir, err)
 		}
 	}
 
@@ -145,6 +149,9 @@ func BuildBundle(projectDir string) (bundlePath string, err error) {
 			return walkErr
 		}
 		if fi.IsDir() {
+			return nil
+		}
+		if slices.ContainsFunc(skip, func(s string) bool { return sameFile(s, path) }) {
 			return nil
 		}
 		// Skip the runtime shim — it's a runtime artifact, not source.
@@ -306,3 +313,8 @@ func resolveBundleDest(dest, version string) string {
 	return dest
 }
 
+func sameFile(a, b string) bool {
+	x, errA := os.Stat(a)
+	y, errB := os.Stat(b)
+	return errA == nil && errB == nil && os.SameFile(x, y)
+}

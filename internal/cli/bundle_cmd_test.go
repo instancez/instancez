@@ -65,3 +65,24 @@ func TestRunBundleRejectsS3Config(t *testing.T) {
 	assert.True(t, strings.Contains(err.Error(), "local") || strings.Contains(err.Error(), "remote"),
 		"error should explain the restriction")
 }
+
+func TestRunBundleDoesNotPackItsOwnOutput(t *testing.T) {
+	dir := writeBundleFixture(t)
+	configPath := filepath.Join(dir, "instancez.yaml")
+	out := filepath.Join(dir, "functions", "bundle.tar.gz")
+	require.NoError(t, runBundle(context.Background(), configPath, out))
+	first, err := os.Stat(out)
+	require.NoError(t, err)
+	require.NoError(t, runBundle(context.Background(), configPath, out))
+	assert.NotContains(t, tarEntries(t, out), "functions/bundle.tar.gz")
+	second, err := os.Stat(out)
+	require.NoError(t, err)
+	assert.InDelta(t, first.Size(), second.Size(), 64, "bundle must not grow between runs")
+}
+
+func TestRunBundleRejectsEmptyOutput(t *testing.T) {
+	dir := writeBundleFixture(t)
+	err := runBundle(context.Background(), filepath.Join(dir, "instancez.yaml"), "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--output needs a path or s3://bucket/key")
+}

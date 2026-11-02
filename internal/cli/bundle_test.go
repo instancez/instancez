@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -367,4 +368,18 @@ func TestBuildBundleNpmFlags(t *testing.T) {
 	got, err := os.ReadFile(argsFile)
 	require.NoError(t, err)
 	assert.Equal(t, "ci --no-audit --no-fund", strings.TrimSpace(string(got)))
+}
+
+func TestBuildBundleNpmFailureWithoutOutputHasNoTrailingNewline(t *testing.T) {
+	fakeNodeAndNpm(t, "exit 1")
+	_, err := BuildBundle(writeDepsFixture(t))
+	require.Error(t, err)
+	assert.False(t, strings.HasSuffix(err.Error(), "\n"), "%q", err.Error())
+}
+
+func TestBuildBundleNpmFailureTailIsValidUTF8(t *testing.T) {
+	fakeNodeAndNpm(t, "i=0; while [ $i -lt 2000 ]; do printf '€' >&2; i=$((i+1)); done; exit 1")
+	_, err := BuildBundle(writeDepsFixture(t))
+	require.Error(t, err)
+	assert.True(t, utf8.ValidString(err.Error()))
 }
