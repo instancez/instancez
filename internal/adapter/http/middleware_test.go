@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -531,6 +532,50 @@ func TestBodySizeLimit_FollowsLiveConfig(t *testing.T) {
 			cur = tc.size
 			if got := post(tc.path, tc.n); got != tc.want {
 				t.Errorf("status = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCorsMiddleware_PreflightAllowsPUT(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(corsMiddleware(func() domain.CORS { return domain.CORS{Origins: []string{"https://a.com"}} }, false))
+	req := httptest.NewRequest(http.MethodOptions, "/rest/v1/x", nil)
+	req.Header.Set("Origin", "https://a.com")
+	req.Header.Set("Access-Control-Request-Method", "PUT")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != 204 {
+		t.Fatalf("preflight status = %d, want 204", w.Code)
+	}
+	if got := w.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(got, "PUT") {
+		t.Errorf("Allow-Methods = %q, want PUT included", got)
+	}
+}
+
+func TestNewServer_CORSFallsBackToBootConfig(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	boot := &domain.Config{Project: domain.Project{Name: "t"}}
+	boot.Server.CORS.Origins = []string{"https://boot.com"}
+	cases := map[string]func() *domain.Config{
+		"nil ConfigFn":     nil,
+		"ConfigFn nil ret": func() *domain.Config { return nil },
+	}
+	for name, fn := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := NewServer(ServerDeps{
+				Config: boot, ConfigFn: fn,
+				DB:            domain.RequestDB{Database: &stubDB{}},
+				Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+				DashboardMode: DashboardDisabled,
+			}).Handler()
+			req := httptest.NewRequest(http.MethodGet, "/live", nil)
+			req.Header.Set("Origin", "https://boot.com")
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+			if got := w.Header().Get("Access-Control-Allow-Origin"); got != "https://boot.com" {
+				t.Errorf("ACAO = %q, want boot origin", got)
 			}
 		})
 	}
