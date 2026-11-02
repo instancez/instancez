@@ -425,6 +425,18 @@ func watchFunctionsDir(
 	reload func(*domain.Config),
 	logger *slog.Logger,
 ) {
+	watchFunctionsDirReady(ctx, dir, getConfig, reload, logger, nil)
+}
+
+// watchFunctionsDirReady closes ready (when non-nil) once the watches are armed.
+func watchFunctionsDirReady(
+	ctx context.Context,
+	dir string,
+	getConfig func() *domain.Config,
+	reload func(*domain.Config),
+	logger *slog.Logger,
+	ready chan<- struct{},
+) {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		logger.Warn("functions watcher: init failed", "error", err)
@@ -432,14 +444,17 @@ func watchFunctionsDir(
 	}
 	defer func() { _ = w.Close() }()
 
+	// Parent first, so a folder created during the tree scan still fires an event.
+	if err := w.Add(filepath.Dir(dir)); err != nil {
+		logger.Warn("functions watcher: watch failed", "dir", filepath.Dir(dir), "error", err)
+		return
+	}
 	if err := addWatchTree(w, dir); err != nil {
 		logger.Warn("functions watcher: watch failed", "dir", dir, "error", err)
 		return
 	}
-	// The parent watch sees the folder being created or recreated.
-	if err := w.Add(filepath.Dir(dir)); err != nil {
-		logger.Warn("functions watcher: watch failed", "dir", filepath.Dir(dir), "error", err)
-		return
+	if ready != nil {
+		close(ready)
 	}
 
 	var debounce *time.Timer

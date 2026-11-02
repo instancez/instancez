@@ -1308,6 +1308,7 @@ func TestHandlePutFunctionCode_CreatesMissingDir(t *testing.T) {
 	if w := put("hello", `{"content":"// hi"}`); w.Code != 200 {
 		t.Fatalf("write with no functions/ dir: code=%d body=%s", w.Code, w.Body.String())
 	}
+	// nosemgrep -- path is inside the test temp dir
 	got, err := os.ReadFile(filepath.Join(dir, "functions", "hello.js"))
 	if err != nil || string(got) != "// hi" {
 		t.Fatalf("file not written: %q err=%v", got, err)
