@@ -8,11 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"os/exec"
-	"path/filepath"
-	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -21,8 +17,7 @@ import (
 )
 
 const (
-	scaffoldSecretKey = "inz_secret_scaffoldtest"
-	scaffoldPubKey    = "inz_publishable_scaffoldtest"
+	scaffoldPubKey = "inz_publishable_reloadtest"
 )
 
 type scaffoldAPI struct {
@@ -80,46 +75,18 @@ func TestScaffoldBootsAndEnforces(t *testing.T) {
 	if _, err := exec.LookPath("npm"); err != nil {
 		t.Skip("npm not on PATH")
 	}
-	bin := filepath.Join(t.TempDir(), "inz")
-	if out, err := exec.Command("go", "build", "-o", bin, "../../cmd/inz").CombinedOutput(); err != nil {
-		t.Fatalf("build inz: %v\n%s", err, out)
-	}
 	proj := t.TempDir()
 	require.NoError(t, runInit(initOptions{dir: proj, name: "scaffold"}))
-
-	port := reloadTestPort(t)
-	var logs lockedBuffer
-	// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command, go_subproc_rule-subproc
-	cmd := exec.Command(bin, "dev", "--embedded-pg", "--port", fmt.Sprint(port))
-	cmd.Dir = proj
-	cmd.Env = append(os.Environ(), "INSTANCEZ_TELEMETRY_DISABLED=1", "INSTANCEZ_SECRET_KEY="+scaffoldSecretKey, "INSTANCEZ_PUBLISHABLE_KEY="+scaffoldPubKey)
-	cmd.Stdout, cmd.Stderr = &logs, &logs
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	require.NoError(t, cmd.Start())
-	t.Cleanup(func() {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-		_ = cmd.Wait()
-	})
+	port, logs := startDev(t, proj)
 
 	api := scaffoldAPI{t: t, base: fmt.Sprintf("http://127.0.0.1:%d", port)}
-	deadline := time.Now().Add(5 * time.Minute)
-	for {
-		if resp, err := http.Get(api.base + "/auth/v1/health"); err == nil {
-			_ = resp.Body.Close()
-			break
-		}
-		if time.Now().After(deadline) {
-			if isEmbeddedPGEnvLimitation(fmt.Errorf("%s", logs.String())) {
-				t.Skip("embedded Postgres unavailable in this environment")
-			}
-			t.Fatalf("server did not start:\n%s", logs.String())
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-
 	tokA, uidA := api.signup("a@example.com")
 	tokB, uidB := api.signup("b@example.com")
 	jsonHdr := map[string]string{"Content-Type": "application/json"}
+	bulk := func(paths ...string) []byte {
+		b, _ := json.Marshal(map[string]any{"prefixes": paths})
+		return b
+	}
 
 	t.Run("function validates with zod under the runtime", func(t *testing.T) {
 		var status int
@@ -148,7 +115,21 @@ func TestScaffoldBootsAndEnforces(t *testing.T) {
 
 		status, _ := api.do("DELETE", "/storage/v1/object/avatars/"+uidA+"/a.png", tokB, nil, nil)
 		assert.NotEqual(t, 200, status)
+		status, _ = api.do("DELETE", "/storage/v1/object/avatars", tokB, bulk(uidA+"/a.png"), jsonHdr)
+		assert.Less(t, status, 500)
 		status, _ = api.do("GET", "/storage/v1/object/public/avatars/"+uidA+"/a.png", "", nil, nil)
-		assert.Equal(t, 200, status, strings.TrimSpace(logs.String()))
+		assert.Equal(t, 200, status, "B must not delete A's avatar\n"+logs.String())
+	})
+
+	t.Run("owner can replace and delete their own avatar", func(t *testing.T) {
+		assert.Equal(t, 200, api.upload(tokA, uidA+"/a.png", true), "owner upsert")
+		status, out := api.do("DELETE", "/storage/v1/object/avatars", tokA, bulk(uidA+"/a.png"), jsonHdr)
+		assert.Equal(t, 200, status, string(out))
+		status, _ = api.do("GET", "/storage/v1/object/public/avatars/"+uidA+"/a.png", "", nil, nil)
+		assert.GreaterOrEqual(t, status, 400, "owner bulk delete must remove the object")
+
+		assert.Equal(t, 200, api.upload(tokA, uidA+"/b.png", false))
+		status, out = api.do("DELETE", "/storage/v1/object/avatars/"+uidA+"/b.png", tokA, nil, nil)
+		assert.Equal(t, 200, status, string(out))
 	})
 }

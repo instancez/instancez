@@ -329,20 +329,6 @@ func writeDepsFixture(t *testing.T) string {
 	return dir
 }
 
-func captureStdout(t *testing.T, fn func()) string {
-	t.Helper()
-	r, w, err := os.Pipe()
-	require.NoError(t, err)
-	orig := os.Stdout
-	os.Stdout = w
-	defer func() { os.Stdout = orig }()
-	fn()
-	require.NoError(t, w.Close())
-	out, err := io.ReadAll(r)
-	require.NoError(t, err)
-	return string(out)
-}
-
 func TestBuildBundleNpmQuietOnSuccess(t *testing.T) {
 	fakeNodeAndNpm(t, "echo 'added 1 package'; echo warn >&2")
 	dir := writeDepsFixture(t)
