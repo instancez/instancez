@@ -128,7 +128,7 @@ Removal DDL iterates sorted keys. Before that it ranged over maps, and a coupled
 Run through this before pushing or opening a PR. A PR that skips it is not done.
 
 1. **Feedback loop green.** See `<feedback_loop>`. If the change touches HTTP, auth, storage, RPC, or JWT handling, say in the PR body that `TestSupabaseJSCompat` passed.
-2. **Tests for the feature.** Cover success, failure and edge cases (zero, nil, empty, oversized, duplicate). Add a unit test, a regression test for any bug you fix (it must fail without the fix), and an integration test where a database or the HTTP stack is involved. Add a supabase-js case in `test/integration/supabase-js/run.mjs` when supabase-js has a matching API.
+2. **Tests for the feature.** Cover success, failure and applicable edge cases (zero, nil, empty, oversized, duplicate). Add a unit test, a regression test for any bug you fix (it must fail without the fix), and an integration test where a database or the HTTP stack is involved. Add a supabase-js case in `test/integration/supabase-js/run.mjs` when supabase-js has a matching API.
 3. **CHANGELOG.md.** Add a line under `## [Unreleased]` for every user-visible change (feature, fix, behavior/config/CLI/env change, breaking change). Start breaking ones with `Breaking,` and say what to change. Internal refactors and test-only changes can skip it.
 4. **Docs.** Update every place the change shows up, in the same PR:
 
