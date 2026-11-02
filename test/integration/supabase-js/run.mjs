@@ -561,6 +561,54 @@ await step('rest: update().single() on 0 and many rows', async () => {
   if (cleanup.error) throw cleanup.error
 })
 
+await step('rest: delete/insert/upsert .single() enforce exactly one row and roll back', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const count = async (title) => {
+    const r = await client.from('todos').select('id').eq('title', title)
+    if (r.error) throw r.error
+    return r.data.length
+  }
+  const ins = await client.from('todos').insert([
+    { title: 'single-del', user_id: userId },
+    { title: 'single-del', user_id: userId },
+  ])
+  if (ins.error) throw ins.error
+
+  const delMany = await client.from('todos').delete().eq('title', 'single-del').select().single()
+  assertEq(delMany.error?.code, 'PGRST116', 'delete().select().single() on 2 rows')
+  assertEq(await count('single-del'), 2, 'rejected delete must roll back')
+  const delZero = await client.from('todos').delete().eq('title', 'no-such-title').select().single()
+  assertEq(delZero.error?.code, 'PGRST116', 'delete().select().single() on 0 rows')
+  const delMaybe = await client.from('todos').delete().eq('title', 'no-such-title').select().maybeSingle()
+  if (delMaybe.error) throw delMaybe.error
+  assertEq(delMaybe.data, null, 'delete().maybeSingle() on 0 rows is null')
+
+  const insMany = await client.from('todos').insert([
+    { title: 'single-ins', user_id: userId },
+    { title: 'single-ins', user_id: userId },
+  ]).select().single()
+  assertEq(insMany.error?.code, 'PGRST116', 'bulk insert().select().single()')
+  assertEq(await count('single-ins'), 0, 'rejected insert must roll back')
+
+  const upMany = await client.from('todos').upsert([
+    { title: 'single-up', user_id: userId },
+    { title: 'single-up', user_id: userId },
+  ]).select().single()
+  assertEq(upMany.error?.code, 'PGRST116', 'bulk upsert().select().single()')
+  assertEq(await count('single-up'), 0, 'rejected upsert must roll back')
+
+  const left = await client.from('todos').select('id').eq('title', 'single-del')
+  if (left.error) throw left.error
+  const first = await client.from('todos').delete().eq('id', left.data[0].id)
+  if (first.error) throw first.error
+  const oneRow = await client.from('todos').delete().eq('id', left.data[1].id).select().single()
+  if (oneRow.error) throw oneRow.error
+  assert(!Array.isArray(oneRow.data), 'delete().select().single() on 1 row returns an object')
+})
+
 await step('rest: .match() regex operator', async () => {
   const client = createClient(URL, PUBLISHABLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
