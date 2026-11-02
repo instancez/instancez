@@ -428,7 +428,7 @@ func watchFunctionsDir(
 	watchFunctionsDirReady(ctx, dir, getConfig, reload, logger, nil)
 }
 
-// watchFunctionsDirReady closes ready (when non-nil) once the watches are armed.
+// watchFunctionsDirReady closes ready (when non-nil) once the parent-dir watch is armed, plus the tree watch if functions/ exists.
 func watchFunctionsDirReady(
 	ctx context.Context,
 	dir string,
