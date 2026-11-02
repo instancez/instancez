@@ -130,6 +130,7 @@ The `default` option accepts:
 
 - A literal value: `true`, `0`, `"pending"`
 - One of the allowed SQL functions: `now()`, `uuid_v7()`, `uuid_v4()`, `current_date`, `current_time`
+- An auth helper, which needs an `auth:` block and a matching column type: `auth.uid()` (`uuid`), `auth.role()` and `auth.email()` (`text`), `auth.jwt()` (`jsonb`). For `auth.uid()`, the signed-in caller's id fills the column on insert, and it is `NULL` for `anon` and `service_role` (a `required` column then rejects the insert). Pair it with `immutable: true` to stamp an owner that can't change.
 
 Note: `uuid_v7()` and `uuid_v4()` currently both generate a v4 UUID (`gen_random_uuid()`) — true v7 generation isn't wired up yet. Use whichever name reads better; there's no behavioral difference today.
 

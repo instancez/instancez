@@ -197,6 +197,8 @@ func planFromScratchStatements(cfg *domain.Config, roles domain.Roles) []string 
 	// Users table (core auth columns).
 	if cfg.Auth != nil {
 		ddl = append(ddl, generateAuthTables(cfg.Auth)...)
+		// Before the tables: a column default may call auth.uid().
+		ddl = append(ddl, generateRLSFunctions()...)
 	}
 
 	// Each table is followed by its indexes so later FKs find their unique index.
@@ -212,9 +214,6 @@ func planFromScratchStatements(cfg *domain.Config, roles domain.Roles) []string 
 	// Storage metadata table
 	ddl = append(ddl, generateStorageTables(cfg)...)
 
-	if cfg.Auth != nil {
-		ddl = append(ddl, generateRLSFunctions()...)
-	}
 	// Policies may call user RPCs, and SQL RPC bodies need the tables above.
 	for _, n := range sortedKeys(cfg.RPC) {
 		ddl = append(ddl, generateRPCFunction(n, cfg.RPC[n]))
@@ -263,6 +262,11 @@ func planUpdateStatements(oldCfg, newCfg *domain.Config, roles domain.Roles) []s
 	// heals on its next migration. This covers apps whose config has no auth block.
 	ddl = append(ddl, generateJWTKeysTable()...)
 
+	// Before any table DDL: a new column default may call auth.uid().
+	if newCfg.Auth != nil {
+		ddl = append(ddl, generateRLSFunctions()...)
+	}
+
 	// 0. Renames, before anything else looks at these tables by name.
 	ddl = append(ddl, diff.Renames...)
 
@@ -284,11 +288,6 @@ func planUpdateStatements(oldCfg, newCfg *domain.Config, roles domain.Roles) []s
 	for _, name := range ordered {
 		ddl = append(ddl, generateIndexes(name, newCfg.Tables[name])...)
 		ddl = append(ddl, generateGuards(name, newCfg.Tables[name])...)
-	}
-
-	// RLS functions (CREATE OR REPLACE)
-	if newCfg.Auth != nil {
-		ddl = append(ddl, generateRLSFunctions()...)
 	}
 
 	// Heal storage.objects on existing DBs. diffNewStorage only emits the

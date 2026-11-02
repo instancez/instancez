@@ -323,6 +323,18 @@ var allowedDefaults = map[string]bool{
 	"uuid_v4()":    true,
 	"current_date": true,
 	"current_time": true,
+	"auth.uid()":   true,
+	"auth.role()":  true,
+	"auth.email()": true,
+	"auth.jwt()":   true,
+}
+
+// authDefaultTypes lists the column types each auth.* default can fill.
+var authDefaultTypes = map[string]func(typ string) bool{
+	"auth.uid()":   func(t string) bool { return t == "uuid" },
+	"auth.role()":  isStringType,
+	"auth.email()": isStringType,
+	"auth.jwt()":   func(t string) bool { return t == "jsonb" || t == "json" },
 }
 
 // reservedTableNames cannot be used by user-defined tables.
@@ -603,6 +615,7 @@ func isTimestampType(t string) bool {
 
 func validateTables(tables map[string]domain.Table, auth *domain.Auth) domain.ValidationErrors {
 	var errs domain.ValidationErrors
+	resolve := domain.ResolverOver(tables)
 
 	for name, table := range tables {
 		path := fmt.Sprintf("tables.%s", name)
@@ -701,7 +714,7 @@ func validateTables(tables map[string]domain.Table, auth *domain.Auth) domain.Va
 
 			// Validate default values
 			if field.Default != nil {
-				errs = append(errs, validateDefault(fpath, field.Default)...)
+				errs = append(errs, validateDefault(fpath, field.Default, domain.EffectiveType(field, resolve), auth != nil)...)
 			}
 
 			// FK validation (structural — cross-ref checked separately)
@@ -1431,7 +1444,7 @@ func validateFieldType(path, typ string) domain.ValidationErrors {
 	return errs
 }
 
-func validateDefault(path string, val any) domain.ValidationErrors {
+func validateDefault(path string, val any, colType string, hasAuth bool) domain.ValidationErrors {
 	var errs domain.ValidationErrors
 	switch v := val.(type) {
 	case string:
@@ -1442,8 +1455,22 @@ func validateDefault(path string, val any) domain.ValidationErrors {
 				errs = append(errs, &domain.ValidationError{
 					Path:       path + ".default",
 					Message:    fmt.Sprintf("SQL expression %q is not in the allowed defaults list", v),
-					Suggestion: "Allowed: now(), uuid_v7(), uuid_v4(), current_date, current_time",
+					Suggestion: "Allowed: now(), uuid_v7(), uuid_v4(), current_date, current_time, auth.uid(), auth.role(), auth.email(), auth.jwt()",
 				})
+			} else if fits, ok := authDefaultTypes[lower]; ok {
+				switch {
+				case !hasAuth:
+					errs = append(errs, &domain.ValidationError{
+						Path:       path + ".default",
+						Message:    fmt.Sprintf("default %s needs an auth: block", v),
+						Suggestion: "Add an auth: block (the auth.* helpers are installed with it)",
+					})
+				case !fits(strings.ToLower(colType)):
+					errs = append(errs, &domain.ValidationError{
+						Path:    path + ".default",
+						Message: fmt.Sprintf("default %s does not fit a %s column", v, colType),
+					})
+				}
 			}
 		}
 		// Plain string literals are always OK

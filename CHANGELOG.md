@@ -7,6 +7,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 ### Added
 
 - `inz --version` prints the same line as `inz version`.
+- Column defaults accept `auth.uid()`, `auth.role()`, `auth.email()` and `auth.jwt()` (checked against the column type), so `created_by uuid default auth.uid()` works. The auth helper functions are now created before the tables.
 
 ### Fixed
 
