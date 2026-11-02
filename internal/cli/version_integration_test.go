@@ -33,6 +33,7 @@ func TestGoBuildVersionIntegration(t *testing.T) {
 	if !strings.Contains(string(info), "vcs.revision") {
 		t.Skip("binary has no VCS stamp")
 	}
+	// nosemgrep -- runs the binary the test just built
 	cmd := exec.Command(bin, "--version")
 	cmd.Env = append(os.Environ(), "INSTANCEZ_TELEMETRY_DISABLED=1")
 	out, err := cmd.Output()

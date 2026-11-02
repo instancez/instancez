@@ -174,6 +174,7 @@ func resetEmbedded(o dbResetOpts) error {
 
 // pgdataRunning reports whether the pid in postmaster.pid is a live process.
 func pgdataRunning(dataDir string) (pid int, running bool) {
+	// nosemgrep -- fixed filename inside the operator-supplied data dir
 	b, err := os.ReadFile(filepath.Join(dataDir, "postmaster.pid"))
 	if err != nil {
 		return 0, false
@@ -308,6 +309,7 @@ func dropSchemas(ctx context.Context, dsn string, schemas []string) error {
 		return err
 	}
 	for _, s := range schemas {
+		// nosemgrep -- schema is quoted by pgx.Identifier.Sanitize
 		if _, err := tx.Exec(ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{s}.Sanitize()+" CASCADE"); err != nil {
 			return fmt.Errorf("drop schema %s: %w", s, err)
 		}

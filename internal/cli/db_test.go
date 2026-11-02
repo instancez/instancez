@@ -223,6 +223,7 @@ func TestDBResetEmbeddedRefusesLivePID(t *testing.T) {
 }
 
 func TestDBResetEmbeddedStalePID(t *testing.T) {
+	// nosemgrep -- re-executes this test binary
 	cmd := exec.Command(os.Args[0], "-test.run=^$")
 	if err := cmd.Run(); err != nil {
 		t.Fatal(err)
