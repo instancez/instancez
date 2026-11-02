@@ -5,6 +5,8 @@ package http_test
 import (
 	"bytes"
 	"context"
+	crand "crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -24,12 +26,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	tc "github.com/testcontainers/testcontainers-go"
 	pgcontainer "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	adapterauth "github.com/instancez/instancez/internal/adapter/auth"
 	instancezhttp "github.com/instancez/instancez/internal/adapter/http"
+	"github.com/instancez/instancez/internal/adapter/oidc"
 	"github.com/instancez/instancez/internal/app"
 	"github.com/instancez/instancez/internal/cli"
 	"github.com/instancez/instancez/internal/domain"
@@ -158,6 +162,8 @@ func TestSupabaseJSCompat(t *testing.T) {
 			// Backs the OAuth/PKCE/identity-link run.mjs coverage — the
 			// wire-level counterpart to fakeOAuthProvider above.
 			OAuth: map[string]*domain.OAuthProvider{
+				// signInWithIdToken coverage: keys are seeded in runSignupDisabledJS.
+				"google": {ClientID: "cid"},
 				"fake": {
 					ClientID:     "test-client",
 					ClientSecret: "test-secret",
@@ -561,11 +567,8 @@ func TestSupabaseJSCompat(t *testing.T) {
 
 func runSignupDisabledFlow(t *testing.T, cfg *domain.Config, baseURL, publishableKey, secretKey string) {
 	t.Helper()
-	// Restore via Cleanup so any t.Fatalf below still resets the live cfg
-	// — the dispatcher reads this pointer on every request.
 	disabled := false
 	cfg.Auth.AllowSignup = &disabled
-	t.Cleanup(func() { cfg.Auth.AllowSignup = nil })
 
 	signupBody := bytes.NewBufferString(`{"email":"blocked@example.com","password":"hunter2hunter2"}`)
 	signupReq, _ := http.NewRequest("POST", baseURL+"/auth/v1/signup", signupBody)
@@ -577,13 +580,16 @@ func runSignupDisabledFlow(t *testing.T, cfg *domain.Config, baseURL, publishabl
 	}
 	bodyBytes, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	if resp.StatusCode != 403 {
-		t.Fatalf("disabled signup: status = %d, want 403; body = %s", resp.StatusCode, bodyBytes)
+	if resp.StatusCode != 422 {
+		t.Fatalf("disabled signup: status = %d, want 422; body = %s", resp.StatusCode, bodyBytes)
 	}
 	var env map[string]any
 	_ = json.Unmarshal(bodyBytes, &env)
 	if env["code"] != "signup_disabled" {
 		t.Errorf("disabled signup: code = %v, want signup_disabled; body = %s", env["code"], bodyBytes)
+	}
+	if env["message"] != "Signups not allowed for this instance" {
+		t.Errorf("disabled signup: message = %v, want GoTrue message; body = %s", env["message"], bodyBytes)
 	}
 
 	// Anonymous signup (empty body) is also blocked when allow_signup=false.
@@ -596,8 +602,8 @@ func runSignupDisabledFlow(t *testing.T, cfg *domain.Config, baseURL, publishabl
 	}
 	anonBytes, _ := io.ReadAll(anonResp.Body)
 	_ = anonResp.Body.Close()
-	if anonResp.StatusCode != 403 {
-		t.Fatalf("disabled signup: anonymous status = %d, want 403; body = %s", anonResp.StatusCode, anonBytes)
+	if anonResp.StatusCode != 422 {
+		t.Fatalf("disabled signup: anonymous status = %d, want 422; body = %s", anonResp.StatusCode, anonBytes)
 	}
 
 	// Admin-keyed create user must still succeed.
@@ -615,6 +621,47 @@ func runSignupDisabledFlow(t *testing.T, cfg *domain.Config, baseURL, publishabl
 	_ = adminResp.Body.Close()
 	if adminResp.StatusCode != 200 {
 		t.Fatalf("disabled signup: admin/users status = %d, want 200; body = %s", adminResp.StatusCode, adminRespBody)
+	}
+
+	runSignupDisabledJS(t, baseURL, publishableKey, adminEmail)
+}
+
+// runSignupDisabledJS asserts supabase-js surfaces the 422s as AuthApiError.
+func runSignupDisabledJS(t *testing.T, baseURL, publishableKey, existingEmail string) {
+	t.Helper()
+	harnessDir, err := filepath.Abs("../../../test/integration/supabase-js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := rsa.GenerateKey(crand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oidc.SeedKeys("google", map[string]*rsa.PublicKey{"k1": &key.PublicKey})
+	t.Cleanup(func() { oidc.SeedKeys("google", nil) })
+	idToken := func(sub, email string) string {
+		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+			"iss": "https://accounts.google.com", "aud": "cid", "sub": sub, "email": email,
+			"email_verified": true, "exp": time.Now().Add(time.Minute).Unix(),
+		})
+		tok.Header["kid"] = "k1"
+		signed, err := tok.SignedString(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return signed
+	}
+
+	cmd := exec.Command("node", "signup-disabled.mjs")
+	cmd.Dir = harnessDir
+	cmd.Env = append(os.Environ(),
+		"INSTANCEZ_URL="+baseURL, "INSTANCEZ_PUBLISHABLE_KEY="+publishableKey,
+		"EXISTING_EMAIL="+existingEmail, "EXISTING_PASSWORD=hunter2hunter2",
+		"NEW_ID_TOKEN="+idToken("g-new", "idtoken-new@example.com"),
+		"EXISTING_ID_TOKEN="+idToken("g-existing", existingEmail))
+	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("supabase-js signup-disabled harness failed: %v", err)
 	}
 }
 

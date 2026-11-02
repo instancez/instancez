@@ -39,7 +39,7 @@ func TestOAuthLoginError(t *testing.T) {
 		status     int
 		code, frag string
 	}{
-		{domain.ErrSignupDisabled, 403, "signup_disabled", "Signups not allowed"},
+		{domain.ErrSignupDisabled, 422, "signup_disabled", "Signups not allowed for this instance"},
 		{domain.ErrProviderEmailUnverified, 422, "provider_email_needs_verification", "Unverified email with google"},
 		{domain.ErrOAuthLinkRefused, 422, "email_exists", "confirm your email"},
 		{errors.New("db"), 500, "internal", "Failed to create or find user"},
@@ -54,7 +54,7 @@ func TestOAuthLoginError(t *testing.T) {
 }
 
 func TestOAuthLoginError_CodesAreStableSlugs(t *testing.T) {
-	for _, slug := range []string{"provider_email_needs_verification", "email_exists"} {
+	for _, slug := range []string{"provider_email_needs_verification", "email_exists", "signup_disabled", "anonymous_provider_disabled"} {
 		if errTypeToCode[slug] != slug {
 			t.Errorf("%s maps to %q", slug, errTypeToCode[slug])
 		}
@@ -496,5 +496,61 @@ func TestOAuthCallback_MissingEmailRedirectsToApp(t *testing.T) {
 	loc := w.Header().Get("Location")
 	if upserted || w.Code != 302 || !strings.HasPrefix(loc, "http://app.local/cb") || !strings.Contains(loc, "error_description=") {
 		t.Fatalf("upserted=%v status %d loc %q body %s", upserted, w.Code, loc, w.Body.String())
+	}
+}
+
+func TestIDTokenGrant_TokenField(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oidc.SeedKeys("google", map[string]*rsa.PublicKey{"k1": &key.PublicKey})
+	t.Cleanup(func() { oidc.SeedKeys("google", nil) })
+	claims := jwt.MapClaims{"iss": "https://accounts.google.com", "aud": "cid", "sub": "g-new", "email": "new@e.com", "exp": time.Now().Add(time.Minute).Unix()}
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	tok.Header["kid"] = "k1"
+	signed, _ := tok.SignedString(key)
+
+	cases := []struct {
+		name, body string
+		reaches    bool
+		status     int
+		frag       string
+	}{
+		{"id_token only (supabase-js)", `{"provider":"google","id_token":"` + signed + `"}`, true, 422, `"code":"signup_disabled"`},
+		{"token only (legacy)", `{"provider":"google","token":"` + signed + `"}`, true, 422, `"code":"signup_disabled"`},
+		{"both: id_token wins", `{"provider":"google","id_token":"` + signed + `","token":"garbage"}`, true, 422, `"code":"signup_disabled"`},
+		{"empty id_token falls back to token", `{"provider":"google","id_token":"","token":"` + signed + `"}`, true, 422, `"code":"signup_disabled"`},
+		{"neither", `{"provider":"google"}`, false, 400, "Missing provider or id_token"},
+		{"both empty", `{"provider":"google","id_token":"","token":""}`, false, 400, "Missing provider or id_token"},
+		{"no provider", `{"id_token":"` + signed + `"}`, false, 400, "Missing provider or id_token"},
+	}
+	no := false
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got domain.OAuthLogin
+			h := &AuthHandler{
+				cfg:    &domain.Config{Auth: &domain.Auth{AllowSignup: &no, OAuth: map[string]*domain.OAuthProvider{"google": {ClientID: "cid"}}}},
+				logger: slog.New(slog.NewTextHandler(io.Discard, nil)), jwtKeys: stubKeys(t),
+				authSvc: &stubAuthService{upsertOAuthUserFn: func(_ context.Context, in domain.OAuthLogin) (map[string]any, error) {
+					got = in
+					return nil, domain.ErrSignupDisabled
+				}},
+			}
+			r := gin.New()
+			r.POST("/token", h.handleIDTokenGrant)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest("POST", "/token", strings.NewReader(tc.body)))
+			if w.Code != tc.status || !strings.Contains(w.Body.String(), tc.frag) {
+				t.Fatalf("status %d body %s", w.Code, w.Body.String())
+			}
+			if tc.reaches && (got.AllowSignup || got.Email != "new@e.com") {
+				t.Fatalf("login passed to service = %+v", got)
+			}
+			if !tc.reaches && got.Provider != "" {
+				t.Fatalf("service reached on rejected request: %+v", got)
+			}
+		})
 	}
 }
