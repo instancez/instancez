@@ -394,11 +394,15 @@ func Warnings(cfg *domain.Config) domain.ValidationErrors {
 		path := "tables." + name + ".rls_enabled"
 		switch {
 		case t.RLSEnabled == nil && len(t.RLS) > 0:
-			// policies imply RLS on
+			ws = append(ws, &domain.ValidationError{
+				Path:       path,
+				Message:    "not set, inferred as true because the table has rls policies; removing the last policy would turn RLS off",
+				Suggestion: "Add rls_enabled: true",
+			})
 		case t.RLSEnabled == nil:
 			ws = append(ws, &domain.ValidationError{
 				Path:       path,
-				Message:    fmt.Sprintf("not set, inferred as %t from the rls policies; set rls_enabled explicitly", t.EffectiveRLSEnabled()),
+				Message:    "not set, inferred as false (RLS is off): anon and authenticated clients can read and write every row",
 				Suggestion: "Add rls_enabled: true (deny by default) or rls_enabled: false (public table)",
 			})
 		case !*t.RLSEnabled:

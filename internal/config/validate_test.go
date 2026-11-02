@@ -749,8 +749,8 @@ func TestWarnings_RLSEnabled(t *testing.T) {
 		rls     []domain.RLSPolicy
 		want    string // substring of Message; "" = no warning
 	}{
-		{"unset, no policies", nil, nil, "set rls_enabled explicitly"},
-		{"unset, with policies", nil, pol, ""},
+		{"unset, no policies", nil, nil, "RLS is off"},
+		{"unset, with policies", nil, pol, "inferred as true because the table has rls policies"},
 		{"false, no policies", &off, nil, "RLS is disabled"},
 		{"true, no policies", &on, nil, ""},
 		{"true, with policies", &on, pol, ""},
@@ -770,6 +770,9 @@ func TestWarnings_RLSEnabled(t *testing.T) {
 			}
 			if len(ws) != 1 || ws[0].Path != "tables.todos.rls_enabled" || !strings.Contains(ws[0].Message, tc.want) {
 				t.Fatalf("want one warning at tables.todos.rls_enabled containing %q, got %v", tc.want, ws)
+			}
+			if strings.Contains(ws[0].Message, "from the rls policies") {
+				t.Fatalf("misleading message: %q", ws[0].Message)
 			}
 		})
 	}
