@@ -162,7 +162,7 @@ Declare a foreign key with `foreign_key.references` pointing to `table.column` o
     on_delete: cascade
 ```
 
-When `foreign_key` is the only option on a field, the column type uses a heuristic: `UUID` for `auth.users.id`, `BIGINT` for all other references. The type is not inferred from the actual referenced column.
+When `foreign_key` is the only option on a field, the column type is inferred from the referenced column: `UUID` for `auth.users.id`, the referenced column's type for another table's field (integer types give `BIGINT`). A reference that can't be resolved (unknown table, cross-schema, or circular) falls back to `BIGINT`. Set `type` to override.
 
 **`on_delete` options:**
 

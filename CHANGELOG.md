@@ -4,11 +4,17 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Added
+
+- `inz --version` prints the same line as `inz version`.
+
 ### Fixed
 
 - `server.cors` and `server.max_body_size` now apply on config reload (`inz dev` file watch, dashboard save) without a restart.
 - A config reload whose migration fails with no last-known-good no longer leaves the failed config live (its CORS and body limit applied to requests), and now reports drift.
 - The singular-object `Accept` check keeps quoted commas and escaped quotes in media-type parameters together and ignores `q` values above 1, `NaN` and `Inf`.
+- `inz dev` no longer creates an empty `functions/` folder. It starts watching when the folder appears, including after you delete and recreate it.
+- Docs: a `foreign_key` field with no `type` takes the referenced column's type; the schema page wrongly said it was always `BIGINT`.
 
 ### Changed
 

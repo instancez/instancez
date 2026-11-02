@@ -104,6 +104,9 @@ func TestDevHotReload_AtomicRenameSave(t *testing.T) {
 	if got := restStatus(port, "notes"); got != 404 {
 		t.Fatalf("notes before reload = %d, want 404", got)
 	}
+	if _, err := os.Stat(filepath.Join(proj, "functions")); !os.IsNotExist(err) {
+		t.Fatalf("inz dev created functions/ in a project without functions (stat err = %v)", err)
+	}
 
 	tmp := filepath.Join(proj, ".instancez.yaml.tmp")
 	if err := os.WriteFile(tmp, []byte(reloadTableYAML), 0o644); err != nil {
