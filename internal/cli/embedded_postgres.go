@@ -19,25 +19,13 @@ import (
 // the data directory is wiped first. Returns a stop func (call on shutdown)
 // and the superuser DSN to inject as INSTANCEZ_DATABASE_URL.
 func startEmbeddedPostgres(opts devOptions) (stop func(), dsn string, err error) {
-	port, err := freePort()
-	if err != nil {
-		return nil, "", fmt.Errorf("find free port for embedded Postgres: %w", err)
-	}
-
 	// The library defaults its logger to os.Stdout, which floods the dev banner
 	// with initdb/pg_ctl chatter and PG's own server log. Capture it instead and
 	// surface it only when Start fails.
 	// ponytail: buffer grows with PG's session logging; fine for a dev session.
 	var pgLog bytes.Buffer
-	pg := embeddedpostgres.NewDatabase(
-		embeddedpostgres.DefaultConfig().
-			Version(embeddedpostgres.V16).
-			DataPath(opts.pgDataDir).
-			RuntimePath(opts.pgDataDir + ".runtime").
-			Port(port).
-			Logger(&pgLog),
-	)
-
+	var pg *embeddedpostgres.EmbeddedPostgres
+	var port uint32
 	err = withFileLock(startLockPath(), pgStartLockTimeout, func() error {
 		if pid, livePort, live := liveEmbeddedPG(opts.pgDataDir); live {
 			return fmt.Errorf("%w (Postgres PID %d, port %d)", errEmbeddedPGRunning, pid, livePort)
@@ -47,7 +35,24 @@ func startEmbeddedPostgres(opts devOptions) (stop func(), dsn string, err error)
 				return fmt.Errorf("reset pgdata: %w", err)
 			}
 		}
-		return pg.Start()
+		p, err := preferredPGPort(opts.pgDataDir)
+		if err != nil {
+			return fmt.Errorf("find free port for embedded Postgres: %w", err)
+		}
+		port = p
+		pg = embeddedpostgres.NewDatabase(
+			embeddedpostgres.DefaultConfig().
+				Version(embeddedpostgres.V16).
+				DataPath(opts.pgDataDir).
+				RuntimePath(opts.pgDataDir + ".runtime").
+				Port(port).
+				Logger(&pgLog),
+		)
+		if err := pg.Start(); err != nil {
+			return err
+		}
+		_ = os.WriteFile(filepath.Join(opts.pgDataDir, pgPortFile), []byte(strconv.Itoa(int(port))), 0o600)
+		return nil
 	})
 	if errors.Is(err, errEmbeddedPGRunning) {
 		return nil, "", err
@@ -62,6 +67,21 @@ func startEmbeddedPostgres(opts devOptions) (stop func(), dsn string, err error)
 			fmt.Fprintf(os.Stderr, "embedded Postgres stop: %v\n", err)
 		}
 	}, superuserDSN, nil
+}
+
+const pgPortFile = ".inz-port"
+
+// preferredPGPort reuses the port saved in dataDir when it is still free, else picks a new one.
+func preferredPGPort(dataDir string) (uint32, error) {
+	if data, err := os.ReadFile(filepath.Join(dataDir, pgPortFile)); err == nil {
+		if p, perr := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 16); perr == nil && p > 0 {
+			if l, lerr := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.FormatUint(p, 10))); lerr == nil {
+				_ = l.Close()
+				return uint32(p), nil
+			}
+		}
+	}
+	return freePort()
 }
 
 var errEmbeddedPGRunning = errors.New("another inz dev is already using this pgdata directory")

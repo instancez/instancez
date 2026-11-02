@@ -31,6 +31,10 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - A second `inz dev --embedded-pg` in the same project now stops with "another inz dev is already using this pgdata directory (Postgres PID N, port P)" instead of suggesting `--reset-pg`, and `--reset-pg` no longer wipes a data directory another `inz dev` is using.
 - A hot reload whose migration fails now logs the failure and keeps the running config's functions; it used to log "config reloaded successfully" and load functions from the rejected config.
 
+### Changed
+
+- `inz dev --embedded-pg` reuses the same Postgres port across runs (stored in `pgdata/.inz-port`, new port if busy) and prints the connection URL in the startup banner.
+
 
 ## [0.0.12] - 2026-11-02
 

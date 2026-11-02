@@ -5,6 +5,8 @@ package cli
 import (
 	"context"
 	"errors"
+	"net"
+	"path/filepath"
 	"os"
 	"strings"
 	"sync"
@@ -163,5 +165,35 @@ func TestStartEmbeddedPostgres_ConcurrentStartsOneWins(t *testing.T) {
 	}
 	if ok != 1 || refused != 1 {
 		t.Fatalf("ok=%d refused=%d, want exactly one of each", ok, refused)
+	}
+}
+
+func TestStartEmbeddedPostgres_PortStableAcrossRestarts(t *testing.T) {
+	dir := t.TempDir()
+	stop, dsn1 := startPGOrSkip(t, devOptions{pgDataDir: dir})
+	stop()
+
+	stop, dsn2 := startPGOrSkip(t, devOptions{pgDataDir: dir})
+	if dsn2 != dsn1 {
+		t.Fatalf("port changed across restart: %s -> %s", dsn1, dsn2)
+	}
+	stop()
+
+	port := strings.SplitN(strings.SplitN(dsn1, "localhost:", 2)[1], "/", 2)[0]
+	l, err := net.Listen("tcp", "127.0.0.1:"+port)
+	if err != nil {
+		t.Skipf("could not occupy port %s: %v", port, err)
+	}
+	defer func() { _ = l.Close() }()
+	_, dsn3 := startPGOrSkip(t, devOptions{pgDataDir: dir})
+	if dsn3 == dsn1 {
+		t.Fatalf("started on a busy port: %s", dsn3)
+	}
+	saved, err := os.ReadFile(filepath.Join(dir, pgPortFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(dsn3, "localhost:"+string(saved)+"/") {
+		t.Fatalf("port file %q does not match dsn %s", saved, dsn3)
 	}
 }

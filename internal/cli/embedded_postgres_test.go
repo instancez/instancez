@@ -273,3 +273,54 @@ func TestStartEmbeddedPostgres_ResetRefusedWhileLiveUnit(t *testing.T) {
 		t.Fatalf("--reset-pg wiped a live data dir: %v", serr)
 	}
 }
+
+func TestPreferredPGPort(t *testing.T) {
+	free, err := freePort()
+	if err != nil {
+		t.Fatal(err)
+	}
+	held, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = held.Close() }()
+	heldPort := uint32(held.Addr().(*net.TCPAddr).Port)
+
+	cases := []struct {
+		name    string
+		content *string
+		want    uint32 // 0 = any valid free port other than heldPort
+	}{
+		{name: "no file"},
+		{name: "empty", content: ptr("")},
+		{name: "garbage", content: ptr("abc")},
+		{name: "zero", content: ptr("0")},
+		{name: "too large", content: ptr("70000")},
+		{name: "negative", content: ptr("-5")},
+		{name: "free port with whitespace", content: ptr(fmt.Sprintf(" %d\n", free)), want: free},
+		{name: "busy port", content: ptr(fmt.Sprint(heldPort))},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.content != nil {
+				if err := os.WriteFile(filepath.Join(dir, pgPortFile), []byte(*tc.content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := preferredPGPort(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.want != 0 {
+				if got != tc.want {
+					t.Fatalf("got %d, want %d", got, tc.want)
+				}
+				return
+			}
+			if got == 0 || got > 65535 || got == heldPort {
+				t.Fatalf("got %d, want a free valid port", got)
+			}
+		})
+	}
+}

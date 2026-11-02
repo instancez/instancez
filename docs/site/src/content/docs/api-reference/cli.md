@@ -49,7 +49,7 @@ inz dev [flags]
 | `--dashboard` | `readwrite` | Dashboard mode: `disabled`, `readonly`, or `readwrite`. |
 | `--dashboard-write-dotenv` | `true` | Allow the dashboard to write secrets to `.development.env`. |
 | `--dotenv-path` | `.development.env` | Path to the .env file for dashboard secret writing. |
-| `--embedded-pg` | `false` | Start an embedded Postgres 16 (data at `./pgdata/`); no external DB needed. |
+| `--embedded-pg` | `false` | Start an embedded Postgres 16 (data at `./pgdata/`); no external DB needed. Prints its DSN in the banner; port is kept across runs. |
 | `--no-watch` | `false` | Disable hot-reload. |
 | `--port` | (from config or `8080`) | Override server port. |
 | `--reset-pg` | `false` | Wipe `./pgdata/` before starting (requires `--embedded-pg`). Refused while another `inz dev` uses `./pgdata/`. |

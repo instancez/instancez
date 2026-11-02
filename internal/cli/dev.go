@@ -135,7 +135,7 @@ func runDev(opts devOptions) error {
 	logger := otel.ComposeLogger(base, otelHandler)
 
 	// Gather startup facts for the sectioned banner printed just before serving.
-	banner := devBanner{embedded: embeddedSuperuserDSN != "", functions: -1, cfg: cfg, opts: opts}
+	banner := devBanner{embedded: embeddedSuperuserDSN != "", dbURL: embeddedSuperuserDSN, functions: -1, cfg: cfg, opts: opts}
 
 	ctx := context.Background()
 	ownerDB, authDB, roles, err := dbConnections(ctx, cfg.Database.Pool, embeddedSuperuserDSN)
@@ -303,6 +303,7 @@ func captureDevRuntimeError(err error) {
 // commentary interleaved with the structured logger.
 type devBanner struct {
 	embedded  bool   // embedded Postgres was started
+	dbURL     string // embedded superuser DSN to print, "" to omit
 	email     string // email provider type, "" if none
 	storage   string // storage provider type, "" if none
 	functions int    // code functions loaded, -1 if the runtime is absent
@@ -325,6 +326,9 @@ func (b devBanner) write(w io.Writer) {
 	pf("\n  Database\n")
 	if b.embedded {
 		pf("    ✓ Embedded Postgres 16 ready\n")
+		if b.dbURL != "" {
+			pf("    URL        %s\n", b.dbURL)
+		}
 	}
 	pf("    ✓ Connected (owner + authenticator)\n")
 
