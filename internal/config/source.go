@@ -75,6 +75,24 @@ func NewSource(spec string) (Source, error) {
 type FileSource struct {
 	Path    string
 	EnvPath string // optional: also watch this file and force-reload its vars before re-reading Path
+	Local   bool   // local dev: tolerate unset INSTANCEZ_ENV_* secrets (see ParseBytesLocal)
+}
+
+// ParseSourceBytes parses data the way src loads its own config.
+func ParseSourceBytes(src Source, data []byte) (*domain.Config, error) {
+	if f, ok := src.(*FileSource); ok && f.Local {
+		cfg, _, err := ParseBytesLocal(data, src.Describe())
+		return cfg, err
+	}
+	return ParseBytes(data, src.Describe())
+}
+
+// ValidateSource validates cfg with the same strictness src loads with.
+func ValidateSource(src Source, cfg *domain.Config) domain.ValidationErrors {
+	if f, ok := src.(*FileSource); ok && f.Local {
+		return ValidateLocal(cfg)
+	}
+	return Validate(cfg)
 }
 
 // NewFileSourceWithEnv returns a FileSource that watches both configPath and
@@ -90,7 +108,7 @@ func (s *FileSource) Load(ctx context.Context) (*domain.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	return ParseBytes(data, s.Path)
+	return ParseSourceBytes(s, data)
 }
 
 func (s *FileSource) Read(ctx context.Context) ([]byte, string, error) {

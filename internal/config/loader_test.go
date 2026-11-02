@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -451,57 +452,74 @@ func TestLoad_MaxLimitNegativeDisablesCap(t *testing.T) {
 	}
 }
 
-func TestBlankMissingEnv(t *testing.T) {
-	t.Setenv("BME_SET", "real")
-	_ = os.Unsetenv("BME_UNSET")
-	_ = os.Unsetenv("BME_UNSET2")
-	_ = os.Unsetenv("BME_DEFAULTED")
-	t.Cleanup(func() { _ = os.Unsetenv("BME_UNSET"); _ = os.Unsetenv("BME_UNSET2") })
-
+func TestParseBytesLocal(t *testing.T) {
+	t.Setenv("INSTANCEZ_ENV_PBL_SET", "real")
+	for _, n := range []string{"INSTANCEZ_ENV_PBL_UNSET", "INSTANCEZ_ENV_PBL_UNSET2", "PBL_CORE"} {
+		t.Setenv(n, "")
+		_ = os.Unsetenv(n)
+	}
+	const head = "version: 1\nproject:\n  name: p\nauth:\n  oauth:\n    github:\n      client_id: id\n"
 	tests := []struct {
-		name    string
-		in      string
-		want    []string
-		wantEnv map[string]string
+		name       string
+		secretLine string
+		extra      string
+		wantSecret string
+		wantBlank  []string
+		wantErr    bool
 	}{
-		{"nothing referenced", "version: 1\n", nil, nil},
-		{"empty input", "", nil, nil},
-		{"set var untouched", "a: ${BME_SET}", nil, map[string]string{"BME_SET": "real"}},
-		{"unset var blanked", "a: ${BME_UNSET}", []string{"BME_UNSET"}, map[string]string{"BME_UNSET": ""}},
-		{"default var left alone", "a: ${BME_DEFAULTED:-x}", nil, nil},
-		{"duplicates reported once", "a: ${BME_UNSET} b: ${BME_UNSET} c: ${BME_UNSET2}", []string{"BME_UNSET", "BME_UNSET2"}, nil},
+		{"set var used", "      client_secret: ${INSTANCEZ_ENV_PBL_SET}\n", "", "real", nil, false},
+		{"unset user var blanked", "      client_secret: ${INSTANCEZ_ENV_PBL_UNSET}\n", "", "", []string{"INSTANCEZ_ENV_PBL_UNSET"}, false},
+		{"default honored", "      client_secret: ${INSTANCEZ_ENV_PBL_UNSET:-dflt}\n", "", "dflt", nil, false},
+		{"duplicates reported once, sorted", "      client_secret: ${INSTANCEZ_ENV_PBL_UNSET2}${INSTANCEZ_ENV_PBL_UNSET}${INSTANCEZ_ENV_PBL_UNSET}\n", "", "", []string{"INSTANCEZ_ENV_PBL_UNSET", "INSTANCEZ_ENV_PBL_UNSET2"}, false},
+		{"comment-only refs ignored", "      client_secret: x\n", "# ${INSTANCEZ_ENV_PBL_UNSET}\n", "x", nil, false},
+		{"non-user var still errors", "      client_secret: ${PBL_CORE}\n", "", "", nil, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_ = os.Unsetenv("BME_UNSET")
-			_ = os.Unsetenv("BME_UNSET2")
-			got := BlankMissingEnv([]byte(tt.in))
-			if !slices.Equal(got, tt.want) {
-				t.Fatalf("missing = %v, want %v", got, tt.want)
-			}
-			for k, v := range tt.wantEnv {
-				if got, ok := os.LookupEnv(k); !ok || got != v {
-					t.Errorf("env %s = %q (set=%v), want %q", k, got, ok, v)
+			cfg, blanked, err := ParseBytesLocal([]byte(head+tt.secretLine+tt.extra), "t")
+			if tt.wantErr {
+				var me *domain.MissingEnvError
+				if !errors.As(err, &me) || !slices.Equal(me.Vars, []string{"PBL_CORE"}) {
+					t.Fatalf("err = %v, want MissingEnvError[PBL_CORE]", err)
 				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.Auth.OAuth["github"].ClientSecret; got != tt.wantSecret {
+				t.Errorf("secret = %q, want %q", got, tt.wantSecret)
+			}
+			if !slices.Equal(blanked, tt.wantBlank) {
+				t.Errorf("blanked = %v, want %v", blanked, tt.wantBlank)
 			}
 		})
 	}
-	if _, ok := os.LookupEnv("BME_DEFAULTED"); ok {
-		t.Error("var with a :- default must not be exported")
+}
+
+// Local parsing must not touch the process environment, so child processes never inherit blanks.
+func TestParseBytesLocalDoesNotSetenv(t *testing.T) {
+	t.Setenv("INSTANCEZ_ENV_PBL_NOSET", "")
+	_ = os.Unsetenv("INSTANCEZ_ENV_PBL_NOSET")
+	src := "version: 1\nproject:\n  name: p\nauth:\n  oauth:\n    github:\n      client_id: id\n      client_secret: ${INSTANCEZ_ENV_PBL_NOSET}\n"
+	if _, _, err := ParseBytesLocal([]byte(src), "t"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := os.LookupEnv("INSTANCEZ_ENV_PBL_NOSET"); ok {
+		t.Fatal("ParseBytesLocal exported an env var")
+	}
+	if _, err := ParseBytes([]byte(src), "t"); err == nil {
+		t.Fatal("strict parse must still fail on the unset var")
 	}
 }
 
-// After blanking, the strict loader must accept the config, so dev's reload
-// path (which parses strictly) never sees MissingEnvError.
-func TestBlankMissingEnvUnblocksStrictParse(t *testing.T) {
-	_ = os.Unsetenv("BME_SECRET")
-	t.Cleanup(func() { _ = os.Unsetenv("BME_SECRET") })
-	src := []byte("version: 1\nproject:\n  name: p\nauth:\n  oauth:\n    github:\n      client_id: id\n      client_secret: ${BME_SECRET}\n")
-	if _, err := ParseBytes(src, "t"); err == nil {
-		t.Fatal("precondition: strict parse should fail on unset var")
+func TestParseBytesLocalInvalidYAML(t *testing.T) {
+	if _, _, err := ParseBytesLocal([]byte("version: 1\n  bad: : :"), "t"); err == nil {
+		t.Fatal("want invalid YAML error")
 	}
-	BlankMissingEnv(src)
-	if _, err := ParseBytes(src, "t"); err != nil {
-		t.Fatalf("strict parse after blanking: %v", err)
+	_, _, localErr := ParseBytesLocal(nil, "t")
+	_, strictErr := ParseBytes(nil, "t")
+	if (localErr == nil) != (strictErr == nil) {
+		t.Fatalf("empty input: local err %v, strict err %v, want same outcome", localErr, strictErr)
 	}
 }

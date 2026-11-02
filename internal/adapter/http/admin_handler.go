@@ -412,7 +412,7 @@ func (h *AdminHandler) handlePutConfig(c *gin.Context) {
 		return
 	}
 	newCfg := *newCfgPtr
-	if errs := config.Validate(&newCfg); errs != nil {
+	if errs := config.ValidateSource(h.configSource, &newCfg); errs != nil {
 		var errList []gin.H
 		for _, e := range errs {
 			item := gin.H{"path": e.Path, "message": e.Message}
@@ -594,7 +594,7 @@ func (h *AdminHandler) handlePreviewConfig(c *gin.Context) {
 		return
 	}
 	newCfg := *newCfgPtr
-	if errs := config.Validate(&newCfg); errs != nil {
+	if errs := config.ValidateSource(h.configSource, &newCfg); errs != nil {
 		var errList []gin.H
 		for _, e := range errs {
 			item := gin.H{"path": e.Path, "message": e.Message}

@@ -269,7 +269,7 @@ func (e *Engine) runWatcher(ctx context.Context, interval time.Duration) {
 				e.logger.Warn("config watch transient error", "error", ev.Err)
 				continue
 			}
-			cfg, err := config.ParseBytes(ev.Data, e.source.Describe())
+			cfg, err := config.ParseSourceBytes(e.source, ev.Data)
 			if err != nil {
 				e.logger.Error("config reload: parse failed", "error", err)
 				e.reportRuntimeError(err)
@@ -278,7 +278,7 @@ func (e *Engine) runWatcher(ctx context.Context, interval time.Duration) {
 				}
 				continue
 			}
-			if errs := config.Validate(cfg); errs != nil {
+			if errs := config.ValidateSource(e.source, cfg); errs != nil {
 				e.logger.Error("config reload: validation failed", "count", len(errs))
 				e.reportRuntimeError(errs)
 				if d := e.Drift(); d != nil {

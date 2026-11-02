@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/instancez/instancez/internal/domain"
@@ -38,6 +39,57 @@ func ParseBytes(data []byte, origin string) (*domain.Config, error) {
 
 	applyDefaults(&cfg)
 	return &cfg, nil
+}
+
+// ParseBytesLocal is ParseBytes for local dev: an unset ${INSTANCEZ_ENV_*} with
+// no default becomes "" and is returned so callers can warn. Any other unset
+// var still fails, and comment lines are ignored.
+func ParseBytesLocal(data []byte, origin string) (*domain.Config, []string, error) {
+	var blanked, missing []string
+	lines := strings.Split(string(data), "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		lines[i] = envVarPattern.ReplaceAllStringFunc(line, func(match string) string {
+			g := envVarPattern.FindStringSubmatch(match)
+			if val, ok := os.LookupEnv(g[1]); ok {
+				return val
+			}
+			if strings.Contains(match, ":-") {
+				return g[2]
+			}
+			if strings.HasPrefix(g[1], instancezEnvPrefix) {
+				blanked = append(blanked, g[1])
+				return ""
+			}
+			missing = append(missing, g[1])
+			return match
+		})
+	}
+	if len(missing) > 0 {
+		slices.Sort(missing)
+		return nil, nil, &domain.MissingEnvError{Vars: slices.Compact(missing)}
+	}
+	var cfg domain.Config
+	if err := decodeYAMLStrict([]byte(strings.Join(lines, "\n")), &cfg); err != nil {
+		return nil, nil, &domain.ConfigError{Path: origin, Message: "invalid YAML", Err: err}
+	}
+	applyDefaults(&cfg)
+	slices.Sort(blanked)
+	return &cfg, slices.Compact(blanked), nil
+}
+
+// LoadLocalWithDotenv is LoadWithDotenv using ParseBytesLocal; it returns the blanked var names.
+func LoadLocalWithDotenv(configPath, dotenvPath string) (*domain.Config, []string, error) {
+	if err := LoadDotenv(dotenvPath); err != nil {
+		return nil, nil, err
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, nil, &domain.ConfigError{Path: configPath, Message: "cannot read file", Err: err}
+	}
+	return ParseBytesLocal(data, configPath)
 }
 
 // LoadWithDotenv loads a .env file (if present) into the process environment,
@@ -132,22 +184,6 @@ func interpolateEnvVarsLenient(input string) string {
 		}
 		return unresolvedEnvPlaceholder // missing var: keep parse/validate unblocked
 	})
-}
-
-// BlankMissingEnv exports "" for every ${VAR} in data that is unset and has no
-// :- default, and returns their names. Local-only commands (dev, validate) call
-// it so a not-yet-configured secret warns instead of blocking.
-func BlankMissingEnv(data []byte) []string {
-	var missing []string
-	for _, m := range envVarPattern.FindAllStringSubmatch(string(data), -1) {
-		name := m[1]
-		if _, ok := os.LookupEnv(name); ok || strings.Contains(m[0], ":-") {
-			continue
-		}
-		_ = os.Setenv(name, "")
-		missing = append(missing, name)
-	}
-	return missing
 }
 
 // EnvRefs returns the unique names of all ${VAR} references in data, extracted
