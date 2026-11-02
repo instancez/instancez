@@ -9,7 +9,7 @@ instancez has no HTTP-level RBAC. Every access decision is a Postgres row-level 
 
 Each entry in `rls:` is a policy object with these fields:
 
-- `operations` — either exactly one of `select`, `insert`, `update`, `delete`, or all four together. Partial combinations (e.g. `[insert, update]`) are rejected.
+- `operations` — one or more of `select`, `insert`, `update`, `delete`, for example `[insert, update]`. Each operation gets its own policy.
 - `using` — a SQL boolean expression that decides which existing rows the operation can see or target. Read by `select`, `update`, `delete`.
 - `with_check` — a SQL boolean expression that decides what a written row is allowed to look like. Read by `insert`, `update`.
 - at least one of `using`/`with_check` is required, whichever your operations read. `select`/`delete` have no `with_check` fallback and `insert` has no `using` fallback, so those always need the matching field directly. For `update` alone, the two fields aren't symmetric. Setting only `using` gets `with_check` auto-filled with the same expression, for both permissive and restrictive policies. Setting only `with_check` auto-fills `using` only when `type: restrictive` is set. On a permissive (default) `update` policy, `with_check` alone leaves `using` unset, and that blocks every update through the policy, so set `using` explicitly there too.

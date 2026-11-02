@@ -267,6 +267,20 @@ func TestGenerateRLSPolicies_SelectDeleteNeverEmitWithCheck(t *testing.T) {
 	mustContain(t, joined, "FOR DELETE USING (true)")
 }
 
+func TestGenerateRLSPolicies_PartialOps(t *testing.T) {
+	table := domain.Table{RLS: []domain.RLSPolicy{
+		{Operations: []string{"select", "insert"}, Using: "a", WithCheck: "b"},
+	}}
+	joined := strings.Join(generateRLSPolicies("t", table), "\n")
+
+	mustContain(t, joined, "CREATE POLICY t_select_0")
+	mustContain(t, joined, "FOR SELECT USING (a)")
+	mustContain(t, joined, "CREATE POLICY t_insert_0")
+	mustContain(t, joined, "FOR INSERT WITH CHECK (b)")
+	mustNotContain(t, joined, "t_update_0")
+	mustNotContain(t, joined, "t_delete_0")
+}
+
 func TestGenerateRLSPolicies_NoRLS(t *testing.T) {
 	table := domain.Table{}
 	ddl := generateRLSPolicies("todos", table)

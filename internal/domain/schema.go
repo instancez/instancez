@@ -411,7 +411,7 @@ func (t Table) HasGuards() bool {
 // be set explicitly. See validateRLS in internal/config/validate.go for the
 // exact rule.
 type RLSPolicy struct {
-	Operations []string `yaml:"operations" json:"operations"`                     // exactly one of select/insert/update/delete, or all four
+	Operations []string `yaml:"operations" json:"operations"`                     // one or more of select/insert/update/delete
 	Using      string   `yaml:"using,omitempty" json:"using,omitempty"`           // SQL boolean expression
 	WithCheck  string   `yaml:"with_check,omitempty" json:"with_check,omitempty"` // SQL boolean expression
 	Type       string   `yaml:"type,omitempty" json:"type,omitempty"`             // permissive (default) | restrictive

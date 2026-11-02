@@ -120,7 +120,7 @@ RLS is the only authorization layer. There is no HTTP-level RBAC and no role tab
 | Publishable key + user JWT | `authenticated` | enforced |
 | Secret key | `service_role` | bypassed |
 
-Each policy entry has `operations` (exactly one of select/insert/update/delete, or all four together; other combinations are rejected), `using` (which existing rows the operation may touch), and `with_check` (what a written row may look like).
+Each policy entry has `operations` (one or more of select/insert/update/delete), `using` (which existing rows the operation may touch), and `with_check` (what a written row may look like).
 
 ```yaml
 rls:
