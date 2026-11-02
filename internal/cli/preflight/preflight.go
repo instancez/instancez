@@ -5,23 +5,25 @@ package preflight
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"strings"
+	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/instancez/instancez/internal/config"
 	"github.com/instancez/instancez/internal/domain"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // DSN env-var names used by dbConnections.  Exported so tests can reference
 // the exact names without duplicating the string literals.
 const (
-	EnvOwnerDSN      = "INSTANCEZ_OWNER_DATABASE_URL"
-	EnvAuthDSN       = "INSTANCEZ_AUTH_DATABASE_URL"
-	EnvSuperuserDSN  = "INSTANCEZ_DATABASE_URL"
+	EnvOwnerDSN     = "INSTANCEZ_OWNER_DATABASE_URL"
+	EnvAuthDSN      = "INSTANCEZ_AUTH_DATABASE_URL"
+	EnvSuperuserDSN = "INSTANCEZ_DATABASE_URL"
 )
 
 // expectedRoleNames returns the full set of Postgres role names that an
@@ -163,17 +165,21 @@ func SuperuserDSNPresentCheck(lookup func(string) string) Check {
 // PortFreeCheck fails when the HTTP port is already bound; port <= 0 always passes.
 func PortFreeCheck(port int) Check {
 	return func() Result {
-		if port > 0 {
-			l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-			if err != nil {
-				return Result{
-					Name:    "port free",
-					Detail:  fmt.Sprintf("port %d is already in use", port),
-					FixHint: "stop the process using it or pass --port <other>",
-				}
-			}
-			_ = l.Close()
+		if port <= 0 {
+			return Result{Name: "port free", OK: true}
 		}
+		l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+		switch {
+		case errors.Is(err, syscall.EADDRINUSE):
+			return Result{
+				Name:    "port free",
+				Detail:  fmt.Sprintf("port %d is already in use", port),
+				FixHint: "stop the process using it or pass --port <other>",
+			}
+		case err != nil:
+			return Result{Name: "port free", Detail: err.Error(), FixHint: "pass a usable --port"}
+		}
+		_ = l.Close()
 		return Result{Name: "port free", OK: true}
 	}
 }

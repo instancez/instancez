@@ -6,14 +6,16 @@ import (
 	"context"
 	"errors"
 	"net"
-	"path/filepath"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/instancez/instancez/internal/cli/preflight"
 )
 
 // TestStartEmbeddedPostgres_BootsAndAcceptsConnections covers the `inz dev
@@ -195,5 +197,26 @@ func TestStartEmbeddedPostgres_PortStableAcrossRestarts(t *testing.T) {
 	}
 	if !strings.Contains(dsn3, "localhost:"+string(saved)+"/") {
 		t.Fatalf("port file %q does not match dsn %s", saved, dsn3)
+	}
+}
+
+func TestDoctorChecks_ReachableDBReportsConnectAndLayout(t *testing.T) {
+	_, dsn := startPGOrSkip(t, devOptions{pgDataDir: t.TempDir()})
+	lookup := func(k string) string {
+		if k == "INSTANCEZ_DATABASE_URL" {
+			return dsn
+		}
+		return ""
+	}
+	checks := doctorChecks("instancez.yaml", lookup)
+	if len(checks) != 4 {
+		t.Fatalf("got %d checks, want 4 (config, DSN, connect, role layout)", len(checks))
+	}
+	results := preflight.RunAll(checks)
+	if r := results[2]; r.Name != "database connect" || !r.OK {
+		t.Fatalf("connect result = %+v, want a passing database connect", r)
+	}
+	if r := results[3]; r.Name != "role layout" {
+		t.Fatalf("last result = %+v, want role layout", r)
 	}
 }

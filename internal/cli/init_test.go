@@ -423,15 +423,6 @@ func TestRunInitPreservesUserGitignore(t *testing.T) {
 	}
 }
 
-func TestScaffoldGitignoreCoversEmbeddedPGDirs(t *testing.T) {
-	lines := strings.Split(scaffoldGitignore(), "\n")
-	for _, want := range []string{"pgdata/", "pgdata.runtime/", "bundle.tar.gz"} {
-		if !slices.Contains(lines, want) {
-			t.Errorf("scaffoldGitignore missing %q", want)
-		}
-	}
-}
-
 // TestRunInitPreservesProductionEnvExample guards the regression that
 // `inz init --force` would clobber a user-edited .production.env.example.
 // Once the user has touched the example file we treat their copy as

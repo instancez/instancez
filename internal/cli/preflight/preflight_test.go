@@ -109,10 +109,10 @@ func TestConfigValidCheck_LocalFileMissing(t *testing.T) {
 
 func TestDSNPresentCheck(t *testing.T) {
 	cases := []struct {
-		name    string
-		env     map[string]string
-		wantOK  bool
-		wantErr string // substring expected in Detail when !wantOK
+		name     string
+		env      map[string]string
+		wantOK   bool
+		wantErr  string // substring expected in Detail when !wantOK
 		wantHint string
 	}{
 		{
@@ -133,10 +133,10 @@ func TestDSNPresentCheck(t *testing.T) {
 			wantErr: preflight.EnvAuthDSN,
 		},
 		{
-			name:    "both missing",
-			env:     map[string]string{},
-			wantOK:  false,
-			wantErr: "not set",
+			name:     "both missing",
+			env:      map[string]string{},
+			wantOK:   false,
+			wantErr:  "not set",
 			wantHint: "inz dev --embedded-pg",
 		},
 	}
@@ -296,8 +296,14 @@ func TestRoleLayoutCheck_GrantsQueryError(t *testing.T) {
 func TestRunAll_NoShortCircuit(t *testing.T) {
 	called := make([]bool, 3)
 	checks := []preflight.Check{
-		func() preflight.Result { called[0] = true; return preflight.Result{Name: "a", OK: false, FixHint: "fix a"} },
-		func() preflight.Result { called[1] = true; return preflight.Result{Name: "b", OK: false, FixHint: "fix b"} },
+		func() preflight.Result {
+			called[0] = true
+			return preflight.Result{Name: "a", OK: false, FixHint: "fix a"}
+		},
+		func() preflight.Result {
+			called[1] = true
+			return preflight.Result{Name: "b", OK: false, FixHint: "fix b"}
+		},
 		func() preflight.Result { called[2] = true; return preflight.Result{Name: "c", OK: true} },
 	}
 	results := preflight.RunAll(checks)
@@ -415,5 +421,15 @@ func TestConnectCheckEmptyDSNHintsEmbeddedPG(t *testing.T) {
 	r := preflight.ConnectCheck("database connect", "")()
 	if r.OK || !strings.Contains(r.FixHint, "inz dev --embedded-pg") {
 		t.Fatalf("got %+v", r)
+	}
+}
+
+func TestPortFreeCheckOtherListenErrors(t *testing.T) {
+	r := preflight.PortFreeCheck(70000)()
+	if r.OK {
+		t.Fatalf("out-of-range port passed: %+v", r)
+	}
+	if strings.Contains(r.Detail, "already in use") {
+		t.Fatalf("invalid port reported as in use: %q", r.Detail)
 	}
 }

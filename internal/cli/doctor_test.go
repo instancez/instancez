@@ -107,28 +107,3 @@ func TestDoctorChecksUnreachableDBOneFailure(t *testing.T) {
 		}
 	}
 }
-
-// TestDoctorChecksContainsExpectedChecks is a membership guard that asserts
-// doctorChecks returns exactly the expected set of named checks.  If a check
-// is accidentally removed this test will fail, preventing a silent regression.
-func TestDoctorChecksContainsExpectedChecks(t *testing.T) {
-	noEnv := func(string) string { return "" }
-	checks := doctorChecks("instancez.yaml", noEnv)
-
-	// Without a DSN only the config and DSN checks remain.
-	names := make(map[string]bool, len(checks))
-	for _, c := range checks {
-		r := c()
-		names[r.Name] = true
-	}
-
-	required := []string{"config file valid", "Superuser DSN present"}
-	for _, want := range required {
-		if !names[want] {
-			t.Errorf("doctorChecks is missing check %q; got names: %v", want, names)
-		}
-	}
-	if len(checks) != len(required) {
-		t.Errorf("doctorChecks returned %d checks, want %d; names: %v", len(checks), len(required), names)
-	}
-}

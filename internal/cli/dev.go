@@ -42,6 +42,11 @@ func newDevCmd() *cobra.Command {
 	return cmd
 }
 
+func failPreflight(r preflight.Result) error {
+	fmt.Fprintf(os.Stderr, "  ✗ %s — %s\n    hint: %s\n", r.Name, r.Detail, r.FixHint)
+	return reported("preflight:" + r.Name)
+}
+
 func runDev(opts devOptions) error {
 	config.DefaultLocalStorage = true
 
@@ -68,8 +73,7 @@ func runDev(opts devOptions) error {
 		checks = append(checks, preflight.SuperuserDSNPresentCheck(os.Getenv))
 	}
 	if r, failed := preflight.RunUntilFail(checks); failed {
-		fmt.Fprintf(os.Stderr, "  ✗ %s — %s\n    hint: %s\n", r.Name, r.Detail, r.FixHint)
-		return reported("preflight:" + r.Name)
+		return failPreflight(r)
 	}
 
 	cfg, blanked, err := config.LoadLocalWithDotenv(opts.configPath, ".development.env")
@@ -102,15 +106,10 @@ func runDev(opts devOptions) error {
 	}
 
 	if r := preflight.PortFreeCheck(cfg.Server.Port)(); !r.OK {
-		fmt.Fprintf(os.Stderr, "  ✗ %s — %s\n    hint: %s\n", r.Name, r.Detail, r.FixHint)
-		return reported("preflight:" + r.Name)
+		return failPreflight(r)
 	}
 
-	// Embedded Postgres owns a throwaway local database; its superuser DSN is
-	// threaded straight into dbConnections below. We deliberately do not read or
-	// write any DSN env var for it. Scoped DSNs (or a stale superuser DSN) left
-	// in the shell or .development.env from an earlier external-Postgres setup
-	// must not redirect the instance at the wrong database.
+	// The embedded DSN goes straight to dbConnections, never through env vars.
 	var embeddedSuperuserDSN string
 	if opts.dbSrc == DevDBSourceEmbedded {
 		fmt.Printf("  Starting embedded Postgres 16...\n")
@@ -140,7 +139,7 @@ func runDev(opts devOptions) error {
 	logger := otel.ComposeLogger(base, otelHandler)
 
 	// Gather startup facts for the sectioned banner printed just before serving.
-	banner := devBanner{embedded: embeddedSuperuserDSN != "", dbURL: embeddedSuperuserDSN, functions: -1, cfg: cfg, opts: opts}
+	banner := newDevBanner(embeddedSuperuserDSN, cfg, opts)
 
 	ctx := context.Background()
 	ownerDB, authDB, roles, err := dbConnections(ctx, cfg.Database.Pool, embeddedSuperuserDSN)
@@ -245,7 +244,7 @@ func runDev(opts devOptions) error {
 		app.WithHTTPServer(httpServer),
 		app.WithFunctionReload(reloadFuncs),
 		app.WithOTelShutdown(otelShutdown),
-		app.WithOnReady(func() { captureDevReady(banner.embedded, len(cfg.Functions), len(cfg.Tables)) }),
+		app.WithOnReady(func() { captureDevReady(banner.dbURL != "", len(cfg.Functions), len(cfg.Tables)) }),
 		app.WithOnRuntimeError(captureDevRuntimeError),
 	)
 
@@ -307,13 +306,17 @@ func captureDevRuntimeError(err error) {
 // summary can be printed as one grouped, sectioned block rather than a running
 // commentary interleaved with the structured logger.
 type devBanner struct {
-	embedded  bool   // embedded Postgres was started
-	dbURL     string // embedded superuser DSN to print, "" to omit
+	dbURL     string // embedded superuser DSN; "" when Postgres is external
 	email     string // email provider type, "" if none
 	storage   string // storage provider type, "" if none
 	functions int    // code functions loaded, -1 if the runtime is absent
 	cfg       *domain.Config
 	opts      devOptions
+}
+
+// newDevBanner takes only the embedded DSN, so an external DSN can never reach the banner.
+func newDevBanner(embeddedDSN string, cfg *domain.Config, opts devOptions) devBanner {
+	return devBanner{dbURL: embeddedDSN, functions: -1, cfg: cfg, opts: opts}
 }
 
 // print writes the sectioned dev startup summary to stdout.
@@ -329,11 +332,9 @@ func (b devBanner) write(w io.Writer) {
 	pf("\n  instancez v%s\n", version)
 
 	pf("\n  Database\n")
-	if b.embedded {
+	if b.dbURL != "" {
 		pf("    ✓ Embedded Postgres 16 ready\n")
-		if b.dbURL != "" {
-			pf("    URL        %s\n", b.dbURL)
-		}
+		pf("    URL        %s\n", b.dbURL)
 	}
 	pf("    ✓ Connected (owner + authenticator)\n")
 

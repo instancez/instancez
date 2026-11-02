@@ -90,8 +90,7 @@ func runServe(opts serveOptions) error {
 		if r, failed := preflight.RunUntilFail([]preflight.Check{
 			preflight.ConfigValidCheck(opts.configPath),
 		}); failed {
-			fmt.Fprintf(os.Stderr, "  ✗ %s — %s\n    hint: %s\n", r.Name, r.Detail, r.FixHint)
-			return reported("preflight:" + r.Name)
+			return failPreflight(r)
 		}
 
 		if err := requireConfigFile(opts.configPath); err != nil {

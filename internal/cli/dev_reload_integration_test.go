@@ -80,25 +80,25 @@ func (l *lockedBuffer) String() string {
 	return l.b.String()
 }
 
-func TestDevHotReload_AtomicRenameSave(t *testing.T) {
+func buildInz(t *testing.T) string {
+	t.Helper()
 	bin := filepath.Join(t.TempDir(), "inz")
 	if out, err := exec.Command("go", "build", "-o", bin, "../../cmd/inz").CombinedOutput(); err != nil {
 		t.Fatalf("build inz: %v\n%s", err, out)
 	}
+	return bin
+}
 
-	proj := t.TempDir()
-	cfgPath := filepath.Join(proj, "instancez.yaml")
-	if err := os.WriteFile(cfgPath, []byte(reloadBaseYAML), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	port := reloadTestPort(t)
-	var logs lockedBuffer
+// startDev runs `inz dev --embedded-pg` in proj and returns once the HTTP server answers.
+func startDev(t *testing.T, proj string) (port int, logs *lockedBuffer) {
+	t.Helper()
+	port = reloadTestPort(t)
+	logs = &lockedBuffer{}
 	// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command, go_subproc_rule-subproc
-	cmd := exec.Command(bin, "dev", "--embedded-pg", "--port", fmt.Sprint(port))
+	cmd := exec.Command(buildInz(t), "dev", "--embedded-pg", "--port", fmt.Sprint(port))
 	cmd.Dir = proj
-	cmd.Env = append(os.Environ(), "INSTANCEZ_SECRET_KEY=inz_secret_reloadtest", "INSTANCEZ_PUBLISHABLE_KEY=inz_publishable_reloadtest")
-	cmd.Stdout, cmd.Stderr = &logs, &logs
+	cmd.Env = append(os.Environ(), "INSTANCEZ_TELEMETRY_DISABLED=1", "INSTANCEZ_SECRET_KEY=inz_secret_reloadtest", "INSTANCEZ_PUBLISHABLE_KEY=inz_publishable_reloadtest")
+	cmd.Stdout, cmd.Stderr = logs, logs
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -119,6 +119,16 @@ func TestDevHotReload_AtomicRenameSave(t *testing.T) {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
+	return port, logs
+}
+
+func TestDevHotReload_AtomicRenameSave(t *testing.T) {
+	proj := t.TempDir()
+	cfgPath := filepath.Join(proj, "instancez.yaml")
+	if err := os.WriteFile(cfgPath, []byte(reloadBaseYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	port, logs := startDev(t, proj)
 	if got := restStatus(port, "notes"); got != 404 {
 		t.Fatalf("notes before reload = %d, want 404", got)
 	}
@@ -194,42 +204,12 @@ func TestDevHotReload_AtomicRenameSave(t *testing.T) {
 
 // A reload whose migration fails must say so, keep serving the old schema, and not claim success.
 func TestDevHotReload_MigrationFailureNotReportedAsSuccess(t *testing.T) {
-	bin := filepath.Join(t.TempDir(), "inz")
-	if out, err := exec.Command("go", "build", "-o", bin, "../../cmd/inz").CombinedOutput(); err != nil {
-		t.Fatalf("build inz: %v\n%s", err, out)
-	}
 	proj := t.TempDir()
 	cfgPath := filepath.Join(proj, "instancez.yaml")
 	if err := os.WriteFile(cfgPath, []byte(reloadBaseYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
-
-	port := reloadTestPort(t)
-	var logs lockedBuffer
-	// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command, go_subproc_rule-subproc
-	cmd := exec.Command(bin, "dev", "--embedded-pg", "--port", fmt.Sprint(port))
-	cmd.Dir = proj
-	cmd.Env = append(os.Environ(), "INSTANCEZ_TELEMETRY_DISABLED=1", "INSTANCEZ_SECRET_KEY=inz_secret_reloadtest", "INSTANCEZ_PUBLISHABLE_KEY=inz_publishable_reloadtest")
-	cmd.Stdout, cmd.Stderr = &logs, &logs
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-		_ = cmd.Wait()
-	})
-
-	deadline := time.Now().Add(3 * time.Minute)
-	for restStatus(port, "notes") == 0 {
-		if time.Now().After(deadline) {
-			if strings.Contains(logs.String(), "embedded") && isEmbeddedPGEnvLimitation(fmt.Errorf("%s", logs.String())) {
-				t.Skip("embedded Postgres unavailable in this environment")
-			}
-			t.Fatalf("server did not start:\n%s", logs.String())
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
+	port, logs := startDev(t, proj)
 	if err := os.WriteFile(cfgPath, []byte(reloadTableYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -260,10 +240,7 @@ func TestDevHotReload_MigrationFailureNotReportedAsSuccess(t *testing.T) {
 }
 
 func TestDev_PortInUseFailsBeforePostgres(t *testing.T) {
-	bin := filepath.Join(t.TempDir(), "inz")
-	if out, err := exec.Command("go", "build", "-o", bin, "../../cmd/inz").CombinedOutput(); err != nil {
-		t.Fatalf("build inz: %v\n%s", err, out)
-	}
+	bin := buildInz(t)
 	proj := t.TempDir()
 	if err := os.WriteFile(filepath.Join(proj, "instancez.yaml"), []byte(reloadBaseYAML), 0o644); err != nil {
 		t.Fatal(err)

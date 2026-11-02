@@ -45,9 +45,7 @@ func runDoctor(configPath string) error {
 // doctorChecks builds the full check list used by both runDoctor and
 // doctor_test.go (where it is called with injected dependencies).
 //
-// Dependency order: config → superuser DSN present → connect → role layout.
-// Database checks are skipped when there is no DSN, and the role layout only
-// runs after a successful connect, so one root cause shows as one failure.
+// No DSN skips DB checks; role layout runs only after connect succeeds.
 func doctorChecks(configPath string, lookup func(string) string) []preflight.Check {
 	superuserDSN := lookup(preflight.EnvSuperuserDSN)
 	checks := []preflight.Check{
@@ -57,12 +55,10 @@ func doctorChecks(configPath string, lookup func(string) string) []preflight.Che
 	if superuserDSN == "" {
 		return checks
 	}
-	connect := preflight.ConnectCheck("database connect", superuserDSN)
-	layout := preflight.RoleLayoutCheck(preflight.PostgresRoleReporter(superuserDSN))
-	return append(checks, func() preflight.Result {
-		if r := connect(); !r.OK {
-			return r
-		}
-		return layout()
-	})
+	connected := preflight.ConnectCheck("database connect", superuserDSN)()
+	checks = append(checks, func() preflight.Result { return connected })
+	if connected.OK {
+		checks = append(checks, preflight.RoleLayoutCheck(preflight.PostgresRoleReporter(superuserDSN)))
+	}
+	return checks
 }
