@@ -62,3 +62,32 @@ func TestNoAuthBlockEmitsNoHelpers(t *testing.T) {
 		t.Fatal("auth helpers must stay gated on an auth block")
 	}
 }
+
+// A config without an auth block (the admin save decodes JSON with no defaults) must still get the helper its defaults call.
+func TestAuthDefaultWithoutAuthBlockEmitsHelperFirst(t *testing.T) {
+	roles := domain.DefaultRoles()
+	noAuth := func(withCol bool) *domain.Config {
+		cfg := authDefaultCfg(withCol)
+		cfg.Auth = nil
+		return cfg
+	}
+	for name, stmts := range map[string][]string{
+		"from scratch": planFromScratchStatements(noAuth(true), roles),
+		"update":       planUpdateStatements(noAuth(false), noAuth(true), roles),
+	} {
+		t.Run(name, func(t *testing.T) {
+			fn, col := -1, -1
+			for i, s := range stmts {
+				if fn < 0 && strings.Contains(s, "FUNCTION auth.uid()") {
+					fn = i
+				}
+				if col < 0 && strings.Contains(s, "DEFAULT auth.uid()") {
+					col = i
+				}
+			}
+			if fn < 0 || col < 0 || fn > col {
+				t.Fatalf("auth.uid() helper at %d, DEFAULT auth.uid() at %d; want the helper first", fn, col)
+			}
+		})
+	}
+}

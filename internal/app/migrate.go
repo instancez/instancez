@@ -139,6 +139,18 @@ func (m *Migrator) planStatements(ctx context.Context, tx domain.Tx, oldCfg, new
 	return planUpdateStatements(oldCfg, newCfg, m.roles), nil
 }
 
+// usesAuthDefault reports whether any column default calls an auth.* helper.
+func usesAuthDefault(cfg *domain.Config) bool {
+	for _, t := range cfg.Tables {
+		for _, f := range t.Fields {
+			if d, _ := f.Default.(string); strings.HasPrefix(strings.ToLower(d), "auth.") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // requiredAuthDefaultAdds lists "table.column" for new required columns on existing tables whose default is an auth.* helper that can be NULL (auth.role() falls back to 'anon').
 func requiredAuthDefaultAdds(oldCfg, newCfg *domain.Config) []string {
 	var out []string
@@ -220,7 +232,9 @@ func planFromScratchStatements(cfg *domain.Config, roles domain.Roles) []string 
 	// Users table (core auth columns).
 	if cfg.Auth != nil {
 		ddl = append(ddl, generateAuthTables(cfg.Auth)...)
-		// Before the tables: a column default may call auth.uid().
+	}
+	// Before the tables: a column default may call auth.uid().
+	if cfg.Auth != nil || usesAuthDefault(cfg) {
 		ddl = append(ddl, generateRLSFunctions()...)
 	}
 
@@ -286,7 +300,7 @@ func planUpdateStatements(oldCfg, newCfg *domain.Config, roles domain.Roles) []s
 	ddl = append(ddl, generateJWTKeysTable()...)
 
 	// Before any table DDL: a new column default may call auth.uid().
-	if newCfg.Auth != nil {
+	if newCfg.Auth != nil || usesAuthDefault(newCfg) {
 		ddl = append(ddl, generateRLSFunctions()...)
 	}
 
