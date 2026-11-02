@@ -160,7 +160,7 @@ func ResolveIncludes(path string) (*Resolved, error) {
 		if err != nil {
 			return nil, cfgErr(fp, "cannot stat file", err)
 		}
-		fmt.Fprintf(hash, "%s\x00%s\n", fp, fileVersionToken(fi))
+		_, _ = fmt.Fprintf(hash, "%s\x00%s\n", fp, fileVersionToken(fi))
 		abs = append(abs, fp)
 	}
 
