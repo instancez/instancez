@@ -233,7 +233,7 @@ The bundle is the deployment artifact for projects that use code functions. It c
 
 The bundled `instancez.yaml` follows `include:`: the files are merged into one and the `include:` key is dropped. Configs without `include:` are bundled as written. Shorthands such as `timestamps` and `owner` are not expanded in the bundle.
 
-Runs stateless validation (same as `inz validate`) including checking that each declared function's `file:` exists on disk.
+Runs stateless validation (same as `inz validate`) including checking that each declared function's `file:` exists on disk. npm output is shown only when `npm ci` fails.
 
 ```
 inz bundle [flags]
@@ -242,11 +242,11 @@ inz bundle [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--config` | `instancez.yaml` | Path to `instancez.yaml`. |
-| `--output` | — | Destination: local file path or `s3://bucket/key`. If omitted, writes to a temp file and prints the path. |
+| `--output` | `bundle.tar.gz` | Destination: local file path (relative to the current directory) or `s3://bucket/key`. |
 
 ```bash
-inz bundle                                       # write temp file, print path
-inz bundle --output bundle.tar.gz                # write to local file
+inz bundle                                       # write ./bundle.tar.gz
+inz bundle --output dist/bundle.tar.gz           # write to another local file
 inz bundle --output s3://my-bucket/bundle.tar.gz # upload to S3, print pointer
 ```
 

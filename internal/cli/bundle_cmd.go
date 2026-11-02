@@ -19,7 +19,7 @@ func newBundleCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "bundle",
-		Short: "Build a deployable functions bundle",
+		Short: "Build a deployable bundle of instancez.yaml and functions/",
 		Long: `Build a self-contained tar.gz bundle from instancez.yaml and functions/.
 
 The bundle is the deployment artifact for projects that use code functions.
@@ -27,15 +27,15 @@ Upload it to S3 then reference it in instancez.yaml under functions_bundle:.
 The bundled instancez.yaml follows include: and is written as one merged file.
 
 Examples:
-  inz bundle                                        # write to a temp file, print path
-  inz bundle --output bundle.tar.gz                 # write to a local file
+  inz bundle                                        # write ./bundle.tar.gz
+  inz bundle --output dist/bundle.tar.gz            # write to a local file
   inz bundle --output s3://my-bucket/bundle.tar.gz  # upload to S3, print pointer`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runBundle(cmd.Context(), configPath, output)
 		},
 	}
 	cmd.Flags().StringVar(&configPath, "config", "instancez.yaml", "path to instancez.yaml (env: INSTANCEZ_CONFIG)")
-	cmd.Flags().StringVar(&output, "output", "", "destination: local path or s3://bucket/key")
+	cmd.Flags().StringVar(&output, "output", "bundle.tar.gz", "destination: local path (relative to the current directory) or s3://bucket/key")
 	return cmd
 }
 
@@ -62,17 +62,7 @@ func runBundle(ctx context.Context, configPath, output string) error {
 		return fmt.Errorf("build bundle: %w", err)
 	}
 
-	keepTemp := output == ""
-	defer func() {
-		if !keepTemp {
-			_ = os.Remove(bundlePath)
-		}
-	}()
-
-	if output == "" {
-		fmt.Printf("  ✓ Bundle: %s\n", bundlePath)
-		return nil
-	}
+	defer func() { _ = os.Remove(bundlePath) }()
 
 	if strings.HasPrefix(output, "s3://") {
 		data, err := os.ReadFile(bundlePath)

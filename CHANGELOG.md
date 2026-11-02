@@ -30,6 +30,10 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 - Field-level `ref:` and `on_delete:` never did anything. `inz validate` now warns and the docs no longer list them. Use `foreign_key: {references, on_delete}`.
 
+### Changed
+
+- `inz bundle` writes `./bundle.tar.gz` by default (was a temp file) and hides npm output unless `npm ci` fails.
+
 ### Fixed
 
 - A missing non-`INSTANCEZ_ENV_` variable no longer hides every other validation error: `inz validate`/`inz dev` report it with the rest, and `inz serve` reports the namespace error before the missing-variable one. `${VAR}` in a full-line `#` comment no longer fails `inz serve`/`inz bundle`.

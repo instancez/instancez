@@ -70,12 +70,14 @@ func BuildBundle(projectDir string) (bundlePath string, err error) {
 	}
 
 	if hasDeps {
-		cmd := exec.Command("npm", "ci")
+		cmd := exec.Command("npm", "ci", "--no-audit", "--no-fund")
 		cmd.Dir = functionsDir
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return "", fmt.Errorf("npm ci in %s: %w", functionsDir, err)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			const maxTail = 4 << 10
+			if len(out) > maxTail {
+				out = out[len(out)-maxTail:]
+			}
+			return "", fmt.Errorf("npm ci in %s: %w\n%s", functionsDir, err, strings.TrimSpace(string(out)))
 		}
 	}
 

@@ -310,3 +310,75 @@ func TestResolveBundleDest(t *testing.T) {
 		})
 	}
 }
+
+// fakeNodeAndNpm puts stub node and npm on PATH; npm runs the given sh body.
+func fakeNodeAndNpm(t *testing.T, npmBody string) {
+	t.Helper()
+	bin := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "node"), []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "npm"), []byte("#!/bin/sh\n"+npmBody+"\n"), 0o755))
+	t.Setenv("PATH", bin)
+}
+
+func writeDepsFixture(t *testing.T) string {
+	t.Helper()
+	dir := writeBundleFixture(t)
+	fnDir := filepath.Join(dir, "functions")
+	require.NoError(t, os.WriteFile(filepath.Join(fnDir, "package.json"), []byte(`{"name":"x","private":true}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(fnDir, "package-lock.json"), []byte(`{}`), 0o644))
+	return dir
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	orig := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = orig }()
+	fn()
+	require.NoError(t, w.Close())
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+	return string(out)
+}
+
+func TestBuildBundleNpmQuietOnSuccess(t *testing.T) {
+	fakeNodeAndNpm(t, "echo 'added 1 package'; echo warn >&2")
+	dir := writeDepsFixture(t)
+	var bundle string
+	out := captureStdout(t, func() {
+		var err error
+		bundle, err = BuildBundle(dir)
+		require.NoError(t, err)
+	})
+	t.Cleanup(func() { _ = os.Remove(bundle) })
+	assert.NotContains(t, out, "added 1 package")
+}
+
+func TestBuildBundleNpmFailureShowsOutput(t *testing.T) {
+	fakeNodeAndNpm(t, "echo 'npm ERR! code E404' >&2; exit 1")
+	_, err := BuildBundle(writeDepsFixture(t))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "npm ci")
+	assert.Contains(t, err.Error(), "E404")
+}
+
+func TestBuildBundleNpmFailureOutputIsBounded(t *testing.T) {
+	fakeNodeAndNpm(t, "head -c 20000 /dev/zero | tr '\\0' 'x'; echo ' END' >&2; exit 1")
+	_, err := BuildBundle(writeDepsFixture(t))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "END")
+	assert.Less(t, len(err.Error()), 5000)
+}
+
+func TestBuildBundleNpmFlags(t *testing.T) {
+	argsFile := filepath.Join(t.TempDir(), "args")
+	fakeNodeAndNpm(t, `echo "$@" > `+argsFile)
+	bundle, err := BuildBundle(writeDepsFixture(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.Remove(bundle) })
+	got, err := os.ReadFile(argsFile)
+	require.NoError(t, err)
+	assert.Equal(t, "ci --no-audit --no-fund", strings.TrimSpace(string(got)))
+}

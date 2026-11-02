@@ -14,9 +14,21 @@ import (
 func TestRunBundleNoOutput(t *testing.T) {
 	dir := writeBundleFixture(t)
 	configPath := filepath.Join(dir, "instancez.yaml")
+	t.Chdir(t.TempDir())
+	tmpGlob := filepath.Join(os.TempDir(), "inz-functions-bundle-*.tar.gz")
+	before, _ := filepath.Glob(tmpGlob)
 
-	err := runBundle(context.Background(), configPath, "")
-	require.NoError(t, err)
+	cmd := newBundleCmd()
+	cmd.SetArgs([]string{"--config", configPath})
+	require.NoError(t, cmd.ExecuteContext(context.Background()))
+
+	assert.Contains(t, tarEntries(t, "bundle.tar.gz"), "instancez.yaml")
+	after, _ := filepath.Glob(tmpGlob)
+	assert.Len(t, after, len(before), "temp bundle must be removed")
+}
+
+func TestBundleHelpSummary(t *testing.T) {
+	assert.Contains(t, newBundleCmd().Short, "instancez.yaml")
 }
 
 func TestRunBundleLocalOutput(t *testing.T) {
