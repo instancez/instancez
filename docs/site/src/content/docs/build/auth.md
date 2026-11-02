@@ -100,7 +100,7 @@ How an OAuth login finds its account:
 
 1. A returning login matches on the provider's user ID, even if the email at the provider changed.
 2. A first login links to an existing account with the same email (case-insensitive), but only when the provider says the email is verified. It links to a verified account, or to an unverified one nobody can sign in to yet (for example an invited user). An unverified account that has a password, a session, another identity, or is anonymous is never linked; the login fails with `email_exists` so a squatter can't capture the real owner's OAuth login. Confirm the email on that account, or sign in to it and link the provider from there.
-3. Otherwise a new user is created, unless `allow_signup` is `false`, which fails with 422 `signup_disabled`, like GoTrue. Existing accounts can still sign in and link.
+3. Otherwise a new user is created, unless `allow_signup` is `false`, which fails. `signInWithIdToken` gets 422 `signup_disabled`, like GoTrue; the browser callback redirects with `error_code=unexpected_failure` (HTTP 500 `oauth_error` if there is no landing URL). Existing accounts can still sign in and link.
 
 An unverified provider email that matches no existing identity fails with `provider_email_needs_verification`. GitHub logins use the verified address from GitHub's email list, not the public profile email.
 
@@ -146,7 +146,7 @@ The signed-in user's browser must finish the link. `/auth/v1/user/identities/aut
 
 **Anonymous** — `supabase.auth.signInAnonymously()`
 
-Issues a JWT with `is_anonymous: true` and the `anon` Postgres role. **Off by default** (like Supabase): set `allow_anonymous: true` to enable it; until then the endpoint returns 422 `anonymous_provider_disabled`. Anonymous users can be promoted to a full account by calling `signUp` or linking an OAuth identity.
+Issues a JWT with `is_anonymous: true` and the `anon` Postgres role. **Off by default** (like Supabase): set `allow_anonymous: true` to enable it; until then the endpoint returns 422 `anonymous_provider_disabled`. If `allow_signup` is also `false`, it returns 422 `signup_disabled` instead. Anonymous users can be promoted to a full account by calling `signUp` or linking an OAuth identity.
 
 **Session management** — `getSession()`, `onAuthStateChange()` and `signOut()` all work as documented by supabase-js. `signOut` invalidates the refresh token server-side. Refresh tokens rotate on every use. Re-using an old one within 10 seconds (two tabs refreshing at once) is allowed; after that it revokes the whole session. A banned user (`admin.updateUserById(id, { ban_duration })` or the dashboard's disable/ban) can't sign in or refresh (`403 user_banned`). Access tokens already issued stay valid until they expire (`jwt_expiry`).
 
