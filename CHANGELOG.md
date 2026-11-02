@@ -4,6 +4,10 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Fixed
+
+- `server.cors` and `server.max_body_size` now apply on config reload (`inz dev` file watch, dashboard save) without a restart.
+
 ### Changed
 
 - Breaking, REST and RPC row values: rows are now serialized like PostgREST (Postgres `to_json`) on list, single, CSV, insert, upsert, update, delete and RPC responses. If your client parsed the old formats, update it. See the [Value formats](docs/site/src/content/docs/build/querying.md#value-formats) table.

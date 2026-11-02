@@ -446,6 +446,7 @@ await step('cors: OPTIONS preflight returns Access-Control-Allow-* headers', asy
   })
   assert(resp.headers.get('access-control-allow-methods'), 'Access-Control-Allow-Methods present')
   assert(resp.headers.get('access-control-allow-headers'), 'Access-Control-Allow-Headers present')
+  assert(resp.headers.get('access-control-allow-methods').includes('PUT'), 'Allow-Methods includes PUT (upsert)')
 })
 
 await step('rest: insert row via PostgREST', async () => {
