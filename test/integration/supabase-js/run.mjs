@@ -516,6 +516,51 @@ await step('rest: patch row', async () => {
   if (error) throw error
 })
 
+await step('rest: update/delete .select() on zero rows returns []', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const upd = await client.from('todos').update({ done: true }).eq('title', 'no-such-title').select()
+  if (upd.error) throw upd.error
+  assert(Array.isArray(upd.data), 'update().select() data must be an array')
+  assertEq(upd.data.length, 0, 'update().select() zero rows')
+  const del = await client.from('todos').delete().eq('title', 'no-such-title').select()
+  if (del.error) throw del.error
+  assert(Array.isArray(del.data), 'delete().select() data must be an array')
+  assertEq(del.data.length, 0, 'delete().select() zero rows')
+})
+
+await step('rest: update().single() on 0 and many rows', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const ins = await client.from('todos').insert([
+    { title: 'dup-single', user_id: userId },
+    { title: 'dup-single', user_id: userId },
+  ])
+  if (ins.error) throw ins.error
+  const patch = (q) => q.update({ title: 'dup-changed' }).eq('title', 'dup-single')
+
+  const zero = await client.from('todos').update({ done: true }).eq('title', 'no-such-title').select().single()
+  assertEq(zero.error?.code, 'PGRST116', 'select().single() on 0 rows')
+  const maybe = await client.from('todos').update({ done: true }).eq('title', 'no-such-title').select().maybeSingle()
+  if (maybe.error) throw maybe.error
+  assertEq(maybe.data, null, 'select().maybeSingle() on 0 rows is null')
+
+  const many = await patch(client.from('todos')).select().single()
+  assertEq(many.error?.code, 'PGRST116', 'select().single() on 2 rows')
+  const noSelect = await patch(client.from('todos')).single()
+  assertEq(noSelect.error?.code, 'PGRST116', 'single() without select on 2 rows')
+
+  const after = await client.from('todos').select('id').eq('title', 'dup-single')
+  if (after.error) throw after.error
+  assertEq(after.data.length, 2, 'rejected updates must roll back')
+  const cleanup = await client.from('todos').delete().eq('title', 'dup-single')
+  if (cleanup.error) throw cleanup.error
+})
+
 await step('rest: .match() regex operator', async () => {
   const client = createClient(URL, PUBLISHABLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
