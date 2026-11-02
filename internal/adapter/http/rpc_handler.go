@@ -195,20 +195,9 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 			}
 			c.Header("Content-Range", contentRange(offset, len(rows), total))
 			status := rangeStatus(offset, len(rows), total)
-			singular := c.GetHeader("Accept") == "application/vnd.pgrst.object+json"
-			if singular {
-				if len(rows) == 0 {
-					pgJSON(c, http.StatusNotAcceptable, "PGRST116",
-						"JSON object requested, multiple (or no) rows returned",
-						"The result contains 0 rows", "")
-					return
-				}
-				if len(rows) > 1 {
-					pgJSON(c, http.StatusNotAcceptable, "PGRST116",
-						"JSON object requested, multiple (or no) rows returned",
-						fmt.Sprintf("The result contains %d rows", len(rows)), "")
-					return
-				}
+			singular := wantsSingular(c)
+			if rejectNonSingular(c, len(rows)) {
+				return
 			}
 			if status == 416 {
 				rangeNotSatisfiable(c, offset, total)

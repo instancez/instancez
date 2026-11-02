@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"mime"
 	"regexp"
 	"slices"
 	"strconv"
@@ -283,12 +284,9 @@ func (h *CRUDHandler) handleList(tableName string, table domain.Table) gin.Handl
 		}
 
 		c.Header("Content-Range", contentRange(qp.Offset, len(rows), total))
-		singular := accept == "application/vnd.pgrst.object+json"
-		if singular && len(rows) != 1 {
-			// supabase-js .maybeSingle() reads "0 rows" in details as data === null.
-			pgJSON(c, 406, "PGRST116",
-				"JSON object requested, multiple (or no) rows returned",
-				fmt.Sprintf("The result contains %d rows", len(rows)), "")
+		singular := wantsSingular(c)
+		// supabase-js .maybeSingle() reads "0 rows" in details as data === null.
+		if rejectNonSingular(c, len(rows)) {
 			return
 		}
 		geomCol := findGeometryColumn(table)
@@ -431,6 +429,7 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 			query, args = postgrest.BuildBulkInsertQuery(tableName, records, returnMode == "representation")
 		}
 
+		var affected int
 		if returnMode == "representation" {
 			rows, err := queryWireRaw(ctx, tx, query, args...)
 			if err != nil {
@@ -438,11 +437,17 @@ func (h *CRUDHandler) handleCreate(tableName string, table domain.Table) gin.Han
 				return
 			}
 			results = rows
+			affected = len(rows)
 		} else {
-			if _, err := tx.Exec(ctx, query, args...); err != nil {
+			n, err := tx.Exec(ctx, query, args...)
+			if err != nil {
 				handleDBError(c, err)
 				return
 			}
+			affected = int(n)
+		}
+		if rejectNonSingular(c, affected) {
+			return
 		}
 
 		if !finishTx(c, tx, ctx, parseTxPrefer(prefer)) {
@@ -509,6 +514,7 @@ func (h *CRUDHandler) handleUpsert(tableName string, table domain.Table) gin.Han
 			return
 		}
 		query, args := postgrest.BuildBulkUpsertQuery(tableName, records, pkCols, "merge", returnMode == "representation")
+		var affected int
 		if returnMode == "representation" {
 			rows, err := queryWireRaw(ctx, tx, query, args...)
 			if err != nil {
@@ -516,11 +522,17 @@ func (h *CRUDHandler) handleUpsert(tableName string, table domain.Table) gin.Han
 				return
 			}
 			results = rows
+			affected = len(rows)
 		} else {
-			if _, err := tx.Exec(ctx, query, args...); err != nil {
+			n, err := tx.Exec(ctx, query, args...)
+			if err != nil {
 				handleDBError(c, err)
 				return
 			}
+			affected = int(n)
+		}
+		if rejectNonSingular(c, affected) {
+			return
 		}
 
 		if !finishTx(c, tx, ctx, parseTxPrefer(prefer)) {
@@ -587,6 +599,9 @@ func (h *CRUDHandler) handleUpdate(tableName string, table domain.Table) gin.Han
 				maxAffectedError(c, len(rows), maxAffected)
 				return
 			}
+			if rejectNonSingular(c, len(rows)) {
+				return
+			}
 			if !finishTx(c, tx, ctx, parseTxPrefer(prefer)) {
 				return
 			}
@@ -599,6 +614,9 @@ func (h *CRUDHandler) handleUpdate(tableName string, table domain.Table) gin.Han
 			}
 			if hasMax && int(affected) > maxAffected {
 				maxAffectedError(c, int(affected), maxAffected)
+				return
+			}
+			if rejectNonSingular(c, int(affected)) {
 				return
 			}
 			if !finishTx(c, tx, ctx, parseTxPrefer(prefer)) {
@@ -658,14 +676,13 @@ func (h *CRUDHandler) handleDelete(tableName string, table domain.Table) gin.Han
 				maxAffectedError(c, len(rows), maxAffected)
 				return
 			}
+			if rejectNonSingular(c, len(rows)) {
+				return
+			}
 			if !finishTx(c, tx, ctx, parseTxPrefer(prefer)) {
 				return
 			}
-			if c.GetHeader("Accept") == "application/vnd.pgrst.object+json" && len(rows) == 1 {
-				writeWireRow(c, 200, rows[0])
-				return
-			}
-			writeWireRows(c, 200, rows)
+			writeMutationResponse(c, 200, returnMode, rows)
 			return
 		}
 
@@ -676,6 +693,9 @@ func (h *CRUDHandler) handleDelete(tableName string, table domain.Table) gin.Han
 		}
 		if hasMax && int(affected) > maxAffected {
 			maxAffectedError(c, int(affected), maxAffected)
+			return
+		}
+		if rejectNonSingular(c, int(affected)) {
 			return
 		}
 
@@ -1276,7 +1296,6 @@ func parseQueryParams(c *gin.Context, tableName string, table domain.Table, allT
 	return qp, nil
 }
 
-
 // identRe matches a safe SQL identifier (alias or cast type). Casts are
 // interpolated directly into SQL, so we refuse anything outside alnum/_.
 // Kept here (duplicated from postgrest package) because rpc_handler.go
@@ -1427,12 +1446,49 @@ func applySchemaSearchPath(c *gin.Context, ctx context.Context, tx domain.Tx) {
 	}
 }
 
+// wantsSingular reports whether the highest-priority Accept type is the singular-object one.
+func wantsSingular(c *gin.Context) bool {
+	best, bestQ := "", -1.0
+	for _, part := range strings.Split(c.GetHeader("Accept"), ",") {
+		mt, params, err := mime.ParseMediaType(strings.TrimSpace(part))
+		if err != nil {
+			continue
+		}
+		q := 1.0
+		if v, ok := params["q"]; ok {
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				continue
+			}
+			q = f
+		}
+		if q <= 0 {
+			continue
+		}
+		if q > bestQ {
+			best, bestQ = mt, q
+		}
+	}
+	return best == "application/vnd.pgrst.object+json"
+}
+
+// rejectNonSingular writes a 406 when one object was requested but n != 1; callers must not commit.
+func rejectNonSingular(c *gin.Context, n int) bool {
+	if !wantsSingular(c) || n == 1 {
+		return false
+	}
+	pgJSON(c, 406, "PGRST116",
+		"JSON object requested, multiple (or no) rows returned",
+		fmt.Sprintf("The result contains %d rows", n), "")
+	return true
+}
+
 // writeMutationResponse writes the HTTP response for a mutation.
 // status is 201 for create, 200 for upsert/update.
 func writeMutationResponse(c *gin.Context, status int, returnMode string, results []json.RawMessage) {
 	switch returnMode {
 	case "representation":
-		if c.GetHeader("Accept") == "application/vnd.pgrst.object+json" && len(results) == 1 {
+		if wantsSingular(c) && len(results) == 1 {
 			writeWireRow(c, status, results[0])
 		} else {
 			writeWireRows(c, status, results)

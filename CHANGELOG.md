@@ -13,6 +13,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
   - A `PATCH` with `return=representation` that matches no rows returns `[]` (was `null`), and honours `Accept: application/vnd.pgrst.object+json` when exactly one row matches.
   - Float `NaN` and `Infinity` are strings (the response was an empty 200).
   - JSON object keys follow the select list (were alphabetical), and `json` columns keep their stored text. `<`, `>`, `&` and U+2028/2029 are no longer escaped in JSON bodies, as in PostgREST (RPC `count=exact` still escapes U+2028/2029).
+  - Breaking, `.single()` / `Accept: application/vnd.pgrst.object+json` on `POST`, `PUT`, `PATCH` and `DELETE` now returns `406` `PGRST116` unless exactly one row is affected, for every `Prefer: return=` mode, and the transaction rolls back. It returned `200` with an array or `204` before. Use `.maybeSingle()` or drop `.single()` when a mutation may touch 0 or many rows. The `Accept` header is now parsed as a media type: parameters (`; nulls=stripped`) and `q` priorities are honoured.
   - Run `inz gen types` again: `interval` and `time` are now `string`.
 
 ## [0.0.11] - 2026-10-27
