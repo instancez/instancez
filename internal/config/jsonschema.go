@@ -63,7 +63,9 @@ func (g *schemaGen) typeSchema(t reflect.Type, enumKey string) map[string]any {
 	}
 	switch t.Kind() {
 	case reflect.Struct:
-		return g.structSchema(t)
+		props := map[string]any{}
+		g.addFields(t, props)
+		return map[string]any{"type": "object", "properties": props, "additionalProperties": false}
 	case reflect.Slice, reflect.Array:
 		return map[string]any{"type": "array", "items": g.typeSchema(t.Elem(), enumKey)}
 	case reflect.Map:
@@ -85,17 +87,35 @@ func (g *schemaGen) typeSchema(t reflect.Type, enumKey string) map[string]any {
 	return map[string]any{}
 }
 
+// nullable lets a property be null, which YAML writes for an unset key and yaml.Marshal for nil values.
+func nullable(s map[string]any) map[string]any {
+	switch t := s["type"].(type) {
+	case string:
+		s["type"] = []any{t, "null"}
+		if e, ok := s["enum"].([]string); ok {
+			s["enum"] = append(anyStrings(e), nil)
+		}
+	default:
+		if alts, ok := s["anyOf"].([]any); ok {
+			s["anyOf"] = append(alts, map[string]any{"type": "null"})
+		}
+	}
+	return s
+}
+
+func anyStrings(in []string) []any {
+	out := make([]any, len(in))
+	for i, v := range in {
+		out[i] = v
+	}
+	return out
+}
+
 func envOr(kind string) map[string]any {
 	return map[string]any{"anyOf": []any{
 		map[string]any{"type": kind},
 		map[string]any{"type": "string", "pattern": envStringPattern},
 	}}
-}
-
-func (g *schemaGen) structSchema(t reflect.Type) map[string]any {
-	props := map[string]any{}
-	g.addFields(t, props)
-	return map[string]any{"type": "object", "properties": props, "additionalProperties": false}
 }
 
 func (g *schemaGen) addFields(t reflect.Type, props map[string]any) {
@@ -117,7 +137,7 @@ func (g *schemaGen) addFields(t reflect.Type, props map[string]any) {
 			name = strings.ToLower(f.Name)
 		}
 		key := t.Name() + "." + f.Name
-		s := g.typeSchema(f.Type, key)
+		s := nullable(g.typeSchema(f.Type, key))
 		if schemaDeprecated[key] {
 			s["deprecated"] = true
 		}

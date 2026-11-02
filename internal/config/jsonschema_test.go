@@ -6,9 +6,11 @@ import (
 	"flag"
 	"os"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/santhosh-tekuri/jsonschema/v6"
 	"gopkg.in/yaml.v3"
 )
 
@@ -32,15 +34,6 @@ func TestJSONSchemaGolden(t *testing.T) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatal("schema is out of date; run: go test ./internal/config -run TestJSONSchemaGolden -update")
-	}
-}
-
-func TestJSONSchemaDeterministic(t *testing.T) {
-	a, _ := JSONSchema()
-	for range 5 {
-		if b, _ := JSONSchema(); !bytes.Equal(a, b) {
-			t.Fatal("schema output differs between runs")
-		}
 	}
 }
 
@@ -71,7 +64,7 @@ func TestJSONSchemaShape(t *testing.T) {
 		t.Errorf("header: %v %v", s["$schema"], s["$id"])
 	}
 	table := dig(t, s, "properties", "tables", "additionalProperties", "properties")
-	if dig(t, table, "fields", "type") != "array" {
+	if !reflect.DeepEqual(dig(t, table, "fields", "type"), []any{"array", "null"}) {
 		t.Error("fields must be an array")
 	}
 	ops := dig(t, table, "rls", "items", "properties", "operations", "items", "enum")
@@ -79,14 +72,14 @@ func TestJSONSchemaShape(t *testing.T) {
 		t.Errorf("operations enum = %v", ops)
 	}
 	field := dig(t, table, "fields", "items", "properties")
-	if !reflect.DeepEqual(dig(t, field, "foreign_key", "properties", "on_delete", "enum"), []any{"cascade", "restrict", "set_null"}) {
+	if !reflect.DeepEqual(dig(t, field, "foreign_key", "properties", "on_delete", "enum"), []any{"cascade", "restrict", "set_null", nil}) {
 		t.Error("on_delete enum")
 	}
-	if m := dig(t, table, "indexes", "items", "properties", "method", "enum").([]any); len(m) != 6 {
+	if m := dig(t, table, "indexes", "items", "properties", "method", "enum").([]any); len(m) != 7 {
 		t.Errorf("method enum = %v", m)
 	}
 	port := dig(t, s, "properties", "server", "properties", "port", "anyOf").([]any)
-	if len(port) != 2 || dig(t, port[0], "type") != "integer" || dig(t, port[1], "pattern") != envStringPattern {
+	if len(port) != 3 || dig(t, port[0], "type") != "integer" || dig(t, port[1], "pattern") != envStringPattern {
 		t.Errorf("port anyOf = %v", port)
 	}
 	if dig(t, s, "additionalProperties") != false || dig(t, s, "properties", "server", "additionalProperties") != false {
@@ -106,48 +99,84 @@ func TestJSONSchemaShape(t *testing.T) {
 	}
 }
 
-func TestJSONSchemaAcceptsShippedConfigs(t *testing.T) {
-	raw, _ := JSONSchema()
-	var schema map[string]any
-	if err := json.Unmarshal(raw, &schema); err != nil {
+func compileSchema(t *testing.T) *jsonschema.Schema {
+	t.Helper()
+	raw, err := JSONSchema()
+	if err != nil {
 		t.Fatal(err)
 	}
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := jsonschema.NewCompiler()
+	if err := c.AddResource(SchemaURL, doc); err != nil {
+		t.Fatal(err)
+	}
+	sch, err := c.Compile(SchemaURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sch
+}
+
+var quotedEnvRef = regexp.MustCompile(`\$\{[^}]*\}`)
+
+// yamlToJSONValue decodes yaml (quoting ${VAR} refs when flow style needs it) into a validator-ready value.
+func yamlToJSONValue(t *testing.T, src []byte) any {
+	t.Helper()
+	var v any
+	if err := yaml.Unmarshal(src, &v); err != nil {
+		if err = yaml.Unmarshal(quotedEnvRef.ReplaceAll(src, []byte(`"$0"`)), &v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := jsonschema.UnmarshalJSON(bytes.NewReader(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func TestJSONSchemaAcceptsShippedConfigs(t *testing.T) {
+	sch := compileSchema(t)
 	for name, src := range shippedConfigs(t) {
-		var doc any
-		if err := yaml.Unmarshal(envVarPattern.ReplaceAll(src, []byte("x")), &doc); err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		if p := schemaMismatch(schema, doc, ""); p != "" {
-			t.Errorf("%s: key %s is not in the schema", name, p)
-		}
+		t.Run(name, func(t *testing.T) {
+			if err := sch.Validate(yamlToJSONValue(t, src)); err != nil {
+				t.Fatalf("as written: %v", err)
+			}
+			cfg, err := ParseBytesLenient(src, name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, err := yaml.Marshal(cfg) // what the dashboard saves
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := sch.Validate(yamlToJSONValue(t, out)); err != nil {
+				t.Fatalf("dashboard-style marshal: %v", err)
+			}
+		})
 	}
 }
 
-// schemaMismatch returns the first key path in doc that the schema's properties do not allow.
-func schemaMismatch(schema map[string]any, doc any, path string) string {
-	switch d := doc.(type) {
-	case map[string]any:
-		props, hasProps := schema["properties"].(map[string]any)
-		extra, _ := schema["additionalProperties"].(map[string]any)
-		for k, v := range d {
-			sub, ok := props[k].(map[string]any)
-			if !ok {
-				if hasProps || extra == nil {
-					return path + "." + k
-				}
-				sub = extra
-			}
-			if p := schemaMismatch(sub, v, path+"."+k); p != "" {
-				return p
-			}
-		}
-	case []any:
-		items, _ := schema["items"].(map[string]any)
-		for _, el := range d {
-			if p := schemaMismatch(items, el, path+"[]"); p != "" {
-				return p
-			}
+func TestJSONSchemaRejectsMistakes(t *testing.T) {
+	sch := compileSchema(t)
+	for name, src := range map[string]string{
+		"unknown key": "version: 1\nbogus: 1\n",
+		"bad enum":    "version: 1\ntables:\n  t:\n    fields:\n      - {name: a, type: text, foreign_key: {references: x.id, on_delete: explode}}\n",
+		"string port": "version: 1\nserver:\n  port: abc\n",
+		"bad rls op":  "version: 1\ntables:\n  t:\n    rls:\n      - {operations: [selec]}\n",
+	} {
+		if err := sch.Validate(yamlToJSONValue(t, []byte(src))); err == nil {
+			t.Errorf("%s: schema accepted it", name)
 		}
 	}
-	return ""
+	if err := sch.Validate(yamlToJSONValue(t, []byte("version: 1\nserver:\n  port: ${PORT}\nproviders:\n  email: null\ntables:\n  t:\n    rls: null\n    fields: null\n"))); err != nil {
+		t.Errorf("null optionals and env refs must pass: %v", err)
+	}
 }

@@ -14,6 +14,9 @@
             {
               "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
               "type": "string"
+            },
+            {
+              "type": "null"
             }
           ]
         },
@@ -25,6 +28,9 @@
             {
               "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
               "type": "string"
+            },
+            {
+              "type": "null"
             }
           ]
         },
@@ -36,18 +42,30 @@
                 "additionalProperties": false,
                 "properties": {
                   "body": {
-                    "type": "string"
+                    "type": [
+                      "string",
+                      "null"
+                    ]
                   },
                   "body_file": {
-                    "type": "string"
+                    "type": [
+                      "string",
+                      "null"
+                    ]
                   },
                   "subject": {
-                    "type": "string"
+                    "type": [
+                      "string",
+                      "null"
+                    ]
                   }
                 },
                 "type": "object"
               },
-              "type": "object"
+              "type": [
+                "object",
+                "null"
+              ]
             },
             "verify_email": {
               "anyOf": [
@@ -57,41 +75,68 @@
                 {
                   "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
                   "type": "string"
+                },
+                {
+                  "type": "null"
                 }
               ]
             }
           },
-          "type": "object"
+          "type": [
+            "object",
+            "null"
+          ]
         },
         "jwt_expiry": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "oauth": {
           "additionalProperties": {
             "additionalProperties": false,
             "properties": {
               "client_id": {
-                "type": "string"
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "client_secret": {
-                "type": "string"
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "redirect_url": {
-                "type": "string"
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             },
             "type": "object"
           },
-          "type": "object"
+          "type": [
+            "object",
+            "null"
+          ]
         },
         "redirect_urls": {
           "items": {
             "type": "string"
           },
-          "type": "array"
+          "type": [
+            "array",
+            "null"
+          ]
         },
         "refresh_token_expiry": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "refresh_tokens": {
           "anyOf": [
@@ -101,11 +146,17 @@
             {
               "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
               "type": "string"
+            },
+            {
+              "type": "null"
             }
           ]
         }
       },
-      "type": "object"
+      "type": [
+        "object",
+        "null"
+      ]
     },
     "database": {
       "additionalProperties": false,
@@ -114,7 +165,10 @@
           "additionalProperties": false,
           "properties": {
             "idle_timeout": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "max": {
               "anyOf": [
@@ -124,6 +178,9 @@
                 {
                   "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
                   "type": "string"
+                },
+                {
+                  "type": "null"
                 }
               ]
             },
@@ -135,14 +192,23 @@
                 {
                   "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
                   "type": "string"
+                },
+                {
+                  "type": "null"
                 }
               ]
             }
           },
-          "type": "object"
+          "type": [
+            "object",
+            "null"
+          ]
         }
       },
-      "type": "object"
+      "type": [
+        "object",
+        "null"
+      ]
     },
     "functions": {
       "additionalProperties": {
@@ -156,6 +222,9 @@
               {
                 "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
                 "type": "string"
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -163,24 +232,42 @@
             "additionalProperties": {
               "type": "string"
             },
-            "type": "object"
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "file": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "runtime": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "timeout": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "type": "object"
       },
-      "type": "object"
+      "type": [
+        "object",
+        "null"
+      ]
     },
     "functions_bundle": {
-      "type": "string"
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "project": {
       "additionalProperties": false,
@@ -189,19 +276,34 @@
           "additionalProperties": false,
           "properties": {
             "project_id": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
-          "type": "object"
+          "type": [
+            "object",
+            "null"
+          ]
         },
         "description": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "name": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
-      "type": "object"
+      "type": [
+        "object",
+        "null"
+      ]
     },
     "providers": {
       "additionalProperties": false,
@@ -210,54 +312,95 @@
           "additionalProperties": false,
           "properties": {
             "api_key": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "default_from_email": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "type": {
               "enum": [
                 "resend",
-                "ses"
+                "ses",
+                null
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
-          "type": "object"
+          "type": [
+            "object",
+            "null"
+          ]
         },
         "storage": {
           "additionalProperties": false,
           "properties": {
             "access_key_id": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "bucket": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "endpoint": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "path": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "region": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "secret_access_key": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "type": {
               "enum": [
                 "local",
-                "s3"
+                "s3",
+                null
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
-          "type": "object"
+          "type": [
+            "object",
+            "null"
+          ]
         }
       },
-      "type": "object"
+      "type": [
+        "object",
+        "null"
+      ]
     },
     "rpc": {
       "additionalProperties": {
@@ -269,7 +412,10 @@
               "properties": {
                 "default": {},
                 "name": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "required": {
                   "anyOf": [
@@ -279,16 +425,25 @@
                     {
                       "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
                       "type": "string"
+                    },
+                    {
+                      "type": "null"
                     }
                   ]
                 },
                 "type": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
               },
               "type": "object"
             },
-            "type": "array"
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "auth_required": {
             "anyOf": [
@@ -298,56 +453,89 @@
               {
                 "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
                 "type": "string"
+              },
+              {
+                "type": "null"
               }
             ]
           },
           "body": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "description": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "language": {
             "enum": [
               "plpgsql",
-              "sql"
+              "sql",
+              null
             ],
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "returns": {
             "additionalProperties": false,
             "properties": {
               "type": {
-                "type": "string"
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             },
-            "type": "object"
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "security": {
             "enum": [
               "definer",
-              "invoker"
+              "invoker",
+              null
             ],
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "set": {
             "additionalProperties": {
               "type": "string"
             },
-            "type": "object"
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "volatility": {
             "enum": [
               "immutable",
               "stable",
-              "volatile"
+              "volatile",
+              null
             ],
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "type": "object"
       },
-      "type": "object"
+      "type": [
+        "object",
+        "null"
+      ]
     },
     "server": {
       "additionalProperties": false,
@@ -359,13 +547,22 @@
               "items": {
                 "type": "string"
               },
-              "type": "array"
+              "type": [
+                "array",
+                "null"
+              ]
             }
           },
-          "type": "object"
+          "type": [
+            "object",
+            "null"
+          ]
         },
         "max_body_size": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "max_limit": {
           "anyOf": [
@@ -375,6 +572,9 @@
             {
               "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
               "type": "string"
+            },
+            {
+              "type": "null"
             }
           ]
         },
@@ -386,6 +586,9 @@
             {
               "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
               "type": "string"
+            },
+            {
+              "type": "null"
             }
           ]
         },
@@ -393,29 +596,50 @@
           "additionalProperties": false,
           "properties": {
             "db_query": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "request": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "shutdown": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "upload": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
-          "type": "object"
+          "type": [
+            "object",
+            "null"
+          ]
         }
       },
-      "type": "object"
+      "type": [
+        "object",
+        "null"
+      ]
     },
     "storage": {
       "additionalProperties": {
         "additionalProperties": false,
         "properties": {
           "max_size": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "public": {
             "anyOf": [
@@ -425,6 +649,9 @@
               {
                 "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
                 "type": "string"
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -442,36 +669,58 @@
                     ],
                     "type": "string"
                   },
-                  "type": "array"
+                  "type": [
+                    "array",
+                    "null"
+                  ]
                 },
                 "type": {
                   "enum": [
                     "permissive",
-                    "restrictive"
+                    "restrictive",
+                    null
                   ],
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "using": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "with_check": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
               },
               "type": "object"
             },
-            "type": "array"
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "types": {
             "items": {
               "type": "string"
             },
-            "type": "array"
+            "type": [
+              "array",
+              "null"
+            ]
           }
         },
         "type": "object"
       },
-      "type": "object"
+      "type": [
+        "object",
+        "null"
+      ]
     },
     "tables": {
       "additionalProperties": {
@@ -489,18 +738,27 @@
                     {
                       "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
                       "type": "string"
+                    },
+                    {
+                      "type": "null"
                     }
                   ]
                 },
                 "check": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "default": {},
                 "enum": {
                   "items": {
                     "type": "string"
                   },
-                  "type": "array"
+                  "type": [
+                    "array",
+                    "null"
+                  ]
                 },
                 "foreign_key": {
                   "additionalProperties": false,
@@ -509,15 +767,25 @@
                       "enum": [
                         "cascade",
                         "restrict",
-                        "set_null"
+                        "set_null",
+                        null
                       ],
-                      "type": "string"
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     },
                     "references": {
-                      "type": "string"
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
-                  "type": "object"
+                  "type": [
+                    "object",
+                    "null"
+                  ]
                 },
                 "immutable": {
                   "anyOf": [
@@ -527,6 +795,9 @@
                     {
                       "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
                       "type": "string"
+                    },
+                    {
+                      "type": "null"
                     }
                   ]
                 },
@@ -538,6 +809,9 @@
                     {
                       "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
                       "type": "string"
+                    },
+                    {
+                      "type": "null"
                     }
                   ]
                 },
@@ -549,18 +823,30 @@
                     {
                       "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
                       "type": "string"
+                    },
+                    {
+                      "type": "null"
                     }
                   ]
                 },
                 "name": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "on_delete": {
                   "deprecated": true,
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "pattern": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "primary_key": {
                   "anyOf": [
@@ -570,15 +856,24 @@
                     {
                       "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
                       "type": "string"
+                    },
+                    {
+                      "type": "null"
                     }
                   ]
                 },
                 "ref": {
                   "deprecated": true,
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "renamed_from": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "required": {
                   "anyOf": [
@@ -588,11 +883,17 @@
                     {
                       "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
                       "type": "string"
+                    },
+                    {
+                      "type": "null"
                     }
                   ]
                 },
                 "type": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "unique": {
                   "anyOf": [
@@ -602,13 +903,19 @@
                     {
                       "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
                       "type": "string"
+                    },
+                    {
+                      "type": "null"
                     }
                   ]
                 }
               },
               "type": "object"
             },
-            "type": "array"
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "indexes": {
             "items": {
@@ -618,7 +925,10 @@
                   "items": {
                     "type": "string"
                   },
-                  "type": "array"
+                  "type": [
+                    "array",
+                    "null"
+                  ]
                 },
                 "method": {
                   "enum": [
@@ -627,9 +937,13 @@
                     "gin",
                     "gist",
                     "brin",
-                    "spgist"
+                    "spgist",
+                    null
                   ],
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "unique": {
                   "anyOf": [
@@ -639,19 +953,31 @@
                     {
                       "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
                       "type": "string"
+                    },
+                    {
+                      "type": "null"
                     }
                   ]
                 },
                 "where": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
               },
               "type": "object"
             },
-            "type": "array"
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "renamed_from": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "rls": {
             "items": {
@@ -667,25 +993,41 @@
                     ],
                     "type": "string"
                   },
-                  "type": "array"
+                  "type": [
+                    "array",
+                    "null"
+                  ]
                 },
                 "type": {
                   "enum": [
                     "permissive",
-                    "restrictive"
+                    "restrictive",
+                    null
                   ],
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "using": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "with_check": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
               },
               "type": "object"
             },
-            "type": "array"
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "rls_enabled": {
             "anyOf": [
@@ -695,16 +1037,25 @@
               {
                 "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
                 "type": "string"
+              },
+              {
+                "type": "null"
               }
             ]
           },
           "schema": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "type": "object"
       },
-      "type": "object"
+      "type": [
+        "object",
+        "null"
+      ]
     },
     "version": {
       "anyOf": [
@@ -714,6 +1065,9 @@
         {
           "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
           "type": "string"
+        },
+        {
+          "type": "null"
         }
       ]
     }
