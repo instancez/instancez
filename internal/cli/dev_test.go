@@ -214,7 +214,7 @@ func TestWatchFunctionsDir(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ready := make(chan struct{})
 	go watchFunctionsDirReady(ctx, dir, func() *domain.Config { return live.Load() }, reload, logger, ready)
-	<-ready
+	waitArmed(t, ready)
 
 	// A shim write must NOT cause a reload.
 	writeFile(t, filepath.Join(dir, ".inz-worker-deadbeef.mjs"), "// shim")
@@ -292,12 +292,17 @@ func startFunctionsWatch(t *testing.T, dir string) <-chan *domain.Config {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ready := make(chan struct{})
 	go watchFunctionsDirReady(ctx, dir, func() *domain.Config { return &domain.Config{} }, func(c *domain.Config) { reloads <- c }, logger, ready)
+	waitArmed(t, ready)
+	return reloads
+}
+
+func waitArmed(t *testing.T, ready <-chan struct{}) {
+	t.Helper()
 	select {
 	case <-ready:
 	case <-time.After(2 * time.Second):
 		t.Fatal("watcher did not arm")
 	}
-	return reloads
 }
 
 func expectReload(t *testing.T, ch <-chan *domain.Config, what string) {
