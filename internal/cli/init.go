@@ -320,16 +320,16 @@ storage:
     max_size: 5MB
     types: [image/*]
     rls:
-      # Only signed-in users may list, upload, replace, or remove avatars.
+      # Signed-in users list avatars; each user writes only under <their user id>/.
       - operations: [select]
         using: "auth.is_authenticated()"
       - operations: [insert]
-        with_check: "auth.is_authenticated()"
+        with_check: "name LIKE auth.uid()::text || '/%%'"
       - operations: [update]
-        using: "auth.is_authenticated()"
-        with_check: "auth.is_authenticated()"
+        using: "name LIKE auth.uid()::text || '/%%'"
+        with_check: "name LIKE auth.uid()::text || '/%%'"
       - operations: [delete]
-        using: "auth.is_authenticated()"
+        using: "name LIKE auth.uid()::text || '/%%'"
 `, name)
 
 	if withFunctions {

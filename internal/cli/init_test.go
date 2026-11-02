@@ -515,3 +515,23 @@ func TestScaffoldZodNotVulnerable(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, major > 4 || (major == 4 && (minor > 6 || (minor == 6 && patch >= 6))), "zod %d.%d.%d", major, minor, patch)
 }
+
+func TestScaffoldAvatarsScopedToOwner(t *testing.T) {
+	cfg, err := config.ParseBytesRaw([]byte(scaffoldYAML("x", true)), "x.yaml")
+	require.NoError(t, err)
+	avatars, ok := cfg.Storage["avatars"]
+	require.True(t, ok)
+	writes := 0
+	for _, p := range avatars.RLS {
+		if !slices.ContainsFunc(p.Operations, func(op string) bool { return op == "insert" || op == "update" || op == "delete" }) {
+			continue
+		}
+		writes++
+		for _, expr := range []string{p.Using, p.WithCheck} {
+			if expr != "" {
+				assert.Contains(t, expr, "auth.uid()::text || '/%'", p.Operations)
+			}
+		}
+	}
+	assert.Equal(t, 3, writes)
+}
