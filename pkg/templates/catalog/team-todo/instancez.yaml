@@ -8,6 +8,7 @@ auth:
   refresh_token_expiry: 7d
 tables:
   profiles:
+    rls_enabled: true
     fields:
       - name: id
         primary_key: true
@@ -28,6 +29,7 @@ tables:
         using: "id = auth.uid()"
         with_check: "id = auth.uid()"
   workspaces:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -54,6 +56,7 @@ tables:
       - operations: [delete]
         using: "public.ws_role(id) = 'owner'"
   workspace_members:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -86,6 +89,7 @@ tables:
       - operations: [select]
         using: "public.is_member(workspace_id)"
   invites:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -128,6 +132,7 @@ tables:
       - operations: [delete]
         using: "public.ws_role(workspace_id) IN ('owner', 'admin')"
   tasks:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -180,6 +185,7 @@ tables:
       - operations: [delete]
         using: "public.is_member(workspace_id) AND (created_by = auth.uid() OR public.ws_role(workspace_id) IN ('owner', 'admin'))"
   task_comments:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial

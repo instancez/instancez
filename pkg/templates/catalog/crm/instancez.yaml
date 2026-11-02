@@ -9,6 +9,7 @@ auth:
   refresh_token_expiry: 7d
 tables:
   members:
+    rls_enabled: true
     fields:
       - name: user_id
         primary_key: true
@@ -38,6 +39,7 @@ tables:
       - operations: [delete]
         using: "public.is_admin()"
   companies:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -78,6 +80,7 @@ tables:
       - operations: [delete]
         using: "public.is_admin()"
   contacts:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -129,6 +132,7 @@ tables:
       - operations: [delete]
         using: "public.is_admin()"
   deals:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -190,6 +194,7 @@ tables:
       - operations: [delete]
         using: "public.is_admin()"
   activities:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -235,6 +240,7 @@ tables:
       - operations: [delete]
         using: "created_by = auth.uid() OR public.is_admin()"
   tasks:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial

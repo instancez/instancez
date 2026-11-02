@@ -8,6 +8,7 @@ auth:
   refresh_token_expiry: 7d
 tables:
   profiles:
+    rls_enabled: true
     fields:
       - name: id
         primary_key: true
@@ -41,6 +42,7 @@ tables:
         using: "auth.uid() = id"
         with_check: "auth.uid() = id AND (avatar_path IS NULL OR avatar_path LIKE auth.uid()::text || '/%')"
   posts:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -73,6 +75,7 @@ tables:
       - operations: [delete]
         using: "author_id = auth.uid()"
   comments:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -106,6 +109,7 @@ tables:
       - operations: [delete]
         using: "author_id = auth.uid() OR EXISTS (SELECT 1 FROM posts p WHERE p.id = post_id AND p.author_id = auth.uid())"
   follows:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -132,6 +136,7 @@ tables:
       - operations: [delete]
         using: "follower_id = auth.uid()"
   likes:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial

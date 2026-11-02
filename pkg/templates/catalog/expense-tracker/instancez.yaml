@@ -9,6 +9,7 @@ auth:
   refresh_token_expiry: 7d
 tables:
   accounts:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -53,6 +54,7 @@ tables:
       - operations: [delete]
         using: "user_id = auth.uid()"
   categories:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -84,6 +86,7 @@ tables:
       - operations: [delete]
         using: "user_id = auth.uid()"
   transactions:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -134,6 +137,7 @@ tables:
       - operations: [delete]
         using: "user_id = auth.uid()"
   budgets:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial

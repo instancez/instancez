@@ -8,6 +8,7 @@ auth:
   refresh_token_expiry: 7d
 tables:
   companies:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -49,6 +50,7 @@ tables:
       - operations: [delete]
         using: "owner_id = auth.uid()"
   jobs:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -118,6 +120,7 @@ tables:
       - operations: [delete]
         using: "EXISTS (SELECT 1 FROM companies c WHERE c.id = company_id AND c.owner_id = auth.uid())"
   applications:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -162,6 +165,7 @@ tables:
       - operations: [delete]
         using: "applicant_id = auth.uid() AND status IN ('submitted', 'withdrawn')"
   saved_jobs:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial

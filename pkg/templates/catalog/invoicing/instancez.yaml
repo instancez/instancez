@@ -8,6 +8,7 @@ auth:
   refresh_token_expiry: 7d
 tables:
   clients:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -48,6 +49,7 @@ tables:
       - operations: [delete]
         using: "user_id = auth.uid()"
   invoice_counters:
+    rls_enabled: true
     fields:
       - name: user_id
         primary_key: true
@@ -61,6 +63,7 @@ tables:
       - operations: [select]
         using: "user_id = auth.uid()"
   invoices:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -142,6 +145,7 @@ tables:
       - operations: [delete]
         using: "user_id = auth.uid() AND status = 'draft'"
   invoice_items:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial

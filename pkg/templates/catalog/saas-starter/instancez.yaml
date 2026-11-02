@@ -8,6 +8,7 @@ auth:
   refresh_token_expiry: 7d
 tables:
   plans:
+    rls_enabled: true
     fields:
       - name: id
         type: text
@@ -32,6 +33,7 @@ tables:
       - operations: [select]
         using: "true"
   organizations:
+    rls_enabled: true
     fields:
       - name: id
         type: uuid
@@ -64,6 +66,7 @@ tables:
       - operations: [delete]
         using: "EXISTS (SELECT 1 FROM memberships m WHERE m.org_id = organizations.id AND m.user_id = auth.uid() AND m.role = 'owner')"
   memberships:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -94,6 +97,7 @@ tables:
       - operations: [delete]
         using: "user_id = auth.uid() AND role <> 'owner'"
   subscriptions:
+    rls_enabled: true
     fields:
       - name: org_id
         type: uuid
@@ -128,6 +132,7 @@ tables:
       - operations: [select]
         using: "EXISTS (SELECT 1 FROM memberships m WHERE m.org_id = subscriptions.org_id AND m.user_id = auth.uid())"
   usage_events:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial

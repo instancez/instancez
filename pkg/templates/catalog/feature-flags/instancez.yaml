@@ -8,6 +8,7 @@ auth:
   refresh_token_expiry: 7d
 tables:
   projects:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -41,6 +42,7 @@ tables:
       - operations: [delete]
         using: "owner_id = auth.uid()"
   environments:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -74,6 +76,7 @@ tables:
       - operations: [delete]
         using: "EXISTS (SELECT 1 FROM projects p WHERE p.id = environments.project_id AND p.owner_id = auth.uid())"
   flags:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -107,6 +110,7 @@ tables:
       - operations: [delete]
         using: "EXISTS (SELECT 1 FROM projects p WHERE p.id = flags.project_id AND p.owner_id = auth.uid())"
   flag_configs:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -146,6 +150,7 @@ tables:
       - operations: [select]
         using: "EXISTS (SELECT 1 FROM flags f JOIN projects p ON p.id = f.project_id WHERE f.id = flag_configs.flag_id AND p.owner_id = auth.uid())"
   audit_log:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial

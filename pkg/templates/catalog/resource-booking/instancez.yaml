@@ -8,6 +8,7 @@ auth:
   refresh_token_expiry: 7d
 tables:
   profiles:
+    rls_enabled: true
     fields:
       - name: id
         primary_key: true
@@ -29,6 +30,7 @@ tables:
         using: "id = auth.uid()"
         with_check: "id = auth.uid() AND role = public.my_role()"
   resources:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -76,6 +78,7 @@ tables:
       - operations: [delete]
         using: "public.is_admin()"
   bookings:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
