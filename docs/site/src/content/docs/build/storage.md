@@ -30,9 +30,10 @@ storage:
     public: false
     max_size: 10MB
     rls:
+      # Private per-user folders: <user id>/<file>.
       - operations: [select, insert, update, delete]
-        using: "auth.uid() IS NOT NULL"
-        with_check: "auth.uid() IS NOT NULL"
+        using: "name LIKE auth.uid()::text || '/%'"
+        with_check: "name LIKE auth.uid()::text || '/%'"
 ```
 
 | Key | Type | Description |
