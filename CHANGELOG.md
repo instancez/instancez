@@ -7,7 +7,6 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 ### Added
 
 - `inz --version` prints the same line as `inz version`.
-- Column defaults accept `auth.uid()`, `auth.role()`, `auth.email()` and `auth.jwt()` (checked against the column type), so `created_by uuid default auth.uid()` works. The auth helper functions are now created before the tables.
 - Column defaults accept `auth.uid()`, `auth.role()`, `auth.email()` and `auth.jwt()` (checked against the column type), so `created_by uuid default auth.uid()` works. The auth helper functions are now created before the tables, and also when a default needs them but the config has no `auth:` block.
 
 ### Fixed
@@ -17,9 +16,9 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - The singular-object `Accept` check keeps quoted commas and escaped quotes in media-type parameters together and ignores `q` values above 1, `NaN` and `Inf`.
 - `inz dev` no longer creates an empty `functions/` folder. It starts watching when the folder appears, including after you delete and recreate it.
 - Docs: a `foreign_key` field with no `type` takes the referenced column's type; the schema page wrongly said it was always `BIGINT`.
-- `inz validate` loads `.development.env`, and `inz validate` / `inz dev` warn about an unset `${VAR}` (using an empty value) instead of failing, so a new OAuth block no longer needs a placeholder secret. `inz serve`, `deploy` and `bundle` stay strict.
 - `inz validate` loads `.development.env`, and `inz validate` / `inz dev` warn about an unset `${INSTANCEZ_ENV_*}` (using an empty value) instead of failing, so a new OAuth block no longer needs a placeholder secret. `inz serve`, `deploy` and `bundle` stay strict.
 - `client_secret` is optional for `google` and `apple` (`signInWithIdToken` needs none); `inz validate` warns that the redirect sign-in flow does.
+- `signInWithIdToken` works with supabase-js: `POST /auth/v1/token?grant_type=id_token` now reads GoTrue's `id_token` field (the old `token` field still works). Before, every supabase-js ID-token sign-in failed with 400.
 
 ### Changed
 
@@ -33,11 +32,6 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
   - JSON object keys follow the select list (were alphabetical), and `json` columns keep their stored text. `<`, `>`, `&` and U+2028/2029 are no longer escaped in JSON bodies, as in PostgREST (RPC `count=exact` still escapes U+2028/2029).
   - Breaking, `.single()` / `Accept: application/vnd.pgrst.object+json` on `POST`, `PUT`, `PATCH` and `DELETE` now returns `406` `PGRST116` unless exactly one row is affected, for every `Prefer: return=` mode, and the transaction rolls back. It returned `200` with an array or `204` before. Use `.maybeSingle()` or drop `.single()` when a mutation may touch 0 or many rows. The `Accept` header is now parsed as a media type: parameters (`; nulls=stripped`) and `q` priorities are honoured.
   - Run `inz gen types` again: `interval` and `time` are now `string`.
-
-### Fixed
-
-- `signInWithIdToken` works with supabase-js: `POST /auth/v1/token?grant_type=id_token` now reads GoTrue's `id_token` field (the old `token` field still works). Before, every supabase-js ID-token sign-in failed with 400.
-
 ## [0.0.11] - 2026-10-27
 
 ### Added
