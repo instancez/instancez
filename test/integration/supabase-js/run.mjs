@@ -3388,6 +3388,28 @@ await step('storage: traversal keys are rejected', async () => {
   assert(error, 'copy to a traversal key must fail')
 })
 
+await step('storage: per-user folder policy via storage.foldername', async () => {
+  const mine = sessionClient().storage.from('userdir')
+  const up = await mine.upload(`${userId}/a.txt`, 'hi', { contentType: 'text/plain' })
+  assert(!up.error, `own folder upload failed: ${JSON.stringify(up.error)}`)
+  const other = await mine.upload('other/a.txt', 'hi', { contentType: 'text/plain' })
+  assert(other.error, 'upload outside own folder must be denied')
+  const { data: listed, error: listErr } = await mine.list(userId)
+  if (listErr) throw listErr
+  assertEq(listed.map(o => o.name).join(','), 'a.txt', 'own folder listing')
+
+  const second = createClient(URL, PUBLISHABLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  const { data: su, error: suErr } = await second.auth.signUp({ email: `u2_${Date.now()}@example.com`, password })
+  if (suErr) throw suErr
+  const s2 = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${su.session.access_token}` } },
+  })
+  const { data: theirs, error: theirErr } = await s2.storage.from('userdir').list(userId)
+  if (theirErr) throw theirErr
+  assertEq(theirs.length, 0, "second user must not see the first user's folder")
+})
+
 await step('storage: private downloads are private, nosniff, and HTML is an attachment', async () => {
   const { error: upErr } = await sessionClient().storage.from('documents')
     .upload('page.html', '<html><script>alert(1)</script></html>', { contentType: 'text/html', upsert: true })

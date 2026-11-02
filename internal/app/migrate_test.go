@@ -1381,3 +1381,48 @@ func TestExpandTimestamps_EquivalentToLongForm(t *testing.T) {
 		t.Fatalf("shorthand plan differs from long form:\n%s\n---\n%s", a, b)
 	}
 }
+
+func TestStorageOwnerColumnDDL_OnlyWhenReferenced(t *testing.T) {
+	b := func(using, check string) map[string]domain.Bucket {
+		return map[string]domain.Bucket{"a": {RLS: []domain.RLSPolicy{{Operations: []string{"select"}, Using: using, WithCheck: check}}}}
+	}
+	cases := []struct {
+		name string
+		in   map[string]domain.Bucket
+		want int
+	}{
+		{"nil storage", nil, 0},
+		{"no policies", map[string]domain.Bucket{"a": {}}, 0},
+		{"uploaded_by only", b("uploaded_by = auth.uid()", ""), 0},
+		{"owner", b("owner = auth.uid()", ""), 2},
+		{"owner_id in with_check", b("", "owner_id = auth.uid()::text"), 2},
+		{"substring owner not matched", b("downer = auth.uid()", ""), 0},
+	}
+	for _, c := range cases {
+		if got := storageOwnerColumnDDL(c.in); len(got) != c.want {
+			t.Errorf("%s: got %d stmts, want %d", c.name, len(got), c.want)
+		}
+	}
+}
+
+func TestStorageHelperFunctions_Defined(t *testing.T) {
+	joined := strings.Join(storageHelperFunctions(), "\n")
+	for _, fn := range []string{"foldername", "filename", "extension"} {
+		mustContain(t, joined, "CREATE OR REPLACE FUNCTION storage."+fn+"(name text)")
+	}
+}
+
+func TestPlanUpdate_EmitsStorageHelpers(t *testing.T) {
+	with := &domain.Config{Version: 1, Storage: map[string]domain.Bucket{"a": {}}}
+	joined := strings.Join(planUpdateStatements(&domain.Config{}, with, domain.DefaultRoles()), "\n")
+	mustContain(t, joined, "CREATE OR REPLACE FUNCTION storage.foldername")
+
+	without := strings.Join(planUpdateStatements(&domain.Config{}, &domain.Config{Version: 1}, domain.DefaultRoles()), "\n")
+	mustNotContain(t, without, "storage.foldername")
+}
+
+func TestGenerateStorageTables_HasOwnerAliasColumns(t *testing.T) {
+	joined := strings.Join(generateStorageTables(&domain.Config{Storage: map[string]domain.Bucket{"a": {}}}), "\n")
+	mustContain(t, joined, "owner UUID GENERATED ALWAYS AS (uploaded_by) STORED")
+	mustContain(t, joined, "owner_id TEXT GENERATED ALWAYS AS (uploaded_by::text) STORED")
+}

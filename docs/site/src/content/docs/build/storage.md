@@ -116,6 +116,21 @@ A direct upload (`upload`/`update`) checks RLS twice, in this order: the MIME ch
 
 The server needs a writable temp directory sized for concurrent uploads × `max_size` (on Lambda, that's `/tmp`). `uploadToSignedUrl` enforces the same bucket MIME allowlist (422) and `max_size` (413) as a normal upload, and returns 500 if the metadata write fails after the bytes are stored.
 
+### Per-user folders and ownership
+
+`storage.foldername(name)`, `storage.filename(name)` and `storage.extension(name)` work in bucket policies with Supabase's signatures. `owner` (uuid) and `owner_id` (text) are read-only aliases of `uploaded_by`, so policies written for Supabase carry over.
+
+```yaml
+storage:
+  avatars:
+    rls:
+      - operations: [select, insert, update, delete]
+        using: "(storage.foldername(name))[1] = auth.uid()::text"
+        with_check: "(storage.foldername(name))[1] = auth.uid()::text"
+```
+
+On a database that already has `storage.objects`, the first policy that mentions `owner` or `owner_id` adds those columns, which rewrites the table once. They are not added to API responses.
+
 ### Downloads
 
 If an object's row exists but the local provider's file is gone, downloads return 404 `not_found`; other read errors return 500.

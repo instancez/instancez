@@ -173,6 +173,8 @@ storage:
         with_check: "auth.is_authenticated()"
 ```
 
+Bucket policies can use `storage.foldername(name)`, `storage.filename(name)`, `storage.extension(name)` and the `owner` / `owner_id` aliases of `uploaded_by`, e.g. `(storage.foldername(name))[1] = auth.uid()::text`.
+
 Declaring any bucket requires a `providers.storage` block (`type: local` for dev, `type: s3` for production). Bucket `rls` uses the same policy syntax as tables, applied to `storage.objects`. Clients use `supabase.storage.from('avatars').upload(...)` as usual. Signed URLs are authorized at creation time against the bucket's policies. As in Supabase, `public: true` only opens `/object/public/<bucket>/<path>` downloads; it grants no `select`, so add a `select` policy for anyone who should list, sign, update or delete. Publishable-key (guest) calls run as `anon` under those policies, so `using: "true"` admits guests; a bucket with no `rls:` gives guests nothing.
 
 ## RPC (SQL functions)

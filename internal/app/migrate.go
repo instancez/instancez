@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -333,6 +334,8 @@ func planUpdateStatements(oldCfg, newCfg *domain.Config, roles domain.Roles) []s
 	// gain the column. This idempotent ALTER runs on every migration.
 	if len(newCfg.Storage) > 0 {
 		ddl = append(ddl, `ALTER TABLE storage.objects ADD COLUMN IF NOT EXISTS user_metadata JSONB;`)
+		ddl = append(ddl, storageHelperFunctions()...)
+		ddl = append(ddl, storageOwnerColumnDDL(newCfg.Storage)...)
 	}
 
 	// RPCs come before the policies that may call them.
@@ -1334,7 +1337,7 @@ func generateStorageTables(cfg *domain.Config) []string {
 	if len(cfg.Storage) == 0 {
 		return nil
 	}
-	return []string{
+	ddl := []string{
 		`CREATE SCHEMA IF NOT EXISTS storage;`,
 		`CREATE TABLE IF NOT EXISTS storage.objects (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1347,6 +1350,8 @@ func generateStorageTables(cfg *domain.Config) []string {
   metadata JSONB,
   user_metadata JSONB,
   name_lower TEXT COLLATE "C" GENERATED ALWAYS AS (lower(name)) STORED,
+  owner UUID GENERATED ALWAYS AS (uploaded_by) STORED,
+  owner_id TEXT GENERATED ALWAYS AS (uploaded_by::text) STORED,
   UNIQUE (bucket_id, name)
 );`,
 		// Additive column for deployments whose storage.objects table predates
@@ -1355,6 +1360,69 @@ func generateStorageTables(cfg *domain.Config) []string {
 		`ALTER TABLE storage.objects ADD COLUMN IF NOT EXISTS user_metadata JSONB;`,
 		storageIndexesWhenEmpty,
 	}
+	ddl = append(ddl, storageHelperFunctions()...)
+	return append(ddl, storageOwnerColumnDDL(cfg.Storage)...)
+}
+
+// storageHelperFunctions mirrors supabase/storage migrations/tenant (b74897cf261d, 0036/0060/0061), so RLS expressions written for Supabase keep working.
+func storageHelperFunctions() []string {
+	return []string{
+		`CREATE OR REPLACE FUNCTION storage.foldername(name text)
+    RETURNS text[]
+    LANGUAGE plpgsql
+    IMMUTABLE
+AS $function$
+DECLARE
+    _parts text[];
+BEGIN
+    SELECT string_to_array(name, '/') INTO _parts;
+    RETURN _parts[1 : array_length(_parts,1) - 1];
+END
+$function$;`,
+		`CREATE OR REPLACE FUNCTION storage.filename(name text)
+    RETURNS text
+    LANGUAGE plpgsql
+    IMMUTABLE
+AS $function$
+DECLARE
+    _parts text[];
+BEGIN
+    SELECT string_to_array(name, '/') INTO _parts;
+    RETURN _parts[array_length(_parts, 1)];
+END
+$function$;`,
+		`CREATE OR REPLACE FUNCTION storage.extension(name text)
+    RETURNS text
+    LANGUAGE plpgsql
+    IMMUTABLE
+AS $function$
+DECLARE
+    _parts text[];
+    _filename text;
+BEGIN
+    SELECT string_to_array(name, '/') INTO _parts;
+    SELECT _parts[array_length(_parts, 1)] INTO _filename;
+    RETURN reverse(split_part(reverse(_filename), '.', 1));
+END
+$function$;`,
+	}
+}
+
+var storageOwnerRefRe = regexp.MustCompile(`(?i)\bowner(_id)?\b`)
+
+// storageOwnerColumnDDL adds the owner aliases to an existing storage.objects only when a policy reads them, since a stored generated column rewrites the table.
+func storageOwnerColumnDDL(storage map[string]domain.Bucket) []string {
+	for _, b := range storage {
+		for _, p := range b.RLS {
+			if storageOwnerRefRe.MatchString(p.Using) || storageOwnerRefRe.MatchString(p.WithCheck) {
+				return []string{
+					`ALTER TABLE storage.objects ADD COLUMN IF NOT EXISTS owner UUID GENERATED ALWAYS AS (uploaded_by) STORED;`,
+					`ALTER TABLE storage.objects ADD COLUMN IF NOT EXISTS owner_id TEXT GENERATED ALWAYS AS (uploaded_by::text) STORED;`,
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // storageUploadedByFKNeedsHeal is a catalog-only check, so a healed DB skips the heal on boot.
