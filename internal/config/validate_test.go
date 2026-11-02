@@ -2176,3 +2176,25 @@ func TestValidateDefault_Grammar(t *testing.T) {
 		t.Fatalf("got %q", msg)
 	}
 }
+
+func TestValidateFieldType_DidYouMean(t *testing.T) {
+	cases := []struct{ typ, want string }{
+		{"timestampz", `Did you mean "timestamptz"?`},
+		{"string", `Did you mean "text"?`},
+		{"datetime", `Did you mean "timestamptz"?`},
+		{"blob", `Did you mean "bytea"?`},
+		{"varchr(20)", `Did you mean "varchar"?`},
+		{"qqqqqqqqq", ""},
+	}
+	for _, c := range cases {
+		errs := validateFieldType("tables.t.fields.f", c.typ)
+		if len(errs) != 1 || errs[0].Suggestion != c.want {
+			t.Errorf("%q: %+v, want suggestion %q", c.typ, errs, c.want)
+		}
+	}
+	for _, ok := range []string{"text", "varchar(20)", "timestamptz", "text[]"} {
+		if errs := validateFieldType("p", ok); len(errs) != 0 {
+			t.Errorf("%q: %v", ok, errs)
+		}
+	}
+}

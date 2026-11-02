@@ -151,7 +151,7 @@ func unknownKeyProblems(te *yaml.TypeError, root *yaml.Node) domain.ValidationEr
 					}
 				}
 			}
-			out = append(out, &domain.ValidationError{Path: path, Line: line, Column: col, Message: fmt.Sprintf("unknown key %q", field)})
+			out = append(out, &domain.ValidationError{Path: path, Line: line, Column: col, Message: fmt.Sprintf("unknown key %q", field), Suggestion: suggestKey(typ, field)})
 			continue
 		}
 		if m := yamlTypeErrRe.FindStringSubmatch(sub); m != nil {

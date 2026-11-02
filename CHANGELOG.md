@@ -7,6 +7,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 ### Added
 
 - `inz validate --use-dsn <dsn> --dry-run-ddl` runs the migration in a transaction that is always rolled back (`lock_timeout` 2s, `statement_timeout` 30s), so unknown RLS columns and bad rpc bodies fail validation. It exits non-zero on failure and adds `dry_run` to `--json`. Plain `--use-dsn` still only prints the plan.
+- Did-you-mean suggestions for unknown YAML keys (`rls_enabeld` suggests `rls_enabled`) and column types (`string` suggests `text`, `timestampz` suggests `timestamptz`).
 
 ### Changed
 

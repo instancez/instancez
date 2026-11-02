@@ -1589,8 +1589,9 @@ func validateFieldType(path, typ string) domain.ValidationErrors {
 
 	if !validPostgresTypes[base] {
 		errs = append(errs, &domain.ValidationError{
-			Path:    path + ".type",
-			Message: fmt.Sprintf("unknown type %q", typ),
+			Path:       path + ".type",
+			Message:    fmt.Sprintf("unknown type %q", typ),
+			Suggestion: didYouMean(suggestType(base)),
 		})
 	}
 	return errs
