@@ -577,13 +577,16 @@ func runSignupDisabledFlow(t *testing.T, cfg *domain.Config, baseURL, publishabl
 	}
 	bodyBytes, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	if resp.StatusCode != 403 {
-		t.Fatalf("disabled signup: status = %d, want 403; body = %s", resp.StatusCode, bodyBytes)
+	if resp.StatusCode != 422 {
+		t.Fatalf("disabled signup: status = %d, want 422; body = %s", resp.StatusCode, bodyBytes)
 	}
 	var env map[string]any
 	_ = json.Unmarshal(bodyBytes, &env)
 	if env["code"] != "signup_disabled" {
 		t.Errorf("disabled signup: code = %v, want signup_disabled; body = %s", env["code"], bodyBytes)
+	}
+	if env["message"] != "Signups not allowed for this instance" {
+		t.Errorf("disabled signup: message = %v, want GoTrue message; body = %s", env["message"], bodyBytes)
 	}
 
 	// Anonymous signup (empty body) is also blocked when allow_signup=false.
@@ -596,8 +599,8 @@ func runSignupDisabledFlow(t *testing.T, cfg *domain.Config, baseURL, publishabl
 	}
 	anonBytes, _ := io.ReadAll(anonResp.Body)
 	_ = anonResp.Body.Close()
-	if anonResp.StatusCode != 403 {
-		t.Fatalf("disabled signup: anonymous status = %d, want 403; body = %s", anonResp.StatusCode, anonBytes)
+	if anonResp.StatusCode != 422 {
+		t.Fatalf("disabled signup: anonymous status = %d, want 422; body = %s", anonResp.StatusCode, anonBytes)
 	}
 
 	// Admin-keyed create user must still succeed.

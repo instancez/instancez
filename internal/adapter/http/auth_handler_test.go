@@ -1136,18 +1136,29 @@ func postSignup(h *AuthHandler, body string) *httptest.ResponseRecorder {
 	return w
 }
 
+// assertGoTrueError checks status, code and message against the GoTrue contract.
+func assertGoTrueError(t *testing.T, w *httptest.ResponseRecorder, status int, code, msg string) {
+	t.Helper()
+	if w.Code != status {
+		t.Fatalf("expected %d, got %d: %s", status, w.Code, w.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["code"] != code {
+		t.Errorf("expected code=%s, got %v (body=%s)", code, body["code"], w.Body.String())
+	}
+	if m, _ := body["message"].(string); m != msg {
+		t.Errorf("expected message=%q, got %q (body=%s)", msg, m, w.Body.String())
+	}
+}
+
+const msgAnonymousDisabled = "Anonymous sign-ins are disabled"
+
 func TestSignupGating_AllowSignupFalse_BlocksEmailSignup(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h, _ := signupGatingHandler(t, ptrBool(false), nil)
 	w := postSignup(h, `{"email":"u@example.com","password":"hunter2hunter2"}`)
-	if w.Code != 403 {
-		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
-	}
-	var body map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &body)
-	if body["code"] != "signup_disabled" {
-		t.Errorf("expected code=signup_disabled, got %v (body=%s)", body["code"], w.Body.String())
-	}
+	assertGoTrueError(t, w, 422, "signup_disabled", msgSignupDisabled)
 }
 
 // allow_signup=false implies anonymous is also blocked (anonymous users
@@ -1156,28 +1167,14 @@ func TestSignupGating_AllowSignupFalse_BlocksAnonymous(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h, _ := signupGatingHandler(t, ptrBool(false), nil)
 	w := postSignup(h, `{}`)
-	if w.Code != 403 {
-		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
-	}
-	var body map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &body)
-	if body["code"] != "signup_disabled" {
-		t.Errorf("expected code=signup_disabled, got %v (body=%s)", body["code"], w.Body.String())
-	}
+	assertGoTrueError(t, w, 422, "signup_disabled", msgSignupDisabled)
 }
 
 func TestSignupGating_AnonymousFalse_BlocksAnonymousOnly(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h, _ := signupGatingHandler(t, ptrBool(true), ptrBool(false))
 	w := postSignup(h, `{}`)
-	if w.Code != 403 {
-		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
-	}
-	var body map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &body)
-	if body["code"] != "signup_disabled" {
-		t.Errorf("expected code=signup_disabled, got %v (body=%s)", body["code"], w.Body.String())
-	}
+	assertGoTrueError(t, w, 422, "anonymous_provider_disabled", msgAnonymousDisabled)
 }
 
 func TestSignupGating_AnonymousFalse_AllowsEmailSignup(t *testing.T) {
@@ -1202,9 +1199,7 @@ func TestSignupGating_NilFlags_AnonymousOffByDefault(t *testing.T) {
 	// anonymous is off unless allow_anonymous: true
 	h2, _ := signupGatingHandler(t, nil, nil)
 	w2 := postSignup(h2, `{}`)
-	if w2.Code != 403 {
-		t.Fatalf("anonymous signup with nil flags: expected 403, got %d: %s", w2.Code, w2.Body.String())
-	}
+	assertGoTrueError(t, w2, 422, "anonymous_provider_disabled", msgAnonymousDisabled)
 	h3, _ := signupGatingHandler(t, nil, ptrBool(true))
 	if w3 := postSignup(h3, `{}`); w3.Code != 200 {
 		t.Fatalf("anonymous signup with allow_anonymous=true: expected 200, got %d: %s", w3.Code, w3.Body.String())

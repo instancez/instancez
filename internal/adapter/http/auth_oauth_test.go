@@ -39,7 +39,7 @@ func TestOAuthLoginError(t *testing.T) {
 		status     int
 		code, frag string
 	}{
-		{domain.ErrSignupDisabled, 403, "signup_disabled", "Signups not allowed"},
+		{domain.ErrSignupDisabled, 422, "signup_disabled", "Signups not allowed for this instance"},
 		{domain.ErrProviderEmailUnverified, 422, "provider_email_needs_verification", "Unverified email with google"},
 		{domain.ErrOAuthLinkRefused, 422, "email_exists", "confirm your email"},
 		{errors.New("db"), 500, "internal", "Failed to create or find user"},
@@ -54,7 +54,7 @@ func TestOAuthLoginError(t *testing.T) {
 }
 
 func TestOAuthLoginError_CodesAreStableSlugs(t *testing.T) {
-	for _, slug := range []string{"provider_email_needs_verification", "email_exists"} {
+	for _, slug := range []string{"provider_email_needs_verification", "email_exists", "signup_disabled", "anonymous_provider_disabled"} {
 		if errTypeToCode[slug] != slug {
 			t.Errorf("%s maps to %q", slug, errTypeToCode[slug])
 		}
