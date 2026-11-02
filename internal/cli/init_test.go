@@ -416,9 +416,18 @@ func TestRunInitPreservesUserGitignore(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(data)
-	for _, want := range []string{"# my notes", "node_modules/", ".env.local", "uploads/", "pgdata/"} {
+	for _, want := range []string{"# my notes", "node_modules/", ".env.local", "uploads/", "pgdata/", "pgdata.runtime/"} {
 		if !strings.Contains(got, want) {
 			t.Errorf(".gitignore missing %q\n--- got ---\n%s", want, got)
+		}
+	}
+}
+
+func TestScaffoldGitignoreCoversEmbeddedPGDirs(t *testing.T) {
+	lines := strings.Split(scaffoldGitignore(), "\n")
+	for _, want := range []string{"pgdata/", "pgdata.runtime/"} {
+		if !slices.Contains(lines, want) {
+			t.Errorf("scaffoldGitignore missing %q", want)
 		}
 	}
 }
