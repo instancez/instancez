@@ -288,3 +288,32 @@ func TestFileSourceWatchEnvAndConfigTogether(t *testing.T) {
 	}
 	expectQuiet(t, ch)
 }
+
+const localSecretYAML = "version: 1\nproject:\n  name: p\nauth:\n  oauth:\n    github:\n      client_id: id\n      client_secret: ${INSTANCEZ_ENV_SRC_LOCAL_SECRET}\n"
+
+func TestFileSourceLocal(t *testing.T) {
+	t.Setenv("INSTANCEZ_ENV_SRC_LOCAL_SECRET", "")
+	_ = os.Unsetenv("INSTANCEZ_ENV_SRC_LOCAL_SECRET")
+	path := filepath.Join(t.TempDir(), "instancez.yaml")
+	if err := os.WriteFile(path, []byte(localSecretYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := (&FileSource{Path: path}).Load(context.Background()); err == nil {
+		t.Fatal("non-local source must reject the unset secret")
+	}
+	local := &FileSource{Path: path, Local: true}
+	cfg, err := local.Load(context.Background())
+	if err != nil {
+		t.Fatalf("local source: %v", err)
+	}
+	if errs := ValidateSource(local, cfg); errs != nil {
+		t.Fatalf("local validate: %v", errs)
+	}
+	if errs := ValidateSource(&FileSource{Path: path}, cfg); !hasPath(errs, "auth.oauth.github.client_secret") {
+		t.Fatalf("strict validate must require the secret, got %v", errs)
+	}
+	if errs := ValidateSource(nil, cfg); !hasPath(errs, "auth.oauth.github.client_secret") {
+		t.Fatalf("nil source must validate strictly, got %v", errs)
+	}
+}

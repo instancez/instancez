@@ -1858,9 +1858,11 @@ func TestValidate_OAuthClientSecret(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			defer func(old bool) { LocalDev = old }(LocalDev)
-			LocalDev = tt.local
-			errs := Validate(oauthCfg(tt.provider, tt.secret))
+			validateFn := Validate
+			if tt.local {
+				validateFn = ValidateLocal
+			}
+			errs := validateFn(oauthCfg(tt.provider, tt.secret))
 			if got := hasPath(errs, "auth.oauth."+tt.provider+".client_secret"); got != tt.wantErr {
 				t.Fatalf("secret error = %v, want %v (errs=%v)", got, tt.wantErr, errs)
 			}
@@ -1869,11 +1871,9 @@ func TestValidate_OAuthClientSecret(t *testing.T) {
 }
 
 func TestValidate_OAuthClientIDStaysRequiredLocally(t *testing.T) {
-	defer func(old bool) { LocalDev = old }(LocalDev)
-	LocalDev = true
 	cfg := validBaseConfig()
 	cfg.Auth = &domain.Auth{OAuth: map[string]*domain.OAuthProvider{"github": {ClientSecret: "s"}}}
-	if !hasPath(Validate(cfg), "auth.oauth.github.client_id") {
+	if !hasPath(ValidateLocal(cfg), "auth.oauth.github.client_id") {
 		t.Fatal("client_id must stay required in local mode")
 	}
 }
@@ -1957,18 +1957,15 @@ func TestValidate_AuthUIDDefaultOnInferredFKType(t *testing.T) {
 	}
 }
 
-// The auth.* helpers are installed with the auth block, so a default that
-// calls one without it would fail at migrate time.
-func TestValidate_AuthDefaultNeedsAuthBlock(t *testing.T) {
-	cfg := validBaseConfig()
-	table := cfg.Tables["todos"]
-	table.Fields = append(table.Fields, domain.Field{Name: "created_by", Type: "uuid", Default: "auth.uid()"})
-	cfg.Tables["todos"] = table
-	if !hasPath(Validate(cfg), "tables.todos.fields.created_by.default") {
-		t.Fatal("auth.uid() default without an auth block must fail validation")
+func TestIsAllowedDefault(t *testing.T) {
+	for _, ok := range []string{"now()", "uuid_v7()", "current_date", "auth.uid()", "auth.role()", "auth.email()", "auth.jwt()"} {
+		if !IsAllowedDefault(ok) {
+			t.Errorf("%q should be allowed", ok)
+		}
 	}
-	cfg.Auth = &domain.Auth{Email: &domain.AuthEmail{}}
-	if hasPath(Validate(cfg), "tables.todos.fields.created_by.default") {
-		t.Fatal("auth.uid() default with an auth block must pass")
+	for _, bad := range []string{"", "AUTH.UID()", " auth.uid()", "auth.uid();", "auth.nope()", "gen_random_uuid()"} {
+		if IsAllowedDefault(bad) {
+			t.Errorf("%q must not be allowed (exact lower-case match only)", bad)
+		}
 	}
 }

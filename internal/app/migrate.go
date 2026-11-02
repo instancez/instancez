@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/instancez/instancez/internal/config"
 	"github.com/instancez/instancez/internal/domain"
 )
 
@@ -123,6 +124,9 @@ func (m *Migrator) planStatements(ctx context.Context, tx domain.Tx, oldCfg, new
 			"revert the primary_key flags, or create a new table and copy the data",
 			ErrPrimaryKeyChange, strings.Join(rejected, "; "))
 	}
+	for _, col := range requiredAuthDefaultAdds(oldCfg, newCfg) {
+		m.logger.Warn("new required column has an auth.* default; existing rows get NULL, so the migration fails on a non-empty table", "column", col)
+	}
 	if destroys := diff.Destroys; len(destroys) > 0 {
 		if !m.allowDestructive {
 			return nil, destructiveError(destroys)
@@ -133,6 +137,25 @@ func (m *Migrator) planStatements(ctx context.Context, tx domain.Tx, oldCfg, new
 			"drops", strings.Join(destroys, ", "))
 	}
 	return planUpdateStatements(oldCfg, newCfg, m.roles), nil
+}
+
+// requiredAuthDefaultAdds lists "table.column" for new required columns on existing tables whose default is an auth.* helper.
+func requiredAuthDefaultAdds(oldCfg, newCfg *domain.Config) []string {
+	var out []string
+	for _, name := range sortedKeys(newCfg.Tables) {
+		oldT, ok := oldCfg.Tables[name]
+		if !ok {
+			continue
+		}
+		had := oldT.FieldMap()
+		for _, f := range newCfg.Tables[name].Fields {
+			d, _ := f.Default.(string)
+			if _, seen := had[f.Name]; !seen && f.RenamedFrom == "" && f.Required && strings.HasPrefix(strings.ToLower(d), "auth.") {
+				out = append(out, name+"."+f.Name)
+			}
+		}
+	}
+	return out
 }
 
 // LivePrimaryKey returns the primary key columns Postgres has for rel, sorted.
@@ -1245,6 +1268,12 @@ func formatDefault(val any, colType string) string {
 	case string:
 		lower := strings.ToLower(v)
 		// SQL functions/keywords — pass through as-is
+		if strings.HasPrefix(lower, "auth.") {
+			if config.IsAllowedDefault(lower) {
+				return lower
+			}
+			return sqlLiteral(v)
+		}
 		if strings.Contains(v, "(") || lower == "current_date" || lower == "current_time" {
 			// Map our shorthand to real Postgres functions
 			switch lower {

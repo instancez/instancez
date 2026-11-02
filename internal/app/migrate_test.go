@@ -501,6 +501,10 @@ func TestFormatDefault_SQLFunctions(t *testing.T) {
 		{"uuid_v7()", "uuid", "gen_random_uuid()"},
 		{"uuid_v4()", "uuid", "gen_random_uuid()"},
 		{"current_date", "date", "current_date"},
+		{"auth.uid()", "uuid", "auth.uid()"},
+		{"AUTH.UID()", "uuid", "auth.uid()"},
+		{"auth.uid(); drop table x", "uuid", "'auth.uid(); drop table x'"},
+		{"auth.nope()", "uuid", "'auth.nope()'"},
 		{"pending", "text", "'pending'"},
 		{42, "integer", "42"},
 		{true, "boolean", "TRUE"},
@@ -1298,5 +1302,33 @@ func TestGenerateRPCFunction_ArgDefaultNull(t *testing.T) {
 				Args: []domain.FuncArg{{Name: "x", Type: "bigint", Default: c.def}}}
 			mustContain(t, generateRPCFunction("f", fn), c.want)
 		})
+	}
+}
+
+func TestRequiredAuthDefaultAdds(t *testing.T) {
+	field := func(name string, req bool, def any) domain.Field {
+		return domain.Field{Name: name, Type: "uuid", Required: req, Default: def}
+	}
+	oldCfg := &domain.Config{Tables: map[string]domain.Table{"todos": {Fields: []domain.Field{field("id", true, nil)}}}}
+	newCfg := &domain.Config{Tables: map[string]domain.Table{
+		"todos": {Fields: []domain.Field{
+			field("id", true, nil),
+			field("created_by", true, "auth.uid()"),
+			field("owner", false, "auth.uid()"),
+			field("slug", true, "now()"),
+			field("moved", true, "auth.uid()"),
+			field("n", true, 5),
+		}},
+		"fresh": {Fields: []domain.Field{field("created_by", true, "auth.uid()")}},
+	}}
+	f := newCfg.Tables["todos"].Fields[4]
+	f.RenamedFrom = "old_moved"
+	newCfg.Tables["todos"].Fields[4] = f
+	got := requiredAuthDefaultAdds(oldCfg, newCfg)
+	if len(got) != 1 || got[0] != "todos.created_by" {
+		t.Fatalf("got %v, want [todos.created_by]", got)
+	}
+	if got := requiredAuthDefaultAdds(oldCfg, oldCfg); len(got) != 0 {
+		t.Fatalf("unchanged config: got %v", got)
 	}
 }
