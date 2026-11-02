@@ -122,7 +122,7 @@ func DSNPresentCheck(lookup func(string) string) Check {
 				Name:    "DSN env vars present",
 				OK:      false,
 				Detail:  EnvOwnerDSN + " and " + EnvAuthDSN + " are not set",
-				FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) in .development.env and run `inz dev`, or set " + EnvOwnerDSN + " + " + EnvAuthDSN + " directly",
+				FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) in .development.env and run `inz dev`, or set " + EnvOwnerDSN + " + " + EnvAuthDSN + " directly, or run `inz dev --embedded-pg` to use a built-in Postgres with no setup",
 			}
 		case owner == "":
 			return Result{
@@ -153,7 +153,7 @@ func SuperuserDSNPresentCheck(lookup func(string) string) Check {
 				Name:    "Superuser DSN present",
 				OK:      false,
 				Detail:  EnvSuperuserDSN + " is not set",
-				FixHint: "set " + EnvSuperuserDSN + " to a superuser Postgres DSN (e.g. postgres://postgres:pass@localhost:5432/instancez)",
+				FixHint: "set " + EnvSuperuserDSN + " to a superuser Postgres DSN (e.g. postgres://postgres:pass@localhost:5432/instancez), or run `inz dev --embedded-pg` to use a built-in Postgres with no setup",
 			}
 		}
 		return Result{Name: "Superuser DSN present", OK: true}
@@ -283,7 +283,7 @@ func ConnectCheck(name, dsn string) Check {
 				Name:    name,
 				OK:      false,
 				Detail:  "DSN is empty",
-				FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) and run `inz dev`, or set the role DSNs in .development.env",
+				FixHint: "set INSTANCEZ_DATABASE_URL (a superuser DSN) and run `inz dev`, or set the role DSNs in .development.env, or run `inz dev --embedded-pg` to use a built-in Postgres with no setup",
 			}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)

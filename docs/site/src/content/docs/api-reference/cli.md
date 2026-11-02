@@ -275,6 +275,8 @@ inz cloud deploy --yes             # skip the confirmation prompt (e.g. in CI)
 
 Run preflight checks for `inz dev`: config validity, the superuser database DSN, and Postgres role layout.
 
+Database checks are skipped when no DSN is set (a missing or unreachable database is reported once), and the DSN hint suggests `inz dev --embedded-pg`, which needs none.
+
 Exits non-zero if any check fails.
 
 ```

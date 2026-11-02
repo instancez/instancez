@@ -113,6 +113,7 @@ func TestDSNPresentCheck(t *testing.T) {
 		env     map[string]string
 		wantOK  bool
 		wantErr string // substring expected in Detail when !wantOK
+		wantHint string
 	}{
 		{
 			name:   "both present",
@@ -136,6 +137,7 @@ func TestDSNPresentCheck(t *testing.T) {
 			env:     map[string]string{},
 			wantOK:  false,
 			wantErr: "not set",
+			wantHint: "inz dev --embedded-pg",
 		},
 	}
 	for _, tc := range cases {
@@ -152,6 +154,9 @@ func TestDSNPresentCheck(t *testing.T) {
 				if r.FixHint == "" {
 					t.Errorf("FixHint must be non-empty on failure")
 				}
+				if !strings.Contains(r.FixHint, tc.wantHint) {
+					t.Errorf("FixHint %q does not contain %q", r.FixHint, tc.wantHint)
+				}
 			}
 		})
 	}
@@ -164,6 +169,9 @@ func TestSuperuserDSNPresentCheck(t *testing.T) {
 	r := preflight.SuperuserDSNPresentCheck(absent)()
 	if r.OK {
 		t.Error("expected fail when INSTANCEZ_DATABASE_URL absent")
+	}
+	if !strings.Contains(r.FixHint, "inz dev --embedded-pg") {
+		t.Errorf("hint should suggest --embedded-pg, got: %q", r.FixHint)
 	}
 	if !strings.Contains(r.Detail, "INSTANCEZ_DATABASE_URL") {
 		t.Errorf("detail should mention env var, got: %q", r.Detail)
@@ -400,5 +408,12 @@ func TestPortFreeCheck(t *testing.T) {
 	r := preflight.PortFreeCheck(heldPort)()
 	if r.OK || !strings.Contains(r.Detail, fmt.Sprint(heldPort)) || !strings.Contains(r.FixHint, "--port") {
 		t.Fatalf("busy port: got %+v", r)
+	}
+}
+
+func TestConnectCheckEmptyDSNHintsEmbeddedPG(t *testing.T) {
+	r := preflight.ConnectCheck("database connect", "")()
+	if r.OK || !strings.Contains(r.FixHint, "inz dev --embedded-pg") {
+		t.Fatalf("got %+v", r)
 	}
 }
