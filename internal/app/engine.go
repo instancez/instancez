@@ -269,7 +269,7 @@ func (e *Engine) runWatcher(ctx context.Context, interval time.Duration) {
 				e.logger.Warn("config watch transient error", "error", ev.Err)
 				continue
 			}
-			cfg, err := config.ParseSourceBytes(e.source, ev.Data)
+			cfg, blanked, err := config.ParseSourceBytes(e.source, ev.Data)
 			if err != nil {
 				e.logger.Error("config reload: parse failed", "error", err)
 				e.reportRuntimeError(err)
@@ -286,6 +286,9 @@ func (e *Engine) runWatcher(ctx context.Context, interval time.Duration) {
 					d.MarkDrift(versionChecksum(ev.Data), msg, time.Now())
 				}
 				continue
+			}
+			for _, name := range blanked {
+				e.logger.Warn("config reload: unset env treated as empty", "var", name)
 			}
 			config.LogWarnings(e.logger, cfg)
 			e.mu.Lock()

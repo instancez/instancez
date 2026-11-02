@@ -317,3 +317,24 @@ func TestFileSourceLocal(t *testing.T) {
 		t.Fatalf("nil source must validate strictly, got %v", errs)
 	}
 }
+
+func TestParseSourceBytesReportsBlankedVars(t *testing.T) {
+	const name = "INSTANCEZ_ENV_PSB_UNSET"
+	t.Setenv(name, "")
+	_ = os.Unsetenv(name)
+	data := []byte("version: 1\nproject:\n  name: p\nauth:\n  oauth:\n    github:\n      client_id: id\n      client_secret: ${" + name + "}\n")
+
+	local := &FileSource{Local: true}
+	cfg, blanked, err := ParseSourceBytes(local, data)
+	if err != nil || cfg == nil {
+		t.Fatalf("local parse: cfg=%v err=%v", cfg, err)
+	}
+	if len(blanked) != 1 || blanked[0] != name {
+		t.Fatalf("blanked = %v, want [%s]", blanked, name)
+	}
+
+	cfg, blanked, err = ParseSourceBytes(&FileSource{}, data)
+	if err == nil || cfg != nil || len(blanked) != 0 {
+		t.Fatalf("strict parse must fail on the unset var and blank nothing: cfg=%v blanked=%v err=%v", cfg, blanked, err)
+	}
+}

@@ -139,7 +139,7 @@ func (m *Migrator) planStatements(ctx context.Context, tx domain.Tx, oldCfg, new
 	return planUpdateStatements(oldCfg, newCfg, m.roles), nil
 }
 
-// requiredAuthDefaultAdds lists "table.column" for new required columns on existing tables whose default is an auth.* helper.
+// requiredAuthDefaultAdds lists "table.column" for new required columns on existing tables whose default is an auth.* helper that can be NULL (auth.role() falls back to 'anon').
 func requiredAuthDefaultAdds(oldCfg, newCfg *domain.Config) []string {
 	var out []string
 	for _, name := range sortedKeys(newCfg.Tables) {
@@ -150,7 +150,7 @@ func requiredAuthDefaultAdds(oldCfg, newCfg *domain.Config) []string {
 		had := oldT.FieldMap()
 		for _, f := range newCfg.Tables[name].Fields {
 			d, _ := f.Default.(string)
-			if _, seen := had[f.Name]; !seen && f.RenamedFrom == "" && f.Required && strings.HasPrefix(strings.ToLower(d), "auth.") {
+			if _, seen := had[f.Name]; !seen && f.RenamedFrom == "" && f.Required && strings.HasPrefix(strings.ToLower(d), "auth.") && strings.ToLower(d) != "auth.role()" {
 				out = append(out, name+"."+f.Name)
 			}
 		}
