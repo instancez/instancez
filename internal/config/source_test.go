@@ -446,16 +446,27 @@ func TestSourceReadOnly_FalseWithoutInclude(t *testing.T) {
 	}
 }
 
-func TestFileSourceReadVersionChangesOnFragmentEdit(t *testing.T) {
-	main, dir := includeProject(t)
-	src := &FileSource{Path: main}
-	_, v1, err := src.Read(context.Background())
-	if err != nil {
+func TestFileSourceWatchPatternDirCreatedLater(t *testing.T) {
+	dir := t.TempDir()
+	main := filepath.Join(dir, "instancez.yaml")
+	writeFile(t, main, "version: 1\ninclude: [tables/*.yaml]\n")
+	ch := startWatch(t, &FileSource{Path: main})
+
+	if err := os.Mkdir(filepath.Join(dir, "tables"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(dir, "tables", "a.yaml"), "tables:\n  a:\n    fields: []\n# more\n")
-	_, v2, _ := src.Read(context.Background())
-	if v1 == v2 {
-		t.Fatal("version must change when a fragment changes")
-	}
+	time.Sleep(200 * time.Millisecond)
+	writeFile(t, filepath.Join(dir, "tables", "a.yaml"), "tables:\n  later:\n    fields: []\n")
+	expectData(t, ch, "later")
+}
+
+func TestFileSourceWatchIgnoresEditorTempInIncludeDir(t *testing.T) {
+	dir := t.TempDir()
+	main := filepath.Join(dir, "instancez.yaml")
+	writeFile(t, main, "version: 1\ninclude: [\"tables/*\"]\n")
+	writeFile(t, filepath.Join(dir, "tables", "a.yaml"), "tables: {}\n")
+	ch := startWatch(t, &FileSource{Path: main})
+	writeFile(t, filepath.Join(dir, "tables", ".a.yaml.swp"), "x")
+	writeFile(t, filepath.Join(dir, "tables", "a.yaml~"), "x")
+	expectQuiet(t, ch)
 }

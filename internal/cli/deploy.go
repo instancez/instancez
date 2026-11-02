@@ -86,7 +86,7 @@ func runDeploy(configPath string, opts deployOpts) error {
 	if err != nil {
 		return fmt.Errorf("read %s: %w", configPath, err)
 	}
-	src, err := config.ReadExpandedConfigFile(configPath)
+	src, err := config.ReadConfigFile(configPath)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", configPath, err)
 	}
@@ -161,7 +161,7 @@ func runDeploy(configPath string, opts deployOpts) error {
 		if err := os.WriteFile(configPath, updated, 0o644); err != nil {
 			return fmt.Errorf("writing %s: %w", configPath, err)
 		}
-		if src, err = config.ReadExpandedConfigFile(configPath); err != nil {
+		if src, err = config.ReadConfigFile(configPath); err != nil {
 			return fmt.Errorf("read %s: %w", configPath, err)
 		}
 		fmt.Printf("  ✓ Project created (id: %s)\n", projectID)

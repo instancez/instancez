@@ -1,8 +1,10 @@
 package config
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,7 +52,7 @@ func TestResolveIncludes_NoIncludeByteIdentical(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", p, err)
 		}
-		if string(got.Data) != string(want) || len(got.Files) != 0 {
+		if string(got.Data) != string(want) {
 			t.Errorf("%s: bytes changed without include", p)
 		}
 	}
@@ -81,9 +83,6 @@ func TestResolveIncludes_MergesTablesAndRPC(t *testing.T) {
 	}
 	if len(cfg.Include) != 0 || len(cfg.UnknownKeys) != 0 {
 		t.Errorf("include=%v unknown=%v", cfg.Include, cfg.UnknownKeys)
-	}
-	if len(r.Files) != 2 || len(r.Patterns) != 2 {
-		t.Errorf("files=%v patterns=%v", r.Files, r.Patterns)
 	}
 }
 
@@ -122,8 +121,12 @@ func TestResolveIncludes_GlobSkipsMainFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(r.Files) != 1 || filepath.Base(r.Files[0]) != "more.yaml" {
-		t.Fatalf("files = %v", r.Files)
+	cfg, err := ParseBytes(r.Data, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.Tables["todos"]; !ok || len(cfg.Tables) != 1 {
+		t.Fatalf("tables = %v", cfg.Tables)
 	}
 }
 
@@ -131,12 +134,59 @@ func TestResolveIncludes_OverlappingGlobsDeduped(t *testing.T) {
 	d := t.TempDir()
 	main := put(t, d, "instancez.yaml", mainHead+"include: [tables/*.yaml, tables/todos.yaml]\n")
 	put(t, d, "tables/todos.yaml", todoTable)
-	r, err := ResolveIncludes(main)
-	if err != nil {
+	if _, err := ResolveIncludes(main); err != nil {
 		t.Fatalf("overlap must not report a duplicate key: %v", err)
 	}
-	if len(r.Files) != 1 {
-		t.Fatalf("files = %v", r.Files)
+}
+
+func TestResolveIncludes_GlobMatchingOnlyMainWarns(t *testing.T) {
+	var logs bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	main := put(t, t.TempDir(), "instancez.yaml", mainHead+"include: ['*.yaml']\n")
+	if _, err := ResolveIncludes(main); err != nil {
+		t.Fatalf("a glob that only matches the main file is not an error: %v", err)
+	}
+	if !strings.Contains(logs.String(), "only the main config file") {
+		t.Fatalf("expected a warning, got %q", logs.String())
+	}
+}
+
+func TestResolveIncludes_GlobSkipsDotfilesAndEditorTemps(t *testing.T) {
+	d := t.TempDir()
+	main := put(t, d, "instancez.yaml", mainHead+"include: ['tables/*']\n")
+	put(t, d, "tables/a.yaml", todoTable)
+	put(t, d, "tables/.a.yaml.swp", "\x00binary")
+	put(t, d, "tables/a.yaml~", "garbage: [")
+	put(t, d, "tables/#a.yaml#", "garbage: [")
+	r, err := ResolveIncludes(main)
+	if err != nil {
+		t.Fatalf("editor temp files must be ignored: %v", err)
+	}
+	if cfg, err := ParseBytes(r.Data, "x"); err != nil || len(cfg.Tables) != 1 {
+		t.Fatalf("cfg=%v err=%v", cfg, err)
+	}
+
+	only := put(t, t.TempDir(), "instancez.yaml", mainHead+"include: ['t/*']\n")
+	put(t, filepath.Dir(only), "t/.hidden.yaml", todoTable)
+	if msg := resolveErr(t, only); !strings.Contains(msg, "matches no files") {
+		t.Fatalf("a glob matching only dotfiles matches no files: %s", msg)
+	}
+}
+
+func TestResolveIncludes_MainUnknownKeyIsCollectedNotFatal(t *testing.T) {
+	d := t.TempDir()
+	main := put(t, d, "instancez.yaml", mainHead+"bogus: 1\ninclude: [a.yaml]\n")
+	put(t, d, "a.yaml", todoTable)
+	r, err := ResolveIncludes(main)
+	if err != nil {
+		t.Fatalf("main-file unknown keys must be reported with other validation errors: %v", err)
+	}
+	cfg, err := ParseBytes(r.Data, "x")
+	if err != nil || len(cfg.UnknownKeys) != 1 {
+		t.Fatalf("unknown keys = %v err=%v", cfg.UnknownKeys, err)
 	}
 }
 
@@ -204,19 +254,19 @@ func TestResolveIncludes_EmptyFragmentOK(t *testing.T) {
 	}
 }
 
-func TestResolveIncludes_EmptyIncludeListNoop(t *testing.T) {
-	d := t.TempDir()
-	src := mainHead + "include: []\n"
-	main := put(t, d, "instancez.yaml", src)
-	r, err := ResolveIncludes(main)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(r.Data) != src {
-		t.Fatalf("empty include list must return the original bytes, got %q", r.Data)
-	}
-	if HasInclude(r.Data) {
-		t.Fatal("empty include list is not an include")
+func TestResolveIncludes_EmptyIncludeKeyStripped(t *testing.T) {
+	for _, inc := range []string{"include: []\n", "include:\n"} {
+		main := put(t, t.TempDir(), "instancez.yaml", mainHead+inc)
+		r, err := ResolveIncludes(main)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(r.Data), "include") {
+			t.Fatalf("%q: the include key must not reach consumers that do not know it:\n%s", inc, r.Data)
+		}
+		if _, err := ParseBytes(r.Data, "x"); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -320,15 +370,6 @@ func TestResolveIncludes_VersionTokenChangesOnFragmentEdit(t *testing.T) {
 		t.Fatalf("version did not change: %q %q", v1, r2.Version)
 	}
 	_ = frag
-}
-
-func TestRejectInclude(t *testing.T) {
-	if err := RejectInclude("s3://b/k", []byte("version: 1\ninclude: [a.yaml]\n")); err == nil || !strings.Contains(err.Error(), "run inz bundle to flatten") {
-		t.Fatalf("err = %v", err)
-	}
-	if err := RejectInclude("s3://b/k", []byte("version: 1\n")); err != nil {
-		t.Fatal(err)
-	}
 }
 
 func TestFileSourceReadResolvesIncludes(t *testing.T) {

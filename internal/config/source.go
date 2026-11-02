@@ -242,6 +242,9 @@ func (s *FileSource) Watch(ctx context.Context, _ time.Duration) (<-chan WatchEv
 					continue
 				}
 				name := filepath.Clean(ev.Name)
+				if ev.Op&fsnotify.Create != 0 && isPatternDirAncestor(includePatterns, name) {
+					refreshIncludes()
+				}
 				isEnv, watched := targets[name]
 				if !watched {
 					watched = includeFiles[name] || matchesAnyPattern(includePatterns, name)
@@ -361,9 +364,6 @@ func (s *S3Source) Read(ctx context.Context) ([]byte, string, error) {
 	data, err := io.ReadAll(out.Body)
 	if err != nil {
 		return nil, "", fmt.Errorf("s3 config %s: read body: %w", s.Describe(), err)
-	}
-	if err := RejectInclude(s.Describe(), data); err != nil {
-		return nil, "", err
 	}
 	return data, aws.ToString(out.ETag), nil
 }

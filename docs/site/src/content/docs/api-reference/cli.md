@@ -231,7 +231,7 @@ Build a self-contained tar.gz bundle from `instancez.yaml` and `functions/`.
 
 The bundle is the deployment artifact for projects that use code functions. It contains `instancez.yaml`, `functions/` (with vendored `node_modules/`), and a `manifest.json`. Upload it to S3 then set `functions_bundle:` in `instancez.yaml` to the returned pointer.
 
-The bundled `instancez.yaml` is flattened: `include:` files are merged and `timestamps` / `owner` shorthands expanded, so the bundle is a single plain file. Configs that use neither are bundled as written.
+The bundled `instancez.yaml` follows `include:`: the files are merged into one and the `include:` key is dropped. Configs without `include:` are bundled as written. Shorthands such as `timestamps` and `owner` are not expanded in the bundle.
 
 Runs stateless validation (same as `inz validate`) including checking that each declared function's `file:` exists on disk.
 

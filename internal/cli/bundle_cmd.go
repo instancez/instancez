@@ -24,7 +24,7 @@ func newBundleCmd() *cobra.Command {
 
 The bundle is the deployment artifact for projects that use code functions.
 Upload it to S3 then reference it in instancez.yaml under functions_bundle:.
-The bundled instancez.yaml follows include: and expands shorthands into one file.
+The bundled instancez.yaml follows include: and is written as one merged file.
 
 Examples:
   inz bundle                                        # write to a temp file, print path

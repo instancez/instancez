@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -17,10 +19,8 @@ import (
 
 // Resolved is a main config file with its include: fragments merged in.
 type Resolved struct {
-	Data     []byte
-	Files    []string // absolute, sorted, excludes the main file
-	Patterns []string // absolute include patterns
-	Version  string   // changes when the main file or any fragment changes
+	Data    []byte
+	Version string // changes when the main file or any fragment changes
 }
 
 var includeSections = []string{"tables", "storage", "rpc", "functions"}
@@ -66,6 +66,8 @@ func mappingEntry(m *yaml.Node, key string) (int, *yaml.Node) {
 	return -1, nil
 }
 
+func removeEntry(m *yaml.Node, idx int) { m.Content = slices.Delete(m.Content, idx, idx+2) }
+
 func cfgErr(path, msg string, err error) error {
 	return &domain.ConfigError{Path: path, Message: msg, Err: err}
 }
@@ -89,7 +91,7 @@ func ResolveIncludes(path string) (*Resolved, error) {
 	}
 	root := rootMapping(&doc)
 	idx, inc := mappingEntry(root, "include")
-	if inc == nil || inc.Kind != yaml.SequenceNode || len(inc.Content) == 0 {
+	if inc == nil || (inc.Kind != yaml.SequenceNode && !(inc.Kind == yaml.ScalarNode && inc.Tag == "!!null")) {
 		return plain, nil
 	}
 
@@ -107,11 +109,6 @@ func ResolveIncludes(path string) (*Resolved, error) {
 	}
 	dir := filepath.Dir(absMain)
 
-	if err := checkSyntax(path, data); err != nil {
-		return nil, err
-	}
-
-	var patterns []string
 	files := map[string]string{} // real path -> display path
 	for _, n := range inc.Content {
 		if n.Kind != yaml.ScalarNode || n.Value == "" {
@@ -121,7 +118,6 @@ func ResolveIncludes(path string) (*Resolved, error) {
 		if err != nil {
 			return nil, cfgErr(path, err.Error(), nil)
 		}
-		patterns = append(patterns, filepath.Join(dir, n.Value))
 		for real, disp := range matches {
 			files[real] = disp
 		}
@@ -131,8 +127,7 @@ func ResolveIncludes(path string) (*Resolved, error) {
 	for r := range files {
 		reals = append(reals, r)
 	}
-	sort.Strings(reals)
-	sort.SliceStable(reals, func(i, j int) bool { return files[reals[i]] < files[reals[j]] })
+	sort.Slice(reals, func(i, j int) bool { return files[reals[i]] < files[reals[j]] })
 
 	mainName := filepath.ToSlash(filepath.Base(absMain))
 	origin := map[string]string{} // "section.key" -> file
@@ -145,7 +140,6 @@ func ResolveIncludes(path string) (*Resolved, error) {
 	}
 
 	hash := sha256.New()
-	var abs []string
 	for _, real := range reals {
 		disp := files[real]
 		fp := filepath.Join(dir, filepath.FromSlash(disp))
@@ -161,10 +155,9 @@ func ResolveIncludes(path string) (*Resolved, error) {
 			return nil, cfgErr(fp, "cannot stat file", err)
 		}
 		_, _ = fmt.Fprintf(hash, "%s\x00%s\n", fp, fileVersionToken(fi))
-		abs = append(abs, fp)
 	}
 
-	root.Content = append(root.Content[:idx], root.Content[idx+2:]...)
+	removeEntry(root, idx)
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
@@ -174,10 +167,8 @@ func ResolveIncludes(path string) (*Resolved, error) {
 	_ = enc.Close()
 
 	return &Resolved{
-		Data:     buf.Bytes(),
-		Files:    abs,
-		Patterns: patterns,
-		Version:  fmt.Sprintf("%s+%x", version, hash.Sum(nil)[:8]),
+		Data:    buf.Bytes(),
+		Version: fmt.Sprintf("%s+%x", version, hash.Sum(nil)[:8]),
 	}, nil
 }
 
@@ -213,11 +204,14 @@ func globInclude(dir, realDir, realMain, pattern string) (map[string]string, err
 	if err != nil {
 		return nil, fmt.Errorf("include %q: %v", pattern, err)
 	}
-	if len(matches) == 0 {
-		return nil, fmt.Errorf("include %q: matches no files", pattern)
-	}
 	out := map[string]string{}
+	sawMain := false
+	candidates := 0
 	for _, m := range matches {
+		if isEditorTemp(filepath.Base(m), filepath.Base(clean)) {
+			continue
+		}
+		candidates++
 		real, err := filepath.EvalSymlinks(m)
 		if err != nil {
 			return nil, fmt.Errorf("include %q: %v", pattern, err)
@@ -231,6 +225,7 @@ func globInclude(dir, realDir, realMain, pattern string) (map[string]string, err
 			return nil, fmt.Errorf("include %q: %s is not a regular file", pattern, filepath.Base(m))
 		}
 		if real == realMain {
+			sawMain = true
 			continue
 		}
 		disp, err := filepath.Rel(dir, m)
@@ -239,7 +234,21 @@ func globInclude(dir, realDir, realMain, pattern string) (map[string]string, err
 		}
 		out[real] = filepath.ToSlash(disp)
 	}
+	if candidates == 0 {
+		return nil, fmt.Errorf("include %q: matches no files", pattern)
+	}
+	if len(out) == 0 && sawMain {
+		slog.Warn("include pattern matches only the main config file, so it includes nothing", "pattern", pattern)
+	}
 	return out, nil
+}
+
+// isEditorTemp reports dotfiles and editor backup or swap names, unless the pattern itself names a dotfile.
+func isEditorTemp(base, patternBase string) bool {
+	if strings.HasPrefix(base, ".") {
+		return !strings.HasPrefix(patternBase, ".")
+	}
+	return strings.HasSuffix(base, "~") || (strings.HasPrefix(base, "#") && strings.HasSuffix(base, "#"))
 }
 
 func mergeFragment(root *yaml.Node, path, disp string, data []byte, origin map[string]string, mainName string) error {
@@ -262,7 +271,7 @@ func mergeFragment(root *yaml.Node, path, disp string, data []byte, origin map[s
 		if k.Value == "include" {
 			return cfgErr(path, fmt.Sprintf("line %d: nested include is not supported", k.Line), nil)
 		}
-		if !isIncludeSection(k.Value) {
+		if !slices.Contains(includeSections, k.Value) {
 			return cfgErr(path, fmt.Sprintf("line %d: key %q is not allowed in an included file (allowed: %s)", k.Line, k.Value, strings.Join(includeSections, ", ")), nil)
 		}
 		if v.Kind == yaml.ScalarNode && v.Tag == "!!null" {
@@ -287,15 +296,6 @@ func mergeFragment(root *yaml.Node, path, disp string, data []byte, origin map[s
 	return nil
 }
 
-func isIncludeSection(s string) bool {
-	for _, k := range includeSections {
-		if k == s {
-			return true
-		}
-	}
-	return false
-}
-
 // sectionNode returns main's mapping for a section, creating it when absent or null.
 func sectionNode(root *yaml.Node, section, mainName string) (*yaml.Node, error) {
 	_, v := mappingEntry(root, section)
@@ -314,16 +314,11 @@ func sectionNode(root *yaml.Node, section, mainName string) (*yaml.Node, error) 
 	return v, nil
 }
 
-// RejectInclude errors when data uses include:, for sources that cannot resolve other files.
-func RejectInclude(origin string, data []byte) error {
-	if HasInclude(data) {
-		return cfgErr(origin, "include: is only supported for local config files; run inz bundle to flatten", nil)
-	}
-	return nil
-}
-
 func matchesAnyPattern(patterns []string, name string) bool {
 	for _, p := range patterns {
+		if isEditorTemp(filepath.Base(name), filepath.Base(p)) {
+			continue
+		}
 		if ok, _ := filepath.Match(p, name); ok {
 			return true
 		}
@@ -363,7 +358,14 @@ func includeWatchTargets(mainPath string) (dirs, patterns, files []string) {
 		}
 		pat := filepath.Join(base, n.Value)
 		patterns = append(patterns, pat)
-		addDir(filepath.Dir(pat))
+		for d := filepath.Dir(pat); strings.HasPrefix(d, base); d = filepath.Dir(d) {
+			if st, err := os.Stat(d); err == nil && st.IsDir() {
+				addDir(d)
+			}
+			if d == base {
+				break
+			}
+		}
 		matches, _ := filepath.Glob(pat)
 		for _, m := range matches {
 			files = append(files, m)
@@ -374,4 +376,14 @@ func includeWatchTargets(mainPath string) (dirs, patterns, files []string) {
 		}
 	}
 	return dirs, patterns, files
+}
+
+// isPatternDirAncestor reports whether dir is, or contains, the directory of an include pattern.
+func isPatternDirAncestor(patterns []string, dir string) bool {
+	for _, p := range patterns {
+		if rel, err := filepath.Rel(dir, filepath.Dir(p)); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }

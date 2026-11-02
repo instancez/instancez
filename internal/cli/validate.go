@@ -103,7 +103,7 @@ func validateAgainstCloud(ctx context.Context, configPath string, jsonOutput boo
 	if err != nil {
 		return fmt.Errorf("--cloud requires authentication: %w", err)
 	}
-	src, err := config.ReadExpandedConfigFile(configPath)
+	src, err := config.ReadConfigFile(configPath)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", configPath, err)
 	}
@@ -442,7 +442,7 @@ func planAgainstProject(ctx context.Context, configPath string, jsonOutput bool,
 		return fmt.Errorf("--project requires authentication: %w", err)
 	}
 
-	src, err := config.ReadExpandedConfigFile(configPath)
+	src, err := config.ReadConfigFile(configPath)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", configPath, err)
 	}

@@ -59,7 +59,7 @@ func TestRunValidate_IncludeMissingFileFails(t *testing.T) {
 	assert.True(t, errors.Is(err, errReported))
 }
 
-func TestBundle_FlattensIncludesAndShorthands(t *testing.T) {
+func TestBundle_FlattensIncludes(t *testing.T) {
 	cfgPath := incProject(t, incMain, incFragTS)
 	dir := filepath.Dir(cfgPath)
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "functions"), 0o755))
@@ -70,22 +70,20 @@ func TestBundle_FlattensIncludesAndShorthands(t *testing.T) {
 
 	got := string(readTarFile(t, bundlePath, "instancez.yaml"))
 	assert.NotContains(t, got, "include")
-	assert.NotContains(t, got, "timestamps")
 	assert.Contains(t, got, "notes:")
-	assert.Contains(t, got, "updated_at")
+	assert.Contains(t, got, "timestamps: true", "shorthands are expanded by the platform, not the CLI")
 	assert.Contains(t, got, "project_id: p1", "main-file keys must survive")
 }
 
-func TestBundle_ShorthandWithoutIncludeIsExpanded(t *testing.T) {
+func TestBundle_ShorthandWithoutIncludeShipsAsWritten(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "functions"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "instancez.yaml"), []byte("version: 1\n"+incFragTS), 0o644))
+	src := "version: 1\n" + incFragTS
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "instancez.yaml"), []byte(src), 0o644))
 	bundlePath, err := BuildBundle(dir)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.Remove(bundlePath) })
-	got := string(readTarFile(t, bundlePath, "instancez.yaml"))
-	assert.NotContains(t, got, "timestamps")
-	assert.Contains(t, got, "created_at")
+	assert.Equal(t, src, string(readTarFile(t, bundlePath, "instancez.yaml")))
 }
 
 // fakeCloudYAML records every yaml body the deploy flow sends.
@@ -125,9 +123,8 @@ func TestDeploy_SendsMergedYAMLAndKeepsIncludeOnDisk(t *testing.T) {
 	require.NotEmpty(t, *yamls)
 	for _, y := range *yamls {
 		assert.NotContains(t, y, "include", "cloud must receive a single flattened file")
-		assert.NotContains(t, y, "timestamps", "cloud must receive expanded shorthands")
 		assert.Contains(t, y, "notes:")
-		assert.Contains(t, y, "updated_at")
+		assert.Contains(t, y, "timestamps: true", "shorthands ship as written")
 	}
 	onDisk, err := os.ReadFile(cfg)
 	require.NoError(t, err)
@@ -174,6 +171,20 @@ func TestDeploy_PlainConfigShipsOriginalBytes(t *testing.T) {
 	require.NotEmpty(t, *yamls)
 	for _, y := range *yamls {
 		assert.Equal(t, plain, y, "configs without include or shorthands ship byte-identical")
+	}
+}
+
+func TestDeploy_EmptyIncludeIsStrippedFromUpload(t *testing.T) {
+	yamls := fakeCloudYAML(t)
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "instancez.yaml")
+	require.NoError(t, os.WriteFile(cfg, []byte("version: 1\nproject:\n  name: demo\n  cloud:\n    project_id: p1\ninclude: []\n"), 0o644))
+
+	require.NoError(t, runDeploy(cfg, deployOpts{yes: true}))
+
+	require.NotEmpty(t, *yamls)
+	for _, y := range *yamls {
+		assert.NotContains(t, y, "include")
 	}
 }
 
