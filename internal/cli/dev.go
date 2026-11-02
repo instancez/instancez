@@ -385,6 +385,7 @@ func isUnder(root, name string) bool {
 // below root, whose churn (npm installs, caches) must not trigger reloads.
 func inSkippedDir(root, name string) bool {
 	rel, err := filepath.Rel(root, filepath.Dir(name))
+	// root itself has Dir(root) outside root, so Rel yields ".." and must not count as a dot dir.
 	if err != nil || rel == "." || filepath.Clean(name) == filepath.Clean(root) {
 		return false
 	}
