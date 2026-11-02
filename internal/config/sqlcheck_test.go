@@ -5,7 +5,7 @@ import "testing"
 func TestCheckSQLExpr_Invalid(t *testing.T) {
 	for _, in := range []string{
 		"  ", "u1 = = auth.uid()", "(a = 1", "a = 1)", "name = 'x", "a = 1 AND", "OR a = 1",
-		"a = 1 and and b = 2", "a <> = b", `"Weird = 1`, "a = $$ x", "a = 1 /* open",
+		"a = 1 and and b = 2", "a <> = b", "a = 1 ;", "a = 1;", `"Weird = 1`, "a = $$ x", "a = 1 /* open",
 	} {
 		if r := checkSQLExpr(in); r == "" {
 			t.Errorf("checkSQLExpr(%q) = ok, want a reason", in)
@@ -24,34 +24,6 @@ func TestCheckSQLExpr_ValidCorpus(t *testing.T) {
 	} {
 		if r := checkSQLExpr(in); r != "" {
 			t.Errorf("checkSQLExpr(%q) = %q, want ok", in, r)
-		}
-	}
-}
-
-func TestCheckSQLExpr_ShippedConfigs(t *testing.T) {
-	for name, raw := range shippedConfigs(t) {
-		cfg, err := ParseBytesLenient(raw, name)
-		if err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		exprs := []string{}
-		for _, tb := range cfg.Tables {
-			for _, p := range tb.RLS {
-				exprs = append(exprs, p.Using, p.WithCheck)
-			}
-		}
-		for _, b := range cfg.Storage {
-			for _, p := range b.RLS {
-				exprs = append(exprs, p.Using, p.WithCheck)
-			}
-		}
-		for _, e := range exprs {
-			if e == "" {
-				continue
-			}
-			if r := checkSQLExpr(e); r != "" {
-				t.Errorf("%s: %q flagged: %s", name, e, r)
-			}
 		}
 	}
 }

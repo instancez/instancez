@@ -122,7 +122,7 @@ func humanType(goType string) string {
 	return strings.ReplaceAll(goType, "domain.", "")
 }
 
-func humanTypeError(got, val, goType string) string {
+func humanTypeError(val, goType string) string {
 	want := humanType(goType)
 	if val == "" || strings.HasPrefix(want, "a list") || want == "a mapping" {
 		return "expected " + want
@@ -130,9 +130,7 @@ func humanTypeError(got, val, goType string) string {
 	return fmt.Sprintf("expected %s, got %q", want, val)
 }
 
-// unknownKeyProblems converts a yaml.v3 TypeError into one ValidationError per
-// problem. root (may be nil) supplies real paths and columns; without it the
-// type-based section name is used. Unrecognised sub-messages pass through verbatim.
+// unknownKeyProblems turns a yaml.v3 TypeError into one ValidationError per problem.
 func unknownKeyProblems(te *yaml.TypeError, root *yaml.Node) domain.ValidationErrors {
 	out := make(domain.ValidationErrors, 0, len(te.Errors))
 	for _, sub := range te.Errors {
@@ -156,7 +154,7 @@ func unknownKeyProblems(te *yaml.TypeError, root *yaml.Node) domain.ValidationEr
 		}
 		if m := yamlTypeErrRe.FindStringSubmatch(sub); m != nil {
 			line, _ := strconv.Atoi(m[1])
-			ve := &domain.ValidationError{Line: line, Message: humanTypeError(m[2], m[3], m[4])}
+			ve := &domain.ValidationError{Line: line, Message: humanTypeError(m[3], m[4])}
 			if root != nil {
 				if p, c, ok := valuePathAt(root, line, m[3]); ok {
 					ve.Path, ve.Column = p, c

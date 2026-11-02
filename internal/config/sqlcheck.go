@@ -60,6 +60,8 @@ func checkSQLExpr(expr string) string {
 			} else {
 				i++
 			}
+		case c == ';':
+			return "semicolon is not allowed"
 		case c == '(':
 			depth++
 			toks, i = append(toks, sqlTok{'p', "("}), i+1

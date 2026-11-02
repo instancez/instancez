@@ -2191,6 +2191,9 @@ func TestValidateFieldType_DidYouMean(t *testing.T) {
 		{"datetime", `Did you mean "timestamptz"?`},
 		{"blob", `Did you mean "bytea"?`},
 		{"varchr(20)", `Did you mean "varchar"?`},
+		{"intt", `Did you mean "int"?`},
+		{"vector(3)", ""},
+		{"citext", ""},
 		{"qqqqqqqqq", ""},
 	}
 	for _, c := range cases {
@@ -2224,4 +2227,14 @@ func TestWarnings_FKNearMissSuggestsDeclaredSchema(t *testing.T) {
 		}
 	}
 	t.Fatal("no warning")
+}
+
+func TestValidate_RLSTrailingSemicolon(t *testing.T) {
+	for _, expr := range []string{"user_id = auth.uid() ;", "user_id = auth.uid();"} {
+		cfg := validBaseConfig()
+		todos := cfg.Tables["todos"]
+		todos.RLS = []domain.RLSPolicy{{Operations: []string{"select"}, Using: expr}}
+		cfg.Tables["todos"] = todos
+		assertHasErrorAt(t, Validate(cfg), "tables.todos.rls[0].using")
+	}
 }

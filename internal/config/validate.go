@@ -1451,8 +1451,8 @@ func fkPath(tableName, fieldName string) string {
 	return fmt.Sprintf("tables.%s.fields.%s.foreign_key", tableName, fieldName)
 }
 
-func validateForeignKeys(tables map[string]domain.Table) domain.ValidationErrors {
-	var errs domain.ValidationErrors
+// checkForeignKeys resolves every foreign key once, returning provable errors and unverifiable-target warnings.
+func checkForeignKeys(tables map[string]domain.Table) (errs, warns domain.ValidationErrors) {
 	schemas := fkSchemas(tables)
 	byName := domain.ResolverOver(tables)
 	for _, tableName := range slices.Sorted(maps.Keys(tables)) {
@@ -1465,6 +1465,9 @@ func validateForeignKeys(tables map[string]domain.Table) domain.ValidationErrors
 			if !ok {
 				continue // already caught by structural validation
 			}
+			if t.warn != nil {
+				warns = append(warns, t.warn)
+			}
 			if t.err != nil {
 				errs = append(errs, t.err)
 				continue
@@ -1473,10 +1476,8 @@ func validateForeignKeys(tables map[string]domain.Table) domain.ValidationErrors
 				continue
 			}
 			resolve := func(table, col string) (domain.Field, bool) {
-				if table == t.table && t.fields != nil {
-					if f, ok := t.fields[col]; ok {
-						return f, true
-					}
+				if f, ok := t.fields[col]; ok && table == t.table {
+					return f, true
 				}
 				return byName(table, col)
 			}
@@ -1491,7 +1492,17 @@ func validateForeignKeys(tables map[string]domain.Table) domain.ValidationErrors
 			}
 		}
 	}
+	return errs, warns
+}
+
+func validateForeignKeys(tables map[string]domain.Table) domain.ValidationErrors {
+	errs, _ := checkForeignKeys(tables)
 	return errs
+}
+
+func fkWarnings(tables map[string]domain.Table) domain.ValidationErrors {
+	_, warns := checkForeignKeys(tables)
+	return warns
 }
 
 // fieldRefWarnings flags the field-level ref and on_delete keys, which nothing reads.
@@ -1512,23 +1523,6 @@ func fieldRefWarnings(tables map[string]domain.Table) domain.ValidationErrors {
 				ws = append(ws, &domain.ValidationError{Path: p + ".on_delete", Message: "field-level on_delete has no effect", Suggestion: "Remove it, or move it under foreign_key"})
 			case f.OnDelete != "":
 				ws = append(ws, &domain.ValidationError{Path: p + ".on_delete", Message: "on_delete has no effect without foreign_key", Suggestion: "Remove it"})
-			}
-		}
-	}
-	return ws
-}
-
-// fkWarnings flags references into tables instancez cannot check.
-func fkWarnings(tables map[string]domain.Table) domain.ValidationErrors {
-	var ws domain.ValidationErrors
-	schemas := fkSchemas(tables)
-	for _, tableName := range slices.Sorted(maps.Keys(tables)) {
-		for _, field := range tables[tableName].Fields {
-			if field.ForeignKey == nil || field.ForeignKey.References == "" {
-				continue
-			}
-			if t, ok := resolveFK(tables, schemas, field.ForeignKey.References, fkPath(tableName, field.Name)+".references"); ok && t.warn != nil {
-				ws = append(ws, t.warn)
 			}
 		}
 	}

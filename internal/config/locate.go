@@ -15,6 +15,8 @@ type Location struct {
 	Line, Column int
 }
 
+var indexRe = regexp.MustCompile(`\[(\d+)\]`)
+
 var pathSegRe = regexp.MustCompile(`^([^\[\]]*)((?:\[\d+\])*)$`)
 
 const envPlaceholder = "__INZENV_"
@@ -70,8 +72,8 @@ func locatePath(root *yaml.Node, path string) (line, col int) {
 			}
 			node, line, col = next, pos.Line, pos.Column
 		}
-		for _, idx := range regexp.MustCompile(`\d+`).FindAllString(m[2], -1) {
-			i, _ := strconv.Atoi(idx)
+		for _, idx := range indexRe.FindAllStringSubmatch(m[2], -1) {
+			i, _ := strconv.Atoi(idx[1])
 			if node.Kind != yaml.SequenceNode || i >= len(node.Content) {
 				return line, col
 			}
@@ -109,30 +111,40 @@ var envRefInScalar = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-.*?)?\
 // EnvRefLocations maps each ${NAME} to the scalars that reference it.
 func EnvRefLocations(raw []byte) map[string][]Location {
 	out := map[string][]Location{}
-	root := rootMapping(raw)
-	if root == nil {
-		return out
+	if root := rootMapping(raw); root != nil {
+		walkYAML(root, "", func(n, _ *yaml.Node, _, path string) bool {
+			if n.Kind == yaml.ScalarNode {
+				for _, m := range envRefInScalar.FindAllStringSubmatch(n.Value, -1) {
+					name := m[1] + m[2]
+					out[name] = append(out[name], Location{Path: path, Line: n.Line, Column: n.Column})
+				}
+			}
+			return false
+		})
 	}
-	var walk func(n *yaml.Node, path string)
-	walk = func(n *yaml.Node, path string) {
-		switch n.Kind {
-		case yaml.ScalarNode:
-			for _, m := range envRefInScalar.FindAllStringSubmatch(n.Value, -1) {
-				name := m[1] + m[2]
-				out[name] = append(out[name], Location{Path: path, Line: n.Line, Column: n.Column})
+	return out
+}
+
+// walkYAML visits every value below n with its key (nil in sequences), parent path and path; fn returns true to stop.
+func walkYAML(n *yaml.Node, path string, fn func(v, key *yaml.Node, parent, path string) bool) bool {
+	switch n.Kind {
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k, v := n.Content[i], n.Content[i+1]
+			p := joinPath(path, k.Value)
+			if fn(v, k, path, p) || walkYAML(v, p, fn) {
+				return true
 			}
-		case yaml.MappingNode:
-			for i := 0; i+1 < len(n.Content); i += 2 {
-				walk(n.Content[i+1], joinPath(path, n.Content[i].Value))
-			}
-		case yaml.SequenceNode:
-			for i, el := range n.Content {
-				walk(el, seqPath(path, i, el))
+		}
+	case yaml.SequenceNode:
+		for i, el := range n.Content {
+			p := seqPath(path, i, el)
+			if fn(el, nil, path, p) || walkYAML(el, p, fn) {
+				return true
 			}
 		}
 	}
-	walk(root, "")
-	return out
+	return false
 }
 
 func joinPath(parent, key string) string {
@@ -154,60 +166,26 @@ func seqPath(parent string, i int, el *yaml.Node) string {
 
 // keyParentPath finds the path of the mapping that holds key on line.
 func keyParentPath(root *yaml.Node, line int, key string) (path string, col int, ok bool) {
-	var walk func(n *yaml.Node, p string) bool
-	walk = func(n *yaml.Node, p string) bool {
-		switch n.Kind {
-		case yaml.MappingNode:
-			for i := 0; i+1 < len(n.Content); i += 2 {
-				k := n.Content[i]
-				if k.Line == line && k.Value == key {
-					path, col = p, k.Column
-					return true
-				}
-			}
-			for i := 0; i+1 < len(n.Content); i += 2 {
-				if walk(n.Content[i+1], joinPath(p, n.Content[i].Value)) {
-					return true
-				}
-			}
-		case yaml.SequenceNode:
-			for i, el := range n.Content {
-				if walk(el, seqPath(p, i, el)) {
-					return true
-				}
-			}
+	ok = walkYAML(root, "", func(_, k *yaml.Node, parent, _ string) bool {
+		if k != nil && k.Line == line && k.Value == key {
+			path, col = parent, k.Column
+			return true
 		}
 		return false
-	}
-	ok = walk(root, "")
+	})
 	return
 }
 
 // valuePathAt finds the path of the value node that starts on line and, for scalars, holds val.
 func valuePathAt(root *yaml.Node, line int, val string) (path string, col int, ok bool) {
-	var walk func(n *yaml.Node, p string) bool
-	walk = func(n *yaml.Node, p string) bool {
-		if p != "" && n.Line == line && ((val == "" && n.Kind != yaml.ScalarNode) || (val != "" && n.Kind == yaml.ScalarNode && scalarMatches(n.Value, val))) {
+	ok = walkYAML(root, "", func(n, _ *yaml.Node, _, p string) bool {
+		match := (val == "" && n.Kind != yaml.ScalarNode) || (val != "" && n.Kind == yaml.ScalarNode && scalarMatches(n.Value, val))
+		if n.Line == line && match {
 			path, col = p, n.Column
 			return true
 		}
-		switch n.Kind {
-		case yaml.MappingNode:
-			for i := 0; i+1 < len(n.Content); i += 2 {
-				if walk(n.Content[i+1], joinPath(p, n.Content[i].Value)) {
-					return true
-				}
-			}
-		case yaml.SequenceNode:
-			for i, el := range n.Content {
-				if walk(el, seqPath(p, i, el)) {
-					return true
-				}
-			}
-		}
 		return false
-	}
-	ok = walk(root, "")
+	})
 	return
 }
 

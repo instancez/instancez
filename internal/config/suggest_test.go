@@ -26,6 +26,8 @@ func TestClosest(t *testing.T) {
 		{"x", []string{"y"}, ""},
 		{"zzzzzz", cands, ""},
 		{"text", nil, ""},
+		{"intt", []string{"inet", "int"}, "int"},
+		{"timestampz", []string{"timestamp", "timestamptz"}, "timestamptz"},
 	}
 	for _, c := range cases {
 		if got := closest(c.in, c.cands); got != c.want {

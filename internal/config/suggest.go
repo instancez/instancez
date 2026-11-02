@@ -13,18 +13,19 @@ import (
 // typeAliases maps common wrong type names to the Postgres type users meant.
 var typeAliases = map[string]string{"string": "text", "str": "text", "datetime": "timestamptz", "number": "numeric", "long": "bigint", "object": "jsonb", "dict": "jsonb", "blob": "bytea"}
 
+// extensionTypes are real Postgres types outside the allowlist; suggesting a core type for them misleads.
+var extensionTypes = map[string]bool{"vector": true, "citext": true, "hstore": true, "ltree": true, "geometry": true, "geography": true}
+
+var sortedTypeNames = slices.Sorted(maps.Keys(validPostgresTypes))
+
 func suggestType(base string) string {
 	if a, ok := typeAliases[base]; ok {
 		return a
 	}
-	// longer names first: a typo more often drops letters than adds them
-	names := slices.SortedFunc(maps.Keys(validPostgresTypes), func(a, b string) int {
-		if len(a) != len(b) {
-			return len(b) - len(a)
-		}
-		return strings.Compare(a, b)
-	})
-	return closest(base, names)
+	if extensionTypes[base] {
+		return ""
+	}
+	return closest(base, sortedTypeNames)
 }
 
 func didYouMean(s string) string {
@@ -34,19 +35,25 @@ func didYouMean(s string) string {
 	return fmt.Sprintf("Did you mean %q?", s)
 }
 
-// yamlStructTypes resolves the Go type names yaml.v3 reports to their structs.
-var yamlStructTypes = map[string]reflect.Type{
-	"domain.Config": reflect.TypeOf(domain.Config{}), "domain.Auth": reflect.TypeOf(domain.Auth{}),
-	"domain.AuthEmail": reflect.TypeOf(domain.AuthEmail{}), "domain.EmailTemplate": reflect.TypeOf(domain.EmailTemplate{}),
-	"domain.OAuthProvider": reflect.TypeOf(domain.OAuthProvider{}), "domain.Server": reflect.TypeOf(domain.Server{}),
-	"domain.Project": reflect.TypeOf(domain.Project{}), "domain.ProjectCloud": reflect.TypeOf(domain.ProjectCloud{}),
-	"domain.Providers": reflect.TypeOf(domain.Providers{}), "domain.EmailProvider": reflect.TypeOf(domain.EmailProvider{}),
-	"domain.StorageProvider": reflect.TypeOf(domain.StorageProvider{}), "domain.DatabaseConfig": reflect.TypeOf(domain.DatabaseConfig{}),
-	"domain.Table": reflect.TypeOf(domain.Table{}), "domain.Field": reflect.TypeOf(domain.Field{}),
-	"domain.Index": reflect.TypeOf(domain.Index{}), "domain.RLSPolicy": reflect.TypeOf(domain.RLSPolicy{}),
-	"domain.Function": reflect.TypeOf(domain.Function{}), "domain.CodeFunction": reflect.TypeOf(domain.CodeFunction{}),
-	"domain.Bucket": reflect.TypeOf(domain.Bucket{}), "domain.ForeignKey": reflect.TypeOf(domain.ForeignKey{}),
-}
+// yamlStructTypes maps the type names yaml.v3 reports (domain.Auth) to the structs reachable from domain.Config.
+var yamlStructTypes = func() map[string]reflect.Type {
+	out := map[string]reflect.Type{}
+	var walk func(t reflect.Type)
+	walk = func(t reflect.Type) {
+		for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Map {
+			t = t.Elem()
+		}
+		if t.Kind() != reflect.Struct || out[t.String()] != nil {
+			return
+		}
+		out[t.String()] = t
+		for i := 0; i < t.NumField(); i++ {
+			walk(t.Field(i).Type)
+		}
+	}
+	walk(reflect.TypeOf(domain.Config{}))
+	return out
+}()
 
 // yamlKeys lists the yaml key names of a struct type, in field order.
 func yamlKeys(t reflect.Type) []string {
@@ -89,16 +96,31 @@ func levenshtein(a, b string) int {
 	return prev[len(rb)]
 }
 
+func commonPrefix(a, b string) int {
+	n := 0
+	for n < len(a) && n < len(b) && a[n] == b[n] {
+		n++
+	}
+	return n
+}
+
 // closest returns the nearest candidate within edit distance 2, or "" if none.
 func closest(input string, candidates []string) string {
 	if input == "" {
 		return ""
 	}
-	best, bestDist := "", 3
+	in := strings.ToLower(input)
+	best, bestDist, bestPrefix := "", 3, -1
 	for _, c := range candidates {
-		d := levenshtein(strings.ToLower(input), strings.ToLower(c))
-		if d < bestDist && d < len([]rune(input)) {
-			best, bestDist = c, d
+		lc := strings.ToLower(c)
+		d := levenshtein(in, lc)
+		if d >= bestDist+1 || d >= len([]rune(in)) {
+			continue
+		}
+		// ties: longer shared prefix, then the longer name (typos drop letters more than they add them)
+		p := commonPrefix(in, lc)
+		if d < bestDist || p > bestPrefix || (p == bestPrefix && len(c) > len(best)) {
+			best, bestDist, bestPrefix = c, d, p
 		}
 	}
 	return best
