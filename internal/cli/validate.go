@@ -23,6 +23,7 @@ func newValidateCmd() *cobra.Command {
 		jsonOutput    bool
 		useDSN        string
 		project       string
+		dryRunDDL     bool
 		cloudValidate bool
 	)
 
@@ -33,7 +34,14 @@ func newValidateCmd() *cobra.Command {
 
 With --use-dsn, validate also connects to the given Postgres and prints
 the migration that would bring the database in sync with the yaml. The
-migration is planned but never applied — this is a dry-run.
+migration is planned but never applied.
+
+With --use-dsn and --dry-run-ddl, validate also runs the migration inside a
+transaction that is always rolled back, so unknown columns in RLS policies
+and bad rpc bodies surface as real Postgres errors. This takes the
+migration advisory lock and DDL locks until the rollback (lock timeout 2s,
+statement timeout 30s). It is opt-in because it touches the live database;
+plain --use-dsn never runs DDL.
 
 With --project, validate previews the local yaml against the cloud project
 and prints the diff. Bare --project reads the project id from
@@ -55,11 +63,14 @@ validate never creates a project and never writes anything server-side; use
 				}
 				return validateAgainstCloud(cmd.Context(), configPath, jsonOutput)
 			}
+			if dryRunDDL && useDSN == "" {
+				return errors.New("--dry-run-ddl requires --use-dsn")
+			}
 			if !cmd.Flags().Changed("project") {
 				if len(args) > 0 {
 					return fmt.Errorf("validate does not take positional arguments")
 				}
-				return runValidate(cmd.Context(), cmd.ErrOrStderr(), configPath, jsonOutput, useDSN)
+				return runValidate(cmd.Context(), cmd.ErrOrStderr(), configPath, jsonOutput, useDSN, dryRunDDL)
 			}
 			override := project
 			if len(args) == 1 {
@@ -72,6 +83,7 @@ validate never creates a project and never writes anything server-side; use
 	cmd.Flags().StringVar(&configPath, "config", "instancez.yaml", "config source (env: INSTANCEZ_CONFIG)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output errors as JSON (for CI)")
 	cmd.Flags().StringVar(&useDSN, "use-dsn", "", "after syntax check, plan a migration against this owner-class DSN")
+	cmd.Flags().BoolVar(&dryRunDDL, "dry-run-ddl", false, "with --use-dsn, also run the migration in a rolled-back transaction (takes DDL locks; catches unknown columns and bad rpc bodies)")
 	cmd.Flags().StringVar(&project, "project", "", "preview against a cloud project (bare --project uses instancez.yaml's project_id; --project <id> overrides it)")
 	cmd.Flags().Lookup("project").NoOptDefVal = useFileProjectID
 	cmd.Flags().BoolVar(&cloudValidate, "cloud", false, "validate against the cloud's policy rules server-side (projectless; the same rules a deploy enforces)")
@@ -126,7 +138,7 @@ func warnBlanked(errOut io.Writer, names []string) {
 	}
 }
 
-func runValidate(ctx context.Context, errOut io.Writer, configPath string, jsonOutput bool, useDSN string) error {
+func runValidate(ctx context.Context, errOut io.Writer, configPath string, jsonOutput bool, useDSN string, dryRunDDL bool) error {
 	if err := requireLocalConfig(configPath); err != nil {
 		return err
 	}
@@ -169,13 +181,13 @@ func runValidate(ctx context.Context, errOut io.Writer, configPath string, jsonO
 
 	// Plan a migration against the live DB. We never apply — this is a
 	// preview that proves the YAML can be migrated to from current state.
-	return planAgainstDSN(ctx, cfg, useDSN, jsonOutput)
+	return planAgainstDSN(ctx, cfg, useDSN, jsonOutput, dryRunDDL)
 }
 
 // planAgainstDSN opens an owner pool, reads the last applied config from
 // _instancez_migrations (if present), and prints the DDL diff. Errors from
 // the planner surface back so the user sees concretely what would break.
-func planAgainstDSN(ctx context.Context, cfg *domain.Config, dsn string, jsonOutput bool) error {
+func planAgainstDSN(ctx context.Context, cfg *domain.Config, dsn string, jsonOutput bool, dryRunDDL bool) error {
 	owner, err := postgres.NewOwner(ctx, dsn, cfg.Database.Pool)
 	if err != nil {
 		return fmt.Errorf("connect owner DSN: %w", err)
@@ -193,27 +205,48 @@ func planAgainstDSN(ctx context.Context, cfg *domain.Config, dsn string, jsonOut
 		return fmt.Errorf("plan migration: %w", err)
 	}
 
+	var dryErr error
+	if dryRunDDL {
+		dryErr = migrator.DryRun(ctx, cfg)
+	}
+
 	if jsonOutput {
 		out := map[string]any{
 			"fresh_database": oldCfg == nil,
 			"ddl":            ddl,
 		}
+		if dryRunDDL {
+			out["dry_run"] = "ok"
+			if dryErr != nil {
+				out["dry_run"] = dryErr.Error()
+			}
+		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		return enc.Encode(out)
+		if err := enc.Encode(out); err != nil {
+			return err
+		}
+		return dryErr
 	}
 
-	if ddl == "" {
+	switch {
+	case ddl == "":
 		fmt.Println("  ✓ Database is in sync — no migration needed")
-		return nil
-	}
-	if oldCfg == nil {
+	case oldCfg == nil:
 		fmt.Println("  ! Fresh database — full schema will be created on first dev/serve")
-	} else {
+		fmt.Println()
+		fmt.Println(ddl)
+	default:
 		fmt.Println("  ! Migration plan (would run on next dev/serve):")
+		fmt.Println()
+		fmt.Println(ddl)
 	}
-	fmt.Println()
-	fmt.Println(ddl)
+	if dryErr != nil {
+		return dryErr
+	}
+	if dryRunDDL {
+		fmt.Println("  ✓ Dry run passed (rolled back)")
+	}
 	return nil
 }
 

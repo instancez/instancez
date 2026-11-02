@@ -43,7 +43,7 @@ rpc:
 
 A `language: sql` body must start with a Postgres command or a parenthesized query, after any comments. Bodies that open with `BEGIN`, `COMMIT`, `END`, `ROLLBACK` or another transaction-control statement are rejected, because Postgres refuses those inside a SQL function. Use `language: plpgsql` for `BEGIN ... END` blocks.
 
-Function bodies are not checked when the migration creates them, so a `language: sql` body can reference tables defined later in the same config. A typo in a body shows up when the function is first called. `inz validate` runs no DDL, and `inz validate --use-dsn` only prints the migration plan, so neither catches body errors. Call the function once in a dev database to check it.
+Function bodies are not checked when the migration creates them, so a `language: sql` body can reference tables defined later in the same config. A typo in a body shows up when the function is first called. `inz validate` runs no DDL, and `inz validate --use-dsn` only prints the migration plan, so neither catches body errors. Run `inz validate --use-dsn <dsn> --dry-run-ddl` against a dev database: it re-creates each function with body checking on inside a rolled-back transaction.
 
 ## Calling via HTTP
 

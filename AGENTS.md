@@ -43,6 +43,7 @@ go build -o inz ./cmd/inz
 ./inz serve            # production mode
 ./inz validate         # YAML syntax check + function file existence, no DB
 ./inz validate --use-dsn <owner-dsn>   # also prints migration plan (plan only, never applied)
+./inz validate --use-dsn <owner-dsn> --dry-run-ddl   # also runs the migration in a rolled-back tx (takes DDL locks)
 ./inz vet              # security lint of instancez.yaml, no DB
 ./inz bundle           # build instancez.yaml + functions/ into a tar.gz artifact
 ./inz bundle --output s3://bucket/key  # build + upload to S3, print pointer

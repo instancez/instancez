@@ -105,6 +105,8 @@ Local validation (including `--use-dsn`) loads `.development.env` first. An unse
 
 With `--use-dsn`, also connects to the database and prints the migration plan (DDL diff) without applying it.
 
+Add `--dry-run-ddl` to also run the migration inside a transaction that is always rolled back. That surfaces unknown columns in RLS policies and bad `language: sql` rpc bodies as real Postgres errors, and exits non-zero on failure. It is opt-in because it takes the migration advisory lock and DDL locks until the rollback (`lock_timeout` 2s, `statement_timeout` 30s). It needs a DSN with the instancez roles provisioned, and runs destructive changes inside the rolled-back transaction. With `--json`, the output gains `dry_run` (`"ok"` or the error).
+
 ```
 inz validate [flags]
 ```
@@ -115,6 +117,7 @@ inz validate [flags]
 | `--json` | `false` | Output errors as JSON (for CI). |
 | `--project` | — | Preview against a cloud project. Bare `--project` uses `instancez.yaml`'s linked project; `--project <id>` or `--project=<id>` targets a different one. Never creates a project; link one first with `inz cloud deploy --new`. |
 | `--use-dsn` | — | After syntax check, plan a migration against this owner-class DSN (plan only — never applied). |
+| `--dry-run-ddl` | `false` | With `--use-dsn`, also run the migration in a rolled-back transaction. Takes DDL locks until rollback. |
 
 ```bash
 inz validate

@@ -206,7 +206,7 @@ func TestRunValidateWarningsDoNotFail(t *testing.T) {
 	}
 
 	var errOut bytes.Buffer
-	if err := runValidate(context.Background(), &errOut, path, false, ""); err != nil {
+	if err := runValidate(context.Background(), &errOut, path, false, "", false); err != nil {
 		t.Fatalf("runValidate with only warnings returned %v", err)
 	}
 	if !strings.Contains(errOut.String(), "! Warning: tables.todos.rls_enabled") {
@@ -235,7 +235,7 @@ func TestRunValidateUnsetSecretWarns(t *testing.T) {
 	path := writeCfgInCwd(t, oauthSecretCfg)
 
 	var errOut bytes.Buffer
-	if err := runValidate(context.Background(), &errOut, path, false, ""); err != nil {
+	if err := runValidate(context.Background(), &errOut, path, false, "", false); err != nil {
 		t.Fatalf("runValidate: %v", err)
 	}
 	if !strings.Contains(errOut.String(), "unset env INSTANCEZ_ENV_GH_SECRET_T") {
@@ -251,7 +251,7 @@ func TestRunValidateLoadsDevelopmentEnv(t *testing.T) {
 	}
 
 	var errOut bytes.Buffer
-	if err := runValidate(context.Background(), &errOut, path, false, ""); err != nil {
+	if err := runValidate(context.Background(), &errOut, path, false, "", false); err != nil {
 		t.Fatalf("runValidate: %v", err)
 	}
 	if strings.Contains(errOut.String(), "unset env") {
@@ -265,7 +265,7 @@ func TestRunValidateLoadsDevelopmentEnv(t *testing.T) {
 // Other problems still fail validate even in local mode.
 func TestRunValidateLocalStillFailsOnRealErrors(t *testing.T) {
 	path := writeCfgInCwd(t, strings.Replace(oauthSecretCfg, "client_id: id", "client_id: \"\"", 1))
-	if err := runValidate(context.Background(), io.Discard, path, false, ""); err == nil {
+	if err := runValidate(context.Background(), io.Discard, path, false, "", false); err == nil {
 		t.Fatal("empty client_id must still fail validate")
 	}
 }
@@ -275,7 +275,7 @@ func TestRunValidateMalformedDevelopmentEnv(t *testing.T) {
 	path := writeCfgInCwd(t, oauthSecretCfg)
 	require.NoError(t, os.WriteFile(".development.env", []byte("NOT A KEY VALUE LINE\n"), 0o600))
 
-	err := runValidate(context.Background(), io.Discard, path, false, "")
+	err := runValidate(context.Background(), io.Discard, path, false, "", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), ".development.env")
 }
@@ -292,4 +292,15 @@ func TestRunBundleStaysStrictOnLocalLeniency(t *testing.T) {
 		path := writeCfgInCwd(t, strings.Replace(oauthSecretCfg, "${INSTANCEZ_ENV_GH_SECRET_T}", `""`, 1))
 		require.Error(t, runBundle(context.Background(), path, ""))
 	})
+}
+
+func TestValidateDryRunDDLRequiresDSN(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "instancez.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("version: 1\n"), 0o644))
+	cmd := newValidateCmd()
+	cmd.SetArgs([]string{"--config", path, "--dry-run-ddl"})
+	cmd.SilenceUsage, cmd.SilenceErrors = true, true
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "requires --use-dsn")
 }
