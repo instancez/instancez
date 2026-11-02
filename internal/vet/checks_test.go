@@ -50,6 +50,10 @@ storage:
     rls:
       - operations: [select]
         using: "true"
+  authed:
+    rls:
+      - operations: [delete]
+        using: "auth.is_authenticated()"
   bare: {}
 rpc:
   f:

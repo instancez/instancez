@@ -157,6 +157,15 @@ func noIdentityWrite(c *ctx, p domain.RLSPolicy, at []any, label string, t domai
 		"Add an identity check, for example auth.uid() = user_id.")
 }
 
+// authedWrite reports a policy that gates update/delete on sign-in alone.
+func authedWrite(p domain.RLSPolicy) bool {
+	var exprs []string
+	for _, op := range opsOf(p, "update", "delete") {
+		exprs = append(exprs, exprsFor(op, p)...)
+	}
+	return len(exprs) > 0 && !slices.ContainsFunc(exprs, func(e string) bool { return !isAuthGateOnly(e) })
+}
+
 func ruleBuckets(c *ctx) {
 	anyRLS := slices.ContainsFunc(slices.Collect(maps.Values(c.cfg.Storage)), func(b domain.Bucket) bool { return len(b.RLS) > 0 })
 	for _, name := range slices.Sorted(maps.Keys(c.cfg.Storage)) {
@@ -166,6 +175,11 @@ func ruleBuckets(c *ctx) {
 			if !strings.EqualFold(p.Type, "restrictive") {
 				pat := append(slices.Clone(at), "rls", i)
 				openWrite(c, "bucket-open-write", p, pat, anyJWT, "bucket "+name)
+				if authedWrite(p) {
+					c.add("bucket-authed-write", Medium, append(pat, "using"), "Any signed-in user can change every object",
+						fmt.Sprintf("This policy only checks that someone is signed in, so any user (including anonymous sign-ins) can replace or delete other users' objects in bucket %s.", name),
+						"Scope it to the uploader, for example name LIKE auth.uid()::text || '/%'.")
+				}
 				if !b.Public && len(opsOf(p, "select")) > 0 && isLiteralTrue(p.Using) {
 					c.add("bucket-open-read", Medium, append(pat, "using"), "Anyone can read every object",
 						fmt.Sprintf("This policy lets %s list and read all objects in bucket %s.", anyJWT, name),

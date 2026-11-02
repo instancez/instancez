@@ -13,6 +13,7 @@ import (
 
 	"github.com/instancez/instancez/internal/cloud"
 	"github.com/instancez/instancez/internal/config"
+	"github.com/instancez/instancez/internal/vet"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -534,4 +535,12 @@ func TestScaffoldAvatarsScopedToOwner(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 3, writes)
+}
+
+func TestScaffoldPassesBucketAuthedWrite(t *testing.T) {
+	r, err := vet.Run([]byte(scaffoldYAML("x", true)))
+	require.NoError(t, err)
+	for _, f := range r.Findings {
+		assert.NotEqual(t, "bucket-authed-write", f.Rule)
+	}
 }

@@ -209,6 +209,7 @@ The dashboard's Security page runs the same scan. A banner shows how many checks
 | `policy-no-identity-write` | medium, high | A write policy that never checks the caller's identity, directly or through a declared rpc that does. High when the table has an owner column. |
 | `bucket-open-write` | critical | A storage policy that lets any caller with a JWT (including anonymous sign-in users) write or delete. |
 | `bucket-open-read` | medium | A select policy on a non-public bucket whose `using` is always true, so any caller with a JWT can list and read every object. |
+| `bucket-authed-write` | medium | An update or delete storage policy that only checks the caller is signed in (`auth.is_authenticated()`, `auth.uid() IS NOT NULL`), so any user can replace or delete other users' objects. |
 | `bucket-no-rls` | medium, high | A bucket with no policies. High when other buckets have them. |
 | `bucket-public` | low | A bucket with `public: true`. |
 | `rpc-definer-no-auth` | low, medium, high | A `security: definer` function callable without sign-in, so its reads bypass RLS. High when the body writes (or runs `EXECUTE`) with no `auth.*` check, medium when it only reads or writes with a check, low when it only reads and checks `auth.uid()`, `auth.jwt()`, `auth.email()` or `auth.role()`. |

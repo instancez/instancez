@@ -7,6 +7,7 @@ import (
 
 	"github.com/instancez/instancez/internal/config"
 	"github.com/instancez/instancez/internal/domain"
+	"github.com/instancez/instancez/pkg/templates"
 )
 
 // vetIDs returns sorted rule ids, dropping the default-config unverified-signup finding.
@@ -233,5 +234,59 @@ func TestIdentityRPCPolicies(t *testing.T) {
 				t.Errorf("rules = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestBucketAuthedWrite(t *testing.T) {
+	pol := func(ops, field, expr, extra string) string {
+		return bucket("b", "    rls:\n      - operations: ["+ops+"]\n        "+field+": \""+expr+"\"\n"+extra)
+	}
+	cases := []struct {
+		name string
+		src  string
+		want []string
+	}{
+		{"update authed", pol("update", "using", "auth.is_authenticated()", ""), []string{"bucket-authed-write"}},
+		{"delete is not null", pol("delete", "using", "auth.uid() IS NOT NULL", ""), []string{"bucket-authed-write"}},
+		{"insert out of scope", pol("insert", "with_check", "auth.is_authenticated()", ""), nil},
+		{"social feed shape", pol("update", "using", "auth.uid() IS NOT NULL AND name LIKE auth.uid()::text || '/%'", ""), nil},
+		{"admin rpc", pol("delete", "using", "public.is_admin()", ""), nil},
+		{"restrictive", pol("delete", "using", "auth.is_authenticated()", "        type: restrictive\n"), nil},
+		{"empty delete using", bucket("b", "    rls:\n      - operations: [delete]\n"), nil},
+		{"literal true is open write only", pol("delete", "using", "true", ""), []string{"bucket-open-write"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := vetIDs(t, tc.src); !slices.Equal(got, tc.want) {
+				t.Errorf("rules = %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	r, err := runQuiet([]byte(pol("update", "using", "auth.is_authenticated()", "")))
+	if err != nil || len(r.Findings) != 1 {
+		t.Fatalf("findings = %v, err = %v", r, err)
+	}
+	if f := r.Findings[0]; f.Severity != Medium || f.Path != "storage.b.rls[0].using" {
+		t.Errorf("finding = %+v", f)
+	}
+}
+
+func TestCatalogTemplatesPassBucketAuthedWrite(t *testing.T) {
+	list := templates.Default().List()
+	if len(list) == 0 {
+		t.Fatal("empty catalog")
+	}
+	for _, tpl := range list {
+		b := tpl.Bundle()
+		r, err := Run([]byte(b.LocalYAML()))
+		if err != nil {
+			t.Fatalf("%s: %v", tpl.ID, err)
+		}
+		for _, f := range r.Findings {
+			if f.Rule == "bucket-authed-write" {
+				t.Errorf("%s trips bucket-authed-write at %s", tpl.ID, f.Path)
+			}
+		}
 	}
 }
