@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -72,7 +73,7 @@ func TestCorsMiddleware(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			r := gin.New()
-			r.Use(corsMiddleware(tc.cors, tc.devMode))
+			r.Use(corsMiddleware(func() domain.CORS { return tc.cors }, tc.devMode))
 			r.GET("/x", func(c *gin.Context) { c.Status(200) })
 
 			req := httptest.NewRequest(http.MethodGet, "/x", nil)
@@ -93,7 +94,7 @@ func TestCorsMiddleware(t *testing.T) {
 
 	t.Run("OPTIONS preflight is answered without invoking the handler", func(t *testing.T) {
 		r := gin.New()
-		r.Use(corsMiddleware(domain.CORS{Origins: []string{"https://allowed.com"}}, false))
+		r.Use(corsMiddleware(func() domain.CORS { return domain.CORS{Origins: []string{"https://allowed.com"}} }, false))
 		called := false
 		r.OPTIONS("/x", func(c *gin.Context) { called = true })
 
@@ -118,7 +119,7 @@ func TestCorsMiddleware(t *testing.T) {
 
 	t.Run("preflight reflects requested headers so new supabase-js headers pass", func(t *testing.T) {
 		r := gin.New()
-		r.Use(corsMiddleware(domain.CORS{Origins: []string{"*"}}, false))
+		r.Use(corsMiddleware(func() domain.CORS { return domain.CORS{Origins: []string{"*"}} }, false))
 		r.OPTIONS("/x", func(c *gin.Context) {})
 
 		req := httptest.NewRequest(http.MethodOptions, "/x", nil)
@@ -137,7 +138,7 @@ func TestCorsMiddleware(t *testing.T) {
 
 	t.Run("without a requested-headers preflight, the known set is served", func(t *testing.T) {
 		r := gin.New()
-		r.Use(corsMiddleware(domain.CORS{Origins: []string{"*"}}, false))
+		r.Use(corsMiddleware(func() domain.CORS { return domain.CORS{Origins: []string{"*"}} }, false))
 		r.GET("/x", func(c *gin.Context) { c.Status(200) })
 
 		req := httptest.NewRequest(http.MethodGet, "/x", nil)
@@ -450,6 +451,86 @@ func TestRenderAuthTemplate(t *testing.T) {
 			got := renderAuthTemplate(tt.tmpl, tt.vars)
 			if got != tt.want {
 				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCorsMiddleware_FollowsLiveConfig(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cur := domain.CORS{Origins: []string{"https://a.com"}}
+	r := gin.New()
+	r.Use(corsMiddleware(func() domain.CORS { return cur }, false))
+	r.GET("/x", func(c *gin.Context) { c.Status(200) })
+
+	acao := func(origin string) string {
+		req := httptest.NewRequest(http.MethodGet, "/x", nil)
+		req.Header.Set("Origin", origin)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w.Header().Get("Access-Control-Allow-Origin")
+	}
+
+	if got := acao("https://b.com"); got != "https://a.com" {
+		t.Fatalf("before reload ACAO = %q, want first configured origin", got)
+	}
+	cur = domain.CORS{Origins: []string{"https://a.com", "https://b.com"}}
+	if got := acao("https://b.com"); got != "https://b.com" {
+		t.Errorf("after reload ACAO = %q, want https://b.com", got)
+	}
+	cur = domain.CORS{}
+	if got := acao("https://b.com"); got != "" {
+		t.Errorf("after clearing origins ACAO = %q, want none", got)
+	}
+	cur = domain.CORS{Origins: []string{"*"}}
+	if got := acao("https://c.com"); got != "https://c.com" {
+		t.Errorf("wildcard ACAO = %q, want reflected origin", got)
+	}
+}
+
+func TestBodySizeLimit_FollowsLiveConfig(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cur := "10"
+	r := gin.New()
+	r.Use(bodySizeLimit(func() string { return cur }))
+	read := func(c *gin.Context) {
+		if _, err := io.ReadAll(c.Request.Body); err != nil {
+			c.Status(413)
+			return
+		}
+		c.Status(200)
+	}
+	r.POST("/rest/v1/x", read)
+	r.POST("/storage/v1/object/b/f", read)
+
+	post := func(path string, n int) int {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(strings.Repeat("a", n)))
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	cases := []struct {
+		name string
+		size string
+		path string
+		n    int
+		want int
+	}{
+		{"under limit", "10", "/rest/v1/x", 10, 200},
+		{"over limit", "10", "/rest/v1/x", 11, 413},
+		{"raised by reload", "1KB", "/rest/v1/x", 500, 200},
+		{"lowered by reload", "5", "/rest/v1/x", 6, 413},
+		{"empty falls back to 1MB", "", "/rest/v1/x", 1 << 19, 200},
+		{"invalid falls back to 1MB", "banana", "/rest/v1/x", (1 << 20) + 1, 413},
+		{"zero falls back to 1MB", "0", "/rest/v1/x", 100, 200},
+		{"storage upload excluded", "5", "/storage/v1/object/b/f", 100, 200},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cur = tc.size
+			if got := post(tc.path, tc.n); got != tc.want {
+				t.Errorf("status = %d, want %d", got, tc.want)
 			}
 		})
 	}

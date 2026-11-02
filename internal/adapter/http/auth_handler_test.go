@@ -624,7 +624,7 @@ func TestHandleRefreshGrant_IgnoresDeprecatedRefreshTokensFalse(t *testing.T) {
 func TestCORS_AllowsSupabaseJSHeaders(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(corsMiddleware(domain.CORS{Origins: []string{"*"}}, true))
+	r.Use(corsMiddleware(func() domain.CORS { return domain.CORS{Origins: []string{"*"}} }, true))
 	r.GET("/x", func(c *gin.Context) { c.Status(200) })
 
 	req := httptest.NewRequest("OPTIONS", "/x", nil)
