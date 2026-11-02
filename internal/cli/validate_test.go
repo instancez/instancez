@@ -269,3 +269,27 @@ func TestRunValidateLocalStillFailsOnRealErrors(t *testing.T) {
 		t.Fatal("empty client_id must still fail validate")
 	}
 }
+
+// A malformed .development.env fails validate instead of being silently skipped.
+func TestRunValidateMalformedDevelopmentEnv(t *testing.T) {
+	path := writeCfgInCwd(t, oauthSecretCfg)
+	require.NoError(t, os.WriteFile(".development.env", []byte("NOT A KEY VALUE LINE\n"), 0o600))
+
+	err := runValidate(context.Background(), io.Discard, path, false, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), ".development.env")
+}
+
+// Strict commands keep failing where local validate only warns.
+func TestRunBundleStaysStrictOnLocalLeniency(t *testing.T) {
+	t.Run("unset secret var", func(t *testing.T) {
+		path := writeCfgInCwd(t, oauthSecretCfg)
+		err := runBundle(context.Background(), path, "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "INSTANCEZ_ENV_GH_SECRET_T")
+	})
+	t.Run("empty literal secret", func(t *testing.T) {
+		path := writeCfgInCwd(t, strings.Replace(oauthSecretCfg, "${INSTANCEZ_ENV_GH_SECRET_T}", `""`, 1))
+		require.Error(t, runBundle(context.Background(), path, ""))
+	})
+}

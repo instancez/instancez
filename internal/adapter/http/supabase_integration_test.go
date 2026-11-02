@@ -262,6 +262,14 @@ func TestSupabaseJSCompat(t *testing.T) {
 					{Operations: []string{"insert", "update"}, Using: "auth.uid() = id", WithCheck: "auth.uid() = id"},
 				},
 			},
+			// authored defaults created_by to the caller's uid, as in a Supabase default auth.uid().
+			"authored": {
+				Fields: []domain.Field{
+					{Name: "id", Type: "bigserial", PrimaryKey: true},
+					{Name: "body", Type: "text"},
+					{Name: "created_by", Type: "uuid", Default: "auth.uid()"},
+				},
+			},
 			// rls_locked has RLS on and no policies: deny-all except service_role.
 			"rls_locked": {
 				RLSEnabled: func() *bool { b := true; return &b }(),
