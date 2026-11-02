@@ -34,6 +34,8 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - Closing the terminal (SIGHUP) now stops `inz dev` and its embedded Postgres instead of leaving Postgres running.
 - A second `inz dev --embedded-pg` in the same project now stops with "another inz dev is already using this pgdata directory (Postgres PID N, port P)" instead of suggesting `--reset-pg`, and `--reset-pg` no longer wipes a data directory another `inz dev` is using.
 - A hot reload (`inz dev`, `inz serve --watch`) whose migration fails now logs the failure and keeps the running config's functions; it used to log "config reloaded successfully" and load functions from the rejected config.
+- `inz --version` / `inz version` show the module version and commit for `go build` and `go install` builds instead of `vdev (unknown)`.
+
 
 ## [0.0.12] - 2026-11-02
 

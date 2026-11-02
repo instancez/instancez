@@ -239,8 +239,6 @@ func printFinalErr(w io.Writer, err error) {
 	}
 }
 
-func versionString() string { return fmt.Sprintf("instancez v%s (%s)", version, commit) }
-
 func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",

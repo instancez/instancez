@@ -357,7 +357,7 @@ inz telemetry disable
 
 ## inz version
 
-Print the binary version. `inz --version` prints the same line.
+Print the binary version. `inz --version` prints the same line. Builds from `go build`/`go install` without ldflags report the module version and git commit.
 
 ```
 inz version
