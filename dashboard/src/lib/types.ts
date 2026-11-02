@@ -240,6 +240,8 @@ export type ConfigStatus = {
   last_error: string | null;
   dashboard_mode: "disabled" | "readonly" | "readwrite";
   dotenv_writable?: boolean;
+  /** True when the config spans several files (include:) and cannot be saved from the dashboard. */
+  read_only?: boolean;
   /** Fixed OAuth callback prefix; append a provider name for the redirect_uri to paste into the provider console. */
   oauth_callback_base?: string;
 };

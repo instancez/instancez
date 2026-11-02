@@ -2,7 +2,7 @@ import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useState, useEffect, useCallback } from "react";
 import { Trash2, Plus, Settings2, KeyRound, Code2 } from "lucide-react";
 import { Box, Grid, HStack, Text, VStack } from "@chakra-ui/react";
-import { useConfig } from "../hooks/useConfig";
+import { useConfig, READ_ONLY_MESSAGE } from "../hooks/useConfig";
 import { jsonEqual } from "../lib/jsonEqual";
 import { useDialog } from "../components/Dialog";
 import { DetailToolbar } from "../components/DetailToolbar";
@@ -26,7 +26,7 @@ export function FunctionDetail() {
   const newState = location.state as
     | { functionName?: string; seed?: CodeFunction; code?: string }
     | null;
-  const { config, save, saving, saveErrors, refresh } = useConfig();
+  const { config, save, saving, saveErrors, refresh, readOnly } = useConfig();
   const canWriteConfig = backend.capabilities.canWriteConfig;
   const dialog = useDialog();
   const [fn, setFn] = useState<CodeFunction | null>(null);
@@ -116,6 +116,10 @@ export function FunctionDetail() {
     };
 
     if (isNew) {
+      if (readOnly) {
+        setCodeError(READ_ONLY_MESSAGE);
+        return;
+      }
       // One atomic create: config + code in a single request → exactly one build.
       // The checksum travels via the backend's If-Match, not the config body.
       setCreateErrors([]);
@@ -127,6 +131,8 @@ export function FunctionDetail() {
         const errs = e?.body?.errors;
         if (Array.isArray(errs) && errs.length > 0) {
           setCreateErrors(errs);
+        } else if (e?.body?.error === "config_read_only") {
+          setCodeError(e.body.message ?? READ_ONLY_MESSAGE);
         } else if (e?.body?.error === "conflict" || e?.status === 409) {
           setCodeError(`Could not create "${effectiveName}": the draft changed since you started. Reload and try again.`);
         } else {

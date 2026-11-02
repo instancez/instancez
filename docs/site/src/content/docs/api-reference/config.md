@@ -331,7 +331,7 @@ include:
 - Every match must resolve inside the project directory, symlinks included. The main file is skipped if a glob matches it.
 - Errors in a fragment name the file and line. Line numbers in later validation errors refer to the merged document.
 - `inz dev` reloads when the main file or any included file changes, including a new file that matches a glob.
-- The dashboard cannot save a config that uses `include:` (the save returns 409 `config_read_only`); edit the YAML files instead.
+- The dashboard cannot save a config that uses `include:` (`GET /_admin/config/status` reports `read_only: true` and the save returns 409 `config_read_only`); edit the YAML files instead.
 - `inz validate`, `inz vet`, `inz gen`, `inz dev` and `inz serve` read the merged config. S3 and bundle config sources do not support `include`; `inz bundle`, `inz cloud deploy` and `inz validate --cloud` send one merged file without the `include:` key; configs without `include:` are sent as written. Shorthands (`timestamps`, `owner`) are not expanded by the CLI, so cloud support for them needs a platform release.
 - A glob that matches only the main file logs a warning. Dotfiles and editor temp files (`.x.swp`, `x~`, `#x#`) are skipped by globs.
 

@@ -2,6 +2,7 @@ package http
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/instancez/instancez/internal/config"
 )
 
 // handleConfigStatus reports drift state, the configured source, the running
@@ -11,11 +12,13 @@ import (
 // this one response, with no separate config endpoint round-trip.
 func (h *AdminHandler) handleConfigStatus(c *gin.Context) {
 	callbackBase := oauthCallbackBase(h.liveConfig())
+	readOnly := config.SourceReadOnly(h.configSource)
 	if h.driftFn == nil {
 		c.JSON(200, gin.H{
 			"status":              "unknown",
 			"dashboard_mode":      h.dashboardMode.String(),
 			"dotenv_writable":     h.dotenvWritable,
+			"read_only":           readOnly,
 			"oauth_callback_base": callbackBase,
 		})
 		return
@@ -26,6 +29,7 @@ func (h *AdminHandler) handleConfigStatus(c *gin.Context) {
 			"status":              "unknown",
 			"dashboard_mode":      h.dashboardMode.String(),
 			"dotenv_writable":     h.dotenvWritable,
+			"read_only":           readOnly,
 			"oauth_callback_base": callbackBase,
 		})
 		return
@@ -45,6 +49,7 @@ func (h *AdminHandler) handleConfigStatus(c *gin.Context) {
 		"last_error":          state.LastError,
 		"dashboard_mode":      h.dashboardMode.String(),
 		"dotenv_writable":     h.dotenvWritable,
+		"read_only":           readOnly,
 		"oauth_callback_base": callbackBase,
 	})
 }

@@ -31,6 +31,8 @@ interface ConfigState {
   saveErrors: ValidationError[];
   dotenvWritable: boolean;
   oauthCallbackBase: string;
+  /** The config uses include:, so saves are refused. */
+  readOnly?: boolean;
   refresh: () => Promise<void>;
   save: (updated: Config, opts?: SaveOptions) => Promise<boolean>;
   updateConfig: (updater: (prev: Config) => Config) => void;
@@ -50,6 +52,9 @@ export interface ConfigStateWithDialog extends ConfigState {
 const ConfigContext = createContext<ConfigState | null>(null);
 
 export { ConfigContext };
+
+export const READ_ONLY_MESSAGE =
+  "instancez.yaml uses include:, so the dashboard cannot save it; edit the YAML files instead";
 
 // Both backends (engine + platform) serialize empty Go maps/slices as JSON
 // null, but the Config type marks these collections required and every tab
@@ -108,6 +113,7 @@ export function useConfigState(initialConfig?: Config | null): ConfigStateWithDi
   const [saveErrors, setSaveErrors] = useState<ValidationError[]>([]);
   const [dotenvWritable, setDotenvWritable] = useState(false);
   const [oauthCallbackBase, setOauthCallbackBase] = useState("");
+  const [readOnly, setReadOnly] = useState(false);
   const [pendingSave, setPendingSave] = useState<PendingSave | null>(null);
   const pendingResolve = useRef<((confirmed: boolean) => void) | null>(null);
 
@@ -123,6 +129,7 @@ export function useConfigState(initialConfig?: Config | null): ConfigStateWithDi
       setConfig(normalizeConfig(cfg));
       setDotenvWritable(status?.dotenv_writable ?? false);
       setOauthCallbackBase(status?.oauth_callback_base ?? "");
+      setReadOnly(status?.read_only ?? false);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -144,6 +151,11 @@ export function useConfigState(initialConfig?: Config | null): ConfigStateWithDi
   const save = useCallback(
     async (updated: Config, opts?: SaveOptions): Promise<boolean> => {
       setSaveErrors([]);
+      if (readOnly) {
+        setSaveErrors([{ path: "", message: READ_ONLY_MESSAGE }]);
+        showSaveErrorToast({ message: READ_ONLY_MESSAGE });
+        return false;
+      }
       const { _checksum, ...body } = updated;
 
       // Dry-run first: what would each file look like after this save?
@@ -181,14 +193,15 @@ export function useConfigState(initialConfig?: Config | null): ConfigStateWithDi
         await refresh();
         return true;
       } catch (e: any) {
+        if (e.body?.error === "config_read_only") setReadOnly(true);
         if (e.body?.errors) {
           setSaveErrors(e.body.errors);
         } else {
-          setSaveErrors([{ path: "", message: e.message }]);
+          setSaveErrors([{ path: "", message: e.body?.message ?? e.message }]);
         }
         const msg = e.body?.errors
           ? `Couldn't save: ${e.body.errors.length} validation error${e.body.errors.length === 1 ? "" : "s"}`
-          : e.message || "Couldn't save";
+          : e.body?.message || e.message || "Couldn't save";
         showSaveErrorToast({ message: msg });
         return false;
       } finally {
@@ -196,7 +209,7 @@ export function useConfigState(initialConfig?: Config | null): ConfigStateWithDi
         setPendingSave(null);
       }
     },
-    [backend, checksum, refresh]
+    [backend, checksum, refresh, readOnly]
   );
 
   const updateConfig = useCallback(
@@ -216,6 +229,7 @@ export function useConfigState(initialConfig?: Config | null): ConfigStateWithDi
         .then((s) => {
           setDotenvWritable(s?.dotenv_writable ?? false);
           setOauthCallbackBase(s?.oauth_callback_base ?? "");
+          setReadOnly(s?.read_only ?? false);
         })
         .catch(() => {});
       return;
@@ -234,6 +248,7 @@ export function useConfigState(initialConfig?: Config | null): ConfigStateWithDi
     saveErrors,
     dotenvWritable,
     oauthCallbackBase,
+    readOnly,
     refresh,
     save,
     updateConfig,

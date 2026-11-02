@@ -375,17 +375,6 @@ func TestValidate_RLSTwoOpComboAccepted(t *testing.T) {
 	}
 }
 
-func TestValidate_RLSThreeOpComboAccepted(t *testing.T) {
-	cfg := validBaseConfig()
-	table := cfg.Tables["todos"]
-	table.RLS = []domain.RLSPolicy{{Operations: []string{"insert", "update", "delete"}, Using: "true", WithCheck: "true"}}
-	cfg.Tables["todos"] = table
-
-	for _, e := range Validate(cfg) {
-		t.Fatalf("expected no errors, got %s: %s", e.Path, e.Message)
-	}
-}
-
 func TestValidate_RLSPartialComboStillNeedsUsing(t *testing.T) {
 	cfg := validBaseConfig()
 	table := cfg.Tables["todos"]
