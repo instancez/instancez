@@ -171,16 +171,18 @@ func (c *ctx) authGate(expr string) bool {
 	})
 }
 
-// authedWrite reports an update/delete policy whose source-row check, or every check, is sign-in only.
-func (c *ctx) authedWrite(p domain.RLSPolicy) bool {
-	exprs := writeExprs(p, "update", "delete")
-	if len(exprs) == 0 {
-		return false
+// authedWrite returns the field of an update/delete policy that only checks sign-in: using covers the source row, with_check the destination of an update.
+func (c *ctx) authedWrite(p domain.RLSPolicy) string {
+	ops := opsOf(p, "update", "delete")
+	switch {
+	case len(ops) == 0:
+		return ""
+	case strings.TrimSpace(p.Using) != "" && c.authGate(p.Using):
+		return "using"
+	case slices.Contains(ops, "update") && strings.TrimSpace(p.WithCheck) != "" && c.authGate(p.WithCheck):
+		return "with_check"
 	}
-	if strings.TrimSpace(p.Using) != "" && c.authGate(p.Using) {
-		return true
-	}
-	return !slices.ContainsFunc(exprs, func(e string) bool { return !c.authGate(e) })
+	return ""
 }
 
 func ruleBuckets(c *ctx) {
@@ -192,13 +194,12 @@ func ruleBuckets(c *ctx) {
 			if !strings.EqualFold(p.Type, "restrictive") {
 				pat := append(slices.Clone(at), "rls", i)
 				openWrite(c, "bucket-open-write", p, pat, anyJWT, "bucket "+name)
-				if c.authedWrite(p) {
-					field := "using"
-					if strings.TrimSpace(p.Using) == "" {
-						field = "with_check"
+				if field := c.authedWrite(p); field != "" {
+					msg := fmt.Sprintf("This policy only checks that someone is signed in, so any user (including anonymous sign-ins) can replace or delete other users' objects in bucket %s.", name)
+					if field == "with_check" && strings.TrimSpace(p.Using) != "" {
+						msg = fmt.Sprintf("This update policy's destination check only verifies sign-in, so users can move or rename objects into any folder of bucket %s.", name)
 					}
-					c.add("bucket-authed-write", Medium, append(pat, field), "Any signed-in user can change every object",
-						fmt.Sprintf("This policy only checks that someone is signed in, so any user (including anonymous sign-ins) can replace or delete other users' objects in bucket %s.", name),
+					c.add("bucket-authed-write", Medium, append(pat, field), "Any signed-in user can change every object", msg,
 						"Scope it to the uploader, for example name LIKE auth.uid()::text || '/%'.")
 				}
 				if !b.Public && len(opsOf(p, "select")) > 0 && isLiteralTrue(p.Using) {

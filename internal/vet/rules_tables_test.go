@@ -263,7 +263,10 @@ func TestBucketAuthedWrite(t *testing.T) {
 		{"or inside a literal", pol("delete", "using", "auth.uid() IS NOT NULL AND name LIKE auth.uid()::text || '/or %'", ""), nil},
 		{"parenthesised or under and", pol("delete", "using", "auth.is_authenticated() AND (name LIKE auth.uid()::text || '/%' OR public.is_admin())", "") + adminRPC, nil},
 		{"update using authed, with_check scoped", bucket("b", "    rls:\n      - operations: [update]\n        using: \"auth.is_authenticated()\"\n        with_check: \"name LIKE auth.uid()::text || '/%'\"\n"), []string{"bucket-authed-write"}},
-		{"update using scoped, with_check authed", bucket("b", "    rls:\n      - operations: [update]\n        using: \"name LIKE auth.uid()::text || '/%'\"\n        with_check: \"auth.is_authenticated()\"\n"), nil},
+		{"update using scoped, with_check authed", bucket("b", "    rls:\n      - operations: [update]\n        using: \"name LIKE auth.uid()::text || '/%'\"\n        with_check: \"auth.is_authenticated()\"\n"), []string{"bucket-authed-write"}},
+		{"delete ignores with_check", bucket("b", "    rls:\n      - operations: [delete]\n        using: \"name LIKE auth.uid()::text || '/%'\"\n        with_check: \"auth.is_authenticated()\"\n"), nil},
+		{"outer parens around or", pol("delete", "using", "(auth.is_authenticated() OR name LIKE auth.uid()::text || '/%')", ""), []string{"bucket-authed-write"}},
+		{"double outer parens", pol("delete", "using", "((auth.is_authenticated() OR public.is_admin()))", "") + adminRPC, []string{"bucket-authed-write"}},
 		{"restrictive", pol("delete", "using", "auth.is_authenticated()", "        type: restrictive\n"), nil},
 		{"empty delete using", bucket("b", "    rls:\n      - operations: [delete]\n"), nil},
 		{"literal true is open write only", pol("delete", "using", "true", ""), []string{"bucket-open-write"}},
@@ -279,6 +282,11 @@ func TestBucketAuthedWrite(t *testing.T) {
 	r, err := runQuiet([]byte(bucket("b", "    rls:\n      - operations: [insert]\n        with_check: \"true\"\n        type: restrictive\n      - operations: [update]\n        with_check: \"auth.is_authenticated()\"\n")))
 	if err != nil || len(r.Findings) != 1 || r.Findings[0].Path != "storage.b.rls[1].with_check" {
 		t.Fatalf("with_check-only path: %+v, err = %v", r, err)
+	}
+
+	r, err = runQuiet([]byte(bucket("b", "    rls:\n      - operations: [update]\n        using: \"name LIKE auth.uid()::text || '/%'\"\n        with_check: \"auth.is_authenticated()\"\n")))
+	if err != nil || len(r.Findings) != 1 || r.Findings[0].Path != "storage.b.rls[0].with_check" || !strings.Contains(r.Findings[0].Message, "move") {
+		t.Fatalf("destination finding: %+v, err = %v", r, err)
 	}
 
 	r, err = runQuiet([]byte(pol("update", "using", "auth.is_authenticated()", "")))

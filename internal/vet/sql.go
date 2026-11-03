@@ -82,6 +82,7 @@ func hasSensitiveSegment(name string) bool {
 
 // splitTopLevelOr splits expr on OR outside parentheses and string literals.
 func splitTopLevelOr(expr string) []string {
+	expr = stripOuterParens(expr)
 	var parts []string
 	depth, start, inStr := 0, 0, false
 	for i := 0; i < len(expr); i++ {
@@ -100,4 +101,33 @@ func splitTopLevelOr(expr string) []string {
 		}
 	}
 	return append(parts, expr[start:])
+}
+
+// stripOuterParens removes parentheses that wrap the whole expression.
+func stripOuterParens(expr string) string {
+	for {
+		t := strings.TrimSpace(expr)
+		if len(t) < 2 || t[0] != '(' || t[len(t)-1] != ')' {
+			return expr
+		}
+		depth, inStr := 0, false
+		for i := 0; i < len(t); i++ {
+			switch t[i] {
+			case '\'':
+				inStr = !inStr
+			case '(':
+				if !inStr {
+					depth++
+				}
+			case ')':
+				if !inStr {
+					depth--
+					if depth == 0 && i < len(t)-1 {
+						return expr
+					}
+				}
+			}
+		}
+		expr = t[1 : len(t)-1]
+	}
 }
