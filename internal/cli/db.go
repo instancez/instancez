@@ -9,9 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/instancez/instancez/internal/config"
 	"github.com/jackc/pgx/v5"
@@ -157,7 +155,7 @@ func resetEmbedded(o dbResetOpts) error {
 	} else if err != nil {
 		return err
 	}
-	if pid, running := pgdataRunning(dir); running {
+	if pid, _, live := liveEmbeddedPG(dir); live {
 		return fmt.Errorf("inz dev appears to be running (PID %d); stop it first, or delete %s if no server is running", pid, filepath.Join(dir, "postmaster.pid"))
 	}
 	if err := confirmReset(o, dir, ""); err != nil {
@@ -170,26 +168,6 @@ func resetEmbedded(o dbResetOpts) error {
 	}
 	_, _ = fmt.Fprintln(o.out, "Database reset. Run inz dev --embedded-pg to recreate it.")
 	return nil
-}
-
-// pgdataRunning reports whether the pid in postmaster.pid is a live process.
-func pgdataRunning(dataDir string) (pid int, running bool) {
-	// nosemgrep -- fixed filename inside the operator-supplied data dir
-	b, err := os.ReadFile(filepath.Join(dataDir, "postmaster.pid"))
-	if err != nil {
-		return 0, false
-	}
-	first, _, _ := strings.Cut(string(b), "\n")
-	pid, err = strconv.Atoi(strings.TrimSpace(first))
-	if err != nil || pid <= 0 {
-		return 0, false
-	}
-	p, err := os.FindProcess(pid)
-	if err != nil {
-		return pid, false
-	}
-	err = p.Signal(syscall.Signal(0))
-	return pid, err == nil || errors.Is(err, syscall.EPERM)
 }
 
 // localDSNHosts returns a password-free host:port/db label, or an error naming the first non-local host.
@@ -226,7 +204,7 @@ func resetSchemas(configPath string) ([]string, error) {
 	}
 	cfg, _, err := config.ParseBytesLocal(data, configPath)
 	if err != nil {
-		return nil, fmt.Errorf("load %s: %w", configPath, err)
+		return nil, fmt.Errorf("load %s: %w\ndb reset needs a valid instancez.yaml to know which schemas to drop", configPath, err)
 	}
 	set := map[string]bool{"public": true, "auth": true, "storage": true}
 	for _, t := range cfg.Tables {

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -159,8 +160,9 @@ func TestResetSchemasClosedSet(t *testing.T) {
 func TestResetSchemasBadConfig(t *testing.T) {
 	cfg := filepath.Join(t.TempDir(), "instancez.yaml")
 	_ = os.WriteFile(cfg, []byte("tables: [\n"), 0o600)
-	if _, err := resetSchemas(cfg); err == nil {
-		t.Error("want error for unparseable config")
+	_, err := resetSchemas(cfg)
+	if err == nil || !strings.Contains(err.Error(), "needs a valid instancez.yaml") {
+		t.Errorf("err = %v, want hint that reset needs a valid instancez.yaml", err)
 	}
 }
 
@@ -215,7 +217,7 @@ func TestDBResetEmbeddedDeclined(t *testing.T) {
 func TestDBResetEmbeddedRefusesLivePID(t *testing.T) {
 	o, dir := embeddedFixture(t)
 	o.yes = true
-	_ = os.WriteFile(filepath.Join(dir, "postmaster.pid"), []byte(strconv.Itoa(os.Getpid())+"\n/data\n"), 0o600)
+	writePMPid(t, dir, os.Getpid(), listenPort(t))
 	err := runDBReset(context.Background(), o)
 	if err == nil || !strings.Contains(err.Error(), "PID") || !strings.Contains(err.Error(), "postmaster.pid") || !fileExists(dir) {
 		t.Fatalf("err = %v", err)
@@ -229,7 +231,7 @@ func TestDBResetEmbeddedStalePID(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, content := range map[string]string{
-		"dead pid": strconv.Itoa(cmd.Process.Pid) + "\n",
+		"dead pid": "dead",
 		"garbage":  "not-a-pid\n",
 		"empty":    "",
 		"zero":     "0\n",
@@ -237,7 +239,11 @@ func TestDBResetEmbeddedStalePID(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			o, dir := embeddedFixture(t)
 			o.yes = true
-			_ = os.WriteFile(filepath.Join(dir, "postmaster.pid"), []byte(content), 0o600)
+			if content == "dead" {
+				writePMPid(t, dir, cmd.Process.Pid, listenPort(t))
+			} else {
+				_ = os.WriteFile(filepath.Join(dir, "postmaster.pid"), []byte(content), 0o600)
+			}
 			if err := runDBReset(context.Background(), o); err != nil {
 				t.Fatal(err)
 			}
@@ -259,14 +265,49 @@ func TestDBResetEmbeddedMissing(t *testing.T) {
 	}
 }
 
-func TestPgdataRunningOtherUserProcess(t *testing.T) {
+func writePMPid(t *testing.T, dir string, pid, port int) {
+	t.Helper()
+	content := strconv.Itoa(pid) + "\n/data\n0\n" + strconv.Itoa(port) + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "postmaster.pid"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func listenPort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	return l.Addr().(*net.TCPAddr).Port
+}
+
+func TestDBResetEmbeddedRefusesOtherUserServer(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root can signal pid 1")
 	}
-	dir := t.TempDir()
-	_ = os.WriteFile(filepath.Join(dir, "postmaster.pid"), []byte("1\n"), 0o600)
-	if pid, running := pgdataRunning(dir); !running || pid != 1 {
-		t.Errorf("pgdataRunning = %d, %v; want 1, true (EPERM means alive)", pid, running)
+	o, dir := embeddedFixture(t)
+	o.yes = true
+	writePMPid(t, dir, 1, listenPort(t))
+	err := runDBReset(context.Background(), o)
+	if err == nil || !strings.Contains(err.Error(), "PID 1") || !fileExists(dir) {
+		t.Fatalf("err = %v; a live server owned by another user must block reset", err)
+	}
+}
+
+func TestDBResetEmbeddedLivePIDNotListeningWipes(t *testing.T) {
+	o, dir := embeddedFixture(t)
+	o.yes = true
+	l, _ := net.Listen("tcp", "127.0.0.1:0")
+	port := l.Addr().(*net.TCPAddr).Port
+	_ = l.Close()
+	writePMPid(t, dir, os.Getpid(), port)
+	if err := runDBReset(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	if fileExists(dir) {
+		t.Error("pgdata not removed")
 	}
 }
 

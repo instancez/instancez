@@ -6,6 +6,14 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Added
 
+- `inz validate --use-dsn <dsn> --dry-run-ddl` runs the migration in a transaction that is always rolled back (`lock_timeout` 2s, `statement_timeout` 30s per statement, 2 minutes overall; an in-sync database still gets its rpc bodies checked), so unknown RLS columns and bad rpc bodies fail validation. It exits non-zero on failure and adds `dry_run` to `--json`. Plain `--use-dsn` still only prints the plan.
+- Did-you-mean suggestions for unknown YAML keys (`rls_enabeld` suggests `rls_enabled`) and column types (`string` suggests `text`, `timestampz` suggests `timestamptz`).
+- A JSON Schema for `instancez.yaml` at `https://docs.instancez.ai/schema/instancez.json`. `inz init` adds the `yaml-language-server` header so editors complete keys and flag unknown ones.
+- `inz doctor --json`.
+- `inz cloud status --json`.
+- `inz db reset` wipes the local database (refuses non-local hosts, asks first unless `--yes`).
+- `inz deploy`, `inz login`, `inz status` and the other cloud verbs typed without `cloud` now suggest `inz cloud`.
+
 ### Changed
 
 - `inz validate`, `inz dev`, `inz serve` and `inz bundle` errors carry the real key path, `file:line:column`, plain-language type errors (`expected true or false, got "maybe"`), the duplicate-key path and a `check indentation at line N` hint. Identical errors are shown once, unset variables show where they are used, and `--json` gains `column`.
@@ -14,7 +22,6 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 ### Deprecated
 
 - Field-level `ref:` and `on_delete:` never did anything. `inz validate` now warns and the docs no longer list them. Use `foreign_key: {references, on_delete}`.
-
 
 ### Fixed
 
@@ -32,7 +39,6 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - A second `inz dev --embedded-pg` in the same project now stops with "another inz dev is already using this pgdata directory (Postgres PID N, port P)" instead of suggesting `--reset-pg`, and `--reset-pg` no longer wipes a data directory another `inz dev` is using.
 - A hot reload (`inz dev`, `inz serve --watch`) whose migration fails now logs the failure and keeps the running config's functions; it used to log "config reloaded successfully" and load functions from the rejected config.
 - `inz --version` / `inz version` show the module version and commit for `go build` and `go install` builds instead of `vdev (unknown)`.
-
 
 ## [0.0.12] - 2026-11-02
 
