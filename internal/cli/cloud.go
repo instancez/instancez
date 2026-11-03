@@ -7,9 +7,10 @@ import "github.com/spf13/cobra"
 // root command to `inz cloud`.
 func newCloudCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "cloud",
-		Short: "Manage and deploy to instancez Cloud",
-		Long:  "Commands for authenticating with and deploying to instancez Cloud.",
+		Use:        "cloud",
+		Short:      "Manage and deploy to instancez Cloud",
+		Long:       "Commands for authenticating with and deploying to instancez Cloud.",
+		SuggestFor: []string{"deploy", "login", "logout", "status", "whoami", "frontend"},
 	}
 	cmd.AddCommand(
 		newLoginCmd(),

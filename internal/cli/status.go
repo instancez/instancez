@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 
 func newStatusCmd() *cobra.Command {
 	var configPath string
+	var jsonOut bool
 
 	cmd := &cobra.Command{
 		Use:   "status",
@@ -24,14 +26,18 @@ project.cloud.project_id by hand.
 
 This is distinct from inz doctor, which checks local environment health.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStatus(configPath)
+			return runStatus(cmd.OutOrStdout(), configPath, jsonOut)
 		},
 	}
 	cmd.Flags().StringVar(&configPath, "config", "instancez.yaml", "path to instancez.yaml")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "print the project state as JSON (never prompts for login)")
 	return cmd
 }
 
-func runStatus(configPath string) error {
+// statusLogin is the login behaviour for status; tests replace it.
+var statusLogin = ensureLoginOpts{}
+
+func runStatus(w io.Writer, configPath string, jsonOut bool) error {
 	if err := requireLocalConfig(configPath); err != nil {
 		return err
 	}
@@ -49,7 +55,11 @@ func runStatus(configPath string) error {
 
 	// Inline login: returns existing creds, prompts on a TTY, or hard-errors
 	// in a non-interactive session pointing at `inz cloud login`.
-	creds, err := ensureLoggedIn(ensureLoginOpts{})
+	login := statusLogin
+	if jsonOut {
+		login.isTTY = func() bool { return false }
+	}
+	creds, err := ensureLoggedIn(login)
 	if err != nil {
 		return err
 	}
@@ -61,7 +71,10 @@ func runStatus(configPath string) error {
 		return fmt.Errorf("get app: %w", err)
 	}
 
-	renderStatus(os.Stdout, app)
+	if jsonOut {
+		return json.NewEncoder(w).Encode(app)
+	}
+	renderStatus(w, app)
 	return nil
 }
 

@@ -42,10 +42,10 @@ func expectedRoleNames() []string {
 
 // Result is the outcome of a single preflight check.
 type Result struct {
-	Name    string
-	OK      bool
-	Detail  string
-	FixHint string
+	Name    string `json:"name"`
+	OK      bool   `json:"ok"`
+	Detail  string `json:"detail,omitempty"`
+	FixHint string `json:"hint,omitempty"`
 }
 
 // Check is a function that performs one preflight check and returns its Result.

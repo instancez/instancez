@@ -35,7 +35,7 @@ const { data, error } = await supabase.from('todos').select('*').eq('status', 'p
 
 The secret key takes the `service_role` path (bypasses RLS); keep it server-side only.
 
-Other commands: `inz serve` (production, no hot reload, dashboard off by default), `inz bundle` (build a tar.gz of config + functions for deploys), `inz cloud deploy` (push to a managed project; `--new` creates one).
+Other commands: `inz serve` (production, no hot reload, dashboard off by default), `inz bundle` (build a tar.gz of config + functions for deploys), `inz cloud deploy` (push to a managed project; `--new` creates one), `inz db reset` (wipe the local DB; `--embedded-pg` for ./pgdata).
 
 ## instancez.yaml at a glance
 

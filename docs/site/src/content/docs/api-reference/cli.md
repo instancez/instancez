@@ -248,6 +248,33 @@ inz bundle --output bundle.tar.gz                # write to local file
 inz bundle --output s3://my-bucket/bundle.tar.gz # upload to S3, print pointer
 ```
 
+## inz db reset
+
+Drop all data in the local development database. Local only: it refuses any database host that is not `localhost`, a loopback address (`127.0.0.0/8`, `::1`) or a unix socket, and there is no override. A tunnel or proxy listening on localhost (SSH tunnel, `kubectl port-forward`, Cloud SQL proxy) counts as local, so check where it points.
+
+It drops `public`, `auth`, `storage` and every schema your tables declare, then recreates an empty `public`. Other schemas are kept, but it uses `DROP SCHEMA ... CASCADE`, so views, foreign keys, functions and columns whose type lives in a dropped schema (for example an enum in `public`) are dropped too. The prompt lists them first. With `INSTANCEZ_OWNER_DATABASE_URL` and `INSTANCEZ_AUTH_DATABASE_URL`, the drop runs as the owner login.
+
+It needs a valid `instancez.yaml` (to know which schemas to drop). It does not migrate or seed: run `inz dev` afterwards to recreate the schema. Flags read the same `INSTANCEZ_*` environment defaults as `inz dev` (for example `INSTANCEZ_EMBEDDED_PG`), except `--yes`, which is never read from the environment.
+
+Asks `Drop all data in <host:port/db>? [y/N]` on a terminal. Without a terminal it exits with an error unless `--yes` is set. If `inz dev` holds locks on the database, it fails after 5 seconds instead of hanging.
+
+With `--embedded-pg` it deletes `pgdata` and `pgdata.runtime` next to the config file (the config file must exist), and refuses while `inz dev --embedded-pg` is running. If the process in `pgdata/postmaster.pid` is gone but the PID was reused, delete that file.
+
+```
+inz db reset [flags]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--config` | `instancez.yaml` | Path to `instancez.yaml`. |
+| `--embedded-pg` | `false` | Delete the embedded Postgres data dir instead of dropping schemas. |
+| `--yes`, `-y` | `false` | Skip the confirmation prompt. |
+
+```bash
+inz db reset
+inz db reset --embedded-pg --yes
+```
+
 ## inz cloud deploy
 
 Write the current `instancez.yaml` to an instancez Cloud project.
@@ -286,6 +313,7 @@ inz doctor [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--config` | `instancez.yaml` | Path to `instancez.yaml`. |
+| `--json` | `false` | Print results as one JSON object: `{"ok", "checks":[{"name","ok","detail","hint"}]}`. Still exits non-zero on failure. |
 
 ```bash
 inz doctor
@@ -304,6 +332,7 @@ inz cloud status [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--config` | `instancez.yaml` | Path to `instancez.yaml`. |
+| `--json` | `false` | Print the project and deploy state as JSON (the API response). Never prompts for login. |
 
 ```bash
 inz cloud status
@@ -357,7 +386,7 @@ inz telemetry disable
 
 ## inz version
 
-Print the binary version. `inz --version` prints the same line.
+Print the binary version. `inz --version` prints the same line. Builds from `go build`/`go install` without ldflags report the module version and git commit.
 
 ```
 inz version

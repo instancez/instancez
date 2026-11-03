@@ -85,6 +85,7 @@ func newRootCmd(env teleEnv) *cobra.Command {
 		newServeCmd(),
 		newVersionCmd(),
 		newDoctorCmd(),
+		newDBCmd(),
 		newCloudCmd(),
 		newTelemetryCmd(env),
 	)
@@ -238,8 +239,6 @@ func printFinalErr(w io.Writer, err error) {
 		_, _ = fmt.Fprintln(w, err)
 	}
 }
-
-func versionString() string { return fmt.Sprintf("instancez v%s (%s)", version, commit) }
 
 func newVersionCmd() *cobra.Command {
 	return &cobra.Command{

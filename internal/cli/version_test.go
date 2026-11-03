@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"runtime/debug"
 	"strings"
 	"testing"
 )
@@ -39,5 +40,40 @@ func TestVersionFlagMatchesSubcommand(t *testing.T) {
 	}
 	if !strings.Contains(flag, "instancez vdev (unknown)") {
 		t.Errorf("--version output = %q", flag)
+	}
+}
+
+func TestResolveVersion(t *testing.T) {
+	bi := func(ver, rev string) *debug.BuildInfo {
+		b := &debug.BuildInfo{Main: debug.Module{Version: ver}}
+		if rev != "" {
+			b.Settings = []debug.BuildSetting{{Key: "vcs.revision", Value: rev}}
+		}
+		return b
+	}
+	cases := []struct {
+		name, ver, com string
+		info           *debug.BuildInfo
+		wantV, wantC   string
+	}{
+		{"nil info", "dev", "unknown", nil, "dev", "unknown"},
+		{"devel", "dev", "unknown", bi("(devel)", ""), "dev", "unknown"},
+		{"empty main version", "dev", "unknown", bi("", ""), "dev", "unknown"},
+		{"tagged", "dev", "unknown", bi("v0.0.12", ""), "0.0.12", "unknown"},
+		{"pseudo dirty", "dev", "unknown", bi("v0.0.13-0.20261102120000-abcdef123456+dirty", "abcdef1234567890"), "0.0.13-0.20261102120000-abcdef123456+dirty", "abcdef1"},
+		{"pseudo without vcs setting", "dev", "unknown", bi("v0.0.13-0.20261102120000-abcdef123456+dirty", ""), "0.0.13-0.20261102120000-abcdef123456+dirty", "abcdef1"},
+		{"pseudo plain", "dev", "unknown", bi("v0.0.13-0.20261102120000-abcdef123456", ""), "0.0.13-0.20261102120000-abcdef123456", "abcdef1"},
+		{"tag with hex-looking suffix", "dev", "unknown", bi("v1.2.3-rc.1", ""), "1.2.3-rc.1", "unknown"},
+		{"devel with short rev", "dev", "unknown", bi("(devel)", "abc"), "dev", "abc"},
+		{"empty rev setting", "dev", "unknown", &debug.BuildInfo{Settings: []debug.BuildSetting{{Key: "vcs.revision"}}}, "dev", "unknown"},
+		{"ldflags win", "0.0.12", "1a2b3c4", bi("v9.9.9", "ffff"), "0.0.12", "1a2b3c4"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			v, com := resolveVersion(c.ver, c.com, c.info)
+			if v != c.wantV || com != c.wantC {
+				t.Errorf("got (%q,%q), want (%q,%q)", v, com, c.wantV, c.wantC)
+			}
+		})
 	}
 }
