@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"os/exec"
@@ -383,5 +384,38 @@ func TestStartEmbeddedPostgres_LivenessCheckedUnderLock(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("second start did not return")
+	}
+}
+
+func TestPidAliveRejectsOutOfRangePIDs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows falls back to the port check")
+	}
+	// 1<<32 truncates to 0 in a 32-bit pid_t, which would signal our own process group.
+	for _, pid := range []int{0, -1, 1 << 32, math.MaxInt32 + 1} {
+		if pidAlive(pid) {
+			t.Errorf("pidAlive(%d) = true, want false", pid)
+		}
+	}
+	if !pidAlive(os.Getpid()) {
+		t.Error("pidAlive(own pid) = false, want true")
+	}
+}
+
+func TestPersistPGPortWarnsOnWriteFailure(t *testing.T) {
+	var warn strings.Builder
+	persistPGPort(filepath.Join(t.TempDir(), "missing"), 5432, &warn)
+	if !strings.Contains(warn.String(), "could not save embedded Postgres port") {
+		t.Fatalf("no warning on a failed save: %q", warn.String())
+	}
+
+	dir := t.TempDir()
+	warn.Reset()
+	persistPGPort(dir, 5432, &warn)
+	if warn.Len() != 0 {
+		t.Fatalf("unexpected warning: %q", warn.String())
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, pgPortFile)); string(data) != "5432" {
+		t.Fatalf("port file = %q, want 5432", data)
 	}
 }

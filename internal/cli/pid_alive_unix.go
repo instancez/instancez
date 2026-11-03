@@ -4,12 +4,13 @@ package cli
 
 import (
 	"errors"
+	"math"
 	"os"
 	"syscall"
 )
 
 func pidAlive(pid int) bool {
-	if pid <= 0 {
+	if pid <= 0 || pid > math.MaxInt32 {
 		return false
 	}
 	p, err := os.FindProcess(pid)

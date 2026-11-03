@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -51,7 +52,7 @@ func startEmbeddedPostgres(opts devOptions) (stop func(), dsn string, err error)
 		if err := pg.Start(); err != nil {
 			return err
 		}
-		_ = os.WriteFile(filepath.Join(opts.pgDataDir, pgPortFile), []byte(strconv.Itoa(int(port))), 0o600)
+		persistPGPort(opts.pgDataDir, port, os.Stderr)
 		return nil
 	})
 	if errors.Is(err, errEmbeddedPGRunning) {
@@ -70,6 +71,12 @@ func startEmbeddedPostgres(opts devOptions) (stop func(), dsn string, err error)
 }
 
 const pgPortFile = ".inz-port"
+
+func persistPGPort(dataDir string, port uint32, warn io.Writer) {
+	if err := os.WriteFile(filepath.Join(dataDir, pgPortFile), []byte(strconv.Itoa(int(port))), 0o600); err != nil {
+		_, _ = fmt.Fprintf(warn, "warning: could not save embedded Postgres port: %v; the port may change on the next start\n", err)
+	}
+}
 
 // preferredPGPort reuses the port saved in dataDir when it is still free, else picks a new one.
 func preferredPGPort(dataDir string) (uint32, error) {

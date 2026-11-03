@@ -5,12 +5,10 @@ package preflight
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/instancez/instancez/internal/config"
@@ -170,7 +168,7 @@ func PortFreeCheck(port int) Check {
 		}
 		l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 		switch {
-		case errors.Is(err, syscall.EADDRINUSE):
+		case isAddrInUse(err):
 			return Result{
 				Name:    "port free",
 				Detail:  fmt.Sprintf("port %d is already in use", port),

@@ -443,6 +443,7 @@ func (e *Engine) Start(ctx context.Context) error {
 func (e *Engine) waitForShutdown(ctx context.Context, srvErrCh <-chan error) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(sigCh)
 
 	select {
 	case sig := <-sigCh:

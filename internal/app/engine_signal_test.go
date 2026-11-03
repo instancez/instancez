@@ -4,7 +4,9 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 	"testing"
@@ -41,5 +43,29 @@ func TestEngineWaitForShutdown_StopsOnSignals(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// waitForShutdown must release its signal registration, or a later SIGTERM is swallowed instead of killing the process.
+func TestEngineWaitForShutdown_ReleasesSignalHandlers(t *testing.T) {
+	if os.Getenv("INZ_SIGNAL_CHILD") == "1" {
+		engine := NewEngine(&domain.Config{}, domain.OwnerDB{Database: newFakeDB(t)}, newFakeRequestDB(t), domain.DefaultRoles())
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_ = engine.waitForShutdown(ctx, make(chan error))
+		_ = syscall.Kill(os.Getpid(), syscall.SIGTERM)
+		time.Sleep(3 * time.Second)
+		return
+	}
+	// nosemgrep -- test re-execs its own binary
+	cmd := exec.Command(os.Args[0], "-test.run=^TestEngineWaitForShutdown_ReleasesSignalHandlers$")
+	cmd.Env = append(os.Environ(), "INZ_SIGNAL_CHILD=1")
+	err := cmd.Run()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("child survived SIGTERM after waitForShutdown returned (err = %v)", err)
+	}
+	if ws, ok := exitErr.Sys().(syscall.WaitStatus); !ok || !ws.Signaled() || ws.Signal() != syscall.SIGTERM {
+		t.Fatalf("child exit = %v, want killed by SIGTERM", exitErr)
 	}
 }
