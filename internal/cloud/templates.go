@@ -12,7 +12,10 @@ import (
 	"github.com/instancez/instancez/pkg/templates"
 )
 
-const MaxTemplateBytes = 2 << 20
+const (
+	MaxTemplateBytes = 2 << 20
+	publicTimeout    = 10 * time.Second
+)
 
 type TemplateNotFoundError struct {
 	ID          string
@@ -34,7 +37,14 @@ func safeError(err error) error {
 func (c *Client) public() *Client {
 	cc := *c
 	cc.Bearer, cc.Org, cc.MaxResponseBytes = "", "", MaxTemplateBytes
-	cc.HTTP = &http.Client{Timeout: 10 * time.Second}
+	hc := http.Client{}
+	if c.HTTP != nil {
+		hc = *c.HTTP
+	}
+	if hc.Timeout == 0 || hc.Timeout > publicTimeout {
+		hc.Timeout = publicTimeout
+	}
+	cc.HTTP = &hc
 	return &cc
 }
 
@@ -50,6 +60,9 @@ func (c *Client) ListTemplates() ([]templates.Manifest, error) {
 		if templates.ValidID(m.ID) {
 			valid = append(valid, m)
 		}
+	}
+	if len(valid) == 0 && len(out.Templates) > 0 {
+		return nil, errors.New("template catalog has no valid entries")
 	}
 	return valid, nil
 }
@@ -77,6 +90,9 @@ func (c *Client) GetTemplate(id string) (*templates.Bundle, error) {
 	}
 	if err != nil {
 		return nil, safeError(err)
+	}
+	if _, ok := b.Files["instancez.yaml"]; !ok {
+		return nil, errors.New("template response has no instancez.yaml")
 	}
 	return &b, nil
 }

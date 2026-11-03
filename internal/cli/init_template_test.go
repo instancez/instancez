@@ -373,8 +373,6 @@ func TestInitTemplateHostileServerWritesNothing(t *testing.T) {
 	}{
 		{map[string]string{"instancez.yaml": "version: 1\n", "../../evil.sh": "boom"}, "unsafe path"},
 		{map[string]string{"instancez.yaml": "version: 1\n", "/tmp/evil": "boom"}, "unsafe path"},
-		{map[string]string{"functions/a.js": "x"}, "no instancez.yaml"},
-		{map[string]string{}, "no instancez.yaml"},
 	}
 	for i, c := range cases {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -598,4 +596,28 @@ func TestInitTemplateHeaderNotDuplicated(t *testing.T) {
 	got, err = os.ReadFile(filepath.Join(dir2, "instancez.yaml"))
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(string(got), config.SchemaHeader+"\n"))
+}
+
+func TestInitTemplateBundleWithoutYAMLFallsBack(t *testing.T) {
+	for _, body := range []string{`{}`, `{"manifest":{"id":"blog"},"files":{"functions/a.js":"x"}}`} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) }))
+		t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
+		t.Setenv("HOME", t.TempDir())
+		dir := t.TempDir()
+		require.NoError(t, runInit(initOptions{dir: dir, template: "blog"}), body)
+		assert.FileExists(t, filepath.Join(dir, "instancez.yaml"), body)
+		srv.Close()
+	}
+}
+
+func TestListTemplatesAllInvalidFallsBack(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{"templates": []map[string]any{{"id": "../x"}, {"id": "BAD ID"}}})
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
+	t.Setenv("HOME", t.TempDir())
+	var buf bytes.Buffer
+	require.NoError(t, runListTemplates(&buf))
+	assert.Contains(t, buf.String(), "kanban-board")
 }

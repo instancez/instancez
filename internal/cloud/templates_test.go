@@ -252,3 +252,39 @@ func TestPublicClientTimeout(t *testing.T) {
 	assert.Equal(t, 10*time.Second, c.public().HTTP.Timeout)
 	assert.Equal(t, orig, c.HTTP.Timeout)
 }
+
+type markerTransport struct{ http.RoundTripper }
+
+func TestPublicKeepsCustomTransport(t *testing.T) {
+	c := NewClient("http://127.0.0.1:1", "")
+	rt := &markerTransport{http.DefaultTransport}
+	c.HTTP = &http.Client{Transport: rt, Timeout: 60 * time.Second}
+	pub := c.public()
+	assert.Same(t, rt, pub.HTTP.Transport)
+	assert.Equal(t, 10*time.Second, pub.HTTP.Timeout)
+	assert.Equal(t, 60*time.Second, c.HTTP.Timeout)
+}
+
+func TestPublicKeepsShorterTimeout(t *testing.T) {
+	c := NewClient("http://127.0.0.1:1", "")
+	c.HTTP = &http.Client{Timeout: 2 * time.Second}
+	assert.Equal(t, 2*time.Second, c.public().HTTP.Timeout)
+}
+
+func TestListTemplatesAllInvalidIsError(t *testing.T) {
+	c := tplServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"templates":[{"id":"../x"},{"id":"BAD ID"}]}`))
+	})
+	_, err := c.ListTemplates()
+	require.Error(t, err)
+}
+
+func TestGetTemplateWithoutYAMLIsError(t *testing.T) {
+	for _, body := range []string{`{}`, `{"manifest":{"id":"blog"},"files":{"functions/a.js":"x"}}`} {
+		c := tplServer(t, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) })
+		_, err := c.GetTemplate("blog")
+		require.Error(t, err, body)
+		var nf *TemplateNotFoundError
+		assert.False(t, errors.As(err, &nf), body)
+	}
+}
