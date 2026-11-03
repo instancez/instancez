@@ -20,19 +20,17 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - Storage RLS can use `storage.foldername()`, `storage.filename()`, `storage.extension()` and the `owner` / `owner_id` columns of `storage.objects`, matching Supabase.
 - `timestamps: true` on a table adds `created_at` and an auto-updated `updated_at`.
 - RLS `operations` accepts any combination, e.g. `[insert, update]`.
+- `inz vet` rule `bucket-authed-write` flags update/delete storage policies that only check sign-in (the source row or an update's destination).
 
 ### Changed
 
 - `inz validate`, `inz dev`, `inz serve` and `inz bundle` errors carry the real key path, `file:line:column`, plain-language type errors (`expected true or false, got "maybe"`), the duplicate-key path and a `check indentation at line N` hint. Identical errors are shown once, unset variables show where they are used, and `--json` gains `column`.
 - `inz dev --embedded-pg` reuses the same Postgres port across runs (stored in `pgdata/.inz-port`, new port if busy) and prints the connection URL in the startup banner.
+- `inz bundle` writes `./bundle.tar.gz` by default (was a temp file) and hides npm output unless `npm ci` fails. An empty `--output` is now an error, and the output file is never packed into the bundle. Local bundle files are written with mode 0600.
 
 ### Deprecated
 
 - Field-level `ref:` and `on_delete:` never did anything. `inz validate` now warns and the docs no longer list them. Use `foreign_key: {references, on_delete}`.
-
-### Changed
-
-- `inz bundle` writes `./bundle.tar.gz` by default (was a temp file) and hides npm output unless `npm ci` fails. An empty `--output` is now an error, and the output file is never packed into the bundle. Local bundle files are written with mode 0600.
 
 ### Fixed
 
@@ -50,6 +48,8 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - A second `inz dev --embedded-pg` in the same project now stops with "another inz dev is already using this pgdata directory (Postgres PID N, port P)" instead of suggesting `--reset-pg`, and `--reset-pg` no longer wipes a data directory another `inz dev` is using.
 - A hot reload (`inz dev`, `inz serve --watch`) whose migration fails now logs the failure and keeps the running config's functions; it used to log "config reloaded successfully" and load functions from the rejected config.
 - `inz --version` / `inz version` show the module version and commit for `go build` and `go install` builds instead of `vdev (unknown)`.
+- `inz init --template` and `--list-templates` work offline, using the templates built into inz.
+- `inz validate --help` no longer prints NUL bytes in the `--project` line.
 
 ### Security
 
