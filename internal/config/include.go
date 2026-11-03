@@ -372,6 +372,9 @@ func includeWatchTargets(mainPath string) (dirs, patterns, files []string) {
 		}
 		matches, _ := filepath.Glob(pat)
 		for _, m := range matches {
+			if isEditorTemp(filepath.Base(m), filepath.Base(pat)) {
+				continue
+			}
 			files = append(files, m)
 			if real, err := filepath.EvalSymlinks(m); err == nil && real != m {
 				files = append(files, real)

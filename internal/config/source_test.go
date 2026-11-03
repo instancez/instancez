@@ -472,6 +472,18 @@ func TestFileSourceWatchFileWrittenRightAfterMkdirStillReloads(t *testing.T) {
 	expectData(t, ch, "burst")
 }
 
+func TestFileSourceWatchIgnoresEditorTempThatExistsAtStart(t *testing.T) {
+	dir := t.TempDir()
+	main := filepath.Join(dir, "instancez.yaml")
+	writeFile(t, main, "version: 1\ninclude: [\"tables/*\"]\n")
+	writeFile(t, filepath.Join(dir, "tables", "a.yaml"), "tables: {}\n")
+	swap := filepath.Join(dir, "tables", ".a.yaml.swp")
+	writeFile(t, swap, "x")
+	ch := startWatch(t, &FileSource{Path: main})
+	writeFile(t, swap, "y")
+	expectQuiet(t, ch)
+}
+
 func TestFileSourceWatchIgnoresEditorTempInIncludeDir(t *testing.T) {
 	dir := t.TempDir()
 	main := filepath.Join(dir, "instancez.yaml")

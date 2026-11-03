@@ -131,7 +131,14 @@ storage:
 
 Bucket policies also accept `owner: uploaded_by` as a shorthand for `uploaded_by = auth.uid()`. Other columns are rejected there.
 
-On a database that already has `storage.objects`, the first policy that mentions `owner` or `owner_id` adds those columns, which rewrites the table once. They are not added to API responses.
+On a database that already has `storage.objects`, the first policy that mentions `owner` or `owner_id` adds those columns, which rewrites the table once under an exclusive lock, with no size or time limit, and blocks storage traffic until it finishes. On a large table, add the columns yourself in a maintenance window first; the migration then skips them:
+
+```sql
+ALTER TABLE storage.objects ADD COLUMN owner UUID GENERATED ALWAYS AS (uploaded_by) STORED;
+ALTER TABLE storage.objects ADD COLUMN owner_id TEXT GENERATED ALWAYS AS (uploaded_by::text) STORED;
+```
+
+They are not added to API responses.
 
 ### Downloads
 
