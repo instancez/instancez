@@ -35,6 +35,19 @@ type WatchEvent struct {
 // should re-Read and retry. An empty expected version skips the check.
 var ErrConfigVersionMismatch = errors.New("config: version mismatch")
 
+// ErrConfigReadOnly is returned by Source.Write when the config spans several files.
+var ErrConfigReadOnly = errors.New("config: source uses include and cannot be written")
+
+// SourceReadOnly reports whether src is a file whose main config uses include:.
+func SourceReadOnly(src Source) bool {
+	f, ok := src.(*FileSource)
+	if !ok || f == nil {
+		return false
+	}
+	data, err := os.ReadFile(f.Path)
+	return err == nil && HasInclude(data)
+}
+
 // Source is a read/write source of instancez configuration.
 // Implementations include local files and S3 objects.
 type Source interface {
@@ -113,18 +126,17 @@ func (s *FileSource) Load(ctx context.Context) (*domain.Config, error) {
 }
 
 func (s *FileSource) Read(ctx context.Context) ([]byte, string, error) {
-	data, err := os.ReadFile(s.Path)
+	r, err := ResolveIncludes(s.Path)
 	if err != nil {
-		return nil, "", &domain.ConfigError{Path: s.Path, Message: "cannot read file", Err: err}
+		return nil, "", err
 	}
-	info, err := os.Stat(s.Path)
-	if err != nil {
-		return nil, "", &domain.ConfigError{Path: s.Path, Message: "cannot stat file", Err: err}
-	}
-	return data, fileVersionToken(info), nil
+	return r.Data, r.Version, nil
 }
 
 func (s *FileSource) Write(ctx context.Context, data []byte, expectedVersion string) (string, error) {
+	if SourceReadOnly(s) {
+		return "", ErrConfigReadOnly
+	}
 	if expectedVersion != "" {
 		info, err := os.Stat(s.Path)
 		if err != nil && !os.IsNotExist(err) {
@@ -193,6 +205,21 @@ func (s *FileSource) Watch(ctx context.Context, _ time.Duration) (<-chan WatchEv
 		}
 	}
 
+	var includeFiles map[string]bool
+	var includePatterns []string
+	refreshIncludes := func() {
+		dirs, patterns, files := includeWatchTargets(s.Path)
+		includePatterns = patterns
+		includeFiles = make(map[string]bool, len(files))
+		for _, f := range files {
+			includeFiles[f] = true
+		}
+		for _, d := range dirs {
+			_ = w.Add(d) // best effort: a pattern dir may not exist yet
+		}
+	}
+	refreshIncludes()
+
 	out := make(chan WatchEvent, 1)
 	go func() {
 		defer close(out)
@@ -214,7 +241,15 @@ func (s *FileSource) Watch(ctx context.Context, _ time.Duration) (<-chan WatchEv
 				if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename|fsnotify.Remove) == 0 {
 					continue
 				}
-				isEnv, watched := targets[filepath.Clean(ev.Name)]
+				name := filepath.Clean(ev.Name)
+				if ev.Op&fsnotify.Create != 0 && isPatternDirAncestor(includePatterns, name) {
+					refreshIncludes()
+					timer.Reset(debounce) // files written before the new watch took effect fire no event
+				}
+				isEnv, watched := targets[name]
+				if !watched {
+					watched = includeFiles[name] || matchesAnyPattern(includePatterns, name)
+				}
 				if !watched {
 					continue
 				}
@@ -227,6 +262,7 @@ func (s *FileSource) Watch(ctx context.Context, _ time.Duration) (<-chan WatchEv
 					_ = ForceLoadDotenv(s.EnvPath)
 					envChanged = false
 				}
+				refreshIncludes()
 				data, ver, err := s.Read(ctx)
 				if errors.Is(err, os.ErrNotExist) {
 					continue // briefly missing mid-replace; the next Create re-arms

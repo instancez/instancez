@@ -121,6 +121,46 @@ describe("useConfigState save confirmation", () => {
   });
 });
 
+describe("useConfigState read-only config", () => {
+  const MESSAGE = "instancez.yaml uses include:, so the dashboard cannot save it; edit the YAML files instead";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.getConfig).mockResolvedValue(structuredClone(baseConfig));
+  });
+
+  it("refuses to save up front when the status reports read_only", async () => {
+    vi.mocked(api.getConfigStatus).mockResolvedValue({ dotenv_writable: true, read_only: true } as any);
+    const onResult = vi.fn();
+    renderWithChakra(<Harness onResult={onResult} />);
+    await waitFor(() => expect(screen.getByText("do-save")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("do-save"));
+    await waitFor(() => expect(onResult).toHaveBeenCalledWith(false));
+    expect(api.previewConfig).not.toHaveBeenCalled();
+    expect(api.putConfig).not.toHaveBeenCalled();
+    expect(showSaveErrorToast).toHaveBeenCalledWith({ message: MESSAGE });
+  });
+
+  it("shows the server message when PUT answers 409 config_read_only", async () => {
+    vi.mocked(api.getConfigStatus).mockResolvedValue({ dotenv_writable: true } as any);
+    vi.mocked(api.previewConfig).mockResolvedValue({ current: "a", proposed: "b" });
+    vi.mocked(api.putConfig).mockRejectedValue(
+      Object.assign(new Error(MESSAGE), { status: 409, body: { error: "config_read_only", message: MESSAGE } })
+    );
+    const onResult = vi.fn();
+    renderWithChakra(<Harness onResult={onResult} />);
+    await waitFor(() => expect(screen.getByText("do-save")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("do-save"));
+    await waitFor(() => expect(screen.getByText("instancez.yaml")).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText(/type CONFIRM/i), { target: { value: "CONFIRM" } });
+    fireEvent.click(screen.getByRole("button", { name: /confirm & save/i }));
+    await waitFor(() => expect(onResult).toHaveBeenCalledWith(false));
+    expect(showSaveErrorToast).toHaveBeenCalledWith({ message: MESSAGE });
+  });
+});
+
 describe("useConfigState seeding", () => {
   beforeEach(() => {
     vi.clearAllMocks();

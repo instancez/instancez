@@ -381,6 +381,14 @@ func (h *AdminHandler) handlePutConfig(c *gin.Context) {
 		return
 	}
 
+	if config.SourceReadOnly(h.configSource) {
+		c.JSON(409, gin.H{
+			"error":   "config_read_only",
+			"message": "instancez.yaml uses include:, so the dashboard cannot save it; edit the YAML files instead",
+		})
+		return
+	}
+
 	// Read current version (for optimistic concurrency). The bytes are
 	// discarded — clients echo `_checksum` (the source's version token) on
 	// PUT via `If-Match`; the source's own ETag/mtime is the only token we

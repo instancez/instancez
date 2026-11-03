@@ -52,7 +52,7 @@ const SEED_CODE = "export default async function handler(req, ctx) { return { st
 function renderNew(
   backendOverrides: Partial<ConsoleBackend> = {},
   saveErrors: ValidationError[] = [],
-  ctxOverrides: Partial<{ refresh: () => Promise<void> }> = {}
+  ctxOverrides: Partial<{ refresh: () => Promise<void>; readOnly: boolean }> = {}
 ) {
   const backend: ConsoleBackend = { ...adminBackend, ...backendOverrides };
   const ctx = {
@@ -137,6 +137,31 @@ describe("FunctionDetail – new mode", () => {
       await screen.findByText(/the draft changed since you started/i)
     ).toBeInTheDocument();
     expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it("shows the server message on 409 config_read_only, not the stale-draft text", async () => {
+    const user = userEvent.setup();
+    const message = "instancez.yaml uses include:, so the dashboard cannot save it; edit the YAML files instead";
+    const err: any = new Error(message);
+    err.status = 409;
+    err.body = { error: "config_read_only", message };
+    const createFunction = vi.fn().mockRejectedValue(err);
+    renderNew({ createFunction });
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+    expect(await screen.findByText(/uses include:/i)).toBeInTheDocument();
+    expect(screen.queryByText(/the draft changed since you started/i)).not.toBeInTheDocument();
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it("does not call createFunction when the config is read-only", async () => {
+    const user = userEvent.setup();
+    const createFunction = vi.fn();
+    renderNew({ createFunction }, [], { readOnly: true });
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+    expect(await screen.findByText(/uses include:/i)).toBeInTheDocument();
+    expect(createFunction).not.toHaveBeenCalled();
   });
 
   it("surfaces server validation errors and does not navigate", async () => {

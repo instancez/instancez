@@ -33,11 +33,17 @@ type Config struct {
 	// not read by the runtime yet.
 	FunctionsBundle string `yaml:"functions_bundle" json:"functions_bundle"`
 
+	// Include lists config fragments merged by config.ResolveIncludes before decode; it is only ever set on an unresolved file.
+	Include []string `yaml:"include,omitempty" json:"-"`
+
 	// UnknownKeys carries config keys that did not map to any field, detected at
 	// decode time and surfaced by Validate alongside structural errors (so a
 	// caller sees unknown keys and other problems in one pass). It is never
 	// serialized — the decoders populate it, Validate reads it.
 	UnknownKeys ValidationErrors `yaml:"-" json:"-"`
+
+	// ExpandErrors carries shorthand expansion conflicts, surfaced by Validate.
+	ExpandErrors ValidationErrors `yaml:"-" json:"-"`
 }
 
 // Project holds display-only metadata.
@@ -250,6 +256,9 @@ type Table struct {
 	RLSEnabled *bool       `yaml:"rls_enabled,omitempty" json:"rls_enabled,omitempty"`
 	RLS        []RLSPolicy `yaml:"rls" json:"rls"`
 
+	// Timestamps adds created_at/updated_at; expanded and cleared at load.
+	Timestamps bool `yaml:"timestamps,omitempty" json:"timestamps,omitempty"`
+
 	// RenamedFrom names this table's previous name. The migrator cannot tell a
 	// rename from a drop-plus-create by comparing configs, so without this it
 	// would drop the old table and its rows. Once the rename has been applied
@@ -411,10 +420,12 @@ func (t Table) HasGuards() bool {
 // be set explicitly. See validateRLS in internal/config/validate.go for the
 // exact rule.
 type RLSPolicy struct {
-	Operations []string `yaml:"operations" json:"operations"`                     // exactly one of select/insert/update/delete, or all four
+	Operations []string `yaml:"operations" json:"operations"`                     // one or more of select/insert/update/delete
 	Using      string   `yaml:"using,omitempty" json:"using,omitempty"`           // SQL boolean expression
 	WithCheck  string   `yaml:"with_check,omitempty" json:"with_check,omitempty"` // SQL boolean expression
 	Type       string   `yaml:"type,omitempty" json:"type,omitempty"`             // permissive (default) | restrictive
+	// Owner is a shorthand for "<column> = auth.uid()"; expanded at load time and cleared.
+	Owner string `yaml:"owner,omitempty" json:"owner,omitempty"`
 }
 
 // Bucket defines a storage bucket.

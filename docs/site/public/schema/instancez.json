@@ -269,6 +269,15 @@
         "null"
       ]
     },
+    "include": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
     "project": {
       "additionalProperties": false,
       "properties": {
@@ -674,6 +683,12 @@
                     "null"
                   ]
                 },
+                "owner": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "type": {
                   "enum": [
                     "permissive",
@@ -998,6 +1013,12 @@
                     "null"
                   ]
                 },
+                "owner": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "type": {
                   "enum": [
                     "permissive",
@@ -1047,6 +1068,20 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "timestamps": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ]
           }
         },

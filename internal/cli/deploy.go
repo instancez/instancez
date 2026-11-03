@@ -82,7 +82,11 @@ func runDeploy(configPath string, opts deployOpts) error {
 		return err
 	}
 
-	src, err := os.ReadFile(configPath)
+	rawSrc, err := os.ReadFile(configPath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", configPath, err)
+	}
+	src, err := config.ReadConfigFile(configPath)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", configPath, err)
 	}
@@ -92,10 +96,10 @@ func runDeploy(configPath string, opts deployOpts) error {
 	}
 
 	if errs := config.ValidateEnvNamespace(src); errs != nil {
-		return printPrettyErrors(cfgSrc{configPath, src}, errs)
+		return printPrettyErrors(readSrc(configPath), errs)
 	}
 
-	fileProjectID, err := cloud.ReadProjectID(src)
+	fileProjectID, err := cloud.ReadProjectID(rawSrc)
 	if err != nil {
 		return fmt.Errorf("parse %s: %w", configPath, err)
 	}
@@ -150,14 +154,16 @@ func runDeploy(configPath string, opts deployOpts) error {
 			return fmt.Errorf("creating cloud project: %w", err)
 		}
 		projectID = resp.ProjectID
-		updated, err := cloud.WriteProjectID(src, projectID)
+		updated, err := cloud.WriteProjectID(rawSrc, projectID)
 		if err != nil {
 			return fmt.Errorf("injecting project_id: %w", err)
 		}
 		if err := os.WriteFile(configPath, updated, 0o644); err != nil {
 			return fmt.Errorf("writing %s: %w", configPath, err)
 		}
-		src = updated
+		if src, err = config.ReadConfigFile(configPath); err != nil {
+			return fmt.Errorf("read %s: %w", configPath, err)
+		}
 		fmt.Printf("  ✓ Project created (id: %s)\n", projectID)
 	} else {
 		fmt.Println("  Checking what would change...")

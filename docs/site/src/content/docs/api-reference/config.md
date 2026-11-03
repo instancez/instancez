@@ -195,6 +195,12 @@ To reference one column of a composite key from another table's `foreign_key`, t
 |-----|------|---------|-------------|
 | `rls_enabled` | `boolean` | inferred: `true` if `rls` has policies, else `false` | Turn row-level security on or off for the table. `true` with no policies denies `anon`/`authenticated` everything. `false` with policies is a validation error. Leaving it unset produces a validation warning. See [RLS](/instancez/build/rls/). |
 
+### tables.\<name\>.timestamps
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `timestamps` | `boolean` | `false` | Appends `created_at` (`timestamptz`, required, default `now()`) and `updated_at` (same, plus `auto_updated_at: true`) after the declared fields. Declaring either column as well is a validation error. Removing `timestamps` later drops both columns, so it needs `--allow-destructive`. A dashboard save writes the expanded fields, not the shorthand. |
+
 ### tables.\<name\>.indexes
 
 | Key | Type | Default | Description |
@@ -214,6 +220,7 @@ RLS is the only authorization layer. Declare policies here; instancez creates th
 | `rls[].using` | `string` | conditional | SQL boolean expression selecting which existing rows the operation can see or target. |
 | `rls[].with_check` | `string` | conditional | SQL boolean expression deciding what a written row is allowed to look like. |
 | `rls[].type` | `string` | `permissive` | `permissive` or `restrictive`. |
+| `rls[].owner` | `string` | — | Shorthand for `<column> = auth.uid()` in `using` and `with_check` (whichever the operations read). `operations` defaults to all four. The column must be `uuid`. Cannot be combined with `using`/`with_check`. A dashboard save writes the expanded form. |
 
 Useful SQL helpers available in RLS expressions:
 
@@ -306,6 +313,27 @@ functions:
 | `functions.<name>.env` | `map` | `{}` | Env values injected as `ctx.env`. Values may be string literals or `${INSTANCEZ_ENV_*}` references. |
 
 `INSTANCEZ_ENV_*` references are resolved from the process environment. Plain `${VAR}` references (without the `INSTANCEZ_ENV_` prefix) are not supported in `env:` — use them elsewhere in the config file for other values.
+
+## include
+
+Split a large config across files. Only the main `instancez.yaml` may use it.
+
+```yaml
+version: 1
+include:
+  - tables/*.yaml
+  - rpc.yaml
+```
+
+- Paths are relative to the main file's directory. Glob characters (`*`, `?`, `[...]`) are allowed only in the last path element, there is no `**`, and each pattern must match at least one file. `${VAR}` and absolute paths are rejected.
+- An included file may only contain `tables`, `storage`, `rpc` and `functions` (empty files are fine). Nested `include` is an error.
+- The same table, bucket, rpc or function name in two files is an error. `functions.<name>.file` stays relative to the project root.
+- Every match must resolve inside the project directory, symlinks included. The main file is skipped if a glob matches it.
+- Errors in a fragment name the file and line. Line numbers in later validation errors refer to the merged document.
+- `inz dev` reloads when the main file or any included file changes, including a new file that matches a glob.
+- The dashboard cannot save a config that uses `include:` (`GET /_admin/config/status` reports `read_only: true` and the save returns 409 `config_read_only`); edit the YAML files instead.
+- `inz validate`, `inz vet`, `inz gen`, `inz dev` and `inz serve` read the merged config. S3 and bundle config sources do not support `include`; `inz bundle`, `inz cloud deploy` and `inz validate --cloud` send one merged file without the `include:` key; configs without `include:` are sent as written. Shorthands (`timestamps`, `owner`) are not expanded by the CLI, so cloud support for them needs a platform release.
+- A glob that matches only the main file logs a warning. Dotfiles and editor temp files (`.x.swp`, `x~`, `#x#`) are skipped by globs.
 
 ## functions_bundle
 

@@ -5,7 +5,7 @@ import type { ConfigStatus } from "../lib/types";
 type Props = { status: ConfigStatus | null };
 
 export function EditModeBanner({ status }: Props) {
-  if (!status || status.dashboard_mode !== "readwrite") return null;
+  if (!status || status.dashboard_mode !== "readwrite" || status.read_only) return null;
   return (
     <Box
       role="status"

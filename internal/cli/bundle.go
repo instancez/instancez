@@ -84,7 +84,7 @@ func BuildBundle(projectDir string) (bundlePath string, err error) {
 	// unresolved ${VAR} references elsewhere in the config must not block the
 	// build.
 	cfgPath := filepath.Join(projectDir, "instancez.yaml")
-	cfgBytes, err := os.ReadFile(cfgPath)
+	cfgBytes, err := config.ReadConfigFile(cfgPath)
 	if err != nil {
 		return "", fmt.Errorf("read config for bundle manifest: %w", err)
 	}

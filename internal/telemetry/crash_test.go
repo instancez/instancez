@@ -95,6 +95,17 @@ func TestCrashReportRemoteAndMissing(t *testing.T) {
 	}
 }
 
+func TestCrashReportKeepsConfigWhenIncludeFails(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "instancez.yaml")
+	if err := os.WriteFile(p, []byte("version: 1\ninclude: [missing/*.yaml]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := BuildCrashReport("dev", nil, nil, p, nil, nil, "")
+	if !strings.Contains(r.ConfigYAML, "include:") {
+		t.Errorf("the raw main file must still be attached when include resolution fails, got %q", r.ConfigYAML)
+	}
+}
+
 func sampleReport() CrashReport {
 	return CrashReport{Command: "dev", ErrClass: "go:x", ErrMessage: "boom", ConfigYAML: "tables: {}\n",
 		Functions: map[string]string{"functions/hello.js": "x", "functions/package.json": "{}"}, Truncated: []string{}}

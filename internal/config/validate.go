@@ -351,6 +351,7 @@ func validate(cfg *domain.Config, local bool) domain.ValidationErrors {
 	// Unknown keys detected at decode time are reported first, alongside the
 	// structural errors below, so the caller sees everything in one pass.
 	errs = append(errs, cfg.UnknownKeys...)
+	errs = append(errs, cfg.ExpandErrors...)
 
 	if cfg.Version != 1 {
 		errs = append(errs, &domain.ValidationError{
@@ -884,7 +885,6 @@ func validateRLS(parentPath string, policies []domain.RLSPolicy) domain.Validati
 		}
 
 		var hasSelectOrDelete, hasInsert, hasUpdate bool
-		distinctOps := map[string]bool{}
 		for _, op := range p.Operations {
 			if !validRLSOps[op] {
 				errs = append(errs, &domain.ValidationError{
@@ -894,7 +894,6 @@ func validateRLS(parentPath string, policies []domain.RLSPolicy) domain.Validati
 				})
 				continue
 			}
-			distinctOps[op] = true
 			switch op {
 			case "select", "delete":
 				hasSelectOrDelete = true
@@ -903,19 +902,6 @@ func validateRLS(parentPath string, policies []domain.RLSPolicy) domain.Validati
 			case "update":
 				hasUpdate = true
 			}
-		}
-
-		// A policy entry is either one command, or all four sharing the same
-		// expression(s) — no partial combos (e.g. [insert, update] alone).
-		// Matches the dashboard's operations picker, which only offers a
-		// single command or "ALL". Skip when there are no valid ops at all —
-		// the empty/all-invalid cases already have their own error above.
-		if len(distinctOps) > 0 && len(distinctOps) != 1 && len(distinctOps) != len(validRLSOps) {
-			errs = append(errs, &domain.ValidationError{
-				Path:       ppath + ".operations",
-				Message:    "operations must be exactly one command, or all four (select, insert, update, delete)",
-				Suggestion: "Split into one rls entry per operation, or list all four together",
-			})
 		}
 
 		if !validRLSTypes[p.Type] {

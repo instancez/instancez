@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/instancez/instancez/internal/app"
+	"github.com/instancez/instancez/internal/config"
 )
 
 func TestConfigStatusOK(t *testing.T) {
@@ -107,5 +110,40 @@ func TestConfigStatusUnknownWhenTrackerNil(t *testing.T) {
 	}
 	if got["status"] != "unknown" {
 		t.Fatalf("status = %v", got["status"])
+	}
+}
+
+func configStatusBody(t *testing.T, h *AdminHandler) map[string]any {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.GET("/_admin/config/status", h.handleConfigStatus)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/_admin/config/status", nil))
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return got
+}
+
+func TestConfigStatusReadOnlyForIncludeConfig(t *testing.T) {
+	dir := t.TempDir()
+	inc := filepath.Join(dir, "instancez.yaml")
+	if err := os.WriteFile(inc, []byte("version: 1\ninclude: [a.yaml]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plain := filepath.Join(dir, "plain.yaml")
+	if err := os.WriteFile(plain, []byte("version: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := configStatusBody(t, &AdminHandler{dashboardMode: DashboardReadwrite, configSource: &config.FileSource{Path: inc}}); got["read_only"] != true {
+		t.Fatalf("include config: read_only = %v", got["read_only"])
+	}
+	if got := configStatusBody(t, &AdminHandler{dashboardMode: DashboardReadwrite, configSource: &config.FileSource{Path: plain}}); got["read_only"] != false {
+		t.Fatalf("plain config: read_only = %v", got["read_only"])
+	}
+	if got := configStatusBody(t, &AdminHandler{dashboardMode: DashboardReadwrite}); got["read_only"] != false {
+		t.Fatalf("no source: read_only = %v", got["read_only"])
 	}
 }

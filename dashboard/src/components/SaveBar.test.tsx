@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { screen, fireEvent } from "@testing-library/react";
 import { renderWithChakra } from "../test/helpers";
 import { SaveBar } from "./SaveBar";
+import { ConfigContext } from "../hooks/useConfig";
 
 describe("SaveBar", () => {
   it("renders nothing when not dirty and no errors", () => {
@@ -80,5 +81,20 @@ describe("SaveBar", () => {
       />
     );
     expect(screen.getByText("Something broke")).toBeInTheDocument();
+  });
+
+  it("disables save and says why when the config is read-only", () => {
+    const onSave = vi.fn();
+    const ctx = { readOnly: true } as unknown as React.ContextType<typeof ConfigContext>;
+    renderWithChakra(
+      <ConfigContext.Provider value={ctx}>
+        <SaveBar onSave={onSave} saving={false} errors={[]} dirty={true} />
+      </ConfigContext.Provider>
+    );
+    const btn = screen.getByRole("button", { name: /save changes/i });
+    expect(btn).toBeDisabled();
+    expect(screen.getByText(/uses include:/i)).toBeInTheDocument();
+    fireEvent.click(btn);
+    expect(onSave).not.toHaveBeenCalled();
   });
 });

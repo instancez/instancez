@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/instancez/instancez/internal/config"
 	"github.com/instancez/instancez/internal/domain"
 )
 
@@ -265,6 +266,20 @@ func TestGenerateRLSPolicies_SelectDeleteNeverEmitWithCheck(t *testing.T) {
 	mustNotContain(t, joined, "WITH CHECK")
 	mustContain(t, joined, "FOR SELECT USING (true)")
 	mustContain(t, joined, "FOR DELETE USING (true)")
+}
+
+func TestGenerateRLSPolicies_PartialOps(t *testing.T) {
+	table := domain.Table{RLS: []domain.RLSPolicy{
+		{Operations: []string{"select", "insert"}, Using: "a", WithCheck: "b"},
+	}}
+	joined := strings.Join(generateRLSPolicies("t", table), "\n")
+
+	mustContain(t, joined, "CREATE POLICY t_select_0")
+	mustContain(t, joined, "FOR SELECT USING (a)")
+	mustContain(t, joined, "CREATE POLICY t_insert_0")
+	mustContain(t, joined, "FOR INSERT WITH CHECK (b)")
+	mustNotContain(t, joined, "t_update_0")
+	mustNotContain(t, joined, "t_delete_0")
 }
 
 func TestGenerateRLSPolicies_NoRLS(t *testing.T) {
@@ -1350,4 +1365,77 @@ func TestRequiredAuthDefaultAddsSkipsNonNullHelpers(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Fatalf("got %v, want %v (auth.role() falls back to 'anon', never NULL)", got, want)
 	}
+}
+
+func TestExpandTimestamps_EquivalentToLongForm(t *testing.T) {
+	short := "version: 1\ntables:\n  t:\n    timestamps: true\n    fields:\n      - {name: id, type: bigserial, primary_key: true}\n"
+	long := "version: 1\ntables:\n  t:\n    fields:\n      - {name: id, type: bigserial, primary_key: true}\n      - {name: created_at, type: timestamptz, required: true, default: now()}\n      - {name: updated_at, type: timestamptz, required: true, default: now(), auto_updated_at: true}\n"
+	plan := func(y string) string {
+		cfg, err := config.ParseBytes([]byte(y), "x")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Join(planUpdateStatements(&domain.Config{}, cfg, domain.DefaultRoles()), "\n")
+	}
+	if a, b := plan(short), plan(long); a != b {
+		t.Fatalf("shorthand plan differs from long form:\n%s\n---\n%s", a, b)
+	}
+}
+
+func TestStorageOwnerColumnDDL_OnlyWhenReferenced(t *testing.T) {
+	b := func(using, check string) map[string]domain.Bucket {
+		return map[string]domain.Bucket{"a": {RLS: []domain.RLSPolicy{{Operations: []string{"select"}, Using: using, WithCheck: check}}}}
+	}
+	cases := []struct {
+		name string
+		in   map[string]domain.Bucket
+		want int
+	}{
+		{"nil storage", nil, 0},
+		{"no policies", map[string]domain.Bucket{"a": {}}, 0},
+		{"uploaded_by only", b("uploaded_by = auth.uid()", ""), 0},
+		{"owner", b("owner = auth.uid()", ""), 1},
+		{"owner_id in with_check", b("", "owner_id = auth.uid()::text"), 1},
+		{"substring owner not matched", b("downer = auth.uid()", ""), 0},
+		{"json key is not the column", b("metadata->>'owner' = auth.uid()::text", ""), 0},
+		{"string literal is not the column", b("name = 'owner'", ""), 0},
+		{"escaped quote in literal", b("name = 'it''s owner'", ""), 0},
+		{"dollar tag inside a quoted string does not open a literal", b("name = '$x$' AND owner = auth.uid() AND name = '$x$'", ""), 1},
+		{"tagged dollar-quoted literal", b("name LIKE $path$owner/%$path$", ""), 0},
+		{"column after a tagged literal", b("name = $t$x$t$ AND owner = auth.uid()", ""), 1},
+		{"unterminated tag is left alone", b("name = $t$owner", ""), 1},
+		{"dollar-quoted literal", b("name = $$owner$$", ""), 0},
+		{"multi-line dollar-quoted literal", b("name = $$a\nowner\nb$$", ""), 0},
+		{"E-string with escaped quote", b(`name = E'it\'s owner'`, ""), 0},
+		{"column after a dollar-quoted literal", b("name = $$x$$ AND owner = auth.uid()", ""), 1},
+		{"column next to a literal", b("name = 'x' AND owner = auth.uid()", ""), 1},
+	}
+	for _, c := range cases {
+		if got := storageOwnerColumnDDL(c.in); len(got) != c.want {
+			t.Errorf("%s: got %d stmts, want %d", c.name, len(got), c.want)
+		}
+	}
+}
+
+func TestStorageOwnerColumnHeal_SingleAlterSoTheTableRewritesOnce(t *testing.T) {
+	if n := strings.Count(storageOwnerColumnHeal, "EXECUTE 'ALTER TABLE"); n != 1 {
+		t.Fatalf("heal runs %d ALTER statements, want 1 (each stored column add rewrites the table)", n)
+	}
+}
+
+func TestStorageOwnerColumnDDL_CatalogGuarded(t *testing.T) {
+	ddl := storageOwnerColumnDDL(map[string]domain.Bucket{"a": {RLS: []domain.RLSPolicy{{Operations: []string{"select"}, Using: "owner = auth.uid()"}}}})
+	joined := strings.Join(ddl, "\n")
+	mustContain(t, joined, "attname = 'owner'")
+	mustContain(t, joined, "attname = 'owner_id'")
+	mustContain(t, joined, "IF NOT EXISTS (SELECT 1 FROM pg_attribute")
+}
+
+func TestPlanUpdate_EmitsStorageHelpers(t *testing.T) {
+	with := &domain.Config{Version: 1, Storage: map[string]domain.Bucket{"a": {}}}
+	joined := strings.Join(planUpdateStatements(&domain.Config{}, with, domain.DefaultRoles()), "\n")
+	mustContain(t, joined, "CREATE OR REPLACE FUNCTION storage.foldername")
+
+	without := strings.Join(planUpdateStatements(&domain.Config{}, &domain.Config{Version: 1}, domain.DefaultRoles()), "\n")
+	mustNotContain(t, without, "storage.foldername")
 }

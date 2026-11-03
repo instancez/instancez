@@ -1,8 +1,10 @@
+import { useContext } from "react";
 import { createPortal } from "react-dom";
 import { Save } from "lucide-react";
 import { Box, HStack, Text, VStack } from "@chakra-ui/react";
 import { Button } from "./ui";
 import { useSaveBarDock } from "./saveBarDock";
+import { ConfigContext, READ_ONLY_MESSAGE } from "../hooks/useConfig";
 import type { ValidationError } from "../lib/types";
 
 interface SaveBarProps {
@@ -14,6 +16,7 @@ interface SaveBarProps {
 
 export function SaveBar({ onSave, saving, errors, dirty = true }: SaveBarProps) {
   const dockNode = useSaveBarDock();
+  const readOnly = useContext(ConfigContext)?.readOnly ?? false;
 
   if (!dirty && errors.length === 0) return null;
 
@@ -39,8 +42,9 @@ export function SaveBar({ onSave, saving, errors, dirty = true }: SaveBarProps) 
               )}
             </VStack>
           )}
+          {readOnly && <Text fontSize="xs" color="fg.muted">{READ_ONLY_MESSAGE}</Text>}
         </Box>
-        <Button onClick={onSave} loading={saving}>
+        <Button onClick={onSave} loading={saving} disabled={readOnly}>
           {!saving && <Save size={14} />}
           {saving ? "Saving..." : "Save Changes"}
         </Button>

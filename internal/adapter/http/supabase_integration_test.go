@@ -327,6 +327,14 @@ func TestSupabaseJSCompat(t *testing.T) {
 					{Operations: []string{"select", "insert", "update", "delete"}, Using: "uploaded_by = auth.uid() AND name LIKE 'mine/%'", WithCheck: "uploaded_by = auth.uid() AND name LIKE 'mine/%'"},
 				},
 			},
+			// userdir scopes each user to a "<uid>/" folder via storage.foldername and owner_id.
+			"userdir": {
+				MaxSize: "5MB",
+				Types:   []string{"text/plain"},
+				RLS: []domain.RLSPolicy{
+					{Operations: []string{"select", "insert", "update", "delete"}, Using: "(storage.foldername(name))[1] = auth.uid()::text AND owner_id = auth.uid()::text", WithCheck: "(storage.foldername(name))[1] = auth.uid()::text"},
+				},
+			},
 			// readonly can SELECT but not DELETE, so remove/emptyBucket must not wipe bytes.
 			"readonly": {
 				MaxSize: "5MB",

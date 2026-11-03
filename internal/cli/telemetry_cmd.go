@@ -149,7 +149,7 @@ func localConfigPath(cmd *cobra.Command, getenv func(string) string) string {
 
 // functionSources returns the declared function files, or none when there is no usable config.
 func functionSources(configPath string) map[string]string {
-	raw, err := os.ReadFile(configPath)
+	raw, err := config.ReadConfigFile(configPath)
 	if err != nil {
 		return nil
 	}

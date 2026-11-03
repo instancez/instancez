@@ -364,24 +364,47 @@ func TestValidate_RLSUpdatePlusSelectRequiresUsing(t *testing.T) {
 	assertHasErrorAt(t, errs, "tables.todos.rls[0].using")
 }
 
-func TestValidate_RLSTwoOpComboRejected(t *testing.T) {
+func TestValidate_RLSTwoOpComboAccepted(t *testing.T) {
 	cfg := validBaseConfig()
 	table := cfg.Tables["todos"]
 	table.RLS = []domain.RLSPolicy{{Operations: []string{"insert", "update"}, Using: "true", WithCheck: "true"}}
 	cfg.Tables["todos"] = table
 
-	errs := Validate(cfg)
-	assertHasErrorAt(t, errs, "tables.todos.rls[0].operations")
+	for _, e := range Validate(cfg) {
+		t.Fatalf("expected no errors, got %s: %s", e.Path, e.Message)
+	}
 }
 
-func TestValidate_RLSThreeOpComboRejected(t *testing.T) {
+func TestValidate_RLSPartialComboStillNeedsUsing(t *testing.T) {
 	cfg := validBaseConfig()
 	table := cfg.Tables["todos"]
-	table.RLS = []domain.RLSPolicy{{Operations: []string{"insert", "update", "delete"}, Using: "true", WithCheck: "true"}}
+	table.RLS = []domain.RLSPolicy{{Operations: []string{"insert", "update"}, WithCheck: "true"}}
 	cfg.Tables["todos"] = table
 
 	errs := Validate(cfg)
-	assertHasErrorAt(t, errs, "tables.todos.rls[0].operations")
+	if len(errs) != 1 {
+		t.Fatalf("expected exactly one error, got %v", errs)
+	}
+	assertHasErrorAt(t, errs, "tables.todos.rls[0].using")
+}
+
+func TestValidate_RLSPartialComboUsingNoEffect(t *testing.T) {
+	cfg := validBaseConfig()
+	table := cfg.Tables["todos"]
+	table.RLS = []domain.RLSPolicy{{Operations: []string{"insert"}, Using: "true", WithCheck: "true"}}
+	cfg.Tables["todos"] = table
+
+	errs := Validate(cfg)
+	assertHasErrorAt(t, errs, "tables.todos.rls[0].using")
+	found := false
+	for _, e := range errs {
+		if e.Path == "tables.todos.rls[0].using" && strings.Contains(e.Message, "has no effect") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected 'has no effect' error, got %v", errs)
+	}
 }
 
 func TestValidate_RLSAllFourOpsAccepted(t *testing.T) {

@@ -130,6 +130,22 @@ func TestDiffConfigs_RemovedRLSPolicy(t *testing.T) {
 	}
 }
 
+func TestDiffRemovedRLSPolicies_AllFourToPartial(t *testing.T) {
+	mk := func(ops ...string) *domain.Config {
+		return &domain.Config{Tables: map[string]domain.Table{"t": {
+			Fields: []domain.Field{{Name: "id", Type: "bigserial"}},
+			RLS:    []domain.RLSPolicy{{Operations: ops, Using: "true", WithCheck: "true"}},
+		}}}
+	}
+	diff := diffConfigs(mk("select", "insert", "update", "delete"), mk("insert", "update"))
+	joined := strings.Join(diff.Removals, "\n")
+
+	mustContain(t, joined, "DROP POLICY IF EXISTS t_select_0 ON t")
+	mustContain(t, joined, "DROP POLICY IF EXISTS t_delete_0 ON t")
+	mustNotContain(t, joined, "t_insert_0")
+	mustNotContain(t, joined, "t_update_0")
+}
+
 func TestDiffConfigs_AllRLSRemoved_DisablesRLS(t *testing.T) {
 	old := &domain.Config{
 		Tables: map[string]domain.Table{

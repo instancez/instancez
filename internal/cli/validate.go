@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -30,7 +31,7 @@ func newValidateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "validate",
 		Short: "Validate config without starting the server",
-		Long: `Validate instancez.yaml structure and references.
+		Long: `Validate instancez.yaml structure and references. Follows include:.
 
 With --use-dsn, validate also connects to the given Postgres and prints
 the migration that would bring the database in sync with the yaml. The
@@ -103,7 +104,7 @@ func validateAgainstCloud(ctx context.Context, configPath string, jsonOutput boo
 	if err != nil {
 		return fmt.Errorf("--cloud requires authentication: %w", err)
 	}
-	src, err := os.ReadFile(configPath)
+	src, err := config.ReadConfigFile(configPath)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", configPath, err)
 	}
@@ -162,13 +163,31 @@ func missingEnvReport(raw []byte, err error) domain.ValidationErrors {
 
 // cfgSrc is a config file path with its raw bytes; a zero value means no file (bundle, s3), so no positions are shown.
 type cfgSrc struct {
-	file string
-	raw  []byte
+	file   string
+	raw    []byte
+	merged bool // raw is include-merged, so its line numbers mean nothing in any one file
+}
+
+func (s cfgSrc) annotate(errs domain.ValidationErrors) {
+	if !s.merged {
+		config.Annotate(s.raw, errs)
+		return
+	}
+	for _, e := range errs {
+		e.Line, e.Column = 0, 0
+	}
 }
 
 func readSrc(file string) cfgSrc {
-	raw, _ := os.ReadFile(file)
-	return cfgSrc{file: file, raw: raw}
+	main, _ := os.ReadFile(file)
+	merged, err := config.ReadConfigFile(file)
+	if err != nil {
+		return cfgSrc{file: file, raw: main}
+	}
+	if !bytes.Equal(main, merged) {
+		return cfgSrc{raw: merged, merged: true}
+	}
+	return cfgSrc{file: file, raw: merged}
 }
 
 func (s cfgSrc) at(e *domain.ValidationError) string {
@@ -356,7 +375,7 @@ func migrationsTableExists(ctx context.Context, owner domain.OwnerDB) (bool, err
 // printPrettyErrors writes a formatted validation report to stderr and returns
 // errReported so the caller exits non-zero without re-printing a bare error.
 func printPrettyErrors(src cfgSrc, errs domain.ValidationErrors) error {
-	config.Annotate(src.raw, errs)
+	src.annotate(errs)
 	for _, e := range errs {
 		fmt.Fprintf(os.Stderr, "\n  ✗ Error: %s\n", e.Path)
 		if at := src.at(e); at != "" {
@@ -373,7 +392,7 @@ func printPrettyErrors(src cfgSrc, errs domain.ValidationErrors) error {
 
 // printWarnings writes non-blocking findings; it never fails the command.
 func printWarnings(w io.Writer, src cfgSrc, ws domain.ValidationErrors) {
-	config.Annotate(src.raw, ws)
+	src.annotate(ws)
 	for _, e := range ws {
 		_, _ = fmt.Fprintf(w, "\n  ! Warning: %s\n", e.Path)
 		if at := src.at(e); at != "" {
@@ -395,7 +414,7 @@ type jsonError struct {
 }
 
 func printJSONErrors(src cfgSrc, errs domain.ValidationErrors) error {
-	config.Annotate(src.raw, errs)
+	src.annotate(errs)
 	out := make([]jsonError, len(errs))
 	for i, e := range errs {
 		out[i] = jsonError{
@@ -442,7 +461,7 @@ func planAgainstProject(ctx context.Context, configPath string, jsonOutput bool,
 		return fmt.Errorf("--project requires authentication: %w", err)
 	}
 
-	src, err := os.ReadFile(configPath)
+	src, err := config.ReadConfigFile(configPath)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", configPath, err)
 	}

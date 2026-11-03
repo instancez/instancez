@@ -52,6 +52,7 @@ tables:        # your schema + RLS policies
 storage:       # buckets + RLS policies
 rpc:           # Postgres stored procedures at /rest/v1/rpc/<name>
 functions:     # Node.js handlers at /functions/v1/<name>
+include:       # optional: merge tables/storage/rpc/functions from other files, e.g. [tables/*.yaml]
 ```
 
 `rpc:` is SQL running inside Postgres. `functions:` is JavaScript running in Node workers. Don't mix them up.
@@ -106,6 +107,7 @@ Rules the migrator enforces:
 
 - Every table needs a field with `primary_key: true`. Nothing is auto-added, not `id`, not `created_at`. Mark two or more fields for a composite key (a junction table keyed on both FKs also enables many-to-many embeds like `posts?select=*,tags(*)`). Key columns can't change once the table exists.
 - `type` comes from a fixed allowlist of standard Postgres types (serials, integers, text/varchar/char, boolean, numeric, date/time, uuid, jsonb, bytea, inet, and similar). Custom types like `citext` or `hstore` fail validation. `[]` array suffixes work.
+- `timestamps: true` on a table appends `created_at` and `updated_at` (auto-updated); do not also declare those fields.
 - Names are lowercase snake_case, starting with a letter, no SQL keywords.
 - The `auth` and `storage` schemas are reserved. User profile data goes in a regular table with a FK to `auth.users.id`, never in `schema: auth`.
 - Removing a table or column from the YAML drops it on the next run, with no confirmation. Warn the user before deleting anything from the YAML of a project with real data.
@@ -120,7 +122,9 @@ RLS is the only authorization layer. There is no HTTP-level RBAC and no role tab
 | Publishable key + user JWT | `authenticated` | enforced |
 | Secret key | `service_role` | bypassed |
 
-Each policy entry has `operations` (exactly one of select/insert/update/delete, or all four together; other combinations are rejected), `using` (which existing rows the operation may touch), and `with_check` (what a written row may look like).
+`owner: user_id` is a shorthand for `using`/`with_check` of `user_id = auth.uid()` (operations default to all four; column must be uuid). On buckets use `owner: uploaded_by`.
+
+Each policy entry has `operations` (one or more of select/insert/update/delete), `using` (which existing rows the operation may touch), and `with_check` (what a written row may look like).
 
 ```yaml
 rls:
@@ -171,6 +175,8 @@ storage:
       - operations: [insert]
         with_check: "auth.is_authenticated()"
 ```
+
+Bucket policies can use `storage.foldername(name)`, `storage.filename(name)`, `storage.extension(name)` and the `owner` / `owner_id` aliases of `uploaded_by`, e.g. `(storage.foldername(name))[1] = auth.uid()::text`.
 
 Declaring any bucket requires a `providers.storage` block (`type: local` for dev, `type: s3` for production). Bucket `rls` uses the same policy syntax as tables, applied to `storage.objects`. Clients use `supabase.storage.from('avatars').upload(...)` as usual. Signed URLs are authorized at creation time against the bucket's policies. As in Supabase, `public: true` only opens `/object/public/<bucket>/<path>` downloads; it grants no `select`, so add a `select` policy for anyone who should list, sign, update or delete. Publishable-key (guest) calls run as `anon` under those policies, so `using: "true"` admits guests; a bucket with no `rls:` gives guests nothing.
 

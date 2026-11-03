@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/instancez/instancez/internal/config"
 	"github.com/instancez/instancez/internal/vet"
 	"github.com/spf13/cobra"
 )
@@ -41,7 +42,7 @@ Exits 1 when a finding is at or above --fail-on (default high).`,
 			if err := requireLocalConfig(configPath); err != nil {
 				return err
 			}
-			src, err := os.ReadFile(configPath)
+			src, err := config.ReadConfigFile(configPath)
 			if err != nil {
 				return fmt.Errorf("read %s: %w", configPath, err)
 			}

@@ -180,3 +180,21 @@ func TestJSONSchemaRejectsMistakes(t *testing.T) {
 		t.Errorf("null optionals and env refs must pass: %v", err)
 	}
 }
+
+func TestJSONSchemaAcceptsShorthandsAndInclude(t *testing.T) {
+	sch := compileSchema(t)
+	src := "version: 1\ninclude: [tables/*.yaml, rpc.yaml]\ntables:\n  t:\n    timestamps: true\n    fields:\n      - {name: id, type: bigserial, primary_key: true}\n      - {name: user_id, type: uuid}\n    rls:\n      - owner: user_id\n      - {operations: [insert, update], owner: user_id}\nstorage:\n  b:\n    rls:\n      - {owner: uploaded_by}\n"
+	if err := sch.Validate(yamlToJSONValue(t, []byte(src))); err != nil {
+		t.Fatalf("shorthands and include must pass: %v", err)
+	}
+	for name, bad := range map[string]string{
+		"include scalar":  "version: 1\ninclude: frag.yaml\n",
+		"owner list":      "version: 1\ntables:\n  t:\n    rls:\n      - {owner: [a]}\n",
+		"timestamps text": "version: 1\ntables:\n  t:\n    timestamps: maybe\n",
+		"unknown rls key": "version: 1\ntables:\n  t:\n    rls:\n      - {ownr: user_id}\n",
+	} {
+		if err := sch.Validate(yamlToJSONValue(t, []byte(bad))); err == nil {
+			t.Errorf("%s: schema accepted it", name)
+		}
+	}
+}
