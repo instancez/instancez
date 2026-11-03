@@ -92,23 +92,28 @@ func runBundle(ctx context.Context, configPath, output string) error {
 	return nil
 }
 
-func copyFileBundle(src, dst string) error {
+// copyFileBundle writes dst through a private temp file and renames it, so a symlink at dst is replaced, never followed.
+func copyFileBundle(src, dst string) (err error) {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = in.Close() }()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE, 0o600)
+	out, err := os.CreateTemp(filepath.Dir(dst), ".inz-bundle-*")
 	if err != nil {
 		return err
 	}
-	defer func() { _ = out.Close() }()
-	if err := out.Chmod(0o600); err != nil {
+	defer func() {
+		if err != nil {
+			_ = os.Remove(out.Name())
+		}
+	}()
+	if _, err = io.Copy(out, in); err != nil {
+		_ = out.Close()
 		return err
 	}
-	if err := out.Truncate(0); err != nil {
+	if err = out.Close(); err != nil {
 		return err
 	}
-	_, err = io.Copy(out, in)
-	return err
+	return os.Rename(out.Name(), dst)
 }

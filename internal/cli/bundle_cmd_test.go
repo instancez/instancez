@@ -104,3 +104,33 @@ func TestRunBundleOutputIsPrivate(t *testing.T) {
 		assert.Contains(t, tarEntries(t, dest), "instancez.yaml", name+": stale bytes must be truncated")
 	}
 }
+
+func TestRunBundleDoesNotFollowOutputSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs symlinks")
+	}
+	dir := writeBundleFixture(t)
+	victim := filepath.Join(t.TempDir(), "victim.txt")
+	require.NoError(t, os.WriteFile(victim, []byte("precious"), 0o600))
+	dest := filepath.Join(t.TempDir(), "bundle.tar.gz")
+	require.NoError(t, os.Symlink(victim, dest))
+
+	require.NoError(t, runBundle(context.Background(), filepath.Join(dir, "instancez.yaml"), dest))
+
+	got, err := os.ReadFile(victim)
+	require.NoError(t, err)
+	assert.Equal(t, "precious", string(got), "the symlink target must not be overwritten")
+	fi, err := os.Lstat(dest)
+	require.NoError(t, err)
+	assert.True(t, fi.Mode().IsRegular(), "the symlink is replaced by the bundle")
+	assert.Contains(t, tarEntries(t, dest), "instancez.yaml")
+}
+
+func TestRunBundleLeavesNoTempFileOnFailure(t *testing.T) {
+	dir := writeBundleFixture(t)
+	outDir := t.TempDir()
+	dest := filepath.Join(outDir, "sub", "bundle.tar.gz")
+	require.Error(t, runBundle(context.Background(), filepath.Join(dir, "instancez.yaml"), dest))
+	entries, _ := os.ReadDir(outDir)
+	assert.Empty(t, entries)
+}
