@@ -117,7 +117,7 @@ func TestRunBundleDoesNotFollowOutputSymlink(t *testing.T) {
 
 	require.NoError(t, runBundle(context.Background(), filepath.Join(dir, "instancez.yaml"), dest))
 
-	got, err := os.ReadFile(victim)
+	got, err := os.ReadFile(victim) // nosemgrep -- path is in t.TempDir
 	require.NoError(t, err)
 	assert.Equal(t, "precious", string(got), "the symlink target must not be overwritten")
 	fi, err := os.Lstat(dest)
