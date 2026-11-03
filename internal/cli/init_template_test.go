@@ -252,7 +252,7 @@ func TestInitTemplateOfflineUsesEmbedded(t *testing.T) {
 }
 
 func TestInitTemplateServerErrorsUseEmbedded(t *testing.T) {
-	handlers := map[string]http.HandlerFunc{"not-json": func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("not json")) }}
+	handlers := map[string]http.HandlerFunc{"not-json": func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("not json")) }} // nosemgrep -- test server writes canned JSON
 	for _, status := range []int{429, 500, 502} {
 		handlers[fmt.Sprint(status)] = func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(status) }
 	}
@@ -600,7 +600,7 @@ func TestInitTemplateHeaderNotDuplicated(t *testing.T) {
 
 func TestInitTemplateBundleWithoutYAMLFallsBack(t *testing.T) {
 	for _, body := range []string{`{}`, `{"manifest":{"id":"blog"},"files":{"functions/a.js":"x"}}`} {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) }))
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) })) // nosemgrep -- test server writes canned JSON
 		t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
 		t.Setenv("HOME", t.TempDir())
 		dir := t.TempDir()
