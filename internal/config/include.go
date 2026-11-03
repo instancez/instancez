@@ -40,11 +40,11 @@ func HasInclude(data []byte) bool {
 	if yaml.Unmarshal(data, &doc) != nil {
 		return false
 	}
-	_, v := mappingEntry(rootMapping(&doc), "include")
+	_, v := mappingEntry(docRoot(&doc), "include")
 	return v != nil && v.Kind == yaml.SequenceNode && len(v.Content) > 0
 }
 
-func rootMapping(doc *yaml.Node) *yaml.Node {
+func docRoot(doc *yaml.Node) *yaml.Node {
 	if doc.Kind == yaml.DocumentNode && len(doc.Content) == 1 {
 		doc = doc.Content[0]
 	}
@@ -89,7 +89,7 @@ func ResolveIncludes(path string) (*Resolved, error) {
 	if yaml.Unmarshal(data, &doc) != nil {
 		return plain, nil // the normal parse reports the syntax error
 	}
-	root := rootMapping(&doc)
+	root := docRoot(&doc)
 	idx, inc := mappingEntry(root, "include")
 	if inc == nil {
 		return plain, nil
@@ -263,7 +263,7 @@ func mergeFragment(root *yaml.Node, path, disp string, data []byte, origin map[s
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return cfgErr(path, err.Error(), nil)
 	}
-	frag := rootMapping(&doc)
+	frag := docRoot(&doc)
 	if frag == nil {
 		if doc.Kind == 0 || (doc.Kind == yaml.DocumentNode && (len(doc.Content) == 0 || doc.Content[0].Kind == yaml.ScalarNode && doc.Content[0].Tag == "!!null")) {
 			return nil // empty or comment-only
@@ -340,7 +340,7 @@ func includeWatchTargets(mainPath string) (dirs, patterns, files []string) {
 	if yaml.Unmarshal(data, &doc) != nil {
 		return nil, nil, nil
 	}
-	_, inc := mappingEntry(rootMapping(&doc), "include")
+	_, inc := mappingEntry(docRoot(&doc), "include")
 	if inc == nil || inc.Kind != yaml.SequenceNode {
 		return nil, nil, nil
 	}

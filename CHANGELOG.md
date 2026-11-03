@@ -13,6 +13,13 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - `inz cloud status --json`.
 - `inz db reset` wipes the local database (refuses non-local hosts, asks first unless `--yes`).
 - `inz deploy`, `inz login`, `inz status` and the other cloud verbs typed without `cloud` now suggest `inz cloud`.
+- `inz validate`, `inz vet`, `inz gen`, `inz serve` and `inz dev` follow `include:`. `inz cloud deploy`, `inz validate --cloud` and `inz bundle` ship one merged file without the `include:` key; configs without `include:` ship unchanged. Shorthands are not expanded by the CLI, so deploying `timestamps` / `owner` to Cloud needs a platform release.
+- `inz dev` hot-reloads included files, and the dashboard shows a read-only banner and disables save for configs that use `include:` (`read_only` in the config status, 409 `config_read_only` on save).
+- `include:` splits `instancez.yaml` across files (`tables`, `storage`, `rpc`, `functions` fragments, globs allowed in the last path element).
+- `owner: <column>` RLS shorthand for `<column> = auth.uid()` on tables and buckets.
+- Storage RLS can use `storage.foldername()`, `storage.filename()`, `storage.extension()` and the `owner` / `owner_id` columns of `storage.objects`, matching Supabase.
+- `timestamps: true` on a table adds `created_at` and an auto-updated `updated_at`.
+- RLS `operations` accepts any combination, e.g. `[insert, update]`.
 
 ### Changed
 

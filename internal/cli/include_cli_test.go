@@ -31,21 +31,21 @@ func incProject(t *testing.T, main, fragment string) string {
 
 func TestRunValidate_IncludeFragmentErrorsReported(t *testing.T) {
 	cfg := incProject(t, incMain, incFragNoPK)
-	err := runValidate(context.Background(), io.Discard, cfg, true, "")
+	err := runValidate(context.Background(), io.Discard, cfg, true, "", false)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, errReported), "fragment validation errors must be reported: %v", err)
 }
 
 func TestRunValidate_IncludeFragmentOK(t *testing.T) {
 	cfg := incProject(t, incMain, incFragTS)
-	assert.NoError(t, runValidate(context.Background(), io.Discard, cfg, true, ""))
+	assert.NoError(t, runValidate(context.Background(), io.Discard, cfg, true, "", false))
 }
 
 func TestRunValidate_IncludeEnvNamespaceChecked(t *testing.T) {
 	t.Setenv("FOO", "bar")
 	frag := "storage:\n  b:\n    max_size: ${FOO}\n"
 	cfg := incProject(t, incMain, frag)
-	err := runValidate(context.Background(), io.Discard, cfg, true, "")
+	err := runValidate(context.Background(), io.Discard, cfg, true, "", false)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, errReported), "bare env ref in a fragment must hit the namespace gate: %v", err)
 }
@@ -54,7 +54,7 @@ func TestRunValidate_IncludeMissingFileFails(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "instancez.yaml")
 	require.NoError(t, os.WriteFile(cfg, []byte("version: 1\ninclude: [nope/*.yaml]\n"), 0o644))
-	err := runValidate(context.Background(), io.Discard, cfg, true, "")
+	err := runValidate(context.Background(), io.Discard, cfg, true, "", false)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, errReported))
 }
@@ -210,4 +210,31 @@ func TestVet_SeesFragmentTables(t *testing.T) {
 	cfg := incProject(t, "version: 1\ninclude: [tables/*.yaml]\n", frag)
 	out, _ := runVet(t, "--config", cfg, "--json")
 	assert.Contains(t, out, "open", "a finding about the fragment table proves vet read the merged config")
+}
+
+func TestRunValidate_IncludeErrorsCarryNoMergedLineNumbers(t *testing.T) {
+	frag := "tables:\n  x:\n    fields:\n      - {name: a, type: text}\n"
+	cfg := incProject(t, incMain, frag)
+	out := captureStdout(t, func() {
+		_ = runValidate(context.Background(), io.Discard, cfg, true, "", false)
+	})
+	var errs []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &errs))
+	require.NotEmpty(t, errs)
+	for _, e := range errs {
+		assert.Zero(t, e["line"], "line numbers of a merged document would point at the wrong file: %v", e)
+	}
+}
+
+func TestRunValidate_PlainConfigKeepsLineNumbers(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "instancez.yaml")
+	require.NoError(t, os.WriteFile(cfg, []byte("version: 1\ntables:\n  x:\n    fields:\n      - {name: a, type: text}\n"), 0o644))
+	out := captureStdout(t, func() {
+		_ = runValidate(context.Background(), io.Discard, cfg, true, "", false)
+	})
+	var errs []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &errs))
+	require.NotEmpty(t, errs)
+	assert.NotZero(t, errs[0]["line"], "single-file configs keep positions")
 }
