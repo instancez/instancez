@@ -100,7 +100,15 @@ func splitTopLevelOr(expr string) []string {
 			start = i + 2
 		}
 	}
-	return append(parts, expr[start:])
+	parts = append(parts, expr[start:])
+	if len(parts) == 1 {
+		return parts
+	}
+	var leaves []string
+	for _, p := range parts {
+		leaves = append(leaves, splitTopLevelOr(p)...)
+	}
+	return leaves
 }
 
 // stripOuterParens removes parentheses that wrap the whole expression.

@@ -266,6 +266,8 @@ func TestBucketAuthedWrite(t *testing.T) {
 		{"update using scoped, with_check authed", bucket("b", "    rls:\n      - operations: [update]\n        using: \"name LIKE auth.uid()::text || '/%'\"\n        with_check: \"auth.is_authenticated()\"\n"), []string{"bucket-authed-write"}},
 		{"delete ignores with_check", bucket("b", "    rls:\n      - operations: [delete]\n        using: \"name LIKE auth.uid()::text || '/%'\"\n        with_check: \"auth.is_authenticated()\"\n"), nil},
 		{"outer parens around or", pol("delete", "using", "(auth.is_authenticated() OR name LIKE auth.uid()::text || '/%')", ""), []string{"bucket-authed-write"}},
+		{"grouped or branch", pol("delete", "using", "(auth.is_authenticated() OR name LIKE auth.uid()::text || '/%') OR public.is_admin()", "") + adminRPC, []string{"bucket-authed-write"}},
+		{"grouped or, scoped leaves", pol("delete", "using", "(name LIKE auth.uid()::text || '/%' OR public.is_admin()) OR auth.role() = 'service_role'", "") + adminRPC, nil},
 		{"double outer parens", pol("delete", "using", "((auth.is_authenticated() OR public.is_admin()))", "") + adminRPC, []string{"bucket-authed-write"}},
 		{"restrictive", pol("delete", "using", "auth.is_authenticated()", "        type: restrictive\n"), nil},
 		{"empty delete using", bucket("b", "    rls:\n      - operations: [delete]\n"), nil},
