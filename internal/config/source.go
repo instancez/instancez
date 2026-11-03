@@ -244,6 +244,7 @@ func (s *FileSource) Watch(ctx context.Context, _ time.Duration) (<-chan WatchEv
 				name := filepath.Clean(ev.Name)
 				if ev.Op&fsnotify.Create != 0 && isPatternDirAncestor(includePatterns, name) {
 					refreshIncludes()
+					timer.Reset(debounce) // files written before the new watch took effect fire no event
 				}
 				isEnv, watched := targets[name]
 				if !watched {

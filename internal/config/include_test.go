@@ -270,6 +270,21 @@ func TestResolveIncludes_EmptyIncludeKeyStripped(t *testing.T) {
 	}
 }
 
+func TestResolveIncludes_ScalarIncludeRejected(t *testing.T) {
+	d := t.TempDir()
+	main := put(t, d, "instancez.yaml", mainHead+"include: frag.yaml\n")
+	put(t, d, "frag.yaml", todoTable)
+	if msg := resolveErr(t, main); !strings.Contains(msg, "include must be a list") {
+		t.Fatal(msg)
+	}
+	for _, inc := range []string{"include: {a: b}\n", "include: 5\n"} {
+		m := put(t, t.TempDir(), "instancez.yaml", mainHead+inc)
+		if msg := resolveErr(t, m); !strings.Contains(msg, "include must be a list") {
+			t.Fatalf("%q: %s", inc, msg)
+		}
+	}
+}
+
 func TestResolveIncludes_SyntaxErrorNamesFragment(t *testing.T) {
 	d := t.TempDir()
 	main := put(t, d, "instancez.yaml", mainHead+"include: [a.yaml]\n")

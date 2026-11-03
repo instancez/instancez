@@ -1409,7 +1409,7 @@ $function$;`,
 }
 
 var (
-	sqlStringLiteralRe = regexp.MustCompile(`'(?:[^']|'')*'`)
+	sqlStringLiteralRe = regexp.MustCompile(`(?s)\$\$.*?\$\$|[eE]'(?:[^'\\]|\\.|'')*'|'(?:[^']|'')*'`)
 	storageOwnerRefRe  = regexp.MustCompile(`(?i)\bowner(_id)?\b`)
 )
 

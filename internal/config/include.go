@@ -91,8 +91,11 @@ func ResolveIncludes(path string) (*Resolved, error) {
 	}
 	root := rootMapping(&doc)
 	idx, inc := mappingEntry(root, "include")
-	if inc == nil || (inc.Kind != yaml.SequenceNode && (inc.Kind != yaml.ScalarNode || inc.Tag != "!!null")) {
+	if inc == nil {
 		return plain, nil
+	}
+	if inc.Kind != yaml.SequenceNode && (inc.Kind != yaml.ScalarNode || inc.Tag != "!!null") {
+		return nil, cfgErr(path, fmt.Sprintf("line %d: include must be a list of paths", inc.Line), nil)
 	}
 
 	absMain, err := filepath.Abs(path)

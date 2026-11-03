@@ -8,6 +8,7 @@ import { PageHeader } from "./PageHeader";
 import { Button, SurfaceProvider } from "./ui";
 import { DriftBanner } from "./DriftBanner";
 import { EditModeBanner } from "./EditModeBanner";
+import { ReadOnlyBanner } from "./ReadOnlyBanner";
 import { useConfigStatus } from "../hooks/useConfigStatus";
 import { useConfig } from "../hooks/useConfig";
 import { ConsoleProvider } from "../console/ConsoleProvider";
@@ -29,6 +30,7 @@ function StatusBanners() {
   return (
     <>
       <DriftBanner status={data} />
+      <ReadOnlyBanner status={data} />
       <EditModeBanner status={data} />
     </>
   );
