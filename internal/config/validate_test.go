@@ -1490,13 +1490,13 @@ func TestValidateForeignKeys_TypeMatch(t *testing.T) {
 			"workspaces":      {Fields: []domain.Field{{Name: "id", Type: "uuid", PrimaryKey: true}, fk}},
 		}
 	}
-	if errs := validateForeignKeys(mk(domain.Field{Name: "school_id", ForeignKey: &domain.ForeignKey{References: "school_accounts.id"}})); len(errs) != 0 {
+	if errs := fkErrs(mk(domain.Field{Name: "school_id", ForeignKey: &domain.ForeignKey{References: "school_accounts.id"}})); len(errs) != 0 {
 		t.Fatalf("untyped FK to uuid PK should be valid, got: %v", errs)
 	}
-	if errs := validateForeignKeys(mk(domain.Field{Name: "school_id", Type: "text", ForeignKey: &domain.ForeignKey{References: "school_accounts.id"}})); len(errs) == 0 {
+	if errs := fkErrs(mk(domain.Field{Name: "school_id", Type: "text", ForeignKey: &domain.ForeignKey{References: "school_accounts.id"}})); len(errs) == 0 {
 		t.Fatalf("text FK to uuid PK should be rejected")
 	}
-	if errs := validateForeignKeys(mk(domain.Field{Name: "school_id", Type: "uuid", ForeignKey: &domain.ForeignKey{References: "school_accounts.id"}})); len(errs) != 0 {
+	if errs := fkErrs(mk(domain.Field{Name: "school_id", Type: "uuid", ForeignKey: &domain.ForeignKey{References: "school_accounts.id"}})); len(errs) != 0 {
 		t.Fatalf("uuid FK to uuid PK should be valid, got: %v", errs)
 	}
 }
@@ -1506,7 +1506,7 @@ func TestValidateForeignKeys_IntegerFamilyCompatible(t *testing.T) {
 		"events":  {Fields: []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}}},
 		"tickets": {Fields: []domain.Field{{Name: "id", Type: "uuid", PrimaryKey: true}, {Name: "event_id", ForeignKey: &domain.ForeignKey{References: "events.id"}}}},
 	}
-	if errs := validateForeignKeys(tables); len(errs) != 0 {
+	if errs := fkErrs(tables); len(errs) != 0 {
 		t.Fatalf("untyped FK to bigserial PK should be valid (integer family), got: %v", errs)
 	}
 }
@@ -1516,7 +1516,7 @@ func TestValidateForeignKeys_MissingColumn_NoSpuriousTypeError(t *testing.T) {
 		"events":  {Fields: []domain.Field{{Name: "id", Type: "uuid", PrimaryKey: true}}},
 		"tickets": {Fields: []domain.Field{{Name: "id", Type: "uuid", PrimaryKey: true}, {Name: "event_id", Type: "uuid", ForeignKey: &domain.ForeignKey{References: "events.missing"}}}},
 	}
-	errs := validateForeignKeys(tables)
+	errs := fkErrs(tables)
 	if len(errs) != 1 {
 		t.Fatalf("missing referenced column should yield exactly one (existence) error, got %d: %v", len(errs), errs)
 	}
@@ -2236,5 +2236,55 @@ func TestValidate_RLSTrailingSemicolon(t *testing.T) {
 		todos.RLS = []domain.RLSPolicy{{Operations: []string{"select"}, Using: expr}}
 		cfg.Tables["todos"] = todos
 		assertHasErrorAt(t, Validate(cfg), "tables.todos.rls[0].using")
+	}
+}
+
+func fkErrs(tables map[string]domain.Table) domain.ValidationErrors {
+	errs, _ := checkForeignKeys(tables, nil)
+	return errs
+}
+
+func TestValidate_FKUndeclaredSchemaFarFromAuthOnlyWarns(t *testing.T) {
+	cfg := validBaseConfig()
+	todos := cfg.Tables["todos"]
+	todos.Fields = append(todos.Fields, domain.Field{Name: "f", Type: "uuid", ForeignKey: &domain.ForeignKey{References: "audit.logs.id"}})
+	cfg.Tables["todos"] = todos
+	if errs := Validate(cfg); errs != nil {
+		t.Fatalf("audit.logs.id must not error: %v", errs)
+	}
+	found := false
+	for _, w := range Warnings(cfg) {
+		found = found || w.Path == "tables.todos.fields.f.foreign_key.references"
+	}
+	if !found {
+		t.Fatal("want a warning")
+	}
+}
+
+func TestValidate_FKOneTimeTokensNeedsEmailAuth(t *testing.T) {
+	build := func(email bool) *domain.Config {
+		cfg := validBaseConfig()
+		cfg.Auth = &domain.Auth{}
+		if email {
+			cfg.Auth.Email = &domain.AuthEmail{}
+		}
+		todos := cfg.Tables["todos"]
+		todos.Fields = append(todos.Fields, domain.Field{Name: "f", Type: "bigint", ForeignKey: &domain.ForeignKey{References: "auth.one_time_tokens.id"}})
+		cfg.Tables["todos"] = todos
+		return cfg
+	}
+	warned := func(c *domain.Config) bool {
+		for _, w := range Warnings(c) {
+			if w.Path == "tables.todos.fields.f.foreign_key.references" {
+				return true
+			}
+		}
+		return false
+	}
+	if warned(build(true)) {
+		t.Error("email auth creates the table: no warning")
+	}
+	if !warned(build(false)) {
+		t.Error("without email auth the table is not created: want a warning")
 	}
 }

@@ -368,7 +368,8 @@ func validate(cfg *domain.Config, local bool) domain.ValidationErrors {
 	errs = append(errs, validateCodeFunctions(cfg.Functions)...)
 
 	// Cross-cutting: FK reference validation
-	errs = append(errs, validateForeignKeys(cfg.Tables)...)
+	fkErrs, _ := checkForeignKeys(cfg.Tables, cfg.Auth)
+	errs = append(errs, fkErrs...)
 
 	// Cross-cutting: declared features must have the providers that back them
 	errs = append(errs, validateProviderRequirements(cfg)...)
@@ -448,7 +449,8 @@ func Warnings(cfg *domain.Config) domain.ValidationErrors {
 		}
 	}
 	ws = append(ws, compositePKFKWarnings(cfg.Tables)...)
-	ws = append(ws, fkWarnings(cfg.Tables)...)
+	_, fkWarns := checkForeignKeys(cfg.Tables, cfg.Auth)
+	ws = append(ws, fkWarns...)
 	ws = append(ws, fieldRefWarnings(cfg.Tables)...)
 	if cfg.Auth != nil {
 		for _, name := range slices.Sorted(maps.Keys(idTokenOnlyProviders)) {
@@ -1364,14 +1366,13 @@ func validateCodeFunctions(functions map[string]domain.CodeFunction) domain.Vali
 
 // uniqueSystemTargets are the only auth/storage columns with a unique constraint.
 var uniqueSystemTargets = map[string]map[string]domain.Field{
-	"auth.users":           {"id": {Type: "uuid", PrimaryKey: true}, "email": {Type: "text"}},
-	"auth.identities":      {"id": {Type: "bigint", PrimaryKey: true}},
-	"auth.refresh_tokens":  {"id": {Type: "bigint", PrimaryKey: true}},
-	"auth.one_time_tokens": {"id": {Type: "bigint", PrimaryKey: true}},
-	"auth.mfa_factors":     {"id": {Type: "uuid", PrimaryKey: true}},
-	"auth.mfa_challenges":  {"id": {Type: "uuid", PrimaryKey: true}},
-	"auth.flow_state":      {"id": {Type: "uuid", PrimaryKey: true}},
-	"storage.objects":      {"id": {Type: "uuid", PrimaryKey: true}},
+	"auth.users":          {"id": {Type: "uuid", PrimaryKey: true}, "email": {Type: "text"}},
+	"auth.identities":     {"id": {Type: "bigint", PrimaryKey: true}},
+	"auth.refresh_tokens": {"id": {Type: "bigint", PrimaryKey: true}},
+	"auth.mfa_factors":    {"id": {Type: "uuid", PrimaryKey: true}},
+	"auth.mfa_challenges": {"id": {Type: "uuid", PrimaryKey: true}},
+	"auth.flow_state":     {"id": {Type: "uuid", PrimaryKey: true}},
+	"storage.objects":     {"id": {Type: "uuid", PrimaryKey: true}},
 }
 
 type fkTarget struct {
@@ -1391,7 +1392,7 @@ func fkSchemas(tables map[string]domain.Table) []string {
 }
 
 // resolveFK classifies one foreign key reference against the declared tables.
-func resolveFK(tables map[string]domain.Table, schemas []string, ref, path string) (fkTarget, bool) {
+func resolveFK(tables map[string]domain.Table, schemas []string, emailAuth bool, ref, path string) (fkTarget, bool) {
 	schema, table, col, err := domain.ParseFKReference(ref)
 	if err != nil {
 		return fkTarget{}, false
@@ -1402,7 +1403,11 @@ func resolveFK(tables map[string]domain.Table, schemas []string, ref, path strin
 		t.err = &domain.ValidationError{Path: path, Message: msg, Suggestion: sugg}
 		return t
 	}
-	if cols, ok := uniqueSystemTargets[full]; ok {
+	cols, ok := uniqueSystemTargets[full]
+	if full == "auth.one_time_tokens" && emailAuth {
+		cols, ok = map[string]domain.Field{"id": {Type: "bigint", PrimaryKey: true}}, true
+	}
+	if ok {
 		if f, ok := cols[col]; ok {
 			t.fields, t.known = map[string]domain.Field{col: f}, true
 			return t, true
@@ -1452,7 +1457,8 @@ func fkPath(tableName, fieldName string) string {
 }
 
 // checkForeignKeys resolves every foreign key once, returning provable errors and unverifiable-target warnings.
-func checkForeignKeys(tables map[string]domain.Table) (errs, warns domain.ValidationErrors) {
+func checkForeignKeys(tables map[string]domain.Table, auth *domain.Auth) (errs, warns domain.ValidationErrors) {
+	emailAuth := auth != nil && auth.Email != nil
 	schemas := fkSchemas(tables)
 	byName := domain.ResolverOver(tables)
 	for _, tableName := range slices.Sorted(maps.Keys(tables)) {
@@ -1461,7 +1467,7 @@ func checkForeignKeys(tables map[string]domain.Table) (errs, warns domain.Valida
 				continue
 			}
 			p := fkPath(tableName, field.Name)
-			t, ok := resolveFK(tables, schemas, field.ForeignKey.References, p+".references")
+			t, ok := resolveFK(tables, schemas, emailAuth, field.ForeignKey.References, p+".references")
 			if !ok {
 				continue // already caught by structural validation
 			}
@@ -1493,16 +1499,6 @@ func checkForeignKeys(tables map[string]domain.Table) (errs, warns domain.Valida
 		}
 	}
 	return errs, warns
-}
-
-func validateForeignKeys(tables map[string]domain.Table) domain.ValidationErrors {
-	errs, _ := checkForeignKeys(tables)
-	return errs
-}
-
-func fkWarnings(tables map[string]domain.Table) domain.ValidationErrors {
-	_, warns := checkForeignKeys(tables)
-	return warns
 }
 
 // fieldRefWarnings flags the field-level ref and on_delete keys, which nothing reads.

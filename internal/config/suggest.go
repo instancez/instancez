@@ -114,7 +114,7 @@ func closest(input string, candidates []string) string {
 	for _, c := range candidates {
 		lc := strings.ToLower(c)
 		d := levenshtein(in, lc)
-		if d >= bestDist+1 || d >= len([]rune(in)) {
+		if d > 2 || d > bestDist || d >= len([]rune(in)) {
 			continue
 		}
 		// ties: longer shared prefix, then the longer name (typos drop letters more than they add them)
