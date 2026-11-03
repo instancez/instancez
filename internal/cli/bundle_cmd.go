@@ -98,12 +98,15 @@ func copyFileBundle(src, dst string) error {
 		return err
 	}
 	defer func() { _ = in.Close() }()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE, 0o600)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = out.Close() }()
 	if err := out.Chmod(0o600); err != nil {
+		return err
+	}
+	if err := out.Truncate(0); err != nil {
 		return err
 	}
 	_, err = io.Copy(out, in)
