@@ -94,7 +94,9 @@ func statusJSONSetup(t *testing.T, saveCreds bool) (cfg string, hits *atomic.Int
 	}))
 	t.Cleanup(srv.Close)
 	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("INSTANCEZ_CLOUD_PAT", "")
 	if saveCreds {
 		if err := cloud.Save(cloud.Credentials{PAT: "pat"}); err != nil {

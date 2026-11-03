@@ -271,7 +271,7 @@ SELECT DISTINCT d FROM (
     JOIN pg_class c ON c.oid = a.attrelid
     JOIN pg_type ty ON ty.oid = a.atttypid
     LEFT JOIN pg_type base ON base.oid = ty.typbasetype
-   WHERE a.attnum > 0 AND NOT a.attisdropped AND c.relkind IN ('r', 'p')
+   WHERE a.attnum > 0 AND NOT a.attisdropped AND c.relkind IN ('r', 'p', 'c')
      AND (ty.typnamespace IN (SELECT oid FROM s) OR base.typnamespace IN (SELECT oid FROM s))
      AND c.relnamespace NOT IN (SELECT oid FROM s)
 ) x ORDER BY d`
