@@ -323,8 +323,8 @@ type Field struct {
 	Max        *float64    `yaml:"max" json:"max"`
 	Check      string      `yaml:"check" json:"check"`
 	ForeignKey *ForeignKey `yaml:"foreign_key" json:"foreign_key"`
-	Ref        string      `yaml:"ref" json:"ref"`             // storage reference: "storage.<bucket>"
-	OnDelete   string      `yaml:"on_delete" json:"on_delete"` // for storage refs: cascade | keep
+	Ref        string      `yaml:"ref" json:"ref"`             // no effect; validate warns
+	OnDelete   string      `yaml:"on_delete" json:"on_delete"` // no effect; use foreign_key.on_delete
 
 	// AutoUpdatedAt sets the column to now() on every UPDATE (timestamp types only).
 	AutoUpdatedAt bool `yaml:"auto_updated_at,omitempty" json:"auto_updated_at,omitempty"`

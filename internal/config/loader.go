@@ -29,7 +29,7 @@ func Load(path string) (*domain.Config, error) {
 func ParseBytes(data []byte, origin string) (*domain.Config, error) {
 	interpolated, missing := interpolateEnvVars(string(data))
 	if len(missing) > 0 {
-		return nil, &domain.MissingEnvError{Vars: missing}
+		return nil, newMissingEnvError(data, missing)
 	}
 
 	var cfg domain.Config
@@ -41,6 +41,17 @@ func ParseBytes(data []byte, origin string) (*domain.Config, error) {
 	return &cfg, nil
 }
 
+func newMissingEnvError(raw []byte, vars []string) *domain.MissingEnvError {
+	where := map[string]string{}
+	locs := EnvRefLocations(raw)
+	for _, v := range vars {
+		if l := locs[v]; len(l) > 0 {
+			where[v] = fmt.Sprintf("%s (line %d:%d)", l[0].Path, l[0].Line, l[0].Column)
+		}
+	}
+	return &domain.MissingEnvError{Vars: vars, Where: where}
+}
+
 // ParseBytesLocal is ParseBytes for local dev: an unset ${INSTANCEZ_ENV_*} with
 // no default becomes "" and is returned so callers can warn. Any other unset
 // var still fails, and comment lines are ignored.
@@ -48,7 +59,7 @@ func ParseBytesLocal(data []byte, origin string) (*domain.Config, []string, erro
 	var blanked, missing []string
 	lines := strings.Split(string(data), "\n")
 	for i, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+		if isCommentLine(line) {
 			continue
 		}
 		lines[i] = envVarPattern.ReplaceAllStringFunc(line, func(match string) string {
@@ -69,7 +80,7 @@ func ParseBytesLocal(data []byte, origin string) (*domain.Config, []string, erro
 	}
 	if len(missing) > 0 {
 		slices.Sort(missing)
-		return nil, nil, &domain.MissingEnvError{Vars: slices.Compact(missing)}
+		return nil, nil, newMissingEnvError(data, slices.Compact(missing))
 	}
 	var cfg domain.Config
 	if err := decodeYAMLStrict([]byte(strings.Join(lines, "\n")), &cfg); err != nil {
@@ -192,11 +203,16 @@ func interpolateEnvVarsLenient(input string) string {
 func EnvRefs(data []byte) []string {
 	var names []string
 	seen := map[string]bool{}
-	for _, m := range envVarPattern.FindAllStringSubmatch(string(data), -1) {
-		name := m[1]
-		if !seen[name] {
-			seen[name] = true
-			names = append(names, name)
+	for _, line := range strings.Split(string(data), "\n") {
+		if isCommentLine(line) {
+			continue
+		}
+		for _, m := range envVarPattern.FindAllStringSubmatch(line, -1) {
+			name := m[1]
+			if !seen[name] {
+				seen[name] = true
+				names = append(names, name)
+			}
 		}
 	}
 	return names
@@ -208,28 +224,31 @@ func interpolateEnvVars(input string) (string, []string) {
 	var missing []string
 	seen := make(map[string]bool)
 
-	result := envVarPattern.ReplaceAllStringFunc(input, func(match string) string {
-		groups := envVarPattern.FindStringSubmatch(match)
-		name := groups[1]
-		defaultVal := groups[2]
-		hasDefault := strings.Contains(match, ":-")
-
-		val, ok := os.LookupEnv(name)
-		if ok {
-			return val
+	lines := strings.Split(input, "\n")
+	for i, line := range lines {
+		if isCommentLine(line) {
+			continue
 		}
-		if hasDefault {
-			return defaultVal
-		}
-		if !seen[name] {
-			missing = append(missing, name)
-			seen[name] = true
-		}
-		return match // leave as-is so YAML parse can proceed for error reporting
-	})
-
-	return result, missing
+		lines[i] = envVarPattern.ReplaceAllStringFunc(line, func(match string) string {
+			groups := envVarPattern.FindStringSubmatch(match)
+			name := groups[1]
+			if val, ok := os.LookupEnv(name); ok {
+				return val
+			}
+			if strings.Contains(match, ":-") {
+				return groups[2]
+			}
+			if !seen[name] {
+				missing = append(missing, name)
+				seen[name] = true
+			}
+			return match // leave as-is so YAML parse can proceed for error reporting
+		})
+	}
+	return strings.Join(lines, "\n"), missing
 }
+
+func isCommentLine(line string) bool { return strings.HasPrefix(strings.TrimSpace(line), "#") }
 
 // loadDotenv parses a simple .env file and sets env vars that aren't already set.
 // Real env vars always take priority.

@@ -57,6 +57,11 @@ func TestCatalogContract(t *testing.T) {
 			if errs := config.Validate(cfg); errs != nil {
 				t.Fatalf("validate: %v", errs)
 			}
+			for _, w := range config.Warnings(cfg) {
+				if strings.HasSuffix(w.Path, ".rls_enabled") {
+					t.Errorf("warning on a fresh template: %s: %s", w.Path, w.Message)
+				}
+			}
 			for _, p := range configvalidate.ValidateYAML([]byte(local)) {
 				t.Errorf("configvalidate: %s: %s", p.Path, p.Message)
 			}

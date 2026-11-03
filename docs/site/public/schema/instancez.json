@@ -1,0 +1,1077 @@
+{
+  "$id": "https://docs.instancez.ai/schema/instancez.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "auth": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_anonymous": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allow_signup": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "email": {
+          "additionalProperties": false,
+          "properties": {
+            "templates": {
+              "additionalProperties": {
+                "additionalProperties": false,
+                "properties": {
+                  "body": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "body_file": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "subject": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "type": "object"
+              },
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "verify_email": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "jwt_expiry": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "oauth": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "client_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "client_secret": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "redirect_url": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "redirect_urls": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "refresh_token_expiry": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "refresh_tokens": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "database": {
+      "additionalProperties": false,
+      "properties": {
+        "pool": {
+          "additionalProperties": false,
+          "properties": {
+            "idle_timeout": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "max": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "min": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "functions": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "auth_required": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "file": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runtime": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timeout": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "functions_bundle": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "project": {
+      "additionalProperties": false,
+      "properties": {
+        "cloud": {
+          "additionalProperties": false,
+          "properties": {
+            "project_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "providers": {
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "additionalProperties": false,
+          "properties": {
+            "api_key": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "default_from_email": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "enum": [
+                "resend",
+                "ses",
+                null
+              ],
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "storage": {
+          "additionalProperties": false,
+          "properties": {
+            "access_key_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "bucket": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "endpoint": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "path": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "region": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "secret_access_key": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "enum": [
+                "local",
+                "s3",
+                null
+              ],
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "rpc": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "args": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "default": {},
+                "name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "required": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "type": "object"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "auth_required": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "language": {
+            "enum": [
+              "plpgsql",
+              "sql",
+              null
+            ],
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "returns": {
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "security": {
+            "enum": [
+              "definer",
+              "invoker",
+              null
+            ],
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "set": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "volatility": {
+            "enum": [
+              "immutable",
+              "stable",
+              "volatile",
+              null
+            ],
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "server": {
+      "additionalProperties": false,
+      "properties": {
+        "cors": {
+          "additionalProperties": false,
+          "properties": {
+            "origins": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "max_body_size": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "port": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "timeouts": {
+          "additionalProperties": false,
+          "properties": {
+            "db_query": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "request": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "shutdown": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "upload": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "storage": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "max_size": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "public": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rls": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "operations": {
+                  "items": {
+                    "enum": [
+                      "delete",
+                      "insert",
+                      "select",
+                      "update"
+                    ],
+                    "type": "string"
+                  },
+                  "type": [
+                    "array",
+                    "null"
+                  ]
+                },
+                "type": {
+                  "enum": [
+                    "permissive",
+                    "restrictive",
+                    null
+                  ],
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "using": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "with_check": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "type": "object"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "types": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "tables": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "fields": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "auto_updated_at": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "check": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "default": {},
+                "enum": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": [
+                    "array",
+                    "null"
+                  ]
+                },
+                "foreign_key": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "on_delete": {
+                      "enum": [
+                        "cascade",
+                        "restrict",
+                        "set_null",
+                        null
+                      ],
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "references": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "type": [
+                    "object",
+                    "null"
+                  ]
+                },
+                "immutable": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "max": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "min": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "on_delete": {
+                  "deprecated": true,
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "pattern": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "primary_key": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "ref": {
+                  "deprecated": true,
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "renamed_from": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "required": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "unique": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "type": "object"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "indexes": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "columns": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": [
+                    "array",
+                    "null"
+                  ]
+                },
+                "method": {
+                  "enum": [
+                    "btree",
+                    "hash",
+                    "gin",
+                    "gist",
+                    "brin",
+                    "spgist",
+                    null
+                  ],
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "unique": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "where": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "type": "object"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "renamed_from": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rls": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "operations": {
+                  "items": {
+                    "enum": [
+                      "delete",
+                      "insert",
+                      "select",
+                      "update"
+                    ],
+                    "type": "string"
+                  },
+                  "type": [
+                    "array",
+                    "null"
+                  ]
+                },
+                "type": {
+                  "enum": [
+                    "permissive",
+                    "restrictive",
+                    null
+                  ],
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "using": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "with_check": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "type": "object"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "rls_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schema": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "version": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\\}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "title": "instancez.yaml",
+  "type": "object"
+}

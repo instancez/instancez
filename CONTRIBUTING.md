@@ -69,6 +69,10 @@ Two things in here look unusual and are deliberate:
 - **Two Postgres logins.** A privileged owner login runs migrations and DDL. A separate non-privileged `authenticator` login serves requests and switches role per request based on the validated JWT. The role switch is what enforces access, so do not collapse the two connections into one.
 - **RLS is the only authorization layer.** There is no HTTP-level role check and no application-side role table. Access decisions are Postgres policies declared in `instancez.yaml`. The middleware validates the JWT and picks the Postgres role; everything else is RLS.
 
+## JSON Schema
+
+The `instancez.yaml` schema at `docs/site/public/schema/instancez.json` is generated from `domain.Config`. After changing config keys, regenerate it with `go test ./internal/config -run TestJSONSchemaGolden -update`.
+
 ## Docs and examples
 
 Documentation lives in `docs/site/`. When you change behavior, config, a CLI flag, or an endpoint, update the docs and examples in the same pull request.

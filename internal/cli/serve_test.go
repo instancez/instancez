@@ -1,10 +1,16 @@
 package cli
 
 import (
+	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/instancez/instancez/internal/domain"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseServeFlagsDefaults(t *testing.T) {
@@ -294,4 +300,18 @@ func TestParseServeFlagsMigrateLockTimeout(t *testing.T) {
 			t.Fatalf("timeout %s err = %v, want rejection naming the flag", bad, err)
 		}
 	}
+}
+
+func TestServe_NamespaceBeforeMissingEnv(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	path := filepath.Join(dir, "instancez.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("version: 1\nproject: {name: ${FOO_NS_T}}\n"), 0o600))
+	_ = os.Unsetenv("FOO_NS_T")
+	var err error
+	out := captureStderr(t, func() { err = runServe(serveOptions{configPath: path}) })
+	require.Error(t, err)
+	var me *domain.MissingEnvError
+	assert.False(t, errors.As(err, &me), "namespace error must win: %v", err)
+	assert.Contains(t, out, "${FOO_NS_T}")
 }

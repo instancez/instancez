@@ -8,6 +8,7 @@ auth:
   refresh_token_expiry: 7d
 tables:
   profiles:
+    rls_enabled: true
     fields:
       - name: id
         primary_key: true
@@ -29,6 +30,7 @@ tables:
         using: "auth.uid() = id"
         with_check: "auth.uid() = id AND role = public.my_role()"
   requests:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -84,6 +86,7 @@ tables:
       - operations: [delete]
         using: "(author_id = auth.uid() AND status = 'open') OR public.is_admin()"
   votes:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -108,6 +111,7 @@ tables:
       - operations: [select]
         using: "user_id = auth.uid()"
   comments:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial

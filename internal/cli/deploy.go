@@ -92,7 +92,7 @@ func runDeploy(configPath string, opts deployOpts) error {
 	}
 
 	if errs := config.ValidateEnvNamespace(src); errs != nil {
-		return printPrettyErrors(errs)
+		return printPrettyErrors(cfgSrc{configPath, src}, errs)
 	}
 
 	fileProjectID, err := cloud.ReadProjectID(src)

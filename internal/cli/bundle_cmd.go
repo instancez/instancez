@@ -49,10 +49,10 @@ func runBundle(ctx context.Context, configPath, output string) error {
 		return err
 	}
 	if errs := config.Validate(cfg); errs != nil {
-		return printPrettyErrors(errs)
+		return printPrettyErrors(readSrc(configPath), errs)
 	}
 	if errs := config.ValidateFunctionFiles(cfg, projectDir); errs != nil {
-		return printPrettyErrors(errs)
+		return printPrettyErrors(readSrc(configPath), errs)
 	}
 	fmt.Println("  ✓ Schema valid")
 

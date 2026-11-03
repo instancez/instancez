@@ -352,6 +352,26 @@ func planUpdateStatements(oldCfg, newCfg *domain.Config, roles domain.Roles) []s
 	return ddl
 }
 
+// marshalConfig returns cfg as JSON with its checksum.
+func marshalConfig(cfg *domain.Config) (configJSON []byte, checksum string, err error) {
+	if configJSON, err = json.Marshal(cfg); err != nil {
+		return nil, "", fmt.Errorf("marshal config: %w", err)
+	}
+	return configJSON, fmt.Sprintf("%x", sha256.Sum256(configJSON)), nil
+}
+
+// previousConfig recovers the last applied config to diff against; nil means a first migration.
+func previousConfig(last *domain.Migration) *domain.Config {
+	if last == nil || last.ConfigJSON == "" || last.ConfigJSON == "{}" {
+		return nil
+	}
+	old := &domain.Config{}
+	if json.Unmarshal([]byte(last.ConfigJSON), old) != nil {
+		return nil
+	}
+	return old
+}
+
 // Apply generates and executes the migration, recording it in the history table.
 // It stores the applied config as JSON so the next run can diff against it to
 // detect removed objects and avoid re-running unchanged migrations.
@@ -364,11 +384,10 @@ func (m *Migrator) Apply(ctx context.Context, cfg *domain.Config) error {
 		return fmt.Errorf("migrate: %w", err)
 	}
 
-	configJSON, err := json.Marshal(cfg)
+	configJSON, configChecksum, err := marshalConfig(cfg)
 	if err != nil {
-		return fmt.Errorf("migrate: marshal config: %w", err)
+		return fmt.Errorf("migrate: %w", err)
 	}
-	configChecksum := fmt.Sprintf("%x", sha256.Sum256(configJSON))
 
 	tx, err := m.beginLocked(ctx)
 	if err != nil {
@@ -386,16 +405,7 @@ func (m *Migrator) Apply(ctx context.Context, cfg *domain.Config) error {
 		return nil // config unchanged
 	}
 
-	// Recover the previous config to diff against.
-	var oldCfg *domain.Config
-	if last != nil && last.ConfigJSON != "" && last.ConfigJSON != "{}" {
-		oldCfg = &domain.Config{}
-		if err := json.Unmarshal([]byte(last.ConfigJSON), oldCfg); err != nil {
-			oldCfg = nil // treat as first migration if unparseable
-		}
-	}
-
-	stmts, err := m.planStatements(ctx, tx, oldCfg, cfg)
+	stmts, err := m.planStatements(ctx, tx, previousConfig(last), cfg)
 	if err != nil {
 		// Apply stays pure: a rejected plan (e.g. ErrDestructive) runs no DDL, so
 		// the interactive config editor can reject a bad edit without side

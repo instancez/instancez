@@ -8,6 +8,7 @@ auth:
   refresh_token_expiry: 7d
 tables:
   waitlist_admins:
+    rls_enabled: true
     fields:
       - name: user_id
         primary_key: true
@@ -16,6 +17,7 @@ tables:
       - operations: [select]
         using: "user_id = auth.uid()"
   signups:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -63,6 +65,7 @@ tables:
       - operations: [delete]
         using: "EXISTS (SELECT 1 FROM waitlist_admins a WHERE a.user_id = auth.uid())"
   join_attempts:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial

@@ -8,6 +8,7 @@ auth:
   refresh_token_expiry: 7d
 tables:
   profiles:
+    rls_enabled: true
     fields:
       - name: id
         primary_key: true
@@ -29,6 +30,7 @@ tables:
         using: "auth.uid() = id"
         with_check: "auth.uid() = id AND role = public.my_role()"
   courses:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -92,6 +94,7 @@ tables:
       - operations: [delete]
         using: "instructor_id = auth.uid()"
   lessons:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -131,6 +134,7 @@ tables:
       - operations: [delete]
         using: "EXISTS (SELECT 1 FROM courses c WHERE c.id = lessons.course_id AND c.instructor_id = auth.uid())"
   lesson_content:
+    rls_enabled: true
     fields:
       - name: lesson_id
         type: bigint
@@ -154,6 +158,7 @@ tables:
       - operations: [delete]
         using: "EXISTS (SELECT 1 FROM lessons l JOIN courses c ON c.id = l.course_id WHERE l.id = lesson_content.lesson_id AND c.instructor_id = auth.uid())"
   enrollments:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -197,6 +202,7 @@ tables:
       - operations: [delete]
         using: "(user_id = auth.uid() AND source = 'free') OR (source = 'grant' AND EXISTS (SELECT 1 FROM courses c WHERE c.id = enrollments.course_id AND c.instructor_id = auth.uid()))"
   progress:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial

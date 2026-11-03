@@ -8,6 +8,7 @@ auth:
   refresh_token_expiry: 7d
 tables:
   forms:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -46,6 +47,7 @@ tables:
       - operations: [delete]
         using: "owner_id = auth.uid()"
   questions:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -93,6 +95,7 @@ tables:
       - operations: [delete]
         using: "EXISTS (SELECT 1 FROM forms f WHERE f.id = questions.form_id AND f.owner_id = auth.uid())"
   responses:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial

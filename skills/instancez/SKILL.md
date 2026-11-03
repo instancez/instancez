@@ -17,6 +17,8 @@ inz validate            # check YAML syntax and references, no DB needed
 inz dev --embedded-pg   # dev server on :8080 with a built-in Postgres 16
 ```
 
+`instancez.yaml` starts with `# yaml-language-server: $schema=https://docs.instancez.ai/schema/instancez.json`; keep it for editor completion.
+
 Edit `instancez.yaml`, save, and `inz dev` re-applies the schema automatically. Always run `inz validate` after editing the YAML; it catches bad types, bad references, and missing function files without touching a database.
 
 Without `--embedded-pg`, `inz dev` needs `INSTANCEZ_DATABASE_URL` set to a superuser DSN. API keys land in `.development.env` on first run (`INSTANCEZ_PUBLISHABLE_KEY`, `INSTANCEZ_SECRET_KEY`). `inz doctor` diagnoses a dev setup that won't boot.
@@ -66,7 +68,7 @@ tables:
         primary_key: true
       - name: user_id
         foreign_key:
-          references: auth.users.id   # table.column or schema.table.column; type inferred: uuid for auth.users.id, bigint otherwise
+          references: auth.users.id   # table.column (public) or schema.table.column; type inferred: uuid for auth.users.id, bigint otherwise
           on_delete: cascade          # cascade | restrict (default) | set_null
       - name: title
         type: text

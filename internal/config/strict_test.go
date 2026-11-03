@@ -116,3 +116,21 @@ func TestUnmarshalConfigJSON_AcceptsValid(t *testing.T) {
 		t.Errorf("valid config should have no unknown keys, got: %v", cfg.UnknownKeys)
 	}
 }
+
+func TestUnknownKey_DidYouMean(t *testing.T) {
+	cases := []struct{ yaml, wantSugg string }{
+		{"version: 1\ntables:\n  u:\n    rls_enabeld: true\n", `Did you mean "rls_enabled"?`},
+		{"version: 1\ntables:\n  u:\n    fields:\n      - {name: id, primay_key: true}\n", `Did you mean "primary_key"?`},
+		{"version: 1\ntabels: {}\n", `Did you mean "tables"?`},
+		{"version: 1\ntables:\n  u:\n    zzzzzz: 1\n", ""},
+	}
+	for _, c := range cases {
+		cfg := parseLenient(t, c.yaml)
+		if len(cfg.UnknownKeys) != 1 {
+			t.Fatalf("%q: %v", c.yaml, cfg.UnknownKeys)
+		}
+		if got := cfg.UnknownKeys[0].Suggestion; got != c.wantSugg {
+			t.Errorf("%q: suggestion %q, want %q", c.yaml, got, c.wantSugg)
+		}
+	}
+}

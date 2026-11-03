@@ -41,10 +41,14 @@ type ValidationError struct {
 	Path       string // e.g. "tables.todos.fields.category_id"
 	Message    string
 	Line       int    // YAML line number (0 if unknown)
+	Column     int    // YAML column (0 if unknown)
 	Suggestion string // optional fix suggestion
 }
 
 func (e *ValidationError) Error() string {
+	if e.Line > 0 && e.Column > 0 {
+		return fmt.Sprintf("%s (line %d:%d): %s", e.Path, e.Line, e.Column, e.Message)
+	}
 	if e.Line > 0 {
 		return fmt.Sprintf("%s (line %d): %s", e.Path, e.Line, e.Message)
 	}
@@ -76,11 +80,18 @@ func (e *ConfigError) Unwrap() error { return e.Err }
 
 // MissingEnvError is returned when required env vars are not set.
 type MissingEnvError struct {
-	Vars []string
+	Vars  []string
+	Where map[string]string // var name -> "path (line L:C)", when known
 }
 
 func (e *MissingEnvError) Error() string {
-	return fmt.Sprintf("missing required environment variables: %v", e.Vars)
+	msg := fmt.Sprintf("missing required environment variables: %v", e.Vars)
+	for _, v := range e.Vars {
+		if w := e.Where[v]; w != "" {
+			msg += fmt.Sprintf("\n  %s referenced at %s", v, w)
+		}
+	}
+	return msg
 }
 
 // DatabaseError wraps database connection/query errors.

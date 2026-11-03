@@ -8,6 +8,7 @@ auth:
   refresh_token_expiry: 7d
 tables:
   profiles:
+    rls_enabled: true
     fields:
       - name: id
         primary_key: true
@@ -45,6 +46,7 @@ tables:
         using: "public.my_role() = 'admin'"
         with_check: "public.my_role() = 'admin'"
   categories:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -78,6 +80,7 @@ tables:
       - operations: [delete]
         using: "EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')"
   threads:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -128,6 +131,7 @@ tables:
       - operations: [delete]
         using: "(author_id = auth.uid() AND NOT EXISTS (SELECT 1 FROM replies r WHERE r.thread_id = threads.id)) OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('moderator', 'admin'))"
   replies:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -161,6 +165,7 @@ tables:
       - operations: [delete]
         using: "author_id = auth.uid() OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('moderator', 'admin'))"
   reactions:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -198,6 +203,7 @@ tables:
       - operations: [delete]
         using: "user_id = auth.uid()"
   reports:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial

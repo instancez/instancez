@@ -101,9 +101,11 @@ Validate `instancez.yaml` structure and references without starting the server.
 
 Checks YAML structure, identifiers, cross-references, and verifies that each declared code function's `file:` exists on disk.
 
-Local validation (including `--use-dsn`) loads `.development.env` first. An unset `${INSTANCEZ_ENV_*}` reference (with no `:-` default) warns and is treated as empty, as in `inz dev`. Any other unset `${VAR}` is still an error. `inz serve` and `inz bundle` stay strict and fail on any unset `${VAR}`. `inz cloud deploy` parses leniently and leaves validation to the cloud, so it does not fail locally on an unset variable. `--project` and `--cloud` send the file as written: they load no `.development.env` and resolve no env references locally.
+Local validation (including `--use-dsn`) loads `.development.env` first. An unset `${INSTANCEZ_ENV_*}` reference (with no `:-` default) warns and is treated as empty, as in `inz dev`. Any other unset `${VAR}` is still an error. `inz validate` and `inz dev` also warn when an OAuth provider other than `google`/`apple` ends up with an empty `client_secret` (`inz serve` rejects it). When an unset variable is outside the `INSTANCEZ_ENV_` namespace, the report lists it together with every other error. `${VAR}` on a full-line `#` comment is ignored everywhere (this includes a line starting with `#` inside a `|` block scalar). `inz serve` and `inz bundle` stay strict and fail on any unset `${VAR}`. `inz cloud deploy` parses leniently and leaves validation to the cloud, so it does not fail locally on an unset variable. `--project` and `--cloud` send the file as written: they load no `.development.env` and resolve no env references locally.
 
 With `--use-dsn`, also connects to the database and prints the migration plan (DDL diff) without applying it.
+
+Add `--dry-run-ddl` to also run the migration inside a transaction that is always rolled back. That surfaces unknown columns in RLS policies and bad `language: sql` rpc bodies as real Postgres errors, and exits non-zero on failure. It is opt-in because it takes the migration advisory lock and DDL locks until the rollback (`lock_timeout` 2s, `statement_timeout` 30s per statement, 2 minutes for the whole run). When the database already matches the config, it skips the plan but still re-creates every rpc with body checking on. It needs a DSN with the instancez roles provisioned, and runs destructive changes inside the rolled-back transaction. With `--json`, the output gains `dry_run` (`"ok"` or the error).
 
 ```
 inz validate [flags]
@@ -112,9 +114,10 @@ inz validate [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--config` | `instancez.yaml` | Config source. Env: `INSTANCEZ_CONFIG`. |
-| `--json` | `false` | Output errors as JSON (for CI). |
+| `--json` | `false` | Output errors as JSON (for CI): an array of `{path, message, line, column, suggestion}`. `line` and `column` are omitted when unknown. |
 | `--project` | — | Preview against a cloud project. Bare `--project` uses `instancez.yaml`'s linked project; `--project <id>` or `--project=<id>` targets a different one. Never creates a project; link one first with `inz cloud deploy --new`. |
 | `--use-dsn` | — | After syntax check, plan a migration against this owner-class DSN (plan only — never applied). |
+| `--dry-run-ddl` | `false` | With `--use-dsn`, also run the migration in a rolled-back transaction. Takes DDL locks until rollback. |
 
 ```bash
 inz validate

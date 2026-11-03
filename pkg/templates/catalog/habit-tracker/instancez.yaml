@@ -8,6 +8,7 @@ auth:
   refresh_token_expiry: 7d
 tables:
   habits:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -60,6 +61,7 @@ tables:
       - operations: [delete]
         using: "user_id = auth.uid()"
   check_ins:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial

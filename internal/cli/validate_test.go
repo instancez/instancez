@@ -183,11 +183,11 @@ func TestPlanAgainstProjectSendsWireBranch(t *testing.T) {
 
 func TestPrintWarnings(t *testing.T) {
 	var buf bytes.Buffer
-	printWarnings(&buf, nil)
+	printWarnings(&buf, cfgSrc{file: "instancez.yaml"}, nil)
 	if buf.Len() != 0 {
 		t.Fatalf("nil warnings printed %q", buf.String())
 	}
-	printWarnings(&buf, domain.ValidationErrors{{Path: "tables.todos.rls_enabled", Message: "m", Suggestion: "s"}})
+	printWarnings(&buf, cfgSrc{file: "instancez.yaml"}, domain.ValidationErrors{{Path: "tables.todos.rls_enabled", Message: "m", Suggestion: "s"}})
 	out := buf.String()
 	for _, want := range []string{"! Warning: tables.todos.rls_enabled", "m", "Suggestion: s"} {
 		if !strings.Contains(out, want) {
@@ -206,7 +206,7 @@ func TestRunValidateWarningsDoNotFail(t *testing.T) {
 	}
 
 	var errOut bytes.Buffer
-	if err := runValidate(context.Background(), &errOut, path, false, ""); err != nil {
+	if err := runValidate(context.Background(), &errOut, path, false, "", false); err != nil {
 		t.Fatalf("runValidate with only warnings returned %v", err)
 	}
 	if !strings.Contains(errOut.String(), "! Warning: tables.todos.rls_enabled") {
@@ -235,7 +235,7 @@ func TestRunValidateUnsetSecretWarns(t *testing.T) {
 	path := writeCfgInCwd(t, oauthSecretCfg)
 
 	var errOut bytes.Buffer
-	if err := runValidate(context.Background(), &errOut, path, false, ""); err != nil {
+	if err := runValidate(context.Background(), &errOut, path, false, "", false); err != nil {
 		t.Fatalf("runValidate: %v", err)
 	}
 	if !strings.Contains(errOut.String(), "unset env INSTANCEZ_ENV_GH_SECRET_T") {
@@ -251,7 +251,7 @@ func TestRunValidateLoadsDevelopmentEnv(t *testing.T) {
 	}
 
 	var errOut bytes.Buffer
-	if err := runValidate(context.Background(), &errOut, path, false, ""); err != nil {
+	if err := runValidate(context.Background(), &errOut, path, false, "", false); err != nil {
 		t.Fatalf("runValidate: %v", err)
 	}
 	if strings.Contains(errOut.String(), "unset env") {
@@ -265,7 +265,7 @@ func TestRunValidateLoadsDevelopmentEnv(t *testing.T) {
 // Other problems still fail validate even in local mode.
 func TestRunValidateLocalStillFailsOnRealErrors(t *testing.T) {
 	path := writeCfgInCwd(t, strings.Replace(oauthSecretCfg, "client_id: id", "client_id: \"\"", 1))
-	if err := runValidate(context.Background(), io.Discard, path, false, ""); err == nil {
+	if err := runValidate(context.Background(), io.Discard, path, false, "", false); err == nil {
 		t.Fatal("empty client_id must still fail validate")
 	}
 }
@@ -275,7 +275,7 @@ func TestRunValidateMalformedDevelopmentEnv(t *testing.T) {
 	path := writeCfgInCwd(t, oauthSecretCfg)
 	require.NoError(t, os.WriteFile(".development.env", []byte("NOT A KEY VALUE LINE\n"), 0o600))
 
-	err := runValidate(context.Background(), io.Discard, path, false, "")
+	err := runValidate(context.Background(), io.Discard, path, false, "", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), ".development.env")
 }
@@ -292,4 +292,127 @@ func TestRunBundleStaysStrictOnLocalLeniency(t *testing.T) {
 		path := writeCfgInCwd(t, strings.Replace(oauthSecretCfg, "${INSTANCEZ_ENV_GH_SECRET_T}", `""`, 1))
 		require.Error(t, runBundle(context.Background(), path, ""))
 	})
+}
+
+func TestValidateDryRunDDLRequiresDSN(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "instancez.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("version: 1\n"), 0o644))
+	cmd := newValidateCmd()
+	cmd.SetArgs([]string{"--config", path, "--dry-run-ddl"})
+	cmd.SilenceUsage, cmd.SilenceErrors = true, true
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "requires --use-dsn")
+}
+
+const missingEnvCfg = `version: 1
+project: {name: t}
+providers:
+  email: {type: resend, api_key: ${RESEND_KEY_T}}
+tables:
+  t:
+    rls_enabled: true
+    fields:
+      - {name: id, type: uuid, primary_key: true}
+      - {name: bad, type: blob}
+`
+
+func TestRunValidate_NonNamespacedMissingVarShowsAllErrors(t *testing.T) {
+	path := writeCfgInCwd(t, missingEnvCfg)
+	_ = os.Unsetenv("RESEND_KEY_T")
+	var err error
+	out := captureStderr(t, func() { err = runValidate(context.Background(), io.Discard, path, false, "", false) })
+	require.Error(t, err)
+	assert.Contains(t, out, "${RESEND_KEY_T}")
+	assert.Contains(t, out, "tables.t.fields.bad.type")
+}
+
+func TestRunValidate_LocalSecretWarnsWithPath(t *testing.T) {
+	path := writeCfgInCwd(t, oauthSecretCfg)
+	var errOut bytes.Buffer
+	require.NoError(t, runValidate(context.Background(), &errOut, path, false, "", false))
+	assert.Contains(t, errOut.String(), "auth.oauth.github.client_secret")
+	assert.Contains(t, errOut.String(), "inz serve rejects this")
+}
+
+func TestPrintPrettyErrors_UsesConfigPath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "other.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("version: 1\ntables:\n  t:\n    rls_enabeld: true\n"), 0o600))
+	errs := domain.ValidationErrors{{Path: "tables.t", Message: "boom"}}
+	out := captureStderr(t, func() { _ = printPrettyErrors(readSrc(path), errs) })
+	assert.Contains(t, out, "other.yaml:3:3")
+	assert.NotContains(t, out, "instancez.yaml")
+}
+
+func TestPrintPrettyErrors_NoFileNoPosition(t *testing.T) {
+	out := captureStderr(t, func() { _ = printPrettyErrors(cfgSrc{}, domain.ValidationErrors{{Path: "x", Message: "m"}}) })
+	assert.NotContains(t, out, "at ")
+}
+
+func TestRunValidate_JSONHasColumn(t *testing.T) {
+	path := writeCfgInCwd(t, "version: 1\nproject: {name: t}\ntables:\n  u:\n    rls_enabeld: true\n    fields:\n      - {name: id, type: uuid, primary_key: true}\n")
+	var err error
+	out := captureStdout(t, func() { err = runValidate(context.Background(), io.Discard, path, true, "", false) })
+	require.Error(t, err)
+	var got []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &got))
+	require.NotEmpty(t, got)
+	assert.Equal(t, "tables.u", got[0]["path"])
+	assert.EqualValues(t, 5, got[0]["line"])
+	assert.EqualValues(t, 5, got[0]["column"])
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout = w
+	defer func() { os.Stdout = old }()
+	fn()
+	require.NoError(t, w.Close())
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+	return string(out)
+}
+
+const placeholderCascadeCfg = `version: 1
+project: {name: t}
+server:
+  port: ${PORT_CASCADE_T}
+providers:
+  email:
+    type: ${MAIL_KIND_CASCADE_T}
+    api_key: ${INSTANCEZ_ENV_K_CASCADE_T}
+tables:
+  t:
+    rls_enabled: true
+    fields:
+      - {name: id, type: uuid, primary_key: true}
+      - {name: bad, type: blob}
+`
+
+func TestRunValidate_MissingVarDoesNotCascadeIntoTypeErrors(t *testing.T) {
+	path := writeCfgInCwd(t, placeholderCascadeCfg)
+	_ = os.Unsetenv("PORT_CASCADE_T")
+	_ = os.Unsetenv("MAIL_KIND_CASCADE_T")
+	var err error
+	out := captureStderr(t, func() { err = runValidate(context.Background(), io.Discard, path, false, "", false) })
+	require.Error(t, err)
+	assert.Contains(t, out, "${PORT_CASCADE_T}")
+	assert.Contains(t, out, "server.port")
+	assert.NotContains(t, out, "placeho")
+	assert.NotContains(t, out, "expected a number")
+	assert.Contains(t, out, "tables.t.fields.bad.type", "unrelated errors are still reported")
+}
+
+func TestPrintPrettyErrors_BundleSourceShowsNoLocalPosition(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	require.NoError(t, os.WriteFile("instancez.yaml", []byte("version: 1\ntables:\n  t:\n    x: 1\n"), 0o600))
+	errs := domain.ValidationErrors{{Path: "tables.t", Message: "boom"}, {Path: "x", Message: "m", Line: 7, Column: 2}}
+	out := captureStderr(t, func() { _ = printPrettyErrors(cfgSrc{}, errs) })
+	assert.NotContains(t, out, "at ")
+	assert.NotContains(t, out, "instancez.yaml")
 }

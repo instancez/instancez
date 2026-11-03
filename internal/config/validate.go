@@ -368,15 +368,32 @@ func validate(cfg *domain.Config, local bool) domain.ValidationErrors {
 	errs = append(errs, validateCodeFunctions(cfg.Functions)...)
 
 	// Cross-cutting: FK reference validation
-	errs = append(errs, validateForeignKeys(cfg.Tables)...)
+	fkErrs, _ := checkForeignKeys(cfg.Tables, cfg.Auth)
+	errs = append(errs, fkErrs...)
 
 	// Cross-cutting: declared features must have the providers that back them
 	errs = append(errs, validateProviderRequirements(cfg)...)
 
+	errs = dedupeErrors(errs)
 	if len(errs) == 0 {
 		return nil
 	}
 	return errs
+}
+
+// dedupeErrors drops later errors with the same path and message.
+func dedupeErrors(errs domain.ValidationErrors) domain.ValidationErrors {
+	type key struct{ path, msg string }
+	seen := make(map[key]bool, len(errs))
+	out := errs[:0]
+	for _, e := range errs {
+		k := key{e.Path, e.Message}
+		if !seen[k] {
+			seen[k] = true
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // LogWarnings logs every config warning at warn level.
@@ -384,6 +401,24 @@ func LogWarnings(logger *slog.Logger, cfg *domain.Config) {
 	for _, w := range Warnings(cfg) {
 		logger.Warn("config warning", "path", w.Path, "message", w.Message)
 	}
+}
+
+// LocalWarnings reports what local validation relaxes but inz serve still rejects.
+func LocalWarnings(cfg *domain.Config) domain.ValidationErrors {
+	if cfg == nil || cfg.Auth == nil {
+		return nil
+	}
+	var ws domain.ValidationErrors
+	for _, name := range slices.Sorted(maps.Keys(cfg.Auth.OAuth)) {
+		if p := cfg.Auth.OAuth[name]; p != nil && p.ClientSecret == "" && !idTokenOnlyProviders[name] {
+			ws = append(ws, &domain.ValidationError{
+				Path:       "auth.oauth." + name + ".client_secret",
+				Message:    "empty: inz serve rejects this (required)",
+				Suggestion: "Set the env var it references, or add it to .development.env",
+			})
+		}
+	}
+	return ws
 }
 
 // Warnings reports config that is valid but probably not what the author meant; it never blocks a deploy.
@@ -394,11 +429,15 @@ func Warnings(cfg *domain.Config) domain.ValidationErrors {
 		path := "tables." + name + ".rls_enabled"
 		switch {
 		case t.RLSEnabled == nil && len(t.RLS) > 0:
-			// policies imply RLS on
+			ws = append(ws, &domain.ValidationError{
+				Path:       path,
+				Message:    "not set, inferred as true because the table has rls policies; removing the last policy would turn RLS off",
+				Suggestion: "Add rls_enabled: true",
+			})
 		case t.RLSEnabled == nil:
 			ws = append(ws, &domain.ValidationError{
 				Path:       path,
-				Message:    fmt.Sprintf("not set, inferred as %t from the rls policies; set rls_enabled explicitly", t.EffectiveRLSEnabled()),
+				Message:    "not set, inferred as false (RLS is off): anon and authenticated clients can read and write every row",
 				Suggestion: "Add rls_enabled: true (deny by default) or rls_enabled: false (public table)",
 			})
 		case !*t.RLSEnabled:
@@ -410,6 +449,9 @@ func Warnings(cfg *domain.Config) domain.ValidationErrors {
 		}
 	}
 	ws = append(ws, compositePKFKWarnings(cfg.Tables)...)
+	_, fkWarns := checkForeignKeys(cfg.Tables, cfg.Auth)
+	ws = append(ws, fkWarns...)
+	ws = append(ws, fieldRefWarnings(cfg.Tables)...)
 	if cfg.Auth != nil {
 		for _, name := range slices.Sorted(maps.Keys(idTokenOnlyProviders)) {
 			if p := cfg.Auth.OAuth[name]; p != nil && p.ClientSecret == "" {
@@ -674,8 +716,20 @@ func validateTables(tables map[string]domain.Table, auth *domain.Auth) domain.Va
 
 		// Validate fields
 		hasPK := false
-		for _, field := range table.Fields {
+		seenFields := map[string]int{}
+		for i, field := range table.Fields {
 			fpath := fmt.Sprintf("%s.fields.%s", path, field.Name)
+			if field.Name != "" {
+				if first, dup := seenFields[field.Name]; dup {
+					errs = append(errs, &domain.ValidationError{
+						Path:       fmt.Sprintf("%s.fields[%d]", path, i),
+						Message:    fmt.Sprintf("duplicate field %q (first at fields[%d])", field.Name, first),
+						Suggestion: "Remove or rename one of them",
+					})
+				} else {
+					seenFields[field.Name] = i
+				}
+			}
 
 			if err := validateIdent(fpath, field.Name); err != nil {
 				errs = append(errs, err)
@@ -731,11 +785,11 @@ func validateTables(tables map[string]domain.Table, auth *domain.Auth) domain.Va
 						Path:    fkPath + ".references",
 						Message: "references is required",
 					})
-				} else if !strings.Contains(field.ForeignKey.References, ".") {
+				} else if _, _, _, perr := domain.ParseFKReference(field.ForeignKey.References); perr != nil {
 					errs = append(errs, &domain.ValidationError{
 						Path:       fkPath + ".references",
 						Message:    fmt.Sprintf("invalid reference %q", field.ForeignKey.References),
-						Suggestion: "Use format: table.column",
+						Suggestion: "Use format: table.column or schema.table.column",
 					})
 				}
 				if field.ForeignKey.OnDelete != "" && !validOnDelete[field.ForeignKey.OnDelete] {
@@ -950,6 +1004,14 @@ func validateRLSExpr(path, expr string) domain.ValidationErrors {
 			Message:    "must be a boolean expression, not a CREATE statement — instancez generates the policy DDL for you",
 			Suggestion: "Keep only the expression, e.g. user_id = auth.uid()",
 		})
+	default:
+		if r := checkSQLExpr(expr); r != "" {
+			errs = append(errs, &domain.ValidationError{
+				Path:       path,
+				Message:    "invalid SQL expression: " + r,
+				Suggestion: "Example: user_id = auth.uid()",
+			})
+		}
 	}
 	return errs
 }
@@ -1302,77 +1364,165 @@ func validateCodeFunctions(functions map[string]domain.CodeFunction) domain.Vali
 	return errs
 }
 
-func validateForeignKeys(tables map[string]domain.Table) domain.ValidationErrors {
-	var errs domain.ValidationErrors
+// uniqueSystemTargets are the only auth/storage columns with a unique constraint.
+var uniqueSystemTargets = map[string]map[string]domain.Field{
+	"auth.users":          {"id": {Type: "uuid", PrimaryKey: true}, "email": {Type: "text"}},
+	"auth.identities":     {"id": {Type: "bigint", PrimaryKey: true}},
+	"auth.refresh_tokens": {"id": {Type: "bigint", PrimaryKey: true}},
+	"auth.mfa_factors":    {"id": {Type: "uuid", PrimaryKey: true}},
+	"auth.mfa_challenges": {"id": {Type: "uuid", PrimaryKey: true}},
+	"auth.flow_state":     {"id": {Type: "uuid", PrimaryKey: true}},
+	"storage.objects":     {"id": {Type: "uuid", PrimaryKey: true}},
+}
 
-	// Build set of known tables + their fields.
-	// The users table has implicit core columns (id, email, etc.) added by
-	// migrations, so pre-populate them before merging user-declared fields.
-	knownTables := map[string]map[string]domain.Field{
-		"users": {"id": {Type: "uuid", PrimaryKey: true}, "email": {Type: "text"}},
+type fkTarget struct {
+	schema, table, col string
+	fields             map[string]domain.Field
+	known              bool // table resolved in a checked schema
+	err                *domain.ValidationError
+	warn               *domain.ValidationError
+}
+
+func fkSchemas(tables map[string]domain.Table) []string {
+	set := map[string]bool{"public": true, "auth": true, "storage": true}
+	for _, t := range tables {
+		set[t.EffectiveSchema()] = true
 	}
-	for name, table := range tables {
-		if name == "users" {
-			for _, f := range table.Fields {
-				knownTables["users"][f.Name] = f
-			}
-		} else {
-			knownTables[name] = table.FieldMap()
+	return slices.Sorted(maps.Keys(set))
+}
+
+// resolveFK classifies one foreign key reference against the declared tables.
+func resolveFK(tables map[string]domain.Table, schemas []string, emailAuth bool, ref, path string) (fkTarget, bool) {
+	schema, table, col, err := domain.ParseFKReference(ref)
+	if err != nil {
+		return fkTarget{}, false
+	}
+	t := fkTarget{schema: schema, table: table, col: col}
+	full := schema + "." + table
+	fail := func(msg, sugg string) fkTarget {
+		t.err = &domain.ValidationError{Path: path, Message: msg, Suggestion: sugg}
+		return t
+	}
+	cols, ok := uniqueSystemTargets[full]
+	if full == "auth.one_time_tokens" && emailAuth {
+		cols, ok = map[string]domain.Field{"id": {Type: "bigint", PrimaryKey: true}}, true
+	}
+	if ok {
+		if f, ok := cols[col]; ok {
+			t.fields, t.known = map[string]domain.Field{col: f}, true
+			return t, true
 		}
+		return fail(fmt.Sprintf("%s.%s has no unique constraint, so Postgres rejects the foreign key", full, col),
+			fmt.Sprintf("Reference %s.id instead", full)), true
 	}
+	switch schema {
+	case "auth", "storage":
+		t.warn = &domain.ValidationError{Path: path, Message: fmt.Sprintf("%s is not checked: instancez cannot verify it has a unique column %q", full, col)}
+		return t, true
+	}
+	if !slices.Contains(schemas, schema) {
+		sugg := ""
+		if near := closest(schema, schemas); near != "" {
+			sugg = fmt.Sprintf("did you mean %s.%s.%s?", near, table, col)
+			if near == "auth" || near == "storage" {
+				return fail(fmt.Sprintf("unknown schema %q", schema), sugg), true
+			}
+		}
+		t.warn = &domain.ValidationError{Path: path, Message: fmt.Sprintf("schema %q is not declared in this config, so the reference is not checked", schema), Suggestion: sugg}
+		return t, true
+	}
+	if tb, ok := tables[table]; ok && tb.EffectiveSchema() == schema {
+		t.fields, t.known = tb.FieldMap(), true
+		if _, ok := t.fields[col]; !ok {
+			return fail(fmt.Sprintf("references %s.%s but column %q does not exist on table %q", table, col, col, table), ""), true
+		}
+		return t, true
+	}
+	if tb, ok := tables[table]; ok && schema == "public" {
+		return fail(fmt.Sprintf("table %q is in schema %q", table, tb.EffectiveSchema()), fmt.Sprintf("Reference it as %s.%s.%s", tb.EffectiveSchema(), table, col)), true
+	}
+	if schema != "public" {
+		t.warn = &domain.ValidationError{Path: path, Message: fmt.Sprintf("table %q is not declared in schema %q, so the reference is not checked", table, schema)}
+		return t, true
+	}
+	sugg := fmt.Sprintf("Define a %q table or check spelling", table)
+	if table == "users" {
+		sugg = fmt.Sprintf("did you mean auth.users.%s?", col)
+	}
+	return fail(fmt.Sprintf("references table %q which does not exist", table), sugg), true
+}
 
-	for tableName, table := range tables {
-		for _, field := range table.Fields {
-			fieldName := field.Name
+func fkPath(tableName, fieldName string) string {
+	return fmt.Sprintf("tables.%s.fields.%s.foreign_key", tableName, fieldName)
+}
+
+// checkForeignKeys resolves every foreign key once, returning provable errors and unverifiable-target warnings.
+func checkForeignKeys(tables map[string]domain.Table, auth *domain.Auth) (errs, warns domain.ValidationErrors) {
+	emailAuth := auth != nil && auth.Email != nil
+	schemas := fkSchemas(tables)
+	byName := domain.ResolverOver(tables)
+	for _, tableName := range slices.Sorted(maps.Keys(tables)) {
+		for _, field := range tables[tableName].Fields {
 			if field.ForeignKey == nil || field.ForeignKey.References == "" {
 				continue
 			}
-			fkPath := fmt.Sprintf("tables.%s.fields.%s.foreign_key", tableName, fieldName)
-			schema, refTable, refCol, err := domain.ParseFKReference(field.ForeignKey.References)
-			if err != nil {
+			p := fkPath(tableName, field.Name)
+			t, ok := resolveFK(tables, schemas, emailAuth, field.ForeignKey.References, p+".references")
+			if !ok {
 				continue // already caught by structural validation
 			}
-			// Cross-schema references (e.g. auth.users.id) target tables outside this
-			// config's tables map. We don't validate their existence here — that's the
-			// migrator's job at apply time.
-			if schema != "public" {
+			if t.warn != nil {
+				warns = append(warns, t.warn)
+			}
+			if t.err != nil {
+				errs = append(errs, t.err)
 				continue
 			}
-			targetFields, tableExists := knownTables[refTable]
-			if !tableExists {
-				errs = append(errs, &domain.ValidationError{
-					Path:       fkPath + ".references",
-					Message:    fmt.Sprintf("references table %q which does not exist", refTable),
-					Suggestion: fmt.Sprintf("Define a %q table or check spelling", refTable),
-				})
+			if !t.known {
 				continue
 			}
-
-			targetField, colExists := targetFields[refCol]
-			if !colExists {
+			resolve := func(table, col string) (domain.Field, bool) {
+				if f, ok := t.fields[col]; ok && table == t.table {
+					return f, true
+				}
+				return byName(table, col)
+			}
+			fkType := domain.EffectiveType(field, resolve)
+			refType := domain.EffectiveType(t.fields[t.col], resolve)
+			if !domain.FKCompatible(fkType, refType) {
 				errs = append(errs, &domain.ValidationError{
-					Path:    fkPath + ".references",
-					Message: fmt.Sprintf("references %s.%s but column %q does not exist on table %q", refTable, refCol, refCol, refTable),
+					Path:       p + ".type",
+					Message:    fmt.Sprintf("column type %q does not match referenced %s.%s type %q", fkType, t.table, t.col, refType),
+					Suggestion: fmt.Sprintf("declare \"type: %s\" on %q, or change the reference", refType, field.Name),
 				})
-			} else {
-				resolve := func(table, col string) (domain.Field, bool) {
-					f, ok := knownTables[table][col]
-					return f, ok
-				}
-				fkType := domain.EffectiveType(field, resolve)
-				refType := domain.EffectiveType(targetField, resolve)
-				if !domain.FKCompatible(fkType, refType) {
-					errs = append(errs, &domain.ValidationError{
-						Path:       fkPath + ".type",
-						Message:    fmt.Sprintf("column type %q does not match referenced %s.%s type %q", fkType, refTable, refCol, refType),
-						Suggestion: fmt.Sprintf("declare \"type: %s\" on %q, or change the reference", refType, fieldName),
-					})
-				}
 			}
 		}
 	}
+	return errs, warns
+}
 
-	return errs
+// fieldRefWarnings flags the field-level ref and on_delete keys, which nothing reads.
+func fieldRefWarnings(tables map[string]domain.Table) domain.ValidationErrors {
+	var ws domain.ValidationErrors
+	for _, tableName := range slices.Sorted(maps.Keys(tables)) {
+		for _, f := range tables[tableName].Fields {
+			p := fmt.Sprintf("tables.%s.fields.%s", tableName, f.Name)
+			if f.Ref != "" {
+				sugg := "Remove it; storage references are not implemented"
+				if strings.HasPrefix(f.Ref, "auth.") {
+					sugg = fmt.Sprintf("Use foreign_key: {references: %s}", f.Ref)
+				}
+				ws = append(ws, &domain.ValidationError{Path: p + ".ref", Message: fmt.Sprintf("ref %q has no effect", f.Ref), Suggestion: sugg})
+			}
+			switch {
+			case f.OnDelete != "" && f.ForeignKey != nil:
+				ws = append(ws, &domain.ValidationError{Path: p + ".on_delete", Message: "field-level on_delete has no effect", Suggestion: "Remove it, or move it under foreign_key"})
+			case f.OnDelete != "":
+				ws = append(ws, &domain.ValidationError{Path: p + ".on_delete", Message: "on_delete has no effect without foreign_key", Suggestion: "Remove it"})
+			}
+		}
+	}
+	return ws
 }
 
 // compositePKFKWarnings flags FKs to one column of a composite primary key.
@@ -1443,8 +1593,9 @@ func validateFieldType(path, typ string) domain.ValidationErrors {
 
 	if !validPostgresTypes[base] {
 		errs = append(errs, &domain.ValidationError{
-			Path:    path + ".type",
-			Message: fmt.Sprintf("unknown type %q", typ),
+			Path:       path + ".type",
+			Message:    fmt.Sprintf("unknown type %q", typ),
+			Suggestion: didYouMean(suggestType(base)),
 		})
 	}
 	return errs
@@ -1466,7 +1617,7 @@ func validateDefault(path string, val any, colType string) domain.ValidationErro
 			} else if fits, ok := authDefaultTypes[lower]; ok && !fits(strings.ToLower(colType)) {
 				errs = append(errs, &domain.ValidationError{
 					Path:    path + ".default",
-					Message: fmt.Sprintf("default %s does not fit a %s column", v, colType),
+					Message: fmt.Sprintf("default %s does not fit column type %s", v, colType),
 				})
 			}
 		}

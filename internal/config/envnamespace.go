@@ -14,6 +14,7 @@ import (
 // platform vars.
 func ValidateEnvNamespace(raw []byte) domain.ValidationErrors {
 	var errs domain.ValidationErrors
+	locs := EnvRefLocations(raw)
 	for _, name := range EnvRefs(raw) {
 		if strings.HasPrefix(name, instancezEnvPrefix) {
 			continue
@@ -24,11 +25,16 @@ func ValidateEnvNamespace(raw []byte) domain.ValidationErrors {
 		if strings.HasPrefix(name, "INSTANCEZ_") || strings.HasPrefix(name, "AWS_") {
 			suggestion = "This is a platform-injected variable; remove the reference (it cannot be set from config)."
 		}
-		errs = append(errs, &domain.ValidationError{
+		ve := &domain.ValidationError{
 			Path:       "${" + name + "}",
 			Message:    fmt.Sprintf("environment variable %q may not be referenced in config; only the INSTANCEZ_ENV_ namespace is allowed", name),
 			Suggestion: suggestion,
-		})
+		}
+		if l := locs[name]; len(l) > 0 {
+			ve.Line, ve.Column = l[0].Line, l[0].Column
+			ve.Message += " (at " + l[0].Path + ")"
+		}
+		errs = append(errs, ve)
 	}
 	return errs
 }

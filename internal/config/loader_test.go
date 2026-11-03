@@ -547,3 +547,22 @@ func TestLoadLocalWithDotenv(t *testing.T) {
 		}
 	})
 }
+
+func TestParseBytes_IgnoresEnvRefInComment(t *testing.T) {
+	src := "version: 1\n# key: ${UNSET_COMMENT_Z}\nproject:\n  name: x # ${UNSET_INLINE_Z:-ok}\n"
+	if _, err := ParseBytes([]byte(src), "t"); err != nil {
+		t.Fatalf("comment-only ref must not fail: %v", err)
+	}
+	var me *domain.MissingEnvError
+	_, err := ParseBytes([]byte("version: 1\nproject:\n  name: ${UNSET_REAL_Z}\n"), "t")
+	if !errors.As(err, &me) || len(me.Vars) != 1 || me.Vars[0] != "UNSET_REAL_Z" {
+		t.Fatalf("real ref must still fail, got %v", err)
+	}
+}
+
+func TestEnvRefs_SkipsComments(t *testing.T) {
+	got := EnvRefs([]byte("# ${A}\n  # ${B}\nk: ${C}\n"))
+	if len(got) != 1 || got[0] != "C" {
+		t.Fatalf("got %v", got)
+	}
+}

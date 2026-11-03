@@ -471,3 +471,29 @@ func TestRunInitNextStepsLeadWithEmbeddedPG(t *testing.T) {
 	assert.NotEqual(t, -1, env)
 	assert.Less(t, embedded, env)
 }
+
+func TestScaffoldYAMLHasSchemaHeader(t *testing.T) {
+	for _, fn := range []bool{true, false} {
+		y := scaffoldYAML("demo", fn)
+		if !strings.HasPrefix(y, config.SchemaHeader+"\nversion: 1") {
+			t.Fatalf("missing header: %q", y[:80])
+		}
+		if _, err := config.ParseBytesLenient([]byte(y), "x"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestWithSchemaHeaderIsIdempotent(t *testing.T) {
+	once := withSchemaHeader("version: 1\n")
+	if withSchemaHeader(once) != once {
+		t.Fatal("header duplicated")
+	}
+	custom := "# yaml-language-server: $schema=./local.json\nversion: 1\n"
+	if withSchemaHeader(custom) != custom {
+		t.Fatal("user header replaced")
+	}
+	if got := withSchemaHeader(""); got != config.SchemaHeader+"\n" {
+		t.Fatalf("empty input: %q", got)
+	}
+}

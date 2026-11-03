@@ -4,6 +4,29 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Added
+
+- `inz validate --use-dsn <dsn> --dry-run-ddl` runs the migration in a transaction that is always rolled back (`lock_timeout` 2s, `statement_timeout` 30s per statement, 2 minutes overall; an in-sync database still gets its rpc bodies checked), so unknown RLS columns and bad rpc bodies fail validation. It exits non-zero on failure and adds `dry_run` to `--json`. Plain `--use-dsn` still only prints the plan.
+- Did-you-mean suggestions for unknown YAML keys (`rls_enabeld` suggests `rls_enabled`) and column types (`string` suggests `text`, `timestampz` suggests `timestamptz`).
+- A JSON Schema for `instancez.yaml` at `https://docs.instancez.ai/schema/instancez.json`. `inz init` adds the `yaml-language-server` header so editors complete keys and flag unknown ones.
+
+### Changed
+
+- `inz validate`, `inz dev`, `inz serve` and `inz bundle` errors carry the real key path, `file:line:column`, plain-language type errors (`expected true or false, got "maybe"`), the duplicate-key path and a `check indentation at line N` hint. Identical errors are shown once, unset variables show where they are used, and `--json` gains `column`.
+
+### Deprecated
+
+- Field-level `ref:` and `on_delete:` never did anything. `inz validate` now warns and the docs no longer list them. Use `foreign_key: {references, on_delete}`.
+
+### Fixed
+
+- A missing non-`INSTANCEZ_ENV_` variable no longer hides every other validation error: `inz validate`/`inz dev` report it with the rest, and `inz serve` reports the namespace error before the missing-variable one. `${VAR}` in a full-line `#` comment no longer fails `inz serve`/`inz bundle`.
+- `inz validate` and `inz dev` warn with the key path when an OAuth `client_secret` is empty but `inz serve` requires it. The auth default type error now reads `does not fit column type integer`.
+- `inz validate` and `inz dev` now warn when `rls_enabled` is unset on a table with policies (inferred true; removing the last policy turns RLS off). The no-policy warning says RLS is off instead of citing policies.
+- Breaking, `inz validate` rejects RLS `using`/`with_check` expressions that can never parse: whitespace-only, unbalanced `(` or quotes, a doubled comparison like `= =`, doubled `AND`/`OR`, or a leading or trailing `AND`/`OR`. Error: `invalid SQL expression: <reason>`. Fix the expression.
+- Breaking, `inz validate` rejects a table that declares the same field twice (migrate failed with `column specified more than once`). Remove or rename one.
+- Breaking, `inz validate` now rejects foreign keys that fail at migrate: `users.id` with no public `users` table (use `auth.users.id`), a bare `x.col` where `x` has `schema:` set (use `schema.x.col`), `auth.users.<col>` other than `id`/`email` or `storage.objects.<col>` other than `id` (no unique constraint), and a misspelled `auth` or `storage` schema such as `auht.users.id`. Everything inz validate cannot prove wrong only warns: other undeclared or near-miss schemas (with a did-you-mean), tables in a declared schema that the config does not define, and auth/storage tables other than the ones instancez creates.
+
 ## [0.0.12] - 2026-11-02
 
 ### Added

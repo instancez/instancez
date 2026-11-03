@@ -8,6 +8,7 @@ auth:
   refresh_token_expiry: 7d
 tables:
   profiles:
+    rls_enabled: true
     fields:
       - name: id
         primary_key: true
@@ -29,6 +30,7 @@ tables:
         using: "id = auth.uid()"
         with_check: "id = auth.uid() AND role = public.my_role()"
   events:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -78,6 +80,7 @@ tables:
       - operations: [delete]
         using: "public.my_role() = 'admin'"
   ticket_types:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -128,6 +131,7 @@ tables:
       - operations: [delete]
         using: "public.my_role() = 'admin'"
   orders:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -175,6 +179,7 @@ tables:
       - operations: [select]
         using: "user_id = auth.uid() OR public.my_role() = 'admin'"
   tickets:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial

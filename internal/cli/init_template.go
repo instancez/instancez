@@ -149,7 +149,7 @@ func writeTemplateFiles(dir string, b *templates.Bundle, yamlText string) error 
 	for _, p := range paths {
 		content := b.Files[p]
 		if p == "instancez.yaml" {
-			content = yamlText
+			content = withSchemaHeader(yamlText)
 		}
 		target := filepath.Join(dir, filepath.FromSlash(p))
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {

@@ -153,17 +153,95 @@ func TestValidate_FKReferencesNonexistentTable(t *testing.T) {
 	assertHasErrorAt(t, errs, "tables.todos.fields.cat_id.foreign_key.references")
 }
 
-func TestValidate_FKReferencesUsersOK(t *testing.T) {
+func TestValidate_FKBareUsersRejected(t *testing.T) {
 	cfg := validBaseConfig()
 	table := cfg.Tables["todos"]
 	table.Fields = append(table.Fields, domain.Field{
-		Name: "user_id", ForeignKey: &domain.ForeignKey{References: "users.id", OnDelete: "cascade"},
+		Name: "owner_id", ForeignKey: &domain.ForeignKey{References: "users.id", OnDelete: "cascade"},
 	})
 	cfg.Tables["todos"] = table
-
 	errs := Validate(cfg)
-	if errs != nil {
-		t.Errorf("expected no errors for FK to users.id, got: %v", errs)
+	assertHasErrorAt(t, errs, "tables.todos.fields.owner_id.foreign_key.references")
+}
+
+func TestValidate_FKTargets(t *testing.T) {
+	appX := domain.Table{Schema: "app", Fields: []domain.Field{{Name: "id", Type: "uuid", PrimaryKey: true}}}
+	usersID := domain.Table{Fields: []domain.Field{{Name: "id", Type: "uuid", PrimaryKey: true}}}
+	usersNoID := domain.Table{Fields: []domain.Field{{Name: "display_name", Type: "text"}}}
+	const path = "tables.todos.fields.f.foreign_key.references"
+	cases := []struct {
+		name       string
+		ref        string
+		extra      map[string]domain.Table
+		wantErr    string
+		wantSugg   string
+		wantWarnAt bool
+		ref2type   string
+	}{
+		{name: "bare users no table", ref: "users.id", wantErr: "does not exist", wantSugg: "auth.users.id"},
+		{name: "bare users without id", ref: "users.id", extra: map[string]domain.Table{"users": usersNoID}, wantErr: "does not exist"},
+		{name: "public users with id", ref: "users.id", extra: map[string]domain.Table{"users": usersID}},
+		{name: "auth users id", ref: "auth.users.id"},
+		{name: "auth users email", ref: "auth.users.email"},
+		{name: "storage objects id", ref: "storage.objects.id"},
+		{name: "auth users created_at", ref: "auth.users.created_at", wantErr: "no unique constraint"},
+		{name: "storage objects name", ref: "storage.objects.name", wantErr: "no unique constraint"},
+		{name: "schema typo", ref: "auht.users.id", wantErr: "unknown schema", wantSugg: "auth.users.id"},
+		{name: "far schema warns", ref: "zzz.t.id", wantWarnAt: true},
+		{name: "other auth table warns", ref: "auth.sessions.id", wantWarnAt: true},
+		{name: "instancez-owned auth table is unique", ref: "auth.identities.id", ref2type: "bigint"},
+		{name: "auth near miss errors", ref: "auth2.users.id", wantErr: "unknown schema", wantSugg: "auth.users.id"},
+		{name: "near miss of declared schema only warns", ref: "api.x.id", extra: map[string]domain.Table{"x": appX}, wantWarnAt: true},
+		{name: "table in other schema", ref: "x.id", extra: map[string]domain.Table{"x": appX}, wantErr: `schema "app"`, wantSugg: "app.x.id"},
+		{name: "declared schema ok", ref: "app.x.id", extra: map[string]domain.Table{"x": appX}},
+		{name: "declared schema missing table warns", ref: "app.nope.id", extra: map[string]domain.Table{"x": appX}, wantWarnAt: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validBaseConfig()
+			for k, v := range tc.extra {
+				cfg.Tables[k] = v
+			}
+			todos := cfg.Tables["todos"]
+			todos.Fields = append(todos.Fields, domain.Field{Name: "f", Type: "uuid", ForeignKey: &domain.ForeignKey{References: tc.ref}})
+			if tc.ref == "auth.users.email" {
+				todos.Fields[len(todos.Fields)-1].Type = "text"
+			}
+			if tc.ref2type != "" {
+				todos.Fields[len(todos.Fields)-1].Type = tc.ref2type
+			}
+			cfg.Tables["todos"] = todos
+			errs := Validate(cfg)
+			if tc.wantErr == "" {
+				for _, e := range errs {
+					if e.Path == path {
+						t.Fatalf("unexpected error: %v", e)
+					}
+				}
+			} else {
+				var found *domain.ValidationError
+				for _, e := range errs {
+					if e.Path == path {
+						found = e
+					}
+				}
+				if found == nil || !strings.Contains(found.Message, tc.wantErr) {
+					t.Fatalf("want error containing %q at %s, got %v", tc.wantErr, path, errs)
+				}
+				if !strings.Contains(found.Suggestion, tc.wantSugg) {
+					t.Fatalf("suggestion %q lacks %q", found.Suggestion, tc.wantSugg)
+				}
+			}
+			gotWarn := false
+			for _, w := range Warnings(cfg) {
+				if w.Path == path {
+					gotWarn = true
+				}
+			}
+			if gotWarn != tc.wantWarnAt {
+				t.Fatalf("warning at %s = %v, want %v", path, gotWarn, tc.wantWarnAt)
+			}
+		})
 	}
 }
 
@@ -558,7 +636,7 @@ func TestValidate_FullExampleConfig(t *testing.T) {
 				Fields: []domain.Field{
 					{Name: "id", Type: "bigserial", PrimaryKey: true},
 					{Name: "team_id", ForeignKey: &domain.ForeignKey{References: "teams.id", OnDelete: "cascade"}},
-					{Name: "user_id", ForeignKey: &domain.ForeignKey{References: "users.id", OnDelete: "cascade"}},
+					{Name: "user_id", ForeignKey: &domain.ForeignKey{References: "auth.users.id", OnDelete: "cascade"}},
 					{Name: "title", Type: "text", Required: true},
 					{Name: "status", Type: "text", Required: true, Enum: []string{"pending", "active", "done"}, Default: "pending"},
 				},
@@ -678,8 +756,8 @@ func TestWarnings_RLSEnabled(t *testing.T) {
 		rls     []domain.RLSPolicy
 		want    string // substring of Message; "" = no warning
 	}{
-		{"unset, no policies", nil, nil, "set rls_enabled explicitly"},
-		{"unset, with policies", nil, pol, ""},
+		{"unset, no policies", nil, nil, "RLS is off"},
+		{"unset, with policies", nil, pol, "inferred as true because the table has rls policies"},
 		{"false, no policies", &off, nil, "RLS is disabled"},
 		{"true, no policies", &on, nil, ""},
 		{"true, with policies", &on, pol, ""},
@@ -699,6 +777,9 @@ func TestWarnings_RLSEnabled(t *testing.T) {
 			}
 			if len(ws) != 1 || ws[0].Path != "tables.todos.rls_enabled" || !strings.Contains(ws[0].Message, tc.want) {
 				t.Fatalf("want one warning at tables.todos.rls_enabled containing %q, got %v", tc.want, ws)
+			}
+			if strings.Contains(ws[0].Message, "from the rls policies") {
+				t.Fatalf("misleading message: %q", ws[0].Message)
 			}
 		})
 	}
@@ -1409,13 +1490,13 @@ func TestValidateForeignKeys_TypeMatch(t *testing.T) {
 			"workspaces":      {Fields: []domain.Field{{Name: "id", Type: "uuid", PrimaryKey: true}, fk}},
 		}
 	}
-	if errs := validateForeignKeys(mk(domain.Field{Name: "school_id", ForeignKey: &domain.ForeignKey{References: "school_accounts.id"}})); len(errs) != 0 {
+	if errs := fkErrs(mk(domain.Field{Name: "school_id", ForeignKey: &domain.ForeignKey{References: "school_accounts.id"}})); len(errs) != 0 {
 		t.Fatalf("untyped FK to uuid PK should be valid, got: %v", errs)
 	}
-	if errs := validateForeignKeys(mk(domain.Field{Name: "school_id", Type: "text", ForeignKey: &domain.ForeignKey{References: "school_accounts.id"}})); len(errs) == 0 {
+	if errs := fkErrs(mk(domain.Field{Name: "school_id", Type: "text", ForeignKey: &domain.ForeignKey{References: "school_accounts.id"}})); len(errs) == 0 {
 		t.Fatalf("text FK to uuid PK should be rejected")
 	}
-	if errs := validateForeignKeys(mk(domain.Field{Name: "school_id", Type: "uuid", ForeignKey: &domain.ForeignKey{References: "school_accounts.id"}})); len(errs) != 0 {
+	if errs := fkErrs(mk(domain.Field{Name: "school_id", Type: "uuid", ForeignKey: &domain.ForeignKey{References: "school_accounts.id"}})); len(errs) != 0 {
 		t.Fatalf("uuid FK to uuid PK should be valid, got: %v", errs)
 	}
 }
@@ -1425,7 +1506,7 @@ func TestValidateForeignKeys_IntegerFamilyCompatible(t *testing.T) {
 		"events":  {Fields: []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}}},
 		"tickets": {Fields: []domain.Field{{Name: "id", Type: "uuid", PrimaryKey: true}, {Name: "event_id", ForeignKey: &domain.ForeignKey{References: "events.id"}}}},
 	}
-	if errs := validateForeignKeys(tables); len(errs) != 0 {
+	if errs := fkErrs(tables); len(errs) != 0 {
 		t.Fatalf("untyped FK to bigserial PK should be valid (integer family), got: %v", errs)
 	}
 }
@@ -1435,7 +1516,7 @@ func TestValidateForeignKeys_MissingColumn_NoSpuriousTypeError(t *testing.T) {
 		"events":  {Fields: []domain.Field{{Name: "id", Type: "uuid", PrimaryKey: true}}},
 		"tickets": {Fields: []domain.Field{{Name: "id", Type: "uuid", PrimaryKey: true}, {Name: "event_id", Type: "uuid", ForeignKey: &domain.ForeignKey{References: "events.missing"}}}},
 	}
-	errs := validateForeignKeys(tables)
+	errs := fkErrs(tables)
 	if len(errs) != 1 {
 		t.Fatalf("missing referenced column should yield exactly one (existence) error, got %d: %v", len(errs), errs)
 	}
@@ -1966,6 +2047,260 @@ func TestIsAllowedDefault(t *testing.T) {
 	for _, bad := range []string{"", "AUTH.UID()", " auth.uid()", "auth.uid();", "auth.nope()", "gen_random_uuid()"} {
 		if IsAllowedDefault(bad) {
 			t.Errorf("%q must not be allowed (exact lower-case match only)", bad)
+		}
+	}
+}
+
+func TestValidate_DuplicateFieldName(t *testing.T) {
+	build := func(names ...string) domain.ValidationErrors {
+		cfg := validBaseConfig()
+		fields := []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}}
+		for _, n := range names {
+			fields = append(fields, domain.Field{Name: n, Type: "text"})
+		}
+		cfg.Tables["todos"] = domain.Table{Fields: fields, RLS: cfg.Tables["todos"].RLS}
+		return Validate(cfg)
+	}
+	dups := func(errs domain.ValidationErrors) (out []*domain.ValidationError) {
+		for _, e := range errs {
+			if strings.Contains(e.Message, "duplicate field") {
+				out = append(out, e)
+			}
+		}
+		return
+	}
+	t.Run("one duplicate", func(t *testing.T) {
+		d := dups(build("title", "title"))
+		if len(d) != 1 || d[0].Path != "tables.todos.fields[2]" || d[0].Message != `duplicate field "title" (first at fields[1])` {
+			t.Fatalf("got %v", d)
+		}
+	})
+	t.Run("three copies", func(t *testing.T) {
+		d := dups(build("x", "x", "x"))
+		if len(d) != 2 || d[0].Path != "tables.todos.fields[2]" || d[1].Path != "tables.todos.fields[3]" {
+			t.Fatalf("got %v", d)
+		}
+	})
+	t.Run("empty names are not duplicates", func(t *testing.T) {
+		if d := dups(build("", "")); len(d) != 0 {
+			t.Fatalf("got %v", d)
+		}
+	})
+}
+
+func TestValidate_RLSExprSyntax(t *testing.T) {
+	cfg := validBaseConfig()
+	todos := cfg.Tables["todos"]
+	todos.RLS = []domain.RLSPolicy{{Operations: []string{"select"}, Using: "u1 = = auth.uid()"}}
+	cfg.Tables["todos"] = todos
+	errs := Validate(cfg)
+	assertHasErrorAt(t, errs, "tables.todos.rls[0].using")
+	for _, e := range errs {
+		if e.Path == "tables.todos.rls[0].using" && !strings.Contains(e.Message, "invalid SQL expression") {
+			t.Errorf("message = %q", e.Message)
+		}
+	}
+}
+
+func TestWarnings_FieldRefOnDelete(t *testing.T) {
+	fk := &domain.ForeignKey{References: "auth.users.id"}
+	cases := []struct {
+		name     string
+		field    domain.Field
+		wantPath string // "" = no warning
+		wantMsg  string
+		wantSugg string
+	}{
+		{"ref storage", domain.Field{Type: "text", Ref: "storage.avatars"}, "tables.todos.fields.f.ref", "has no effect", ""},
+		{"ref auth users", domain.Field{Type: "uuid", Ref: "auth.users.id"}, "tables.todos.fields.f.ref", "has no effect", "foreign_key: {references: auth.users.id}"},
+		{"on_delete with fk", domain.Field{ForeignKey: fk, OnDelete: "cascade"}, "tables.todos.fields.f.on_delete", "has no effect", "move it under foreign_key"},
+		{"on_delete without fk", domain.Field{Type: "text", OnDelete: "cascade"}, "tables.todos.fields.f.on_delete", "has no effect without foreign_key", ""},
+		{"neither", domain.Field{Type: "text"}, "", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validBaseConfig()
+			todos := cfg.Tables["todos"]
+			tc.field.Name = "f"
+			todos.Fields = append(todos.Fields, tc.field)
+			cfg.Tables["todos"] = todos
+			if errs := Validate(cfg); errs != nil {
+				t.Fatalf("must stay valid, got %v", errs)
+			}
+			var got *domain.ValidationError
+			for _, w := range Warnings(cfg) {
+				if strings.HasPrefix(w.Path, "tables.todos.fields.f.") {
+					got = w
+				}
+			}
+			if tc.wantPath == "" {
+				if got != nil {
+					t.Fatalf("unexpected warning %v", got)
+				}
+				return
+			}
+			if got == nil || got.Path != tc.wantPath || !strings.Contains(got.Message, tc.wantMsg) || !strings.Contains(got.Suggestion, tc.wantSugg) {
+				t.Fatalf("got %+v", got)
+			}
+		})
+	}
+}
+
+func TestLocalWarnings(t *testing.T) {
+	mk := func(name, secret string) *domain.Config {
+		return &domain.Config{Auth: &domain.Auth{OAuth: map[string]*domain.OAuthProvider{name: {ClientID: "id", ClientSecret: secret}}}}
+	}
+	if ws := LocalWarnings(mk("google", "")); len(ws) != 0 {
+		t.Errorf("google empty: %v", ws)
+	}
+	ws := LocalWarnings(mk("github", ""))
+	if len(ws) != 1 || ws[0].Path != "auth.oauth.github.client_secret" || !strings.Contains(ws[0].Message, "inz serve rejects this") {
+		t.Errorf("github empty: %v", ws)
+	}
+	if ws := LocalWarnings(mk("github", "s")); len(ws) != 0 {
+		t.Errorf("github set: %v", ws)
+	}
+	if ws := LocalWarnings(&domain.Config{}); ws != nil {
+		t.Errorf("nil auth: %v", ws)
+	}
+	if ws := LocalWarnings(nil); ws != nil {
+		t.Errorf("nil cfg: %v", ws)
+	}
+}
+
+func TestValidateDefault_Grammar(t *testing.T) {
+	cfg := validBaseConfig()
+	todos := cfg.Tables["todos"]
+	todos.Fields = append(todos.Fields, domain.Field{Name: "n", Type: "integer", Default: "auth.uid()"})
+	cfg.Tables["todos"] = todos
+	var msg string
+	for _, e := range Validate(cfg) {
+		if e.Path == "tables.todos.fields.n.default" {
+			msg = e.Message
+		}
+	}
+	if msg != "default auth.uid() does not fit column type integer" {
+		t.Fatalf("got %q", msg)
+	}
+}
+
+func TestValidateFieldType_DidYouMean(t *testing.T) {
+	cases := []struct{ typ, want string }{
+		{"timestampz", `Did you mean "timestamptz"?`},
+		{"string", `Did you mean "text"?`},
+		{"datetime", `Did you mean "timestamptz"?`},
+		{"blob", `Did you mean "bytea"?`},
+		{"varchr(20)", `Did you mean "varchar"?`},
+		{"intt", `Did you mean "int"?`},
+		{"vector(3)", ""},
+		{"citext", ""},
+		{"qqqqqqqqq", ""},
+	}
+	for _, c := range cases {
+		errs := validateFieldType("tables.t.fields.f", c.typ)
+		if len(errs) != 1 || errs[0].Suggestion != c.want {
+			t.Errorf("%q: %+v, want suggestion %q", c.typ, errs, c.want)
+		}
+	}
+	for _, ok := range []string{"text", "varchar(20)", "timestamptz", "text[]"} {
+		if errs := validateFieldType("p", ok); len(errs) != 0 {
+			t.Errorf("%q: %v", ok, errs)
+		}
+	}
+}
+
+func TestWarnings_FKNearMissSuggestsDeclaredSchema(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Tables["x"] = domain.Table{Schema: "app", Fields: []domain.Field{{Name: "id", Type: "uuid", PrimaryKey: true}}}
+	todos := cfg.Tables["todos"]
+	todos.Fields = append(todos.Fields, domain.Field{Name: "f", Type: "uuid", ForeignKey: &domain.ForeignKey{References: "api.x.id"}})
+	cfg.Tables["todos"] = todos
+	if errs := Validate(cfg); errs != nil {
+		t.Fatalf("near miss of a declared schema must not error: %v", errs)
+	}
+	for _, w := range Warnings(cfg) {
+		if w.Path == "tables.todos.fields.f.foreign_key.references" {
+			if !strings.Contains(w.Suggestion, "app.x.id") {
+				t.Fatalf("suggestion %q", w.Suggestion)
+			}
+			return
+		}
+	}
+	t.Fatal("no warning")
+}
+
+func TestValidate_RLSTrailingSemicolon(t *testing.T) {
+	for _, expr := range []string{"user_id = auth.uid() ;", "user_id = auth.uid();"} {
+		cfg := validBaseConfig()
+		todos := cfg.Tables["todos"]
+		todos.RLS = []domain.RLSPolicy{{Operations: []string{"select"}, Using: expr}}
+		cfg.Tables["todos"] = todos
+		assertHasErrorAt(t, Validate(cfg), "tables.todos.rls[0].using")
+	}
+}
+
+func fkErrs(tables map[string]domain.Table) domain.ValidationErrors {
+	errs, _ := checkForeignKeys(tables, nil)
+	return errs
+}
+
+func TestValidate_FKUndeclaredSchemaFarFromAuthOnlyWarns(t *testing.T) {
+	cfg := validBaseConfig()
+	todos := cfg.Tables["todos"]
+	todos.Fields = append(todos.Fields, domain.Field{Name: "f", Type: "uuid", ForeignKey: &domain.ForeignKey{References: "audit.logs.id"}})
+	cfg.Tables["todos"] = todos
+	if errs := Validate(cfg); errs != nil {
+		t.Fatalf("audit.logs.id must not error: %v", errs)
+	}
+	found := false
+	for _, w := range Warnings(cfg) {
+		found = found || w.Path == "tables.todos.fields.f.foreign_key.references"
+	}
+	if !found {
+		t.Fatal("want a warning")
+	}
+}
+
+func TestValidate_FKOneTimeTokensNeedsEmailAuth(t *testing.T) {
+	build := func(email bool) *domain.Config {
+		cfg := validBaseConfig()
+		cfg.Auth = &domain.Auth{}
+		if email {
+			cfg.Auth.Email = &domain.AuthEmail{}
+		}
+		todos := cfg.Tables["todos"]
+		todos.Fields = append(todos.Fields, domain.Field{Name: "f", Type: "bigint", ForeignKey: &domain.ForeignKey{References: "auth.one_time_tokens.id"}})
+		cfg.Tables["todos"] = todos
+		return cfg
+	}
+	warned := func(c *domain.Config) bool {
+		for _, w := range Warnings(c) {
+			if w.Path == "tables.todos.fields.f.foreign_key.references" {
+				return true
+			}
+		}
+		return false
+	}
+	if warned(build(true)) {
+		t.Error("email auth creates the table: no warning")
+	}
+	if !warned(build(false)) {
+		t.Error("without email auth the table is not created: want a warning")
+	}
+}
+
+func TestValidate_FKReferenceWithTooManyParts(t *testing.T) {
+	for _, ref := range []string{"a.b.c.d", "justone"} {
+		cfg := validBaseConfig()
+		todos := cfg.Tables["todos"]
+		todos.Fields = append(todos.Fields, domain.Field{Name: "f", Type: "uuid", ForeignKey: &domain.ForeignKey{References: ref}})
+		cfg.Tables["todos"] = todos
+		errs := Validate(cfg)
+		assertHasErrorAt(t, errs, "tables.todos.fields.f.foreign_key.references")
+		for _, e := range errs {
+			if e.Path == "tables.todos.fields.f.foreign_key.references" && !strings.Contains(e.Suggestion, "schema.table.column") {
+				t.Errorf("%q suggestion %q", ref, e.Suggestion)
+			}
 		}
 	}
 }

@@ -8,6 +8,7 @@ auth:
   refresh_token_expiry: 7d
 tables:
   agents:
+    rls_enabled: true
     fields:
       - name: user_id
         primary_key: true
@@ -25,6 +26,7 @@ tables:
       - operations: [select]
         using: "user_id = auth.uid() OR public.is_admin()"
   tickets:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -83,6 +85,7 @@ tables:
       - operations: [delete]
         using: "EXISTS (SELECT 1 FROM agents WHERE user_id = auth.uid() AND role = 'admin')"
   ticket_messages:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -116,6 +119,7 @@ tables:
       - operations: [delete]
         using: "author_id = auth.uid() AND kind = 'note'"
   canned_replies:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -139,6 +143,7 @@ tables:
       - operations: [delete]
         using: "EXISTS (SELECT 1 FROM agents WHERE user_id = auth.uid() AND role = 'admin')"
   intake_attempts:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial

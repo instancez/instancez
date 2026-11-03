@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/instancez/instancez/internal/domain"
 	"gopkg.in/yaml.v3"
@@ -28,8 +29,43 @@ func decodeYAMLStrict(data []byte, cfg *domain.Config) error {
 	}
 	var te *yaml.TypeError
 	if errors.As(err, &te) {
-		cfg.UnknownKeys = append(cfg.UnknownKeys, unknownKeyProblems(te)...)
+		cfg.UnknownKeys = append(cfg.UnknownKeys, unknownKeyProblems(te, rootMapping(data))...)
 		return nil
+	}
+	return withIndentHint(data, err)
+}
+
+var yamlErrLineRe = regexp.MustCompile(`^yaml: line (\d+):`)
+
+// withIndentHint points at the first dedent that matches no open level, since yaml.v3 reports the context line.
+func withIndentHint(data []byte, err error) error {
+	m := yamlErrLineRe.FindStringSubmatch(err.Error())
+	if m == nil {
+		return err
+	}
+	errLine, _ := strconv.Atoi(m[1])
+	var levels []int
+	for i, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimLeft(line, " ")
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		indent := len(line) - len(trimmed)
+		popped := false
+		for len(levels) > 0 && levels[len(levels)-1] > indent {
+			levels, popped = levels[:len(levels)-1], true
+		}
+		if popped && (len(levels) == 0 || levels[len(levels)-1] != indent) && i+1 > errLine {
+			return fmt.Errorf("%w; check indentation at line %d", err, i+1)
+		}
+		if len(levels) == 0 || levels[len(levels)-1] < indent {
+			levels = append(levels, indent)
+		}
+		if strings.HasPrefix(trimmed, "- ") {
+			if inner := indent + 2; levels[len(levels)-1] < inner {
+				levels = append(levels, inner)
+			}
+		}
 	}
 	return err
 }
@@ -62,28 +98,84 @@ var yamlTypeToSection = map[string]string{
 	"domain.Bucket":          "storage.<name>",
 }
 
-// unknownKeyProblems converts a yaml.v3 TypeError into one ValidationError per
-// unknown key. A sub-message that doesn't match the known shape is passed
-// through verbatim so nothing is silently lost.
-func unknownKeyProblems(te *yaml.TypeError) domain.ValidationErrors {
+var (
+	yamlTypeErrRe = regexp.MustCompile("^line (\\d+): cannot unmarshal !!(\\w+)(?: `(.*)`)? into (.+)$")
+	yamlDupKeyRe  = regexp.MustCompile(`^line (\d+): mapping key (".*") already defined at line (\d+)$`)
+)
+
+// humanType words a Go type for a config author.
+func humanType(goType string) string {
+	switch {
+	case goType == "bool":
+		return "true or false"
+	case strings.HasPrefix(goType, "int"), strings.HasPrefix(goType, "uint"), strings.HasPrefix(goType, "float"):
+		return "a number"
+	case goType == "string":
+		return "a string"
+	case goType == "[]domain.Field":
+		return "a list of fields"
+	case strings.HasPrefix(goType, "[]"):
+		return "a list"
+	case strings.HasPrefix(goType, "map["), strings.HasPrefix(goType, "domain."):
+		return "a mapping"
+	}
+	return strings.ReplaceAll(goType, "domain.", "")
+}
+
+func humanTypeError(val, goType string) string {
+	want := humanType(goType)
+	if val == "" || strings.HasPrefix(want, "a list") || want == "a mapping" {
+		return "expected " + want
+	}
+	return fmt.Sprintf("expected %s, got %q", want, val)
+}
+
+// unknownKeyProblems turns a yaml.v3 TypeError into one ValidationError per problem.
+func unknownKeyProblems(te *yaml.TypeError, root *yaml.Node) domain.ValidationErrors {
 	out := make(domain.ValidationErrors, 0, len(te.Errors))
 	for _, sub := range te.Errors {
-		m := yamlUnknownFieldRe.FindStringSubmatch(sub)
-		if m == nil {
-			out = append(out, &domain.ValidationError{Message: sub})
+		if m := yamlUnknownFieldRe.FindStringSubmatch(sub); m != nil {
+			line, _ := strconv.Atoi(m[1])
+			field, typ := m[2], m[3]
+			path, col := "(top level)", 0
+			if section, ok := yamlTypeToSection[typ]; ok {
+				path = section
+			}
+			if root != nil {
+				if p, c, ok := keyParentPath(root, line, field); ok {
+					path, col = p, c
+					if p == "" {
+						path = "(top level)"
+					}
+				}
+			}
+			out = append(out, &domain.ValidationError{Path: path, Line: line, Column: col, Message: fmt.Sprintf("unknown key %q", field), Suggestion: suggestKey(typ, field)})
 			continue
 		}
-		line, _ := strconv.Atoi(m[1])
-		field, typ := m[2], m[3]
-		path := "(top level)"
-		if section, ok := yamlTypeToSection[typ]; ok {
-			path = section
+		if m := yamlTypeErrRe.FindStringSubmatch(sub); m != nil {
+			line, _ := strconv.Atoi(m[1])
+			ve := &domain.ValidationError{Line: line, Message: humanTypeError(m[3], m[4])}
+			if root != nil {
+				if p, c, ok := valuePathAt(root, line, m[3]); ok {
+					ve.Path, ve.Column = p, c
+				}
+			}
+			out = append(out, ve)
+			continue
 		}
-		out = append(out, &domain.ValidationError{
-			Path:    path,
-			Line:    line,
-			Message: fmt.Sprintf("unknown key %q", field),
-		})
+		if m := yamlDupKeyRe.FindStringSubmatch(sub); m != nil {
+			line, _ := strconv.Atoi(m[1])
+			key, _ := strconv.Unquote(m[2])
+			ve := &domain.ValidationError{Line: line, Message: fmt.Sprintf("duplicate key %q (first defined at line %s)", key, m[3])}
+			if root != nil {
+				if p, c, ok := keyParentPath(root, line, key); ok {
+					ve.Path, ve.Column = p, c
+				}
+			}
+			out = append(out, ve)
+			continue
+		}
+		out = append(out, &domain.ValidationError{Message: sub})
 	}
 	return out
 }

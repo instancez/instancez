@@ -8,6 +8,7 @@ auth:
   refresh_token_expiry: 7d
 tables:
   conversations:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -41,6 +42,7 @@ tables:
       - operations: [delete]
         using: "user_id = auth.uid()"
   messages:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial
@@ -74,6 +76,7 @@ tables:
       - operations: [delete]
         using: "user_id = auth.uid()"
   app_settings:
+    rls_enabled: true
     fields:
       - name: key
         type: text
@@ -85,6 +88,7 @@ tables:
       - operations: [select]
         using: "true"
   usage_daily:
+    rls_enabled: true
     fields:
       - name: id
         type: bigserial

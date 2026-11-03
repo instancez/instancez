@@ -7,6 +7,16 @@ description: Complete instancez.yaml schema reference. Every key, type, default,
 
 Env vars are interpolated using `${VAR}` or `${VAR:-default}`. They are resolved at load time; references are never stored in the database.
 
+## Editor schema
+
+A JSON Schema for this file is published at `https://docs.instancez.ai/schema/instancez.json`. Add this as the first line of `instancez.yaml` for completion and inline errors in editors that use the YAML language server (VS Code YAML extension, Neovim, JetBrains):
+
+```yaml
+# yaml-language-server: $schema=https://docs.instancez.ai/schema/instancez.json
+```
+
+`inz init` writes the line for you. Numbers and booleans also accept a `${VAR}` string.
+
 ## version
 
 | Key | Type | Required | Description |
@@ -155,12 +165,10 @@ tables:
 | `fields[].min` | `number` | — | Minimum numeric value (inclusive). |
 | `fields[].max` | `number` | — | Maximum numeric value (inclusive). |
 | `fields[].check` | `string` | — | Raw SQL `CHECK` expression. |
-| `fields[].foreign_key.references` | `string` | — | `table.column` or `schema.table.column`. |
+| `fields[].foreign_key.references` | `string` | — | `table.column` or `schema.table.column`. `table.column` is `public`; use `auth.users.id` for auth users. |
 | `fields[].foreign_key.on_delete` | `string` | `restrict` | `cascade`, `restrict`, or `set_null`. Defaults to `restrict` when omitted. |
 | `fields[].auto_updated_at` | `boolean` | `false` | Set the column to `now()` on every `UPDATE`. Only on `timestamp`/`timestamptz` fields. |
 | `fields[].immutable` | `boolean` | `false` | Reject any `UPDATE` that changes the column (error `23514`, HTTP 400), for every role including the secret key. `INSERT` is unaffected; an upsert that hits a conflict counts as an update. |
-| `fields[].ref` | `string` | — | Storage reference in the form `storage.<bucket>`. |
-| `fields[].on_delete` | `string` | — | (`ref` only) `cascade` or `keep` — whether to delete the object on row deletion. |
 
 No columns are injected automatically. Every column, including primary keys, must be declared.
 
@@ -367,8 +375,6 @@ tables:
         type: text
       - name: avatar_url
         type: text
-        ref: storage.avatars
-        on_delete: keep
     rls:
       - operations: [select]
         using: "true"

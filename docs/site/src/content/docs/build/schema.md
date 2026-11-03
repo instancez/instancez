@@ -163,6 +163,8 @@ Declare a foreign key with `foreign_key.references` pointing to `table.column` o
     on_delete: cascade
 ```
 
+`inz validate` checks the target by schema and table. `users.id` means `public.users.id`, so reference `auth.users.id` for auth users. Allowed unique targets in system schemas are `auth.users.id`, `auth.users.email` and `storage.objects.id`; other columns there are errors, other tables warn. A reference into an undeclared schema, or to a table of a declared schema that this config does not define, only warns (it may exist outside the config). A table with `schema: app` is referenced as `app.table.column`.
+
 When `foreign_key` is the only option on a field, the column type is inferred from the referenced column: `UUID` for `auth.users.id`, the referenced column's type for another table's field (integer types give `BIGINT`). A reference that can't be resolved (unknown table, cross-schema, or circular) falls back to `BIGINT`. Set `type` to override.
 
 **`on_delete` options:**
