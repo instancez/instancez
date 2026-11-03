@@ -1400,6 +1400,7 @@ func TestStorageOwnerColumnDDL_OnlyWhenReferenced(t *testing.T) {
 		{"json key is not the column", b("metadata->>'owner' = auth.uid()::text", ""), 0},
 		{"string literal is not the column", b("name = 'owner'", ""), 0},
 		{"escaped quote in literal", b("name = 'it''s owner'", ""), 0},
+		{"dollar tag inside a quoted string does not open a literal", b("name = '$x$' AND owner = auth.uid() AND name = '$x$'", ""), 1},
 		{"tagged dollar-quoted literal", b("name LIKE $path$owner/%$path$", ""), 0},
 		{"column after a tagged literal", b("name = $t$x$t$ AND owner = auth.uid()", ""), 1},
 		{"unterminated tag is left alone", b("name = $t$owner", ""), 1},

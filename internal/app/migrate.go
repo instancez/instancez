@@ -1408,10 +1408,7 @@ $function$;`,
 	}
 }
 
-var (
-	sqlStringLiteralRe = regexp.MustCompile(`[eE]'(?:[^'\\]|\\.|'')*'|'(?:[^']|'')*'`)
-	storageOwnerRefRe  = regexp.MustCompile(`(?i)\bowner(_id)?\b`)
-)
+var storageOwnerRefRe = regexp.MustCompile(`(?i)\bowner(_id)?\b`)
 
 // storageOwnerColumnDDL adds the owner aliases to an existing storage.objects only when a policy reads them, since a stored generated column rewrites the table.
 func storageOwnerColumnDDL(storage map[string]domain.Bucket) []string {
@@ -1425,26 +1422,31 @@ func storageOwnerColumnDDL(storage map[string]domain.Bucket) []string {
 	return nil
 }
 
-var dollarTagRe = regexp.MustCompile(`\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$`)
+var sqlLiteralRe = regexp.MustCompile(`[eE]'(?:[^'\\]|\\.|'')*'|'(?:[^']|'')*'|\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$`)
 
-// stripSQLLiterals blanks dollar-quoted and single-quoted strings, so only real column references remain.
+// stripSQLLiterals blanks quoted and dollar-quoted strings in token order, so only real column references remain.
 func stripSQLLiterals(s string) string {
 	var b strings.Builder
 	for {
-		loc := dollarTagRe.FindStringIndex(s)
+		loc := sqlLiteralRe.FindStringIndex(s)
 		if loc == nil {
 			break
 		}
-		tag := s[loc[0]:loc[1]]
-		end := strings.Index(s[loc[1]:], tag)
-		if end < 0 {
-			break
+		m, next := s[loc[0]:loc[1]], loc[1]
+		if m[0] == '$' {
+			end := strings.Index(s[loc[1]:], m)
+			if end < 0 {
+				b.WriteString(s[:loc[1]])
+				s = s[loc[1]:]
+				continue
+			}
+			next += end + len(m)
 		}
-		b.WriteString(s[:loc[0]])
-		s = s[loc[1]+end+len(tag):]
+		b.WriteString(s[:loc[0]] + "''")
+		s = s[next:]
 	}
 	b.WriteString(s)
-	return sqlStringLiteralRe.ReplaceAllString(b.String(), "''")
+	return b.String()
 }
 
 // storageOwnerColumnHeal checks the catalog first, so a healed table takes no lock.
