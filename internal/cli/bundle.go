@@ -73,12 +73,10 @@ func BuildBundle(projectDir string, skip ...string) (bundlePath string, err erro
 	if hasDeps {
 		cmd := exec.Command("npm", "ci", "--no-audit", "--no-fund")
 		cmd.Dir = functionsDir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			const maxTail = 4 << 10
-			if len(out) > maxTail {
-				out = out[len(out)-maxTail:]
-			}
-			if tail := strings.TrimSpace(strings.ToValidUTF8(string(out), "")); tail != "" {
+		out := &tailWriter{max: 4 << 10}
+		cmd.Stdout, cmd.Stderr = out, out
+		if err := cmd.Run(); err != nil {
+			if tail := strings.TrimSpace(strings.ToValidUTF8(string(out.buf), "")); tail != "" {
 				return "", fmt.Errorf("npm ci in %s: %w\n%s", functionsDir, err, tail)
 			}
 			return "", fmt.Errorf("npm ci in %s: %w", functionsDir, err)
@@ -317,4 +315,23 @@ func sameFile(a, b string) bool {
 	x, errA := os.Stat(a)
 	y, errB := os.Stat(b)
 	return errA == nil && errB == nil && os.SameFile(x, y)
+}
+
+// tailWriter keeps only the last max bytes written to it.
+type tailWriter struct {
+	max int
+	buf []byte
+}
+
+func (w *tailWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	if len(p) >= w.max {
+		w.buf = append(w.buf[:0], p[len(p)-w.max:]...)
+		return n, nil
+	}
+	if over := len(w.buf) + len(p) - w.max; over > 0 {
+		w.buf = append(w.buf[:0], w.buf[over:]...)
+	}
+	w.buf = append(w.buf, p...)
+	return n, nil
 }

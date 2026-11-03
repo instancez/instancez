@@ -245,11 +245,11 @@ inz bundle [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--config` | `instancez.yaml` | Path to `instancez.yaml`. |
-| `--output` | `bundle.tar.gz` | Destination: local file path (relative to the current directory) or `s3://bucket/key`. |
+| `--output` | `bundle.tar.gz` | Destination: local file path (relative to the current directory) or `s3://bucket/key`. Local files are written with mode 0600. |
 
 ```bash
 inz bundle                                       # write ./bundle.tar.gz
-inz bundle --output dist/bundle.tar.gz           # write to another local file
+inz bundle --output my-app.tar.gz                # write to another local file
 inz bundle --output s3://my-bucket/bundle.tar.gz # upload to S3, print pointer
 ```
 

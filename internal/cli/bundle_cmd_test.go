@@ -82,3 +82,19 @@ func TestRunBundleRejectsEmptyOutput(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--output needs a path or s3://bucket/key")
 }
+
+func TestRunBundleOutputIsPrivate(t *testing.T) {
+	dir := writeBundleFixture(t)
+	configPath := filepath.Join(dir, "instancez.yaml")
+	for name, pre := range map[string]bool{"new file": false, "existing 0644 file": true} {
+		dest := filepath.Join(t.TempDir(), "out.tar.gz")
+		if pre {
+			require.NoError(t, os.WriteFile(dest, []byte("old"), 0o644))
+			require.NoError(t, os.Chmod(dest, 0o644))
+		}
+		require.NoError(t, runBundle(context.Background(), configPath, dest), name)
+		fi, err := os.Stat(dest)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm(), name)
+	}
+}

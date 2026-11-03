@@ -29,7 +29,7 @@ The bundled instancez.yaml follows include: and is written as one merged file.
 
 Examples:
   inz bundle                                        # write ./bundle.tar.gz
-  inz bundle --output dist/bundle.tar.gz            # write to a local file
+  inz bundle --output my-app.tar.gz                 # write to a local file
   inz bundle --output s3://my-bucket/bundle.tar.gz  # upload to S3, print pointer`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runBundle(cmd.Context(), configPath, output)
@@ -98,11 +98,14 @@ func copyFileBundle(src, dst string) error {
 		return err
 	}
 	defer func() { _ = in.Close() }()
-	out, err := os.Create(dst)
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = out.Close() }()
+	if err := out.Chmod(0o600); err != nil {
+		return err
+	}
 	_, err = io.Copy(out, in)
 	return err
 }

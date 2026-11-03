@@ -350,11 +350,29 @@ func TestBuildBundleNpmFailureShowsOutput(t *testing.T) {
 }
 
 func TestBuildBundleNpmFailureOutputIsBounded(t *testing.T) {
-	fakeNodeAndNpm(t, "head -c 20000 /dev/zero | tr '\\0' 'x'; echo ' END' >&2; exit 1")
+	chunk := strings.Repeat("x", 50)
+	fakeNodeAndNpm(t, "echo START; i=0; while [ $i -lt 400 ]; do printf '%s' "+chunk+"; i=$((i+1)); done; echo ' END' >&2; exit 1")
 	_, err := BuildBundle(writeDepsFixture(t))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "END")
+	assert.NotContains(t, err.Error(), "START", "only the tail of the output is kept")
 	assert.Less(t, len(err.Error()), 5000)
+}
+
+func TestTailWriterKeepsOnlyTheTail(t *testing.T) {
+	w := &tailWriter{max: 8}
+	for _, chunk := range []string{"abcdef", "ghijkl", "", "mn"} {
+		n, err := w.Write([]byte(chunk))
+		require.NoError(t, err)
+		assert.Equal(t, len(chunk), n)
+		assert.LessOrEqual(t, len(w.buf), 8)
+	}
+	assert.Equal(t, "ghijklmn", string(w.buf))
+	big := &tailWriter{max: 4}
+	_, err := big.Write([]byte(strings.Repeat("z", 1<<20) + "tail"))
+	require.NoError(t, err)
+	assert.Equal(t, "tail", string(big.buf))
+	assert.LessOrEqual(t, cap(big.buf), 2*4+8, "must not retain the whole write")
 }
 
 func TestBuildBundleNpmFlags(t *testing.T) {

@@ -64,12 +64,12 @@ const { data } = supabase.storage.from('avatars').getPublicUrl(`${user.id}/photo
 const { data } = supabase.storage.from('avatars').getPublicUrl(`${user.id}/photo.png`, { transform: { width: 200 } })
 
 // Signed URL (private buckets, expires in seconds)
-const { data } = await supabase.storage.from('documents').createSignedUrl('report.pdf', 3600)
+const { data } = await supabase.storage.from('documents').createSignedUrl(`${user.id}/report.pdf`, 3600)
 // Same, but the browser saves it as a file
-const { data } = await supabase.storage.from('documents').createSignedUrl('report.pdf', 3600, { download: 'q3.pdf' })
+const { data } = await supabase.storage.from('documents').createSignedUrl(`${user.id}/report.pdf`, 3600, { download: 'q3.pdf' })
 
 // Signed URL for a resized image
-const { data } = await supabase.storage.from('documents').createSignedUrl('scan.png', 3600, { transform: { width: 400 } })
+const { data } = await supabase.storage.from('documents').createSignedUrl(`${user.id}/scan.png`, 3600, { transform: { width: 400 } })
 
 // List one folder level, or page through every key
 const { data } = await supabase.storage.from('avatars').list('', { limit: 100 })
