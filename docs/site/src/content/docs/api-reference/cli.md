@@ -252,7 +252,7 @@ inz bundle --output s3://my-bucket/bundle.tar.gz # upload to S3, print pointer
 
 Drop all data in the local development database. Local only: it refuses any database host that is not `localhost`, a loopback address (`127.0.0.0/8`, `::1`) or a unix socket, and there is no override. A tunnel or proxy listening on localhost (SSH tunnel, `kubectl port-forward`, Cloud SQL proxy) counts as local, so check where it points.
 
-It drops `public`, `auth`, `storage` and every schema your tables declare, then recreates an empty `public`. Other schemas are kept, but it uses `DROP SCHEMA ... CASCADE`, so views, foreign keys and functions in other schemas that depend on the dropped ones are dropped too. The prompt lists them first. With `INSTANCEZ_OWNER_DATABASE_URL` and `INSTANCEZ_AUTH_DATABASE_URL`, the drop runs as the owner login.
+It drops `public`, `auth`, `storage` and every schema your tables declare, then recreates an empty `public`. Other schemas are kept, but it uses `DROP SCHEMA ... CASCADE`, so views, foreign keys, functions and columns whose type lives in a dropped schema (for example an enum in `public`) are dropped too. The prompt lists them first. With `INSTANCEZ_OWNER_DATABASE_URL` and `INSTANCEZ_AUTH_DATABASE_URL`, the drop runs as the owner login.
 
 It needs a valid `instancez.yaml` (to know which schemas to drop). It does not migrate or seed: run `inz dev` afterwards to recreate the schema. Flags read the same `INSTANCEZ_*` environment defaults as `inz dev` (for example `INSTANCEZ_EMBEDDED_PG`), except `--yes`, which is never read from the environment.
 

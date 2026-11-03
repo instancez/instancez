@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"regexp"
 	"runtime/debug"
 	"strings"
 )
@@ -23,8 +24,16 @@ func resolveVersion(ver, com string, info *debug.BuildInfo) (string, string) {
 			}
 		}
 	}
+	if com == "unknown" {
+		if m := pseudoRev.FindStringSubmatch(ver); m != nil {
+			com = m[1][:7]
+		}
+	}
 	return ver, com
 }
+
+// pseudoRev matches the 12-char revision of a pseudo-version such as 0.0.13-0.20261102120000-abcdef123456.
+var pseudoRev = regexp.MustCompile(`[-.]\d{14}-([0-9a-f]{12})(?:\+|$)`)
 
 func versionString() string {
 	bi, _ := debug.ReadBuildInfo()

@@ -44,7 +44,7 @@ func newDBResetCmd() *cobra.Command {
 		Short: "Drop all local database data (local only)",
 		Long: `Drop every schema instancez manages (public, auth, storage and the schemas
 your tables declare) and recreate an empty public schema. Other schemas are
-kept, but views, foreign keys and functions in them that depend on the dropped
+kept, but views, foreign keys, functions and columns (of a type in a dropped schema) in them that depend on the dropped
 schemas are dropped too (DROP ... CASCADE); the prompt lists them.
 
 Refuses any database host that is not localhost, a loopback address or a unix
@@ -265,6 +265,15 @@ SELECT DISTINCT d FROM (
      AND dep.refobjid IN (SELECT oid FROM pg_class WHERE relnamespace IN (SELECT oid FROM s)
                           UNION SELECT oid FROM pg_type WHERE typnamespace IN (SELECT oid FROM s))
      AND p.pronamespace NOT IN (SELECT oid FROM s)
+  UNION ALL
+  SELECT 'column ' || c.oid::regclass || '.' || a.attname
+    FROM pg_attribute a
+    JOIN pg_class c ON c.oid = a.attrelid
+    JOIN pg_type ty ON ty.oid = a.atttypid
+    LEFT JOIN pg_type base ON base.oid = ty.typbasetype
+   WHERE a.attnum > 0 AND NOT a.attisdropped AND c.relkind IN ('r', 'p')
+     AND (ty.typnamespace IN (SELECT oid FROM s) OR base.typnamespace IN (SELECT oid FROM s))
+     AND c.relnamespace NOT IN (SELECT oid FROM s)
 ) x ORDER BY d`
 
 // findDependents lists objects outside schemas that DROP SCHEMA ... CASCADE would also drop.

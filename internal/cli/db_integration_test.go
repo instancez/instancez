@@ -74,6 +74,7 @@ func resetIntegrationSetup(t *testing.T) (string, *pgx.Conn) {
 		"INSERT INTO public.todos (id) VALUES (gen_random_uuid())",
 		"CREATE SCHEMA keepme", "CREATE TABLE keepme.t (id int)", "INSERT INTO keepme.t VALUES (1)",
 		"CREATE VIEW keepme.v AS SELECT id FROM public.todos",
+		"CREATE TYPE public.mood AS ENUM ('a')", "CREATE TABLE keepme.moods (m public.mood)",
 	} {
 		if _, err := su.Exec(ctx, q); err != nil {
 			t.Fatalf("%s: %v", q, err)
@@ -105,6 +106,9 @@ func TestDBResetIntegration(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "will also be dropped") || !strings.Contains(prompt, "view keepme.v") {
 		t.Errorf("prompt does not list the dependent view: %q", prompt)
+	}
+	if !strings.Contains(prompt, "column keepme.moods.m") {
+		t.Errorf("prompt does not list the column that uses a dropped enum: %q", prompt)
 	}
 	if n := count(t, su, "SELECT count(*) FROM pg_views WHERE viewname = 'v'"); n != 0 {
 		t.Error("dependent view survived CASCADE; the prompt would be lying")
