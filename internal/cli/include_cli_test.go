@@ -238,3 +238,16 @@ func TestRunValidate_PlainConfigKeepsLineNumbers(t *testing.T) {
 	require.NotEmpty(t, errs)
 	assert.NotZero(t, errs[0]["line"], "single-file configs keep positions")
 }
+
+func TestRunValidate_EmptyIncludeListStillMergedSoNoStaleLineNumbers(t *testing.T) {
+	cfg := incProject(t, "version: 1\ninclude: []\ntables:\n  x:\n    fields:\n      - {name: a, type: text}\n", incFragTS)
+	out := captureStdout(t, func() {
+		_ = runValidate(context.Background(), io.Discard, cfg, true, "", false)
+	})
+	var errs []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &errs))
+	require.NotEmpty(t, errs)
+	for _, e := range errs {
+		assert.Zero(t, e["line"], "the include key was stripped, so lines no longer match the file: %v", e)
+	}
+}

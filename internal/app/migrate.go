@@ -1409,7 +1409,7 @@ $function$;`,
 }
 
 var (
-	sqlStringLiteralRe = regexp.MustCompile(`(?s)\$\$.*?\$\$|[eE]'(?:[^'\\]|\\.|'')*'|'(?:[^']|'')*'`)
+	sqlStringLiteralRe = regexp.MustCompile(`[eE]'(?:[^'\\]|\\.|'')*'|'(?:[^']|'')*'`)
 	storageOwnerRefRe  = regexp.MustCompile(`(?i)\bowner(_id)?\b`)
 )
 
@@ -1417,13 +1417,34 @@ var (
 func storageOwnerColumnDDL(storage map[string]domain.Bucket) []string {
 	for _, b := range storage {
 		for _, p := range b.RLS {
-			if storageOwnerRefRe.MatchString(sqlStringLiteralRe.ReplaceAllString(p.Using, "''")) ||
-				storageOwnerRefRe.MatchString(sqlStringLiteralRe.ReplaceAllString(p.WithCheck, "''")) {
+			if storageOwnerRefRe.MatchString(stripSQLLiterals(p.Using)) || storageOwnerRefRe.MatchString(stripSQLLiterals(p.WithCheck)) {
 				return []string{storageOwnerColumnHeal}
 			}
 		}
 	}
 	return nil
+}
+
+var dollarTagRe = regexp.MustCompile(`\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$`)
+
+// stripSQLLiterals blanks dollar-quoted and single-quoted strings, so only real column references remain.
+func stripSQLLiterals(s string) string {
+	var b strings.Builder
+	for {
+		loc := dollarTagRe.FindStringIndex(s)
+		if loc == nil {
+			break
+		}
+		tag := s[loc[0]:loc[1]]
+		end := strings.Index(s[loc[1]:], tag)
+		if end < 0 {
+			break
+		}
+		b.WriteString(s[:loc[0]])
+		s = s[loc[1]+end+len(tag):]
+	}
+	b.WriteString(s)
+	return sqlStringLiteralRe.ReplaceAllString(b.String(), "''")
 }
 
 // storageOwnerColumnHeal checks the catalog first, so a healed table takes no lock.

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -183,7 +184,7 @@ func readSrc(file string) cfgSrc {
 	if err != nil {
 		return cfgSrc{file: file, raw: main}
 	}
-	if config.HasInclude(main) {
+	if !bytes.Equal(main, merged) {
 		return cfgSrc{raw: merged, merged: true}
 	}
 	return cfgSrc{file: file, raw: merged}
