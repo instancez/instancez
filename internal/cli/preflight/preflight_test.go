@@ -392,14 +392,14 @@ func TestRender_Output(t *testing.T) {
 }
 
 func TestPortFreeCheck(t *testing.T) {
-	held, err := net.Listen("tcp", ":0")
+	held, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = held.Close() }()
 	heldPort := held.Addr().(*net.TCPAddr).Port
 
-	tmp, err := net.Listen("tcp", ":0")
+	tmp, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

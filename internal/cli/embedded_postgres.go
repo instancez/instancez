@@ -73,6 +73,7 @@ const pgPortFile = ".inz-port"
 
 // preferredPGPort reuses the port saved in dataDir when it is still free, else picks a new one.
 func preferredPGPort(dataDir string) (uint32, error) {
+	// nosemgrep -- path is the local pgdata dir
 	if data, err := os.ReadFile(filepath.Join(dataDir, pgPortFile)); err == nil {
 		if p, perr := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 16); perr == nil && p > 0 {
 			if l, lerr := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.FormatUint(p, 10))); lerr == nil {
@@ -96,6 +97,7 @@ func (e *embeddedPGRunningError) Unwrap() error { return errEmbeddedPGRunning }
 
 // liveEmbeddedPG reports whether postmaster.pid in dataDir names a running process that accepts connections on its port.
 func liveEmbeddedPG(dataDir string) (pid int, port int, live bool) {
+	// nosemgrep -- path is the local pgdata dir
 	data, err := os.ReadFile(filepath.Join(dataDir, "postmaster.pid"))
 	if err != nil {
 		return 0, 0, false

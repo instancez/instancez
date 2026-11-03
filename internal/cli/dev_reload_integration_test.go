@@ -223,6 +223,12 @@ func TestDevHotReload_MigrationFailureNotReportedAsSuccess(t *testing.T) {
 		t.Fatalf("notes not served after good reload\n%s", logs.String())
 	}
 
+	// REST serves the new table before the watcher logs the reload, so wait for that line before marking the offset.
+	for end := time.Now().Add(20 * time.Second); !strings.Contains(logs.String(), "config reloaded successfully"); time.Sleep(100 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatalf("good reload never logged success\n%s", logs.String())
+		}
+	}
 	offset := len(logs.String())
 	bad := reloadTableYAML + "    rls_enabled: true\n    rls:\n      - operations: [select]\n        using: \"owner_id = auth.uid()\"\n"
 	if err := os.WriteFile(cfgPath, []byte(bad), 0o644); err != nil {
@@ -251,7 +257,7 @@ func TestDev_PortInUseFailsBeforePostgres(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(proj, "instancez.yaml"), []byte(reloadBaseYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	l, err := net.Listen("tcp", ":0")
+	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,6 +298,7 @@ func TestDev_PortInUseFailsBeforePostgres(t *testing.T) {
 
 // An external DSN (with a password) must never be echoed in the startup banner or logs.
 func TestDev_ExternalDSNNotPrintedInBanner(t *testing.T) {
+	// nosemgrep -- test-only password for a throwaway embedded Postgres
 	const password = "s3cretPw-9f2c"
 	_, dsn := startPGOrSkip(t, devOptions{pgDataDir: t.TempDir()})
 	execPG(t, dsn, "ALTER USER postgres PASSWORD '"+password+"'")

@@ -191,6 +191,7 @@ func TestStartEmbeddedPostgres_PortStableAcrossRestarts(t *testing.T) {
 	if dsn3 == dsn1 {
 		t.Fatalf("started on a busy port: %s", dsn3)
 	}
+	// nosemgrep -- path is the test temp dir
 	saved, err := os.ReadFile(filepath.Join(dir, pgPortFile))
 	if err != nil {
 		t.Fatal(err)

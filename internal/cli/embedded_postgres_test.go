@@ -207,6 +207,7 @@ func TestEmbeddedPGHintRunning(t *testing.T) {
 // deadPID returns the PID of a process that has already exited.
 func deadPID(t *testing.T) int {
 	t.Helper()
+	// nosemgrep -- test re-execs its own binary to get an exited PID
 	cmd := exec.Command(os.Args[0], "-test.run=^$")
 	if err := cmd.Run(); err != nil {
 		t.Fatal(err)
