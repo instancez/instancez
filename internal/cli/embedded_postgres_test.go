@@ -438,3 +438,17 @@ func TestPreferredPGPortAvoidsHTTPPort(t *testing.T) {
 		t.Fatalf("got %d, want a port different from the HTTP port %d", got, free)
 	}
 }
+
+func TestPreferredPGPortGivesUpWhenOnlyAvoidedPortIsFree(t *testing.T) {
+	orig := pickFreePort
+	t.Cleanup(func() { pickFreePort = orig })
+	calls := 0
+	pickFreePort = func() (uint32, error) { calls++; return 7777, nil }
+
+	if _, err := preferredPGPort(t.TempDir(), 7777); err == nil {
+		t.Fatal("want an error when every free port equals the avoided one")
+	}
+	if calls != maxPortPicks {
+		t.Fatalf("picked %d times, want %d", calls, maxPortPicks)
+	}
+}

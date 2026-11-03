@@ -89,13 +89,18 @@ func preferredPGPort(dataDir string, avoid uint32) (uint32, error) {
 			}
 		}
 	}
-	for {
-		p, err := freePort()
+	for range maxPortPicks {
+		p, err := pickFreePort()
 		if err != nil || p != avoid {
 			return p, err
 		}
 	}
+	return 0, fmt.Errorf("no free port other than %d after %d attempts", avoid, maxPortPicks)
 }
+
+const maxPortPicks = 20
+
+var pickFreePort = freePort
 
 var errEmbeddedPGRunning = errors.New("another inz dev is already using this pgdata directory")
 
