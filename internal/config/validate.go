@@ -785,11 +785,11 @@ func validateTables(tables map[string]domain.Table, auth *domain.Auth) domain.Va
 						Path:    fkPath + ".references",
 						Message: "references is required",
 					})
-				} else if !strings.Contains(field.ForeignKey.References, ".") {
+				} else if _, _, _, perr := domain.ParseFKReference(field.ForeignKey.References); perr != nil {
 					errs = append(errs, &domain.ValidationError{
 						Path:       fkPath + ".references",
 						Message:    fmt.Sprintf("invalid reference %q", field.ForeignKey.References),
-						Suggestion: "Use format: table.column",
+						Suggestion: "Use format: table.column or schema.table.column",
 					})
 				}
 				if field.ForeignKey.OnDelete != "" && !validOnDelete[field.ForeignKey.OnDelete] {

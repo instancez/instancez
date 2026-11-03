@@ -20,7 +20,7 @@ func TestCheckSQLExpr_ValidCorpus(t *testing.T) {
 		"exists (select 1 from members m where m.team_id = team_id and m.user_id = auth.uid())",
 		"$$ ( $$ = 'x'", "$t$ ) $t$ = 'x'", `E'\'' = 'x'`, "a = 1 -- trailing (", "a = /* ( */ 1",
 		"NOT (a AND b)", "operator(pg_catalog.=)", "a = 1 AND NOT b", "a IS NOT NULL OR b",
-		"a = (1 + 2)", "$1 = 2", "a <> b", "a = '=' ",
+		"a = (1 + 2)", "$1 = 2", "my$col$ = 1", "a$b = 1", "t.my$col$ = $$x$$", "a <> b", "a = '=' ",
 	} {
 		if r := checkSQLExpr(in); r != "" {
 			t.Errorf("checkSQLExpr(%q) = %q, want ok", in, r)

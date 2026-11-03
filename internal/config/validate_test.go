@@ -2288,3 +2288,19 @@ func TestValidate_FKOneTimeTokensNeedsEmailAuth(t *testing.T) {
 		t.Error("without email auth the table is not created: want a warning")
 	}
 }
+
+func TestValidate_FKReferenceWithTooManyParts(t *testing.T) {
+	for _, ref := range []string{"a.b.c.d", "justone"} {
+		cfg := validBaseConfig()
+		todos := cfg.Tables["todos"]
+		todos.Fields = append(todos.Fields, domain.Field{Name: "f", Type: "uuid", ForeignKey: &domain.ForeignKey{References: ref}})
+		cfg.Tables["todos"] = todos
+		errs := Validate(cfg)
+		assertHasErrorAt(t, errs, "tables.todos.fields.f.foreign_key.references")
+		for _, e := range errs {
+			if e.Path == "tables.todos.fields.f.foreign_key.references" && !strings.Contains(e.Suggestion, "schema.table.column") {
+				t.Errorf("%q suggestion %q", ref, e.Suggestion)
+			}
+		}
+	}
+}

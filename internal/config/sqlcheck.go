@@ -80,7 +80,7 @@ func checkSQLExpr(expr string) string {
 			toks, i = append(toks, sqlTok{'o', expr[i:j]}), j
 		case isSQLWordChar(c):
 			j := i
-			for j < len(expr) && isSQLWordChar(expr[j]) {
+			for j < len(expr) && (isSQLWordChar(expr[j]) || expr[j] == '$') {
 				j++
 			}
 			word := expr[i:j]
