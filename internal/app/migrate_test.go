@@ -1413,6 +1413,12 @@ func TestStorageOwnerColumnDDL_OnlyWhenReferenced(t *testing.T) {
 	}
 }
 
+func TestStorageOwnerColumnHeal_SingleAlterSoTheTableRewritesOnce(t *testing.T) {
+	if n := strings.Count(storageOwnerColumnHeal, "EXECUTE 'ALTER TABLE"); n != 1 {
+		t.Fatalf("heal runs %d ALTER statements, want 1 (each stored column add rewrites the table)", n)
+	}
+}
+
 func TestStorageOwnerColumnDDL_CatalogGuarded(t *testing.T) {
 	ddl := storageOwnerColumnDDL(map[string]domain.Bucket{"a": {RLS: []domain.RLSPolicy{{Operations: []string{"select"}, Using: "owner = auth.uid()"}}}})
 	joined := strings.Join(ddl, "\n")

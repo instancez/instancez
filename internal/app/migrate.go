@@ -1427,13 +1427,18 @@ func storageOwnerColumnDDL(storage map[string]domain.Bucket) []string {
 }
 
 // storageOwnerColumnHeal checks the catalog first, so a healed table takes no lock.
-const storageOwnerColumnHeal = `DO $$ BEGIN
+const storageOwnerColumnHeal = `DO $$
+DECLARE adds text[] := '{}';
+BEGIN
 IF to_regclass('storage.objects') IS NOT NULL THEN
   IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'storage.objects'::regclass AND attname = 'owner' AND NOT attisdropped) THEN
-    ALTER TABLE storage.objects ADD COLUMN owner UUID GENERATED ALWAYS AS (uploaded_by) STORED;
+    adds := array_append(adds, 'ADD COLUMN owner UUID GENERATED ALWAYS AS (uploaded_by) STORED');
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'storage.objects'::regclass AND attname = 'owner_id' AND NOT attisdropped) THEN
-    ALTER TABLE storage.objects ADD COLUMN owner_id TEXT GENERATED ALWAYS AS (uploaded_by::text) STORED;
+    adds := array_append(adds, 'ADD COLUMN owner_id TEXT GENERATED ALWAYS AS (uploaded_by::text) STORED');
+  END IF;
+  IF cardinality(adds) > 0 THEN
+    EXECUTE 'ALTER TABLE storage.objects ' || array_to_string(adds, ', ');
   END IF;
 END IF;
 END $$;`

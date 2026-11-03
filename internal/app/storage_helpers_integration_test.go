@@ -127,3 +127,22 @@ func TestIntegration_StorageOwnerColumnsAddedOnExistingTable(t *testing.T) {
 		t.Fatalf("owner columns after v3 = %d, want 2 (kept)", n)
 	}
 }
+
+func TestIntegration_StorageOwnerHealAddsOnlyTheMissingColumn(t *testing.T) {
+	owner, _ := dbboot.StartContainer(t)
+	ctx := context.Background()
+	m := app.NewMigrator(owner)
+	if err := m.Apply(ctx, ownerBucketCfg("true", "")); err != nil {
+		t.Fatalf("v1: %v", err)
+	}
+	if _, err := owner.Exec(ctx, "ALTER TABLE storage.objects DROP COLUMN owner_id"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Apply(ctx, ownerBucketCfg("owner_id = auth.uid()::text", "")); err != nil {
+		t.Fatalf("v2: %v", err)
+	}
+	rows, err := owner.Query(ctx, "SELECT count(*) AS n FROM information_schema.columns WHERE table_schema='storage' AND table_name='objects' AND column_name IN ('owner','owner_id')")
+	if err != nil || rows[0]["n"].(int64) != 2 {
+		t.Fatalf("columns after heal: %v %v", rows, err)
+	}
+}
