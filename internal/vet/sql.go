@@ -79,3 +79,63 @@ func hasSensitiveSegment(name string) bool {
 	joined := "_" + strings.Join(wordSegments(name), "_") + "_"
 	return slices.ContainsFunc(sensitiveWords, func(w string) bool { return strings.Contains(joined, "_"+w+"_") })
 }
+
+// splitTopLevelOr splits expr on OR outside parentheses and string literals.
+func splitTopLevelOr(expr string) []string {
+	expr = stripOuterParens(expr)
+	var parts []string
+	depth, start, inStr := 0, 0, false
+	for i := 0; i < len(expr); i++ {
+		switch c := expr[i]; {
+		case c == '\'':
+			inStr = !inStr
+		case inStr:
+		case c == '(':
+			depth++
+		case c == ')':
+			depth--
+		case depth == 0 && i > 0 && i+2 < len(expr) && strings.EqualFold(expr[i:i+2], "or") &&
+			strings.ContainsRune(" \t\r\n)", rune(expr[i-1])) && strings.ContainsRune(" \t\r\n(", rune(expr[i+2])):
+			parts = append(parts, expr[start:i])
+			start = i + 2
+		}
+	}
+	parts = append(parts, expr[start:])
+	if len(parts) == 1 {
+		return parts
+	}
+	var leaves []string
+	for _, p := range parts {
+		leaves = append(leaves, splitTopLevelOr(p)...)
+	}
+	return leaves
+}
+
+// stripOuterParens removes parentheses that wrap the whole expression.
+func stripOuterParens(expr string) string {
+	for {
+		t := strings.TrimSpace(expr)
+		if len(t) < 2 || t[0] != '(' || t[len(t)-1] != ')' {
+			return expr
+		}
+		depth, inStr := 0, false
+		for i := 0; i < len(t); i++ {
+			switch t[i] {
+			case '\'':
+				inStr = !inStr
+			case '(':
+				if !inStr {
+					depth++
+				}
+			case ')':
+				if !inStr {
+					depth--
+					if depth == 0 && i < len(t)-1 {
+						return expr
+					}
+				}
+			}
+		}
+		expr = t[1 : len(t)-1]
+	}
+}

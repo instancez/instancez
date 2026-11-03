@@ -126,11 +126,8 @@ func validateAgainstCloud(ctx context.Context, configPath string, jsonOutput boo
 	return nil
 }
 
-// useFileProjectID is the sentinel NoOptDefVal for --project, so bare
-// --project (no =value and no following token) is distinguishable from an
-// explicit override in planAgainstProject. Not a value any real project id
-// can equal, since ids are Mongo ObjectID hex strings.
-const useFileProjectID = "\x00use-file-project-id\x00"
+// Bare --project resolves to this; real ids are hex ObjectIDs.
+const useFileProjectID = "from-yaml"
 
 // missingEnvReport turns a missing-env load error into one report, leaving out errors caused by the placeholder for an unset var, or nil.
 func missingEnvReport(raw []byte, err error) domain.ValidationErrors {

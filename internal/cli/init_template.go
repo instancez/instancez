@@ -73,6 +73,25 @@ func setProjectName(yamlText, name string) (string, error) {
 	return "", errors.New("template has no project.name to replace")
 }
 
+func fetchTemplate(id string) (*templates.Bundle, error) {
+	b, err := cloud.NewClient(cloud.APIURL(), "").GetTemplate(id)
+	var nf *cloud.TemplateNotFoundError
+	if err == nil || errors.As(err, &nf) {
+		return b, err
+	}
+	catalogFallbackNotice(err)
+	t, ok := templates.Default().Get(id)
+	if !ok {
+		return nil, &cloud.TemplateNotFoundError{ID: id, Suggestions: templates.Default().Suggest(id)}
+	}
+	eb := t.Bundle()
+	return &eb, nil
+}
+
+func catalogFallbackNotice(err error) {
+	alertf("  ! template catalog unreachable (%s); using templates built into this inz", templates.CleanN(err.Error(), 120))
+}
+
 func runInitTemplate(opts initOptions, dir string) error {
 	conflicts, err := checkTargets(dir, []string{"instancez.yaml"}, opts.force)
 	if err != nil {
@@ -81,7 +100,7 @@ func runInitTemplate(opts initOptions, dir string) error {
 	if len(conflicts) > 0 {
 		return fmt.Errorf("%s already exist; use --force to overwrite", strings.Join(conflicts, ", "))
 	}
-	bundle, err := cloud.NewClient(cloud.APIURL(), "").GetTemplate(opts.template)
+	bundle, err := fetchTemplate(opts.template)
 	if err != nil {
 		var nf *cloud.TemplateNotFoundError
 		if errors.As(err, &nf) {

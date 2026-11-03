@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/instancez/instancez/internal/cloud"
 	"github.com/instancez/instancez/internal/config"
+	"github.com/instancez/instancez/internal/vet"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -110,7 +112,11 @@ func TestRunInitScaffoldsFunctions(t *testing.T) {
 	pkg, err := os.ReadFile(filepath.Join(dir, "functions", "package.json"))
 	require.NoError(t, err, "functions/package.json should exist")
 	assert.Contains(t, string(pkg), "@supabase/supabase-js", "ctx.supabase needs supabase-js")
-	assert.Contains(t, string(pkg), "zod")
+	var parsed struct {
+		Dependencies map[string]string `json:"dependencies"`
+	}
+	require.NoError(t, json.Unmarshal(pkg, &parsed))
+	assert.Equal(t, "^4.6.7", parsed.Dependencies["zod"], "zod < 4.6.6 has GHSA-mrhx-c7xc-m3w5")
 
 	// The handler is a real one (uses ctx.supabase + default export).
 	fn, err := os.ReadFile(filepath.Join(dir, "functions", "todos.js"))
@@ -495,5 +501,33 @@ func TestWithSchemaHeaderIsIdempotent(t *testing.T) {
 	}
 	if got := withSchemaHeader(""); got != config.SchemaHeader+"\n" {
 		t.Fatalf("empty input: %q", got)
+	}
+}
+
+func TestScaffoldAvatarsScopedToOwner(t *testing.T) {
+	cfg, err := config.ParseBytesRaw([]byte(scaffoldYAML("x", true)), "x.yaml")
+	require.NoError(t, err)
+	avatars, ok := cfg.Storage["avatars"]
+	require.True(t, ok)
+	writes := 0
+	for _, p := range avatars.RLS {
+		if !slices.ContainsFunc(p.Operations, func(op string) bool { return op == "insert" || op == "update" || op == "delete" }) {
+			continue
+		}
+		writes++
+		for _, expr := range []string{p.Using, p.WithCheck} {
+			if expr != "" {
+				assert.Contains(t, expr, "auth.uid()::text || '/%'", p.Operations)
+			}
+		}
+	}
+	assert.Equal(t, 3, writes)
+}
+
+func TestScaffoldPassesBucketAuthedWrite(t *testing.T) {
+	r, err := vet.Run([]byte(scaffoldYAML("x", true)))
+	require.NoError(t, err)
+	for _, f := range r.Findings {
+		assert.NotEqual(t, "bucket-authed-write", f.Rule)
 	}
 }

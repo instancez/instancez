@@ -1,6 +1,7 @@
 package cloud
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -25,7 +26,7 @@ func TestGetTemplateSuccess(t *testing.T) {
 	var gotPath, gotAuth string
 	c := tplServer(t, func(w http.ResponseWriter, r *http.Request) {
 		gotPath, gotAuth = r.URL.Path, r.Header.Get("Authorization")
-		_, _ = w.Write([]byte(`{"manifest":{"id":"blog","name":"Blog"},"files":{"instancez.yaml":"version: 1\n"}}`))
+		_, _ = w.Write([]byte(`{"manifest":{"id":"blog","name":"Blog"},"files":{"instancez.yaml":"version: 1\n"}}`)) // nosemgrep -- test server writes canned JSON
 	})
 	b, err := c.GetTemplate("blog")
 	require.NoError(t, err)
@@ -38,7 +39,7 @@ func TestGetTemplateSuccess(t *testing.T) {
 func TestGetTemplateNotFoundCarriesSuggestions(t *testing.T) {
 	c := tplServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(404)
-		_, _ = w.Write([]byte(`{"error":"template_not_found","suggestions":["blog"]}`))
+		_, _ = w.Write([]byte(`{"error":"template_not_found","suggestions":["blog"]}`)) // nosemgrep -- test server writes canned JSON
 	})
 	_, err := c.GetTemplate("blgo")
 	var nf *TemplateNotFoundError
@@ -50,7 +51,7 @@ func TestGetTemplateNotFoundCarriesSuggestions(t *testing.T) {
 func TestGetTemplateNotFoundWithoutSuggestions(t *testing.T) {
 	c := tplServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(404)
-		_, _ = w.Write([]byte(`{"error":"template_not_found"}`))
+		_, _ = w.Write([]byte(`{"error":"template_not_found"}`)) // nosemgrep -- test server writes canned JSON
 	})
 	_, err := c.GetTemplate("zzzz")
 	var nf *TemplateNotFoundError
@@ -63,8 +64,8 @@ func TestGetTemplateErrors(t *testing.T) {
 	cases := map[string]http.HandlerFunc{
 		"500":       func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(500) },
 		"429":       func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(429) },
-		"bad json":  func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{not json`)) },
-		"html page": func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`<html>spa</html>`)) },
+		"bad json":  func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{not json`)) },        // nosemgrep -- test server writes canned JSON
+		"html page": func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`<html>spa</html>`)) }, // nosemgrep -- test server writes canned JSON
 	}
 	for name, h := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -78,9 +79,9 @@ func TestGetTemplateErrors(t *testing.T) {
 
 func TestGetTemplateRejectsOversizeBody(t *testing.T) {
 	c := tplServer(t, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"manifest":{},"files":{"instancez.yaml":"`))
-		_, _ = w.Write([]byte(strings.Repeat("a", MaxTemplateBytes+10)))
-		_, _ = w.Write([]byte(`"}}`))
+		_, _ = w.Write([]byte(`{"manifest":{},"files":{"instancez.yaml":"`)) // nosemgrep -- test server writes canned JSON
+		_, _ = w.Write([]byte(strings.Repeat("a", MaxTemplateBytes+10)))     // nosemgrep -- test server writes canned JSON
+		_, _ = w.Write([]byte(`"}}`))                                        // nosemgrep -- test server writes canned JSON
 	})
 	_, err := c.GetTemplate("blog")
 	require.Error(t, err)
@@ -108,7 +109,7 @@ func TestGetTemplateUnreachable(t *testing.T) {
 func TestListTemplates(t *testing.T) {
 	c := tplServer(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/public/templates", r.URL.Path)
-		_, _ = w.Write([]byte(`{"templates":[{"id":"blog","tagline":"t","category":"content"}]}`))
+		_, _ = w.Write([]byte(`{"templates":[{"id":"blog","tagline":"t","category":"content"}]}`)) // nosemgrep -- test server writes canned JSON
 	})
 	got, err := c.ListTemplates()
 	require.NoError(t, err)
@@ -117,7 +118,7 @@ func TestListTemplates(t *testing.T) {
 }
 
 func TestListTemplatesEmptyIsNotAnError(t *testing.T) {
-	c := tplServer(t, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"templates":[]}`)) })
+	c := tplServer(t, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"templates":[]}`)) }) // nosemgrep -- test server writes canned JSON
 	got, err := c.ListTemplates()
 	require.NoError(t, err)
 	assert.Empty(t, got)
@@ -128,7 +129,7 @@ func TestGetTemplateSendsExtraHeaders(t *testing.T) {
 	var got string
 	c := tplServer(t, func(w http.ResponseWriter, r *http.Request) {
 		got = r.Header.Get("X-Bypass")
-		_, _ = w.Write([]byte(`{"manifest":{"id":"blog"},"files":{"instancez.yaml":"x"}}`))
+		_, _ = w.Write([]byte(`{"manifest":{"id":"blog"},"files":{"instancez.yaml":"x"}}`)) // nosemgrep -- test server writes canned JSON
 	})
 	_, err := c.GetTemplate("blog")
 	require.NoError(t, err)
@@ -141,10 +142,10 @@ func TestPublicTemplateCallsDropOrgHeader(t *testing.T) {
 	c := tplServer(t, func(w http.ResponseWriter, r *http.Request) {
 		gotOrg = append(gotOrg, r.Header.Get("X-Instancez-Org"))
 		if r.URL.Path == "/public/templates" {
-			_, _ = w.Write([]byte(`{"templates":[]}`))
+			_, _ = w.Write([]byte(`{"templates":[]}`)) // nosemgrep -- test server writes canned JSON
 			return
 		}
-		_, _ = w.Write([]byte(`{"manifest":{"id":"blog"},"files":{"instancez.yaml":"x"}}`))
+		_, _ = w.Write([]byte(`{"manifest":{"id":"blog"},"files":{"instancez.yaml":"x"}}`)) // nosemgrep -- test server writes canned JSON
 	})
 	require.Equal(t, "org_1", c.Org)
 	_, err := c.ListTemplates()
@@ -169,7 +170,7 @@ func TestGetTemplateBodySizeBoundary(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			payload := body(tc.total)
 			require.Len(t, payload, tc.total)
-			c := tplServer(t, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(payload)) })
+			c := tplServer(t, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(payload)) }) // nosemgrep -- test server writes canned JSON
 			_, err := c.GetTemplate("blog")
 			if tc.wantErr {
 				require.Error(t, err)
@@ -191,7 +192,7 @@ func TestListTemplatesNotFoundIsError(t *testing.T) {
 func TestGetTemplateNotFoundNonJSONBody(t *testing.T) {
 	c := tplServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(404)
-		_, _ = w.Write([]byte(`<html>not found</html>`))
+		_, _ = w.Write([]byte(`<html>not found</html>`)) // nosemgrep -- test server writes canned JSON
 	})
 	_, err := c.GetTemplate("zzzz")
 	var nf *TemplateNotFoundError
@@ -203,7 +204,7 @@ func TestGetTemplateNotFoundNonJSONBody(t *testing.T) {
 func TestGetTemplateNotFoundKeepsOnlyValidSuggestions(t *testing.T) {
 	c := tplServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(404)
-		_, _ = w.Write([]byte(`{"error":"template_not_found","suggestions":["blog","evil\u001b[2J","a\nb","Bad_ID"]}`))
+		_, _ = w.Write([]byte(`{"error":"template_not_found","suggestions":["blog","evil\u001b[2J","a\nb","Bad_ID"]}`)) // nosemgrep -- test server writes canned JSON
 	})
 	_, err := c.GetTemplate("blg")
 	var nf *TemplateNotFoundError
@@ -215,7 +216,7 @@ func TestGetTemplateNotFoundKeepsOnlyValidSuggestions(t *testing.T) {
 func TestTemplateErrorsCarryNoControlCharacters(t *testing.T) {
 	c := tplServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
-		_, _ = w.Write([]byte(`{"error":"boom\u001b[2J\u202Eevil"}`))
+		_, _ = w.Write([]byte(`{"error":"boom\u001b[2J\u202Eevil"}`)) // nosemgrep -- test server writes canned JSON
 	})
 	_, err := c.GetTemplate("blog")
 	require.Error(t, err)
@@ -228,7 +229,7 @@ func TestTemplateErrorsCarryNoControlCharacters(t *testing.T) {
 func TestTemplateErrorTextIsBounded(t *testing.T) {
 	c := tplServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
-		_, _ = w.Write([]byte(`{"error":"` + strings.Repeat("x", 5000) + `"}`))
+		_, _ = w.Write([]byte(`{"error":"` + strings.Repeat("x", 5000) + `"}`)) // nosemgrep -- test server writes canned JSON
 	})
 	_, err := c.GetTemplate("blog")
 	require.Error(t, err)
@@ -237,11 +238,72 @@ func TestTemplateErrorTextIsBounded(t *testing.T) {
 
 func TestListTemplatesDropsInvalidIDs(t *testing.T) {
 	c := tplServer(t, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"templates":[{"id":"blog"},{"id":"evil\u001b[2J"},{"id":""},{"id":"Bad_ID"},{"id":"shop-front"}]}`))
+		_, _ = w.Write([]byte(`{"templates":[{"id":"blog"},{"id":"evil\u001b[2J"},{"id":""},{"id":"Bad_ID"},{"id":"shop-front"}]}`)) // nosemgrep -- test server writes canned JSON
 	})
 	got, err := c.ListTemplates()
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 	assert.Equal(t, "blog", got[0].ID)
 	assert.Equal(t, "shop-front", got[1].ID)
+}
+
+func TestPublicClientTimeout(t *testing.T) {
+	c := NewClient("http://127.0.0.1:1", "")
+	orig := c.HTTP.Timeout
+	assert.Equal(t, 10*time.Second, c.public().HTTP.Timeout)
+	assert.Equal(t, orig, c.HTTP.Timeout)
+}
+
+type markerTransport struct{ http.RoundTripper }
+
+func TestPublicKeepsCustomTransport(t *testing.T) {
+	c := NewClient("http://127.0.0.1:1", "")
+	rt := &markerTransport{http.DefaultTransport}
+	c.HTTP = &http.Client{Transport: rt, Timeout: 60 * time.Second}
+	pub := c.public()
+	assert.Same(t, rt, pub.HTTP.Transport)
+	assert.Equal(t, 10*time.Second, pub.HTTP.Timeout)
+	assert.Equal(t, 60*time.Second, c.HTTP.Timeout)
+}
+
+func TestPublicKeepsShorterTimeout(t *testing.T) {
+	c := NewClient("http://127.0.0.1:1", "")
+	c.HTTP = &http.Client{Timeout: 2 * time.Second}
+	assert.Equal(t, 2*time.Second, c.public().HTTP.Timeout)
+}
+
+func TestListTemplatesAllInvalidIsError(t *testing.T) {
+	c := tplServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"templates":[{"id":"../x"},{"id":"BAD ID"}]}`)) // nosemgrep -- test server writes canned JSON
+	})
+	_, err := c.ListTemplates()
+	require.Error(t, err)
+}
+
+func TestGetTemplateWithoutYAMLIsError(t *testing.T) {
+	for _, body := range []string{`{}`, `{"manifest":{"id":"blog"},"files":{"functions/a.js":"x"}}`} {
+		c := tplServer(t, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) }) // nosemgrep -- test server writes canned JSON
+		_, err := c.GetTemplate("blog")
+		require.Error(t, err, body)
+		var nf *TemplateNotFoundError
+		assert.False(t, errors.As(err, &nf), body)
+	}
+}
+
+func TestListTemplatesMissingFieldIsError(t *testing.T) {
+	for _, body := range []string{`{}`, `null`, `{"templates":null}`} {
+		c := tplServer(t, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) }) // nosemgrep -- test server writes canned JSON
+		_, err := c.ListTemplates()
+		require.Error(t, err, body)
+	}
+}
+
+func TestGetTemplateBlankYAMLIsError(t *testing.T) {
+	for _, yml := range []string{"", "  \n\t"} {
+		c := tplServer(t, func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(templates.Bundle{Files: map[string]string{"instancez.yaml": yml}})
+		})
+		_, err := c.GetTemplate("blog")
+		require.Error(t, err, yml)
+	}
 }

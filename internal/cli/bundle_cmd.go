@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,7 +20,7 @@ func newBundleCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "bundle",
-		Short: "Build a deployable functions bundle",
+		Short: "Build a deployable bundle of instancez.yaml and functions/",
 		Long: `Build a self-contained tar.gz bundle from instancez.yaml and functions/.
 
 The bundle is the deployment artifact for projects that use code functions.
@@ -27,15 +28,15 @@ Upload it to S3 then reference it in instancez.yaml under functions_bundle:.
 The bundled instancez.yaml follows include: and is written as one merged file.
 
 Examples:
-  inz bundle                                        # write to a temp file, print path
-  inz bundle --output bundle.tar.gz                 # write to a local file
+  inz bundle                                        # write ./bundle.tar.gz
+  inz bundle --output my-app.tar.gz                 # write to a local file
   inz bundle --output s3://my-bucket/bundle.tar.gz  # upload to S3, print pointer`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runBundle(cmd.Context(), configPath, output)
 		},
 	}
 	cmd.Flags().StringVar(&configPath, "config", "instancez.yaml", "path to instancez.yaml (env: INSTANCEZ_CONFIG)")
-	cmd.Flags().StringVar(&output, "output", "", "destination: local path or s3://bucket/key")
+	cmd.Flags().StringVar(&output, "output", "bundle.tar.gz", "destination: local path (relative to the current directory) or s3://bucket/key")
 	return cmd
 }
 
@@ -57,22 +58,15 @@ func runBundle(ctx context.Context, configPath, output string) error {
 	}
 	fmt.Println("  ✓ Schema valid")
 
-	bundlePath, err := BuildBundle(projectDir)
+	if output == "" {
+		return errors.New("--output needs a path or s3://bucket/key")
+	}
+	bundlePath, err := BuildBundle(projectDir, output)
 	if err != nil {
 		return fmt.Errorf("build bundle: %w", err)
 	}
 
-	keepTemp := output == ""
-	defer func() {
-		if !keepTemp {
-			_ = os.Remove(bundlePath)
-		}
-	}()
-
-	if output == "" {
-		fmt.Printf("  ✓ Bundle: %s\n", bundlePath)
-		return nil
-	}
+	defer func() { _ = os.Remove(bundlePath) }()
 
 	if strings.HasPrefix(output, "s3://") {
 		data, err := os.ReadFile(bundlePath)
@@ -98,17 +92,28 @@ func runBundle(ctx context.Context, configPath, output string) error {
 	return nil
 }
 
-func copyFileBundle(src, dst string) error {
+// copyFileBundle writes dst through a private temp file and renames it, so a symlink at dst is replaced, never followed.
+func copyFileBundle(src, dst string) (err error) {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = in.Close() }()
-	out, err := os.Create(dst)
+	out, err := os.CreateTemp(filepath.Dir(dst), ".inz-bundle-*")
 	if err != nil {
 		return err
 	}
-	defer func() { _ = out.Close() }()
-	_, err = io.Copy(out, in)
-	return err
+	defer func() {
+		if err != nil {
+			_ = os.Remove(out.Name())
+		}
+	}()
+	if _, err = io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	if err = out.Close(); err != nil {
+		return err
+	}
+	return os.Rename(out.Name(), dst)
 }

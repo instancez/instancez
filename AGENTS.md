@@ -45,7 +45,7 @@ go build -o inz ./cmd/inz
 ./inz validate --use-dsn <owner-dsn>   # also prints migration plan (plan only, never applied)
 ./inz validate --use-dsn <owner-dsn> --dry-run-ddl   # also runs the migration in a rolled-back tx (takes DDL locks)
 ./inz vet              # security lint of instancez.yaml, no DB
-./inz bundle           # build instancez.yaml + functions/ into a tar.gz artifact
+./inz bundle           # build instancez.yaml + functions/ into ./bundle.tar.gz
 ./inz bundle --output s3://bucket/key  # build + upload to S3, print pointer
 ./inz db reset --embedded-pg --yes   # wipe local DB (local hosts only)
 ./inz serve --bundle s3://bucket/key#etag   # production mode using bundle (config + functions from single archive)

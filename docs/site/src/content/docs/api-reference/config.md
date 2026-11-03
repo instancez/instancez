@@ -421,9 +421,9 @@ storage:
       - operations: [select]
         using: "auth.uid() IS NOT NULL"
       - operations: [insert]
-        with_check: "auth.uid() IS NOT NULL"
+        with_check: "name LIKE auth.uid()::text || '/%'"
       - operations: [delete]
-        using: "auth.uid() IS NOT NULL"
+        using: "name LIKE auth.uid()::text || '/%'"
 
 rpc:
   profile_search:

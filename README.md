@@ -98,7 +98,7 @@ tables:
       - name: name
         type: text
         required: true
-      - name: avatar_path      # path of the file in the avatars bucket below
+      - name: avatar_path      # path in the avatars bucket below, under <user id>/
         type: text
 
     rls:
@@ -149,12 +149,12 @@ storage:
       - operations: [select]
         using: "auth.is_authenticated()"
       - operations: [insert]
-        with_check: "auth.is_authenticated()"
+        with_check: "name LIKE auth.uid()::text || '/%'"
       - operations: [update]
-        using: "auth.is_authenticated()"
-        with_check: "auth.is_authenticated()"
+        using: "name LIKE auth.uid()::text || '/%'"
+        with_check: "name LIKE auth.uid()::text || '/%'"
       - operations: [delete]
-        using: "auth.is_authenticated()"
+        using: "name LIKE auth.uid()::text || '/%'"
 
 functions:
   todos:

@@ -26,8 +26,8 @@ inz init [name] [flags]
 |------|---------|-------------|
 | `--dir` | `.` | Output directory. |
 | `--force` | `false` | Overwrite existing scaffolding files. |
-| `--template` | | Scaffold from a hosted template id. See [templates](https://github.com/instancez/instancez/blob/main/docs/templates.md). |
-| `--list-templates` | `false` | List available templates and exit. |
+| `--template` | | Scaffold from a template id (cloud catalog, falls back to the built-in one offline). See [templates](https://github.com/instancez/instancez/blob/main/docs/templates.md). |
+| `--list-templates` | `false` | List available templates (built-in list when offline) and exit. |
 
 ```bash
 inz init my-app --dir ./my-app
@@ -113,6 +113,7 @@ inz validate [flags]
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--cloud` | `false` | Validate against the cloud's policy rules server-side (projectless; the same rules a deploy enforces). Requires `inz cloud login`. Cannot be combined with `--project`. |
 | `--config` | `instancez.yaml` | Config source. Env: `INSTANCEZ_CONFIG`. |
 | `--json` | `false` | Output errors as JSON (for CI): an array of `{path, message, line, column, suggestion}`. `line` and `column` are omitted when unknown. |
 | `--project` | — | Preview against a cloud project. Bare `--project` uses `instancez.yaml`'s linked project; `--project <id>` or `--project=<id>` targets a different one. Never creates a project; link one first with `inz cloud deploy --new`. |
@@ -122,6 +123,7 @@ inz validate [flags]
 ```bash
 inz validate
 inz validate --use-dsn postgres://owner:pass@localhost/mydb
+inz validate --cloud                  # check against the cloud's policy rules
 inz validate --project                # preview against instancez.yaml's linked project
 inz validate --project abc123         # preview against a specific project id
 ```
@@ -182,7 +184,7 @@ Exit codes: `0` when nothing reaches `--fail-on`, `1` when something does, or wh
 }
 ```
 
-`checks.total` is the number of rules below, and `checks.passed` is how many of them have no finding. The human output ends with the same tally, for example `20 of 21 checks passed`. `unknown-key` is reported but is not a check.
+`checks.total` is the number of rules below, and `checks.passed` is how many of them have no finding. The human output ends with the same tally, for example `21 of 22 checks passed`. `unknown-key` is reported but is not a check.
 
 `edit` is present when one config change resolves the finding: `rls-disabled` (only for a table that already has policies, since turning RLS on without any denies every row), `anonymous-signins`, `jwt-expiry-long`, `signup-unverified-email` (only when an email provider is configured), `cors-null-origin` and `max-limit-disabled`. `path` lists object keys and array indexes. `remove: true` deletes the value instead of setting it, and `value` is then the value expected at `path`. Findings whose right fix depends on your app, such as policies, have no `edit`.
 
@@ -209,6 +211,7 @@ The dashboard's Security page runs the same scan. A banner shows how many checks
 | `policy-no-identity-write` | medium, high | A write policy that never checks the caller's identity, directly or through a declared rpc that does. High when the table has an owner column. |
 | `bucket-open-write` | critical | A storage policy that lets any caller with a JWT (including anonymous sign-in users) write or delete. |
 | `bucket-open-read` | medium | A select policy on a non-public bucket whose `using` is always true, so any caller with a JWT can list and read every object. |
+| `bucket-authed-write` | medium | An update or delete storage policy that only checks the caller is signed in (`auth.is_authenticated()`, `auth.uid() IS NOT NULL`), so any user can replace or delete other users' objects. |
 | `bucket-no-rls` | medium, high | A bucket with no policies. High when other buckets have them. |
 | `bucket-public` | low | A bucket with `public: true`. |
 | `rpc-definer-no-auth` | low, medium, high | A `security: definer` function callable without sign-in, so its reads bypass RLS. High when the body writes (or runs `EXECUTE`) with no `auth.*` check, medium when it only reads or writes with a check, low when it only reads and checks `auth.uid()`, `auth.jwt()`, `auth.email()` or `auth.role()`. |
@@ -233,7 +236,7 @@ The bundle is the deployment artifact for projects that use code functions. It c
 
 The bundled `instancez.yaml` follows `include:`: the files are merged into one and the `include:` key is dropped. Configs without `include:` are bundled as written. Shorthands such as `timestamps` and `owner` are not expanded in the bundle.
 
-Runs stateless validation (same as `inz validate`) including checking that each declared function's `file:` exists on disk.
+Runs stateless validation (same as `inz validate`) including checking that each declared function's `file:` exists on disk. npm output is shown only when `npm ci` fails.
 
 ```
 inz bundle [flags]
@@ -242,11 +245,11 @@ inz bundle [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--config` | `instancez.yaml` | Path to `instancez.yaml`. |
-| `--output` | — | Destination: local file path or `s3://bucket/key`. If omitted, writes to a temp file and prints the path. |
+| `--output` | `bundle.tar.gz` | Destination: local file path (relative to the current directory) or `s3://bucket/key`. Local files are written with mode 0600. |
 
 ```bash
-inz bundle                                       # write temp file, print path
-inz bundle --output bundle.tar.gz                # write to local file
+inz bundle                                       # write ./bundle.tar.gz
+inz bundle --output my-app.tar.gz                # write to another local file
 inz bundle --output s3://my-bucket/bundle.tar.gz # upload to S3, print pointer
 ```
 
@@ -372,6 +375,38 @@ Print the currently logged-in instancez Cloud user.
 
 ```
 inz cloud whoami
+```
+
+## inz cloud frontend deploy
+
+Upload an externally-built static frontend bundle to an instancez Cloud project.
+
+The bundle is served as the project's static site. `<dist-dir>` must contain `index.html` (a Vite/SPA build). The project id is read from `project.cloud.project_id` in `instancez.yaml`, or pass `--project`.
+
+```
+inz cloud frontend deploy <dist-dir> [flags]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--branch` | — | Branch/version to deploy the frontend to (validated server-side). |
+| `--config` | `instancez.yaml` | Path to `instancez.yaml` (for the linked project id). |
+| `--project` | — | Target this cloud project id instead of `instancez.yaml`'s `project.cloud.project_id`. |
+
+```bash
+npm run build && inz cloud frontend deploy dist
+```
+
+## inz completion
+
+Generate the shell autocompletion script.
+
+```
+inz completion bash|zsh|fish|powershell
+```
+
+```bash
+source <(inz completion zsh)    # load for the current shell
 ```
 
 ## inz telemetry

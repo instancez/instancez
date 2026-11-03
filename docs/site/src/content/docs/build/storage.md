@@ -17,21 +17,23 @@ storage:
     rls:
       - operations: [select]
         using: "auth.uid() IS NOT NULL"
+      # Each user writes only under <their user id>/.
       - operations: [insert]
-        with_check: "auth.uid() IS NOT NULL"
+        with_check: "name LIKE auth.uid()::text || '/%'"
       - operations: [update]
-        using: "auth.uid() IS NOT NULL"
-        with_check: "auth.uid() IS NOT NULL"
+        using: "name LIKE auth.uid()::text || '/%'"
+        with_check: "name LIKE auth.uid()::text || '/%'"
       - operations: [delete]
-        using: "auth.uid() IS NOT NULL"
+        using: "name LIKE auth.uid()::text || '/%'"
 
   documents:
     public: false
     max_size: 10MB
     rls:
+      # Private per-user folders: <user id>/<file>.
       - operations: [select, insert, update, delete]
-        using: "auth.uid() IS NOT NULL"
-        with_check: "auth.uid() IS NOT NULL"
+        using: "name LIKE auth.uid()::text || '/%'"
+        with_check: "name LIKE auth.uid()::text || '/%'"
 ```
 
 | Key | Type | Description |
@@ -51,30 +53,30 @@ instancez exposes the same storage API as Supabase. Any Supabase client library 
 
 ```js
 // Upload
-await supabase.storage.from('avatars').upload('photo.png', file)
-await supabase.storage.from('avatars').upload('photo.png', file, { upsert: true })
+await supabase.storage.from('avatars').upload(`${user.id}/photo.png`, file)
+await supabase.storage.from('avatars').upload(`${user.id}/photo.png`, file, { upsert: true })
 
 // Upload with user metadata, returned by info()
-await supabase.storage.from('avatars').upload('photo.png', file, { metadata: { alt: 'me' } })
+await supabase.storage.from('avatars').upload(`${user.id}/photo.png`, file, { metadata: { alt: 'me' } })
 
 // Public URL (public buckets), optionally resized
-const { data } = supabase.storage.from('avatars').getPublicUrl('photo.png')
-const { data } = supabase.storage.from('avatars').getPublicUrl('photo.png', { transform: { width: 200 } })
+const { data } = supabase.storage.from('avatars').getPublicUrl(`${user.id}/photo.png`)
+const { data } = supabase.storage.from('avatars').getPublicUrl(`${user.id}/photo.png`, { transform: { width: 200 } })
 
 // Signed URL (private buckets, expires in seconds)
-const { data } = await supabase.storage.from('documents').createSignedUrl('report.pdf', 3600)
+const { data } = await supabase.storage.from('documents').createSignedUrl(`${user.id}/report.pdf`, 3600)
 // Same, but the browser saves it as a file
-const { data } = await supabase.storage.from('documents').createSignedUrl('report.pdf', 3600, { download: 'q3.pdf' })
+const { data } = await supabase.storage.from('documents').createSignedUrl(`${user.id}/report.pdf`, 3600, { download: 'q3.pdf' })
 
 // Signed URL for a resized image
-const { data } = await supabase.storage.from('documents').createSignedUrl('scan.png', 3600, { transform: { width: 400 } })
+const { data } = await supabase.storage.from('documents').createSignedUrl(`${user.id}/scan.png`, 3600, { transform: { width: 400 } })
 
 // List one folder level, or page through every key
 const { data } = await supabase.storage.from('avatars').list('', { limit: 100 })
 const { data } = await supabase.storage.from('avatars').listV2({ prefix: 'users/', with_delimiter: true })
 
 // Delete
-await supabase.storage.from('avatars').remove(['photo.png'])
+await supabase.storage.from('avatars').remove([`${user.id}/photo.png`])
 ```
 
 Uploading to an existing path without `upsert: true` returns a 409 error.

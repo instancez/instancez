@@ -130,11 +130,17 @@ func openRead(c *ctx, p domain.RLSPolicy, at []any, label string, t domain.Table
 	}
 }
 
-func noIdentityWrite(c *ctx, p domain.RLSPolicy, at []any, label string, t domain.Table) {
+// writeExprs returns the expressions that gate the given write ops of p.
+func writeExprs(p domain.RLSPolicy, ops ...string) []string {
 	var exprs []string
-	for _, op := range opsOf(p, writeOps...) {
+	for _, op := range opsOf(p, ops...) {
 		exprs = append(exprs, exprsFor(op, p)...)
 	}
+	return exprs
+}
+
+func noIdentityWrite(c *ctx, p domain.RLSPolicy, at []any, label string, t domain.Table) {
+	exprs := writeExprs(p, writeOps...)
 	if len(exprs) == 0 || slices.ContainsFunc(exprs, isLiteralTrue) || !slices.ContainsFunc(exprs, func(e string) bool { return squash(e) != "false" }) {
 		return
 	}
@@ -157,6 +163,28 @@ func noIdentityWrite(c *ctx, p domain.RLSPolicy, at []any, label string, t domai
 		"Add an identity check, for example auth.uid() = user_id.")
 }
 
+// authGate reports whether expr lets any signed-in user through; an OR branch that is only a sign-in check opens the whole expression.
+func (c *ctx) authGate(expr string) bool {
+	branches := splitTopLevelOr(expr)
+	return slices.ContainsFunc(branches, func(e string) bool {
+		return isAuthGateOnly(e) && !strings.Contains(squash(e), "service_role") && !c.callsIdentityRPC(e)
+	})
+}
+
+// authedWrite returns the field of an update/delete policy that only checks sign-in: using covers the source row, with_check the destination of an update.
+func (c *ctx) authedWrite(p domain.RLSPolicy) string {
+	ops := opsOf(p, "update", "delete")
+	switch {
+	case len(ops) == 0:
+		return ""
+	case strings.TrimSpace(p.Using) != "" && c.authGate(p.Using):
+		return "using"
+	case slices.Contains(ops, "update") && strings.TrimSpace(p.WithCheck) != "" && c.authGate(p.WithCheck):
+		return "with_check"
+	}
+	return ""
+}
+
 func ruleBuckets(c *ctx) {
 	anyRLS := slices.ContainsFunc(slices.Collect(maps.Values(c.cfg.Storage)), func(b domain.Bucket) bool { return len(b.RLS) > 0 })
 	for _, name := range slices.Sorted(maps.Keys(c.cfg.Storage)) {
@@ -166,6 +194,14 @@ func ruleBuckets(c *ctx) {
 			if !strings.EqualFold(p.Type, "restrictive") {
 				pat := append(slices.Clone(at), "rls", i)
 				openWrite(c, "bucket-open-write", p, pat, anyJWT, "bucket "+name)
+				if field := c.authedWrite(p); field != "" {
+					msg := fmt.Sprintf("This policy only checks that someone is signed in, so any user (including anonymous sign-ins) can replace or delete other users' objects in bucket %s.", name)
+					if field == "with_check" && strings.TrimSpace(p.Using) != "" {
+						msg = fmt.Sprintf("This update policy's destination check only verifies sign-in, so users can move or rename objects into any folder of bucket %s.", name)
+					}
+					c.add("bucket-authed-write", Medium, append(pat, field), "Any signed-in user can change every object", msg,
+						"Scope it to the uploader, for example name LIKE auth.uid()::text || '/%'.")
+				}
 				if !b.Public && len(opsOf(p, "select")) > 0 && isLiteralTrue(p.Using) {
 					c.add("bucket-open-read", Medium, append(pat, "using"), "Anyone can read every object",
 						fmt.Sprintf("This policy lets %s list and read all objects in bucket %s.", anyJWT, name),

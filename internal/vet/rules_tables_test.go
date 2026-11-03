@@ -7,6 +7,7 @@ import (
 
 	"github.com/instancez/instancez/internal/config"
 	"github.com/instancez/instancez/internal/domain"
+	"github.com/instancez/instancez/pkg/templates"
 )
 
 // vetIDs returns sorted rule ids, dropping the default-config unverified-signup finding.
@@ -233,5 +234,87 @@ func TestIdentityRPCPolicies(t *testing.T) {
 				t.Errorf("rules = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+const adminRPC = "rpc:\n  is_admin:\n    returns: {type: boolean}\n    language: sql\n    body: select exists (select 1 from admins where id = auth.uid());\n"
+
+func TestBucketAuthedWrite(t *testing.T) {
+	pol := func(ops, field, expr, extra string) string {
+		return bucket("b", "    rls:\n      - operations: ["+ops+"]\n        "+field+": \""+expr+"\"\n"+extra)
+	}
+	cases := []struct {
+		name string
+		src  string
+		want []string
+	}{
+		{"update authed", pol("update", "using", "auth.is_authenticated()", ""), []string{"bucket-authed-write"}},
+		{"delete is not null", pol("delete", "using", "auth.uid() IS NOT NULL", ""), []string{"bucket-authed-write"}},
+		{"insert out of scope", pol("insert", "with_check", "auth.is_authenticated()", ""), nil},
+		{"social feed shape", pol("update", "using", "auth.uid() IS NOT NULL AND name LIKE auth.uid()::text || '/%'", ""), nil},
+		{"admin rpc", pol("delete", "using", "public.is_admin()", ""), nil},
+		{"service role gate", pol("delete", "using", "auth.role() = 'service_role'", ""), nil},
+		{"authed and admin rpc", pol("delete", "using", "auth.is_authenticated() AND public.is_admin()", "") + adminRPC, nil},
+		{"authed or service role", pol("delete", "using", "auth.is_authenticated() OR auth.role() = 'service_role'", ""), []string{"bucket-authed-write"}},
+		{"authed and service role", pol("delete", "using", "auth.is_authenticated() AND auth.role() = 'service_role'", ""), nil},
+		{"service role or admin rpc", pol("delete", "using", "auth.role() = 'service_role' OR public.is_admin()", "") + adminRPC, nil},
+		{"authed or admin rpc", pol("delete", "using", "auth.is_authenticated() OR public.is_admin()", "") + adminRPC, []string{"bucket-authed-write"}},
+		{"authed or owner prefix", pol("delete", "using", "auth.is_authenticated() OR name LIKE auth.uid()::text || '/%'", ""), []string{"bucket-authed-write"}},
+		{"or inside a literal", pol("delete", "using", "auth.uid() IS NOT NULL AND name LIKE auth.uid()::text || '/or %'", ""), nil},
+		{"parenthesised or under and", pol("delete", "using", "auth.is_authenticated() AND (name LIKE auth.uid()::text || '/%' OR public.is_admin())", "") + adminRPC, nil},
+		{"update using authed, with_check scoped", bucket("b", "    rls:\n      - operations: [update]\n        using: \"auth.is_authenticated()\"\n        with_check: \"name LIKE auth.uid()::text || '/%'\"\n"), []string{"bucket-authed-write"}},
+		{"update using scoped, with_check authed", bucket("b", "    rls:\n      - operations: [update]\n        using: \"name LIKE auth.uid()::text || '/%'\"\n        with_check: \"auth.is_authenticated()\"\n"), []string{"bucket-authed-write"}},
+		{"delete ignores with_check", bucket("b", "    rls:\n      - operations: [delete]\n        using: \"name LIKE auth.uid()::text || '/%'\"\n        with_check: \"auth.is_authenticated()\"\n"), nil},
+		{"outer parens around or", pol("delete", "using", "(auth.is_authenticated() OR name LIKE auth.uid()::text || '/%')", ""), []string{"bucket-authed-write"}},
+		{"grouped or branch", pol("delete", "using", "(auth.is_authenticated() OR name LIKE auth.uid()::text || '/%') OR public.is_admin()", "") + adminRPC, []string{"bucket-authed-write"}},
+		{"grouped or, scoped leaves", pol("delete", "using", "(name LIKE auth.uid()::text || '/%' OR public.is_admin()) OR auth.role() = 'service_role'", "") + adminRPC, nil},
+		{"double outer parens", pol("delete", "using", "((auth.is_authenticated() OR public.is_admin()))", "") + adminRPC, []string{"bucket-authed-write"}},
+		{"restrictive", pol("delete", "using", "auth.is_authenticated()", "        type: restrictive\n"), nil},
+		{"empty delete using", bucket("b", "    rls:\n      - operations: [delete]\n"), nil},
+		{"literal true is open write only", pol("delete", "using", "true", ""), []string{"bucket-open-write"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := vetIDs(t, tc.src); !slices.Equal(got, tc.want) {
+				t.Errorf("rules = %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	r, err := runQuiet([]byte(bucket("b", "    rls:\n      - operations: [insert]\n        with_check: \"true\"\n        type: restrictive\n      - operations: [update]\n        with_check: \"auth.is_authenticated()\"\n")))
+	if err != nil || len(r.Findings) != 1 || r.Findings[0].Path != "storage.b.rls[1].with_check" {
+		t.Fatalf("with_check-only path: %+v, err = %v", r, err)
+	}
+
+	r, err = runQuiet([]byte(bucket("b", "    rls:\n      - operations: [update]\n        using: \"name LIKE auth.uid()::text || '/%'\"\n        with_check: \"auth.is_authenticated()\"\n")))
+	if err != nil || len(r.Findings) != 1 || r.Findings[0].Path != "storage.b.rls[0].with_check" || !strings.Contains(r.Findings[0].Message, "move") {
+		t.Fatalf("destination finding: %+v, err = %v", r, err)
+	}
+
+	r, err = runQuiet([]byte(pol("update", "using", "auth.is_authenticated()", "")))
+	if err != nil || len(r.Findings) != 1 {
+		t.Fatalf("findings = %v, err = %v", r, err)
+	}
+	if f := r.Findings[0]; f.Severity != Medium || f.Path != "storage.b.rls[0].using" {
+		t.Errorf("finding = %+v", f)
+	}
+}
+
+func TestCatalogTemplatesPassBucketAuthedWrite(t *testing.T) {
+	list := templates.Default().List()
+	if len(list) == 0 {
+		t.Fatal("empty catalog")
+	}
+	for _, tpl := range list {
+		b := tpl.Bundle()
+		r, err := Run([]byte(b.LocalYAML()))
+		if err != nil {
+			t.Fatalf("%s: %v", tpl.ID, err)
+		}
+		for _, f := range r.Findings {
+			if f.Rule == "bucket-authed-write" {
+				t.Errorf("%s trips bucket-authed-write at %s", tpl.ID, f.Path)
+			}
+		}
 	}
 }

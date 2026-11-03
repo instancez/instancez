@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -309,4 +310,93 @@ func TestResolveBundleDest(t *testing.T) {
 			assert.Contains(t, got, ver, "version must be in generated filename")
 		})
 	}
+}
+
+// fakeNodeAndNpm adds a stub npm running the given sh body next to the stub node.
+func fakeNodeAndNpm(t *testing.T, npmBody string) {
+	t.Helper()
+	fakeNodeOnPath(t)
+	require.NoError(t, os.WriteFile(filepath.Join(os.Getenv("PATH"), "npm"), []byte("#!/bin/sh\n"+npmBody+"\n"), 0o755))
+}
+
+func writeDepsFixture(t *testing.T) string {
+	t.Helper()
+	dir := writeBundleFixture(t)
+	fnDir := filepath.Join(dir, "functions")
+	require.NoError(t, os.WriteFile(filepath.Join(fnDir, "package.json"), []byte(`{"name":"x","private":true}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(fnDir, "package-lock.json"), []byte(`{}`), 0o644))
+	return dir
+}
+
+func TestBuildBundleNpmQuietOnSuccess(t *testing.T) {
+	fakeNodeAndNpm(t, "echo 'added 1 package'; echo warn >&2")
+	dir := writeDepsFixture(t)
+	var bundle string
+	out := captureStdout(t, func() {
+		var err error
+		bundle, err = BuildBundle(dir)
+		require.NoError(t, err)
+	})
+	t.Cleanup(func() { _ = os.Remove(bundle) })
+	assert.NotContains(t, out, "added 1 package")
+}
+
+func TestBuildBundleNpmFailureShowsOutput(t *testing.T) {
+	fakeNodeAndNpm(t, "echo 'npm ERR! code E404' >&2; exit 1")
+	_, err := BuildBundle(writeDepsFixture(t))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "npm ci")
+	assert.Contains(t, err.Error(), "E404")
+}
+
+func TestBuildBundleNpmFailureOutputIsBounded(t *testing.T) {
+	chunk := strings.Repeat("x", 50)
+	fakeNodeAndNpm(t, "echo START; i=0; while [ $i -lt 400 ]; do printf '%s' "+chunk+"; i=$((i+1)); done; echo ' END' >&2; exit 1")
+	_, err := BuildBundle(writeDepsFixture(t))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "END")
+	assert.NotContains(t, err.Error(), "START", "only the tail of the output is kept")
+	assert.Less(t, len(err.Error()), 5000)
+}
+
+func TestTailWriterKeepsOnlyTheTail(t *testing.T) {
+	w := &tailWriter{max: 8}
+	for _, chunk := range []string{"abcdef", "ghijkl", "", "mn"} {
+		n, err := w.Write([]byte(chunk))
+		require.NoError(t, err)
+		assert.Equal(t, len(chunk), n)
+		assert.LessOrEqual(t, len(w.buf), 8)
+	}
+	assert.Equal(t, "ghijklmn", string(w.buf))
+	big := &tailWriter{max: 4}
+	_, err := big.Write([]byte(strings.Repeat("z", 1<<20) + "tail"))
+	require.NoError(t, err)
+	assert.Equal(t, "tail", string(big.buf))
+	assert.LessOrEqual(t, cap(big.buf), 2*4+8, "must not retain the whole write")
+}
+
+func TestBuildBundleNpmFlags(t *testing.T) {
+	argsFile := filepath.Join(t.TempDir(), "args")
+	fakeNodeAndNpm(t, `echo "$@" > `+argsFile)
+	bundle, err := BuildBundle(writeDepsFixture(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.Remove(bundle) })
+	// nosemgrep -- path is in t.TempDir
+	got, err := os.ReadFile(argsFile)
+	require.NoError(t, err)
+	assert.Equal(t, "ci --no-audit --no-fund", strings.TrimSpace(string(got)))
+}
+
+func TestBuildBundleNpmFailureWithoutOutputHasNoTrailingNewline(t *testing.T) {
+	fakeNodeAndNpm(t, "exit 1")
+	_, err := BuildBundle(writeDepsFixture(t))
+	require.Error(t, err)
+	assert.False(t, strings.HasSuffix(err.Error(), "\n"), "%q", err.Error())
+}
+
+func TestBuildBundleNpmFailureTailIsValidUTF8(t *testing.T) {
+	fakeNodeAndNpm(t, "i=0; while [ $i -lt 2000 ]; do printf '€' >&2; i=$((i+1)); done; exit 1")
+	_, err := BuildBundle(writeDepsFixture(t))
+	require.Error(t, err)
+	assert.True(t, utf8.ValidString(err.Error()))
 }

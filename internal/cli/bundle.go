@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -39,7 +40,7 @@ type manifestFunction struct {
 // functions/ to vendor dependencies; a failing `npm ci` aborts the build (bad
 // deps must never ship). The returned path points at a temp file the caller is
 // responsible for cleaning up.
-func BuildBundle(projectDir string) (bundlePath string, err error) {
+func BuildBundle(projectDir string, skip ...string) (bundlePath string, err error) {
 	functionsDir := filepath.Join(projectDir, "functions")
 	info, err := os.Stat(functionsDir)
 	if err != nil || !info.IsDir() {
@@ -70,11 +71,14 @@ func BuildBundle(projectDir string) (bundlePath string, err error) {
 	}
 
 	if hasDeps {
-		cmd := exec.Command("npm", "ci")
+		cmd := exec.Command("npm", "ci", "--no-audit", "--no-fund")
 		cmd.Dir = functionsDir
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		out := &tailWriter{max: 4 << 10}
+		cmd.Stdout, cmd.Stderr = out, out
 		if err := cmd.Run(); err != nil {
+			if tail := strings.TrimSpace(strings.ToValidUTF8(string(out.buf), "")); tail != "" {
+				return "", fmt.Errorf("npm ci in %s: %w\n%s", functionsDir, err, tail)
+			}
 			return "", fmt.Errorf("npm ci in %s: %w", functionsDir, err)
 		}
 	}
@@ -143,6 +147,9 @@ func BuildBundle(projectDir string) (bundlePath string, err error) {
 			return walkErr
 		}
 		if fi.IsDir() {
+			return nil
+		}
+		if slices.ContainsFunc(skip, func(s string) bool { return sameFile(s, path) }) {
 			return nil
 		}
 		// Skip the runtime shim — it's a runtime artifact, not source.
@@ -304,3 +311,27 @@ func resolveBundleDest(dest, version string) string {
 	return dest
 }
 
+func sameFile(a, b string) bool {
+	x, errA := os.Stat(a)
+	y, errB := os.Stat(b)
+	return errA == nil && errB == nil && os.SameFile(x, y)
+}
+
+// tailWriter keeps only the last max bytes written to it.
+type tailWriter struct {
+	max int
+	buf []byte
+}
+
+func (w *tailWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	if len(p) >= w.max {
+		w.buf = append(w.buf[:0], p[len(p)-w.max:]...)
+		return n, nil
+	}
+	if over := len(w.buf) + len(p) - w.max; over > 0 {
+		w.buf = append(w.buf[:0], w.buf[over:]...)
+	}
+	w.buf = append(w.buf, p...)
+	return n, nil
+}
