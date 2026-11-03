@@ -113,6 +113,9 @@ func runDev(opts devOptions) error {
 	var embeddedSuperuserDSN string
 	if opts.dbSrc == DevDBSourceEmbedded {
 		fmt.Printf("  Starting embedded Postgres 16...\n")
+		if cfg.Server.Port > 0 {
+			opts.avoidPort = uint32(cfg.Server.Port)
+		}
 		stop, superuserDSN, err := startEmbeddedPostgres(opts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  ✗ embedded Postgres failed to start: %v\n    hint: %s\n", err, embeddedPGHint(err))

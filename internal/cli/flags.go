@@ -311,6 +311,7 @@ type devOptions struct {
 	dbSrc     DevDBSource
 	pgDataDir string
 	resetPG   bool
+	avoidPort uint32 // HTTP port the embedded Postgres must not take
 }
 
 type devFlagSet struct {

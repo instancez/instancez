@@ -36,7 +36,7 @@ func startEmbeddedPostgres(opts devOptions) (stop func(), dsn string, err error)
 				return fmt.Errorf("reset pgdata: %w", err)
 			}
 		}
-		p, err := preferredPGPort(opts.pgDataDir)
+		p, err := preferredPGPort(opts.pgDataDir, opts.avoidPort)
 		if err != nil {
 			return fmt.Errorf("find free port for embedded Postgres: %w", err)
 		}
@@ -78,18 +78,23 @@ func persistPGPort(dataDir string, port uint32, warn io.Writer) {
 	}
 }
 
-// preferredPGPort reuses the port saved in dataDir when it is still free, else picks a new one.
-func preferredPGPort(dataDir string) (uint32, error) {
+// preferredPGPort reuses the port saved in dataDir when it is free and not avoid (the HTTP port), else picks a new one.
+func preferredPGPort(dataDir string, avoid uint32) (uint32, error) {
 	// nosemgrep -- path is the local pgdata dir
 	if data, err := os.ReadFile(filepath.Join(dataDir, pgPortFile)); err == nil {
-		if p, perr := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 16); perr == nil && p > 0 {
+		if p, perr := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 16); perr == nil && p > 0 && uint32(p) != avoid {
 			if l, lerr := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.FormatUint(p, 10))); lerr == nil {
 				_ = l.Close()
 				return uint32(p), nil
 			}
 		}
 	}
-	return freePort()
+	for {
+		p, err := freePort()
+		if err != nil || p != avoid {
+			return p, err
+		}
+	}
 }
 
 var errEmbeddedPGRunning = errors.New("another inz dev is already using this pgdata directory")

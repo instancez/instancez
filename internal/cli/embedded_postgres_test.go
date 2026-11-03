@@ -337,7 +337,7 @@ func TestPreferredPGPort(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			got, err := preferredPGPort(dir)
+			got, err := preferredPGPort(dir, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -418,5 +418,23 @@ func TestPersistPGPortWarnsOnWriteFailure(t *testing.T) {
 	// nosemgrep -- test reads a file it just wrote to a temp dir
 	if data, _ := os.ReadFile(filepath.Join(dir, pgPortFile)); string(data) != "5432" {
 		t.Fatalf("port file = %q, want 5432", data)
+	}
+}
+
+func TestPreferredPGPortAvoidsHTTPPort(t *testing.T) {
+	free, err := freePort()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, pgPortFile), []byte(fmt.Sprint(free)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := preferredPGPort(dir, free)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == free || got == 0 {
+		t.Fatalf("got %d, want a port different from the HTTP port %d", got, free)
 	}
 }
