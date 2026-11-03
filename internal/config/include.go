@@ -146,6 +146,7 @@ func ResolveIncludes(path string) (*Resolved, error) {
 	for _, real := range reals {
 		disp := files[real]
 		fp := filepath.Join(dir, filepath.FromSlash(disp))
+		// nosemgrep -- real passed EvalSymlinks, the project-dir containment check and the regular-file check in globInclude
 		fdata, err := os.ReadFile(real)
 		if err != nil {
 			return nil, cfgErr(fp, "cannot read file", err)

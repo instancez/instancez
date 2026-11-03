@@ -420,11 +420,13 @@ func TestFileSourceWatchIncludeWithMissingPatternDir(t *testing.T) {
 
 func TestFileSourceWriteReadOnlyWithInclude(t *testing.T) {
 	main, _ := includeProject(t)
+	// nosemgrep -- test reads a temp file it created
 	before, _ := os.ReadFile(main)
 	src := &FileSource{Path: main}
 	if _, err := src.Write(context.Background(), []byte("version: 1\n"), ""); !errors.Is(err, ErrConfigReadOnly) {
 		t.Fatalf("err = %v, want ErrConfigReadOnly", err)
 	}
+	// nosemgrep -- test reads a temp file it created
 	after, _ := os.ReadFile(main)
 	if string(before) != string(after) {
 		t.Fatal("main file was modified")

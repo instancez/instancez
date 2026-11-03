@@ -102,6 +102,7 @@ func TestIntegration_StorageOwnerColumnsAddedOnExistingTable(t *testing.T) {
 		t.Fatalf("v1: %v", err)
 	}
 	for _, c := range []string{"owner", "owner_id"} {
+		// nosemgrep -- c iterates the fixed column names owner and owner_id
 		if _, err := owner.Exec(ctx, "ALTER TABLE storage.objects DROP COLUMN "+c); err != nil {
 			t.Fatal(err)
 		}

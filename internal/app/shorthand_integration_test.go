@@ -211,6 +211,7 @@ func TestIntegration_RawOwnerPolicyAddsColumnsOnExistingTable(t *testing.T) {
 	}
 	applyYAML(t, m, storageYAML(`{operations: [select], using: "true"}`))
 	for _, c := range []string{"owner", "owner_id"} {
+		// nosemgrep -- c iterates the fixed column names owner and owner_id
 		if _, err := owner.Exec(context.Background(), "ALTER TABLE storage.objects DROP COLUMN "+c); err != nil {
 			t.Fatal(err)
 		}

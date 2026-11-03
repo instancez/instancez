@@ -1414,6 +1414,7 @@ func TestAdminPutConfig_IncludeReturns409(t *testing.T) {
 	if calls != 0 {
 		t.Fatalf("migrator touched the DB %d times", calls)
 	}
+	// nosemgrep -- test reads a temp file it created
 	if b, _ := os.ReadFile(path); !strings.Contains(string(b), "include") {
 		t.Fatal("main file was rewritten")
 	}

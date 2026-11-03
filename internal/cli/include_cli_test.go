@@ -101,10 +101,13 @@ func fakeCloudYAML(t *testing.T) (yamls *[]string) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == validateConfigPath:
+			// nosemgrep -- test server writes fixed canned responses
 			_, _ = w.Write([]byte(validateConfigOK))
 		case strings.HasSuffix(r.URL.Path, "/yaml"):
+			// nosemgrep -- test server writes fixed canned responses
 			_, _ = w.Write([]byte(uploadYAMLResponseBody(false)))
 		default:
+			// nosemgrep -- test server writes fixed canned responses
 			_, _ = w.Write([]byte(`{"dropped":[],"diff":{"tables":[],"config_sections":[],"has_changes":false}}`))
 		}
 	}))
@@ -126,6 +129,7 @@ func TestDeploy_SendsMergedYAMLAndKeepsIncludeOnDisk(t *testing.T) {
 		assert.Contains(t, y, "notes:")
 		assert.Contains(t, y, "timestamps: true", "shorthands ship as written")
 	}
+	// nosemgrep -- test reads a temp file it created
 	onDisk, err := os.ReadFile(cfg)
 	require.NoError(t, err)
 	assert.Equal(t, incMain, string(onDisk), "deploy must not rewrite an existing main file")
@@ -136,12 +140,16 @@ func TestDeploy_NewProjectWritesProjectIDIntoRawMain(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == validateConfigPath:
+			// nosemgrep -- test server writes fixed canned responses
 			_, _ = w.Write([]byte(validateConfigOK))
 		case r.Method == "POST" && r.URL.Path == "/instancez/projects":
+			// nosemgrep -- test server writes fixed canned responses
 			_, _ = w.Write([]byte(`{"project_id":"newp"}`))
 		case strings.HasSuffix(r.URL.Path, "/yaml"):
+			// nosemgrep -- test server writes fixed canned responses
 			_, _ = w.Write([]byte(uploadYAMLResponseBody(false)))
 		default:
+			// nosemgrep -- test server writes fixed canned responses
 			_, _ = w.Write([]byte(`{"dropped":[],"diff":{"tables":[],"config_sections":[],"has_changes":false}}`))
 		}
 	}))
@@ -152,6 +160,7 @@ func TestDeploy_NewProjectWritesProjectIDIntoRawMain(t *testing.T) {
 	cfg := incProject(t, "version: 1\nproject:\n  name: demo\ninclude: [tables/*.yaml]\n", incFragTS)
 	require.NoError(t, runDeploy(cfg, deployOpts{yes: true, new: true}))
 
+	// nosemgrep -- test reads a temp file it created
 	onDisk, err := os.ReadFile(cfg)
 	require.NoError(t, err)
 	assert.Contains(t, string(onDisk), "include:", "main file keeps include")
