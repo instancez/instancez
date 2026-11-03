@@ -163,12 +163,24 @@ func noIdentityWrite(c *ctx, p domain.RLSPolicy, at []any, label string, t domai
 		"Add an identity check, for example auth.uid() = user_id.")
 }
 
-// authedWrite reports a policy that gates update/delete on sign-in alone.
+// authGate reports whether expr lets any signed-in user through; an OR branch that is only a sign-in check opens the whole expression.
+func (c *ctx) authGate(expr string) bool {
+	branches := splitTopLevelOr(expr)
+	return slices.ContainsFunc(branches, func(e string) bool {
+		return isAuthGateOnly(e) && !strings.Contains(squash(e), "service_role") && !c.callsIdentityRPC(e)
+	})
+}
+
+// authedWrite reports an update/delete policy whose source-row check, or every check, is sign-in only.
 func (c *ctx) authedWrite(p domain.RLSPolicy) bool {
 	exprs := writeExprs(p, "update", "delete")
-	return len(exprs) > 0 && !slices.ContainsFunc(exprs, func(e string) bool {
-		return !isAuthGateOnly(e) || strings.Contains(squash(e), "service_role") || c.callsIdentityRPC(e)
-	})
+	if len(exprs) == 0 {
+		return false
+	}
+	if strings.TrimSpace(p.Using) != "" && c.authGate(p.Using) {
+		return true
+	}
+	return !slices.ContainsFunc(exprs, func(e string) bool { return !c.authGate(e) })
 }
 
 func ruleBuckets(c *ctx) {

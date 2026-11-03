@@ -79,3 +79,25 @@ func hasSensitiveSegment(name string) bool {
 	joined := "_" + strings.Join(wordSegments(name), "_") + "_"
 	return slices.ContainsFunc(sensitiveWords, func(w string) bool { return strings.Contains(joined, "_"+w+"_") })
 }
+
+// splitTopLevelOr splits expr on OR outside parentheses and string literals.
+func splitTopLevelOr(expr string) []string {
+	var parts []string
+	depth, start, inStr := 0, 0, false
+	for i := 0; i < len(expr); i++ {
+		switch c := expr[i]; {
+		case c == '\'':
+			inStr = !inStr
+		case inStr:
+		case c == '(':
+			depth++
+		case c == ')':
+			depth--
+		case depth == 0 && i > 0 && i+2 < len(expr) && strings.EqualFold(expr[i:i+2], "or") &&
+			strings.ContainsRune(" \t\r\n)", rune(expr[i-1])) && strings.ContainsRune(" \t\r\n(", rune(expr[i+2])):
+			parts = append(parts, expr[start:i])
+			start = i + 2
+		}
+	}
+	return append(parts, expr[start:])
+}
