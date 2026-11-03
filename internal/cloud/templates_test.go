@@ -63,7 +63,7 @@ func TestGetTemplateErrors(t *testing.T) {
 	cases := map[string]http.HandlerFunc{
 		"500":       func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(500) },
 		"429":       func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(429) },
-		"bad json":  func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{not json`)) }, // nosemgrep -- test server writes canned JSON
+		"bad json":  func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{not json`)) },        // nosemgrep -- test server writes canned JSON
 		"html page": func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`<html>spa</html>`)) }, // nosemgrep -- test server writes canned JSON
 	}
 	for name, h := range cases {
@@ -79,8 +79,8 @@ func TestGetTemplateErrors(t *testing.T) {
 func TestGetTemplateRejectsOversizeBody(t *testing.T) {
 	c := tplServer(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"manifest":{},"files":{"instancez.yaml":"`)) // nosemgrep -- test server writes canned JSON
-		_, _ = w.Write([]byte(strings.Repeat("a", MaxTemplateBytes+10))) // nosemgrep -- test server writes canned JSON
-		_, _ = w.Write([]byte(`"}}`)) // nosemgrep -- test server writes canned JSON
+		_, _ = w.Write([]byte(strings.Repeat("a", MaxTemplateBytes+10)))     // nosemgrep -- test server writes canned JSON
+		_, _ = w.Write([]byte(`"}}`))                                        // nosemgrep -- test server writes canned JSON
 	})
 	_, err := c.GetTemplate("blog")
 	require.Error(t, err)
