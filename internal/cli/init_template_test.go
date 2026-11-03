@@ -247,7 +247,7 @@ func TestInitTemplateOfflineUsesEmbedded(t *testing.T) {
 	want := tpl.Bundle()
 	got, err := os.ReadFile(filepath.Join(dir, "instancez.yaml"))
 	require.NoError(t, err)
-	assert.Equal(t, want.LocalYAML(), string(got))
+	assert.Equal(t, withSchemaHeader(want.LocalYAML()), string(got))
 	assert.FileExists(t, filepath.Join(dir, ".gitignore"))
 }
 
