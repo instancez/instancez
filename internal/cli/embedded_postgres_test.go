@@ -415,6 +415,7 @@ func TestPersistPGPortWarnsOnWriteFailure(t *testing.T) {
 	if warn.Len() != 0 {
 		t.Fatalf("unexpected warning: %q", warn.String())
 	}
+	// nosemgrep -- test reads a file it just wrote to a temp dir
 	if data, _ := os.ReadFile(filepath.Join(dir, pgPortFile)); string(data) != "5432" {
 		t.Fatalf("port file = %q, want 5432", data)
 	}

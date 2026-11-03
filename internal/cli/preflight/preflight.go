@@ -168,7 +168,7 @@ func PortFreeCheck(port int) Check {
 		}
 		l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 		switch {
-		case isAddrInUse(err):
+		case IsAddrInUse(err):
 			return Result{
 				Name:    "port free",
 				Detail:  fmt.Sprintf("port %d is already in use", port),

@@ -7,4 +7,5 @@ import (
 	"syscall"
 )
 
-func isAddrInUse(err error) bool { return errors.Is(err, syscall.EADDRINUSE) }
+// IsAddrInUse reports whether err is a bind failure because the port is taken.
+func IsAddrInUse(err error) bool { return errors.Is(err, syscall.EADDRINUSE) }

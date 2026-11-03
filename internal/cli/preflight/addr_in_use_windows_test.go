@@ -9,10 +9,10 @@ import (
 )
 
 func TestIsAddrInUseMatchesWSAEADDRINUSE(t *testing.T) {
-	if !isAddrInUse(fmt.Errorf("listen tcp :80: %w", syscall.Errno(10048))) {
+	if !IsAddrInUse(fmt.Errorf("listen tcp :80: %w", syscall.Errno(10048))) {
 		t.Fatal("WSAEADDRINUSE not recognized")
 	}
-	if isAddrInUse(syscall.Errno(10013)) {
+	if IsAddrInUse(syscall.Errno(10013)) {
 		t.Fatal("WSAEACCES treated as in use")
 	}
 }

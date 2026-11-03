@@ -198,3 +198,19 @@ type emptyMulti struct{}
 
 func (emptyMulti) Error() string   { return "empty" }
 func (emptyMulti) Unwrap() []error { return nil }
+
+func TestClassifyErrBusyPort(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = l.Close() }()
+	_, err = net.Listen("tcp", l.Addr().String())
+	if err == nil {
+		t.Fatal("second listen on a busy port succeeded")
+	}
+	class, expected, _ := classifyErr(fmt.Errorf("serve: %w", err))
+	if class != "env:port_in_use" || !expected {
+		t.Fatalf("got (%q, %v), want (env:port_in_use, true)", class, expected)
+	}
+}
