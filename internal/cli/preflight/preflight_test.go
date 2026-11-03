@@ -3,6 +3,8 @@ package preflight_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,10 +109,11 @@ func TestConfigValidCheck_LocalFileMissing(t *testing.T) {
 
 func TestDSNPresentCheck(t *testing.T) {
 	cases := []struct {
-		name    string
-		env     map[string]string
-		wantOK  bool
-		wantErr string // substring expected in Detail when !wantOK
+		name     string
+		env      map[string]string
+		wantOK   bool
+		wantErr  string // substring expected in Detail when !wantOK
+		wantHint string
 	}{
 		{
 			name:   "both present",
@@ -130,10 +133,11 @@ func TestDSNPresentCheck(t *testing.T) {
 			wantErr: preflight.EnvAuthDSN,
 		},
 		{
-			name:    "both missing",
-			env:     map[string]string{},
-			wantOK:  false,
-			wantErr: "not set",
+			name:     "both missing",
+			env:      map[string]string{},
+			wantOK:   false,
+			wantErr:  "not set",
+			wantHint: "inz dev --embedded-pg",
 		},
 	}
 	for _, tc := range cases {
@@ -150,6 +154,9 @@ func TestDSNPresentCheck(t *testing.T) {
 				if r.FixHint == "" {
 					t.Errorf("FixHint must be non-empty on failure")
 				}
+				if !strings.Contains(r.FixHint, tc.wantHint) {
+					t.Errorf("FixHint %q does not contain %q", r.FixHint, tc.wantHint)
+				}
 			}
 		})
 	}
@@ -162,6 +169,9 @@ func TestSuperuserDSNPresentCheck(t *testing.T) {
 	r := preflight.SuperuserDSNPresentCheck(absent)()
 	if r.OK {
 		t.Error("expected fail when INSTANCEZ_DATABASE_URL absent")
+	}
+	if !strings.Contains(r.FixHint, "inz dev --embedded-pg") {
+		t.Errorf("hint should suggest --embedded-pg, got: %q", r.FixHint)
 	}
 	if !strings.Contains(r.Detail, "INSTANCEZ_DATABASE_URL") {
 		t.Errorf("detail should mention env var, got: %q", r.Detail)
@@ -286,8 +296,14 @@ func TestRoleLayoutCheck_GrantsQueryError(t *testing.T) {
 func TestRunAll_NoShortCircuit(t *testing.T) {
 	called := make([]bool, 3)
 	checks := []preflight.Check{
-		func() preflight.Result { called[0] = true; return preflight.Result{Name: "a", OK: false, FixHint: "fix a"} },
-		func() preflight.Result { called[1] = true; return preflight.Result{Name: "b", OK: false, FixHint: "fix b"} },
+		func() preflight.Result {
+			called[0] = true
+			return preflight.Result{Name: "a", OK: false, FixHint: "fix a"}
+		},
+		func() preflight.Result {
+			called[1] = true
+			return preflight.Result{Name: "b", OK: false, FixHint: "fix b"}
+		},
 		func() preflight.Result { called[2] = true; return preflight.Result{Name: "c", OK: true} },
 	}
 	results := preflight.RunAll(checks)
@@ -372,5 +388,48 @@ func TestRender_Output(t *testing.T) {
 	}
 	if !strings.Contains(out, "do this to fix") {
 		t.Error("expected FixHint in output")
+	}
+}
+
+func TestPortFreeCheck(t *testing.T) {
+	held, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = held.Close() }()
+	heldPort := held.Addr().(*net.TCPAddr).Port
+
+	tmp, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	freePort := tmp.Addr().(*net.TCPAddr).Port
+	_ = tmp.Close()
+
+	for _, p := range []int{0, -1, freePort} {
+		if r := preflight.PortFreeCheck(p)(); !r.OK {
+			t.Errorf("port %d: want OK, got %+v", p, r)
+		}
+	}
+	r := preflight.PortFreeCheck(heldPort)()
+	if r.OK || !strings.Contains(r.Detail, fmt.Sprint(heldPort)) || !strings.Contains(r.FixHint, "--port") {
+		t.Fatalf("busy port: got %+v", r)
+	}
+}
+
+func TestConnectCheckEmptyDSNHintsEmbeddedPG(t *testing.T) {
+	r := preflight.ConnectCheck("database connect", "")()
+	if r.OK || !strings.Contains(r.FixHint, "inz dev --embedded-pg") {
+		t.Fatalf("got %+v", r)
+	}
+}
+
+func TestPortFreeCheckOtherListenErrors(t *testing.T) {
+	r := preflight.PortFreeCheck(70000)()
+	if r.OK {
+		t.Fatalf("out-of-range port passed: %+v", r)
+	}
+	if strings.Contains(r.Detail, "already in use") {
+		t.Fatalf("invalid port reported as in use: %q", r.Detail)
 	}
 }

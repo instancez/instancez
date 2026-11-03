@@ -56,7 +56,7 @@ The quickest way to start is the Postgres that ships inside `inz`. You do not ne
 inz dev --embedded-pg
 ```
 
-The first run downloads a Postgres 16 binary (about 30 MB) and keeps its data in `./pgdata/`. Later runs reuse that directory. To start over from an empty database, add `--reset-pg`.
+The first run downloads a Postgres 16 binary (about 30 MB) and keeps its data in `./pgdata/` and the binaries in `./pgdata.runtime/` (both git-ignored). Later runs reuse that directory. To start over from an empty database, add `--reset-pg`. The startup banner prints the database URL, so you can connect with `psql` or any other tool; the port stays the same across runs.
 
 **Or point at your own Postgres.** If you already have a Postgres 14+ instance, drop the flag and set a superuser connection string:
 

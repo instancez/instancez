@@ -42,6 +42,7 @@ dashboard/coverage/
 
 # Docker
 pgdata/
+pgdata.runtime/
 
 # LLM prompts
 prompts/

@@ -416,7 +416,7 @@ func TestRunInitPreservesUserGitignore(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(data)
-	for _, want := range []string{"# my notes", "node_modules/", ".env.local", "uploads/", "pgdata/"} {
+	for _, want := range []string{"# my notes", "node_modules/", ".env.local", "uploads/", "pgdata/", "pgdata.runtime/", "bundle.tar.gz"} {
 		if !strings.Contains(got, want) {
 			t.Errorf(".gitignore missing %q\n--- got ---\n%s", want, got)
 		}

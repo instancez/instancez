@@ -455,3 +455,12 @@ func TestWatchFunctionsDir_RelativePath(t *testing.T) {
 	}
 	expectReload(t, reloads, "relative functions dir created")
 }
+
+func TestDevBannerShowsEmbeddedDSN(t *testing.T) {
+	const dsn = "postgres://postgres:postgres@localhost:5555/postgres?sslmode=disable"
+	var buf strings.Builder
+	newDevBanner(dsn, &domain.Config{}, devOptions{}).write(&buf)
+	if !strings.Contains(buf.String(), "URL        "+dsn) {
+		t.Fatalf("banner missing embedded DSN:\n%s", buf.String())
+	}
+}

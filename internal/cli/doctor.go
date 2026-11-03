@@ -16,6 +16,7 @@ func newDoctorCmd() *cobra.Command {
 		Long: `Run a set of preflight checks that verify the environment is ready for
 inz dev: config file validity, the INSTANCEZ_DATABASE_URL superuser DSN,
 a live database connection, and the required Postgres role layout.
+Database checks are skipped when no DSN is set; "inz dev --embedded-pg" needs none.
 
 Exits non-zero if any check fails.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -44,15 +45,20 @@ func runDoctor(configPath string) error {
 // doctorChecks builds the full check list used by both runDoctor and
 // doctor_test.go (where it is called with injected dependencies).
 //
-// Dependency order: config → superuser DSN present → connect → role layout.
-// RunAll runs all checks and collects every failure so the user sees the full
-// picture at once.
+// No DSN skips DB checks; role layout runs only after connect succeeds.
 func doctorChecks(configPath string, lookup func(string) string) []preflight.Check {
 	superuserDSN := lookup(preflight.EnvSuperuserDSN)
-	return []preflight.Check{
+	checks := []preflight.Check{
 		preflight.ConfigValidCheck(configPath),
 		preflight.SuperuserDSNPresentCheck(lookup),
-		preflight.ConnectCheck("database connect", superuserDSN),
-		preflight.RoleLayoutCheck(preflight.PostgresRoleReporter(superuserDSN)),
 	}
+	if superuserDSN == "" {
+		return checks
+	}
+	connected := preflight.ConnectCheck("database connect", superuserDSN)()
+	checks = append(checks, func() preflight.Result { return connected })
+	if connected.OK {
+		checks = append(checks, preflight.RoleLayoutCheck(preflight.PostgresRoleReporter(superuserDSN)))
+	}
+	return checks
 }

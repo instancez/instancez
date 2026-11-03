@@ -351,6 +351,8 @@ func scaffoldGitignore() string {
 uploads/
 sdk/
 pgdata/
+pgdata.runtime/
+bundle.tar.gz
 functions/node_modules/
 `
 }

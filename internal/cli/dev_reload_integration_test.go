@@ -80,25 +80,31 @@ func (l *lockedBuffer) String() string {
 	return l.b.String()
 }
 
-func TestDevHotReload_AtomicRenameSave(t *testing.T) {
+func buildInz(t *testing.T) string {
+	t.Helper()
 	bin := filepath.Join(t.TempDir(), "inz")
 	if out, err := exec.Command("go", "build", "-o", bin, "../../cmd/inz").CombinedOutput(); err != nil {
 		t.Fatalf("build inz: %v\n%s", err, out)
 	}
+	return bin
+}
 
-	proj := t.TempDir()
-	cfgPath := filepath.Join(proj, "instancez.yaml")
-	if err := os.WriteFile(cfgPath, []byte(reloadBaseYAML), 0o644); err != nil {
-		t.Fatal(err)
-	}
+// startDev runs `inz dev --embedded-pg` in proj and returns once the HTTP server answers.
+func startDev(t *testing.T, proj string) (port int, logs *lockedBuffer) {
+	return startDevWith(t, proj, []string{"--embedded-pg"}, nil)
+}
 
-	port := reloadTestPort(t)
-	var logs lockedBuffer
+// startDevWith is startDev with extra flags and env (e.g. an external DSN instead of --embedded-pg).
+func startDevWith(t *testing.T, proj string, flags, env []string) (port int, logs *lockedBuffer) {
+	t.Helper()
+	port = reloadTestPort(t)
+	logs = &lockedBuffer{}
 	// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command, go_subproc_rule-subproc
-	cmd := exec.Command(bin, "dev", "--embedded-pg", "--port", fmt.Sprint(port))
+	cmd := exec.Command(buildInz(t), append([]string{"dev", "--port", fmt.Sprint(port)}, flags...)...)
 	cmd.Dir = proj
-	cmd.Env = append(os.Environ(), "INSTANCEZ_SECRET_KEY=inz_secret_reloadtest", "INSTANCEZ_PUBLISHABLE_KEY=inz_publishable_reloadtest")
-	cmd.Stdout, cmd.Stderr = &logs, &logs
+	cmd.Env = append(os.Environ(), "INSTANCEZ_TELEMETRY_DISABLED=1", "INSTANCEZ_SECRET_KEY=inz_secret_reloadtest", "INSTANCEZ_PUBLISHABLE_KEY=inz_publishable_reloadtest")
+	cmd.Env = append(cmd.Env, env...)
+	cmd.Stdout, cmd.Stderr = logs, logs
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -119,6 +125,16 @@ func TestDevHotReload_AtomicRenameSave(t *testing.T) {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
+	return port, logs
+}
+
+func TestDevHotReload_AtomicRenameSave(t *testing.T) {
+	proj := t.TempDir()
+	cfgPath := filepath.Join(proj, "instancez.yaml")
+	if err := os.WriteFile(cfgPath, []byte(reloadBaseYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	port, logs := startDev(t, proj)
 	if got := restStatus(port, "notes"); got != 404 {
 		t.Fatalf("notes before reload = %d, want 404", got)
 	}
@@ -189,5 +205,118 @@ func TestDevHotReload_AtomicRenameSave(t *testing.T) {
 	// notes dropped from config; dev mode allows destructive drops.
 	if !waitStatus(port, "notes", 404, 20*time.Second) {
 		t.Fatalf("save after invalid save did not reload (notes = %d)\n%s", restStatus(port, "notes"), logs.String())
+	}
+}
+
+// A reload whose migration fails must say so, keep serving the old schema, and not claim success.
+func TestDevHotReload_MigrationFailureNotReportedAsSuccess(t *testing.T) {
+	proj := t.TempDir()
+	cfgPath := filepath.Join(proj, "instancez.yaml")
+	if err := os.WriteFile(cfgPath, []byte(reloadBaseYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	port, logs := startDev(t, proj)
+	if err := os.WriteFile(cfgPath, []byte(reloadTableYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !waitStatus(port, "notes", 200, 20*time.Second) {
+		t.Fatalf("notes not served after good reload\n%s", logs.String())
+	}
+
+	// REST serves the new table before the watcher logs the reload, so wait for that line before marking the offset.
+	for end := time.Now().Add(20 * time.Second); !strings.Contains(logs.String(), "config reloaded successfully"); time.Sleep(100 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatalf("good reload never logged success\n%s", logs.String())
+		}
+	}
+	offset := len(logs.String())
+	bad := reloadTableYAML + "    rls_enabled: true\n    rls:\n      - operations: [select]\n        using: \"owner_id = auth.uid()\"\n"
+	if err := os.WriteFile(cfgPath, []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const want = "migration failed, still running last applied config"
+	end := time.Now().Add(20 * time.Second)
+	for !strings.Contains(logs.String()[offset:], want) {
+		if time.Now().After(end) {
+			t.Fatalf("fallback line not logged\n%s", logs.String()[offset:])
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	time.Sleep(time.Second)
+	if strings.Contains(logs.String()[offset:], "config reloaded successfully") {
+		t.Fatalf("failed reload reported as success\n%s", logs.String()[offset:])
+	}
+	if got := restStatus(port, "notes"); got != 200 {
+		t.Fatalf("notes after failed reload = %d, want 200", got)
+	}
+}
+
+func TestDev_PortInUseFailsBeforePostgres(t *testing.T) {
+	bin := buildInz(t)
+	proj := t.TempDir()
+	if err := os.WriteFile(filepath.Join(proj, "instancez.yaml"), []byte(reloadBaseYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = l.Close() }()
+	port := l.Addr().(*net.TCPAddr).Port
+
+	var logs lockedBuffer
+	// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command, go_subproc_rule-subproc
+	cmd := exec.Command(bin, "dev", "--embedded-pg", "--port", fmt.Sprint(port))
+	cmd.Dir = proj
+	cmd.Env = append(os.Environ(), "INSTANCEZ_TELEMETRY_DISABLED=1")
+	cmd.Stdout, cmd.Stderr = &logs, &logs
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatalf("inz dev exited 0 on a busy port\n%s", logs.String())
+		}
+	case <-time.After(30 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatalf("inz dev did not fail fast\n%s", logs.String())
+	}
+	out := logs.String()
+	if !strings.Contains(out, fmt.Sprintf("port %d is already in use", port)) {
+		t.Fatalf("missing busy-port message:\n%s", out)
+	}
+	if strings.Contains(out, "Starting embedded Postgres") {
+		t.Fatalf("Postgres boot started before the port check:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(proj, "pgdata")); !os.IsNotExist(err) {
+		t.Fatalf("pgdata/ created despite busy port (stat err = %v)", err)
+	}
+}
+
+// An external DSN (with a password) must never be echoed in the startup banner or logs.
+func TestDev_ExternalDSNNotPrintedInBanner(t *testing.T) {
+	// nosemgrep -- test-only password for a throwaway embedded Postgres
+	const password = "s3cretPw-9f2c"
+	_, dsn := startPGOrSkip(t, devOptions{pgDataDir: t.TempDir()})
+	execPG(t, dsn, "ALTER USER postgres PASSWORD '"+password+"'")
+	external := strings.Replace(dsn, "postgres:postgres@", "postgres:"+password+"@", 1)
+
+	proj := t.TempDir()
+	if err := os.WriteFile(filepath.Join(proj, "instancez.yaml"), []byte(reloadBaseYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, logs := startDevWith(t, proj, nil, []string{"INSTANCEZ_DATABASE_URL=" + external})
+
+	out := logs.String()
+	if !strings.Contains(out, "Connected") {
+		t.Fatalf("dev did not print its banner:\n%s", out)
+	}
+	for _, leak := range []string{"postgres://", password} {
+		if strings.Contains(out, leak) {
+			t.Fatalf("dev output leaks %q:\n%s", leak, out)
+		}
 	}
 }

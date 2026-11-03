@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/instancez/instancez/internal/app"
+	"github.com/instancez/instancez/internal/cli/preflight"
 	"github.com/instancez/instancez/internal/cloud"
 	"github.com/instancez/instancez/internal/domain"
 	"github.com/instancez/instancez/internal/telemetry"
@@ -108,7 +109,7 @@ func classifyErr(err error) (class string, isExpected bool, msg string) {
 		return "env:db_connect", true, msg
 	case errors.Is(err, syscall.ECONNREFUSED):
 		return "env:connect_refused", true, msg
-	case errors.Is(err, syscall.EADDRINUSE):
+	case preflight.IsAddrInUse(err):
 		return "env:port_in_use", true, msg
 	case errors.As(err, &dnsErr):
 		return "env:dns", true, msg

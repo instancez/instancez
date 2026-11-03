@@ -63,48 +63,47 @@ func TestDoctorRunnerAllPassing(t *testing.T) {
 	}
 }
 
-// TestDoctorChecksNoLiveDB verifies that doctorChecks can be built and run
-// without a live database.  The config check will fail because no
-// instancez.yaml exists in the test directory, but the runner must not panic.
-func TestDoctorChecksNoLiveDB(t *testing.T) {
+func TestDoctorChecksNoDSNSkipsDBChecks(t *testing.T) {
 	noEnv := func(string) string { return "" }
 	checks := doctorChecks("instancez.yaml", noEnv)
-	results := preflight.RunAll(checks)
-	if len(results) != len(checks) {
-		t.Fatalf("RunAll returned %d results, want %d", len(results), len(checks))
+	if len(checks) != 2 {
+		t.Fatalf("got %d checks, want 2 (config + superuser DSN)", len(checks))
 	}
-	// At least the config check should have failed (no file in cwd).
-	if !preflight.AnyFailed(results) {
-		t.Log("Note: unexpectedly all checks passed; may run from a directory with a valid instancez.yaml")
+	var dsnFailures int
+	for _, r := range preflight.RunAll(checks) {
+		switch r.Name {
+		case "database connect", "role layout":
+			t.Errorf("cascading check %q ran without a DSN", r.Name)
+		case "Superuser DSN present":
+			if !r.OK {
+				dsnFailures++
+			}
+		}
+	}
+	if dsnFailures != 1 {
+		t.Fatalf("want exactly one DSN failure, got %d", dsnFailures)
 	}
 }
 
-// TestDoctorChecksContainsExpectedChecks is a membership guard that asserts
-// doctorChecks returns exactly the expected set of named checks.  If a check
-// is accidentally removed this test will fail, preventing a silent regression.
-func TestDoctorChecksContainsExpectedChecks(t *testing.T) {
-	noEnv := func(string) string { return "" }
-	checks := doctorChecks("instancez.yaml", noEnv)
-
-	// Run each check against the empty env and collect result Names.
-	names := make(map[string]bool, len(checks))
-	for _, c := range checks {
-		r := c()
-		names[r.Name] = true
-	}
-
-	required := []string{
-		"config file valid",
-		"Superuser DSN present",
-		"database connect",
-		"role layout",
-	}
-	for _, want := range required {
-		if !names[want] {
-			t.Errorf("doctorChecks is missing check %q; got names: %v", want, names)
+func TestDoctorChecksUnreachableDBOneFailure(t *testing.T) {
+	lookup := func(k string) string {
+		if k == preflight.EnvSuperuserDSN {
+			return "postgres://x:y@127.0.0.1:1/db?connect_timeout=1"
 		}
+		return ""
 	}
-	if len(checks) != len(required) {
-		t.Errorf("doctorChecks returned %d checks, want %d; names: %v", len(checks), len(required), names)
+	checks := doctorChecks("instancez.yaml", lookup)
+	if len(checks) != 3 {
+		t.Fatalf("got %d checks, want 3", len(checks))
+	}
+	results := preflight.RunAll(checks)
+	last := results[len(results)-1]
+	if last.OK || last.Name != "database connect" {
+		t.Fatalf("last result = %+v, want failed database connect", last)
+	}
+	for _, r := range results {
+		if r.Name == "role layout" {
+			t.Fatalf("role layout reported after a connect failure: %+v", r)
+		}
 	}
 }

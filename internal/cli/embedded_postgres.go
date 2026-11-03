@@ -2,10 +2,13 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,32 +20,45 @@ import (
 // the data directory is wiped first. Returns a stop func (call on shutdown)
 // and the superuser DSN to inject as INSTANCEZ_DATABASE_URL.
 func startEmbeddedPostgres(opts devOptions) (stop func(), dsn string, err error) {
-	port, err := freePort()
-	if err != nil {
-		return nil, "", fmt.Errorf("find free port for embedded Postgres: %w", err)
-	}
-
-	if opts.resetPG {
-		if err := os.RemoveAll(opts.pgDataDir); err != nil {
-			return nil, "", fmt.Errorf("reset pgdata: %w", err)
-		}
-	}
-
 	// The library defaults its logger to os.Stdout, which floods the dev banner
 	// with initdb/pg_ctl chatter and PG's own server log. Capture it instead and
 	// surface it only when Start fails.
 	// ponytail: buffer grows with PG's session logging; fine for a dev session.
 	var pgLog bytes.Buffer
-	pg := embeddedpostgres.NewDatabase(
-		embeddedpostgres.DefaultConfig().
-			Version(embeddedpostgres.V16).
-			DataPath(opts.pgDataDir).
-			RuntimePath(opts.pgDataDir + ".runtime").
-			Port(port).
-			Logger(&pgLog),
-	)
-
-	if err := withFileLock(startLockPath(), pgStartLockTimeout, pg.Start); err != nil {
+	var pg *embeddedpostgres.EmbeddedPostgres
+	var port uint32
+	err = withFileLock(startLockPath(), pgStartLockTimeout, func() error {
+		if pid, livePort, live := liveEmbeddedPG(opts.pgDataDir); live {
+			return &embeddedPGRunningError{pid: pid, port: livePort}
+		}
+		if opts.resetPG {
+			if err := os.RemoveAll(opts.pgDataDir); err != nil {
+				return fmt.Errorf("reset pgdata: %w", err)
+			}
+		}
+		p, err := preferredPGPort(opts.pgDataDir, opts.avoidPort)
+		if err != nil {
+			return fmt.Errorf("find free port for embedded Postgres: %w", err)
+		}
+		port = p
+		pg = embeddedpostgres.NewDatabase(
+			embeddedpostgres.DefaultConfig().
+				Version(embeddedpostgres.V16).
+				DataPath(opts.pgDataDir).
+				RuntimePath(opts.pgDataDir + ".runtime").
+				Port(port).
+				Logger(&pgLog),
+		)
+		if err := pg.Start(); err != nil {
+			return err
+		}
+		persistPGPort(opts.pgDataDir, port, os.Stderr)
+		return nil
+	})
+	if errors.Is(err, errEmbeddedPGRunning) {
+		return nil, "", err
+	}
+	if err != nil {
 		return nil, "", fmt.Errorf("start embedded Postgres: %w\n%s", err, pgLog.String())
 	}
 
@@ -54,6 +70,72 @@ func startEmbeddedPostgres(opts devOptions) (stop func(), dsn string, err error)
 	}, superuserDSN, nil
 }
 
+const pgPortFile = ".inz-port"
+
+func persistPGPort(dataDir string, port uint32, warn io.Writer) {
+	if err := os.WriteFile(filepath.Join(dataDir, pgPortFile), []byte(strconv.Itoa(int(port))), 0o600); err != nil {
+		_, _ = fmt.Fprintf(warn, "warning: could not save embedded Postgres port: %v; the port may change on the next start\n", err)
+	}
+}
+
+// preferredPGPort reuses the port saved in dataDir when it is free and not avoid (the HTTP port), else picks a new one.
+func preferredPGPort(dataDir string, avoid uint32) (uint32, error) {
+	// nosemgrep -- path is the local pgdata dir
+	if data, err := os.ReadFile(filepath.Join(dataDir, pgPortFile)); err == nil {
+		if p, perr := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 16); perr == nil && p > 0 && uint32(p) != avoid {
+			if l, lerr := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.FormatUint(p, 10))); lerr == nil {
+				_ = l.Close()
+				return uint32(p), nil
+			}
+		}
+	}
+	for range maxPortPicks {
+		p, err := pickFreePort()
+		if err != nil || p != avoid {
+			return p, err
+		}
+	}
+	return 0, fmt.Errorf("no free port other than %d after %d attempts", avoid, maxPortPicks)
+}
+
+const maxPortPicks = 20
+
+var pickFreePort = freePort
+
+var errEmbeddedPGRunning = errors.New("another inz dev is already using this pgdata directory")
+
+type embeddedPGRunningError struct{ pid, port int }
+
+func (e *embeddedPGRunningError) Error() string {
+	return fmt.Sprintf("%s (Postgres PID %d, port %d)", errEmbeddedPGRunning, e.pid, e.port)
+}
+
+func (e *embeddedPGRunningError) Unwrap() error { return errEmbeddedPGRunning }
+
+// liveEmbeddedPG reports whether postmaster.pid in dataDir names a running process that accepts connections on its port.
+func liveEmbeddedPG(dataDir string) (pid int, port int, live bool) {
+	// nosemgrep -- path is the local pgdata dir
+	data, err := os.ReadFile(filepath.Join(dataDir, "postmaster.pid"))
+	if err != nil {
+		return 0, 0, false
+	}
+	lines := strings.Split(string(data), "\n")
+	if len(lines) < 4 {
+		return 0, 0, false
+	}
+	pid, perr := strconv.Atoi(strings.TrimSpace(lines[0]))
+	port, qerr := strconv.Atoi(strings.TrimSpace(lines[3]))
+	if perr != nil || qerr != nil || !pidAlive(pid) {
+		return 0, 0, false
+	}
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), 500*time.Millisecond)
+	if err != nil {
+		return 0, 0, false
+	}
+	_ = conn.Close()
+	return pid, port, true
+}
+
 // embeddedPGHint maps a failure from startEmbeddedPostgres to a single
 // actionable remediation hint. The matches key off the error strings emitted
 // by the fergusstrange/embedded-postgres library and the OS, so they are
@@ -63,6 +145,14 @@ func startEmbeddedPostgres(opts devOptions) (stop func(), dsn string, err error)
 func embeddedPGHint(err error) string {
 	msg := strings.ToLower(err.Error())
 	switch {
+	case errors.Is(err, errEmbeddedPGRunning):
+		hint := "stop the other inz dev (Ctrl+C in its terminal), or run this one from a different project directory"
+		var running *embeddedPGRunningError
+		if errors.As(err, &running) {
+			hint += fmt.Sprintf("; if no inz dev is running, a leftover Postgres is still up: kill %d", running.pid)
+		}
+		return hint
+
 	// Unsupported OS/arch: the library has no Postgres binary to download.
 	case strings.Contains(msg, "no version found matching"),
 		strings.Contains(msg, "cannot find binary in archive"):
@@ -92,7 +182,7 @@ func embeddedPGHint(err error) string {
 		strings.Contains(msg, "unable to connect to create database"),
 		strings.Contains(msg, "process already listening on port"),
 		strings.Contains(msg, "timed out waiting"):
-		return "./pgdata may be corrupt, left by a different Postgres version, or still in use by a stale process — stop any running instance, or wipe and reinitialize with: inz dev --embedded-pg --reset-pg"
+		return "./pgdata may be corrupt, left by a different Postgres version, or left by a crashed run — stop any running instance, delete ./pgdata/postmaster.pid if it is stale, or wipe and reinitialize with: inz dev --embedded-pg --reset-pg"
 
 	default:
 		return "set INSTANCEZ_DATABASE_URL to use a full Postgres installation instead"

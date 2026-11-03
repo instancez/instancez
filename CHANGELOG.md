@@ -13,6 +13,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 ### Changed
 
 - `inz validate`, `inz dev`, `inz serve` and `inz bundle` errors carry the real key path, `file:line:column`, plain-language type errors (`expected true or false, got "maybe"`), the duplicate-key path and a `check indentation at line N` hint. Identical errors are shown once, unset variables show where they are used, and `--json` gains `column`.
+- `inz dev --embedded-pg` reuses the same Postgres port across runs (stored in `pgdata/.inz-port`, new port if busy) and prints the connection URL in the startup banner.
 
 ### Deprecated
 
@@ -26,6 +27,13 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - Breaking, `inz validate` rejects RLS `using`/`with_check` expressions that can never parse: whitespace-only, unbalanced `(` or quotes, a doubled comparison like `= =`, doubled `AND`/`OR`, or a leading or trailing `AND`/`OR`. Error: `invalid SQL expression: <reason>`. Fix the expression.
 - Breaking, `inz validate` rejects a table that declares the same field twice (migrate failed with `column specified more than once`). Remove or rename one.
 - Breaking, `inz validate` now rejects foreign keys that fail at migrate: `users.id` with no public `users` table (use `auth.users.id`), a bare `x.col` where `x` has `schema:` set (use `schema.x.col`), `auth.users.<col>` other than `id`/`email` or `storage.objects.<col>` other than `id` (no unique constraint), and a misspelled `auth` or `storage` schema such as `auht.users.id`. Everything inz validate cannot prove wrong only warns: other undeclared or near-miss schemas (with a did-you-mean), tables in a declared schema that the config does not define, and auth/storage tables other than the ones instancez creates.
+- `inz doctor` reports a missing or unreachable database once instead of three times, and DSN hints in `inz doctor` / `inz dev` suggest `inz dev --embedded-pg`.
+- `inz dev` checks that the HTTP port is free (and that the config is valid) before starting embedded Postgres or installing function dependencies, so these failures show up in seconds.
+- `inz dev` hot reload logs every validation error with its path and line, not just a count.
+- `inz init` adds `pgdata.runtime/` (embedded Postgres binaries) and `bundle.tar.gz` to `.gitignore`. Existing projects: re-run `inz init` (it only appends missing lines) or add the line by hand.
+- Closing the terminal (SIGHUP) now stops `inz dev` and its embedded Postgres instead of leaving Postgres running.
+- A second `inz dev --embedded-pg` in the same project now stops with "another inz dev is already using this pgdata directory (Postgres PID N, port P)" instead of suggesting `--reset-pg`, and `--reset-pg` no longer wipes a data directory another `inz dev` is using.
+- A hot reload (`inz dev`, `inz serve --watch`) whose migration fails now logs the failure and keeps the running config's functions; it used to log "config reloaded successfully" and load functions from the rejected config.
 
 ## [0.0.12] - 2026-11-02
 

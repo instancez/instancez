@@ -37,7 +37,7 @@ inz init my-app --dir ./my-app
 
 Start a local development server with hot-reload.
 
-Reads config, connects to Postgres, runs migrations, and watches for file changes. Requires `INSTANCEZ_DATABASE_URL` (a superuser DSN) to provision roles on every startup, or set `INSTANCEZ_OWNER_DATABASE_URL` and `INSTANCEZ_AUTH_DATABASE_URL` directly.
+Reads config, connects to Postgres, runs migrations, and watches for file changes. Requires `INSTANCEZ_DATABASE_URL` (a superuser DSN) to provision roles on every startup, or set `INSTANCEZ_OWNER_DATABASE_URL` and `INSTANCEZ_AUTH_DATABASE_URL` directly. Startup order: validate the config, check that the HTTP port is free, then start embedded Postgres and function dependencies.
 
 ```
 inz dev [flags]
@@ -49,10 +49,10 @@ inz dev [flags]
 | `--dashboard` | `readwrite` | Dashboard mode: `disabled`, `readonly`, or `readwrite`. |
 | `--dashboard-write-dotenv` | `true` | Allow the dashboard to write secrets to `.development.env`. |
 | `--dotenv-path` | `.development.env` | Path to the .env file for dashboard secret writing. |
-| `--embedded-pg` | `false` | Start an embedded Postgres 16 (data at `./pgdata/`); no external DB needed. |
+| `--embedded-pg` | `false` | Start an embedded Postgres 16 (data at `./pgdata/`); no external DB needed. Prints its DSN in the banner; port is kept across runs. |
 | `--no-watch` | `false` | Disable hot-reload. |
 | `--port` | (from config or `8080`) | Override server port. |
-| `--reset-pg` | `false` | Wipe `./pgdata/` before starting (requires `--embedded-pg`). |
+| `--reset-pg` | `false` | Wipe `./pgdata/` before starting (requires `--embedded-pg`). Refused while another `inz dev` uses `./pgdata/`. |
 | `--verbose` | `false` | Enable debug logging. |
 | `--watch` | `true` | Watch the config source for changes. |
 | `--watch-interval` | `1m` | S3-watch poll interval (minimum 10s). |
@@ -67,7 +67,7 @@ Start the production server.
 
 Unlike `dev`, does not hot-reload and defaults to dashboard disabled.
 
-Even without `--migrate`, every boot creates the migration-history table if missing, as its own locked step, then — in a second locked transaction — creates `auth.jwt_keys` if missing, re-applies the privilege revokes on `auth.*` and `_instancez_migrations`, and adds any auth columns or indexes that newer releases introduced. Boot fails if either step fails. With `--watch`, this also re-runs after every hot-reloaded migration; a failure there is logged, not fatal.
+Even without `--migrate`, every boot creates the migration-history table if missing, as its own locked step, then — in a second locked transaction — creates `auth.jwt_keys` if missing, re-applies the privilege revokes on `auth.*` and `_instancez_migrations`, and adds any auth columns or indexes that newer releases introduced. Boot fails if either step fails. With `--watch`, this also re-runs after every hot-reloaded migration; a failure there is logged, not fatal, and the functions of the failed config are not loaded (they reload only after a successful migration).
 
 ```
 inz serve [flags]
@@ -274,6 +274,8 @@ inz cloud deploy --yes             # skip the confirmation prompt (e.g. in CI)
 ## inz doctor
 
 Run preflight checks for `inz dev`: config validity, the superuser database DSN, and Postgres role layout.
+
+Database checks are skipped when no DSN is set (a missing or unreachable database is reported once), and the DSN hint suggests `inz dev --embedded-pg`, which needs none.
 
 Exits non-zero if any check fails.
 
