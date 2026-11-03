@@ -599,15 +599,27 @@ func TestInitTemplateHeaderNotDuplicated(t *testing.T) {
 }
 
 func TestInitTemplateBundleWithoutYAMLFallsBack(t *testing.T) {
-	for _, body := range []string{`{}`, `{"manifest":{"id":"blog"},"files":{"functions/a.js":"x"}}`} {
+	for _, body := range []string{`{}`, `{"manifest":{"id":"blog"},"files":{"functions/a.js":"x"}}`, `{"files":{"instancez.yaml":"  \n"}}`} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) })) // nosemgrep -- test server writes canned JSON
 		t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
 		t.Setenv("HOME", t.TempDir())
 		dir := t.TempDir()
 		require.NoError(t, runInit(initOptions{dir: dir, template: "blog"}), body)
-		assert.FileExists(t, filepath.Join(dir, "instancez.yaml"), body)
+		got, err := os.ReadFile(filepath.Join(dir, "instancez.yaml"))
+		require.NoError(t, err, body)
+		assert.NotEmpty(t, strings.TrimSpace(string(got)), body)
 		srv.Close()
 	}
+}
+
+func TestListTemplatesMissingFieldFallsBack(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{}`)) })) // nosemgrep -- test server writes canned JSON
+	t.Cleanup(srv.Close)
+	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
+	t.Setenv("HOME", t.TempDir())
+	var buf bytes.Buffer
+	require.NoError(t, runListTemplates(&buf))
+	assert.Contains(t, buf.String(), "kanban-board")
 }
 
 func TestListTemplatesAllInvalidFallsBack(t *testing.T) {

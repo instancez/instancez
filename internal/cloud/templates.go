@@ -55,6 +55,9 @@ func (c *Client) ListTemplates() ([]templates.Manifest, error) {
 	if err := c.public().do("GET", "/public/templates", nil, &out); err != nil {
 		return nil, safeError(err)
 	}
+	if out.Templates == nil {
+		return nil, errors.New("template catalog response has no templates field")
+	}
 	valid := out.Templates[:0]
 	for _, m := range out.Templates {
 		if templates.ValidID(m.ID) {
@@ -91,7 +94,7 @@ func (c *Client) GetTemplate(id string) (*templates.Bundle, error) {
 	if err != nil {
 		return nil, safeError(err)
 	}
-	if _, ok := b.Files["instancez.yaml"]; !ok {
+	if strings.TrimSpace(b.Files["instancez.yaml"]) == "" {
 		return nil, errors.New("template response has no instancez.yaml")
 	}
 	return &b, nil

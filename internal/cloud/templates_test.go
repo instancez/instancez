@@ -1,6 +1,7 @@
 package cloud
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -286,5 +287,23 @@ func TestGetTemplateWithoutYAMLIsError(t *testing.T) {
 		require.Error(t, err, body)
 		var nf *TemplateNotFoundError
 		assert.False(t, errors.As(err, &nf), body)
+	}
+}
+
+func TestListTemplatesMissingFieldIsError(t *testing.T) {
+	for _, body := range []string{`{}`, `null`, `{"templates":null}`} {
+		c := tplServer(t, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) }) // nosemgrep -- test server writes canned JSON
+		_, err := c.ListTemplates()
+		require.Error(t, err, body)
+	}
+}
+
+func TestGetTemplateBlankYAMLIsError(t *testing.T) {
+	for _, yml := range []string{"", "  \n\t"} {
+		c := tplServer(t, func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(templates.Bundle{Files: map[string]string{"instancez.yaml": yml}})
+		})
+		_, err := c.GetTemplate("blog")
+		require.Error(t, err, yml)
 	}
 }
