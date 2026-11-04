@@ -163,48 +163,62 @@ func noIdentityWrite(c *ctx, p domain.RLSPolicy, at []any, label string, t domai
 		"Add an identity check, for example auth.uid() = user_id.")
 }
 
-// authGate reports whether expr lets any signed-in user through: some OR branch, or the ELSE or sign-in-guarded arm of a CASE, is only a sign-in check.
-func (c *ctx) authGate(expr string) bool {
+const maxGateDepth = 32
+
+// authGate reports whether any signed-in user passes expr.
+func (c *ctx) authGate(expr string) bool { return c.authGateAt(expr, 0) }
+
+func (c *ctx) authGateAt(expr string, depth int) bool {
+	if depth > maxGateDepth {
+		return false
+	}
+	next := func(e string) bool { return c.authGateAt(e, depth+1) }
 	if branches := splitTop(expr, "or"); len(branches) > 1 {
-		return slices.ContainsFunc(branches, c.authGate)
+		return slices.ContainsFunc(branches, next)
 	}
 	if conjuncts := splitTop(expr, "and"); len(conjuncts) > 1 {
-		return slices.ContainsFunc(conjuncts, c.authGate) &&
-			!slices.ContainsFunc(conjuncts, func(e string) bool { return !c.authGate(e) && !isLiteralTrue(e) })
+		anyGate := false
+		for _, e := range conjuncts {
+			if next(e) {
+				anyGate = true
+			} else if c.scopes(e) {
+				return false
+			}
+		}
+		return anyGate
 	}
 	if conds, results, elseRes, ok := caseArms(expr); ok {
-		if strings.TrimSpace(elseRes) != "" && c.authGate(elseRes) {
+		if next(elseRes) {
 			return true
 		}
-		return slices.ContainsFunc(conds, func(cond string) bool { return c.authGate(cond) }) && c.guardedOpen(conds, results)
+		for i, cond := range conds {
+			if next(cond) && (isLiteralTrue(results[i]) || next(results[i])) {
+				return true
+			}
+		}
+		return false
 	}
 	e := stripOuterParens(expr)
 	_, mask := scanSQL(e)
-	if toks := sqlWords(mask); len(toks) > 0 && toks[0].word == "not" || slices.ContainsFunc(toks, func(t sqlTok) bool { return t.word == "case" }) {
+	toks := sqlWords(mask)
+	if len(toks) > 0 && toks[0].word == "not" || slices.ContainsFunc(toks, func(t sqlTok) bool { return t.word == "case" }) {
 		return false
 	}
-	return isAuthGateOnly(mask) && !strings.Contains(squash(e), "service_role") && !c.callsIdentityRPC(e)
+	return isAuthGateOnly(mask) && !c.scopes(e)
 }
 
-// guardedOpen reports whether a CASE arm guarded by a sign-in-only condition yields true or another sign-in check.
-func (c *ctx) guardedOpen(conds, results []string) bool {
-	for i, cond := range conds {
-		if c.authGate(cond) && (isLiteralTrue(results[i]) || c.authGate(results[i])) {
-			return true
-		}
-	}
-	return false
+// scopes reports whether e ties access to the caller: identity, service role or an identity rpc.
+func (c *ctx) scopes(e string) bool {
+	_, mask := scanSQL(e)
+	return refsIdentity(strings.ReplaceAll(squash(mask), "auth.uid()isnotnull", "")) || strings.Contains(squash(e), "service_role") || c.callsIdentityRPC(e)
 }
 
-// authedWrite returns the field of an insert, update or delete policy that only checks sign-in: using covers the source row, with_check the new row or an update's destination.
+// authedWrite returns the field of a write policy that only checks sign-in.
 func (c *ctx) authedWrite(p domain.RLSPolicy) string {
-	ops := opsOf(p, writeOps...)
 	switch {
-	case len(ops) == 0:
-		return ""
-	case (slices.Contains(ops, "update") || slices.Contains(ops, "delete")) && strings.TrimSpace(p.Using) != "" && c.authGate(p.Using):
+	case len(opsOf(p, "update", "delete")) > 0 && c.authGate(p.Using):
 		return "using"
-	case (slices.Contains(ops, "update") || slices.Contains(ops, "insert")) && strings.TrimSpace(p.WithCheck) != "" && c.authGate(p.WithCheck):
+	case len(opsOf(p, "update", "insert")) > 0 && c.authGate(p.WithCheck):
 		return "with_check"
 	}
 	return ""
@@ -220,14 +234,16 @@ func ruleBuckets(c *ctx) {
 				pat := append(slices.Clone(at), "rls", i)
 				openWrite(c, "bucket-open-write", p, pat, anyJWT, "bucket "+name)
 				if field := c.authedWrite(p); field != "" {
+					title := "Any signed-in user can change every object"
 					msg := fmt.Sprintf("This policy only checks that someone is signed in, so any user (including anonymous sign-ins) can replace or delete other users' objects in bucket %s.", name)
 					switch ops := opsOf(p, writeOps...); {
 					case field == "with_check" && !slices.Contains(ops, "update"):
+						title = "Any signed-in user can upload anywhere"
 						msg = fmt.Sprintf("This insert policy only checks that someone is signed in, so any user (including anonymous sign-ins) can upload to any path in bucket %s.", name)
 					case field == "with_check" && strings.TrimSpace(p.Using) != "":
 						msg = fmt.Sprintf("This update policy's destination check only verifies sign-in, so users can move or rename objects into any folder of bucket %s.", name)
 					}
-					c.add("bucket-authed-write", Medium, append(pat, field), "Any signed-in user can change every object", msg,
+					c.add("bucket-authed-write", Medium, append(pat, field), title, msg,
 						"Scope it to the uploader, for example name LIKE auth.uid()::text || '/%'.")
 				}
 				if !b.Public && len(opsOf(p, "select")) > 0 && isLiteralTrue(p.Using) {

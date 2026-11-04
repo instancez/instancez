@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSplitTop(t *testing.T) {
@@ -106,11 +107,14 @@ func TestAuthGate(t *testing.T) {
 		{"role authenticated", "auth.role() = 'authenticated'", true},
 		{"negated gate", "NOT auth.is_authenticated()", false},
 		{"owner constraint", "auth.uid() IS NOT NULL AND name LIKE auth.uid()::text || '/%'", false},
-		{"path constraint", "auth.is_authenticated() AND (storage.foldername(name))[1] = 'shared'", false},
+		{"non-identity filter", "auth.is_authenticated() AND (storage.foldername(name))[1] = 'shared'", true},
+		{"bucket id literal", "bucket_id = 'x' AND auth.role() = 'authenticated'", true},
+		{"role and identity", "auth.role() = 'authenticated' AND auth.uid() = user_id", false},
 		{"and of gates", "auth.is_authenticated() AND auth.uid() IS NOT NULL", true},
 		{"and with true", "auth.is_authenticated() AND true", true},
 		{"or open", "auth.is_authenticated() OR name LIKE auth.uid()::text || '/%'", true},
-		{"or in literal under and", "auth.uid() IS NOT NULL AND name LIKE '%/or/%'", false},
+		{"or in literal under and", "auth.uid() IS NOT NULL AND name LIKE '%/or/%'", true},
+		{"or in literal with identity", "auth.uid() IS NOT NULL AND name LIKE auth.uid()::text || '/or/%'", false},
 		{"and in literal under or", "name LIKE '/and/' OR auth.is_authenticated()", true},
 		{"gate text in literal", "name = 'auth.is_authenticated() or x'", false},
 		{"nested parens or under and", "auth.is_authenticated() AND ((auth.uid() IS NOT NULL) OR name LIKE 'a/%')", true},
@@ -136,6 +140,26 @@ func TestAuthGate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := c.authGate(tc.expr); got != tc.want {
 				t.Errorf("authGate(%q) = %v, want %v", tc.expr, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAuthGateIsLinearAndBounded(t *testing.T) {
+	c := &ctx{cfg: &domain.Config{}}
+	const n = 40
+	gate := "auth.is_authenticated()"
+	exprs := map[string]string{
+		"and nest":  strings.Repeat("true AND (", n) + gate + strings.Repeat(")", n),
+		"case nest": strings.Repeat("CASE WHEN ", n) + gate + strings.Repeat(" THEN true END", n),
+		"deep":      strings.Repeat("(", 5000) + gate + strings.Repeat(")", 5000),
+	}
+	for name, e := range exprs {
+		t.Run(name, func(t *testing.T) {
+			start := time.Now()
+			c.authGate(e)
+			if d := time.Since(start); d > time.Second {
+				t.Fatalf("authGate took %v", d)
 			}
 		})
 	}

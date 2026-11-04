@@ -21,7 +21,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - `timestamps: true` on a table adds `created_at` and an auto-updated `updated_at`.
 - RLS `operations` accepts any combination, e.g. `[insert, update]`.
 - `inz vet` rule `bucket-authed-write` flags update/delete storage policies that only check sign-in (the source row or an update's destination).
-- `inz vet` `bucket-authed-write` also flags an insert policy that only checks sign-in, and sign-in `OR` branches or `CASE` arms. A sign-in check `AND`ed with an owner or path condition is not flagged. `policy-authed-read-sensitive` uses the same check, so it no longer flags `auth.role() = 'service_role'` or sign-in `AND` a filter, and `policy-open-write` catches `... OR true`. Limits are in the `inz vet` docs.
+- `inz vet` `bucket-authed-write` also flags sign-in-only insert policies and sign-in `OR` branches or `CASE` arms, and sign-in `AND`ed with an identity check is not flagged.
 
 ### Changed
 

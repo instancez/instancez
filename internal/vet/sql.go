@@ -80,7 +80,7 @@ func hasSensitiveSegment(name string) bool {
 	return slices.ContainsFunc(sensitiveWords, func(w string) bool { return strings.Contains(joined, "_"+w+"_") })
 }
 
-// scanSQL blanks comments in clean and also blanks string and quoted-identifier contents in mask; both keep expr's length.
+// scanSQL blanks comments in clean, and literal contents too in mask.
 func scanSQL(expr string) (clean, mask string) {
 	c, m := []byte(expr), []byte(expr)
 	for i := 0; i < len(c); i++ {
@@ -152,15 +152,12 @@ func sqlWords(mask string) []sqlTok {
 				j++
 			}
 			w := strings.ToLower(mask[i:j])
-			switch w {
-			case "case":
-				toks = append(toks, sqlTok{w, i, j, depth})
-				depth++
-			case "end":
+			if w == "end" {
 				depth--
-				toks = append(toks, sqlTok{w, i, j, depth})
-			default:
-				toks = append(toks, sqlTok{w, i, j, depth})
+			}
+			toks = append(toks, sqlTok{w, i, j, depth})
+			if w == "case" {
+				depth++
 			}
 			i = j
 		default:
@@ -186,26 +183,37 @@ func splitTop(expr, kw string) []string {
 
 // stripOuterParens removes parentheses that wrap the whole expression.
 func stripOuterParens(expr string) string {
-	for {
-		clean, mask := scanSQL(expr)
-		t, m := strings.TrimSpace(clean), strings.TrimSpace(mask)
-		if len(t) < 2 || t[0] != '(' || t[len(t)-1] != ')' {
-			return strings.TrimSpace(clean)
-		}
-		depth := 0
-		for i := 0; i < len(m); i++ {
-			switch m[i] {
-			case '(':
-				depth++
-			case ')':
-				depth--
-				if depth == 0 && i < len(m)-1 {
-					return strings.TrimSpace(clean)
-				}
+	clean, mask := scanSQL(expr)
+	match := make([]int, len(mask))
+	var stack []int
+	for i := 0; i < len(mask); i++ {
+		switch mask[i] {
+		case '(':
+			stack = append(stack, i)
+		case ')':
+			if len(stack) > 0 {
+				match[stack[len(stack)-1]] = i
+				stack = stack[:len(stack)-1]
 			}
 		}
-		expr = t[1 : len(t)-1]
 	}
+	lo, hi := 0, len(mask)-1
+	for {
+		for lo < hi && strings.ContainsRune(" \t\r\n", rune(mask[lo])) {
+			lo++
+		}
+		for hi > lo && strings.ContainsRune(" \t\r\n", rune(mask[hi])) {
+			hi--
+		}
+		if lo >= hi || mask[lo] != '(' || match[lo] != hi {
+			break
+		}
+		lo, hi = lo+1, hi-1
+	}
+	if lo > hi {
+		return ""
+	}
+	return strings.TrimSpace(clean[lo : hi+1])
 }
 
 // caseArms returns the WHEN conditions, their results and the ELSE result when expr is one searched CASE.
@@ -216,13 +224,11 @@ func caseArms(expr string) (conds, results []string, elseRes string, ok bool) {
 	if last < 1 || toks[0].word != "case" || toks[0].start != 0 || toks[last].word != "end" || toks[last].end != len(mask) {
 		return nil, nil, "", false
 	}
+	var marks []sqlTok
 	for _, t := range toks[1:last] {
 		if t.depth == 0 {
 			return nil, nil, "", false
 		}
-	}
-	var marks []sqlTok
-	for _, t := range toks[1:last] {
 		if t.depth == 1 && (t.word == "when" || t.word == "then" || t.word == "else") {
 			marks = append(marks, t)
 		}

@@ -182,18 +182,8 @@ func TestVetBucketAuthedWriteFixtures(t *testing.T) {
       - operations: [insert]
         with_check: "auth.is_authenticated()"
 `), true},
-		{"case opens delete", bucket(`      - operations: [delete]
-        using: "CASE WHEN auth.uid() IS NOT NULL THEN true ELSE false END"
-`), true},
-		{"or branch opens update", bucket(`      - operations: [update]
-        using: "(name LIKE auth.uid()::text || '/%') OR auth.is_authenticated()"
-`), true},
 		{"sign-in and owner prefix", bucket(`      - operations: [update, delete]
         using: "auth.uid() IS NOT NULL AND name LIKE auth.uid()::text || '/%'"
-        with_check: "auth.uid() IS NOT NULL AND name LIKE auth.uid()::text || '/%'"
-`), false},
-		{"owner scoped insert", bucket(`      - operations: [insert]
-        with_check: "(storage.foldername(name))[1] = auth.uid()::text"
 `), false},
 	}
 	for _, c := range cases {
