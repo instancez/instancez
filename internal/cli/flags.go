@@ -80,15 +80,15 @@ func isFileSpec(s string) bool {
 }
 
 func checkConfigBackend(path string) error {
-	if !isFileSpec(path) && !strings.HasPrefix(path, "s3://") {
-		return fmt.Errorf("unsupported config backend: %s (only file paths and s3:// URIs are supported)", path)
+	if !isFileSpec(path) && !strings.HasPrefix(path, "s3://") && !strings.HasPrefix(path, "gcs://") {
+		return fmt.Errorf("unsupported config backend: %s (only file paths, s3:// and gcs:// URIs are supported)", path)
 	}
 	return nil
 }
 
 // requireConfigFile asserts that a local config path exists, returning a
-// helpful error that points users at `inz init`. s3:// sources skip the
-// check (the s3 client validates existence at fetch time, and we don't want
+// helpful error that points users at `inz init`. s3:// and gcs:// sources skip the
+// check (the storage client validates existence at fetch time, and we don't want
 // to make HEAD calls just to produce a nicer error message).
 func requireConfigFile(path string) error {
 	if !isFileSpec(path) {
@@ -216,8 +216,8 @@ type serveFlagSet struct {
 func newServeFlagSet() *serveFlagSet {
 	fs := &serveFlagSet{flags: pflag.NewFlagSet("serve", pflag.ContinueOnError)}
 	fs.flags.IntVar(&fs.port, "port", 0, "server port (default: from config or 8080)")
-	fs.flags.StringVar(&fs.configPath, "config", "instancez.yaml", "config source (file path or s3://bucket/key; env: INSTANCEZ_CONFIG)")
-	fs.flags.StringVar(&fs.bundlePath, "bundle", "", "bundle pointer (file path or s3://bucket/key[#version]); replaces --config when set (env: INSTANCEZ_BUNDLE)")
+	fs.flags.StringVar(&fs.configPath, "config", "instancez.yaml", "config source (file path, s3://bucket/key or gcs://bucket/key; env: INSTANCEZ_CONFIG)")
+	fs.flags.StringVar(&fs.bundlePath, "bundle", "", "bundle pointer (file path, s3://bucket/key[#version] or gcs://bucket/key[#version]); replaces --config when set (env: INSTANCEZ_BUNDLE)")
 	fs.flags.BoolVar(&fs.migrate, "migrate", false, "run pending migrations on startup")
 	fs.flags.BoolVar(&fs.allowDestructive, "allow-destructive", false, "permit DROP TABLE/COLUMN in migrations")
 	fs.flags.DurationVar(&fs.migrateLockTimeout, "migrate-lock-timeout", app.DefaultMigrateLockTimeout, "max wait for a table lock per migration statement; 0 disables (env: INSTANCEZ_MIGRATE_LOCK_TIMEOUT)")
@@ -334,7 +334,7 @@ type devFlagSet struct {
 func newDevFlagSet() *devFlagSet {
 	fs := &devFlagSet{flags: pflag.NewFlagSet("dev", pflag.ContinueOnError)}
 	fs.flags.IntVar(&fs.port, "port", 0, "server port (default: from config or 8080)")
-	fs.flags.StringVar(&fs.configPath, "config", "instancez.yaml", "config source (file path or s3://bucket/key; env: INSTANCEZ_CONFIG)")
+	fs.flags.StringVar(&fs.configPath, "config", "instancez.yaml", "config source (file path, s3://bucket/key or gcs://bucket/key; env: INSTANCEZ_CONFIG)")
 	fs.flags.BoolVar(&fs.noWatch, "no-watch", false, "disable hot-reload (alias for --watch=false)")
 	fs.flags.BoolVar(&fs.watch, "watch", true, "watch the config source for changes")
 	fs.flags.DurationVar(&fs.watchInterval, "watch-interval", 60*time.Second, "S3-watch poll interval; min 10s")

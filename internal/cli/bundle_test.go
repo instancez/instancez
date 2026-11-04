@@ -206,15 +206,15 @@ func TestBuildBundleRequiresLockfileWhenPackageJSON(t *testing.T) {
 }
 
 func TestParseS3URI(t *testing.T) {
-	b, k, err := parseS3URI("s3://bucket/path/to/key.tar.gz")
+	b, k, err := parseObjectURI("s3://bucket/path/to/key.tar.gz")
 	require.NoError(t, err)
 	assert.Equal(t, "bucket", b)
 	assert.Equal(t, "path/to/key.tar.gz", k)
 
-	_, _, err = parseS3URI("https://example.com/x")
+	_, _, err = parseObjectURI("https://example.com/x")
 	assert.Error(t, err, "non-s3 scheme rejected")
 
-	_, _, err = parseS3URI("s3://bucket")
+	_, _, err = parseObjectURI("s3://bucket")
 	assert.Error(t, err, "missing key rejected")
 }
 
