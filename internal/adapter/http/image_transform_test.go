@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"runtime"
 	"testing"
 
@@ -113,6 +114,17 @@ func TestApplyTransform_UndecodableReturnsOriginal(t *testing.T) {
 	b, _ := io.ReadAll(out)
 	assert.Equal(t, "not an image", string(b))
 	assert.Equal(t, "image/webp", ct)
+}
+
+func TestApplyTransform_InvalidPaletteTIFFReturnsOriginal(t *testing.T) {
+	tiff, err := os.ReadFile("testdata/invalid-palette-ref.tiff")
+	require.NoError(t, err)
+	out, ct, err := applyTransform(io.NopCloser(bytes.NewReader(tiff)), "image/tiff",
+		&transformParams{Width: 10, Format: "origin", Quality: 80})
+	require.NoError(t, err)
+	b, _ := io.ReadAll(out)
+	assert.Equal(t, tiff, b)
+	assert.Equal(t, "image/tiff", ct)
 }
 
 func assertCoverBounded(t *testing.T, src []byte, params *transformParams) {
