@@ -3,13 +3,15 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
 
-func readCapture(t *testing.T, name string) string {
+func readDemoFile(t *testing.T, rel string) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "..", "docs", "demo", "captures", name))
+	b, err := os.ReadFile(filepath.Join("..", "..", "docs", "demo", rel))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -18,23 +20,44 @@ func readCapture(t *testing.T, name string) string {
 
 func TestDemoYAMLMatchesScaffold(t *testing.T) {
 	want := withSchemaHeader(scaffoldYAML("my-app", true))
-	if got := readCapture(t, "yaml0.yaml"); got != want {
+	yaml0 := readDemoFile(t, "captures/yaml0.yaml")
+	if yaml0 != want {
 		t.Fatal("docs/demo/captures/yaml0.yaml drifted from the inz init scaffold; re-record the demo captures (docs/demo/README.md)")
 	}
-	if !strings.Contains(readCapture(t, "yaml1.yaml"), "- name: priority") {
-		t.Fatal("yaml1.yaml lost the priority field")
+
+	player := readDemoFile(t, "player.src.html")
+	m := regexp.MustCompile(`after: (\d+), lines: \[([^\]]*)\]`).FindStringSubmatch(player)
+	if m == nil {
+		t.Fatal("player.src.html has no edit step with after/lines")
+	}
+	after, _ := strconv.Atoi(m[1])
+	var added []string
+	for _, q := range regexp.MustCompile(`'([^']*)'`).FindAllStringSubmatch(m[2], -1) {
+		added = append(added, q[1])
+	}
+	lines := strings.Split(yaml0, "\n")
+	if after < 1 || after > len(lines) {
+		t.Fatalf("edit anchor after: %d is outside yaml0 (%d lines)", after, len(lines))
+	}
+	edited := append(append(append([]string{}, lines[:after]...), added...), lines[after:]...)
+	if got := readDemoFile(t, "captures/yaml1.yaml"); got != strings.Join(edited, "\n") {
+		t.Fatal("yaml1.yaml is not yaml0 plus the player's edit; fix the anchor or re-record")
 	}
 }
 
 func TestDemoMigrationPlanUsesOwnerScopedAvatars(t *testing.T) {
-	plan := readCapture(t, "validate_plan.raw")
-	if n := strings.Count(plan, "name LIKE auth.uid()::text || '/%'"); n < 4 {
-		t.Fatalf("plan has %d owner-scoped avatars predicates, want at least 4", n)
-	}
-	for _, line := range strings.Split(plan, "\n") {
-		if strings.Contains(line, "storage_avatars_") && !strings.Contains(line, "_select_") &&
-			strings.Contains(line, "auth.is_authenticated()") {
+	const owner = "name LIKE auth.uid()::text || '/%'"
+	var writes int
+	for _, line := range strings.Split(readDemoFile(t, "captures/validate_plan.raw"), "\n") {
+		if !strings.HasPrefix(line, "CREATE POLICY storage_avatars_") || strings.Contains(line, "_select_") {
+			continue
+		}
+		writes++
+		if !strings.Contains(line, owner) || strings.Contains(line, "auth.is_authenticated()") {
 			t.Fatalf("avatars write policy is not owner-scoped: %s", line)
 		}
+	}
+	if writes == 0 {
+		t.Fatal("no avatars write policies found in validate_plan.raw")
 	}
 }
