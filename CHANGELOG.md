@@ -34,6 +34,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Fixed
 
+- `inz` now recognises connection-refused and aborted-upload socket errors on Windows (WSAECONNREFUSED/WSAECONNRESET), so they are classified as expected errors (no crash-report prompt) and aborted uploads return 400.
 - A missing non-`INSTANCEZ_ENV_` variable no longer hides every other validation error: `inz validate`/`inz dev` report it with the rest, and `inz serve` reports the namespace error before the missing-variable one. `${VAR}` in a full-line `#` comment no longer fails `inz serve`/`inz bundle`.
 - `inz validate` and `inz dev` warn with the key path when an OAuth `client_secret` is empty but `inz serve` requires it. The auth default type error now reads `does not fit column type integer`.
 - `inz validate` and `inz dev` now warn when `rls_enabled` is unset on a table with policies (inferred true; removing the last policy turns RLS off). The no-policy warning says RLS is off instead of citing policies.

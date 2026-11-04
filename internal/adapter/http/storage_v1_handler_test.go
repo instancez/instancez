@@ -2205,6 +2205,7 @@ func TestSpoolFailed_ClassifiesAbortsAsClientError(t *testing.T) {
 		{"context canceled", context.Canceled, 400, "WARN"},
 		{"connection reset (wrapped)", &net.OpError{Op: "read", Err: syscall.ECONNRESET}, 400, "WARN"},
 		{"connection reset (bare)", syscall.ECONNRESET, 400, "WARN"},
+		{"connection reset (windows)", &net.OpError{Op: "read", Err: os.NewSyscallError("wsarecv", syscall.Errno(10054))}, 400, "WARN"},
 		{"other io error", errors.New("disk full"), 500, "ERROR"},
 	}
 	for _, tc := range cases {
@@ -3010,5 +3011,23 @@ func TestList_NULInTextIs400NotDBError(t *testing.T) {
 	} {
 		w := serve(r, "POST", "/storage/v1/object/"+tc.path+"/avatars", tc.body, nil)
 		assert.Equal(t, 400, w.Code, "%s %s: %s", tc.path, tc.body, w.Body.String())
+	}
+}
+
+func TestIsConnReset(t *testing.T) {
+	win := &net.OpError{Op: "read", Err: os.NewSyscallError("wsarecv", syscall.Errno(10054))}
+	for name, tc := range map[string]struct {
+		err  error
+		want bool
+	}{
+		"linux":           {fmt.Errorf("x: %w", syscall.ECONNRESET), true},
+		"windows":         {fmt.Errorf("x: %w", win), true},
+		"windows timeout": {&net.OpError{Err: syscall.Errno(10060)}, false},
+		"nil":             {nil, false},
+		"unrelated":       {errors.New("connection reset"), false},
+	} {
+		if got := isConnReset(tc.err); got != tc.want {
+			t.Errorf("%s: got %v", name, got)
+		}
 	}
 }
