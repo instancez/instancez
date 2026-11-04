@@ -107,7 +107,7 @@ func classifyErr(err error) (class string, isExpected bool, msg string) {
 		return "env:db_auth", true, msg
 	case errors.As(err, &connErr):
 		return "env:db_connect", true, msg
-	case errors.Is(err, syscall.ECONNREFUSED):
+	case isConnRefused(err):
 		return "env:connect_refused", true, msg
 	case preflight.IsAddrInUse(err):
 		return "env:port_in_use", true, msg
@@ -158,4 +158,11 @@ func cloudAPIClass(status int) string {
 		return "cloud_api"
 	}
 	return fmt.Sprintf("cloud_api:%d", status)
+}
+
+// wsaECONNREFUSED is what Windows dials return; syscall.ECONNREFUSED is a placeholder there.
+const wsaECONNREFUSED = syscall.Errno(10061)
+
+func isConnRefused(err error) bool {
+	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, wsaECONNREFUSED)
 }

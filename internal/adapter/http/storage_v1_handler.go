@@ -548,7 +548,7 @@ func (h *StorageV1Handler) spoolFailed(c *gin.Context, err error, maxSize string
 		storageErr(c, 413, "payload_too_large", fmt.Sprintf("File exceeds maximum size of %s", maxSize))
 		return
 	}
-	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, context.Canceled) || errors.Is(err, syscall.ECONNRESET) {
+	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, context.Canceled) || isConnReset(err) {
 		h.logger.Warn("spool upload aborted by client", "error", err)
 		storageErr(c, 400, "bad_request", "Upload aborted before completion")
 		return
@@ -1642,4 +1642,11 @@ func (h *StorageV1Handler) verifyUploadToken(token, bucket, objPath string) (own
 		return "", false
 	}
 	return owner, true
+}
+
+// wsaECONNRESET is what Windows sockets return; syscall.ECONNRESET is a placeholder there.
+const wsaECONNRESET = syscall.Errno(10054)
+
+func isConnReset(err error) bool {
+	return errors.Is(err, syscall.ECONNRESET) || errors.Is(err, wsaECONNRESET)
 }
