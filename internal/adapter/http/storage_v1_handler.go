@@ -1645,8 +1645,11 @@ func (h *StorageV1Handler) verifyUploadToken(token, bucket, objPath string) (own
 }
 
 // wsaECONNRESET is what Windows sockets return; syscall.ECONNRESET is a placeholder there.
-const wsaECONNRESET = syscall.Errno(10054)
+const (
+	wsaECONNRESET   = syscall.Errno(10054)
+	wsaECONNABORTED = syscall.Errno(10053)
+)
 
 func isConnReset(err error) bool {
-	return errors.Is(err, syscall.ECONNRESET) || errors.Is(err, wsaECONNRESET)
+	return errors.Is(err, syscall.ECONNRESET) || errors.Is(err, wsaECONNRESET) || errors.Is(err, wsaECONNABORTED)
 }
