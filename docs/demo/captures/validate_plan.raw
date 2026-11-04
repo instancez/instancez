@@ -37,6 +37,41 @@ CREATE TABLE IF NOT EXISTS auth.jwt_keys (
   retired_at TIMESTAMPTZ
 );
 
+CREATE SCHEMA IF NOT EXISTS auth;
+
+CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
+  SELECT NULLIF(current_setting('app.user_id', true), '')::UUID;
+$$ LANGUAGE SQL STABLE;
+
+CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$
+  SELECT COALESCE(NULLIF(current_setting('app.role', true), ''), 'anon');
+$$ LANGUAGE SQL STABLE;
+
+CREATE OR REPLACE FUNCTION auth.email() RETURNS TEXT AS $$
+  SELECT NULLIF(current_setting('app.email', true), '');
+$$ LANGUAGE SQL STABLE;
+
+CREATE OR REPLACE FUNCTION auth.jwt() RETURNS JSONB AS $$
+  SELECT CASE
+    WHEN NULLIF(current_setting('app.jwt', true), '') IS NULL THEN NULL
+    ELSE convert_from(
+      decode(
+        translate(
+          split_part(current_setting('app.jwt', true), '.', 2),
+          '-_', '+/'
+        ) ||
+        repeat('=', (4 - length(split_part(current_setting('app.jwt', true), '.', 2)) % 4) % 4),
+        'base64'
+      ),
+      'utf8'
+    )::jsonb
+  END;
+$$ LANGUAGE SQL STABLE;
+
+CREATE OR REPLACE FUNCTION auth.is_authenticated() RETURNS BOOLEAN AS $$
+  SELECT auth.role() = 'authenticated' OR auth.role() = 'service_role';
+$$ LANGUAGE SQL STABLE;
+
 CREATE TABLE IF NOT EXISTS auth.refresh_tokens (
   id BIGSERIAL PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -104,42 +139,68 @@ END $$;
 
 ALTER TABLE todos ADD COLUMN due_date timestamptz;
 
-CREATE SCHEMA IF NOT EXISTS auth;
-
-CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
-  SELECT NULLIF(current_setting('app.user_id', true), '')::UUID;
-$$ LANGUAGE SQL STABLE;
-
-CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$
-  SELECT COALESCE(NULLIF(current_setting('app.role', true), ''), 'anon');
-$$ LANGUAGE SQL STABLE;
-
-CREATE OR REPLACE FUNCTION auth.email() RETURNS TEXT AS $$
-  SELECT NULLIF(current_setting('app.email', true), '');
-$$ LANGUAGE SQL STABLE;
-
-CREATE OR REPLACE FUNCTION auth.jwt() RETURNS JSONB AS $$
-  SELECT CASE
-    WHEN NULLIF(current_setting('app.jwt', true), '') IS NULL THEN NULL
-    ELSE convert_from(
-      decode(
-        translate(
-          split_part(current_setting('app.jwt', true), '.', 2),
-          '-_', '+/'
-        ) ||
-        repeat('=', (4 - length(split_part(current_setting('app.jwt', true), '.', 2)) % 4) % 4),
-        'base64'
-      ),
-      'utf8'
-    )::jsonb
-  END;
-$$ LANGUAGE SQL STABLE;
-
-CREATE OR REPLACE FUNCTION auth.is_authenticated() RETURNS BOOLEAN AS $$
-  SELECT auth.role() = 'authenticated' OR auth.role() = 'service_role';
-$$ LANGUAGE SQL STABLE;
-
 ALTER TABLE storage.objects ADD COLUMN IF NOT EXISTS user_metadata JSONB;
+
+CREATE OR REPLACE FUNCTION storage.foldername(name text)
+    RETURNS text[]
+    LANGUAGE plpgsql
+    IMMUTABLE
+AS $function$
+DECLARE
+    _parts text[];
+BEGIN
+    SELECT string_to_array(name, '/') INTO _parts;
+    RETURN _parts[1 : array_length(_parts,1) - 1];
+END
+$function$;
+
+CREATE OR REPLACE FUNCTION storage.filename(name text)
+    RETURNS text
+    LANGUAGE plpgsql
+    IMMUTABLE
+AS $function$
+DECLARE
+    _parts text[];
+BEGIN
+    SELECT string_to_array(name, '/') INTO _parts;
+    RETURN _parts[array_length(_parts, 1)];
+END
+$function$;
+
+CREATE OR REPLACE FUNCTION storage.extension(name text)
+    RETURNS text
+    LANGUAGE plpgsql
+    IMMUTABLE
+AS $function$
+DECLARE
+    _parts text[];
+    _filename text;
+BEGIN
+    SELECT string_to_array(name, '/') INTO _parts;
+    SELECT _parts[array_length(_parts, 1)] INTO _filename;
+    RETURN reverse(split_part(reverse(_filename), '.', 1));
+END
+$function$;
+
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE profiles FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS profiles_select_0 ON profiles;
+
+CREATE POLICY profiles_select_0 ON profiles AS PERMISSIVE FOR SELECT USING (auth.is_authenticated());
+
+DROP POLICY IF EXISTS profiles_insert_1 ON profiles;
+
+CREATE POLICY profiles_insert_1 ON profiles AS PERMISSIVE FOR INSERT WITH CHECK (id = auth.uid());
+
+DROP POLICY IF EXISTS profiles_update_2 ON profiles;
+
+CREATE POLICY profiles_update_2 ON profiles AS PERMISSIVE FOR UPDATE USING (id = auth.uid()) WITH CHECK (id = auth.uid());
+
+DROP POLICY IF EXISTS profiles_delete_3 ON profiles;
+
+CREATE POLICY profiles_delete_3 ON profiles AS PERMISSIVE FOR DELETE USING (id = auth.uid());
 
 ALTER TABLE todos ENABLE ROW LEVEL SECURITY;
 
@@ -173,15 +234,15 @@ CREATE POLICY storage_avatars_select_0 ON storage.objects AS PERMISSIVE FOR SELE
 
 DROP POLICY IF EXISTS storage_avatars_insert_1 ON storage.objects;
 
-CREATE POLICY storage_avatars_insert_1 ON storage.objects AS PERMISSIVE FOR INSERT WITH CHECK (bucket_id = 'avatars' AND (auth.is_authenticated()));
+CREATE POLICY storage_avatars_insert_1 ON storage.objects AS PERMISSIVE FOR INSERT WITH CHECK (bucket_id = 'avatars' AND (name LIKE auth.uid()::text || '/%'));
 
 DROP POLICY IF EXISTS storage_avatars_update_2 ON storage.objects;
 
-CREATE POLICY storage_avatars_update_2 ON storage.objects AS PERMISSIVE FOR UPDATE USING (bucket_id = 'avatars' AND (auth.is_authenticated())) WITH CHECK (bucket_id = 'avatars' AND (auth.is_authenticated()));
+CREATE POLICY storage_avatars_update_2 ON storage.objects AS PERMISSIVE FOR UPDATE USING (bucket_id = 'avatars' AND (name LIKE auth.uid()::text || '/%')) WITH CHECK (bucket_id = 'avatars' AND (name LIKE auth.uid()::text || '/%'));
 
 DROP POLICY IF EXISTS storage_avatars_delete_3 ON storage.objects;
 
-CREATE POLICY storage_avatars_delete_3 ON storage.objects AS PERMISSIVE FOR DELETE USING (bucket_id = 'avatars' AND (auth.is_authenticated()));
+CREATE POLICY storage_avatars_delete_3 ON storage.objects AS PERMISSIVE FOR DELETE USING (bucket_id = 'avatars' AND (name LIKE auth.uid()::text || '/%'));
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
 

@@ -63,6 +63,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Documentation
 
+- The interactive demo shows the current `inz init` scaffold, including the owner-scoped `avatars` policies, and a test fails if the demo drifts from it.
 - The CLI reference covers `inz cloud frontend deploy`, `inz completion` and `inz validate --cloud`. The root help no longer mentions events.
 
 ## [0.0.12] - 2026-11-02
