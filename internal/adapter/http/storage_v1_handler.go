@@ -235,6 +235,7 @@ func (h *StorageV1Handler) emptyBucket(c *gin.Context) {
 
 // deleteBytes removes object bytes for rows whose metadata delete already committed.
 func deleteBytes(ctx context.Context, store domain.ObjectStore, logger *slog.Logger, bucket string, rows []map[string]any) {
+	ctx = context.WithoutCancel(ctx)
 	for _, row := range rows {
 		if err := store.Delete(ctx, bucket+"/"+asString(row["name"])); err != nil {
 			logger.Warn("delete object bytes", "bucket", bucket, "error", err)
@@ -1150,7 +1151,7 @@ func (h *StorageV1Handler) removeObjects(c *gin.Context) {
 	c.JSON(200, deleted)
 }
 
-// removeObject deletes one object, answering 404 when it is missing or RLS hides it.
+// removeObject deletes one object; 403 when it exists but RLS denies, 404 when missing.
 func (h *StorageV1Handler) removeObject(c *gin.Context) {
 	bucketName := c.Param("bucket")
 	if _, ok := h.getBucketConfig(bucketName); !ok {
@@ -1166,10 +1167,28 @@ func (h *StorageV1Handler) removeObject(c *gin.Context) {
 		return
 	}
 	if len(rows) == 0 {
-		storageErr(c, 404, "not_found", "Object not found")
+		h.missingOrDenied(c, bucketName, objPath)
 		return
 	}
 	c.JSON(200, gin.H{"message": "Successfully deleted"})
+}
+
+// missingOrDenied answers 403 when the object exists (as service role) and 404 otherwise.
+func (h *StorageV1Handler) missingOrDenied(c *gin.Context, bucket, objPath string) {
+	ctx, err := serviceContext(h.db, c.Request.Context())
+	var row map[string]any
+	if err == nil {
+		row, err = h.db.QueryRow(ctx, "SELECT 1 FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucket, objPath)
+	}
+	switch {
+	case err != nil:
+		h.logger.Error("remove object existence check", "error", err)
+		storageErr(c, 500, "internal", "Failed to remove object")
+	case row != nil:
+		storageErr(c, 403, "Unauthorized", "Access denied")
+	default:
+		storageErr(c, 404, "not_found", "Object not found")
+	}
 }
 
 // deleteKeys removes rows under the caller's RLS and their bytes; false means an error response was written.

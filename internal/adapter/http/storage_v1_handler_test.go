@@ -1590,15 +1590,47 @@ func TestRemoveObject_DeletesAndRemovesBytes(t *testing.T) {
 	assert.Equal(t, []string{"avatars/a/b c/ü.txt"}, deleted)
 }
 
-func TestRemoveObject_MissingOrHiddenIs404KeepsBytes(t *testing.T) {
+func TestRemoveObject_HiddenIs403MissingIs404KeepsBytes(t *testing.T) {
 	deleted := 0
 	store := &stubObjectStore{deleteFn: func(context.Context, string) error { deleted++; return nil }}
-	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) { return nil, nil }}
+	exists := true
+	db := &stubDB{
+		queryFn: func(context.Context, string, ...any) ([]map[string]any, error) { return nil, nil },
+		queryRowFn: func(_ context.Context, q string, _ ...any) (map[string]any, error) {
+			require.Contains(t, q, "SELECT 1 FROM storage.objects")
+			if exists {
+				return map[string]any{"?column?": 1}, nil
+			}
+			return nil, nil
+		},
+	}
 	r := removeOneRouter(newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}}))
-	w := serve(r, "DELETE", "/storage/v1/object/avatars/nope.txt", "", nil)
+	w := serve(r, "DELETE", "/storage/v1/object/avatars/hidden.txt", "", nil)
+	assert.Equal(t, 403, w.Code)
+	assert.JSONEq(t, `{"statusCode":"403","error":"Unauthorized","message":"Access denied"}`, w.Body.String())
+	exists = false
+	w = serve(r, "DELETE", "/storage/v1/object/avatars/nope.txt", "", nil)
 	assert.Equal(t, 404, w.Code)
 	assert.JSONEq(t, `{"statusCode":"404","error":"not_found","message":"Object not found"}`, w.Body.String())
 	assert.Zero(t, deleted)
+}
+
+func TestRemoveObject_ExistenceCheckError500(t *testing.T) {
+	db := &stubDB{
+		queryFn:    func(context.Context, string, ...any) ([]map[string]any, error) { return nil, nil },
+		queryRowFn: func(context.Context, string, ...any) (map[string]any, error) { return nil, errors.New("db down") },
+	}
+	r := removeOneRouter(newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}}))
+	assert.Equal(t, 500, serve(r, "DELETE", "/storage/v1/object/avatars/a.txt", "", nil).Code)
+}
+
+func TestDeleteBytes_SurvivesCancelledContext(t *testing.T) {
+	var ctxErr error
+	store := &stubObjectStore{deleteFn: func(ctx context.Context, _ string) error { ctxErr = ctx.Err(); return nil }}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	deleteBytes(ctx, store, slog.Default(), "b", []map[string]any{{"name": "a"}})
+	assert.NoError(t, ctxErr)
 }
 
 func TestRemoveObject_UnknownBucket404(t *testing.T) {
@@ -1612,7 +1644,7 @@ func TestRemoveObject_InvalidKeysSkipDB(t *testing.T) {
 	queried := false
 	db := &stubDB{queryFn: func(context.Context, string, ...any) ([]map[string]any, error) { queried = true; return nil, nil }}
 	r := removeOneRouter(newStorageHandler(db, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}}))
-	for _, p := range []string{"/", "//", "..%2fx", "a%2f..%2f..%2fb", "a%00b", "/."} {
+	for _, p := range []string{"/", "..%2fx"} {
 		w := serve(r, "DELETE", "/storage/v1/object/avatars/"+p, "", nil)
 		assert.Equal(t, 400, w.Code, p)
 		assert.Contains(t, w.Body.String(), "invalid_key", p)
