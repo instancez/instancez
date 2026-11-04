@@ -55,7 +55,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 - The `inz init` avatars bucket now lets users upload, replace and delete only files under `<their user id>/`. Before, any signed-in user could overwrite or delete any avatar. Existing projects: copy the new policies from a fresh `inz init`.
 - New projects from `inz init` pin zod `^4.6.7` (was `^3.23.8`, affected by GHSA-mrhx-c7xc-m3w5). Existing projects: run `npm install zod@^4.6.7` in `functions/`.
-- The embedded dashboard bundle is rebuilt with patched npm dependencies (vite, undici, react-router, postcss, js-yaml, nanoid, vitest and others).
+- The embedded dashboard bundle is rebuilt with patched npm dependencies (vite, undici, react-router, postcss, js-yaml, nanoid and others).
 
 ### Documentation
 
