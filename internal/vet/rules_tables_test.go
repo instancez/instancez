@@ -263,6 +263,8 @@ func TestBucketAuthedWrite(t *testing.T) {
 		{"insert bucket id and role", pol("insert", "with_check", "bucket_id = 'avatars' AND auth.role() = 'authenticated'", ""), []string{"bucket-authed-write"}},
 		{"update bucket id and role", pol("update", "using", "bucket_id = 'avatars' AND auth.role() = 'authenticated'", ""), []string{"bucket-authed-write"}},
 		{"delete bucket id and role", pol("delete", "using", "bucket_id = 'avatars' AND auth.role() = 'authenticated'", ""), []string{"bucket-authed-write"}},
+		{"insert identity or true", pol("insert", "with_check", "auth.uid() IS NOT NULL AND (auth.uid()::text = (storage.foldername(name))[1] OR true)", ""), []string{"bucket-authed-write"}},
+		{"insert two owners", pol("insert", "with_check", "auth.uid() IS NOT NULL AND (auth.uid()::text = (storage.foldername(name))[1] OR auth.uid()::text = 'x')", ""), nil},
 		{"bucket id and owner", pol("delete", "using", "bucket_id = 'avatars' AND auth.uid()::text = (storage.foldername(name))[1]", ""), nil},
 		{"insert authed beside owner read", bucket("b", "    rls:\n      - operations: [select]\n        using: \"name LIKE auth.uid()::text || '/%'\"\n      - operations: [insert]\n        with_check: \"auth.is_authenticated()\"\n"), []string{"bucket-authed-write"}},
 		{"select and insert in one policy", bucket("b", "    rls:\n      - operations: [select, insert]\n        using: \"name LIKE auth.uid()::text || '/%'\"\n        with_check: \"auth.is_authenticated()\"\n"), []string{"bucket-authed-write"}},

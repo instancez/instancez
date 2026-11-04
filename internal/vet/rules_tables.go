@@ -181,7 +181,7 @@ func (c *ctx) authGateAt(expr string, depth int) bool {
 		for _, e := range conjuncts {
 			if next(e) {
 				anyGate = true
-			} else if c.scopes(e) {
+			} else if c.scopes(e) && !hasTrueBranch(e) {
 				return false
 			}
 		}
