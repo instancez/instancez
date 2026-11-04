@@ -57,7 +57,7 @@ func TestDemoMigrationPlanUsesOwnerScopedAvatars(t *testing.T) {
 			t.Fatalf("avatars write policy is not owner-scoped: %s", line)
 		}
 	}
-	if writes == 0 {
-		t.Fatal("no avatars write policies found in validate_plan.raw")
+	if writes != 3 {
+		t.Fatalf("found %d avatars write policies in validate_plan.raw, want 3", writes)
 	}
 }
