@@ -32,6 +32,7 @@ export default defineConfig({
         // which already owns that file (plus the full/small dumps).
         starlightPageActions(),
         starlightThemeBlack({
+          docs: { showMarkdownActions: false },
           footerText: 'instancez — a lightweight, self-hosted backend. [GitHub](https://github.com/instancez/instancez)',
         }),
         starlightLlmsTxt({

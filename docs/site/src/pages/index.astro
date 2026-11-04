@@ -495,15 +495,15 @@ if (!version) {
 <span class="p">)</span>
 
 <span class="cm">// query</span>
-<span class="k">const</span> <span class="p">{</span> <span class="plain">data</span> <span class="p">}</span> <span class="p">=</span> <span class="k">await</span> <span class="plain">supabase</span>
+<span class="k">const</span> <span class="p">{'{'}</span> <span class="plain">data</span> <span class="p">{'}'}</span> <span class="p">=</span> <span class="k">await</span> <span class="plain">supabase</span>
   <span class="p">.</span><span class="fn">from</span><span class="p">(</span><span class="s">'posts'</span><span class="p">)</span>
   <span class="p">.</span><span class="fn">select</span><span class="p">(</span><span class="s">'id, title'</span><span class="p">)</span>
-  <span class="p">.</span><span class="fn">order</span><span class="p">(</span><span class="s">'id'</span><span class="p">,</span> <span class="p">{</span> <span class="plain">ascending</span><span class="p">:</span> <span class="k">false</span> <span class="p">})</span>
+  <span class="p">.</span><span class="fn">order</span><span class="p">(</span><span class="s">'id'</span><span class="p">,</span> <span class="p">{'{'}</span> <span class="plain">ascending</span><span class="p">:</span> <span class="k">false</span> <span class="p">{'}'})</span>
 
 <span class="cm">// insert: RLS checks user_id for you</span>
-<span class="k">const</span> <span class="p">{</span> <span class="plain">data</span> <span class="p">}</span> <span class="p">=</span> <span class="k">await</span> <span class="plain">supabase</span>
+<span class="k">const</span> <span class="p">{'{'}</span> <span class="plain">data</span> <span class="p">{'}'}</span> <span class="p">=</span> <span class="k">await</span> <span class="plain">supabase</span>
   <span class="p">.</span><span class="fn">from</span><span class="p">(</span><span class="s">'posts'</span><span class="p">)</span>
-  <span class="p">.</span><span class="fn">insert</span><span class="p">({</span> <span class="plain">title</span><span class="p">:</span> <span class="s">'Hello world'</span> <span class="p">})</span>
+  <span class="p">.</span><span class="fn">insert</span><span class="p">({'{'}</span> <span class="plain">title</span><span class="p">:</span> <span class="s">'Hello world'</span> <span class="p">{'}'})</span>
   <span class="p">.</span><span class="fn">select</span><span class="p">()</span>
   <span class="p">.</span><span class="fn">single</span><span class="p">()</span></pre>
         </div>
