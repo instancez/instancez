@@ -3376,6 +3376,42 @@ if (SECRET_KEY) {
   })
 }
 
+if (SECRET_KEY) {
+  await step('storage: DELETE /object/<bucket>/<path> follows RLS like remove', async () => {
+    const admin = adminStorage().storage.from('owned')
+    const owner = sessionClient().storage.from('owned')
+    const del = (bucket, path, key = accessToken, apikey = PUBLISHABLE_KEY) => fetch(`${URL}/storage/v1/object/${bucket}/${path}`, {
+      method: 'DELETE', headers: { Authorization: `Bearer ${key}`, apikey },
+    })
+    for (const [c, k] of [[owner, 'mine/single dir/ü.txt'], [owner, 'mine/plain.txt'], [admin, 'mine/admin.txt'], [admin, 'other/admin.txt']]) {
+      const { error } = await c.upload(k, 'x', { contentType: 'text/plain', upsert: true })
+      if (error) throw error
+    }
+
+    let r = await del('owned', 'mine/single%20dir/%C3%BC.txt')
+    assertEq(r.status, 200, 'owner deletes nested, url-encoded key')
+    assertEq((await r.json()).message, 'Successfully deleted')
+    assertEq((await admin.exists('mine/single dir/ü.txt')).data, false, 'row and bytes gone')
+    assertEq((await del('owned', 'mine/single%20dir/%C3%BC.txt')).status, 404, 'second delete is 404')
+
+    r = await del('owned', 'mine/admin.txt')
+    assertEq(r.status, 404, "another user's object is hidden by RLS")
+    assertEq((await admin.exists('mine/admin.txt')).data, true, 'hidden object survives')
+    assertEq((await del('owned', 'other/admin.txt')).status, 404, 'outside the policy prefix is 404')
+    assertEq((await del('owned', 'mine/plain.txt', PUBLISHABLE_KEY)).status, 404, 'anon is denied')
+    assertEq((await admin.exists('mine/plain.txt')).data, true, 'anon cannot delete')
+
+    assertEq((await del('owned', 'mine/admin.txt', SECRET_KEY, SECRET_KEY)).status, 200, 'service role bypasses RLS')
+    assertEq((await del('owned', 'other/admin.txt', SECRET_KEY, SECRET_KEY)).status, 200, 'service role, any key')
+    assertEq((await del('ghost', 'a.txt')).status, 404, 'unknown bucket')
+    assertEq((await del('owned', '')).status, 400, 'trailing slash with no key')
+    assertEq((await del('owned', '..%2f..%2fx')).status, 400, 'traversal key')
+
+    const { error } = await owner.remove(['mine/plain.txt'])
+    if (error) throw error
+  })
+}
+
 // fetch normalizes %2e%2e segments away, so use one segment with encoded slashes.
 await step('storage: traversal keys are rejected', async () => {
   const resp = await fetch(`${URL}/storage/v1/object/avatars/..%2f..%2fescape.txt`, {

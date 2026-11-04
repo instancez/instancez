@@ -65,6 +65,8 @@ var noRLSAnonCases = []anonCase{
 	{"PUT", "/storage/v1/object/open/a.txt", "x", 403, "Not authorized to write this object"},
 	{"POST", "/storage/v1/object/upload/sign/open/a.txt", "", 403, "Not authorized to write this object"},
 	{"DELETE", "/storage/v1/object/open", `{"prefixes":["a.txt"]}`, 200, "[]"},
+	{"DELETE", "/storage/v1/object/open/a.txt", "", 404, "Object not found"},
+	{"DELETE", "/storage/v1/object/open/a%00b", "", 400, "invalid_key"},
 	{"POST", "/storage/v1/object/move", `{"bucketId":"open","sourceKey":"a","destinationKey":"b"}`, 404, "not_found"},
 	{"POST", "/storage/v1/object/copy", `{"bucketId":"open","sourceKey":"a","destinationKey":"b"}`, 404, "not_found"},
 	{"POST", "/storage/v1/object/move", `{"bucketId":"gated","destinationBucket":"open","sourceKey":"a","destinationKey":"b"}`, 404, "not_found"},

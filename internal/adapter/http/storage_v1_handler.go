@@ -99,6 +99,7 @@ func (h *StorageV1Handler) Mount(root *gin.RouterGroup) {
 
 	// Remove (DELETE with paths in body)
 	sg.DELETE("/object/:bucket", key, opt, h.removeObjects)
+	sg.DELETE("/object/:bucket/*path", key, opt, h.removeObject)
 
 	// Move & Copy
 	sg.POST("/object/move", key, opt, h.moveObject)
@@ -1138,24 +1139,53 @@ func (h *StorageV1Handler) removeObjects(c *gin.Context) {
 		return
 	}
 
-	keys := validKeys(req.Prefixes)
 	deleted := []gin.H{}
-	if len(keys) == 0 || !anonMayReach(c, h.cfg, bucketName) {
-		c.JSON(200, deleted)
+	rows, ok := h.deleteKeys(c, bucketName, validKeys(req.Prefixes))
+	if !ok {
 		return
 	}
-	rows, err := h.db.Query(h.rlsCtx(c),
-		"DELETE FROM storage.objects WHERE bucket_id = $1 AND name = ANY($2::text[]) RETURNING name", bucketName, keys)
-	if err != nil {
-		h.logger.Error("remove objects", "error", err)
-		storageErr(c, 500, "internal", "Failed to remove objects")
-		return
-	}
-	deleteBytes(c.Request.Context(), h.storage, h.logger, bucketName, rows)
 	for _, row := range rows {
 		deleted = append(deleted, gin.H{"name": asString(row["name"]), "bucket_id": bucketName})
 	}
 	c.JSON(200, deleted)
+}
+
+// removeObject deletes one object, answering 404 when it is missing or RLS hides it.
+func (h *StorageV1Handler) removeObject(c *gin.Context) {
+	bucketName := c.Param("bucket")
+	if _, ok := h.getBucketConfig(bucketName); !ok {
+		storageErr(c, 404, "not_found", "Bucket not found")
+		return
+	}
+	objPath, ok := objectPath(c, c.Param("path"))
+	if !ok {
+		return
+	}
+	rows, ok := h.deleteKeys(c, bucketName, []string{objPath})
+	if !ok {
+		return
+	}
+	if len(rows) == 0 {
+		storageErr(c, 404, "not_found", "Object not found")
+		return
+	}
+	c.JSON(200, gin.H{"message": "Successfully deleted"})
+}
+
+// deleteKeys removes rows under the caller's RLS and their bytes; false means an error response was written.
+func (h *StorageV1Handler) deleteKeys(c *gin.Context, bucket string, keys []string) ([]map[string]any, bool) {
+	if len(keys) == 0 || !anonMayReach(c, h.cfg, bucket) {
+		return nil, true
+	}
+	rows, err := h.db.Query(h.rlsCtx(c),
+		"DELETE FROM storage.objects WHERE bucket_id = $1 AND name = ANY($2::text[]) RETURNING name", bucket, keys)
+	if err != nil {
+		h.logger.Error("remove objects", "error", err)
+		storageErr(c, 500, "internal", "Failed to remove objects")
+		return nil, false
+	}
+	deleteBytes(c.Request.Context(), h.storage, h.logger, bucket, rows)
+	return rows, true
 }
 
 func (h *StorageV1Handler) moveObject(c *gin.Context) {
