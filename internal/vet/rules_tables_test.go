@@ -110,6 +110,12 @@ func TestTableRules(t *testing.T) {
 		{"scoped read sensitive", tbl(on, idField+mailField+userField, pol("select", "auth.uid() = user_id", "", "")), nil},
 		{"gate plus identity sensitive", tbl(on, idField+mailField+userField, pol("select", "auth.is_authenticated() and auth.uid() = user_id", "", "")), nil},
 
+		{"authed or owner read sensitive", tbl(on, idField+mailField+userField, pol("select", "auth.is_authenticated() OR auth.uid() = user_id", "", "")), []string{"policy-authed-read-sensitive"}},
+		{"authed and non-identity read sensitive", tbl(on, idField+mailField, pol("select", "auth.is_authenticated() AND status = 'published'", "", "")), nil},
+		{"service role read sensitive", tbl(on, idField+mailField, pol("select", "auth.role() = 'service_role'", "", "")), nil},
+		{"open write or branch", tbl(on, idField, pol("insert", "", "auth.uid() = id OR true", "")), []string{"policy-open-write"}},
+		{"open write literal true text", tbl(on, idField, pol("insert", "", "name = 'x or true'", "")), []string{"policy-no-identity-write"}},
+
 		{"no identity write", tbl(on, idField, pol("insert", "", "auth.is_authenticated()", "")), []string{"policy-no-identity-write"}},
 		{"no identity update", tbl(on, idField, pol("update", "status = 'draft'", "", "")), []string{"policy-no-identity-write"}},
 		{"identity via jwt", tbl(on, idField, pol("delete", "auth.jwt() ->> 'sub' = id::text", "", "")), nil},
@@ -250,7 +256,12 @@ func TestBucketAuthedWrite(t *testing.T) {
 	}{
 		{"update authed", pol("update", "using", "auth.is_authenticated()", ""), []string{"bucket-authed-write"}},
 		{"delete is not null", pol("delete", "using", "auth.uid() IS NOT NULL", ""), []string{"bucket-authed-write"}},
-		{"insert out of scope", pol("insert", "with_check", "auth.is_authenticated()", ""), nil},
+		{"insert authed", pol("insert", "with_check", "auth.is_authenticated()", ""), []string{"bucket-authed-write"}},
+		{"insert scoped", pol("insert", "with_check", "name LIKE auth.uid()::text || '/%'", ""), nil},
+		{"insert path constrained", pol("insert", "with_check", "auth.uid() IS NOT NULL AND (storage.foldername(name))[1] = 'shared'", ""), nil},
+		{"insert authed beside owner read", bucket("b", "    rls:\n      - operations: [select]\n        using: \"name LIKE auth.uid()::text || '/%'\"\n      - operations: [insert]\n        with_check: \"auth.is_authenticated()\"\n"), []string{"bucket-authed-write"}},
+		{"select and insert in one policy", bucket("b", "    rls:\n      - operations: [select, insert]\n        using: \"name LIKE auth.uid()::text || '/%'\"\n        with_check: \"auth.is_authenticated()\"\n"), []string{"bucket-authed-write"}},
+		{"select with_check ignored", bucket("b", "    rls:\n      - operations: [select]\n        with_check: \"auth.is_authenticated()\"\n"), nil},
 		{"social feed shape", pol("update", "using", "auth.uid() IS NOT NULL AND name LIKE auth.uid()::text || '/%'", ""), nil},
 		{"admin rpc", pol("delete", "using", "public.is_admin()", ""), nil},
 		{"service role gate", pol("delete", "using", "auth.role() = 'service_role'", ""), nil},

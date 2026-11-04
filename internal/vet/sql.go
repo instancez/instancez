@@ -80,62 +80,164 @@ func hasSensitiveSegment(name string) bool {
 	return slices.ContainsFunc(sensitiveWords, func(w string) bool { return strings.Contains(joined, "_"+w+"_") })
 }
 
-// splitTopLevelOr splits expr on OR outside parentheses and string literals.
-func splitTopLevelOr(expr string) []string {
-	expr = stripOuterParens(expr)
-	var parts []string
-	depth, start, inStr := 0, 0, false
-	for i := 0; i < len(expr); i++ {
-		switch c := expr[i]; {
-		case c == '\'':
-			inStr = !inStr
-		case inStr:
-		case c == '(':
-			depth++
-		case c == ')':
-			depth--
-		case depth == 0 && i > 0 && i+2 < len(expr) && strings.EqualFold(expr[i:i+2], "or") &&
-			strings.ContainsRune(" \t\r\n)", rune(expr[i-1])) && strings.ContainsRune(" \t\r\n(", rune(expr[i+2])):
-			parts = append(parts, expr[start:i])
-			start = i + 2
+// scanSQL blanks comments in clean and also blanks string and quoted-identifier contents in mask; both keep expr's length.
+func scanSQL(expr string) (clean, mask string) {
+	c, m := []byte(expr), []byte(expr)
+	for i := 0; i < len(c); i++ {
+		switch {
+		case c[i] == '\'' || c[i] == '"':
+			q := c[i]
+			for i++; i < len(c); i++ {
+				if c[i] == q {
+					if i+1 < len(c) && c[i+1] == q {
+						m[i], m[i+1] = 'x', 'x'
+						i++
+						continue
+					}
+					break
+				}
+				m[i] = 'x'
+			}
+		case c[i] == '-' && i+1 < len(c) && c[i+1] == '-':
+			for ; i < len(c) && c[i] != '\n'; i++ {
+				c[i], m[i] = ' ', ' '
+			}
+		case c[i] == '/' && i+1 < len(c) && c[i+1] == '*':
+			for depth := 0; i < len(c); i++ {
+				switch {
+				case c[i] == '/' && i+1 < len(c) && c[i+1] == '*':
+					depth++
+					c[i], m[i] = ' ', ' '
+					i++
+				case c[i] == '*' && i+1 < len(c) && c[i+1] == '/':
+					depth--
+					c[i], m[i] = ' ', ' '
+					i++
+				}
+				c[i], m[i] = ' ', ' '
+				if depth == 0 {
+					break
+				}
+			}
 		}
 	}
-	parts = append(parts, expr[start:])
-	if len(parts) == 1 {
-		return parts
+	return string(c), string(m)
+}
+
+type sqlTok struct {
+	word       string
+	start, end int
+	depth      int
+}
+
+func isWordByte(b byte) bool {
+	return b == '_' || b == '$' || b == '.' || b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= 0x80
+}
+
+// sqlWords lists the words of mask with their paren and CASE nesting depth.
+func sqlWords(mask string) []sqlTok {
+	var toks []sqlTok
+	depth := 0
+	for i := 0; i < len(mask); {
+		switch {
+		case mask[i] == '(':
+			depth++
+			i++
+		case mask[i] == ')':
+			depth--
+			i++
+		case isWordByte(mask[i]):
+			j := i
+			for j < len(mask) && isWordByte(mask[j]) {
+				j++
+			}
+			w := strings.ToLower(mask[i:j])
+			switch w {
+			case "case":
+				toks = append(toks, sqlTok{w, i, j, depth})
+				depth++
+			case "end":
+				depth--
+				toks = append(toks, sqlTok{w, i, j, depth})
+			default:
+				toks = append(toks, sqlTok{w, i, j, depth})
+			}
+			i = j
+		default:
+			i++
+		}
 	}
-	var leaves []string
-	for _, p := range parts {
-		leaves = append(leaves, splitTopLevelOr(p)...)
+	return toks
+}
+
+// splitTop splits expr on keyword kw outside parentheses, CASE blocks, strings, quoted identifiers and comments.
+func splitTop(expr, kw string) []string {
+	expr, mask := scanSQL(stripOuterParens(expr))
+	start := 0
+	var parts []string
+	for _, t := range sqlWords(mask) {
+		if t.depth == 0 && t.word == kw {
+			parts = append(parts, expr[start:t.start])
+			start = t.end
+		}
 	}
-	return leaves
+	return append(parts, expr[start:])
 }
 
 // stripOuterParens removes parentheses that wrap the whole expression.
 func stripOuterParens(expr string) string {
 	for {
-		t := strings.TrimSpace(expr)
+		clean, mask := scanSQL(expr)
+		t, m := strings.TrimSpace(clean), strings.TrimSpace(mask)
 		if len(t) < 2 || t[0] != '(' || t[len(t)-1] != ')' {
-			return expr
+			return strings.TrimSpace(clean)
 		}
-		depth, inStr := 0, false
-		for i := 0; i < len(t); i++ {
-			switch t[i] {
-			case '\'':
-				inStr = !inStr
+		depth := 0
+		for i := 0; i < len(m); i++ {
+			switch m[i] {
 			case '(':
-				if !inStr {
-					depth++
-				}
+				depth++
 			case ')':
-				if !inStr {
-					depth--
-					if depth == 0 && i < len(t)-1 {
-						return expr
-					}
+				depth--
+				if depth == 0 && i < len(m)-1 {
+					return strings.TrimSpace(clean)
 				}
 			}
 		}
 		expr = t[1 : len(t)-1]
 	}
+}
+
+// caseArms returns the WHEN conditions, their results and the ELSE result when expr is one searched CASE.
+func caseArms(expr string) (conds, results []string, elseRes string, ok bool) {
+	clean, mask := scanSQL(stripOuterParens(expr))
+	toks := sqlWords(mask)
+	last := len(toks) - 1
+	if last < 1 || toks[0].word != "case" || toks[0].start != 0 || toks[last].word != "end" || toks[last].end != len(mask) {
+		return nil, nil, "", false
+	}
+	for _, t := range toks[1:last] {
+		if t.depth == 0 {
+			return nil, nil, "", false
+		}
+	}
+	var marks []sqlTok
+	for _, t := range toks[1:last] {
+		if t.depth == 1 && (t.word == "when" || t.word == "then" || t.word == "else") {
+			marks = append(marks, t)
+		}
+	}
+	marks = append(marks, toks[last])
+	for i, m := range marks[:len(marks)-1] {
+		text := clean[m.end:marks[i+1].start]
+		switch m.word {
+		case "when":
+			conds = append(conds, text)
+		case "then":
+			results = append(results, text)
+		default:
+			elseRes = text
+		}
+	}
+	return conds, results, elseRes, len(conds) == len(results)
 }

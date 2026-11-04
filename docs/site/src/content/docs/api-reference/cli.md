@@ -211,7 +211,7 @@ The dashboard's Security page runs the same scan. A banner shows how many checks
 | `policy-no-identity-write` | medium, high | A write policy that never checks the caller's identity, directly or through a declared rpc that does. High when the table has an owner column. |
 | `bucket-open-write` | critical | A storage policy that lets any caller with a JWT (including anonymous sign-in users) write or delete. |
 | `bucket-open-read` | medium | A select policy on a non-public bucket whose `using` is always true, so any caller with a JWT can list and read every object. |
-| `bucket-authed-write` | medium | An update or delete storage policy that only checks the caller is signed in (`auth.is_authenticated()`, `auth.uid() IS NOT NULL`), so any user can replace or delete other users' objects. |
+| `bucket-authed-write` | medium | An insert, update or delete storage policy that only checks the caller is signed in (`auth.is_authenticated()`, `auth.uid() IS NOT NULL`), so any user can upload anywhere, or replace or delete other users' objects. Catches an `OR` branch or a `CASE` arm that is only a sign-in check. A sign-in check `AND`ed with any other condition is not flagged. |
 | `bucket-no-rls` | medium, high | A bucket with no policies. High when other buckets have them. |
 | `bucket-public` | low | A bucket with `public: true`. |
 | `rpc-definer-no-auth` | low, medium, high | A `security: definer` function callable without sign-in, so its reads bypass RLS. High when the body writes (or runs `EXECUTE`) with no `auth.*` check, medium when it only reads or writes with a check, low when it only reads and checks `auth.uid()`, `auth.jwt()`, `auth.email()` or `auth.role()`. |
@@ -227,6 +227,13 @@ The dashboard's Security page runs the same scan. A banner shows how many checks
 | `cors-null-origin` | medium | `null` in `server.cors.origins`. |
 | `unknown-key` | medium | A key that is not a known setting (usually a typo), so it has no effect. |
 | `max-limit-disabled` | medium | `server.max_limit: -1` (no row limit). |
+
+Sign-in rules (`bucket-authed-write`, `policy-authed-read-sensitive`) read expressions with a small tokenizer, not a SQL parser. They skip string literals, quoted identifiers and comments. Known limits, all of which err toward not flagging:
+
+- Only a top-level `OR`, or the `ELSE` or sign-in-guarded `THEN` of one whole searched `CASE`, is checked. A sign-in check hidden in a subquery, a function body, `COALESCE`, `NOT`, or the simple form `CASE x WHEN ...` is not seen.
+- An `AND` with any non-sign-in condition counts as scoped, even when that condition is weak (`... AND name LIKE '%'`).
+- Dollar-quoted strings and `E'...'` backslash escapes are not special-cased.
+- An insert policy that only checks sign-in is flagged even when open uploads are intended. Scope it by path, for example `(storage.foldername(name))[1] = auth.uid()::text`, or ignore the finding.
 
 ## inz bundle
 

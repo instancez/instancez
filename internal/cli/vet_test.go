@@ -167,3 +167,45 @@ func TestVetShippedExamples(t *testing.T) {
 		})
 	}
 }
+
+func TestVetBucketAuthedWriteFixtures(t *testing.T) {
+	bucket := func(policies string) string {
+		return noSignup + "providers:\n  storage: {type: local, path: ./data}\nstorage:\n  files:\n    rls:\n" + policies
+	}
+	cases := []struct {
+		name string
+		yaml string
+		want bool
+	}{
+		{"insert sign-in beside owner read", bucket(`      - operations: [select]
+        using: "name LIKE auth.uid()::text || '/%'"
+      - operations: [insert]
+        with_check: "auth.is_authenticated()"
+`), true},
+		{"case opens delete", bucket(`      - operations: [delete]
+        using: "CASE WHEN auth.uid() IS NOT NULL THEN true ELSE false END"
+`), true},
+		{"or branch opens update", bucket(`      - operations: [update]
+        using: "(name LIKE auth.uid()::text || '/%') OR auth.is_authenticated()"
+`), true},
+		{"sign-in and owner prefix", bucket(`      - operations: [update, delete]
+        using: "auth.uid() IS NOT NULL AND name LIKE auth.uid()::text || '/%'"
+        with_check: "auth.uid() IS NOT NULL AND name LIKE auth.uid()::text || '/%'"
+`), false},
+		{"owner scoped insert", bucket(`      - operations: [insert]
+        with_check: "(storage.foldername(name))[1] = auth.uid()::text"
+`), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out, err := runVet(t, "--config", writeTemp(t, c.yaml), "--fail-on", "medium", "--json")
+			if c.want {
+				require.ErrorIs(t, err, errReported)
+				assert.Contains(t, out, `"bucket-authed-write"`)
+			} else {
+				require.NoError(t, err)
+				assert.NotContains(t, out, "bucket-authed-write")
+			}
+		})
+	}
+}
