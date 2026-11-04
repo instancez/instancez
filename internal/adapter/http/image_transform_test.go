@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"runtime"
 	"testing"
 
@@ -115,8 +116,9 @@ func TestApplyTransform_UndecodableReturnsOriginal(t *testing.T) {
 	assert.Equal(t, "image/webp", ct)
 }
 
-func TestApplyTransform_MalformedTIFFReturnsOriginal(t *testing.T) {
-	tiff := []byte{'I', 'I', 42, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+func TestApplyTransform_InvalidPaletteTIFFReturnsOriginal(t *testing.T) {
+	tiff, err := os.ReadFile("testdata/invalid-palette-ref.tiff")
+	require.NoError(t, err)
 	out, ct, err := applyTransform(io.NopCloser(bytes.NewReader(tiff)), "image/tiff",
 		&transformParams{Width: 10, Format: "origin", Quality: 80})
 	require.NoError(t, err)

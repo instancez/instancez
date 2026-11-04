@@ -57,7 +57,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - The `inz init` avatars bucket now lets users upload, replace and delete only files under `<their user id>/`. Before, any signed-in user could overwrite or delete any avatar. Existing projects: copy the new policies from a fresh `inz init`.
 - New projects from `inz init` pin zod `^4.6.7` (was `^3.23.8`, affected by GHSA-mrhx-c7xc-m3w5). Existing projects: run `npm install zod@^4.6.7` in `functions/`.
 - The embedded dashboard bundle is rebuilt with patched npm dependencies (vite, undici, react-router, postcss, js-yaml, nanoid and others).
-- Bumped `golang.org/x/image` to 0.43.0 (the `imaging` library pulled in a 2019 version, and the TIFF decoder was reachable through image transforms), `google.golang.org/grpc` to 1.83.1, `quic-go` to 0.59.1, `pgx/v5` to 5.9.2, `klauspost/compress` to 1.18.7, `moby/sys/user` to 0.4.1, `moby/go-archive` to 0.3.0, OpenTelemetry to 1.45.0 (log modules 0.21.0) and `x/text` to 0.41.0.
+- Bumped Go dependencies (x/image, grpc, quic-go, pgx, OpenTelemetry and others) to clear security advisories; a crafted TIFF upload could crash the server through image transforms.
 
 ### Documentation
 
