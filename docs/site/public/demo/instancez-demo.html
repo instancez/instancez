@@ -269,7 +269,7 @@ const CHAPTERS = [
     { title: 'Meet instancez.yaml', text: 'This is the whole generated file. Step through the parts.', panes: [{ t: 'editor', file: 'instancez.yaml', src: 'yaml0' }], callouts: [
       { pane: 0, find: ['tables:', 'default: now()'], title: 'Tables and fields', text: 'Declare columns here. instancez diffs this against your database and applies only what changed.' },
       { pane: 0, find: ['using: "user_id', 'with_check: "user_id'], title: 'Authorization is a policy', text: 'Row-level security is the only access layer. This policy lets each user see only their own rows.' },
-      { pane: 0, find: ['storage:', "name LIKE auth.uid()", true], title: 'Storage buckets', text: 'Uploads are governed by RLS, exactly like tables. Here each user can write only under their own <code>&lt;user id&gt;/</code> folder.' },
+      { pane: 0, find: ['  avatars:', "name LIKE auth.uid()", true], title: 'Storage buckets', text: 'Uploads are governed by RLS, exactly like tables. Here each user can write only under their own <code>&lt;user id&gt;/</code> folder.' },
       { pane: 0, find: ['functions:', 'auth_required: true'], title: 'Functions', text: 'Point at a file in <code>functions/</code>. Callers must be signed in.' } ] },
   ] },
   { id: 'dev', label: 'dev', title: 'Develop locally', cmd: 'inz dev', when: 'Every day while you build. It runs the full backend on your machine, applies schema changes the moment you save, and serves a read-write dashboard.', steps: [
