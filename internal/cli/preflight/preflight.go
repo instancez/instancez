@@ -191,7 +191,7 @@ func PortFreeCheck(port int) Check {
 const configReadTimeout = 10 * time.Second
 
 // ConfigSource is the minimal read surface ConfigValidCheck needs. Both
-// *config.FileSource and *config.S3Source satisfy it, so the check works
+// *config.FileSource, *config.S3Source and *config.GCSSource satisfy it, so the check works
 // against local files and s3:// objects alike.
 type ConfigSource interface {
 	Read(ctx context.Context) ([]byte, string, error)
@@ -205,7 +205,7 @@ type ConfigSource interface {
 // run safely at the very top of runDev/runServe — before dotenv files are
 // loaded — without false-failing on DSN placeholders.
 //
-// configPath may be a local file path or an s3://bucket/key URI; it is routed
+// configPath may be a local file path or an s3:// or gcs:// URI; it is routed
 // through config.NewSource so both backends are read the same way.
 func ConfigValidCheck(configPath string) Check {
 	return func() Result {
@@ -235,6 +235,8 @@ func ConfigValidCheckSource(src ConfigSource) Check {
 			fixHint := "run `inz init` to create instancez.yaml"
 			if strings.HasPrefix(src.Describe(), "s3://") {
 				fixHint = "verify the s3:// object exists and credentials grant s3:GetObject"
+			} else if strings.HasPrefix(src.Describe(), "gcs://") {
+				fixHint = "verify the gcs:// object exists and credentials grant storage.objects.get"
 			}
 			return Result{
 				Name:    "config file valid",

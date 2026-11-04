@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/instancez/instancez/internal/adapter/funcs"
+	gcsadapter "github.com/instancez/instancez/internal/adapter/gcs"
 	"github.com/instancez/instancez/internal/adapter/s3"
 	"github.com/instancez/instancez/internal/config"
 )
@@ -252,7 +253,7 @@ func addTarFile(tw *tar.Writer, path, name string, fi os.FileInfo) error {
 type s3BundleUploader struct{}
 
 func (s3BundleUploader) Upload(ctx context.Context, destURI string, data []byte) (string, error) {
-	bucket, key, err := parseS3URI(destURI)
+	bucket, key, err := parseObjectURI(destURI)
 	if err != nil {
 		return "", err
 	}
@@ -273,6 +274,29 @@ func (s3BundleUploader) Upload(ctx context.Context, destURI string, data []byte)
 	return bundleVersion(data), nil
 }
 
+// gcsBundleUploader uploads bundles to GCS with Application Default Credentials.
+type gcsBundleUploader struct{}
+
+func (gcsBundleUploader) Upload(ctx context.Context, destURI string, data []byte) (string, error) {
+	bucket, key, err := parseObjectURI(destURI)
+	if err != nil {
+		return "", err
+	}
+	store, err := gcsadapter.New(ctx, gcsadapter.Config{Bucket: bucket})
+	if err != nil {
+		return "", fmt.Errorf("init gcs for bundle upload: %w", err)
+	}
+	if err := store.Upload(ctx, key, bytes.NewReader(data), "application/gzip", int64(len(data))); err != nil {
+		return "", fmt.Errorf("upload bundle to %s: %w", destURI, err)
+	}
+	return bundleVersion(data), nil
+}
+
+// isRemoteBundleDest reports whether dest is an object-store URI.
+func isRemoteBundleDest(dest string) bool {
+	return strings.HasPrefix(dest, "s3://") || strings.HasPrefix(dest, "gcs://")
+}
+
 // bundleVersion returns a deterministic, watchable version token for the bundle
 // bytes. The s3 adapter's Upload discards the PutObject ETag, so we compute a
 // sha256 client-side instead — opaque, deterministic, zero extra round-trips.
@@ -281,22 +305,25 @@ func bundleVersion(data []byte) string {
 	return fmt.Sprintf("%x", sum)
 }
 
-// parseS3URI splits an s3://bucket/key URI into bucket and key. The key must be
-// non-empty (a bare s3://bucket is not a valid destination).
-func parseS3URI(uri string) (bucket, key string, err error) {
+// parseObjectURI splits an s3:// or gcs:// bucket/key URI into bucket and key.
+// The key must be non-empty (a bare s3://bucket is not a valid destination).
+func parseObjectURI(uri string) (bucket, key string, err error) {
 	rest, ok := strings.CutPrefix(uri, "s3://")
 	if !ok {
-		return "", "", fmt.Errorf("bundle dest must be an s3:// URI, got %q", uri)
+		rest, ok = strings.CutPrefix(uri, "gcs://")
+	}
+	if !ok {
+		return "", "", fmt.Errorf("bundle dest must be an s3:// or gcs:// URI, got %q", uri)
 	}
 	bucket, key, ok = strings.Cut(rest, "/")
 	if !ok || bucket == "" || key == "" {
-		return "", "", fmt.Errorf("bundle dest must be s3://bucket/key, got %q", uri)
+		return "", "", fmt.Errorf("bundle dest must be s3://bucket/key or gcs://bucket/key, got %q", uri)
 	}
 	return bucket, key, nil
 }
 
 // resolveBundleDest turns the --output flag value (or any bundle destination
-// URI) into the full object key. A trailing slash (or a bare s3://bucket with
+// URI) into the full object key. A trailing slash (or a bare s3:// or gcs:// bucket with
 // no key segment) is treated as a prefix and gets a generated filename
 // appended; otherwise the value is the full key verbatim. version is woven
 // into the filename so prefix uploads are content-addressed.
@@ -305,8 +332,10 @@ func resolveBundleDest(dest, version string) string {
 		return dest + "inz-functions-bundle-" + version + ".tar.gz"
 	}
 	// A bare s3://bucket (no key) is also a prefix.
-	if rest, ok := strings.CutPrefix(dest, "s3://"); ok && !strings.Contains(rest, "/") {
-		return dest + "/inz-functions-bundle-" + version + ".tar.gz"
+	for _, scheme := range []string{"s3://", "gcs://"} {
+		if rest, ok := strings.CutPrefix(dest, scheme); ok && !strings.Contains(rest, "/") {
+			return dest + "/inz-functions-bundle-" + version + ".tar.gz"
+		}
 	}
 	return dest
 }

@@ -337,7 +337,7 @@ include:
 
 ## functions_bundle
 
-Bundle pointer for self-hosted deployments. `inz bundle` produces the value (e.g. `s3://bucket/key#sha256`) and writes it here; the managed cloud stamps it server-side from uploaded sources. `inz cloud deploy` does not write this field.
+Bundle pointer for self-hosted deployments. `inz bundle` produces the value (e.g. `s3://bucket/key#sha256` or `gcs://bucket/key#sha256`) and writes it here; the managed cloud stamps it server-side from uploaded sources. `inz cloud deploy` does not write this field.
 
 ---
 

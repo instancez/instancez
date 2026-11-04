@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	gcsadapter "github.com/instancez/instancez/internal/adapter/gcs"
 	s3adapter "github.com/instancez/instancez/internal/adapter/s3"
 	"github.com/instancez/instancez/internal/app"
 	"github.com/instancez/instancez/internal/config"
@@ -27,11 +28,12 @@ type BundleSource struct {
 	extractParent string
 
 	isS3     bool
-	s3Bucket string
-	s3Key    string
+	isGCS    bool
+	s3Bucket string // bucket for either scheme
+	s3Key    string // key for either scheme
 
 	mu      sync.Mutex
-	store   *s3adapter.Store
+	store   objectHeader
 	lastDir string // most recently extracted bundle directory
 }
 
@@ -39,6 +41,7 @@ type BundleSource struct {
 // pointer is in the same form accepted by app.FetchAndExtract:
 //   - s3://bucket/key.tar.gz         (S3 bundle, polls ETag for changes)
 //   - s3://bucket/key.tar.gz#etag    (S3 bundle with pinned version, still polls for new ETags)
+//   - gcs://bucket/key.tar.gz[#etag] (GCS bundle, same semantics)
 //   - /path/to/bundle.tar.gz         (local bundle, polls mtime for changes)
 func NewBundleSource(pointer, extractParent string) *BundleSource {
 	baseURI, _ := splitBundlePointer(pointer)
@@ -47,8 +50,9 @@ func NewBundleSource(pointer, extractParent string) *BundleSource {
 		baseURI:       baseURI,
 		extractParent: extractParent,
 	}
-	if strings.HasPrefix(baseURI, "s3://") {
-		bs.isS3 = true
+	bs.isS3 = strings.HasPrefix(baseURI, "s3://")
+	bs.isGCS = strings.HasPrefix(baseURI, "gcs://")
+	if bs.isS3 || bs.isGCS {
 		if u, err := url.Parse(baseURI); err == nil {
 			bs.s3Bucket = u.Host
 			bs.s3Key = strings.TrimPrefix(u.Path, "/")
@@ -161,7 +165,7 @@ func (bs *BundleSource) Watch(ctx context.Context, interval time.Duration) (<-ch
 // headVersion returns a cheap version token for the current bundle state:
 // ETag for S3 bundles, mtime+size for local file bundles.
 func (bs *BundleSource) headVersion(ctx context.Context) (string, error) {
-	if bs.isS3 {
+	if bs.isS3 || bs.isGCS {
 		store, err := bs.getStore(ctx)
 		if err != nil {
 			return "", err
@@ -182,7 +186,7 @@ func (bs *BundleSource) headVersion(ctx context.Context) (string, error) {
 // fetchAndRead calls FetchAndExtract for pointer, records the extracted dir, and
 // reads instancez.yaml from the extracted tree.
 func (bs *BundleSource) fetchAndRead(ctx context.Context, pointer string) ([]byte, string, error) {
-	dir, version, err := app.FetchAndExtract(ctx, pointer, bs.extractParent, s3BundleFetcher)
+	dir, version, err := app.FetchAndExtract(ctx, pointer, bs.extractParent, bundleFetcher)
 	if err != nil {
 		return nil, "", fmt.Errorf("bundle source: fetch %s: %w", pointer, err)
 	}
@@ -198,11 +202,19 @@ func (bs *BundleSource) fetchAndRead(ctx context.Context, pointer string) ([]byt
 
 // getStore lazily initializes the S3 store using the same credential env vars
 // as app.FetchAndExtract (S3_REGION, S3_ENDPOINT, S3_ACCESS_KEY_ID, etc.).
-func (bs *BundleSource) getStore(ctx context.Context) (*s3adapter.Store, error) {
+func (bs *BundleSource) getStore(ctx context.Context) (objectHeader, error) {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
 	if bs.store != nil {
 		return bs.store, nil
+	}
+	if bs.isGCS {
+		store, err := gcsadapter.New(ctx, gcsadapter.Config{Bucket: bs.s3Bucket})
+		if err != nil {
+			return nil, fmt.Errorf("bundle source: init gcs: %w", err)
+		}
+		bs.store = store
+		return store, nil
 	}
 	store, err := s3adapter.New(ctx, s3adapter.Config{
 		Bucket:          bs.s3Bucket,
@@ -218,25 +230,36 @@ func (bs *BundleSource) getStore(ctx context.Context) (*s3adapter.Store, error) 
 	return store, nil
 }
 
-// s3BundleFetcher implements app.BundleFetcher for s3://bucket/key uris. It is
+// objectHeader is the HEAD seam shared by the s3 and gcs stores.
+type objectHeader interface {
+	Head(ctx context.Context, key string) (domain.ObjectInfo, error)
+}
+
+// bundleFetcher implements app.BundleFetcher for s3:// and gcs:// uris. It is
 // the concrete-adapter seam app.FetchAndExtract needs but must not import
 // itself, since app depends only on domain interfaces.
-func s3BundleFetcher(ctx context.Context, uri string) ([]byte, error) {
-	bucket, key, err := parseS3URI(uri)
+func bundleFetcher(ctx context.Context, uri string) ([]byte, error) {
+	bucket, key, err := parseObjectURI(uri)
 	if err != nil {
 		return nil, err
 	}
-	store, err := s3adapter.New(ctx, s3adapter.Config{
-		Bucket:          bucket,
-		Region:          os.Getenv("S3_REGION"),
-		Endpoint:        os.Getenv("S3_ENDPOINT"),
-		AccessKeyID:     os.Getenv("S3_ACCESS_KEY_ID"),
-		SecretAccessKey: os.Getenv("S3_SECRET_ACCESS_KEY"),
-		// No KeyPrefix: the key is fully specified by the pointer, matching
-		// how deploy uploads it (see s3BundleUploader in bundle.go).
-	})
+	var store domain.ObjectStore
+	if strings.HasPrefix(uri, "gcs://") {
+		// No KeyPrefix: the key is fully specified by the pointer.
+		store, err = gcsadapter.New(ctx, gcsadapter.Config{Bucket: bucket})
+	} else {
+		store, err = s3adapter.New(ctx, s3adapter.Config{
+			Bucket:          bucket,
+			Region:          os.Getenv("S3_REGION"),
+			Endpoint:        os.Getenv("S3_ENDPOINT"),
+			AccessKeyID:     os.Getenv("S3_ACCESS_KEY_ID"),
+			SecretAccessKey: os.Getenv("S3_SECRET_ACCESS_KEY"),
+			// No KeyPrefix: the key is fully specified by the pointer, matching
+			// how deploy uploads it (see s3BundleUploader in bundle.go).
+		})
+	}
 	if err != nil {
-		return nil, fmt.Errorf("funcbundle: init s3: %w", err)
+		return nil, fmt.Errorf("funcbundle: init store: %w", err)
 	}
 	rc, _, err := store.Download(ctx, key)
 	if err != nil {

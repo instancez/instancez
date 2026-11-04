@@ -76,10 +76,13 @@ type Source interface {
 }
 
 // NewSource returns a Source for the given spec. Specs beginning with "s3://"
-// return an S3Source; everything else is treated as a local file path.
+// or "gcs://" return an S3Source or GCSSource; everything else is treated as a local file path.
 func NewSource(spec string) (Source, error) {
 	if strings.HasPrefix(spec, "s3://") {
 		return newS3Source(spec)
+	}
+	if strings.HasPrefix(spec, "gcs://") {
+		return newGCSSource(spec)
 	}
 	return &FileSource{Path: spec}, nil
 }
