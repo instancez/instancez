@@ -217,7 +217,7 @@ function editorPane(o){
   p.showHint = t => { p.hint.hidden = !t; p.hint.innerHTML = t || ''; };
   p.focus = (a, b) => { p.rows.forEach((r, i) => { r.classList.toggle('dim', i < a || i > b); r.classList.toggle('hl', i >= a && i <= b); }); const t = p.rows[a]; if (t) p.body.scrollTop = Math.max(0, t.offsetTop - 60); };
   p.clear = () => p.rows.forEach(r => r.classList.remove('dim', 'hl'));
-  p.find = (a, b) => { const i = p.lines.findIndex(t => t.includes(a)); if (i < 0) return null; if (!b) return [i, i]; const j = p.lines.findIndex((t, k) => k >= i && t.includes(b)); return [i, j < 0 ? i : j]; };
+  p.find = (a, b, last) => { const i = p.lines.findIndex(t => t.includes(a)); if (i < 0) return null; if (!b) return [i, i]; const j = (last ? p.lines.findLastIndex : p.lines.findIndex).call(p.lines, (t, k) => k >= i && t.includes(b)); return [i, j < 0 ? i : j]; };
   p.set(o.src);
   return p;
 }
@@ -239,7 +239,7 @@ function dashPane(o){
     p.hs.forEach(h => h.remove()); p.hs = [];
     const add = (r, to, label, need) => { const h = mk('button', 'hs' + (need ? ' need' : '')); h.setAttribute('aria-label', label); p.rect(h, r); h.onclick = () => { if (p.onNav) p.onNav(to, need); p.go(to); }; p.canvas.appendChild(h); p.hs.push(h); if (need) p.need = h; };
     Object.entries(NAV).forEach(([k, y]) => { if (k !== pg) add([16, y - 17, 224, 34], NAVTO[k], 'Open ' + k, p.needKey === 'nav:' + k); });
-    if (pg === 'tables') add([289, 235, 1111, 56], 'data', 'Open todos table', p.needKey === 'row:todos');
+    if (pg === 'tables') add([289, 297, 1111, 56], 'data', 'Open todos table', p.needKey === 'row:todos');
     if (['data', 'fields', 'indexes', 'rls'].includes(pg)) Object.entries(TABS).forEach(([k, [x, y]]) => { if (k !== pg) add([x - 38, y - 20, 76, 40], k, 'Open ' + k + ' tab', p.needKey === 'tab:' + k); });
   };
   p.showSpot = r => { if (!r){ p.spot.classList.remove('on'); return; } p.rect(p.spot, r); p.spot.classList.add('on'); };
@@ -263,8 +263,8 @@ const CHAPTERS = [
       { pane: 0, find: ['Done!', 'embedded-pg'], title: 'No Postgres to install', text: '<code>--embedded-pg</code> starts a bundled Postgres 16 for you. Or point instancez at your own database.' } ] },
     { title: 'Meet instancez.yaml', text: 'This is the whole generated file. Step through the parts.', panes: [{ t: 'editor', file: 'instancez.yaml', src: 'yaml0' }], callouts: [
       { pane: 0, find: ['tables:', 'default: now()'], title: 'Tables and fields', text: 'Declare columns here. instancez diffs this against your database and applies only what changed.' },
-      { pane: 0, find: ['    rls:', 'with_check: "user_id'], title: 'Authorization is a policy', text: 'Row-level security is the only access layer. This policy lets each user see only their own rows.' },
-      { pane: 0, find: ['storage:', 'types: [image/*]'], title: 'Storage buckets', text: 'Uploads are governed by RLS, exactly like tables.' },
+      { pane: 0, find: ['using: "user_id', 'with_check: "user_id'], title: 'Authorization is a policy', text: 'Row-level security is the only access layer. This policy lets each user see only their own rows.' },
+      { pane: 0, find: ['  avatars:', "name LIKE auth.uid()", true], title: 'Storage buckets', text: 'Uploads are governed by RLS, exactly like tables. Here each user can write only under their own <code>&lt;user id&gt;/</code> folder.' },
       { pane: 0, find: ['functions:', 'auth_required: true'], title: 'Functions', text: 'Point at a file in <code>functions/</code>. Callers must be signed in.' } ] },
   ] },
   { id: 'dev', label: 'dev', title: 'Develop locally', cmd: 'inz dev', when: 'Every day while you build. It runs the full backend on your machine, applies schema changes the moment you save, and serves a read-write dashboard.', steps: [
@@ -275,10 +275,10 @@ const CHAPTERS = [
       { pane: 0, find: ['Server', 'Dashboard'], title: 'API and dashboard', text: 'Your Supabase-compatible API and the dashboard are both served from this one process.' },
       { pane: 0, find: ['Watching for changes'], title: 'Hot reload is on', text: 'Edit <code>instancez.yaml</code> and the schema re-applies automatically.' } ] },
     { title: 'Open the dashboard', text: 'The dashboard is part of the same binary.', gate: { pane: 0, key: 'nav:overview', skip: true }, panes: [{ t: 'dash', page: 'overview' }], callouts: [
-      { pane: 0, rect: [289, 182, 1110, 160], title: 'Live project overview', text: 'Tables, auth and storage at a glance, read straight from your running instance.' },
-      { pane: 0, rect: [289, 518, 1110, 225], title: 'Your API URL and keys', text: 'Everything a client needs to connect, ready to copy.' },
+      { pane: 0, rect: [289, 182, 1110, 196], title: 'Live project overview', text: 'Tables, auth and storage at a glance, read straight from your running instance.' },
+      { pane: 0, rect: [289, 554, 1110, 226], title: 'Your API URL and keys', text: 'Everything a client needs to connect, ready to copy.' },
       { pane: 0, rect: [0, 836, 1440, 64], title: 'Live edit mode', text: 'In dev, dashboard edits are written back to <code>instancez.yaml</code>, so the file stays the source of truth.' } ] },
-    { title: 'Edit the YAML, watch it apply', text: 'Add a field to the file and let hot reload do the rest.', panes: [{ t: 'editor', file: 'instancez.yaml', src: 'yaml0' }, { t: 'term', title: 'inz dev · running', prefill: { cmd: 'inz dev --embedded-pg', out: 'dev' } }], actions: [{ edit: 0, label: 'Save a new priority field', after: 43, lines: ['      - name: priority', '        type: integer', '        default: 0'] }, { append: 1, out: 'reload', ms: 260 }], callouts: [
+    { title: 'Edit the YAML, watch it apply', text: 'Add a field to the file and let hot reload do the rest.', panes: [{ t: 'editor', file: 'instancez.yaml', src: 'yaml0' }, { t: 'term', title: 'inz dev · running', prefill: { cmd: 'inz dev --embedded-pg', out: 'dev' } }], actions: [{ edit: 0, label: 'Save a new priority field', after: 71, lines: ['      - name: priority', '        type: integer', '        default: 0'] }, { append: 1, out: 'reload', ms: 260 }], callouts: [
       { pane: 0, find: ['name: priority', 'default: 0'], title: 'Three new lines', text: 'No migration file to write. The new column is declared where the rest of the schema already lives.' },
       { pane: 1, find: ['config reloaded successfully'], title: 'Applied on save', text: 'The file watcher saw the change, diffed it against Postgres and added the column.' } ] },
     { title: 'Open the Tables page', text: 'Your dashboard is live. Open the Tables page from the sidebar.', gate: { key: 'nav:tables', msg: 'Click <b>Tables</b> in the sidebar.' }, doneText: 'These tables come straight from your YAML.', panes: [{ t: 'dash', page: 'overview' }], callouts: [] },
@@ -453,7 +453,7 @@ function applyCallout(){
   if (!c) return;
   const p = panes[c.pane];
   if (p.kind === 'dash') p.focus(c.rect);
-  else { const r = p.find(c.find[0], c.find[1]); if (r) p.focus(r[0], r[1]); }
+  else { const r = p.find(c.find[0], c.find[1], c.find[2]); if (r) p.focus(r[0], r[1]); }
 }
 
 function gateDone(){ const st = cur(); if (st.gate) st.gate.done = true; renderSide(); if (st.next && st.next.gate && !st.next.started){ st.next.started = true; const p = panes.find(x => x.kind === 'dash'); if (p) setTimeout(() => p.setNeed(st.next.gate.key), 50); } }
