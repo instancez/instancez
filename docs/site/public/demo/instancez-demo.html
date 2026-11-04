@@ -222,7 +222,7 @@ function editorPane(o){
   p.showHint = t => { p.hint.hidden = !t; p.hint.innerHTML = t || ''; };
   p.focus = (a, b) => { p.rows.forEach((r, i) => { r.classList.toggle('dim', i < a || i > b); r.classList.toggle('hl', i >= a && i <= b); }); const t = p.rows[a]; if (t) p.body.scrollTop = Math.max(0, t.offsetTop - 60); };
   p.clear = () => p.rows.forEach(r => r.classList.remove('dim', 'hl'));
-  p.find = (a, b) => { const i = p.lines.findIndex(t => t.includes(a)); if (i < 0) return null; if (!b) return [i, i]; const j = p.lines.findLastIndex((t, k) => k >= i && t.includes(b)); return [i, j < 0 ? i : j]; };
+  p.find = (a, b, last) => { const i = p.lines.findIndex(t => t.includes(a)); if (i < 0) return null; if (!b) return [i, i]; const j = (last ? p.lines.findLastIndex : p.lines.findIndex).call(p.lines, (t, k) => k >= i && t.includes(b)); return [i, j < 0 ? i : j]; };
   p.set(o.src);
   return p;
 }
@@ -269,7 +269,7 @@ const CHAPTERS = [
     { title: 'Meet instancez.yaml', text: 'This is the whole generated file. Step through the parts.', panes: [{ t: 'editor', file: 'instancez.yaml', src: 'yaml0' }], callouts: [
       { pane: 0, find: ['tables:', 'default: now()'], title: 'Tables and fields', text: 'Declare columns here. instancez diffs this against your database and applies only what changed.' },
       { pane: 0, find: ['using: "user_id', 'with_check: "user_id'], title: 'Authorization is a policy', text: 'Row-level security is the only access layer. This policy lets each user see only their own rows.' },
-      { pane: 0, find: ['storage:', "name LIKE auth.uid()"], title: 'Storage buckets', text: 'Uploads are governed by RLS, exactly like tables. Here each user can write only under their own <code>&lt;user id&gt;/</code> folder.' },
+      { pane: 0, find: ['storage:', "name LIKE auth.uid()", true], title: 'Storage buckets', text: 'Uploads are governed by RLS, exactly like tables. Here each user can write only under their own <code>&lt;user id&gt;/</code> folder.' },
       { pane: 0, find: ['functions:', 'auth_required: true'], title: 'Functions', text: 'Point at a file in <code>functions/</code>. Callers must be signed in.' } ] },
   ] },
   { id: 'dev', label: 'dev', title: 'Develop locally', cmd: 'inz dev', when: 'Every day while you build. It runs the full backend on your machine, applies schema changes the moment you save, and serves a read-write dashboard.', steps: [
@@ -458,7 +458,7 @@ function applyCallout(){
   if (!c) return;
   const p = panes[c.pane];
   if (p.kind === 'dash') p.focus(c.rect);
-  else { const r = p.find(c.find[0], c.find[1]); if (r) p.focus(r[0], r[1]); }
+  else { const r = p.find(c.find[0], c.find[1], c.find[2]); if (r) p.focus(r[0], r[1]); }
 }
 
 function gateDone(){ const st = cur(); if (st.gate) st.gate.done = true; renderSide(); if (st.next && st.next.gate && !st.next.started){ st.next.started = true; const p = panes.find(x => x.kind === 'dash'); if (p) setTimeout(() => p.setNeed(st.next.gate.key), 50); } }
