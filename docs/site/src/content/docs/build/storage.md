@@ -104,6 +104,7 @@ A row must be visible under a `select` policy before `update` or `delete` can fi
 | Operation | Policy that must allow it |
 |---|---|
 | `remove`, `emptyBucket` | `select` and `delete` on each object. An object you can't see or delete is dropped from the batch silently, with no error and no count; its bytes are kept. `emptyBucket` isn't admin-only: it removes what your `select`+`delete` policies allow, as in Supabase. |
+| `DELETE /object/<bucket>/<path>` | Same policies as `remove`, one key: 200 `Successfully deleted`, 403 when RLS denies, 404 when missing. `?versionId` is ignored (no object versioning). |
 | `move` | `select` and `update` on the source row, with the destination passing `with_check`. **A policy that grants `update` but not `delete` still lets a caller move an object, which removes the source, same as a delete.** A hidden or missing source returns 404 (unlike `remove`, this fails loudly). Moving onto an existing object returns 409. |
 | `copy` | `select` on the source and `insert` on the destination. Copying onto an existing destination object also needs `update` on that row, since copy always upserts. The caller owns the copy. |
 | `update` (PUT) | `select` and `update` on the existing object. A hidden or missing object returns 404, like `move`. |
@@ -112,7 +113,7 @@ A request with only the publishable key runs as `anon` under the bucket's `rls:`
 
 A project that declares no `rls:` on any bucket leaves `storage.objects` RLS off entirely: signed-in operations run on route-level auth alone, with no per-row check. Only the `public/` GET routes and signed-URL redemption (`GET /object/sign/...` and `/render/image/sign/...`, where the token is the grant) skip auth.
 
-Object keys with a `..` segment, a NUL byte, or nothing at all return 400 on the single-object routes (upload, download, sign, info, move, copy). `remove` drops bad keys from its batch silently instead; `createSignedUrls` reports a per-path `error` instead of failing the whole call.
+Object keys with a `..` segment, a NUL byte, or nothing at all return 400 on the single-object routes (upload, download, sign, info, move, copy, delete), as `invalid_key`. `remove` drops bad keys from its batch silently instead; `createSignedUrls` reports a per-path `error` instead of failing the whole call.
 
 A direct upload (`upload`/`update`) checks RLS twice, in this order: the MIME check runs first, then an early probe (a short, always-rolled-back transaction) runs your `insert`/`update` policy with `size = 0` (the real size isn't known until the body is read), so a `with_check` policy that requires `size > 0` rejects every upload with 403. Only after the probe passes does the body spool to a temporary file, and the real write transaction runs last, re-checking RLS when it writes the metadata row. A signed upload (`uploadToSignedUrl`) checks RLS only once, when `createSignedUploadUrl` mints the token; redemption runs as `service_role` and does not check again, since the token itself is the grant. That mint-time probe uses `size = 0` and an empty content type, so a `with_check` policy bounding either `size` or `mime` rejects every `createSignedUploadUrl` call, the same gotcha as the direct-upload probe above.
 
