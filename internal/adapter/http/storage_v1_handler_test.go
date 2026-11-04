@@ -1624,6 +1624,16 @@ func TestRemoveObject_ExistenceCheckError500(t *testing.T) {
 	assert.Equal(t, 500, serve(r, "DELETE", "/storage/v1/object/avatars/a.txt", "", nil).Code)
 }
 
+func TestDeleteBytes_BoundedByTimeout(t *testing.T) {
+	store := &stubObjectStore{deleteFn: func(ctx context.Context, _ string) error { <-ctx.Done(); return ctx.Err() }}
+	orig := deleteBytesTimeout
+	deleteBytesTimeout = 50 * time.Millisecond
+	defer func() { deleteBytesTimeout = orig }()
+	start := time.Now()
+	deleteBytes(context.Background(), store, slog.Default(), "b", []map[string]any{{"name": "a"}})
+	assert.Less(t, time.Since(start), 5*time.Second)
+}
+
 func TestDeleteBytes_SurvivesCancelledContext(t *testing.T) {
 	var ctxErr error
 	store := &stubObjectStore{deleteFn: func(ctx context.Context, _ string) error { ctxErr = ctx.Err(); return nil }}

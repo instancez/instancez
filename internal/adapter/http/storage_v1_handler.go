@@ -233,11 +233,16 @@ func (h *StorageV1Handler) emptyBucket(c *gin.Context) {
 	c.JSON(200, gin.H{"message": "Successfully emptied"})
 }
 
+var deleteBytesTimeout = 30 * time.Second
+
 // deleteBytes removes object bytes for rows whose metadata delete already committed.
 func deleteBytes(ctx context.Context, store domain.ObjectStore, logger *slog.Logger, bucket string, rows []map[string]any) {
 	ctx = context.WithoutCancel(ctx)
 	for _, row := range rows {
-		if err := store.Delete(ctx, bucket+"/"+asString(row["name"])); err != nil {
+		delCtx, cancel := context.WithTimeout(ctx, deleteBytesTimeout)
+		err := store.Delete(delCtx, bucket+"/"+asString(row["name"]))
+		cancel()
+		if err != nil {
 			logger.Warn("delete object bytes", "bucket", bucket, "error", err)
 		}
 	}
