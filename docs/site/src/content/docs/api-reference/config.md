@@ -85,9 +85,9 @@ Set `providers.email: null` to disable email sending.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `providers.storage.type` | `string` | — | `"local"` or `"s3"`. |
+| `providers.storage.type` | `string` | — | `"local"`, `"s3"` or `"gcs"`. |
 | `providers.storage.path` | `string` | — | (`local` only) Directory for local file storage. |
-| `providers.storage.bucket` | `string` | — | (`s3` only) S3 bucket name. |
+| `providers.storage.bucket` | `string` | — | (`s3` and `gcs`) Bucket name. Required. |
 | `providers.storage.region` | `string` | — | (`s3` only) AWS region. |
 | `providers.storage.access_key_id` | `string` | — | (`s3` only) AWS access key. Supports `${VAR}`. |
 | `providers.storage.secret_access_key` | `string` | — | (`s3` only) AWS secret key. Supports `${VAR}`. |

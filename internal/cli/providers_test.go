@@ -10,7 +10,7 @@ import (
 
 func TestStorageRegistryBuiltins(t *testing.T) {
 	registerBuiltins()
-	for _, name := range []string{"s3", "local"} {
+	for _, name := range []string{"s3", "gcs", "local"} {
 		if _, ok := storageRegistry[name]; !ok {
 			t.Errorf("storage factory %q not registered", name)
 		}
@@ -26,8 +26,8 @@ func TestUnsupportedStorageProviderError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "gdrive") {
 		t.Fatalf("err = %v, want mention of gdrive", err)
 	}
-	if !strings.Contains(err.Error(), "s3") || !strings.Contains(err.Error(), "local") {
-		t.Errorf("error should list supported providers, got %q", err.Error())
+	if !strings.Contains(err.Error(), "supported: gcs, local, s3") {
+		t.Errorf("error should list all supported providers, got %q", err.Error())
 	}
 }
 
@@ -195,5 +195,13 @@ func TestInitStorageProvider_Local_UsesStructPath(t *testing.T) {
 	}
 	if store == nil {
 		t.Fatal("expected non-nil store")
+	}
+}
+
+func TestInitStorageProvider_GCSRequiresBucket(t *testing.T) {
+	cfg := &domain.Config{Providers: domain.Providers{Storage: &domain.StorageProvider{Type: "gcs"}}}
+	_, err := initStorageProvider(context.Background(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "bucket") {
+		t.Fatalf("err = %v, want bucket error", err)
 	}
 }

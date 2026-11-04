@@ -6,6 +6,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Added
 
+- `gcs` storage provider (`providers.storage.type: gcs`) for Google Cloud Storage. It uses Application Default Credentials only (no HMAC keys); signed URLs go through IAM `signBlob`. Reads `bucket`, `INSTANCEZ_STORAGE_KEY_PREFIX` and optional `INSTANCEZ_GCS_SIGNER_EMAIL`.
 - `inz validate --use-dsn <dsn> --dry-run-ddl` runs the migration in a transaction that is always rolled back (`lock_timeout` 2s, `statement_timeout` 30s per statement, 2 minutes overall; an in-sync database still gets its rpc bodies checked), so unknown RLS columns and bad rpc bodies fail validation. It exits non-zero on failure and adds `dry_run` to `--json`. Plain `--use-dsn` still only prints the plan.
 - Did-you-mean suggestions for unknown YAML keys (`rls_enabeld` suggests `rls_enabled`) and column types (`string` suggests `text`, `timestampz` suggests `timestamptz`).
 - A JSON Schema for `instancez.yaml` at `https://docs.instancez.ai/schema/instancez.json`. `inz init` adds the `yaml-language-server` header so editors complete keys and flag unknown ones.

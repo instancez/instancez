@@ -390,6 +390,7 @@
             },
             "type": {
               "enum": [
+                "gcs",
                 "local",
                 "s3",
                 null
