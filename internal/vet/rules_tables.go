@@ -96,7 +96,7 @@ func openWrite(c *ctx, rule string, p domain.RLSPolicy, at []any, who, label str
 			name, expr string
 			used       bool
 		}{{"using", p.Using, usesUsing}, {"with_check", p.WithCheck, usesCheck}} {
-			if f.used && isLiteralTrue(f.expr) {
+			if f.used && hasTrueBranch(f.expr) {
 				c.add(rule, Critical, append(slices.Clone(at), f.name),
 					"Anyone can change rows",
 					fmt.Sprintf("This policy lets %s %s rows in %s.", who, op, label),
@@ -122,7 +122,7 @@ func openRead(c *ctx, p domain.RLSPolicy, at []any, label string, t domain.Table
 			"Anyone can read every row",
 			fmt.Sprintf("This policy lets any caller, signed in or not, read all rows in %s.%s", label, extra),
 			"Scope it to the caller, or keep it only if the table is truly public.")
-	case isAuthGateOnly(p.Using) && hasSensitiveColumn(t):
+	case c.authGate(p.Using) && hasSensitiveColumn(t):
 		c.add("policy-authed-read-sensitive", Medium, at,
 			"Every signed-in user can read every row",
 			fmt.Sprintf("This policy only checks that someone is signed in, and %s has sensitive columns. Anonymous sign-ins count too.", label),
@@ -141,7 +141,7 @@ func writeExprs(p domain.RLSPolicy, ops ...string) []string {
 
 func noIdentityWrite(c *ctx, p domain.RLSPolicy, at []any, label string, t domain.Table) {
 	exprs := writeExprs(p, writeOps...)
-	if len(exprs) == 0 || slices.ContainsFunc(exprs, isLiteralTrue) || !slices.ContainsFunc(exprs, func(e string) bool { return squash(e) != "false" }) {
+	if len(exprs) == 0 || slices.ContainsFunc(exprs, hasTrueBranch) || !slices.ContainsFunc(exprs, func(e string) bool { return squash(e) != "false" }) {
 		return
 	}
 	for _, e := range exprs {
@@ -163,23 +163,62 @@ func noIdentityWrite(c *ctx, p domain.RLSPolicy, at []any, label string, t domai
 		"Add an identity check, for example auth.uid() = user_id.")
 }
 
-// authGate reports whether expr lets any signed-in user through; an OR branch that is only a sign-in check opens the whole expression.
-func (c *ctx) authGate(expr string) bool {
-	branches := splitTopLevelOr(expr)
-	return slices.ContainsFunc(branches, func(e string) bool {
-		return isAuthGateOnly(e) && !strings.Contains(squash(e), "service_role") && !c.callsIdentityRPC(e)
-	})
+const maxGateDepth = 32
+
+// authGate reports whether any signed-in user passes expr.
+func (c *ctx) authGate(expr string) bool { return c.authGateAt(expr, 0) }
+
+func (c *ctx) authGateAt(expr string, depth int) bool {
+	if depth > maxGateDepth {
+		return false
+	}
+	next := func(e string) bool { return c.authGateAt(e, depth+1) }
+	if branches := splitTop(expr, "or"); len(branches) > 1 {
+		return slices.ContainsFunc(branches, next)
+	}
+	if conjuncts := splitTop(expr, "and"); len(conjuncts) > 1 {
+		anyGate := false
+		for _, e := range conjuncts {
+			if next(e) {
+				anyGate = true
+			} else if c.scopes(e) && !hasTrueBranch(e) {
+				return false
+			}
+		}
+		return anyGate
+	}
+	if conds, results, elseRes, ok := caseArms(expr); ok {
+		if next(elseRes) {
+			return true
+		}
+		for i, cond := range conds {
+			if next(cond) && (isLiteralTrue(results[i]) || next(results[i])) {
+				return true
+			}
+		}
+		return false
+	}
+	e := stripOuterParens(expr)
+	_, mask := scanSQL(e)
+	toks := sqlWords(mask)
+	if len(toks) > 0 && toks[0].word == "not" || slices.ContainsFunc(toks, func(t sqlTok) bool { return t.word == "case" }) {
+		return false
+	}
+	return isAuthGateOnly(mask) && !c.scopes(e)
 }
 
-// authedWrite returns the field of an update/delete policy that only checks sign-in: using covers the source row, with_check the destination of an update.
+// scopes reports whether e ties access to the caller: identity, service role or an identity rpc.
+func (c *ctx) scopes(e string) bool {
+	_, mask := scanSQL(e)
+	return refsIdentity(strings.ReplaceAll(squash(mask), "auth.uid()isnotnull", "")) || strings.Contains(squash(e), "service_role") || c.callsIdentityRPC(e)
+}
+
+// authedWrite returns the field of a write policy that only checks sign-in.
 func (c *ctx) authedWrite(p domain.RLSPolicy) string {
-	ops := opsOf(p, "update", "delete")
 	switch {
-	case len(ops) == 0:
-		return ""
-	case strings.TrimSpace(p.Using) != "" && c.authGate(p.Using):
+	case len(opsOf(p, "update", "delete")) > 0 && c.authGate(p.Using):
 		return "using"
-	case slices.Contains(ops, "update") && strings.TrimSpace(p.WithCheck) != "" && c.authGate(p.WithCheck):
+	case len(opsOf(p, "update", "insert")) > 0 && c.authGate(p.WithCheck):
 		return "with_check"
 	}
 	return ""
@@ -195,11 +234,16 @@ func ruleBuckets(c *ctx) {
 				pat := append(slices.Clone(at), "rls", i)
 				openWrite(c, "bucket-open-write", p, pat, anyJWT, "bucket "+name)
 				if field := c.authedWrite(p); field != "" {
+					title := "Any signed-in user can change every object"
 					msg := fmt.Sprintf("This policy only checks that someone is signed in, so any user (including anonymous sign-ins) can replace or delete other users' objects in bucket %s.", name)
-					if field == "with_check" && strings.TrimSpace(p.Using) != "" {
+					switch ops := opsOf(p, writeOps...); {
+					case field == "with_check" && !slices.Contains(ops, "update"):
+						title = "Any signed-in user can upload anywhere"
+						msg = fmt.Sprintf("This insert policy only checks that someone is signed in, so any user (including anonymous sign-ins) can upload to any path in bucket %s.", name)
+					case field == "with_check" && strings.TrimSpace(p.Using) != "":
 						msg = fmt.Sprintf("This update policy's destination check only verifies sign-in, so users can move or rename objects into any folder of bucket %s.", name)
 					}
-					c.add("bucket-authed-write", Medium, append(pat, field), "Any signed-in user can change every object", msg,
+					c.add("bucket-authed-write", Medium, append(pat, field), title, msg,
 						"Scope it to the uploader, for example name LIKE auth.uid()::text || '/%'.")
 				}
 				if !b.Public && len(opsOf(p, "select")) > 0 && isLiteralTrue(p.Using) {
@@ -240,4 +284,9 @@ func (c *ctx) callsIdentityRPC(expr string) bool {
 		}
 	}
 	return false
+}
+
+// hasTrueBranch reports whether expr is always true, directly or through a top-level OR branch.
+func hasTrueBranch(expr string) bool {
+	return slices.ContainsFunc(splitTop(expr, "or"), isLiteralTrue)
 }

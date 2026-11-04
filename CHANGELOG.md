@@ -22,6 +22,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - `timestamps: true` on a table adds `created_at` and an auto-updated `updated_at`.
 - RLS `operations` accepts any combination, e.g. `[insert, update]`.
 - `inz vet` rule `bucket-authed-write` flags update/delete storage policies that only check sign-in (the source row or an update's destination).
+- `inz vet` `bucket-authed-write` also flags sign-in-only insert policies and sign-in `OR` branches or `CASE` arms, and sign-in `AND`ed with an identity check is not flagged.
 
 ### Changed
 
