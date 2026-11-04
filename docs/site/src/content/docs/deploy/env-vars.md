@@ -69,11 +69,21 @@ providers:
 
 instancez interpolates `${VAR}` references in `instancez.yaml` at load time. Any environment variable name works; the names above are conventions.
 
-One variable is read directly from the process environment (no YAML reference needed):
+For Google Cloud Storage, set only the bucket; credentials come from Application Default Credentials:
+
+```yaml
+providers:
+  storage:
+    type: gcs
+    bucket: ${INSTANCEZ_GCS_BUCKET}
+```
+
+These variables are read directly from the process environment (no YAML reference needed):
 
 | Variable | Description |
 |----------|-------------|
 | `INSTANCEZ_STORAGE_KEY_PREFIX` | Optional prefix prepended to all object keys in the storage bucket. Useful for sharing a bucket across environments. |
+| `INSTANCEZ_GCS_SIGNER_EMAIL` | (`gcs` only) Optional service account that signs URLs via IAM `signBlob`. Auto-detected on GKE and Cloud Run when unset. |
 
 ## Email providers
 
