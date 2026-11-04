@@ -115,6 +115,16 @@ func TestApplyTransform_UndecodableReturnsOriginal(t *testing.T) {
 	assert.Equal(t, "image/webp", ct)
 }
 
+func TestApplyTransform_MalformedTIFFReturnsOriginal(t *testing.T) {
+	tiff := []byte{'I', 'I', 42, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+	out, ct, err := applyTransform(io.NopCloser(bytes.NewReader(tiff)), "image/tiff",
+		&transformParams{Width: 10, Format: "origin", Quality: 80})
+	require.NoError(t, err)
+	b, _ := io.ReadAll(out)
+	assert.Equal(t, tiff, b)
+	assert.Equal(t, "image/tiff", ct)
+}
+
 func assertCoverBounded(t *testing.T, src []byte, params *transformParams) {
 	t.Helper()
 	var before, after runtime.MemStats
