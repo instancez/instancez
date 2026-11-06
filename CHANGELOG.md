@@ -4,6 +4,8 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [0.0.13] - 2026-11-06
+
 ### Added
 
 - `DELETE /storage/v1/object/<bucket>/<path>` deletes one object like Supabase (403 when RLS denies, 404 when missing).
@@ -397,7 +399,8 @@ First tagged release.
 - Deployment targets: Docker, Docker Compose, Kubernetes (Helm chart), AWS Lambda
 - A `@supabase/supabase-js` wire-compatibility test suite that runs on every commit
 
-[Unreleased]: https://github.com/instancez/instancez/compare/v0.0.12...HEAD
+[Unreleased]: https://github.com/instancez/instancez/compare/v0.0.13...HEAD
+[0.0.13]: https://github.com/instancez/instancez/compare/v0.0.12...v0.0.13
 [0.0.12]: https://github.com/instancez/instancez/compare/v0.0.11...v0.0.12
 [0.0.11]: https://github.com/instancez/instancez/compare/v0.0.10...v0.0.11
 [0.0.10]: https://github.com/instancez/instancez/compare/v0.0.9...v0.0.10
