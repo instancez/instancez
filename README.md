@@ -12,7 +12,7 @@ Defined in one YAML file — self-hosted in seconds.
 [![Release](https://img.shields.io/github/v/release/instancez/instancez)](https://github.com/instancez/instancez/releases)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-[Quick start](#quick-start) · [Docs](https://instancez.github.io) · [Feature parity](#feature-parity)
+[Quick start](#quick-start) · [Docs](https://instancez.github.io) · [Roadmap](https://roadmap.instancez.ai/) · [Feature parity](#feature-parity)
 
 </div>
 
