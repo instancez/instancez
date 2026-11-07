@@ -7,11 +7,12 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 ### Added
 
 - `POST /storage/<bucket>/sign` accepts an optional `path` to name the object instead of a random id. It uses the `/storage/v1` key rules plus no leading slash, empty segments or keys over 1024 bytes (400), runs the `insert` policy against the real path, returns 409 for an existing object (or replaces it with `x-upsert: true`), and responds with `{id, path, upload_url}`. Without `path` nothing changes.
+- `GET` and `DELETE /storage/<bucket>/<id>` accept ids with slashes, so objects created with a nested `path` can be downloaded and deleted.
 - The storage docs gain "Choosing an upload method" and state the ~4.5MB cap on server-proxied uploads on Instancez Cloud.
 
 ### Changed
 
-- `POST /storage/<bucket>/sign` signs the declared `size` as `Content-Length`, so S3 rejects an upload of a different length, and records it in `storage.objects` (was 0). When the bucket sets `max_size`, `size` is now required (400 without it), because an unsized presigned `PUT` could bypass the limit.
+- Breaking, `POST /storage/<bucket>/sign` now requires `size` when the bucket sets `max_size` (400 without it); send `size: file.size`. It also signs the declared `size` as `Content-Length`, so S3 rejects an upload of a different length, and records it in `storage.objects` (was 0). An unsized presigned `PUT` could bypass `max_size`.
 
 ## [0.0.14] - 2026-11-07
 

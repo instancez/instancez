@@ -37,8 +37,8 @@ func (h *StorageHandler) Mount(root *gin.RouterGroup) {
 
 		group := root.Group("/storage/" + name)
 		group.POST("/sign", jwtAuth(h.jwtKeys, true), h.handleSignUpload(name, b))
-		group.GET("/:id", jwtAuth(h.jwtKeys, !b.Public), h.handleSignDownload(name, b))
-		group.DELETE("/:id", jwtAuth(h.jwtKeys, true), h.handleDelete(name, b))
+		group.GET("/*id", jwtAuth(h.jwtKeys, !b.Public), h.handleSignDownload(name, b))
+		group.DELETE("/*id", jwtAuth(h.jwtKeys, true), h.handleDelete(name, b))
 	}
 }
 
@@ -54,7 +54,7 @@ func (h *StorageHandler) handleSignUpload(bucketName string, bucket domain.Bucke
 			Path        *string `json:"path"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
-			problemJSON(c, 400, "bad_request", "Missing content_type")
+			problemJSON(c, 400, "bad_request", "Invalid body: content_type is required, size must be an integer, path a string")
 			return
 		}
 

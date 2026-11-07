@@ -644,3 +644,36 @@ func TestHandleSignUpload_AnonymousRejectedWithPath(t *testing.T) {
 	assert.Equal(t, 403, w.Code)
 	assert.Zero(t, execs)
 }
+
+func TestLegacyRoutes_AcceptNestedIDs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var gotName any
+	db := &stubDB{
+		queryRowFn: func(_ context.Context, _ string, args ...any) (map[string]any, error) {
+			gotName = args[0]
+			return map[string]any{"mime": "text/plain"}, nil
+		},
+		queryFn: func(_ context.Context, _ string, args ...any) ([]map[string]any, error) {
+			gotName = args[0]
+			return []map[string]any{{"name": args[0]}}, nil
+		},
+	}
+	store := &stubObjectStore{signDownloadFn: func(context.Context, string, time.Duration, domain.DownloadOptions) (string, error) {
+		return "https://s3.example/get", nil
+	}}
+	h := newLegacyStorageHandler(db, store)
+	r := gin.New()
+	r.Use(func(c *gin.Context) { setTestSession(c, domain.Session{Role: "authenticated", UserID: "u1", IsAuthenticated: true}) })
+	r.GET("/storage/docs/*id", h.handleSignDownload("docs", domain.Bucket{}))
+	r.DELETE("/storage/docs/*id", h.handleDelete("docs", domain.Bucket{}))
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/storage/docs/p1/Sham%20Zain.pdf", nil))
+	assert.Equal(t, 200, w.Code, w.Body.String())
+	assert.Equal(t, "p1/Sham Zain.pdf", gotName)
+
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/storage/docs/p1/Sham%20Zain.pdf", nil))
+	assert.Equal(t, 204, w.Code, w.Body.String())
+	assert.Equal(t, "p1/Sham Zain.pdf", gotName)
+}

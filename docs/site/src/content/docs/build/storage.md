@@ -223,7 +223,7 @@ const { data: files } = await supabase.storage.from('records').list(patientId)
 const { data: blob } = await supabase.storage.from('records').download(path)
 ```
 
-The row is recorded when the URL is signed, with the declared `size`. A URL that is never used leaves a row without bytes until you delete it.
+The URL works for 15 minutes. The row is recorded when the URL is signed, with the declared `size`. The local provider ignores `size`, so `max_size` is not enforced on direct uploads in local dev. A URL that is never used leaves a row without bytes until you delete it.
 
 **CORS.** Instancez Cloud's uploads bucket allows any origin; access is gated by presigned URLs and the bucket is private. On self-hosted S3, add a CORS rule that allows `PUT, GET, HEAD` from your app's origin.
 
