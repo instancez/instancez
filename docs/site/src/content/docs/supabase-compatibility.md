@@ -48,13 +48,13 @@ When using the S3 provider, you can bypass the SDK entirely and upload files str
 const { id, upload_url } = await fetch('/storage/avatars/sign', {
   method: 'POST',
   headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
-  body: JSON.stringify({ content_type: file.type, size: file.size }),
+  body: JSON.stringify({ content_type: file.type, size: file.size, path: `${userId}/${file.name}` }), // path is optional
 }).then(r => r.json())
 
 // Upload directly to S3 — instancez is not in this path
 await fetch(upload_url, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file })
 ```
 
-See [Storage](/instancez/build/storage/) for the full spec.
+Uploads through `supabase.storage.upload()` are proxied and capped at about 4.5MB on Instancez Cloud. This direct flow is the way past that cap. See [Storage](/instancez/build/storage/#choosing-an-upload-method) for the full spec.
 
 The integration test suite runs `@supabase/supabase-js` against a live instancez instance on every commit. If you find a gap, [open an issue](https://github.com/instancez/instancez/issues).

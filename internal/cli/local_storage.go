@@ -38,7 +38,7 @@ func (s *LocalStore) fullPath(key string) (string, error) {
 	return filepath.Join(s.basePath, s.keyPrefix, key), nil
 }
 
-func (s *LocalStore) SignUpload(_ context.Context, key string, _ string, _ time.Duration) (string, error) {
+func (s *LocalStore) SignUpload(_ context.Context, key string, _ string, _ int64, _ time.Duration) (string, error) {
 	fullPath, err := s.fullPath(key)
 	if err != nil {
 		return "", err

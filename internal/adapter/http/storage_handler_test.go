@@ -31,7 +31,7 @@ func TestHandleSignUpload_Success(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	var gotKey, gotContentType string
 	store := &stubObjectStore{
-		signUploadFn: func(ctx context.Context, key, contentType string, expiry time.Duration) (string, error) {
+		signUploadFn: func(ctx context.Context, key, contentType string, size int64, expiry time.Duration) (string, error) {
 			gotKey, gotContentType = key, contentType
 			return "https://example.com/upload?sig=abc", nil
 		},
@@ -459,4 +459,188 @@ func TestStorageHandler_MountsAtRootOnly(t *testing.T) {
 			}
 		})
 	}
+}
+
+type signCall struct {
+	key       string
+	size      int64
+	signed    bool
+	execQuery string
+	execArgs  []any
+	execs     int
+}
+
+func doSign(t *testing.T, bucket domain.Bucket, body string, hdr map[string]string, execErr error) (*httptest.ResponseRecorder, *signCall) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	call := &signCall{}
+	store := &stubObjectStore{signUploadFn: func(_ context.Context, key, _ string, size int64, _ time.Duration) (string, error) {
+		call.key, call.size, call.signed = key, size, true
+		return "https://s3.example/put", nil
+	}}
+	db := &stubDB{execFn: func(_ context.Context, q string, args ...any) (int64, error) {
+		call.execs++
+		call.execQuery, call.execArgs = q, args
+		return 1, execErr
+	}}
+	h := newLegacyStorageHandler(db, store)
+	r := gin.New()
+	r.POST("/sign", func(c *gin.Context) {
+		setTestSession(c, domain.Session{Role: "authenticated", UserID: "u1", IsAuthenticated: true})
+		h.handleSignUpload("docs", bucket)(c)
+	})
+	req := httptest.NewRequest(http.MethodPost, "/sign", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w, call
+}
+
+func TestHandleSignUpload_WithoutPathKeepsRandomID(t *testing.T) {
+	w, call := doSign(t, domain.Bucket{}, `{"content_type":"application/pdf"}`, nil, nil)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	var resp map[string]string
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.NotEmpty(t, resp["id"])
+	assert.Equal(t, resp["id"], resp["path"])
+	assert.Equal(t, "docs/"+resp["id"], call.key)
+	assert.Equal(t, resp["id"], call.execArgs[1])
+}
+
+func TestHandleSignUpload_WithPathUsesItForKeyAndRow(t *testing.T) {
+	name := "p1/Sham ZainAlabideen All Info 2026.pdf"
+	body, _ := json.Marshal(map[string]any{"content_type": "application/pdf", "size": 1234, "path": name})
+	w, call := doSign(t, domain.Bucket{}, string(body), nil, nil)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	var resp map[string]string
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, name, resp["id"])
+	assert.Equal(t, name, resp["path"])
+	assert.Equal(t, "https://s3.example/put", resp["upload_url"])
+	assert.Equal(t, "docs/"+name, call.key)
+	assert.EqualValues(t, 1234, call.size)
+	assert.Equal(t, name, call.execArgs[1], "RLS insert sees the real path")
+	assert.EqualValues(t, 1234, call.execArgs[2], "declared size recorded")
+	assert.NotContains(t, call.execQuery, "ON CONFLICT")
+}
+
+func TestHandleSignUpload_UnicodePath(t *testing.T) {
+	body, _ := json.Marshal(map[string]any{"content_type": "text/plain", "path": "ünï/çødé 😀.txt"})
+	w, call := doSign(t, domain.Bucket{}, string(body), nil, nil)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Equal(t, "docs/ünï/çødé 😀.txt", call.key)
+}
+
+func TestHandleSignUpload_InvalidPaths(t *testing.T) {
+	long := strings.Repeat("a", maxKeyBytes)
+	for name, p := range map[string]string{
+		"dotdot": "../x", "nested dotdot": "a/../b", "leading slash": "/a.pdf", "empty": "",
+		"empty segment": "a//b", "trailing slash": "a/", "dot segment": "a/./b", "nul": "a\x00b",
+		"too long": long, "root": ".",
+	} {
+		t.Run(name, func(t *testing.T) {
+			body, _ := json.Marshal(map[string]any{"content_type": "text/plain", "path": p})
+			w, call := doSign(t, domain.Bucket{}, string(body), nil, nil)
+			assert.Equal(t, 400, w.Code, w.Body.String())
+			assert.False(t, call.signed, "no URL minted")
+			assert.Zero(t, call.execs, "no row created")
+		})
+	}
+}
+
+func TestHandleSignUpload_PathAtKeyLimit(t *testing.T) {
+	p := strings.Repeat("a", maxKeyBytes-len("docs/"))
+	body, _ := json.Marshal(map[string]any{"content_type": "text/plain", "path": p})
+	w, _ := doSign(t, domain.Bucket{}, string(body), nil, nil)
+	assert.Equal(t, 200, w.Code, w.Body.String())
+}
+
+func TestHandleSignUpload_ExistingPathIs409(t *testing.T) {
+	dup := errors.New(`duplicate key value violates unique constraint "objects_pkey" (SQLSTATE 23505)`)
+	w, _ := doSign(t, domain.Bucket{}, `{"content_type":"text/plain","path":"a.txt"}`, nil, dup)
+	assert.Equal(t, 409, w.Code, w.Body.String())
+}
+
+func TestHandleSignUpload_UpsertHeader(t *testing.T) {
+	w, call := doSign(t, domain.Bucket{}, `{"content_type":"text/plain","path":"a.txt"}`, map[string]string{"x-upsert": "true"}, nil)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Contains(t, call.execQuery, "ON CONFLICT")
+}
+
+func TestHandleSignUpload_RLSDeniedWithPath(t *testing.T) {
+	deny := errors.New(`new row violates row-level security policy for table "objects"`)
+	w, _ := doSign(t, domain.Bucket{}, `{"content_type":"text/plain","path":"other/a.txt"}`, nil, deny)
+	assert.Equal(t, 403, w.Code)
+}
+
+func TestHandleSignUpload_SizeRules(t *testing.T) {
+	capped := domain.Bucket{MaxSize: "1KB"}
+	cases := []struct {
+		name   string
+		bucket domain.Bucket
+		body   string
+		code   int
+	}{
+		{"over max", capped, `{"content_type":"text/plain","size":2048}`, 422},
+		{"exactly max", capped, `{"content_type":"text/plain","size":1024}`, 200},
+		{"missing with max_size", capped, `{"content_type":"text/plain"}`, 400},
+		{"zero with max_size", capped, `{"content_type":"text/plain","size":0}`, 400},
+		{"negative", capped, `{"content_type":"text/plain","size":-1}`, 400},
+		{"missing without max_size", domain.Bucket{}, `{"content_type":"text/plain"}`, 200},
+		{"mime rejected", domain.Bucket{Types: []string{"image/*"}}, `{"content_type":"text/plain","size":1}`, 422},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w, call := doSign(t, tc.bucket, tc.body, nil, nil)
+			assert.Equal(t, tc.code, w.Code, w.Body.String())
+			if tc.code != 200 {
+				assert.False(t, call.signed)
+				assert.Zero(t, call.execs, "no orphan row")
+			}
+		})
+	}
+}
+
+func TestHandleSignUpload_PassesDeclaredSizeToSigner(t *testing.T) {
+	_, call := doSign(t, domain.Bucket{MaxSize: "1MB"}, `{"content_type":"text/plain","size":777}`, nil, nil)
+	assert.EqualValues(t, 777, call.size)
+}
+
+func TestHandleSignUpload_NoRowWhenSigningFails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	execs := 0
+	store := &stubObjectStore{signUploadFn: func(context.Context, string, string, int64, time.Duration) (string, error) {
+		return "", errors.New("boom")
+	}}
+	db := &stubDB{execFn: func(context.Context, string, ...any) (int64, error) { execs++; return 1, nil }}
+	h := newLegacyStorageHandler(db, store)
+	r := gin.New()
+	r.POST("/sign", func(c *gin.Context) {
+		setTestSession(c, domain.Session{Role: "authenticated", UserID: "u1", IsAuthenticated: true})
+		h.handleSignUpload("docs", domain.Bucket{})(c)
+	})
+	req := httptest.NewRequest(http.MethodPost, "/sign", strings.NewReader(`{"content_type":"text/plain","path":"a.txt"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	assert.Equal(t, 500, w.Code)
+	assert.Zero(t, execs)
+}
+
+func TestHandleSignUpload_AnonymousRejectedWithPath(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	execs := 0
+	db := &stubDB{execFn: func(context.Context, string, ...any) (int64, error) { execs++; return 1, nil }}
+	h := newLegacyStorageHandler(db, &stubObjectStore{})
+	r := gin.New()
+	r.POST("/sign", h.handleSignUpload("docs", domain.Bucket{}))
+	req := httptest.NewRequest(http.MethodPost, "/sign", strings.NewReader(`{"content_type":"text/plain","path":"a.txt"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	assert.Equal(t, 403, w.Code)
+	assert.Zero(t, execs)
 }

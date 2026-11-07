@@ -42,70 +42,82 @@ func (h *StorageHandler) Mount(root *gin.RouterGroup) {
 	}
 }
 
+// maxKeyBytes is the S3 object key limit.
+const maxKeyBytes = 1024
+
 func (h *StorageHandler) handleSignUpload(bucketName string, bucket domain.Bucket) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		session := getSession(c)
 		var req struct {
-			ContentType string `json:"content_type" binding:"required"`
-			Size        int64  `json:"size"`
+			ContentType string  `json:"content_type" binding:"required"`
+			Size        int64   `json:"size"`
+			Path        *string `json:"path"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			problemJSON(c, 400, "bad_request", "Missing content_type")
 			return
 		}
 
-		// Validate MIME type against bucket types
 		if len(bucket.Types) > 0 && !matchesMIME(req.ContentType, bucket.Types) {
 			problemJSON(c, 422, "validation",
 				fmt.Sprintf("Content type %q not allowed. Allowed: %v", req.ContentType, bucket.Types))
 			return
 		}
 
-		// Validate file size against bucket max_size
-		if bucket.MaxSize != "" && req.Size > 0 {
-			maxBytes := parseSizeBytes(bucket.MaxSize)
-			if maxBytes > 0 && req.Size > maxBytes {
-				problemJSON(c, 422, "validation",
-					fmt.Sprintf("File size %d bytes exceeds maximum %s", req.Size, bucket.MaxSize))
-				return
-			}
+		// A presigned PUT cannot cap length, so max_size needs a declared size to sign.
+		maxBytes := parseSizeBytes(bucket.MaxSize)
+		if req.Size < 0 {
+			problemJSON(c, 400, "bad_request", "size must not be negative")
+			return
+		}
+		if maxBytes > 0 && req.Size == 0 {
+			problemJSON(c, 400, "bad_request", "size is required for buckets with max_size")
+			return
+		}
+		if maxBytes > 0 && req.Size > maxBytes {
+			problemJSON(c, 422, "validation",
+				fmt.Sprintf("File size %d bytes exceeds maximum %s", req.Size, bucket.MaxSize))
+			return
 		}
 		if !anonMayReach(c, h.cfg, bucketName) {
 			problemJSON(c, 403, "forbidden", "Not authorized to upload to this bucket")
 			return
 		}
 
-		// Generate object key (UUID)
 		key := generateRandomToken()
+		if req.Path != nil {
+			clean, err := cleanPath(*req.Path)
+			if err != nil || clean != *req.Path || len(bucketName)+1+len(clean) > maxKeyBytes {
+				problemJSON(c, 400, "bad_request", "Invalid path")
+				return
+			}
+			key = clean
+		}
 
-		// Sign upload URL
-		url, err := h.storage.SignUpload(c.Request.Context(), bucketName+"/"+key, req.ContentType, 15*time.Minute)
+		url, err := h.storage.SignUpload(c.Request.Context(), bucketName+"/"+key, req.ContentType, req.Size, 15*time.Minute)
 		if err != nil {
 			h.logger.Error("sign upload error", "error", err)
 			problemJSON(c, 500, "internal", "Failed to generate upload URL")
 			return
 		}
 
-		// Record in storage.objects
-		var uploadedBy any
-		if session.UserID != "" {
-			uploadedBy = session.UserID
-		}
-		if _, err := h.db.Exec(rlsContext(h.db, c),
-			"INSERT INTO storage.objects (bucket_id, name, size, mime, uploaded_by) VALUES ($1, $2, 0, $3, $4)",
-			bucketName, key, req.ContentType, uploadedBy); err != nil {
-			if isPermissionDenied(err) {
+		row := objectRow{bucket: bucketName, name: key, size: req.Size, mime: req.ContentType,
+			uploadedBy: nullIfEmpty(session.UserID), metadata: objectMetadataJSON(req.Size, req.ContentType, "")}
+		upsert := c.GetHeader("x-upsert") == "true"
+		if err := writeObjectRow(rlsContext(h.db, c), h.db, row, false, upsert); err != nil {
+			switch {
+			case isDuplicateKeyErr(err):
+				problemJSON(c, 409, "conflict", "An object already exists at this path")
+			case isPermissionDenied(err):
 				problemJSON(c, 403, "forbidden", "Not authorized to upload to this bucket")
-				return
+			default:
+				h.logger.Error("record object", "error", err)
+				problemJSON(c, 500, "internal", "Failed to record object")
 			}
-			problemJSON(c, 500, "internal", "Failed to record object")
 			return
 		}
 
-		c.JSON(200, gin.H{
-			"id":         key,
-			"upload_url": url,
-		})
+		c.JSON(200, gin.H{"id": key, "path": key, "upload_url": url})
 	}
 }
 

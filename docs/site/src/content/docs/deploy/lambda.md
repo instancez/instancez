@@ -39,14 +39,14 @@ Lambda functions are stateless and ephemeral — use the S3 storage provider, no
 const { id, upload_url } = await fetch('/storage/avatars/sign', {
   method: 'POST',
   headers: { 'Authorization': `Bearer ${jwt}`, 'Content-Type': 'application/json' },
-  body: JSON.stringify({ content_type: file.type, size: file.size }),
+  body: JSON.stringify({ content_type: file.type, size: file.size, path: `${userId}/${file.name}` }), // path is optional
 }).then(r => r.json())
 
 // Upload directly to S3 — Lambda is not in this path
 await fetch(upload_url, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file })
 ```
 
-This avoids Lambda's 6 MB payload limit and keeps large uploads off the function entirely. See [Storage — Direct upload](/instancez/build/storage/) for the full endpoint spec.
+Requests proxied through the function, including `supabase.storage.upload()`, are capped by Lambda's 6 MB payload limit (about 4.5 MB of file after base64). This direct flow avoids that limit and keeps large uploads off the function entirely. See [Storage — Direct upload](/instancez/build/storage/) for the full endpoint spec.
 
 ## Lambda configuration
 
