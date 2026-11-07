@@ -101,6 +101,7 @@ export interface OAuthProvider {
 }
 
 export interface Table {
+  schema?: string;
   fields: Field[];
   indexes: Index[];
   /** Explicit RLS switch; unset means "on iff rls has policies". */

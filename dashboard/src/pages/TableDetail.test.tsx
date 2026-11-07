@@ -121,6 +121,121 @@ const SEED: Table = {
   rls: [],
 };
 
+const fkConfig: Config = {
+  ...baseConfig,
+  tables: {
+    notes: {
+      fields: [
+        { name: "id", type: "bigserial", primary_key: true },
+        { name: "owner", type: "", foreign_key: { references: "auth.users.id", on_delete: "cascade" } },
+        { name: "peer", type: "", foreign_key: { references: "notes.id", on_delete: "cascade" } },
+        { name: "typed", type: "uuid", foreign_key: { references: "auth.users.id", on_delete: "cascade" } },
+      ],
+      indexes: [],
+      rls: [],
+    },
+  },
+};
+
+describe("TableDetail foreign keys", () => {
+  async function openFields() {
+    renderTableDetail(fkConfig, "notes");
+    fireEvent.click(screen.getByRole("tab", { name: "Fields" }));
+    await screen.findAllByText("owner");
+    return screen.getAllByRole("combobox") as HTMLSelectElement[];
+  }
+
+  it("offers auth.users.id, not users.id, and selects the existing value", async () => {
+    const selects = await openFields();
+    const fk = selects.find((s) => s.value === "auth.users.id");
+    assertDefined(fk, "owner FK select missing");
+    const opts = Array.from(fk.options).map((o) => o.value);
+    expect(opts).toContain("auth.users.id");
+    expect(opts).not.toContain("users.id");
+  });
+
+  it("labels untyped FKs with the referenced type and keeps inferred selected", async () => {
+    const selects = await openFields();
+    const labels = selects.map((s) =>
+      Array.from(s.querySelectorAll("option")).find((o) => o.value === s.value)?.textContent,
+    );
+    expect(labels).toContain("inferred (uuid)");
+    expect(labels).toContain("inferred (bigint)");
+    expect(screen.queryByRole("button", { name: /save/i })).toBeNull();
+  });
+
+  it("pins the resolved type when picked explicitly", async () => {
+    const save = vi.fn().mockResolvedValue(true);
+    const seed: Table = {
+      fields: [{ name: "owner", type: "", foreign_key: { references: "auth.users.id", on_delete: "cascade" } }],
+      indexes: [],
+      rls: [],
+    };
+    renderTableDetailNew({ tableName: "t", seed, save });
+    await screen.findAllByText("owner");
+    const sel = (screen.getAllByRole("combobox") as HTMLSelectElement[]).find((s) => s.value === "");
+    assertDefined(sel, "type select missing");
+    fireEvent.change(sel, { target: { value: "uuid" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    });
+    const saved = save.mock.calls[0]?.[0] as Config;
+    expect(saved.tables.t?.fields[0]?.type).toBe("uuid");
+  });
+
+  it("clears an explicit FK type back to inferred as an empty type", async () => {
+    const save = vi.fn().mockResolvedValue(true);
+    const seed: Table = {
+      fields: [{ name: "owner", type: "uuid", foreign_key: { references: "auth.users.id", on_delete: "cascade" } }],
+      indexes: [],
+      rls: [],
+    };
+    renderTableDetailNew({ tableName: "t", seed, save });
+    await screen.findAllByText("owner");
+    const sel = (screen.getAllByRole("combobox") as HTMLSelectElement[]).find((s) => s.value === "uuid");
+    assertDefined(sel, "type select missing");
+    fireEvent.change(sel, { target: { value: "" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    });
+    const saved = save.mock.calls[0]?.[0] as Config;
+    const field = saved.tables.t?.fields[0];
+    assertDefined(field, "saved field missing");
+    expect(field.type).toBe("");
+  });
+
+  it("shows an explicit type that is not in the preset list", async () => {
+    const cfg: Config = {
+      ...baseConfig,
+      tables: {
+        t: {
+          fields: [{ name: "owner", type: "varchar(63)", foreign_key: { references: "auth.users.id", on_delete: "cascade" } }],
+          indexes: [],
+          rls: [],
+        },
+      },
+    };
+    renderTableDetail(cfg, "t");
+    fireEvent.click(screen.getByRole("tab", { name: "Fields" }));
+    await screen.findAllByText("owner");
+    const values = (screen.getAllByRole("combobox") as HTMLSelectElement[]).map((s) => s.value);
+    expect(values).toContain("varchar(63)");
+  });
+
+  it("does not mark an untyped FK dirty when inferred is picked again", async () => {
+    renderTableDetail(
+      { ...baseConfig, tables: { t: { fields: [{ name: "owner", type: "", foreign_key: { references: "nope.id", on_delete: "cascade" } }], indexes: [], rls: [] } } },
+      "t",
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Fields" }));
+    await screen.findAllByText("owner");
+    const sel = (screen.getAllByRole("combobox") as HTMLSelectElement[]).find((s) => s.value === "");
+    assertDefined(sel, "type select missing");
+    fireEvent.change(sel, { target: { value: "" } });
+    expect(screen.queryByRole("button", { name: /save/i })).toBeNull();
+  });
+});
+
 describe("TableDetail", () => {
   it("renders column names on the Fields tab", async () => {
     renderTableDetail(baseConfig, "todos");
