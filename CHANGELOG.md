@@ -4,6 +4,8 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [0.0.14] - 2026-11-07
+
 ### Fixed
 
 - The dashboard table editor now offers `auth.users.id` (was `users.id`, which validation rejects) as a foreign key target, shows existing `auth.users.id` references as selected, and shows the referenced column's type (`uuid` for `auth.users.id`) instead of `bigint` for foreign keys without a type (or `inferred` when the target is unknown, which also clears an explicit type).
@@ -14,9 +16,10 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Changed
 
-- Building from source now needs Go 1.26.10 or newer (was 1.25). Docker images and CI build with Go 1.27.
+- Breaking for source builds, Go 1.26.10 or newer is now required (was 1.25). Docker images and CI build with Go 1.27.
+- Release binaries are built with Go 1.26.10 because Go 1.27 drops macOS 12, so macOS 12 keeps working.
 - Upgraded all Go dependencies (grpc, OpenTelemetry, quic-go, x/image and others).
-- pgx 5.12 parses connection URLs like libpq: `+` in query values is literal, the userinfo ends at the first `@` (percent-encode `@` in passwords as `%40`), and IPv6 hosts must be bracketed.
+- Breaking, pgx 5.12 parses connection URLs like libpq: `+` in query values is literal, the userinfo ends at the first `@` (percent-encode `@` in passwords as `%40`), and IPv6 hosts must be bracketed.
 
 ## [0.0.13] - 2026-11-06
 
@@ -413,7 +416,8 @@ First tagged release.
 - Deployment targets: Docker, Docker Compose, Kubernetes (Helm chart), AWS Lambda
 - A `@supabase/supabase-js` wire-compatibility test suite that runs on every commit
 
-[Unreleased]: https://github.com/instancez/instancez/compare/v0.0.13...HEAD
+[Unreleased]: https://github.com/instancez/instancez/compare/v0.0.14...HEAD
+[0.0.14]: https://github.com/instancez/instancez/compare/v0.0.13...v0.0.14
 [0.0.13]: https://github.com/instancez/instancez/compare/v0.0.12...v0.0.13
 [0.0.12]: https://github.com/instancez/instancez/compare/v0.0.11...v0.0.12
 [0.0.11]: https://github.com/instancez/instancez/compare/v0.0.10...v0.0.11
