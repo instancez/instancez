@@ -161,7 +161,7 @@ describe("TableDetail foreign keys", () => {
     expect(values.filter((v) => v === "bigint").length).toBe(1);
   });
 
-  it("clears an explicit FK type back to inferred by dropping the key", async () => {
+  it("clears an explicit FK type back to inferred as an empty type", async () => {
     const save = vi.fn().mockResolvedValue(true);
     const seed: Table = {
       fields: [{ name: "owner", type: "uuid", foreign_key: { references: "auth.users.id", on_delete: "cascade" } }],
@@ -179,7 +179,38 @@ describe("TableDetail foreign keys", () => {
     const saved = save.mock.calls[0]?.[0] as Config;
     const field = saved.tables.t?.fields[0];
     assertDefined(field, "saved field missing");
-    expect("type" in field).toBe(false);
+    expect(field.type).toBe("");
+  });
+
+  it("shows an explicit type that is not in the preset list", async () => {
+    const cfg: Config = {
+      ...baseConfig,
+      tables: {
+        t: {
+          fields: [{ name: "owner", type: "varchar(63)", foreign_key: { references: "auth.users.id", on_delete: "cascade" } }],
+          indexes: [],
+          rls: [],
+        },
+      },
+    };
+    renderTableDetail(cfg, "t");
+    fireEvent.click(screen.getByRole("tab", { name: "Fields" }));
+    await screen.findAllByText("owner");
+    const values = (screen.getAllByRole("combobox") as HTMLSelectElement[]).map((s) => s.value);
+    expect(values).toContain("varchar(63)");
+  });
+
+  it("does not mark an untyped FK dirty when inferred is picked again", async () => {
+    renderTableDetail(
+      { ...baseConfig, tables: { t: { fields: [{ name: "owner", type: "", foreign_key: { references: "nope.id", on_delete: "cascade" } }], indexes: [], rls: [] } } },
+      "t",
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Fields" }));
+    await screen.findAllByText("owner");
+    const sel = (screen.getAllByRole("combobox") as HTMLSelectElement[]).find((s) => s.value === "");
+    assertDefined(sel, "type select missing");
+    fireEvent.change(sel, { target: { value: "" } });
+    expect(screen.queryByRole("button", { name: /save/i })).toBeNull();
   });
 });
 

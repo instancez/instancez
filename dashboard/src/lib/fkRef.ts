@@ -25,7 +25,7 @@ function normalize(t: string): string {
   return t;
 }
 
-// Mirrors the server's EffectiveType; undefined when the target is unknown.
+// Like the server's inference, but undefined where the server would default to bigint.
 export function fkColumnType(
   ref: string | null | undefined,
   tables: Tables,
