@@ -53,8 +53,9 @@ export function TableDetail() {
     []
   );
 
+  const effectiveName = isNew ? newState?.tableName : name;
+
   async function handleSave() {
-    const effectiveName = isNew ? newState?.tableName : name;
     if (!config || !table || !effectiveName) return;
     const updated = {
       ...config,
@@ -90,7 +91,7 @@ export function TableDetail() {
   const fieldEntries = table.fields || [];
   const allTableColumns = fieldEntries.map((x) => x.name);
 
-  const tables = { ...config.tables, [name ?? newState?.tableName ?? ""]: table };
+  const tables = effectiveName ? { ...config.tables, [effectiveName]: table } : config.tables;
   const fkOpts = fkOptions(tables);
 
   return (
@@ -360,6 +361,7 @@ function FieldRow({
   onRename: (newName: string) => void;
   onDelete: () => void;
 }) {
+  const fkType = fkColumnType(field.foreign_key?.references, tables);
   const [editingName, setEditingName] = useState(false);
   const [localName, setLocalName] = useState(name);
 
@@ -409,13 +411,14 @@ function FieldRow({
         <Select
           mono
           inputSize="sm"
-          value={field.type || fkColumnType(field.foreign_key?.references, tables) || (field.foreign_key ? "" : "text")}
-          onChange={(e) => onChange({ ...field, type: e.target.value })}
+          value={field.type || fkType || (field.foreign_key ? "" : "text")}
+          onChange={(e) => {
+            const { type: _drop, ...rest } = field;
+            onChange(e.target.value ? { ...field, type: e.target.value } : (rest as Field));
+          }}
         >
-          {!field.type && !fkColumnType(field.foreign_key?.references, tables) && field.foreign_key && (
-            <option value="">inferred</option>
-          )}
-          {POSTGRES_TYPES.map((t) => (
+          {field.foreign_key && <option value="">inferred</option>}
+          {[...(fkType && !(POSTGRES_TYPES as readonly string[]).includes(fkType) ? [fkType] : []), ...POSTGRES_TYPES].map((t) => (
             <option key={t} value={t}>
               {t}
             </option>

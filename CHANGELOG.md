@@ -6,7 +6,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Fixed
 
-- The dashboard table editor now offers `auth.users.id` (was `users.id`, which validation rejects) as a foreign key target, shows existing `auth.users.id` references as selected, and shows the referenced column's type (`uuid` for `auth.users.id`) instead of `bigint` for foreign keys without a type.
+- The dashboard table editor now offers `auth.users.id` (was `users.id`, which validation rejects) as a foreign key target, shows existing `auth.users.id` references as selected, and shows the referenced column's type (`uuid` for `auth.users.id`) instead of `bigint` for foreign keys without a type (or `inferred` when the target is unknown, which also clears an explicit type).
 
 ## [0.0.13] - 2026-11-06
 

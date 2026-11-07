@@ -121,6 +121,68 @@ const SEED: Table = {
   rls: [],
 };
 
+const fkConfig: Config = {
+  ...baseConfig,
+  tables: {
+    notes: {
+      fields: [
+        { name: "id", type: "bigserial", primary_key: true },
+        { name: "owner", type: "", foreign_key: { references: "auth.users.id", on_delete: "cascade" } },
+        { name: "peer", type: "", foreign_key: { references: "notes.id", on_delete: "cascade" } },
+        { name: "typed", type: "uuid", foreign_key: { references: "auth.users.id", on_delete: "cascade" } },
+      ],
+      indexes: [],
+      rls: [],
+    },
+  },
+};
+
+describe("TableDetail foreign keys", () => {
+  async function openFields() {
+    renderTableDetail(fkConfig, "notes");
+    fireEvent.click(screen.getByRole("tab", { name: "Fields" }));
+    await screen.findAllByText("owner");
+    return screen.getAllByRole("combobox") as HTMLSelectElement[];
+  }
+
+  it("offers auth.users.id, not users.id, and selects the existing value", async () => {
+    const selects = await openFields();
+    const fk = selects.find((s) => s.value === "auth.users.id");
+    assertDefined(fk, "owner FK select missing");
+    const opts = Array.from(fk.options).map((o) => o.value);
+    expect(opts).toContain("auth.users.id");
+    expect(opts).not.toContain("users.id");
+  });
+
+  it("shows the referenced column type for untyped FKs, not bigint", async () => {
+    const selects = await openFields();
+    const values = selects.map((s) => s.value);
+    expect(values.filter((v) => v === "uuid").length).toBe(2);
+    expect(values.filter((v) => v === "bigint").length).toBe(1);
+  });
+
+  it("clears an explicit FK type back to inferred by dropping the key", async () => {
+    const save = vi.fn().mockResolvedValue(true);
+    const seed: Table = {
+      fields: [{ name: "owner", type: "uuid", foreign_key: { references: "auth.users.id", on_delete: "cascade" } }],
+      indexes: [],
+      rls: [],
+    };
+    renderTableDetailNew({ tableName: "t", seed, save });
+    await screen.findAllByText("owner");
+    const sel = (screen.getAllByRole("combobox") as HTMLSelectElement[]).find((s) => s.value === "uuid");
+    assertDefined(sel, "type select missing");
+    fireEvent.change(sel, { target: { value: "" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    });
+    const saved = save.mock.calls[0]?.[0] as Config;
+    const field = saved.tables.t?.fields[0];
+    assertDefined(field, "saved field missing");
+    expect("type" in field).toBe(false);
+  });
+});
+
 describe("TableDetail", () => {
   it("renders column names on the Fields tab", async () => {
     renderTableDetail(baseConfig, "todos");
