@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"go.opentelemetry.io/otel"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
 
@@ -60,9 +61,14 @@ func TestSetupDisabledIsNoop(t *testing.T) {
 func TestSetupEnabledConsole(t *testing.T) {
 	t.Setenv("OTEL_TRACES_EXPORTER", "console")
 	t.Setenv("OTEL_LOGS_EXPORTER", "console")
+	prev := otel.GetLoggerProvider()
+	t.Cleanup(func() { otel.SetLoggerProvider(prev) })
 	h, shutdown, err := Setup(context.Background())
 	if err != nil {
 		t.Fatalf("Setup: %v", err)
+	}
+	if otel.GetLoggerProvider() == prev {
+		t.Fatal("Setup did not set the global logger provider")
 	}
 	if h == nil {
 		t.Fatal("enabled Setup should return a non-nil handler")

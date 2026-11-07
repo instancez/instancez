@@ -10,12 +10,13 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Security
 
-- Upgraded `golang.org/x/net` to 0.62.0 and `golang.org/x/crypto` to 0.58.0, and built with Go 1.27, which clears the open advisories and the standard library fixes (`crypto/tls`, `net/http`, `crypto/x509`).
+- Upgraded `golang.org/x/net` to 0.62.0, `golang.org/x/crypto` to 0.58.0, `klauspost/compress` to 1.20.3 (GO-2026-6865) and `pgx` to 5.12.0 (GHSA-j38q-h3ph-jjpq, GHSA-95fj-3fxw-g62g). Builds on Go 1.27 clear the standard library advisories. `govulncheck` reachable findings went from 43 to 0.
 
 ### Changed
 
 - Building from source now needs Go 1.26.10 or newer (was 1.25). Docker images and CI build with Go 1.27.
-- Upgraded all Go dependencies (pgx, grpc, OpenTelemetry, quic-go, x/image and others).
+- Upgraded all Go dependencies (grpc, OpenTelemetry, quic-go, x/image and others).
+- pgx 5.12 parses connection URLs like libpq: `+` in query values is literal, the userinfo ends at the first `@` (percent-encode `@` in passwords as `%40`), and IPv6 hosts must be bracketed.
 
 ## [0.0.13] - 2026-11-06
 
