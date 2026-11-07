@@ -10,7 +10,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Security
 
-- Upgraded `golang.org/x/net` to 0.62.0, `golang.org/x/crypto` to 0.58.0, `klauspost/compress` to 1.20.3 (GO-2026-6865) and `pgx` to 5.12.0 (GHSA-j38q-h3ph-jjpq, GHSA-95fj-3fxw-g62g). Builds on Go 1.27 clear the standard library advisories. `govulncheck` reachable findings went from 43 to 0.
+- Upgraded `golang.org/x/net` to 0.62.0, `golang.org/x/crypto` to 0.58.0, `klauspost/compress` to 1.20.3 (GO-2026-6865) and `pgx` to 5.12.0 (GHSA-j38q-h3ph-jjpq, GHSA-95fj-3fxw-g62g). Builds on Go 1.27 clear the standard library advisories. `govulncheck` reachable findings went from 43 to 0. The unreachable `x/crypto` GO-2026-5932 (openpgp) remains, fixed only in a pseudo-version.
 
 ### Changed
 
