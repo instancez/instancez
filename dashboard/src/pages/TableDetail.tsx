@@ -361,7 +361,7 @@ function FieldRow({
   onRename: (newName: string) => void;
   onDelete: () => void;
 }) {
-  const shown = field.type || fkColumnType(field.foreign_key?.references, tables);
+  const fkType = fkColumnType(field.foreign_key?.references, tables);
   const [editingName, setEditingName] = useState(false);
   const [localName, setLocalName] = useState(name);
 
@@ -411,11 +411,11 @@ function FieldRow({
         <Select
           mono
           inputSize="sm"
-          value={shown || (field.foreign_key ? "" : "text")}
+          value={field.type || (field.foreign_key ? "" : "text")}
           onChange={(e) => onChange({ ...field, type: e.target.value })}
         >
-          {field.foreign_key && <option value="">inferred</option>}
-          {[...(shown && !(POSTGRES_TYPES as readonly string[]).includes(shown) ? [shown] : []), ...POSTGRES_TYPES].map((t) => (
+          {field.foreign_key && <option value="">{fkType ? `inferred (${fkType})` : "inferred"}</option>}
+          {[...(field.type && !(POSTGRES_TYPES as readonly string[]).includes(field.type) ? [field.type] : []), ...POSTGRES_TYPES].map((t) => (
             <option key={t} value={t}>
               {t}
             </option>
