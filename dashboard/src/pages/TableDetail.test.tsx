@@ -156,7 +156,9 @@ describe("TableDetail foreign keys", () => {
 
   it("labels untyped FKs with the referenced type and keeps inferred selected", async () => {
     const selects = await openFields();
-    const labels = selects.map((s) => s.options[s.selectedIndex]?.textContent);
+    const labels = selects.map((s) =>
+      Array.from(s.querySelectorAll("option")).find((o) => o.value === s.value)?.textContent,
+    );
     expect(labels).toContain("inferred (uuid)");
     expect(labels).toContain("inferred (bigint)");
     expect(screen.queryByRole("button", { name: /save/i })).toBeNull();
