@@ -42,3 +42,20 @@ func TestParsePoolConfigRejectsInvalidIdleTimeout(t *testing.T) {
 		t.Fatal("expected error for invalid idle_timeout, got nil")
 	}
 }
+
+func TestParsePoolConfigPercentEncodedAtInPassword(t *testing.T) {
+	cfg, err := parsePoolConfig("postgres://u:p%40ss@db.example.com:5432/app", domain.PoolConfig{})
+	if err != nil {
+		t.Fatalf("parsePoolConfig: %v", err)
+	}
+	cc := cfg.ConnConfig
+	if cc.Password != "p@ss" || cc.Host != "db.example.com" {
+		t.Fatalf("got password %q host %q", cc.Password, cc.Host)
+	}
+}
+
+func TestParsePoolConfigRejectsUnbracketedIPv6(t *testing.T) {
+	if _, err := parsePoolConfig("postgres://u:p@::1/db", domain.PoolConfig{}); err == nil {
+		t.Fatal("expected error for unbracketed IPv6 host")
+	}
+}

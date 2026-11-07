@@ -8,6 +8,16 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 - The dashboard table editor now offers `auth.users.id` (was `users.id`, which validation rejects) as a foreign key target, shows existing `auth.users.id` references as selected, and shows the referenced column's type (`uuid` for `auth.users.id`) instead of `bigint` for foreign keys without a type (or `inferred` when the target is unknown, which also clears an explicit type).
 
+### Security
+
+- Upgraded `golang.org/x/net` to 0.62.0, `golang.org/x/crypto` to 0.58.0, `klauspost/compress` to 1.20.3 (GO-2026-6865) and `pgx` to 5.12.0 (GHSA-j38q-h3ph-jjpq, GHSA-95fj-3fxw-g62g). Builds on Go 1.27 clear the standard library advisories. `govulncheck` reachable findings went from 43 to 0. The unreachable `x/crypto` GO-2026-5932 (openpgp) remains, fixed only in a pseudo-version.
+
+### Changed
+
+- Building from source now needs Go 1.26.10 or newer (was 1.25). Docker images and CI build with Go 1.27.
+- Upgraded all Go dependencies (grpc, OpenTelemetry, quic-go, x/image and others).
+- pgx 5.12 parses connection URLs like libpq: `+` in query values is literal, the userinfo ends at the first `@` (percent-encode `@` in passwords as `%40`), and IPv6 hosts must be bracketed.
+
 ## [0.0.13] - 2026-11-06
 
 ### Added

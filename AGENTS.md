@@ -2,7 +2,7 @@
 
 Guidance for AI coding agents working in this repo. Humans, see CONTRIBUTING.md.
 
-Needs Go 1.25+, Postgres 14+, Node 22+, Docker (integration tests only).
+Needs Go 1.26.10+, Postgres 14+, Node 22+, Docker (integration tests only).
 
 ## Non-negotiables
 

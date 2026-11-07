@@ -9,7 +9,7 @@ Both API keys plus one database credential path — either the single superuser 
 
 | Variable | Description |
 |----------|-------------|
-| `INSTANCEZ_DATABASE_URL` | Superuser Postgres DSN (e.g. `postgres://postgres:password@localhost:5432/mydb`). The CLI provisions all required roles (`instancez_owner`, `authenticator`, `anon`, `authenticated`, `service_role`) automatically on startup. This is what `inz init` scaffolds for local dev. |
+| `INSTANCEZ_DATABASE_URL` | Superuser Postgres DSN (e.g. `postgres://postgres:password@localhost:5432/mydb`). The CLI provisions all required roles (`instancez_owner`, `authenticator`, `anon`, `authenticated`, `service_role`) automatically on startup. This is what `inz init` scaffolds for local dev. URLs follow libpq rules: percent-encode `@` in passwords as `%40`, and bracket IPv6 hosts (`[::1]`). |
 | `INSTANCEZ_OWNER_DATABASE_URL` + `INSTANCEZ_AUTH_DATABASE_URL` | Alternative to `INSTANCEZ_DATABASE_URL`: a pre-provisioned `instancez_owner` DSN and a pre-provisioned `authenticator` DSN, used instead of a superuser login. This is the path `inz init` writes into `.production.env`, and the one typically used in production where a superuser DSN isn't available. |
 | `INSTANCEZ_PUBLISHABLE_KEY` | Publishable API key (value like `inz_publishable_…`). Client-safe, maps to the `anon` role, and is what client apps pass. Sent in the `apikey` header. Also settable with `--publishable-key`. |
 | `INSTANCEZ_SECRET_KEY` | Secret API key (value like `inz_secret_…`). Server-side only, maps to `service_role`, and unlocks the admin API and dashboard login. Sent in the `apikey` header. Also settable with `--secret-key`. Leave unset to disable the admin routes (they return 404). |
