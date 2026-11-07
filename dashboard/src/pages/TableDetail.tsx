@@ -20,6 +20,7 @@ import {
 import { useBackend } from "../console/BackendContext";
 import { POSTGRES_TYPES, SQL_DEFAULTS } from "../lib/utils";
 import { TableData } from "../components/TableData";
+import { fkOptions, fkColumnType } from "../lib/fkRef";
 import type { Table, Field } from "../lib/types";
 
 export function TableDetail() {
@@ -89,14 +90,8 @@ export function TableDetail() {
   const fieldEntries = table.fields || [];
   const allTableColumns = fieldEntries.map((x) => x.name);
 
-  // FK options: all table.column pairs
-  const fkOptions: string[] = [];
-  for (const [tName, t] of Object.entries(config.tables)) {
-    for (const f of (t.fields || [])) {
-      fkOptions.push(`${tName}.${f.name}`);
-    }
-  }
-  fkOptions.push("users.id");
+  const tables = { ...config.tables, [name ?? newState?.tableName ?? ""]: table };
+  const fkOpts = fkOptions(tables);
 
   return (
     <Box pb="20">
@@ -153,7 +148,8 @@ export function TableDetail() {
                       key={field.name}
                       name={field.name}
                       field={field}
-                      fkOptions={fkOptions}
+                      fkOptions={fkOpts}
+                      tables={tables}
                       canWrite={canWriteConfig}
                       onChange={(updated) =>
                         updateTable((t) => ({
@@ -349,6 +345,7 @@ function FieldRow({
   name,
   field,
   fkOptions,
+  tables,
   canWrite,
   onChange,
   onRename,
@@ -357,6 +354,7 @@ function FieldRow({
   name: string;
   field: Field;
   fkOptions: string[];
+  tables: Record<string, Table>;
   canWrite: boolean;
   onChange: (f: Field) => void;
   onRename: (newName: string) => void;
@@ -411,9 +409,12 @@ function FieldRow({
         <Select
           mono
           inputSize="sm"
-          value={field.type || (field.foreign_key ? "bigint" : "text")}
+          value={field.type || fkColumnType(field.foreign_key?.references, tables) || (field.foreign_key ? "" : "text")}
           onChange={(e) => onChange({ ...field, type: e.target.value })}
         >
+          {!field.type && !fkColumnType(field.foreign_key?.references, tables) && field.foreign_key && (
+            <option value="">inferred</option>
+          )}
           {POSTGRES_TYPES.map((t) => (
             <option key={t} value={t}>
               {t}
@@ -480,7 +481,10 @@ function FieldRow({
           }
         >
           <option value="">—</option>
-          {fkOptions.map((fk) => (
+          {(field.foreign_key?.references && !fkOptions.includes(field.foreign_key.references)
+            ? [...fkOptions, field.foreign_key.references]
+            : fkOptions
+          ).map((fk) => (
             <option key={fk} value={fk}>
               {fk}
             </option>
