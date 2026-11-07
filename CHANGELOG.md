@@ -8,6 +8,15 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 - The dashboard table editor now offers `auth.users.id` (was `users.id`, which validation rejects) as a foreign key target, shows existing `auth.users.id` references as selected, and shows the referenced column's type (`uuid` for `auth.users.id`) instead of `bigint` for foreign keys without a type (or `inferred` when the target is unknown, which also clears an explicit type).
 
+### Security
+
+- Upgraded `golang.org/x/net` to 0.62.0 and `golang.org/x/crypto` to 0.58.0, and built with Go 1.27, which clears the open advisories and the standard library fixes (`crypto/tls`, `net/http`, `crypto/x509`).
+
+### Changed
+
+- Building from source now needs Go 1.26.10 or newer (was 1.25). Docker images and CI build with Go 1.27.
+- Upgraded all Go dependencies (pgx, grpc, OpenTelemetry, quic-go, x/image and others).
+
 ## [0.0.13] - 2026-11-06
 
 ### Added

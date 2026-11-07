@@ -10,7 +10,7 @@ For anything larger than a small fix, open an issue first so we can agree on the
 
 You need:
 
-- Go 1.25 or newer
+- Go 1.26.10 or newer
 - Postgres 14 or newer (a local instance or Docker)
 - Node.js 22 or newer (only if you work on the dashboard or on code functions)
 - Docker (only for integration tests)
