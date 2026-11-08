@@ -111,12 +111,31 @@ func TestRunFrontendDeploy_RejectsMissingIndex(t *testing.T) {
 	assert.Contains(t, err.Error(), "index.html")
 }
 
-func TestFrontendDeployCmd_BranchFlagRejected(t *testing.T) {
+func TestFrontendDeployCmd_DeprecatedBranchFlagIgnored(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "tok"}))
+
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
+
+	dist := filepath.Join(dir, "dist")
+	require.NoError(t, os.MkdirAll(dist, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dist, "index.html"), []byte("<html>"), 0o644))
+
 	cmd := newFrontendDeployCmd()
-	cmd.SetArgs([]string{"dist", "--project", "abc", "--branch", "staging"})
+	cmd.SetArgs([]string{dist, "--project", "abc", "--branch", "production"})
 	cmd.SilenceUsage, cmd.SilenceErrors = true, true
 	cmd.SetErr(io.Discard)
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown flag: --branch")
+	require.NoError(t, cmd.Execute())
+	assert.True(t, cmd.Flags().Lookup("branch").Hidden)
+	assert.NotContains(t, gotBody, "branch")
+	assert.Contains(t, gotBody, "files")
 }
