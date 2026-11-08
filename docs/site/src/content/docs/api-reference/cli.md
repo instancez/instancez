@@ -396,7 +396,6 @@ inz cloud frontend deploy <dist-dir> [flags]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--branch` | — | Branch/version to deploy the frontend to (validated server-side). |
 | `--config` | `instancez.yaml` | Path to `instancez.yaml` (for the linked project id). |
 | `--project` | — | Target this cloud project id instead of `instancez.yaml`'s `project.cloud.project_id`. |
 

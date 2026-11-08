@@ -37,22 +37,22 @@ func newFrontendDeployCmd() *cobra.Command {
 
 The bundle is served as the project's static site. <dist-dir> must contain index.html (a Vite/SPA build).
 
---branch selects which version to deploy to (validated server-side against the
-app's versions). The project id is read from project.cloud.project_id in
+The project id is read from project.cloud.project_id in
 instancez.yaml, or pass --project to target one directly.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runFrontendDeploy(args[0], configPath, project, branch)
+			return runFrontendDeploy(args[0], configPath, project)
 		},
 	}
 	cmd.Flags().StringVar(&configPath, "config", "instancez.yaml", "path to instancez.yaml (for the linked project id)")
 	cmd.Flags().StringVar(&project, "project", "", "target this cloud project id instead of instancez.yaml's project.cloud.project_id")
-	cmd.Flags().StringVar(&branch, "branch", "", "branch/version to deploy the frontend to (validated server-side)")
-	_ = cmd.MarkFlagRequired("branch")
+	cmd.Flags().StringVar(&branch, "branch", "", "")
+	_ = cmd.Flags().MarkHidden("branch")
+	_ = cmd.Flags().MarkDeprecated("branch", "branch is ignored")
 	return cmd
 }
 
-func runFrontendDeploy(distDir, configPath, project, branch string) error {
+func runFrontendDeploy(distDir, configPath, project string) error {
 	projectID := project
 	if projectID == "" {
 		src, err := os.ReadFile(configPath)
@@ -78,10 +78,10 @@ func runFrontendDeploy(distDir, configPath, project, branch string) error {
 		return err
 	}
 	c := cloud.NewClient(cloud.APIURL(), creds.PAT)
-	if err := c.UploadFrontend(projectID, branch, files); err != nil {
+	if err := c.UploadFrontend(projectID, files); err != nil {
 		return err
 	}
-	fmt.Printf("  ✓ Deployed %d file(s) from %s to %s\n", len(files), distDir, branch)
+	fmt.Printf("  ✓ Deployed %d file(s) from %s\n", len(files), distDir)
 	return nil
 }
 
