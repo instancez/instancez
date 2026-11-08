@@ -120,7 +120,7 @@ type SectionChange struct {
 }
 
 // ConfigDiff is the page-free structural summary the cloud API returns for
-// both the config preview endpoint and a branch write: tables and top-level
+// both the config preview endpoint and a config write: tables and top-level
 // config sections only. Never carries page-builder content, since inz-driven
 // backend-only projects never have pages.
 type ConfigDiff struct {
@@ -138,10 +138,7 @@ type uploadYAMLResponse struct {
 	Diff    ConfigDiff `json:"diff"`
 }
 
-// wireBranch is sent on every write/preview call for backward compat with the
-// server's request shape. The server resolves it to the app's one and only
-// version regardless of value — apps have a single version now, no
-// draft/production split — so this is never varied client-side.
+// wireBranch keeps older servers on their production path, which they default to draft.
 const wireBranch = "production"
 
 // UploadYAML writes yamlContent to projectID's Defs and triggers a rebuild.
@@ -204,15 +201,12 @@ func (c *Client) ValidateConfigCloud(yamlContent string) (problems, dropped []Pr
 	return out.Problems, out.Dropped, nil
 }
 
-// UploadFrontend deploys an externally-built static bundle to the given branch
-// of the project's frontend. files is path-keyed with base64-encoded contents
-// (keys are relative to the bundle root, e.g. "index.html", "assets/app.abc.js").
-// branch is validated server-side against the app's versions. The cloud
-// validates the bundle, uploads it under that version's frontend prefix, and
-// redeploys. Called by `inz cloud frontend deploy`.
-func (c *Client) UploadFrontend(projectID, branch string, files map[string]string) error {
+// UploadFrontend deploys an externally-built static bundle as the project's frontend.
+// files is path-keyed with base64 contents relative to the bundle root, e.g. "index.html".
+// The cloud validates the bundle, uploads it, and redeploys.
+func (c *Client) UploadFrontend(projectID string, files map[string]string) error {
 	return c.do("POST", "/instancez/projects/"+projectID+"/frontend",
-		map[string]any{"files": files, "branch": branch}, nil)
+		map[string]any{"files": files}, nil)
 }
 
 // GetAppResponse mirrors GET /instancez/projects/:id. It carries the project

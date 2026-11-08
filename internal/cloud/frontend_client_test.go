@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestUploadFrontend_PostsFilesAndBranch(t *testing.T) {
+func TestUploadFrontend_PostsFilesWithoutBranch(t *testing.T) {
 	var gotMethod, gotPath string
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -24,12 +24,12 @@ func TestUploadFrontend_PostsFilesAndBranch(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "pat")
-	err := c.UploadFrontend("proj1", "production", map[string]string{"index.html": "PGh0bWw+"})
+	err := c.UploadFrontend("proj1", map[string]string{"index.html": "PGh0bWw+"})
 	require.NoError(t, err)
 
 	assert.Equal(t, "POST", gotMethod)
 	assert.Equal(t, "/instancez/projects/proj1/frontend", gotPath)
-	assert.Equal(t, "production", gotBody["branch"])
+	assert.NotContains(t, gotBody, "branch")
 	files := gotBody["files"].(map[string]any)
 	assert.Equal(t, "PGh0bWw+", files["index.html"])
 }

@@ -63,7 +63,7 @@ func TestValidateAgainstCloud_RequiresAuth(t *testing.T) {
 	assert.Contains(t, err.Error(), "authentication")
 }
 
-func TestRunFrontendDeploy_PostsBundleToBranch(t *testing.T) {
+func TestRunFrontendDeploy_PostsBundleWithoutBranch(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "tok"}))
@@ -86,10 +86,10 @@ func TestRunFrontendDeploy_PostsBundleToBranch(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dist, "index.html"), []byte("<html>"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dist, "assets", "a.js"), []byte("x"), 0o644))
 
-	require.NoError(t, runFrontendDeploy(dist, cfg, "", "production"))
+	require.NoError(t, runFrontendDeploy(dist, cfg, ""))
 
 	assert.Equal(t, "/instancez/projects/abc/frontend", gotPath)
-	assert.Equal(t, "production", gotBody["branch"])
+	assert.NotContains(t, gotBody, "branch")
 	files := gotBody["files"].(map[string]any)
 	assert.Contains(t, files, "index.html")
 	assert.Contains(t, files, "assets/a.js")
@@ -106,7 +106,36 @@ func TestRunFrontendDeploy_RejectsMissingIndex(t *testing.T) {
 	require.NoError(t, os.MkdirAll(dist, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dist, "app.js"), []byte("x"), 0o644)) // no index.html
 
-	err := runFrontendDeploy(dist, cfg, "", "production")
+	err := runFrontendDeploy(dist, cfg, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "index.html")
+}
+
+func TestFrontendDeployCmd_DeprecatedBranchFlagIgnored(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "tok"}))
+
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
+
+	dist := filepath.Join(dir, "dist")
+	require.NoError(t, os.MkdirAll(dist, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dist, "index.html"), []byte("<html>"), 0o644))
+
+	cmd := newFrontendDeployCmd()
+	cmd.SetArgs([]string{dist, "--project", "abc", "--branch", "staging"})
+	cmd.SilenceUsage, cmd.SilenceErrors = true, true
+	cmd.SetErr(io.Discard)
+	require.NoError(t, cmd.Execute())
+	assert.True(t, cmd.Flags().Lookup("branch").Hidden)
+	assert.NotContains(t, gotBody, "branch")
+	assert.Contains(t, gotBody, "files")
 }
