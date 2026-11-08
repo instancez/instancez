@@ -29,7 +29,7 @@ func newFrontendCmd() *cobra.Command {
 }
 
 func newFrontendDeployCmd() *cobra.Command {
-	var configPath, project, branch string
+	var configPath, project string
 	cmd := &cobra.Command{
 		Use:   "deploy <dist-dir>",
 		Short: "Upload a prebuilt static bundle (dist/) as the project's frontend",
@@ -46,9 +46,6 @@ instancez.yaml, or pass --project to target one directly.`,
 	}
 	cmd.Flags().StringVar(&configPath, "config", "instancez.yaml", "path to instancez.yaml (for the linked project id)")
 	cmd.Flags().StringVar(&project, "project", "", "target this cloud project id instead of instancez.yaml's project.cloud.project_id")
-	cmd.Flags().StringVar(&branch, "branch", "", "")
-	_ = cmd.Flags().MarkHidden("branch")
-	_ = cmd.Flags().MarkDeprecated("branch", "branch is ignored")
 	return cmd
 }
 

@@ -6,7 +6,8 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Changed
 
-- `inz cloud frontend deploy --branch` is deprecated and ignored (no longer required), and the frontend upload no longer sends a `branch` field.
+- Removed `--branch` from `inz frontend deploy`; passing it now errors as an unknown flag.
+- The CLI no longer sends `branch` to the cloud APIs (deploy, preview, frontend upload). This requires an up-to-date instancez Cloud server.
 
 ## [0.0.14] - 2026-11-07
 

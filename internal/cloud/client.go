@@ -138,9 +138,6 @@ type uploadYAMLResponse struct {
 	Diff    ConfigDiff `json:"diff"`
 }
 
-// wireBranch keeps older servers on their production path, which they default to draft.
-const wireBranch = "production"
-
 // UploadYAML writes yamlContent to projectID's Defs and triggers a rebuild.
 // Called by `inz cloud deploy`. functions (path-keyed sources, e.g.
 // "functions/hello.js") and secrets (INSTANCEZ_ENV_* name->value) ride in the
@@ -152,10 +149,9 @@ const wireBranch = "production"
 func (c *Client) UploadYAML(projectID, yamlContent string, functions, secrets map[string]string) ([]Problem, ConfigDiff, error) {
 	body := struct {
 		YAML      string            `json:"yaml"`
-		Branch    string            `json:"branch"`
 		Functions map[string]string `json:"functions,omitempty"`
 		Secrets   map[string]string `json:"secrets,omitempty"`
-	}{yamlContent, wireBranch, functions, secrets}
+	}{yamlContent, functions, secrets}
 	var out uploadYAMLResponse
 	if err := c.do("PUT", "/instancez/projects/"+projectID+"/yaml", body, &out); err != nil {
 		return nil, ConfigDiff{}, err
@@ -176,7 +172,7 @@ type previewResponse struct {
 func (c *Client) PreviewConfig(projectID, yamlContent string) ([]Problem, ConfigDiff, error) {
 	var out previewResponse
 	if err := c.do("POST", "/instancez/projects/"+projectID+"/config/preview",
-		map[string]string{"yaml": yamlContent, "branch": wireBranch}, &out); err != nil {
+		map[string]string{"yaml": yamlContent}, &out); err != nil {
 		return nil, ConfigDiff{}, err
 	}
 	return out.Dropped, out.Diff, nil

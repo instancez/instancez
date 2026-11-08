@@ -154,20 +154,17 @@ func TestPlanAgainstProjectNeverUploads(t *testing.T) {
 	require.NoError(t, planAgainstProject(context.Background(), yamlPath, false, "explicit-id"))
 }
 
-func TestPlanAgainstProjectSendsWireBranch(t *testing.T) {
+func TestPlanAgainstProjectOmitsBranch(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "tok-123"}))
 	yamlPath := filepath.Join(dir, "instancez.yaml")
 	require.NoError(t, os.WriteFile(yamlPath, []byte("version: 1\n"), 0o644))
 
-	var gotBranch string
+	var gotBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Branch string `json:"branch"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		gotBranch = body.Branch
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"dropped": []any{},
@@ -178,7 +175,8 @@ func TestPlanAgainstProjectSendsWireBranch(t *testing.T) {
 	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
 
 	require.NoError(t, planAgainstProject(context.Background(), yamlPath, false, "explicit-id"))
-	assert.Equal(t, "production", gotBranch)
+	assert.Contains(t, gotBody, "yaml")
+	assert.NotContains(t, gotBody, "branch")
 }
 
 func TestPrintWarnings(t *testing.T) {
