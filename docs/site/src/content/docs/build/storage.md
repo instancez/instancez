@@ -195,6 +195,14 @@ providers:
     bucket: "${MY_GCS_BUCKET}"
 ```
 
+Browser uploads and downloads through signed URLs need CORS on the bucket, because signed URLs use the XML API endpoints and IAM plus a valid signature do not satisfy the browser check:
+
+```json
+[{"origin": ["https://app.example.com"], "method": ["GET", "PUT"], "responseHeader": ["Content-Type"], "maxAgeSeconds": 3600}]
+```
+
+Apply it with `gcloud storage buckets update gs://BUCKET --cors-file=cors.json`. Drop `GET` if downloads never go through signed URLs.
+
 Set `INSTANCEZ_GCS_SIGNER_EMAIL` only when the signing service account cannot be auto-detected (for example local development with user credentials). `region`, `access_key_id`, `secret_access_key` and `endpoint` are ignored.
 
 ## Direct upload (serverless)

@@ -201,3 +201,26 @@ func TestGCSSourceWatch(t *testing.T) {
 		t.Fatal("channel not closed after cancel")
 	}
 }
+
+func TestGCSSourceWatchBaselineIsReadBeforeReturn(t *testing.T) {
+	src, f := newGCSTestSource(t)
+	f.put("app/instancez.yaml", []byte("v1"))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, err := src.Watch(ctx, 20*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.put("app/instancez.yaml", []byte("v2")) // changes right after Watch returns
+	f.mu.Unlock()
+	select {
+	case ev := <-ch:
+		if ev.Err != nil || string(ev.Data) != "v2" {
+			t.Fatalf("event = %+v", ev)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("change made right after Watch returned was never reported")
+	}
+}

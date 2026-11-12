@@ -132,6 +132,7 @@ func (s *GCSSource) Watch(ctx context.Context, interval time.Duration) (<-chan W
 	if _, err := s.obj(ctx); err != nil {
 		return nil, err
 	}
+	lastVer, _ := s.generation(ctx)
 	out := make(chan WatchEvent, 1)
 	send := func(ev WatchEvent) bool {
 		select {
@@ -145,7 +146,6 @@ func (s *GCSSource) Watch(ctx context.Context, interval time.Duration) (<-chan W
 		defer close(out)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-		lastVer, _ := s.generation(ctx)
 		for {
 			select {
 			case <-ctx.Done():

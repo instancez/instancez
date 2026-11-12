@@ -94,7 +94,22 @@ func (s *Store) sign(ctx context.Context, key, method string, expiry time.Durati
 	o.Expires = time.Now().Add(expiry + 999*time.Millisecond)
 	o.GoogleAccessID = s.signerEmail
 	o.SignBytes = s.signBytes
-	return s.bucket.SignedURL(name, &o)
+	type result struct {
+		url string
+		err error
+	}
+	done := make(chan result, 1)
+	// The library's signBlob call ignores ctx; abandon it on cancel, it ends on its own retry deadline.
+	go func() {
+		u, err := s.bucket.SignedURL(name, &o)
+		done <- result{u, err}
+	}()
+	select {
+	case r := <-done:
+		return r.url, r.err
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 }
 
 func (s *Store) SignUpload(ctx context.Context, key string, contentType string, expiry time.Duration) (string, error) {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,9 +52,8 @@ func NewBundleSource(pointer, extractParent string) *BundleSource {
 	bs.isS3 = strings.HasPrefix(baseURI, "s3://")
 	bs.isGCS = strings.HasPrefix(baseURI, "gcs://")
 	if bs.isS3 || bs.isGCS {
-		if u, err := url.Parse(baseURI); err == nil {
-			bs.s3Bucket = u.Host
-			bs.s3Key = strings.TrimPrefix(u.Path, "/")
+		if bucket, key, err := parseObjectURI(baseURI); err == nil {
+			bs.s3Bucket, bs.s3Key = bucket, key
 		}
 	}
 	return bs

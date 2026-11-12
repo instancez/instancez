@@ -85,12 +85,12 @@ describe("ProvidersPage", () => {
     expect(screen.queryByText("SendGrid")).not.toBeInTheDocument();
   });
 
-  it("renders only the supported storage providers", () => {
+  it("renders the supported storage providers", () => {
     renderProviders(baseConfig);
     expect(screen.getByText("AWS S3")).toBeInTheDocument();
     expect(screen.getByText("Local Filesystem")).toBeInTheDocument();
     expect(screen.queryByText("MinIO")).not.toBeInTheDocument();
-    expect(screen.queryByText("Google Cloud Storage")).not.toBeInTheDocument();
+    expect(screen.getByText("Google Cloud Storage")).toBeInTheDocument();
   });
 
   it("requests status for all credential vars, even ones not yet saved in config", () => {

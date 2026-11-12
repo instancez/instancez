@@ -186,7 +186,7 @@ func TestUploadDownloadHead_RoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ := io.ReadAll(rc)
-	rc.Close()
+	_ = rc.Close()
 	if string(b) != "hello" || ct != "text/plain" {
 		t.Fatalf("got %q %q", b, ct)
 	}
@@ -443,5 +443,23 @@ func TestSign_InvalidKey(t *testing.T) {
 	s := newSigningStore(t, "")
 	if _, err := s.SignUpload(context.Background(), "", "text/plain", time.Minute); err == nil {
 		t.Fatal("expected error for empty key")
+	}
+}
+
+func TestSign_ReturnsWhenContextIsCancelled(t *testing.T) {
+	s := newSigningStore(t, "app1")
+	release := make(chan struct{})
+	defer close(release)
+	s.signBytes = func([]byte) ([]byte, error) { <-release; return []byte("sig"), nil }
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := s.SignDownload(ctx, "a.txt", time.Minute, domain.DownloadOptions{})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want deadline exceeded", err)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatalf("sign held the caller for %v after cancel", time.Since(start))
 	}
 }
