@@ -379,3 +379,20 @@ func TestClientDeviceCode(t *testing.T) {
 	assert.Equal(t, 900, resp.ExpiresIn)
 	assert.Equal(t, 5, resp.Interval)
 }
+
+func TestAPIErrorRetryAfter(t *testing.T) {
+	for hdr, want := range map[string]int{"1": 1, " 7 ": 7, "": 0, "soon": 0, "Wed, 21 Oct 2026 07:28:00 GMT": 0} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if hdr != "" {
+				w.Header().Set("Retry-After", hdr)
+			}
+			w.WriteHeader(429)
+		}))
+		_, err := NewClient(srv.URL, "").GetLogs("p", 5)
+		srv.Close()
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || apiErr.RetryAfter != want {
+			t.Errorf("header %q: got %v, want RetryAfter %d", hdr, err, want)
+		}
+	}
+}

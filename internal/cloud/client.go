@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -237,6 +238,30 @@ func (c *Client) GetApp(projectID string) (*GetAppResponse, error) {
 	return &out, nil
 }
 
+// LogEvent is one log line. TS is kept raw because the wire format (unix
+// millis or RFC3339) is decoded by the caller.
+type LogEvent struct {
+	TS      json.RawMessage `json:"ts"`
+	Message string          `json:"message"`
+}
+
+// LogsResponse mirrors GET /instancez/projects/:id/logs.
+type LogsResponse struct {
+	Events    []LogEvent `json:"events"`
+	Deployed  bool       `json:"deployed"`
+	Truncated bool       `json:"truncated"`
+	Minutes   int        `json:"minutes"`
+}
+
+// GetLogs fetches recent runtime logs for the project.
+func (c *Client) GetLogs(projectID string, minutes int) (*LogsResponse, error) {
+	var out LogsResponse
+	if err := c.do("GET", fmt.Sprintf("/instancez/projects/%s/logs?minutes=%d", projectID, minutes), nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // WhoamiResponse mirrors GET /instancez/whoami.
 type WhoamiResponse struct {
 	Email  string      `json:"email"`
@@ -328,6 +353,8 @@ type APIError struct {
 	Code     string
 	Body     string
 	Problems []Problem
+	// RetryAfter is the Retry-After header in whole seconds; 0 when absent or not a number.
+	RetryAfter int
 }
 
 func (e *APIError) Error() string {
@@ -384,6 +411,7 @@ func (c *Client) do(method, path string, payload, out any) error {
 
 	if resp.StatusCode >= 400 {
 		apiErr := &APIError{Status: resp.StatusCode, Body: string(respBody)}
+		apiErr.RetryAfter, _ = strconv.Atoi(strings.TrimSpace(resp.Header.Get("Retry-After")))
 		var env struct {
 			Error    string    `json:"error"`
 			Problems []Problem `json:"problems"`
