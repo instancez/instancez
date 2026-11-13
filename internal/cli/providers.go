@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/instancez/instancez/internal/adapter/gcs"
 	"github.com/instancez/instancez/internal/adapter/resend"
 	"github.com/instancez/instancez/internal/adapter/s3"
 	"github.com/instancez/instancez/internal/domain"
@@ -34,6 +35,9 @@ func registerEmail(name string, f emailFactory)     { emailRegistry[name] = f }
 func registerBuiltins() {
 	registerStorage("s3", func(ctx context.Context, p *domain.StorageProvider) (domain.ObjectStore, error) {
 		return newS3Store(ctx, p)
+	})
+	registerStorage("gcs", func(ctx context.Context, p *domain.StorageProvider) (domain.ObjectStore, error) {
+		return newGCSStore(ctx, p)
 	})
 	registerStorage("local", func(_ context.Context, p *domain.StorageProvider) (domain.ObjectStore, error) {
 		path := p.Path
@@ -133,4 +137,15 @@ func newS3Store(ctx context.Context, p *domain.StorageProvider) (*s3.Store, erro
 		KeyPrefix:       os.Getenv("INSTANCEZ_STORAGE_KEY_PREFIX"),
 	}
 	return s3.New(ctx, s3Cfg)
+}
+
+func newGCSStore(ctx context.Context, p *domain.StorageProvider) (*gcs.Store, error) {
+	if p.Bucket == "" {
+		return nil, fmt.Errorf("providers.storage.bucket not set (required for gcs provider)")
+	}
+	return gcs.New(ctx, gcs.Config{
+		Bucket:      p.Bucket,
+		KeyPrefix:   os.Getenv("INSTANCEZ_STORAGE_KEY_PREFIX"),
+		SignerEmail: os.Getenv("INSTANCEZ_GCS_SIGNER_EMAIL"),
+	})
 }

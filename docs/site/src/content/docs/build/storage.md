@@ -184,9 +184,30 @@ providers:
     endpoint: ""   # optional: set for non-AWS endpoints (e.g. Cloudflare R2)
 ```
 
+### Google Cloud Storage
+
+Uses Application Default Credentials (Workload Identity on GKE and Cloud Run); no keys or HMAC secrets. Signed URLs are signed through the IAM Credentials `signBlob` API, so the service account needs `roles/iam.serviceAccountTokenCreator` on itself and object access on the bucket.
+
+```yaml
+providers:
+  storage:
+    type: gcs
+    bucket: "${MY_GCS_BUCKET}"
+```
+
+Browser uploads and downloads through signed URLs need CORS on the bucket, because signed URLs use the XML API endpoints and IAM plus a valid signature do not satisfy the browser check:
+
+```json
+[{"origin": ["https://app.example.com"], "method": ["GET", "PUT"], "responseHeader": ["Content-Type"], "maxAgeSeconds": 3600}]
+```
+
+Apply it with `gcloud storage buckets update gs://BUCKET --cors-file=cors.json`. Drop `GET` if downloads never go through signed URLs.
+
+Set `INSTANCEZ_GCS_SIGNER_EMAIL` only when the signing service account cannot be auto-detected (for example local development with user credentials). `region`, `access_key_id`, `secret_access_key` and `endpoint` are ignored.
+
 ## Direct upload (serverless)
 
-When using the S3 provider, you can upload files directly to S3 without routing bytes through instancez. Call `POST /storage/<bucket>/sign` to get a presigned upload URL, then `PUT` the file straight to S3:
+When using the S3 or GCS provider, you can upload files directly to the bucket without routing bytes through instancez. Call `POST /storage/<bucket>/sign` to get a presigned upload URL, then `PUT` the file straight to S3:
 
 ```js
 const { id, upload_url } = await fetch('/storage/avatars/sign', {

@@ -307,7 +307,7 @@ func init() {
 var rlsCheckDDLRE = regexp.MustCompile(`(?is)^\s*create\b`)
 
 var validStorageProviders = map[string]bool{
-	"s3": true, "local": true,
+	"s3": true, "gcs": true, "local": true,
 }
 
 // idTokenOnlyProviders can sign in via signInWithIdToken without a client secret.
@@ -513,13 +513,19 @@ func validateProviders(p *domain.Providers) domain.ValidationErrors {
 			errs = append(errs, &domain.ValidationError{
 				Path:       "providers.storage.type",
 				Message:    fmt.Sprintf("unknown storage provider type %q", p.Storage.Type),
-				Suggestion: "Supported types: s3, local",
+				Suggestion: "Supported types: s3, gcs, local",
 			})
 		} else if p.Storage.Type == "s3" && p.Storage.Bucket == "" {
 			errs = append(errs, &domain.ValidationError{
 				Path:       "providers.storage.bucket",
 				Message:    "required for s3 provider",
 				Suggestion: "Set INSTANCEZ_S3_BUCKET in your environment or .env file",
+			})
+		} else if p.Storage.Type == "gcs" && p.Storage.Bucket == "" {
+			errs = append(errs, &domain.ValidationError{
+				Path:       "providers.storage.bucket",
+				Message:    "required for gcs provider",
+				Suggestion: "Set providers.storage.bucket to your GCS bucket name",
 			})
 		}
 	}
@@ -539,7 +545,7 @@ func validateProviderRequirements(cfg *domain.Config) domain.ValidationErrors {
 		errs = append(errs, &domain.ValidationError{
 			Path:       "providers.storage",
 			Message:    "storage buckets are configured but no storage provider is set",
-			Suggestion: "Add a providers.storage block (type: s3 or local)",
+			Suggestion: "Add a providers.storage block (type: s3, gcs or local)",
 		})
 	}
 

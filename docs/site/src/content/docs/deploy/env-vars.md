@@ -18,8 +18,8 @@ Both API keys plus one database credential path — either the single superuser 
 
 | Variable | Flag equivalent | Default | Description |
 |----------|----------------|---------|-------------|
-| `INSTANCEZ_CONFIG` | `--config` | `instancez.yaml` | Config source. Accepts a local file path or an `s3://bucket/key` URI. |
-| `INSTANCEZ_BUNDLE` | `--bundle` | — | Bundle source (config + function source in one archive), built with `inz bundle`. Accepts a local path or `s3://bucket/key`. Takes the place of `INSTANCEZ_CONFIG` when set. |
+| `INSTANCEZ_CONFIG` | `--config` | `instancez.yaml` | Config source. Accepts a local file path or an `s3://bucket/key` or `gcs://bucket/key` URI. |
+| `INSTANCEZ_BUNDLE` | `--bundle` | — | Bundle source (config + function source in one archive), built with `inz bundle`. Accepts a local path, `s3://bucket/key` or `gcs://bucket/key`. Takes the place of `INSTANCEZ_CONFIG` when set. |
 | `INSTANCEZ_WATCH` | `--watch` | `false` | Re-apply config when the source changes. For S3 sources, polls on the watch interval. |
 | `INSTANCEZ_WATCH_INTERVAL` | `--watch-interval` | `60s` | Poll interval for S3 config sources. Minimum 10 s. |
 
@@ -69,11 +69,21 @@ providers:
 
 instancez interpolates `${VAR}` references in `instancez.yaml` at load time. Any environment variable name works; the names above are conventions.
 
-One variable is read directly from the process environment (no YAML reference needed):
+For Google Cloud Storage, set only the bucket; credentials come from Application Default Credentials:
+
+```yaml
+providers:
+  storage:
+    type: gcs
+    bucket: ${INSTANCEZ_GCS_BUCKET}
+```
+
+These variables are read directly from the process environment (no YAML reference needed):
 
 | Variable | Description |
 |----------|-------------|
 | `INSTANCEZ_STORAGE_KEY_PREFIX` | Optional prefix prepended to all object keys in the storage bucket. Useful for sharing a bucket across environments. |
+| `INSTANCEZ_GCS_SIGNER_EMAIL` | (`gcs` only) Optional service account that signs URLs via IAM `signBlob`. Auto-detected on GKE and Cloud Run when unset. |
 
 ## Email providers
 

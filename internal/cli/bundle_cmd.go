@@ -30,13 +30,14 @@ The bundled instancez.yaml follows include: and is written as one merged file.
 Examples:
   inz bundle                                        # write ./bundle.tar.gz
   inz bundle --output my-app.tar.gz                 # write to a local file
-  inz bundle --output s3://my-bucket/bundle.tar.gz  # upload to S3, print pointer`,
+  inz bundle --output s3://my-bucket/bundle.tar.gz  # upload to S3, print pointer
+  inz bundle --output gcs://my-bucket/bundle.tar.gz # upload to GCS, print pointer`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runBundle(cmd.Context(), configPath, output)
 		},
 	}
 	cmd.Flags().StringVar(&configPath, "config", "instancez.yaml", "path to instancez.yaml (env: INSTANCEZ_CONFIG)")
-	cmd.Flags().StringVar(&output, "output", "bundle.tar.gz", "destination: local path (relative to the current directory) or s3://bucket/key")
+	cmd.Flags().StringVar(&output, "output", "bundle.tar.gz", "destination: local path (relative to the current directory), s3://bucket/key or gcs://bucket/key")
 	return cmd
 }
 
@@ -59,7 +60,7 @@ func runBundle(ctx context.Context, configPath, output string) error {
 	fmt.Println("  ✓ Schema valid")
 
 	if output == "" {
-		return errors.New("--output needs a path or s3://bucket/key")
+		return errors.New("--output needs a path, s3://bucket/key or gcs://bucket/key")
 	}
 	bundlePath, err := BuildBundle(projectDir, output)
 	if err != nil {
@@ -68,14 +69,18 @@ func runBundle(ctx context.Context, configPath, output string) error {
 
 	defer func() { _ = os.Remove(bundlePath) }()
 
-	if strings.HasPrefix(output, "s3://") {
+	if isRemoteBundleDest(output) {
 		data, err := os.ReadFile(bundlePath)
 		if err != nil {
 			return fmt.Errorf("read bundle: %w", err)
 		}
 		version := bundleVersion(data)
 		dest := resolveBundleDest(output, version)
-		uploadedVersion, err := s3BundleUploader{}.Upload(ctx, dest, data)
+		upload := s3BundleUploader{}.Upload
+		if strings.HasPrefix(dest, "gcs://") {
+			upload = gcsBundleUploader{}.Upload
+		}
+		uploadedVersion, err := upload(ctx, dest, data)
 		if err != nil {
 			return err
 		}

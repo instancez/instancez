@@ -720,10 +720,10 @@ func TestValidate_UnknownEmailTemplateRejected(t *testing.T) {
 	}
 }
 
-// TestValidate_RemovedProvidersRejected pins the removal of the gcs/minio
-// storage providers and the sendgrid email provider.
+// TestValidate_RemovedProvidersRejected pins the removal of the minio
+// storage provider and the sendgrid email provider.
 func TestValidate_RemovedProvidersRejected(t *testing.T) {
-	for _, storageType := range []string{"minio", "gcs"} {
+	for _, storageType := range []string{"minio"} {
 		cfg := validBaseConfig()
 		cfg.Providers.Storage = &domain.StorageProvider{Type: storageType, Bucket: "b"}
 		errs := Validate(cfg)
@@ -1344,6 +1344,40 @@ func TestValidateProviders_S3RequiresBucket(t *testing.T) {
 	if !found {
 		t.Errorf("expected providers.storage.bucket error, got: %v", errs)
 	}
+}
+
+func TestValidateProviders_GCS(t *testing.T) {
+	mk := func(bucket string) *domain.Config {
+		return &domain.Config{
+			Version:   1,
+			Project:   domain.Project{Name: "test"},
+			Providers: domain.Providers{Storage: &domain.StorageProvider{Type: "gcs", Bucket: bucket}},
+		}
+	}
+	for _, e := range Validate(mk("my-bucket")) {
+		if strings.HasPrefix(e.Path, "providers.storage") {
+			t.Errorf("gcs with bucket should be valid, got %v", e)
+		}
+	}
+	found := false
+	for _, e := range Validate(mk("")) {
+		if e.Path == "providers.storage.bucket" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected providers.storage.bucket error for gcs without bucket")
+	}
+}
+
+func TestValidateProviders_UnknownStorageListsGCS(t *testing.T) {
+	cfg := &domain.Config{Version: 1, Project: domain.Project{Name: "t"}, Providers: domain.Providers{Storage: &domain.StorageProvider{Type: "gdrive"}}}
+	for _, e := range Validate(cfg) {
+		if e.Path == "providers.storage.type" && strings.Contains(e.Suggestion, "gcs") {
+			return
+		}
+	}
+	t.Error("unknown-provider suggestion should list gcs")
 }
 
 func TestValidateProviders_S3WithBucket_Valid(t *testing.T) {

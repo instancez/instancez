@@ -198,7 +198,7 @@ func buildServeFuncRuntime(
 		return nil, "", fmt.Errorf("functions: %d function(s) declared but no functions bundle recorded; run `inz bundle` to build one and set functions_bundle (serve cannot build)", len(cfg.Functions))
 	}
 
-	dir, _, err := app.FetchAndExtract(ctx, cfg.FunctionsBundle, extractParent, s3BundleFetcher)
+	dir, _, err := app.FetchAndExtract(ctx, cfg.FunctionsBundle, extractParent, bundleFetcher)
 	if err != nil {
 		return nil, "", fmt.Errorf("functions: fetch bundle: %w", err)
 	}

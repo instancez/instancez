@@ -4,6 +4,11 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Added
+
+- `gcs://bucket/key` is accepted wherever `s3://` is: `--config`, `--bundle`, `functions_bundle` and `inz bundle --output`. It uses Application Default Credentials; the config version token is the object generation.
+- `gcs` storage provider (`providers.storage.type: gcs`) for Google Cloud Storage. It uses Application Default Credentials only (no HMAC keys); signed URLs go through IAM `signBlob`. Reads `bucket`, `INSTANCEZ_STORAGE_KEY_PREFIX` and optional `INSTANCEZ_GCS_SIGNER_EMAIL`.
+
 ### Changed
 
 - `inz cloud frontend deploy --branch` is deprecated and ignored (hidden), and `branch` is no longer sent to the cloud APIs (deploy, preview, frontend upload).
