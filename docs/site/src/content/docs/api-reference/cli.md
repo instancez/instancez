@@ -350,6 +350,26 @@ inz cloud status [flags]
 inz cloud status
 ```
 
+## inz cloud logs
+
+Show recent runtime logs for the linked cloud project, one line per event: `<RFC3339 time> message`. Control characters are stripped from messages.
+
+```
+inz cloud logs [flags]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--config` | `instancez.yaml` | Path to `instancez.yaml`. |
+| `--minutes` | `5` | Look-back window. One of 5, 15, 30, 60, 180, 360, 720, 1440. |
+| `--json` | `false` | Print the API response (`events`, `deployed`, `truncated`, `minutes`) as JSON. Never prompts for login. |
+
+When the server truncates the result, older lines are dropped and a note goes to stderr; use a smaller `--minutes`. A rate limit (429) is retried once after `Retry-After`.
+
+```bash
+inz cloud logs --minutes 60
+```
+
 ## inz cloud login
 
 Authenticate against instancez Cloud via device-code flow.

@@ -115,6 +115,14 @@ inz cloud status
 
 This prints the project name, id, URL, and deploy status. It's separate from `inz doctor`, which checks your local environment rather than the cloud project.
 
+## View logs
+
+```bash
+inz cloud logs --minutes 60
+```
+
+This prints runtime log lines from the last 5 to 1440 minutes (see the [CLI reference](/api-reference/cli/#inz-cloud-logs)).
+
 ## Other commands
 
 ```bash

@@ -6,6 +6,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Added
 
+- `inz cloud logs` shows recent runtime logs for the linked cloud project (`--minutes`, `--json`).
 - `gcs://bucket/key` is accepted wherever `s3://` is: `--config`, `--bundle`, `functions_bundle` and `inz bundle --output`. It uses Application Default Credentials; the config version token is the object generation.
 - `gcs` storage provider (`providers.storage.type: gcs`) for Google Cloud Storage. It uses Application Default Credentials only (no HMAC keys); signed URLs go through IAM `signBlob`. Reads `bucket`, `INSTANCEZ_STORAGE_KEY_PREFIX` and optional `INSTANCEZ_GCS_SIGNER_EMAIL`.
 
