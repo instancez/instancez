@@ -143,11 +143,11 @@ func writeExprs(p domain.RLSPolicy, ops ...string) []string {
 
 func noIdentityWrite(c *ctx, p domain.RLSPolicy, at []any, label string, t domain.Table) {
 	exprs := writeExprs(p, writeOps...)
-	if len(exprs) == 0 || slices.ContainsFunc(exprs, c.hasTrueBranch) || !slices.ContainsFunc(exprs, func(e string) bool { return squash(e) != "false" }) {
+	if len(exprs) == 0 || slices.ContainsFunc(exprs, c.hasTrueBranch) || !slices.ContainsFunc(exprs, c.notConstFalse) {
 		return
 	}
 	for _, e := range exprs {
-		if refsIdentity(e) || strings.Contains(squash(e), "service_role") || c.callsIdentityRPC(e) {
+		if c.scopes(e) {
 			return
 		}
 	}
@@ -195,7 +195,7 @@ func (c *ctx) authGateAt(expr string, depth int) bool {
 			return true
 		}
 		for i, cond := range conds {
-			if next(cond) && (isLiteralTrue(results[i]) || next(results[i])) {
+			if next(cond) && (c.hasTrueBranch(results[i]) || next(results[i])) {
 				return true
 			}
 		}
@@ -212,7 +212,7 @@ func (c *ctx) authGateAt(expr string, depth int) bool {
 
 // scopes reports whether e ties access to the caller: identity, service role or an identity rpc.
 func (c *ctx) scopes(e string) bool {
-	return refsIdentity(e) || strings.Contains(squash(e), "service_role") || c.callsIdentityRPC(e)
+	return refsCaller(e) || c.callsIdentityRPC(e)
 }
 
 // authedWrite returns the field of a write policy that only checks sign-in.
@@ -279,7 +279,7 @@ func ruleBuckets(c *ctx) {
 // callsIdentityRPC reports whether expr calls a user-declared rpc whose body reads the caller's identity.
 func (c *ctx) callsIdentityRPC(expr string) bool {
 	for name, fn := range c.cfg.RPC {
-		if !refsIdentity(fn.Body) && !strings.Contains(squash(fn.Body), "service_role") {
+		if !refsCaller(fn.Body) {
 			continue
 		}
 		call := regexp.MustCompile(`(?i)(?:^|[^\w.])(?:public\s*\.\s*)?` + regexp.QuoteMeta(name) + `\s*\(`)
@@ -290,10 +290,15 @@ func (c *ctx) callsIdentityRPC(expr string) bool {
 	return false
 }
 
-// hasTrueBranch reports whether expr is always true, through any nesting of OR, AND, NOT, IS and COALESCE.
+// hasTrueBranch reports whether expr is always true, through any nesting of OR, AND, NOT and parentheses.
 func (c *ctx) hasTrueBranch(expr string) bool {
-	v, ok := constBool(expr, 0, &c.deep)
+	v, ok := c.constBool(expr, 0)
 	return v && ok
+}
+
+func (c *ctx) notConstFalse(expr string) bool {
+	v, ok := c.constBool(expr, 0)
+	return !ok || v
 }
 
 // flagDeep reports a policy whose expressions went past the analysis depth cap.

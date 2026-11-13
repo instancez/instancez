@@ -138,6 +138,13 @@ func TestAuthGate(t *testing.T) {
 		{"case nested", "CASE WHEN a THEN CASE WHEN auth.is_authenticated() THEN true END ELSE false END", false},
 		{"case in or", "CASE WHEN auth.is_authenticated() THEN true END OR false", true},
 		{"case literal text", "CASE WHEN name = ' ELSE auth.is_authenticated() ' THEN true ELSE false END", false},
+		{"case when wrapped gate", "CASE WHEN (select auth.uid()) IS NOT NULL THEN true ELSE false END", true},
+		{"case when uid gate", "CASE WHEN auth.uid() IS NOT NULL THEN true ELSE false END", true},
+		{"wrapped uid gate", "(select auth.uid()) IS NOT NULL", true},
+		{"jwt gate", "auth.jwt() IS NOT NULL", true},
+		{"wrapped role gate", "(select auth.role()) = 'authenticated'", true},
+		{"legacy claim scoped", "auth.uid() IS NOT NULL AND user_id::text = current_setting('request.jwt.claim.sub', true)", false},
+		{"role in service list", "auth.role() IN ('authenticated', 'service_role')", true},
 		{"case compared", "CASE WHEN auth.is_authenticated() THEN true END = true", false},
 	}
 	for _, tc := range cases {
@@ -158,10 +165,12 @@ func TestAuthGateIsLinearAndBounded(t *testing.T) {
 		"case nest": strings.Repeat("CASE WHEN ", n) + gate + strings.Repeat(" THEN true END", n),
 		"deep":      strings.Repeat("(", 5000) + gate + strings.Repeat(")", 5000),
 	}
+	exprs["nested or true"] = strings.Repeat("x OR (", 5000) + "true" + strings.Repeat(")", 5000)
 	for name, e := range exprs {
 		t.Run(name, func(t *testing.T) {
 			start := time.Now()
 			c.authGate(e)
+			c.hasTrueBranch(e)
 			if d := time.Since(start); d > time.Second {
 				t.Fatalf("authGate took %v", d)
 			}

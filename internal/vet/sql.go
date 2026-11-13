@@ -13,8 +13,8 @@ func squash(expr string) string {
 	return strings.ToLower(strings.Join(strings.Fields(expr), ""))
 }
 
-// literalBool returns "true" or "false" when expr is a constant such as `( TRUE )`, `1=1` or `0=1`.
-func literalBool(expr string) string {
+// literalBool folds constants such as `( TRUE )`, `1=1` and `0=1`; ok is false for anything else.
+func literalBool(expr string) (v, ok bool) {
 	s := squash(expr)
 	for prev := ""; prev != s; {
 		prev = s
@@ -25,20 +25,18 @@ func literalBool(expr string) string {
 	}
 	switch s {
 	case "true", "1=1":
-		return "true"
+		return true, true
 	case "false", "0=1", "1=0":
-		return "false"
+		return false, true
 	}
-	return ""
+	return false, false
 }
 
-// isLiteralTrue reports whether expr is a constant-true predicate such as `( TRUE )` or `1=1`.
-func isLiteralTrue(expr string) bool { return literalBool(expr) == "true" }
-
 var (
-	signInGate  = regexp.MustCompile(`(^|[(]|and|or|select|return|where)(?:\(select)?auth\.(?:uid|jwt|email)\(\)\)?isnotnull`)
+	signInGate  = regexp.MustCompile(`(^|[(]|and|or|not|select|return|where|when|then|else)(?:\(select)?auth\.(?:uid|jwt|email)\(\)\)?isnotnull`)
 	settingCall = regexp.MustCompile(`(?i)\bcurrent_setting\s*\(\s*'`)
 	claimName   = regexp.MustCompile(`^request\.jwt\.(claims|claim\.(sub|email))'`)
+	serviceRole = regexp.MustCompile(`(?:\(select)?auth\.role\(\)\)?='service_role'|'service_role'=(?:\(select)?auth\.role\(\)`)
 )
 
 // refsIdentity reports whether expr ties access to the caller's identity; a bare IS NOT NULL sign-in check does not.
@@ -56,6 +54,12 @@ func refsIdentity(expr string) bool {
 	return false
 }
 
+// refsCaller reports whether expr checks the caller's identity or equals the service role.
+func refsCaller(expr string) bool {
+	clean, _ := scanSQL(expr)
+	return refsIdentity(expr) || serviceRole.MatchString(squash(clean))
+}
+
 // isAuthGateOnly reports whether expr only checks that someone is signed in, with no identity scoping.
 func isAuthGateOnly(expr string) bool {
 	if refsIdentity(expr) {
@@ -66,17 +70,17 @@ func isAuthGateOnly(expr string) bool {
 	return strings.Contains(s, "auth.is_authenticated(") || strings.Contains(s, "auth.role(") || signInGate.MatchString(s)
 }
 
-// constBool folds expr to a constant through nested AND, OR, NOT, IS and COALESCE; ok is false when it is not constant.
-func constBool(expr string, depth int, deep *bool) (v, ok bool) {
+// constBool folds expr to a constant through nested AND, OR, NOT and parentheses; ok is false when it is not constant.
+func (c *ctx) constBool(expr string, depth int) (v, ok bool) {
 	if depth > maxGateDepth {
-		*deep = true
+		c.deep = true
 		return false, false
 	}
 	e := stripOuterParens(expr)
 	if strings.TrimSpace(e) == "" {
 		return false, false
 	}
-	next := func(x string) (bool, bool) { return constBool(x, depth+1, deep) }
+	next := func(x string) (bool, bool) { return c.constBool(x, depth+1) }
 	if parts := splitTop(e, "or"); len(parts) > 1 {
 		allFalse := true
 		for _, p := range parts {
@@ -99,68 +103,16 @@ func constBool(expr string, depth int, deep *bool) (v, ok bool) {
 		}
 		return allTrue, allTrue
 	}
-	switch literalBool(e) {
-	case "true":
-		return true, true
-	case "false":
-		return false, true
+	if v, ok := literalBool(e); ok {
+		return v, true
 	}
 	_, mask := scanSQL(e)
-	toks := sqlWords(mask)
-	if len(toks) == 0 {
-		return false, false
-	}
-	if toks[0].word == "not" && toks[0].start == 0 {
+	if toks := sqlWords(mask); len(toks) > 0 && toks[0].word == "not" && toks[0].start == 0 {
 		if rv, rok := next(e[toks[0].end:]); rok {
 			return !rv, true
 		}
-		return false, false
-	}
-	if n := len(toks); n >= 3 && toks[n-1].depth == 0 && toks[n-2].depth == 0 {
-		last, mid := toks[n-1].word, toks[n-2].word
-		neg := mid == "not" && toks[n-3].word == "is"
-		if (mid == "is" || neg) && (last == "true" || last == "false") {
-			cut := toks[n-2].start
-			if neg {
-				cut = toks[n-3].start
-			}
-			if bv, bok := next(e[:cut]); bok {
-				return (bv == (last == "true")) != neg, true
-			}
-			return false, false
-		}
-	}
-	if toks[0].word == "coalesce" && toks[0].start == 0 {
-		rest := strings.TrimSpace(e[toks[0].end:])
-		inner := stripOuterParens(rest)
-		if strings.HasPrefix(rest, "(") && inner != rest {
-			first, _, _ := strings.Cut(topLevelCommas(inner), "\x00")
-			if fv, fok := next(first); fok && fv {
-				return true, true
-			}
-		}
 	}
 	return false, false
-}
-
-// topLevelCommas replaces commas outside parentheses and literals with NUL.
-func topLevelCommas(expr string) string {
-	clean, mask := scanSQL(expr)
-	b := []byte(clean)
-	depth := 0
-	for i := range mask {
-		switch mask[i] {
-		case '(':
-			depth++
-		case ')':
-			depth--
-		case ',':
-			if depth == 0 {
-				b[i] = 0
-			}
-		}
-	}
-	return string(b)
 }
 
 // exprsFor returns the expressions that gate op under policy p.

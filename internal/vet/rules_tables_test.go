@@ -126,6 +126,32 @@ func TestTableRules(t *testing.T) {
 		{"write no exprs skipped", tbl(on, idField, "      - operations: [insert]\n"), nil},
 		{"open write not also no-identity", tbl(on, idField, pol("insert", "", "true", "")), []string{"policy-open-write"}},
 		{"restrictive no identity skipped", tbl(on, idField, pol("insert", "", "auth.is_authenticated()", "restrictive")), nil},
+
+		{"nested true write", tbl(on, idField, pol("delete", "(a = b) OR (true AND (1=1))", "", "")), []string{"policy-open-write"}},
+		{"nested true read", tbl(on, idField, pol("select", "(a = b) OR (true AND (1=1))", "", "")), []string{"policy-open-read"}},
+		{"not false read", tbl(on, idField, pol("select", "NOT false", "", "")), []string{"policy-open-read"}},
+		{"deny 1=0", tbl(on, idField, pol("insert", "", "1=0", "")), nil},
+		{"deny not true", tbl(on, idField, pol("update", "NOT true", "NOT (true)", "")), nil},
+		{"deny false and gate", tbl(on, idField, pol("insert", "", "false AND auth.is_authenticated()", "")), nil},
+		{"insert wrapped gate", tbl(on, idField+userField, pol("insert", "", "(select auth.uid()) IS NOT NULL", "")), []string{"policy-no-identity-write"}},
+		{"insert jwt gate", tbl(on, idField+userField, pol("insert", "", "auth.jwt() IS NOT NULL", "")), []string{"policy-no-identity-write"}},
+		{"insert role gate", tbl(on, idField+userField, pol("insert", "", "auth.role() = 'authenticated'", "")), []string{"policy-no-identity-write"}},
+		{"insert case gate", tbl(on, idField+userField, pol("insert", "", "CASE WHEN auth.uid() IS NOT NULL THEN true ELSE false END", "")), []string{"policy-no-identity-write"}},
+		{"role in list is not service only", tbl(on, idField, pol("insert", "", "auth.role() IN ('authenticated', 'service_role')", "")), []string{"policy-no-identity-write"}},
+		{"select wrapped gate sensitive", tbl(on, idField+mailField, pol("select", "(select auth.uid()) IS NOT NULL", "", "")), []string{"policy-authed-read-sensitive"}},
+		{"select jwt gate sensitive", tbl(on, idField+mailField, pol("select", "auth.jwt() IS NOT NULL", "", "")), []string{"policy-authed-read-sensitive"}},
+		{"owner eq", tbl(on, idField+mailField+userField, pol("select, insert, update, delete", "user_id = auth.uid()", "user_id = auth.uid()", "")), nil},
+		{"owner wrapped", tbl(on, idField+mailField+userField, pol("select, insert, update, delete", "(select auth.uid()) = user_id", "(select auth.uid()) = user_id", "")), nil},
+		{"owner and status", tbl(on, idField+mailField+userField, pol("update", "auth.uid() = owner_id AND status = 'x'", "auth.uid() = owner_id AND status = 'x'", "")), nil},
+		{"owner using gate check", tbl(on, idField+userField, pol("update", "user_id = auth.uid()", "auth.uid() IS NOT NULL", "")), nil},
+		{"legacy claim sub", tbl(on, idField+userField, pol("update", "user_id::text = current_setting('request.jwt.claim.sub', true)", "", "")), nil},
+		{"legacy claims json", tbl(on, idField+userField, pol("delete", "user_id::text = current_setting('request.jwt.claims', true)::json->>'sub'", "", "")), nil},
+		{"legacy claim read", tbl(on, idField+mailField+userField, pol("select", "current_setting('request.jwt.claim.sub', true) = user_id::text", "", "")), nil},
+		{"deep and read", tbl(on, idField+mailField, pol("select", strings.Repeat("true AND (", 40)+"auth.is_authenticated()"+strings.Repeat(")", 40), "", "")), []string{"policy-unanalyzable"}},
+		{"deep case read", tbl(on, idField+mailField, pol("select", strings.Repeat("CASE WHEN ", 40)+"auth.is_authenticated()"+strings.Repeat(" THEN true END", 40), "", "")), []string{"policy-unanalyzable"}},
+		{"deep write", tbl(on, idField, pol("insert", "", strings.Repeat("true AND (", 40)+"auth.is_authenticated()"+strings.Repeat(")", 40), "")), []string{"policy-no-identity-write", "policy-unanalyzable"}},
+		{"shallow still flagged", tbl(on, idField+mailField, pol("select", strings.Repeat("true AND (", 5)+"auth.is_authenticated()"+strings.Repeat(")", 5), "", "")), []string{"policy-authed-read-sensitive"}},
+		{"deep plain parens fine", tbl(on, idField+mailField, pol("select", strings.Repeat("(", 500)+"auth.uid() = id"+strings.Repeat(")", 500), "", "")), nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -232,6 +258,15 @@ func TestIdentityRPCPolicies(t *testing.T) {
 		{"rpc without identity", "public.is_admin()", rpcs("select true"), []string{"policy-no-identity-write"}},
 		{"other schema same name", "other.is_admin()", idRPC, []string{"policy-no-identity-write"}},
 		{"name substring", "not_is_admin()", idRPC, []string{"policy-no-identity-write"}},
+		{"role only rpc", "is_admin()", rpcs("select auth.role() = 'authenticated'"), []string{"policy-no-identity-write"}},
+		{"wrapped role only rpc", "is_admin()", rpcs("select (select auth.role()) = 'authenticated'"), []string{"policy-no-identity-write"}},
+		{"uid not null only rpc", "is_admin()", rpcs("select auth.uid() is not null"), []string{"policy-no-identity-write"}},
+		{"identity in comment rpc", "is_admin()", rpcs("select true -- auth.uid()"), []string{"policy-no-identity-write"}},
+		{"service_role in comment rpc", "is_admin()", rpcs("select true -- auth.role() = 'service_role'"), []string{"policy-no-identity-write"}},
+		{"service role list rpc", "is_admin()", rpcs("select auth.role() in ('authenticated', 'service_role')"), []string{"policy-no-identity-write"}},
+		{"jwt rpc", "is_admin()", rpcs("select auth.jwt() ->> 'sub' = 'x'"), nil},
+		{"legacy claim rpc", "is_admin()", rpcs("select current_setting('request.jwt.claim.sub', true) = 'x'"), nil},
+		{"service role rpc", "is_admin()", rpcs("select auth.role() = 'service_role'"), nil},
 		{"undeclared rpc", "my_role() = 'a'", idRPC, []string{"policy-no-identity-write"}},
 	}
 	for _, tc := range cases {
@@ -334,5 +369,13 @@ func TestCatalogTemplatesPassBucketAuthedWrite(t *testing.T) {
 				t.Errorf("%s trips bucket-authed-write at %s", tpl.ID, f.Path)
 			}
 		}
+	}
+}
+
+func TestDepthCapBucket(t *testing.T) {
+	deep := strings.Repeat("true AND (", 40) + "auth.is_authenticated()" + strings.Repeat(")", 40)
+	src := "storage:\n  files:\n    rls:\n      - operations: [insert]\n        with_check: \"" + deep + "\"\n"
+	if got := vetIDs(t, src); !slices.Contains(got, "policy-unanalyzable") {
+		t.Errorf("rules = %v", got)
 	}
 }
