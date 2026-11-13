@@ -7,9 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
+	"net/url"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Client talks to the Instancez Cloud API. Bearer is the PAT (or "" for
@@ -232,17 +233,16 @@ type DeploymentInfo struct {
 // deploy status.
 func (c *Client) GetApp(projectID string) (*GetAppResponse, error) {
 	var out GetAppResponse
-	if err := c.do("GET", "/instancez/projects/"+projectID, nil, &out); err != nil {
+	if err := c.do("GET", "/instancez/projects/"+url.PathEscape(projectID), nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-// LogEvent is one log line. TS is kept raw because the wire format (unix
-// millis or RFC3339) is decoded by the caller.
+// LogEvent is one log line; TS is unix milliseconds.
 type LogEvent struct {
-	TS      json.RawMessage `json:"ts"`
-	Message string          `json:"message"`
+	TS      int64  `json:"ts"`
+	Message string `json:"message"`
 }
 
 // LogsResponse mirrors GET /instancez/projects/:id/logs.
@@ -256,7 +256,7 @@ type LogsResponse struct {
 // GetLogs fetches recent runtime logs for the project.
 func (c *Client) GetLogs(projectID string, minutes int) (*LogsResponse, error) {
 	var out LogsResponse
-	if err := c.do("GET", fmt.Sprintf("/instancez/projects/%s/logs?minutes=%d", projectID, minutes), nil, &out); err != nil {
+	if err := c.do("GET", fmt.Sprintf("/instancez/projects/%s/logs?minutes=%d", url.PathEscape(projectID), minutes), nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -353,13 +353,11 @@ type APIError struct {
 	Code     string
 	Body     string
 	Problems []Problem
-	// RetryAfter is the Retry-After header in whole seconds; 0 when absent or not a number.
-	RetryAfter int
 }
 
 func (e *APIError) Error() string {
 	if e.Code != "" {
-		return fmt.Sprintf("cloud api: %d %s", e.Status, e.Code)
+		return fmt.Sprintf("cloud api: %d %s", e.Status, SanitizeLine(e.Code))
 	}
 	return fmt.Sprintf("cloud api: %d %s", e.Status, http.StatusText(e.Status))
 }
@@ -411,7 +409,6 @@ func (c *Client) do(method, path string, payload, out any) error {
 
 	if resp.StatusCode >= 400 {
 		apiErr := &APIError{Status: resp.StatusCode, Body: string(respBody)}
-		apiErr.RetryAfter, _ = strconv.Atoi(strings.TrimSpace(resp.Header.Get("Retry-After")))
 		var env struct {
 			Error    string    `json:"error"`
 			Problems []Problem `json:"problems"`
@@ -429,4 +426,17 @@ func (c *Client) do(method, path string, payload, out any) error {
 		}
 	}
 	return nil
+}
+
+// SanitizeLine turns whitespace controls into spaces and drops other control and format chars, so server text cannot drive the terminal.
+func SanitizeLine(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\t' || r == '\n' || r == '\r' || r == '\u2028' || r == '\u2029':
+			return ' '
+		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r):
+			return -1
+		}
+		return r
+	}, s)
 }

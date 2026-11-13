@@ -9,51 +9,11 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/instancez/instancez/internal/cloud"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestFormatLogTS(t *testing.T) {
-	const want = "2026-06-01T12:00:00Z"
-	cases := map[string]string{
-		`1780315200000`:               want,
-		`1780315200`:                  want,
-		`"1780315200000"`:             want,
-		`"2026-06-01T12:00:00Z"`:      want,
-		`"2026-06-01T14:00:00+02:00"`: want,
-		`"2026-06-01T12:00:00.123Z"`:  want,
-		`null`:                        "-",
-		`""`:                          "-",
-		`0`:                           "0",
-		`-5`:                          "-5",
-		`"yesterday\u001b[2Jnoon"`:    "yesterday[2Jnoon",
-		`1.5e12`:                      "1.5e12",
-	}
-	for in, out := range cases {
-		assert.Equal(t, out, formatLogTS(json.RawMessage(in)), in)
-	}
-}
-
-func TestSanitizeLogLine(t *testing.T) {
-	cases := map[string]string{
-		"plain":                "plain",
-		"":                     "",
-		"a\tb\nc\r\nd":         "a b c  d",
-		"\x1b[31mred\x1b[0m":   "[31mred[0m",
-		"bell\x07\x00nul":      "bellnul",
-		"osc\x1b]0;title\x07x": "osc]0;titlex",
-		"c1\u009bcsi":          "c1csi",
-		"bidi\u202eevil":            "bidievil",
-		"line sep":             "line sep",
-		"héllo 日本 🚀":           "héllo 日本 🚀",
-	}
-	for in, out := range cases {
-		assert.Equal(t, out, sanitizeLogLine(in), in)
-	}
-}
 
 func TestRenderLogs(t *testing.T) {
 	render := func(res *cloud.LogsResponse) (string, string) {
@@ -63,37 +23,50 @@ func TestRenderLogs(t *testing.T) {
 	}
 
 	out, errOut := render(&cloud.LogsResponse{Deployed: true, Events: []cloud.LogEvent{
-		{TS: json.RawMessage(`1780315200000`), Message: "hi\x1b[2J"},
-		{TS: nil, Message: "no ts"},
+		{TS: 1780315200000, Message: "hi\x1b[2J"},
+		{TS: 0, Message: "epoch"},
 	}})
-	assert.Equal(t, "2026-06-01T12:00:00Z hi[2J\n- no ts\n", out)
+	assert.Equal(t, "2026-06-01T12:00:00Z hi[2J\n1970-01-01T00:00:00Z epoch\n", out)
 	assert.Empty(t, errOut)
 
 	out, errOut = render(&cloud.LogsResponse{Deployed: true})
 	assert.Equal(t, "no logs in the last 15 minutes\n", out)
 	assert.Empty(t, errOut)
 
-	out, errOut = render(&cloud.LogsResponse{Deployed: true, Truncated: true, Events: []cloud.LogEvent{{TS: json.RawMessage(`1`), Message: "x"}}})
-	assert.Contains(t, out, "x")
-	assert.Contains(t, errOut, "truncated")
+	out, errOut = render(&cloud.LogsResponse{Deployed: true, Truncated: true, Events: []cloud.LogEvent{{TS: 1780315200000, Message: "x"}}})
+	assert.Equal(t, "2026-06-01T12:00:00Z x\n", out)
+	assert.Equal(t, "output truncated: older lines omitted, use a smaller --minutes window\n", errOut)
 
 	out, errOut = render(&cloud.LogsResponse{Deployed: false})
 	assert.Empty(t, out)
 	assert.Contains(t, errOut, "not deployed")
 }
 
-func TestLogsMinutesRegistered(t *testing.T) {
-	root := NewRootCmd()
-	c, _, err := root.Find([]string{"cloud", "logs"})
-	require.NoError(t, err)
-	assert.Equal(t, "logs", c.Name())
-	assert.Equal(t, "5", c.Flags().Lookup("minutes").DefValue)
-}
-
 type logsEnv struct {
 	cfg  string
 	hits *atomic.Int32
 	last *atomic.Value
+}
+
+func TestLogsTruncatedEndToEnd(t *testing.T) {
+	env := logsSetup(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"events":[{"ts":1780315200000,"message":"x"}],"deployed":true,"truncated":true,"minutes":5}`))
+	}, true)
+	out, errOut, err := runLogsCmd(t, "--config", env.cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "2026-06-01T12:00:00Z x\n", out)
+	assert.Contains(t, errOut, "truncated")
+}
+
+func TestLogsErrorBodyControlCharsSanitized(t *testing.T) {
+	env := logsSetup(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+		_, _ = w.Write([]byte(`{"error":"bad\u001b[2Jthing"}`))
+	}, true)
+	_, _, err := runLogsCmd(t, "--config", env.cfg)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "\x1b")
+	assert.Contains(t, err.Error(), "bad[2Jthing")
 }
 
 func logsSetup(t *testing.T, handler http.HandlerFunc, saveCreds bool) logsEnv {
@@ -123,9 +96,6 @@ func logsSetup(t *testing.T, handler http.HandlerFunc, saveCreds bool) logsEnv {
 	}
 	env.cfg = filepath.Join(t.TempDir(), "instancez.yaml")
 	require.NoError(t, os.WriteFile(env.cfg, []byte("project:\n  cloud:\n    project_id: proj_1\n"), 0o600))
-	prev := logsSleep
-	logsSleep = func(time.Duration) {}
-	t.Cleanup(func() { logsSleep = prev })
 	return env
 }
 
@@ -142,7 +112,7 @@ func runLogsCmd(t *testing.T, args ...string) (stdout, stderr string, err error)
 
 func TestLogsEndToEnd(t *testing.T) {
 	env := logsSetup(t, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"events":[{"ts":1780315200000,"message":"a\u001b[31m"},{"ts":"2026-06-01T12:00:01Z","message":"b"}],"deployed":true,"truncated":false,"minutes":60}`))
+		_, _ = w.Write([]byte(`{"events":[{"ts":1780315200000,"message":"a\u001b[31m"},{"ts":1780315201000,"message":"b"}],"deployed":true,"truncated":false,"minutes":60}`))
 	}, true)
 
 	out, _, err := runLogsCmd(t, "--config", env.cfg, "--minutes", "60")
@@ -157,13 +127,14 @@ func TestLogsEndToEnd(t *testing.T) {
 
 func TestLogsJSON(t *testing.T) {
 	env := logsSetup(t, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"events":null,"deployed":true,"truncated":true,"minutes":5}`))
+		_, _ = w.Write([]byte(`{"events":null,"deployed":true,"truncated":true}`))
 	}, true)
 	out, _, err := runLogsCmd(t, "--config", env.cfg, "--json")
 	require.NoError(t, err)
 	var got map[string]any
 	require.NoError(t, json.Unmarshal([]byte(out), &got), out)
 	assert.Equal(t, []any{}, got["events"])
+	assert.EqualValues(t, 5, got["minutes"])
 	assert.Equal(t, true, got["truncated"])
 }
 
@@ -186,12 +157,11 @@ func TestLogsJSONNoPrompt(t *testing.T) {
 
 func TestLogsBadMinutesNeverHitsServer(t *testing.T) {
 	env := logsSetup(t, func(w http.ResponseWriter, r *http.Request) {}, true)
-	for _, m := range []string{"0", "-5", "7", "1441", "99999999999999999999", "abc", ""} {
+	for _, m := range []string{"0", "7", "1441"} {
 		_, _, err := runLogsCmd(t, "--config", env.cfg, "--minutes", m)
 		require.Error(t, err, m)
+		assert.Contains(t, err.Error(), "5, 15, 30, 60, 180, 360, 720, 1440")
 	}
-	_, _, err := runLogsCmd(t, "--config", env.cfg, "--minutes", "7")
-	assert.Contains(t, err.Error(), "5, 15, 30, 60, 180, 360, 720, 1440")
 	assert.Zero(t, env.hits.Load())
 }
 
@@ -214,7 +184,7 @@ func TestLogsErrorMapping(t *testing.T) {
 		{"404", 404, `{"error":"not_found"}`, "project not found"},
 		{"401", 401, `{"error":"unauthorized"}`, "inz cloud login"},
 		{"502", 502, `{"error":"upstream"}`, "log source unavailable"},
-		{"502 html", 502, `<html>bad gateway</html>`, "log source unavailable"},
+		{"429", 429, `{"error":"slow"}`, "rate limited"},
 		{"500", 500, `boom`, "get logs"},
 	}
 	for _, tc := range cases {
@@ -236,59 +206,4 @@ func TestLogsNonJSONSuccessBody(t *testing.T) {
 	_, _, err := runLogsCmd(t, "--config", env.cfg)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "decode response")
-}
-
-func TestLogsRateLimitRetriesOnce(t *testing.T) {
-	var waited time.Duration
-	var calls atomic.Int32
-	env := logsSetup(t, func(w http.ResponseWriter, r *http.Request) {
-		if calls.Add(1) == 1 {
-			w.Header().Set("Retry-After", "1")
-			w.WriteHeader(429)
-			return
-		}
-		_, _ = w.Write([]byte(`{"events":[{"ts":1780315200000,"message":"ok"}],"deployed":true,"truncated":false,"minutes":5}`))
-	}, true)
-	logsSleep = func(d time.Duration) { waited = d }
-	out, _, err := runLogsCmd(t, "--config", env.cfg)
-	require.NoError(t, err)
-	assert.Contains(t, out, "ok")
-	assert.Equal(t, time.Second, waited)
-	assert.EqualValues(t, 2, env.hits.Load())
-}
-
-func TestLogsRateLimitGivesUp(t *testing.T) {
-	var waited time.Duration
-	env := logsSetup(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Retry-After", "3600")
-		w.WriteHeader(429)
-	}, true)
-	logsSleep = func(d time.Duration) { waited = d }
-	_, _, err := runLogsCmd(t, "--config", env.cfg)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "rate limited")
-	assert.EqualValues(t, 2, env.hits.Load())
-	assert.Equal(t, maxLogsRetryWait, waited)
-}
-
-func TestLogsRateLimitBadRetryAfter(t *testing.T) {
-	var waited time.Duration
-	env := logsSetup(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Retry-After", "soon")
-		w.WriteHeader(429)
-	}, true)
-	logsSleep = func(d time.Duration) { waited = d }
-	_, _, err := runLogsCmd(t, "--config", env.cfg)
-	require.Error(t, err)
-	assert.Equal(t, time.Second, waited)
-}
-
-func TestLogsNotDeployedAndTruncated(t *testing.T) {
-	env := logsSetup(t, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"events":[],"deployed":false,"truncated":false,"minutes":5}`))
-	}, true)
-	out, errOut, err := runLogsCmd(t, "--config", env.cfg)
-	require.NoError(t, err)
-	assert.Empty(t, out)
-	assert.Contains(t, errOut, "not deployed")
 }

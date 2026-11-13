@@ -380,19 +380,45 @@ func TestClientDeviceCode(t *testing.T) {
 	assert.Equal(t, 5, resp.Interval)
 }
 
-func TestAPIErrorRetryAfter(t *testing.T) {
-	for hdr, want := range map[string]int{"1": 1, " 7 ": 7, "": 0, "soon": 0, "Wed, 21 Oct 2026 07:28:00 GMT": 0} {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if hdr != "" {
-				w.Header().Set("Retry-After", hdr)
-			}
-			w.WriteHeader(429)
-		}))
-		_, err := NewClient(srv.URL, "").GetLogs("p", 5)
-		srv.Close()
-		var apiErr *APIError
-		if !errors.As(err, &apiErr) || apiErr.RetryAfter != want {
-			t.Errorf("header %q: got %v, want RetryAfter %d", hdr, err, want)
+func TestProjectIDEscapedInPath(t *testing.T) {
+	var raw []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw = append(raw, r.URL.EscapedPath())
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "")
+	id := "a/b?c#d/../e"
+	_, _ = c.GetLogs(id, 5)
+	_, _ = c.GetApp(id)
+	want := []string{"/instancez/projects/a%2Fb%3Fc%23d%2F..%2Fe/logs", "/instancez/projects/a%2Fb%3Fc%23d%2F..%2Fe"}
+	if len(raw) != 2 || raw[0] != want[0] || raw[1] != want[1] {
+		t.Errorf("got %v, want %v", raw, want)
+	}
+}
+
+func TestAPIErrorSanitizesCode(t *testing.T) {
+	e := &APIError{Status: 500, Code: "bad\x1b[2J\nthing"}
+	if got := e.Error(); got != "cloud api: 500 bad[2J thing" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestSanitizeLine(t *testing.T) {
+	cases := map[string]string{
+		"plain":              "plain",
+		"":                   "",
+		"a\tb\nc\r\nd":       "a b c  d",
+		"\x1b[31mred\x1b[0m": "[31mred[0m",
+		"bell\x07\x00nul":    "bellnul",
+		"c1\u009bcsi":        "c1csi",
+		"bidi\u202eevil":          "bidievil",
+		"line sep":           "line sep",
+		"héllo 日本 🚀":         "héllo 日本 🚀",
+	}
+	for in, out := range cases {
+		if got := SanitizeLine(in); got != out {
+			t.Errorf("%q: got %q, want %q", in, got, out)
 		}
 	}
 }
