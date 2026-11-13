@@ -205,10 +205,11 @@ The dashboard's Security page runs the same scan. A banner shows how many checks
 | Rule | Severity | Flags |
 |------|----------|-------|
 | `rls-disabled` | critical | A table with `rls_enabled: false`. |
-| `policy-open-write` | critical | An insert, update or delete policy whose `using` or `with_check` is always true. |
+| `policy-open-write` | critical | An insert, update or delete policy whose `using` or `with_check` is always true, including through nested `OR`/`AND`, `NOT false`, `x IS TRUE` and `COALESCE(true, ...)`. |
 | `policy-open-read` | low, high | A select policy whose `using` is always true. High when the table has sensitive columns. |
 | `policy-authed-read-sensitive` | medium | A select policy that only checks the caller is signed in, on a table with sensitive columns. |
-| `policy-no-identity-write` | medium, high | A write policy that never checks the caller's identity, directly or through a declared rpc that does. High when the table has an owner column. |
+| `policy-no-identity-write` | medium, high | A write policy that never checks the caller's identity, directly or through a declared rpc that does. A bare `auth.uid() IS NOT NULL`, `auth.jwt() IS NOT NULL` or `auth.role() = ...` check is not an identity check. High when the table has an owner column. |
+| `policy-unanalyzable` | medium | A table or bucket policy expression nested more than 32 levels deep. Vet stops analyzing it, so review it by hand. |
 | `bucket-open-write` | critical | A storage policy that lets any caller with a JWT (including anonymous sign-in users) write or delete. |
 | `bucket-open-read` | medium | A select policy on a non-public bucket whose `using` is always true, so any caller with a JWT can list and read every object. |
 | `bucket-authed-write` | medium | An insert, update or delete storage policy that only checks the caller is signed in (`auth.is_authenticated()`, `auth.uid() IS NOT NULL`), so any user can upload anywhere, or replace or delete other users' objects. |
@@ -230,7 +231,9 @@ The dashboard's Security page runs the same scan. A banner shows how many checks
 
 Sign-in rules (`bucket-authed-write`, `policy-authed-read-sensitive`) read expressions with a small tokenizer, not a SQL parser. They skip string literals, quoted identifiers and comments. Known limits, all of which err toward not flagging:
 
-- Only a top-level `OR`, or the `ELSE` or sign-in-guarded `THEN` of one whole searched `CASE`, is checked. A sign-in check hidden in a subquery, a function body, `COALESCE`, `NOT`, or the simple form `CASE x WHEN ...` is not seen.
+- Always-true detection and sign-in checks follow nested `OR`, `AND` and parentheses. Always-true detection also follows `NOT`, `IS [NOT] TRUE/FALSE` and the first argument of `COALESCE`, and treats `1=1` and `0=1` as constants. Expressions nested past 32 levels are reported as `policy-unanalyzable`.
+- Identity means `auth.uid()`, `auth.jwt()`, `auth.email()` or the legacy `current_setting('request.jwt.claims' | 'request.jwt.claim.sub' | 'request.jwt.claim.email')`. A declared rpc counts as identity only when its body uses one of these (or `service_role`); an `auth.role()`-only body does not.
+- For sign-in rules, only a top-level `OR`, or the `ELSE` or sign-in-guarded `THEN` of one whole searched `CASE`, is checked. A sign-in check hidden in a subquery, a function body, `COALESCE`, `NOT`, or the simple form `CASE x WHEN ...` is not seen.
 - A sign-in check `AND`ed with a condition counts as scoped only when that condition mentions `auth.uid()`, `auth.jwt()`, `auth.email()`, `service_role` or a declared rpc that reads the caller. Other filters (`bucket_id = 'x'`, `deleted_at IS NULL`, path checks) do not scope, so the policy is still flagged.
 - Dollar-quoted strings and `E'...'` backslash escapes are not special-cased.
 - An insert policy that only checks sign-in is flagged even when open uploads are intended. Scope it by path, for example `(storage.foldername(name))[1] = auth.uid()::text`, or ignore the finding.
