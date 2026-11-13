@@ -38,19 +38,9 @@ This is distinct from inz doctor, which checks local environment health.`,
 var statusLogin = ensureLoginOpts{}
 
 func runStatus(w io.Writer, configPath string, jsonOut bool) error {
-	if err := requireLocalConfig(configPath); err != nil {
+	projectID, err := linkedProjectID(configPath)
+	if err != nil {
 		return err
-	}
-	src, err := os.ReadFile(configPath)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", configPath, err)
-	}
-	projectID, err := cloud.ReadProjectID(src)
-	if err != nil {
-		return fmt.Errorf("parse %s: %w", configPath, err)
-	}
-	if projectID == "" {
-		return errors.New("no project.cloud.project_id in instancez.yaml; run `inz cloud deploy --new` to create and link one")
 	}
 
 	// Inline login: returns existing creds, prompts on a TTY, or hard-errors
@@ -107,4 +97,23 @@ func renderStatus(w io.Writer, app *cloud.GetAppResponse) {
 	if app.Deployment.Error != "" {
 		_, _ = fmt.Fprintf(w, "Error:      %s\n", app.Deployment.Error)
 	}
+}
+
+// linkedProjectID reads project.cloud.project_id from the config at configPath.
+func linkedProjectID(configPath string) (string, error) {
+	if err := requireLocalConfig(configPath); err != nil {
+		return "", err
+	}
+	src, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", configPath, err)
+	}
+	projectID, err := cloud.ReadProjectID(src)
+	if err != nil {
+		return "", fmt.Errorf("parse %s: %w", configPath, err)
+	}
+	if projectID == "" {
+		return "", errors.New("no project.cloud.project_id in instancez.yaml; run `inz cloud deploy --new` to create and link one")
+	}
+	return projectID, nil
 }
