@@ -40,6 +40,8 @@ tables:
         using: "status = 'x'"
       - operations: [select]
         using: "auth.uid() is not null"
+      - operations: [delete]
+        using: "x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (x = 1 OR (y = 2))))))))))))))))))))))))))))))))))))))))"
 storage:
   open:
     public: true

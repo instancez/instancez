@@ -71,6 +71,7 @@ type Checks struct {
 // checkIDs is every rule a user can fail; keep it in sync with the docs table.
 var checkIDs = []string{
 	"rls-disabled", "policy-open-write", "policy-open-read", "policy-authed-read-sensitive", "policy-no-identity-write",
+	"policy-unanalyzable",
 	"bucket-open-write", "bucket-open-read", "bucket-authed-write", "bucket-no-rls", "bucket-public",
 	"rpc-definer-no-auth", "rpc-definer-search-path", "rpc-dynamic-sql",
 	"function-public-secrets", "hardcoded-secret", "jwt-expiry-long", "signup-unverified-email",
