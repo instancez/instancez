@@ -58,6 +58,10 @@ const STORAGE_SCHEMAS: Record<string, ProviderSchema> = {
       { key: "region", label: "Region", placeholder: "us-east-1" },
     ],
   },
+  gcs: {
+    credentials: [],
+    settings: [{ key: "bucket", label: "Bucket", placeholder: "my-bucket" }],
+  },
   local: {
     credentials: [],
     settings: [{ key: "path", label: "Storage path", placeholder: "./storage" }],
@@ -92,6 +96,7 @@ const EMAIL_PROVIDERS = [
 
 const STORAGE_PROVIDERS = [
   { value: "s3", label: "AWS S3", description: "Amazon Simple Storage Service" },
+  { value: "gcs", label: "Google Cloud Storage", description: "Uses Application Default Credentials" },
   { value: "local", label: "Local Filesystem", description: "Store files on the local disk" },
 ] as const;
 

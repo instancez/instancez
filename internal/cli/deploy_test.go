@@ -222,11 +222,8 @@ func TestRunDeployAcceptWrites(t *testing.T) {
 			_, _ = w.Write([]byte(validateConfigOK))
 			return
 		}
-		var body struct {
-			Branch string `json:"branch"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		assert.Equal(t, "production", body.Branch)
+		raw, _ := io.ReadAll(r.Body)
+		assert.NotContains(t, string(raw), "branch")
 		switch {
 		case r.Method == "POST" && r.URL.Path == "/instancez/projects/abc/config/preview":
 			_ = json.NewEncoder(w).Encode(map[string]any{

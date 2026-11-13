@@ -82,7 +82,7 @@ func TestRunBundleRejectsEmptyOutput(t *testing.T) {
 	dir := writeBundleFixture(t)
 	err := runBundle(context.Background(), filepath.Join(dir, "instancez.yaml"), "")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--output needs a path or s3://bucket/key")
+	assert.Contains(t, err.Error(), "--output needs a path, s3://bucket/key or gcs://bucket/key")
 }
 
 func TestRunBundleOutputIsPrivate(t *testing.T) {

@@ -13,9 +13,9 @@ import (
 	"strings"
 )
 
-// BundleFetcher fetches the raw bytes of a bundle at uri (e.g. "s3://bucket/key").
+// BundleFetcher fetches the raw bytes of a bundle at uri (e.g. "s3://bucket/key" or "gcs://bucket/key").
 // FetchAndExtract handles local filesystem paths itself; callers that need
-// non-local schemes (S3) supply a BundleFetcher so app stays free of concrete
+// non-local schemes (S3, GCS) supply a BundleFetcher so app stays free of concrete
 // adapter dependencies — the composition root (cli) owns which storage backend
 // a given uri resolves against.
 type BundleFetcher func(ctx context.Context, uri string) ([]byte, error)
@@ -31,6 +31,7 @@ const maxBundleEntryBytes = 512 << 20
 //
 // pointer is one of:
 //   - s3://bucket/key#<version>  — fetched from S3 via the s3 adapter
+//   - gcs://bucket/key#<version> — fetched from GCS via the gcs adapter
 //   - key#<version>              — a plain local filesystem path to a .tar.gz
 //   - <path>                     — a local path with no version suffix
 //
@@ -49,7 +50,7 @@ const maxBundleEntryBytes = 512 << 20
 // The returned dir is <destParent>/<version> (or a content-addressed name when
 // no version is present). On success the caller owns the directory.
 //
-// fetch resolves non-local uris (s3://bucket/key); pass nil when pointer is
+// fetch resolves non-local uris (s3://, gcs://); pass nil when pointer is
 // always a local path (e.g. tests). A local filesystem path is handled
 // directly regardless of fetch.
 func FetchAndExtract(ctx context.Context, pointer string, destParent string, fetch BundleFetcher) (dir string, version string, err error) {
@@ -118,7 +119,7 @@ func splitPointer(pointer string) (uri, version string) {
 }
 
 // fetchBundle reads the bundle bytes for uri. Local filesystem paths are read
-// directly; any other scheme (s3://...) is delegated to fetch, which must be
+// directly; any other scheme (s3://, gcs://...) is delegated to fetch, which must be
 // non-nil for such uris.
 func fetchBundle(ctx context.Context, uri string, fetch BundleFetcher) ([]byte, error) {
 	if strings.Contains(uri, "://") {

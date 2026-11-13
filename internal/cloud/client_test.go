@@ -3,6 +3,7 @@ package cloud
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -165,13 +166,13 @@ func TestClientUploadYAML(t *testing.T) {
 
 		var body struct {
 			YAML      string            `json:"yaml"`
-			Branch    string            `json:"branch"`
 			Functions map[string]string `json:"functions"`
 			Secrets   map[string]string `json:"secrets"`
 		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		assert.NotContains(t, string(raw), "branch")
 		assert.Contains(t, body.YAML, "version: 1")
-		assert.Equal(t, "production", body.Branch)
 		assert.Equal(t, map[string]string{"functions/hello.js": "x"}, body.Functions)
 		assert.Equal(t, map[string]string{"INSTANCEZ_ENV_FOO": "bar"}, body.Secrets)
 
@@ -252,12 +253,8 @@ func TestClientPreviewConfig(t *testing.T) {
 		assert.Equal(t, "POST", r.Method)
 		assert.Equal(t, "/instancez/projects/app-uuid/config/preview", r.URL.Path)
 
-		var body struct {
-			YAML   string `json:"yaml"`
-			Branch string `json:"branch"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		assert.Equal(t, "production", body.Branch)
+		raw, _ := io.ReadAll(r.Body)
+		assert.NotContains(t, string(raw), "branch")
 
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"dropped": []any{},

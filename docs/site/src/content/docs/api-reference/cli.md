@@ -45,7 +45,7 @@ inz dev [flags]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--config` | `instancez.yaml` | Config source: file path or `s3://bucket/key`. Env: `INSTANCEZ_CONFIG`. |
+| `--config` | `instancez.yaml` | Config source: file path, `s3://bucket/key` or `gcs://bucket/key`. Env: `INSTANCEZ_CONFIG`. |
 | `--dashboard` | `readwrite` | Dashboard mode: `disabled`, `readonly`, or `readwrite`. |
 | `--dashboard-write-dotenv` | `true` | Allow the dashboard to write secrets to `.development.env`. |
 | `--dotenv-path` | `.development.env` | Path to the .env file for dashboard secret writing. |
@@ -77,8 +77,8 @@ inz serve [flags]
 |------|---------|-------------|
 | `--allow-destructive` | `false` | Permit `DROP TABLE` and `DROP COLUMN` during migration. Without it, `inz serve` refuses to apply a plan that drops a table or column and reports what would have been lost. `inz dev` always permits drops and logs each one. Env: `INSTANCEZ_ALLOW_DESTRUCTIVE`. |
 | `--migrate-lock-timeout` | `5s` | Longest an `inz serve` migration statement waits for a table lock. If a long query holds the table, the migration fails and the server keeps running on the last applied config instead of blocking traffic behind the pending lock. `0` disables the limit. Env: `INSTANCEZ_MIGRATE_LOCK_TIMEOUT`. |
-| `--bundle` | — | Bundle pointer: file path or `s3://bucket/key[#version]`. When set, reads config and functions from the bundle archive instead of `--config`. Env: `INSTANCEZ_BUNDLE`. |
-| `--config` | `instancez.yaml` | Config source: file path or `s3://bucket/key`. Ignored when `--bundle` is set. Env: `INSTANCEZ_CONFIG`. |
+| `--bundle` | — | Bundle pointer: file path or `s3://bucket/key[#version]` or `gcs://bucket/key[#version]`. When set, reads config and functions from the bundle archive instead of `--config`. Env: `INSTANCEZ_BUNDLE`. |
+| `--config` | `instancez.yaml` | Config source: file path, `s3://bucket/key` or `gcs://bucket/key`. Ignored when `--bundle` is set. Env: `INSTANCEZ_CONFIG`. |
 | `--dashboard` | `disabled` | Dashboard mode. Env: `INSTANCEZ_DASHBOARD`. |
 | `--dashboard-write-dotenv` | `false` | Allow dashboard to write secrets to a .env file. Env: `INSTANCEZ_DASHBOARD_WRITE_DOTENV`. |
 | `--dotenv-path` | — | Path to .env file when `--dashboard-write-dotenv` is set. Env: `INSTANCEZ_DOTENV_PATH`. |
@@ -252,7 +252,7 @@ inz bundle [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--config` | `instancez.yaml` | Path to `instancez.yaml`. |
-| `--output` | `bundle.tar.gz` | Destination: local file path (relative to the current directory) or `s3://bucket/key`. Local files are written with mode 0600. |
+| `--output` | `bundle.tar.gz` | Destination: local file path (relative to the current directory), `s3://bucket/key` or `gcs://bucket/key`. Local files are written with mode 0600. |
 
 ```bash
 inz bundle                                       # write ./bundle.tar.gz
@@ -396,7 +396,6 @@ inz cloud frontend deploy <dist-dir> [flags]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--branch` | — | Branch/version to deploy the frontend to (validated server-side). |
 | `--config` | `instancez.yaml` | Path to `instancez.yaml` (for the linked project id). |
 | `--project` | — | Target this cloud project id instead of `instancez.yaml`'s `project.cloud.project_id`. |
 

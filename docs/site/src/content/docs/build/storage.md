@@ -184,6 +184,27 @@ providers:
     endpoint: ""   # optional: set for non-AWS endpoints (e.g. Cloudflare R2)
 ```
 
+### Google Cloud Storage
+
+Uses Application Default Credentials (Workload Identity on GKE and Cloud Run); no keys or HMAC secrets. Signed URLs are signed through the IAM Credentials `signBlob` API, so the service account needs `roles/iam.serviceAccountTokenCreator` on itself and object access on the bucket.
+
+```yaml
+providers:
+  storage:
+    type: gcs
+    bucket: "${MY_GCS_BUCKET}"
+```
+
+Browser uploads and downloads through signed URLs need CORS on the bucket, because signed URLs use the XML API endpoints and IAM plus a valid signature do not satisfy the browser check:
+
+```json
+[{"origin": ["https://app.example.com"], "method": ["GET", "PUT"], "responseHeader": ["Content-Type"], "maxAgeSeconds": 3600}]
+```
+
+Apply it with `gcloud storage buckets update gs://BUCKET --cors-file=cors.json`. Drop `GET` if downloads never go through signed URLs.
+
+Set `INSTANCEZ_GCS_SIGNER_EMAIL` only when the signing service account cannot be auto-detected (for example local development with user credentials). `region`, `access_key_id`, `secret_access_key` and `endpoint` are ignored.
+
 ## Choosing an upload method
 
 | Method | Goes through the server? | Size limit | Use when |
@@ -198,12 +219,12 @@ On Instancez Cloud, apps run on AWS Lambda behind a Function URL in buffered mod
 
 ## Direct upload (S3)
 
-With the S3 provider, upload straight to S3 without routing bytes through instancez. Call `POST /storage/<bucket>/sign` for a presigned URL, then `PUT` the file to it.
+With the S3 or GCS provider, upload straight to S3 without routing bytes through instancez. Call `POST /storage/<bucket>/sign` for a presigned URL, then `PUT` the file to it.
 
 | Body field | Description |
 |---|---|
 | `content_type` | Required. Checked against the bucket's `types`. The `PUT` must send the same `Content-Type`. |
-| `size` | File size in bytes. Signed into the URL, so S3 rejects a `PUT` of any other length. Required when the bucket sets `max_size`; must not exceed it (422). Without `max_size` it may be omitted, but then the upload length is not bounded. |
+| `size` | File size in bytes. On S3 it is signed into the URL, so S3 rejects a `PUT` of any other length. Required when the bucket sets `max_size`; must not exceed it (422). Without `max_size` it may be omitted, but then the upload length is not bounded. |
 | `path` | Optional object name, such as `${patient_id}/scan.pdf`. Same rules as `/storage/v1` keys, but stricter: no leading slash, `..`, `.`, empty segments or trailing slash (400), and at most 1024 bytes with the bucket name. Spaces and unicode are fine. Omit it to get a random id. |
 
 An existing object at `path` returns 409. Send `x-upsert: true` to replace it. The bucket's `insert` policy is checked against the real `path`, so rules on `name` apply. The response is `{ "id", "path", "upload_url" }`; `id` and `path` are the object name.
@@ -223,7 +244,7 @@ const { data: files } = await supabase.storage.from('records').list(patientId)
 const { data: blob } = await supabase.storage.from('records').download(path)
 ```
 
-The URL works for 15 minutes. The row is recorded when the URL is signed, with the declared `size`. The local provider ignores `size`, so `max_size` is not enforced on direct uploads in local dev. A URL that is never used leaves a row without bytes until you delete it.
+The URL works for 15 minutes. The row is recorded when the URL is signed, with the declared `size`. The local and GCS providers ignore `size`, so `max_size` is not enforced on direct uploads there; only S3 signs the length. A URL that is never used leaves a row without bytes until you delete it.
 
 **CORS.** Instancez Cloud's uploads bucket allows any origin; access is gated by presigned URLs and the bucket is private. On self-hosted S3, add a CORS rule that allows `PUT, GET, HEAD` from your app's origin.
 

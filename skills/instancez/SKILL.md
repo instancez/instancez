@@ -46,7 +46,7 @@ version: 1
 project:
   name: my-app
 server:        # port, cors, timeouts, max_body_size (all optional)
-providers:     # storage backend (local | s3), email provider
+providers:     # storage backend (local | s3 | gcs), email provider
 auth:          # jwt expiry, refresh tokens, signup toggles, oauth
 tables:        # your schema + RLS policies
 storage:       # buckets + RLS policies
@@ -179,7 +179,7 @@ storage:
 Bucket policies can use `storage.foldername(name)`, `storage.filename(name)`, `storage.extension(name)` and the `owner` / `owner_id` aliases of `uploaded_by`, e.g. `(storage.foldername(name))[1] = auth.uid()::text`.
 Upload to `` `${user.id}/<file>` `` so the policy matches; scope update and delete the same way, since `auth.is_authenticated()` alone lets any user replace or delete other users' objects (`inz vet` flags it as `bucket-authed-write`).
 
-Declaring any bucket requires a `providers.storage` block (`type: local` for dev, `type: s3` for production). Bucket `rls` uses the same policy syntax as tables, applied to `storage.objects`. Clients use `supabase.storage.from('avatars').upload(...)` as usual. Signed URLs are authorized at creation time against the bucket's policies. Uploads proxied through the server (`upload()`, `uploadToSignedUrl`) are capped near 4.5MB on Instancez Cloud and `max_size` cannot lift that; for bigger files use `POST /storage/<bucket>/sign` with `{content_type, size, path?}` and `PUT` to the returned `upload_url` (`size` is required with `max_size`; existing `path` is 409). As in Supabase, `public: true` only opens `/object/public/<bucket>/<path>` downloads; it grants no `select`, so add a `select` policy for anyone who should list, sign, update or delete. Publishable-key (guest) calls run as `anon` under those policies, so `using: "true"` admits guests; a bucket with no `rls:` gives guests nothing.
+Declaring any bucket requires a `providers.storage` block (`type: local` for dev, `type: s3` or `type: gcs` for production). Bucket `rls` uses the same policy syntax as tables, applied to `storage.objects`. Clients use `supabase.storage.from('avatars').upload(...)` as usual. Signed URLs are authorized at creation time against the bucket's policies. Uploads proxied through the server (`upload()`, `uploadToSignedUrl`) are capped near 4.5MB on Instancez Cloud and `max_size` cannot lift that; for bigger files use `POST /storage/<bucket>/sign` with `{content_type, size, path?}` and `PUT` to the returned `upload_url` (`size` is required with `max_size`; existing `path` is 409). As in Supabase, `public: true` only opens `/object/public/<bucket>/<path>` downloads; it grants no `select`, so add a `select` policy for anyone who should list, sign, update or delete. Publishable-key (guest) calls run as `anon` under those policies, so `using: "true"` admits guests; a bucket with no `rls:` gives guests nothing.
 
 ## RPC (SQL functions)
 

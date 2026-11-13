@@ -45,6 +45,14 @@ func TestNewBundleSourceS3WithVersion(t *testing.T) {
 	assert.Equal(t, "bundles/app.tar.gz", bs.s3Key)
 }
 
+func TestNewBundleSourceKeepsKeyLiteral(t *testing.T) {
+	for _, scheme := range []string{"s3", "gcs"} {
+		bs := NewBundleSource(scheme+"://bkt/releases/app%20v1.tar.gz#v1", "/tmp/extract")
+		assert.Equal(t, "bkt", bs.s3Bucket, scheme)
+		assert.Equal(t, "releases/app%20v1.tar.gz", bs.s3Key, scheme+": HEAD must read the same key as the download")
+	}
+}
+
 func TestBundleSourceDescribe(t *testing.T) {
 	bs := NewBundleSource("s3://bucket/key.tar.gz#v1", "/tmp/x")
 	assert.Equal(t, "bundle:s3://bucket/key.tar.gz#v1", bs.Describe())

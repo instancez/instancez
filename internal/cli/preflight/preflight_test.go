@@ -433,3 +433,17 @@ func TestPortFreeCheckOtherListenErrors(t *testing.T) {
 		t.Fatalf("invalid port reported as in use: %q", r.Detail)
 	}
 }
+
+func TestConfigValidCheckSource_GCSReadErrorHint(t *testing.T) {
+	src := fakeConfigSource{describe: "gcs://bucket/key", err: errors.New("get object: 403")}
+	r := preflight.ConfigValidCheckSource(src)()
+	if r.OK {
+		t.Fatalf("expected failure on gcs read error")
+	}
+	if strings.Contains(r.FixHint, "inz init") || strings.Contains(r.FixHint, "s3") {
+		t.Fatalf("FixHint = %q, want a gcs hint", r.FixHint)
+	}
+	if !strings.Contains(r.FixHint, "gcs://") {
+		t.Fatalf("FixHint = %q, want it to reference gcs://", r.FixHint)
+	}
+}
