@@ -44,7 +44,7 @@ A JSON Schema for this file is published at `https://docs.instancez.ai/schema/in
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `server.port` | `integer` | `8080` | HTTP listen port. |
-| `server.max_body_size` | `string` | `1MB` | Maximum request body size for non-upload endpoints. |
+| `server.max_body_size` | `string` | `1MB` | Maximum request body size for non-upload endpoints. Cannot raise Instancez Cloud's ~6MB request cap. |
 | `server.max_limit` | `integer` | `1000` | Most rows one REST table read, setof RPC, or top-level has-many embed returns (PostgREST `db-max-rows`). Applies with or without `limit`/`Range`; `Content-Range` shows the capped range. `-1` disables the cap. |
 
 ### server.cors
@@ -247,7 +247,7 @@ storage:
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `storage.<name>.public` | `boolean` | `false` | Allow anyone to download via `/storage/v1/object/public/...`, which skips RLS. Grants no `select`; listing and writes still follow `rls`. |
-| `storage.<name>.max_size` | `string` | `50MB` | Maximum file size per upload (e.g. `5MB`, `1GB`). |
+| `storage.<name>.max_size` | `string` | `50MB` | Maximum file size per upload (e.g. `5MB`, `1GB`). Does not lift the ~4.5MB cap on server-proxied uploads on Instancez Cloud; use `POST /storage/<bucket>/sign` for larger files. |
 | `storage.<name>.types` | `string[]` | `[]` | Allowed MIME types. Wildcards like `image/*` are accepted. Empty means all types allowed. |
 | `storage.<name>.rls` | `RLSPolicy[]` | `[]` | Same policy shape as table RLS, applied to `storage.objects`. |
 

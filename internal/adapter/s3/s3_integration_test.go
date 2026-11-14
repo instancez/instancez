@@ -92,3 +92,45 @@ func TestStoreSignDownload_ResponseOverrides(t *testing.T) {
 	// Appending params (what storage-js does for download) breaks the signature.
 	assert.Equal(t, 403, get(u+"&download=").StatusCode)
 }
+
+func putPresigned(t *testing.T, u, contentType string, body []byte) int {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPut, u, strings.NewReader(string(body)))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", contentType)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	return resp.StatusCode
+}
+
+func TestStoreSignUpload_EnforcesDeclaredSize(t *testing.T) {
+	st := newMinIOStore(t)
+	ctx := context.Background()
+	u, err := st.SignUpload(ctx, "docs/a.bin", "application/octet-stream", 10, time.Minute)
+	require.NoError(t, err)
+
+	assert.Contains(t, u, "content-length", "length must be a signed header")
+	assert.GreaterOrEqual(t, putPresigned(t, u, "application/octet-stream", make([]byte, 11)), 400, "longer body rejected")
+	assert.GreaterOrEqual(t, putPresigned(t, u, "application/octet-stream", make([]byte, 9)), 400, "shorter body rejected")
+	_, err = st.Head(ctx, "docs/a.bin")
+	assert.Error(t, err, "nothing stored by the rejected uploads")
+	assert.Equal(t, 200, putPresigned(t, u, "application/octet-stream", make([]byte, 10)))
+	info, err := st.Head(ctx, "docs/a.bin")
+	require.NoError(t, err)
+	assert.EqualValues(t, 10, info.Size)
+}
+
+func TestStoreSignUpload_ZeroSizeIsUnbounded(t *testing.T) {
+	st := newMinIOStore(t)
+	u, err := st.SignUpload(context.Background(), "docs/b.bin", "text/plain", 0, time.Minute)
+	require.NoError(t, err)
+	assert.Equal(t, 200, putPresigned(t, u, "text/plain", make([]byte, 1000)))
+}
+
+func TestStoreSignUpload_ContentTypeEnforced(t *testing.T) {
+	st := newMinIOStore(t)
+	u, err := st.SignUpload(context.Background(), "docs/c.bin", "application/pdf", 4, time.Minute)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, putPresigned(t, u, "text/html", make([]byte, 4)), 400)
+}

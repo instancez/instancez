@@ -35,16 +35,16 @@ import (
 
 type stubObjectStore struct {
 	signDownloadFn func(ctx context.Context, key string, expiry time.Duration, opts domain.DownloadOptions) (string, error)
-	signUploadFn   func(ctx context.Context, key, contentType string, expiry time.Duration) (string, error)
+	signUploadFn   func(ctx context.Context, key, contentType string, size int64, expiry time.Duration) (string, error)
 	deleteFn       func(ctx context.Context, key string) error
 	uploadFn       func(ctx context.Context, key string, r io.Reader, contentType string, size int64) error
 	downloadFn     func(ctx context.Context, key string) (io.ReadCloser, string, error)
 	copyFn         func(ctx context.Context, srcKey, dstKey string) error
 }
 
-func (s *stubObjectStore) SignUpload(ctx context.Context, key, contentType string, expiry time.Duration) (string, error) {
+func (s *stubObjectStore) SignUpload(ctx context.Context, key, contentType string, size int64, expiry time.Duration) (string, error) {
 	if s.signUploadFn != nil {
-		return s.signUploadFn(ctx, key, contentType, expiry)
+		return s.signUploadFn(ctx, key, contentType, size, expiry)
 	}
 	return "", nil
 }

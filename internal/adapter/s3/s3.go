@@ -90,11 +90,15 @@ func (s *Store) stripKey(key string) string {
 	return strings.TrimPrefix(key, s.keyPrefix+"/")
 }
 
-func (s *Store) SignUpload(ctx context.Context, key string, contentType string, expiry time.Duration) (string, error) {
+// SignUpload presigns a PUT. A size above 0 is signed as Content-Length, so S3 rejects any other length.
+func (s *Store) SignUpload(ctx context.Context, key string, contentType string, size int64, expiry time.Duration) (string, error) {
 	input := &s3.PutObjectInput{
 		Bucket:      aws.String(s.bucket),
 		Key:         aws.String(s.fullKey(key)),
 		ContentType: aws.String(contentType),
+	}
+	if size > 0 {
+		input.ContentLength = aws.Int64(size)
 	}
 
 	req, err := s.presignClient.PresignPutObject(ctx, input, s3.WithPresignExpires(expiry))
