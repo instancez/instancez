@@ -384,24 +384,27 @@ Print the currently logged-in instancez Cloud user.
 inz cloud whoami
 ```
 
-## inz cloud frontend deploy
+## inz cloud site deploy
 
-Upload an externally-built static frontend bundle to an instancez Cloud project.
+Deploy a prebuilt static bundle to an instancez Cloud static site.
 
-The bundle is served as the project's static site. `<dist-dir>` must contain `index.html` (a Vite/SPA build). The project id is read from `project.cloud.project_id` in `instancez.yaml`, or pass `--project`.
+The directory (default `dist`) is archived as tar.gz with `index.html` at its root and uploaded through a short-lived upload URL minted for the site. The CLI needs a login (`inz cloud login`).
 
 ```
-inz cloud frontend deploy <dist-dir> [flags]
+inz cloud site deploy [dir] --site <id|slug>
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--config` | `instancez.yaml` | Path to `instancez.yaml` (for the linked project id). |
-| `--project` | — | Target this cloud project id instead of `instancez.yaml`'s `project.cloud.project_id`. |
+| `--site` | — | Site id or slug. Falls back to `$INSTANCEZ_SITE`, then the first line of `./.instancez/site`. |
+
+Limits: 5000 files and 100 MiB uncompressed. Symlinks are rejected. `.git`, `node_modules` and `.DS_Store` are skipped, plus any glob patterns (one per line, `#` comments, trailing `/` for directories) in `<dir>/.instancezignore`.
 
 ```bash
-npm run build && inz cloud frontend deploy dist
+npm run build && inz cloud site deploy dist --site my-site
 ```
+
+`inz cloud frontend deploy` was removed. It prints a pointer to this command and exits non-zero.
 
 ## inz completion
 
