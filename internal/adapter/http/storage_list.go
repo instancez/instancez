@@ -68,26 +68,31 @@ func (q listQuery) walkSQL() (string, []any) {
 	if q.caseFold {
 		startExpr = "lower($4)"
 	}
-	first, order := key+" >= "+startExpr, []string{key}
-	skip := `CASE WHEN w.p > 0 THEN left(w.k, $3 + w.p - 1) || '0' ELSE %s END`
-	below := `CASE WHEN w.p > 0 THEN left(w.k, $3 + w.p) ELSE %s END`
-	stepAsc, stepDesc := key+" >= "+fmt.Sprintf(skip, "w.k || chr(1)"), key+" < "+fmt.Sprintf(below, "w.k")
+	first, order, op := key+" >= "+startExpr, []string{key}, ">="
+	// The step bound is computed in the row, so the probe compares a plain column and stays an index condition under RLS.
+	skip := `CASE WHEN s.p > 0 THEN left(s.k, $3 + s.p - 1) || '0' ELSE %s END`
+	nx, nn, nnTail := fmt.Sprintf(skip, "s.k || chr(1)"), "NULL::text", " || chr(1)"
 	if q.caseFold {
 		// Case variants share a key, so the walk breaks ties on the exact name and steps by (key, name).
 		order = append(order, `o.name COLLATE "C"`)
-		row := `ROW(` + key + `, o.name COLLATE "C") `
-		stepAsc = row + ">= ROW(" + fmt.Sprintf(skip, "w.k") + ", CASE WHEN w.p > 0 THEN '' ELSE w.name || chr(1) END)"
-		stepDesc = row + "< ROW(" + fmt.Sprintf(below, "w.k") + ", CASE WHEN w.p > 0 THEN '' ELSE w.name END)"
+		nx = fmt.Sprintf(skip, "s.k")
 	}
-	step, dir := stepAsc, "ASC"
+	dir := "ASC"
 	if q.desc {
+		nx, nnTail, op, dir = `CASE WHEN s.p > 0 THEN left(s.k, $3 + s.p) ELSE s.k END`, "", "<", "DESC"
 		if q.after == nil {
 			// ponytail: U+10FFFF caps the prefix range, so keys continuing with that code point are missed in desc order.
 			startExpr += " || chr(1114111)"
 		}
-		first, step, dir = key+" < "+startExpr, stepDesc, "DESC"
+		first = key + " < " + startExpr
 	}
-	peek := fmt.Sprintf(`SELECT o.id, o.name, o.uploaded_at, o.metadata, %s AS k, %s AS p FROM storage.objects o WHERE o.bucket_id = $1 AND %%s ORDER BY %s LIMIT 1`, key, p, strings.Join(order, " "+dir+", ")+" "+dir)
+	step := key + " " + op + " w.nx"
+	if q.caseFold {
+		nn = fmt.Sprintf(`CASE WHEN s.p > 0 THEN '' ELSE s.name%s END`, nnTail)
+		step = `ROW(` + key + `, o.name COLLATE "C") ` + op + " ROW(w.nx, w.nn)"
+	}
+	cols := "s.*, " + nx + " AS nx, " + nn + " AS nn"
+	peek := fmt.Sprintf(`SELECT %s FROM (SELECT o.id, o.name, o.uploaded_at, o.metadata, %s AS k, %s AS p FROM storage.objects o WHERE o.bucket_id = $1 AND %%s ORDER BY %s LIMIT 1) s`, cols, key, p, strings.Join(order, " "+dir+", ")+" "+dir)
 	sql := fmt.Sprintf(`WITH RECURSIVE walk AS (
   (%s)
   UNION ALL

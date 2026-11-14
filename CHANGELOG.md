@@ -13,6 +13,10 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 - `inz cloud frontend deploy --branch` is deprecated and ignored (hidden), and `branch` is no longer sent to the cloud APIs (deploy, preview, frontend upload).
 
+### Fixed
+
+- Storage listing under RLS is bounded again on Postgres 14.25, 15.20, 16.16 and 17.12.
+
 ## [0.0.14] - 2026-11-07
 
 ### Fixed
