@@ -270,6 +270,27 @@ func TestStorageList_SkipScanIsBoundedUnderRLS(t *testing.T) {
 	assertBounded(t, tx, ctx, boundedShapes())
 }
 
+func TestStorageList_RLSWalkReturnsSameRowsAsOwner(t *testing.T) {
+	buckets := map[string]domain.Bucket{"b": {}, "big": {RLS: []domain.RLSPolicy{{Operations: []string{"select"}, Using: "octet_length(name) > 0"}}}}
+	owner, req := listDB(t, buckets)
+	seedBig(t, owner)
+	ctx, err := req.WithRLS(context.Background(), domain.Session{Role: "authenticated", IsAuthenticated: true})
+	require.NoError(t, err)
+	tx, err := req.Begin(ctx)
+	require.NoError(t, err)
+	defer tx.Rollback(ctx)
+	for name, q := range boundedShapes() {
+		q.lowerCol = true
+		sql, args := q.sql()
+		want, err := owner.Query(context.Background(), sql, args...)
+		require.NoError(t, err, name)
+		got, err := tx.Query(ctx, sql, args...)
+		require.NoError(t, err, name)
+		assert.NotEmpty(t, want, name)
+		assert.Equal(t, want, got, name)
+	}
+}
+
 func TestStorageList_V1KeepsNamesThatDifferOnlyByCase(t *testing.T) {
 	owner, _ := listDB(t, plainBuckets)
 	seedObjects(t, owner, "b", time.Now(), "p/a.txt", "p/A.txt", "p/z/1.txt", "p/Z/2.txt", "p/b.txt")
