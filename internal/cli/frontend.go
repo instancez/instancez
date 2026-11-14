@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -30,7 +31,7 @@ func newFrontendCmd() *cobra.Command {
 		FParseErrWhitelist: cobra.FParseErrWhitelist{UnknownFlags: true},
 		SilenceUsage:       true,
 		RunE: func(*cobra.Command, []string) error {
-			return errors.New(frontendMovedMsg)
+			return errors.New(strings.TrimSpace(frontendMovedMsg))
 		},
 	})
 	return cmd

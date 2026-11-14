@@ -202,10 +202,10 @@ func TestRunSiteDeploy_EndToEnd(t *testing.T) {
 	var putAuth, putType string
 	var srv *httptest.Server
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/instancez/sites":
+		switch r.URL.Path {
+		case "/instancez/sites":
 			_, _ = w.Write([]byte(`{"sites":[{"Id":"s1","Slug":"blog","url":"https://blog.x"},{"Id":"s2","Slug":"s1","url":"https://other"}]}`))
-		case r.URL.Path == "/mcp":
+		case "/mcp":
 			assert.Equal(t, "Bearer tok", r.Header.Get("Authorization"))
 			b, _ := io.ReadAll(r.Body)
 			if strings.Contains(string(b), `"site_id":"s1"`) {
@@ -214,7 +214,7 @@ func TestRunSiteDeploy_EndToEnd(t *testing.T) {
 				mintedFor = append(mintedFor, string(b))
 			}
 			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"isError":false,"content":[{"type":"text","text":"{\"upload_url\":\"` + srv.URL + `/up?token=t\"}"}]}}`))
-		case r.URL.Path == "/up":
+		case "/up":
 			putAuth, putType = r.Header.Get("Authorization"), r.Header.Get("Content-Type")
 			putBody, _ = io.ReadAll(r.Body)
 			assert.Equal(t, "t", r.URL.Query().Get("token"))
