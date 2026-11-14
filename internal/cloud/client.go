@@ -26,6 +26,8 @@ type Client struct {
 	// sole org.
 	Org              string
 	MaxResponseBytes int64 // 0 = unlimited
+	// UploadTimeout bounds a whole site archive upload; 0 uses DefaultUploadTimeout.
+	UploadTimeout time.Duration
 }
 
 // NewClient returns a client with sane defaults.

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -95,7 +96,9 @@ func TestMintSiteUpload_Errors(t *testing.T) {
 func TestUploadSiteArchive(t *testing.T) {
 	var got string
 	var cl int64
+	var edge, ctype string
 	c := srvClient(t, func(w http.ResponseWriter, r *http.Request) {
+		edge, ctype = r.Header.Get("X-Edge"), r.Header.Get("Content-Type")
 		assert.Equal(t, "PUT", r.Method)
 		assert.Empty(t, r.Header.Get("Authorization"))
 		cl = r.ContentLength
@@ -107,6 +110,8 @@ func TestUploadSiteArchive(t *testing.T) {
 	res, err := c.UploadSiteArchive(c.BaseURL+"/up?token=t", strings.NewReader("abc"), 3)
 	require.NoError(t, err)
 	assert.Equal(t, "abc", got)
+	assert.Equal(t, "1", edge)
+	assert.Equal(t, "application/gzip", ctype)
 	assert.EqualValues(t, 3, cl)
 	assert.Equal(t, "d1", res.DeployID)
 	assert.Equal(t, 3, res.Files)
@@ -141,5 +146,57 @@ func TestUploadSiteArchive_TransportErrorHidesToken(t *testing.T) {
 	c := NewClient("http://127.0.0.1:1", "")
 	_, err := c.UploadSiteArchive("http://127.0.0.1:1/up?token=SECRET", strings.NewReader("x"), 1)
 	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "SECRET")
+}
+
+func TestUploadSiteArchive_Any2xxIsSuccess(t *testing.T) {
+	for name, tc := range map[string]struct {
+		status int
+		body   string
+	}{
+		"empty body": {200, ""},
+		"204":        {204, ""},
+		"html body":  {200, "<html>ok</html>"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := srvClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			})
+			res, err := c.UploadSiteArchive(c.BaseURL+"/up?token=t", strings.NewReader("x"), 1)
+			require.NoError(t, err)
+			assert.Empty(t, res.URL)
+		})
+	}
+}
+
+func TestUploadSiteArchive_RedirectIsError(t *testing.T) {
+	hit := false
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		_, _ = w.Write([]byte("<html>login</html>"))
+	}))
+	defer target.Close()
+	for _, code := range []int{301, 302, 307, 308} {
+		c := srvClient(t, func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, target.URL, code)
+		})
+		_, err := c.UploadSiteArchive(c.BaseURL+"/up?token=SECRET", strings.NewReader("x"), 1)
+		require.Error(t, err, code)
+		assert.Contains(t, err.Error(), "upload rejected")
+		assert.NotContains(t, err.Error(), "SECRET")
+	}
+	assert.False(t, hit, "redirect must not be followed")
+}
+
+func TestUploadSiteArchive_StalledServerTimesOut(t *testing.T) {
+	release := make(chan struct{})
+	c := srvClient(t, func(w http.ResponseWriter, r *http.Request) { <-release })
+	t.Cleanup(func() { close(release) })
+	c.UploadTimeout = 100 * time.Millisecond
+	start := time.Now()
+	_, err := c.UploadSiteArchive(c.BaseURL+"/up?token=SECRET", strings.NewReader("x"), 1)
+	require.Error(t, err)
+	assert.Less(t, time.Since(start), 5*time.Second)
 	assert.NotContains(t, err.Error(), "SECRET")
 }

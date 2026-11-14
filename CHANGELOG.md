@@ -18,7 +18,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Changed
 
-- Breaking, `inz cloud frontend deploy` is removed; it prints a migration message and exits non-zero. Use `inz cloud site deploy [dir] --site <id|slug>`, which uploads the directory as tar.gz to a static site (site from `--site`, `$INSTANCEZ_SITE` or `./.instancez/site`; `.instancezignore` supported).
+- Breaking, `inz cloud frontend deploy` is removed; it prints a migration message and exits non-zero. Use `inz cloud site deploy [dir] --site <id|slug>`, which uploads the directory as tar.gz to a static site (site from `--site`, `$INSTANCEZ_SITE` or `./.instancez/site`; `.instancezignore` supported). `inz cloud site list` shows site ids and slugs.
 - Breaking, `POST /storage/<bucket>/sign` now requires `size` when the bucket sets `max_size` (400 without it); send `size: file.size`. It also signs the declared `size` as `Content-Length`, so S3 rejects an upload of a different length, and records it in `storage.objects` (was 0). An unsized presigned `PUT` could bypass `max_size`.
 - `branch` is no longer sent to the cloud APIs (deploy, preview).
 

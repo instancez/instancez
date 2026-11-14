@@ -1,6 +1,7 @@
 package cloud
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // Site is the subset of a cloud static site the CLI needs.
@@ -109,10 +111,21 @@ func (c *Client) MintSiteUpload(siteID string) (*SiteUpload, error) {
 	return &up, nil
 }
 
+// DefaultUploadTimeout bounds one whole archive upload.
+const DefaultUploadTimeout = 30 * time.Minute
+
 // UploadSiteArchive PUTs a tar.gz to a capability URL. The URL is the
 // credential, so no bearer is sent and the token is kept out of errors.
+// Redirects are errors. Any 2xx counts as success; a JSON body, when present,
+// fills the result.
 func (c *Client) UploadSiteArchive(uploadURL string, body io.Reader, size int64) (*SiteDeploy, error) {
-	req, err := http.NewRequest(http.MethodPut, uploadURL, body)
+	timeout := c.UploadTimeout
+	if timeout <= 0 {
+		timeout = DefaultUploadTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, body)
 	if err != nil {
 		return nil, fmt.Errorf("build upload request: %w", redactURL(err))
 	}
@@ -143,23 +156,17 @@ func (c *Client) UploadSiteArchive(uploadURL string, body io.Reader, size int64)
 		return nil, fmt.Errorf("upload rejected (%d): %s", resp.StatusCode, msg)
 	}
 	var out SiteDeploy
-	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &out); err != nil {
-			return nil, fmt.Errorf("decode upload response: %w", err)
-		}
-	}
+	_ = json.Unmarshal(raw, &out)
 	return &out, nil
 }
 
 func (c *Client) uploadClient() *http.Client {
-	if c.HTTP == nil {
-		return http.DefaultClient
+	var cp http.Client
+	if c.HTTP != nil {
+		cp = *c.HTTP
 	}
-	if c.HTTP.Timeout == 0 {
-		return c.HTTP
-	}
-	cp := *c.HTTP
 	cp.Timeout = 0
+	cp.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &cp
 }
 

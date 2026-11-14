@@ -3,6 +3,7 @@ package cli
 import (
 	"archive/tar"
 	"compress/gzip"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -23,6 +24,8 @@ const (
 	ignoreFile   = ".instancezignore"
 )
 
+var archiveHook func(path string)
+
 type siteLimits struct {
 	files int
 	bytes int64
@@ -30,7 +33,7 @@ type siteLimits struct {
 
 func newSiteCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "site", Short: "Manage static sites"}
-	cmd.AddCommand(newSiteDeployCmd())
+	cmd.AddCommand(newSiteDeployCmd(), newSiteListCmd())
 	return cmd
 }
 
@@ -42,9 +45,13 @@ func newSiteDeployCmd() *cobra.Command {
 		Long: `Archive a built static bundle (default ./dist) as tar.gz and deploy it to a site.
 
 The site is a site id or slug, from --site, else $INSTANCEZ_SITE, else the first
-line of ./.instancez/site. index.html must be at the root of the directory.
-Glob patterns (one per line, trailing / for directories) in <dir>/.instancezignore are
-skipped, as are .git, node_modules and .DS_Store. Symlinks are rejected.`,
+line of ./.instancez/site. index.html must be at the root of the directory and
+non-empty. A symlinked <dir> is followed; symlinks inside it are rejected.
+
+<dir>/.instancezignore lists patterns to skip, one per line: path.Match globs
+(*, ?, [a-z]) matched against the relative path or the file name, a trailing /
+for directories, # for comments. Negation (!), ** and a leading / are errors.
+.git, node_modules, .DS_Store and .instancezignore itself are always skipped.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := "dist"
@@ -79,16 +86,6 @@ func resolveSiteRef(flag, env, file string) (string, error) {
 }
 
 func runSiteDeploy(out io.Writer, dir, ref string) error {
-	arc, n, err := buildSiteArchive(dir, siteLimits{maxSiteFiles, maxSiteBytes})
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(arc.Name()); _ = arc.Close() }()
-	st, err := arc.Stat()
-	if err != nil {
-		return err
-	}
-
 	creds, err := ensureLoggedIn(ensureLoginOpts{})
 	if err != nil {
 		return err
@@ -98,6 +95,17 @@ func runSiteDeploy(out io.Writer, dir, ref string) error {
 	if err != nil {
 		return err
 	}
+
+	arc, n, err := buildSiteArchive(dir, siteLimits{maxSiteFiles, maxSiteBytes})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = arc.Close(); _ = os.Remove(arc.Name()) }()
+	st, err := arc.Stat()
+	if err != nil {
+		return err
+	}
+
 	up, err := c.MintSiteUpload(site.ID)
 	if err != nil {
 		return err
@@ -116,18 +124,39 @@ func runSiteDeploy(out io.Writer, dir, ref string) error {
 
 type ignoreRules struct{ patterns []string }
 
-func loadIgnore(dir string) ignoreRules {
-	r := ignoreRules{patterns: []string{".git/", "node_modules/", ".DS_Store"}}
+// validateIgnorePattern accepts only path.Match globs with an optional
+// trailing "/" for directories.
+func validateIgnorePattern(p string) error {
+	switch {
+	case strings.HasPrefix(p, "!"):
+		return errors.New("negation (!) is not supported")
+	case strings.HasPrefix(p, "/"):
+		return errors.New("a leading / is not supported")
+	case strings.Contains(p, "**"):
+		return errors.New("** is not supported")
+	}
+	if _, err := path.Match(strings.TrimSuffix(p, "/"), ""); err != nil {
+		return fmt.Errorf("malformed glob: %w", err)
+	}
+	return nil
+}
+
+func loadIgnore(dir string) (ignoreRules, error) {
+	r := ignoreRules{patterns: []string{".git/", "node_modules/", ".DS_Store", ignoreFile}}
 	b, err := os.ReadFile(filepath.Join(dir, ignoreFile))
 	if err != nil {
-		return r
+		return r, nil
 	}
-	for _, l := range strings.Split(string(b), "\n") {
-		if l = strings.TrimSpace(l); l != "" && !strings.HasPrefix(l, "#") {
-			r.patterns = append(r.patterns, l)
+	for i, l := range strings.Split(string(b), "\n") {
+		if l = strings.TrimSpace(l); l == "" || strings.HasPrefix(l, "#") {
+			continue
 		}
+		if err := validateIgnorePattern(l); err != nil {
+			return r, fmt.Errorf("%s line %d (%q): %w", ignoreFile, i+1, l, err)
+		}
+		r.patterns = append(r.patterns, l)
 	}
-	return r
+	return r, nil
 }
 
 // match reports whether the slash-separated relative path is ignored.
@@ -160,7 +189,18 @@ func buildSiteArchive(dir string, lim siteLimits) (*os.File, int, error) {
 	if !info.IsDir() {
 		return nil, 0, fmt.Errorf("%s is not a directory", dir)
 	}
-	rules := loadIgnore(dir)
+	root, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return nil, 0, fmt.Errorf("read %s: %w", dir, err)
+	}
+	if ri, err := os.Stat(root); err != nil || !ri.IsDir() {
+		return nil, 0, fmt.Errorf("%s is not a directory", dir)
+	}
+	dir = root
+	rules, err := loadIgnore(dir)
+	if err != nil {
+		return nil, 0, err
+	}
 
 	f, err := os.CreateTemp("", "inz-site-*.tgz")
 	if err != nil {
@@ -215,6 +255,12 @@ func buildSiteArchive(dir string, lim siteLimits) (*os.File, int, error) {
 		if total > lim.bytes {
 			return fmt.Errorf("bundle too large (> %d bytes)", lim.bytes)
 		}
+		if slash == "index.html" && fi.Size() == 0 {
+			return errors.New("index.html is empty")
+		}
+		if archiveHook != nil {
+			archiveHook(p)
+		}
 		hdr := &tar.Header{Name: slash, Mode: 0o644, Size: fi.Size(), ModTime: fi.ModTime(), Typeflag: tar.TypeReg}
 		if err := tw.WriteHeader(hdr); err != nil {
 			return err
@@ -256,4 +302,30 @@ func buildSiteArchive(dir string, lim siteLimits) (*os.File, int, error) {
 		return fail(err)
 	}
 	return f, count, nil
+}
+
+func newSiteListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List static sites with their ids and slugs",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			creds, err := ensureLoggedIn(ensureLoginOpts{})
+			if err != nil {
+				return err
+			}
+			sites, err := cloud.NewClient(cloud.APIURL(), creds.PAT).ListSites()
+			if err != nil {
+				return err
+			}
+			if len(sites) == 0 {
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No sites yet.")
+				return nil
+			}
+			for _, s := range sites {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", s.ID, s.Slug, s.URL)
+			}
+			return nil
+		},
+	}
 }

@@ -398,10 +398,22 @@ inz cloud site deploy [dir] --site <id|slug>
 |------|---------|-------------|
 | `--site` | — | Site id or slug. Falls back to `$INSTANCEZ_SITE`, then the first line of `./.instancez/site`. |
 
-Limits: 5000 files and 100 MiB uncompressed. Symlinks are rejected. `.git`, `node_modules` and `.DS_Store` are skipped, plus any glob patterns (one per line, `#` comments, trailing `/` for directories) in `<dir>/.instancezignore`.
+Limits: 5000 files and 100 MiB uncompressed. `index.html` must be at the root and non-empty. A symlinked `<dir>` is followed; symlinks inside it are rejected. The upload has a 30 minute deadline and redirects are treated as errors.
+
+`<dir>/.instancezignore` lists patterns to skip, one per line. The supported subset is `path.Match` globs (`*`, `?`, `[a-z]`) matched against the relative path or the file name, a trailing `/` to match directories only, and `#` comments. Negation (`!`), `**` and a leading `/` are errors. `.git`, `node_modules`, `.DS_Store` and `.instancezignore` itself are always skipped.
+
+Find site ids and slugs with `inz cloud site list`.
 
 ```bash
 npm run build && inz cloud site deploy dist --site my-site
+```
+
+## inz cloud site list
+
+List the organization's static sites as `id`, `slug` and URL, tab separated.
+
+```
+inz cloud site list
 ```
 
 `inz cloud frontend deploy` was removed. It prints a pointer to this command and exits non-zero.

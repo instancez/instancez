@@ -197,6 +197,7 @@ func TestRunSiteDeploy_EndToEnd(t *testing.T) {
 	t.Setenv("HOME", home)
 	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "tok"}))
 
+	var mintedFor []string
 	var putBody []byte
 	var putAuth, putType string
 	var srv *httptest.Server
@@ -207,7 +208,11 @@ func TestRunSiteDeploy_EndToEnd(t *testing.T) {
 		case r.URL.Path == "/mcp":
 			assert.Equal(t, "Bearer tok", r.Header.Get("Authorization"))
 			b, _ := io.ReadAll(r.Body)
-			assert.Contains(t, string(b), `"site_id":"s1"`)
+			if strings.Contains(string(b), `"site_id":"s1"`) {
+				mintedFor = append(mintedFor, "s1")
+			} else {
+				mintedFor = append(mintedFor, string(b))
+			}
 			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"isError":false,"content":[{"type":"text","text":"{\"upload_url\":\"` + srv.URL + `/up?token=t\"}"}]}}`))
 		case r.URL.Path == "/up":
 			putAuth, putType = r.Header.Get("Authorization"), r.Header.Get("Content-Type")
@@ -247,11 +252,197 @@ func TestRunSiteDeploy_EndToEnd(t *testing.T) {
 
 	out.Reset()
 	require.NoError(t, runSiteDeploy(&out, dist, "blog"))
+	assert.Equal(t, []string{"s1", "s1"}, mintedFor, "slug blog resolves to s1")
+
+	mintedFor = nil
+	require.NoError(t, runSiteDeploy(&out, dist, "s2"))
+	require.Len(t, mintedFor, 1)
+	assert.Contains(t, mintedFor[0], `"site_id":"s2"`)
 }
 
-func TestRunSiteDeploy_BadBundleFailsBeforeNetwork(t *testing.T) {
+func TestRunSiteDeploy_NoLoginFailsBeforeArchiveOrMint(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("INSTANCEZ_CLOUD_API", "http://127.0.0.1:1")
 	err := runSiteDeploy(io.Discard, t.TempDir(), "x")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not logged in")
+}
+
+func TestRunSiteDeploy_BadBundleNeverMints(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "tok"}))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/instancez/sites" {
+			_, _ = w.Write([]byte(`{"sites":[{"Id":"s1","Slug":"blog"}]}`))
+			return
+		}
+		t.Errorf("unexpected %s", r.URL.Path)
+	}))
+	defer srv.Close()
+	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
+	err := runSiteDeploy(io.Discard, t.TempDir(), "blog")
 	assert.ErrorContains(t, err, "no files")
+}
+
+func TestRunSiteDeploy_UnknownSiteNeverArchives(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "tok"}))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"sites":[]}`))
+	}))
+	defer srv.Close()
+	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
+	dist := t.TempDir()
+	write(t, dist, "index.html", "x")
+	err := runSiteDeploy(io.Discard, dist, "nope")
+	assert.ErrorContains(t, err, "no site with id or slug")
+}
+
+func TestBuildSiteArchive_SymlinkedRootIsFollowed(t *testing.T) {
+	real := t.TempDir()
+	write(t, real, "index.html", "x")
+	write(t, real, "a/b.js", "y")
+	link := filepath.Join(t.TempDir(), "dist")
+	require.NoError(t, os.Symlink(real, link))
+	got, err := build(t, link, testLimits)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"index.html": "x", "a/b.js": "y"}, got)
+}
+
+func TestBuildSiteArchive_DanglingRootSymlink(t *testing.T) {
+	link := filepath.Join(t.TempDir(), "dist")
+	require.NoError(t, os.Symlink(filepath.Join(t.TempDir(), "gone"), link))
+	_, err := build(t, link, testLimits)
+	assert.Error(t, err)
+}
+
+func TestBuildSiteArchive_RootSymlinkToFile(t *testing.T) {
+	d := t.TempDir()
+	write(t, d, "f", "x")
+	link := filepath.Join(d, "l")
+	require.NoError(t, os.Symlink(filepath.Join(d, "f"), link))
+	_, err := build(t, link, testLimits)
+	assert.ErrorContains(t, err, "not a directory")
+}
+
+func TestBuildSiteArchive_IgnoreFileNeverShipped(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "index.html", "x")
+	write(t, dir, ".instancezignore", "nothing\n")
+	write(t, dir, "sub/.instancezignore", "nothing\n")
+	got, err := build(t, dir, testLimits)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"index.html": "x"}, got)
+}
+
+func TestBuildSiteArchive_RejectsBadIgnorePatterns(t *testing.T) {
+	for pat, want := range map[string]string{
+		"!keep.txt": "negation",
+		"/abs":      "leading /",
+		"**/*.map":  "**",
+		"a/**":      "**",
+		"[unclosed": "malformed",
+		"dir[/":     "malformed",
+		"bad\\":     "malformed",
+	} {
+		t.Run(pat, func(t *testing.T) {
+			dir := t.TempDir()
+			write(t, dir, "index.html", "x")
+			write(t, dir, ".instancezignore", "ok.txt\n"+pat+"\n")
+			_, err := build(t, dir, testLimits)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), want)
+			assert.Contains(t, err.Error(), "line 2")
+		})
+	}
+}
+
+func TestBuildSiteArchive_SlashPatternMatchesRelativePath(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "index.html", "x")
+	write(t, dir, "assets/a.map", "m")
+	write(t, dir, "other/a.map", "m")
+	write(t, dir, ".instancezignore", "assets/*.map\n")
+	got, err := build(t, dir, testLimits)
+	require.NoError(t, err)
+	assert.Contains(t, got, "other/a.map")
+	assert.NotContains(t, got, "assets/a.map")
+}
+
+func TestBuildSiteArchive_EmptyIndexRejected(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "index.html", "")
+	write(t, dir, "a.js", "x")
+	_, err := build(t, dir, testLimits)
+	assert.ErrorContains(t, err, "index.html is empty")
+}
+
+func TestBuildSiteArchive_FileShrinksWhileArchiving(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "index.html", "<html>")
+	write(t, dir, "big.txt", "0123456789")
+	archiveHook = func(p string) {
+		if filepath.Base(p) == "big.txt" {
+			_ = os.Truncate(p, 3)
+		}
+	}
+	t.Cleanup(func() { archiveHook = nil })
+	_, err := build(t, dir, testLimits)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "big.txt")
+}
+
+func TestBuildSiteArchive_FileGrowsWhileArchiving(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "index.html", "<html>")
+	write(t, dir, "big.txt", "0123")
+	archiveHook = func(p string) {
+		if filepath.Base(p) == "big.txt" {
+			_ = os.WriteFile(p, []byte("0123456789"), 0o644)
+		}
+	}
+	t.Cleanup(func() { archiveHook = nil })
+	_, err := build(t, dir, testLimits)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "big.txt")
+}
+
+func TestFrontendDeployStub(t *testing.T) {
+	cmd := newFrontendCmd()
+	cmd.SilenceUsage, cmd.SilenceErrors = true, true
+	cmd.SetArgs([]string{"deploy", "dist", "--project", "p1", "--branch", "main", "--whatever"})
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--site <id|slug>")
+	assert.Contains(t, err.Error(), "inz cloud site list")
+	assert.Contains(t, err.Error(), "to a project's frontend")
+
+	var out bytes.Buffer
+	help := newFrontendCmd()
+	help.SetOut(&out)
+	help.SetErr(&out)
+	help.SetArgs([]string{"deploy", "--help"})
+	require.NoError(t, help.Execute())
+	assert.Contains(t, out.String(), "inz cloud site deploy")
+}
+
+func TestSiteListCmd(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "tok"}))
+	body := `{"sites":[{"Id":"s1","Slug":"blog","url":"https://blog.x"}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
+	var out bytes.Buffer
+	cmd := newSiteListCmd()
+	cmd.SetOut(&out)
+	require.NoError(t, cmd.Execute())
+	assert.Equal(t, "s1\tblog\thttps://blog.x\n", out.String())
+
+	body = `{"sites":[]}`
+	out.Reset()
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, out.String(), "No sites")
 }
