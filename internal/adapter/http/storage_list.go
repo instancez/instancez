@@ -69,15 +69,18 @@ func (q listQuery) walkSQL() (string, []any) {
 		startExpr = "lower($4)"
 	}
 	first, order := key+" >= "+startExpr, []string{key}
-	skip := `CASE WHEN w.p > 0 THEN left(w.k, $3 + w.p - 1) || '0' ELSE %s END`
-	below := `CASE WHEN w.p > 0 THEN left(w.k, $3 + w.p) ELSE %s END`
-	stepAsc, stepDesc := key+" >= "+fmt.Sprintf(skip, "w.k || chr(1)"), key+" < "+fmt.Sprintf(below, "w.k")
+	skip := `CASE WHEN p > 0 THEN left(k, $3 + p - 1) || '0' ELSE %s END`
+	below := `CASE WHEN p > 0 THEN left(k, $3 + p) ELSE %s END`
+	// The next seek key is computed in the select list so the step qual compares against plain columns.
+	// Postgres 16.16 stops pushing a qual with non-leakproof calls into the index scan under RLS.
+	nextKey, nextName := fmt.Sprintf(skip, "k || chr(1)"), "NULL::text"
+	stepAsc, stepDesc := key+" >= w.nk", key+" < w.nk"
 	if q.caseFold {
 		// Case variants share a key, so the walk breaks ties on the exact name and steps by (key, name).
 		order = append(order, `o.name COLLATE "C"`)
 		row := `ROW(` + key + `, o.name COLLATE "C") `
-		stepAsc = row + ">= ROW(" + fmt.Sprintf(skip, "w.k") + ", CASE WHEN w.p > 0 THEN '' ELSE w.name || chr(1) END)"
-		stepDesc = row + "< ROW(" + fmt.Sprintf(below, "w.k") + ", CASE WHEN w.p > 0 THEN '' ELSE w.name END)"
+		nextKey, nextName = fmt.Sprintf(skip, "k"), "CASE WHEN p > 0 THEN '' ELSE name || chr(1) END"
+		stepAsc, stepDesc = row+">= ROW(w.nk, w.nn)", row+"< ROW(w.nk, w.nn)"
 	}
 	step, dir := stepAsc, "ASC"
 	if q.desc {
@@ -85,9 +88,13 @@ func (q listQuery) walkSQL() (string, []any) {
 			// ponytail: U+10FFFF caps the prefix range, so keys continuing with that code point are missed in desc order.
 			startExpr += " || chr(1114111)"
 		}
+		nextKey = fmt.Sprintf(below, "k")
+		if q.caseFold {
+			nextName = "CASE WHEN p > 0 THEN '' ELSE name END"
+		}
 		first, step, dir = key+" < "+startExpr, stepDesc, "DESC"
 	}
-	peek := fmt.Sprintf(`SELECT o.id, o.name, o.uploaded_at, o.metadata, %s AS k, %s AS p FROM storage.objects o WHERE o.bucket_id = $1 AND %%s ORDER BY %s LIMIT 1`, key, p, strings.Join(order, " "+dir+", ")+" "+dir)
+	peek := fmt.Sprintf(`SELECT t.*, %s AS nk, %s AS nn FROM (SELECT o.id, o.name, o.uploaded_at, o.metadata, %s AS k, %s AS p FROM storage.objects o WHERE o.bucket_id = $1 AND %%s ORDER BY %s LIMIT 1) t`, nextKey, nextName, key, p, strings.Join(order, " "+dir+", ")+" "+dir)
 	sql := fmt.Sprintf(`WITH RECURSIVE walk AS (
   (%s)
   UNION ALL

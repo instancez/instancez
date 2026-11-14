@@ -4,6 +4,10 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Fixed
+
+- Storage listing under RLS no longer scans thousands of rows per step on Postgres 14.25, 15.20, 16.16 and 17.12. Those releases stopped pushing the skip-scan seek condition into the index when its right side called non-leakproof functions, so it ran as a filter after the RLS policy. The next seek key is now computed in the select list.
+
 ### Added
 
 - `POST /storage/<bucket>/sign` accepts an optional `path` to name the object instead of a random id. It uses the `/storage/v1` key rules plus no leading slash, empty segments or keys over 1024 bytes (400), runs the `insert` policy against the real path, returns 409 for an existing object (or replaces it with `x-upsert: true`), and responds with `{id, path, upload_url}`. Without `path` nothing changes.
