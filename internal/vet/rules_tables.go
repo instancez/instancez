@@ -82,9 +82,11 @@ func rulePolicies(c *ctx) {
 				continue
 			}
 			at := []any{"tables", name, "rls", i}
+			c.deep = false
 			openWrite(c, "policy-open-write", p, at, anyCaller, label)
 			openRead(c, p, at, label, t)
 			noIdentityWrite(c, p, at, label, t)
+			c.flagDeep(at)
 		}
 	}
 }
@@ -96,7 +98,7 @@ func openWrite(c *ctx, rule string, p domain.RLSPolicy, at []any, who, label str
 			name, expr string
 			used       bool
 		}{{"using", p.Using, usesUsing}, {"with_check", p.WithCheck, usesCheck}} {
-			if f.used && hasTrueBranch(f.expr) {
+			if f.used && c.hasTrueBranch(f.expr) {
 				c.add(rule, Critical, append(slices.Clone(at), f.name),
 					"Anyone can change rows",
 					fmt.Sprintf("This policy lets %s %s rows in %s.", who, op, label),
@@ -113,7 +115,7 @@ func openRead(c *ctx, p domain.RLSPolicy, at []any, label string, t domain.Table
 	}
 	at = append(slices.Clone(at), "using")
 	switch {
-	case isLiteralTrue(p.Using):
+	case c.hasTrueBranch(p.Using):
 		sev, extra := Low, ""
 		if hasSensitiveColumn(t) {
 			sev, extra = High, " The table has sensitive columns, and the API returns every column."
@@ -141,11 +143,11 @@ func writeExprs(p domain.RLSPolicy, ops ...string) []string {
 
 func noIdentityWrite(c *ctx, p domain.RLSPolicy, at []any, label string, t domain.Table) {
 	exprs := writeExprs(p, writeOps...)
-	if len(exprs) == 0 || slices.ContainsFunc(exprs, hasTrueBranch) || !slices.ContainsFunc(exprs, func(e string) bool { return squash(e) != "false" }) {
+	if len(exprs) == 0 || slices.ContainsFunc(exprs, c.hasTrueBranch) || !slices.ContainsFunc(exprs, c.notConstFalse) {
 		return
 	}
 	for _, e := range exprs {
-		if refsIdentity(e) || strings.Contains(squash(e), "service_role") || c.callsIdentityRPC(e) {
+		if c.scopes(e) {
 			return
 		}
 	}
@@ -169,7 +171,8 @@ const maxGateDepth = 32
 func (c *ctx) authGate(expr string) bool { return c.authGateAt(expr, 0) }
 
 func (c *ctx) authGateAt(expr string, depth int) bool {
-	if depth > maxGateDepth {
+	if depth > maxGateDepth || depth == 0 && tooDeep(expr) {
+		c.deep = true
 		return false
 	}
 	next := func(e string) bool { return c.authGateAt(e, depth+1) }
@@ -181,7 +184,7 @@ func (c *ctx) authGateAt(expr string, depth int) bool {
 		for _, e := range conjuncts {
 			if next(e) {
 				anyGate = true
-			} else if c.scopes(e) && !hasTrueBranch(e) {
+			} else if c.scopes(e) && !c.hasTrueBranch(e) {
 				return false
 			}
 		}
@@ -192,7 +195,7 @@ func (c *ctx) authGateAt(expr string, depth int) bool {
 			return true
 		}
 		for i, cond := range conds {
-			if next(cond) && (isLiteralTrue(results[i]) || next(results[i])) {
+			if next(cond) && (c.hasTrueBranch(results[i]) || next(results[i])) {
 				return true
 			}
 		}
@@ -204,13 +207,12 @@ func (c *ctx) authGateAt(expr string, depth int) bool {
 	if len(toks) > 0 && toks[0].word == "not" || slices.ContainsFunc(toks, func(t sqlTok) bool { return t.word == "case" }) {
 		return false
 	}
-	return isAuthGateOnly(mask) && !c.scopes(e)
+	return isAuthGateOnly(e) && !c.scopes(e)
 }
 
 // scopes reports whether e ties access to the caller: identity, service role or an identity rpc.
 func (c *ctx) scopes(e string) bool {
-	_, mask := scanSQL(e)
-	return refsIdentity(strings.ReplaceAll(squash(mask), "auth.uid()isnotnull", "")) || strings.Contains(squash(e), "service_role") || c.callsIdentityRPC(e)
+	return refsCaller(e) || c.callsIdentityRPC(e)
 }
 
 // authedWrite returns the field of a write policy that only checks sign-in.
@@ -232,6 +234,7 @@ func ruleBuckets(c *ctx) {
 		for i, p := range b.RLS {
 			if !strings.EqualFold(p.Type, "restrictive") {
 				pat := append(slices.Clone(at), "rls", i)
+				c.deep = false
 				openWrite(c, "bucket-open-write", p, pat, anyJWT, "bucket "+name)
 				if field := c.authedWrite(p); field != "" {
 					title := "Any signed-in user can change every object"
@@ -246,11 +249,12 @@ func ruleBuckets(c *ctx) {
 					c.add("bucket-authed-write", Medium, append(pat, field), title, msg,
 						"Scope it to the uploader, for example name LIKE auth.uid()::text || '/%'.")
 				}
-				if !b.Public && len(opsOf(p, "select")) > 0 && isLiteralTrue(p.Using) {
+				if !b.Public && len(opsOf(p, "select")) > 0 && c.hasTrueBranch(p.Using) {
 					c.add("bucket-open-read", Medium, append(pat, "using"), "Anyone can read every object",
 						fmt.Sprintf("This policy lets %s list and read all objects in bucket %s.", anyJWT, name),
 						"Scope it to the caller, for example by object path and auth.uid(), or make the bucket public if that is intended.")
 				}
+				c.flagDeep(pat)
 			}
 		}
 		if len(b.RLS) == 0 {
@@ -275,7 +279,7 @@ func ruleBuckets(c *ctx) {
 // callsIdentityRPC reports whether expr calls a user-declared rpc whose body reads the caller's identity.
 func (c *ctx) callsIdentityRPC(expr string) bool {
 	for name, fn := range c.cfg.RPC {
-		if !bodyAuthRef.MatchString(fn.Body) {
+		if !refsCaller(fn.Body) {
 			continue
 		}
 		call := regexp.MustCompile(`(?i)(?:^|[^\w.])(?:public\s*\.\s*)?` + regexp.QuoteMeta(name) + `\s*\(`)
@@ -286,7 +290,22 @@ func (c *ctx) callsIdentityRPC(expr string) bool {
 	return false
 }
 
-// hasTrueBranch reports whether expr is always true, directly or through a top-level OR branch.
-func hasTrueBranch(expr string) bool {
-	return slices.ContainsFunc(splitTop(expr, "or"), isLiteralTrue)
+// hasTrueBranch reports whether expr is always true, through any nesting of OR, AND, NOT and parentheses.
+func (c *ctx) hasTrueBranch(expr string) bool {
+	v, ok := c.constBool(expr, 0)
+	return v && ok
+}
+
+func (c *ctx) notConstFalse(expr string) bool {
+	v, ok := c.constBool(expr, 0)
+	return !ok || v
+}
+
+// flagDeep reports a policy whose expressions went past the analysis depth cap.
+func (c *ctx) flagDeep(at []any) {
+	if c.deep {
+		c.add("policy-unanalyzable", Medium, at, "Policy is too deeply nested to check",
+			fmt.Sprintf("An expression nests deeper than %d levels, so vet cannot tell whether it is open or scoped.", maxGateDepth),
+			"Flatten the expression, or move it into a SQL rpc, and review it by hand.")
+	}
 }

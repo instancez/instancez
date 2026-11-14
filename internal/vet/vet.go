@@ -15,6 +15,7 @@ type ctx struct {
 	cfg      *domain.Config
 	doc      *yaml.Node
 	findings []Finding
+	deep     bool
 }
 
 func (c *ctx) add(rule string, sev Severity, path []any, title, msg, fix string) {

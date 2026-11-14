@@ -70,25 +70,49 @@ func TestLocate(t *testing.T) {
 }
 
 func TestSQLHelpers(t *testing.T) {
+	c := &ctx{}
 	for expr, want := range map[string]bool{
 		"true": true, " TRUE ": true, "( TRUE )": true, "((true))": true, "1=1": true, "1 = 1": true,
-		"": false, "false": false, "auth.uid() = user_id": false, "true::boolean": true, "(TRUE::BOOLEAN)": true, "true and x": false, "(a) or (true)": false,
+		"": false, "false": false, "auth.uid() = user_id": false, "true::boolean": true, "(TRUE::BOOLEAN)": true, "true and x": false,
+		"(a) or (true)": true, "(a = b) OR (true AND (1=1))": true, "x OR (y OR (z OR (true)))": true, "x OR (y OR true) OR w": true,
+		"NOT false": true, "NOT (NOT true)": true, "true AND 1=1": true, "NOT true": false, "false AND true": false,
+		"a = b OR c = d": false, "name = 'x or true'": false, "a = b -- or true": false, "NULL": false, "((true": false,
+		"NOT x": false, "a OR NOT 0=1": true, "coalesce(true, x)": false, "true IS TRUE": false,
 	} {
-		if got := isLiteralTrue(expr); got != want {
-			t.Errorf("isLiteralTrue(%q) = %v", expr, got)
+		if got := c.hasTrueBranch(expr); got != want {
+			t.Errorf("hasTrueBranch(%q) = %v", expr, got)
 		}
 	}
 	for expr, want := range map[string]bool{
 		"auth.uid() = user_id": true, "AUTH.JWT() ->> 'x' = '1'": true, "auth.email() = email": true,
 		"auth.is_authenticated()": false, "": false,
+		"(select auth.uid()) = user_id": true, "user_id = auth.uid() IS NOT NULL": true, "status = 'x' AND auth.uid() = owner_id": true,
+		"user_id::text = current_setting('request.jwt.claim.sub', true)":              true,
+		"user_id = (current_setting('request.jwt.claims', true)::json->>'sub')::uuid": true,
+		"CURRENT_SETTING ( 'REQUEST.JWT.CLAIMS' , true ) ->> 'sub' = x":               true,
+		"auth.uid() IS NOT NULL": false, "(select auth.uid()) IS NOT NULL": false, "((select auth.uid()) is not null)": false,
+		"auth.jwt() IS NOT NULL": false, "(select auth.jwt()) is not null": false, "auth.role() = 'authenticated'": false,
+		"CASE WHEN auth.uid() IS NOT NULL THEN true ELSE false END": false,
+		"current_setting('app.tenant') = tenant":                    false, "name = 'auth.uid()'": false, "a = 1 -- auth.uid()": false,
+		"name = 'current_setting(''request.jwt.claim.sub'')'": false, "current_setting('request.jwt.claim.role') = 'x'": false,
 	} {
 		if got := refsIdentity(expr); got != want {
 			t.Errorf("refsIdentity(%q) = %v", expr, got)
 		}
 	}
 	for expr, want := range map[string]bool{
+		"auth.role() = 'service_role'": true, "(select auth.role()) = 'service_role'": true, "x OR AUTH.ROLE() = 'service_role'": true,
+		"auth.role() IN ('authenticated', 'service_role')": false, "auth.role() <> 'service_role'": false,
+		"auth.role() = 'authenticated'": false, "x -- auth.role() = 'service_role'": false, "": false,
+	} {
+		if got := refsCaller(expr) && !refsIdentity(expr); got != want {
+			t.Errorf("serviceRole(%q) = %v", expr, got)
+		}
+	}
+	for expr, want := range map[string]bool{
 		"auth.is_authenticated()": true, "auth.role() = 'authenticated'": true, "auth.uid() is not null": true,
-		"AUTH.UID()  IS  NOT  NULL": true, "auth.uid() = user_id": false,
+		"AUTH.UID()  IS  NOT  NULL": true, "(select auth.uid()) IS NOT NULL": true, "auth.jwt() IS NOT NULL": true,
+		"CASE WHEN auth.uid() IS NOT NULL THEN true ELSE false END": true, "x = 1 AND auth.uid() IS NOT NULL": true, "auth.uid() = user_id": false,
 		"auth.is_authenticated() and auth.uid() = user_id": false, "true": false, "": false,
 	} {
 		if got := isAuthGateOnly(expr); got != want {
@@ -199,7 +223,7 @@ func TestReportJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"findings":[],"counts":{"critical":0,"high":0,"info":0,"low":0,"medium":0},"checks":{"total":22,"passed":22}}`
+	want := `{"findings":[],"counts":{"critical":0,"high":0,"info":0,"low":0,"medium":0},"checks":{"total":23,"passed":23}}`
 	if string(b) != want {
 		t.Errorf("json = %s", b)
 	}
