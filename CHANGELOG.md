@@ -4,6 +4,10 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Fixed
+
+- Storage listing under RLS no longer scans thousands of rows per step on Postgres 14.25, 15.20, 16.16 and 17.12. Those releases stopped pushing the skip-scan seek condition into the index when its right side called non-leakproof functions, so it ran as a filter after the RLS policy. The next seek key is now computed in the select list.
+
 ### Added
 
 - `gcs://bucket/key` is accepted wherever `s3://` is: `--config`, `--bundle`, `functions_bundle` and `inz bundle --output`. It uses Application Default Credentials; the config version token is the object generation.
