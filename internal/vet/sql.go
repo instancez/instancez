@@ -72,7 +72,7 @@ func isAuthGateOnly(expr string) bool {
 
 // constBool folds expr to a constant through nested AND, OR, NOT and parentheses; ok is false when it is not constant.
 func (c *ctx) constBool(expr string, depth int) (v, ok bool) {
-	if depth > maxGateDepth {
+	if depth > maxGateDepth || depth == 0 && tooDeep(expr) {
 		c.deep = true
 		return false, false
 	}
@@ -92,7 +92,7 @@ func (c *ctx) constBool(expr string, depth int) (v, ok bool) {
 		}
 		return false, allFalse
 	}
-	if parts := splitTop(e, "and"); len(parts) > 1 {
+	if parts := splitTop(e, "and"); len(parts) > 1 && !hasTopWord(e, "between") {
 		allTrue := true
 		for _, p := range parts {
 			pv, pok := next(p)
@@ -113,6 +113,33 @@ func (c *ctx) constBool(expr string, depth int) (v, ok bool) {
 		}
 	}
 	return false, false
+}
+
+// tooDeep reports whether expr nests parentheses or CASE blocks past the analysis cap, ignoring parentheses that wrap it whole.
+func tooDeep(expr string) bool {
+	_, mask := scanSQL(expr)
+	lo, hi := outerSpan(mask)
+	mask = mask[lo:hi]
+	depth, deepest := 0, 0
+	for i := 0; i < len(mask); i++ {
+		switch mask[i] {
+		case '(':
+			depth++
+			deepest = max(deepest, depth)
+		case ')':
+			depth--
+		}
+	}
+	eachWord(mask, func(t sqlTok) { deepest = max(deepest, t.depth) })
+	return deepest > maxGateDepth
+}
+
+// hasTopWord reports whether kw appears in expr outside parentheses, CASE blocks, strings and comments.
+func hasTopWord(expr, kw string) bool {
+	_, mask := scanSQL(stripOuterParens(expr))
+	found := false
+	eachWord(mask, func(t sqlTok) { found = found || t.depth == 0 && t.word == kw })
+	return found
 }
 
 // exprsFor returns the expressions that gate op under policy p.

@@ -158,21 +158,30 @@ func TestAuthGate(t *testing.T) {
 
 func TestAuthGateIsLinearAndBounded(t *testing.T) {
 	c := &ctx{cfg: &domain.Config{}}
-	const n = 40
 	gate := "auth.is_authenticated()"
-	exprs := map[string]string{
-		"and nest":  strings.Repeat("true AND (", n) + gate + strings.Repeat(")", n),
-		"case nest": strings.Repeat("CASE WHEN ", n) + gate + strings.Repeat(" THEN true END", n),
-		"deep":      strings.Repeat("(", 5000) + gate + strings.Repeat(")", 5000),
+	rep := strings.Repeat
+	gens := map[string]func(n int) string{
+		"and nest":       func(n int) string { return rep("true AND (", n) + gate + rep(")", n) },
+		"case nest":      func(n int) string { return rep("CASE WHEN ", n) + gate + rep(" THEN true END", n) },
+		"case then nest": func(n int) string { return rep("CASE WHEN x THEN ", n) + gate + rep(" END", n) },
+		"deep":           func(n int) string { return rep("(", n) + gate + rep(")", n) },
+		"nested or true": func(n int) string { return rep("x OR (", n) + "true" + rep(")", n) },
 	}
-	exprs["nested or true"] = strings.Repeat("x OR (", 5000) + "true" + strings.Repeat(")", 5000)
-	for name, e := range exprs {
-		t.Run(name, func(t *testing.T) {
+	best := func(e string) time.Duration {
+		d := time.Hour
+		for range 3 {
 			start := time.Now()
 			c.authGate(e)
 			c.hasTrueBranch(e)
-			if d := time.Since(start); d > time.Second {
-				t.Fatalf("authGate took %v", d)
+			d = min(d, time.Since(start))
+		}
+		return d
+	}
+	for name, gen := range gens {
+		t.Run(name, func(t *testing.T) {
+			small, large := best(gen(1000)), best(gen(4000))
+			if large > 8*small+20*time.Millisecond {
+				t.Fatalf("4x input took %v vs %v: not linear", large, small)
 			}
 		})
 	}

@@ -151,6 +151,15 @@ func TestTableRules(t *testing.T) {
 		{"deep case read", tbl(on, idField+mailField, pol("select", strings.Repeat("CASE WHEN ", 40)+"auth.is_authenticated()"+strings.Repeat(" THEN true END", 40), "", "")), []string{"policy-unanalyzable"}},
 		{"deep write", tbl(on, idField, pol("insert", "", strings.Repeat("true AND (", 40)+"auth.is_authenticated()"+strings.Repeat(")", 40), "")), []string{"policy-no-identity-write", "policy-unanalyzable"}},
 		{"shallow still flagged", tbl(on, idField+mailField, pol("select", strings.Repeat("true AND (", 5)+"auth.is_authenticated()"+strings.Repeat(")", 5), "", "")), []string{"policy-authed-read-sensitive"}},
+		{"between false is true", tbl(on, idField, pol("insert", "", "false BETWEEN false AND false", "")), []string{"policy-no-identity-write"}},
+		{"between numbers", tbl(on, idField, pol("insert", "", "1 BETWEEN 0 AND 2", "")), []string{"policy-no-identity-write"}},
+		{"between or true", tbl(on, idField, pol("insert", "", "x BETWEEN 1 AND 2 OR true", "")), []string{"policy-open-write"}},
+		{"not between", tbl(on, idField, pol("insert", "", "NOT false BETWEEN false AND false", "")), []string{"policy-no-identity-write"}},
+		{"between in parens", tbl(on, idField, pol("insert", "", "(false BETWEEN false AND false)", "")), []string{"policy-no-identity-write"}},
+		{"between under and", tbl(on, idField, pol("insert", "", "true AND (false BETWEEN false AND false)", "")), []string{"policy-no-identity-write"}},
+		{"deep case insert", tbl(on, idField, pol("insert", "", strings.Repeat("CASE WHEN x = 1 THEN ", 40)+"true"+strings.Repeat(" END", 40), "")), []string{"policy-no-identity-write", "policy-unanalyzable"}},
+		{"deep case update with uid", tbl(on, idField+userField, pol("update", strings.Repeat("CASE WHEN auth.uid() = user_id THEN ", 40)+"true"+strings.Repeat(" END", 40), "", "")), []string{"policy-unanalyzable"}},
+		{"deep case in cond", tbl(on, idField, pol("insert", "", strings.Repeat("CASE WHEN ", 40)+"auth.uid() = id"+strings.Repeat(" THEN true END", 40), "")), []string{"policy-unanalyzable"}},
 		{"deep plain parens fine", tbl(on, idField+mailField, pol("select", strings.Repeat("(", 500)+"auth.uid() = id"+strings.Repeat(")", 500), "", "")), nil},
 	}
 	for _, tc := range cases {

@@ -171,7 +171,7 @@ const maxGateDepth = 32
 func (c *ctx) authGate(expr string) bool { return c.authGateAt(expr, 0) }
 
 func (c *ctx) authGateAt(expr string, depth int) bool {
-	if depth > maxGateDepth {
+	if depth > maxGateDepth || depth == 0 && tooDeep(expr) {
 		c.deep = true
 		return false
 	}
