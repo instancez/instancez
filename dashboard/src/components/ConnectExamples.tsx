@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Cable } from "lucide-react";
-import { Box, HStack, chakra } from "@chakra-ui/react";
+import { Box, HStack, Text, chakra } from "@chakra-ui/react";
 import { Section, useSurfaceBg } from "./ui";
 import { CopyButton } from "./ApiKeys";
 import { useApiBaseUrl } from "../console/BackendContext";
@@ -117,6 +117,9 @@ export function ConnectExamples({ exampleTable }: { exampleTable: string }) {
           <CopyButton value={code} label={`Copy ${active.label} example`} />
         </HStack>
       </Box>
+      <Text fontSize="xs" color="fg.muted">
+        Set <Text as="span" fontFamily="mono">PUBLISHABLE_KEY</Text> to the publishable key above. Never ship the secret key in browser code.
+      </Text>
     </Section>
   );
 }

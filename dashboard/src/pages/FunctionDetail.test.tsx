@@ -213,3 +213,30 @@ describe("FunctionDetail – code editor", () => {
     expect(screen.queryByRole("button", { name: "Save code" })).not.toBeInTheDocument();
   });
 });
+
+describe("FunctionDetail – delete", () => {
+  async function openDelete() {
+    const ctx = renderFunctionDetail(structuredClone(baseConfig), "process_image");
+    await userEvent.click(await screen.findByRole("button", { name: "Delete function" }));
+    return ctx;
+  }
+
+  it("keeps Delete locked until the function name is typed", async () => {
+    const ctx = await openDelete();
+    const del = await screen.findByRole("button", { name: "Delete" });
+    expect(del).toBeDisabled();
+    const box = screen.getByRole("textbox", { name: /type process_image/i });
+    await userEvent.type(box, "process_imag");
+    expect(del).toBeDisabled();
+    await userEvent.type(box, "e");
+    await userEvent.click(del);
+    await waitFor(() => expect(ctx.save).toHaveBeenCalled());
+    expect(ctx.save.mock.calls[0]![0].functions).toEqual({});
+  });
+
+  it("cancel deletes nothing", async () => {
+    const ctx = await openDelete();
+    await userEvent.click((await screen.findAllByRole("button", { name: "Cancel" })).at(-1)!);
+    expect(ctx.save).not.toHaveBeenCalled();
+  });
+});

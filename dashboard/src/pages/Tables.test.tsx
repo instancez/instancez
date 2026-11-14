@@ -147,6 +147,12 @@ describe("Tables", () => {
     expect(screen.getByText("2 tables defined")).toBeInTheDocument();
   });
 
+  it("shows a single Add table button on the empty state, none duplicated in the toolbar", () => {
+    renderTables(baseConfig);
+    expect(screen.getAllByRole("button", { name: /add table/i })).toHaveLength(1);
+    expect(screen.getByText("No tables yet")).toBeInTheDocument();
+  });
+
   it("hides Add Table button when canWriteConfig is false", () => {
     const config = {
       ...baseConfig,
@@ -200,8 +206,7 @@ describe("Tables", () => {
       </BackendProvider>
     );
     await act(async () => {
-      // baseConfig has no tables so both the toolbar button and EmptyState action render
-      fireEvent.click(screen.getAllByRole("button", { name: /add table/i })[0]!);
+      fireEvent.click(screen.getByRole("button", { name: /add table/i }));
     });
     expect(save).not.toHaveBeenCalled();
     expect(mockNavigate).toHaveBeenCalledWith(

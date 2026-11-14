@@ -5,12 +5,13 @@ import { useConfig } from "../hooks/useConfig";
 import { SaveBar } from "../components/SaveBar";
 import { CodeEditor } from "../components/CodeEditor";
 import { Toggle } from "../components/Toggle";
-import { Field, Input, Panel, Section } from "../components/ui";
+import { Button, Field, Input, Panel, Section } from "../components/ui";
 import { VarRow } from "../components/VarRow";
 import { CopyButton } from "../components/ApiKeys";
 import { useBackend } from "../console/BackendContext";
 import { envRefName } from "../lib/envRef";
 import { isValidRedirectOrigin } from "../lib/redirectOrigin";
+import { authOverview } from "../lib/authOverview";
 import { jsonEqual } from "../lib/jsonEqual";
 import type { Auth } from "../lib/types";
 
@@ -127,6 +128,25 @@ const DEFAULT_AUTH: Auth = {
   email: { verify_email: false, templates: {} },
   oauth: {},
 };
+
+const SECTION_NAV = [
+  { id: "auth-jwt", label: "JWT" },
+  { id: "auth-signup", label: "Sign-up" },
+  { id: "auth-redirects", label: "Redirect URLs" },
+  { id: "auth-templates", label: "Email templates" },
+  { id: "auth-oauth", label: "OAuth providers" },
+] as const;
+
+/** One-line status of the three sign-up switches, as the server will apply them. */
+export function signupSummary(auth: Auth): string {
+  const { signup, anonymous, verifyEmail } = authOverview(auth);
+  const state = (v: boolean) => (v ? "on" : "off");
+  return `Public sign-up ${state(signup)}, anonymous sign-in ${state(anonymous)}, email confirmation ${state(verifyEmail)}`;
+}
+
+function scrollToSection(id: string) {
+  document.getElementById(id)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+}
 
 export function AuthPage() {
   const backend = useBackend();
@@ -278,9 +298,20 @@ export function AuthPage() {
 
   return (
     <Box pb="20">
-      <VStack pb="8" gap="6" maxW="3xl" align="stretch">
+      <VStack pb="8" gap="6" maxW="3xl" mx="auto" align="stretch">
         {auth && (
           <>
+            <VStack gap="2" align="stretch">
+              <Text fontSize="sm" color="fg.muted" data-testid="signup-summary">{signupSummary(auth)}</Text>
+              <HStack as="nav" aria-label="Auth sections" gap="1" flexWrap="wrap">
+                {SECTION_NAV.map(({ id, label }) => (
+                  <Button key={id} variant="ghost" size="sm" onClick={() => scrollToSection(id)}>
+                    {label}
+                  </Button>
+                ))}
+              </HStack>
+            </VStack>
+            <Box id="auth-jwt" scrollMarginTop="4">
             <Section
               title="JWT Settings"
               icon={KeySquare}
@@ -304,7 +335,9 @@ export function AuthPage() {
                 </Field>
               </Grid>
             </Section>
+            </Box>
 
+            <Box id="auth-signup" scrollMarginTop="4">
             <Section title="Sign-up & verification" icon={UserPlus}>
               <VStack gap="4" align="stretch">
                 <HStack justify="space-between" gap="3">
@@ -359,7 +392,9 @@ export function AuthPage() {
                 </HStack>
               </VStack>
             </Section>
+            </Box>
 
+            <Box id="auth-redirects" scrollMarginTop="4">
             <Section title="Redirect URLs" icon={Link2}>
               <VStack gap="3" align="stretch">
                 <Text fontSize="xs" color="fg.muted">
@@ -410,8 +445,9 @@ export function AuthPage() {
                 </HStack>
               </VStack>
             </Section>
+            </Box>
 
-
+            <Box id="auth-templates" scrollMarginTop="4">
             <Section title="Email Templates" icon={Mails}>
               <VStack gap="4" align="stretch">
                 {EMAIL_TEMPLATES.map((kind) => {
@@ -441,7 +477,6 @@ export function AuthPage() {
                             fontSize="11px"
                             fontFamily="mono"
                             color="fg.muted"
-                            opacity="0.7"
                             truncate
                           >
                             {kind.vars}
@@ -468,7 +503,9 @@ export function AuthPage() {
                 })}
               </VStack>
             </Section>
+            </Box>
 
+            <Box id="auth-oauth" scrollMarginTop="4">
             <Section
               title="OAuth Providers"
               icon={Plug2}
@@ -580,6 +617,7 @@ export function AuthPage() {
                 );
               })}
             </Section>
+            </Box>
           </>
         )}
       </VStack>

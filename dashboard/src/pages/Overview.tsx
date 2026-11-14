@@ -11,6 +11,7 @@ import { Card, CardTitle, CardValue } from "../components/Card";
 import { StatusBadge } from "../components/StatusBadge";
 import { Button } from "../components/ui";
 import { databaseSummary } from "../lib/advisories";
+import { authOverview } from "../lib/authOverview";
 import { formatBytes } from "../lib/utils";
 import type { StatsResponse } from "../lib/types";
 
@@ -19,6 +20,15 @@ function Unit({ children }: { children: string }) {
     <Text as="span" ml="1.5" fontSize="sm" fontWeight="normal" color="fg.muted">
       {children}
     </Text>
+  );
+}
+
+function AuthRow({ label, on }: { label: string; on: boolean }) {
+  return (
+    <HStack justify="space-between">
+      <Text fontSize="sm" color="fg.muted">{label}</Text>
+      <StatusBadge variant={on ? "success" : "muted"}>{on ? "On" : "Off"}</StatusBadge>
+    </HStack>
   );
 }
 
@@ -62,6 +72,7 @@ export function Overview() {
     : 0;
 
   const tableSummary = databaseSummary(config);
+  const auth = authOverview(config.auth);
 
   return (
     <Box pt="8" pb="8">
@@ -142,16 +153,21 @@ export function Overview() {
               <CardTitle>Auth</CardTitle>
               <Box as={Shield} boxSize="4.5" color="fg.muted" />
             </HStack>
-            <CardValue>Enabled</CardValue>
+            <CardValue>
+              {auth.methods.length}
+              <Unit>{auth.methods.length === 1 ? "sign-in method" : "sign-in methods"}</Unit>
+            </CardValue>
             <Text mt="1" fontSize="xs" color="fg.muted">
-              {[
-                config.auth?.email ? "Email" : null,
-                config.auth?.oauth?.google ? "Google" : null,
-                config.auth?.oauth?.github ? "GitHub" : null,
-              ]
-                .filter(Boolean)
-                .join(", ") || "No providers"}
+              {auth.methods.join(", ")}
             </Text>
+            <VStack mt="3" gap="1.5" align="stretch">
+              <AuthRow label="Public sign-up" on={auth.signup} />
+              <AuthRow label="Email confirmation" on={auth.verifyEmail} />
+              <HStack justify="space-between">
+                <Text fontSize="sm" color="fg.muted">Access token expiry</Text>
+                <Text fontSize="sm" color="fg">{auth.jwtExpiry}</Text>
+              </HStack>
+            </VStack>
           </Card>
 
           <Card hoverable onClick={() => navigate("/storage")}>

@@ -10,6 +10,14 @@ type ToggleProps = {
   disabled?: boolean;
 };
 
+function StateText({ on }: { on: boolean }) {
+  return (
+    <Text as="span" aria-hidden fontSize="xs" fontWeight="medium" color="fg.muted" minW="6">
+      {on ? "On" : "Off"}
+    </Text>
+  );
+}
+
 function SwitchWidget({
   checked,
   onChange,
@@ -38,22 +46,21 @@ function SwitchWidget({
   );
 }
 
-/**
- * Toggle is the single switch control used across the dashboard for boolean
- * settings. It renders an accessible `role="switch"` button; pass `label` to
- * get the standard "switch + text" row, or omit it for a bare switch (e.g. in
- * a table cell, where you should pass `aria-label`).
- */
+/** Boolean switch with a visible On/Off word; pass `label` for the clickable text row, else `aria-label`. */
 export function Toggle({ checked, onChange, label, disabled, "aria-label": ariaLabel }: ToggleProps) {
   if (label == null) {
     return (
-      <SwitchWidget checked={checked} onChange={onChange} disabled={disabled} ariaLabel={ariaLabel} />
+      <HStack gap="2">
+        <SwitchWidget checked={checked} onChange={onChange} disabled={disabled} ariaLabel={ariaLabel} />
+        <StateText on={checked} />
+      </HStack>
     );
   }
   return (
     <HStack gap="3" fontSize="sm" color="fg" cursor={disabled ? "not-allowed" : "pointer"}>
       <SwitchWidget checked={checked} onChange={onChange} disabled={disabled} />
       <Text onClick={() => !disabled && onChange(!checked)}>{label}</Text>
+      <StateText on={checked} />
     </HStack>
   );
 }

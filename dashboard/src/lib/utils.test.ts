@@ -6,6 +6,7 @@ import {
   POSTGRES_TYPES,
   SQL_DEFAULTS,
   RLS_OPERATIONS,
+  nameError,
 } from "./utils";
 
 describe("formatBytes", () => {
@@ -95,5 +96,21 @@ describe("constants", () => {
 
   it("RLS_OPERATIONS has CRUD operations", () => {
     expect(RLS_OPERATIONS).toEqual(["select", "insert", "update", "delete"]);
+  });
+});
+
+describe("nameError", () => {
+  it.each(["posts", "user_profiles", "t1", "a"])("accepts %s", (n) => {
+    expect(nameError(n, [], "table")).toBeNull();
+  });
+  it.each(["", "1abc", "_x", "Posts", "my table", "a-b", "naïve", "NaN "])("rejects %j", (n) => {
+    expect(nameError(n, [], "table")).toMatch(/lowercase/i);
+  });
+  it("rejects a duplicate and names the kind", () => {
+    expect(nameError("posts", ["posts"], "bucket")).toBe('A bucket named "posts" already exists.');
+  });
+  it("accepts 63 chars and rejects 64", () => {
+    expect(nameError("a".repeat(63), [], "table")).toBeNull();
+    expect(nameError("a".repeat(64), [], "table")).toMatch(/63/);
   });
 });

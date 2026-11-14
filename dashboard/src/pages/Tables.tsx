@@ -7,6 +7,7 @@ import { EmptyState } from "../components/EmptyState";
 import { StatusBadge } from "../components/StatusBadge";
 import { Button, ListRow } from "../components/ui";
 import { useBackend } from "../console/BackendContext";
+import { NAME_HINT, nameError } from "../lib/utils";
 
 export function Tables() {
   const backend = useBackend();
@@ -22,13 +23,9 @@ export function Tables() {
   );
 
   async function addTable() {
-    const name = await dialog.prompt("Table name:");
+    const name = await dialog.prompt("Table name", { message: NAME_HINT, validate: (v) => nameError(v, Object.keys(config!.tables ?? {}), "table") });
     if (!name?.trim()) return;
     const tableName = name.trim().toLowerCase().replace(/\s+/g, "_");
-    if (config!.tables?.[tableName]) {
-      await dialog.confirm(`Table "${tableName}" already exists.`, { confirmText: "OK" });
-      return;
-    }
     const seed = {
       fields: [
         { name: "id", type: "bigserial", primary_key: true },
@@ -44,7 +41,7 @@ export function Tables() {
   const addButton = canWriteConfig ? (
     <Button onClick={addTable}>
       <Plus size={14} />
-      Add Table
+      Add table
     </Button>
   ) : null;
 
@@ -55,7 +52,7 @@ export function Tables() {
           <Text fontSize="sm" color="fg.muted">
             {tables.length} table{tables.length !== 1 ? "s" : ""} defined
           </Text>
-          {addButton}
+          {tables.length > 0 && addButton}
         </HStack>
         {tables.length === 0 ? (
           <EmptyState

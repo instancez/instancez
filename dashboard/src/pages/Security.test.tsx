@@ -5,7 +5,7 @@ import { MemoryRouter, useLocation } from "react-router-dom";
 import { ChakraProvider, createSystem, defaultConfig } from "@chakra-ui/react";
 import { ColorModeProvider } from "../components/color-mode";
 import { renderWithChakra } from "../test/helpers";
-import { SecurityPage } from "./Security";
+import { SecurityPage, findingTable } from "./Security";
 import { BackendProvider } from "../console/BackendContext";
 import { fullCapabilities, type ConsoleBackend } from "../console/backend";
 import { ConfigContext } from "../hooks/useConfig";
@@ -28,7 +28,7 @@ const baseConfig = {
 } as unknown as Config;
 
 type ConfigValue = NonNullable<React.ContextType<typeof ConfigContext>>;
-type PageOpts = { save?: ConfigValue["save"]; canWriteConfig?: boolean; config?: Config | null };
+type PageOpts = { save?: ConfigValue["save"]; canWriteConfig?: boolean; config?: Config | null; route?: string };
 
 const baseCtx = {
   config: baseConfig, loading: false, error: null, checksum: "c", saving: false, saveErrors: [],
@@ -44,7 +44,7 @@ function renderPage(getVetReport: ConsoleBackend["getVetReport"], opts: PageOpts
     dotenvWritable: false, oauthCallbackBase: "", refresh: vi.fn(), save, updateConfig: vi.fn(),
   } as ConfigValue;
   const view = renderWithChakra(
-    <MemoryRouter><ConfigContext.Provider value={ctx}><BackendProvider backend={backend}><SecurityPage /><Where /></BackendProvider></ConfigContext.Provider></MemoryRouter>,
+    <MemoryRouter initialEntries={[opts.route ?? "/security"]}><ConfigContext.Provider value={ctx}><BackendProvider backend={backend}><SecurityPage /><Where /></BackendProvider></ConfigContext.Provider></MemoryRouter>,
   );
   return { ...view, save: save as ReturnType<typeof vi.fn> };
 }
@@ -226,7 +226,7 @@ describe("SecurityPage list and detail", () => {
     renderPage(async () => report([f({ edit: { path: ["tables", "notes", "rls_enabled"], value: true } })]));
     await screen.findByText("HOW TO FIX");
     expect(screen.queryByRole("button", { name: /Copy/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    screen.queryAllByRole("link").forEach((l) => expect(l).toHaveTextContent(/^go to/i));
     expect(screen.queryByText(/Ignore/)).not.toBeInTheDocument();
     expect(screen.queryByText(/inz-vet-ignore/)).not.toBeInTheDocument();
   });
@@ -461,5 +461,62 @@ describe("SecurityPage Fix it", () => {
     const next = renderPage(async () => report([f({ edit: { path: ["auth", "email", "verify_email"], value: true } })]), { config: { ...baseConfig, auth: { jwt_expiry: "1h" } as Config["auth"] } });
     await user.click(await screen.findByRole("button", { name: "Fix it" }));
     expect((next.save.mock.calls[0]![0] as Config).auth).toEqual({ jwt_expiry: "1h", email: { verify_email: true } });
+  });
+});
+
+describe("SecurityPage navigation and legend", () => {
+  const rlsFinding = f({ rule: "r-rls", severity: "critical", title: "Open policy", path: "tables.posts.rls[1].using", line: 4 });
+  const storageFinding = f({ rule: "r-st", severity: "high", title: "Public bucket", path: "storage.b", line: 0 });
+
+  it("links an RLS finding to its table's RLS tab with a precise label", async () => {
+    renderPage(async () => report([rlsFinding]));
+    const link = await screen.findByRole("link", { name: /go to posts\.rls\[1\]/i });
+    expect(link).toHaveAttribute("href", "/tables/posts?tab=rls");
+  });
+
+  it("links a plain table finding to the fields tab", async () => {
+    renderPage(async () => report([f({ title: "RLS off", path: "tables.notes.rls_enabled" })]));
+    const link = await screen.findByRole("link", { name: /go to notes/i });
+    expect(link).toHaveAttribute("href", "/tables/notes?tab=fields");
+  });
+
+  it("shows no table link for findings outside tables", async () => {
+    renderPage(async () => report([storageFinding]));
+    await screen.findByText("HOW TO FIX");
+    expect(screen.queryByRole("link", { name: /go to/i })).toBeNull();
+  });
+
+  it("renders a severity legend with meanings", async () => {
+    renderPage(async () => report([rlsFinding]));
+    const legend = await screen.findByLabelText("Severity legend");
+    for (const sev of ["critical", "high", "medium", "low", "info"]) expect(legend).toHaveTextContent(sev);
+  });
+
+  it("filters to one table via ?table= and can clear the filter", async () => {
+    renderPage(async () => report([rlsFinding, storageFinding]), { route: "/security?table=posts" });
+    expect(await screen.findByText(/showing findings for table/i)).toBeInTheDocument();
+    expect(screen.getAllByText("Open policy").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Public bucket")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /show all/i }));
+    expect(await screen.findByText("Public bucket")).toBeInTheDocument();
+  });
+
+  it("a table with no findings gets an explicit empty state, not a dead end", async () => {
+    renderPage(async () => report([storageFinding]), { route: "/security?table=ghost" });
+    expect(await screen.findByText(/no findings for table ghost/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /show all findings/i }));
+    expect((await screen.findAllByText("Public bucket")).length).toBeGreaterThan(0);
+  });
+});
+
+describe("findingTable", () => {
+  it.each([
+    ["tables.posts.rls[0].using", "posts"],
+    ["tables.posts", "posts"],
+    ["storage.b", null],
+    ["", null],
+    ["server.cors", null],
+  ])("%j -> %s", (path, want) => {
+    expect(findingTable(path)).toBe(want);
   });
 });

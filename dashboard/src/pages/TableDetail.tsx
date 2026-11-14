@@ -1,12 +1,14 @@
-import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { useParams, useNavigate, useLocation, useSearchParams, Link } from "react-router-dom";
 import { useState, useEffect, useCallback } from "react";
 import { Tabs, Box, HStack, Text, VStack } from "@chakra-ui/react";
-import { Plus, Trash2, GripVertical } from "lucide-react";
+import { Plus, Trash2, GripVertical, ListTree, ShieldAlert, ShieldCheck } from "lucide-react";
 import { useConfig } from "../hooks/useConfig";
 import { jsonEqual } from "../lib/jsonEqual";
 import { useDialog } from "../components/Dialog";
-import { DetailToolbar } from "../components/DetailToolbar";
+import { DetailToolbar, DangerZone } from "../components/DetailToolbar";
 import { SaveBar } from "../components/SaveBar";
+import { EmptyState } from "../components/EmptyState";
+import { ListSkeleton } from "../components/Skeletons";
 import { TagInput } from "../components/TagInput";
 import { Toggle } from "../components/Toggle";
 import { RlsPolicyCard } from "../components/RlsPolicyCard";
@@ -28,6 +30,7 @@ export function TableDetail() {
   const { name } = useParams<{ name: string }>();
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { config, save, saving, saveErrors } = useConfig();
   const dialog = useDialog();
   const canWriteConfig = backend.capabilities.canWriteConfig;
@@ -67,11 +70,15 @@ export function TableDetail() {
 
   async function deleteTable() {
     if (!config || !name) return;
-    if (!(await dialog.confirm(`Delete table "${name}"?`, { message: "This will drop the table and all its data.", confirmText: name }))) return;
+    if (!(await dialog.confirm("Delete table?", { message: `"${name}" and all its data will be dropped. This can't be undone.`, confirmText: name }))) return;
     const { [name]: _, ...rest } = config.tables;
     const updated = { ...config, tables: rest };
     const ok = await save(updated);
     if (ok) navigate("..", { relative: "path" });
+  }
+
+  if (config && !table && (isNew ? !!newState?.seed : !!(name && config.tables[name]))) {
+    return <ListSkeleton rows={5} />;
   }
 
   if (!config || !table) {
@@ -94,16 +101,57 @@ export function TableDetail() {
   const tables = effectiveName ? { ...config.tables, [effectiveName]: table } : config.tables;
   const fkOpts = fkOptions(tables);
 
+  const addIndexButton = (
+    <Button
+      variant="dashed"
+      size="sm"
+      onClick={() =>
+        updateTable((t) => ({
+          ...t,
+          indexes: [...(t.indexes || []), { columns: [], unique: false, where: "" }],
+        }))
+      }
+    >
+      <Plus size={14} />
+      Add index
+    </Button>
+  );
+
+  const tabs = isNew ? ["fields", "indexes", "rls"] : ["data", "fields", "indexes", "rls"];
+  const wantedTab = searchParams.get("tab");
+  const activeTab = wantedTab && tabs.includes(wantedTab) ? wantedTab : tabs[0]!;
+  const policyCount = (table.rls || []).length;
+  const addPolicyButton = (
+    <Button
+      variant="dashed"
+      size="sm"
+      onClick={() =>
+        updateTable((t) => ({
+          ...t,
+          rls: [...(t.rls || []), { operations: ["select"], using: "" }],
+        }))
+      }
+    >
+      <Plus size={14} />
+      Add RLS policy
+    </Button>
+  );
+
   return (
     <Box pb="20">
-      <DetailToolbar backLabel="Tables" onDelete={canWriteConfig && !isNew ? deleteTable : undefined} />
+      <DetailToolbar backLabel="Tables" />
       <Box pb="8">
-        <Tabs.Root defaultValue={isNew ? "fields" : "data"} lazyMount unmountOnExit>
+        <Tabs.Root
+          value={activeTab}
+          onValueChange={(e) => setSearchParams({ tab: e.value }, { replace: true, state: location.state })}
+          lazyMount
+          unmountOnExit
+        >
           <Tabs.List borderBottomWidth="1px" mb="6" gap="1">
-            {(isNew ? ["Fields", "Indexes", "RLS"] : ["Data", "Fields", "Indexes", "RLS"]).map((tab) => (
+            {tabs.map((tab) => (
               <Tabs.Trigger
                 key={tab}
-                value={tab.toLowerCase()}
+                value={tab}
                 fontSize="sm"
                 fontWeight="medium"
                 color="fg.muted"
@@ -114,7 +162,7 @@ export function TableDetail() {
                 _hover={{ color: "fg" }}
                 mb="-1px"
               >
-                {tab}
+                {tab === "rls" ? "RLS" : tab[0]!.toUpperCase() + tab.slice(1)}
               </Tabs.Trigger>
             ))}
           </Tabs.List>
@@ -197,6 +245,14 @@ export function TableDetail() {
 
           {/* Indexes Tab */}
           <Tabs.Content value="indexes">
+            {(table.indexes || []).length === 0 && (
+              <EmptyState
+                icon={ListTree}
+                title="No indexes"
+                description="Indexes speed up lookups on columns you filter or sort by. Primary keys and unique fields are already indexed."
+                action={canWriteConfig ? addIndexButton : undefined}
+              />
+            )}
             <VStack gap="3" align="stretch">
               {(table.indexes || []).map((idx, i) => (
                 <Panel key={i} display="flex" alignItems="flex-start" gap="3" p="4">
@@ -262,33 +318,41 @@ export function TableDetail() {
                   )}
                 </Panel>
               ))}
-              {canWriteConfig && (
-                <Button
-                  variant="dashed"
-                  size="sm"
-                  onClick={() =>
-                    updateTable((t) => ({
-                      ...t,
-                      indexes: [
-                        ...(t.indexes || []),
-                        { columns: [], unique: false, where: "" },
-                      ],
-                    }))
-                  }
-                >
-                  <Plus size={14} />
-                  Add Index
-                </Button>
-              )}
+              {canWriteConfig && (table.indexes || []).length > 0 && addIndexButton}
             </VStack>
           </Tabs.Content>
 
           {/* RLS Tab */}
           <Tabs.Content value="rls">
+            <HStack justify="space-between" gap="4" pb="3">
+              <Text fontSize="sm" color="fg.muted">
+                {policyCount} polic{policyCount === 1 ? "y" : "ies"}
+                {!table.rls_enabled && " · RLS is off for this table"}
+              </Text>
+              {!isNew && (
+                <Link to={`/security?table=${encodeURIComponent(effectiveName ?? "")}`} style={{ fontSize: "var(--chakra-font-sizes-sm)" }}>
+                  <HStack as="span" gap="1.5" color="fg.muted" _hover={{ color: "fg" }}>
+                    <ShieldAlert size={14} />
+                    View security findings
+                  </HStack>
+                </Link>
+              )}
+            </HStack>
+            {policyCount === 0 && (
+              <EmptyState
+                icon={ShieldCheck}
+                title="No policies"
+                description={table.rls_enabled
+                  ? "RLS is on with no policies, so anon and authenticated users are denied all access. Add a policy to open access."
+                  : "Add a policy to control who can read or change rows in this table."}
+                action={canWriteConfig ? addPolicyButton : undefined}
+              />
+            )}
             <VStack gap="3" align="stretch">
               {(table.rls || []).map((policy, i) => (
                 <RlsPolicyCard
                   key={i}
+                  index={i}
                   policy={policy}
                   onChange={(p) =>
                     updateTable((t) => {
@@ -305,29 +369,21 @@ export function TableDetail() {
                   }
                 />
               ))}
-              {canWriteConfig && (
-                <Button
-                  variant="dashed"
-                  size="sm"
-                  onClick={() =>
-                    updateTable((t) => ({
-                      ...t,
-                      rls: [
-                        ...(t.rls || []),
-                        { operations: ["select"], using: "" },
-                      ],
-                    }))
-                  }
-                >
-                  <Plus size={14} />
-                  Add RLS Policy
-                </Button>
-              )}
+              {canWriteConfig && policyCount > 0 && addPolicyButton}
             </VStack>
           </Tabs.Content>
 
         </Tabs.Root>
       </Box>
+
+      {canWriteConfig && !isNew && (
+        <DangerZone
+          title="Delete this table"
+          description="Drops the table and all its data."
+          label="Delete table"
+          onDelete={deleteTable}
+        />
+      )}
 
       {canWriteConfig && (
         <SaveBar

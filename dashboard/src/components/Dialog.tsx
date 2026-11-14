@@ -1,7 +1,8 @@
-import { createContext, useContext, useState, useRef, useEffect, useCallback } from "react";
+import { createContext, useContext, useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { X, AlertTriangle, Info, Trash2 } from "lucide-react";
-import { Box, HStack, Input, Portal, Text, VStack } from "@chakra-ui/react";
+import { Box, HStack, Input, Text, VStack } from "@chakra-ui/react";
 import { Button, Field, Select } from "./ui";
+import { Overlay } from "./Modal";
 
 type DialogType = "prompt" | "confirm" | "alert" | "select";
 
@@ -15,22 +16,45 @@ interface DialogState {
   confirmText?: string;
   destructive?: boolean;
   options?: string[];
+  validate?: (value: string) => string | null;
+  owner?: symbol;
   resolve: (value: any) => void;
 }
 
+type PromptOptions = { message?: string; defaultValue?: string; placeholder?: string; validate?: (value: string) => string | null };
+
 interface DialogContextValue {
-  prompt: (title: string, options?: { message?: string; defaultValue?: string; placeholder?: string }) => Promise<string | null>;
+  prompt: (title: string, options?: PromptOptions) => Promise<string | null>;
   confirm: (title: string, options?: { message?: string; confirmLabel?: string; destructive?: boolean; confirmText?: string }) => Promise<boolean>;
   alert: (title: string, options?: { message?: string }) => Promise<void>;
   select: (title: string, options: string[], extra?: { message?: string }) => Promise<string | null>;
 }
 
-const DialogContext = createContext<DialogContextValue | null>(null);
+interface ProviderValue extends DialogContextValue {
+  open: (state: Omit<DialogState, "resolve" | "owner">, owner?: symbol) => Promise<any>;
+  dismissOwned: (owner: symbol) => void;
+}
 
-export function useDialog() {
+function makeDialogApi(open: ProviderValue["open"], owner?: symbol): DialogContextValue {
+  return {
+    prompt: (title, o) => open({ type: "prompt", title, ...o }, owner),
+    confirm: (title, o) => open({ type: "confirm", title, ...o, destructive: o?.destructive ?? true }, owner),
+    alert: (title, o) => open({ type: "alert", title, message: o?.message }, owner),
+    select: (title, options, extra) => open({ type: "select", title, options, message: extra?.message }, owner),
+  };
+}
+
+const dismissed = (d: DialogState) => (d.type === "confirm" ? false : null);
+
+const DialogContext = createContext<ProviderValue | null>(null);
+
+/** Dialogs opened through this hook are cancelled when the calling page unmounts (tab or route change). */
+export function useDialog(): DialogContextValue {
   const ctx = useContext(DialogContext);
   if (!ctx) throw new Error("useDialog must be used within DialogProvider");
-  return ctx;
+  const owner = useRef(Symbol("dialog-owner")).current;
+  useEffect(() => () => ctx.dismissOwned(owner), [ctx.dismissOwned, owner]);
+  return useMemo(() => makeDialogApi(ctx.open, owner), [ctx.open, owner]);
 }
 
 export function DialogProvider({ children }: { children: React.ReactNode }) {
@@ -43,60 +67,55 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
   const confirmInputRef = useRef<HTMLInputElement>(null);
   const selectRef = useRef<HTMLSelectElement>(null);
 
-  const prompt = useCallback(
-    (title: string, options?: { message?: string; defaultValue?: string; placeholder?: string }) =>
-      new Promise<string | null>((resolve) => {
-        setInputValue(options?.defaultValue || "");
-        setDialog({ type: "prompt", title, message: options?.message, defaultValue: options?.defaultValue, placeholder: options?.placeholder, resolve });
-      }),
-    []
-  );
+  const current = useRef<DialogState | null>(null);
+  current.current = dialog;
 
-  const confirm = useCallback(
-    (title: string, options?: { message?: string; confirmLabel?: string; destructive?: boolean; confirmText?: string }) =>
-      new Promise<boolean>((resolve) => {
+  const open = useCallback(
+    (state: Omit<DialogState, "resolve" | "owner">, owner?: symbol) =>
+      new Promise<any>((resolve) => {
+        const prev = current.current;
+        if (prev) prev.resolve(dismissed(prev));
+        setInputValue(state.defaultValue || "");
         setConfirmInput("");
-        setDialog({
-          type: "confirm",
-          title,
-          message: options?.message,
-          confirmLabel: options?.confirmLabel,
-          confirmText: options?.confirmText,
-          destructive: options?.destructive ?? true,
-          resolve,
-        });
+        setSelectValue(state.options?.[0] || "");
+        setDialog({ ...state, owner, resolve });
       }),
     []
   );
 
-  const alert = useCallback(
-    (title: string, options?: { message?: string }) =>
-      new Promise<void>((resolve) => {
-        setDialog({ type: "alert", title, message: options?.message, resolve: () => resolve() });
-      }),
-    []
-  );
-
-  const select = useCallback(
-    (title: string, options: string[], extra?: { message?: string }) =>
-      new Promise<string | null>((resolve) => {
-        setSelectValue(options[0] || "");
-        setDialog({ type: "select", title, message: extra?.message, options, resolve });
-      }),
-    []
-  );
-
-  function close(value: string | boolean | null) {
+  const dismissOwned = useCallback((owner: symbol) => {
+    setDialog((cur) => {
+      if (cur?.owner !== owner) return cur;
+      cur.resolve(dismissed(cur));
+      return null;
+    });
     setVisible(false);
-    setTimeout(() => {
-      dialog?.resolve(value);
-      setDialog(null);
-    }, 150);
+  }, []);
+
+  const value = useMemo<ProviderValue>(
+    () => ({ open, dismissOwned, ...makeDialogApi(open) }),
+    [open, dismissOwned]
+  );
+
+  function close(result: string | boolean | null) {
+    const closing = dialog;
+    if (!closing) return;
+    closing.resolve(result);
+    setVisible(false);
+    setTimeout(() => setDialog((cur) => (cur === closing ? null : cur)), 150);
   }
 
+  const promptError = dialog?.type === "prompt" && dialog.validate && inputValue.trim()
+    ? dialog.validate(inputValue.trim())
+    : null;
+  const promptValid = dialog?.type === "prompt" && !!inputValue.trim() && !promptError;
+  const promptDirty = dialog?.type === "prompt" && inputValue !== (dialog.defaultValue || "");
+
   function handleConfirm() {
+    if (confirmLocked) return;
     if (dialog?.type === "prompt") {
-      close(inputValue.trim() || null);
+      if (!promptValid) return;
+      close(inputValue.trim());
     } else if (dialog?.type === "select") {
       close(selectValue || null);
     } else if (dialog?.type === "confirm") {
@@ -107,13 +126,7 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
   }
 
   function handleCancel() {
-    if (dialog?.type === "prompt") {
-      close(null);
-    } else if (dialog?.type === "confirm") {
-      close(false);
-    } else {
-      close(null);
-    }
+    if (dialog) close(dismissed(dialog));
   }
 
   const confirmLocked = dialog?.type === "confirm" && dialog.confirmText
@@ -124,45 +137,25 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
     if (dialog) {
       requestAnimationFrame(() => setVisible(true));
       if (dialog.type === "prompt") {
-        setTimeout(() => {
-          inputRef.current?.focus();
-          inputRef.current?.select();
-        }, 50);
+        inputRef.current?.focus();
+        inputRef.current?.select();
       } else if (dialog.type === "select") {
-        setTimeout(() => selectRef.current?.focus(), 50);
+        selectRef.current?.focus();
       } else if (dialog.type === "confirm" && dialog.confirmText) {
-        setTimeout(() => confirmInputRef.current?.focus(), 50);
+        confirmInputRef.current?.focus();
       }
     }
   }, [dialog]);
 
-  useEffect(() => {
-    if (!dialog) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") handleCancel();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [dialog]);
-
   return (
-    <DialogContext.Provider value={{ prompt, confirm, alert, select }}>
+    <DialogContext.Provider value={value}>
       {children}
       {dialog && (
-        <Portal>
-          <Box
-            position="fixed"
-            inset="0"
-            zIndex="overlay"
-            display="flex"
-            alignItems="center"
-            justifyContent="center"
-            bg={visible ? "blackAlpha.600" : "transparent"}
-            backdropFilter={visible ? "blur(2px)" : undefined}
-            transition="all 0.2s ease-out"
-            onClick={(e) => { if (e.target === e.currentTarget) handleCancel(); }}
-          >
+        <Overlay onDismiss={handleCancel} dismissOnBackdrop={!promptDirty} visible={visible}>
             <Box
+              role="dialog"
+              aria-modal="true"
+              aria-label={dialog.type === "prompt" ? undefined : dialog.title}
               position="relative"
               w="full"
               maxW="420px"
@@ -181,6 +174,7 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
               <Box
                 as="button"
                 onClick={handleCancel}
+                aria-label="Close"
                 position="absolute"
                 top="4"
                 right="4"
@@ -206,17 +200,22 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
                           type="text"
                           value={inputValue}
                           onChange={(e) => setInputValue(e.target.value)}
-                          onKeyDown={(e) => { if (e.key === "Enter" && inputValue.trim()) handleConfirm(); }}
+                          onKeyDown={(e) => { if (e.key === "Enter") handleConfirm(); }}
+                          aria-invalid={!!promptError}
                           placeholder={dialog.placeholder || "Enter a name…"}
                           size="sm"
                         />
                       </Field>
-                      {dialog.message && <Text fontSize="xs" color="fg.muted">{dialog.message}</Text>}
+                      {promptError ? (
+                        <Text role="alert" fontSize="xs" color="fg.error">{promptError}</Text>
+                      ) : (
+                        dialog.message && <Text fontSize="xs" color="fg.muted">{dialog.message}</Text>
+                      )}
                     </VStack>
                   </Box>
                   <HStack justify="flex-end" gap="2.5" px="6" pb="5">
                     <Button variant="ghost" onClick={handleCancel}>Cancel</Button>
-                    <Button onClick={handleConfirm} disabled={!inputValue.trim()}>Create</Button>
+                    <Button onClick={handleConfirm} disabled={!promptValid}>Create</Button>
                   </HStack>
                 </>
               )}
@@ -270,7 +269,7 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
                           id="confirm-input"
                           value={confirmInput}
                           onChange={(e) => setConfirmInput(e.target.value)}
-                          onKeyDown={(e) => { if (e.key === "Enter" && !confirmLocked) handleConfirm(); }}
+                          onKeyDown={(e) => { if (e.key === "Enter") handleConfirm(); }}
                           placeholder={dialog.confirmText}
                           spellCheck={false}
                           autoComplete="off"
@@ -314,8 +313,7 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
                 </>
               )}
             </Box>
-          </Box>
-        </Portal>
+        </Overlay>
       )}
     </DialogContext.Provider>
   );
