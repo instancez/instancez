@@ -219,3 +219,38 @@ func TestUploadSiteArchive_RejectionEchoingURLIsDropped(t *testing.T) {
 		})
 	}
 }
+
+func TestUploadSiteArchive_NeverForwardsCredentialHeaders(t *testing.T) {
+	var got http.Header
+	h := func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		_, _ = w.Write([]byte(`{}`))
+	}
+	check := func(t *testing.T, c *Client) {
+		t.Helper()
+		got = nil
+		_, err := c.UploadSiteArchive(c.BaseURL+"/up?token=t", strings.NewReader("x"), 1)
+		require.NoError(t, err)
+		assert.Empty(t, got.Values("Authorization"))
+		assert.Empty(t, got.Values("Cookie"))
+		assert.Empty(t, got.Values("Proxy-Authorization"))
+		assert.Equal(t, "1", got.Get("X-Edge"))
+	}
+
+	t.Run("explicit headers", func(t *testing.T) {
+		c := srvClient(t, h)
+		c.Headers = http.Header{}
+		c.Headers["authorization"] = []string{"Bearer SECRET"}
+		c.Headers.Set("COOKIE", "s=SECRET")
+		c.Headers.Set("proxy-authorization", "Basic SECRET")
+		c.Headers.Set("X-Edge", "1")
+		check(t, c)
+	})
+	t.Run("env headers", func(t *testing.T) {
+		t.Setenv("INSTANCEZ_CLOUD_HEADERS", "authorization: Bearer SECRET\nCookie: s=SECRET\nX-Edge: 1")
+		c := srvClient(t, h)
+		c.Headers = ExtraHeaders()
+		require.NotEmpty(t, c.Headers)
+		check(t, c)
+	})
+}

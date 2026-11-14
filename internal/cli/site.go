@@ -264,12 +264,18 @@ func buildSiteArchive(dir string, lim siteLimits) (*os.File, int, error) {
 		if archiveHook != nil {
 			archiveHook(p)
 		}
-		hdr := &tar.Header{Name: slash, Mode: 0o644, Size: fi.Size(), ModTime: fi.ModTime(), Typeflag: tar.TypeReg}
-		if err := tw.WriteHeader(hdr); err != nil {
-			return err
-		}
 		src, err := os.Open(p)
 		if err != nil {
+			return err
+		}
+		opened, err := src.Stat()
+		if err != nil || !opened.Mode().IsRegular() || !os.SameFile(fi, opened) {
+			_ = src.Close()
+			return fmt.Errorf("%s changed while archiving", slash)
+		}
+		hdr := &tar.Header{Name: slash, Mode: 0o644, Size: fi.Size(), ModTime: fi.ModTime(), Typeflag: tar.TypeReg}
+		if err := tw.WriteHeader(hdr); err != nil {
+			_ = src.Close()
 			return err
 		}
 		n, err := io.Copy(tw, src)

@@ -480,3 +480,25 @@ func TestBuildSiteArchive_PermissionDeniedIgnoreFile(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "read .instancezignore")
 }
+
+func TestBuildSiteArchive_FileSwappedForSymlinkWhileArchiving(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "index.html", "<html>")
+	write(t, dir, "data.txt", "AAAA")
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	require.NoError(t, os.WriteFile(outside, []byte("BBBB"), 0o644))
+	archiveHook = func(p string) {
+		if filepath.Base(p) == "data.txt" {
+			_ = os.Remove(p)
+			_ = os.Symlink(outside, p)
+		}
+	}
+	t.Cleanup(func() { archiveHook = nil })
+	f, _, err := buildSiteArchive(dir, testLimits)
+	if f != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+	}
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "data.txt changed while archiving")
+}

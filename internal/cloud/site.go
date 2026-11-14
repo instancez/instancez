@@ -132,6 +132,9 @@ func (c *Client) UploadSiteArchive(uploadURL string, body io.Reader, size int64)
 	req.ContentLength = size
 	req.Header.Set("Content-Type", "application/gzip")
 	for name, values := range c.Headers {
+		if isCredentialHeader(name) {
+			continue
+		}
 		for _, v := range values {
 			req.Header.Set(name, v)
 		}
@@ -192,6 +195,15 @@ func leaksUploadURL(msg, uploadURL string) bool {
 				return true
 			}
 		}
+	}
+	return false
+}
+
+// isCredentialHeader reports headers that must never reach the capability URL.
+func isCredentialHeader(name string) bool {
+	switch http.CanonicalHeaderKey(strings.TrimSpace(name)) {
+	case "Authorization", "Cookie", "Proxy-Authorization":
+		return true
 	}
 	return false
 }
