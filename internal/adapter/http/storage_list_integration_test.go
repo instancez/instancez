@@ -258,9 +258,10 @@ func TestStorageList_SkipScanIsBoundedOn50kObjects(t *testing.T) {
 
 // The RLS policy runs before any non-leakproof qual, so the walk must key on leakproof comparisons only.
 func TestStorageList_SkipScanIsBoundedUnderRLS(t *testing.T) {
-	buckets := map[string]domain.Bucket{"b": {}, "big": {RLS: []domain.RLSPolicy{{Operations: []string{"select"}, Using: "octet_length(name) > 0"}}}}
+	buckets := map[string]domain.Bucket{"b": {}, "big": {RLS: []domain.RLSPolicy{{Operations: []string{"select"}, Using: "octet_length(name) > 0 AND name NOT LIKE '%.secret'"}}}}
 	owner, req := listDB(t, buckets)
 	seedBig(t, owner)
+	seedObjects(t, owner, "big", time.Now(), "p/f2.secret", "p/f200/x0.secret", "p/zz/a.secret")
 
 	ctx, err := req.WithRLS(context.Background(), domain.Session{Role: "authenticated", IsAuthenticated: true})
 	require.NoError(t, err)
@@ -268,27 +269,24 @@ func TestStorageList_SkipScanIsBoundedUnderRLS(t *testing.T) {
 	require.NoError(t, err)
 	defer tx.Rollback(ctx)
 	assertBounded(t, tx, ctx, boundedShapes())
-}
 
-func TestStorageList_RLSWalkReturnsSameRowsAsOwner(t *testing.T) {
-	buckets := map[string]domain.Bucket{"b": {}, "big": {RLS: []domain.RLSPolicy{{Operations: []string{"select"}, Using: "octet_length(name) > 0"}}}}
-	owner, req := listDB(t, buckets)
-	seedBig(t, owner)
-	ctx, err := req.WithRLS(context.Background(), domain.Session{Role: "authenticated", IsAuthenticated: true})
-	require.NoError(t, err)
-	tx, err := req.Begin(ctx)
-	require.NoError(t, err)
-	defer tx.Rollback(ctx)
-	for name, q := range boundedShapes() {
+	first := func(db queryer, ctx context.Context, q listQuery) []string {
 		q.lowerCol = true
 		sql, args := q.sql()
-		want, err := owner.Query(context.Background(), sql, args...)
-		require.NoError(t, err, name)
-		got, err := tx.Query(ctx, sql, args...)
-		require.NoError(t, err, name)
-		assert.NotEmpty(t, want, name)
-		assert.Equal(t, want, got, name)
+		rows, err := db.Query(ctx, sql, args...)
+		require.NoError(t, err)
+		var got []string
+		for _, r := range rows {
+			got = append(got, r["name"].(string))
+		}
+		return got
 	}
+	inFolder := listQuery{bucket: "big", match: "p/f200/", limit: 3}
+	assert.Equal(t, []string{"p/f200/x0.secret", "p/f200/x1.txt", "p/f200/x10.txt"}, first(owner, context.Background(), inFolder))
+	assert.Equal(t, []string{"p/f200/x1.txt", "p/f200/x10.txt", "p/f200/x100.txt"}, first(tx, ctx, inFolder), "denied rows are skipped, not returned")
+	top := listQuery{bucket: "big", match: "p/", fold: true, foldFrom: 2, desc: true, limit: 1}
+	assert.Equal(t, []string{"p/zz/"}, first(owner, context.Background(), top))
+	assert.Equal(t, []string{"p/top5.txt"}, first(tx, ctx, top), "a folder holding only denied rows is absent")
 }
 
 func TestStorageList_V1KeepsNamesThatDifferOnlyByCase(t *testing.T) {

@@ -15,7 +15,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Fixed
 
-- Storage listing under RLS regressed on the Postgres minor releases of November 2026 (14.25, 15.20, 16.16, 17.12): the list walk read most of a bucket instead of seeking by index. It is bounded again on all supported versions.
+- Storage listing under RLS is bounded again on Postgres 14.25, 15.20, 16.16 and 17.12.
 
 ## [0.0.14] - 2026-11-07
 
