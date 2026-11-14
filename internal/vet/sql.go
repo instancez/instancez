@@ -209,9 +209,8 @@ func isWordByte(b byte) bool {
 	return b == '_' || b == '$' || b == '.' || b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= 0x80
 }
 
-// sqlWords lists the words of mask with their paren and CASE nesting depth.
-func sqlWords(mask string) []sqlTok {
-	var toks []sqlTok
+// eachWord calls fn for each word of mask with its paren and CASE nesting depth.
+func eachWord(mask string, fn func(sqlTok)) {
 	depth := 0
 	for i := 0; i < len(mask); {
 		switch {
@@ -230,7 +229,7 @@ func sqlWords(mask string) []sqlTok {
 			if w == "end" {
 				depth--
 			}
-			toks = append(toks, sqlTok{w, i, j, depth})
+			fn(sqlTok{w, i, j, depth})
 			if w == "case" {
 				depth++
 			}
@@ -239,26 +238,40 @@ func sqlWords(mask string) []sqlTok {
 			i++
 		}
 	}
+}
+
+// sqlWords lists the words of mask with their paren and CASE nesting depth.
+func sqlWords(mask string) []sqlTok {
+	var toks []sqlTok
+	eachWord(mask, func(t sqlTok) { toks = append(toks, t) })
 	return toks
 }
 
 // splitTop splits expr on keyword kw outside parentheses, CASE blocks, strings, quoted identifiers and comments.
 func splitTop(expr, kw string) []string {
-	expr, mask := scanSQL(stripOuterParens(expr))
+	clean, mask := scanSQL(expr)
+	lo, hi := outerSpan(mask)
+	clean, mask = clean[lo:hi], mask[lo:hi]
 	start := 0
 	var parts []string
-	for _, t := range sqlWords(mask) {
+	eachWord(mask, func(t sqlTok) {
 		if t.depth == 0 && t.word == kw {
-			parts = append(parts, expr[start:t.start])
+			parts = append(parts, clean[start:t.start])
 			start = t.end
 		}
-	}
-	return append(parts, expr[start:])
+	})
+	return append(parts, clean[start:])
 }
 
 // stripOuterParens removes parentheses that wrap the whole expression.
 func stripOuterParens(expr string) string {
 	clean, mask := scanSQL(expr)
+	lo, hi := outerSpan(mask)
+	return strings.TrimSpace(clean[lo:hi])
+}
+
+// outerSpan returns the half-open span of mask left after peeling parentheses that wrap all of it.
+func outerSpan(mask string) (lo, hi int) {
 	match := make([]int, len(mask))
 	var stack []int
 	for i := 0; i < len(mask); i++ {
@@ -272,7 +285,7 @@ func stripOuterParens(expr string) string {
 			}
 		}
 	}
-	lo, hi := 0, len(mask)-1
+	lo, hi = 0, len(mask)-1
 	for {
 		for lo < hi && strings.ContainsRune(" \t\r\n", rune(mask[lo])) {
 			lo++
@@ -286,9 +299,9 @@ func stripOuterParens(expr string) string {
 		lo, hi = lo+1, hi-1
 	}
 	if lo > hi {
-		return ""
+		return 0, 0
 	}
-	return strings.TrimSpace(clean[lo : hi+1])
+	return lo, hi + 1
 }
 
 // caseArms returns the WHEN conditions, their results and the ELSE result when expr is one searched CASE.
