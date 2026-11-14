@@ -200,3 +200,22 @@ func TestUploadSiteArchive_StalledServerTimesOut(t *testing.T) {
 	assert.Less(t, time.Since(start), 5*time.Second)
 	assert.NotContains(t, err.Error(), "SECRET")
 }
+
+func TestUploadSiteArchive_RejectionEchoingURLIsDropped(t *testing.T) {
+	for name, body := range map[string]string{
+		"plain": "bad request for /up?token=SECRET",
+		"json":  `{"error":"cannot use /up?token=SECRET"}`,
+		"token": "token SECRET is invalid",
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := srvClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(403)
+				_, _ = w.Write([]byte(body))
+			})
+			_, err := c.UploadSiteArchive(c.BaseURL+"/up?token=SECRET", strings.NewReader("x"), 1)
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), "SECRET")
+			assert.Contains(t, err.Error(), "(403): Forbidden")
+		})
+	}
+}

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"errors"
-	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -11,7 +10,7 @@ const frontendMovedMsg = `inz cloud frontend deploy was removed. It was per-proj
 
   inz cloud site deploy <dist-dir> --site <id|slug>
 
-Find the site id and slug with ` + "`inz cloud site list`" + ` (or the Sites page in the console).`
+Find the site id and slug with ` + "`inz cloud site list`" + ` (or the Sites page in the console)`
 
 // newFrontendCmd keeps the removed command as a hidden stub that explains the
 // replacement and exits non-zero. Unknown flags are tolerated so old
@@ -31,7 +30,7 @@ func newFrontendCmd() *cobra.Command {
 		FParseErrWhitelist: cobra.FParseErrWhitelist{UnknownFlags: true},
 		SilenceUsage:       true,
 		RunE: func(*cobra.Command, []string) error {
-			return errors.New(strings.TrimSpace(frontendMovedMsg))
+			return errors.New(frontendMovedMsg)
 		},
 	})
 	return cmd

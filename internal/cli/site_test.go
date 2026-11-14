@@ -446,3 +446,37 @@ func TestSiteListCmd(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 	assert.Contains(t, out.String(), "No sites")
 }
+
+func TestRunSiteDeploy_UnreadableIgnoreFileFailsBeforeMint(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, cloud.Save(cloud.Credentials{PAT: "tok"}))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/instancez/sites" {
+			_, _ = w.Write([]byte(`{"sites":[{"Id":"s1","Slug":"blog"}]}`))
+			return
+		}
+		t.Errorf("unexpected %s", r.URL.Path)
+	}))
+	defer srv.Close()
+	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
+
+	dist := t.TempDir()
+	write(t, dist, "index.html", "x")
+	require.NoError(t, os.Mkdir(filepath.Join(dist, ".instancezignore"), 0o755))
+	err := runSiteDeploy(io.Discard, dist, "blog")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), ".instancezignore")
+}
+
+func TestBuildSiteArchive_PermissionDeniedIgnoreFile(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can read chmod 000 files")
+	}
+	dist := t.TempDir()
+	write(t, dist, "index.html", "x")
+	write(t, dist, ".instancezignore", "*.map\n")
+	require.NoError(t, os.Chmod(filepath.Join(dist, ".instancezignore"), 0))
+	_, err := build(t, dist, testLimits)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "read .instancezignore")
+}

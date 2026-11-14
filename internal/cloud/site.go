@@ -150,7 +150,7 @@ func (c *Client) UploadSiteArchive(uploadURL string, body io.Reader, size int64)
 		if json.Unmarshal(raw, &env) == nil && env.Error != "" {
 			msg = env.Error
 		}
-		if msg == "" {
+		if msg == "" || leaksUploadURL(msg, uploadURL) {
 			msg = http.StatusText(resp.StatusCode)
 		}
 		return nil, fmt.Errorf("upload rejected (%d): %s", resp.StatusCode, msg)
@@ -176,4 +176,22 @@ func redactURL(err error) error {
 		return ue.Err
 	}
 	return err
+}
+
+func leaksUploadURL(msg, uploadURL string) bool {
+	if strings.Contains(msg, uploadURL) {
+		return true
+	}
+	u, err := url.Parse(uploadURL)
+	if err != nil {
+		return false
+	}
+	for _, vs := range u.Query() {
+		for _, v := range vs {
+			if v != "" && strings.Contains(msg, v) {
+				return true
+			}
+		}
+	}
+	return false
 }

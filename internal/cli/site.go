@@ -144,8 +144,11 @@ func validateIgnorePattern(p string) error {
 func loadIgnore(dir string) (ignoreRules, error) {
 	r := ignoreRules{patterns: []string{".git/", "node_modules/", ".DS_Store", ignoreFile}}
 	b, err := os.ReadFile(filepath.Join(dir, ignoreFile))
-	if err != nil {
+	if errors.Is(err, fs.ErrNotExist) {
 		return r, nil
+	}
+	if err != nil {
+		return r, fmt.Errorf("read %s: %w", ignoreFile, err)
 	}
 	for i, l := range strings.Split(string(b), "\n") {
 		if l = strings.TrimSpace(l); l == "" || strings.HasPrefix(l, "#") {
