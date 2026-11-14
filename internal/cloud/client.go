@@ -26,6 +26,8 @@ type Client struct {
 	// sole org.
 	Org              string
 	MaxResponseBytes int64 // 0 = unlimited
+	// UploadTimeout bounds a whole site archive upload; 0 uses DefaultUploadTimeout.
+	UploadTimeout time.Duration
 }
 
 // NewClient returns a client with sane defaults.
@@ -195,14 +197,6 @@ func (c *Client) ValidateConfigCloud(yamlContent string) (problems, dropped []Pr
 		return nil, nil, err
 	}
 	return out.Problems, out.Dropped, nil
-}
-
-// UploadFrontend deploys an externally-built static bundle as the project's frontend.
-// files is path-keyed with base64 contents relative to the bundle root, e.g. "index.html".
-// The cloud validates the bundle, uploads it, and redeploys.
-func (c *Client) UploadFrontend(projectID string, files map[string]string) error {
-	return c.do("POST", "/instancez/projects/"+projectID+"/frontend",
-		map[string]any{"files": files}, nil)
 }
 
 // GetAppResponse mirrors GET /instancez/projects/:id. It carries the project
