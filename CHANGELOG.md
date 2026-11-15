@@ -4,6 +4,8 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [0.0.15] - 2026-11-15
+
 ### Fixed
 
 - Storage listing under RLS no longer scans thousands of rows per step on Postgres 14.25, 15.20, 16.16 and 17.12. Those releases stopped pushing the skip-scan seek condition into the index when its right side called non-leakproof functions, so it ran as a filter after the RLS policy. The next seek key is now computed in the select list.
@@ -17,6 +19,8 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - The storage docs gain "Choosing an upload method" and state the ~4.5MB cap on server-proxied uploads on Instancez Cloud.
 - `gcs://bucket/key` is accepted wherever `s3://` is: `--config`, `--bundle`, `functions_bundle` and `inz bundle --output`. It uses Application Default Credentials; the config version token is the object generation.
 - `gcs` storage provider (`providers.storage.type: gcs`) for Google Cloud Storage. It uses Application Default Credentials only (no HMAC keys); signed URLs go through IAM `signBlob`. Reads `bucket`, `INSTANCEZ_STORAGE_KEY_PREFIX` and optional `INSTANCEZ_GCS_SIGNER_EMAIL`.
+- `inz cloud site deploy [dir] --site <id|slug>` uploads a built directory as tar.gz to an Instancez Cloud static site. The site comes from `--site`, `$INSTANCEZ_SITE` or `./.instancez/site`. `index.html` must be at the root; limits are 5000 files and 100 MiB. `.git`, `node_modules` and `.DS_Store` are skipped, and `.instancezignore` adds `path.Match` patterns (no `**`, `!` or leading `/`).
+- `inz cloud site list` prints each site's id, slug and URL.
 
 ### Changed
 
@@ -436,7 +440,8 @@ First tagged release.
 - Deployment targets: Docker, Docker Compose, Kubernetes (Helm chart), AWS Lambda
 - A `@supabase/supabase-js` wire-compatibility test suite that runs on every commit
 
-[Unreleased]: https://github.com/instancez/instancez/compare/v0.0.14...HEAD
+[Unreleased]: https://github.com/instancez/instancez/compare/v0.0.15...HEAD
+[0.0.15]: https://github.com/instancez/instancez/compare/v0.0.14...v0.0.15
 [0.0.14]: https://github.com/instancez/instancez/compare/v0.0.13...v0.0.14
 [0.0.13]: https://github.com/instancez/instancez/compare/v0.0.12...v0.0.13
 [0.0.12]: https://github.com/instancez/instancez/compare/v0.0.11...v0.0.12
