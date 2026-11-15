@@ -19,6 +19,8 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - The storage docs gain "Choosing an upload method" and state the ~4.5MB cap on server-proxied uploads on Instancez Cloud.
 - `gcs://bucket/key` is accepted wherever `s3://` is: `--config`, `--bundle`, `functions_bundle` and `inz bundle --output`. It uses Application Default Credentials; the config version token is the object generation.
 - `gcs` storage provider (`providers.storage.type: gcs`) for Google Cloud Storage. It uses Application Default Credentials only (no HMAC keys); signed URLs go through IAM `signBlob`. Reads `bucket`, `INSTANCEZ_STORAGE_KEY_PREFIX` and optional `INSTANCEZ_GCS_SIGNER_EMAIL`.
+- `inz cloud site deploy [dir] --site <id|slug>` uploads a built directory as tar.gz to an Instancez Cloud static site. The site comes from `--site`, `$INSTANCEZ_SITE` or `./.instancez/site`. `index.html` must be at the root; limits are 5000 files and 100 MiB. `.git`, `node_modules` and `.DS_Store` are skipped, and `.instancezignore` adds `path.Match` patterns (no `**`, `!` or leading `/`).
+- `inz cloud site list` prints each site's id, slug and URL.
 
 ### Changed
 
