@@ -373,7 +373,7 @@ export function ProvidersPage() {
 
   return (
     <Box pb="20">
-      <VStack pb="8" gap="6" maxW="3xl" align="stretch">
+      <VStack pb="8" gap="6" maxW="3xl" mx="auto" align="stretch">
         <Section
           title="Email Provider"
           icon={Mail}

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { renderWithChakra } from "../test/helpers";
@@ -418,5 +418,20 @@ describe("AuthPage", () => {
     expect(saved.allow_anonymous).toBe(false);
     expect(saved.redirect_urls).toEqual(["https://app.example.com"]);
     expect(saved.jwt_expiry).toBe("30m");
+  });
+});
+
+describe("AuthPage header", () => {
+  it("has no summary line or quick-link nav", () => {
+    renderAuth(makeConfig());
+    expect(screen.queryByTestId("signup-summary")).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "Auth sections" })).toBeNull();
+  });
+
+  it("toggles beside a label show no On/Off word", () => {
+    renderAuth(makeConfig());
+    expect(screen.getAllByRole("switch").length).toBeGreaterThan(0);
+    expect(screen.queryByText("On")).toBeNull();
+    expect(screen.queryByText("Off")).toBeNull();
   });
 });

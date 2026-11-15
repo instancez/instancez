@@ -5,7 +5,7 @@ import { Box, Grid, HStack, Text, VStack } from "@chakra-ui/react";
 import { useConfig, READ_ONLY_MESSAGE } from "../hooks/useConfig";
 import { jsonEqual } from "../lib/jsonEqual";
 import { useDialog } from "../components/Dialog";
-import { DetailToolbar } from "../components/DetailToolbar";
+import { DetailToolbar, DangerZone } from "../components/DetailToolbar";
 import { SaveBar } from "../components/SaveBar";
 import { Toggle } from "../components/Toggle";
 import { CodeEditor } from "../components/CodeEditor";
@@ -161,8 +161,8 @@ export function FunctionDetail() {
   async function deleteFunction() {
     if (!config || !name) return;
     if (
-      !(await dialog.confirm(`Delete function "${name}"?`, {
-        message: "Removes the config entry. The .js file is left on disk.",
+      !(await dialog.confirm("Delete function?", {
+        message: `The "${name}" config entry will be removed; the .js file stays on disk. This can't be undone.`,
         confirmText: name,
       }))
     )
@@ -188,8 +188,8 @@ export function FunctionDetail() {
 
   return (
     <Box pb="20">
-      <DetailToolbar backLabel="Code Functions" onDelete={!isNew ? deleteFunction : undefined} />
-      <VStack pb="8" gap="6" maxW="3xl" align="stretch">
+      <DetailToolbar backLabel="Code Functions" />
+      <VStack pb="8" gap="6" maxW="3xl" mx="auto" align="stretch">
         <Section
           title="Runtime"
           icon={Settings2}
@@ -331,6 +331,17 @@ export function FunctionDetail() {
           </Section>
         )}
       </VStack>
+
+      {!isNew && canWriteConfig && (
+        <Box maxW="3xl" mx="auto">
+          <DangerZone
+            title="Delete this function"
+            description="Removes the config entry; the .js file stays on disk."
+            label="Delete function"
+            onDelete={deleteFunction}
+          />
+        </Box>
+      )}
 
       {canWriteConfig && (
         <SaveBar

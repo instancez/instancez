@@ -7,6 +7,7 @@ import { EmptyState } from "../components/EmptyState";
 import { StatusBadge } from "../components/StatusBadge";
 import { Button, ListRow } from "../components/ui";
 import { useBackend } from "../console/BackendContext";
+import { NAME_HINT, nameError } from "../lib/utils";
 
 export function Rpc() {
   const backend = useBackend();
@@ -22,7 +23,7 @@ export function Rpc() {
   );
 
   async function addFunction() {
-    const name = await dialog.prompt("Function name:");
+    const name = await dialog.prompt("Function name", { message: NAME_HINT, validate: (v) => nameError(v, Object.keys(config!.rpc ?? {}), "function") });
     if (!name?.trim()) return;
     const fnName = name.trim().toLowerCase().replace(/\s+/g, "_");
 
@@ -50,7 +51,7 @@ export function Rpc() {
   const addButton = canWriteConfig ? (
     <Button onClick={addFunction}>
       <Plus size={14} />
-      Add Function
+      Add function
     </Button>
   ) : null;
 
@@ -61,7 +62,7 @@ export function Rpc() {
           <Text fontSize="sm" color="fg.muted">
             {functions.length} SQL function{functions.length !== 1 ? "s" : ""}
           </Text>
-          {addButton}
+          {functions.length > 0 && addButton}
         </HStack>
         {functions.length === 0 ? (
           <EmptyState

@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { Users as UsersIcon, Plus, Check, Minus } from "lucide-react";
+import { Users as UsersIcon, Plus, Check, Minus, ChevronRight, Dices, Search, AlertCircle, RefreshCw } from "lucide-react";
 import { Box, HStack, Text, VStack } from "@chakra-ui/react";
 import { useBackend } from "../console/BackendContext";
 import { useDialog } from "../components/Dialog";
@@ -8,6 +8,7 @@ import { EmptyState } from "../components/EmptyState";
 import { StatusBadge } from "../components/StatusBadge";
 import { Modal } from "../components/Modal";
 import { Button, Field, Input } from "../components/ui";
+import { generatePassword, passwordStrength } from "../lib/password";
 import { Toggle } from "../components/Toggle";
 import type { AdminUser } from "../lib/types";
 
@@ -41,6 +42,16 @@ function UserModal({ user, onClose, onSaved }: UserModalProps) {
   const [banned, setBanned] = useState(isEdit ? isBanned(user!) : false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const strength = passwordStrength(password);
+  const dirty = isEdit
+    ? email !== user!.email || password !== "" || banned !== isBanned(user!)
+    : email !== "" || password !== "" || emailConfirm;
+
+  function fillGenerated() {
+    setPassword(generatePassword());
+    setShowPassword(true);
+  }
 
   async function handleSubmit() {
     setError("");
@@ -81,10 +92,9 @@ function UserModal({ user, onClose, onSaved }: UserModalProps) {
 
   async function handleDelete() {
     if (!user) return;
-    const ok = await dialog.confirm(`Delete user "${user.email}"?`, {
-      message: "This will permanently remove the user and all their sessions.",
+    const ok = await dialog.confirm("Delete user?", {
+      message: `${user.email} and all their sessions will be removed. This can't be undone.`,
       confirmText: user.email,
-      confirmLabel: "Delete user",
     });
     if (!ok) return;
     setSaving(true);
@@ -99,8 +109,20 @@ function UserModal({ user, onClose, onSaved }: UserModalProps) {
   }
 
   return (
-    <Modal open onClose={onClose} title={isEdit ? "Edit user" : "Add user"}>
-      <Modal.Body>
+    <Modal
+      open
+      onClose={onClose}
+      title={isEdit ? "Edit user" : "Add user"}
+      dirty={dirty}
+      busy={saving}
+      error={error}
+      primary={{ label: isEdit ? "Save" : "Create", onClick: handleSubmit, loading: saving }}
+      footerStart={isEdit && (
+        <Button variant="danger-outline" size="sm" onClick={handleDelete} disabled={saving}>
+          Delete user
+        </Button>
+      )}
+    >
         <VStack gap="4" align="stretch">
           <Field label="Email" htmlFor="user-email">
             <Input
@@ -111,21 +133,37 @@ function UserModal({ user, onClose, onSaved }: UserModalProps) {
               placeholder="user@example.com"
             />
           </Field>
-          <Field label={isEdit ? "New password" : "Password"} htmlFor="user-password">
-            <Input
-              id="user-password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder={isEdit ? "Leave blank to keep current" : "Password"}
-            />
+          <Field
+            label={isEdit ? "New password" : "Password"}
+            htmlFor="user-password"
+            hint={strength.label ? <Text as="span" color={strength.level === "short" ? "fg.error" : "fg.muted"}>{strength.label}</Text> : "At least 6 characters"}
+          >
+            <HStack gap="2" w="full">
+              <Input
+                id="user-password"
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={isEdit ? "Leave blank to keep current" : "Password"}
+                autoComplete="new-password"
+              />
+              <Button variant="outline" onClick={fillGenerated}>
+                <Dices size={14} />
+                Generate
+              </Button>
+            </HStack>
           </Field>
           {!isEdit && (
-            <Toggle
-              checked={emailConfirm}
-              onChange={setEmailConfirm}
-              label="Confirm email automatically"
-            />
+            <VStack gap="1" align="stretch">
+              <Toggle
+                checked={emailConfirm}
+                onChange={setEmailConfirm}
+                label="Confirm email automatically"
+              />
+              <Text fontSize="xs" color="fg.muted" pl="12">
+                Off: the user must confirm their email before signing in, if verification is on.
+              </Text>
+            </VStack>
           )}
           {isEdit && (
             <Toggle
@@ -134,28 +172,7 @@ function UserModal({ user, onClose, onSaved }: UserModalProps) {
               label="Banned"
             />
           )}
-          {error && (
-            <Text fontSize="xs" color="fg.error">
-              {error}
-            </Text>
-          )}
         </VStack>
-      </Modal.Body>
-      <Modal.Footer>
-        {isEdit && (
-          <Box flex="1">
-            <Button variant="danger-ghost" size="sm" onClick={handleDelete} disabled={saving}>
-              Delete
-            </Button>
-          </Box>
-        )}
-        <Button variant="ghost" onClick={onClose} disabled={saving}>
-          Cancel
-        </Button>
-        <Button onClick={handleSubmit} loading={saving}>
-          {isEdit ? "Save" : "Create user"}
-        </Button>
-      </Modal.Footer>
     </Modal>
   );
 }
@@ -169,6 +186,7 @@ export function UsersPage() {
   const [loadError, setLoadError] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<AdminUser | null>(null);
+  const [query, setQuery] = useState("");
 
   const perPage = 50;
 
@@ -212,35 +230,65 @@ export function UsersPage() {
     load(page);
   }
 
+  const searchable = users.length > 10;
+  const q = searchable ? query.trim().toLowerCase() : "";
+  const shown = q ? users.filter((u) => u.email.toLowerCase().includes(q)) : users;
+  const addButton = (
+    <Button onClick={openCreate}>
+      <Plus size={14} />
+      Add user
+    </Button>
+  );
+
   return (
     <Box pb="20">
       <HStack justify="space-between" gap="4" pb="6">
         <Text fontSize="sm" color="fg.muted">
           {loading ? "Loading…" : `${total} user${total !== 1 ? "s" : ""}`}
         </Text>
-        <Button onClick={openCreate}>
-          <Plus size={14} />
-          Add user
-        </Button>
+        {total > 0 && addButton}
       </HStack>
 
       {loadError && (
-        <Text fontSize="sm" color="fg.error" pb="4">
-          {loadError}
-        </Text>
+        <HStack role="alert" gap="3" mb="4" px="4" py="3" borderWidth="1px" borderColor="border.error" borderRadius="lg" fontSize="sm" color="fg.error">
+          <Box as={AlertCircle} boxSize="4" flexShrink="0" />
+          <Text flex="1">{loadError}</Text>
+          <Button variant="outline" size="sm" onClick={() => void load(page)}>
+            <RefreshCw size={13} />
+            Retry
+          </Button>
+        </HStack>
       )}
 
-      {loading && <ListSkeleton rows={6} />}
+      {loading && users.length === 0 && <ListSkeleton rows={6} />}
 
       {!loading && users.length === 0 && !loadError && (
         <EmptyState
           icon={UsersIcon}
           title="No users yet"
           description="Create your first user to get started."
+          action={addButton}
         />
       )}
 
-      {users.length > 0 && (
+      {searchable && (
+        <Box position="relative" maxW="sm" pb="4">
+          <Box as={Search} position="absolute" left="3" top="2.5" boxSize="3.5" color="fg.muted" pointerEvents="none" />
+          <Input
+            aria-label="Search users"
+            placeholder="Search by email"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            style={{ paddingLeft: "2rem" }}
+          />
+        </Box>
+      )}
+
+      {q && shown.length === 0 && (
+        <Text fontSize="sm" color="fg.muted" pb="4">No users on this page match "{query.trim()}".</Text>
+      )}
+
+      {shown.length > 0 && (
         <VStack gap="0" align="stretch" borderWidth="1px" borderRadius="xl" overflow="hidden">
           <HStack
             px="4"
@@ -261,10 +309,15 @@ export function UsersPage() {
             <Text w="20" textAlign="center">
               Status
             </Text>
+            <Box w="4" />
           </HStack>
-          {users.map((user) => (
+          {shown.map((user) => (
             <HStack
               key={user.id}
+              role="button"
+              tabIndex={0}
+              aria-label={`Edit ${user.email}`}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openEdit(user); } }}
               px="4"
               py="3"
               borderBottomWidth="1px"
@@ -294,6 +347,7 @@ export function UsersPage() {
               <Box w="20" display="flex" justifyContent="center">
                 {isBanned(user) && <StatusBadge variant="error">Banned</StatusBadge>}
               </Box>
+              <Box as={ChevronRight} boxSize="4" color="fg.muted" flexShrink="0" />
             </HStack>
           ))}
         </VStack>

@@ -1,16 +1,17 @@
 import { useNavigate } from "react-router-dom";
-import { Plus, Table2 } from "lucide-react";
-import { Box, HStack, Text, VStack } from "@chakra-ui/react";
+import { Plus, Table2, Trash2 } from "lucide-react";
+import { Box, HStack, IconButton, Text, VStack } from "@chakra-ui/react";
 import { useConfig } from "../hooks/useConfig";
 import { useDialog } from "../components/Dialog";
 import { EmptyState } from "../components/EmptyState";
 import { StatusBadge } from "../components/StatusBadge";
 import { Button, ListRow } from "../components/ui";
 import { useBackend } from "../console/BackendContext";
+import { NAME_HINT, nameError } from "../lib/utils";
 
 export function Tables() {
   const backend = useBackend();
-  const { config } = useConfig();
+  const { config, save } = useConfig();
   const navigate = useNavigate();
   const dialog = useDialog();
   const canWriteConfig = backend.capabilities.canWriteConfig;
@@ -22,13 +23,9 @@ export function Tables() {
   );
 
   async function addTable() {
-    const name = await dialog.prompt("Table name:");
+    const name = await dialog.prompt("Table name", { message: NAME_HINT, validate: (v) => nameError(v, Object.keys(config!.tables ?? {}), "table") });
     if (!name?.trim()) return;
     const tableName = name.trim().toLowerCase().replace(/\s+/g, "_");
-    if (config!.tables?.[tableName]) {
-      await dialog.confirm(`Table "${tableName}" already exists.`, { confirmText: "OK" });
-      return;
-    }
     const seed = {
       fields: [
         { name: "id", type: "bigserial", primary_key: true },
@@ -41,10 +38,16 @@ export function Tables() {
     navigate("new", { relative: "path", state: { tableName, seed } });
   }
 
+  async function deleteTable(name: string) {
+    if (!(await dialog.confirm("Delete table?", { message: `"${name}" and all its data will be dropped. This can't be undone.`, confirmText: name }))) return;
+    const { [name]: _, ...rest } = config!.tables;
+    await save({ ...config!, tables: rest });
+  }
+
   const addButton = canWriteConfig ? (
     <Button onClick={addTable}>
       <Plus size={14} />
-      Add Table
+      Add table
     </Button>
   ) : null;
 
@@ -55,7 +58,7 @@ export function Tables() {
           <Text fontSize="sm" color="fg.muted">
             {tables.length} table{tables.length !== 1 ? "s" : ""} defined
           </Text>
-          {addButton}
+          {tables.length > 0 && addButton}
         </HStack>
         {tables.length === 0 ? (
           <EmptyState
@@ -77,6 +80,11 @@ export function Tables() {
                   icon={Table2}
                   title={name}
                   onClick={() => navigate(name, { relative: "path" })}
+                  action={canWriteConfig ? (
+                    <IconButton aria-label={`Delete table ${name}`} size="sm" variant="ghost" onClick={() => deleteTable(name)}>
+                      <Trash2 size={14} />
+                    </IconButton>
+                  ) : undefined}
                   badges={
                     <>
                       <StatusBadge variant="muted">

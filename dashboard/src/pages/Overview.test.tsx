@@ -88,7 +88,24 @@ describe("Overview", () => {
     expect(screen.getAllByText("Tables").length).toBeGreaterThan(0);
     expect(screen.getByText("table")).toBeInTheDocument();
     expect(screen.getByText("bucket")).toBeInTheDocument();
-    expect(screen.getByText("Enabled")).toBeInTheDocument();
+    expect(screen.getByText("sign-in method")).toBeInTheDocument();
+  });
+
+  it("shows real auth settings instead of a static Enabled label", () => {
+    renderOverview({
+      ...baseConfig,
+      auth: { ...baseConfig.auth!, allow_signup: false, jwt_expiry: "1h", email: { verify_email: true, templates: {} } },
+    });
+    expect(screen.queryByText("Enabled")).not.toBeInTheDocument();
+    expect(screen.getByText("Public sign-up").nextSibling).toHaveTextContent("Off");
+    expect(screen.getByText("Email confirmation").nextSibling).toHaveTextContent("On");
+    expect(screen.getByText("1h")).toBeInTheDocument();
+  });
+
+  it("falls back to email-only sign-in when auth is missing", () => {
+    renderOverview({ ...baseConfig, auth: null as never });
+    expect(screen.getByText("sign-in method")).toBeInTheDocument();
+    expect(screen.queryByText("No sign-in methods")).not.toBeInTheDocument();
   });
 
   it("does not show status badges", async () => {

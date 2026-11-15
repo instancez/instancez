@@ -136,7 +136,7 @@ export function Input({ mono = false, inputSize = "md", ...rest }: InputProps) {
 
 /* ── Select ─────────────────────────────────────────────────────────────── */
 
-interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
+interface SelectProps extends React.ComponentPropsWithRef<"select"> {
   mono?: boolean;
   inputSize?: "sm" | "md";
 }
@@ -217,36 +217,37 @@ interface ListRowProps {
   meta?: ReactNode;
   badges?: ReactNode;
   onClick?: () => void;
+  /** Trailing control (e.g. a delete button), kept outside the row button. */
+  action?: ReactNode;
 }
 
-export function ListRow({ icon: Icon, title, meta, badges, onClick }: ListRowProps) {
+export function ListRow({ icon: Icon, title, meta, badges, onClick, action }: ListRowProps) {
   const bg = useSurfaceBg();
   return (
-    <Box
-      as="button"
-      onClick={onClick}
-      w="full"
-      display="flex"
-      alignItems="center"
-      justifyContent="space-between"
-      gap="3"
-      px="5"
-      py="3.5"
-      borderRadius="xl"
-      borderWidth="1px"
-      bg={bg}
-      _hover={{ bg: "bg.subtle" }}
-      transition="colors"
-      cursor="pointer"
-      textAlign="left"
-    >
-      <HStack gap="3" minW="0">
-        <Box as={Icon} boxSize="4" color="fg.muted" flexShrink="0" />
-        <Text fontSize="sm" fontFamily="mono" fontWeight="medium" color="fg" truncate>{title}</Text>
-        {meta && <Text fontSize="xs" color="fg.muted" truncate>{meta}</Text>}
-      </HStack>
-      {badges && <HStack gap="2" flexShrink="0">{badges}</HStack>}
-    </Box>
+    <HStack gap="1" pr={action ? "3" : "0"} borderRadius="xl" borderWidth="1px" bg={bg} _hover={{ bg: "bg.subtle" }} transition="colors">
+      <Box
+        as="button"
+        onClick={onClick}
+        flex="1"
+        minW="0"
+        display="flex"
+        alignItems="center"
+        justifyContent="space-between"
+        gap="3"
+        px="5"
+        py="3.5"
+        cursor="pointer"
+        textAlign="left"
+      >
+        <HStack gap="3" minW="0">
+          <Box as={Icon} boxSize="4" color="fg.muted" flexShrink="0" />
+          <Text fontSize="sm" fontFamily="mono" fontWeight="medium" color="fg" truncate>{title}</Text>
+          {meta && <Text fontSize="xs" color="fg.muted" truncate>{meta}</Text>}
+        </HStack>
+        {badges && <HStack gap="2" flexShrink="0">{badges}</HStack>}
+      </Box>
+      {action}
+    </HStack>
   );
 }
 
