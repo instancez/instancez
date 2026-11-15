@@ -136,7 +136,7 @@ export function Input({ mono = false, inputSize = "md", ...rest }: InputProps) {
 
 /* ── Select ─────────────────────────────────────────────────────────────── */
 
-interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
+interface SelectProps extends React.ComponentPropsWithRef<"select"> {
   mono?: boolean;
   inputSize?: "sm" | "md";
 }

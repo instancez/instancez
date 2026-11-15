@@ -188,6 +188,7 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
           )}
           {dialog.type === "select" && (
             <Select
+              ref={selectRef}
               aria-label={dialog.title}
               value={selectValue}
               onChange={(e) => setSelectValue((e.target as HTMLSelectElement).value)}

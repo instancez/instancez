@@ -170,6 +170,20 @@ describe("DialogProvider regressions", () => {
     expect(screen.getByRole("dialog", { name: "Table name" })).toBeInTheDocument();
   });
 
+  it("focuses the select when a prompt is replaced by a select dialog", async () => {
+    let dlg!: ReturnType<typeof useDialog>;
+    function Grab() {
+      dlg = useDialog();
+      return null;
+    }
+    renderWithChakra(<DialogProvider><Grab /></DialogProvider>);
+    act(() => void dlg.prompt("Name"));
+    await screen.findByRole("textbox");
+    act(() => void dlg.select("Pick", ["a", "b"]));
+    const select = await screen.findByRole("combobox");
+    await waitFor(() => expect(select).toHaveFocus());
+  });
+
   it("a non-destructive confirm with confirmText is not locked", async () => {
     const onResult = await openDialog((d) => d.confirm("Continue?", { destructive: false, confirmText: "go", confirmLabel: "Continue" }));
     await userEvent.click(screen.getByRole("button", { name: "Continue" }));
