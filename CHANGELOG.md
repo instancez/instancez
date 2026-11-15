@@ -22,6 +22,13 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - `inz cloud site deploy [dir] --site <id|slug>` uploads a built directory as tar.gz to an Instancez Cloud static site. The site comes from `--site`, `$INSTANCEZ_SITE` or `./.instancez/site`. `index.html` must be at the root; limits are 5000 files and 100 MiB. `.git`, `node_modules` and `.DS_Store` are skipped, and `.instancezignore` adds `path.Match` patterns (no `**`, `!` or leading `/`).
 - `inz cloud site list` prints each site's id, slug and URL.
 
+### Fixed
+
+- `inz vet` no longer fails open on policy expressions nested past 32 levels: they now raise `policy-unanalyzable`.
+- `inz vet` finds always-true policies through nested `OR`/`AND`/`NOT`, and for select policies too.
+- `inz vet` treats the legacy `current_setting('request.jwt.claim.sub')` and `request.jwt.claims` idioms as caller identity.
+- `inz vet` treats `(select auth.uid()) IS NOT NULL` and `auth.jwt() IS NOT NULL` as sign-in checks, not owner scoping, and an rpc that only checks `auth.role()` no longer counts as an identity check.
+
 ### Changed
 
 - Breaking, `inz cloud frontend deploy` is removed; it prints a migration message and exits non-zero. Use `inz cloud site deploy [dir] --site <id|slug>`, which uploads the directory as tar.gz to a static site (site from `--site`, `$INSTANCEZ_SITE` or `./.instancez/site`; `.instancezignore` supported). `inz cloud site list` shows site ids and slugs.

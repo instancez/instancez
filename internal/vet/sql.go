@@ -1,6 +1,7 @@
 package vet
 
 import (
+	"regexp"
 	"slices"
 	"strings"
 	"unicode"
@@ -12,8 +13,8 @@ func squash(expr string) string {
 	return strings.ToLower(strings.Join(strings.Fields(expr), ""))
 }
 
-// isLiteralTrue reports whether expr is a constant-true predicate such as `( TRUE )` or `1=1`.
-func isLiteralTrue(expr string) bool {
+// literalBool folds constants such as `( TRUE )`, `1=1` and `0=1`; ok is false for anything else.
+func literalBool(expr string) (v, ok bool) {
 	s := squash(expr)
 	for prev := ""; prev != s; {
 		prev = s
@@ -22,22 +23,123 @@ func isLiteralTrue(expr string) bool {
 			s = s[1 : len(s)-1]
 		}
 	}
-	return s == "true" || s == "1=1"
+	switch s {
+	case "true", "1=1":
+		return true, true
+	case "false", "0=1", "1=0":
+		return false, true
+	}
+	return false, false
 }
 
-// refsIdentity reports whether expr ties access to the caller's identity.
+var (
+	signInGate  = regexp.MustCompile(`(^|[(]|and|or|not|select|return|where|when|then|else)(?:\(select)?auth\.(?:uid|jwt|email)\(\)\)?isnotnull`)
+	settingCall = regexp.MustCompile(`(?i)\bcurrent_setting\s*\(\s*'`)
+	claimName   = regexp.MustCompile(`^request\.jwt\.(claims|claim\.(sub|email))'`)
+	serviceRole = regexp.MustCompile(`(?:\(select)?auth\.role\(\)\)?='service_role'|'service_role'=(?:\(select)?auth\.role\(\)`)
+)
+
+// refsIdentity reports whether expr ties access to the caller's identity; a bare IS NOT NULL sign-in check does not.
 func refsIdentity(expr string) bool {
-	s := squash(expr)
-	return strings.Contains(s, "auth.uid(") || strings.Contains(s, "auth.jwt(") || strings.Contains(s, "auth.email(")
+	clean, mask := scanSQL(expr)
+	s := signInGate.ReplaceAllString(squash(mask), "$1")
+	if strings.Contains(s, "auth.uid(") || strings.Contains(s, "auth.jwt(") || strings.Contains(s, "auth.email(") {
+		return true
+	}
+	for _, loc := range settingCall.FindAllStringIndex(mask, -1) {
+		if claimName.MatchString(strings.ToLower(clean[loc[1]:])) {
+			return true
+		}
+	}
+	return false
+}
+
+// refsCaller reports whether expr checks the caller's identity or equals the service role.
+func refsCaller(expr string) bool {
+	clean, _ := scanSQL(expr)
+	return refsIdentity(expr) || serviceRole.MatchString(squash(clean))
 }
 
 // isAuthGateOnly reports whether expr only checks that someone is signed in, with no identity scoping.
 func isAuthGateOnly(expr string) bool {
-	s := strings.ReplaceAll(squash(expr), "auth.uid()isnotnull", "auth.is_authenticated()")
-	if refsIdentity(s) {
+	if refsIdentity(expr) {
 		return false
 	}
-	return strings.Contains(s, "auth.is_authenticated(") || strings.Contains(s, "auth.role(")
+	_, mask := scanSQL(expr)
+	s := squash(mask)
+	return strings.Contains(s, "auth.is_authenticated(") || strings.Contains(s, "auth.role(") || signInGate.MatchString(s)
+}
+
+// constBool folds expr to a constant through nested AND, OR, NOT and parentheses; ok is false when it is not constant.
+func (c *ctx) constBool(expr string, depth int) (v, ok bool) {
+	if depth > maxGateDepth || depth == 0 && tooDeep(expr) {
+		c.deep = true
+		return false, false
+	}
+	e := stripOuterParens(expr)
+	if strings.TrimSpace(e) == "" {
+		return false, false
+	}
+	next := func(x string) (bool, bool) { return c.constBool(x, depth+1) }
+	if parts := splitTop(e, "or"); len(parts) > 1 {
+		allFalse := true
+		for _, p := range parts {
+			pv, pok := next(p)
+			if pok && pv {
+				return true, true
+			}
+			allFalse = allFalse && pok
+		}
+		return false, allFalse
+	}
+	if parts := splitTop(e, "and"); len(parts) > 1 && !hasTopWord(e, "between") {
+		allTrue := true
+		for _, p := range parts {
+			pv, pok := next(p)
+			if pok && !pv {
+				return false, true
+			}
+			allTrue = allTrue && pok
+		}
+		return allTrue, allTrue
+	}
+	if v, ok := literalBool(e); ok {
+		return v, true
+	}
+	_, mask := scanSQL(e)
+	if toks := sqlWords(mask); len(toks) > 0 && toks[0].word == "not" && toks[0].start == 0 {
+		if rv, rok := next(e[toks[0].end:]); rok {
+			return !rv, true
+		}
+	}
+	return false, false
+}
+
+// tooDeep reports whether expr nests parentheses or CASE blocks past the analysis cap, ignoring parentheses that wrap it whole.
+func tooDeep(expr string) bool {
+	_, mask := scanSQL(expr)
+	lo, hi := outerSpan(mask)
+	mask = mask[lo:hi]
+	depth, deepest := 0, 0
+	for i := 0; i < len(mask); i++ {
+		switch mask[i] {
+		case '(':
+			depth++
+			deepest = max(deepest, depth)
+		case ')':
+			depth--
+		}
+	}
+	eachWord(mask, func(t sqlTok) { deepest = max(deepest, t.depth) })
+	return deepest > maxGateDepth
+}
+
+// hasTopWord reports whether kw appears in expr outside parentheses, CASE blocks, strings and comments.
+func hasTopWord(expr, kw string) bool {
+	_, mask := scanSQL(stripOuterParens(expr))
+	found := false
+	eachWord(mask, func(t sqlTok) { found = found || t.depth == 0 && t.word == kw })
+	return found
 }
 
 // exprsFor returns the expressions that gate op under policy p.
@@ -134,9 +236,8 @@ func isWordByte(b byte) bool {
 	return b == '_' || b == '$' || b == '.' || b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= 0x80
 }
 
-// sqlWords lists the words of mask with their paren and CASE nesting depth.
-func sqlWords(mask string) []sqlTok {
-	var toks []sqlTok
+// eachWord calls fn for each word of mask with its paren and CASE nesting depth.
+func eachWord(mask string, fn func(sqlTok)) {
 	depth := 0
 	for i := 0; i < len(mask); {
 		switch {
@@ -155,7 +256,7 @@ func sqlWords(mask string) []sqlTok {
 			if w == "end" {
 				depth--
 			}
-			toks = append(toks, sqlTok{w, i, j, depth})
+			fn(sqlTok{w, i, j, depth})
 			if w == "case" {
 				depth++
 			}
@@ -164,26 +265,40 @@ func sqlWords(mask string) []sqlTok {
 			i++
 		}
 	}
+}
+
+// sqlWords lists the words of mask with their paren and CASE nesting depth.
+func sqlWords(mask string) []sqlTok {
+	var toks []sqlTok
+	eachWord(mask, func(t sqlTok) { toks = append(toks, t) })
 	return toks
 }
 
 // splitTop splits expr on keyword kw outside parentheses, CASE blocks, strings, quoted identifiers and comments.
 func splitTop(expr, kw string) []string {
-	expr, mask := scanSQL(stripOuterParens(expr))
+	clean, mask := scanSQL(expr)
+	lo, hi := outerSpan(mask)
+	clean, mask = clean[lo:hi], mask[lo:hi]
 	start := 0
 	var parts []string
-	for _, t := range sqlWords(mask) {
+	eachWord(mask, func(t sqlTok) {
 		if t.depth == 0 && t.word == kw {
-			parts = append(parts, expr[start:t.start])
+			parts = append(parts, clean[start:t.start])
 			start = t.end
 		}
-	}
-	return append(parts, expr[start:])
+	})
+	return append(parts, clean[start:])
 }
 
 // stripOuterParens removes parentheses that wrap the whole expression.
 func stripOuterParens(expr string) string {
 	clean, mask := scanSQL(expr)
+	lo, hi := outerSpan(mask)
+	return strings.TrimSpace(clean[lo:hi])
+}
+
+// outerSpan returns the half-open span of mask left after peeling parentheses that wrap all of it.
+func outerSpan(mask string) (lo, hi int) {
 	match := make([]int, len(mask))
 	var stack []int
 	for i := 0; i < len(mask); i++ {
@@ -197,7 +312,7 @@ func stripOuterParens(expr string) string {
 			}
 		}
 	}
-	lo, hi := 0, len(mask)-1
+	lo, hi = 0, len(mask)-1
 	for {
 		for lo < hi && strings.ContainsRune(" \t\r\n", rune(mask[lo])) {
 			lo++
@@ -211,9 +326,9 @@ func stripOuterParens(expr string) string {
 		lo, hi = lo+1, hi-1
 	}
 	if lo > hi {
-		return ""
+		return 0, 0
 	}
-	return strings.TrimSpace(clean[lo : hi+1])
+	return lo, hi + 1
 }
 
 // caseArms returns the WHEN conditions, their results and the ELSE result when expr is one searched CASE.
