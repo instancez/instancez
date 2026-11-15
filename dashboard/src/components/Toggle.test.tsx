@@ -19,10 +19,16 @@ describe("Toggle", () => {
     expect(screen.getByText("Off")).toBeInTheDocument();
   });
 
-  it("labelled toggle always shows the state and the label toggles it", async () => {
+  it("hideState drops the On/Off word on a bare toggle", () => {
+    renderWithChakra(<Toggle aria-label="x" hideState checked onChange={vi.fn()} />);
+    expect(screen.getByRole("switch", { name: "x" })).toBeChecked();
+    expect(screen.queryByText("On")).toBeNull();
+  });
+
+  it("labelled toggle hides the state and the label toggles it", async () => {
     const onChange = vi.fn();
     renderWithChakra(<Toggle label="Banned" checked={false} onChange={onChange} />);
-    expect(screen.getByText("Off")).toBeInTheDocument();
+    expect(screen.queryByText("Off")).toBeNull();
     await userEvent.click(screen.getByText("Banned"));
     expect(onChange).toHaveBeenCalledWith(true);
   });

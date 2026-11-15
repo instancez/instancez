@@ -351,7 +351,7 @@ describe("UsersPage UX", () => {
     renderUsersPage(makeBackend());
     await screen.findByText("No users yet");
     fireEvent.click(screen.getByRole("button", { name: /add user/i }));
-    expect(screen.getByText(/sign in right away/i)).toBeInTheDocument();
+    expect(screen.getByText(/click the emailed link/i)).toBeInTheDocument();
   });
 
   it("a typed-in modal survives a backdrop click; an untouched one closes", async () => {

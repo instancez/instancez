@@ -8,6 +8,8 @@ type ToggleProps = {
   label?: React.ReactNode;
   "aria-label"?: string;
   disabled?: boolean;
+  /** Hide the On/Off word on an unlabelled switch whose row already has a label beside it. */
+  hideState?: boolean;
 };
 
 function StateText({ on }: { on: boolean }) {
@@ -46,13 +48,13 @@ function SwitchWidget({
   );
 }
 
-/** Boolean switch with a visible On/Off word; pass `label` for the clickable text row, else `aria-label`. */
-export function Toggle({ checked, onChange, label, disabled, "aria-label": ariaLabel }: ToggleProps) {
+/** Boolean switch; shows On/Off only when unlabelled. Pass `label` for the clickable text row, else `aria-label`. */
+export function Toggle({ checked, onChange, label, disabled, hideState, "aria-label": ariaLabel }: ToggleProps) {
   if (label == null) {
     return (
       <HStack gap="2">
         <SwitchWidget checked={checked} onChange={onChange} disabled={disabled} ariaLabel={ariaLabel} />
-        <StateText on={checked} />
+        {!hideState && <StateText on={checked} />}
       </HStack>
     );
   }
@@ -60,7 +62,6 @@ export function Toggle({ checked, onChange, label, disabled, "aria-label": ariaL
     <HStack gap="3" fontSize="sm" color="fg" cursor={disabled ? "not-allowed" : "pointer"}>
       <SwitchWidget checked={checked} onChange={onChange} disabled={disabled} />
       <Text onClick={() => !disabled && onChange(!checked)}>{label}</Text>
-      <StateText on={checked} />
     </HStack>
   );
 }

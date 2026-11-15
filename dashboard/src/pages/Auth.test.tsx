@@ -3,7 +3,7 @@ import { render, screen, waitFor, fireEvent, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { renderWithChakra } from "../test/helpers";
-import { AuthPage, signupSummary } from "./Auth";
+import { AuthPage } from "./Auth";
 import { DialogProvider } from "../components/Dialog";
 import { ConfigContext } from "../hooks/useConfig";
 import type { Config, ValidationError } from "../lib/types";
@@ -421,46 +421,17 @@ describe("AuthPage", () => {
   });
 });
 
-describe("AuthPage summary and section nav", () => {
-  it("summarises defaults: sign-up on, anonymous off, confirmation off", () => {
+describe("AuthPage header", () => {
+  it("has no summary line or quick-link nav", () => {
     renderAuth(makeConfig());
-    expect(screen.getByTestId("signup-summary")).toHaveTextContent("Public sign-up on, anonymous sign-in off, email confirmation off");
+    expect(screen.queryByTestId("signup-summary")).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "Auth sections" })).toBeNull();
   });
 
-  it("updates live when a switch is flipped", async () => {
+  it("toggles beside a label show no On/Off word", () => {
     renderAuth(makeConfig());
-    await userEvent.click(screen.getByRole("switch", { name: "Allow public sign-up" }));
-    expect(screen.getByTestId("signup-summary")).toHaveTextContent("Public sign-up off, anonymous sign-in off, email confirmation off");
-    await userEvent.click(screen.getByRole("switch", { name: "Require email verification" }));
-    expect(screen.getByTestId("signup-summary")).toHaveTextContent("email confirmation on");
-  });
-
-  it("signupSummary reports anonymous as off while sign-up is off, even if the flag is set", () => {
-    const auth = { ...makeConfig().auth!, allow_signup: false, allow_anonymous: true };
-    expect(signupSummary(auth)).toBe("Public sign-up off, anonymous sign-in off, email confirmation off");
-  });
-
-  it("signupSummary tolerates a missing email block", () => {
-    const auth = { ...makeConfig().auth!, email: undefined } as unknown as Parameters<typeof signupSummary>[0];
-    expect(signupSummary(auth)).toContain("email confirmation off");
-  });
-
-  it("section nav scrolls to Email templates", async () => {
-    renderAuth(makeConfig());
-    const target = document.getElementById("auth-templates")!;
-    expect(target).not.toBeNull();
-    const scroll = vi.fn();
-    target.scrollIntoView = scroll;
-    await userEvent.click(within(screen.getByRole("navigation", { name: "Auth sections" })).getByRole("button", { name: "Email templates" }));
-    expect(scroll).toHaveBeenCalledOnce();
-  });
-
-  it("every nav entry has a matching section anchor", () => {
-    renderAuth(makeConfig());
-    const nav = within(screen.getByRole("navigation", { name: "Auth sections" }));
-    expect(nav.getAllByRole("button")).toHaveLength(5);
-    for (const id of ["auth-jwt", "auth-signup", "auth-redirects", "auth-templates", "auth-oauth"]) {
-      expect(document.getElementById(id)).not.toBeNull();
-    }
+    expect(screen.getAllByRole("switch").length).toBeGreaterThan(0);
+    expect(screen.queryByText("On")).toBeNull();
+    expect(screen.queryByText("Off")).toBeNull();
   });
 });

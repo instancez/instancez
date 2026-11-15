@@ -50,11 +50,11 @@ function SeverityBadge({ severity }: { severity: string }) {
 const MUTED = "gray.400";
 
 const SEVERITY_MEANING: Record<VetSeverity, string> = {
-  critical: "Data is exposed or can be taken over now",
-  high: "Likely exploitable, fix soon",
-  medium: "Weakens protection, worth fixing",
-  low: "Minor hardening",
-  info: "For awareness, no action needed",
+  critical: "Exposed now",
+  high: "Fix soon",
+  medium: "Worth fixing",
+  low: "Minor",
+  info: "FYI",
 };
 
 const TARGET = /^tables\.([^.[\]]+)(?:\.rls\[\d+\])?/;
@@ -75,20 +75,6 @@ function GoToTable({ path }: { path: string }) {
         <ArrowRight size={14} />
       </HStack>
     </Link>
-  );
-}
-
-function SeverityLegend() {
-  return (
-    <HStack as="ul" gap="4" flexWrap="wrap" mb="4" fontSize="xs" color="fg.muted" aria-label="Severity legend" style={{ listStyle: "none" }}>
-      {SEVERITIES.map((s) => (
-        <HStack as="li" key={s} gap="1.5">
-          <Dot color={`${PALETTE[s]}.solid`} />
-          <Text as="span" fontWeight="semibold" color="fg">{s}</Text>
-          <Text as="span">{SEVERITY_MEANING[s]}</Text>
-        </HStack>
-      ))}
-    </HStack>
   );
 }
 
@@ -253,6 +239,16 @@ function Banner({ report, findings, counts, active, onFilter }: {
             <Flex ml="auto" align="center" gap="2" fontSize="sm" color={MUTED}><Dot color="green.solid" />{checks.passed} passed</Flex>
           )}
         </Flex>
+        {total > 0 && (
+          <HStack as="ul" gap="4" flexWrap="wrap" fontSize="xs" color={MUTED} aria-label="Severity legend" style={{ listStyle: "none" }}>
+            {SEVERITIES.map((s) => (
+              <HStack as="li" key={s} gap="1.5">
+                <Dot color={`${PALETTE[s]}.solid`} />
+                <Text as="span">{s}: {SEVERITY_MEANING[s]}</Text>
+              </HStack>
+            ))}
+          </HStack>
+        )}
       </VStack>
     </Flex>
   );
@@ -386,7 +382,6 @@ export function SecurityPage() {
           <Button variant="ghost" size="xs" onClick={() => { setParams({}); }}><X size={12} />Show all</Button>
         </HStack>
       )}
-      {report && !error && findings.length > 0 && <SeverityLegend />}
       {report && !error && <Banner report={report} findings={findings} counts={counts} active={active} onFilter={(s) => { setFilter(s); setSelKey(null); }} />}
       {body}
     </Box>

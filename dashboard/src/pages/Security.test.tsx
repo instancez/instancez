@@ -490,6 +490,7 @@ describe("SecurityPage navigation and legend", () => {
     renderPage(async () => report([rlsFinding]));
     const legend = await screen.findByLabelText("Severity legend");
     for (const sev of ["critical", "high", "medium", "low", "info"]) expect(legend).toHaveTextContent(sev);
+    expect(legend).toHaveTextContent("critical: Exposed now");
   });
 
   it("filters to one table via ?table= and can clear the filter", async () => {

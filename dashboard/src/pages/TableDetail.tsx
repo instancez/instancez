@@ -5,7 +5,7 @@ import { Plus, Trash2, GripVertical, ListTree, ShieldAlert, ShieldCheck } from "
 import { useConfig } from "../hooks/useConfig";
 import { jsonEqual } from "../lib/jsonEqual";
 import { useDialog } from "../components/Dialog";
-import { DetailToolbar, DangerZone } from "../components/DetailToolbar";
+import { DetailToolbar } from "../components/DetailToolbar";
 import { SaveBar } from "../components/SaveBar";
 import { EmptyState } from "../components/EmptyState";
 import { ListSkeleton } from "../components/Skeletons";
@@ -66,15 +66,6 @@ export function TableDetail() {
     };
     const ok = await save(updated);
     if (ok && isNew) navigate(`../${effectiveName}`, { relative: "path", replace: true });
-  }
-
-  async function deleteTable() {
-    if (!config || !name) return;
-    if (!(await dialog.confirm("Delete table?", { message: `"${name}" and all its data will be dropped. This can't be undone.`, confirmText: name }))) return;
-    const { [name]: _, ...rest } = config.tables;
-    const updated = { ...config, tables: rest };
-    const ok = await save(updated);
-    if (ok) navigate("..", { relative: "path" });
   }
 
   if (config && !table && (isNew ? !!newState?.seed : !!(name && config.tables[name]))) {
@@ -249,7 +240,7 @@ export function TableDetail() {
               <EmptyState
                 icon={ListTree}
                 title="No indexes"
-                description="Indexes speed up lookups on columns you filter or sort by. Primary keys and unique fields are already indexed."
+                description="Indexes speed up filters and sorts. Primary keys are already indexed."
                 action={canWriteConfig ? addIndexButton : undefined}
               />
             )}
@@ -343,8 +334,8 @@ export function TableDetail() {
                 icon={ShieldCheck}
                 title="No policies"
                 description={table.rls_enabled
-                  ? "RLS is on with no policies, so anon and authenticated users are denied all access. Add a policy to open access."
-                  : "Add a policy to control who can read or change rows in this table."}
+                  ? "RLS is on with no policies, so all access is denied. Add one to open access."
+                  : "Add a policy to control who can read or change rows."}
                 action={canWriteConfig ? addPolicyButton : undefined}
               />
             )}
@@ -375,15 +366,6 @@ export function TableDetail() {
 
         </Tabs.Root>
       </Box>
-
-      {canWriteConfig && !isNew && (
-        <DangerZone
-          title="Delete this table"
-          description="Drops the table and all its data."
-          label="Delete table"
-          onDelete={deleteTable}
-        />
-      )}
 
       {canWriteConfig && (
         <SaveBar

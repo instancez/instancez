@@ -54,40 +54,12 @@ function mount(url: string, canWriteConfig = true) {
   return save;
 }
 
-describe("TableDetail danger zone", () => {
-  it("no delete button in the toolbar; delete lives in the danger zone", async () => {
+describe("TableDetail delete", () => {
+  it("has no delete control; deleting lives in the tables list", async () => {
     mount("/tables/todos?tab=fields");
-    expect(await screen.findAllByRole("button", { name: /delete table/i })).toHaveLength(1);
-    expect(screen.getByText("Delete this table")).toBeInTheDocument();
-  });
-
-  it("requires typing the exact table name before deleting", async () => {
-    const save = mount("/tables/todos?tab=fields");
-    await userEvent.click(await screen.findByRole("button", { name: /delete table/i }));
-    expect(await screen.findByText("Delete table?")).toBeInTheDocument();
-    const del = screen.getByRole("button", { name: "Delete" });
-    expect(del).toBeDisabled();
-    await userEvent.type(screen.getByRole("textbox"), "todo");
-    expect(del).toBeDisabled();
-    await userEvent.type(screen.getByRole("textbox"), "s");
-    await userEvent.click(del);
-    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
-    expect(save.mock.calls[0]![0].tables).not.toHaveProperty("todos");
-    expect(save.mock.calls[0]![0].tables).toHaveProperty("notes");
-  });
-
-  it("cancel and Escape delete nothing", async () => {
-    const save = mount("/tables/todos?tab=fields");
-    await userEvent.click(await screen.findByRole("button", { name: /delete table/i }));
-    await userEvent.keyboard("{Escape}");
-    await waitFor(() => expect(screen.queryByText("Delete table?")).toBeNull());
-    expect(save).not.toHaveBeenCalled();
-  });
-
-  it("is hidden for read-only backends", async () => {
-    mount("/tables/todos?tab=fields", false);
     await screen.findByText("Fields", { selector: "button" });
     expect(screen.queryByRole("button", { name: /delete table/i })).toBeNull();
+    expect(screen.queryByText("Delete this table")).toBeNull();
   });
 });
 
@@ -112,7 +84,7 @@ describe("TableDetail indexes and RLS empty states", () => {
   it("empty indexes shows an explanation and a single Add index button", async () => {
     mount("/tables/todos?tab=indexes");
     expect(await screen.findByText("No indexes")).toBeInTheDocument();
-    expect(screen.getByText(/speed up lookups/i)).toBeInTheDocument();
+    expect(screen.getByText(/speed up filters and sorts/i)).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /add index/i })).toHaveLength(1);
     await userEvent.click(screen.getByRole("button", { name: /add index/i }));
     expect(await screen.findByLabelText("Delete index")).toBeInTheDocument();
@@ -135,7 +107,7 @@ describe("TableDetail indexes and RLS empty states", () => {
   it("RLS tab with zero policies explains deny-all and offers one Add button", async () => {
     mount("/tables/todos?tab=rls");
     expect(await screen.findByText("No policies")).toBeInTheDocument();
-    expect(screen.getByText(/denied all access/i)).toBeInTheDocument();
+    expect(screen.getByText(/all access is denied/i)).toBeInTheDocument();
     expect(screen.getByText(/0 policies/)).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /add rls policy/i })).toHaveLength(1);
   });

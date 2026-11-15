@@ -11,7 +11,6 @@ import { CopyButton } from "../components/ApiKeys";
 import { useBackend } from "../console/BackendContext";
 import { envRefName } from "../lib/envRef";
 import { isValidRedirectOrigin } from "../lib/redirectOrigin";
-import { authOverview } from "../lib/authOverview";
 import { jsonEqual } from "../lib/jsonEqual";
 import type { Auth } from "../lib/types";
 
@@ -128,25 +127,6 @@ const DEFAULT_AUTH: Auth = {
   email: { verify_email: false, templates: {} },
   oauth: {},
 };
-
-const SECTION_NAV = [
-  { id: "auth-jwt", label: "JWT" },
-  { id: "auth-signup", label: "Sign-up" },
-  { id: "auth-redirects", label: "Redirect URLs" },
-  { id: "auth-templates", label: "Email templates" },
-  { id: "auth-oauth", label: "OAuth providers" },
-] as const;
-
-/** One-line status of the three sign-up switches, as the server will apply them. */
-export function signupSummary(auth: Auth): string {
-  const { signup, anonymous, verifyEmail } = authOverview(auth);
-  const state = (v: boolean) => (v ? "on" : "off");
-  return `Public sign-up ${state(signup)}, anonymous sign-in ${state(anonymous)}, email confirmation ${state(verifyEmail)}`;
-}
-
-function scrollToSection(id: string) {
-  document.getElementById(id)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
-}
 
 export function AuthPage() {
   const backend = useBackend();
@@ -301,17 +281,7 @@ export function AuthPage() {
       <VStack pb="8" gap="6" maxW="3xl" mx="auto" align="stretch">
         {auth && (
           <>
-            <VStack gap="2" align="stretch">
-              <Text fontSize="sm" color="fg.muted" data-testid="signup-summary">{signupSummary(auth)}</Text>
-              <HStack as="nav" aria-label="Auth sections" gap="1" flexWrap="wrap">
-                {SECTION_NAV.map(({ id, label }) => (
-                  <Button key={id} variant="ghost" size="sm" onClick={() => scrollToSection(id)}>
-                    {label}
-                  </Button>
-                ))}
-              </HStack>
-            </VStack>
-            <Box id="auth-jwt" scrollMarginTop="4">
+            <Box>
             <Section
               title="JWT Settings"
               icon={KeySquare}
@@ -337,17 +307,18 @@ export function AuthPage() {
             </Section>
             </Box>
 
-            <Box id="auth-signup" scrollMarginTop="4">
+            <Box>
             <Section title="Sign-up & verification" icon={UserPlus}>
               <VStack gap="4" align="stretch">
                 <HStack justify="space-between" gap="3">
                   <VStack gap="0.5" align="start">
                     <Text fontSize="sm" color="fg">Allow public sign-up</Text>
                     <Text fontSize="xs" color="fg.muted">
-                      Let anyone create an account via email/password. Turn off to invite-only.
+                      Anyone can create an account. Off means invite-only.
                     </Text>
                   </VStack>
                   <Toggle
+                    hideState
                     aria-label="Allow public sign-up"
                     checked={auth.allow_signup ?? true}
                     onChange={(v) => updateAuth((a) => ({ ...a, allow_signup: v }))}
@@ -358,11 +329,12 @@ export function AuthPage() {
                     <Text fontSize="sm" color="fg">Allow anonymous sign-in</Text>
                     <Text fontSize="xs" color="fg.muted">
                       {(auth.allow_signup ?? true)
-                        ? "Issue a session to users with no email/password yet."
-                        : "Blocked while public sign-up is off."}
+                        ? "Sign in without an email or password."
+                        : "Needs public sign-up."}
                     </Text>
                   </VStack>
                   <Toggle
+                    hideState
                     aria-label="Allow anonymous sign-in"
                     checked={auth.allow_anonymous ?? false}
                     disabled={!(auth.allow_signup ?? true)}
@@ -373,10 +345,11 @@ export function AuthPage() {
                   <VStack gap="0.5" align="start">
                     <Text fontSize="sm" color="fg">Require email verification</Text>
                     <Text fontSize="xs" color="fg.muted">
-                      Users must confirm their email address before their account becomes active.
+                      Users confirm their email before signing in.
                     </Text>
                   </VStack>
                   <Toggle
+                    hideState
                     aria-label="Require email verification"
                     checked={auth.email?.verify_email || false}
                     onChange={(v) =>
@@ -394,14 +367,11 @@ export function AuthPage() {
             </Section>
             </Box>
 
-            <Box id="auth-redirects" scrollMarginTop="4">
+            <Box>
             <Section title="Redirect URLs" icon={Link2}>
               <VStack gap="3" align="stretch">
                 <Text fontSize="xs" color="fg.muted">
-                  Origins your app may be redirected to after OAuth and email flows. The
-                  server's own origin and relative paths are always allowed, so add external
-                  origins only (e.g. a separate front-end host). Checked here in the browser
-                  only.
+                  External origins your app can redirect to after OAuth and email flows. The server's own origin is always allowed.
                 </Text>
                 {(auth.redirect_urls ?? []).map((url, i) => {
                   const invalid = url.trim() !== "" && !isValidRedirectOrigin(url.trim());
@@ -447,7 +417,7 @@ export function AuthPage() {
             </Section>
             </Box>
 
-            <Box id="auth-templates" scrollMarginTop="4">
+            <Box>
             <Section title="Email Templates" icon={Mails}>
               <VStack gap="4" align="stretch">
                 {EMAIL_TEMPLATES.map((kind) => {
@@ -505,7 +475,7 @@ export function AuthPage() {
             </Section>
             </Box>
 
-            <Box id="auth-oauth" scrollMarginTop="4">
+            <Box>
             <Section
               title="OAuth Providers"
               icon={Plug2}
@@ -524,6 +494,7 @@ export function AuthPage() {
                           <Text textTransform="capitalize">{provider}</Text>
                         </HStack>
                         <Toggle
+                          hideState
                           aria-label={`Enable ${provider}`}
                           checked={isEnabled}
                           onChange={() => toggleOAuth(provider, isEnabled)}

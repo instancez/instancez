@@ -57,7 +57,7 @@ export const RLS_OPERATIONS = [
   "delete",
 ] as const;
 
-export const NAME_HINT = "Lowercase letters, digits and underscores. Start with a letter. Max 63 characters.";
+export const NAME_HINT = "Lowercase letters, digits, underscores. Start with a letter. Max 63.";
 
 /** Returns an inline error for an invalid or duplicate resource name, or null when it is fine. */
 export function nameError(name: string, existing: string[], kind: string): string | null {

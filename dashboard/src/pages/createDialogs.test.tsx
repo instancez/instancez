@@ -63,7 +63,7 @@ describe.each(cases)("create $kind dialog", ({ Page, button, label, existing }) 
     mount(<Page />);
     await userEvent.click(await screen.findByRole("button", { name: button }));
     expect(screen.getByRole("textbox")).toHaveFocus();
-    expect(screen.getByText(/lowercase letters, digits and underscores/i)).toBeInTheDocument();
+    expect(screen.getByText(/lowercase letters, digits, underscores/i)).toBeInTheDocument();
     const create = screen.getByRole("button", { name: "Create" });
     expect(create).toBeDisabled();
 

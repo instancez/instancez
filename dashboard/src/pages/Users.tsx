@@ -149,7 +149,7 @@ function UserModal({ user, onClose, onSaved }: UserModalProps) {
                 label="Confirm email automatically"
               />
               <Text fontSize="xs" color="fg.muted" pl="12">
-                On: the user can sign in right away. Off: they must click the confirmation link sent to their email first.
+                Off: the user must click the emailed link first.
               </Text>
             </VStack>
           )}

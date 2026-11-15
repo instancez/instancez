@@ -10,7 +10,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Added
 
-- Dashboard UX pass: dialogs close on Escape and when their page unmounts, destructive deletes sit in a danger zone with typed-name confirm for tables and buckets, create dialogs validate names inline, empty states and loading skeletons are consistent, the RLS and Indexes tabs are clearer, Users gets search, a password generator and a row affordance, and Auth and Security gain a status summary, section nav and per-finding links.
+- Dashboard UX pass: dialogs close on Escape and when their page unmounts, table deletes move to the tables list and other deletes sit in a danger zone, both with typed-name confirm, create dialogs validate names inline, empty states and loading skeletons are consistent, the RLS and Indexes tabs are clearer, Users gets search, a password generator and a row affordance, and Security gains a severity legend and per-finding links.
 - The Overview Auth card shows sign-in methods, public sign-up, email confirmation and access token expiry instead of a static "Enabled".
 - `POST /storage/<bucket>/sign` accepts an optional `path` to name the object instead of a random id. It uses the `/storage/v1` key rules plus no leading slash, empty segments or keys over 1024 bytes (400), runs the `insert` policy against the real path, returns 409 for an existing object (or replaces it with `x-upsert: true`), and responds with `{id, path, upload_url}`. Without `path` nothing changes.
 - `GET` and `DELETE /storage/<bucket>/<id>` accept ids with slashes, so objects created with a nested `path` can be downloaded and deleted.

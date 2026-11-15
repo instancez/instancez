@@ -1,6 +1,6 @@
 import { useNavigate } from "react-router-dom";
-import { Plus, Table2 } from "lucide-react";
-import { Box, HStack, Text, VStack } from "@chakra-ui/react";
+import { Plus, Table2, Trash2 } from "lucide-react";
+import { Box, HStack, IconButton, Text, VStack } from "@chakra-ui/react";
 import { useConfig } from "../hooks/useConfig";
 import { useDialog } from "../components/Dialog";
 import { EmptyState } from "../components/EmptyState";
@@ -11,7 +11,7 @@ import { NAME_HINT, nameError } from "../lib/utils";
 
 export function Tables() {
   const backend = useBackend();
-  const { config } = useConfig();
+  const { config, save } = useConfig();
   const navigate = useNavigate();
   const dialog = useDialog();
   const canWriteConfig = backend.capabilities.canWriteConfig;
@@ -36,6 +36,12 @@ export function Tables() {
       rls: [],
     };
     navigate("new", { relative: "path", state: { tableName, seed } });
+  }
+
+  async function deleteTable(name: string) {
+    if (!(await dialog.confirm("Delete table?", { message: `"${name}" and all its data will be dropped. This can't be undone.`, confirmText: name }))) return;
+    const { [name]: _, ...rest } = config!.tables;
+    await save({ ...config!, tables: rest });
   }
 
   const addButton = canWriteConfig ? (
@@ -74,6 +80,11 @@ export function Tables() {
                   icon={Table2}
                   title={name}
                   onClick={() => navigate(name, { relative: "path" })}
+                  action={canWriteConfig ? (
+                    <IconButton aria-label={`Delete table ${name}`} size="sm" variant="ghost" onClick={() => deleteTable(name)}>
+                      <Trash2 size={14} />
+                    </IconButton>
+                  ) : undefined}
                   badges={
                     <>
                       <StatusBadge variant="muted">
