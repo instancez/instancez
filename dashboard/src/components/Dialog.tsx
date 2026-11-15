@@ -78,17 +78,19 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
         setInputValue(state.defaultValue || "");
         setConfirmInput("");
         setSelectValue(state.options?.[0] || "");
-        setDialog({ ...state, owner, resolve });
+        const next = { ...state, owner, resolve };
+        current.current = next;
+        setDialog(next);
       }),
     []
   );
 
   const dismissOwned = useCallback((owner: symbol) => {
-    setDialog((cur) => {
-      if (cur?.owner !== owner) return cur;
-      cur.resolve(dismissed(cur));
-      return null;
-    });
+    const cur = current.current;
+    if (cur?.owner !== owner) return;
+    cur.resolve(dismissed(cur));
+    current.current = null;
+    setDialog(null);
     setVisible(false);
   }, []);
 
@@ -129,7 +131,7 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
     if (dialog) close(dismissed(dialog));
   }
 
-  const confirmLocked = dialog?.type === "confirm" && dialog.confirmText
+  const confirmLocked = dialog?.type === "confirm" && dialog.destructive && dialog.confirmText
     ? confirmInput !== dialog.confirmText
     : false;
 
@@ -155,7 +157,7 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
             <Box
               role="dialog"
               aria-modal="true"
-              aria-label={dialog.type === "prompt" ? undefined : dialog.title}
+              aria-label={dialog.title}
               position="relative"
               w="full"
               maxW="420px"

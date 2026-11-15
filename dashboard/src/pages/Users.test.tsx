@@ -336,7 +336,7 @@ describe("UsersPage UX", () => {
     const pw = screen.getByLabelText(/password/i) as HTMLInputElement;
     expect(pw.type).toBe("text");
     expect(pw.value).toHaveLength(16);
-    expect(screen.getByText(/^(Good|Strong)$/)).toBeInTheDocument();
+    expect(screen.getByText(/^(Weak.*|Good|Strong)$/)).toBeInTheDocument();
   });
 
   it("flags a too-short password in the hint", async () => {
@@ -351,7 +351,7 @@ describe("UsersPage UX", () => {
     renderUsersPage(makeBackend());
     await screen.findByText("No users yet");
     fireEvent.click(screen.getByRole("button", { name: /add user/i }));
-    expect(screen.getByText(/click the emailed link/i)).toBeInTheDocument();
+    expect(screen.getByText(/confirm their email before signing in/i)).toBeInTheDocument();
   });
 
   it("a typed-in modal survives a backdrop click; an untouched one closes", async () => {

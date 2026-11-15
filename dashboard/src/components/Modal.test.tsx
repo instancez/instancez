@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { useState } from "react";
 import { screen, fireEvent } from "@testing-library/react";
 import { renderWithChakra } from "../test/helpers";
 import { Modal } from "./Modal";
@@ -67,5 +68,29 @@ describe("Modal", () => {
       </Modal>
     );
     expect(screen.getByText("Save")).toBeInTheDocument();
+  });
+
+  it("returns focus to the opener when it closes", () => {
+    function Host() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button onClick={() => setOpen(true)}>opener</button>
+          <Modal open={open} onClose={() => setOpen(false)} title="T"><Modal.Body><input aria-label="f" /></Modal.Body></Modal>
+        </>
+      );
+    }
+    renderWithChakra(<Host />);
+    const opener = screen.getByText("opener");
+    opener.focus();
+    fireEvent.click(opener);
+    expect(screen.getByLabelText("f")).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: /close/i }));
+    expect(opener).toHaveFocus();
+  });
+
+  it("moves focus to a button when there is no field", () => {
+    renderWithChakra(<Modal open onClose={vi.fn()} title="T"><Modal.Body>plain</Modal.Body></Modal>);
+    expect(screen.getByRole("dialog").contains(document.activeElement)).toBe(true);
   });
 });

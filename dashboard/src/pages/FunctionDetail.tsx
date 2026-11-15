@@ -332,7 +332,7 @@ export function FunctionDetail() {
         )}
       </VStack>
 
-      {!isNew && (
+      {!isNew && canWriteConfig && (
         <Box maxW="3xl" mx="auto">
           <DangerZone
             title="Delete this function"

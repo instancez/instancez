@@ -35,7 +35,13 @@ export function Overlay({ onDismiss, dismissOnBackdrop = true, visible = true, c
   }, []);
 
   useEffect(() => {
-    ref.current?.querySelector<HTMLElement>("input:not([readonly]), select, textarea")?.focus();
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const first = ref.current?.querySelector<HTMLElement>("input:not([readonly]), select, textarea")
+      ?? ref.current?.querySelector<HTMLElement>("button, [href], [tabindex]:not([tabindex='-1'])");
+    first?.focus();
+    return () => {
+      if (opener?.isConnected) opener.focus();
+    };
   }, []);
 
   return (

@@ -137,6 +137,46 @@ describe("DialogProvider", () => {
   });
 });
 
+describe("DialogProvider regressions", () => {
+  it("a confirm then prompt in one handler resolves the first as dismissed", async () => {
+    let dlg!: ReturnType<typeof useDialog>;
+    function Grab() { dlg = useDialog(); return null; }
+    renderWithChakra(<DialogProvider><Grab /></DialogProvider>);
+    const first = vi.fn();
+    act(() => { void dlg.confirm("First?").then(first); void dlg.prompt("Second"); });
+    await waitFor(() => expect(first).toHaveBeenCalledWith(false));
+    expect(screen.getByRole("textbox")).toBeInTheDocument();
+  });
+
+  it("another page unmounting leaves an open dialog visible", async () => {
+    let dlg!: ReturnType<typeof useDialog>;
+    function Owner() { dlg = useDialog(); return null; }
+    function Leaver() { useDialog(); return null; }
+    function Shell() {
+      const [show, setShow] = useState(true);
+      return <><button onClick={() => setShow(false)}>drop</button>{show && <Leaver />}<Owner /></>;
+    }
+    renderWithChakra(<DialogProvider><Shell /></DialogProvider>);
+    const result = vi.fn();
+    act(() => { void dlg.confirm("Keep me?").then(result); });
+    await userEvent.click(screen.getByText("drop"));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByText("Keep me?")).toBeInTheDocument();
+    expect(result).not.toHaveBeenCalled();
+  });
+
+  it("prompt dialogs are named by their title", async () => {
+    await openDialog((d) => d.prompt("Table name"));
+    expect(screen.getByRole("dialog", { name: "Table name" })).toBeInTheDocument();
+  });
+
+  it("a non-destructive confirm with confirmText is not locked", async () => {
+    const onResult = await openDialog((d) => d.confirm("Continue?", { destructive: false, confirmText: "go", confirmLabel: "Continue" }));
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => expect(onResult).toHaveBeenCalledWith(true));
+  });
+});
+
 describe("Modal stacking", () => {
   it("Escape closes only the top-most overlay", async () => {
     const onClose = vi.fn();

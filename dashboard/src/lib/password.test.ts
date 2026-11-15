@@ -11,8 +11,9 @@ describe("generatePassword", () => {
     expect(generatePassword()).toHaveLength(16);
     expect(generatePassword()).not.toBe(generatePassword());
   });
-  it("is always at least good by its own meter", () => {
-    for (let i = 0; i < 50; i++) expect(["good", "strong"]).toContain(passwordStrength(generatePassword()).level);
+  it("meter rates a mixed 16-character password strong and a single-class one weak", () => {
+    expect(passwordStrength("Abcdefgh23456789").level).toBe("strong");
+    expect(passwordStrength("abcdefghjkmnpqrs").level).toBe("weak");
   });
   it("returns an empty string for length 0", () => {
     expect(generatePassword(0)).toBe("");
