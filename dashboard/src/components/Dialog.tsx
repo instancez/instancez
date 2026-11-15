@@ -1,8 +1,7 @@
 import { createContext, useContext, useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { X, AlertTriangle, Info, Trash2 } from "lucide-react";
-import { Box, HStack, Input, Text, VStack } from "@chakra-ui/react";
-import { Button, Field, Select } from "./ui";
-import { Overlay } from "./Modal";
+import { Box, Input, Text } from "@chakra-ui/react";
+import { Field, Select } from "./ui";
+import { DialogFrame } from "./DialogFrame";
 
 type DialogType = "prompt" | "confirm" | "alert" | "select";
 
@@ -42,6 +41,13 @@ function makeDialogApi(open: ProviderValue["open"], owner?: symbol): DialogConte
     alert: (title, o) => open({ type: "alert", title, message: o?.message }, owner),
     select: (title, options, extra) => open({ type: "select", title, options, message: extra?.message }, owner),
   };
+}
+
+function primaryLabel(d: DialogState) {
+  if (d.type === "prompt") return "Create";
+  if (d.type === "select") return "Select";
+  if (d.type === "alert") return "OK";
+  return d.confirmLabel || (d.destructive ? "Delete" : "Confirm");
 }
 
 const dismissed = (d: DialogState) => (d.type === "confirm" ? false : null);
@@ -135,6 +141,9 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
     ? confirmInput !== dialog.confirmText
     : false;
 
+  const primaryDisabled =
+    dialog?.type === "prompt" ? !promptValid : dialog?.type === "select" ? !selectValue : confirmLocked;
+
   useEffect(() => {
     if (dialog) {
       requestAnimationFrame(() => setVisible(true));
@@ -153,169 +162,64 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
     <DialogContext.Provider value={value}>
       {children}
       {dialog && (
-        <Overlay onDismiss={handleCancel} dismissOnBackdrop={!promptDirty} visible={visible}>
-            <Box
-              role="dialog"
-              aria-modal="true"
+        <DialogFrame
+          title={dialog.title}
+          description={dialog.message}
+          tone={dialog.type === "confirm" && dialog.destructive ? "danger" : "default"}
+          error={promptError}
+          dirty={promptDirty}
+          visible={visible}
+          onClose={handleCancel}
+          secondary={dialog.type === "alert" ? false : undefined}
+          primary={{ label: primaryLabel(dialog), onClick: handleConfirm, disabled: primaryDisabled }}
+        >
+          {dialog.type === "prompt" && (
+            <Input
+              ref={inputRef}
+              type="text"
               aria-label={dialog.title}
-              position="relative"
-              w="full"
-              maxW="420px"
-              mx="4"
-              borderRadius="2xl"
-              overflow="hidden"
-              borderWidth="1px"
-              borderColor={dialog.type === "confirm" && dialog.destructive ? "red.200" : "border"}
-              bg="bg.panel"
-              boxShadow="lg"
-              opacity={visible ? 1 : 0}
-              transform={visible ? "scale(1) translateY(0)" : "scale(0.95) translateY(8px)"}
-              transition="all 0.2s ease-out"
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleConfirm(); }}
+              aria-invalid={!!promptError}
+              placeholder={dialog.placeholder || "Enter a name…"}
+              size="sm"
+            />
+          )}
+          {dialog.type === "select" && (
+            <Select
+              aria-label={dialog.title}
+              value={selectValue}
+              onChange={(e) => setSelectValue((e.target as HTMLSelectElement).value)}
+              mono
             >
-              {/* Close button */}
-              <Box
-                as="button"
-                onClick={handleCancel}
-                aria-label="Close"
-                position="absolute"
-                top="4"
-                right="4"
-                p="1.5"
-                borderRadius="lg"
-                color="fg.muted"
-                _hover={{ color: "fg", bg: "bg.subtle" }}
-                cursor="pointer"
-                zIndex="1"
-              >
-                <X size={14} />
-              </Box>
-
-              {/* Prompt variant */}
-              {dialog.type === "prompt" && (
-                <>
-                  <Box px="6" pt="6" pb="5">
-                    <VStack gap="3" align="stretch">
-                      <Field label={dialog.title} htmlFor="dialog-input">
-                        <Input
-                          ref={inputRef}
-                          id="dialog-input"
-                          type="text"
-                          value={inputValue}
-                          onChange={(e) => setInputValue(e.target.value)}
-                          onKeyDown={(e) => { if (e.key === "Enter") handleConfirm(); }}
-                          aria-invalid={!!promptError}
-                          placeholder={dialog.placeholder || "Enter a name…"}
-                          size="sm"
-                        />
-                      </Field>
-                      {promptError ? (
-                        <Text role="alert" fontSize="xs" color="fg.error">{promptError}</Text>
-                      ) : (
-                        dialog.message && <Text fontSize="xs" color="fg.muted">{dialog.message}</Text>
-                      )}
-                    </VStack>
-                  </Box>
-                  <HStack justify="flex-end" gap="2.5" px="6" pb="5">
-                    <Button variant="ghost" onClick={handleCancel}>Cancel</Button>
-                    <Button onClick={handleConfirm} disabled={!promptValid}>Create</Button>
-                  </HStack>
-                </>
+              {(dialog.options || []).map((opt) => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))}
+            </Select>
+          )}
+          {dialog.type === "confirm" && dialog.destructive && (
+            <>
+              {dialog.confirmText && (
+                <Field label={<>Type <Box as="span" fontFamily="mono" fontWeight="semibold" color="fg">{dialog.confirmText}</Box> to confirm</>} htmlFor="confirm-input">
+                  <Input
+                    ref={confirmInputRef}
+                    id="confirm-input"
+                    value={confirmInput}
+                    onChange={(e) => setConfirmInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleConfirm(); }}
+                    placeholder={dialog.confirmText}
+                    spellCheck={false}
+                    autoComplete="off"
+                    size="sm"
+                    fontFamily="mono"
+                  />
+                </Field>
               )}
-
-              {/* Select variant */}
-              {dialog.type === "select" && (
-                <>
-                  <Box px="6" pt="6" pb="5">
-                    <VStack gap="3" align="stretch">
-                      <Field label={dialog.title} htmlFor="dialog-select">
-                        <Select
-                          value={selectValue}
-                          onChange={(e) => setSelectValue((e.target as HTMLSelectElement).value)}
-                          mono
-                        >
-                          {(dialog.options || []).map((opt) => (
-                            <option key={opt} value={opt}>{opt}</option>
-                          ))}
-                        </Select>
-                      </Field>
-                      {dialog.message && <Text fontSize="xs" color="fg.muted">{dialog.message}</Text>}
-                    </VStack>
-                  </Box>
-                  <HStack justify="flex-end" gap="2.5" px="6" pb="5">
-                    <Button variant="ghost" onClick={handleCancel}>Cancel</Button>
-                    <Button onClick={handleConfirm} disabled={!selectValue}>Select</Button>
-                  </HStack>
-                </>
-              )}
-
-              {/* Destructive confirm */}
-              {dialog.type === "confirm" && dialog.destructive && (
-                <>
-                  <Box h="1.5" bg="red.500" />
-                  <Box px="6" pt="5" pb="2">
-                    <HStack gap="3.5" align="start">
-                      <Box w="10" h="10" borderRadius="xl" bg="red.50" _dark={{ bg: "red.900/30" }} display="flex" alignItems="center" justifyContent="center" flexShrink="0">
-                        <Box as={Trash2} boxSize="4.5" color="fg.error" />
-                      </Box>
-                      <Box minW="0" pt="0.5" flex="1">
-                        <Text fontSize="md" fontWeight="semibold" color="fg" pr="8">{dialog.title}</Text>
-                        {dialog.message && <Text fontSize="sm" color="fg.muted" mt="1.5">{dialog.message}</Text>}
-                      </Box>
-                    </HStack>
-                  </Box>
-                  {dialog.confirmText && (
-                    <Box px="6" pt="3" pb="1">
-                      <Field label={<>Type <Box as="span" fontFamily="mono" fontWeight="semibold" color="fg">{dialog.confirmText}</Box> to confirm</>} htmlFor="confirm-input">
-                        <Input
-                          ref={confirmInputRef}
-                          id="confirm-input"
-                          value={confirmInput}
-                          onChange={(e) => setConfirmInput(e.target.value)}
-                          onKeyDown={(e) => { if (e.key === "Enter") handleConfirm(); }}
-                          placeholder={dialog.confirmText}
-                          spellCheck={false}
-                          autoComplete="off"
-                          size="sm"
-                          fontFamily="mono"
-                        />
-                      </Field>
-                    </Box>
-                  )}
-                  <Box mx="6" mt="4" px="3.5" py="2.5" borderRadius="lg" bg="red.50" _dark={{ bg: "red.900/20" }} borderWidth="1px" borderColor="red.200">
-                    <HStack gap="2" fontSize="xs" color="fg.error">
-                      <Box as={AlertTriangle} boxSize="3" flexShrink="0" />
-                      This action cannot be undone.
-                    </HStack>
-                  </Box>
-                  <HStack justify="flex-end" gap="2.5" px="6" pt="4" pb="5">
-                    <Button variant="ghost" onClick={handleCancel}>Cancel</Button>
-                    <Button variant="danger" onClick={handleConfirm} disabled={confirmLocked}>{dialog.confirmLabel || "Delete"}</Button>
-                  </HStack>
-                </>
-              )}
-
-              {/* Non-destructive confirm / Alert */}
-              {(dialog.type === "alert" || (dialog.type === "confirm" && !dialog.destructive)) && (
-                <>
-                  <Box px="6" pt="6" pb="2">
-                    <HStack gap="3.5" align="start">
-                      <Box w="10" h="10" borderRadius="xl" bg="blue.50" _dark={{ bg: "blue.900/30" }} display="flex" alignItems="center" justifyContent="center" flexShrink="0">
-                        <Box as={Info} boxSize="4.5" color="blue.600" _dark={{ color: "blue.300" }} />
-                      </Box>
-                      <Box minW="0" pt="0.5">
-                        <Text fontSize="md" fontWeight="semibold" color="fg" pr="8">{dialog.title}</Text>
-                        {dialog.message && <Text fontSize="sm" color="fg.muted" mt="1.5">{dialog.message}</Text>}
-                      </Box>
-                    </HStack>
-                  </Box>
-                  <HStack justify="flex-end" gap="2.5" px="6" pt="4" pb="5">
-                    {dialog.type !== "alert" && <Button variant="ghost" onClick={handleCancel}>Cancel</Button>}
-                    <Button onClick={handleConfirm}>{dialog.type === "alert" ? "OK" : dialog.confirmLabel || "Confirm"}</Button>
-                  </HStack>
-                </>
-              )}
-            </Box>
-        </Overlay>
+              <Text fontSize="sm" color="fg.muted">This action cannot be undone.</Text>
+            </>
+          )}
+        </DialogFrame>
       )}
     </DialogContext.Provider>
   );

@@ -120,7 +120,7 @@ describe("ConfirmSaveDialog", () => {
   });
 
   it("diff pre container uses compact lineHeight 1.5, not sprawling 5", () => {
-    const { container } = renderWithChakra(
+    renderWithChakra(
       <ConfirmSaveDialog
         current={CURRENT}
         proposed={PROPOSED}
@@ -130,7 +130,7 @@ describe("ConfirmSaveDialog", () => {
         onCancel={vi.fn()}
       />
     );
-    const pre = container.querySelector("pre");
+    const pre = document.querySelector("pre");
     expect(pre).not.toBeNull();
     const style = window.getComputedStyle(pre!);
     expect(style.lineHeight).not.toBe("5");

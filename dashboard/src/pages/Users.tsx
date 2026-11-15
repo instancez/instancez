@@ -109,8 +109,20 @@ function UserModal({ user, onClose, onSaved }: UserModalProps) {
   }
 
   return (
-    <Modal open onClose={onClose} title={isEdit ? "Edit user" : "Add user"} dirty={dirty}>
-      <Modal.Body>
+    <Modal
+      open
+      onClose={onClose}
+      title={isEdit ? "Edit user" : "Add user"}
+      dirty={dirty}
+      busy={saving}
+      error={error}
+      primary={{ label: isEdit ? "Save" : "Create", onClick: handleSubmit, loading: saving }}
+      footerStart={isEdit && (
+        <Button variant="danger-outline" size="sm" onClick={handleDelete} disabled={saving}>
+          Delete user
+        </Button>
+      )}
+    >
         <VStack gap="4" align="stretch">
           <Field label="Email" htmlFor="user-email">
             <Input
@@ -160,28 +172,7 @@ function UserModal({ user, onClose, onSaved }: UserModalProps) {
               label="Banned"
             />
           )}
-          {error && (
-            <Text fontSize="xs" color="fg.error">
-              {error}
-            </Text>
-          )}
         </VStack>
-      </Modal.Body>
-      <Modal.Footer>
-        {isEdit && (
-          <Box flex="1">
-            <Button variant="danger-outline" size="sm" onClick={handleDelete} disabled={saving}>
-              Delete user
-            </Button>
-          </Box>
-        )}
-        <Button variant="ghost" onClick={onClose} disabled={saving}>
-          Cancel
-        </Button>
-        <Button onClick={handleSubmit} loading={saving}>
-          {isEdit ? "Save" : "Create"}
-        </Button>
-      </Modal.Footer>
     </Modal>
   );
 }

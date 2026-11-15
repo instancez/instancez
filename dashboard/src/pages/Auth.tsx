@@ -7,7 +7,7 @@ import { CodeEditor } from "../components/CodeEditor";
 import { Toggle } from "../components/Toggle";
 import { Button, Field, Input, Panel, Section } from "../components/ui";
 import { VarRow } from "../components/VarRow";
-import { CopyButton } from "../components/ApiKeys";
+import { CopyButton } from "../components/CopyButton";
 import { useBackend } from "../console/BackendContext";
 import { envRefName } from "../lib/envRef";
 import { isValidRedirectOrigin } from "../lib/redirectOrigin";
@@ -577,7 +577,7 @@ export function AuthPage() {
                               />
                               <CopyButton
                                 value={oauthCallbackBase ? oauthCallbackBase + provider : ""}
-                                label={`Copy ${provider} redirect URL`}
+                                label={`${provider} redirect URL`}
                               />
                             </HStack>
                           </Field>
