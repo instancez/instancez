@@ -10,7 +10,7 @@ func newCloudCmd() *cobra.Command {
 		Use:        "cloud",
 		Short:      "Manage and deploy to instancez Cloud",
 		Long:       "Commands for authenticating with and deploying to instancez Cloud.",
-		SuggestFor: []string{"deploy", "login", "logout", "status", "whoami", "frontend", "site"},
+		SuggestFor: []string{"deploy", "login", "logout", "status", "logs", "whoami", "frontend", "site"},
 	}
 	cmd.AddCommand(
 		newLoginCmd(),
@@ -18,6 +18,7 @@ func newCloudCmd() *cobra.Command {
 		newWhoamiCmd(),
 		newDeployCmd(),
 		newStatusCmd(),
+		newLogsCmd(),
 		newSiteCmd(),
 		newFrontendCmd(),
 	)

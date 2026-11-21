@@ -379,3 +379,46 @@ func TestClientDeviceCode(t *testing.T) {
 	assert.Equal(t, 900, resp.ExpiresIn)
 	assert.Equal(t, 5, resp.Interval)
 }
+
+func TestProjectIDEscapedInPath(t *testing.T) {
+	var raw []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw = append(raw, r.URL.EscapedPath())
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "")
+	id := "a/b?c#d/../e"
+	_, _ = c.GetLogs(id, 5)
+	_, _ = c.GetApp(id)
+	want := []string{"/instancez/projects/a%2Fb%3Fc%23d%2F..%2Fe/logs", "/instancez/projects/a%2Fb%3Fc%23d%2F..%2Fe"}
+	if len(raw) != 2 || raw[0] != want[0] || raw[1] != want[1] {
+		t.Errorf("got %v, want %v", raw, want)
+	}
+}
+
+func TestAPIErrorSanitizesCode(t *testing.T) {
+	e := &APIError{Status: 500, Code: "bad\x1b[2J\nthing"}
+	if got := e.Error(); got != "cloud api: 500 bad[2J thing" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestSanitizeLine(t *testing.T) {
+	cases := map[string]string{
+		"plain":              "plain",
+		"":                   "",
+		"a\tb\nc\r\nd":       "a b c  d",
+		"\x1b[31mred\x1b[0m": "[31mred[0m",
+		"bell\x07\x00nul":    "bellnul",
+		"c1\u009bcsi":        "c1csi",
+		"bidi\u202eevil":          "bidievil",
+		"line sep":           "line sep",
+		"héllo 日本 🚀":         "héllo 日本 🚀",
+	}
+	for in, out := range cases {
+		if got := SanitizeLine(in); got != out {
+			t.Errorf("%q: got %q, want %q", in, got, out)
+		}
+	}
+}

@@ -4,6 +4,10 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Added
+
+- `inz cloud logs` shows recent runtime logs for the linked cloud project (`--minutes`, `--json`).
+
 ## [0.0.15] - 2026-11-15
 
 ### Fixed
