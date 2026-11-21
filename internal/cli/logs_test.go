@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -191,7 +192,7 @@ func TestLogsErrorMapping(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			env := logsSetup(t, func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(tc.status)
-				_, _ = w.Write([]byte(tc.body))
+				_, _ = io.WriteString(w, tc.body)
 			}, true)
 			_, _, err := runLogsCmd(t, "--config", env.cfg)
 			require.Error(t, err)
