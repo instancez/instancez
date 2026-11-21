@@ -4,6 +4,13 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Fixed
+
+- `inz vet` no longer fails open on policy expressions nested past 32 levels: they now raise `policy-unanalyzable`.
+- `inz vet` finds always-true policies through nested `OR`/`AND`/`NOT`, and for select policies too.
+- `inz vet` treats the legacy `current_setting('request.jwt.claim.sub')` and `request.jwt.claims` idioms as caller identity.
+- `inz vet` treats `(select auth.uid()) IS NOT NULL` and `auth.jwt() IS NOT NULL` as sign-in checks, not owner scoping, and an rpc that only checks `auth.role()` no longer counts as an identity check.
+
 ## [0.0.15] - 2026-11-15
 
 ### Fixed
@@ -21,13 +28,6 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 - `gcs` storage provider (`providers.storage.type: gcs`) for Google Cloud Storage. It uses Application Default Credentials only (no HMAC keys); signed URLs go through IAM `signBlob`. Reads `bucket`, `INSTANCEZ_STORAGE_KEY_PREFIX` and optional `INSTANCEZ_GCS_SIGNER_EMAIL`.
 - `inz cloud site deploy [dir] --site <id|slug>` uploads a built directory as tar.gz to an Instancez Cloud static site. The site comes from `--site`, `$INSTANCEZ_SITE` or `./.instancez/site`. `index.html` must be at the root; limits are 5000 files and 100 MiB. `.git`, `node_modules` and `.DS_Store` are skipped, and `.instancezignore` adds `path.Match` patterns (no `**`, `!` or leading `/`).
 - `inz cloud site list` prints each site's id, slug and URL.
-
-### Fixed
-
-- `inz vet` no longer fails open on policy expressions nested past 32 levels: they now raise `policy-unanalyzable`.
-- `inz vet` finds always-true policies through nested `OR`/`AND`/`NOT`, and for select policies too.
-- `inz vet` treats the legacy `current_setting('request.jwt.claim.sub')` and `request.jwt.claims` idioms as caller identity.
-- `inz vet` treats `(select auth.uid()) IS NOT NULL` and `auth.jwt() IS NOT NULL` as sign-in checks, not owner scoping, and an rpc that only checks `auth.role()` no longer counts as an identity check.
 
 ### Changed
 
