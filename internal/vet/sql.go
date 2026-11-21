@@ -33,7 +33,7 @@ func literalBool(expr string) (v, ok bool) {
 }
 
 var (
-	signInGate  = regexp.MustCompile(`(^|[(]|and|or|not|select|return|where|when|then|else)(?:\(select)?auth\.(?:uid|jwt|email)\(\)\)?isnotnull`)
+	signInGate  = regexp.MustCompile(`(^|[(]|and|or|not|select|return|where|when|then|else|if)(?:\(select)?auth\.(?:uid|jwt|email)\(\)\)?isnotnull`)
 	settingCall = regexp.MustCompile(`(?i)\bcurrent_setting\s*\(\s*'`)
 	claimName   = regexp.MustCompile(`^request\.jwt\.(claims|claim\.(sub|email))'`)
 	serviceRole = regexp.MustCompile(`(?:\(select)?auth\.role\(\)\)?='service_role'|'service_role'=(?:\(select)?auth\.role\(\)`)

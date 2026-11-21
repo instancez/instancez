@@ -273,6 +273,7 @@ func TestIdentityRPCPolicies(t *testing.T) {
 		{"identity in comment rpc", "is_admin()", rpcs("select true -- auth.uid()"), []string{"policy-no-identity-write"}},
 		{"service_role in comment rpc", "is_admin()", rpcs("select true -- auth.role() = 'service_role'"), []string{"policy-no-identity-write"}},
 		{"service role list rpc", "is_admin()", rpcs("select auth.role() in ('authenticated', 'service_role')"), []string{"policy-no-identity-write"}},
+		{"plpgsql if uid gate rpc", "is_admin()", rpcs("begin if auth.uid() is not null then return true; else return false; end if; end;"), []string{"policy-no-identity-write"}},
 		{"jwt rpc", "is_admin()", rpcs("select auth.jwt() ->> 'sub' = 'x'"), nil},
 		{"legacy claim rpc", "is_admin()", rpcs("select current_setting('request.jwt.claim.sub', true) = 'x'"), nil},
 		{"service role rpc", "is_admin()", rpcs("select auth.role() = 'service_role'"), nil},

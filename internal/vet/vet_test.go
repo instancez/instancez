@@ -92,8 +92,9 @@ func TestSQLHelpers(t *testing.T) {
 		"CURRENT_SETTING ( 'REQUEST.JWT.CLAIMS' , true ) ->> 'sub' = x":               true,
 		"auth.uid() IS NOT NULL": false, "(select auth.uid()) IS NOT NULL": false, "((select auth.uid()) is not null)": false,
 		"auth.jwt() IS NOT NULL": false, "(select auth.jwt()) is not null": false, "auth.role() = 'authenticated'": false,
-		"CASE WHEN auth.uid() IS NOT NULL THEN true ELSE false END": false,
-		"current_setting('app.tenant') = tenant":                    false, "name = 'auth.uid()'": false, "a = 1 -- auth.uid()": false,
+		"CASE WHEN auth.uid() IS NOT NULL THEN true ELSE false END":                                                              false,
+		"BEGIN IF auth.uid() IS NOT NULL THEN RETURN true; ELSIF (select auth.jwt()) IS NOT NULL THEN RETURN true; END IF; END;": false,
+		"current_setting('app.tenant') = tenant":                                                                                 false, "name = 'auth.uid()'": false, "a = 1 -- auth.uid()": false,
 		"name = 'current_setting(''request.jwt.claim.sub'')'": false, "current_setting('request.jwt.claim.role') = 'x'": false,
 	} {
 		if got := refsIdentity(expr); got != want {
