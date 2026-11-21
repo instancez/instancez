@@ -8,6 +8,13 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 - `inz cloud logs` shows recent runtime logs for the linked cloud project (`--minutes`, `--json`).
 
+### Fixed
+
+- `inz vet` no longer fails open on policy expressions nested past 32 levels: they now raise `policy-unanalyzable`.
+- `inz vet` finds always-true policies through nested `OR`/`AND`/`NOT`, and for select policies too.
+- `inz vet` treats the legacy `current_setting('request.jwt.claim.sub')` and `request.jwt.claims` idioms as caller identity.
+- `inz vet` treats `(select auth.uid()) IS NOT NULL` and `auth.jwt() IS NOT NULL` as sign-in checks, not owner scoping, and an rpc that only checks `auth.role()` no longer counts as an identity check.
+
 ## [0.0.15] - 2026-11-15
 
 ### Fixed
