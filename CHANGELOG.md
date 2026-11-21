@@ -4,6 +4,10 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Added
+
+- `inz cloud logs` shows recent runtime logs for the linked cloud project (`--minutes`, `--json`).
+
 ### Fixed
 
 - `inz vet` no longer fails open on policy expressions nested past 32 levels: they now raise `policy-unanalyzable`.
