@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ComponentProps } from "react";
-import { ShieldAlert, ShieldCheck } from "lucide-react";
+import { ArrowRight, ShieldAlert, ShieldCheck, X } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
 import { Box, chakra, Code, Flex, HStack, Text, VisuallyHidden, VStack } from "@chakra-ui/react";
 import { EmptyState } from "../components/EmptyState";
 import { ListSkeleton } from "../components/Skeletons";
@@ -47,6 +48,35 @@ function SeverityBadge({ severity }: { severity: string }) {
 }
 
 const MUTED = "gray.400";
+
+const SEVERITY_MEANING: Record<VetSeverity, string> = {
+  critical: "Exposed now",
+  high: "Fix soon",
+  medium: "Worth fixing",
+  low: "Minor",
+  info: "FYI",
+};
+
+const TARGET = /^tables\.([^.[\]]+)(?:\.rls\[\d+\])?/;
+
+/** Table name for findings located under tables.<name>, else null. */
+export function findingTable(path: string): string | null {
+  return TARGET.exec(path)?.[1] ?? null;
+}
+
+function GoToTable({ path }: { path: string }) {
+  const table = findingTable(path);
+  if (!table) return null;
+  const tab = path.includes(".rls[") ? "rls" : /\.indexes\[/.test(path) ? "indexes" : "fields";
+  return (
+    <Link to={`/tables/${encodeURIComponent(table)}?tab=${tab}`}>
+      <HStack as="span" gap="1.5" fontSize="sm" fontWeight="medium" color="fg" textDecoration="underline">
+        Go to {TARGET.exec(path)![0].slice(7)}
+        <ArrowRight size={14} />
+      </HStack>
+    </Link>
+  );
+}
 
 function Mono(props: ComponentProps<typeof Code>) {
   return <Code fontSize="xs" px="2" py="1" borderRadius="md" bg="bg.muted" color="fg" wordBreak="break-all" {...props} />;
@@ -104,6 +134,7 @@ function FindingDetail({ finding, onFix, busy }: { finding: VetFinding; onFix?: 
           {finding.line > 0 && <Text fontSize="xs" color="fg.muted" fontFamily="mono">line {finding.line}</Text>}
         </HStack>
       )}
+      <GoToTable path={finding.path} />
       {finding.fix && (
         <VStack align="stretch" gap="2" p="4" borderRadius="lg" bg="green.subtle" borderWidth="1px" borderColor="green.muted">
           <Text fontSize="xs" fontWeight="bold" letterSpacing="0.04em" color="green.fg">HOW TO FIX</Text>
@@ -208,6 +239,16 @@ function Banner({ report, findings, counts, active, onFilter }: {
             <Flex ml="auto" align="center" gap="2" fontSize="sm" color={MUTED}><Dot color="green.solid" />{checks.passed} passed</Flex>
           )}
         </Flex>
+        {total > 0 && (
+          <HStack as="ul" gap="4" flexWrap="wrap" fontSize="xs" color={MUTED} aria-label="Severity legend" style={{ listStyle: "none" }}>
+            {SEVERITIES.map((s) => (
+              <HStack as="li" key={s} gap="1.5">
+                <Dot color={`${PALETTE[s]}.solid`} />
+                <Text as="span">{s}: {SEVERITY_MEANING[s]}</Text>
+              </HStack>
+            ))}
+          </HStack>
+        )}
       </VStack>
     </Flex>
   );
@@ -269,7 +310,10 @@ export function SecurityPage() {
     }
   }
 
-  const findings = report?.findings ?? [];
+  const [params, setParams] = useSearchParams();
+  const tableFilter = params.get("table");
+  const allFindings = report?.findings ?? [];
+  const findings = tableFilter ? allFindings.filter((f) => findingTable(f.path) === tableFilter) : allFindings;
   const counts = Object.fromEntries(SEVERITIES.map((s) => [s, 0])) as Record<VetSeverity, number>;
   for (const f of findings) counts[bucketOf(f.severity)]++;
   const active = filter && counts[filter] > 0 ? filter : null;
@@ -305,7 +349,10 @@ export function SecurityPage() {
   } else if (!report) {
     body = <ListSkeleton rows={4} />;
   } else if (findings.length === 0) {
-    body = <EmptyState icon={ShieldCheck} title="Nothing to fix" description="Your config passed every check." />;
+    body = tableFilter
+      ? <EmptyState icon={ShieldCheck} title="Nothing to fix" description={`No findings for table ${tableFilter}.`}
+          action={<Button variant="outline" onClick={() => { setParams({}); }}>Show all findings</Button>} />
+      : <EmptyState icon={ShieldCheck} title="Nothing to fix" description="Your config passed every check." />;
   } else {
     body = (
       <Flex gap="5" align="flex-start" flexWrap="wrap">
@@ -329,6 +376,12 @@ export function SecurityPage() {
 
   return (
     <Box pb="8">
+      {tableFilter && (
+        <HStack gap="2" mb="4" fontSize="sm" color="fg.muted">
+          <Text>Showing findings for table <Text as="span" fontFamily="mono" color="fg">{tableFilter}</Text></Text>
+          <Button variant="ghost" size="xs" onClick={() => { setParams({}); }}><X size={12} />Show all</Button>
+        </HStack>
+      )}
       {report && !error && <Banner report={report} findings={findings} counts={counts} active={active} onFilter={(s) => { setFilter(s); setSelKey(null); }} />}
       {body}
     </Box>

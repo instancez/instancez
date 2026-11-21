@@ -7,12 +7,30 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 ### Added
 
 - `inz cloud logs` shows recent runtime logs for the linked cloud project (`--minutes`, `--json`).
+
+## [0.0.15] - 2026-11-15
+
+### Fixed
+
+- Storage listing under RLS no longer scans thousands of rows per step on Postgres 14.25, 15.20, 16.16 and 17.12. Those releases stopped pushing the skip-scan seek condition into the index when its right side called non-leakproof functions, so it ran as a filter after the RLS policy. The next seek key is now computed in the select list.
+
+### Added
+
+- Dashboard UX pass: dialogs close on Escape and when their page unmounts, table deletes move to the tables list and other deletes sit in a danger zone, both with typed-name confirm, create dialogs validate names inline, empty states and loading skeletons are consistent, the RLS and Indexes tabs are clearer, Users gets search, a password generator and a row affordance, and Security gains a severity legend and per-finding links.
+- The Overview Auth card shows sign-in methods, public sign-up, email confirmation and access token expiry instead of a static "Enabled".
+- `POST /storage/<bucket>/sign` accepts an optional `path` to name the object instead of a random id. It uses the `/storage/v1` key rules plus no leading slash, empty segments or keys over 1024 bytes (400), runs the `insert` policy against the real path, returns 409 for an existing object (or replaces it with `x-upsert: true`), and responds with `{id, path, upload_url}`. Without `path` nothing changes.
+- `GET` and `DELETE /storage/<bucket>/<id>` accept ids with slashes, so objects created with a nested `path` can be downloaded and deleted.
+- The storage docs gain "Choosing an upload method" and state the ~4.5MB cap on server-proxied uploads on Instancez Cloud.
 - `gcs://bucket/key` is accepted wherever `s3://` is: `--config`, `--bundle`, `functions_bundle` and `inz bundle --output`. It uses Application Default Credentials; the config version token is the object generation.
 - `gcs` storage provider (`providers.storage.type: gcs`) for Google Cloud Storage. It uses Application Default Credentials only (no HMAC keys); signed URLs go through IAM `signBlob`. Reads `bucket`, `INSTANCEZ_STORAGE_KEY_PREFIX` and optional `INSTANCEZ_GCS_SIGNER_EMAIL`.
+- `inz cloud site deploy [dir] --site <id|slug>` uploads a built directory as tar.gz to an Instancez Cloud static site. The site comes from `--site`, `$INSTANCEZ_SITE` or `./.instancez/site`. `index.html` must be at the root; limits are 5000 files and 100 MiB. `.git`, `node_modules` and `.DS_Store` are skipped, and `.instancezignore` adds `path.Match` patterns (no `**`, `!` or leading `/`).
+- `inz cloud site list` prints each site's id, slug and URL.
 
 ### Changed
 
-- `inz cloud frontend deploy --branch` is deprecated and ignored (hidden), and `branch` is no longer sent to the cloud APIs (deploy, preview, frontend upload).
+- Breaking, `inz cloud frontend deploy` is removed; it prints a migration message and exits non-zero. Use `inz cloud site deploy [dir] --site <id|slug>`, which uploads the directory as tar.gz to a static site (site from `--site`, `$INSTANCEZ_SITE` or `./.instancez/site`; `.instancezignore` supported). `inz cloud site list` shows site ids and slugs.
+- Breaking, `POST /storage/<bucket>/sign` now requires `size` when the bucket sets `max_size` (400 without it); send `size: file.size`. It also signs the declared `size` as `Content-Length`, so S3 rejects an upload of a different length, and records it in `storage.objects` (was 0). An unsized presigned `PUT` could bypass `max_size`.
+- `branch` is no longer sent to the cloud APIs (deploy, preview).
 
 ## [0.0.14] - 2026-11-07
 
@@ -426,7 +444,8 @@ First tagged release.
 - Deployment targets: Docker, Docker Compose, Kubernetes (Helm chart), AWS Lambda
 - A `@supabase/supabase-js` wire-compatibility test suite that runs on every commit
 
-[Unreleased]: https://github.com/instancez/instancez/compare/v0.0.14...HEAD
+[Unreleased]: https://github.com/instancez/instancez/compare/v0.0.15...HEAD
+[0.0.15]: https://github.com/instancez/instancez/compare/v0.0.14...v0.0.15
 [0.0.14]: https://github.com/instancez/instancez/compare/v0.0.13...v0.0.14
 [0.0.13]: https://github.com/instancez/instancez/compare/v0.0.12...v0.0.13
 [0.0.12]: https://github.com/instancez/instancez/compare/v0.0.11...v0.0.12

@@ -1,11 +1,12 @@
 import { Suspense, useState } from "react";
 import { Outlet, useMatches, useParams } from "react-router-dom";
-import { Box, Center, HStack, Spinner, Text, VStack } from "@chakra-ui/react";
+import { Box, Center, HStack, Text, VStack } from "@chakra-ui/react";
 import { AlertCircle, RefreshCw } from "lucide-react";
 import { Navbar } from "./Navbar";
 import { Sidebar } from "./Sidebar";
 import { PageHeader } from "./PageHeader";
 import { Button, SurfaceProvider } from "./ui";
+import { ListSkeleton } from "./Skeletons";
 import { DriftBanner } from "./DriftBanner";
 import { EditModeBanner } from "./EditModeBanner";
 import { ReadOnlyBanner } from "./ReadOnlyBanner";
@@ -18,10 +19,9 @@ import type { ConsoleRouteHandle } from "../console/routes";
 
 function PageLoader() {
   return (
-    <Center py="24" flexDirection="column" gap="3">
-      <Spinner size="sm" color="fg.muted" />
-      <Text fontSize="sm" color="fg.muted">Loading</Text>
-    </Center>
+    <Box pt="6" aria-busy="true" aria-label="Loading">
+      <ListSkeleton rows={6} />
+    </Box>
   );
 }
 
@@ -59,12 +59,11 @@ function Shell() {
 
   if (loading && !config) {
     return (
-      <Center minH="100dvh" bg="bg">
-        <VStack gap="3">
-          <Spinner size="md" color="fg.muted" />
-          <Text fontSize="sm" color="fg.muted">Loading configuration...</Text>
-        </VStack>
-      </Center>
+      <Box minH="100dvh" bg="bg" px="8" pt="16" aria-busy="true" aria-label="Loading configuration">
+        <Box maxW="3xl" mx="auto">
+          <ListSkeleton rows={6} />
+        </Box>
+      </Box>
     );
   }
 

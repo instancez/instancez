@@ -404,24 +404,39 @@ Print the currently logged-in instancez Cloud user.
 inz cloud whoami
 ```
 
-## inz cloud frontend deploy
+## inz cloud site deploy
 
-Upload an externally-built static frontend bundle to an instancez Cloud project.
+Deploy a prebuilt static bundle to an instancez Cloud static site.
 
-The bundle is served as the project's static site. `<dist-dir>` must contain `index.html` (a Vite/SPA build). The project id is read from `project.cloud.project_id` in `instancez.yaml`, or pass `--project`.
+The directory (default `dist`) is archived as tar.gz with `index.html` at its root and uploaded through a short-lived upload URL minted for the site. The CLI needs a login (`inz cloud login`).
 
 ```
-inz cloud frontend deploy <dist-dir> [flags]
+inz cloud site deploy [dir] --site <id|slug>
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--config` | `instancez.yaml` | Path to `instancez.yaml` (for the linked project id). |
-| `--project` | — | Target this cloud project id instead of `instancez.yaml`'s `project.cloud.project_id`. |
+| `--site` | — | Site id or slug. Falls back to `$INSTANCEZ_SITE`, then the first line of `./.instancez/site`. |
+
+Limits: 5000 files and 100 MiB uncompressed. `index.html` must be at the root and non-empty. A symlinked `<dir>` is followed; symlinks inside it are rejected. The upload has a 30 minute deadline and redirects are treated as errors.
+
+`<dir>/.instancezignore` lists patterns to skip, one per line. The supported subset is `path.Match` globs (`*`, `?`, `[a-z]`) matched against the relative path or the file name, a trailing `/` to match directories only, and `#` comments. Negation (`!`), `**` and a leading `/` are errors. `.git`, `node_modules`, `.DS_Store` and `.instancezignore` itself are always skipped.
+
+Find site ids and slugs with `inz cloud site list`.
 
 ```bash
-npm run build && inz cloud frontend deploy dist
+npm run build && inz cloud site deploy dist --site my-site
 ```
+
+## inz cloud site list
+
+List the organization's static sites as `id`, `slug` and URL, tab separated.
+
+```
+inz cloud site list
+```
+
+`inz cloud frontend deploy` was removed. It prints a pointer to this command and exits non-zero.
 
 ## inz completion
 

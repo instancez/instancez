@@ -5,7 +5,8 @@ import { Box, Tabs, Text, VStack } from "@chakra-ui/react";
 import { useConfig } from "../hooks/useConfig";
 import { jsonEqual } from "../lib/jsonEqual";
 import { useDialog } from "../components/Dialog";
-import { DetailToolbar } from "../components/DetailToolbar";
+import { ListSkeleton } from "../components/Skeletons";
+import { DetailToolbar, DangerZone } from "../components/DetailToolbar";
 import { SaveBar } from "../components/SaveBar";
 import { TagInput } from "../components/TagInput";
 import { Toggle } from "../components/Toggle";
@@ -47,12 +48,14 @@ export function StorageDetail() {
 
   async function deleteBucket() {
     if (!config || !name) return;
-    if (!(await dialog.confirm(`Delete bucket "${name}"?`, { message: "This will delete the bucket and all uploaded files.", confirmText: name }))) return;
+    if (!(await dialog.confirm("Delete bucket?", { message: `"${name}" and all uploaded files will be deleted. This can't be undone.`, confirmText: name }))) return;
     const { [name]: _, ...rest } = config.storage;
     const updated = { ...config, storage: rest };
     const ok = await save(updated);
     if (ok) navigate("..", { relative: "path" });
   }
+
+  if (config && !bucket && name && config.storage[name]) return <ListSkeleton rows={5} />;
 
   if (!config || !bucket || !name) {
     return (
@@ -67,7 +70,7 @@ export function StorageDetail() {
 
   return (
     <Box pb="20">
-      <DetailToolbar backLabel="Storage" onDelete={canWriteConfig ? () => void deleteBucket() : undefined} />
+      <DetailToolbar backLabel="Storage" />
       <Box pb="8">
         <Tabs.Root defaultValue="objects" lazyMount unmountOnExit>
           <Tabs.List borderBottomWidth="1px" mb="6" gap="1">
@@ -179,6 +182,15 @@ export function StorageDetail() {
           </Tabs.Content>
         </Tabs.Root>
       </Box>
+
+      {canWriteConfig && (
+        <DangerZone
+          title="Delete this bucket"
+          description="Deletes the bucket and all uploaded files."
+          label="Delete bucket"
+          onDelete={() => void deleteBucket()}
+        />
+      )}
 
       <SaveBar onSave={handleSave} saving={saving} errors={saveErrors} dirty={dirty} />
     </Box>

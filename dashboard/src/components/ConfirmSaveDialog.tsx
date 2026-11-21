@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import { structuredPatch } from "diff";
-import { FileDiff, X } from "lucide-react";
 import { Box, HStack, Text, VStack } from "@chakra-ui/react";
-import { Button, Input } from "./ui";
+import { DialogFrame } from "./DialogFrame";
+import { Input } from "./ui";
 
 /** Word the user must type to arm the Confirm button. */
 const CONFIRM_PHRASE = "CONFIRM";
@@ -54,31 +54,13 @@ export function ConfirmSaveDialog({
   const armed = phrase.trim().toUpperCase() === CONFIRM_PHRASE;
 
   return (
-    <Box position="fixed" inset="0" zIndex="50" display="flex" alignItems="center" justifyContent="center" p="6">
-      <Box position="absolute" inset="0" bg="blackAlpha.400" onClick={onCancel} />
-      <Box
-        position="relative"
-        w="full"
-        maxW="2xl"
-        maxH="80vh"
-        display="flex"
-        flexDir="column"
-        borderRadius="xl"
-        borderWidth="1px"
-        bg="bg.panel"
-        boxShadow="lg"
-      >
-        <HStack justify="space-between" px="5" py="3" borderBottomWidth="1px">
-          <HStack as="span" gap="2" fontSize="sm" fontWeight="medium" color="fg">
-            <FileDiff size={15} />
-            <Text>Review changes before saving</Text>
-          </HStack>
-          <Button variant="ghost" size="icon" aria-label="Close" onClick={onCancel}>
-            <X size={14} />
-          </Button>
-        </HStack>
-
-        <VStack flex="1" minH="0" overflowY="auto" px="5" py="4" gap="4" align="stretch">
+    <DialogFrame
+      title="Review changes before saving"
+      size="lg"
+      busy={saving}
+      onClose={onCancel}
+      primary={{ label: saving ? "Saving..." : "Confirm & Save", onClick: onConfirm, loading: saving, disabled: !armed }}
+    >
           <Box as="section">
             <Text fontSize="xs" fontWeight="medium" color="fg" mb="2">instancez.yaml</Text>
             {hunks.length === 0 ? (
@@ -153,36 +135,24 @@ export function ConfirmSaveDialog({
               </VStack>
             </Box>
           )}
-        </VStack>
 
-        <HStack justify="space-between" gap="3" px="5" py="3" borderTopWidth="1px">
-          <HStack gap="2" flex="1" minW="0">
-            <Box as="label" {...({ htmlFor: "confirm-phrase" } as object)} fontSize="xs" color="fg.muted" whiteSpace="nowrap">
-              Type <Box as="code" fontFamily="mono" color="fg">{CONFIRM_PHRASE}</Box> to apply
-            </Box>
-            <Box w="40" flexShrink="0">
-              <Input
-                id="confirm-phrase"
-                inputSize="sm"
-                mono
-                value={phrase}
-                onChange={(e) => setPhrase(e.target.value)}
-                placeholder={CONFIRM_PHRASE}
-                autoFocus
-                disabled={saving}
-              />
-            </Box>
-          </HStack>
-          <HStack gap="2" flexShrink="0">
-            <Button variant="ghost" onClick={onCancel} disabled={saving}>
-              Cancel
-            </Button>
-            <Button onClick={onConfirm} loading={saving} disabled={!armed}>
-              {saving ? "Saving..." : "Confirm & Save"}
-            </Button>
-          </HStack>
-        </HStack>
-      </Box>
-    </Box>
+      <HStack gap="2">
+        <Box as="label" {...({ htmlFor: "confirm-phrase" } as object)} fontSize="xs" color="fg.muted" whiteSpace="nowrap">
+          Type <Box as="code" fontFamily="mono" color="fg">{CONFIRM_PHRASE}</Box> to apply
+        </Box>
+        <Box w="40" flexShrink="0">
+          <Input
+            id="confirm-phrase"
+            inputSize="sm"
+            mono
+            value={phrase}
+            onChange={(e) => setPhrase(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && armed && !saving) onConfirm(); }}
+            placeholder={CONFIRM_PHRASE}
+            disabled={saving}
+          />
+        </Box>
+      </HStack>
+    </DialogFrame>
   );
 }

@@ -5,7 +5,8 @@ import { Box, Grid, HStack, Text, VStack } from "@chakra-ui/react";
 import { useConfig } from "../hooks/useConfig";
 import { jsonEqual } from "../lib/jsonEqual";
 import { useDialog } from "../components/Dialog";
-import { DetailToolbar } from "../components/DetailToolbar";
+import { ListSkeleton } from "../components/Skeletons";
+import { DetailToolbar, DangerZone } from "../components/DetailToolbar";
 import { SaveBar } from "../components/SaveBar";
 import { CodeEditor } from "../components/CodeEditor";
 import { Toggle } from "../components/Toggle";
@@ -78,12 +79,14 @@ export function RpcDetail() {
 
   async function deleteFunction() {
     if (!config || !name) return;
-    if (!(await dialog.confirm(`Delete function "${name}"?`, { message: "This will permanently remove the function endpoint.", confirmText: name }))) return;
+    if (!(await dialog.confirm("Delete function?", { message: `The "${name}" endpoint will be removed. This can't be undone.` }))) return;
     const { [name]: _, ...rest } = config.rpc || {};
     const updated = { ...config, rpc: rest };
     const ok = await save(updated);
     if (ok) navigate("..", { relative: "path" });
   }
+
+  if (config && !fn && name && config.rpc?.[name]) return <ListSkeleton rows={5} />;
 
   if (!config || !fn || !name) {
     return (
@@ -120,8 +123,8 @@ export function RpcDetail() {
 
   return (
     <Box pb="20">
-      <DetailToolbar backLabel="Database Functions" onDelete={deleteFunction} />
-      <VStack pb="8" gap="6" maxW="3xl" align="stretch">
+      <DetailToolbar backLabel="Database Functions" />
+      <VStack pb="8" gap="6" maxW="3xl" mx="auto" align="stretch">
         <Section
           title="Definition"
           icon={FileCode2}
@@ -307,6 +310,15 @@ export function RpcDetail() {
         </Section>
 
       </VStack>
+
+      <Box maxW="3xl" mx="auto">
+        <DangerZone
+          title="Delete this function"
+          description="Removes the function and its /rest/v1/rpc endpoint."
+          label="Delete function"
+          onDelete={deleteFunction}
+        />
+      </Box>
 
       <SaveBar onSave={handleSave} saving={saving} errors={saveErrors} dirty={dirty} />
     </Box>

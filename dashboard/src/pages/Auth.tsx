@@ -5,9 +5,9 @@ import { useConfig } from "../hooks/useConfig";
 import { SaveBar } from "../components/SaveBar";
 import { CodeEditor } from "../components/CodeEditor";
 import { Toggle } from "../components/Toggle";
-import { Field, Input, Panel, Section } from "../components/ui";
+import { Button, Field, Input, Panel, Section } from "../components/ui";
 import { VarRow } from "../components/VarRow";
-import { CopyButton } from "../components/ApiKeys";
+import { CopyButton } from "../components/CopyButton";
 import { useBackend } from "../console/BackendContext";
 import { envRefName } from "../lib/envRef";
 import { isValidRedirectOrigin } from "../lib/redirectOrigin";
@@ -278,9 +278,10 @@ export function AuthPage() {
 
   return (
     <Box pb="20">
-      <VStack pb="8" gap="6" maxW="3xl" align="stretch">
+      <VStack pb="8" gap="6" maxW="3xl" mx="auto" align="stretch">
         {auth && (
           <>
+            <Box>
             <Section
               title="JWT Settings"
               icon={KeySquare}
@@ -304,17 +305,20 @@ export function AuthPage() {
                 </Field>
               </Grid>
             </Section>
+            </Box>
 
+            <Box>
             <Section title="Sign-up & verification" icon={UserPlus}>
               <VStack gap="4" align="stretch">
                 <HStack justify="space-between" gap="3">
                   <VStack gap="0.5" align="start">
                     <Text fontSize="sm" color="fg">Allow public sign-up</Text>
                     <Text fontSize="xs" color="fg.muted">
-                      Let anyone create an account via email/password. Turn off to invite-only.
+                      Anyone can create an account. Off means invite-only.
                     </Text>
                   </VStack>
                   <Toggle
+                    hideState
                     aria-label="Allow public sign-up"
                     checked={auth.allow_signup ?? true}
                     onChange={(v) => updateAuth((a) => ({ ...a, allow_signup: v }))}
@@ -325,11 +329,12 @@ export function AuthPage() {
                     <Text fontSize="sm" color="fg">Allow anonymous sign-in</Text>
                     <Text fontSize="xs" color="fg.muted">
                       {(auth.allow_signup ?? true)
-                        ? "Issue a session to users with no email/password yet."
-                        : "Blocked while public sign-up is off."}
+                        ? "Sign in without an email or password."
+                        : "Needs public sign-up."}
                     </Text>
                   </VStack>
                   <Toggle
+                    hideState
                     aria-label="Allow anonymous sign-in"
                     checked={auth.allow_anonymous ?? false}
                     disabled={!(auth.allow_signup ?? true)}
@@ -340,10 +345,11 @@ export function AuthPage() {
                   <VStack gap="0.5" align="start">
                     <Text fontSize="sm" color="fg">Require email verification</Text>
                     <Text fontSize="xs" color="fg.muted">
-                      Users must confirm their email address before their account becomes active.
+                      Users confirm their email before signing in.
                     </Text>
                   </VStack>
                   <Toggle
+                    hideState
                     aria-label="Require email verification"
                     checked={auth.email?.verify_email || false}
                     onChange={(v) =>
@@ -359,14 +365,13 @@ export function AuthPage() {
                 </HStack>
               </VStack>
             </Section>
+            </Box>
 
+            <Box>
             <Section title="Redirect URLs" icon={Link2}>
               <VStack gap="3" align="stretch">
                 <Text fontSize="xs" color="fg.muted">
-                  Origins your app may be redirected to after OAuth and email flows. The
-                  server's own origin and relative paths are always allowed, so add external
-                  origins only (e.g. a separate front-end host). Checked here in the browser
-                  only.
+                  External origins your app can redirect to after OAuth and email flows. The server's own origin is always allowed.
                 </Text>
                 {(auth.redirect_urls ?? []).map((url, i) => {
                   const invalid = url.trim() !== "" && !isValidRedirectOrigin(url.trim());
@@ -410,8 +415,9 @@ export function AuthPage() {
                 </HStack>
               </VStack>
             </Section>
+            </Box>
 
-
+            <Box>
             <Section title="Email Templates" icon={Mails}>
               <VStack gap="4" align="stretch">
                 {EMAIL_TEMPLATES.map((kind) => {
@@ -441,7 +447,6 @@ export function AuthPage() {
                             fontSize="11px"
                             fontFamily="mono"
                             color="fg.muted"
-                            opacity="0.7"
                             truncate
                           >
                             {kind.vars}
@@ -468,7 +473,9 @@ export function AuthPage() {
                 })}
               </VStack>
             </Section>
+            </Box>
 
+            <Box>
             <Section
               title="OAuth Providers"
               icon={Plug2}
@@ -487,6 +494,7 @@ export function AuthPage() {
                           <Text textTransform="capitalize">{provider}</Text>
                         </HStack>
                         <Toggle
+                          hideState
                           aria-label={`Enable ${provider}`}
                           checked={isEnabled}
                           onChange={() => toggleOAuth(provider, isEnabled)}
@@ -569,7 +577,7 @@ export function AuthPage() {
                               />
                               <CopyButton
                                 value={oauthCallbackBase ? oauthCallbackBase + provider : ""}
-                                label={`Copy ${provider} redirect URL`}
+                                label={`${provider} redirect URL`}
                               />
                             </HStack>
                           </Field>
@@ -580,6 +588,7 @@ export function AuthPage() {
                 );
               })}
             </Section>
+            </Box>
           </>
         )}
       </VStack>

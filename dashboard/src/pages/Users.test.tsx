@@ -1,3 +1,4 @@
+import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -97,7 +98,8 @@ describe("UsersPage", () => {
     renderUsersPage(makeBackend());
     await screen.findByText("No users yet");
     fireEvent.click(screen.getByRole("button", { name: /add user/i }));
-    expect(screen.getByText("Create user")).toBeInTheDocument();
+    expect(screen.getByText("Add user", { selector: "p" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create" })).toBeInTheDocument();
   });
 
   it("opens edit modal when user row clicked", async () => {
@@ -122,7 +124,7 @@ describe("UsersPage", () => {
     fireEvent.change(screen.getByLabelText(/password/i), {
       target: { value: "secret123" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /create user/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^create$/i }));
 
     await waitFor(() => expect(createUser).toHaveBeenCalledWith("alice@example.com", "secret123", false));
   });
@@ -155,13 +157,16 @@ describe("UsersPage", () => {
     renderUsersPage(backend);
 
     fireEvent.click(await screen.findByText("alice@example.com"));
-    fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^delete user$/i }));
 
-    // The confirm dialog appears with a text input gated by the user's email.
-    // Type the email to unlock the "Delete user" confirm button.
-    const input = await screen.findByPlaceholderText("alice@example.com");
-    fireEvent.change(input, { target: { value: "alice@example.com" } });
-    fireEvent.click(await screen.findByRole("button", { name: /delete user/i }));
+    expect(await screen.findByText("Delete user?")).toBeInTheDocument();
+    const confirm = await screen.findByRole("button", { name: /^delete$/i });
+    expect(confirm).toBeDisabled();
+    await userEvent.type(screen.getByRole("textbox", { name: /type alice@example.com/i }), "alice@example.co");
+    expect(confirm).toBeDisabled();
+    expect(deleteUser).not.toHaveBeenCalled();
+    await userEvent.type(screen.getByRole("textbox", { name: /type alice@example.com/i }), "m");
+    fireEvent.click(confirm);
 
     await waitFor(() => expect(deleteUser).toHaveBeenCalledWith("u1"));
   });
@@ -181,7 +186,7 @@ describe("UsersPage", () => {
     fireEvent.change(screen.getByLabelText(/password/i), {
       target: { value: "secret123" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /create user/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^create$/i }));
 
     expect(await screen.findByText("Email already exists")).toBeInTheDocument();
   });
@@ -191,7 +196,7 @@ describe("UsersPage", () => {
     await screen.findByText("No users yet");
 
     fireEvent.click(screen.getByRole("button", { name: /add user/i }));
-    fireEvent.click(screen.getByRole("button", { name: /create user/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^create$/i }));
 
     expect(screen.getByText("Email is required.")).toBeInTheDocument();
   });
@@ -202,7 +207,7 @@ describe("UsersPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /add user/i }));
     fireEvent.change(screen.getByLabelText(/email/i), { target: { value: "notanemail" } });
-    fireEvent.click(screen.getByRole("button", { name: /create user/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^create$/i }));
 
     expect(screen.getByText("Enter a valid email address.")).toBeInTheDocument();
   });
@@ -214,7 +219,7 @@ describe("UsersPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /add user/i }));
     fireEvent.change(screen.getByLabelText(/email/i), { target: { value: "alice@example.com" } });
     fireEvent.change(screen.getByLabelText(/password/i), { target: { value: "abc" } });
-    fireEvent.click(screen.getByRole("button", { name: /create user/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^create$/i }));
 
     expect(screen.getByText("Password must be at least 6 characters.")).toBeInTheDocument();
   });
@@ -259,5 +264,116 @@ describe("UsersPage", () => {
       </MemoryRouter>
     );
     expect(screen.getByTestId("list-skeleton")).toBeInTheDocument();
+  });
+});
+
+describe("UsersPage UX", () => {
+  const many = Array.from({ length: 12 }, (_, i) => ({ ...alice, id: `u${i}`, email: `user${i}@example.com` }));
+
+  it("empty state has the only Add user button", async () => {
+    renderUsersPage(makeBackend());
+    await screen.findByText("No users yet");
+    expect(screen.getAllByRole("button", { name: /add user/i })).toHaveLength(1);
+  });
+
+  it("shows the toolbar Add user button once there are users", async () => {
+    renderUsersPage(makeBackend({ listUsers: vi.fn().mockResolvedValue({ users: [alice], total: 1 }) }));
+    await screen.findByText("alice@example.com");
+    expect(screen.getAllByRole("button", { name: /add user/i })).toHaveLength(1);
+  });
+
+  it("hides search at 10 users or fewer and shows it above 10", async () => {
+    const { unmount } = renderUsersPage(makeBackend({ listUsers: vi.fn().mockResolvedValue({ users: many.slice(0, 10), total: 10 }) }));
+    await screen.findByText("user0@example.com");
+    expect(screen.queryByLabelText("Search users")).toBeNull();
+    unmount();
+    renderUsersPage(makeBackend({ listUsers: vi.fn().mockResolvedValue({ users: many, total: 12 }) }));
+    expect(await screen.findByLabelText("Search users")).toBeInTheDocument();
+  });
+
+  it("search filters case-insensitively and reports no matches", async () => {
+    renderUsersPage(makeBackend({ listUsers: vi.fn().mockResolvedValue({ users: many, total: 12 }) }));
+    const box = await screen.findByLabelText("Search users");
+    fireEvent.change(box, { target: { value: "USER11" } });
+    expect(screen.getByText("user11@example.com")).toBeInTheDocument();
+    expect(screen.queryByText("user0@example.com")).toBeNull();
+    fireEvent.change(box, { target: { value: "zzz" } });
+    expect(screen.getByText(/no users on this page match/i)).toBeInTheDocument();
+  });
+
+  it("a stale query never hides rows once the search box is gone", async () => {
+    const listUsers = vi.fn()
+      .mockResolvedValueOnce({ users: many, total: 60 })
+      .mockResolvedValue({ users: [alice], total: 60 });
+    renderUsersPage(makeBackend({ listUsers }));
+    fireEvent.change(await screen.findByLabelText("Search users"), { target: { value: "zzz" } });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByText("alice@example.com")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Search users")).toBeNull();
+  });
+
+  it("rows are keyboard-activatable and open the editor", async () => {
+    renderUsersPage(makeBackend({ listUsers: vi.fn().mockResolvedValue({ users: [alice], total: 1 }) }));
+    const row = await screen.findByRole("button", { name: "Edit alice@example.com" });
+    fireEvent.keyDown(row, { key: "Enter" });
+    expect(screen.getByText("Edit user")).toBeInTheDocument();
+  });
+
+  it("load failure shows a banner with Retry that reloads", async () => {
+    const listUsers = vi.fn().mockRejectedValueOnce(new Error("boom")).mockResolvedValue({ users: [alice], total: 1 });
+    renderUsersPage(makeBackend({ listUsers }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("boom");
+    fireEvent.click(screen.getByRole("button", { name: /retry/i }));
+    expect(await screen.findByText("alice@example.com")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("Generate fills a revealed password of sufficient strength", async () => {
+    renderUsersPage(makeBackend());
+    await screen.findByText("No users yet");
+    fireEvent.click(screen.getByRole("button", { name: /add user/i }));
+    fireEvent.click(screen.getByRole("button", { name: /generate/i }));
+    const pw = screen.getByLabelText(/password/i) as HTMLInputElement;
+    expect(pw.type).toBe("text");
+    expect(pw.value).toHaveLength(16);
+    expect(screen.getByText(/^(Weak.*|Good|Strong)$/)).toBeInTheDocument();
+  });
+
+  it("flags a too-short password in the hint", async () => {
+    renderUsersPage(makeBackend());
+    await screen.findByText("No users yet");
+    fireEvent.click(screen.getByRole("button", { name: /add user/i }));
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: "abc" } });
+    expect(screen.getByText(/too short/i)).toBeInTheDocument();
+  });
+
+  it("explains what Confirm email automatically does", async () => {
+    renderUsersPage(makeBackend());
+    await screen.findByText("No users yet");
+    fireEvent.click(screen.getByRole("button", { name: /add user/i }));
+    expect(screen.getByText(/confirm their email before signing in/i)).toBeInTheDocument();
+  });
+
+  it("a typed-in modal survives a backdrop click; an untouched one closes", async () => {
+    renderUsersPage(makeBackend());
+    await screen.findByText("No users yet");
+    fireEvent.click(screen.getByRole("button", { name: /add user/i }));
+    fireEvent.click(screen.getByTestId("modal-backdrop"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /add user/i }));
+    fireEvent.change(screen.getByLabelText(/email/i), { target: { value: "x@y.co" } });
+    fireEvent.click(screen.getByTestId("modal-backdrop"));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("cancelling the confirm deletes nothing", async () => {
+    const deleteUser = vi.fn();
+    renderUsersPage(makeBackend({ listUsers: vi.fn().mockResolvedValue({ users: [alice], total: 1 }), deleteUser }));
+    fireEvent.click(await screen.findByText("alice@example.com"));
+    fireEvent.click(screen.getByRole("button", { name: /^delete user$/i }));
+    await screen.findByText("Delete user?");
+    fireEvent.click(screen.getAllByRole("button", { name: "Cancel" }).at(-1)!);
+    await waitFor(() => expect(screen.queryByText("Delete user?")).toBeNull());
+    expect(deleteUser).not.toHaveBeenCalled();
   });
 });

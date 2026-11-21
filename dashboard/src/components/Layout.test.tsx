@@ -72,3 +72,18 @@ describe("Layout (shell owns titles)", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("Layout loading", () => {
+  it("shows a skeleton, not a bare spinner, while the config loads", async () => {
+    vi.mocked(api.getConfig).mockImplementationOnce(() => new Promise(() => {}));
+    renderAt("/tables");
+    expect(await screen.findByLabelText("Loading configuration")).toBeInTheDocument();
+    expect(screen.getByTestId("list-skeleton")).toBeInTheDocument();
+  });
+
+  it("shows a retryable error when the config fails, never a blank shell", async () => {
+    vi.mocked(api.getConfig).mockRejectedValueOnce(new Error("boom"));
+    renderAt("/tables");
+    expect(await screen.findByRole("button", { name: /retry/i })).toBeInTheDocument();
+  });
+});

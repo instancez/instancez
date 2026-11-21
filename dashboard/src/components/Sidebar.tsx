@@ -96,7 +96,7 @@ function SectionLabel({ children }: { children: string }) {
       fontWeight="semibold"
       letterSpacing="wider"
       textTransform="uppercase"
-      color="fg.subtle"
+      color="fg.muted"
     >
       {children}
     </Text>
@@ -133,7 +133,7 @@ export function Sidebar() {
           </Box>
         ))}
       </Box>
-      <Text px="2.5" pt="3" fontSize="10px" color="fg.subtle" fontFamily="mono">
+      <Text px="2.5" pt="3" fontSize="10px" color="fg.muted" fontFamily="mono">
         v0.1.0
       </Text>
     </Box>

@@ -107,6 +107,16 @@ jobs:
 
 `--project` targets a project for that run only; it never edits `instancez.yaml`, so both jobs can check out the exact same file.
 
+## Deploy a frontend
+
+A frontend is a separate static site with its own hostname. Build it, then upload the output:
+
+```bash
+npm run build && inz cloud site deploy dist --site <id|slug>
+```
+
+See [`inz cloud site deploy`](/api-reference/cli/#inz-cloud-site-deploy) for the site lookup order and ignore rules. `inz cloud frontend deploy` was removed.
+
 ## Check status
 
 ```bash

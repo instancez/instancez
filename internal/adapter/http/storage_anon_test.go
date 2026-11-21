@@ -249,7 +249,7 @@ func TestLegacySignUpload_RunsInsertUnderCallerRole(t *testing.T) {
 				return 1, nil
 			},
 		}
-		store := &stubObjectStore{signUploadFn: func(context.Context, string, string, time.Duration) (string, error) {
+		store := &stubObjectStore{signUploadFn: func(context.Context, string, string, int64, time.Duration) (string, error) {
 			return "https://s3.example/put", nil
 		}}
 		h := &StorageHandler{cfg: &domain.Config{Storage: map[string]domain.Bucket{"docs": {RLS: []domain.RLSPolicy{{Operations: []string{"select"}, Using: "true"}}}}},

@@ -57,7 +57,7 @@ export function SqlEditor() {
     <VStack align="stretch" gap="0" height="100%">
       <HStack px="3" py="2" borderBottomWidth="1px" borderColor="border" gap="3">
         <Button size="sm" onClick={run} disabled={running}><Play size={13} /> Run</Button>
-        <Text fontSize="xs" color="fg.subtle" fontFamily="mono">⌘↵</Text>
+        <Text fontSize="xs" color="fg.muted" fontFamily="mono">⌘↵</Text>
       </HStack>
       <Box borderBottomWidth="1px" borderColor="border"><CodeEditor language="sql" value={sql} onChange={setSql} onSubmit={() => void run()} sqlSchema={schema} minHeight="220px" /></Box>
       {error && <Box px="3" py="3"><Text fontSize="sm" color="fg.error" fontFamily="mono" whiteSpace="pre-wrap">{error}</Text></Box>}

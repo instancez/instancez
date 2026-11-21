@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Cable } from "lucide-react";
-import { Box, HStack, chakra } from "@chakra-ui/react";
+import { Box, HStack, Text, chakra } from "@chakra-ui/react";
 import { Section, useSurfaceBg } from "./ui";
-import { CopyButton } from "./ApiKeys";
+import { CopyButton } from "./CopyButton";
 import { useApiBaseUrl } from "../console/BackendContext";
 
 interface ClientLib {
@@ -98,7 +98,7 @@ export function ConnectExamples({ exampleTable }: { exampleTable: string }) {
           >
             $ {active.install}
           </Box>
-          <CopyButton value={active.install} label={`Copy ${active.label} install command`} />
+          <CopyButton value={active.install} label={`${active.label} install command`} />
         </HStack>
         <HStack alignItems="start" gap="2" px="4" py="3">
           <Box
@@ -114,9 +114,12 @@ export function ConnectExamples({ exampleTable }: { exampleTable: string }) {
           >
             {code}
           </Box>
-          <CopyButton value={code} label={`Copy ${active.label} example`} />
+          <CopyButton value={code} label={`${active.label} example`} />
         </HStack>
       </Box>
+      <Text fontSize="xs" color="fg.muted">
+        Set <Text as="span" fontFamily="mono">PUBLISHABLE_KEY</Text> to the publishable key above. Never ship the secret key in browser code.
+      </Text>
     </Section>
   );
 }
