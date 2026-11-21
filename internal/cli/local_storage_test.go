@@ -29,7 +29,7 @@ func TestLocalStore_SignUpload(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	url, err := store.SignUpload(context.Background(), "bucket/file.txt", "text/plain", 0)
+	url, err := store.SignUpload(context.Background(), "bucket/file.txt", "text/plain", 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestLocalStore_RejectsEscapingKeys(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := fresh.SignUpload(ctx, k, "", 0); err == nil {
+		if _, err := fresh.SignUpload(ctx, k, "", 0, 0); err == nil {
 			t.Errorf("SignUpload(%q) succeeded, want error", k)
 		}
 		if err := fresh.EnsureBucket(ctx, k); err == nil {

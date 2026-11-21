@@ -3943,6 +3943,44 @@ await step('storage: legacy /storage routes run under the caller\'s RLS, not ser
   assertEq(ownerDel.status, 204, 'owner can delete their own object via the legacy route')
 })
 
+await step('storage: /storage/<bucket>/sign with path names the object, enforces RLS, 409 and size rules', async () => {
+  const { data: signIn } = await anon.auth.signInWithPassword({ email, password })
+  if (!signIn?.session) throw new Error('re-login failed')
+  const sign = (body) => fetch(`${URL}/storage/owned/sign`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${signIn.session.access_token}`, apikey: PUBLISHABLE_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const name = 'mine/Sham ZainAlabideen All Info 2026.txt'
+
+  const ok = await sign({ content_type: 'text/plain', size: 321, path: name })
+  assertEq(ok.status, 200, `sign with path: ${await ok.clone().text()}`)
+  const okBody = await ok.json()
+  assertEq(okBody.id, name, 'id is the path')
+  assertEq(okBody.path, name, 'path is the path')
+  assert(okBody.upload_url, 'upload_url present')
+
+  const { data: listed, error: listErr } = await anon.storage.from('owned').list('mine')
+  assert(!listErr, `list failed: ${JSON.stringify(listErr)}`)
+  const row = listed.find((o) => o.name === 'Sham ZainAlabideen All Info 2026.txt')
+  assert(row, 'supabase-js list sees the signed object')
+  assertEq(row.metadata?.size, 321, 'declared size recorded')
+
+  assertEq((await sign({ content_type: 'text/plain', size: 321, path: name })).status, 409, 'second sign on the same path')
+  assertEq((await sign({ content_type: 'text/plain', size: 1, path: 'other/x.txt' })).status, 403, 'insert policy sees the real path')
+  assertEq((await sign({ content_type: 'text/plain', size: 1, path: '../mine/x.txt' })).status, 400, 'traversal rejected')
+  assertEq((await sign({ content_type: 'text/plain', size: 1, path: '/mine/x.txt' })).status, 400, 'leading slash rejected')
+  assertEq((await sign({ content_type: 'text/plain', size: 1, path: 'mine//x.txt' })).status, 400, 'empty segment rejected')
+  assertEq((await sign({ content_type: 'text/plain', path: 'mine/nosize.txt' })).status, 400, 'size required with max_size')
+  assertEq((await sign({ content_type: 'text/plain', size: 6 * 1024 * 1024, path: 'mine/big.txt' })).status, 422, 'size over max_size')
+  assertEq((await sign({ content_type: 'image/png', size: 1, path: 'mine/a.png' })).status, 422, 'mime outside allowlist')
+
+  const { data: after } = await anon.storage.from('owned').list('mine')
+  assert(!after.some((o) => ['x.txt', 'nosize.txt', 'big.txt', 'a.png'].includes(o.name)), 'no row from a rejected sign')
+
+  await anon.storage.from('owned').remove([name])
+})
+
 // --- RLS / two-login enforcement ---
 // rls_secrets has a policy: owner_id = auth.uid(). This exercises the
 // per-request SET LOCAL ROLE: anon must be denied, service_role must

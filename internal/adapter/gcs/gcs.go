@@ -112,7 +112,8 @@ func (s *Store) sign(ctx context.Context, key, method string, expiry time.Durati
 	}
 }
 
-func (s *Store) SignUpload(ctx context.Context, key string, contentType string, expiry time.Duration) (string, error) {
+// SignUpload ignores size: the signed GCS URL does not bound the upload length.
+func (s *Store) SignUpload(ctx context.Context, key string, contentType string, _ int64, expiry time.Duration) (string, error) {
 	u, err := s.sign(ctx, key, "PUT", expiry, storage.SignedURLOptions{ContentType: contentType})
 	if err != nil {
 		return "", fmt.Errorf("presign upload: %w", err)

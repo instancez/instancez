@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { renderWithChakra } from "../test/helpers";
@@ -144,7 +144,7 @@ describe("FunctionDetail – env vars", () => {
     renderFunctionDetail(config, "process_image");
 
     await user.click(screen.getByRole("button", { name: /add var/i }));
-    await user.type(screen.getByLabelText("Env variable name:"), "FOO");
+    await user.type(within(screen.getByRole("dialog")).getByRole("textbox"), "FOO");
     await user.click(screen.getByRole("button", { name: /create/i }));
 
     expect(await screen.findByText(/already exists/i)).toBeInTheDocument();
@@ -211,5 +211,39 @@ describe("FunctionDetail – code editor", () => {
     await waitFor(() => expect(screen.getByText("Code")).toBeInTheDocument());
     // Initially no dirty state → no Save code button
     expect(screen.queryByRole("button", { name: "Save code" })).not.toBeInTheDocument();
+  });
+});
+
+describe("FunctionDetail – delete", () => {
+  it("is hidden when config writes are disabled", async () => {
+    const backend = { ...adminBackend, capabilities: { ...adminBackend.capabilities, canWriteConfig: false } };
+    renderFunctionDetail(baseConfig, "process_image", backend);
+    await waitFor(() => expect(screen.getByText("Code")).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Delete function" })).toBeNull();
+  });
+
+  async function openDelete() {
+    const ctx = renderFunctionDetail(structuredClone(baseConfig), "process_image");
+    await userEvent.click(await screen.findByRole("button", { name: "Delete function" }));
+    return ctx;
+  }
+
+  it("keeps Delete locked until the function name is typed", async () => {
+    const ctx = await openDelete();
+    const del = await screen.findByRole("button", { name: "Delete" });
+    expect(del).toBeDisabled();
+    const box = screen.getByRole("textbox", { name: /type process_image/i });
+    await userEvent.type(box, "process_imag");
+    expect(del).toBeDisabled();
+    await userEvent.type(box, "e");
+    await userEvent.click(del);
+    await waitFor(() => expect(ctx.save).toHaveBeenCalled());
+    expect(ctx.save.mock.calls[0]![0].functions).toEqual({});
+  });
+
+  it("cancel deletes nothing", async () => {
+    const ctx = await openDelete();
+    await userEvent.click((await screen.findAllByRole("button", { name: "Cancel" })).at(-1)!);
+    expect(ctx.save).not.toHaveBeenCalled();
   });
 });

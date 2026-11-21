@@ -8,7 +8,7 @@ import { EmptyState } from "../components/EmptyState";
 import { StatusBadge } from "../components/StatusBadge";
 import { Button, ListRow } from "../components/ui";
 import { useBackend } from "../console/BackendContext";
-import { formatBytes } from "../lib/utils";
+import { formatBytes, NAME_HINT, nameError } from "../lib/utils";
 import type { StatsResponse } from "../lib/types";
 
 export function Storage() {
@@ -32,7 +32,7 @@ export function Storage() {
   const buckets = Object.keys(config.storage).sort((a, b) => a.localeCompare(b));
 
   const addBucket = async () => {
-    const name = await dialog.prompt("Bucket name:");
+    const name = await dialog.prompt("Bucket name", { message: NAME_HINT, validate: (v) => nameError(v, Object.keys(config.storage ?? {}), "bucket") });
     if (!name?.trim()) return;
     const bucketName = name.trim().toLowerCase().replace(/\s+/g, "_");
     const updated = {
@@ -47,14 +47,14 @@ export function Storage() {
   };
 
   const addButton = canWriteConfig ? (
-    <Button onClick={() => void addBucket()}><Plus size={14} /> Add Bucket</Button>
+    <Button onClick={() => void addBucket()}><Plus size={14} /> Add bucket</Button>
   ) : null;
 
   return (
     <Box pb="8">
       <HStack justify="space-between" gap="4" pb="6">
         <Text fontSize="sm" color="fg.muted">{buckets.length} bucket{buckets.length !== 1 ? "s" : ""} configured</Text>
-        {addButton}
+        {buckets.length > 0 && addButton}
       </HStack>
       {buckets.length === 0 ? (
         <EmptyState icon={HardDrive} title="No storage buckets"

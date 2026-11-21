@@ -23,7 +23,7 @@ type DownloadOptions struct {
 
 // ObjectStore is the port for object storage operations (S3, local disk, etc.).
 type ObjectStore interface {
-	SignUpload(ctx context.Context, key string, contentType string, expiry time.Duration) (string, error)
+	SignUpload(ctx context.Context, key string, contentType string, size int64, expiry time.Duration) (string, error)
 	SignDownload(ctx context.Context, key string, expiry time.Duration, opts DownloadOptions) (string, error)
 	Delete(ctx context.Context, key string) error
 	EnsureBucket(ctx context.Context, bucket string) error

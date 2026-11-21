@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { render, screen, fireEvent, within, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { renderWithChakra } from "../test/helpers";
 import { RpcDetail } from "./RpcDetail";
@@ -229,5 +229,28 @@ describe("RpcDetail", () => {
     expect(screen.getByRole("button", { name: /save changes/i })).toBeInTheDocument();
     fireEvent.change(returns, { target: { value: "text" } });
     expect(screen.queryByRole("button", { name: /save changes/i })).not.toBeInTheDocument();
+  });
+});
+
+describe("RpcDetail delete", () => {
+  it("deletes after a simple confirm, with no typed-name gate", async () => {
+    const save = vi.fn().mockResolvedValue(true);
+    renderRpcDetail(baseConfig, "get_todos", save);
+    fireEvent.click(screen.getByRole("button", { name: /delete function/i }));
+    expect(await screen.findByText("Delete function?")).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("get_todos")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(save).toHaveBeenCalledOnce());
+    expect(save.mock.calls[0]![0].rpc).not.toHaveProperty("get_todos");
+  });
+
+  it("cancelling the confirm saves nothing", async () => {
+    const save = vi.fn().mockResolvedValue(true);
+    renderRpcDetail(baseConfig, "get_todos", save);
+    fireEvent.click(screen.getByRole("button", { name: /delete function/i }));
+    await screen.findByText("Delete function?");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByText("Delete function?")).toBeNull());
+    expect(save).not.toHaveBeenCalled();
   });
 });

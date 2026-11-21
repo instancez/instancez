@@ -1,40 +1,10 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Check, Copy, Eye, EyeOff, KeyRound } from "lucide-react";
+import { Eye, EyeOff, KeyRound } from "lucide-react";
 import { Box, HStack, VStack } from "@chakra-ui/react";
 import { useBackend, useApiBaseUrl } from "../console/BackendContext";
 import { Section, useSurfaceBg } from "./ui";
 import { StatusBadge } from "./StatusBadge";
-
-export function CopyButton({ value, label }: { value: string; label: string }) {
-  const [copied, setCopied] = useState(false);
-
-  async function handleCopy() {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard unavailable (insecure context) — nothing useful to do.
-    }
-  }
-
-  return (
-    <Box
-      as="button"
-      onClick={handleCopy}
-      aria-label={label}
-      flexShrink="0"
-      p="1.5"
-      borderRadius="md"
-      color="fg.muted"
-      _hover={{ color: "fg", bg: "bg.subtle" }}
-      transition="colors"
-      cursor="pointer"
-    >
-      {copied ? <Check size={14} /> : <Copy size={14} />}
-    </Box>
-  );
-}
+import { CopyButton } from "./CopyButton";
 
 /** The publishable key from /_admin/keys (null until loaded or when unavailable). */
 export function usePublishableKey(): string | null {
@@ -119,7 +89,7 @@ function KeyRow({ label, badge, value, secret }: KeyRowProps) {
           {revealed ? <EyeOff size={14} /> : <Eye size={14} />}
         </Box>
       )}
-      <CopyButton value={value} label={`Copy ${label}`} />
+      <CopyButton value={value} label={label} />
     </HStack>
   );
 }

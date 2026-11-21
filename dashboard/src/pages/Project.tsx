@@ -46,7 +46,7 @@ export function ProjectPage() {
 
   return (
     <Box pb="20">
-      <VStack pb="8" gap="6" maxW="3xl" align="stretch">
+      <VStack pb="8" gap="6" maxW="3xl" mx="auto" align="stretch">
         <Section title="CORS Origins" icon={Globe}>
           <VStack gap="3" align="stretch">
             <Text fontSize="xs" color="fg.muted">

@@ -9,6 +9,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { Button, Field, Input, ListRow, Panel, Section } from "../components/ui";
 import { useBackend } from "../console/BackendContext";
 import { ListSkeleton } from "../components/Skeletons";
+import { NAME_HINT, nameError } from "../lib/utils";
 
 interface DepsState {
   dependencies: Record<string, string>;
@@ -99,7 +100,7 @@ export function Functions() {
   // how Tables navigates to a "new" route with the seed in router state.
   async function addFunction() {
     if (!config) return;
-    const input = await dialog.prompt("Function name:");
+    const input = await dialog.prompt("Function name", { message: NAME_HINT, validate: (v) => nameError(v, Object.keys(config.functions ?? {}), "function") });
     const name = input?.trim().toLowerCase().replace(/\s+/g, "_");
     if (!name) return;
     if ((config.functions || {})[name]) {
@@ -134,12 +135,12 @@ export function Functions() {
 
   return (
     <Box>
-      <VStack pb="8" gap="6" maxW="3xl" align="stretch">
+      <VStack pb="8" gap="6" align="stretch">
         <HStack justify="space-between" gap="4">
           <Text fontSize="sm" color="fg.muted">
             {functions.length} code function{functions.length !== 1 ? "s" : ""}
           </Text>
-          {addButton}
+          {functions.length > 0 && addButton}
         </HStack>
         {functions.length === 0 ? (
           <EmptyState
@@ -177,6 +178,7 @@ export function Functions() {
         {(depsLoading || deps !== null) && (
           <Section
             title="Dependencies"
+            description="npm packages shared by every code function in this project."
             icon={Package}
             actions={
               !depsLoading && deps !== null ? (

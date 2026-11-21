@@ -1,5 +1,5 @@
 import { Trash2 } from "lucide-react";
-import { Box, HStack, VStack } from "@chakra-ui/react";
+import { Box, HStack, Text, VStack } from "@chakra-ui/react";
 import { Panel, Button, Field } from "./ui";
 import { CodeEditor } from "./CodeEditor";
 import { RLS_OPERATIONS } from "../lib/utils";
@@ -9,6 +9,8 @@ interface RlsPolicyCardProps {
   policy: RLSPolicy;
   onChange: (policy: RLSPolicy) => void;
   onDelete: () => void;
+  /** Zero-based position among sibling policies; shows a "Policy N" heading. */
+  index?: number;
 }
 
 /** A single-select pill-button group (radio semantics, styled like tabs). */
@@ -80,12 +82,17 @@ export function RlsPolicyCard({
   policy,
   onChange,
   onDelete,
+  index,
 }: RlsPolicyCardProps) {
   return (
     <Panel p="4">
       <VStack gap="3" align="stretch">
         <HStack alignItems="start" justify="space-between" gap="3">
           <VStack gap="3" align="start">
+            {index !== undefined && (
+              <Text fontSize="sm" fontWeight="semibold" color="fg">Policy {index + 1}</Text>
+            )}
+            <HStack gap="5" align="start" flexWrap="wrap">
             <Field label="Type">
               <PillRadioGroup
                 options={[
@@ -113,6 +120,7 @@ export function RlsPolicyCard({
                 }
               />
             </Field>
+            </HStack>
           </VStack>
           <Button
             variant="danger-ghost"

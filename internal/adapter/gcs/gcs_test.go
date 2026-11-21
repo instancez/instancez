@@ -419,7 +419,7 @@ func TestSignDownload_NoOverridesOmitsParams(t *testing.T) {
 
 func TestSignUpload_SignsContentType(t *testing.T) {
 	s := newSigningStore(t, "")
-	raw, err := s.SignUpload(context.Background(), "k", "image/png", time.Hour)
+	raw, err := s.SignUpload(context.Background(), "k", "image/png", 0, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -441,7 +441,7 @@ func TestSign_ExpiryOverSevenDaysRejected(t *testing.T) {
 
 func TestSign_InvalidKey(t *testing.T) {
 	s := newSigningStore(t, "")
-	if _, err := s.SignUpload(context.Background(), "", "text/plain", time.Minute); err == nil {
+	if _, err := s.SignUpload(context.Background(), "", "text/plain", 0, time.Minute); err == nil {
 		t.Fatal("expected error for empty key")
 	}
 }

@@ -1,7 +1,7 @@
-import { createContext, useContext, useState, useRef, useEffect, useCallback } from "react";
-import { X, AlertTriangle, Info, Trash2 } from "lucide-react";
-import { Box, HStack, Input, Portal, Text, VStack } from "@chakra-ui/react";
-import { Button, Field, Select } from "./ui";
+import { createContext, useContext, useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { Box, Input, Text } from "@chakra-ui/react";
+import { Field, Select } from "./ui";
+import { DialogFrame } from "./DialogFrame";
 
 type DialogType = "prompt" | "confirm" | "alert" | "select";
 
@@ -15,22 +15,52 @@ interface DialogState {
   confirmText?: string;
   destructive?: boolean;
   options?: string[];
+  validate?: (value: string) => string | null;
+  owner?: symbol;
   resolve: (value: any) => void;
 }
 
+type PromptOptions = { message?: string; defaultValue?: string; placeholder?: string; validate?: (value: string) => string | null };
+
 interface DialogContextValue {
-  prompt: (title: string, options?: { message?: string; defaultValue?: string; placeholder?: string }) => Promise<string | null>;
+  prompt: (title: string, options?: PromptOptions) => Promise<string | null>;
   confirm: (title: string, options?: { message?: string; confirmLabel?: string; destructive?: boolean; confirmText?: string }) => Promise<boolean>;
   alert: (title: string, options?: { message?: string }) => Promise<void>;
   select: (title: string, options: string[], extra?: { message?: string }) => Promise<string | null>;
 }
 
-const DialogContext = createContext<DialogContextValue | null>(null);
+interface ProviderValue extends DialogContextValue {
+  open: (state: Omit<DialogState, "resolve" | "owner">, owner?: symbol) => Promise<any>;
+  dismissOwned: (owner: symbol) => void;
+}
 
-export function useDialog() {
+function makeDialogApi(open: ProviderValue["open"], owner?: symbol): DialogContextValue {
+  return {
+    prompt: (title, o) => open({ type: "prompt", title, ...o }, owner),
+    confirm: (title, o) => open({ type: "confirm", title, ...o, destructive: o?.destructive ?? true }, owner),
+    alert: (title, o) => open({ type: "alert", title, message: o?.message }, owner),
+    select: (title, options, extra) => open({ type: "select", title, options, message: extra?.message }, owner),
+  };
+}
+
+function primaryLabel(d: DialogState) {
+  if (d.type === "prompt") return "Create";
+  if (d.type === "select") return "Select";
+  if (d.type === "alert") return "OK";
+  return d.confirmLabel || (d.destructive ? "Delete" : "Confirm");
+}
+
+const dismissed = (d: DialogState) => (d.type === "confirm" ? false : null);
+
+const DialogContext = createContext<ProviderValue | null>(null);
+
+/** Dialogs opened through this hook are cancelled when the calling page unmounts (tab or route change). */
+export function useDialog(): DialogContextValue {
   const ctx = useContext(DialogContext);
   if (!ctx) throw new Error("useDialog must be used within DialogProvider");
-  return ctx;
+  const owner = useRef(Symbol("dialog-owner")).current;
+  useEffect(() => () => ctx.dismissOwned(owner), [ctx.dismissOwned, owner]);
+  return useMemo(() => makeDialogApi(ctx.open, owner), [ctx.open, owner]);
 }
 
 export function DialogProvider({ children }: { children: React.ReactNode }) {
@@ -43,60 +73,57 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
   const confirmInputRef = useRef<HTMLInputElement>(null);
   const selectRef = useRef<HTMLSelectElement>(null);
 
-  const prompt = useCallback(
-    (title: string, options?: { message?: string; defaultValue?: string; placeholder?: string }) =>
-      new Promise<string | null>((resolve) => {
-        setInputValue(options?.defaultValue || "");
-        setDialog({ type: "prompt", title, message: options?.message, defaultValue: options?.defaultValue, placeholder: options?.placeholder, resolve });
-      }),
-    []
-  );
+  const current = useRef<DialogState | null>(null);
+  current.current = dialog;
 
-  const confirm = useCallback(
-    (title: string, options?: { message?: string; confirmLabel?: string; destructive?: boolean; confirmText?: string }) =>
-      new Promise<boolean>((resolve) => {
+  const open = useCallback(
+    (state: Omit<DialogState, "resolve" | "owner">, owner?: symbol) =>
+      new Promise<any>((resolve) => {
+        const prev = current.current;
+        if (prev) prev.resolve(dismissed(prev));
+        setInputValue(state.defaultValue || "");
         setConfirmInput("");
-        setDialog({
-          type: "confirm",
-          title,
-          message: options?.message,
-          confirmLabel: options?.confirmLabel,
-          confirmText: options?.confirmText,
-          destructive: options?.destructive ?? true,
-          resolve,
-        });
+        setSelectValue(state.options?.[0] || "");
+        const next = { ...state, owner, resolve };
+        current.current = next;
+        setDialog(next);
       }),
     []
   );
 
-  const alert = useCallback(
-    (title: string, options?: { message?: string }) =>
-      new Promise<void>((resolve) => {
-        setDialog({ type: "alert", title, message: options?.message, resolve: () => resolve() });
-      }),
-    []
-  );
-
-  const select = useCallback(
-    (title: string, options: string[], extra?: { message?: string }) =>
-      new Promise<string | null>((resolve) => {
-        setSelectValue(options[0] || "");
-        setDialog({ type: "select", title, message: extra?.message, options, resolve });
-      }),
-    []
-  );
-
-  function close(value: string | boolean | null) {
+  const dismissOwned = useCallback((owner: symbol) => {
+    const cur = current.current;
+    if (cur?.owner !== owner) return;
+    cur.resolve(dismissed(cur));
+    current.current = null;
+    setDialog(null);
     setVisible(false);
-    setTimeout(() => {
-      dialog?.resolve(value);
-      setDialog(null);
-    }, 150);
+  }, []);
+
+  const value = useMemo<ProviderValue>(
+    () => ({ open, dismissOwned, ...makeDialogApi(open) }),
+    [open, dismissOwned]
+  );
+
+  function close(result: string | boolean | null) {
+    const closing = dialog;
+    if (!closing) return;
+    closing.resolve(result);
+    setVisible(false);
+    setTimeout(() => setDialog((cur) => (cur === closing ? null : cur)), 150);
   }
 
+  const promptError = dialog?.type === "prompt" && dialog.validate && inputValue.trim()
+    ? dialog.validate(inputValue.trim())
+    : null;
+  const promptValid = dialog?.type === "prompt" && !!inputValue.trim() && !promptError;
+  const promptDirty = dialog?.type === "prompt" && inputValue !== (dialog.defaultValue || "");
+
   function handleConfirm() {
+    if (confirmLocked) return;
     if (dialog?.type === "prompt") {
-      close(inputValue.trim() || null);
+      if (!promptValid) return;
+      close(inputValue.trim());
     } else if (dialog?.type === "select") {
       close(selectValue || null);
     } else if (dialog?.type === "confirm") {
@@ -107,215 +134,93 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
   }
 
   function handleCancel() {
-    if (dialog?.type === "prompt") {
-      close(null);
-    } else if (dialog?.type === "confirm") {
-      close(false);
-    } else {
-      close(null);
-    }
+    if (dialog) close(dismissed(dialog));
   }
 
-  const confirmLocked = dialog?.type === "confirm" && dialog.confirmText
+  const confirmLocked = dialog?.type === "confirm" && dialog.destructive && dialog.confirmText
     ? confirmInput !== dialog.confirmText
     : false;
+
+  const primaryDisabled =
+    dialog?.type === "prompt" ? !promptValid : dialog?.type === "select" ? !selectValue : confirmLocked;
 
   useEffect(() => {
     if (dialog) {
       requestAnimationFrame(() => setVisible(true));
       if (dialog.type === "prompt") {
-        setTimeout(() => {
-          inputRef.current?.focus();
-          inputRef.current?.select();
-        }, 50);
+        inputRef.current?.focus();
+        inputRef.current?.select();
       } else if (dialog.type === "select") {
-        setTimeout(() => selectRef.current?.focus(), 50);
+        selectRef.current?.focus();
       } else if (dialog.type === "confirm" && dialog.confirmText) {
-        setTimeout(() => confirmInputRef.current?.focus(), 50);
+        confirmInputRef.current?.focus();
       }
     }
   }, [dialog]);
 
-  useEffect(() => {
-    if (!dialog) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") handleCancel();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [dialog]);
-
   return (
-    <DialogContext.Provider value={{ prompt, confirm, alert, select }}>
+    <DialogContext.Provider value={value}>
       {children}
       {dialog && (
-        <Portal>
-          <Box
-            position="fixed"
-            inset="0"
-            zIndex="overlay"
-            display="flex"
-            alignItems="center"
-            justifyContent="center"
-            bg={visible ? "blackAlpha.600" : "transparent"}
-            backdropFilter={visible ? "blur(2px)" : undefined}
-            transition="all 0.2s ease-out"
-            onClick={(e) => { if (e.target === e.currentTarget) handleCancel(); }}
-          >
-            <Box
-              position="relative"
-              w="full"
-              maxW="420px"
-              mx="4"
-              borderRadius="2xl"
-              overflow="hidden"
-              borderWidth="1px"
-              borderColor={dialog.type === "confirm" && dialog.destructive ? "red.200" : "border"}
-              bg="bg.panel"
-              boxShadow="lg"
-              opacity={visible ? 1 : 0}
-              transform={visible ? "scale(1) translateY(0)" : "scale(0.95) translateY(8px)"}
-              transition="all 0.2s ease-out"
+        <DialogFrame
+          title={dialog.title}
+          description={dialog.message}
+          tone={dialog.type === "confirm" && dialog.destructive ? "danger" : "default"}
+          error={promptError}
+          dirty={promptDirty}
+          visible={visible}
+          onClose={handleCancel}
+          secondary={dialog.type === "alert" ? false : undefined}
+          primary={{ label: primaryLabel(dialog), onClick: handleConfirm, disabled: primaryDisabled }}
+        >
+          {dialog.type === "prompt" && (
+            <Input
+              ref={inputRef}
+              type="text"
+              aria-label={dialog.title}
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleConfirm(); }}
+              aria-invalid={!!promptError}
+              placeholder={dialog.placeholder || "Enter a name…"}
+              size="sm"
+            />
+          )}
+          {dialog.type === "select" && (
+            <Select
+              ref={selectRef}
+              aria-label={dialog.title}
+              value={selectValue}
+              onChange={(e) => setSelectValue((e.target as HTMLSelectElement).value)}
+              mono
             >
-              {/* Close button */}
-              <Box
-                as="button"
-                onClick={handleCancel}
-                position="absolute"
-                top="4"
-                right="4"
-                p="1.5"
-                borderRadius="lg"
-                color="fg.muted"
-                _hover={{ color: "fg", bg: "bg.subtle" }}
-                cursor="pointer"
-                zIndex="1"
-              >
-                <X size={14} />
-              </Box>
-
-              {/* Prompt variant */}
-              {dialog.type === "prompt" && (
-                <>
-                  <Box px="6" pt="6" pb="5">
-                    <VStack gap="3" align="stretch">
-                      <Field label={dialog.title} htmlFor="dialog-input">
-                        <Input
-                          ref={inputRef}
-                          id="dialog-input"
-                          type="text"
-                          value={inputValue}
-                          onChange={(e) => setInputValue(e.target.value)}
-                          onKeyDown={(e) => { if (e.key === "Enter" && inputValue.trim()) handleConfirm(); }}
-                          placeholder={dialog.placeholder || "Enter a name…"}
-                          size="sm"
-                        />
-                      </Field>
-                      {dialog.message && <Text fontSize="xs" color="fg.muted">{dialog.message}</Text>}
-                    </VStack>
-                  </Box>
-                  <HStack justify="flex-end" gap="2.5" px="6" pb="5">
-                    <Button variant="ghost" onClick={handleCancel}>Cancel</Button>
-                    <Button onClick={handleConfirm} disabled={!inputValue.trim()}>Create</Button>
-                  </HStack>
-                </>
+              {(dialog.options || []).map((opt) => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))}
+            </Select>
+          )}
+          {dialog.type === "confirm" && dialog.destructive && (
+            <>
+              {dialog.confirmText && (
+                <Field label={<>Type <Box as="span" fontFamily="mono" fontWeight="semibold" color="fg">{dialog.confirmText}</Box> to confirm</>} htmlFor="confirm-input">
+                  <Input
+                    ref={confirmInputRef}
+                    id="confirm-input"
+                    value={confirmInput}
+                    onChange={(e) => setConfirmInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleConfirm(); }}
+                    placeholder={dialog.confirmText}
+                    spellCheck={false}
+                    autoComplete="off"
+                    size="sm"
+                    fontFamily="mono"
+                  />
+                </Field>
               )}
-
-              {/* Select variant */}
-              {dialog.type === "select" && (
-                <>
-                  <Box px="6" pt="6" pb="5">
-                    <VStack gap="3" align="stretch">
-                      <Field label={dialog.title} htmlFor="dialog-select">
-                        <Select
-                          value={selectValue}
-                          onChange={(e) => setSelectValue((e.target as HTMLSelectElement).value)}
-                          mono
-                        >
-                          {(dialog.options || []).map((opt) => (
-                            <option key={opt} value={opt}>{opt}</option>
-                          ))}
-                        </Select>
-                      </Field>
-                      {dialog.message && <Text fontSize="xs" color="fg.muted">{dialog.message}</Text>}
-                    </VStack>
-                  </Box>
-                  <HStack justify="flex-end" gap="2.5" px="6" pb="5">
-                    <Button variant="ghost" onClick={handleCancel}>Cancel</Button>
-                    <Button onClick={handleConfirm} disabled={!selectValue}>Select</Button>
-                  </HStack>
-                </>
-              )}
-
-              {/* Destructive confirm */}
-              {dialog.type === "confirm" && dialog.destructive && (
-                <>
-                  <Box h="1.5" bg="red.500" />
-                  <Box px="6" pt="5" pb="2">
-                    <HStack gap="3.5" align="start">
-                      <Box w="10" h="10" borderRadius="xl" bg="red.50" _dark={{ bg: "red.900/30" }} display="flex" alignItems="center" justifyContent="center" flexShrink="0">
-                        <Box as={Trash2} boxSize="4.5" color="fg.error" />
-                      </Box>
-                      <Box minW="0" pt="0.5" flex="1">
-                        <Text fontSize="md" fontWeight="semibold" color="fg" pr="8">{dialog.title}</Text>
-                        {dialog.message && <Text fontSize="sm" color="fg.muted" mt="1.5">{dialog.message}</Text>}
-                      </Box>
-                    </HStack>
-                  </Box>
-                  {dialog.confirmText && (
-                    <Box px="6" pt="3" pb="1">
-                      <Field label={<>Type <Box as="span" fontFamily="mono" fontWeight="semibold" color="fg">{dialog.confirmText}</Box> to confirm</>} htmlFor="confirm-input">
-                        <Input
-                          ref={confirmInputRef}
-                          id="confirm-input"
-                          value={confirmInput}
-                          onChange={(e) => setConfirmInput(e.target.value)}
-                          onKeyDown={(e) => { if (e.key === "Enter" && !confirmLocked) handleConfirm(); }}
-                          placeholder={dialog.confirmText}
-                          spellCheck={false}
-                          autoComplete="off"
-                          size="sm"
-                          fontFamily="mono"
-                        />
-                      </Field>
-                    </Box>
-                  )}
-                  <Box mx="6" mt="4" px="3.5" py="2.5" borderRadius="lg" bg="red.50" _dark={{ bg: "red.900/20" }} borderWidth="1px" borderColor="red.200">
-                    <HStack gap="2" fontSize="xs" color="fg.error">
-                      <Box as={AlertTriangle} boxSize="3" flexShrink="0" />
-                      This action cannot be undone.
-                    </HStack>
-                  </Box>
-                  <HStack justify="flex-end" gap="2.5" px="6" pt="4" pb="5">
-                    <Button variant="ghost" onClick={handleCancel}>Cancel</Button>
-                    <Button variant="danger" onClick={handleConfirm} disabled={confirmLocked}>{dialog.confirmLabel || "Delete"}</Button>
-                  </HStack>
-                </>
-              )}
-
-              {/* Non-destructive confirm / Alert */}
-              {(dialog.type === "alert" || (dialog.type === "confirm" && !dialog.destructive)) && (
-                <>
-                  <Box px="6" pt="6" pb="2">
-                    <HStack gap="3.5" align="start">
-                      <Box w="10" h="10" borderRadius="xl" bg="blue.50" _dark={{ bg: "blue.900/30" }} display="flex" alignItems="center" justifyContent="center" flexShrink="0">
-                        <Box as={Info} boxSize="4.5" color="blue.600" _dark={{ color: "blue.300" }} />
-                      </Box>
-                      <Box minW="0" pt="0.5">
-                        <Text fontSize="md" fontWeight="semibold" color="fg" pr="8">{dialog.title}</Text>
-                        {dialog.message && <Text fontSize="sm" color="fg.muted" mt="1.5">{dialog.message}</Text>}
-                      </Box>
-                    </HStack>
-                  </Box>
-                  <HStack justify="flex-end" gap="2.5" px="6" pt="4" pb="5">
-                    {dialog.type !== "alert" && <Button variant="ghost" onClick={handleCancel}>Cancel</Button>}
-                    <Button onClick={handleConfirm}>{dialog.type === "alert" ? "OK" : dialog.confirmLabel || "Confirm"}</Button>
-                  </HStack>
-                </>
-              )}
-            </Box>
-          </Box>
-        </Portal>
+              <Text fontSize="sm" color="fg.muted">This action cannot be undone.</Text>
+            </>
+          )}
+        </DialogFrame>
       )}
     </DialogContext.Provider>
   );

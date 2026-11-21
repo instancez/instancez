@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { renderWithChakra } from "../test/helpers";
 import { StorageDetail } from "./StorageDetail";
@@ -33,7 +33,7 @@ const baseConfig: Config = {
   database: { pool: { max: 25, min: 5, idle_timeout: "5m" } },
 };
 
-function renderStorageDetail(config: Config, bucketName: string) {
+function renderStorageDetail(config: Config, bucketName: string, save = vi.fn().mockResolvedValue(true)) {
   const ctx = {
     config,
     loading: false,
@@ -43,7 +43,7 @@ function renderStorageDetail(config: Config, bucketName: string) {
     saveErrors: [] as ValidationError[],
     dotenvWritable: false, oauthCallbackBase: "",
     refresh: vi.fn(),
-    save: vi.fn().mockResolvedValue(true),
+    save,
     updateConfig: vi.fn(),
   };
   return renderWithChakra(
@@ -76,5 +76,22 @@ describe("StorageDetail", () => {
   it("shows not-found message for missing bucket", () => {
     renderStorageDetail(baseConfig, "nonexistent");
     expect(screen.getByText("Bucket not found.")).toBeInTheDocument();
+  });
+});
+
+describe("StorageDetail delete", () => {
+  it("needs the exact bucket name typed before Delete unlocks", async () => {
+    const save = vi.fn().mockResolvedValue(true);
+    renderStorageDetail(baseConfig, "avatars", save);
+    fireEvent.click(screen.getByRole("button", { name: /delete bucket/i }));
+    expect(await screen.findByText("Delete bucket?")).toBeInTheDocument();
+    const del = screen.getByRole("button", { name: "Delete" });
+    expect(del).toBeDisabled();
+    fireEvent.change(screen.getByPlaceholderText("avatars"), { target: { value: "avatar" } });
+    expect(del).toBeDisabled();
+    fireEvent.change(screen.getByPlaceholderText("avatars"), { target: { value: "avatars" } });
+    fireEvent.click(del);
+    await waitFor(() => expect(save).toHaveBeenCalledOnce());
+    expect(save.mock.calls[0]![0].storage).not.toHaveProperty("avatars");
   });
 });
