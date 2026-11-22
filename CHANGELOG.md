@@ -4,6 +4,8 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [0.0.16] - 2026-11-21
+
 ### Added
 
 - `inz cloud logs` shows recent runtime logs for the linked cloud project (`--minutes`, `--json`).
@@ -451,7 +453,8 @@ First tagged release.
 - Deployment targets: Docker, Docker Compose, Kubernetes (Helm chart), AWS Lambda
 - A `@supabase/supabase-js` wire-compatibility test suite that runs on every commit
 
-[Unreleased]: https://github.com/instancez/instancez/compare/v0.0.15...HEAD
+[Unreleased]: https://github.com/instancez/instancez/compare/v0.0.16...HEAD
+[0.0.16]: https://github.com/instancez/instancez/compare/v0.0.15...v0.0.16
 [0.0.15]: https://github.com/instancez/instancez/compare/v0.0.14...v0.0.15
 [0.0.14]: https://github.com/instancez/instancez/compare/v0.0.13...v0.0.14
 [0.0.13]: https://github.com/instancez/instancez/compare/v0.0.12...v0.0.13
