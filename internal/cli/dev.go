@@ -183,6 +183,7 @@ func runDev(opts devOptions) error {
 
 	// reloadFuncs rebuilds workers from updated code/config without npm ci.
 	reloadFuncs := func(newCfg *domain.Config) {
+		newCfg = withServerPort(newCfg, cfg.Server.Port)
 		rt, err := buildDevFuncRuntimeFast(ctx, newCfg, opts.configPath, km, logger)
 		if err != nil {
 			logger.Error("functions: reload failed", "error", err)
@@ -509,4 +510,12 @@ func watchFunctionsDirReady(
 			logger.Warn("functions watcher: error", "error", err)
 		}
 	}
+}
+
+// withServerPort returns a copy of cfg listening on port. A reloaded config is
+// parsed fresh, so it would otherwise lose the --port override.
+func withServerPort(cfg *domain.Config, port int) *domain.Config {
+	c := *cfg
+	c.Server.Port = port
+	return &c
 }
