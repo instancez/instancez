@@ -710,9 +710,103 @@ func diffColumnChanges(old, new *domain.Config) []string {
 						qual, fieldName))
 				}
 			}
+
+			ddl = append(ddl, diffColumnConstraints(qual, fieldName, oldField, newField, old, new)...)
 		}
 	}
 	return ddl
+}
+
+// columnChecks lists a field's CHECK expressions in creation order.
+func columnChecks(f domain.Field) []string {
+	var out []string
+	if len(f.Enum) > 0 {
+		quoted := make([]string, len(f.Enum))
+		for i, v := range f.Enum {
+			quoted[i] = sqlLiteral(v)
+		}
+		out = append(out, fmt.Sprintf("%s IN (%s)", f.Name, strings.Join(quoted, ", ")))
+	}
+	if f.Pattern != "" {
+		out = append(out, fmt.Sprintf("%s ~ %s", f.Name, sqlLiteral(f.Pattern)))
+	}
+	if f.Min != nil {
+		out = append(out, fmt.Sprintf("%s >= %g", f.Name, *f.Min))
+	}
+	if f.Max != nil {
+		out = append(out, fmt.Sprintf("%s <= %g", f.Name, *f.Max))
+	}
+	if f.Check != "" {
+		out = append(out, f.Check)
+	}
+	return out
+}
+
+// dropColumnConstraints drops every constraint of the given pg_constraint type
+// that covers exactly this column, whatever Postgres named it.
+func dropColumnConstraints(qual, col, contype string) string {
+	return fmt.Sprintf(`DO $$ DECLARE r record; BEGIN FOR r IN SELECT conname FROM pg_constraint WHERE conrelid = %[1]s::regclass AND contype = '%[3]s' AND conkey = ARRAY[(SELECT attnum FROM pg_attribute WHERE attrelid = %[1]s::regclass AND attname = %[2]s)] LOOP EXECUTE format('ALTER TABLE %%s DROP CONSTRAINT %%I', %[1]s, r.conname); END LOOP; END $$;`,
+		sqlLiteral(qual), sqlLiteral(col), contype)
+}
+
+func fkSignature(f domain.Field) string {
+	if f.ForeignKey == nil {
+		return ""
+	}
+	return f.ForeignKey.References + "|" + fkOnDelete(f.ForeignKey)
+}
+
+// diffColumnConstraints reconciles checks, foreign key, unique and default on a
+// column that exists in both configs.
+func diffColumnConstraints(qual, col string, oldF, newF domain.Field, old, new *domain.Config) []string {
+	var ddl []string
+
+	oldChecks, newChecks := columnChecks(oldF), columnChecks(newF)
+	if !slices.Equal(oldChecks, newChecks) {
+		if len(oldChecks) > 0 {
+			ddl = append(ddl, dropColumnConstraints(qual, col, "c"))
+		}
+		for _, c := range newChecks {
+			ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ADD CHECK (%s);", qual, c))
+		}
+	}
+
+	if fkSignature(oldF) != fkSignature(newF) {
+		if oldF.ForeignKey != nil {
+			ddl = append(ddl, dropColumnConstraints(qual, col, "f"))
+		}
+		if newF.ForeignKey != nil {
+			if schema, refTable, refCol, err := domain.ParseFKReference(newF.ForeignKey.References); err == nil {
+				ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ADD FOREIGN KEY (%s) REFERENCES %s.%s(%s) ON DELETE %s;",
+					qual, col, schema, refTable, refCol, fkOnDelete(newF.ForeignKey)))
+			}
+		}
+	}
+
+	if oldF.Unique != newF.Unique {
+		if newF.Unique {
+			ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ADD UNIQUE (%s);", qual, col))
+		} else {
+			ddl = append(ddl, dropColumnConstraints(qual, col, "u"))
+		}
+	}
+
+	oldDef, newDef := defaultSQL(oldF, old), defaultSQL(newF, new)
+	if oldDef != newDef {
+		if newDef == "" {
+			ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s DROP DEFAULT;", qual, col))
+		} else {
+			ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s;", qual, col, newDef))
+		}
+	}
+	return ddl
+}
+
+func defaultSQL(f domain.Field, cfg *domain.Config) string {
+	if f.Default == nil {
+		return ""
+	}
+	return formatDefault(f.Default, effectiveType(f, cfg.Tables))
 }
 
 // --- Helpers ---

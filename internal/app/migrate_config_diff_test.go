@@ -1077,3 +1077,97 @@ func TestPlanUpdate_NewTableWithRLSEnabled_NoDuplicateEnable(t *testing.T) {
 		t.Fatalf("expected exactly 1 ENABLE ROW LEVEL SECURITY for todos, got %d\n%s", count, stmts)
 	}
 }
+
+// --- constraint changes on existing columns (regression: silently ignored) ---
+
+func oneColCfg(f domain.Field) *domain.Config {
+	return &domain.Config{Tables: map[string]domain.Table{
+		"parents": {Fields: []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}}},
+		"kids": {Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
+			f,
+		}},
+	}}
+}
+
+func TestDiffColumnChanges_CheckAddedChangedRemoved(t *testing.T) {
+	plain := domain.Field{Name: "qty", Type: "integer"}
+	checked := domain.Field{Name: "qty", Type: "integer", Check: "qty > 0"}
+	tighter := domain.Field{Name: "qty", Type: "integer", Min: f64p(1), Max: f64p(9)}
+
+	added := strings.Join(diffColumnChanges(oneColCfg(plain), oneColCfg(checked)), "\n")
+	mustContain(t, added, "ADD CHECK (qty > 0)")
+
+	changed := strings.Join(diffColumnChanges(oneColCfg(checked), oneColCfg(tighter)), "\n")
+	mustContain(t, changed, "contype = 'c'")
+	mustContain(t, changed, "ADD CHECK (qty >= 1)")
+	mustContain(t, changed, "ADD CHECK (qty <= 9)")
+
+	removed := strings.Join(diffColumnChanges(oneColCfg(checked), oneColCfg(plain)), "\n")
+	mustContain(t, removed, "contype = 'c'")
+	if strings.Contains(removed, "ADD CHECK") {
+		t.Fatalf("removal must not add checks: %s", removed)
+	}
+}
+
+func TestDiffColumnChanges_ForeignKeyOnDeleteChange(t *testing.T) {
+	fk := func(on string) domain.Field {
+		return domain.Field{Name: "parent_id", Type: "bigint", ForeignKey: &domain.ForeignKey{References: "parents.id", OnDelete: on}}
+	}
+	got := strings.Join(diffColumnChanges(oneColCfg(fk("cascade")), oneColCfg(fk("restrict"))), "\n")
+	mustContain(t, got, "contype = 'f'")
+	mustContain(t, got, "ON DELETE RESTRICT")
+
+	dropped := strings.Join(diffColumnChanges(oneColCfg(fk("cascade")), oneColCfg(domain.Field{Name: "parent_id", Type: "bigint"})), "\n")
+	mustContain(t, dropped, "contype = 'f'")
+	if strings.Contains(dropped, "FOREIGN KEY") {
+		t.Fatalf("FK removal must not re-add: %s", dropped)
+	}
+
+	// cascade vs unset (default RESTRICT) is a real change; unset vs restrict is not.
+	if d := diffColumnChanges(oneColCfg(fk("")), oneColCfg(fk("restrict"))); len(d) != 0 {
+		t.Fatalf("default restrict == explicit restrict, got %v", d)
+	}
+}
+
+func TestDiffColumnChanges_UniqueAndDefault(t *testing.T) {
+	base := domain.Field{Name: "code", Type: "text"}
+	uniq := domain.Field{Name: "code", Type: "text", Unique: true}
+	mustContain(t, strings.Join(diffColumnChanges(oneColCfg(base), oneColCfg(uniq)), "\n"), "ADD UNIQUE (code)")
+	mustContain(t, strings.Join(diffColumnChanges(oneColCfg(uniq), oneColCfg(base)), "\n"), "contype = 'u'")
+
+	withDef := domain.Field{Name: "code", Type: "text", Default: "x"}
+	mustContain(t, strings.Join(diffColumnChanges(oneColCfg(base), oneColCfg(withDef)), "\n"), "SET DEFAULT 'x'")
+	mustContain(t, strings.Join(diffColumnChanges(oneColCfg(withDef), oneColCfg(base)), "\n"), "DROP DEFAULT")
+	other := domain.Field{Name: "code", Type: "text", Default: "y"}
+	mustContain(t, strings.Join(diffColumnChanges(oneColCfg(withDef), oneColCfg(other)), "\n"), "SET DEFAULT 'y'")
+}
+
+func TestDiffColumnChanges_UnchangedConstraintsEmitNothing(t *testing.T) {
+	f := domain.Field{Name: "qty", Type: "integer", Check: "qty > 0", Min: f64p(0), Unique: true, Default: 1,
+		Enum: nil}
+	if d := diffColumnChanges(oneColCfg(f), oneColCfg(f)); len(d) != 0 {
+		t.Fatalf("no change must emit nothing, got %v", d)
+	}
+}
+
+func TestDiffColumnChanges_ConstraintNamesAreQuotedSafely(t *testing.T) {
+	f := domain.Field{Name: "qty", Type: "integer"}
+	g := f
+	g.Check = "qty > 0"
+	cfg := oneColCfg(f)
+	k := cfg.Tables["kids"]
+	cfg.Tables["Weird'Table"] = k
+	delete(cfg.Tables, "kids")
+	cfg2 := oneColCfg(g)
+	k2 := cfg2.Tables["kids"]
+	cfg2.Tables["Weird'Table"] = k2
+	delete(cfg2.Tables, "kids")
+	for _, s := range diffColumnChanges(cfg, cfg2) {
+		if strings.Contains(s, "'Weird'Table'") {
+			t.Fatalf("unescaped literal in %s", s)
+		}
+	}
+}
+
+func f64p(v float64) *float64 { return &v }
