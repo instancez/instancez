@@ -66,6 +66,18 @@ func TestMintSiteUpload(t *testing.T) {
 	assert.Contains(t, body, `"site_id":"s1"`)
 }
 
+func TestMintSiteUpload_APIPrefixedBaseUsesRootMCP(t *testing.T) {
+	var path string
+	c := srvClient(t, func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		_, _ = w.Write([]byte(`{"result":{"content":[{"text":"{\"upload_url\":\"https://h/up\"}"}]}}`))
+	})
+	c.BaseURL += "/api"
+	_, err := c.MintSiteUpload("s1")
+	require.NoError(t, err)
+	assert.Equal(t, "/mcp", path)
+}
+
 func TestMintSiteUpload_Errors(t *testing.T) {
 	cases := map[string]struct {
 		status int
