@@ -1439,3 +1439,26 @@ func TestPlanUpdate_EmitsStorageHelpers(t *testing.T) {
 	without := strings.Join(planUpdateStatements(&domain.Config{}, &domain.Config{Version: 1}, domain.DefaultRoles()), "\n")
 	mustNotContain(t, without, "storage.foldername")
 }
+
+// Hyphenated bucket names must produce valid, distinct policy identifiers.
+func TestGenerateStorageRLS_HyphenBucketQuotesPolicyName(t *testing.T) {
+	bucket := domain.Bucket{RLS: []domain.RLSPolicy{{Operations: []string{"insert"}, WithCheck: "true"}}}
+	hy := strings.Join(generateStorageRLS("brand-logos", bucket), "\n")
+	us := strings.Join(generateStorageRLS("brand_logos", bucket), "\n")
+	mustContain(t, hy, `DROP POLICY IF EXISTS "storage_brand-logos_insert_0" ON storage.objects`)
+	mustContain(t, hy, `CREATE POLICY "storage_brand-logos_insert_0" ON storage.objects`)
+	mustContain(t, hy, "bucket_id = 'brand-logos'")
+	mustContain(t, us, "DROP POLICY IF EXISTS storage_brand_logos_insert_0 ON")
+	if strings.Contains(hy, "storage_brand_logos_insert_0") {
+		t.Fatal("hyphen and underscore buckets must not share a policy name")
+	}
+}
+
+func TestGenerateStorageRLSAll_HyphenBucketDefaultAllQuoted(t *testing.T) {
+	cfg := &domain.Config{Storage: map[string]domain.Bucket{
+		"brand-logos": {},
+		"docs":        {RLS: []domain.RLSPolicy{{Operations: []string{"select"}, Using: "true"}}},
+	}}
+	joined := strings.Join(generateStorageRLSAll(cfg.Storage), "\n")
+	mustContain(t, joined, `"brand-logos_default_all"`)
+}

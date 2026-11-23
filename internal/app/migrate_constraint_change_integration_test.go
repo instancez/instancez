@@ -85,3 +85,22 @@ func TestMigrate_AddingViolatedCheckFailsLoudly(t *testing.T) {
 		t.Fatal("expected migration error for violating rows")
 	}
 }
+
+func TestMigrate_HyphenAndUnderscoreBucketsGetDistinctPolicies(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+	rls := []domain.RLSPolicy{{Operations: []string{"insert"}, WithCheck: "true"}}
+	cfg := &domain.Config{Version: 1, Auth: &domain.Auth{}, Storage: map[string]domain.Bucket{
+		"brand-logos": {RLS: rls}, "brand_logos": {RLS: rls}, "open-bucket": {},
+	}}
+	if err := app.NewMigrator(db).AllowDestructive(true).Apply(ctx, cfg); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	row, err := db.QueryRow(ctx, "SELECT count(*) AS n FROM pg_policies WHERE schemaname='storage' AND tablename='objects' AND policyname IN ('storage_brand-logos_insert_0','storage_brand_logos_insert_0')")
+	if err != nil || row["n"].(int64) != 2 {
+		t.Fatalf("want 2 distinct policies, got %v err %v", row, err)
+	}
+	if err := app.NewMigrator(db).AllowDestructive(true).Apply(ctx, cfg); err != nil {
+		t.Fatalf("re-apply must be idempotent: %v", err)
+	}
+}

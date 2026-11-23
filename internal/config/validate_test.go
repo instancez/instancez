@@ -1085,7 +1085,6 @@ func TestValidate_IdentifierNaming(t *testing.T) {
 		{"table", "Products"},
 		{"table", "1things"},
 		{"table", "_internal"},
-		{"bucket", "my-bucket"},
 		{"bucket", "MyBucket"},
 		{"field", "First-Name"},
 		{"function", "do-stuff"},
@@ -1115,7 +1114,7 @@ func TestValidate_IdentifierNaming(t *testing.T) {
 			}
 			found := false
 			for _, e := range errs {
-				if strings.Contains(e.Message, "invalid identifier") {
+				if strings.Contains(e.Message, "invalid identifier") || strings.Contains(e.Message, "invalid bucket name") {
 					found = true
 					break
 				}
@@ -2415,5 +2414,28 @@ func TestValidate_FKReferenceWithTooManyParts(t *testing.T) {
 				t.Errorf("%q suggestion %q", ref, e.Suggestion)
 			}
 		}
+	}
+}
+
+func TestValidate_StorageBucketNames(t *testing.T) {
+	cases := map[string]bool{
+		"brand-logos": true, "brand_logos": true, "a": true, "1st-bucket": true, "a-b_c-9": true,
+		strings.Repeat("a", 63): true,
+		"": false, "Brand": false, "brand logos": false, "-lead": false, "_lead": false, "a'b": false,
+		"a/b": false, "a.b": false, "a\"b": false, strings.Repeat("a", 64): false, "ünï": false,
+	}
+	for name, ok := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := validBaseConfig()
+			cfg.Providers.Storage = &domain.StorageProvider{Type: "local"}
+			cfg.Storage = map[string]domain.Bucket{name: {}}
+			errs := Validate(cfg)
+			if ok && errs != nil {
+				t.Fatalf("bucket %q should be valid: %v", name, errs)
+			}
+			if !ok {
+				assertHasErrorAt(t, errs, "storage."+name)
+			}
+		})
 	}
 }

@@ -245,7 +245,10 @@ func collectDeploySecrets(dir string, opts deployOpts) (map[string]string, error
 	sort.Strings(names)
 	if !opts.pushSecrets {
 		if len(names) > 0 {
-			fmt.Printf("  Not pushing %d local secret(s): %s (pass --push-secrets to upload)\n", len(names), strings.Join(names, ", "))
+			fmt.Printf("  Secrets NOT updated: cloud keeps its existing values. Found locally but not sent: %s\n", strings.Join(names, ", "))
+			fmt.Println("  Pass --push-secrets to upload them (overwrites cloud secrets of the same name).")
+		} else {
+			fmt.Println("  Secrets not updated (pass --push-secrets to upload INSTANCEZ_ENV_* values).")
 		}
 		return nil, nil
 	}

@@ -1692,11 +1692,11 @@ func generateStorageRLSAll(storage map[string]domain.Bucket) []string {
 			// RLS is on table-wide but this bucket opted out: keep it open so
 			// behaviour matches a table without RLS. Route-level auth still
 			// gates anonymous writes (upload routes require a JWT).
-			policyName := fmt.Sprintf("%s_default_all", name)
+			policyName := policyIdent(fmt.Sprintf("%s_default_all", name))
 			ddl = append(ddl, fmt.Sprintf("DROP POLICY IF EXISTS %s ON storage.objects;", policyName))
 			ddl = append(ddl, fmt.Sprintf(
-				"CREATE POLICY %s ON storage.objects FOR ALL USING (bucket_id = '%s') WITH CHECK (bucket_id = '%s');",
-				policyName, name, name))
+				"CREATE POLICY %s ON storage.objects FOR ALL USING (bucket_id = %s) WITH CHECK (bucket_id = %s);",
+				policyName, sqlLiteral(name), sqlLiteral(name)))
 		}
 	}
 	return ddl
@@ -1708,10 +1708,10 @@ func dropPublicSelect(storage map[string]domain.Bucket, guarded bool) []string {
 	for _, name := range sortedKeys(storage) {
 		if guarded {
 			ddl = append(ddl, fmt.Sprintf(
-				"IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = '%s_public_select') THEN\nDROP POLICY %s_public_select ON storage.objects;\nEND IF;",
-				name, name))
+				"IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = '%s_public_select') THEN\nDROP POLICY %s ON storage.objects;\nEND IF;",
+				name, policyIdent(name+"_public_select")))
 		} else {
-			ddl = append(ddl, fmt.Sprintf("DROP POLICY IF EXISTS %s_public_select ON storage.objects;", name))
+			ddl = append(ddl, fmt.Sprintf("DROP POLICY IF EXISTS %s ON storage.objects;", policyIdent(name+"_public_select")))
 		}
 	}
 	if !guarded || len(ddl) == 0 {
@@ -1728,7 +1728,7 @@ func generateStorageRLS(bucketName string, bucket domain.Bucket) []string {
 		scopedUsing := scopeToBucket(bucketName, policy.Using, restrictive)
 		scopedWithCheck := scopeToBucket(bucketName, policy.WithCheck, restrictive)
 		for _, op := range policy.Operations {
-			policyName := fmt.Sprintf("storage_%s_%s_%d", bucketName, op, i)
+			policyName := policyIdent(fmt.Sprintf("storage_%s_%s_%d", bucketName, op, i))
 			pgOp := strings.ToUpper(op)
 
 			ddl = append(ddl, fmt.Sprintf("DROP POLICY IF EXISTS %s ON storage.objects;", policyName))
@@ -1740,15 +1740,25 @@ func generateStorageRLS(bucketName string, bucket domain.Bucket) []string {
 	return ddl
 }
 
+// policyIdent double-quotes a policy name only when it is not a plain lowercase identifier.
+func policyIdent(name string) string {
+	if plainIdentRE.MatchString(name) {
+		return name
+	}
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+}
+
+var plainIdentRE = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
+
 // scopeToBucket confines a possibly-empty RLS expression to bucketName, using OR-negation for restrictive policies so they don't AND-deny other buckets.
 func scopeToBucket(bucketName, expr string, restrictive bool) string {
 	if expr == "" {
 		return ""
 	}
 	if restrictive {
-		return fmt.Sprintf("bucket_id <> '%s' OR (%s)", bucketName, expr)
+		return fmt.Sprintf("bucket_id <> %s OR (%s)", sqlLiteral(bucketName), expr)
 	}
-	return fmt.Sprintf("bucket_id = '%s' AND (%s)", bucketName, expr)
+	return fmt.Sprintf("bucket_id = %s AND (%s)", sqlLiteral(bucketName), expr)
 }
 
 // orderTables does a topological sort based on FK dependencies.

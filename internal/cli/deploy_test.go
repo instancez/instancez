@@ -106,7 +106,20 @@ func TestRunDeploySecretNamesShownValuesNever(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(out), "INSTANCEZ_ENV_FOO")
 	assert.Contains(t, string(out), "--push-secrets")
+	assert.Contains(t, string(out), "Secrets NOT updated")
 	assert.NotContains(t, string(out), "s3cr3tvalue")
+}
+
+func TestRunDeployMessageWhenNoLocalSecrets(t *testing.T) {
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	_, err := deployToFakeCloud(t, "UNRELATED=x\n", deployOpts{})
+	_ = w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	require.NoError(t, err)
+	assert.Contains(t, string(out), "Secrets not updated")
 }
 
 func TestRunDeployPushSecretsDeclinedUploadsNothing(t *testing.T) {

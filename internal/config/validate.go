@@ -1021,6 +1021,10 @@ func validateRLSExpr(path, expr string) domain.ValidationErrors {
 	return errs
 }
 
+var bucketNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
+
+const bucketNameRule = "must start with a lowercase letter or digit, followed by lowercase letters, digits, hyphens or underscores (max 63 chars)"
+
 // reservedBucketNames are /storage/v1/object/<segment> routes that would shadow a bucket of the same name.
 var reservedBucketNames = map[string]bool{
 	"public": true, "sign": true, "authenticated": true, "info": true,
@@ -1032,8 +1036,18 @@ func validateStorage(storage map[string]domain.Bucket) domain.ValidationErrors {
 	for name, bucket := range storage {
 		path := fmt.Sprintf("storage.%s", name)
 
-		if err := validateIdent(path, name); err != nil {
-			errs = append(errs, err)
+		if !bucketNameRE.MatchString(name) {
+			errs = append(errs, &domain.ValidationError{
+				Path:       path,
+				Message:    fmt.Sprintf("invalid bucket name %q: %s", name, bucketNameRule),
+				Suggestion: "Use lowercase letters, digits, hyphens or underscores, e.g. brand-logos",
+			})
+		} else if reservedSQLKeywords[name] {
+			errs = append(errs, &domain.ValidationError{
+				Path:       path,
+				Message:    fmt.Sprintf("%q is a reserved SQL keyword", name),
+				Suggestion: "Pick a different name (e.g. add a prefix or suffix)",
+			})
 		} else if reservedBucketNames[name] {
 			errs = append(errs, &domain.ValidationError{
 				Path:       path,
