@@ -779,8 +779,9 @@ func diffColumnConstraints(qual, col string, oldF, newF domain.Field, old, new *
 		}
 		if newF.ForeignKey != nil {
 			if schema, refTable, refCol, err := domain.ParseFKReference(newF.ForeignKey.References); err == nil {
-				fks = append(fks, fmt.Sprintf("ALTER TABLE %s ADD FOREIGN KEY (%s) REFERENCES %s.%s(%s) ON DELETE %s;",
-					qual, col, schema, refTable, refCol, fkOnDelete(newF.ForeignKey)))
+				// Skipped when the column already has a foreign key to that table.
+				fks = append(fks, fmt.Sprintf(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE contype = 'f' AND conrelid = %[1]s::regclass AND confrelid = %[2]s::regclass AND conkey = ARRAY[(SELECT attnum FROM pg_attribute WHERE attrelid = %[1]s::regclass AND attname = %[3]s)]) THEN ALTER TABLE %[4]s ADD FOREIGN KEY (%[5]s) REFERENCES %[6]s.%[7]s(%[8]s) ON DELETE %[9]s; END IF; END $$;`,
+					sqlLiteral(qual), sqlLiteral(schema+"."+refTable), sqlLiteral(col), qual, col, schema, refTable, refCol, fkOnDelete(newF.ForeignKey)))
 			}
 		}
 	}

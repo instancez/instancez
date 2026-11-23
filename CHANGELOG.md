@@ -20,6 +20,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Fixed
 
+- Adding a declared foreign key to an existing column skips it when the column already has one, so a migration tool that added the FK itself does not end up with a duplicate.
 - `inz cloud site deploy` posted to `/api/mcp` and got 405; it now uses `/mcp`.
 - `inz cloud deploy --new` writes `project.cloud.project_id` in place instead of re-serializing the whole yaml.
 - `inz dev --port N` kept N on hot reload; functions called back to :8080 after any edit.

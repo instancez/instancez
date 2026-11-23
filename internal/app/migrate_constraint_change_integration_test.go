@@ -104,3 +104,27 @@ func TestMigrate_HyphenAndUnderscoreBucketsGetDistinctPolicies(t *testing.T) {
 		t.Fatalf("re-apply must be idempotent: %v", err)
 	}
 }
+
+// A migration tool may add the FK itself before the config declares it; the redeploy must not duplicate it.
+func TestMigrate_AddingDeclaredForeignKeyIsIdempotent(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+	m := app.NewMigrator(db).AllowDestructive(true)
+	bare := constraintCfg("cascade", "")
+	k := bare.Tables["kids"]
+	k.Fields[1].ForeignKey = nil
+	bare.Tables["kids"] = k
+	if err := m.Apply(ctx, bare); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, "ALTER TABLE kids ADD FOREIGN KEY (parent_id) REFERENCES parents(id) ON DELETE CASCADE"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Apply(ctx, constraintCfg("cascade", "")); err != nil {
+		t.Fatalf("apply with the FK already present: %v", err)
+	}
+	row, err := db.QueryRow(ctx, "SELECT count(*) AS n FROM pg_constraint WHERE contype='f' AND conrelid='kids'::regclass")
+	if err != nil || row["n"].(int64) != 1 {
+		t.Fatalf("want exactly one FK, got %v err %v", row, err)
+	}
+}
