@@ -18,9 +18,10 @@ import (
 // bools/strings so a new flag doesn't force every call site (tests included)
 // to change its argument list.
 type deployOpts struct {
-	yes     bool
-	new     bool
-	project string
+	yes         bool
+	new         bool
+	project     string
+	pushSecrets bool
 }
 
 func newDeployCmd() *cobra.Command {
@@ -40,6 +41,11 @@ project without editing the yaml.
 Deploy shows a diff of what would change and asks "Deploy? [y/N]" unless
 --yes is passed.
 
+Secrets are never uploaded unless --push-secrets is passed. With it, the
+INSTANCEZ_ENV_* values from .env, .production.env and the shell are sent and
+overwrite cloud secrets of the same name; set them once otherwise (dashboard
+or the set_app_secrets MCP tool).
+
 When the project declares code functions, deploy uploads their sources and
 the cloud builds the bundle. No local npm or S3 bucket is required.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -49,6 +55,7 @@ the cloud builds the bundle. No local npm or S3 bucket is required.`,
 	cmd.Flags().StringVar(&configPath, "config", "instancez.yaml", "path to instancez.yaml")
 	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false, "skip the deploy confirmation prompt")
 	cmd.Flags().BoolVar(&opts.new, "new", false, "create a new instancez Cloud project when none is linked yet (only after local validation passes)")
+	cmd.Flags().BoolVar(&opts.pushSecrets, "push-secrets", false, "upload local INSTANCEZ_ENV_* values as cloud secrets, overwriting existing ones (default: secrets are never pushed)")
 	cmd.Flags().StringVar(&opts.project, "project", "", "target this cloud project id for this run, instead of instancez.yaml's project.cloud.project_id (does not modify the file)")
 	return cmd
 }
@@ -135,6 +142,17 @@ func runDeploy(configPath string, opts deployOpts) error {
 	}
 	printDropped(dropped)
 
+	secrets, err := collectDeploySecrets(filepath.Dir(configPath), opts)
+	if err != nil {
+		return err
+	}
+	if len(secrets) > 0 && !opts.yes {
+		if !promptConfirm(fmt.Sprintf("Overwrite %d cloud secret(s) with local values? [y/N] ", len(secrets))) {
+			fmt.Println("  Aborted — nothing was changed.")
+			return nil
+		}
+	}
+
 	// Confirm before anything is written OR created, so declining leaves nothing
 	// behind: no cloud project, no project_id in the local yaml, no sources.
 	// The two cases gate differently: a new project has no remote state to diff
@@ -195,29 +213,6 @@ func runDeploy(configPath string, opts deployOpts) error {
 		fmt.Printf("  Including %d function source file(s)\n", len(sources))
 	}
 
-	// Provision INSTANCEZ_ENV_* secrets so the deployed app resolves its ${...}
-	// refs without a manual dashboard step. Only names present locally are
-	// pushed; secrets set only in the dashboard are left untouched.
-	secrets, err := config.LoadInstancezEnv(filepath.Dir(configPath), "production")
-	if err != nil {
-		return fmt.Errorf("load INSTANCEZ_ENV_ secrets: %w", err)
-	}
-	// Drop empty values so a blank `.env` line (INSTANCEZ_ENV_FOO=) doesn't fail
-	// the whole deploy on the endpoint's non-empty check.
-	for n, v := range secrets {
-		if v == "" {
-			delete(secrets, n)
-		}
-	}
-	if len(secrets) > 0 {
-		names := make([]string, 0, len(secrets))
-		for n := range secrets {
-			names = append(names, n)
-		}
-		sort.Strings(names)
-		fmt.Printf("  Including %d secret(s): %s\n", len(secrets), strings.Join(names, ", "))
-	}
-
 	fmt.Println("  Deploying...")
 	// The preview call above already printed dropped/diff for this same
 	// candidate yaml; no need to print them again here.
@@ -228,4 +223,36 @@ func runDeploy(configPath string, opts deployOpts) error {
 	fmt.Println("  ✓ Deployed.")
 	fmt.Println("  Track progress in the instancez Cloud dashboard.")
 	return nil
+}
+
+// collectDeploySecrets returns the INSTANCEZ_ENV_* values to upload. Without
+// --push-secrets it uploads none and only names what it left behind.
+func collectDeploySecrets(dir string, opts deployOpts) (map[string]string, error) {
+	local, err := config.LoadInstancezEnv(dir, "production")
+	if err != nil {
+		return nil, fmt.Errorf("load INSTANCEZ_ENV_ secrets: %w", err)
+	}
+	// Blank values would fail the endpoint's non-empty check.
+	for n, v := range local {
+		if v == "" {
+			delete(local, n)
+		}
+	}
+	names := make([]string, 0, len(local))
+	for n := range local {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	if !opts.pushSecrets {
+		if len(names) > 0 {
+			fmt.Printf("  Not pushing %d local secret(s): %s (pass --push-secrets to upload)\n", len(names), strings.Join(names, ", "))
+		}
+		return nil, nil
+	}
+	if len(names) == 0 {
+		fmt.Println("  --push-secrets: no INSTANCEZ_ENV_* values found locally.")
+		return nil, nil
+	}
+	fmt.Printf("  Pushing %d secret(s): %s\n", len(names), strings.Join(names, ", "))
+	return local, nil
 }
