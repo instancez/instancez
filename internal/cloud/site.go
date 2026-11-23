@@ -69,7 +69,8 @@ type SiteDeploy struct {
 }
 
 // MintSiteUpload asks the MCP endpoint (create_site_upload) for a ~60 minute
-// upload URL for the site. No REST route mints one.
+// upload URL for the site. No REST route mints one; MCP lives at the host
+// root, not under the /api prefix.
 func (c *Client) MintSiteUpload(siteID string) (*SiteUpload, error) {
 	req := map[string]any{
 		"jsonrpc": "2.0",
@@ -91,7 +92,9 @@ func (c *Client) MintSiteUpload(siteID string) (*SiteUpload, error) {
 			} `json:"content"`
 		} `json:"result"`
 	}
-	if err := c.do("POST", "/mcp", req, &resp); err != nil {
+	root := *c
+	root.BaseURL = strings.TrimSuffix(c.BaseURL, "/api")
+	if err := root.do("POST", "/mcp", req, &resp); err != nil {
 		return nil, err
 	}
 	if resp.Error != nil {

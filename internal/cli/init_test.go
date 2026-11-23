@@ -531,3 +531,48 @@ func TestScaffoldPassesBucketAuthedWrite(t *testing.T) {
 		assert.NotEqual(t, "bucket-authed-write", f.Rule)
 	}
 }
+
+func TestRunInitNoFunctionsSkipsFunctionsAndYAMLBlock(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, runInit(initOptions{name: "demo", dir: dir, noFunctions: true}))
+	assert.NoDirExists(t, filepath.Join(dir, "functions"))
+	yaml, err := os.ReadFile(filepath.Join(dir, "instancez.yaml"))
+	require.NoError(t, err)
+	assert.NotContains(t, string(yaml), "functions:")
+	assert.FileExists(t, filepath.Join(dir, ".production.env.example"))
+}
+
+func TestRunInitNoEnvExamplesSkipsOnlyEnvExamples(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, runInit(initOptions{name: "demo", dir: dir, noEnvExamples: true}))
+	assert.NoFileExists(t, filepath.Join(dir, ".production.env.example"))
+	assert.NoFileExists(t, filepath.Join(dir, ".development.env.example"))
+	assert.FileExists(t, filepath.Join(dir, "instancez.yaml"))
+	assert.FileExists(t, filepath.Join(dir, ".gitignore"))
+}
+
+func TestInitMinimalFlagImpliesBothOptOuts(t *testing.T) {
+	cmd := newInitCmd()
+	for _, f := range []string{"minimal", "no-functions", "no-env-examples"} {
+		require.NotNil(t, cmd.Flags().Lookup(f), f)
+	}
+	var o initOptions
+	require.NoError(t, cmd.ParseFlags([]string{"--minimal"}))
+	o.minimal = true
+	assert.True(t, o.skipFunctions() && o.skipEnvExamples())
+}
+
+func TestRunInitGitignoreCoversWorkerShims(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, runInit(initOptions{name: "demo", dir: dir}))
+	gi, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	require.NoError(t, err)
+	assert.Contains(t, string(gi), "functions/.inz-worker-*")
+}
+
+func TestRunInitDefaultsUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, runInit(initOptions{name: "demo", dir: dir}))
+	assert.FileExists(t, filepath.Join(dir, ".production.env.example"))
+	assert.FileExists(t, filepath.Join(dir, ".development.env.example"))
+}

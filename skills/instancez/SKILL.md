@@ -81,7 +81,7 @@ tables:
         default: draft
       - name: score
         type: integer
-        min: 0                       # min/max/check/pattern become CHECK constraints
+        min: 0                       # min/max (numeric types only), check, pattern become CHECK constraints; cap text with check: "char_length(col) <= N"
         max: 100
       - name: created_at
         type: timestamptz

@@ -38,7 +38,7 @@ func TestRunDeployRejectsBareEnvRef(t *testing.T) {
 // deployToFakeCloud points runDeploy at a fake cloud API and returns the
 // secrets the yaml upload carried. yes:true skips the confirmation prompt,
 // since these tests exercise the secrets push, not the prompt itself.
-func deployToFakeCloud(t *testing.T, dotenv string) (secrets map[string]string, err error) {
+func deployToFakeCloud(t *testing.T, dotenv string, opts deployOpts) (secrets map[string]string, err error) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/yaml") {
@@ -63,23 +63,91 @@ func deployToFakeCloud(t *testing.T, dotenv string) (secrets map[string]string, 
 	if e := os.WriteFile(filepath.Join(dir, ".production.env"), []byte(dotenv), 0o644); e != nil {
 		t.Fatal(e)
 	}
-	err = runDeploy(cfgPath, deployOpts{yes: true})
+	opts.yes = true
+	err = runDeploy(cfgPath, opts)
 	return secrets, err
 }
 
-func TestRunDeployPushesEnvSecrets(t *testing.T) {
+func TestRunDeployPushesEnvSecretsWithFlag(t *testing.T) {
 	// INSTANCEZ_ENV_FOO is pushed; UNRELATED is filtered out (wrong namespace);
 	// INSTANCEZ_ENV_EMPTY has a blank value and is dropped, not pushed.
-	secrets, err := deployToFakeCloud(t, "INSTANCEZ_ENV_FOO=bar\nUNRELATED=x\nINSTANCEZ_ENV_EMPTY=\n")
+	secrets, err := deployToFakeCloud(t, "INSTANCEZ_ENV_FOO=bar\nUNRELATED=x\nINSTANCEZ_ENV_EMPTY=\n", deployOpts{pushSecrets: true})
 	require.NoError(t, err)
 	assert.Equal(t, map[string]string{"INSTANCEZ_ENV_FOO": "bar"}, secrets)
 }
 
-func TestRunDeployNoSecretsSkipsPush(t *testing.T) {
-	// No INSTANCEZ_ENV_ vars present, so the yaml upload carries no secrets.
-	secrets, err := deployToFakeCloud(t, "UNRELATED=x\n")
+func TestRunDeployDoesNotPushSecretsByDefault(t *testing.T) {
+	secrets, err := deployToFakeCloud(t, "INSTANCEZ_ENV_FOO=bar\n", deployOpts{})
 	require.NoError(t, err)
 	assert.Empty(t, secrets)
+}
+
+func TestRunDeployDoesNotPushProcessEnvSecretsByDefault(t *testing.T) {
+	t.Setenv("INSTANCEZ_ENV_PLACEHOLDER", "changeme")
+	secrets, err := deployToFakeCloud(t, "UNRELATED=x\n", deployOpts{})
+	require.NoError(t, err)
+	assert.Empty(t, secrets)
+}
+
+func TestRunDeployNoSecretsSkipsPush(t *testing.T) {
+	secrets, err := deployToFakeCloud(t, "UNRELATED=x\n", deployOpts{pushSecrets: true})
+	require.NoError(t, err)
+	assert.Empty(t, secrets)
+}
+
+func TestRunDeploySecretNamesShownValuesNever(t *testing.T) {
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	_, err := deployToFakeCloud(t, "INSTANCEZ_ENV_FOO=s3cr3tvalue\n", deployOpts{})
+	_ = w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	require.NoError(t, err)
+	assert.Contains(t, string(out), "INSTANCEZ_ENV_FOO")
+	assert.Contains(t, string(out), "--push-secrets")
+	assert.Contains(t, string(out), "Secrets NOT updated")
+	assert.NotContains(t, string(out), "s3cr3tvalue")
+}
+
+func TestRunDeployMessageWhenNoLocalSecrets(t *testing.T) {
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	_, err := deployToFakeCloud(t, "UNRELATED=x\n", deployOpts{})
+	_ = w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	require.NoError(t, err)
+	assert.Contains(t, string(out), "Secrets not updated")
+}
+
+func TestRunDeployPushSecretsDeclinedUploadsNothing(t *testing.T) {
+	var puts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "PUT" {
+			puts++
+		}
+		_, _ = w.Write([]byte(`{"dropped":[],"diff":{"tables":[],"config_sections":[],"has_changes":false}}`))
+	}))
+	defer srv.Close()
+	t.Setenv("INSTANCEZ_CLOUD_API", srv.URL)
+	t.Setenv("INSTANCEZ_CLOUD_PAT", "test-pat")
+	var asked string
+	defer swapPromptConfirm(func(p string) bool {
+		if strings.Contains(p, "secret") {
+			asked = p
+			return false
+		}
+		return true
+	})()
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "instancez.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("version: 1\nproject:\n  name: demo\n  cloud:\n    project_id: p1\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".production.env"), []byte("INSTANCEZ_ENV_FOO=bar\n"), 0o644))
+	require.NoError(t, runDeploy(cfgPath, deployOpts{pushSecrets: true}))
+	assert.NotEmpty(t, asked)
+	assert.Zero(t, puts)
 }
 
 func TestRunDeployFunctionsWithoutFunctionsDir(t *testing.T) {
@@ -641,4 +709,17 @@ func swapPromptConfirm(fn func(string) bool) func() {
 	prev := promptConfirm
 	promptConfirm = fn
 	return func() { promptConfirm = prev }
+}
+
+func TestConfirmStdinKeepsReadAheadAcrossPrompts(t *testing.T) {
+	r, w, _ := os.Pipe()
+	_, _ = w.WriteString("y\ny\nn\n")
+	_ = w.Close()
+	oldIn, oldReader := os.Stdin, stdinReader
+	os.Stdin, stdinReader = r, nil
+	defer func() { os.Stdin, stdinReader = oldIn, oldReader }()
+	assert.True(t, confirmStdinDefaultNo(""))
+	assert.True(t, confirmStdinDefaultNo(""))
+	assert.False(t, confirmStdinDefaultNo(""))
+	assert.False(t, confirmStdinDefaultNo(""), "EOF is a no")
 }

@@ -89,8 +89,8 @@ func TestOwnerPoolConfigShrinksPool(t *testing.T) {
 	if got.Min != 0 {
 		t.Errorf("Min = %d, want 0", got.Min)
 	}
-	if got.IdleTimeout != "300s" {
-		t.Errorf("IdleTimeout = %q, want %q (inherited)", got.IdleTimeout, "300s")
+	if got.IdleTimeout != "10s" {
+		t.Errorf("IdleTimeout = %q, want 10s (owner connections are released soon after boot)", got.IdleTimeout)
 	}
 }
 
@@ -241,5 +241,47 @@ func TestEnsureAPIKeysFillsMissingKey(t *testing.T) {
 	// The pre-existing publishable key must be left untouched.
 	if !strings.Contains(string(data), "inz_publishable_existing") {
 		t.Errorf("expected existing publishable key preserved:\n%s", string(data))
+	}
+}
+
+func TestOwnerPoolConfigKeepsShorterIdleTimeout(t *testing.T) {
+	if got := ownerPoolConfig(domain.PoolConfig{Max: 2, IdleTimeout: "3s"}); got.IdleTimeout != "3s" {
+		t.Errorf("IdleTimeout = %q, want 3s", got.IdleTimeout)
+	}
+	if got := ownerPoolConfig(domain.PoolConfig{Max: 2}); got.IdleTimeout != "10s" {
+		t.Errorf("empty IdleTimeout = %q, want 10s", got.IdleTimeout)
+	}
+}
+
+func TestCapPoolFromEnv(t *testing.T) {
+	cases := []struct {
+		name         string
+		env          string
+		in           domain.PoolConfig
+		wantMax, min int
+	}{
+		{"unset keeps config", "", domain.PoolConfig{Max: 20, Min: 5}, 20, 5},
+		{"cap lowers max and min", "1", domain.PoolConfig{Max: 20, Min: 5}, 1, 1},
+		{"cap never raises", "50", domain.PoolConfig{Max: 20, Min: 5}, 20, 5},
+		{"cap equal", "20", domain.PoolConfig{Max: 20, Min: 5}, 20, 5},
+		{"min above max is clamped", "", domain.PoolConfig{Max: 2, Min: 5}, 2, 2},
+		{"zero ignored", "0", domain.PoolConfig{Max: 20, Min: 5}, 20, 5},
+		{"negative ignored", "-3", domain.PoolConfig{Max: 20, Min: 5}, 20, 5},
+		{"garbage ignored", "abc", domain.PoolConfig{Max: 20, Min: 5}, 20, 5},
+		{"NaN ignored", "NaN", domain.PoolConfig{Max: 20, Min: 5}, 20, 5},
+		{"overflow ignored", "99999999999999999999", domain.PoolConfig{Max: 20, Min: 5}, 20, 5},
+		{"max unset gets cap", "2", domain.PoolConfig{}, 2, 0},
+		{"spaces trimmed", " 3 ", domain.PoolConfig{Max: 20, Min: 5}, 3, 3},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := capPoolFromEnv(tc.in, func(string) string { return tc.env })
+			if got.Max != tc.wantMax || got.Min != tc.min {
+				t.Errorf("got max=%d min=%d, want max=%d min=%d", got.Max, got.Min, tc.wantMax, tc.min)
+			}
+			if got.IdleTimeout != tc.in.IdleTimeout {
+				t.Errorf("idle timeout must pass through")
+			}
+		})
 	}
 }

@@ -133,3 +133,13 @@ func VetYAML(data []byte) (*VetResult, error) {
 	}
 	return out, nil
 }
+
+// CheckFunctionImports reports relative imports in the uploaded function
+// sources (project-relative path to content) that point at a missing file.
+func CheckFunctionImports(files map[string]string) []Problem {
+	var probs []Problem
+	for _, m := range config.CheckFunctionImports(files) {
+		probs = append(probs, Problem{Path: "functions", Message: m, Suggestion: "Upload every file the handlers import, or remove the import"})
+	}
+	return probs
+}

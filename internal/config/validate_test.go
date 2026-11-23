@@ -433,6 +433,62 @@ func TestValidate_EnumOnNonStringType(t *testing.T) {
 	assertHasErrorAt(t, errs, "tables.todos.fields.priority.enum")
 }
 
+func f64(v float64) *float64 { return &v }
+
+// Regression: min/max on text emitted CHECK (col <= 280), which fails with 42883 at migrate time.
+func TestValidate_MinMaxOnlyOnNumericTypes(t *testing.T) {
+	cases := []struct {
+		typ     string
+		wantErr bool
+	}{
+		{"text", true}, {"varchar(20)", true}, {"boolean", true}, {"timestamptz", true}, {"uuid", true}, {"jsonb", true},
+		{"integer", false}, {"int", false}, {"bigint", false}, {"smallint", false}, {"numeric(10,2)", false},
+		{"decimal", false}, {"interval", true}, {"int4", false}, {"real", false}, {"double precision", false}, {"float8", false}, {"serial", false},
+	}
+	for _, tc := range cases {
+		for _, which := range []string{"min", "max"} {
+			t.Run(tc.typ+"/"+which, func(t *testing.T) {
+				cfg := validBaseConfig()
+				table := cfg.Tables["todos"]
+				f := domain.Field{Name: "x", Type: tc.typ}
+				if which == "min" {
+					f.Min = f64(0)
+				} else {
+					f.Max = f64(280)
+				}
+				table.Fields = append(table.Fields, f)
+				cfg.Tables["todos"] = table
+				errs := Validate(cfg)
+				path := "tables.todos.fields.x." + which
+				if tc.wantErr {
+					assertHasErrorAt(t, errs, path)
+					for _, e := range errs {
+						if e.Path == path {
+							if !strings.Contains(e.Suggestion, "char_length") {
+								t.Errorf("suggestion %q should mention char_length", e.Suggestion)
+							}
+						}
+					}
+				} else {
+					for _, e := range errs {
+						if e.Path == path {
+							t.Errorf("unexpected error at %s: %s", path, e.Message)
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestValidate_MinMaxZeroValueOnTextStillRejected(t *testing.T) {
+	cfg := validBaseConfig()
+	table := cfg.Tables["todos"]
+	table.Fields = append(table.Fields, domain.Field{Name: "x", Type: "text", Max: f64(0)})
+	cfg.Tables["todos"] = table
+	assertHasErrorAt(t, Validate(cfg), "tables.todos.fields.x.max")
+}
+
 func TestValidate_InvalidDefault(t *testing.T) {
 	cfg := validBaseConfig()
 	table := cfg.Tables["todos"]
@@ -1029,7 +1085,6 @@ func TestValidate_IdentifierNaming(t *testing.T) {
 		{"table", "Products"},
 		{"table", "1things"},
 		{"table", "_internal"},
-		{"bucket", "my-bucket"},
 		{"bucket", "MyBucket"},
 		{"field", "First-Name"},
 		{"function", "do-stuff"},
@@ -1059,7 +1114,7 @@ func TestValidate_IdentifierNaming(t *testing.T) {
 			}
 			found := false
 			for _, e := range errs {
-				if strings.Contains(e.Message, "invalid identifier") {
+				if strings.Contains(e.Message, "invalid identifier") || strings.Contains(e.Message, "invalid bucket name") {
 					found = true
 					break
 				}
@@ -2359,5 +2414,28 @@ func TestValidate_FKReferenceWithTooManyParts(t *testing.T) {
 				t.Errorf("%q suggestion %q", ref, e.Suggestion)
 			}
 		}
+	}
+}
+
+func TestValidate_StorageBucketNames(t *testing.T) {
+	cases := map[string]bool{
+		"brand-logos": true, "brand_logos": true, "a": true, "1st-bucket": true, "a-b_c-9": true,
+		strings.Repeat("a", 63): true,
+		"": false, "Brand": false, "brand logos": false, "-lead": false, "_lead": false, "a'b": false,
+		"a/b": false, "a.b": false, "a\"b": false, strings.Repeat("a", 64): false, "ünï": false,
+	}
+	for name, ok := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := validBaseConfig()
+			cfg.Providers.Storage = &domain.StorageProvider{Type: "local"}
+			cfg.Storage = map[string]domain.Bucket{name: {}}
+			errs := Validate(cfg)
+			if ok && errs != nil {
+				t.Fatalf("bucket %q should be valid: %v", name, errs)
+			}
+			if !ok {
+				assertHasErrorAt(t, errs, "storage."+name)
+			}
+		})
 	}
 }

@@ -22,7 +22,13 @@ type initOptions struct {
 	force         bool
 	template      string
 	listTemplates bool
+	noFunctions   bool
+	noEnvExamples bool
+	minimal       bool
 }
+
+func (o initOptions) skipFunctions() bool   { return o.noFunctions || o.minimal }
+func (o initOptions) skipEnvExamples() bool { return o.noEnvExamples || o.minimal }
 
 func newInitCmd() *cobra.Command {
 	var opts initOptions
@@ -58,6 +64,9 @@ init only writes scaffolding files; it never touches a database. A
 	cmd.Flags().BoolVar(&opts.force, "force", false, "overwrite existing scaffolding files")
 	cmd.Flags().StringVar(&opts.template, "template", "", "scaffold from a template (cloud catalog, built-in copy offline; see --list-templates)")
 	cmd.Flags().BoolVar(&opts.listTemplates, "list-templates", false, "list available templates and exit")
+	cmd.Flags().BoolVar(&opts.noFunctions, "no-functions", false, "skip the example code function and functions/package.json")
+	cmd.Flags().BoolVar(&opts.noEnvExamples, "no-env-examples", false, "skip the .production.env.example and .development.env.example files")
+	cmd.Flags().BoolVar(&opts.minimal, "minimal", false, "shorthand for --no-functions --no-env-examples")
 	return cmd
 }
 
@@ -122,7 +131,7 @@ func runInit(opts initOptions) error {
 	// functions are declared but node is missing. Rather than scaffolding a
 	// project that fails its first `inz dev`, skip the example function on
 	// node-less machines and say so loudly below.
-	nodeOK := funcs.RequireNode() == nil
+	nodeOK := !opts.skipFunctions() && funcs.RequireNode() == nil
 
 	// instancez.yaml: keep existing content when the file is already present
 	// and --force is not set. The rest of init (functions, env examples,
@@ -165,7 +174,7 @@ func runInit(opts initOptions) error {
 		}); err != nil {
 			return err
 		}
-	} else {
+	} else if !opts.skipFunctions() {
 		alertf("  ! Node.js not found on PATH. Skipped the example code function.")
 		alertf("    Code functions (the functions: block in instancez.yaml) need Node.js >= %d.", funcs.MinNodeMajorVersion)
 		alertf("    Install it from https://nodejs.org to use them.")
@@ -174,6 +183,9 @@ func runInit(opts initOptions) error {
 	// .production.env.example: write once. After that, treat user edits as
 	// authoritative — the file is a static example, we have no live values to
 	// inject, and the user may have hand-tuned it for their environment.
+	if opts.skipEnvExamples() {
+		return initDone(dir, opts)
+	}
 	if err := applyWrite(dir, ".production.env.example", func(existing string) (string, writeAction) {
 		if existing != "" {
 			return existing, actionSkip
@@ -195,6 +207,10 @@ func runInit(opts initOptions) error {
 		return err
 	}
 
+	return initDone(dir, opts)
+}
+
+func initDone(dir string, opts initOptions) error {
 	fmt.Println()
 	fmt.Println("Done! Next steps:")
 	if dir != mustCwd() {
@@ -363,6 +379,7 @@ pgdata/
 pgdata.runtime/
 bundle.tar.gz
 functions/node_modules/
+functions/.inz-worker-*
 `
 }
 

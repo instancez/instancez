@@ -121,6 +121,9 @@ func parsePoolConfig(databaseURL string, poolCfg domain.PoolConfig) (*pgxpool.Co
 		// Closing idle connections promptly matters behind NLB/PrivateLink
 		// paths, which silently expire idle TCP flows (350s default).
 		cfg.MaxConnIdleTime = idle
+		if idle > 0 {
+			cfg.HealthCheckPeriod = min(idle, cfg.HealthCheckPeriod)
+		}
 	}
 	return cfg, nil
 }

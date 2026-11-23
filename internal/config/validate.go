@@ -808,6 +808,19 @@ func validateTables(tables map[string]domain.Table, auth *domain.Auth) domain.Va
 				}
 			}
 
+			for _, bound := range []struct {
+				name string
+				set  bool
+			}{{"min", field.Min != nil}, {"max", field.Max != nil}} {
+				if bound.set && field.Type != "" && !isNumericType(field.Type) {
+					errs = append(errs, &domain.ValidationError{
+						Path:       fpath + "." + bound.name,
+						Message:    fmt.Sprintf("%s is only supported on numeric types, not %s", bound.name, field.Type),
+						Suggestion: "Use check, e.g. check: \"char_length(" + field.Name + ") <= 280\"",
+					})
+				}
+			}
+
 			// Validate enum
 			if len(field.Enum) > 0 && field.Type != "" && !isStringType(field.Type) {
 				errs = append(errs, &domain.ValidationError{
@@ -1008,6 +1021,10 @@ func validateRLSExpr(path, expr string) domain.ValidationErrors {
 	return errs
 }
 
+var bucketNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
+
+const bucketNameRule = "must start with a lowercase letter or digit, followed by lowercase letters, digits, hyphens or underscores (max 63 chars)"
+
 // reservedBucketNames are /storage/v1/object/<segment> routes that would shadow a bucket of the same name.
 var reservedBucketNames = map[string]bool{
 	"public": true, "sign": true, "authenticated": true, "info": true,
@@ -1019,8 +1036,18 @@ func validateStorage(storage map[string]domain.Bucket) domain.ValidationErrors {
 	for name, bucket := range storage {
 		path := fmt.Sprintf("storage.%s", name)
 
-		if err := validateIdent(path, name); err != nil {
-			errs = append(errs, err)
+		if !bucketNameRE.MatchString(name) {
+			errs = append(errs, &domain.ValidationError{
+				Path:       path,
+				Message:    fmt.Sprintf("invalid bucket name %q: %s", name, bucketNameRule),
+				Suggestion: "Use lowercase letters, digits, hyphens or underscores, e.g. brand-logos",
+			})
+		} else if reservedSQLKeywords[name] {
+			errs = append(errs, &domain.ValidationError{
+				Path:       path,
+				Message:    fmt.Sprintf("%q is a reserved SQL keyword", name),
+				Suggestion: "Pick a different name (e.g. add a prefix or suffix)",
+			})
 		} else if reservedBucketNames[name] {
 			errs = append(errs, &domain.ValidationError{
 				Path:       path,
@@ -1623,6 +1650,19 @@ func validateDefault(path string, val any, colType string) domain.ValidationErro
 		})
 	}
 	return errs
+}
+
+func isNumericType(typ string) bool {
+	lower := strings.ToLower(strings.TrimSpace(typ))
+	if lower == "int" {
+		return true
+	}
+	for _, p := range []string{"smallint", "integer", "int2", "int4", "int8", "bigint", "serial", "smallserial", "bigserial", "numeric", "decimal", "real", "double", "float"} {
+		if strings.HasPrefix(lower, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func isStringType(typ string) bool {

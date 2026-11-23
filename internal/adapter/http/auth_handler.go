@@ -241,7 +241,7 @@ func (h *AuthHandler) handleSignup(c *gin.Context) {
 		Data     map[string]any `json:"data"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		problemJSON(c, 400, "bad_request", "Invalid signup request: "+err.Error())
+		problemJSON(c, 400, "bad_request", "Invalid signup request: "+bindMessage(err))
 		return
 	}
 
@@ -846,7 +846,7 @@ func (h *AuthHandler) handleOTP(c *gin.Context) {
 		Data       map[string]any `json:"data"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		problemJSON(c, 400, "bad_request", "Invalid otp request: "+err.Error())
+		problemJSON(c, 400, "bad_request", "Invalid otp request: "+bindMessage(err))
 		return
 	}
 	createUser := true
@@ -907,7 +907,7 @@ func (h *AuthHandler) handleGenerateLink(c *gin.Context) {
 		RedirectTo string         `json:"redirect_to"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		problemJSON(c, 400, "bad_request", "Invalid generate_link request: "+err.Error())
+		problemJSON(c, 400, "bad_request", "Invalid generate_link request: "+bindMessage(err))
 		return
 	}
 
@@ -998,7 +998,7 @@ func (h *AuthHandler) handleAdminCreateUser(c *gin.Context) {
 		BanDuration  string         `json:"ban_duration"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		problemJSON(c, 400, "bad_request", "Invalid request: "+err.Error())
+		problemJSON(c, 400, "bad_request", "Invalid request: "+bindMessage(err))
 		return
 	}
 	if req.Email == "" {
@@ -1111,7 +1111,7 @@ func (h *AuthHandler) handleAdminUpdateUser(c *gin.Context) {
 		BanDuration  *string        `json:"ban_duration"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		problemJSON(c, 400, "bad_request", "Invalid request: "+err.Error())
+		problemJSON(c, 400, "bad_request", "Invalid request: "+bindMessage(err))
 		return
 	}
 
@@ -1188,7 +1188,7 @@ func (h *AuthHandler) handleAdminInvite(c *gin.Context) {
 		Data  map[string]any `json:"data"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		problemJSON(c, 400, "bad_request", "Invalid request: "+err.Error())
+		problemJSON(c, 400, "bad_request", "Invalid request: "+bindMessage(err))
 		return
 	}
 
@@ -2069,7 +2069,7 @@ func (h *AuthHandler) handleResend(c *gin.Context) {
 		Email string `json:"email" binding:"required,email"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		problemJSON(c, 400, "bad_request", "Invalid resend request: "+err.Error())
+		problemJSON(c, 400, "bad_request", "Invalid resend request: "+bindMessage(err))
 		return
 	}
 
@@ -2165,7 +2165,7 @@ func (h *AuthHandler) handleTokenVerify(c *gin.Context) {
 		Token string `json:"token" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		problemJSON(c, 400, "bad_request", "Invalid request: "+err.Error())
+		problemJSON(c, 400, "bad_request", "Invalid request: "+bindMessage(err))
 		return
 	}
 

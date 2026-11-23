@@ -160,7 +160,7 @@ func (h *StorageV1Handler) callerMayReach(c *gin.Context, bucket, rawPath string
 
 func denyNotFound(c *gin.Context) { storageErr(c, 404, "not_found", "Object not found") }
 func denyForbidden(c *gin.Context) {
-	storageErr(c, 403, "forbidden", "Not authorized to write this object")
+	storageErr(c, 403, "Unauthorized", "new row violates row-level security policy")
 }
 func denyEmptyList(c *gin.Context) { c.JSON(200, []gin.H{}) }
 func denyEmptyListV2(c *gin.Context) {
@@ -630,11 +630,20 @@ func nullIfEmpty(s string) any {
 // storageErr writes a storage-js compatible error body: {statusCode, error, message}.
 // statusCode is the HTTP status rendered as a string, matching @supabase/storage-js.
 func storageErr(c *gin.Context, status int, errSlug, message string) {
-	c.JSON(status, gin.H{
+	body := gin.H{
 		"statusCode": strconv.Itoa(status),
 		"error":      errSlug,
 		"message":    message,
-	})
+	}
+	switch {
+	case status == 404 && message == "Object not found":
+		body["code"] = "NoSuchKey"
+	case status == 404 && strings.Contains(strings.ToLower(message), "bucket") && strings.Contains(strings.ToLower(message), "not found"):
+		body["code"] = "NoSuchBucket"
+	case status == 403:
+		body["code"] = "AccessDenied"
+	}
+	c.JSON(status, body)
 }
 
 // uploadWriteError maps a failed metadata write to 404, 409, 403 or 500.
@@ -645,7 +654,7 @@ func (h *StorageV1Handler) uploadWriteError(c *gin.Context, err error) {
 	case isDuplicateKeyErr(err):
 		storageErr(c, 409, "duplicate", "The resource already exists")
 	case isPermissionDenied(err):
-		storageErr(c, 403, "forbidden", "Not authorized to write this object")
+		storageErr(c, 403, "Unauthorized", "new row violates row-level security policy")
 	default:
 		h.logger.Error("record object", "error", err)
 		storageErr(c, 500, "internal", "Failed to record object")
@@ -737,7 +746,7 @@ func (h *StorageV1Handler) serveObject(c *gin.Context, bucketName, objPath strin
 		storageErr(c, 500, "internal", "Download failed")
 		return
 	}
-	row, err := h.db.QueryRow(ctx, "SELECT size, metadata FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
+	row, err := h.db.QueryRow(ctx, "SELECT size, mime, metadata FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
 	if err != nil || row == nil {
 		storageErr(c, 404, "not_found", "Object not found")
 		return
@@ -750,13 +759,17 @@ func (h *StorageV1Handler) serveObject(c *gin.Context, bucketName, objPath strin
 		return
 	}
 	defer func() { _ = body.Close() }()
+	// The local store sniffs the type (SVG becomes text/plain); the stored mime is exact.
+	if m := strings.ToLower(asString(row["mime"])); m != "" && m != "application/octet-stream" {
+		contentType = m
+	}
 
 	length := int64(-1)
 	if size, ok := row["size"].(int64); ok && c.Request.Method == http.MethodHead {
 		length = size
 	}
 	var out io.Reader = body
-	if tp != nil && strings.HasPrefix(contentType, "image/") {
+	if tp != nil && strings.HasPrefix(contentType, "image/") && !strings.HasPrefix(contentType, "image/svg") {
 		transformed, newCT, err := applyTransform(body, contentType, tp)
 		if errors.Is(err, errImageTooLarge) {
 			storageErr(c, 413, "image_too_large", err.Error())

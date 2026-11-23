@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/instancez/instancez/internal/domain"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseDevFlagsDefaults(t *testing.T) {
@@ -463,4 +465,18 @@ func TestDevBannerShowsEmbeddedDSN(t *testing.T) {
 	if !strings.Contains(buf.String(), "URL        "+dsn) {
 		t.Fatalf("banner missing embedded DSN:\n%s", buf.String())
 	}
+}
+
+// Regression: a hot reload parsed the yaml fresh and pointed functions at :8080
+// instead of the --port the server listens on.
+func TestWithServerPortKeepsOverrideAndDoesNotMutateInput(t *testing.T) {
+	fresh := &domain.Config{Functions: map[string]domain.CodeFunction{"f": {}}}
+	fresh.Server.Port = 8080
+	got := withServerPort(fresh, 9123)
+	assert.Equal(t, 9123, got.Server.Port)
+	assert.Equal(t, 8080, fresh.Server.Port)
+	assert.Contains(t, got.Functions, "f")
+	opts, err := sharedFuncOptions(context.Background(), got, t.TempDir(), "development", nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "http://127.0.0.1:9123", opts.LoopbackURL)
 }

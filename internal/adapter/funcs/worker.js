@@ -1,5 +1,6 @@
 import http from "node:http";
 import { pathToFileURL } from "node:url";
+import { basename } from "node:path";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 // AsyncLocalStorage tracks the current request context so log lines emitted
@@ -84,14 +85,19 @@ try {
 // args: <socketPath> <fnName=absPath,...>
 const [, , socketPath, fnSpec] = process.argv;
 const fns = {};
+const importErrors = new Map();
 for (const pair of fnSpec.split(",").filter(Boolean)) {
   const [name, file] = pair.split("=");
+  if (!name || !file) continue;
   try {
     const mod = await import(pathToFileURL(file).href);
     fns[name] = mod.default;
   } catch (e) {
     // Import errors go to stderr (not stdout) so they don't corrupt NDJSON.
-    process.stderr.write("inz-worker: failed to import " + name + " (" + file + "): " + String(e && e.message || e) + "\n");
+    const msg = String(e && e.message || e);
+    process.stderr.write("inz-worker: failed to import " + name + " (" + file + "): " + msg + "\n");
+    // The response detail keeps only file names, never absolute server paths.
+    importErrors.set(name, msg.replace(/(?:[A-Za-z]:)?(?:[\\/][^\s'"():]+)+/g, (p) => basename(p)));
   }
 }
 
@@ -192,7 +198,13 @@ const server = http.createServer(async (req, res) => {
   if (req.url === "/healthz") { res.writeHead(200); res.end("ok"); return; }
   const fnName = req.headers["x-inz-fn"];
   const handler = fns[fnName];
-  if (!handler) { res.writeHead(404); res.end(JSON.stringify({ message: "unknown fn" })); return; }
+  if (!handler) {
+    const body = { message: "unknown fn" };
+    if (importErrors.has(fnName)) body.detail = "function " + fnName + " failed to import: " + importErrors.get(fnName);
+    res.writeHead(404, { "content-type": "application/json" });
+    res.end(JSON.stringify(body));
+    return;
+  }
 
   // Best-effort worker-side abort: when the request connection closes before a
   // response is sent (e.g. the Go-side per-request timeout closes the socket),

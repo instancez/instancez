@@ -180,7 +180,7 @@ Secrets are resolved from three sources in ascending precedence order:
 
 Only keys with the `INSTANCEZ_ENV_` prefix are passed to functions. Other environment variables in those files are ignored.
 
-Function workers run with a scrubbed environment, so host secrets like AWS credentials and database URLs are not visible inside a handler. The values you declare under `env:` are the only secrets a worker sees. instancez injects them per request over an internal channel and never writes them to the worker's process environment.
+Function workers run with a scrubbed environment, so host secrets like AWS credentials and database URLs are not visible inside a handler. `process.env.NAME` is empty inside a handler by design: read secrets from `ctx.env.NAME`, and declare each one under the function's `env:` block. The values you declare under `env:` are the only secrets a worker sees. instancez injects them per request over an internal channel and never writes them to the worker's process environment.
 
 ## npm dependencies
 
