@@ -121,7 +121,7 @@ The schema model has no equivalent for a few Postgres column features. Use `bigs
 | `enum` | list of strings | Restricts column values to the given set. Only valid on `text`/`varchar`/`char` types. |
 | `foreign_key` | object | Declares a foreign key. See [Foreign keys](#foreign-keys). |
 | `check` | string | Arbitrary SQL check expression added as a `CHECK` constraint. |
-| `min` / `max` | number | Numeric range constraints. Applied as check constraints. |
+| `min` / `max` | number | Numeric range constraints. Applied as check constraints. Only valid on numeric types; for text length use `check: "char_length(col) <= 280"`. |
 | `pattern` | string | Regex pattern constraint (applied as a check). |
 
 ### Defaults
