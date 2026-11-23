@@ -14,6 +14,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ### Added
 
+- `INSTANCEZ_DB_POOL_MAX` lowers the request pool (never raises it) so hosts can keep all instances inside a database role's connection limit. A configured pool `min` above `max` is clamped to `max`, and the owner pool now releases its connections after 10s idle instead of holding them for the request pool's idle timeout.
 - `inz init --no-functions`, `--no-env-examples` and `--minimal`.
 - Unknown-function 404s keep `{"message":"unknown fn"}` and add a `detail` naming the function and the import error when it failed to load.
 

@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/instancez/instancez/internal/adapter/postgres"
 	"github.com/instancez/instancez/internal/domain"
@@ -75,8 +78,26 @@ func ensureAPIKeys(envFile string) (bool, error) {
 // NLB/PrivateLink paths silently expire) and caps out at 2.
 func ownerPoolConfig(poolCfg domain.PoolConfig) domain.PoolConfig {
 	poolCfg.Min = 0
+	if d, err := time.ParseDuration(poolCfg.IdleTimeout); err != nil || d > ownerIdleTimeout {
+		poolCfg.IdleTimeout = ownerIdleTimeout.String()
+	}
 	if poolCfg.Max > 2 || poolCfg.Max == 0 {
 		poolCfg.Max = 2
+	}
+	return poolCfg
+}
+
+const ownerIdleTimeout = 10 * time.Second
+
+// capPoolFromEnv lowers the request pool to INSTANCEZ_DB_POOL_MAX, which the
+// host sets so all instances stay inside the database role's connection limit.
+// It never raises the configured size, and ignores values that are not positive integers.
+func capPoolFromEnv(poolCfg domain.PoolConfig, getenv func(string) string) domain.PoolConfig {
+	if n, err := strconv.Atoi(strings.TrimSpace(getenv("INSTANCEZ_DB_POOL_MAX"))); err == nil && n > 0 && (poolCfg.Max == 0 || n < poolCfg.Max) {
+		poolCfg.Max = n
+	}
+	if poolCfg.Max > 0 && poolCfg.Min > poolCfg.Max {
+		poolCfg.Min = poolCfg.Max
 	}
 	return poolCfg
 }
@@ -133,6 +154,7 @@ func resolveDBSource(getenv func(string) string, superuserOverride string) (dbSo
 // DSN env var (the embedded-Postgres path); otherwise the DSNs are resolved from
 // the environment. See resolveDBSource. It then opens both pools concurrently.
 func dbConnections(ctx context.Context, poolCfg domain.PoolConfig, superuserOverride string) (domain.OwnerDB, domain.RequestDB, domain.Roles, error) {
+	poolCfg = capPoolFromEnv(poolCfg, os.Getenv)
 	roles := rolesFromEnv()
 	if err := roles.Validate(); err != nil {
 		return domain.OwnerDB{}, domain.RequestDB{}, domain.Roles{}, err
