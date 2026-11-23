@@ -1100,36 +1100,8 @@ func generateTable(name string, table domain.Table, allTables map[string]domain.
 			}
 		}
 
-		// CHECK constraints from enum
-		if len(field.Enum) > 0 {
-			quoted := make([]string, len(field.Enum))
-			for i, v := range field.Enum {
-				quoted[i] = sqlLiteral(v)
-			}
-			constraints = append(constraints,
-				fmt.Sprintf("CHECK (%s IN (%s))", fname, strings.Join(quoted, ", ")))
-		}
-
-		// CHECK from pattern
-		if field.Pattern != "" {
-			constraints = append(constraints,
-				fmt.Sprintf("CHECK (%s ~ %s)", fname, sqlLiteral(field.Pattern)))
-		}
-
-		// CHECK from min/max
-		if field.Min != nil {
-			constraints = append(constraints,
-				fmt.Sprintf("CHECK (%s >= %g)", fname, *field.Min))
-		}
-		if field.Max != nil {
-			constraints = append(constraints,
-				fmt.Sprintf("CHECK (%s <= %g)", fname, *field.Max))
-		}
-
-		// Raw check
-		if field.Check != "" {
-			constraints = append(constraints,
-				fmt.Sprintf("CHECK (%s)", field.Check))
+		for _, c := range columnChecks(field) {
+			constraints = append(constraints, fmt.Sprintf("CHECK (%s)", c))
 		}
 
 		// Unique

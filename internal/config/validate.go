@@ -1654,6 +1654,9 @@ func validateDefault(path string, val any, colType string) domain.ValidationErro
 
 func isNumericType(typ string) bool {
 	lower := strings.ToLower(strings.TrimSpace(typ))
+	if lower == "int" {
+		return true
+	}
 	for _, p := range []string{"smallint", "integer", "int2", "int4", "int8", "bigint", "serial", "smallserial", "bigserial", "numeric", "decimal", "real", "double", "float"} {
 		if strings.HasPrefix(lower, p) {
 			return true

@@ -442,7 +442,7 @@ func TestValidate_MinMaxOnlyOnNumericTypes(t *testing.T) {
 		wantErr bool
 	}{
 		{"text", true}, {"varchar(20)", true}, {"boolean", true}, {"timestamptz", true}, {"uuid", true}, {"jsonb", true},
-		{"integer", false}, {"bigint", false}, {"smallint", false}, {"numeric(10,2)", false},
+		{"integer", false}, {"int", false}, {"bigint", false}, {"smallint", false}, {"numeric(10,2)", false},
 		{"decimal", false}, {"interval", true}, {"int4", false}, {"real", false}, {"double precision", false}, {"float8", false}, {"serial", false},
 	}
 	for _, tc := range cases {

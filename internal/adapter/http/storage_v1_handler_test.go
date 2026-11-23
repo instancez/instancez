@@ -3201,3 +3201,21 @@ func TestStorageErr_AddsSupabaseCodeWithoutChangingStatusOrShape(t *testing.T) {
 		}
 	}
 }
+
+// SVG is not a raster: a transform query must serve it, not 400.
+func TestServeObject_SVGIgnoresTransformQuery(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := &stubDB{queryRowFn: func(context.Context, string, ...any) (map[string]any, error) {
+		return map[string]any{"size": int64(3), "mime": "image/svg+xml"}, nil
+	}}
+	store := &stubObjectStore{downloadFn: func(context.Context, string) (io.ReadCloser, string, error) {
+		return io.NopCloser(strings.NewReader("<svg/>")), "text/plain", nil
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"logos": {Public: true}})
+	r := gin.New()
+	r.GET("/storage/v1/object/*all", h.objectGetDispatch)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/storage/v1/object/public/logos/a.svg?width=50", nil))
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Equal(t, "<svg/>", w.Body.String())
+}

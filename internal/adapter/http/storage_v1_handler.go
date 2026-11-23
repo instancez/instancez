@@ -769,7 +769,7 @@ func (h *StorageV1Handler) serveObject(c *gin.Context, bucketName, objPath strin
 		length = size
 	}
 	var out io.Reader = body
-	if tp != nil && strings.HasPrefix(contentType, "image/") {
+	if tp != nil && strings.HasPrefix(contentType, "image/") && !strings.HasPrefix(contentType, "image/svg") {
 		transformed, newCT, err := applyTransform(body, contentType, tp)
 		if errors.Is(err, errImageTooLarge) {
 			storageErr(c, 413, "image_too_large", err.Error())

@@ -78,7 +78,7 @@ func collectFunctionSources(projectDir string, cfg *domain.Config) (map[string]s
 		}
 	}
 	if probs := config.CheckFunctionImports(out); len(probs) > 0 {
-		return nil, errors.New(probs[0])
+		return nil, errors.New(strings.Join(probs, "; "))
 	}
 	return out, nil
 }

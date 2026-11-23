@@ -132,3 +132,23 @@ func TestWriteProjectIDFlowAndEmptyInputs(t *testing.T) {
 	_, err = WriteProjectID([]byte("- a\n"), "id1")
 	assert.Error(t, err)
 }
+
+func TestWriteProjectIDFallsBackWhenInPlaceEditIsUnsafe(t *testing.T) {
+	cases := map[string]string{
+		"empty value":        "project:\n  cloud:\n    project_id:\n  name: a\n",
+		"empty with comment": "project:\n  cloud:\n    project_id: # fill me\n",
+		"null value":         "project:\n  cloud:\n    project_id: null\n",
+		"flow top level":     "{version: 1}\n",
+		"crlf":               "version: 1\r\nproject:\r\n  name: a\r\n",
+		"quoted old id":      "project:\n  cloud:\n    project_id: \"old\"\n",
+	}
+	for name, src := range cases {
+		t.Run(name, func(t *testing.T) {
+			out, err := WriteProjectID([]byte(src), "new-id")
+			assert.NoError(t, err)
+			id, err := ReadProjectID(out)
+			assert.NoError(t, err)
+			assert.Equal(t, "new-id", id)
+		})
+	}
+}
