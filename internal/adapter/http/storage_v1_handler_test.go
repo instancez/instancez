@@ -1607,11 +1607,11 @@ func TestRemoveObject_HiddenIs403MissingIs404KeepsBytes(t *testing.T) {
 	r := removeOneRouter(newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}}))
 	w := serve(r, "DELETE", "/storage/v1/object/avatars/hidden.txt", "", nil)
 	assert.Equal(t, 403, w.Code)
-	assert.JSONEq(t, `{"statusCode":"403","error":"Unauthorized","message":"Access denied"}`, w.Body.String())
+	assert.JSONEq(t, `{"statusCode":"403","error":"Unauthorized","message":"Access denied","code":"AccessDenied"}`, w.Body.String())
 	exists = false
 	w = serve(r, "DELETE", "/storage/v1/object/avatars/nope.txt", "", nil)
 	assert.Equal(t, 404, w.Code)
-	assert.JSONEq(t, `{"statusCode":"404","error":"not_found","message":"Object not found"}`, w.Body.String())
+	assert.JSONEq(t, `{"statusCode":"404","error":"not_found","message":"Object not found","code":"NoSuchKey"}`, w.Body.String())
 	assert.Zero(t, deleted)
 }
 
@@ -1647,7 +1647,7 @@ func TestRemoveObject_UnknownBucket404(t *testing.T) {
 	r := removeOneRouter(newStorageHandler(&stubDB{}, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}}))
 	w := serve(r, "DELETE", "/storage/v1/object/ghost/a.txt", "", nil)
 	assert.Equal(t, 404, w.Code)
-	assert.JSONEq(t, `{"statusCode":"404","error":"not_found","message":"Bucket not found"}`, w.Body.String())
+	assert.JSONEq(t, `{"statusCode":"404","error":"not_found","message":"Bucket not found","code":"NoSuchBucket"}`, w.Body.String())
 }
 
 func TestRemoveObject_InvalidKeysSkipDB(t *testing.T) {
@@ -3168,5 +3168,36 @@ func TestServeObject_StoredMimeWinsOverSniffedType(t *testing.T) {
 			require.Equal(t, 200, w.Code)
 			assert.Equal(t, tc.want, w.Header().Get("Content-Type"))
 		})
+	}
+}
+
+// storage-js exists() keys off code NoSuchKey; Supabase also sends AccessDenied/NoSuchBucket.
+func TestStorageErr_AddsSupabaseCodeWithoutChangingStatusOrShape(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		status          int
+		slug, msg, code string
+	}{
+		{404, "not_found", "Object not found", "NoSuchKey"},
+		{404, "not_found", "Bucket not found", "NoSuchBucket"},
+		{403, "Unauthorized", "new row violates row-level security policy", "AccessDenied"},
+		{403, "Unauthorized", "Access denied", "AccessDenied"},
+		{400, "invalid_transform", "bad", ""},
+	}
+	for _, tc := range cases {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		storageErr(c, tc.status, tc.slug, tc.msg)
+		assert.Equal(t, tc.status, w.Code)
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+		assert.Equal(t, strconv.Itoa(tc.status), body["statusCode"])
+		assert.Equal(t, tc.slug, body["error"])
+		assert.Equal(t, tc.msg, body["message"])
+		if tc.code == "" {
+			assert.NotContains(t, body, "code")
+		} else {
+			assert.Equal(t, tc.code, body["code"])
+		}
 	}
 }

@@ -160,7 +160,7 @@ func (h *StorageV1Handler) callerMayReach(c *gin.Context, bucket, rawPath string
 
 func denyNotFound(c *gin.Context) { storageErr(c, 404, "not_found", "Object not found") }
 func denyForbidden(c *gin.Context) {
-	storageErr(c, 403, "forbidden", "Not authorized to write this object")
+	storageErr(c, 403, "Unauthorized", "new row violates row-level security policy")
 }
 func denyEmptyList(c *gin.Context) { c.JSON(200, []gin.H{}) }
 func denyEmptyListV2(c *gin.Context) {
@@ -630,11 +630,20 @@ func nullIfEmpty(s string) any {
 // storageErr writes a storage-js compatible error body: {statusCode, error, message}.
 // statusCode is the HTTP status rendered as a string, matching @supabase/storage-js.
 func storageErr(c *gin.Context, status int, errSlug, message string) {
-	c.JSON(status, gin.H{
+	body := gin.H{
 		"statusCode": strconv.Itoa(status),
 		"error":      errSlug,
 		"message":    message,
-	})
+	}
+	switch {
+	case status == 404 && message == "Object not found":
+		body["code"] = "NoSuchKey"
+	case status == 404 && message == "Bucket not found":
+		body["code"] = "NoSuchBucket"
+	case status == 403:
+		body["code"] = "AccessDenied"
+	}
+	c.JSON(status, body)
 }
 
 // uploadWriteError maps a failed metadata write to 404, 409, 403 or 500.
@@ -645,7 +654,7 @@ func (h *StorageV1Handler) uploadWriteError(c *gin.Context, err error) {
 	case isDuplicateKeyErr(err):
 		storageErr(c, 409, "duplicate", "The resource already exists")
 	case isPermissionDenied(err):
-		storageErr(c, 403, "forbidden", "Not authorized to write this object")
+		storageErr(c, 403, "Unauthorized", "new row violates row-level security policy")
 	default:
 		h.logger.Error("record object", "error", err)
 		storageErr(c, 500, "internal", "Failed to record object")
