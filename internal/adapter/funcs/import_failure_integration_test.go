@@ -35,11 +35,13 @@ func TestImportFailureNamesFunctionAndCause(t *testing.T) {
 	}
 	write("ok.js", `export default async () => ({ status: 200, body: { ok: true } })`)
 	write("broken.js", `import { g } from "./lib/google.js"; export default async () => g`)
+	write("leaky.js", `throw new Error("failed to load /srv/secret/shared/config.json"); export default 1`)
 	rt, err := funcs.New(funcs.Options{
 		Dir: dir,
 		Functions: map[string]domain.CodeFunction{
 			"ok":     {Runtime: "node", File: "ok.js"},
 			"broken": {Runtime: "node", File: "broken.js"},
+			"leaky":  {Runtime: "node", File: "leaky.js"},
 		},
 	})
 	if err != nil {
@@ -61,5 +63,13 @@ func TestImportFailureNamesFunctionAndCause(t *testing.T) {
 	detail, _ := body["detail"].(string)
 	if !strings.Contains(detail, "broken") || !strings.Contains(detail, "google.js") {
 		t.Errorf("detail = %q, want function name and import error", detail)
+	}
+	if strings.Contains(detail, dir) {
+		t.Errorf("detail leaks the server path: %q", detail)
+	}
+
+	_, leak := invokeStatus(t, rt, "leaky")
+	if d, _ := leak["detail"].(string); strings.Contains(d, "/srv/secret") || !strings.Contains(d, "config.json") {
+		t.Errorf("paths outside the function dir must be reduced to file names: %q", d)
 	}
 }

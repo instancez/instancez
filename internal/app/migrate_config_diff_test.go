@@ -1171,3 +1171,30 @@ func TestDiffColumnChanges_ConstraintNamesAreQuotedSafely(t *testing.T) {
 }
 
 func f64p(v float64) *float64 { return &v }
+
+// An FK to a column that becomes unique in the same migration must come after the UNIQUE.
+func TestDiffColumnChanges_ForeignKeyAfterReferencedUnique(t *testing.T) {
+	mk := func(unique bool, fk bool) *domain.Config {
+		kid := domain.Field{Name: "parent_code", Type: "text"}
+		if fk {
+			kid.ForeignKey = &domain.ForeignKey{References: "parents.code"}
+		}
+		return &domain.Config{Tables: map[string]domain.Table{
+			"kids":    {Fields: []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}, kid}},
+			"parents": {Fields: []domain.Field{{Name: "id", Type: "bigserial", PrimaryKey: true}, {Name: "code", Type: "text", Unique: unique}}},
+		}}
+	}
+	ddl := diffColumnChanges(mk(false, false), mk(true, true))
+	uniq, fk := -1, -1
+	for i, s := range ddl {
+		if strings.Contains(s, "ADD UNIQUE") {
+			uniq = i
+		}
+		if strings.Contains(s, "ADD FOREIGN KEY") {
+			fk = i
+		}
+	}
+	if uniq < 0 || fk < 0 || fk < uniq {
+		t.Fatalf("want UNIQUE before FOREIGN KEY, got %v", ddl)
+	}
+}

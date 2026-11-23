@@ -1,6 +1,6 @@
 import http from "node:http";
 import { pathToFileURL } from "node:url";
-import { dirname } from "node:path";
+import { basename } from "node:path";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 // AsyncLocalStorage tracks the current request context so log lines emitted
@@ -85,9 +85,10 @@ try {
 // args: <socketPath> <fnName=absPath,...>
 const [, , socketPath, fnSpec] = process.argv;
 const fns = {};
-const importErrors = {};
+const importErrors = new Map();
 for (const pair of fnSpec.split(",").filter(Boolean)) {
   const [name, file] = pair.split("=");
+  if (!name || !file) continue;
   try {
     const mod = await import(pathToFileURL(file).href);
     fns[name] = mod.default;
@@ -95,8 +96,8 @@ for (const pair of fnSpec.split(",").filter(Boolean)) {
     // Import errors go to stderr (not stdout) so they don't corrupt NDJSON.
     const msg = String(e && e.message || e);
     process.stderr.write("inz-worker: failed to import " + name + " (" + file + "): " + msg + "\n");
-    // The response detail hides absolute server paths.
-    importErrors[name] = msg.split(dirname(file) + "/").join("./");
+    // The response detail keeps only file names, never absolute server paths.
+    importErrors.set(name, msg.replace(/(?:[A-Za-z]:)?(?:[\\/][^\s'"():]+)+/g, (p) => basename(p)));
   }
 }
 
@@ -199,7 +200,7 @@ const server = http.createServer(async (req, res) => {
   const handler = fns[fnName];
   if (!handler) {
     const body = { message: "unknown fn" };
-    if (Object.hasOwn(importErrors, fnName)) body.detail = "function " + fnName + " failed to import: " + importErrors[fnName];
+    if (importErrors.has(fnName)) body.detail = "function " + fnName + " failed to import: " + importErrors.get(fnName);
     res.writeHead(404, { "content-type": "application/json" });
     res.end(JSON.stringify(body));
     return;

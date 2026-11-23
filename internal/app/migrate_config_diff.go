@@ -675,7 +675,7 @@ func diffNewStorage(old, new *domain.Config) []string {
 // diffColumnChanges returns ALTER TABLE statements for type changes and
 // nullability changes on columns that exist in both old and new configs.
 func diffColumnChanges(old, new *domain.Config) []string {
-	var ddl []string
+	var ddl, fkDDL []string
 	tableNames := sortedKeys(new.Tables)
 	for _, tableName := range tableNames {
 		newTable := new.Tables[tableName]
@@ -711,10 +711,13 @@ func diffColumnChanges(old, new *domain.Config) []string {
 				}
 			}
 
-			ddl = append(ddl, diffColumnConstraints(qual, fieldName, oldField, newField, old, new)...)
+			cons, fk := diffColumnConstraints(qual, fieldName, oldField, newField, old, new)
+			ddl = append(ddl, cons...)
+			fkDDL = append(fkDDL, fk...)
 		}
 	}
-	return ddl
+	// Foreign keys last, so a referenced unique key added in this migration exists.
+	return append(ddl, fkDDL...)
 }
 
 // columnChecks lists a field's CHECK expressions in creation order.
@@ -758,8 +761,7 @@ func fkSignature(f domain.Field) string {
 
 // diffColumnConstraints reconciles checks, foreign key, unique and default on a
 // column that exists in both configs.
-func diffColumnConstraints(qual, col string, oldF, newF domain.Field, old, new *domain.Config) []string {
-	var ddl []string
+func diffColumnConstraints(qual, col string, oldF, newF domain.Field, old, new *domain.Config) (ddl, fks []string) {
 
 	oldChecks, newChecks := columnChecks(oldF), columnChecks(newF)
 	if !slices.Equal(oldChecks, newChecks) {
@@ -777,7 +779,7 @@ func diffColumnConstraints(qual, col string, oldF, newF domain.Field, old, new *
 		}
 		if newF.ForeignKey != nil {
 			if schema, refTable, refCol, err := domain.ParseFKReference(newF.ForeignKey.References); err == nil {
-				ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ADD FOREIGN KEY (%s) REFERENCES %s.%s(%s) ON DELETE %s;",
+				fks = append(fks, fmt.Sprintf("ALTER TABLE %s ADD FOREIGN KEY (%s) REFERENCES %s.%s(%s) ON DELETE %s;",
 					qual, col, schema, refTable, refCol, fkOnDelete(newF.ForeignKey)))
 			}
 		}
@@ -799,7 +801,7 @@ func diffColumnConstraints(qual, col string, oldF, newF domain.Field, old, new *
 			ddl = append(ddl, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s;", qual, col, newDef))
 		}
 	}
-	return ddl
+	return ddl, fks
 }
 
 func defaultSQL(f domain.Field, cfg *domain.Config) string {

@@ -710,3 +710,16 @@ func swapPromptConfirm(fn func(string) bool) func() {
 	promptConfirm = fn
 	return func() { promptConfirm = prev }
 }
+
+func TestConfirmStdinKeepsReadAheadAcrossPrompts(t *testing.T) {
+	r, w, _ := os.Pipe()
+	_, _ = w.WriteString("y\ny\nn\n")
+	_ = w.Close()
+	oldIn, oldReader := os.Stdin, stdinReader
+	os.Stdin, stdinReader = r, nil
+	defer func() { os.Stdin, stdinReader = oldIn, oldReader }()
+	assert.True(t, confirmStdinDefaultNo(""))
+	assert.True(t, confirmStdinDefaultNo(""))
+	assert.False(t, confirmStdinDefaultNo(""))
+	assert.False(t, confirmStdinDefaultNo(""), "EOF is a no")
+}

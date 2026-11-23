@@ -66,13 +66,18 @@ the cloud builds the bundle. No local npm or S3 bucket is required.`,
 // explicit choice.
 var promptConfirm = confirmStdinDefaultNo
 
+// stdinReader is shared so read-ahead from one prompt is not lost to the next.
+var stdinReader *bufio.Reader
+
 // confirmStdinDefaultNo prints prompt and reads a [y/N] answer from stdin. Only
 // an answer starting with 'y'/'Y' is a yes; empty input (just Enter) or
 // anything else is no.
 func confirmStdinDefaultNo(prompt string) bool {
 	fmt.Print(prompt)
-	reader := bufio.NewReader(os.Stdin)
-	line, err := reader.ReadString('\n')
+	if stdinReader == nil {
+		stdinReader = bufio.NewReader(os.Stdin)
+	}
+	line, err := stdinReader.ReadString('\n')
 	if err != nil && line == "" {
 		return false
 	}

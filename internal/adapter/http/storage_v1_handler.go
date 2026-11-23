@@ -638,7 +638,7 @@ func storageErr(c *gin.Context, status int, errSlug, message string) {
 	switch {
 	case status == 404 && message == "Object not found":
 		body["code"] = "NoSuchKey"
-	case status == 404 && message == "Bucket not found":
+	case status == 404 && strings.Contains(strings.ToLower(message), "bucket") && strings.Contains(strings.ToLower(message), "not found"):
 		body["code"] = "NoSuchBucket"
 	case status == 403:
 		body["code"] = "AccessDenied"
@@ -760,7 +760,7 @@ func (h *StorageV1Handler) serveObject(c *gin.Context, bucketName, objPath strin
 	}
 	defer func() { _ = body.Close() }()
 	// The local store sniffs the type (SVG becomes text/plain); the stored mime is exact.
-	if m := asString(row["mime"]); m != "" && m != "application/octet-stream" {
+	if m := strings.ToLower(asString(row["mime"])); m != "" && m != "application/octet-stream" {
 		contentType = m
 	}
 

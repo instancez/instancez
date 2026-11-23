@@ -3219,3 +3219,34 @@ func TestServeObject_SVGIgnoresTransformQuery(t *testing.T) {
 	require.Equal(t, 200, w.Code, w.Body.String())
 	assert.Equal(t, "<svg/>", w.Body.String())
 }
+
+func TestStorageErr_MissingBucketVariantsGetNoSuchBucket(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, msg := range []string{`Bucket "x" not found`, "Source bucket not found", "Destination bucket not found"} {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		storageErr(c, 404, "not_found", msg)
+		assert.Contains(t, w.Body.String(), `"code":"NoSuchBucket"`, msg)
+	}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	storageErr(c, 404, "not_found", "Object not found")
+	assert.Contains(t, w.Body.String(), "NoSuchKey")
+}
+
+func TestServeObject_MimeCaseInsensitive(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := &stubDB{queryRowFn: func(context.Context, string, ...any) (map[string]any, error) {
+		return map[string]any{"size": int64(3), "mime": "Image/SVG+XML"}, nil
+	}}
+	store := &stubObjectStore{downloadFn: func(context.Context, string) (io.ReadCloser, string, error) {
+		return io.NopCloser(strings.NewReader("<svg/>")), "text/plain", nil
+	}}
+	h := newStorageHandler(db, store, map[string]domain.Bucket{"logos": {Public: true}})
+	r := gin.New()
+	r.GET("/storage/v1/object/*all", h.objectGetDispatch)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/storage/v1/object/public/logos/a.svg?width=5", nil))
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Equal(t, "image/svg+xml", w.Header().Get("Content-Type"))
+}
