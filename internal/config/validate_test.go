@@ -433,6 +433,62 @@ func TestValidate_EnumOnNonStringType(t *testing.T) {
 	assertHasErrorAt(t, errs, "tables.todos.fields.priority.enum")
 }
 
+func f64(v float64) *float64 { return &v }
+
+// Regression: min/max on text emitted CHECK (col <= 280), which fails with 42883 at migrate time.
+func TestValidate_MinMaxOnlyOnNumericTypes(t *testing.T) {
+	cases := []struct {
+		typ     string
+		wantErr bool
+	}{
+		{"text", true}, {"varchar(20)", true}, {"boolean", true}, {"timestamptz", true}, {"uuid", true}, {"jsonb", true},
+		{"integer", false}, {"bigint", false}, {"smallint", false}, {"numeric(10,2)", false},
+		{"decimal", false}, {"interval", true}, {"int4", false}, {"real", false}, {"double precision", false}, {"float8", false}, {"serial", false},
+	}
+	for _, tc := range cases {
+		for _, which := range []string{"min", "max"} {
+			t.Run(tc.typ+"/"+which, func(t *testing.T) {
+				cfg := validBaseConfig()
+				table := cfg.Tables["todos"]
+				f := domain.Field{Name: "x", Type: tc.typ}
+				if which == "min" {
+					f.Min = f64(0)
+				} else {
+					f.Max = f64(280)
+				}
+				table.Fields = append(table.Fields, f)
+				cfg.Tables["todos"] = table
+				errs := Validate(cfg)
+				path := "tables.todos.fields.x." + which
+				if tc.wantErr {
+					assertHasErrorAt(t, errs, path)
+					for _, e := range errs {
+						if e.Path == path {
+							if !strings.Contains(e.Suggestion, "char_length") {
+								t.Errorf("suggestion %q should mention char_length", e.Suggestion)
+							}
+						}
+					}
+				} else {
+					for _, e := range errs {
+						if e.Path == path {
+							t.Errorf("unexpected error at %s: %s", path, e.Message)
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestValidate_MinMaxZeroValueOnTextStillRejected(t *testing.T) {
+	cfg := validBaseConfig()
+	table := cfg.Tables["todos"]
+	table.Fields = append(table.Fields, domain.Field{Name: "x", Type: "text", Max: f64(0)})
+	cfg.Tables["todos"] = table
+	assertHasErrorAt(t, Validate(cfg), "tables.todos.fields.x.max")
+}
+
 func TestValidate_InvalidDefault(t *testing.T) {
 	cfg := validBaseConfig()
 	table := cfg.Tables["todos"]

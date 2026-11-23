@@ -808,6 +808,19 @@ func validateTables(tables map[string]domain.Table, auth *domain.Auth) domain.Va
 				}
 			}
 
+			for _, bound := range []struct {
+				name string
+				set  bool
+			}{{"min", field.Min != nil}, {"max", field.Max != nil}} {
+				if bound.set && field.Type != "" && !isNumericType(field.Type) {
+					errs = append(errs, &domain.ValidationError{
+						Path:       fpath + "." + bound.name,
+						Message:    fmt.Sprintf("%s is only supported on numeric types, not %s", bound.name, field.Type),
+						Suggestion: "Use check, e.g. check: \"char_length(" + field.Name + ") <= 280\"",
+					})
+				}
+			}
+
 			// Validate enum
 			if len(field.Enum) > 0 && field.Type != "" && !isStringType(field.Type) {
 				errs = append(errs, &domain.ValidationError{
@@ -1623,6 +1636,16 @@ func validateDefault(path string, val any, colType string) domain.ValidationErro
 		})
 	}
 	return errs
+}
+
+func isNumericType(typ string) bool {
+	lower := strings.ToLower(strings.TrimSpace(typ))
+	for _, p := range []string{"smallint", "integer", "int2", "int4", "int8", "bigint", "serial", "smallserial", "bigserial", "numeric", "decimal", "real", "double", "float"} {
+		if strings.HasPrefix(lower, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func isStringType(typ string) bool {
