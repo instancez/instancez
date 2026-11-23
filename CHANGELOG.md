@@ -4,6 +4,29 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Changed
+
+- `inz cloud deploy` no longer uploads `INSTANCEZ_ENV_*` secrets by default. Pass `--push-secrets` to send them (they overwrite cloud secrets of the same name, with a confirmation unless `--yes`). Without the flag it names the local secrets it left unsent. Scripts that relied on the automatic push must add the flag.
+- `inz cloud deploy` uploads all of `functions/` (not just entry files), except `node_modules` and dotfiles, and fails before uploading when a relative import has no matching file.
+- `inz validate` rejects `min`/`max` on non-numeric fields (they produced `col <= N`, which failed at migrate time). Use `check: "char_length(col) <= N"` for text.
+- Bucket names may contain hyphens (`brand-logos`) and start with a digit.
+- Storage write denials now say `new row violates row-level security policy`, and storage error bodies carry Supabase's `code` (`NoSuchKey`, `NoSuchBucket`, `AccessDenied`). Statuses are unchanged.
+
+### Added
+
+- `inz init --no-functions`, `--no-env-examples` and `--minimal`.
+- Unknown-function 404s keep `{"message":"unknown fn"}` and add a `detail` naming the function and the import error when it failed to load.
+
+### Fixed
+
+- `inz cloud site deploy` posted to `/api/mcp` and got 405; it now uses `/mcp`.
+- `inz cloud deploy --new` writes `project.cloud.project_id` in place instead of re-serializing the whole yaml.
+- `inz dev --port N` kept N on hot reload; functions called back to :8080 after any edit.
+- Local storage served SVG objects as `text/plain`; GET now uses the stored mime.
+- Auth errors for malformed input no longer expose Go validator text (status and code unchanged).
+- Changing `check`, `min`/`max`, `enum`, `pattern`, `unique`, `default` or a foreign key's `on_delete` on an existing column now migrates instead of being ignored.
+- `.inz-worker-*` shim files are in the scaffolded `.gitignore`.
+
 ## [0.0.16] - 2026-11-21
 
 ### Added
