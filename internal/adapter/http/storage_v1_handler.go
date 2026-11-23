@@ -737,7 +737,7 @@ func (h *StorageV1Handler) serveObject(c *gin.Context, bucketName, objPath strin
 		storageErr(c, 500, "internal", "Download failed")
 		return
 	}
-	row, err := h.db.QueryRow(ctx, "SELECT size, metadata FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
+	row, err := h.db.QueryRow(ctx, "SELECT size, mime, metadata FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucketName, objPath)
 	if err != nil || row == nil {
 		storageErr(c, 404, "not_found", "Object not found")
 		return
@@ -750,6 +750,10 @@ func (h *StorageV1Handler) serveObject(c *gin.Context, bucketName, objPath strin
 		return
 	}
 	defer func() { _ = body.Close() }()
+	// The local store sniffs the type (SVG becomes text/plain); the stored mime is exact.
+	if m := asString(row["mime"]); m != "" && m != "application/octet-stream" {
+		contentType = m
+	}
 
 	length := int64(-1)
 	if size, ok := row["size"].(int64); ok && c.Request.Method == http.MethodHead {

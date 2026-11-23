@@ -3137,3 +3137,36 @@ func TestIsConnReset(t *testing.T) {
 		}
 	}
 }
+
+// Regression: the local store sniffs SVG as text/plain; GET must use the stored mime.
+func TestServeObject_StoredMimeWinsOverSniffedType(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := map[string]struct{ stored, sniffed, want string }{
+		"svg sniffed as text": {"image/svg+xml", "text/plain; charset=utf-8", "image/svg+xml"},
+		"png unchanged":       {"image/png", "image/png", "image/png"},
+		"no stored mime":      {"", "image/jpeg", "image/jpeg"},
+		"nil stored mime":     {"<nil>", "text/plain; charset=utf-8", "text/plain; charset=utf-8"},
+		"octet-stream stored": {"application/octet-stream", "text/plain; charset=utf-8", "text/plain; charset=utf-8"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			db := &stubDB{queryRowFn: func(context.Context, string, ...any) (map[string]any, error) {
+				row := map[string]any{"size": int64(3), "metadata": nil}
+				if tc.stored != "<nil>" {
+					row["mime"] = tc.stored
+				}
+				return row, nil
+			}}
+			store := &stubObjectStore{downloadFn: func(context.Context, string) (io.ReadCloser, string, error) {
+				return io.NopCloser(strings.NewReader("abc")), tc.sniffed, nil
+			}}
+			h := newStorageHandler(db, store, map[string]domain.Bucket{"logos": {Public: true}})
+			r := gin.New()
+			r.GET("/storage/v1/object/*all", h.objectGetDispatch)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/storage/v1/object/public/logos/a.svg", nil))
+			require.Equal(t, 200, w.Code)
+			assert.Equal(t, tc.want, w.Header().Get("Content-Type"))
+		})
+	}
+}
