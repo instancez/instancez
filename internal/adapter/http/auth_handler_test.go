@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"io"
 	"log/slog"
 	"net/http"
@@ -2464,4 +2466,33 @@ func TestHandleOAuthCallback_ExchangeFailure(t *testing.T) {
 	if w.Code != 500 {
 		t.Errorf("no redirect config: status = %d, want 500: %s", w.Code, w.Body.String())
 	}
+}
+
+// Regression: a malformed email leaked the raw Go validator text.
+func TestSignup_MalformedInputGivesCleanMessageSameStatusAndCode(t *testing.T) {
+	h, _ := signupGatingHandler(t, nil, nil)
+	cases := map[string]struct{ body, want string }{
+		"double dot email": {`{"email":"a..b@x.com","password":"password123"}`, "email must be a valid email address"},
+		"no at sign":       {`{"email":"notanemail","password":"password123"}`, "email must be a valid email address"},
+		"short password":   {`{"email":"a@x.com","password":"short"}`, "password must be at least 8 characters"},
+		"missing password": {`{"email":"a@x.com"}`, "password is required"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			w := postSignup(h, tc.body)
+			require.Equal(t, 400, w.Code, w.Body.String())
+			var body map[string]any
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+			assert.Equal(t, "PGRST100", body["code"], "code must stay unchanged")
+			msg, _ := body["message"].(string)
+			assert.Contains(t, msg, tc.want)
+			assert.NotContains(t, msg, "Key:")
+			assert.NotContains(t, msg, "Field validation")
+		})
+	}
+}
+
+func TestBindMessage(t *testing.T) {
+	assert.Equal(t, "malformed JSON", bindMessage(errors.New("unexpected EOF")))
+	assert.Equal(t, "malformed request body", bindMessage(nil))
 }
