@@ -114,6 +114,18 @@ func TestBuildFilterCondition(t *testing.T) {
 			wantN:   3,
 		},
 		{
+			name:    "in empty list matches nothing",
+			filter:  Filter{Column: "status", Operator: "in", Value: "()"},
+			wantSQL: "FALSE",
+			wantN:   0,
+		},
+		{
+			name:    "in blank value matches nothing",
+			filter:  Filter{Column: "status", Operator: "in", Value: ""},
+			wantSQL: "FALSE",
+			wantN:   0,
+		},
+		{
 			name:    "plfts",
 			filter:  Filter{Column: "title", Operator: "plfts", Value: "search terms"},
 			wantSQL: "title @@ plainto_tsquery($1)",

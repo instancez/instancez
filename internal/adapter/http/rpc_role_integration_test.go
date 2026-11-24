@@ -109,3 +109,12 @@ func TestRPC_MissingArgHint(t *testing.T) {
 	assert.Equal(t, "PGRST202", body["code"])
 	assert.Equal(t, "argument b has no default", body["hint"])
 }
+
+func TestRPC_ExtraArgIsPGRST202(t *testing.T) {
+	ts := rpcRoleServer(t)
+	code, body, raw := doJSON(t, "POST", ts.URL+"/rest/v1/rpc/needs_two", `{"a":1,"b":2,"c":3}`, map[string]string{"apikey": "inz_publishable_rolecheck"})
+	require.Equal(t, 404, code, raw)
+	assert.Equal(t, "PGRST202", body["code"])
+	assert.Equal(t, "Could not find the function public.needs_two(a, b, c) in the schema cache", body["message"])
+	assert.Equal(t, "Perhaps you meant to call the function public.needs_two(a, b)", body["hint"])
+}

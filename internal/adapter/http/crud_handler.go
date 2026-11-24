@@ -89,7 +89,8 @@ func (h *CRUDHandler) dispatch(pick func(*tableHandlers) gin.HandlerFunc) gin.Ha
 	return func(c *gin.Context) {
 		th, ok := h.current().byTable[c.Param("table")]
 		if !ok {
-			c.String(404, "404 page not found")
+			pgJSON(c, 404, "PGRST205",
+				fmt.Sprintf("Could not find the table 'public.%s' in the schema cache", c.Param("table")), "", "")
 			c.Abort()
 			return
 		}

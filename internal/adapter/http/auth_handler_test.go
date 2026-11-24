@@ -2496,3 +2496,29 @@ func TestBindMessage(t *testing.T) {
 	assert.Equal(t, "malformed JSON", bindMessage(errors.New("unexpected EOF")))
 	assert.Equal(t, "malformed request body", bindMessage(nil))
 }
+
+func TestRESTUnknownTable_PGRST205(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &CRUDHandler{cfg: &domain.Config{Tables: map[string]domain.Table{}}}
+	r := gin.New()
+	h.Mount(r.Group(""))
+
+	for _, method := range []string{"GET", "HEAD", "POST", "PATCH", "DELETE"} {
+		req := httptest.NewRequest(method, "/rest/v1/nope", strings.NewReader("{}"))
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != 404 {
+			t.Errorf("%s: status %d, want 404", method, w.Code)
+		}
+		if method == "HEAD" {
+			continue
+		}
+		var body map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("%s: body is not JSON: %s", method, w.Body.String())
+		}
+		if body["code"] != "PGRST205" || body["message"] != "Could not find the table 'public.nope' in the schema cache" {
+			t.Errorf("%s: unexpected body %v", method, body)
+		}
+	}
+}

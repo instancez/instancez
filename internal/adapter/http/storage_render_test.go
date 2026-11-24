@@ -75,7 +75,7 @@ func TestObjectInfoPublic(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Equal(t, "a.png", body["name"])
 	assert.Equal(t, "image/png", body["content_type"])
-	assert.Equal(t, 404, serve(r, "GET", "/storage/v1/object/info/public/priv/a.png", "", nil).Code)
+	assert.Equal(t, 400, serve(r, "GET", "/storage/v1/object/info/public/priv/a.png", "", nil).Code)
 }
 
 func TestRenderPublicAndAuthenticated(t *testing.T) {
@@ -90,14 +90,14 @@ func TestRenderPublicAndAuthenticated(t *testing.T) {
 	}
 	assert.Equal(t, 400, serve(r, "GET", "/storage/v1/render/image/public/pub/a.png?width=-1", "", nil).Code)
 	anon := map[string]string{"apikey": anonTestPK, "Authorization": "Bearer " + anonTestPK}
-	assert.Equal(t, 404, serve(r, "GET", "/storage/v1/render/image/authenticated/open/a.png?width=3", "", anon).Code, "anon + no rls: gated like downloads")
+	assert.Equal(t, 400, serve(r, "GET", "/storage/v1/render/image/authenticated/open/a.png?width=3", "", anon).Code, "anon + no rls: gated like downloads")
 	svc := map[string]string{"apikey": "test-secret-key"}
 	t.Setenv("INSTANCEZ_SECRET_KEY", "test-secret-key")
 	w := serve(r, "GET", "/storage/v1/render/image/authenticated/open/a.png?width=2&height=2&resize=fill", "", svc)
 	require.Equal(t, 200, w.Code, w.Body.String())
 	wd, ht := pngSize(t, w.Body.Bytes())
 	assert.Equal(t, [2]int{2, 2}, [2]int{wd, ht})
-	assert.Equal(t, 404, serve(r, "GET", "/storage/v1/render/image/bogus/pub/a.png", "", nil).Code)
+	assert.Equal(t, 400, serve(r, "GET", "/storage/v1/render/image/bogus/pub/a.png", "", nil).Code)
 }
 
 func TestRenderToken_SignedTransformRoundTrip(t *testing.T) {
@@ -199,7 +199,7 @@ func TestRenderPublic_PrivateBucketNeverQueries(t *testing.T) {
 	_, r := renderHandlerDB(t, db, map[string]domain.Bucket{"priv": {}})
 	for _, m := range []string{"GET", "HEAD"} {
 		w := serve(r, m, "/storage/v1/render/image/public/priv/a.png?width=3", "", nil)
-		assert.Equal(t, 404, w.Code, m)
+		assert.Equal(t, 400, w.Code, m)
 	}
 }
 

@@ -407,6 +407,9 @@ func buildFilterCondition(f Filter, argIdx int) (string, []any, int) {
 	case "in":
 		inner := strings.TrimPrefix(f.Value, "(")
 		inner = strings.TrimSuffix(inner, ")")
+		if strings.TrimSpace(inner) == "" {
+			return "FALSE", nil, argIdx
+		}
 		vals := strings.Split(inner, ",")
 		placeholders := make([]string, len(vals))
 		var args []any

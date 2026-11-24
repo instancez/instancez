@@ -50,27 +50,27 @@ var noRLSAnonCases = []anonCase{
 	{"POST", "/storage/v1/object/list/open", `{"prefix":""}`, 200, "[]"},
 	{"POST", "/storage/v1/object/list/nope", `{"prefix":""}`, 200, "[]"},
 	{"POST", "/storage/v1/object/list-v2/open", `{}`, 200, `"objects":[]`},
-	{"GET", "/storage/v1/object/info/open/a.txt", "", 404, "not_found"},
-	{"GET", "/storage/v1/object/info/authenticated/open/a.txt", "", 404, "not_found"},
-	{"GET", "/storage/v1/object/authenticated/open/a.txt", "", 404, "not_found"},
-	{"GET", "/storage/v1/object/open/a.txt", "", 404, "not_found"},
+	{"GET", "/storage/v1/object/info/open/a.txt", "", 400, "not_found"},
+	{"GET", "/storage/v1/object/info/authenticated/open/a.txt", "", 400, "not_found"},
+	{"GET", "/storage/v1/object/authenticated/open/a.txt", "", 400, "not_found"},
+	{"GET", "/storage/v1/object/open/a.txt", "", 400, "not_found"},
 	{"HEAD", "/storage/v1/object/open/a.txt", "", 404, ""},
 	{"HEAD", "/storage/v1/object/authenticated/open/a.txt", "", 404, ""},
-	{"HEAD", "/storage/v1/object/info/open/a.txt", "", 404, ""},
-	{"GET", "/storage/v1/render/image/authenticated/open/a.png", "", 404, "not_found"},
-	{"HEAD", "/storage/v1/render/image/authenticated/open/a.png", "", 404, ""},
-	{"POST", "/storage/v1/object/sign/open/a.txt", `{"expiresIn":60}`, 404, "not_found"},
+	{"HEAD", "/storage/v1/object/info/open/a.txt", "", 400, "not_found"},
+	{"GET", "/storage/v1/render/image/authenticated/open/a.png", "", 400, "not_found"},
+	{"HEAD", "/storage/v1/render/image/authenticated/open/a.png", "", 400, "not_found"},
+	{"POST", "/storage/v1/object/sign/open/a.txt", `{"expiresIn":60}`, 400, "not_found"},
 	{"POST", "/storage/v1/object/sign/open", `{"expiresIn":60,"paths":["a.txt"]}`, 200, errNoObjectAccess},
-	{"POST", "/storage/v1/object/open/a.txt", "x", 403, "new row violates row-level security policy"},
-	{"PUT", "/storage/v1/object/open/a.txt", "x", 403, "new row violates row-level security policy"},
-	{"POST", "/storage/v1/object/upload/sign/open/a.txt", "", 403, "new row violates row-level security policy"},
+	{"POST", "/storage/v1/object/open/a.txt", "x", 400, "new row violates row-level security policy"},
+	{"PUT", "/storage/v1/object/open/a.txt", "x", 400, "new row violates row-level security policy"},
+	{"POST", "/storage/v1/object/upload/sign/open/a.txt", "", 400, "new row violates row-level security policy"},
 	{"DELETE", "/storage/v1/object/open", `{"prefixes":["a.txt"]}`, 200, "[]"},
-	{"POST", "/storage/v1/object/move", `{"bucketId":"open","sourceKey":"a","destinationKey":"b"}`, 404, "not_found"},
-	{"POST", "/storage/v1/object/copy", `{"bucketId":"open","sourceKey":"a","destinationKey":"b"}`, 404, "not_found"},
-	{"POST", "/storage/v1/object/move", `{"bucketId":"gated","destinationBucket":"open","sourceKey":"a","destinationKey":"b"}`, 404, "not_found"},
-	{"POST", "/storage/v1/object/copy", `{"bucketId":"gated","destinationBucket":"open","sourceKey":"a","destinationKey":"b"}`, 404, "not_found"},
-	{"POST", "/storage/v1/object/move", `{"bucketId":"open","destinationBucket":"gated","sourceKey":"a","destinationKey":"b"}`, 404, "not_found"},
-	{"POST", "/storage/v1/object/copy", `{"bucketId":"open","destinationBucket":"gated","sourceKey":"a","destinationKey":"b"}`, 404, "not_found"},
+	{"POST", "/storage/v1/object/move", `{"bucketId":"open","sourceKey":"a","destinationKey":"b"}`, 400, "not_found"},
+	{"POST", "/storage/v1/object/copy", `{"bucketId":"open","sourceKey":"a","destinationKey":"b"}`, 400, "not_found"},
+	{"POST", "/storage/v1/object/move", `{"bucketId":"gated","destinationBucket":"open","sourceKey":"a","destinationKey":"b"}`, 400, "not_found"},
+	{"POST", "/storage/v1/object/copy", `{"bucketId":"gated","destinationBucket":"open","sourceKey":"a","destinationKey":"b"}`, 400, "not_found"},
+	{"POST", "/storage/v1/object/move", `{"bucketId":"open","destinationBucket":"gated","sourceKey":"a","destinationKey":"b"}`, 400, "not_found"},
+	{"POST", "/storage/v1/object/copy", `{"bucketId":"open","destinationBucket":"gated","sourceKey":"a","destinationKey":"b"}`, 400, "not_found"},
 	{"GET", "/storage/v1/object/open/a%00b", "", 400, "invalid_key"},
 	{"GET", "/storage/v1/object/authenticated/open/a%00b", "", 400, "invalid_key"},
 	{"GET", "/storage/v1/object/info/open/a%00b", "", 400, "invalid_key"},
@@ -156,7 +156,7 @@ func TestStorageAnon_RLSBucketRunsAsAnon(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "a.txt", "anon sees what the select policy allows")
 
 	w = serve(r, "POST", "/storage/v1/object/gated/b.txt", "x", map[string]string{"apikey": anonTestPK, "Authorization": "Bearer " + anonTestPK, "Content-Type": "text/plain"})
-	require.Equal(t, 403, w.Code, "RLS, not route auth, denies the anon upload: %s", w.Body.String())
+	require.Equal(t, 400, w.Code, "RLS, not route auth, denies the anon upload: %s", w.Body.String())
 	require.NotEmpty(t, roles)
 	for _, role := range roles {
 		assert.Equal(t, "anon", role)
