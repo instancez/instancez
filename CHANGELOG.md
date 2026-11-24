@@ -5,6 +5,7 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 ## [Unreleased]
 
 ## [0.0.17] - 2026-11-23
+
 ### Changed
 
 - `inz cloud deploy` no longer uploads `INSTANCEZ_ENV_*` secrets by default. Pass `--push-secrets` to send them (they overwrite cloud secrets of the same name, with a confirmation unless `--yes`). Without the flag it names the local secrets it left unsent. Scripts that relied on the automatic push must add the flag.
