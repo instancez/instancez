@@ -4,6 +4,10 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Changed
+
+- Changing or removing a `check` that references other columns now fails the migration with an error naming the constraint, instead of leaving the old constraint in force. Drop it with `ALTER TABLE ... DROP CONSTRAINT <name>` and redeploy; the migration continues once it is gone.
+
 ## [0.0.17] - 2026-11-23
 
 ### Changed

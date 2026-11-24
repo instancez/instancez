@@ -1198,3 +1198,44 @@ func TestDiffColumnChanges_ForeignKeyAfterReferencedUnique(t *testing.T) {
 		t.Fatalf("want UNIQUE before FOREIGN KEY, got %v", ddl)
 	}
 }
+
+// --- changing a check that spans columns must fail loudly, not leave the old one behind ---
+
+func crossColCfg(check string) *domain.Config {
+	return &domain.Config{Tables: map[string]domain.Table{
+		"bookings": {Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
+			{Name: "start_at", Type: "timestamptz"},
+			{Name: "end_at", Type: "timestamptz", Check: check},
+		}},
+	}}
+}
+
+func TestDiffColumnChanges_CrossColumnCheckChangeGuarded(t *testing.T) {
+	cases := map[string]struct {
+		old, new  *domain.Config
+		wantGuard bool
+	}{
+		"changed":             {crossColCfg("end_at > start_at"), crossColCfg("end_at >= start_at"), true},
+		"removed":             {crossColCfg("end_at > start_at"), crossColCfg(""), true},
+		"case-insensitive":    {crossColCfg("END_AT > Start_At"), crossColCfg(""), true},
+		"added fresh":         {crossColCfg(""), crossColCfg("end_at > start_at"), false},
+		"unchanged":           {crossColCfg("end_at > start_at"), crossColCfg("end_at > start_at"), false},
+		"single column":       {crossColCfg("end_at > now()"), crossColCfg("end_at > '2020-01-01'"), false},
+		"name inside literal": {crossColCfg("end_at <> 'start_at'"), crossColCfg(""), true}, // heuristic: errs on the loud side
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			joined := strings.Join(diffColumnChanges(tc.old, tc.new), "\n")
+			if got := strings.Contains(joined, "RAISE EXCEPTION"); got != tc.wantGuard {
+				t.Fatalf("guard = %v, want %v\n%s", got, tc.wantGuard, joined)
+			}
+			if tc.wantGuard {
+				mustContain(t, joined, "DROP CONSTRAINT")
+				if g, d := strings.Index(joined, "RAISE EXCEPTION"), strings.Index(joined, "LOOP EXECUTE"); g < 0 || d < 0 || g > d {
+					t.Fatalf("guard must come before the drop:\n%s", joined)
+				}
+			}
+		})
+	}
+}
