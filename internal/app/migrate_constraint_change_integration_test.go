@@ -128,3 +128,46 @@ func TestMigrate_AddingDeclaredForeignKeyIsIdempotent(t *testing.T) {
 		t.Fatalf("want exactly one FK, got %v err %v", row, err)
 	}
 }
+
+// Changing a cross-column check fails loudly while the old constraint exists, and proceeds once it is dropped.
+func TestMigrate_CrossColumnCheckChangeFailsLoudlyThenProceeds(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+	m := app.NewMigrator(db).AllowDestructive(true)
+	cfg := func(check string) *domain.Config {
+		return &domain.Config{Version: 1, Tables: map[string]domain.Table{"ev": {Fields: []domain.Field{
+			{Name: "id", Type: "bigserial", PrimaryKey: true},
+			{Name: "start_at", Type: "integer"},
+			{Name: "end_at", Type: "integer", Check: check},
+		}}}}
+	}
+	if err := m.Apply(ctx, cfg("end_at > start_at")); err != nil {
+		t.Fatal(err)
+	}
+	err := m.Apply(ctx, cfg(""))
+	if err == nil || !strings.Contains(err.Error(), "spans several columns") || !strings.Contains(err.Error(), "ev_check") {
+		t.Fatalf("want a loud error naming the constraint, got %v", err)
+	}
+	if _, err := db.Exec(ctx, "INSERT INTO ev (start_at, end_at) VALUES (5, 1)"); err == nil {
+		t.Fatal("old check must still be enforced after the refused migration")
+	}
+	if _, err := db.Exec(ctx, "ALTER TABLE ev DROP CONSTRAINT ev_check"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Apply(ctx, cfg("")); err != nil {
+		t.Fatalf("after dropping it by hand the migration must proceed: %v", err)
+	}
+	if _, err := db.Exec(ctx, "INSERT INTO ev (start_at, end_at) VALUES (5, 1)"); err != nil {
+		t.Fatalf("check should be gone: %v", err)
+	}
+	// Unchanged cross-column checks never trip the guard.
+	if _, err := db.Exec(ctx, "DELETE FROM ev"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Apply(ctx, cfg("end_at > start_at")); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Apply(ctx, cfg("end_at > start_at")); err != nil {
+		t.Fatalf("re-apply unchanged: %v", err)
+	}
+}

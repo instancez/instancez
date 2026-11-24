@@ -711,7 +711,7 @@ func diffColumnChanges(old, new *domain.Config) []string {
 				}
 			}
 
-			cons, fk := diffColumnConstraints(qual, fieldName, oldField, newField, old, new)
+			cons, fk := diffColumnConstraints(qual, fieldName, oldField, newField, old, new, newTable.Fields)
 			ddl = append(ddl, cons...)
 			fkDDL = append(fkDDL, fk...)
 		}
@@ -752,6 +752,34 @@ func dropColumnConstraints(qual, col, contype string) string {
 		sqlLiteral(qual), sqlLiteral(col), contype)
 }
 
+var identRE = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*`)
+
+// checksReferenceOtherColumns reports whether any check expression names another column of the table.
+// It is a text match, so a column name inside a string literal also counts.
+func checksReferenceOtherColumns(checks []string, col string, siblings []domain.Field) bool {
+	others := map[string]bool{}
+	for _, f := range siblings {
+		if f.Name != col {
+			others[strings.ToLower(f.Name)] = true
+		}
+	}
+	for _, c := range checks {
+		for _, id := range identRE.FindAllString(c, -1) {
+			if others[strings.ToLower(id)] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// crossColumnCheckGuard refuses to go on while a CHECK covering this column and others still exists.
+// The drop below matches single-column constraints only, so the old rule would otherwise stay in force.
+func crossColumnCheckGuard(qual, col string) string {
+	return fmt.Sprintf(`DO $$ DECLARE names text; BEGIN SELECT string_agg(conname, ', ') INTO names FROM pg_constraint WHERE conrelid = %[1]s::regclass AND contype = 'c' AND cardinality(conkey) > 1 AND conkey @> ARRAY[(SELECT attnum FROM pg_attribute WHERE attrelid = %[1]s::regclass AND attname = %[2]s)]; IF names IS NOT NULL THEN RAISE EXCEPTION 'check on %%.%% spans several columns (constraint: %%); drop it manually (ALTER TABLE ... DROP CONSTRAINT <name>) and redeploy', %[1]s, %[2]s, names; END IF; END $$;`,
+		sqlLiteral(qual), sqlLiteral(col))
+}
+
 func fkSignature(f domain.Field) string {
 	if f.ForeignKey == nil {
 		return ""
@@ -761,11 +789,14 @@ func fkSignature(f domain.Field) string {
 
 // diffColumnConstraints reconciles checks, foreign key, unique and default on a
 // column that exists in both configs.
-func diffColumnConstraints(qual, col string, oldF, newF domain.Field, old, new *domain.Config) (ddl, fks []string) {
+func diffColumnConstraints(qual, col string, oldF, newF domain.Field, old, new *domain.Config, siblings []domain.Field) (ddl, fks []string) {
 
 	oldChecks, newChecks := columnChecks(oldF), columnChecks(newF)
 	if !slices.Equal(oldChecks, newChecks) {
 		if len(oldChecks) > 0 {
+			if checksReferenceOtherColumns(oldChecks, col, siblings) {
+				ddl = append(ddl, crossColumnCheckGuard(qual, col))
+			}
 			ddl = append(ddl, dropColumnConstraints(qual, col, "c"))
 		}
 		for _, c := range newChecks {
