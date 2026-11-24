@@ -4,6 +4,8 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [0.0.18] - 2026-11-24
+
 ### Changed
 
 - Changing or removing a `check` that references other columns now fails the migration with an error naming the constraint, instead of leaving the old constraint in force. Drop it with `ALTER TABLE ... DROP CONSTRAINT <name>` and redeploy; the migration continues once it is gone.
@@ -484,7 +486,8 @@ First tagged release.
 - Deployment targets: Docker, Docker Compose, Kubernetes (Helm chart), AWS Lambda
 - A `@supabase/supabase-js` wire-compatibility test suite that runs on every commit
 
-[Unreleased]: https://github.com/instancez/instancez/compare/v0.0.17...HEAD
+[Unreleased]: https://github.com/instancez/instancez/compare/v0.0.18...HEAD
+[0.0.18]: https://github.com/instancez/instancez/compare/v0.0.17...v0.0.18
 [0.0.17]: https://github.com/instancez/instancez/compare/v0.0.16...v0.0.17
 [0.0.16]: https://github.com/instancez/instancez/compare/v0.0.15...v0.0.16
 [0.0.15]: https://github.com/instancez/instancez/compare/v0.0.14...v0.0.15
