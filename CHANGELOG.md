@@ -4,6 +4,8 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [0.0.19] - 2026-11-25
+
 ### Changed
 
 - Storage errors for a missing object or bucket, an RLS denial and a duplicate now return HTTP 400, as Supabase storage does. The body's `statusCode` still carries `"404"`, `"403"` or `"409"` and `code` is `NoSuchKey`, `NoSuchBucket`, `AccessDenied` or `ResourceAlreadyExists`. supabase-js is unaffected, but a raw HTTP client that checks the status must read `statusCode` from the body. `HEAD` object requests keep their plain status.
@@ -494,9 +496,9 @@ First tagged release.
 - Dashboard (`@instancez/console`): manage tables, auth, storage, functions, RPC, and providers
 - CLI: `init`, `dev`, `serve`, `validate`, `bundle`, `doctor`, `status`, `login`, `logout`, `whoami`, `deploy`, `cloud`
 - Deployment targets: Docker, Docker Compose, Kubernetes (Helm chart), AWS Lambda
-- A `@supabase/supabase-js` wire-compatibility test suite that runs on every commit
 
-[Unreleased]: https://github.com/instancez/instancez/compare/v0.0.18...HEAD
+[Unreleased]: https://github.com/instancez/instancez/compare/v0.0.19...HEAD
+[0.0.19]: https://github.com/instancez/instancez/compare/v0.0.18...v0.0.19
 [0.0.18]: https://github.com/instancez/instancez/compare/v0.0.17...v0.0.18
 [0.0.17]: https://github.com/instancez/instancez/compare/v0.0.16...v0.0.17
 [0.0.16]: https://github.com/instancez/instancez/compare/v0.0.15...v0.0.16
