@@ -1,10 +1,11 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { renderWithChakra } from "../test/helpers";
 import { BackendProvider } from "../console/BackendContext";
 import { fullCapabilities, type ConsoleBackend } from "../console/backend";
-import { SqlEditor } from "./SqlEditor";
+import { EditorView } from "codemirror";
+import { SqlEditor, sortRows, cellText } from "./SqlEditor";
 
 function mk(runQuery: ConsoleBackend["runQuery"]) {
   return {
@@ -20,7 +21,21 @@ function renderPage(b: ConsoleBackend) {
     </BackendProvider>
   );
 }
+function stubStorage(overrides: Partial<Storage> = {}) {
+  const data = new Map<string, string>();
+  const store = {
+    getItem: (k: string) => data.get(k) ?? null,
+    setItem: (k: string, v: string) => void data.set(k, v),
+    clear: () => data.clear(),
+    ...overrides,
+  };
+  vi.stubGlobal("localStorage", store);
+  return store;
+}
+
 describe("SqlEditor", () => {
+  beforeEach(() => { stubStorage(); });
+
   it("runs a query and shows results", async () => {
     const runQuery = vi.fn(async () => ({ columns: ["n"], rows: [[1]], row_count: 1 }));
     renderPage(mk(runQuery));
@@ -42,5 +57,119 @@ describe("SqlEditor", () => {
     const editorEl = container.querySelector(".cm-content") as HTMLElement;
     fireEvent.keyDown(editorEl, { key: "Enter", ctrlKey: true });
     await waitFor(() => expect(runQuery).toHaveBeenCalled());
+  });
+
+  it("shows how long the query took", async () => {
+    renderPage(mk(vi.fn(async () => ({ columns: ["n"], rows: [[1]], row_count: 1 }))));
+    fireEvent.click(screen.getByRole("button", { name: /run/i }));
+    expect(await screen.findByText(/1 row · \d+ ms/)).toBeInTheDocument();
+  });
+
+  it("explains a statement that returns no columns", async () => {
+    renderPage(mk(vi.fn(async () => ({ columns: [], rows: [], row_count: 0 }))));
+    fireEvent.click(screen.getByRole("button", { name: /run/i }));
+    expect(await screen.findByText(/no rows returned/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /export csv/i })).not.toBeInTheDocument();
+  });
+
+  it("copes with a null result from the backend", async () => {
+    renderPage(mk(vi.fn(async () => ({ columns: null, rows: null, row_count: null }) as never)));
+    fireEvent.click(screen.getByRole("button", { name: /run/i }));
+    expect(await screen.findByText(/0 rows/)).toBeInTheDocument();
+  });
+
+  it("sorts by a column header: asc, desc, then back to original order", async () => {
+    renderPage(mk(vi.fn(async () => ({ columns: ["n"], rows: [[2], [null], [10], [1]], row_count: 4 }))));
+    fireEvent.click(screen.getByRole("button", { name: /^run$/i }));
+    await screen.findByRole("cell", { name: "10" });
+    const order = () => screen.getAllByRole("cell").filter((c) => c.title === "Click to copy").map((c) => c.textContent);
+    expect(order()).toEqual(["2", "", "10", "1"]);
+    fireEvent.click(screen.getByRole("button", { name: /sort by n/i }));
+    expect(order()).toEqual(["1", "2", "10", ""]);
+    fireEvent.click(screen.getByRole("button", { name: /sort by n/i }));
+    expect(order()).toEqual(["10", "2", "1", ""]);
+    fireEvent.click(screen.getByRole("button", { name: /sort by n/i }));
+    expect(order()).toEqual(["2", "", "10", "1"]);
+  });
+
+  it("copies a cell on click and a row as JSON", async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    renderPage(mk(vi.fn(async () => ({ columns: ["id", "name"], rows: [[1, "ann"]], row_count: 1 }))));
+    fireEvent.click(screen.getByRole("button", { name: /^run$/i }));
+    fireEvent.click(await screen.findByRole("cell", { name: "ann" }));
+    expect(writeText).toHaveBeenCalledWith("ann");
+    fireEvent.click(screen.getByRole("button", { name: /copy row/i }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('{"id":1,"name":"ann"}'));
+  });
+
+  it("restores the saved draft and saves edits", async () => {
+    localStorage.setItem("inz:sql-draft:" + window.location.origin, "select 42");
+    const { container } = renderPage(mk(vi.fn()));
+    expect(container.querySelector(".cm-content")?.textContent).toBe("select 42");
+    expect(localStorage.getItem("inz:sql-draft:" + window.location.origin)).toBe("select 42");
+  });
+
+  it("starts from the default query when storage is empty or unavailable", () => {
+    stubStorage({
+      getItem: () => { throw new Error("denied"); },
+      setItem: () => { throw new Error("quota"); },
+    });
+    const { container } = renderPage(mk(vi.fn()));
+    expect(container.querySelector(".cm-content")?.textContent).toBe("select * from ");
+  });
+
+  it("formats the query with the Format button", async () => {
+    localStorage.setItem("inz:sql-draft:" + window.location.origin, "SELECT id,title FROM todos");
+    const { container } = renderPage(mk(vi.fn()));
+    fireEvent.click(screen.getByRole("button", { name: /format/i }));
+    await waitFor(() => expect(container.querySelector(".cm-content")?.textContent).toContain("title"));
+    await waitFor(() => expect(container.querySelectorAll(".cm-line").length).toBeGreaterThan(1));
+    expect(container.querySelector(".cm-content")?.textContent).toMatch(/^select\s*id,/);
+  });
+
+  it("runs only the selected text", async () => {
+    localStorage.setItem("inz:sql-draft:" + window.location.origin, "select 1; select 2");
+    const runQuery = vi.fn(async () => ({ columns: ["n"], rows: [[1]], row_count: 1 }));
+    const { container } = renderPage(mk(runQuery));
+    const content = container.querySelector(".cm-content") as HTMLElement;
+    const view = EditorView.findFromDOM(container.querySelector(".cm-editor") as HTMLElement)!;
+    view.dispatch({ selection: { anchor: 10, head: 18 } });
+    fireEvent.click(screen.getByRole("button", { name: /^run$/i }));
+    await waitFor(() => expect(runQuery).toHaveBeenCalledWith("select 2"));
+  });
+
+  it("runs the statement under the cursor on Ctrl+Enter", async () => {
+    localStorage.setItem("inz:sql-draft:" + window.location.origin, "select 1;\nselect 2;");
+    const runQuery = vi.fn(async () => ({ columns: ["n"], rows: [[1]], row_count: 1 }));
+    const { container } = renderPage(mk(runQuery));
+    const content = container.querySelector(".cm-content") as HTMLElement;
+    const view = EditorView.findFromDOM(container.querySelector(".cm-editor") as HTMLElement)!;
+    view.dispatch({ selection: { anchor: 3 } });
+    fireEvent.keyDown(content, { key: "Enter", ctrlKey: true });
+    await waitFor(() => expect(runQuery).toHaveBeenCalledWith("select 1;"));
+  });
+});
+
+describe("sortRows and cellText", () => {
+  it("orders numbers numerically, text naturally and nulls last in both directions", () => {
+    const rows = [["b"], [null], ["a10"], ["a2"]];
+    expect(sortRows(rows, 0, "asc").map((r) => r[0])).toEqual(["a2", "a10", "b", null]);
+    expect(sortRows(rows, 0, "desc").map((r) => r[0])).toEqual(["b", "a10", "a2", null]);
+    expect(sortRows([], 0, "asc")).toEqual([]);
+  });
+
+  it("does not mutate its input", () => {
+    const rows = [[2], [1]];
+    sortRows(rows, 0, "asc");
+    expect(rows).toEqual([[2], [1]]);
+  });
+
+  it("renders null, objects and primitives for display and copy", () => {
+    expect(cellText(null)).toBe("");
+    expect(cellText(undefined)).toBe("");
+    expect(cellText({ a: 1 })).toBe('{"a":1}');
+    expect(cellText(0)).toBe("0");
+    expect(cellText(false)).toBe("false");
   });
 });

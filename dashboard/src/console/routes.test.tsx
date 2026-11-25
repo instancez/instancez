@@ -46,7 +46,7 @@ describe("consoleRoutes", () => {
 
   it("registers the security route with its title", () => {
     const route = consoleRoutes().find((r) => r.path === "security");
-    expect(route?.children?.[0]?.handle).toEqual({ title: "Security" });
+    expect(route?.children?.[0]?.handle).toEqual({ title: "Advisor" });
   });
 
   it("mounts the SQL editor", async () => {

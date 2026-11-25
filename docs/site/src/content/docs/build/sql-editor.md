@@ -8,9 +8,18 @@ The dashboard's Database section has a SQL Editor tab for running arbitrary SQL 
 ## What it does
 
 - Runs on the privileged owner connection: DDL-capable, bypasses RLS. Equivalent to Supabase's SQL editor `postgres` role.
-- In `readwrite` dashboard mode, the whole editor buffer runs as one transaction. Multiple statements are allowed; any error rolls back the whole buffer.
-- In `readonly` dashboard mode, only a single statement runs per execution, inside a `READ ONLY` transaction — this also blocks a multi-statement buffer from smuggling a write past the read-only guard.
-- Shows the last result set from the buffer. Results are capped at 1000 rows.
+- **Run** (or Ctrl/Cmd+Enter) sends the selected text, or the statement under the cursor when nothing is selected.
+- In `readwrite` dashboard mode, the text sent runs as one transaction. A selection may hold several statements; any error rolls them all back.
+- In `readonly` dashboard mode, only a single statement runs per execution, inside a `READ ONLY` transaction — this also blocks a multi-statement selection from smuggling a write past the read-only guard.
+- Shows the last result set, with the row count and how long the query took. Results are capped at 1000 rows.
+
+## Editing
+
+- Tables, columns and functions from your config autocomplete with their types, and are colored by kind. Tab accepts a suggestion; otherwise it indents.
+- Postgres syntax errors are underlined as you type. The parser runs in the browser and loads the first time you open the editor.
+- **Format** (or Shift+Alt+F) reformats the query. Ctrl/Cmd+Z undoes it.
+- The query is saved as a draft in your browser, per project, and comes back when you reopen the editor.
+- Click a column header to sort the results, click a cell to copy it, or use the row's copy button to copy the row as JSON.
 
 ## Permissions & modes
 

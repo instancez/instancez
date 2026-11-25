@@ -3,6 +3,7 @@ import { Outlet, useMatches, useParams } from "react-router-dom";
 import { Box, Center, HStack, Text, VStack } from "@chakra-ui/react";
 import { AlertCircle, RefreshCw } from "lucide-react";
 import { Navbar } from "./Navbar";
+import { DotGridBackground } from "./DotGridBackground";
 import { Sidebar } from "./Sidebar";
 import { PageHeader } from "./PageHeader";
 import { Button, SurfaceProvider } from "./ui";
@@ -83,7 +84,8 @@ function Shell() {
   }
 
   return (
-    <Box h="100dvh" bg="bg" display="flex" flexDirection="column" overflow="hidden">
+    <Box h="100dvh" bg="bg" display="flex" flexDirection="column" overflow="hidden" position="relative" isolation="isolate">
+      <DotGridBackground />
       <Navbar />
       <HStack flex="1" minH="0" gap="2" px="2" pb="2" align="stretch">
         <Sidebar />

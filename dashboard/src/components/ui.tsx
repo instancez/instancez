@@ -179,14 +179,16 @@ export function Field({ label, htmlFor, hint, children, align = "start" }: Field
 interface SectionProps {
   title: ReactNode;
   description?: ReactNode;
-  icon?: LucideIcon;
+  icon?: LucideIcon | React.ElementType;
   actions?: ReactNode;
+  /** Red border for destructive actions, like DangerZone. */
+  danger?: boolean;
   children?: ReactNode;
 }
 
-export function Section({ title, description, icon: Icon, actions, children }: SectionProps) {
+export function Section({ title, description, icon: Icon, actions, danger, children }: SectionProps) {
   return (
-    <Panel>
+    <Panel borderColor={danger ? "border.error" : undefined}>
       <HStack
         justify="space-between"
         gap="4"
@@ -194,6 +196,7 @@ export function Section({ title, description, icon: Icon, actions, children }: S
         pt="4"
         pb="3"
         borderBottomWidth={children != null ? "1px" : undefined}
+        borderColor={danger ? "border.error" : undefined}
       >
         <VStack align="start" gap="0.5" minW="0">
           <HStack gap="2" fontSize="sm" fontWeight="semibold" color="fg">

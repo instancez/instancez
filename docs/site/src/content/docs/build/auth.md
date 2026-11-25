@@ -196,7 +196,7 @@ See [RLS Policies](/instancez/build/rls/) for the full policy reference.
 
 ## Managing users in the dashboard
 
-The dashboard's **Users** section (top-level nav item) provides a full admin UI for user management:
+The dashboard's **Users** page, under Security in the sidebar, provides a full admin UI for user management:
 
 - **List users** — paginated table showing email, confirmed status, last sign-in, and ban status
 - **Create user** — email + password, with optional automatic email confirmation

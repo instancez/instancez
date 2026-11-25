@@ -25,14 +25,20 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "^6.20.4",
+    "@codemirror/commands": "^6.11.1",
     "@codemirror/lang-javascript": "^6.2.5",
     "@codemirror/lang-sql": "^6.8.0",
     "@codemirror/language": "^6.10.0",
+    "@codemirror/legacy-modes": "6.5.4",
+    "@codemirror/lint": "^6.9.8",
     "@lezer/highlight": "^1.2.0",
+    "@libpg-query/parser": "^18.0.0",
     "codemirror": "^6.0.1",
     "diff": "^9.0.0",
     "js-yaml": "^4.1.1",
-    "lucide-react": "^0.468.0"
+    "lucide-react": "^0.468.0",
+    "sql-formatter": "^15.10.0"
   },
   "devDependencies": {
     "@chakra-ui/react": "^3.16.0",
