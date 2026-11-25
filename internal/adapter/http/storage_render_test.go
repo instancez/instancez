@@ -97,7 +97,7 @@ func TestRenderPublicAndAuthenticated(t *testing.T) {
 	require.Equal(t, 200, w.Code, w.Body.String())
 	wd, ht := pngSize(t, w.Body.Bytes())
 	assert.Equal(t, [2]int{2, 2}, [2]int{wd, ht})
-	assert.Equal(t, 400, serve(r, "GET", "/storage/v1/render/image/bogus/pub/a.png", "", nil).Code)
+	assert.Equal(t, 404, serve(r, "GET", "/storage/v1/render/image/bogus/pub/a.png", "", nil).Code, "unknown route stays a real 404")
 }
 
 func TestRenderToken_SignedTransformRoundTrip(t *testing.T) {

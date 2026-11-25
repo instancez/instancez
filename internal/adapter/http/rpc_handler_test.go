@@ -1025,3 +1025,10 @@ func TestHandleRPC_MissingArgIsPGRST202WithHint(t *testing.T) {
 		})
 	}
 }
+
+func TestUnknownArgError_NoHintWithoutDeclaredArgs(t *testing.T) {
+	e := &unknownArgError{fn: "f", arg: "x", sent: []string{"x"}}
+	if got := e.hint(); got != "" {
+		t.Errorf("hint = %q, want empty", got)
+	}
+}

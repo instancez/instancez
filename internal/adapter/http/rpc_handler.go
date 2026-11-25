@@ -354,6 +354,9 @@ func (e *unknownArgError) message() string {
 }
 
 func (e *unknownArgError) hint() string {
+	if len(e.declared) == 0 {
+		return ""
+	}
 	names := make([]string, len(e.declared))
 	for i, a := range e.declared {
 		names[i] = a.Name

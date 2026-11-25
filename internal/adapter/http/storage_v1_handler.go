@@ -966,7 +966,7 @@ func (h *StorageV1Handler) renderDispatch(c *gin.Context) {
 	case "sign":
 		h.redeemRenderURL(c, seg[1], seg[2])
 	default:
-		storageErr(c, 404, "not_found", "Route not found")
+		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Route not found"})
 	}
 }
 
