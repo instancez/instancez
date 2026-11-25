@@ -1426,16 +1426,13 @@ func TestConf_RPC(t *testing.T) {
 		assert.Equal(t, "PGRST202", m["code"])
 	})
 
-	t.Run("unknown arg key is rejected", func(t *testing.T) {
-		// 'wrong' is not declared on add_numbers; PostgREST would
-		// return a PGRST202-style error. We return a 400 bad_request
-		// with a descriptive message; locking that shape in here lets
-		// supabase-js surface it as error.message.
+	t.Run("unknown arg key is PGRST202", func(t *testing.T) {
 		status, _, parsed, _ := rpcPOST(t, "add_numbers", `{"a":1,"b":2,"wrong":9}`, nil)
-		assert.Equal(t, 400, status)
+		assert.Equal(t, 404, status)
 		m, ok := parsed.(map[string]any)
 		require.True(t, ok)
-		assert.NotEmpty(t, m["message"])
+		assert.Equal(t, "PGRST202", m["code"])
+		assert.Contains(t, m["message"], "public.add_numbers(a, b, wrong)")
 	})
 
 	t.Run("GET on volatile function → 405 PGRST102", func(t *testing.T) {
