@@ -1983,6 +1983,23 @@ await step('rpc: scalar function returns bare number', async () => {
   assertEq(data, 9, 'add_two result')
 })
 
+await step('postgrest errors: unknown table is PGRST205, extra rpc arg is PGRST202, in([]) is empty', async () => {
+  const client = createClient(URL, PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const t = await client.from('no_such_table').select('*')
+  assertEq(t.status, 404, 'unknown table status')
+  assertEq(t.error?.code, 'PGRST205', 'unknown table code')
+  assertEq(t.error?.message, "Could not find the table 'public.no_such_table' in the schema cache")
+  const r = await client.rpc('add_two', { a: 1, b: 2, c: 3 })
+  assertEq(r.status, 404, 'extra rpc arg status')
+  assertEq(r.error?.code, 'PGRST202', 'extra rpc arg code')
+  const e = await client.from('todos').select('id').in('id', [])
+  assertEq(e.error, null, 'in([]) error')
+  assertEq(JSON.stringify(e.data), '[]', 'in([]) data')
+})
+
 await step('rpc: text function roundtrips a string', async () => {
   const client = createClient(URL, PUBLISHABLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -2670,7 +2687,7 @@ await step('storage: getBucket 404 for unknown bucket', async () => {
   const resp = await fetch(`${URL}/storage/v1/bucket/nonexistent`, {
     headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY },
   })
-  assertEq(resp.status, 404)
+  assertEq(resp.status, 400)
 })
 
 await step('storage: createBucket returns 400 (YAML-only)', async () => {
@@ -2710,7 +2727,7 @@ await step('storage: upload duplicate without upsert returns 409', async () => {
     },
     body: 'duplicate',
   })
-  assertEq(resp.status, 409, 'duplicate without upsert → 409')
+  assertEq(resp.status, 400, 'duplicate without upsert → 409')
 })
 
 await step('storage: upload with x-upsert header succeeds', async () => {
@@ -2866,9 +2883,9 @@ await step('storage: download from non-public bucket fails', async () => {
   assert(up.ok, `documents upload failed: ${up.status}`)
 
   const resp = await fetch(`${URL}/storage/v1/object/public/documents/secret.txt`)
-  assertEq(resp.status, 404, 'private bucket answers like a missing one on public download')
+  assertEq(resp.status, 400, 'private bucket answers like a missing one on public download')
   const missing = await fetch(`${URL}/storage/v1/object/public/no_such_bucket/secret.txt`)
-  assertEq(missing.status, 404)
+  assertEq(missing.status, 400)
   assertEq(await resp.text(), await missing.text(), 'private and missing buckets must be indistinguishable')
 })
 
@@ -3285,7 +3302,7 @@ await step('storage: createSignedUploadUrl enforces the bucket insert policy at 
     },
     body: '{}',
   })
-  assertEq(resp.status, 403, 'mint denied for a path the insert policy forbids')
+  assertEq(resp.status, 400, 'mint denied for a path the insert policy forbids')
   const data = await resp.json()
   assert(!data.token, 'no token handed to an unauthorized caller')
 })
@@ -3392,13 +3409,13 @@ if (SECRET_KEY) {
     assertEq(r.status, 200, 'owner deletes nested, url-encoded key')
     assertEq((await r.json()).message, 'Successfully deleted')
     assertEq((await admin.exists('mine/single dir/ü.txt')).data, false, 'row and bytes gone')
-    assertEq((await del('owned', 'mine/single%20dir/%C3%BC.txt')).status, 404, 'second delete is 404')
+    assertEq((await del('owned', 'mine/single%20dir/%C3%BC.txt')).status, 400, 'second delete is 404')
 
     r = await del('owned', 'mine/admin.txt')
-    assertEq(r.status, 403, "another user's object is denied by RLS")
+    assertEq(r.status, 400, "another user's object is denied by RLS")
     assertEq((await admin.exists('mine/admin.txt')).data, true, 'hidden object survives')
-    assertEq((await del('owned', 'other/admin.txt')).status, 403, 'outside the policy prefix is denied')
-    assertEq((await del('owned', 'mine/plain.txt', PUBLISHABLE_KEY)).status, 403, 'anon is denied')
+    assertEq((await del('owned', 'other/admin.txt')).status, 400, 'outside the policy prefix is denied')
+    assertEq((await del('owned', 'mine/plain.txt', PUBLISHABLE_KEY)).status, 400, 'anon is denied')
     assertEq((await admin.exists('mine/plain.txt')).data, true, 'anon cannot delete')
 
     assertEq((await del('owned', 'mine/admin.txt', SECRET_KEY, SECRET_KEY)).status, 200, 'service role bypasses RLS')
@@ -3583,15 +3600,15 @@ if (SECRET_KEY) {
     assert(put.ok, `admin seed upload failed: ${put.status}`)
 
     const mv = await userPost('move', { bucketId: 'readonly', sourceKey: 'ro-move.txt', destinationKey: 'ro-moved.txt' })
-    assertEq(mv.status, 404, 'move without an update policy matches no row')
+    assertEq(mv.status, 400, 'move without an update policy matches no row')
     const src = await adminGet('readonly/ro-move.txt')
     assert(src.ok, `source must survive a denied move: ${src.status}`)
     assertEq(await src.text(), 'ro move bytes', 'source bytes untouched')
-    assertEq((await adminGet('readonly/ro-moved.txt')).status, 404, 'no destination after denied move')
+    assertEq((await adminGet('readonly/ro-moved.txt')).status, 400, 'no destination after denied move')
 
     const cp = await userPost('copy', { bucketId: 'readonly', sourceKey: 'ro-move.txt', destinationKey: 'ro-copy.txt' })
-    assertEq(cp.status, 403, 'copy without an insert policy is forbidden')
-    assertEq((await adminGet('readonly/ro-copy.txt')).status, 404, 'no destination bytes after denied copy')
+    assertEq(cp.status, 400, 'copy without an insert policy is forbidden')
+    assertEq((await adminGet('readonly/ro-copy.txt')).status, 400, 'no destination bytes after denied copy')
 
     await fetch(`${URL}/storage/v1/bucket/readonly/empty`, {
       method: 'POST',
@@ -3609,8 +3626,8 @@ if (SECRET_KEY) {
 
     for (const [bucket, key] of [['avatars', 'stolen.txt'], ['owned', 'mine/stolen.txt']]) {
       const cp = await userPost('copy', { bucketId: 'owned', sourceKey: 'mine/victim.txt', destinationKey: key, destinationBucket: bucket })
-      assertEq(cp.status, 404, `copy of hidden source into ${bucket} is not found`)
-      assertEq((await adminGet(`${bucket}/${key}`)).status, 404, `no stolen bytes in ${bucket}`)
+      assertEq(cp.status, 400, `copy of hidden source into ${bucket} is not found`)
+      assertEq((await adminGet(`${bucket}/${key}`)).status, 400, `no stolen bytes in ${bucket}`)
     }
 
     const { error } = await createClient(URL, SECRET_KEY, { auth: { persistSession: false } })
@@ -3620,13 +3637,13 @@ if (SECRET_KEY) {
 
   await step('storage: move is forbidden when the destination fails WITH CHECK', async () => {
     const mv = await userPost('move', { bucketId: 'owned', sourceKey: 'mine/file.txt', destinationKey: 'escape.txt' })
-    assertEq(mv.status, 403, 'destination outside mine/ violates the policy')
+    assertEq(mv.status, 400, 'destination outside mine/ violates the policy')
     const dl = await fetch(`${URL}/storage/v1/object/authenticated/owned/mine/file.txt`, {
       headers: { Authorization: `Bearer ${accessToken}`, apikey: PUBLISHABLE_KEY },
     })
     assert(dl.ok, `owner still reads the source: ${dl.status}`)
     assertEq(await dl.text(), 'owned content', 'source bytes untouched')
-    assertEq((await adminGet('owned/escape.txt')).status, 404, 'no escaped copy')
+    assertEq((await adminGet('owned/escape.txt')).status, 400, 'no escaped copy')
   })
 }
 
@@ -3855,9 +3872,9 @@ await step('storage: render/image routes serve storage-js transforms', async () 
   const privHead = await fetch(`${URL}/storage/v1/object/public/documents/secret.txt`, { method: 'HEAD' })
   assertEq(privHead.status, 404, 'HEAD public on a private bucket')
   const privInfo = await fetch(`${URL}/storage/v1/object/info/public/documents/secret.txt`)
-  assertEq(privInfo.status, 404, 'info/public on a private bucket')
+  assertEq(privInfo.status, 400, 'info/public on a private bucket')
   const privRender = await fetch(`${URL}/storage/v1/render/image/public/documents/secret.txt?width=2`)
-  assertEq(privRender.status, 404, 'render/public on a private bucket')
+  assertEq(privRender.status, 400, 'render/public on a private bucket')
   const headInfo = await fetch(`${URL}/storage/v1/object/info/public/avatars/transform-test.png`, { method: 'HEAD' })
   assertEq(headInfo.status, 404, 'no HEAD on info/public, as in Supabase')
 })

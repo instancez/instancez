@@ -526,7 +526,7 @@ CSV cells use the JSON value formats (`true`, `2024-01-02T03:04:05+00:00`, `[1,2
 
 ## Error statuses
 
-Database errors use PostgREST's status mapping. Not-null, check and invalid-input errors (`23502`, `23514`, class `22`) return 400, foreign-key violations (`23503`) return 409, and unknown SQLSTATEs return 400. `42501` (insufficient privilege) returns 403 for `anon`. The body and SQLSTATE `code` are unchanged. A missing required RPC argument returns 404 `PGRST202` with a hint naming the argument. A singular `Accept` (`.single()`) on a read or write that does not return exactly one row returns 406 `PGRST116`.
+Database errors use PostgREST's status mapping. Not-null, check and invalid-input errors (`23502`, `23514`, class `22`) return 400, foreign-key violations (`23503`) return 409, and unknown SQLSTATEs return 400. `42501` (insufficient privilege) returns 403 for `anon`. The body and SQLSTATE `code` are unchanged. A missing required RPC argument returns 404 `PGRST202` with a hint naming the argument; an argument the function does not declare also returns 404 `PGRST202`, and the hint lists the declared ones. A table that is not in the config returns 404 `PGRST205`. `in.()` (supabase-js `.in('id', [])`) matches no rows and returns `[]`. A singular `Accept` (`.single()`) on a read or write that does not return exactly one row returns 406 `PGRST116`.
 
 ## What's next
 

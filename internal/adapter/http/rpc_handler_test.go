@@ -99,6 +99,16 @@ func TestCollectRPCArgs_RejectsUnknownKeys(t *testing.T) {
 	if !strings.Contains(err.Error(), "unknown argument") {
 		t.Errorf("expected unknown-argument error, got %v", err)
 	}
+	var u *unknownArgError
+	if !errors.As(err, &u) {
+		t.Fatalf("want *unknownArgError, got %T", err)
+	}
+	if got, want := u.message(), "Could not find the function public.f(DROP TABLE, x) in the schema cache"; got != want {
+		t.Errorf("message = %q, want %q", got, want)
+	}
+	if got, want := u.hint(), "Perhaps you meant to call the function public.f(x)"; got != want {
+		t.Errorf("hint = %q, want %q", got, want)
+	}
 }
 
 // TestCollectRPCArgs_RequiresRequired confirms missing required args
@@ -1013,5 +1023,12 @@ func TestHandleRPC_MissingArgIsPGRST202WithHint(t *testing.T) {
 			assert.Equal(t, "PGRST202", m["code"])
 			assert.Equal(t, tc.hint, m["hint"])
 		})
+	}
+}
+
+func TestUnknownArgError_NoHintWithoutDeclaredArgs(t *testing.T) {
+	e := &unknownArgError{fn: "f", arg: "x", sent: []string{"x"}}
+	if got := e.hint(); got != "" {
+		t.Errorf("hint = %q, want empty", got)
 	}
 }

@@ -627,6 +627,15 @@ func nullIfEmpty(s string) any {
 	return s
 }
 
+// storageHTTPStatus maps to the HTTP status Supabase storage sends; the body's statusCode keeps the real one.
+func storageHTTPStatus(status int) int {
+	switch status {
+	case 403, 404, 409:
+		return 400
+	}
+	return status
+}
+
 // storageErr writes a storage-js compatible error body: {statusCode, error, message}.
 // statusCode is the HTTP status rendered as a string, matching @supabase/storage-js.
 func storageErr(c *gin.Context, status int, errSlug, message string) {
@@ -642,8 +651,10 @@ func storageErr(c *gin.Context, status int, errSlug, message string) {
 		body["code"] = "NoSuchBucket"
 	case status == 403:
 		body["code"] = "AccessDenied"
+	case status == 409:
+		body["code"] = "ResourceAlreadyExists"
 	}
-	c.JSON(status, body)
+	c.JSON(storageHTTPStatus(status), body)
 }
 
 // uploadWriteError maps a failed metadata write to 404, 409, 403 or 500.
@@ -955,7 +966,7 @@ func (h *StorageV1Handler) renderDispatch(c *gin.Context) {
 	case "sign":
 		h.redeemRenderURL(c, seg[1], seg[2])
 	default:
-		storageErr(c, 404, "not_found", "Route not found")
+		c.JSON(404, gin.H{"statusCode": "404", "error": "not_found", "message": "Route not found"})
 	}
 }
 

@@ -200,8 +200,8 @@ func TestGetBucket_NotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/storage/v1/bucket/missing", nil)
 	r.ServeHTTP(w, req)
 
-	if w.Code != 404 {
-		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
+	if w.Code != 400 {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -287,8 +287,8 @@ func TestEmptyBucket_NotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/storage/v1/bucket/missing/empty", nil)
 	r.ServeHTTP(w, req)
 
-	if w.Code != 404 {
-		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
+	if w.Code != 400 {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -430,8 +430,8 @@ func TestCreateSignedUploadURL_DeniedByInsertRLS(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/upload/sign/avatars/photo.jpg", nil)
 	r.ServeHTTP(w, req)
 
-	if w.Code != 403 {
-		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	if w.Code != 400 {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 	var resp map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
@@ -609,8 +609,8 @@ func TestCreateSignedURL_ObjectNotFound(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
-	if w.Code != 404 {
-		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
+	if w.Code != 400 {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -668,8 +668,8 @@ func TestUploadObject_BucketNotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/missing/photo.jpg", strings.NewReader("data"))
 	r.ServeHTTP(w, req)
 
-	if w.Code != 404 {
-		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
+	if w.Code != 400 {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -808,8 +808,8 @@ func TestUploadObject_DuplicateKeyConflict(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/photo.jpg", strings.NewReader("data"))
 	r.ServeHTTP(w, req)
 
-	if w.Code != 409 {
-		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
+	if w.Code != 400 {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 	var body map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &body)
@@ -833,8 +833,8 @@ func TestUploadObject_RLSDenied(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/photo.jpg", strings.NewReader("data"))
 	r.ServeHTTP(w, req)
 
-	if w.Code != 403 {
-		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	if w.Code != 400 {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -875,7 +875,7 @@ func TestUploadObject_RLSDeniedNeverReadsBody(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/avatars/photo.jpg", body)
 	r.ServeHTTP(w, req)
 
-	assert.Equal(t, 403, w.Code, w.Body.String())
+	assert.Equal(t, 400, w.Code, w.Body.String())
 	assert.Zero(t, reads, "a denied caller's body must never be read/spooled")
 	assert.True(t, rolledBack, "the permission-probe transaction must be rolled back")
 	assert.False(t, committed, "the permission-probe transaction must never be committed")
@@ -989,8 +989,8 @@ func TestUpdateObject_NotFoundNoRowsAffected(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/storage/v1/object/avatars/missing.jpg", strings.NewReader("data"))
 	r.ServeHTTP(w, req)
 
-	if w.Code != 404 {
-		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
+	if w.Code != 400 {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -1076,7 +1076,7 @@ func TestObjectGetDispatch_Public_BucketNotPublic(t *testing.T) {
 	r.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/storage/v1/object/public/nope/photo.jpg", nil))
 
 	// Same answer as a missing bucket, so private bucket names can't be enumerated.
-	assert.Equal(t, 404, w.Code, w.Body.String())
+	assert.Equal(t, 400, w.Code, w.Body.String())
 	assert.Equal(t, missing.Code, w.Code)
 	assert.JSONEq(t, missing.Body.String(), w.Body.String())
 }
@@ -1092,8 +1092,8 @@ func TestObjectGetDispatch_Public_BucketNotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/storage/v1/object/public/missing/photo.jpg", nil)
 	r.ServeHTTP(w, req)
 
-	if w.Code != 404 {
-		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
+	if w.Code != 400 {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -1112,8 +1112,8 @@ func TestObjectGetDispatch_Public_ObjectNotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/storage/v1/object/public/avatars/missing.jpg", nil)
 	r.ServeHTTP(w, req)
 
-	if w.Code != 404 {
-		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
+	if w.Code != 400 {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -1177,8 +1177,8 @@ func TestObjectGetDispatch_Authenticated_AnonNoRLSIs404(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/storage/v1/object/authenticated/avatars/photo.jpg", nil)
 	r.ServeHTTP(w, req)
 
-	if w.Code != 404 {
-		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
+	if w.Code != 400 {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -1243,7 +1243,7 @@ func TestObjectGetDispatch_InfoRoutes(t *testing.T) {
 		{"/storage/v1/object/info/docs", 400, ""},
 		{"/storage/v1/object/info/docs/", 400, ""},
 		{"/storage/v1/object/info/authenticated/docs", 400, ""},
-		{"/storage/v1/object/info/missing/f.txt", 404, ""},
+		{"/storage/v1/object/info/missing/f.txt", 400, ""},
 	}
 	for _, tc := range cases {
 		gotArgs, rlsCalls = nil, 0
@@ -1277,8 +1277,8 @@ func TestListObjects_BucketNotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/storage/v1/object/list/missing", strings.NewReader(`{}`))
 	r.ServeHTTP(w, req)
 
-	if w.Code != 404 {
-		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
+	if w.Code != 400 {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -1606,11 +1606,11 @@ func TestRemoveObject_HiddenIs403MissingIs404KeepsBytes(t *testing.T) {
 	}
 	r := removeOneRouter(newStorageHandler(db, store, map[string]domain.Bucket{"avatars": {}}))
 	w := serve(r, "DELETE", "/storage/v1/object/avatars/hidden.txt", "", nil)
-	assert.Equal(t, 403, w.Code)
+	assert.Equal(t, 400, w.Code)
 	assert.JSONEq(t, `{"statusCode":"403","error":"Unauthorized","message":"Access denied","code":"AccessDenied"}`, w.Body.String())
 	exists = false
 	w = serve(r, "DELETE", "/storage/v1/object/avatars/nope.txt", "", nil)
-	assert.Equal(t, 404, w.Code)
+	assert.Equal(t, 400, w.Code)
 	assert.JSONEq(t, `{"statusCode":"404","error":"not_found","message":"Object not found","code":"NoSuchKey"}`, w.Body.String())
 	assert.Zero(t, deleted)
 }
@@ -1646,7 +1646,7 @@ func TestDeleteBytes_SurvivesCancelledContext(t *testing.T) {
 func TestRemoveObject_UnknownBucket404(t *testing.T) {
 	r := removeOneRouter(newStorageHandler(&stubDB{}, &stubObjectStore{}, map[string]domain.Bucket{"avatars": {}}))
 	w := serve(r, "DELETE", "/storage/v1/object/ghost/a.txt", "", nil)
-	assert.Equal(t, 404, w.Code)
+	assert.Equal(t, 400, w.Code)
 	assert.JSONEq(t, `{"statusCode":"404","error":"not_found","message":"Bucket not found","code":"NoSuchBucket"}`, w.Body.String())
 }
 
@@ -1687,8 +1687,8 @@ func TestMoveObject_SourceBucketNotFound(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
-	if w.Code != 404 {
-		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
+	if w.Code != 400 {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -1706,8 +1706,8 @@ func TestCopyObject_DestinationBucketNotFound(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
-	if w.Code != 404 {
-		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
+	if w.Code != 400 {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -1772,9 +1772,9 @@ func TestMoveObject_Denials(t *testing.T) {
 		err  error
 		want int
 	}{
-		{"hidden by RLS", 0, nil, 404},
-		{"dest violates policy", 0, errors.New(`new row violates row-level security policy for table "objects"`), 403},
-		{"dest exists", 0, errors.New(`duplicate key value violates unique constraint (SQLSTATE 23505)`), 409},
+		{"hidden by RLS", 0, nil, 400},
+		{"dest violates policy", 0, errors.New(`new row violates row-level security policy for table "objects"`), 400},
+		{"dest exists", 0, errors.New(`duplicate key value violates unique constraint (SQLSTATE 23505)`), 400},
 		{"db down", 0, errors.New("conn reset"), 500},
 	}
 	for _, tc := range cases {
@@ -1878,8 +1878,8 @@ func TestCopyObject_Denials(t *testing.T) {
 		err  error
 		want int
 	}{
-		{"source hidden by RLS", 0, nil, 404},
-		{"dest insert denied", 0, errors.New(`new row violates row-level security policy for table "objects" (SQLSTATE 42501)`), 403},
+		{"source hidden by RLS", 0, nil, 400},
+		{"dest insert denied", 0, errors.New(`new row violates row-level security policy for table "objects" (SQLSTATE 42501)`), 400},
 		{"db down", 0, errors.New("conn reset"), 500},
 	}
 	for _, tc := range cases {
@@ -2091,8 +2091,8 @@ func TestStorageErrShape(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	storageErr(c, 404, "not_found", `Bucket "x" not found`)
 
-	if w.Code != 404 {
-		t.Fatalf("status = %d, want 404", w.Code)
+	if w.Code != 400 {
+		t.Fatalf("status = %d, want 400", w.Code)
 	}
 	var body map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
@@ -2871,7 +2871,7 @@ func TestRedeemSignedURL_RejectsBeforeAnyLookup(t *testing.T) {
 		"nul":                  {"/storage/v1/object/sign/docs/cat.png%00?token=" + tok, 400, "invalid_key"},
 		"no path":              {"/storage/v1/object/sign/docs?token=" + tok, 400, "bad_request"},
 		"empty path":           {"/storage/v1/object/sign/docs/?token=" + tok, 400, "invalid_key"},
-		"valid token, no bkt":  {"/storage/v1/object/sign/nope/cat.png?token=" + missingBucket, 404, "not_found"},
+		"valid token, no bkt":  {"/storage/v1/object/sign/nope/cat.png?token=" + missingBucket, 400, "not_found"},
 	}
 	for name, c := range cases {
 		w := getRaw(r, c.target)
@@ -2898,7 +2898,7 @@ func TestRedeemSignedURL_MissingObjectAndFailures(t *testing.T) {
 	tok := h.signDownloadToken(context.Background(), "docs", "cat.png", time.Hour)
 
 	w := getRaw(r, "/storage/v1/object/sign/docs/cat.png?token="+tok)
-	assert.Equal(t, 404, w.Code, "deleted object")
+	assert.Equal(t, 400, w.Code, "deleted object")
 
 	row = map[string]any{"mime": "image/png"}
 	w = getRaw(r, "/storage/v1/object/sign/docs/cat.png?token="+tok)
@@ -2978,7 +2978,7 @@ func TestDownload_MissingBackingFileIs404(t *testing.T) {
 	} {
 		dlErr = fmt.Errorf("open file: %w: %w", domain.ErrNotFound, fs.ErrNotExist)
 		w := getRaw(r, target)
-		assert.Equal(t, 404, w.Code, name+": "+w.Body.String())
+		assert.Equal(t, 400, w.Code, name+": "+w.Body.String())
 		assert.Contains(t, w.Body.String(), "not_found", name)
 
 		dlErr = errors.New("disk on fire")
@@ -3076,7 +3076,7 @@ func TestServeDownload_PublicRouteBypassesRLS(t *testing.T) {
 	queried = nil
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/storage/v1/object/public/priv/a.txt", nil))
-	assert.Equal(t, 404, w.Code)
+	assert.Equal(t, 400, w.Code)
 	assert.Empty(t, queried, "a non-public bucket must be rejected before any lookup")
 }
 
@@ -3182,13 +3182,14 @@ func TestStorageErr_AddsSupabaseCodeWithoutChangingStatusOrShape(t *testing.T) {
 		{404, "not_found", "Bucket not found", "NoSuchBucket"},
 		{403, "Unauthorized", "new row violates row-level security policy", "AccessDenied"},
 		{403, "Unauthorized", "Access denied", "AccessDenied"},
+		{409, "duplicate", "The resource already exists", "ResourceAlreadyExists"},
 		{400, "invalid_transform", "bad", ""},
 	}
 	for _, tc := range cases {
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
 		storageErr(c, tc.status, tc.slug, tc.msg)
-		assert.Equal(t, tc.status, w.Code)
+		assert.Equal(t, storageHTTPStatus(tc.status), w.Code)
 		var body map[string]any
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 		assert.Equal(t, strconv.Itoa(tc.status), body["statusCode"])

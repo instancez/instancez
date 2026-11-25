@@ -4,6 +4,16 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Changed
+
+- Storage errors for a missing object or bucket, an RLS denial and a duplicate now return HTTP 400, as Supabase storage does. The body's `statusCode` still carries `"404"`, `"403"` or `"409"` and `code` is `NoSuchKey`, `NoSuchBucket`, `AccessDenied` or `ResourceAlreadyExists`. supabase-js is unaffected, but a raw HTTP client that checks the status must read `statusCode` from the body. `HEAD` object requests keep their plain status.
+
+### Fixed
+
+- A request to a table that does not exist now returns 404 `PGRST205` instead of a plain-text 404.
+- Calling an RPC with an argument it does not declare now returns 404 `PGRST202`, as PostgREST does, instead of 400.
+- `.in('col', [])` now returns `[]` instead of a 400 or a wrong match.
+
 ## [0.0.18] - 2026-11-24
 
 ### Changed

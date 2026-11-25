@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"slices"
 	"strconv"
@@ -72,6 +73,11 @@ func (h *CRUDHandler) handleRPC() gin.HandlerFunc {
 			pgJSON(c, http.StatusNotFound, "PGRST202",
 				fmt.Sprintf("Could not find the function public.%s in the schema cache", name),
 				missing.Error(), missing.hint())
+			return
+		}
+		var unknown *unknownArgError
+		if errors.As(err, &unknown) {
+			pgJSON(c, http.StatusNotFound, "PGRST202", unknown.message(), "", unknown.hint())
 			return
 		}
 		if err != nil {
@@ -305,7 +311,7 @@ func (h *CRUDHandler) collectRPCArgs(c *gin.Context, fnName string, fn domain.Fu
 	out := make(map[string]any, len(raw))
 	for k, v := range raw {
 		if !declared[k] {
-			return nil, fmt.Errorf("unknown argument %q for function %s", k, fnName)
+			return nil, &unknownArgError{fn: fnName, arg: k, sent: slices.Sorted(maps.Keys(raw)), declared: fn.Args}
 		}
 		// json.Unmarshal decodes every number as float64, but Postgres
 		// does function resolution by exact type — there's no implicit
@@ -330,6 +336,33 @@ func (h *CRUDHandler) collectRPCArgs(c *gin.Context, fnName string, fn domain.Fu
 		return nil, &missingArgsError{names: missing}
 	}
 	return out, nil
+}
+
+// unknownArgError is a call that names an argument the function lacks; PostgREST answers PGRST202.
+type unknownArgError struct {
+	fn, arg  string
+	sent     []string
+	declared []domain.FuncArg
+}
+
+func (e *unknownArgError) Error() string {
+	return fmt.Sprintf("unknown argument %q for function %s", e.arg, e.fn)
+}
+
+func (e *unknownArgError) message() string {
+	return fmt.Sprintf("Could not find the function public.%s(%s) in the schema cache", e.fn, strings.Join(e.sent, ", "))
+}
+
+func (e *unknownArgError) hint() string {
+	if len(e.declared) == 0 {
+		return ""
+	}
+	names := make([]string, len(e.declared))
+	for i, a := range e.declared {
+		names[i] = a.Name
+	}
+	slices.Sort(names)
+	return fmt.Sprintf("Perhaps you meant to call the function public.%s(%s)", e.fn, strings.Join(names, ", "))
 }
 
 // missingArgsError lists required arguments the caller omitted.
