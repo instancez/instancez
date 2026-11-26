@@ -166,6 +166,7 @@ describe("sortRows and cellText", () => {
     expect(col(["1.5", "1.25", "1.3"])).toEqual(["1.25", "1.3", "1.5"]);
     expect(col(["10", 9, null, "8.5"], "desc")).toEqual(["10", 9, "8.5", null]);
     expect(col(["", "2", "1"])).toEqual(["", "1", "2"]);
+    expect(col(["9007199254740993", "9007199254740992", "-9007199254740993"])).toEqual(["-9007199254740993", "9007199254740992", "9007199254740993"]);
   });
 
   it("does not mutate its input", () => {
@@ -188,6 +189,9 @@ describe("rowObject", () => {
     expect(rowObject(["?column?", "?column?", "id"], [1, 2, 3])).toEqual({ "?column?": 1, "?column?_2": 2, id: 3 });
     expect(rowObject(["a", "a_2", "a"], [1, 2, 3])).toEqual({ a: 1, a_2: 2, a_3: 3 });
     expect(rowObject([], [])).toEqual({});
+    expect(JSON.parse(JSON.stringify(rowObject(["constructor", "__proto__", "toString"], [1, 2, 3])))).toEqual(
+      JSON.parse('{"constructor":1,"__proto__":2,"toString":3}')
+    );
   });
 });
 

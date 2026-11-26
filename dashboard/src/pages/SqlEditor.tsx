@@ -29,6 +29,7 @@ function exportCsv(r: SqlResult) {
 }
 
 // Cells arrive as strings in readwrite mode, so numbers are detected from text.
+const INT = /^-?\d+$/;
 const asNumber = (v: unknown) => (typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN);
 
 /** Nulls last, numbers numerically, everything else as natural-order text. */
@@ -37,6 +38,11 @@ export function sortRows(rows: unknown[][], col: number, dir: "asc" | "desc"): u
   return [...rows].sort((a, b) => {
     const x = a[col], y = b[col];
     if (x == null || y == null) return x == null ? (y == null ? 0 : 1) : -1;
+    // Integer text compares exactly, so bigints past 2^53 keep their order.
+    if (typeof x === "string" && typeof y === "string" && INT.test(x) && INT.test(y)) {
+      const d = BigInt(x) - BigInt(y);
+      return (d === 0n ? 0 : d > 0n ? 1 : -1) * sign;
+    }
     const nx = asNumber(x), ny = asNumber(y);
     if (Number.isFinite(nx) && Number.isFinite(ny)) return (nx - ny) * sign;
     return cellText(x).localeCompare(cellText(y), undefined, { numeric: true }) * sign;
@@ -45,10 +51,10 @@ export function sortRows(rows: unknown[][], col: number, dir: "asc" | "desc"): u
 
 /** One row as an object; repeated column names (`select 1, 2`) get a `_2`, `_3` suffix so none are lost. */
 export function rowObject(columns: string[], row: unknown[]): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
+  const out: Record<string, unknown> = Object.create(null); // so "constructor" or "__proto__" are plain keys
   columns.forEach((c, i) => {
     let key = c;
-    for (let n = 2; key in out; n++) key = `${c}_${n}`;
+    for (let n = 2; Object.hasOwn(out, key); n++) key = `${c}_${n}`;
     out[key] = row[i];
   });
   return out;
