@@ -4,6 +4,8 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [0.0.20] - 2026-11-25
+
 ### Added
 
 - Dashboard SQL editor: Postgres syntax errors are underlined as you type (parsed in the browser with libpg_query, loaded on first use), a Format button and Shift+Alt+F format the query, and Ctrl/Cmd+Enter or Run executes the selection or the statement under the cursor. Tab indents or accepts a suggestion. Tables, columns and functions autocomplete with their types and are colored by kind. Results show timing, sort by column, copy a cell or row, and the draft is kept in the browser.
@@ -507,7 +509,8 @@ First tagged release.
 - CLI: `init`, `dev`, `serve`, `validate`, `bundle`, `doctor`, `status`, `login`, `logout`, `whoami`, `deploy`, `cloud`
 - Deployment targets: Docker, Docker Compose, Kubernetes (Helm chart), AWS Lambda
 
-[Unreleased]: https://github.com/instancez/instancez/compare/v0.0.19...HEAD
+[Unreleased]: https://github.com/instancez/instancez/compare/v0.0.20...HEAD
+[0.0.20]: https://github.com/instancez/instancez/compare/v0.0.19...v0.0.20
 [0.0.19]: https://github.com/instancez/instancez/compare/v0.0.18...v0.0.19
 [0.0.18]: https://github.com/instancez/instancez/compare/v0.0.17...v0.0.18
 [0.0.17]: https://github.com/instancez/instancez/compare/v0.0.16...v0.0.17
