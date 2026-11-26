@@ -22,20 +22,13 @@ type NavItem = { to: string; icon: LucideIcon; label: string };
 const OVERVIEW: NavItem = { to: "/", icon: LayoutDashboard, label: "Overview" };
 
 // The console areas, grouped into labelled sections.
-const SECTIONS: { title: string; items: NavItem[] }[] = [
+export const SECTIONS: { title: string; items: NavItem[] }[] = [
   {
     title: "Database",
     items: [
       { to: "/tables", icon: Table2, label: "Tables" },
       { to: "/rpc", icon: Database, label: "Database Functions" },
       { to: "/sql", icon: Terminal, label: "SQL Editor" },
-    ],
-  },
-  {
-    title: "Auth",
-    items: [
-      { to: "/auth", icon: Shield, label: "Auth" },
-      { to: "/users", icon: Users, label: "Users" },
     ],
   },
   {
@@ -47,15 +40,20 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     items: [{ to: "/functions", icon: Code2, label: "Code Functions" }],
   },
   {
+    title: "Security",
+    items: [
+      { to: "/auth", icon: Shield, label: "Auth" },
+      { to: "/users", icon: Users, label: "Users" },
+      { to: "/security", icon: ShieldAlert, label: "Advisor" },
+    ],
+  },
+  {
     title: "Integrations",
     items: [{ to: "/providers", icon: Plug, label: "Providers" }],
   },
   {
-    title: "Project",
-    items: [
-      { to: "/project", icon: Globe, label: "Project" },
-      { to: "/security", icon: ShieldAlert, label: "Security" },
-    ],
+    title: "Manage",
+    items: [{ to: "/project", icon: Globe, label: "Project" }],
   },
 ];
 

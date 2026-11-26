@@ -23,3 +23,6 @@ export { ConfirmSaveDialog } from "../components/ConfirmSaveDialog";
 export { VarRow } from "../components/VarRow";
 export { ListSkeleton } from "../components/Skeletons";
 export { SaveBarDockContext } from "../components/saveBarDock";
+export { DotGridBackground, DotGridSurface } from "../components/DotGridBackground";
+export { ClientSnippets } from "../components/ConnectExamples";
+export { Section } from "../components/ui";

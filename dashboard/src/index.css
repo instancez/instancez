@@ -25,10 +25,16 @@
   --syn-type: #6d28d9;
   --syn-operator: #52525b;
   --syn-function: #0f766e;
+  --syn-table: #be185d;
+  --syn-column: #0369a1;
   --syn-cursor: #09090b;
   --syn-active-line: rgb(9 9 11 / 0.03);
   --syn-readonly-line: rgb(9 9 11 / 0.05);
   --syn-selection: rgb(37 99 235 / 0.30);
+
+  /* DotGridBackground */
+  --dot-grid-dot: rgba(125, 125, 125, 0.2);
+  --dot-grid-glow: rgba(24, 24, 27, 0.55);
 }
 
 .dark {
@@ -50,11 +56,40 @@
   --syn-type: #c4b5fd;
   --syn-operator: #a1a1aa;
   --syn-function: #5eead4;
+  --syn-table: #f9a8d4;
+  --syn-column: #7dd3fc;
   --syn-cursor: #fafafa;
   --syn-active-line: rgb(250 250 250 / 0.04);
   --syn-readonly-line: rgb(250 250 250 / 0.06);
   --syn-selection: rgb(96 165 250 / 0.40);
+
+  --dot-grid-dot: rgba(125, 125, 125, 0.1);
+  --dot-grid-glow: rgba(255, 255, 255, 0.55);
 }
+
+.dot-grid-glow {
+  transition: opacity 200ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dot-grid-glow { transition: none; }
+}
+
+/* Static code highlighting (ConnectExamples) */
+.code-snippet .tok-keyword { color: var(--syn-keyword); font-weight: 600; }
+.code-snippet .tok-string,
+.code-snippet .tok-string2 { color: var(--syn-string); }
+.code-snippet .tok-comment { color: var(--syn-comment); font-style: italic; }
+.code-snippet .tok-number,
+.code-snippet .tok-bool,
+.code-snippet .tok-atom,
+.code-snippet .tok-literal { color: var(--syn-number); }
+.code-snippet .tok-operator,
+.code-snippet .tok-punctuation { color: var(--syn-operator); }
+.code-snippet .tok-typeName,
+.code-snippet .tok-className,
+.code-snippet .tok-namespace { color: var(--syn-type); }
+.code-snippet .tok-propertyName,
+.code-snippet .tok-variableName2 { color: var(--syn-function); }
 
 /* Card entrance animation — used by Login */
 @keyframes rise-in {

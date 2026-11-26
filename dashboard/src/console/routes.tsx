@@ -87,7 +87,7 @@ export const sqlRoutes = (): RouteObject[] => [
 ];
 
 export const securityRoutes = (): RouteObject[] => [
-  { index: true, element: <SecurityPage />, handle: { title: "Security" } satisfies ConsoleRouteHandle },
+  { index: true, element: <SecurityPage />, handle: { title: "Advisor" } satisfies ConsoleRouteHandle },
 ];
 
 export function consoleRoutes(): RouteObject[] {

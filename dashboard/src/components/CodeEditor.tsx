@@ -1,7 +1,9 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useImperativeHandle, type Ref } from "react";
 import { Box } from "@chakra-ui/react";
 import { EditorView, basicSetup } from "codemirror";
 import { Decoration, keymap, type DecorationSet } from "@codemirror/view";
+import { acceptCompletion } from "@codemirror/autocomplete";
+import { indentWithTab } from "@codemirror/commands";
 import {
   EditorState,
   EditorSelection,
@@ -14,10 +16,12 @@ import {
   type SelectionRange,
   type TransactionSpec,
 } from "@codemirror/state";
-import { sql } from "@codemirror/lang-sql";
+import { sql, PostgreSQL, type SQLNamespace } from "@codemirror/lang-sql";
 import { javascript } from "@codemirror/lang-javascript";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
+import { sqlLint, sqlToRun } from "./sqlTools";
+import { functionCompletion, sqlIdentifierHighlight, type SqlIdentifiers } from "./sqlIdentifiers";
 
 /* Syntax colors are CSS variables flipped by the `.dark` class (see
    index.css), so a single highlight style adapts to both color modes. */
@@ -39,6 +43,9 @@ const brandTheme = EditorView.theme({
   // `.dark` class instead). So its `&light` defaults for gutter text and the
   // active-line bands always apply and out-specify a plain rule. Forcing the var
   // wins regardless, in both modes.
+  ".cm-id-table": { color: "var(--syn-table)", fontWeight: "500" },
+  ".cm-id-column": { color: "var(--syn-column)" },
+  ".cm-id-function": { color: "var(--syn-function)" },
   ".cm-activeLine": { backgroundColor: "var(--syn-active-line) !important" },
   ".cm-activeLineGutter": { backgroundColor: "var(--syn-active-line) !important" },
   "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection":
@@ -361,10 +368,23 @@ interface CodeEditorProps {
       syntax-highlighted lines above and below the body and kept out of
       `value`/`onChange`. */
   frame?: Frame;
-  /** Fired on Cmd/Ctrl+Enter, e.g. to run the current query. */
+  /** Fired on Cmd/Ctrl+Enter, e.g. to run the current query (read it with the handle's `runnable()`). */
   onSubmit?: () => void;
   /** Table → column names, fed to SQL autocompletion as known identifiers. */
-  sqlSchema?: Record<string, string[]>;
+  sqlSchema?: SQLNamespace;
+  /** Known tables, columns and functions, colored by kind in SQL. */
+  sqlIdentifiers?: SqlIdentifiers;
+  /** Underline Postgres syntax errors in SQL. */
+  sqlLint?: boolean;
+  /** Rewrites the document on Shift+Alt+F and via the handle's `format()`. */
+  format?: (doc: string) => Promise<string>;
+  ref?: Ref<CodeEditorHandle>;
+}
+
+export interface CodeEditorHandle {
+  format: () => Promise<void>;
+  /** The selection, or the statement under the cursor, or the whole document. */
+  runnable: () => string;
 }
 
 export function CodeEditor({
@@ -377,6 +397,10 @@ export function CodeEditor({
   frame,
   onSubmit,
   sqlSchema,
+  sqlIdentifiers,
+  sqlLint: lintEnabled,
+  format,
+  ref,
 }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -384,6 +408,26 @@ export function CodeEditor({
   onChangeRef.current = onChange;
   const onSubmitRef = useRef(onSubmit);
   onSubmitRef.current = onSubmit;
+  const formatRef = useRef(format);
+  formatRef.current = format;
+  // Survives a rebuild (schema or identifiers arriving), since the cursor decides what Run executes.
+  const keptRef = useRef<{ anchor: number; head: number; focused: boolean } | null>(null);
+
+  async function runFormat() {
+    const fmt = formatRef.current;
+    if (!viewRef.current || !fmt) return;
+    const doc = viewRef.current.state.doc.toString();
+    const out = await fmt(doc);
+    // Re-read the view: it may have been rebuilt while formatting.
+    const view = viewRef.current;
+    if (!view || out === doc || view.state.doc.toString() !== doc) return;
+    const head = Math.min(view.state.selection.main.head, out.length);
+    view.dispatch({ changes: { from: 0, to: doc.length, insert: out }, selection: { anchor: head } });
+  }
+  useImperativeHandle(ref, () => ({
+    format: runFormat,
+    runnable: () => (viewRef.current ? sqlToRun(viewRef.current.state) : ""),
+  }));
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -396,14 +440,25 @@ export function CodeEditor({
         keymap.of([
           {
             key: "Mod-Enter",
-            run: () => {
+            run: (view) => {
               if (!onSubmitRef.current) return false; // fall through to basicSetup
               onSubmitRef.current();
               return true;
             },
           },
+          {
+            key: "Shift-Alt-f",
+            run: () => {
+              if (!formatRef.current) return false;
+              void runFormat();
+              return true;
+            },
+          },
+          // Tab takes an open suggestion first, otherwise indents.
+          { key: "Tab", run: acceptCompletion },
         ])
       ),
+      keymap.of([indentWithTab]),
       basicSetup,
       EditorView.lineWrapping,
       brandTheme,
@@ -438,8 +493,13 @@ export function CodeEditor({
       }),
     ];
 
-    if (language === "sql")
-      extensions.push(sql(sqlSchema ? { schema: sqlSchema, upperCaseKeywords: false } : undefined));
+    if (language === "sql") {
+      const lang = sql({ dialect: PostgreSQL, ...(sqlSchema ? { schema: sqlSchema, upperCaseKeywords: false } : {}) });
+      extensions.push(lang);
+      if (sqlIdentifiers) extensions.push(lang.language.data.of({ autocomplete: functionCompletion(sqlIdentifiers) }));
+    }
+    if (language === "sql" && sqlIdentifiers) extensions.push(sqlIdentifierHighlight(sqlIdentifiers));
+    if (language === "sql" && lintEnabled) extensions.push(sqlLint);
     if (language === "javascript") extensions.push(javascript());
     if (readOnly) extensions.push(EditorState.readOnly.of(true));
     if (placeholder) {
@@ -448,21 +508,28 @@ export function CodeEditor({
       );
     }
 
+    const doc = composeDoc(initFrame, value);
+    const kept = keptRef.current;
+    const clamp = (n: number) => Math.min(n, doc.length);
     const state = EditorState.create({
-      doc: composeDoc(initFrame, value),
+      doc,
       extensions,
+      ...(kept ? { selection: { anchor: clamp(kept.anchor), head: clamp(kept.head) } } : {}),
     });
     const view = new EditorView({ state, parent: containerRef.current });
     viewRef.current = view;
+    if (kept?.focused) view.focus();
 
     return () => {
+      const { anchor, head } = view.state.selection.main;
+      keptRef.current = { anchor, head, focused: view.hasFocus };
       view.destroy();
       viewRef.current = null;
     };
     // Only re-create on language/readOnly change, not value. The frame and value
     // flow in through the effects below without tearing down the editor.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [language, readOnly, minHeight, sqlSchema]);
+  }, [language, readOnly, minHeight, sqlSchema, sqlIdentifiers, lintEnabled]);
 
   // Rewrite the scaffold in place when the frame's structure changes (header,
   // footer, or the hole's before/after text — e.g. the RPC header recomputing

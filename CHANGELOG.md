@@ -4,6 +4,16 @@ All notable changes to instancez are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Added
+
+- Dashboard SQL editor: Postgres syntax errors are underlined as you type (parsed in the browser with libpg_query, loaded on first use), a Format button and Shift+Alt+F format the query, and Ctrl/Cmd+Enter or Run executes the selection or the statement under the cursor. Tab indents or accepts a suggestion. Tables, columns and functions autocomplete with their types and are colored by kind. Results show timing, sort by column, copy a cell or row, and the draft is kept in the browser.
+- Dashboard Overview: connection examples now cover JS/TS, Python, Dart, Swift, Kotlin and Go, with syntax highlighting, and long lines wrap instead of scrolling.
+- Dashboard background: a dot grid that lights up near the cursor.
+
+### Changed
+
+- Dashboard sidebar: Auth, Users and the Advisor (formerly Security) page sit under Security, and Project moves under Manage.
+
 ## [0.0.19] - 2026-11-25
 
 ### Changed
