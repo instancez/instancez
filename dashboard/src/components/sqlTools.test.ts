@@ -29,6 +29,18 @@ describe("sqlToRun", () => {
     expect(sqlToRun(stateAt(doc, doc.indexOf("select 2")))).toContain("language sql;");
   });
 
+  it("treats a whitespace-only selection as no selection, never the whole buffer", () => {
+    const two = "select 1;\n\n   \nselect 2;";
+    const gap = two.indexOf("\n");
+    expect(sqlToRun(stateAt(two, gap + 4, gap + 1))).toBe("select 1;");
+  });
+
+  it("finds a statement past the parsed range in a fresh state", () => {
+    const long = Array.from({ length: 3000 }, (_, i) => `select ${i};`).join("\n");
+    const state = EditorState.create({ doc: long, selection: { anchor: long.length }, extensions: [sql({ dialect: PostgreSQL })] });
+    expect(sqlToRun(state)).toBe("select 2999;");
+  });
+
   it("uses the previous statement when the cursor sits in the gap after it", () => {
     expect(sqlToRun(stateAt(doc, 10))).toBe("select 1;");
   });

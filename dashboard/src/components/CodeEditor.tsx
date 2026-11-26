@@ -368,9 +368,8 @@ interface CodeEditorProps {
       syntax-highlighted lines above and below the body and kept out of
       `value`/`onChange`. */
   frame?: Frame;
-  /** Fired on Cmd/Ctrl+Enter, e.g. to run the current query. */
-  /** Gets the text to run: the selection or current statement in SQL. */
-  onSubmit?: (text?: string) => void;
+  /** Fired on Cmd/Ctrl+Enter, e.g. to run the current query (read it with the handle's `runnable()`). */
+  onSubmit?: () => void;
   /** Table → column names, fed to SQL autocompletion as known identifiers. */
   sqlSchema?: SQLNamespace;
   /** Known tables, columns and functions, colored by kind in SQL. */
@@ -411,6 +410,8 @@ export function CodeEditor({
   onSubmitRef.current = onSubmit;
   const formatRef = useRef(format);
   formatRef.current = format;
+  // Survives a rebuild (schema or identifiers arriving), since the cursor decides what Run executes.
+  const keptRef = useRef<{ anchor: number; head: number; focused: boolean } | null>(null);
 
   async function runFormat() {
     const view = viewRef.current;
@@ -440,7 +441,7 @@ export function CodeEditor({
             key: "Mod-Enter",
             run: (view) => {
               if (!onSubmitRef.current) return false; // fall through to basicSetup
-              onSubmitRef.current(language === "sql" ? sqlToRun(view.state) : undefined);
+              onSubmitRef.current();
               return true;
             },
           },
@@ -506,14 +507,21 @@ export function CodeEditor({
       );
     }
 
+    const doc = composeDoc(initFrame, value);
+    const kept = keptRef.current;
+    const clamp = (n: number) => Math.min(n, doc.length);
     const state = EditorState.create({
-      doc: composeDoc(initFrame, value),
+      doc,
       extensions,
+      ...(kept ? { selection: { anchor: clamp(kept.anchor), head: clamp(kept.head) } } : {}),
     });
     const view = new EditorView({ state, parent: containerRef.current });
     viewRef.current = view;
+    if (kept?.focused) view.focus();
 
     return () => {
+      const { anchor, head } = view.state.selection.main;
+      keptRef.current = { anchor, head, focused: view.hasFocus };
       view.destroy();
       viewRef.current = null;
     };

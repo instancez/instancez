@@ -179,7 +179,7 @@ export function Field({ label, htmlFor, hint, children, align = "start" }: Field
 interface SectionProps {
   title: ReactNode;
   description?: ReactNode;
-  icon?: LucideIcon | React.ElementType;
+  icon?: React.ElementType;
   actions?: ReactNode;
   /** Red border for destructive actions, like DangerZone. */
   danger?: boolean;

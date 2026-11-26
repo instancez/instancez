@@ -65,7 +65,9 @@ describe("ClientSnippets", () => {
     renderWithChakra(<ClientSnippets url="https://api.test" table="todos" />);
     expect(screen.getByText(/^\$ npm install/, { selector: "code" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Kotlin" }));
-    expect(screen.getByText(/^implementation\(/, { selector: "code" })).toBeInTheDocument();
+    const gradle = screen.getByText(/^implementation\(/, { selector: "code" });
+    expect(gradle).toHaveTextContent("postgrest-kt");
+    expect(gradle).toHaveTextContent("ktor-client-cio");
   });
 
   it("inlines a passed publishable key as a string literal in every language", async () => {

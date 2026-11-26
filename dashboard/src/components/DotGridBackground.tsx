@@ -41,12 +41,10 @@ export function DotGridBackground({ dotColor, glowColor, glowRadius = 60, gap = 
     };
 
     host.addEventListener("pointermove", move);
-    host.addEventListener("pointerenter", move);
     host.addEventListener("pointerleave", leave);
     return () => {
       cancelAnimationFrame(frame);
       host.removeEventListener("pointermove", move);
-      host.removeEventListener("pointerenter", move);
       host.removeEventListener("pointerleave", leave);
     };
   }, []);

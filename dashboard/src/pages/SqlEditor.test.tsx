@@ -5,7 +5,8 @@ import { renderWithChakra } from "../test/helpers";
 import { BackendProvider } from "../console/BackendContext";
 import { fullCapabilities, type ConsoleBackend } from "../console/backend";
 import { EditorView } from "codemirror";
-import { SqlEditor, sortRows, cellText } from "./SqlEditor";
+import { SqlEditor, sortRows, cellText, rowObject } from "./SqlEditor";
+import { ApiBaseUrlProvider } from "../console/BackendContext";
 
 function mk(runQuery: ConsoleBackend["runQuery"]) {
   return {
@@ -159,6 +160,14 @@ describe("sortRows and cellText", () => {
     expect(sortRows([], 0, "asc")).toEqual([]);
   });
 
+  it("sorts numeric strings as numbers, including negatives and decimals", () => {
+    const col = (vals: unknown[], dir: "asc" | "desc" = "asc") => sortRows(vals.map((v) => [v]), 0, dir).map((r) => r[0]);
+    expect(col(["-5", "-10", "0", "3"])).toEqual(["-10", "-5", "0", "3"]);
+    expect(col(["1.5", "1.25", "1.3"])).toEqual(["1.25", "1.3", "1.5"]);
+    expect(col(["10", 9, null, "8.5"], "desc")).toEqual(["10", 9, "8.5", null]);
+    expect(col(["", "2", "1"])).toEqual(["", "1", "2"]);
+  });
+
   it("does not mutate its input", () => {
     const rows = [[2], [1]];
     sortRows(rows, 0, "asc");
@@ -171,5 +180,33 @@ describe("sortRows and cellText", () => {
     expect(cellText({ a: 1 })).toBe('{"a":1}');
     expect(cellText(0)).toBe("0");
     expect(cellText(false)).toBe("false");
+  });
+});
+
+describe("rowObject", () => {
+  it("keeps every column when names repeat", () => {
+    expect(rowObject(["?column?", "?column?", "id"], [1, 2, 3])).toEqual({ "?column?": 1, "?column?_2": 2, id: 3 });
+    expect(rowObject(["a", "a_2", "a"], [1, 2, 3])).toEqual({ a: 1, a_2: 2, a_3: 3 });
+    expect(rowObject([], [])).toEqual({});
+  });
+});
+
+describe("SqlEditor drafts per project", () => {
+  beforeEach(() => { stubStorage(); });
+
+  it("loads the new project's draft and leaves the old one intact when the API URL changes", async () => {
+    localStorage.setItem("inz:sql-draft:https://a.test", "select 'a'");
+    localStorage.setItem("inz:sql-draft:https://b.test", "select 'b'");
+    const page = (url: string) => (
+      <BackendProvider backend={mk(vi.fn())}>
+        <ApiBaseUrlProvider value={url}><MemoryRouter><SqlEditor /></MemoryRouter></ApiBaseUrlProvider>
+      </BackendProvider>
+    );
+    const { container, rerender } = renderWithChakra(page("https://a.test"));
+    expect(container.querySelector(".cm-content")?.textContent).toBe("select 'a'");
+    rerender(page("https://b.test"));
+    await waitFor(() => expect(container.querySelector(".cm-content")?.textContent).toBe("select 'b'"));
+    expect(localStorage.getItem("inz:sql-draft:https://a.test")).toBe("select 'a'");
+    expect(localStorage.getItem("inz:sql-draft:https://b.test")).toBe("select 'b'");
   });
 });

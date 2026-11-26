@@ -1,5 +1,5 @@
 import { linter, type Diagnostic } from "@codemirror/lint";
-import { syntaxTree } from "@codemirror/language";
+import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
 import type { EditorState, Extension } from "@codemirror/state";
 
 /** Formats Postgres SQL; returns the input unchanged if it can't be parsed. */
@@ -25,12 +25,14 @@ async function loadWithBundledWasm(): Promise<PgParser> {
     const url = input instanceof Request ? input.url : String(input);
     return realFetch(url.endsWith("libpg-query.wasm") ? wasmUrl : input, init);
   };
+  const redirect = globalThis.fetch;
   try {
     const m = await import("@libpg-query/parser");
     await m.loadModule();
     return m;
   } finally {
-    globalThis.fetch = realFetch;
+    // Leave alone any fetch wrapper someone else installed meanwhile.
+    if (globalThis.fetch === redirect) globalThis.fetch = realFetch;
   }
 }
 
@@ -59,14 +61,15 @@ export async function lintSql(sql: string): Promise<Diagnostic[]> {
 
 export const sqlLint: Extension = linter((view) => lintSql(view.state.doc.toString()), { delay: 600 });
 
-/** The selection if any, else the statement under the cursor, else the whole document. */
+/** The selection if it has text, else the statement under the cursor, else the whole document. */
 export function sqlToRun(state: EditorState): string {
   const doc = state.doc.toString();
   const { from, to, head } = state.selection.main;
-  if (from !== to) return doc.slice(from, to).trim() || doc;
+  const selected = doc.slice(from, to).trim();
+  if (selected) return selected;
 
   const statements: { from: number; to: number }[] = [];
-  syntaxTree(state).iterate({
+  (ensureSyntaxTree(state, state.doc.length, 200) ?? syntaxTree(state)).iterate({
     enter(n) {
       if (n.name !== "Statement") return;
       statements.push({ from: n.from, to: n.to });

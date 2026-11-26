@@ -169,3 +169,16 @@ describe("CodeEditor sql lint", () => {
     expect(good.container.querySelector(".cm-lintRange-error")).toBeNull();
   });
 });
+
+describe("CodeEditor rebuild", () => {
+  it("keeps the cursor when schema arrives, so Run still targets the same statement", () => {
+    const ref = { current: null as import("./CodeEditor").CodeEditorHandle | null };
+    const doc = "select 1;\nselect 2;\nselect 3;";
+    const { container, rerender } = renderWithChakra(<CodeEditor ref={ref} value={doc} onChange={vi.fn()} />);
+    viewOf(container).dispatch({ selection: { anchor: doc.indexOf("select 3") + 2 } });
+    expect(ref.current!.runnable()).toBe("select 3;");
+    rerender(<CodeEditor ref={ref} value={doc} onChange={vi.fn()} sqlSchema={{ todos: ["id"] }} />);
+    expect(viewOf(container).state.selection.main.head).toBe(doc.indexOf("select 3") + 2);
+    expect(ref.current!.runnable()).toBe("select 3;");
+  });
+});

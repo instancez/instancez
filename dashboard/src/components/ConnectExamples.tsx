@@ -88,7 +88,7 @@ let response = try await supabase
   {
     id: "kotlin",
     label: "Kotlin",
-    install: `implementation("io.github.jan-tennert.supabase:postgrest-kt:3.9.0")`,
+    install: `implementation("io.github.jan-tennert.supabase:postgrest-kt:3.9.0")\nimplementation("io.ktor:ktor-client-cio:3.6.0")`,
     shell: false,
     language: StreamLanguage.define(kotlin),
     snippet: (url, table, key) => `import io.github.jan.supabase.createSupabaseClient

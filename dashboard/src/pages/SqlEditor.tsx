@@ -28,15 +28,30 @@ function exportCsv(r: SqlResult) {
   URL.revokeObjectURL(url);
 }
 
+// Cells arrive as strings in readwrite mode, so numbers are detected from text.
+const asNumber = (v: unknown) => (typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN);
+
 /** Nulls last, numbers numerically, everything else as natural-order text. */
 export function sortRows(rows: unknown[][], col: number, dir: "asc" | "desc"): unknown[][] {
   const sign = dir === "asc" ? 1 : -1;
   return [...rows].sort((a, b) => {
     const x = a[col], y = b[col];
     if (x == null || y == null) return x == null ? (y == null ? 0 : 1) : -1;
-    if (typeof x === "number" && typeof y === "number") return (x - y) * sign;
+    const nx = asNumber(x), ny = asNumber(y);
+    if (Number.isFinite(nx) && Number.isFinite(ny)) return (nx - ny) * sign;
     return cellText(x).localeCompare(cellText(y), undefined, { numeric: true }) * sign;
   });
+}
+
+/** One row as an object; repeated column names (`select 1, 2`) get a `_2`, `_3` suffix so none are lost. */
+export function rowObject(columns: string[], row: unknown[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  columns.forEach((c, i) => {
+    let key = c;
+    for (let n = 2; key in out; n++) key = `${c}_${n}`;
+    out[key] = row[i];
+  });
+  return out;
 }
 
 function loadDraft(key: string): string {
@@ -48,8 +63,13 @@ function loadDraft(key: string): string {
 }
 
 export function SqlEditor() {
-  const backend = useBackend();
   const draftKey = `inz:sql-draft:${useApiBaseUrl()}`;
+  // Remount per project so one project's draft is never saved under another's key.
+  return <SqlEditorPane key={draftKey} draftKey={draftKey} />;
+}
+
+function SqlEditorPane({ draftKey }: { draftKey: string }) {
+  const backend = useBackend();
   const editor = useRef<CodeEditorHandle>(null);
   const [sql, setSql] = useState(() => loadDraft(draftKey));
   const [result, setResult] = useState<SqlResult | null>(null);
@@ -78,8 +98,8 @@ export function SqlEditor() {
     }
   }, [draftKey, sql]);
 
-  const run = useCallback(async (text?: string) => {
-    const query = text ?? editor.current?.runnable() ?? sql;
+  const run = useCallback(async () => {
+    const query = editor.current?.runnable() ?? sql;
     if (!query.trim() || running) return;
     setRunning(true); setError(null);
     const started = performance.now();
@@ -113,7 +133,7 @@ export function SqlEditor() {
             language="sql"
             value={sql}
             onChange={setSql}
-            onSubmit={(t) => void run(t)}
+            onSubmit={() => void run()}
             sqlSchema={schema}
             sqlIdentifiers={identifiers}
             sqlLint
@@ -142,7 +162,7 @@ export function SqlEditor() {
               <Box as="table" width="100%" fontFamily="mono" fontSize="xs" css={{ borderCollapse: "collapse" }}>
                 <Box as="thead"><Box as="tr" bg="bg.subtle" color="fg.muted">
                   {columns.map((c, ci) => (
-                    <Box as="th" key={c} textAlign="left" px="3" py="2" borderBottomWidth="1px" borderColor="border" aria-sort={sort?.col === ci ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
+                    <Box as="th" key={ci} textAlign="left" px="3" py="2" borderBottomWidth="1px" borderColor="border" aria-sort={sort?.col === ci ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
                       <Box as="button" display="inline-flex" alignItems="center" gap="1" cursor="pointer" fontWeight="inherit" onClick={() => toggleSort(ci)} aria-label={`Sort by ${c}`}>
                         {c}
                         {sort?.col === ci && (sort.dir === "asc" ? <ArrowUp size={11} /> : <ArrowDown size={11} />)}
@@ -160,7 +180,7 @@ export function SqlEditor() {
                       {cellText(cell)}
                     </Box>)}
                     <Box as="td" px="1" borderBottomWidth="1px" borderColor="border">
-                      <CopyButton label="row" value={JSON.stringify(Object.fromEntries(columns.map((c, i) => [c, row[i]])))} />
+                      <CopyButton label="row" value={JSON.stringify(rowObject(columns, row))} />
                     </Box>
                   </Box>)}
                 </Box>
