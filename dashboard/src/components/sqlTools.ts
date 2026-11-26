@@ -1,5 +1,5 @@
 import { linter, type Diagnostic } from "@codemirror/lint";
-import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
+import { ensureSyntaxTree } from "@codemirror/language";
 import type { EditorState, Extension } from "@codemirror/state";
 
 /** Formats Postgres SQL; returns the input unchanged if it can't be parsed. */
@@ -61,15 +61,18 @@ export async function lintSql(sql: string): Promise<Diagnostic[]> {
 
 export const sqlLint: Extension = linter((view) => lintSql(view.state.doc.toString()), { delay: 600 });
 
-/** The selection if it has text, else the statement under the cursor, else the whole document. */
+/** The selection if it has text, else the statement under the cursor, else the whole document; "" if parsing can't finish. */
 export function sqlToRun(state: EditorState): string {
   const doc = state.doc.toString();
   const { from, to, head } = state.selection.main;
   const selected = doc.slice(from, to).trim();
   if (selected) return selected;
 
+  // A partial tree could pick an earlier statement, so run nothing rather than guess.
+  const tree = ensureSyntaxTree(state, state.doc.length, 1000);
+  if (!tree) return "";
   const statements: { from: number; to: number }[] = [];
-  (ensureSyntaxTree(state, state.doc.length, 200) ?? syntaxTree(state)).iterate({
+  tree.iterate({
     enter(n) {
       if (n.name !== "Statement") return;
       statements.push({ from: n.from, to: n.to });

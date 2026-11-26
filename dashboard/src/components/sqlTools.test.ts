@@ -1,5 +1,11 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+const parseTimesOut = vi.hoisted(() => ({ value: false }));
+vi.mock("@codemirror/language", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@codemirror/language")>();
+  return { ...real, ensureSyntaxTree: (...a: Parameters<typeof real.ensureSyntaxTree>) => (parseTimesOut.value ? null : real.ensureSyntaxTree(...a)) };
+});
 import { EditorState } from "@codemirror/state";
 import { sql, PostgreSQL } from "@codemirror/lang-sql";
 import { ensureSyntaxTree } from "@codemirror/language";
@@ -39,6 +45,15 @@ describe("sqlToRun", () => {
     const long = Array.from({ length: 3000 }, (_, i) => `select ${i};`).join("\n");
     const state = EditorState.create({ doc: long, selection: { anchor: long.length }, extensions: [sql({ dialect: PostgreSQL })] });
     expect(sqlToRun(state)).toBe("select 2999;");
+  });
+
+  it("runs nothing when the parse can't finish in time", () => {
+    parseTimesOut.value = true;
+    try {
+      expect(sqlToRun(EditorState.create({ doc: "select 1;\nselect 2;", extensions: [sql({ dialect: PostgreSQL })] }))).toBe("");
+    } finally {
+      parseTimesOut.value = false;
+    }
   });
 
   it("uses the previous statement when the cursor sits in the gap after it", () => {

@@ -71,7 +71,7 @@ final data = await supabase.from('${table}').select();`,
   {
     id: "swift",
     label: "Swift",
-    install: "swift package add-dependency https://github.com/supabase/supabase-swift --from 2.0.0",
+    install: "swift package add-dependency https://github.com/supabase/supabase-swift --from 2.0.0\nswift package add-target-dependency Supabase YourTarget --package supabase-swift",
     language: StreamLanguage.define(swift),
     snippet: (url, table, key) => `import Supabase
 

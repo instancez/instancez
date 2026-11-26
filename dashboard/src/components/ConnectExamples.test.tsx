@@ -64,6 +64,8 @@ describe("ClientSnippets", () => {
   it("shows a shell prompt only for shell install commands", async () => {
     renderWithChakra(<ClientSnippets url="https://api.test" table="todos" />);
     expect(screen.getByText(/^\$ npm install/, { selector: "code" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Swift" }));
+    expect(screen.getByText(/add-dependency/, { selector: "code" })).toHaveTextContent("add-target-dependency Supabase");
     await userEvent.click(screen.getByRole("button", { name: "Kotlin" }));
     const gradle = screen.getByText(/^implementation\(/, { selector: "code" });
     expect(gradle).toHaveTextContent("postgrest-kt");
