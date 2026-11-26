@@ -54,7 +54,7 @@ export function rowObject(columns: string[], row: unknown[]): Record<string, unk
   const out: Record<string, unknown> = Object.create(null); // so "constructor" or "__proto__" are plain keys
   columns.forEach((c, i) => {
     let key = c;
-    for (let n = 2; Object.hasOwn(out, key); n++) key = `${c}_${n}`;
+    for (let n = 2; Object.prototype.hasOwnProperty.call(out, key); n++) key = `${c}_${n}`;
     out[key] = row[i];
   });
   return out;
