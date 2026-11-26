@@ -414,12 +414,13 @@ export function CodeEditor({
   const keptRef = useRef<{ anchor: number; head: number; focused: boolean } | null>(null);
 
   async function runFormat() {
-    const view = viewRef.current;
     const fmt = formatRef.current;
-    if (!view || !fmt) return;
-    const doc = view.state.doc.toString();
+    if (!viewRef.current || !fmt) return;
+    const doc = viewRef.current.state.doc.toString();
     const out = await fmt(doc);
-    if (out === doc || view.state.doc.toString() !== doc) return;
+    // Re-read the view: it may have been rebuilt while formatting.
+    const view = viewRef.current;
+    if (!view || out === doc || view.state.doc.toString() !== doc) return;
     const head = Math.min(view.state.selection.main.head, out.length);
     view.dispatch({ changes: { from: 0, to: doc.length, insert: out }, selection: { anchor: head } });
   }

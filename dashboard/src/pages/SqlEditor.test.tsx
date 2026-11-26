@@ -125,8 +125,8 @@ describe("SqlEditor", () => {
     const { container } = renderPage(mk(vi.fn()));
     fireEvent.click(screen.getByRole("button", { name: /format/i }));
     // The formatter is lazy-loaded; its first import can be slow on a busy runner.
-    await waitFor(() => expect(container.querySelectorAll(".cm-line").length).toBeGreaterThan(1), { timeout: 10_000 });
-    expect(container.querySelector(".cm-content")?.textContent).toMatch(/^select\s*id,/);
+    await waitFor(() => expect(container.querySelector(".cm-content")?.textContent).toMatch(/^select\s*id,/), { timeout: 10_000 });
+    expect(container.querySelectorAll(".cm-line").length).toBeGreaterThan(1);
   });
 
   it("runs only the selected text", async () => {

@@ -171,6 +171,18 @@ describe("CodeEditor sql lint", () => {
 });
 
 describe("CodeEditor rebuild", () => {
+  it("applies a format that finishes after the editor was rebuilt", async () => {
+    let release!: (s: string) => void;
+    const format = vi.fn(() => new Promise<string>((r) => (release = r)));
+    const onChange = vi.fn();
+    const { container, rerender } = renderWithChakra(<CodeEditor value="select 1" onChange={onChange} format={format} />);
+    fireEvent.keyDown(container.querySelector(".cm-content") as HTMLElement, { key: "f", shiftKey: true, altKey: true });
+    rerender(<CodeEditor value="select 1" onChange={onChange} format={format} sqlSchema={{ todos: ["id"] }} />);
+    await act(async () => release("SELECT 1"));
+    expect(viewOf(container).state.doc.toString()).toBe("SELECT 1");
+    expect(onChange).toHaveBeenLastCalledWith("SELECT 1");
+  });
+
   it("keeps the cursor when schema arrives, so Run still targets the same statement", () => {
     const ref = { current: null as import("./CodeEditor").CodeEditorHandle | null };
     const doc = "select 1;\nselect 2;\nselect 3;";
