@@ -117,6 +117,8 @@ npm run build && inz cloud site deploy dist --site <id|slug>
 
 See [`inz cloud site deploy`](/api-reference/cli/#inz-cloud-site-deploy) for the site lookup order and ignore rules. `inz cloud frontend deploy` was removed.
 
+You can also manage Cloud projects and sites from Claude through the [MCP connector](/deploy/mcp/).
+
 ## Check status
 
 ```bash
