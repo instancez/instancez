@@ -95,6 +95,7 @@ export default defineConfig({
           label: 'Deploy',
           items: [
             { label: 'instancez Cloud', slug: 'deploy/cloud' },
+            { label: 'MCP connector (Claude)', slug: 'deploy/mcp' },
             { label: 'Docker', slug: 'deploy/docker' },
             { label: 'Kubernetes', slug: 'deploy/kubernetes' },
             { label: 'AWS Lambda', slug: 'deploy/lambda' },
